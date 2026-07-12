@@ -1,0 +1,12 @@
+{
+  "_captured": "2026-07-12 zero-credit GET /v1/media/{id} on live clip 12b526c5 (extend child, project c6c87bdd)",
+  "_note": "encodedVideo stripped; prompt truncated — the CONTRACT is the key set: the media resource carries the EXACT generation prompt + model + seed that produced it (deterministic current-run output binding authority).",
+  "name": "12b526c5-5ea6-4120-ba53-e120eab6d242",
+  "video": {
+    "prompt": "<root>\n  <context>\n  </context>\n  <instruction>\n    <prompt>Vertical 9:16 handheld. Slow push-in on the product, soft natural light, subtle motion, premium feel.</prompt>\n  </instruction>\n</root>…[truncated]",
+    "model": "veo_3_1_extension_lite",
+    "seed": 48860,
+    "aspectRatio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+    "encodedVideo": "<stripped: 2451452 base64 chars>"
+  }
+}

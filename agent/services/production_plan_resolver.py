@@ -182,6 +182,12 @@ async def resolve_production_authority(
             ordered = _ordered_reference_media_ids(resolved_assets, asset)
             if ordered:
                 out["initial_reference_media_ids"] = ordered
+        # SERVER-OWNED source-mode authority (PR321 closure): derived from the
+        # package's persisted compiler lineage — a client declaration was already
+        # stripped above and can never relax the per-mode reference contract.
+        if not _clean(out.get("initial_source_mode")):
+            from agent.services import flow_mode_reference_contract as _refc_sm
+            out["initial_source_mode"] = _refc_sm.derive_package_source_mode(pkg)
 
     # T2V asset-authority relaxation applies only to an EXPLICIT text-only mode
     # (package/intent declared) — never to the incomplete-plan fallback below,
@@ -198,8 +204,13 @@ async def resolve_production_authority(
         refs = ([out["initial_asset_media_id"]]
                 if _clean(out.get("initial_asset_media_id")) else [])
     refs = [str(m) for m in refs if _clean(m)]
-    if _clean(out.get("initial_mode")).upper() == "T2V" and out.get("initial_mode_explicit"):
-        refs = []  # text-only: NEVER inherit stale image state into T2V
+    if (_clean(out.get("initial_mode")).upper() == "T2V"
+            and out.get("initial_mode_explicit") and trust_client_authority):
+        # RECOVERY/trust path only: stale client-supplied image junk on an explicit
+        # text-only intent is cleared. In PRODUCTION the refs come from the package
+        # itself — a T2V package carrying references is a contract violation and
+        # REJECTS below (never silently cleared, never attached).
+        refs = []
     out["initial_reference_media_ids"] = refs
     if refs and not _clean(out.get("initial_asset_media_id")):
         out["initial_asset_media_id"] = refs[0]

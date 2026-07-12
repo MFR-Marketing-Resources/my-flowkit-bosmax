@@ -1909,6 +1909,10 @@ CREATE INDEX IF NOT EXISTS idx_video_side_effect_job ON video_job_side_effect(jo
             # Unified all-mode contract: the ORDERED reference media ids block-1
             # actually sends (F2V 1-2 / HYBRID 1 / I2V 2-3 / T2V 0).
             ("initial_reference_media_ids_json", "TEXT"),
+            # PR321 closure: SERVER-OWNED canonical surface mode (from the package's
+            # compiler lineage) + the exact-output correlation evidence of block 1.
+            ("initial_source_mode", "TEXT"),
+            ("initial_correlation_json", "TEXT"),
         ):
             if col not in vj_cols:
                 await db.execute(f"ALTER TABLE video_production_job ADD COLUMN {col} {decl}")

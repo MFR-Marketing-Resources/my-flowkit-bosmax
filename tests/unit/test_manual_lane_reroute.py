@@ -468,3 +468,53 @@ def test_manual_lane_i2v_three_refs_preserve_slot_order(monkeypatch):
     assert result["ok"] is True
     # canonical order: subject → scene → style (semantic roles preserved)
     assert calls["start_generate"]["image_media_ids"] == [_UUID_A, _UUID_B, _UUID_C]
+
+
+def test_manual_lane_rejects_client_source_mode_contradicting_package(monkeypatch):
+    """Required test 7 (PR321 closure): the client's source_mode declaration is
+    checked against the execution package's SERVER-OWNED compiled lineage — a
+    contradiction rejects; the derived mode (never the client's) is the contract
+    authority."""
+    import asyncio as _aio
+    import json as _json
+
+    calls = {}
+    _wire_contract(monkeypatch, calls)
+
+    async def _setup_pkg():
+        from agent.db import crud as _crud
+        product = await _crud.create_product("Authority Mismatch Product")
+        pid = product["id"]
+        await _crud.create_or_replace_workspace_execution_package(
+            "wep_mismatch", product_id=pid, mode="I2V", duration_seconds=8,
+            aspect_ratio="9:16", model="veo_3_1_lite",
+            manual_override=False, prompt_text="block-1", prompt_fingerprint="pf",
+            prompt_package_snapshot_id="snap", asset_slots=_json.dumps(["subject"]),
+            resolved_assets=_json.dumps([]), readiness="READY",
+            execution_allowed=True, production_generation_allowed=True,
+            manual_fallback="{}", blockers="[]",
+            request_lineage_payload=_json.dumps(
+                {"compiler": {"source_mode": "INGREDIENTS"}}),
+            source_of_truth_notes="[]")
+    _aio.run(_setup_pkg())
+
+    body = {"request_id": "m_authz", "prompt": "p",
+            "workspace_execution_package_id": "wep_mismatch",
+            "source_mode": "HYBRID",           # contradicts the package (INGREDIENTS)
+            "refs": {"subjectAsset": {"mediaId": _UUID_A},
+                     "sceneAsset": {"mediaId": _UUID_B}}}
+    with pytest.raises(HTTPException) as exc:
+        _run(flow_api._run_manual_job_via_generate(body, "I2V", None))
+    assert exc.value.status_code == 422
+    assert "ERR_SOURCE_MODE_AUTHORITY_MISMATCH" in str(exc.value.detail)
+    assert "start_generate" not in calls
+
+    # the SAME payload with the matching declaration passes under the DERIVED authority
+    ok = {"request_id": "m_authz2", "prompt": "p",
+          "workspace_execution_package_id": "wep_mismatch",
+          "source_mode": "I2V",                # normalizes to INGREDIENTS — matches
+          "refs": {"subjectAsset": {"mediaId": _UUID_A},
+                   "sceneAsset": {"mediaId": _UUID_B}}}
+    result = _run(flow_api._run_manual_job_via_generate(ok, "I2V", None))
+    assert result["ok"] is True
+    assert calls["start_generate"]["image_media_ids"] == [_UUID_A, _UUID_B]

@@ -2129,6 +2129,7 @@ async def create_video_production_job_full(job_id: str, *, logical_job_key: str,
         # production authority persisted at plan time (create-before-initial)
         "initial_mode", "initial_prompt_text", "initial_prompt_fingerprint",
         "initial_asset_media_id", "initial_reference_media_ids_json",
+        "initial_source_mode",
         "continuation_prompts_json",
     }
     cols.update({k: v for k, v in fields.items() if k in allowed})
@@ -2153,6 +2154,7 @@ async def update_video_production_job_full(job_id: str, **fields) -> None:
         "extend_child_operation_id", "extend_child_workflow_id", "stage_state_json",
         "initial_mode", "initial_prompt_text", "initial_prompt_fingerprint",
         "initial_asset_media_id", "initial_reference_media_ids_json",
+        "initial_source_mode", "initial_correlation_json",
         "continuation_prompts_json",
         "authorization_id", "authorization_issued_at", "authorization_consumed_at",
         "authorization_consumed_by_job_id", "authorization_consumed_plan_fingerprint",

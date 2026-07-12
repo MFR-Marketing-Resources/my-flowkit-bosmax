@@ -54,34 +54,116 @@ async def test_durable_exclusion_helper_passthrough():
 
 
 # ── the incident scenario: an OLD harvestable clip must never be accepted ────
-class _OldClipClient:
-    """get_media serves a real finished video for the OLD clip — exactly what the
-    reloaded editor DOM exposed in the incident."""
-    def __init__(self):
+class _PromptMediaClient:
+    """get_media serves finished videos whose resource carries the CAPTURED live
+    contract shape (video.prompt/model/seed) — the deterministic binding authority."""
+    def __init__(self, prompts):
         self.fetched = []
+        self._prompts = prompts  # media_id -> generation prompt (None = no metadata)
 
     async def get_media(self, mid):
         self.fetched.append(mid)
-        return {"encodedVideo": base64.b64encode(b"\x00" * 2048).decode()}
+        video = {"encodedVideo": base64.b64encode(b"\x00" * 2048).decode(),
+                 "model": "veo_3_1_r2v_lite", "seed": 7}
+        if self._prompts.get(mid) is not None:
+            video["prompt"] = self._prompts[mid]
+        return {"name": mid, "video": video}
+
+
+def _corr(prompt="THIS RUN prompt", sse=None, model=None):
+    return {"submitted_prompt": prompt, "sse_prompt": sse, "expected_model": model,
+            "tool_call_id": "tc-1", "response_id": "r-1", "seed": None}
+
+
+def _stats():
+    return {"unverifiable": 0, "prompt_mismatched": 0, "model_mismatched": 0,
+            "unverifiable_ids": []}
 
 
 async def test_incident_old_clip_is_skipped_when_excluded(tmp_path, monkeypatch):
     monkeypatch.setattr(mv, "OUTPUT_DIR", tmp_path)
-    client = _OldClipClient()
+    client = _PromptMediaClient({OLD_CLIP: "some other run"})
     # incident shape: harvest offers ONLY the old clip; it is DB-known → excluded
-    mid, path, size = await mv._save_video_by_get_media(
-        client, [OLD_CLIP], exclude={OLD_CLIP})
-    assert mid is None and path is None
-    assert client.fetched == []          # never even fetched, let alone accepted
+    # (defensive prefilter — never even fetched, let alone accepted)
+    mid, path, size, ev = await mv._accept_correlated_output(
+        client, [OLD_CLIP], {OLD_CLIP}, _corr(), _stats())
+    assert mid is None and path is None and ev is None
+    assert client.fetched == []
 
 
 async def test_fresh_clip_is_accepted_next_to_old_one(tmp_path, monkeypatch):
     monkeypatch.setattr(mv, "OUTPUT_DIR", tmp_path)
-    client = _OldClipClient()
-    mid, path, size = await mv._save_video_by_get_media(
-        client, [OLD_CLIP, "fresh-new-clip"], exclude={OLD_CLIP})
+    client = _PromptMediaClient({OLD_CLIP: "old prompt",
+                                 "fresh-new-clip": "THIS RUN prompt"})
+    mid, path, size, ev = await mv._accept_correlated_output(
+        client, [OLD_CLIP, "fresh-new-clip"], {OLD_CLIP}, _corr(), _stats())
     assert mid == "fresh-new-clip"       # the old clip is skipped, the new one lands
     assert client.fetched == ["fresh-new-clip"]
+    assert ev["matched_on"] == "submitted_prompt" and ev["media_id"] == "fresh-new-clip"
+
+
+# ── deterministic correlation IS the acceptance authority (PR321 closure) ────
+async def test_old_and_new_unrelated_clips_are_never_accepted_without_exclusion(
+        tmp_path, monkeypatch):
+    """Required test 9: old AND newer unrelated videos in the project, NO
+    exclusion covering them — neither may become current output, because
+    neither carries THIS run's prompt."""
+    monkeypatch.setattr(mv, "OUTPUT_DIR", tmp_path)
+    client = _PromptMediaClient({"old-unrelated": "ancient prompt",
+                                 "newer-unrelated": "yesterday prompt"})
+    stats = _stats()
+    mid, path, size, ev = await mv._accept_correlated_output(
+        client, ["newer-unrelated", "old-unrelated"], set(), _corr(), stats)
+    assert mid is None and ev is None
+    assert stats["prompt_mismatched"] == 2
+
+
+async def test_only_the_operation_linked_output_is_accepted(tmp_path, monkeypatch):
+    """Required test 10: among mixed candidates, ONLY the clip whose own media
+    resource carries this run's exact prompt is bound — order/newness never
+    decide."""
+    monkeypatch.setattr(mv, "OUTPUT_DIR", tmp_path)
+    client = _PromptMediaClient({"decoy-newest": "other job",
+                                 "ours": "THIS RUN prompt",
+                                 "decoy-old": "older job"})
+    mid, _, _, ev = await mv._accept_correlated_output(
+        client, ["decoy-newest", "ours", "decoy-old"], set(), _corr(), _stats())
+    assert mid == "ours"
+    assert ev["media_model"] == "veo_3_1_r2v_lite" and ev["media_seed"] == 7
+
+
+async def test_sse_tool_prompt_is_the_strongest_anchor(tmp_path, monkeypatch):
+    monkeypatch.setattr(mv, "OUTPUT_DIR", tmp_path)
+    client = _PromptMediaClient({"ours": "AGENT REWRITTEN prompt"})
+    mid, _, _, ev = await mv._accept_correlated_output(
+        client, ["ours"], set(),
+        _corr(prompt="user block prompt", sse="AGENT REWRITTEN prompt"), _stats())
+    assert mid == "ours" and ev["matched_on"] == "sse_tool_prompt"
+
+
+async def test_confirmed_model_mismatch_rejects_candidate(tmp_path, monkeypatch):
+    monkeypatch.setattr(mv, "OUTPUT_DIR", tmp_path)
+    client = _PromptMediaClient({"ours": "THIS RUN prompt"})
+    stats = _stats()
+    mid, _, _, _ = await mv._accept_correlated_output(
+        client, ["ours"], set(), _corr(model="veo_3_1_fast"), stats)
+    assert mid is None and stats["model_mismatched"] == 1
+
+
+async def test_missing_prompt_metadata_counts_unverifiable_never_accepts(
+        tmp_path, monkeypatch):
+    """Required test 11: a finished video whose resource exposes NO generation
+    prompt can never be bound — counted so the job fails closed
+    OUTPUT_CORRELATION_UNAVAILABLE (zero false success)."""
+    monkeypatch.setattr(mv, "OUTPUT_DIR", tmp_path)
+    client = _PromptMediaClient({"metadata-less": None})
+    stats = _stats()
+    mid, path, size, ev = await mv._accept_correlated_output(
+        client, ["metadata-less"], set(), _corr(), stats)
+    assert mid is None and ev is None
+    assert stats["unverifiable"] == 1
+    assert stats["unverifiable_ids"] == ["metadata-less"]
+    assert "OUTPUT_CORRELATION_UNAVAILABLE" in mv._RETRIEVAL_PHASE_MARKERS
 
 
 # ── steer wording law (Mission 8) ────────────────────────────────────────────
