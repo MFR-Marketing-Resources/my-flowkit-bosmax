@@ -561,6 +561,7 @@ async def _list_products_response(
     source: str | None = None,
     source_lane: str | None = None,
     readiness: str | None = None,
+    purpose: str | None = None,
     include_archived: bool = False,
     lifecycle_status: str | None = None,
     limit: int = 50,
@@ -582,6 +583,13 @@ async def _list_products_response(
         requested_source=requested_source,
         requested_source_lane=requested_source_lane,
     )
+    if (purpose or "").strip().upper() == "GENERATION":
+        merged_products = [
+            product
+            for product in merged_products
+            if not product.get("reference_only")
+            and not is_fastmoss_reference_product_id(str(product.get("id") or ""))
+        ]
     filtered_all = _filter_products_for_catalog(
         merged_products,
         query=q,
@@ -778,6 +786,7 @@ async def list_products(
     source: str | None = Query(default=None),
     source_lane: str | None = Query(default=None),
     readiness: str | None = Query(default=None),
+    purpose: str | None = Query(default=None),
     include_archived: bool = Query(default=False),
     lifecycle_status: str | None = Query(default=None),
     limit: int = Query(default=50),
@@ -788,6 +797,7 @@ async def list_products(
         source=source,
         source_lane=source_lane,
         readiness=readiness,
+        purpose=purpose,
         include_archived=include_archived,
         lifecycle_status=lifecycle_status,
         limit=limit,
@@ -800,6 +810,7 @@ async def search_products(
     q: str | None = Query(default=None),
     source: str | None = Query(default=None),
     source_lane: str | None = Query(default=None),
+    purpose: str | None = Query(default=None),
     include_archived: bool = Query(default=False),
     lifecycle_status: str | None = Query(default=None),
     limit: int = Query(default=25),
@@ -809,6 +820,7 @@ async def search_products(
         q=q,
         source=source,
         source_lane=source_lane,
+        purpose=purpose,
         include_archived=include_archived,
         lifecycle_status=lifecycle_status,
         limit=limit,

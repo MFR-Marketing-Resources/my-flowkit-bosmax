@@ -75,6 +75,45 @@ def test_fastmoss_reference_products_appear_in_search_with_lane_filter(monkeypat
     assert payload["items"][0]["raw_product_title"] == "FastMoss Reference Serum"
 
 
+def test_generation_catalog_excludes_fastmoss_reference_rows(monkeypatch):
+    canonical = {
+        **_reference_product(),
+        "id": "canonical-serum-001",
+        "source": "MANUAL",
+        "source_lane": "MANUAL",
+        "source_label": "Canonical Product",
+        "source_url": "https://canonical.example/product/serum",
+        "reference_only": False,
+        "catalog_blockers": [],
+        "catalog_visibility_reason": None,
+        "raw_product_title": "Canonical Serum",
+        "product_display_name": "Canonical Serum",
+        "product_short_name": "Canonical Serum",
+    }
+
+    async def fake_list_products(**kwargs):
+        return [canonical]
+
+    async def fake_enrich_product(product, **kwargs):
+        return dict(product)
+
+    async def fake_list_fastmoss_reference_products(limit=500):
+        return [_reference_product()]
+
+    monkeypatch.setattr("agent.api.products.crud.list_products", fake_list_products)
+    monkeypatch.setattr("agent.api.products._enrich_product", fake_enrich_product)
+    monkeypatch.setattr("agent.api.products.list_fastmoss_reference_products", fake_list_fastmoss_reference_products)
+
+    client = TestClient(_build_app())
+    for endpoint in ("/api/products?purpose=GENERATION", "/api/products/search?q=serum&purpose=GENERATION"):
+        response = client.get(endpoint)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert [item["id"] for item in payload["items"]] == ["canonical-serum-001"]
+        assert payload["total_count"] == 1
+
+
 def test_archived_fastmoss_products_remain_filtered_by_lifecycle(monkeypatch):
     archived_product = {
         "id": "prod-archived",

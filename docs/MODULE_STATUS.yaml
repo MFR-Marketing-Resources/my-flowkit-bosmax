@@ -38,12 +38,14 @@ domains:
       - docs/evidence/incident-20260709-eligibility-audit-proof.md
       - agent/api/workspace_packages.py
       - agent/api/copy_sets.py
+      - agent/api/copywriting.py
       - agent/models/copy_set.py
       - agent/services/copy_set_service.py
       - agent/services/copy_binding_service.py
       - tests/unit/test_copy_set_service.py
       - tests/unit/test_copyset_approval_formula_gate.py
       - tests/api/test_copy_sets_api.py
+      - tests/api/test_copywriting_readiness_api.py
       - tests/unit/test_copy_binding_service.py
       - tests/unit/test_copy_binding_workspace_integration.py
       - tests/api/test_workspace_copy_binding_api.py
