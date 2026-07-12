@@ -56,28 +56,35 @@ async def test_durable_exclusion_helper_passthrough():
 # ── the incident scenario: an OLD harvestable clip must never be accepted ────
 class _PromptMediaClient:
     """get_media serves finished videos whose resource carries the CAPTURED live
-    contract shape (video.prompt/model/seed) — the deterministic binding authority."""
-    def __init__(self, prompts):
+    contract shape (video.prompt/model/seed) — the deterministic binding authority.
+
+    `prompts` maps media_id -> generation prompt (None = no prompt metadata);
+    `seeds` maps media_id -> the media's own seed (default 7; None = seed absent)."""
+    def __init__(self, prompts, seeds=None):
         self.fetched = []
-        self._prompts = prompts  # media_id -> generation prompt (None = no metadata)
+        self._prompts = prompts
+        self._seeds = seeds or {}
 
     async def get_media(self, mid):
         self.fetched.append(mid)
         video = {"encodedVideo": base64.b64encode(b"\x00" * 2048).decode(),
-                 "model": "veo_3_1_r2v_lite", "seed": 7}
+                 "model": "veo_3_1_r2v_lite"}
+        seed = self._seeds.get(mid, 7)
+        if seed is not None:
+            video["seed"] = seed
         if self._prompts.get(mid) is not None:
             video["prompt"] = self._prompts[mid]
         return {"name": mid, "video": video}
 
 
-def _corr(prompt="THIS RUN prompt", sse=None, model=None):
+def _corr(prompt="THIS RUN prompt", sse=None, model=None, seed=7):
     return {"submitted_prompt": prompt, "sse_prompt": sse, "expected_model": model,
-            "tool_call_id": "tc-1", "response_id": "r-1", "seed": None}
+            "tool_call_id": "tc-1", "response_id": "r-1", "seed": seed}
 
 
 def _stats():
     return {"unverifiable": 0, "prompt_mismatched": 0, "model_mismatched": 0,
-            "unverifiable_ids": []}
+            "seed_mismatched": 0, "unverifiable_ids": []}
 
 
 async def test_incident_old_clip_is_skipped_when_excluded(tmp_path, monkeypatch):
@@ -212,3 +219,60 @@ def test_reference_run_fallback_never_guessed():
     assert mv._reference_run_dropped_reference([], "veo_3_1_lite") is None       # T2V run
     assert mv._reference_run_dropped_reference(["m1"], None) is None             # no evidence
     assert mv._reference_run_dropped_reference(["m1"], "abra_fast") is None      # uncaptured engine
+
+
+# ── PR322 final closure: EXACT seed correlation (same prompt+model ambiguity) ─
+async def test_same_prompt_and_model_wrong_seed_first_is_rejected(tmp_path, monkeypatch):
+    """Mandatory tests 1+2: two candidates share this run's exact prompt AND
+    model; the wrong-seed clip appears FIRST and must be rejected — only the
+    exact prompt+model+seed candidate is bound."""
+    monkeypatch.setattr(mv, "OUTPUT_DIR", tmp_path)
+    client = _PromptMediaClient(
+        {"wrong-seed-first": "THIS RUN prompt", "ours": "THIS RUN prompt"},
+        seeds={"wrong-seed-first": 999, "ours": 4242})
+    stats = _stats()
+    mid, _, _, ev = await mv._accept_correlated_output(
+        client, ["wrong-seed-first", "ours"], set(), _corr(seed=4242), stats)
+    assert mid == "ours"
+    assert stats["seed_mismatched"] == 1          # the same-prompt decoy was rejected
+    assert ev["seed_matched"] is True
+    assert ev["media_seed"] == 4242 and ev["gen_seed"] == 4242
+
+
+async def test_same_prompt_missing_media_seed_is_rejected_when_gen_seed_known(
+        tmp_path, monkeypatch):
+    """Mandatory test 3: a same-prompt clip whose resource exposes NO seed can
+    never be bound while this generation's seed is known."""
+    monkeypatch.setattr(mv, "OUTPUT_DIR", tmp_path)
+    client = _PromptMediaClient({"seedless": "THIS RUN prompt"},
+                                seeds={"seedless": None})
+    stats = _stats()
+    mid, _, _, ev = await mv._accept_correlated_output(
+        client, ["seedless"], set(), _corr(seed=4242), stats)
+    assert mid is None and ev is None
+    assert stats["seed_mismatched"] == 1
+
+
+async def test_missing_generation_seed_never_yields_prompt_only_success(
+        tmp_path, monkeypatch):
+    """Mandatory test 4: when the approved SSE exposed NO usable seed, a
+    prompt+model match alone is NOT deterministic — nothing is accepted and the
+    candidate is counted unverifiable (the run fails closed
+    OUTPUT_CORRELATION_UNAVAILABLE, never a false deterministic success)."""
+    monkeypatch.setattr(mv, "OUTPUT_DIR", tmp_path)
+    client = _PromptMediaClient({"prompt-match": "THIS RUN prompt"})
+    stats = _stats()
+    mid, _, _, ev = await mv._accept_correlated_output(
+        client, ["prompt-match"], set(), _corr(seed=None), stats)
+    assert mid is None and ev is None
+    assert stats["unverifiable"] == 1
+    assert stats["unverifiable_ids"] == ["prompt-match"]
+
+
+def test_seed_value_normalization():
+    assert mv._seed_value(4242) == 4242
+    assert mv._seed_value("4242") == 4242
+    assert mv._seed_value(4242.0) == 4242
+    assert mv._seed_value(None) is None
+    assert mv._seed_value("") is None
+    assert mv._seed_value(True) is None    # booleans are never seeds

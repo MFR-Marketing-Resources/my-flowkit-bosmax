@@ -357,11 +357,17 @@ async def _accept_correlated_output(client, candidates, exclude, correlation,
     {name, video{prompt, model, seed, aspectRatio, encodedVideo}} — the resource
     carries the EXACT generation prompt and model key that produced it.
 
-    Acceptance requires:
+    Acceptance requires EVERY exact identity (PR322 final seed closure):
       * media.video.prompt equals (stripped) the exact prompt THIS run fired —
         the agent-tool prompt captured from the approved SSE when present,
         else the submitted block-1 prompt;
-      * a CONFIRMED model mismatch (both sides known) rejects the candidate.
+      * a CONFIRMED model mismatch (both sides known) rejects the candidate;
+      * media.video.seed equals THIS generation's SSE-captured seed — the
+        discriminator when two generations share prompt AND model. Same-prompt
+        media with a different or missing seed is rejected. When the approved
+        SSE exposed NO usable seed there is NO prompt-only fallback: nothing is
+        accepted and the run fails closed OUTPUT_CORRELATION_UNAVAILABLE
+        (GENERATED_BUT_UNRETRIEVED honesty — never a deterministic-success claim).
 
     The exclusion set (stale/refs/DOM-snapshot/DB-known) remains a DEFENSIVE
     prefilter and diagnostic only — it is never the acceptance authority, and a
@@ -373,6 +379,7 @@ async def _accept_correlated_output(client, candidates, exclude, correlation,
     import base64
     anchors = [str(a).strip() for a in (correlation.get("sse_prompt"),
                                         correlation.get("submitted_prompt")) if a]
+    gen_seed = _seed_value(correlation.get("seed"))
     for mid in dict.fromkeys(candidates):  # de-dupe, keep order
         if mid in exclude:
             continue
@@ -399,6 +406,19 @@ async def _accept_correlated_output(client, candidates, exclude, correlation,
         if expected_model and vmodel and str(vmodel) != str(expected_model):
             stats["model_mismatched"] += 1
             continue
+        if gen_seed is None:
+            # The approved SSE exposed no usable seed — a prompt+model match alone
+            # is NOT deterministic (two generations can share both). No fallback:
+            # count unverifiable so the run fails closed, never a false success.
+            stats["unverifiable"] += 1
+            if mid not in stats["unverifiable_ids"]:
+                stats["unverifiable_ids"].append(mid)
+            continue
+        media_seed = _seed_value(video_meta.get("seed"))
+        if media_seed is None or media_seed != gen_seed:
+            # same prompt/model but NOT this generation's seed — a different run.
+            stats["seed_mismatched"] += 1
+            continue
         vbytes = base64.b64decode(enc)
         outdir = OUTPUT_DIR / "retrieved"
         outdir.mkdir(parents=True, exist_ok=True)
@@ -412,11 +432,25 @@ async def _accept_correlated_output(client, candidates, exclude, correlation,
                            else "submitted_prompt"),
             "media_model": vmodel,
             "media_seed": video_meta.get("seed"),
+            "gen_seed": correlation.get("seed"),
+            "seed_matched": True,
             "tool_call_id": correlation.get("tool_call_id"),
             "response_id": correlation.get("response_id"),
         }
         return mid, str(path), round(len(vbytes) / 1024 / 1024, 2), evidence
     return None, None, None, None
+
+
+def _seed_value(raw):
+    """Normalize a generation seed for exact comparison (int when possible;
+    None for absent/unusable values — never a coincidental string match)."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        s = str(raw).strip()
+        return s or None
 
 
 # Retrieval-phase failure markers (false-negative fix). A failure carrying one of these AFTER the
@@ -573,7 +607,8 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         job["generation_identity"] = {
             k: v for k, v in correlation.items() if k != "submitted_prompt"}
         corr_stats = {"unverifiable": 0, "prompt_mismatched": 0,
-                      "model_mismatched": 0, "unverifiable_ids": []}
+                      "model_mismatched": 0, "seed_mismatched": 0,
+                      "unverifiable_ids": []}
         probe_turn = int(nres.get("turns_used") or 0) + 1  # next agent turn for status probes
         # False-DONE fix (live: g_745e95ede679 claimed the PREVIOUS run's mp4 at try 1):
         # snapshot every media id already visible in the project BEFORE polling, so
@@ -694,10 +729,14 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         # (never a false success; credits may have been spent).
         if corr_stats["unverifiable"] and not collected:
             job["correlation_stats"] = dict(corr_stats)
+            reason = ("this run's approved SSE exposed no usable generation seed"
+                      if _seed_value(correlation.get("seed")) is None
+                      else "the media resource exposes no generation-prompt metadata")
             raise RuntimeError(
                 "OUTPUT_CORRELATION_UNAVAILABLE: finished media "
-                f"{corr_stats['unverifiable_ids'][:4]} exposes no generation-prompt "
-                "metadata — refusing an uncorrelated candidate as this run's output")
+                f"{corr_stats['unverifiable_ids'][:4]} cannot be deterministically "
+                f"bound ({reason}) — refusing an uncorrelated candidate as this "
+                "run's output")
         # Render started but no mp4 harvested in the polling window — treat as a retrieval-phase
         # failure (classified below as GENERATED_BUT_UNRETRIEVED), not a generation failure.
         job["correlation_stats"] = dict(corr_stats)
