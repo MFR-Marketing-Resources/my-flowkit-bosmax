@@ -7,6 +7,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from typing import Any
+
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -206,6 +208,16 @@ def load_registration() -> LocalAgentRegistration:
             encoding="utf-8",
         )
     return registration
+
+
+@router.post("/capture-video-payload")
+async def capture_video_payload(payload: dict[str, Any]):
+    """Extension debug hook (webRequest observe). Ack only — no credit, no queue."""
+    LOCAL_AGENT_STATE_DIR.mkdir(parents=True, exist_ok=True)
+    marker = payload.get("marker")
+    if marker == "hook-loaded":
+        return {"ok": True, "marker": marker}
+    return {"ok": True, "accepted": True, "has_url": bool(payload.get("url"))}
 
 
 @router.get("/status", response_model=LocalAgentStatus)
