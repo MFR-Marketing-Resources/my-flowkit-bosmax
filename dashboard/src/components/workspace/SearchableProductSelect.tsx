@@ -46,6 +46,7 @@ export default function SearchableProductSelect({
 	const [search, setSearch] = useState("");
 	const [serverResults, setServerResults] = useState<Product[]>([]);
 	const [isSearching, setIsSearching] = useState(false);
+	const [searchError, setSearchError] = useState<string | null>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
 
 	// Debounced server-side search. The `products` prop only holds the first
@@ -55,20 +56,24 @@ export default function SearchableProductSelect({
 	// keeps them discoverable by name without loading the entire catalog.
 	useEffect(() => {
 		const query = search.trim();
+		setServerResults([]);
+		setSearchError(null);
 		if (query.length < 2) {
-			setServerResults([]);
 			setIsSearching(false);
 			return;
 		}
 		let isActive = true;
 		setIsSearching(true);
 		const handle = window.setTimeout(() => {
-			void searchProducts(query, 25)
+			void searchProducts(query, 25, "GENERATION")
 				.then((response) => {
 					if (isActive) setServerResults(response.items ?? []);
 				})
-				.catch(() => {
-					if (isActive) setServerResults([]);
+				.catch((error: unknown) => {
+					if (isActive) {
+						setServerResults([]);
+						setSearchError(error instanceof Error ? error.message : "Product search failed.");
+					}
 				})
 				.finally(() => {
 					if (isActive) setIsSearching(false);
@@ -110,6 +115,8 @@ export default function SearchableProductSelect({
 
 	const sourceLaneLabel = (product: Product) =>
 		product.source_label || product.source_lane || product.source;
+	const isReferenceOnly = (product: Product) =>
+		Boolean(product.reference_only) || product.id.startsWith("fastmoss-ref:");
 
 	return (
 		<div className="relative min-w-0" ref={containerRef}>
@@ -128,7 +135,7 @@ export default function SearchableProductSelect({
 								<span className="inline-flex rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-blue-200">
 									{sourceLaneLabel(selectedProduct)}
 								</span>
-								{selectedProduct.reference_only ? (
+								{isReferenceOnly(selectedProduct) ? (
 									<span className="inline-flex rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-amber-100">
 										Reference only
 									</span>
@@ -149,7 +156,7 @@ export default function SearchableProductSelect({
 								})()}
 							</div>
 							{/* Reference-only: show reason + Bulk FastMoss Convert CTA */}
-							{selectedProduct.reference_only ? (
+							{isReferenceOnly(selectedProduct) ? (
 								<div className="bosmax-wrap-safe mt-2 text-[10px] text-amber-200/80 flex items-start justify-between gap-2">
 									<span>
 										{selectedProduct.catalog_visibility_reason ||
@@ -204,16 +211,19 @@ export default function SearchableProductSelect({
 									isLoadingReadiness,
 								);
 								const toneClass = readinessToneClass(status);
+								const referenceOnly = isReferenceOnly(product);
 								return (
 									<button
 										type="button"
 										key={product.id}
+										disabled={referenceOnly}
 										onClick={() => {
+											if (referenceOnly) return;
 											onSelect(product);
 											setIsOpen(false);
 											setSearch("");
 										}}
-										className={`flex items-start justify-between gap-3 px-4 py-3 text-[11px] transition-colors cursor-pointer w-full text-left ${selectedProduct?.id === product.id ? "bg-blue-600/20 text-blue-400" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"}`}
+										className={`flex items-start justify-between gap-3 px-4 py-3 text-[11px] transition-colors w-full text-left ${referenceOnly ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${selectedProduct?.id === product.id ? "bg-blue-600/20 text-blue-400" : referenceOnly ? "text-slate-500" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"}`}
 									>
 										<div className="min-w-0 flex-1 pr-2">
 											<span className="bosmax-wrap-safe block">
@@ -223,7 +233,7 @@ export default function SearchableProductSelect({
 												<span className="inline-flex rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-blue-200">
 													{sourceLaneLabel(product)}
 												</span>
-												{product.reference_only ? (
+												{referenceOnly ? (
 													<span className="inline-flex rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-amber-100">
 														Reference only
 													</span>
@@ -235,7 +245,7 @@ export default function SearchableProductSelect({
 												</span>
 											</div>
 											{/* Reference-only: explicit REFERENCE_ONLY_PRODUCT reason */}
-											{product.reference_only ? (
+											{referenceOnly ? (
 												<div className="bosmax-wrap-safe mt-1 text-[9px] text-amber-300/70">
 													REFERENCE_ONLY_PRODUCT — Convert/Register this product
 													before package load or generation.
@@ -261,11 +271,16 @@ export default function SearchableProductSelect({
 								No products match your search.
 							</div>
 						)}
+						{searchError ? (
+							<div className="px-4 py-3 text-center text-xs text-rose-300">
+								{searchError}
+							</div>
+						) : null}
 					</div>
 
 					<div className="p-2 border-t border-slate-800 bg-slate-950/20 text-right">
 						<span className="text-[9px] text-slate-600 uppercase tracking-widest font-bold pr-2">
-							{isSearching ? "Searching…" : `${filtered.length} visible`}
+							{`${filtered.length} visible${isSearching ? " — searching…" : ""}`}
 						</span>
 					</div>
 				</div>

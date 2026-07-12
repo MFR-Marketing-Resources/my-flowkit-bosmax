@@ -31,3 +31,24 @@ def test_readiness_route_404(monkeypatch):
     monkeypatch.setattr("agent.api.copywriting.get_copywriting_readiness", fake)
     resp = TestClient(app).get("/api/copywriting/readiness/missing")
     assert resp.status_code == 404
+
+
+def test_readiness_route_rejects_fastmoss_reference_before_service(monkeypatch):
+    async def unexpected_service_call(product_id: str):
+        raise AssertionError(f"reference-only id reached readiness service: {product_id}")
+
+    monkeypatch.setattr(
+        "agent.api.copywriting.get_copywriting_readiness",
+        unexpected_service_call,
+    )
+
+    product_id = "fastmoss-ref:515b48d0d43fe085"
+    resp = TestClient(app).get(f"/api/copywriting/readiness/{product_id}")
+
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail["error"] == "REFERENCE_ONLY_PRODUCT"
+    assert detail["detail"]["product_id"] == product_id
+    assert detail["detail"]["conversion_instruction"] == (
+        "Convert/Register this FastMoss reference before requesting copywriting readiness."
+    )

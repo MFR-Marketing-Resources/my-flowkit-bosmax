@@ -14,9 +14,10 @@ import { fetchAPI } from "./client";
 
 export async function fetchProductCatalog(
 	limit = 250,
+	purpose: "GENERATION" | "REVIEW" = "GENERATION",
 ): Promise<ProductCatalogResponse> {
 	return fetchAPI<ProductCatalogResponse>(
-		`/api/products?limit=${encodeURIComponent(String(limit))}&offset=0`,
+		`/api/products?limit=${encodeURIComponent(String(limit))}&offset=0&purpose=${encodeURIComponent(purpose)}`,
 	);
 }
 
@@ -29,11 +30,13 @@ export async function fetchProductCatalog(
 export async function searchProducts(
 	query: string,
 	limit = 25,
+	purpose?: "GENERATION",
 ): Promise<ProductCatalogResponse> {
+	const purposeQuery = purpose ? `&purpose=${encodeURIComponent(purpose)}` : "";
 	return fetchAPI<ProductCatalogResponse>(
 		`/api/products/search?q=${encodeURIComponent(query)}&limit=${encodeURIComponent(
 			String(limit),
-		)}&offset=0`,
+		)}&offset=0${purposeQuery}`,
 	);
 }
 
