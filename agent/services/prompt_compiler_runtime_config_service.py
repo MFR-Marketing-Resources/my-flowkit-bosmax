@@ -76,7 +76,7 @@ CAMERA_STYLE_REGISTRY = [
     },
 ]
 
-PERSONA_REGISTRY = [
+_BASE_PERSONAS = [
     {
         "id": "DEFAULT_CREATOR",
         "label": "Default Creator",
@@ -92,6 +92,25 @@ PERSONA_REGISTRY = [
         "continuity_notes": "consistent creator look and clean commercial delivery",
     },
 ]
+
+
+def _load_persona_variants() -> list[dict]:
+    """Avatar Persona variants (Phase A): seeds + the composed gender ×
+    ethnicity × age × bundle cross-product from PERSONA_VARIANTS.yaml. Import
+    is deferred + fail-closed: any loader error leaves only the base personas
+    (video lanes keep working)."""
+    try:
+        from agent.services.persona_variant_service import load_composed_personas
+
+        return [dict(entry) for entry in load_composed_personas()]
+    except Exception:  # noqa: BLE001 — base personas always survive
+        return []
+
+
+# The FULL registry (validity + compiler injection). The UI select ships only
+# the curated slice (see get_runtime_config) — composed ids are resolved by
+# the frontend composer and validated here via normalize_creator_persona.
+PERSONA_REGISTRY = [*_BASE_PERSONAS, *_load_persona_variants()]
 
 CONTINUATION_POLICY = {
     "requires_same_character_identity": True,
@@ -126,6 +145,15 @@ ENGINE_MODE_CAPABILITY_POLICY = {
 }
 
 
+def _persona_composer_block() -> dict[str, Any]:
+    try:
+        from agent.services.persona_variant_service import composer_vocab_for_ui
+
+        return composer_vocab_for_ui()
+    except Exception:  # noqa: BLE001 — composer absent, base personas remain
+        return {}
+
+
 def get_runtime_config() -> dict[str, Any]:
     return {
         "generation_modes": list(GENERATION_MODES),
@@ -146,7 +174,13 @@ def get_runtime_config() -> dict[str, Any]:
                 "warning": "Faceless output is explicit-only and must be operator-selected.",
             },
         ],
-        "persona_registry": deepcopy(PERSONA_REGISTRY),
+        # UI slice only: base personas + curated seeds (the full composed
+        # registry stays server-side for validation/injection; the composer
+        # block below lets the UI build + preview composed ids client-side).
+        "persona_registry": deepcopy(
+            [p for p in PERSONA_REGISTRY if not p["id"].startswith("AVX_")]
+        ),
+        "persona_composer": _persona_composer_block(),
         "language_wps_policy": deepcopy(LANGUAGE_WPS_POLICY),
         "shot_count_policy": deepcopy(SHOT_COUNT_POLICY),
         "continuation_policy": deepcopy(CONTINUATION_POLICY),

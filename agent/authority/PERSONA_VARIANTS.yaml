@@ -1,0 +1,192 @@
+# Avatar Persona variants authority (Owner Growth Pack, Phase A — 2026-07-14).
+#
+# TEXT-only presenter vocabulary for T2V/HYBRID videos. The composer crosses
+# gender × ethnicity × age × bundle into persona entries whose
+# visual_description is injected by the canonical compiler through the
+# EXISTING creator_persona channel. Coherence law: wardrobe and environment
+# ship ONLY as validated bundle pairs (mirroring the proven
+# AVATAR_POOL_NORMALIZED.csv variant vocabulary) — no incoherent combos like
+# baju kurung at a jogging park.
+#
+# Safety: descriptions must stay clear of scan_prompt_text FORBIDDEN_TERMS /
+# METADATA_TOKENS / PLACEHOLDER_TOKENS (registry-wide test enforces this).
+schema_version: persona-variants-v1
+
+genders:
+  - id: F
+    label_ms: Wanita
+    descriptor_en: woman
+  - id: F_HIJAB
+    label_ms: Wanita (bertudung)
+    # hijab itself is carried by each bundle's wardrobe_f_hijab_en phrasing
+    descriptor_en: woman
+  - id: M
+    label_ms: Lelaki
+    descriptor_en: man
+
+ethnicities:
+  - id: MELAYU
+    label: Melayu
+    descriptor_en: Malay
+  - id: CINA
+    label: Cina
+    descriptor_en: Malaysian Chinese
+  - id: INDIA
+    label: India
+    descriptor_en: Malaysian Indian
+  - id: KADAZAN
+    label: Kadazan
+    descriptor_en: Kadazan
+  - id: DUSUN
+    label: Dusun
+    descriptor_en: Dusun
+  - id: JAWA
+    label: Jawa
+    descriptor_en: Javanese-Malay
+  - id: BANGLADESH
+    label: Bangladesh
+    descriptor_en: Bangladeshi
+  - id: PAN_ASIA
+    label: Pan-Asia
+    descriptor_en: pan-Asian
+
+age_ranges:
+  - id: 20S
+    label: 20-an
+    descriptor_en: young adult in their 20s
+  - id: 30S
+    label: 30-an
+    descriptor_en: adult in their 30s
+  - id: 40S
+    label: 40-an
+    descriptor_en: adult in their 40s
+  - id: 50S
+    label: 50+ (matang)
+    descriptor_en: mature adult in their 50s
+
+# The 10 proven variant bundles from the avatar pool — each pairs wardrobe
+# (per gender) with its matching environment. Wardrobe never travels alone.
+bundles:
+  - id: OFFICE
+    label: Pejabat (smart office)
+    environment_en: a modern office interior with balanced commercial lighting
+    wardrobe_f_en: smart office wear
+    wardrobe_f_hijab_en: smart office wear with a coordinated hijab
+    wardrobe_m_en: smart office wear
+    expression_en: calm, credible expression
+  - id: HOME
+    label: Rumah (kasual)
+    environment_en: a warm modern Malaysian living room with soft natural light
+    wardrobe_f_en: comfortable modest home casual wear
+    wardrobe_f_hijab_en: comfortable modest home wear with a simple hijab
+    wardrobe_m_en: comfortable home casual wear
+    expression_en: relaxed, friendly expression
+  - id: JOGGING
+    label: Taman (sukan)
+    environment_en: a green jogging park in the morning light
+    wardrobe_f_en: modest activewear with tied-back hair
+    wardrobe_f_hijab_en: modest activewear with a sports hijab
+    wardrobe_m_en: sporty activewear
+    expression_en: energetic, confident expression
+  - id: CAMPUS
+    label: Kampus (belia)
+    environment_en: a bright university hallway
+    wardrobe_f_en: neat campus casual wear
+    wardrobe_f_hijab_en: neat campus casual wear with a student-style hijab
+    wardrobe_m_en: neat campus casual wear
+    expression_en: friendly, approachable expression
+  - id: KENDURI
+    label: Kenduri / Raya (tradisional)
+    environment_en: a festive Malaysian event hall with warm celebratory lighting
+    wardrobe_f_en: an elegant modern baju kurung
+    wardrobe_f_hijab_en: an elegant modern baju kurung with a matching hijab
+    wardrobe_m_en: a modern baju melayu with sampin
+    expression_en: warm, polite expression
+  - id: CAFE
+    label: Kafe (santai)
+    environment_en: a cozy coffee shop interior with soft window light
+    wardrobe_f_en: relaxed cafe casual wear
+    wardrobe_f_hijab_en: relaxed cafe casual wear with a stylish hijab
+    wardrobe_m_en: relaxed cafe casual wear
+    expression_en: relaxed, conversational expression
+  - id: MALL
+    label: Pusat beli-belah
+    environment_en: a bright modern shopping mall interior
+    wardrobe_f_en: polished shopping casual wear
+    wardrobe_f_hijab_en: polished shopping casual wear with a coordinated hijab
+    wardrobe_m_en: polished shopping casual wear
+    expression_en: confident, upbeat expression
+  - id: STUDIO
+    label: Studio (neutral)
+    environment_en: a clean plain neutral studio backdrop with balanced lighting
+    wardrobe_f_en: neutral presentable studio wear
+    wardrobe_f_hijab_en: neutral presentable studio wear with a plain hijab
+    wardrobe_m_en: neutral presentable studio wear
+    expression_en: calm, neutral expression
+  - id: KITCHEN
+    label: Dapur (masakan)
+    environment_en: a bright modern Malaysian home kitchen
+    wardrobe_f_en: tidy home wear with a clean apron
+    wardrobe_f_hijab_en: tidy home wear with a simple hijab and clean apron
+    wardrobe_m_en: tidy home wear with a clean apron
+    expression_en: warm, welcoming expression
+  - id: TRAVEL
+    label: Perjalanan (travel)
+    environment_en: a modern airport interior with daylight
+    wardrobe_f_en: comfortable smart travel wear
+    wardrobe_f_hijab_en: comfortable smart travel wear with a practical hijab
+    wardrobe_m_en: comfortable smart travel wear
+    expression_en: confident, at-ease expression
+
+# Quick-pick seeds mirroring the avatar pool's most-used looks.
+seeds:
+  - id: AVATAR_ALYA_OFFICE
+    label: "Alya — Wanita Melayu, Pejabat"
+    visual_description: >-
+      Malaysian Malay woman in her late 20s, light-medium skin tone, medium
+      tidy hair, wearing smart office wear, in a modern office interior with
+      balanced commercial lighting, calm and credible expression, natural
+      commercial grooming, consistent identity and wardrobe across all blocks.
+  - id: AVATAR_ZARA_HOME
+    label: "Zara — Wanita Melayu, Rumah"
+    visual_description: >-
+      Malaysian Malay woman in her 30s, tan Southeast Asian skin tone, medium
+      tidy hair, wearing comfortable modest home casual wear, in a warm modern
+      Malaysian living room with soft natural light, relaxed friendly
+      expression, natural commercial grooming, consistent identity and
+      wardrobe across all blocks.
+  - id: AVATAR_AISYAH_HIJAB_STUDIO
+    label: "Aisyah — Wanita Melayu bertudung, Studio"
+    visual_description: >-
+      Malaysian Malay woman in her 30s wearing a neatly styled plain hijab,
+      tan Southeast Asian skin tone, wearing neutral presentable studio wear,
+      against a clean plain neutral studio backdrop with balanced lighting,
+      calm neutral expression, natural commercial grooming, consistent
+      identity and wardrobe across all blocks.
+  - id: AVATAR_HARIS_OFFICE
+    label: "Haris — Lelaki Melayu, Pejabat"
+    visual_description: >-
+      Malaysian Malay man in his 30s, tan Southeast Asian skin tone, short
+      neat hair, wearing smart office wear, in a modern office interior with
+      balanced commercial lighting, calm credible expression, natural
+      commercial grooming, consistent identity and wardrobe across all blocks.
+  - id: AVATAR_MIA_KENDURI
+    label: "Mia — Wanita Melayu, Kenduri/Raya"
+    visual_description: >-
+      Malaysian Malay woman in her 30s, tan Southeast Asian skin tone, medium
+      tidy hair, wearing an elegant modern baju kurung, in a festive Malaysian
+      event hall with warm celebratory lighting, warm polite expression,
+      natural commercial grooming, consistent identity and wardrobe across all
+      blocks.
+  - id: AVATAR_RAFI_KENDURI
+    label: "Rafi — Lelaki Melayu, Kenduri/Raya"
+    visual_description: >-
+      Malaysian Malay man in his 30s, medium tan skin tone, short neat hair,
+      wearing a modern baju melayu with sampin, in a festive Malaysian event
+      hall with warm celebratory lighting, warm polite expression, natural
+      commercial grooming, consistent identity and wardrobe across all blocks.
+
+visual_template_en: >-
+  Malaysian {ethnicity} {gender}, {age}, wearing {wardrobe}, in {environment},
+  {expression}, natural commercial grooming, modest presentable styling,
+  consistent identity and wardrobe across all blocks.
