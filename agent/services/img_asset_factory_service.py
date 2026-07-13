@@ -145,6 +145,39 @@ IMG_FASTLANE_PRESETS: list[dict[str, object]] = [
         ],
     },
     {
+        # WRNA technique (Phase C): hyper-real floating product render.
+        "preset_id": "WRNA_CGI_COMMERCIAL_FLOAT",
+        "label": "CGI Commercial Float (WRNA)",
+        "route": "INGREDIENTS",
+        "lane_id": "PRODUCT_ONLY_HERO",
+        "ingredient_role": "PRODUCT_REFERENCE",
+        "description": "Ultra-premium hyper-real CGI render: product floating in a category-adaptive conceptual environment, identity truth-locked.",
+        "required_inputs": ["Database product"],
+        "output_spec": _FASTLANE_OUTPUT_SPEC,
+        "tags": ["wrna", "cgi", "hero", "ingredients"],
+        "negative_rules": [
+            "No random liquid, unnecessary splash, or generic swirl unless contextually accurate to the product.",
+            "No product identity, packaging, proportion, label, or branding drift.",
+            "No humans in frame — product is the only hero.",
+        ],
+    },
+    {
+        # WRNA technique (Phase C): e-commerce lifestyle with human model.
+        "preset_id": "WRNA_ECOM_LIFESTYLE",
+        "label": "E-Commerce Lifestyle Model (WRNA)",
+        "route": "FRAMES",
+        "lane_id": "AVATAR_PRODUCT_SCENE_COMPOSITE",
+        "description": "High-converting lifestyle ad: human model interacting naturally with the product, category-adaptive background, real-world scale.",
+        "required_inputs": ["Database product"],
+        "output_spec": _FASTLANE_OUTPUT_SPEC,
+        "tags": ["wrna", "ecommerce", "lifestyle", "frames"],
+        "negative_rules": [
+            "No unrealistic product stacking — max 3 units (small 2-3, medium 1-2, large/premium 1).",
+            "No oversized or shrunken product relative to real-world hand/body scale.",
+            "No irrelevant props; background stays clean, slightly blurred, and category-relevant.",
+        ],
+    },
+    {
         "preset_id": "MWCB_WG40_PRODUCT_ONLY_POSTER_LOCK",
         "label": "MWCB WG40 Product Poster Lock",
         "route": "INGREDIENTS",
@@ -427,6 +460,29 @@ def _preset_directives(
             [
                 "Poster lock: preserve WG40 bottle truth while allowing terminal poster composition only after product identity, label, and scale remain exact.",
                 "Rendered poster text may decorate around the bottle but must never replace or distort the real product label.",
+            ]
+        )
+    elif preset_id == "WRNA_CGI_COMMERCIAL_FLOAT":
+        from agent.services.img_category_adapt_service import resolve_category_adapt
+
+        adapt = resolve_category_adapt(product)
+        directives.extend(
+            [
+                f"Ultra-premium hyper-realistic CGI render of {product_name}, heroically floating in a high-end conceptual environment designed for its real usage context, while strictly preserving the exact product identity, packaging, proportions, material, label, and branding with zero distortion.",
+                f"Surround the product only with purpose-driven floating elements that reinforce its function or sensory experience: {adapt['float_elements']}.",
+                "Bold, clean, well-balanced composition with the product as the central hero; dramatic cinematic lighting, controlled highlights and shadows, premium reflections, soft depth of field, ultra-sharp detailing — slightly surreal yet believable for a real premium campaign.",
+            ]
+        )
+    elif preset_id == "WRNA_ECOM_LIFESTYLE":
+        from agent.services.img_category_adapt_service import resolve_category_adapt
+
+        adapt = resolve_category_adapt(product)
+        directives.extend(
+            [
+                f"High-converting commercial lifestyle advertisement of {product_name}: {adapt['model']} interacting naturally with the product, chest-up framing, natural expression.",
+                f"Background: {adapt['background']} — clean, slightly blurred, category-relevant; extract the product's dominant colour and blend it naturally into the environment while keeping contrast.",
+                "Close-up 85mm portrait look with shallow depth of field: product carries 60-70 percent of the visual focus at real-world scale relative to human hands and body; packaging stays accurate and readable; realistic quantity only.",
+                "Bright commercial lighting with soft shadows that enhance product texture; ultra-realistic high-resolution commercial brand quality.",
             ]
         )
     else:

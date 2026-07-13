@@ -89,6 +89,15 @@ export const GUIDED_GOALS: GuidedGoal[] = [
 		description: "Sasarkan masalah pelanggan dengan mesej yang selamat.",
 		accent: "teal",
 	},
+	{
+		// Archetype code must equal the wrna_ads_poster_916 recipe's archetype
+		// exactly (see PORTABILITY mismatch note above).
+		archetype: "ADS_PREMIUM",
+		title: "Ads Premium (WRNA)",
+		description:
+			"Poster iklan premium high-converting: tajuk persuasif, hierarki jelas, CTA kuat.",
+		accent: "fuchsia",
+	},
 ];
 
 export function goalForArchetype(archetype: string): GuidedGoal {

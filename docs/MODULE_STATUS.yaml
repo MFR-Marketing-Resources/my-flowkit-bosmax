@@ -557,6 +557,11 @@ domains:
       # composer emitting structured poster_spec/overlay_spec; legacy no-recipe
       # path byte-identical. overlay_spec is a foundation only (no compositor).
       - agent/authority/POSTER_RECIPES.yaml
+
+      # WRNA poster/IMG techniques (Phase C — category visual auto-adapt)
+      - agent/authority/CATEGORY_SCENE_MODEL_MAP.yaml
+      - agent/services/img_category_adapt_service.py
+      - tests/unit/test_wrna_techniques.py
       - agent/models/poster_recipe.py
       - agent/services/poster_recipe_service.py
       - agent/services/poster_prompt_composer.py
