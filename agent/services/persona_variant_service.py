@@ -137,6 +137,36 @@ def load_composed_personas() -> tuple[dict[str, Any], ...]:
     return tuple(entries)
 
 
+def presenter_profile_for_persona(persona_id: str | None) -> dict[str, Any] | None:
+    """Presenter-profile override for the CANONICAL compiler.
+
+    When the operator's creator_persona is a persona variant (seed or composed
+    AVX id), return an avatar_registry-shaped profile whose `prose_override`
+    carries the variant's visual description — `presenter_prose()` renders it
+    verbatim instead of the seeded avatar-pool pick. Returns None for the base
+    personas / unknown ids (pool behavior unchanged)."""
+    wanted = str(persona_id or "").strip().upper()
+    if not wanted:
+        return None
+    entry = next((e for e in load_composed_personas() if e["id"] == wanted), None)
+    if not entry:
+        return None
+    return {
+        "avatar_code": wanted,
+        "character_name": entry["label"],
+        "variant": "PERSONA_VARIANT",
+        "skin_tone": "",
+        "hair_style": "",
+        "wardrobe": "",
+        "environment": "",
+        "lighting": "",
+        "camera": "",
+        "expression": "",
+        "usage_tags": [],
+        "prose_override": entry["visual_description"],
+    }
+
+
 def composer_vocab_for_ui() -> dict[str, Any]:
     """Compact vocabulary block for the frontend composer (descriptors included
     so the UI can preview the composed text without another round-trip)."""

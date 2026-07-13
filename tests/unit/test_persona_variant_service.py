@@ -109,3 +109,36 @@ def test_compiler_injects_composed_description():
     text = _persona_visual_description("AVX_F_HIJAB_MELAYU_30S_KENDURI")
     assert "baju kurung with a matching hijab" in text
     assert _persona_visual_description("DEFAULT_CREATOR") == ""  # base unchanged
+
+
+def test_presenter_profile_override_reaches_canonical_prose():
+    """The CANONICAL compiler path: persona variants override the seeded
+    avatar-pool presenter via prose_override; pool profiles stay byte-identical."""
+    from agent.services.avatar_registry import presenter_prose
+
+    profile = svc.presenter_profile_for_persona("AVX_F_HIJAB_MELAYU_30S_KENDURI")
+    prose = presenter_prose(profile)
+    assert prose.startswith("The presenter is a Malaysian Malay woman")
+    assert "baju kurung with a matching hijab" in prose
+    assert "festive Malaysian event hall" in prose
+    assert "consistent in every shot" in prose
+
+    seed_profile = svc.presenter_profile_for_persona("AVATAR_HARIS_OFFICE")
+    assert "smart office wear" in presenter_prose(seed_profile)
+
+    # base personas / unknown ids → None → the proven pool pick applies
+    assert svc.presenter_profile_for_persona("DEFAULT_CREATOR") is None
+    assert svc.presenter_profile_for_persona("NOT_A_PERSONA") is None
+
+    # pool-CSV profile output byte-identical (no prose_override key)
+    pool_profile = {
+        "avatar_code": "BOS_F_ALYA_01", "skin_tone": "Light-medium",
+        "hair_style": "Medium tidy", "wardrobe": "Smart office wear",
+        "expression": "Calm neutral",
+    }
+    assert presenter_prose(pool_profile) == (
+        "The presenter is a Malaysian adult woman with light-medium skin and "
+        "medium tidy hair, wearing smart office wear, with a calm neutral "
+        "expression. Keep this exact presenter identity — face, hair, wardrobe, "
+        "and body language — consistent in every shot."
+    )
