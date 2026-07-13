@@ -932,7 +932,28 @@ export interface PromptCompilerRuntimeConfig {
 		presentation: string;
 		tone: string;
 		continuity_notes: string;
+		visual_description?: string;
 	}>;
+	// Avatar Persona composer vocabulary (Phase A): composed ids are built
+	// client-side and validated server-side by normalize_creator_persona.
+	persona_composer?: {
+		id_prefix: string;
+		genders: Array<{ id: string; label_ms: string; descriptor_en: string }>;
+		ethnicities: Array<{ id: string; label: string; descriptor_en: string }>;
+		age_ranges: Array<{ id: string; label: string; descriptor_en: string }>;
+		bundles: Array<{
+			id: string;
+			label: string;
+			environment_en: string;
+			wardrobe_f_en: string;
+			wardrobe_f_hijab_en: string;
+			wardrobe_m_en: string;
+			expression_en: string;
+			allowed_genders: string[];
+		}>;
+		seeds: string[];
+		visual_template_en: string;
+	};
 	language_wps_policy: Record<
 		PromptTargetLanguage,
 		{

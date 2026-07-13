@@ -422,6 +422,51 @@ export function referenceBindingBlocker(
 	return null;
 }
 
+// Avatar Persona composer (Phase A) — pure + hoisted for unit tests. The id
+// pattern MUST mirror agent/services/persona_variant_service.compose_persona_id;
+// the server's normalize_creator_persona stays the only validity gate.
+export type AvatarComposerVocab = NonNullable<
+	PromptCompilerRuntimeConfig["persona_composer"]
+>;
+
+export function composeAvatarPersonaId(
+	gender: string,
+	ethnicity: string,
+	age: string,
+	bundle: string,
+): string | null {
+	if (!(gender && ethnicity && age && bundle)) return null;
+	return `AVX_${gender}_${ethnicity}_${age}_${bundle}`.toUpperCase();
+}
+
+export function composeAvatarPersonaPreview(
+	composer: AvatarComposerVocab,
+	genderId: string,
+	ethnicityId: string,
+	ageId: string,
+	bundleId: string,
+): string | null {
+	const gender = composer.genders.find((g) => g.id === genderId);
+	const ethnicity = composer.ethnicities.find((e) => e.id === ethnicityId);
+	const age = composer.age_ranges.find((a) => a.id === ageId);
+	const bundle = composer.bundles.find((b) => b.id === bundleId);
+	if (!(gender && ethnicity && age && bundle)) return null;
+	if (!bundle.allowed_genders.includes(gender.id)) return null;
+	const wardrobe =
+		gender.id === "F"
+			? bundle.wardrobe_f_en
+			: gender.id === "F_HIJAB"
+				? bundle.wardrobe_f_hijab_en
+				: bundle.wardrobe_m_en;
+	return composer.visual_template_en
+		.replace("{ethnicity}", ethnicity.descriptor_en)
+		.replace("{gender}", gender.descriptor_en)
+		.replace("{age}", age.descriptor_en)
+		.replace("{wardrobe}", wardrobe)
+		.replace("{environment}", bundle.environment_en)
+		.replace("{expression}", bundle.expression_en);
+}
+
 // Owner Phase-1 (SEV-0 manual_faf40cf6): a HYBRID failure must never surface as a
 // bare "F2V failed" — the SOURCE mode is the user-facing identity; the shared
 // transport mode is a diagnostic detail. Pure + hoisted so the mapping is
@@ -630,6 +675,37 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const [characterPresence, setCharacterPresence] =
 		useState<PromptCharacterPresence>("VISIBLE_CREATOR");
 	const [creatorPersona, setCreatorPersona] = useState("DEFAULT_CREATOR");
+	// Avatar Persona composer (Phase A): a complete valid selection resolves to
+	// a composed persona id; the server's normalize_creator_persona remains the
+	// only validity gate (unknown ids fail closed at compile time).
+	const [avatarGender, setAvatarGender] = useState("");
+	const [avatarEthnicity, setAvatarEthnicity] = useState("");
+	const [avatarAge, setAvatarAge] = useState("");
+	const [avatarBundle, setAvatarBundle] = useState("");
+	const composedAvatarPreview =
+		promptConfig?.persona_composer &&
+		avatarGender &&
+		avatarEthnicity &&
+		avatarAge &&
+		avatarBundle
+			? composeAvatarPersonaPreview(
+					promptConfig.persona_composer,
+					avatarGender,
+					avatarEthnicity,
+					avatarAge,
+					avatarBundle,
+				)
+			: null;
+	useEffect(() => {
+		if (!composedAvatarPreview) return;
+		const composedId = composeAvatarPersonaId(
+			avatarGender,
+			avatarEthnicity,
+			avatarAge,
+			avatarBundle,
+		);
+		if (composedId) setCreatorPersona(composedId);
+	}, [composedAvatarPreview, avatarGender, avatarEthnicity, avatarAge, avatarBundle]);
 	const [videoDurationSeconds, setVideoDurationSeconds] = useState(8);
 	// Canonical source-mode (ADR-008) — delegates to the hoisted pure export
 	// resolveOperatorSourceMode; identity is stable across renders.
@@ -2007,9 +2083,91 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										{persona.label}
 									</option>
 								))}
+								{creatorPersona.startsWith("AVX_") ? (
+									<option value={creatorPersona}>
+										Composed: {creatorPersona}
+									</option>
+								) : null}
 							</select>
 						</div>
 					</div>
+					{promptConfig?.persona_composer?.bundles?.length ? (
+						<div
+							data-testid="avatar-persona-composer"
+							className="mt-4 rounded-lg border border-fuchsia-500/25 bg-fuchsia-500/5 p-3"
+						>
+							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-fuchsia-200">
+								Avatar Persona Composer
+							</div>
+							<div className="mt-1 text-[11px] text-slate-300">
+								Pilih jantina · bangsa · umur · wardrobe+suasana (bundle
+								tervalidasi) — deskripsi presenter dimasukkan ke prompt sebagai
+								teks. Tiada gambar reference terlibat.
+							</div>
+							{characterPresence === "FACELESS" ? (
+								<div className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-200">
+									Mod FACELESS aktif — persona avatar tidak digunakan.
+								</div>
+							) : null}
+							<div className="mt-3 grid gap-3 md:grid-cols-4">
+								{(
+									[
+										["Jantina", avatarGender, setAvatarGender,
+											promptConfig.persona_composer.genders.map((g) => ({
+												id: g.id, label: g.label_ms,
+											}))],
+										["Bangsa", avatarEthnicity, setAvatarEthnicity,
+											promptConfig.persona_composer.ethnicities.map((e) => ({
+												id: e.id, label: e.label,
+											}))],
+										["Umur", avatarAge, setAvatarAge,
+											promptConfig.persona_composer.age_ranges.map((a) => ({
+												id: a.id, label: a.label,
+											}))],
+										["Wardrobe + Suasana", avatarBundle, setAvatarBundle,
+											promptConfig.persona_composer.bundles
+												.filter(
+													(b) =>
+														!avatarGender ||
+														b.allowed_genders.includes(avatarGender),
+												)
+												.map((b) => ({ id: b.id, label: b.label }))],
+									] as Array<[
+										string,
+										string,
+										(v: string) => void,
+										Array<{ id: string; label: string }>,
+									]>
+								).map(([label, value, setter, options]) => (
+									<label key={label} className="space-y-1 text-xs text-slate-200">
+										<span>{label}</span>
+										<select
+											value={value}
+											onChange={(event) => setter(event.target.value)}
+											className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+										>
+											<option value="">— pilih —</option>
+											{options.map((option) => (
+												<option key={option.id} value={option.id}>
+													{option.label}
+												</option>
+											))}
+										</select>
+									</label>
+								))}
+							</div>
+							{composedAvatarPreview ? (
+								<div className="mt-3 rounded border border-fuchsia-500/20 bg-slate-950/60 px-3 py-2">
+									<div className="text-[10px] uppercase tracking-[0.18em] text-fuchsia-300">
+										Persona digunakan: {creatorPersona}
+									</div>
+									<div className="mt-1 text-[11px] leading-relaxed text-slate-300">
+										{composedAvatarPreview}
+									</div>
+								</div>
+							) : null}
+						</div>
+					) : null}
 					<CanonicalReferenceBindingControls
 						mode={mode}
 						productId={selectedProduct?.id ?? null}

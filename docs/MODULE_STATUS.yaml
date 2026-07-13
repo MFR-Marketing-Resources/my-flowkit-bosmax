@@ -206,6 +206,13 @@ domains:
       - agent/services/prompt_output_composer.py
       - agent/services/prompt_preview_pipeline.py
       - agent/authority/AVATAR_POOL_NORMALIZED.csv
+
+      # Avatar Persona variants (Phase A — text-only presenter control)
+      - agent/authority/PERSONA_VARIANTS.yaml
+      - agent/models/persona_variant.py
+      - agent/services/persona_variant_service.py
+      - tests/unit/test_persona_variant_service.py
+      - dashboard/src/pages/OperatorPage.avatarComposer.test.ts
       - agent/authority/BOSMAX_CUSTOM_INSTRUCTION.txt
       - agent/authority/COPYWRITING_FRAMEWORK_UNIVERSAL.yaml
       - agent/authority/UNIVERSAL_PRODUCT_SCHEMA.json
