@@ -146,6 +146,13 @@ async def resolve_production_authority(
         from agent.db import crud
         pkg = await crud.get_workspace_execution_package(exec_pkg_id)
     if pkg:
+        # Fail-closed package gate: a BLOCKED execution package (readiness
+        # blockers, e.g. a missing required I2V recipe role) must never mint a
+        # production plan — even when its media-ref count still lands inside the
+        # transport contract. Production only; the explicit recovery path
+        # (trust_client_authority=True) supplies reviewed authority itself.
+        if not trust_client_authority and not bool(pkg.get("execution_allowed")):
+            out["execution_package_blocked"] = True
         if not _clean(out.get("model")):
             out["model"] = pkg.get("model")
         if not _clean(out.get("aspect_ratio")):
@@ -312,6 +319,8 @@ def _missing_fields(out: dict[str, Any], extend_ops: int) -> list[str]:
     required = [f for f in REQUIRED_AUTHORITY
                 if not (explicit_t2v and f in _IMAGE_MODE_ONLY_AUTHORITY)]
     missing = [f for f in required if not _clean(out.get(f))]
+    if out.get("execution_package_blocked"):
+        missing.append("execution_package_execution_allowed")
     conts = out.get("continuation_prompts") or []
     if len(conts) < extend_ops:
         missing.append("continuation_prompts")

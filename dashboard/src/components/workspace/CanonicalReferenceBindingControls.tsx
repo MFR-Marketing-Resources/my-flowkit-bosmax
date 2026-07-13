@@ -15,7 +15,7 @@ export interface CanonicalReferenceBinding {
 	styleReferenceAssetId: string | null;
 }
 
-const EMPTY_BINDING: CanonicalReferenceBinding = {
+export const EMPTY_BINDING: CanonicalReferenceBinding = {
 	productReferenceAssetId: null,
 	startFrameAssetId: null,
 	endFrameAssetId: null,
@@ -71,10 +71,13 @@ export default function CanonicalReferenceBindingControls({
 		void Promise.all(
 			surfaces.map(async (surface) => {
 				const result = await fetchCreativeAssetEligibilityAudit({ surface });
-				const eligible =
-					surface === "HYBRID_START_FRAME_PICKER" && productId
-						? result.eligible_assets.filter((asset) => asset.product_id === productId)
-						: result.eligible_assets;
+				// Product-scoped assets from another product are never bindable
+				// (the server rejects WRONG_PRODUCT); global assets stay listed.
+				const eligible = productId
+					? result.eligible_assets.filter(
+							(asset) => !asset.product_id || asset.product_id === productId,
+						)
+					: result.eligible_assets;
 				return [surface, eligible] as const;
 			}),
 		)
@@ -97,13 +100,32 @@ export default function CanonicalReferenceBindingControls({
 			<div className="mt-3 grid gap-3 md:grid-cols-2">
 				{surfaces.map((surface) => {
 					const field = fieldForSurface(surface);
-					const required = surface !== "F2V_END_FRAME_PICKER";
+					// HYBRID: the approved package supplies the product anchor
+					// automatically — a manual pick is an OVERRIDE, never mandatory.
+					// Style is optional in every current I2V recipe.
+					const required =
+						surface !== "F2V_END_FRAME_PICKER" &&
+						surface !== "HYBRID_START_FRAME_PICKER" &&
+						surface !== "I2V_STYLE_PICKER";
+					const emptyLabel =
+						surface === "HYBRID_START_FRAME_PICKER"
+							? "Automatic product anchor (approved package)"
+							: surface === "F2V_END_FRAME_PICKER"
+								? "No end frame"
+								: surface === "I2V_STYLE_PICKER"
+									? "No style reference"
+									: "Select approved reference";
 					return (
 						<label key={surface} className="space-y-1 text-xs text-slate-200">
 							<span>{surface.replace(/_/g, " ")}{required ? " *" : " (optional)"}</span>
 							<select value={binding[field] ?? ""} onChange={(event) => onChange({ ...binding, [field]: event.target.value || null })} className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100">
-								<option value="">{required ? "Select approved reference" : "No end frame"}</option>
-								{(assets[surface] ?? []).map((asset) => <option key={asset.asset_id} value={asset.asset_id}>{asset.display_name}{asset.media_id ? "" : " (no media)"}</option>)}
+								<option value="">{emptyLabel}</option>
+								{(assets[surface] ?? []).map((asset) => (
+									<option key={asset.asset_id} value={asset.asset_id} disabled={!asset.media_id}>
+										{asset.display_name}
+										{asset.media_id ? "" : " (no media — not bindable)"}
+									</option>
+								))}
 							</select>
 						</label>
 					);

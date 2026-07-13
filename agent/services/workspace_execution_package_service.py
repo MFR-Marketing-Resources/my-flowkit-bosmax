@@ -56,7 +56,12 @@ def _workspace_execution_package_id(
     target_language: str,
     camera_style: str,
     character_presence: str,
+    asset_fingerprints: list[str],
 ) -> str:
+    # asset_fingerprints are part of the package identity: two packages with
+    # different operator-selected reference bindings must never share one id
+    # (a same-id create_or_replace silently swapped resolved assets under an
+    # already-planned job's execution_package_id — PR#338 regression).
     digest = _fingerprint(
         product_id,
         mode,
@@ -69,6 +74,7 @@ def _workspace_execution_package_id(
         target_language,
         camera_style,
         character_presence,
+        "|".join(asset_fingerprints),
     )
     return f"wep_{digest[:16]}"
 
@@ -112,21 +118,36 @@ def _merge_i2v_resolved_assets(
 async def _bind_f2v_reference_assets(
     asset_slots: list[dict[str, Any]],
     *,
+    product_id: str,
     source_mode: str | None,
     product_reference_asset_id: str | None,
     start_frame_asset_id: str | None,
     end_frame_asset_id: str | None,
 ) -> list[dict[str, Any]]:
-    """Replace only explicitly selected F2V reference slots with validated assets."""
+    """Bind operator-selected F2V reference slots with server-validated assets.
+
+    HYBRID: the approved package's own product anchor (start_frame slot) is the
+    DEFAULT authority; an explicitly selected PRODUCT_REFERENCE asset overrides
+    it. Start/end frame ids are a contract violation (exactly one effective
+    product reference). FRAMES: an explicit start frame is REQUIRED (end frame
+    optional) — the raw product image is never a silent stand-in for a finished
+    composite frame. Every explicit selection is validated server-side: role,
+    mode, slot, approval, rendered-text ban, product ownership, and
+    provider-usable media identity (the durable plan submits media ids only).
+    """
     normalized_source_mode = str(source_mode or "").upper()
     selected_slots: list[tuple[str, str, str]] = []
     if normalized_source_mode == "HYBRID":
-        if not product_reference_asset_id or start_frame_asset_id or end_frame_asset_id:
+        if start_frame_asset_id or end_frame_asset_id:
             raise ValueError("HYBRID_EXACTLY_ONE_PRODUCT_REFERENCE_REQUIRED")
-        selected_slots.append(("start_frame", product_reference_asset_id, "PRODUCT_REFERENCE"))
+        if product_reference_asset_id:
+            selected_slots.append(("start_frame", product_reference_asset_id, "PRODUCT_REFERENCE"))
+        # No explicit selection: the package's resolved product anchor stands
+        # (or the package is already BLOCKED with START_FRAME_REQUIRED).
     if normalized_source_mode == "FRAMES":
-        if start_frame_asset_id:
-            selected_slots.append(("start_frame", start_frame_asset_id, "COMPOSITE_FRAME_REFERENCE"))
+        if not start_frame_asset_id:
+            raise ValueError("FRAMES_START_FRAME_REFERENCE_REQUIRED")
+        selected_slots.append(("start_frame", start_frame_asset_id, "COMPOSITE_FRAME_REFERENCE"))
         if end_frame_asset_id:
             selected_slots.append(("end_frame", end_frame_asset_id, "COMPOSITE_FRAME_REFERENCE"))
 
@@ -137,14 +158,22 @@ async def _bind_f2v_reference_assets(
             semantic_role=semantic_role,
             allowed_mode="F2V",
             engine_slot=slot_key,  # type: ignore[arg-type]
+            disallow_rendered_text=True,
             require_approved=True,
         )
-        if not validation.valid or validation.asset is None:
+        blockers = list(validation.blockers)
+        asset = validation.asset
+        if asset is not None:
+            if asset.product_id and asset.product_id != product_id:
+                blockers.append("WRONG_PRODUCT")
+            if not str(asset.media_id or "").strip():
+                blockers.append("MEDIA_IDENTITY_MISSING")
+        if asset is None or blockers:
             raise ValueError(
-                f"{slot_key.upper()}_REFERENCE_INVALID:{','.join(validation.blockers)}"
+                f"{slot_key.upper()}_REFERENCE_INVALID:{','.join(blockers)}"
             )
         resolved_asset = build_resolved_workspace_asset(
-            asset=validation.asset,
+            asset=asset,
             slot_key=slot_key,
         )
         resolved_asset["semantic_role"] = semantic_role
@@ -317,24 +346,12 @@ async def create_workspace_execution_package(
         }
     prompt_fingerprint = compiler_result["prompt_fingerprint"]
     total_duration_seconds = int(compiler_result["total_duration_seconds"])
-    execution_package_id = _workspace_execution_package_id(
-        product_id,
-        normalized_mode,
-        prompt_fingerprint,
-        total_duration_seconds,
-        aspect_ratio,
-        resolved_model,
-        manual_override,
-        compiler_result["generation_mode"],
-        compiler_result["target_language"],
-        compiler_result["camera_style"],
-        compiler_result["character_presence"],
-    )
     semantic_slot_resolver: dict[str, Any] | None = None
     package_asset_slots = copy.deepcopy(package["asset_slots"])
     if normalized_mode == "F2V":
         package_asset_slots = await _bind_f2v_reference_assets(
             package_asset_slots,
+            product_id=product_id,
             source_mode=resolved_source_mode,
             product_reference_asset_id=product_reference_asset_id,
             start_frame_asset_id=start_frame_asset_id,
@@ -364,6 +381,20 @@ async def create_workspace_execution_package(
         for asset in resolved_assets
         if asset.get("asset_fingerprint")
     ]
+    execution_package_id = _workspace_execution_package_id(
+        product_id,
+        normalized_mode,
+        prompt_fingerprint,
+        total_duration_seconds,
+        aspect_ratio,
+        resolved_model,
+        manual_override,
+        compiler_result["generation_mode"],
+        compiler_result["target_language"],
+        compiler_result["camera_style"],
+        compiler_result["character_presence"],
+        asset_fingerprints,
+    )
     request_lineage_payload = {
         "product_id": product_id,
         "mode": normalized_mode,
