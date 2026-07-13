@@ -15,8 +15,9 @@ def _build_app() -> FastAPI:
 def test_import_endpoint_returns_report(monkeypatch):
     captured = {}
 
-    def fake_import(source_path):
+    def fake_import(source_path, existing_tids=None):
         captured["source_path"] = source_path
+        captured["existing_tids"] = existing_tids
         return KalodataImportReport(
             source_path=str(source_path), parsed_merged=4, parsed_hub=3,
             staged=3, skipped_duplicate_in_file=1, product_id_from_url=2,
@@ -26,6 +27,11 @@ def test_import_endpoint_returns_report(monkeypatch):
 
     monkeypatch.setattr(
         "agent.services.kalodata_import_service.import_workbook", fake_import
+    )
+    async def fake_tids():
+        return {"tid-existing"}
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.collect_system_tids", fake_tids
     )
     client = TestClient(_build_app())
     response = client.post("/api/kalodata/import", json={"source_path": "C:/tmp/kalo.xlsx"})
@@ -39,12 +45,18 @@ def test_import_endpoint_returns_report(monkeypatch):
 def test_import_endpoint_uses_default_path(monkeypatch):
     captured = {}
 
-    def fake_import(source_path):
+    def fake_import(source_path, existing_tids=None):
         captured["source_path"] = source_path
+        captured["existing_tids"] = existing_tids
         return KalodataImportReport(source_path=str(source_path))
 
     monkeypatch.setattr(
         "agent.services.kalodata_import_service.import_workbook", fake_import
+    )
+    async def fake_tids():
+        return {"tid-existing"}
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.collect_system_tids", fake_tids
     )
     client = TestClient(_build_app())
     response = client.post("/api/kalodata/import", json={})
@@ -53,11 +65,16 @@ def test_import_endpoint_uses_default_path(monkeypatch):
 
 
 def test_import_endpoint_404_on_missing_workbook(monkeypatch):
-    def fake_import(source_path):
+    def fake_import(source_path, existing_tids=None):
         raise FileNotFoundError(source_path)
 
     monkeypatch.setattr(
         "agent.services.kalodata_import_service.import_workbook", fake_import
+    )
+    async def fake_tids():
+        return {"tid-existing"}
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.collect_system_tids", fake_tids
     )
     client = TestClient(_build_app())
     response = client.post("/api/kalodata/import", json={"source_path": "C:/no.xlsx"})

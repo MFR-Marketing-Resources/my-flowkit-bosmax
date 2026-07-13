@@ -161,6 +161,49 @@ def test_import_workbook_stages_records_and_hub(staged_env, tmp_path):
     assert item["price"] == 26.5
 
 
+def test_import_skips_tids_already_in_system(staged_env, tmp_path):
+    # Duplicate law: TikTok Product ID = product identity. Row 1's tid already
+    # exists in the system → never staged; the others stage normally.
+    report = svc.import_workbook(
+        staged_env, existing_tids={"1731147231842430988"}
+    )
+    # both fixture rows carrying that tid (the original AND its in-file twin)
+    # are refused at the system gate
+    assert report.skipped_existing_tid == 2
+    assert report.staged == 2
+    catalog = json.loads((tmp_path / svc.STAGED_CATALOG_FILENAME).read_text(encoding="utf-8"))
+    tids = {(r.get("kalodata_meta") or {}).get("tiktok_product_id") for r in catalog}
+    assert "1731147231842430988" not in tids
+
+
+def test_import_dedupes_same_tid_within_file(tmp_path, monkeypatch):
+    import openpyxl
+
+    monkeypatch.setattr(svc, "OPERATOR_PACK_DIR", tmp_path)
+    wb = openpyxl.Workbook()
+    merged = wb.active
+    merged.title = svc.MERGED_SHEET
+    merged.append(["No", "Sumber", "Product Name", "Image URL", "Category",
+                   "Price (RM)", "Launch Date", "Product Rating", "Item Sold",
+                   "Avg Unit Price", "Commission Rate", "Creator Number",
+                   "Conversion", "TikTok URL", "Product ID", "Source URL"])
+    # same tid, DIFFERENT truncated titles + different source urls → different
+    # sha1 reference ids, but ONE product
+    merged.append([1, "KALODATA", "Kepingan ganti kaca penutup belakang iPhone A",
+                   None, "Tech", "RM10", None, None, None, None, None, None, None,
+                   "https://shop-my.tiktok.com/pdp/1733902025147385549", None, "https://k/1"])
+    merged.append([2, "FASTMOSS", "Kepingan ganti kaca penutup belakang iPh",
+                   None, "Tech", "RM10", None, None, None, None, None, None, None,
+                   "https://shop.tiktok.com/view/product/1733902025147385549", None, "https://f/2"])
+    wb.create_sheet(svc.HUB_SHEET)
+    path = tmp_path / "dupe.xlsx"
+    wb.save(path)
+
+    report = svc.import_workbook(path)
+    assert report.staged == 1
+    assert report.skipped_duplicate_in_file == 1
+
+
 def test_import_workbook_is_idempotent(staged_env):
     first = svc.import_workbook(staged_env)
     second = svc.import_workbook(staged_env)
@@ -207,6 +250,99 @@ async def test_reference_union_includes_staged_records(staged_env, monkeypatch):
     svc.import_workbook(staged_env)
     items_again = await ref_svc.list_fastmoss_reference_products(limit=2000)
     assert len([i for i in items_again if i.get("source_label") == "Kalodata Reference"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_purge_redundant_queue_rows_keeps_drafted_survivor(monkeypatch):
+    """Never-drafted queue twins of the same tid — or of a committed product —
+    are purged; drafted/approved rows always survive."""
+    from agent.db import crud
+
+    products = [
+        {"id": "p-committed", "tiktok_product_url": "https://shop.tiktok.com/view/product/9990001112223334"},
+    ]
+    queue = [
+        # tid duplicated across two queue rows: drafted survives, pending goes
+        {"reference_id": "fastmoss-ref:aaa", "draft_id": "draft-1",
+         "promotion_status": "READY_FOR_APPROVAL",
+         "tiktok_product_url": "https://shop-my.tiktok.com/pdp/1110002223334445"},
+        {"reference_id": "fastmoss-ref:bbb", "draft_id": None,
+         "promotion_status": "PENDING_DRAFT",
+         "tiktok_product_url": "https://shop.tiktok.com/view/product/1110002223334445"},
+        # tid already a committed product: pending row goes
+        {"reference_id": "fastmoss-ref:ccc", "draft_id": None,
+         "promotion_status": "PENDING_DRAFT",
+         "tiktok_product_url": "https://shop-my.tiktok.com/pdp/9990001112223334"},
+        # unique tid: stays
+        {"reference_id": "fastmoss-ref:ddd", "draft_id": None,
+         "promotion_status": "PENDING_DRAFT",
+         "tiktok_product_url": "https://shop-my.tiktok.com/pdp/5556667778889990"},
+    ]
+    deleted_ids: list[str] = []
+
+    async def fake_list_products(**kwargs):
+        return products
+
+    async def fake_list_rows():
+        return queue
+
+    async def fake_delete(reference_ids):
+        deleted_ids.extend(reference_ids)
+        return len(reference_ids)
+
+    monkeypatch.setattr(crud, "list_products", fake_list_products)
+    monkeypatch.setattr(crud, "list_all_bulk_queue_rows", fake_list_rows)
+    monkeypatch.setattr(crud, "delete_bulk_queue_rows", fake_delete)
+
+    dry = await svc.purge_redundant_queue_rows(dry_run=True)
+    assert dry["candidates"] == 2 and dry["deleted"] == 0 and not deleted_ids
+
+    result = await svc.purge_redundant_queue_rows()
+    assert sorted(deleted_ids) == ["fastmoss-ref:bbb", "fastmoss-ref:ccc"]
+    assert result["deleted"] == 2
+
+
+@pytest.mark.asyncio
+async def test_duplicate_detector_matches_by_tiktok_product_id(monkeypatch):
+    """Draft-time guard: a variant/truncated title with the SAME TikTok id is
+    caught even though the title query finds nothing."""
+    from agent.db import crud as _crud
+    from agent.services.fastmoss_bulk_promotion_service import (
+        _detect_queue_duplicate_candidate,
+    )
+
+    async def fake_list_products(**kwargs):
+        return []  # title query finds nothing (variant title)
+
+    async def fake_find_by_tid(tid):
+        assert tid == "1731147231842430988"
+        return [{
+            "id": "p-1", "product_display_name": "Pengedap Vakum",
+            "source": "MANUAL", "mapping_source": "FASTMOSS_PROMOTED",
+            "tiktok_product_url": f"https://shop.tiktok.com/view/product/{tid}",
+        }]
+
+    monkeypatch.setattr(_crud, "list_products", fake_list_products)
+    monkeypatch.setattr(_crud, "find_products_by_tiktok_product_id", fake_find_by_tid)
+
+    candidate = await _detect_queue_duplicate_candidate(
+        "fastmoss-ref:x", "Pengedap Vakum Mudah Alih VARIANT TITLE",
+        "https://shop-my.tiktok.com/pdp/1731147231842430988",
+    )
+    assert candidate is not None
+    assert candidate["match_reason"] == "TIKTOK_PRODUCT_ID_MATCH_EXISTING_PRODUCT"
+    assert candidate["id"] == "p-1"
+
+    # raw FASTMOSS reference rows still never block by tid either
+    async def fake_find_raw(tid):
+        return [{"id": "p-raw", "source": "FASTMOSS", "mapping_source": None,
+                 "tiktok_product_url": "x"}]
+
+    monkeypatch.setattr(_crud, "find_products_by_tiktok_product_id", fake_find_raw)
+    assert await _detect_queue_duplicate_candidate(
+        "fastmoss-ref:x", "Sesuatu Produk",
+        "https://shop-my.tiktok.com/pdp/1731147231842430988",
+    ) is None
 
 
 @pytest.mark.asyncio
