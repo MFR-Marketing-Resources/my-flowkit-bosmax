@@ -5709,7 +5709,41 @@ function broadcastStatus() {
 	sendRuntimeMessageNoThrow({ type: "STATUS_PUSH" });
 }
 
-const BUILD_ID = "flowkit-f2v-runner-audit-2026-06-15a";
+const BUILD_ID = "flowkit-canonical-dom-guard-2026-07-13a";
+
+// ── ADR-007 canonical-mode DOM-route prohibition ────────────────────────────
+// Canonical production modes generate API-first only (backend
+// _run_manual_job_via_generate -> make_video.start_generate). The DOM lane is
+// DEAD for them. handleExecuteFlowJob() uses this to refuse any canonical job
+// that a stale runtime / stale queued message / misroute tries to run through
+// the dead lane — the exact recurrence path of the SEV-0 JOB_PROMPT_EMPTY
+// incident. Transport-only messages (no canonical mode) are unaffected.
+const BACKGROUND_CANONICAL_API_FIRST_MODES = [
+	"IMG",
+	"T2V",
+	"I2V",
+	"F2V",
+	"HYBRID",
+	"INGREDIENTS",
+	"FRAMES",
+];
+function backgroundCanonicalModeOf(job) {
+	if (!job || typeof job !== "object") return "";
+	// OR-logic across ALL authority fields (not first-non-empty): catch a job
+	// that aliases a non-canonical `mode` while carrying a canonical
+	// `source_mode`/nested value — the "aliased transport mode" recurrence path.
+	const candidates = [
+		job.mode,
+		job.data && job.data.mode,
+		job.source_mode,
+		job.data && job.data.source_mode,
+	];
+	for (let i = 0; i < candidates.length; i += 1) {
+		const norm = String(candidates[i] || "").trim().toUpperCase();
+		if (BACKGROUND_CANONICAL_API_FIRST_MODES.indexOf(norm) !== -1) return norm;
+	}
+	return "";
+}
 
 function buildBackgroundStatusResponse() {
 	const buildId = BUILD_ID;
@@ -6986,6 +7020,37 @@ async function handleGfv2Job(job) {
 }
 
 async function handleExecuteFlowJob(job) {
+	// ADR-007: canonical production modes are API-first only. Refuse to run one
+	// through the dead DOM lane even if a stale runtime or queued message
+	// dispatched it here — this is exactly where the SEV-0 runtime-skew
+	// JOB_PROMPT_EMPTY incident could recur. Post FAILED telemetry so the
+	// dashboard poll loop exits, then return a structured, actionable error.
+	// Smoke readiness probes (smoke_test, prompt=None) are a non-generating
+	// bridge check with a deliberate content-script short-circuit — they carry a
+	// default canonical mode but MUST pass through to that short-circuit.
+	const canonicalMode = job && job.smoke_test ? "" : backgroundCanonicalModeOf(job);
+	if (canonicalMode) {
+		const requestId = job && job.request_id;
+		if (requestId) {
+			postStageTelemetry(
+				{
+					request_id: requestId,
+					stage: "FAILED",
+					status: "FAIL",
+					message: `ERR_CANONICAL_MODE_LEGACY_DOM_ROUTE_FORBIDDEN mode=${canonicalMode} lane=${(job && job.lane) || "n/a"} prompt_present=${Boolean(job && job.prompt)} build=${BUILD_ID}`,
+					source: "extension",
+				},
+				null,
+			);
+		}
+		return {
+			ok: false,
+			error: "ERR_CANONICAL_MODE_LEGACY_DOM_ROUTE_FORBIDDEN",
+			mode: canonicalMode,
+			detail:
+				"Canonical production modes generate API-first (make_video.start_generate); the DOM lane is dead.",
+		};
+	}
 	// Google Flow V2 lane — surface acquisition + upload/settings/prompt, stop before generate.
 	if (isGfv2Lane(job)) {
 		return await handleGfv2Job(job);

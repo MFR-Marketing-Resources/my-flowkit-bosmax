@@ -15,7 +15,37 @@
 (() => {
   const FLOW_KIT_DOM_VERSION = '2026-05-11-f2v-sop-gates';
   const FLOW_KIT_DOM_PROTOCOL_VERSION = 'FLOWKIT_DOM_V1';
-  const FLOW_KIT_DOM_BUILD_ID = 'flowkit-f2v-runner-audit-2026-06-15a';
+  const FLOW_KIT_DOM_BUILD_ID = 'flowkit-canonical-dom-guard-2026-07-13a';
+
+  // ── ADR-007 canonical-mode DOM-route prohibition ───────────────────────────
+  // Generation for the canonical production modes is API-first ONLY (backend
+  // _run_manual_job_via_generate -> make_video.start_generate). The DOM-clicking
+  // generation lane is DEAD for them. This predicate lets both the production
+  // executor (executeFlowJob) and the background router refuse any canonical job
+  // that a stale runtime, stale queued message or misrouted caller tries to run
+  // through the dead lane, so the SEV-0 runtime-skew JOB_PROMPT_EMPTY DOM run can
+  // never recur. Transport-only messages (no canonical mode) are unaffected.
+  const FLOW_KIT_CANONICAL_API_FIRST_MODES = [
+    'IMG', 'T2V', 'I2V', 'F2V', 'HYBRID', 'INGREDIENTS', 'FRAMES',
+  ];
+  function flowKitCanonicalModeOf(job) {
+    if (!job || typeof job !== 'object') return '';
+    // OR-logic across ALL authority fields (not first-non-empty): a job that
+    // aliases a non-canonical `mode` while carrying a canonical `source_mode`
+    // (or nested data.*) must STILL be caught — that is the exact "aliased
+    // transport mode" recurrence path the guard exists to close.
+    const candidates = [
+      job.mode,
+      job.data && job.data.mode,
+      job.source_mode,
+      job.data && job.data.source_mode,
+    ];
+    for (let i = 0; i < candidates.length; i += 1) {
+      const norm = String(candidates[i] || '').trim().toUpperCase();
+      if (FLOW_KIT_CANONICAL_API_FIRST_MODES.indexOf(norm) !== -1) return norm;
+    }
+    return '';
+  }
   const FLOW_KIT_PLAYWRIGHT_HARNESS = hasPlaywrightHarnessMarker();
   const FLOW_KIT_TEST_MODE = Boolean(window.__FLOWKIT_TEST_MODE__);
   const FLOW_KIT_ENABLE_TEST_HOOKS =
@@ -5785,6 +5815,20 @@ function isSettingsScopedModelSource(source) {
     };
 
     try {
+      // ADR-007: refuse canonical production modes BEFORE any DOM work. Their
+      // generation is API-first only; reaching this executor means a stale
+      // runtime / queued message / misroute — fail loud, never DOM-generate.
+      // Smoke readiness probes (smoke_test, prompt=None) are a non-generating
+      // bridge check with their own short-circuit — never canonical-blocked.
+      const canonicalMode = job && job.smoke_test ? '' : flowKitCanonicalModeOf(job);
+      if (canonicalMode) {
+        logStage(
+          'CANONICAL_MODE_DOM_ROUTE_BLOCKED',
+          'FAIL',
+          `mode=${canonicalMode} lane=${job.lane || 'n/a'} package=${job.package_id || job.execution_package_id || 'n/a'} prompt_present=${Boolean(job.prompt)} content_build=${FLOW_KIT_DOM_BUILD_ID}`,
+        );
+        throw new Error('ERR_CANONICAL_MODE_LEGACY_DOM_ROUTE_FORBIDDEN');
+      }
       logStage(STAGES.FLOW_TAB_FOUND, 'PASS', 'flow_dom_listener_ready');
       const backgroundBuildId = String(
         testConn?.buildId
@@ -6453,6 +6497,7 @@ function isSettingsScopedModelSource(source) {
       waitForCdpFileChooserProofResult,
       openFlowConfigPanel,
       verifyFlowMode,
+      flowKitCanonicalModeOf,
     };
     installPlaywrightTestBridge();
   }
