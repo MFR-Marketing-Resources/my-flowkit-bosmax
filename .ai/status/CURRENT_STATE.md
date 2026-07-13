@@ -8,6 +8,48 @@ ADR-007 win.
 - Verify live from Git (`git rev-parse HEAD` / `origin/main`); this file never
   self-declares a current SHA.
 
+## VIDEO_EXTENSION_FINAL_SEAL (CLOSED — do not reopen)
+- **Status: CLOSED.** All four modes (T2V / HYBRID / F2V / I2V) are live-proven
+  end-to-end plus ONE shared full 16-second chain (initial → Native Extend →
+  server concat). No more generation, Extend, concat or live proof is required.
+- **Functional closure authority:** PR #334 (feature `a7618879…`, merged
+  `acb95e5dd7ab16c1f1a7f1c85bebea515b20198d`). Start any new work from that merged
+  main SHA (or later), never from historical audit branches.
+- **Documentation closure authority:** the evidence-seal PR (this task) +
+  `docs/evidence/video_extension_all_modes_golden_path_closure.sanitized.json`
+  (the durable source of truth for the ledger, provenance, validation and tests).
+- **Root cause (fixed, do not re-audit):** the FIRST Extend in a fresh project must
+  bootstrap its Flow scene from the clip's `workflow_id`; that id is only in the
+  media status poll (`check_video_status_by_media`), not `get_media`, and
+  `createScene` re-issues the timeline `primaryMediaId`. Repaired surgically in
+  `agent/api/flow.py` (`_ensure_scene_membership` captures the workflow id + adopts
+  the scene's canonical member; `_map_lane_to_identity` and `POST /video-jobs` use
+  it). `NATIVE_EXTEND_ENABLED=1` persisted in `.env`.
+- **Final artifact:** `final_vj_25ca81841930` — 16.0s, 15,040,996 bytes, SHA-256
+  `a58c96ab42b705a80bc0e484802ecd302fa23af32271642d69797f9ca52677fb`, retrieved via
+  `/api/flow/retrieved/final_vj_25ca81841930` (byte-match). Golden lineage: harvest
+  `780fb967` → workflow `6d159659` → scene `2accf53a` → parent `ce53dda4` → child
+  `aeddefd1` → concat job `…/jobs/b2bb63cb-…`.
+- **Credit truth:** 1530 → 1460 (−70). 4 modes CERTIFIED ≠ 4 new final-round
+  initials: the final closure round submitted **3** new initials (T2V/F2V/I2V) and
+  **reused/adopted** the HYBRID initial (`780fb967`); the −70 also covers 2 pre-fix
+  failures (T2V provider render-fail, durable HYBRID scene-unresolved). 0 uncertain
+  operations. Full itemised ledger is in the evidence JSON.
+- **Runtime invariants:** API-first only; `NATIVE_EXTEND_ENABLED=1` (from `.env`);
+  the durable source of truth is the DB (`video_production_job`, `video_job_side_effect`,
+  `extend_lineage`, `generated_artifact`) + the evidence JSON + `output/retrieved/*.mp4`.
+- **Regression-entry procedure (the ONLY way to reopen):** (1) reproduce on canonical
+  main; (2) record the exact current job + provider identity; (3) diff against this
+  evidence; (4) prove a NEW regression; (5) patch only that newly-proven defect;
+  (6) never repeat the four-mode certification unless the shared downstream
+  extend/concat architecture itself changes (it is source-mode-agnostic — zero
+  `source_mode` branches).
+- **Continuation note:** Codex, Hermes Agent, Cursor, Antigravity and future Claude
+  sessions must treat this module as CLOSED. Do not restart historical audit work.
+  New work must begin from the merged canonical SHA and be scoped to a newly
+  reproduced defect. Check the existing final artifact and evidence BEFORE spending
+  any credits.
+
 ## THE ONE ARCHITECTURE (ADR-007 — final, do not relitigate)
 - Generation is **API-first**. The Chrome extension is **authenticated
   transport only** (session, reCAPTCHA, fetch relay, harvest). There is NO

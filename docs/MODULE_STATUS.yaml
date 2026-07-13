@@ -112,6 +112,11 @@ domains:
       # NATIVE_EXTEND_ENABLED=1 persisted in .env. Final deliverable final_vj_25ca81841930
       # = 16.0s, sha a58c96ab...677fb, retrievable. Evidence:
       # docs/evidence/video_extension_all_modes_golden_path_closure.sanitized.json
+      # Provenance: functional PR #334 (feature a7618879, merge
+      # acb95e5dd7ab16c1f1a7f1c85bebea515b20198d); documentation closure via the
+      # evidence-seal PR (see the evidence JSON delivery_provenance + .ai/status/
+      # CURRENT_STATE.md VIDEO_EXTENSION_FINAL_SEAL). Do NOT reopen without a newly
+      # reproduced regression on canonical main.
       # =====================================================================
       # Native Google Flow Extend (runtime lane, capability authority, lineage)
       - .ai/decisions/ADR-009-google-flow-native-video-extend.md
