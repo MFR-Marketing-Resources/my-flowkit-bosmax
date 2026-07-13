@@ -21,11 +21,8 @@ import CopywritingReadinessCard from "../components/copywriting/CopywritingReadi
 import RequestReportPanel from "../components/reporting/RequestReportPanel";
 import SocialCopyPackagePanel from "../components/SocialCopyPackagePanel";
 import CopySelectionPanel from "../components/workspace/CopySelectionPanel";
-import F2VModule from "../components/workspace/F2VModule";
-import I2VModule from "../components/workspace/I2VModule";
 import IMGModule from "../components/workspace/IMGModule";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
-import T2VModule from "../components/workspace/T2VModule";
 import NativeExtendPanel from "../components/NativeExtendPanel";
 import {
 	type VideoCapabilityMatrix,
@@ -1551,41 +1548,31 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		: "Generate Final Prompt";
 
 	const renderModule = () => {
+		if (mode !== "IMG") {
+			// Canonical video production has one user control: the durable full-video
+			// panel rendered above for an authorised EXTEND plan. The retired workspace
+			// modules only insert prompts into Google Flow, which is a fail-closed DOM
+			// lane and must never be exposed as a normal production action.
+			return isExtendMode ? (
+				<div
+					data-testid="canonical-video-production-control"
+					className="rounded-lg border border-indigo-500/20 bg-indigo-500/5 px-3 py-2 text-xs text-slate-300"
+				>
+					Use the Full Video control above to plan and generate this canonical
+					{` ${mode}`} production job.
+				</div>
+			) : (
+				<div
+					data-testid="canonical-video-production-requires-extend"
+					className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-100"
+				>
+					Canonical video production requires EXTEND with an authorised total
+					duration. Select EXTEND above to use the server-owned durable video job.
+				</div>
+			);
+		}
+
 		switch (mode) {
-			case "HYBRID": // product-image anchor + AI presenter — same module shape as F2V
-			case "F2V":
-				return (
-					<F2VModule
-						onExecute={handleExecute}
-						isExecuting={isExecuting}
-						compact={isPortalMode}
-						workspacePackage={workspacePackage}
-						copyReady={copyReadiness?.ready_for_generation ?? false}
-						surfaceMode={mode === "HYBRID" ? "HYBRID" : "F2V"}
-					/>
-				);
-			case "T2V":
-				return (
-					<T2VModule
-						onExecute={handleExecute}
-						isExecuting={isExecuting}
-						compact={isPortalMode}
-						workspacePackage={workspacePackage}
-						copyReady={copyReadiness?.ready_for_generation ?? false}
-					/>
-				);
-			case "I2V":
-				return (
-					<I2VModule
-						onExecute={handleExecute}
-						isExecuting={isExecuting}
-						compact={isPortalMode}
-						workspacePackage={workspacePackage}
-						onWorkspacePackageUpdated={setWorkspacePackage}
-						selectedCopySetId={selectedCopySetId}
-						copyReady={copyReadiness?.ready_for_generation ?? false}
-					/>
-				);
 			case "IMG":
 				return (
 					<IMGModule
