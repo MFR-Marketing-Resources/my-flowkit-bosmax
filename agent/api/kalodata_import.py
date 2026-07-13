@@ -36,11 +36,23 @@ _CACHE_IMAGE_ATTEMPTS = 3
 async def import_external_catalog(body: KalodataImportRequest):
     source_path = (body.source_path or "").strip() or DEFAULT_SOURCE_PATH
     try:
-        return await asyncio.to_thread(_svc.import_workbook, source_path)
+        # Duplicate law: the TikTok Product ID is the product identity — rows
+        # whose tid already exists in the system are never staged.
+        existing_tids = await _svc.collect_system_tids()
+        return await asyncio.to_thread(
+            _svc.import_workbook, source_path, existing_tids
+        )
     except FileNotFoundError as exc:
         raise HTTPException(404, f"WORKBOOK_NOT_FOUND:{exc}") from exc
     except Exception as exc:  # noqa: BLE001 — surfaced verbatim, never partial-staged
         raise HTTPException(422, f"IMPORT_FAILED:{exc}") from exc
+
+
+@router.post("/purge-duplicates")
+async def purge_duplicates(dry_run: bool = False):
+    """Purge never-drafted queue rows whose TikTok product id duplicates
+    another queue row or an already-committed product."""
+    return await _svc.purge_redundant_queue_rows(dry_run=dry_run)
 
 
 @router.post("/apply-hub-enrichment")

@@ -71,6 +71,8 @@ class KalodataImportReport(BaseModel):
     parsed_hub: int = 0
     staged: int = 0
     skipped_duplicate_in_file: int = 0
+    # tid already exists in the system (committed product / fastmoss workbook)
+    skipped_existing_tid: int = 0
     skipped_invalid: int = 0
     product_id_from_url: int = 0
     product_id_low_confidence: int = 0

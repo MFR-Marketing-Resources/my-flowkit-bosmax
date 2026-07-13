@@ -1996,6 +1996,44 @@ async def list_bulk_queue(
     return [dict(r) for r in await cur.fetchall()]
 
 
+async def find_products_by_tiktok_product_id(tiktok_product_id: str) -> list[dict]:
+    """Products whose TikTok URL carries this product id (duplicate identity
+    check — the id is the strongest same-product signal)."""
+    tid = str(tiktok_product_id or "").strip()
+    if not tid.isdigit():
+        return []
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM product WHERE tiktok_product_url LIKE ?", (f"%{tid}%",))
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def list_all_bulk_queue_rows() -> list[dict]:
+    """Full unpaginated queue scan (duplicate audit / purge)."""
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM fastmoss_bulk_draft_status ORDER BY created_at ASC")
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def delete_bulk_queue_rows(reference_ids: list[str]) -> int:
+    """Delete STAGING queue rows (duplicate purge). Callers must only pass
+    never-drafted rows — drafted/approved rows are history and stay."""
+    if not reference_ids:
+        return 0
+    db = await get_db()
+    deleted = 0
+    async with _db_lock:
+        for reference_id in reference_ids:
+            cur = await db.execute(
+                "DELETE FROM fastmoss_bulk_draft_status "
+                "WHERE reference_id=? AND draft_id IS NULL",
+                (reference_id,))
+            deleted += cur.rowcount
+        await db.commit()
+    return deleted
+
+
 async def count_bulk_queue(
     promotion_status: str | None = None,
     claim_risk_level: str | None = None,

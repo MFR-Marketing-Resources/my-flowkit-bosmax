@@ -415,8 +415,16 @@ def _atomic_write_json(path: Path, payload: Any) -> None:
     os.replace(tmp, path)
 
 
-def import_workbook(source_path: str | Path) -> KalodataImportReport:
-    """Parse + stage the workbook. Pure parsing — no AI, no DB writes."""
+def import_workbook(
+    source_path: str | Path,
+    existing_tids: set[str] | None = None,
+) -> KalodataImportReport:
+    """Parse + stage the workbook. Pure parsing — no AI, no DB writes.
+
+    Duplicate law (Owner, 2026-07-14): the TikTok Product ID is the product
+    identity. A row whose tid already exists in the SYSTEM (committed product
+    rows or the fastmoss reference workbook — supplied via `existing_tids`)
+    or earlier in the SAME file is never staged."""
     path = Path(source_path)
     if not path.exists():
         raise FileNotFoundError(str(path))
@@ -431,15 +439,23 @@ def import_workbook(source_path: str | Path) -> KalodataImportReport:
     staged_records: list[dict[str, Any]] = []
     staged_by_row_no: dict[int, dict[str, Any]] = {}
     seen_ids: set[str] = set()
+    seen_tids: set[str] = set()
+    system_tids = {t for t in (existing_tids or set()) if t}
     for row in merged_rows:
         if not _clean(row.product_name):
             report.skipped_invalid += 1
             continue
         record = build_staged_record(row, source_file=path.name)
-        if record["id"] in seen_ids:
+        tid = row.tiktok_product_id
+        if tid and tid in system_tids:
+            report.skipped_existing_tid += 1
+            continue
+        if record["id"] in seen_ids or (tid and tid in seen_tids):
             report.skipped_duplicate_in_file += 1
             continue
         seen_ids.add(record["id"])
+        if tid:
+            seen_tids.add(tid)
         staged_records.append(record)
         staged_by_row_no[row.row_no] = record
         if row.tiktok_product_id_confidence == "URL":
@@ -506,6 +522,81 @@ async def apply_hub_enrichment(reference_ids: list[str] | None = None) -> dict[s
     if not items:
         return {"total": 0, "recomputed": 0, "skipped": 0, "failed": 0, "results": []}
     return await import_enrichment(items)
+
+
+async def collect_system_tids() -> set[str]:
+    """TikTok product ids already known to the system: committed product rows
+    plus the fastmoss reference WORKBOOK rows (never the staged Kalodata file —
+    a re-import must not exclude itself)."""
+    from agent.db import crud
+
+    tids: set[str] = set()
+    for product in await crud.list_products(include_archived=True):
+        tid, _ = extract_tiktok_product_id(product.get("tiktok_product_url"), None)
+        if tid:
+            tids.add(tid)
+    try:
+        from agent.api.operator import _load_products
+
+        for ref in _load_products(limit=2000):
+            tid, _ = extract_tiktok_product_id(
+                getattr(ref, "tiktok_product_url", None), None
+            )
+            if tid:
+                tids.add(tid)
+    except Exception as exc:  # noqa: BLE001 — workbook optional
+        logger.warning("collect_system_tids: workbook refs unavailable: %s", exc)
+    return tids
+
+
+async def purge_redundant_queue_rows(dry_run: bool = False) -> dict[str, Any]:
+    """Purge NEVER-DRAFTED queue rows whose TikTok product id duplicates either
+    (a) another queue row for the same tid (the earliest/drafted row survives)
+    or (b) an already-committed product. Drafted/approved rows are history and
+    are never deleted."""
+    from agent.db import crud
+
+    product_tids: set[str] = set()
+    for product in await crud.list_products(include_archived=True):
+        tid, _ = extract_tiktok_product_id(product.get("tiktok_product_url"), None)
+        if tid:
+            product_tids.add(tid)
+
+    rows = await crud.list_all_bulk_queue_rows()
+    by_tid: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        tid, _ = extract_tiktok_product_id(row.get("tiktok_product_url"), None)
+        if tid:
+            by_tid.setdefault(tid, []).append(row)
+
+    def _deletable(row: dict[str, Any]) -> bool:
+        return not row.get("draft_id") and row.get("promotion_status") == "PENDING_DRAFT"
+
+    to_delete: list[dict[str, Any]] = []
+    for tid, group in by_tid.items():
+        if tid in product_tids:
+            # product already committed — every never-drafted queue twin goes
+            to_delete.extend(r for r in group if _deletable(r))
+            continue
+        if len(group) > 1:
+            keepers = [r for r in group if not _deletable(r)]
+            survivors = keepers or group[:1]  # earliest row survives
+            survivor_ids = {r["reference_id"] for r in survivors}
+            to_delete.extend(
+                r for r in group
+                if r["reference_id"] not in survivor_ids and _deletable(r)
+            )
+
+    reference_ids = sorted({r["reference_id"] for r in to_delete})
+    deleted = 0
+    if reference_ids and not dry_run:
+        deleted = await crud.delete_bulk_queue_rows(reference_ids)
+    return {
+        "dry_run": dry_run,
+        "candidates": len(reference_ids),
+        "deleted": deleted,
+        "reference_ids": reference_ids[:100],
+    }
 
 
 async def hub_gaps() -> dict[str, Any]:

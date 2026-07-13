@@ -21,6 +21,7 @@ import asyncio
 import csv
 import io
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -128,27 +129,46 @@ async def _detect_queue_duplicate_candidate(
             return "TIKTOK_URL_MATCH_EXISTING_PRODUCT"
         return None
 
-    candidates = await crud.list_products(query=raw_product_title, limit=50)
-    for row in candidates:
+    def _candidate_payload(row: dict, match_reason: str) -> dict[str, Any]:
+        return {
+            "id": row.get("id"),
+            "title": row.get("product_display_name")
+            or row.get("product_short_name")
+            or row.get("raw_product_title"),
+            "source": row.get("source"),
+            "mapping_source": row.get("mapping_source"),
+            "match_reason": match_reason,
+        }
+
+    def _is_blocking_canonical(row: dict) -> bool:
         if ignore_product_id and str(row.get("id") or "") == ignore_product_id:
-            continue
+            return False
         src = row.get("source", "")
         mapping_src = row.get("mapping_source", "")
         # Raw FASTMOSS reference rows are inputs to this promotion pipeline.
         # Only block on them once they have been committed (mapping_source=FASTMOSS_PROMOTED).
-        if src == "FASTMOSS" and mapping_src != "FASTMOSS_PROMOTED":
+        return not (src == "FASTMOSS" and mapping_src != "FASTMOSS_PROMOTED")
+
+    candidates = await crud.list_products(query=raw_product_title, limit=50)
+    for row in candidates:
+        if not _is_blocking_canonical(row):
             continue
         match_reason = _row_matches(row)
         if match_reason:
-            return {
-                "id": row.get("id"),
-                "title": row.get("product_display_name")
-                or row.get("product_short_name")
-                or row.get("raw_product_title"),
-                "source": row.get("source"),
-                "mapping_source": row.get("mapping_source"),
-                "match_reason": match_reason,
-            }
+            return _candidate_payload(row, match_reason)
+
+    # TikTok Product ID match (Owner duplicate law, 2026-07-14): the id is the
+    # product identity — it catches truncated/variant titles the title query
+    # above can never see.
+    tid_match = re.search(
+        r"(?:/pdp/|/product/|[?&](?:pid|product_id)=)(\d{6,})",
+        _clean(tiktok_product_url),
+    )
+    if tid_match:
+        for row in await crud.find_products_by_tiktok_product_id(tid_match.group(1)):
+            if not _is_blocking_canonical(row):
+                continue
+            return _candidate_payload(row, "TIKTOK_PRODUCT_ID_MATCH_EXISTING_PRODUCT")
 
     return None
 
