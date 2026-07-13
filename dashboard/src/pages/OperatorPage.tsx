@@ -1,7 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-	resolvePromptRepresentationPresentation,
-} from "../utils/promptRepresentationUi";
 import { useLocation, useNavigate } from "react-router-dom";
 import { fetchAPI } from "../api/client";
 import { useCopywritingReadiness } from "../api/copywritingReadiness";
@@ -18,21 +15,15 @@ import {
 } from "../api/workspacePackages";
 import BackendVersionBanner from "../components/BackendVersionBanner";
 import CopywritingReadinessCard from "../components/copywriting/CopywritingReadinessCard";
+import NativeExtendPanel from "../components/NativeExtendPanel";
 import RequestReportPanel from "../components/reporting/RequestReportPanel";
 import SocialCopyPackagePanel from "../components/SocialCopyPackagePanel";
+import CanonicalReferenceBindingControls, {
+	type CanonicalReferenceBinding,
+} from "../components/workspace/CanonicalReferenceBindingControls";
 import CopySelectionPanel from "../components/workspace/CopySelectionPanel";
 import IMGModule from "../components/workspace/IMGModule";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
-import NativeExtendPanel from "../components/NativeExtendPanel";
-import {
-	type VideoCapabilityMatrix,
-	defaultEngine as pickDefaultEngine,
-	getEngine,
-	modelsForSingle,
-	resolveDurationChange,
-	resolveSingleSelection,
-	singleDurations,
-} from "../utils/videoCapability";
 import type {
 	Product,
 	PromptCameraStyle,
@@ -49,6 +40,16 @@ import type {
 	WorkspacePackageReadinessItem,
 	WorkspacePromptPreviewResult,
 } from "../types";
+import { resolvePromptRepresentationPresentation } from "../utils/promptRepresentationUi";
+import {
+	getEngine,
+	modelsForSingle,
+	defaultEngine as pickDefaultEngine,
+	resolveDurationChange,
+	resolveSingleSelection,
+	singleDurations,
+	type VideoCapabilityMatrix,
+} from "../utils/videoCapability";
 
 type OperatorNoticeTone = "idle" | "info" | "success" | "warning" | "error";
 
@@ -145,7 +146,10 @@ function PromptAuditCard({
 }) {
 	const [copiedPrimary, setCopiedPrimary] = useState(false);
 	const [copiedSecondary, setCopiedSecondary] = useState(false);
-	const presentation = resolvePromptRepresentationPresentation(block, fallbackText);
+	const presentation = resolvePromptRepresentationPresentation(
+		block,
+		fallbackText,
+	);
 	const independentText = presentation.independentText;
 	const extendText = presentation.extendText;
 	const primaryText = presentation.primaryCopyText;
@@ -155,7 +159,9 @@ function PromptAuditCard({
 	const showExtendUnavailable = presentation.showExtendUnavailable;
 	const showIndependentSecondary = presentation.showIndependentSecondary;
 	const sections = parsePromptSections(
-		isExtendBlock ? independentText : presentation.initialText || independentText,
+		isExtendBlock
+			? independentText
+			: presentation.initialText || independentText,
 	);
 	const allocation = block?.allocation;
 	const presentHeadings = new Set(sections.map((section) => section.heading));
@@ -189,14 +195,20 @@ function PromptAuditCard({
 	const audioSeam = block?.audio_seam_contract;
 
 	return (
-		<div className="rounded-xl border border-slate-800 bg-slate-950/70 overflow-hidden" data-testid="prompt-audit-card">
+		<div
+			className="rounded-xl border border-slate-800 bg-slate-950/70 overflow-hidden"
+			data-testid="prompt-audit-card"
+		>
 			<div className="flex flex-col gap-3 border-b border-slate-800 px-4 py-3 md:flex-row md:items-start md:justify-between">
 				<div className="space-y-2">
 					<div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-200">
 						{label}
 					</div>
 					<div className="flex flex-wrap gap-2">
-						<span className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-indigo-200" data-testid="prompt-representation-badge">
+						<span
+							className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-indigo-200"
+							data-testid="prompt-representation-badge"
+						>
 							{representationLabel}
 						</span>
 						{!isExtendBlock ? (
@@ -255,30 +267,63 @@ function PromptAuditCard({
 			{presentation.helpText ? (
 				<div
 					className={`border-b border-slate-800 px-4 py-2 text-[11px] ${showExtendUnavailable ? "bg-amber-500/10 text-amber-100" : "bg-indigo-500/5 text-indigo-100"}`}
-					data-testid={showExtendUnavailable ? "extend-not-available" : "extend-prompt-help"}
+					data-testid={
+						showExtendUnavailable
+							? "extend-not-available"
+							: "extend-prompt-help"
+					}
 				>
 					{presentation.helpText}
 				</div>
 			) : null}
 			{allocation ? (
-				<div className="border-b border-slate-800 bg-slate-900/40 px-4 py-3 text-xs text-slate-300" data-testid="storyboard-allocation-summary">
-					<div className="font-semibold text-slate-200">Storyboard allocation · {allocation.start_s}–{allocation.end_s}s · {allocation.is_final ? "Final closure" : "Continuation seam"}</div>
-					<div className="mt-1 text-slate-400">Story beats: {allocation.assigned_story_beats.map((beat) => beat.role).join(" → ")}</div>
-					<div className="mt-1 text-slate-400">Exact dialogue: {allocation.exact_dialogue_slice || block?.exact_dialogue_slice || "(visual-only block)"}</div>
+				<div
+					className="border-b border-slate-800 bg-slate-900/40 px-4 py-3 text-xs text-slate-300"
+					data-testid="storyboard-allocation-summary"
+				>
+					<div className="font-semibold text-slate-200">
+						Storyboard allocation · {allocation.start_s}–{allocation.end_s}s ·{" "}
+						{allocation.is_final ? "Final closure" : "Continuation seam"}
+					</div>
+					<div className="mt-1 text-slate-400">
+						Story beats:{" "}
+						{allocation.assigned_story_beats
+							.map((beat) => beat.role)
+							.join(" → ")}
+					</div>
+					<div className="mt-1 text-slate-400">
+						Exact dialogue:{" "}
+						{allocation.exact_dialogue_slice ||
+							block?.exact_dialogue_slice ||
+							"(visual-only block)"}
+					</div>
 					{block?.previous_block_index ? (
-						<div className="mt-1 text-slate-400">Previous block: {block.previous_block_index} · Continuation source: {block.continuation_source || "PREVIOUS_GENERATED_VIDEO"}</div>
+						<div className="mt-1 text-slate-400">
+							Previous block: {block.previous_block_index} · Continuation
+							source: {block.continuation_source || "PREVIOUS_GENERATED_VIDEO"}
+						</div>
 					) : null}
 					{audioSeam ? (
-						<div className="mt-1 text-slate-400" data-testid="audio-seam-summary">
+						<div
+							className="mt-1 text-slate-400"
+							data-testid="audio-seam-summary"
+						>
 							Audio seam: {String(audioSeam.audio_seam_out || "—")}
-							{audioSeam.voice_active_in_final_second ? " · voice active in final second" : ""}
-							{allocation.is_final ? " · final block (no next extension seam)" : ""}
+							{audioSeam.voice_active_in_final_second
+								? " · voice active in final second"
+								: ""}
+							{allocation.is_final
+								? " · final block (no next extension seam)"
+								: ""}
 						</div>
 					) : null}
 				</div>
 			) : null}
 			{isExtendBlock && extendText ? (
-				<div className="border-b border-slate-800 px-4 py-3 text-sm leading-relaxed text-slate-200 whitespace-pre-wrap" data-testid="flow-extend-prompt-preview">
+				<div
+					className="border-b border-slate-800 px-4 py-3 text-sm leading-relaxed text-slate-200 whitespace-pre-wrap"
+					data-testid="flow-extend-prompt-preview"
+				>
 					{extendText}
 				</div>
 			) : null}
@@ -359,7 +404,10 @@ export function resolveOperatorSourceMode(
 // transport mode is a diagnostic detail. Pure + hoisted so the mapping is
 // unit-testable without rendering the page. Presentation only: transport values
 // and telemetry keys are unchanged.
-export function noticeModeLabel(surfaceMode: string, transportMode: string): string {
+export function noticeModeLabel(
+	surfaceMode: string,
+	transportMode: string,
+): string {
 	const source = resolveOperatorSourceMode(surfaceMode);
 	if (source === "HYBRID") return `HYBRID (transport: ${transportMode})`;
 	if (source === "FRAMES") return "Frames/F2V";
@@ -414,9 +462,7 @@ export function buildOperatorDurationAuthority({
 			generationMode,
 			route: null,
 			plan: [videoDurationSeconds],
-			timeline: [
-				{ block_index: 1, start_s: 0, end_s: videoDurationSeconds },
-			],
+			timeline: [{ block_index: 1, start_s: 0, end_s: videoDurationSeconds }],
 			payload: {
 				generation_mode: "SINGLE",
 				duration_seconds: videoDurationSeconds,
@@ -526,6 +572,20 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const [productsError, setProductsError] = useState<string | null>(null);
 	const [isLoadingProducts, setIsLoadingProducts] = useState(false);
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+	const [referenceBinding, setReferenceBinding] =
+		useState<CanonicalReferenceBinding>({
+			productReferenceAssetId: null,
+			startFrameAssetId: null,
+			endFrameAssetId: null,
+			characterReferenceAssetId: null,
+			sceneContextReferenceAssetId: null,
+			styleReferenceAssetId: null,
+		});
+	const i2vReferenceCount = [
+		referenceBinding.characterReferenceAssetId,
+		referenceBinding.sceneContextReferenceAssetId,
+		referenceBinding.styleReferenceAssetId,
+	].filter(Boolean).length;
 	const [packageReadiness, setPackageReadiness] = useState<
 		Record<string, WorkspacePackageReadinessItem>
 	>({});
@@ -563,9 +623,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// Canonical source-mode (ADR-008) — delegates to the hoisted pure export
 	// resolveOperatorSourceMode; identity is stable across renders.
 	const resolveSourceMode = resolveOperatorSourceMode;
-	const [requestedTotalDuration, setRequestedTotalDuration] = useState<number | null>(
-		null,
-	);
+	const [requestedTotalDuration, setRequestedTotalDuration] = useState<
+		number | null
+	>(null);
 	const isExtendMode = generationMode === "EXTEND";
 	const durationAuthority =
 		isExtendMode && requestedTotalDuration === null
@@ -675,6 +735,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		setIsLoadingReadiness(true);
 		void fetchWorkspacePackageReadiness({
 			mode: jobMode as WorkspaceMode,
+			source_mode: resolveSourceMode(mode),
 			product_ids: products.map((item) => item.id),
 		})
 			.then((response) => {
@@ -685,7 +746,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			})
 			.catch(() => {})
 			.finally(() => setIsLoadingReadiness(false));
-	}, [jobMode, products]);
+	}, [jobMode, mode, products]);
 
 	useEffect(() => {
 		if (
@@ -700,6 +761,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		setIsLoadingSelectedReadiness(true);
 		void fetchWorkspacePackageReadiness({
 			mode: jobMode as WorkspaceMode,
+			source_mode: resolveSourceMode(mode),
 			product_ids: [selectedProduct.id],
 		})
 			.then((response) => {
@@ -720,7 +782,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		return () => {
 			isActive = false;
 		};
-	}, [jobMode, packageReadiness, selectedProduct]);
+	}, [jobMode, mode, packageReadiness, selectedProduct]);
 
 	useEffect(() => {
 		if (!statePackage || statePackage.mode !== mode) return;
@@ -760,7 +822,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		} else {
 			setRequestedTotalDuration(null);
 			if (workspacePackage.prompt_blocks?.[0]?.duration_seconds) {
-				setVideoDurationSeconds(workspacePackage.prompt_blocks[0].duration_seconds);
+				setVideoDurationSeconds(
+					workspacePackage.prompt_blocks[0].duration_seconds,
+				);
 			}
 			if (workspacePackage.model) {
 				// Hydrate the operator's model from the saved tuple WITHOUT
@@ -801,7 +865,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// mode modules — that split-brain is removed).
 	const [capabilityMatrix, setCapabilityMatrix] =
 		useState<VideoCapabilityMatrix | null>(null);
-	const [selectedEngineId, setSelectedEngineId] = useState<string>("GOOGLE_FLOW");
+	const [selectedEngineId, setSelectedEngineId] =
+		useState<string>("GOOGLE_FLOW");
 	const [videoModel, setVideoModel] = useState<string>("Veo 3.1 - Lite");
 	const [modelAdjustmentNote, setModelAdjustmentNote] = useState<string | null>(
 		null,
@@ -814,7 +879,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				const engine = pickDefaultEngine(matrix);
 				if (!engine) return;
 				setSelectedEngineId(engine.id);
-				const sel = resolveSingleSelection(engine, null, engine.default_single_duration);
+				const sel = resolveSingleSelection(
+					engine,
+					null,
+					engine.default_single_duration,
+				);
 				if (sel) {
 					setVideoModel(sel.model);
 					setVideoDurationSeconds(sel.durationSeconds);
@@ -1170,8 +1239,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					// IMG carries no video duration (must not inherit video controls).
 					duration_s: data.mode === "IMG" ? undefined : videoDurationSeconds,
 					engine: data.mode === "IMG" ? undefined : selectedEngineId,
-					generation_mode:
-						data.mode === "IMG" ? undefined : generationMode,
+					generation_mode: data.mode === "IMG" ? undefined : generationMode,
 					capability_matrix_version:
 						data.mode === "IMG"
 							? undefined
@@ -1217,7 +1285,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		setSavePackageError(null);
 	};
 
-	const handleGenerationModeChange = (nextGenerationMode: PromptGenerationMode) => {
+	const handleGenerationModeChange = (
+		nextGenerationMode: PromptGenerationMode,
+	) => {
 		const transition = transitionOperatorDurationAuthority(
 			{
 				generationMode,
@@ -1242,7 +1312,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const handleEngineChange = (nextEngineId: string) => {
 		setSelectedEngineId(nextEngineId);
 		const engine = getEngine(capabilityMatrix, nextEngineId);
-		const sel = resolveSingleSelection(engine, videoModel, videoDurationSeconds);
+		const sel = resolveSingleSelection(
+			engine,
+			videoModel,
+			videoDurationSeconds,
+		);
 		if (sel) {
 			setVideoModel(sel.model);
 			setVideoDurationSeconds(sel.durationSeconds);
@@ -1364,6 +1438,19 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			});
 			return;
 		}
+		if (
+			(mode === "HYBRID" && !referenceBinding.productReferenceAssetId) ||
+			(mode === "F2V" && !referenceBinding.startFrameAssetId) ||
+			(mode === "I2V" && i2vReferenceCount < 2)
+		) {
+			setNotice({
+				tone: "error",
+				title: "Reference binding required",
+				detail: `${resolveSourceMode(mode)} requires its canonical approved reference before package load.`,
+				requestId: null,
+			});
+			return;
+		}
 		setIsLoadingPreview(true);
 		setPreviewPackage(null);
 		setWorkspacePackage(null);
@@ -1420,6 +1507,19 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			});
 			return;
 		}
+		if (
+			(mode === "HYBRID" && !referenceBinding.productReferenceAssetId) ||
+			(mode === "F2V" && !referenceBinding.startFrameAssetId) ||
+			(mode === "I2V" && i2vReferenceCount < 2)
+		) {
+			setNotice({
+				tone: "error",
+				title: "Reference binding required",
+				detail: `${resolveSourceMode(mode)} requires its canonical approved reference before package persistence.`,
+				requestId: null,
+			});
+			return;
+		}
 		setShowFallbackConfirm(false);
 		setIsLoadingPackage(true);
 		try {
@@ -1437,6 +1537,14 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				camera_style: cameraStyle,
 				character_presence: characterPresence,
 				creator_persona: creatorPersona,
+				product_reference_asset_id: referenceBinding.productReferenceAssetId,
+				start_frame_asset_id: referenceBinding.startFrameAssetId,
+				end_frame_asset_id: referenceBinding.endFrameAssetId,
+				character_reference_asset_id:
+					referenceBinding.characterReferenceAssetId,
+				scene_context_reference_asset_id:
+					referenceBinding.sceneContextReferenceAssetId,
+				style_reference_asset_id: referenceBinding.styleReferenceAssetId,
 			});
 			setWorkspacePackage(pkg);
 			setPreviewPackage(null);
@@ -1498,11 +1606,14 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const engineSingleDurations = singleDurations(currentEngine);
 	const singleDurationOptions =
 		engineSingleDurations.length > 0 ? engineSingleDurations : allowedDurations;
-	const singleModelOptions = modelsForSingle(currentEngine, videoDurationSeconds);
+	const singleModelOptions = modelsForSingle(
+		currentEngine,
+		videoDurationSeconds,
+	);
 	// EXTEND keeps all engine models (route/block authority owns durations);
 	// SINGLE is filtered to the operator-policy ∩ model duration.
 	const modelSelectOptions = isExtendMode
-		? currentEngine?.models ?? []
+		? (currentEngine?.models ?? [])
 		: singleModelOptions;
 	const engineHelperText = currentEngine
 		? `Single video supports ${engineSingleDurations
@@ -1530,7 +1641,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		promptConfig?.shot_count_policy[String(videoDurationSeconds)] ?? null;
 	const extendAuthority =
 		durationAuthority?.generationMode === "EXTEND" ? durationAuthority : null;
-	const extendTotalOptions = Object.keys(OPERATOR_EXTEND_PLAN_BY_TOTAL).map(Number);
+	const extendTotalOptions = Object.keys(OPERATOR_EXTEND_PLAN_BY_TOTAL).map(
+		Number,
+	);
 	const automaticWps =
 		promptConfig?.language_wps_policy[targetLanguage]?.body_wps ?? null;
 	const packageBridgeFlowLabelByMode: Record<WorkspaceMode, string> = {
@@ -1567,7 +1680,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-100"
 				>
 					Canonical video production requires EXTEND with an authorised total
-					duration. Select EXTEND above to use the server-owned durable video job.
+					duration. Select EXTEND above to use the server-owned durable video
+					job.
 				</div>
 			);
 		}
@@ -1757,7 +1871,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									id="operator-extend-total-duration"
 									name="operator_extend_total_duration"
 									title="Total video duration"
-									value={requestedTotalDuration === null ? "" : String(requestedTotalDuration)}
+									value={
+										requestedTotalDuration === null
+											? ""
+											: String(requestedTotalDuration)
+									}
 									onChange={(e) =>
 										handleExtendTotalDurationChange(
 											e.target.value === "" ? null : Number(e.target.value),
@@ -1795,7 +1913,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									))}
 								</select>
 								<div className="text-[11px] text-slate-400">
-									One complete video · {videoShotPolicy?.recommended ?? "-"} recommended shot(s)
+									One complete video · {videoShotPolicy?.recommended ?? "-"}{" "}
+									recommended shot(s)
 								</div>
 							</div>
 						)}
@@ -1863,6 +1982,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							</select>
 						</div>
 					</div>
+					<CanonicalReferenceBindingControls
+						mode={mode}
+						productId={selectedProduct?.id ?? null}
+						binding={referenceBinding}
+						onChange={setReferenceBinding}
+					/>
 					{legacyPackageWarning ? (
 						<div
 							data-testid="operator-legacy-package-warning"
@@ -1927,16 +2052,29 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									<>
 										<div title={extendAuthority.route ?? undefined}>
 											Route:{" "}
-											{extendAuthority.route === "GOOGLE_FLOW_INDEPENDENT_8S_BLOCKS"
+											{extendAuthority.route ===
+											"GOOGLE_FLOW_INDEPENDENT_8S_BLOCKS"
 												? "Uniform 8s block plan (executes via Native Flow Extend below)"
 												: extendAuthority.route}{" "}
 											· authorized · {extendAuthority.plan.length} blocks
 										</div>
 										<div className="mt-1">
-											Plan: {extendAuthority.plan.map((duration) => `${duration}s`).join(" + ")} · Timeline: {extendAuthority.timeline.map((segment) => `${segment.start_s}–${segment.end_s}s`).join(" | ")}
+											Plan:{" "}
+											{extendAuthority.plan
+												.map((duration) => `${duration}s`)
+												.join(" + ")}{" "}
+											· Timeline:{" "}
+											{extendAuthority.timeline
+												.map(
+													(segment) => `${segment.start_s}–${segment.end_s}s`,
+												)
+												.join(" | ")}
 										</div>
 										<div className="mt-1">
-											WPS: automatic {automaticWps === null ? "from compiler policy" : `${automaticWps} body WPS`}
+											WPS: automatic{" "}
+											{automaticWps === null
+												? "from compiler policy"
+												: `${automaticWps} body WPS`}
 										</div>
 									</>
 								) : (
@@ -1953,12 +2091,14 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							executionPackageId={
 								workspacePackage?.workspace_execution_package_id ?? null
 							}
-							plannedBlocks={extendAuthority.plan.slice(1).map((_blockDuration, i) => ({
-								block_index: i + 2,
-								position: i + 1,
-								prompt: `Native Extend continuation block ${i + 2}`,
-								is_final: i === extendAuthority.plan.length - 2,
-							}))}
+							plannedBlocks={extendAuthority.plan
+								.slice(1)
+								.map((_blockDuration, i) => ({
+									block_index: i + 2,
+									position: i + 1,
+									prompt: `Native Extend continuation block ${i + 2}`,
+									is_final: i === extendAuthority.plan.length - 2,
+								}))}
 						/>
 					)}
 					<div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -1972,14 +2112,18 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										const duration = segment.end_s - segment.start_s;
 										return (
 											<div key={segment.block_index} className="mt-1">
-												Block {segment.block_index}: {duration}s · {promptConfig?.shot_count_policy[String(duration)]?.recommended ?? "-"} recommended shot(s)
+												Block {segment.block_index}: {duration}s ·{" "}
+												{promptConfig?.shot_count_policy[String(duration)]
+													?.recommended ?? "-"}{" "}
+												recommended shot(s)
 											</div>
 										);
 									})}
 								</div>
 							) : (
 								<div className="mt-2">
-									Complete video: {videoShotPolicy?.recommended ?? "-"} recommended shot(s)
+									Complete video: {videoShotPolicy?.recommended ?? "-"}{" "}
+									recommended shot(s)
 								</div>
 							)}
 						</div>
@@ -2221,9 +2365,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					) : null}
 					{extendTotalRequired ? (
 						<div className="mb-3 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-200">
-							<strong>Production EXTEND requires one Total Video Duration.</strong> The
-							authorized route, block plan, timeline, and WPS budget are derived
-							automatically. Select a total above to enable Load / Generate.
+							<strong>
+								Production EXTEND requires one Total Video Duration.
+							</strong>{" "}
+							The authorized route, block plan, timeline, and WPS budget are
+							derived automatically. Select a total above to enable Load /
+							Generate.
 						</div>
 					) : null}
 					<button
@@ -2313,11 +2460,35 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								</div>
 							) : null}
 							{previewPackage.planner_result ? (
-								<div className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 px-3 py-3 text-xs text-slate-300" data-testid="operator-storyboard-plan-summary">
-									<div className="font-bold uppercase tracking-[0.18em] text-indigo-300">Storyboard-first plan · {previewPackage.planner_result.plan_version}</div>
-									<div className="mt-2 text-slate-400">Route: {previewPackage.planner_result.route_id} · Total: {previewPackage.planner_result.total_duration_seconds}s · Blocks: [{previewPackage.planner_result.resolved_block_plan.join(", ")}]</div>
-									<div className="mt-1 text-slate-400">Story: {previewPackage.planner_result.full_story_plan.story_summary}</div>
-									<div className="mt-1 text-slate-400">Full dialogue: {previewPackage.planner_result.full_dialogue_plan.full_dialogue_text || "(visual-only preview)"}</div>
+								<div
+									className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 px-3 py-3 text-xs text-slate-300"
+									data-testid="operator-storyboard-plan-summary"
+								>
+									<div className="font-bold uppercase tracking-[0.18em] text-indigo-300">
+										Storyboard-first plan ·{" "}
+										{previewPackage.planner_result.plan_version}
+									</div>
+									<div className="mt-2 text-slate-400">
+										Route: {previewPackage.planner_result.route_id} · Total:{" "}
+										{previewPackage.planner_result.total_duration_seconds}s ·
+										Blocks: [
+										{previewPackage.planner_result.resolved_block_plan.join(
+											", ",
+										)}
+										]
+									</div>
+									<div className="mt-1 text-slate-400">
+										Story:{" "}
+										{
+											previewPackage.planner_result.full_story_plan
+												.story_summary
+										}
+									</div>
+									<div className="mt-1 text-slate-400">
+										Full dialogue:{" "}
+										{previewPackage.planner_result.full_dialogue_plan
+											.full_dialogue_text || "(visual-only preview)"}
+									</div>
 								</div>
 							) : null}
 							<div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-200">

@@ -11,7 +11,10 @@ def _build_app() -> FastAPI:
 
 
 def test_workspace_execution_package_api_creates_package(monkeypatch):
+    captured = {}
+
     async def fake_create(**kwargs):
+        captured.update(kwargs)
         return {
             "workspace_execution_package_id": "wep_123",
             "product_id": kwargs["product_id"],
@@ -42,12 +45,18 @@ def test_workspace_execution_package_api_creates_package(monkeypatch):
             "generation_mode": "SINGLE",
             "camera_style": "UGC_IPHONE_RAW",
             "character_presence": "VISIBLE_CREATOR",
+            "source_mode": "FRAMES",
+            "start_frame_asset_id": "ca_start",
+            "end_frame_asset_id": "ca_end",
         },
     )
 
     assert response.status_code == 200
     assert response.json()["workspace_execution_package_id"] == "wep_123"
     assert response.json()["generation_mode"] == "SINGLE"
+    assert captured["source_mode"] == "FRAMES"
+    assert captured["start_frame_asset_id"] == "ca_start"
+    assert captured["end_frame_asset_id"] == "ca_end"
 
 
 def test_workspace_execution_package_api_lists_packages(monkeypatch):
@@ -64,7 +73,10 @@ def test_workspace_execution_package_api_lists_packages(monkeypatch):
 
 
 def test_workspace_package_readiness_api_returns_mode_items(monkeypatch):
-    async def fake_readiness(product_id, mode):
+    captured = []
+
+    async def fake_readiness(product_id, mode, *, source_mode=None):
+        captured.append((product_id, mode, source_mode))
         return {
             "product_id": product_id,
             "product_name": "Bosmax Herbs 5 ML",
@@ -85,11 +97,13 @@ def test_workspace_package_readiness_api_returns_mode_items(monkeypatch):
     client = TestClient(_build_app())
     response = client.post(
         "/api/workspace/package-readiness",
-        json={"mode": "F2V", "product_ids": ["prod-001", "prod-002"]},
+        json={"mode": "F2V", "source_mode": "FRAMES", "product_ids": ["prod-001", "prod-002"]},
     )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["mode"] == "F2V"
+    assert payload["source_mode"] == "FRAMES"
     assert len(payload["items"]) == 2
     assert payload["items"][0]["readiness_status"] == "READY"
+    assert captured == [("prod-001", "F2V", "FRAMES"), ("prod-002", "F2V", "FRAMES")]
