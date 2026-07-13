@@ -75,6 +75,26 @@ RS_SAFE, RS_RESUME_ONLY, RS_BLOCKED = "SAFE", "RESUME_ONLY", "BLOCKED"
 AUTHORIZATION_TTL_SECONDS = 600
 _SEGMENT_SECONDS = 8
 
+# The execution package (server-side SSOT) stores the operator's aspect in UI
+# ratio form ("9:16"); the Native Extend runtime resolves its model by the
+# captured enum form (EXTEND_VIDEO_MODELS keys). Map at THIS boundary only —
+# an already-enum value passes through unchanged, and an unknown value still
+# fails closed in the runtime (EXTEND_UNSUPPORTED_MODEL, zero credit). Live
+# regression: job vj_2502426e7791 EXTEND_FAILED with detail
+# "EXTEND_UNSUPPORTED_MODEL:9:16" after a successful initial.
+_ASPECT_RATIO_TO_ENUM = {
+    "9:16": "VIDEO_ASPECT_RATIO_PORTRAIT",
+    "16:9": "VIDEO_ASPECT_RATIO_LANDSCAPE",
+    "1:1": "VIDEO_ASPECT_RATIO_SQUARE",
+}
+
+
+def extend_aspect_ratio(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "VIDEO_ASPECT_RATIO_PORTRAIT"
+    return _ASPECT_RATIO_TO_ENUM.get(raw, raw)
+
 
 class OrchestratorError(RuntimeError):
     def __init__(self, code: str, detail: str = "") -> None:
@@ -526,7 +546,7 @@ async def advance_job(
             req = _nx.ExtendChainRequest(
                 project_id=job["project_id"], scene_id=job["scene_id"],
                 source_operation_id=parent_op, blocks=blocks,
-                aspect_ratio=job.get("aspect_ratio") or "VIDEO_ASPECT_RATIO_PORTRAIT")
+                aspect_ratio=extend_aspect_ratio(job.get("aspect_ratio")))
             try:
                 result = await _nx.run_native_extend_chain(
                     client, req, dry_run=False, confirm_live_credit_burn=True,

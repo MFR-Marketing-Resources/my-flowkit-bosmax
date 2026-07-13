@@ -129,6 +129,20 @@ async def _expire(job_id):
     await crud.update_video_production_job_full(job_id, authorization_expires_at="1.0")
 
 
+def test_extend_aspect_ratio_maps_ui_ratio_to_captured_enum():
+    # Live regression vj_2502426e7791: the package stores the operator aspect as
+    # "9:16" while EXTEND_VIDEO_MODELS is keyed by the captured enum — the
+    # orchestrator maps at its boundary; enum passes through; unknown values
+    # stay fail-closed in the runtime.
+    assert orch.extend_aspect_ratio("9:16") == "VIDEO_ASPECT_RATIO_PORTRAIT"
+    assert orch.extend_aspect_ratio("16:9") == "VIDEO_ASPECT_RATIO_LANDSCAPE"
+    assert orch.extend_aspect_ratio("1:1") == "VIDEO_ASPECT_RATIO_SQUARE"
+    assert (orch.extend_aspect_ratio("VIDEO_ASPECT_RATIO_PORTRAIT")
+            == "VIDEO_ASPECT_RATIO_PORTRAIT")
+    assert orch.extend_aspect_ratio(None) == "VIDEO_ASPECT_RATIO_PORTRAIT"
+    assert orch.extend_aspect_ratio("4:3") == "4:3"  # unknown → runtime fails closed
+
+
 # ── identity + plan authority (Mission 1 / 2 / 3) ────────────────────────────
 async def test_job_created_before_initial_generation(monkeypatch, tmp_path):
     planned, _ = await _plan_authorize(monkeypatch, "created")
