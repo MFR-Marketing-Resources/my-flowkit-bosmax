@@ -1,5 +1,13 @@
 {
   "mission": "BOSMAX_VIDEO_EXTENSION_ALL_MODES_GOLDEN_PATH_FINAL_CLOSURE",
+  "evidence_seal": {
+    "task": "BOSMAX_VIDEO_EXTENSION_FINAL_EVIDENCE_SEAL_AND_AGENT_HANDOFF_CLOSURE",
+    "purpose": "Documentation/evidence/status-only seal. NO production code, NO generation, NO credit. Corrects the credit ledger (modes-certified vs new-initial-submits), adds Git+runtime+test provenance, machine-readable post-merge validation, and the future-agent handoff.",
+    "no_production_source_changed": true,
+    "sealed_at_utc": "2026-07-13",
+    "seal_branch": "docs/video-extension-final-evidence-seal",
+    "seal_merge_sha": "SEE_FINAL_REPORT (recorded externally to avoid a self-referential commit-SHA loop)"
+  },
   "baseline_main_sha": "9f7046de6e773c20593bbcf121d2e6e373a9b6f7",
   "product": {"id": "6483d624-a03d-4933-9bba-6ca2e5f7b6fd", "name": "Minyak Warisan Tok Cap Burung 25ml"},
   "golden_benchmark": {
@@ -11,21 +19,21 @@
     "final_media_id": "final_vj_aa993dab70aa",
     "final_duration_s": 16.0,
     "final_sha256": "0e3a0c796af0b4516a91c207bdf3d44906480d44dcd2c716569c3a89a6150ab1",
-    "how_scene_was_present": "extend_lineage row (95977859) recorded parent 69051c7b + scene cce593f7; the scene was FIRST bootstrapped on 2026-07-11 by an earlier Extend of sibling parent b6371e69 in the SAME project, so resolve_extend_source_context found it for 69051c7b. A fresh project has NO prior lineage/artifact scene evidence -> the FIRST Extend must bootstrap the scene itself."
+    "how_scene_was_present": "extend_lineage row 95977859 recorded parent 69051c7b + scene cce593f7; the scene was FIRST bootstrapped 2026-07-11 by an earlier Extend of sibling parent b6371e69 in the SAME project, so resolve_extend_source_context found it for 69051c7b. A fresh project has NO prior lineage/artifact scene evidence -> the FIRST Extend must bootstrap the scene itself."
   },
   "root_cause": {
     "summary": "The FIRST Extend in a fresh project must create its Flow scene from the source clip's workflow id. _ensure_scene_membership fetched that id ONLY from get_media, which for a finished clip returns the encoded video WITHOUT a workflowId -> INITIAL_SCENE_UNRESOLVED, and the bootstrap could never run.",
     "workflow_id_is_available_via": "check_video_status_by_media -> media[{name,projectId,workflowId}] (captured live contract record 608; poll_status.sanitized.json). Proven live: status poll for 780fb967 returned workflowId 6d159659-3c5a-4f0f-9a6d-8fb34adde85a.",
-    "second_defect": "createScene(project,[workflowId]) COPIES the workflow into a fresh timeline entry with a RE-ISSUED primaryMediaId (verified live: op_in_listing=False, primary_in_listing=True), so the strict op_id==member check false-failed INITIAL_SCENE_ATTACH_UNVERIFIED. The scene IS the clip's (created from ITS workflow id); the scene's canonical member is the Extend parent.",
+    "second_defect": "createScene(project,[workflowId]) COPIES the workflow into a fresh timeline entry with a RE-ISSUED primaryMediaId (verified live: op_id not in listing, primary in listing), so the strict op_id==member check false-failed INITIAL_SCENE_ATTACH_UNVERIFIED. The scene IS the clip's (created from ITS workflow id); the scene's canonical member is the Extend parent.",
     "classification": "INTERNAL identity-capture + scene-bootstrap defect (not an external Google outage). Surgically repaired; no module rebuild."
   },
   "surgical_fix": {
     "files": ["agent/api/flow.py"],
     "changes": [
-      "_ensure_scene_membership: obtain workflow id from check_video_status_by_media when get_media omits it (identity captured from its REAL path, never cross-filled from media/response/tool ids).",
+      "_ensure_scene_membership: obtain workflow id from check_video_status_by_media when get_media omits it (from its REAL path, never cross-filled from media/response/tool ids).",
       "_ensure_scene_membership: accept the scene created from the clip's authoritative workflow id when it has a verified member; return (scene_id, workflow_id, canonical_member_id) 3-tuple; persist BOTH op_id and canonical member as durable scene evidence.",
       "_map_lane_to_identity: use the canonical member id as the Extend parent (== op_id in the golden case).",
-      "/video-jobs create: on resolve-miss, bootstrap the scene and adopt the scene's verified member id as the source (zero generation credit)."
+      "POST /video-jobs: on resolve-miss, bootstrap the scene and adopt the scene's verified member id as the source (zero generation credit)."
     ],
     "runtime_config": "NATIVE_EXTEND_ENABLED=1 persisted in .env (canonical config; proven effective with the OS var UNSET) + documented in .env.example. Not dependent on a temporary shell variable."
   },
@@ -51,18 +59,105 @@
   },
   "per_mode_initials": {
     "certification_strategy": "one real initial per mode + ONE shared full 16s chain (HYBRID). Downstream Extend+concat is source-mode-AGNOSTIC (operates on segment media ids + scene id; no source_mode branch), so per-mode full chains are unnecessary.",
-    "HYBRID": {"source_mode": "HYBRID", "transport_mode": "F2V", "refs": ["b2d9682c-845a-4bed-a260-1a2a11f6dbe1"], "initial_media_id": "780fb967-a574-4417-a481-d53d0fcee20a", "result": "DONE (adopted into the full chain)"},
-    "T2V": {"source_mode": "T2V", "transport_mode": "T2V", "refs": [], "initial_media_id": "2cc117e2-afde-4ed8-a28a-b6fe6df898d1", "result": "DONE"},
-    "F2V": {"source_mode": "FRAMES", "transport_mode": "F2V", "refs": ["b2d9682c-845a-4bed-a260-1a2a11f6dbe1"], "initial_media_id": "16da9f64-d983-461a-b63f-97653c1f234d", "result": "DONE"},
-    "I2V": {"source_mode": "INGREDIENTS", "transport_mode": "I2V", "refs": ["b2d9682c-845a-4bed-a260-1a2a11f6dbe1", "bbdb4c03-2156-49ce-8c2e-34334b2332b2"], "initial_media_id": "10d74088-51b6-4918-8b65-f6c1136b6dac", "result": "DONE"}
+    "HYBRID": {"source_mode": "HYBRID", "transport_mode": "F2V", "refs": ["b2d9682c-845a-4bed-a260-1a2a11f6dbe1"], "initial_media_id": "780fb967-a574-4417-a481-d53d0fcee20a", "gen_job": "g_15387de2c753", "on_disk_bytes": 2050758, "result": "DONE (adopted into the full chain; reused across rounds)"},
+    "T2V": {"source_mode": "T2V", "transport_mode": "T2V", "refs": [], "initial_media_id": "2cc117e2-afde-4ed8-a28a-b6fe6df898d1", "gen_job": "g_15d2b53c1ddd", "on_disk_bytes": 2532061, "result": "DONE"},
+    "F2V": {"source_mode": "FRAMES", "transport_mode": "F2V", "refs": ["b2d9682c-845a-4bed-a260-1a2a11f6dbe1"], "initial_media_id": "16da9f64-d983-461a-b63f-97653c1f234d", "gen_job": "g_ce4599a7828f", "on_disk_bytes": 2303410, "result": "DONE"},
+    "I2V": {"source_mode": "INGREDIENTS", "transport_mode": "I2V", "refs": ["b2d9682c-845a-4bed-a260-1a2a11f6dbe1", "bbdb4c03-2156-49ce-8c2e-34334b2332b2"], "initial_media_id": "10d74088-51b6-4918-8b65-f6c1136b6dac", "gen_job": "g_74ef0c477280", "on_disk_bytes": 1885378, "result": "DONE"}
   },
   "downstream_agnostic_proof": "grep of agent/services/google_flow_native_extend_runtime.py + google_flow_final_timeline_runtime.py returns ZERO source_mode/initial_source_mode/source_lane references; run_native_extend_chain + finalize_timeline operate on (project_id, scene_id, segment media ids, prompts) only -> ONE shared full chain certifies all modes.",
   "credit_ledger": {
-    "note": "Full ledger from the original 1530 baseline across all rounds. This mission's live burns are the ONE Extend (-10) and the mode initials.",
+    "reconstructed_from": "durable task-output credit-before/after captures + video_production_job + video_job_side_effect + extend_lineage + on-disk artifacts. Verified to reconcile exactly.",
+    "certification": {
+      "mode_count": 4,
+      "modes": ["T2V", "HYBRID", "F2V", "I2V"],
+      "note": "certified_mode_count (4) is DISTINCT from new_initial_submits_in_final_closure_round (3): the HYBRID initial was generated in an earlier round and REUSED/adopted, not re-generated."
+    },
     "original_baseline": 1530,
-    "pre_fix_rounds": "T2V render-fail (-10), HYBRID /generate 780fb967 (-10, now ADOPTED/REUSED), durable HYBRID scene-unresolved (-10, pre-fix casualty) -> 1500",
-    "this_round": "scene bootstrap (0, FREE), Extend aeddefd1 (-10 -> 1490), concat (0, FREE), T2V initial (-10 -> 1480), F2V initial (-10 -> 1470), I2V initial (-10 -> 1460)",
     "final_balance": 1460,
-    "live_credit_operations_this_mission": {"initials": 4, "extend": 1, "concat": 1, "no_duplicate_side_effect": true, "no_uncertain_operation": true}
+    "generation_credit_delta": -70,
+    "successful_initials": 4,
+    "new_initial_submits_in_final_closure_round": 3,
+    "reused_initials": 1,
+    "failed_provider_initials": 1,
+    "failed_internal_initials": 1,
+    "extend_submits": 1,
+    "concat_submits": 1,
+    "free_operations": ["scene_bootstrap", "concat", "earlier zero-credit precondition failures (T2V NO_OPEN_EDITOR, T2V CAPTCHA_FAILED)"],
+    "uncertain_operation_count": 0,
+    "final_closure_round": {
+      "new_initial_submits": 3,
+      "reused_initials": 1,
+      "extend_submits": 1,
+      "concat_submits": 1,
+      "round_delta": -40
+    },
+    "all_operations_from_original_baseline": [
+      {"seq": 1, "type": "initial", "mode": "T2V", "outcome": "FAILED_PROVIDER_RENDER", "reused": false, "credit_spending": true, "ref": "g_e6dc487c2be1", "credits_before": 1530, "credits_after": 1520, "delta": -10, "round": "pre-fix", "evidence": "task b4z35frcf/bzg71aj3u: FAILED_RENDER_REPORTED_BY_AGENT"},
+      {"seq": 2, "type": "initial", "mode": "HYBRID", "outcome": "SUCCESS", "reused": true, "credit_spending": true, "ref": "g_15387de2c753 -> 780fb967", "credits_before": 1520, "credits_after": 1510, "delta": -10, "round": "pre-fix (adopted in final round)", "evidence": "task ba1rqh6jl: DONE; adopted as ce53dda4 Extend parent"},
+      {"seq": 3, "type": "initial", "mode": "HYBRID", "outcome": "FAILED_INTERNAL_SCENE_UNRESOLVED", "reused": false, "credit_spending": true, "ref": "g_5a8b7268f873 (vj_d99aaf00c45b)", "credits_before": 1510, "credits_after": 1500, "delta": -10, "round": "pre-fix", "evidence": "video_production_job INITIAL_FAILED + side_effect credit_state=MAY_HAVE_SPENT; credit gap confirms spend; superseded by the fix"},
+      {"seq": 4, "type": "extend", "mode": "shared", "outcome": "SUCCESS", "reused": false, "credit_spending": true, "ref": "ce53dda4 -> aeddefd1", "credits_before": 1500, "credits_after": 1490, "delta": -10, "round": "final-closure", "evidence": "task bzuwdvgbs: EXTEND_SUCCEEDED"},
+      {"seq": 5, "type": "initial", "mode": "T2V", "outcome": "SUCCESS", "reused": false, "credit_spending": true, "ref": "g_15d2b53c1ddd -> 2cc117e2", "credits_before": 1490, "credits_after": 1480, "delta": -10, "round": "final-closure", "evidence": "task b3jm31orr: DONE"},
+      {"seq": 6, "type": "initial", "mode": "F2V", "outcome": "SUCCESS", "reused": false, "credit_spending": true, "ref": "g_ce4599a7828f -> 16da9f64", "credits_before": 1480, "credits_after": 1470, "delta": -10, "round": "final-closure", "evidence": "task b6ojbyn78: DONE"},
+      {"seq": 7, "type": "initial", "mode": "I2V", "outcome": "SUCCESS", "reused": false, "credit_spending": true, "ref": "g_74ef0c477280 -> 10d74088", "credits_before": 1470, "credits_after": 1460, "delta": -10, "round": "final-closure", "evidence": "task byt7g96dv: DONE"},
+      {"seq": 8, "type": "scene_bootstrap", "mode": "HYBRID", "outcome": "SUCCESS", "reused": false, "credit_spending": false, "ref": "780fb967 -> scene 2accf53a", "credits_before": 1500, "credits_after": 1500, "delta": 0, "round": "final-closure", "evidence": "createScene from captured workflow 6d159659; FREE"},
+      {"seq": 9, "type": "concat", "mode": "shared", "outcome": "SUCCESS", "reused": false, "credit_spending": false, "ref": "final_vj_25ca81841930 (concat job b2bb63cb-...)", "credits_before": 1490, "credits_after": 1490, "delta": 0, "round": "final-closure", "evidence": "runVideoFxConcatenation FREE; final 16.0s"}
+    ],
+    "reconciliation": "7 credit-spending operations x -10 = -70; 1530 - 70 = 1460 (matches final_balance). scene_bootstrap + concat = 0 credit."
+  },
+  "delivery_provenance": {
+    "feature_branch": "fix/video-extension-all-modes-golden-path-final-closure",
+    "feature_commit_sha": "a7618879257dd0fb0f4c1170b40606fa7f02b310",
+    "pr_number": 334,
+    "pr_url": "https://github.com/MFR-Marketing-Resources/my-flowkit-bosmax/pull/334",
+    "pr_title": "fix(video-extension): golden scene-bootstrap bridge — all 4 modes live-proven + 16s chain",
+    "pr_state": "MERGED",
+    "pr_merged_at_utc": "2026-07-13T04:26:49Z",
+    "base_sha": "9f7046de6e773c20593bbcf121d2e6e373a9b6f7",
+    "merge_sha": "acb95e5dd7ab16c1f1a7f1c85bebea515b20198d",
+    "current_main_sha": "acb95e5dd7ab16c1f1a7f1c85bebea515b20198d",
+    "canonical_runtime_sha_after_restart": "acb95e5dd7ab16c1f1a7f1c85bebea515b20198d",
+    "pr_334_changed_files": [".env.example", "agent/api/flow.py", "docs/MODULE_STATUS.yaml", "docs/evidence/video_extension_all_modes_golden_path_closure.sanitized.json", "tests/api/test_scene_bootstrap_bridge.py", "tests/unit/test_production_initial_adapter.py"],
+    "evidence_seal_pr": "SEE_FINAL_REPORT (opened by this task; merge SHA recorded in the final report to avoid a self-referential loop)"
+  },
+  "post_merge_validation": {
+    "validation_timestamp_utc": "2026-07-13",
+    "canonical_repo_path": "C:/Users/USER/Desktop/_ref_flowkit",
+    "canonical_head": "acb95e5dd7ab16c1f1a7f1c85bebea515b20198d",
+    "runtime_startup_proof": "canonical restart via scripts/start-local-agent.ps1 (.venv); fix present (check_video_status_by_media x2 in agent/api/flow.py)",
+    "backend_health": "OK",
+    "active_database": "flow_agent.db (repo root)",
+    "product_count": 516,
+    "extension_connected": true,
+    "token_present": true,
+    "native_extend_enabled": true,
+    "native_extend_enabled_source": ".env (proven with OS var unset)",
+    "in_flight_generation_count": 0,
+    "in_flight_extend_count": 0,
+    "credit_before_validation": 1460,
+    "credit_after_validation": 1460,
+    "zero_credit_validation": true,
+    "final_artifact_retrieval_http": 200,
+    "retrieved_byte_count": 15040996,
+    "retrieved_sha256": "a58c96ab42b705a80bc0e484802ecd302fa23af32271642d69797f9ca52677fb",
+    "expected_sha256": "a58c96ab42b705a80bc0e484802ecd302fa23af32271642d69797f9ca52677fb",
+    "sha_match": true,
+    "expected_duration_s": 16.0,
+    "probed_duration_s": 16.0,
+    "duration_match": true,
+    "no_generation": true,
+    "no_extend": true,
+    "no_concat": true,
+    "no_new_db_side_effect": true
+  },
+  "test_ledger": {
+    "environment": "system python 3.12 (also verified importable under .venv); repo root C:/Users/USER/Desktop/_ref_flowkit; no live-generation flags; zero Google Flow credits",
+    "command": "python -m pytest tests/api/test_scene_bootstrap_bridge.py tests/unit/test_production_initial_adapter.py tests/unit/test_google_flow_native_extend_runtime.py tests/api/test_extend_api.py tests/unit/test_native_extend_source_resolver.py tests/unit/test_extend_lineage_persistence.py tests/unit/test_video_production_orchestrator.py tests/integration/test_full_video_job_e2e.py tests/unit/test_initial_gen_mode_authority.py tests/unit/test_flow_mode_reference_contract.py tests/unit/test_initial_reference_contract.py tests/unit/test_google_flow_final_timeline_runtime.py tests/api/test_retrieved_final_id.py tests/unit/test_production_plan_resolver.py tests/unit/test_single_block_prompt_guard.py -q",
+    "exit_code": 0,
+    "passed": 177,
+    "failed": 0,
+    "skipped": 0,
+    "duration_s": 10.72,
+    "suites_covered": ["scene-bootstrap bridge", "production initial adapter", "native extend runtime", "extend api", "source resolver", "extend lineage", "video production orchestrator", "full-video integration", "mode authority", "reference contract", "final timeline", "final artifact retrieval", "production plan resolver", "single-block prompt guard"],
+    "supersedes": "the '177 passed' figure is reproduced here, not merely copied."
   }
 }
