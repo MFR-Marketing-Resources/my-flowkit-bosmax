@@ -129,6 +129,16 @@ def presenter_prose(profile: dict) -> str:
     This is the ONLY sanctioned way avatar identity enters a final prompt: real
     description, reusable across blocks, no pool metadata, no placeholders.
     """
+    # Persona-variant override (Phase A): a profile carrying `prose_override`
+    # (persona_variant_service) renders its curated description verbatim.
+    # Pool-CSV profiles never carry this key — their output is byte-identical.
+    override = str(profile.get("prose_override") or "").strip()
+    if override:
+        return (
+            f"The presenter is {override.rstrip('.')}. Keep this exact presenter "
+            f"identity — face, hair, wardrobe, and body language — consistent in "
+            f"every shot."
+        )
     gender = _gender_word(profile.get("avatar_code", ""))
     bits = []
     skin = profile.get("skin_tone")

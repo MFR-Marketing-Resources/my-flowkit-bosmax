@@ -867,12 +867,20 @@ def compile_ugc_video_prompt(
         resolved_copy["usps"] = sentences[:3]
     resolved_presenter = None
     if resolved_source_mode in ("HYBRID", "T2V"):
-        from agent.services import avatar_registry as _avatars
-        resolved_presenter = _avatars.resolve_presenter(
-            avatar_id,
-            usage_context=_clean(product.get("category")),
-            seed=_clean(product.get("id") or product.get("name") or "bosmax"),
+        # Avatar Persona variant override (Phase A): an operator-selected
+        # persona variant (seed or composed AVX id) IS the presenter identity;
+        # otherwise the proven seeded avatar-pool pick applies unchanged.
+        from agent.services import persona_variant_service as _persona_variants
+        resolved_presenter = _persona_variants.presenter_profile_for_persona(
+            resolved_creator_persona
         )
+        if resolved_presenter is None:
+            from agent.services import avatar_registry as _avatars
+            resolved_presenter = _avatars.resolve_presenter(
+                avatar_id,
+                usage_context=_clean(product.get("category")),
+                seed=_clean(product.get("id") or product.get("name") or "bosmax"),
+            )
     _ingredient_roles = (
         {"PRODUCT_REFERENCE": True, "AVATAR_REFERENCE": True}
         if resolved_source_mode == "INGREDIENTS" else None

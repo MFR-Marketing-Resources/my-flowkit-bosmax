@@ -143,50 +143,47 @@ seeds:
   - id: AVATAR_ALYA_OFFICE
     label: "Alya — Wanita Melayu, Pejabat"
     visual_description: >-
-      Malaysian Malay woman in her late 20s, light-medium skin tone, medium
+      a Malaysian Malay woman in her late 20s, light-medium skin tone, medium
       tidy hair, wearing smart office wear, in a modern office interior with
       balanced commercial lighting, calm and credible expression, natural
-      commercial grooming, consistent identity and wardrobe across all blocks.
+      commercial grooming.
   - id: AVATAR_ZARA_HOME
     label: "Zara — Wanita Melayu, Rumah"
     visual_description: >-
-      Malaysian Malay woman in her 30s, tan Southeast Asian skin tone, medium
+      a Malaysian Malay woman in her 30s, tan Southeast Asian skin tone, medium
       tidy hair, wearing comfortable modest home casual wear, in a warm modern
       Malaysian living room with soft natural light, relaxed friendly
-      expression, natural commercial grooming, consistent identity and
-      wardrobe across all blocks.
+      expression, natural commercial grooming.
   - id: AVATAR_AISYAH_HIJAB_STUDIO
     label: "Aisyah — Wanita Melayu bertudung, Studio"
     visual_description: >-
-      Malaysian Malay woman in her 30s wearing a neatly styled plain hijab,
+      a Malaysian Malay woman in her 30s wearing a neatly styled plain hijab,
       tan Southeast Asian skin tone, wearing neutral presentable studio wear,
       against a clean plain neutral studio backdrop with balanced lighting,
-      calm neutral expression, natural commercial grooming, consistent
-      identity and wardrobe across all blocks.
+      calm neutral expression, natural commercial grooming.
   - id: AVATAR_HARIS_OFFICE
     label: "Haris — Lelaki Melayu, Pejabat"
     visual_description: >-
-      Malaysian Malay man in his 30s, tan Southeast Asian skin tone, short
+      a Malaysian Malay man in his 30s, tan Southeast Asian skin tone, short
       neat hair, wearing smart office wear, in a modern office interior with
       balanced commercial lighting, calm credible expression, natural
-      commercial grooming, consistent identity and wardrobe across all blocks.
+      commercial grooming.
   - id: AVATAR_MIA_KENDURI
     label: "Mia — Wanita Melayu, Kenduri/Raya"
     visual_description: >-
-      Malaysian Malay woman in her 30s, tan Southeast Asian skin tone, medium
+      a Malaysian Malay woman in her 30s, tan Southeast Asian skin tone, medium
       tidy hair, wearing an elegant modern baju kurung, in a festive Malaysian
       event hall with warm celebratory lighting, warm polite expression,
-      natural commercial grooming, consistent identity and wardrobe across all
-      blocks.
+      natural commercial grooming.
   - id: AVATAR_RAFI_KENDURI
     label: "Rafi — Lelaki Melayu, Kenduri/Raya"
     visual_description: >-
-      Malaysian Malay man in his 30s, medium tan skin tone, short neat hair,
+      a Malaysian Malay man in his 30s, medium tan skin tone, short neat hair,
       wearing a modern baju melayu with sampin, in a festive Malaysian event
       hall with warm celebratory lighting, warm polite expression, natural
-      commercial grooming, consistent identity and wardrobe across all blocks.
+      commercial grooming.
 
 visual_template_en: >-
-  Malaysian {ethnicity} {gender}, {age}, wearing {wardrobe}, in {environment},
-  {expression}, natural commercial grooming, modest presentable styling,
-  consistent identity and wardrobe across all blocks.
+  a Malaysian {ethnicity} {gender}, {age}, wearing {wardrobe}, in
+  {environment}, with a {expression}, natural commercial grooming and modest
+  presentable styling
