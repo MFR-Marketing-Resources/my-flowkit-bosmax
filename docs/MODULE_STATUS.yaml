@@ -82,6 +82,13 @@ domains:
       - agent/services/creative_asset_service.py
       - agent/services/fastmoss_bulk_promotion_service.py
       - agent/services/fastmoss_product_reference_service.py
+
+      # Kalodata/External catalog staged import (additive, zero AI spend)
+      - agent/api/kalodata_import.py
+      - agent/models/kalodata_import.py
+      - agent/services/kalodata_import_service.py
+      - tests/unit/test_kalodata_import_service.py
+      - tests/api/test_kalodata_import_api.py
       - agent/services/bosmax_product_family.py
       - agent/services/claim_safe_rewrite_service.py
       - agent/services/ai_provider_settings_service.py

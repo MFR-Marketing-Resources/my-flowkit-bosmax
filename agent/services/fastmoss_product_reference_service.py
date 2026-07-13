@@ -104,34 +104,79 @@ def _reference_seed(operator_product: Any) -> dict[str, Any]:
     }
 
 
+def _staged_catalog_signature() -> str:
+    """Cache-signature fragment for the staged Kalodata catalog file (0:0 when
+    absent) so a re-import invalidates the reference cache."""
+    from agent.services.kalodata_import_service import staged_catalog_path
+
+    path = staged_catalog_path()
+    if not path.exists():
+        return "0:0"
+    stat = path.stat()
+    return f"{stat.st_mtime_ns}:{stat.st_size}"
+
+
+async def _load_staged_reference_items(seen_ids: set[str]) -> list[dict[str, Any]]:
+    """Kalodata staged records (already in `_reference_seed` shape with the same
+    `fastmoss-ref:` id scheme) enriched exactly like workbook rows. Ids already
+    present from the workbook win — staged duplicates are dropped."""
+    from agent.services.kalodata_import_service import load_staged_catalog
+
+    items: list[dict[str, Any]] = []
+    for record in load_staged_catalog():
+        record_id = _clean(record.get("id"))
+        if not record_id or record_id in seen_ids:
+            continue
+        seen_ids.add(record_id)
+        enriched = await enrich_product(dict(record), persist=False)
+        enriched["source_lane"] = FASTMOSS_REFERENCE_LANE
+        enriched["source_label"] = "Kalodata Reference"
+        enriched["reference_only"] = True
+        enriched["catalog_blockers"] = [FASTMOSS_REFERENCE_BLOCKER]
+        enriched["catalog_visibility_reason"] = FASTMOSS_REFERENCE_REASON
+        items.append(enriched)
+    return items
+
+
 async def list_fastmoss_reference_products(limit: int = 500) -> list[dict[str, Any]]:
     global _REFERENCE_CACHE_ITEMS, _REFERENCE_CACHE_SIGNATURE, _REFERENCE_CACHE_LOADED_LIMIT
     from agent.api.operator import _load_products, _pack_file
 
     workbook_path = Path(_pack_file("FASTMOSS_COMBINED_10_FILES_WORKBOOK.xlsx"))
-    if not workbook_path.exists():
+    workbook_exists = workbook_path.exists()
+    staged_signature = _staged_catalog_signature()
+    if not workbook_exists and staged_signature == "0:0":
         _REFERENCE_CACHE_SIGNATURE = None
         _REFERENCE_CACHE_ITEMS = []
         _REFERENCE_CACHE_LOADED_LIMIT = 0
         return []
 
-    signature = f"{workbook_path.stat().st_mtime_ns}:{workbook_path.stat().st_size}"
+    workbook_signature = (
+        f"{workbook_path.stat().st_mtime_ns}:{workbook_path.stat().st_size}"
+        if workbook_exists
+        else "0:0"
+    )
+    signature = f"{workbook_signature}|{staged_signature}"
     # Hit on the load cap, not len(items): if the workbook has fewer rows than the
     # requested limit, the cache already holds ALL of them and is still complete.
     if signature == _REFERENCE_CACHE_SIGNATURE and _REFERENCE_CACHE_LOADED_LIMIT >= limit:
         return _REFERENCE_CACHE_ITEMS[:limit]
 
     load_cap = max(limit, len(_REFERENCE_CACHE_ITEMS), 500)
-    operator_products = _load_products(limit=load_cap)
     items: list[dict[str, Any]] = []
-    for operator_product in operator_products:
-        enriched = await enrich_product(_reference_seed(operator_product), persist=False)
-        enriched["source_lane"] = FASTMOSS_REFERENCE_LANE
-        enriched["source_label"] = FASTMOSS_REFERENCE_LABEL
-        enriched["reference_only"] = True
-        enriched["catalog_blockers"] = [FASTMOSS_REFERENCE_BLOCKER]
-        enriched["catalog_visibility_reason"] = FASTMOSS_REFERENCE_REASON
-        items.append(enriched)
+    seen_ids: set[str] = set()
+    if workbook_exists:
+        operator_products = _load_products(limit=load_cap)
+        for operator_product in operator_products:
+            enriched = await enrich_product(_reference_seed(operator_product), persist=False)
+            enriched["source_lane"] = FASTMOSS_REFERENCE_LANE
+            enriched["source_label"] = FASTMOSS_REFERENCE_LABEL
+            enriched["reference_only"] = True
+            enriched["catalog_blockers"] = [FASTMOSS_REFERENCE_BLOCKER]
+            enriched["catalog_visibility_reason"] = FASTMOSS_REFERENCE_REASON
+            items.append(enriched)
+            seen_ids.add(_clean(enriched.get("id")))
+    items.extend(await _load_staged_reference_items(seen_ids))
     _REFERENCE_CACHE_SIGNATURE = signature
     _REFERENCE_CACHE_ITEMS = items
     _REFERENCE_CACHE_LOADED_LIMIT = load_cap

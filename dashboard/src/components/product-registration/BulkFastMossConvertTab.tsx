@@ -74,6 +74,8 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 	>({});
 	const [loading, setLoading] = useState(false);
 	const [syncing, setSyncing] = useState(false);
+	const [kalodataImporting, setKalodataImporting] = useState(false);
+	const [applyingHub, setApplyingHub] = useState(false);
 	const [actionMessage, setActionMessage] = useState<string | null>(null);
 	const [actionError, setActionError] = useState<string | null>(null);
 	const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
@@ -201,6 +203,58 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 			setActionError(getErrorMessage(e, "Sync failed"));
 		} finally {
 			setSyncing(false);
+		}
+	};
+
+	// Kalodata/External catalog staged import (additive, zero AI spend):
+	// stages the Owner's merged workbook into the reference catalog, then the
+	// normal Sync Queue / drafts / approval flow applies unchanged.
+	const handleKalodataImport = async () => {
+		setKalodataImporting(true);
+		setActionMessage(null);
+		setActionError(null);
+		try {
+			const report = await postAPI<{
+				staged: number;
+				parsed_merged: number;
+				hub_matched: number;
+				product_id_low_confidence: number;
+				skipped_duplicate_in_file: number;
+			}>("/api/kalodata/import", {});
+			setActionMessage(
+				`Kalodata import — parsed: ${report.parsed_merged}, staged: ${report.staged}, ` +
+					`HUB matched: ${report.hub_matched}, duplicates: ${report.skipped_duplicate_in_file}, ` +
+					`low-confidence IDs: ${report.product_id_low_confidence}. ` +
+					`Press Sync Queue to load them.`,
+			);
+		} catch (e: unknown) {
+			setActionError(getErrorMessage(e, "Kalodata import failed"));
+		} finally {
+			setKalodataImporting(false);
+		}
+	};
+
+	const handleApplyHubEnrichment = async () => {
+		setApplyingHub(true);
+		setActionMessage(null);
+		setActionError(null);
+		try {
+			const r = await postAPI<{
+				total: number;
+				recomputed: number;
+				skipped: number;
+				failed: number;
+			}>("/api/kalodata/apply-hub-enrichment", {});
+			setActionMessage(
+				`HUB enrichment — total: ${r.total}, recomputed: ${r.recomputed}, ` +
+					`skipped: ${r.skipped}, failed: ${r.failed}`,
+			);
+			await fetchStats();
+			await fetchQueue();
+		} catch (e: unknown) {
+			setActionError(getErrorMessage(e, "HUB enrichment failed"));
+		} finally {
+			setApplyingHub(false);
 		}
 	};
 
@@ -644,6 +698,24 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 						Queue Stats
 					</span>
 					<div className="flex items-center gap-2">
+						<button
+							type="button"
+							onClick={handleKalodataImport}
+							disabled={kalodataImporting}
+							title="Stage the Kalodata/Fastmoss merged workbook into the reference catalog (no AI, no product writes)"
+							className="px-3 py-1 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/40 border border-cyan-600/30 disabled:opacity-40 text-cyan-300 text-[10px] font-bold uppercase tracking-widest transition-all"
+						>
+							{kalodataImporting ? "Importing…" : "Import Kalodata"}
+						</button>
+						<button
+							type="button"
+							onClick={handleApplyHubEnrichment}
+							disabled={applyingHub}
+							title="Apply staged COPYWRITING HUB data to queued Kalodata rows (recompute drafts)"
+							className="px-3 py-1 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/40 border border-cyan-600/30 disabled:opacity-40 text-cyan-300 text-[10px] font-bold uppercase tracking-widest transition-all"
+						>
+							{applyingHub ? "Applying…" : "Apply HUB Enrichment"}
+						</button>
 						<button
 							type="button"
 							onClick={handleExportMissing}
