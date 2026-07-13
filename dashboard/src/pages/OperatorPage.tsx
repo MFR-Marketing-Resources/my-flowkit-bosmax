@@ -2111,24 +2111,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							</div>
 						</div>
 					</div>
-					{extendAuthority && (
-						<NativeExtendPanel
-							totalDurationSeconds={requestedTotalDuration}
-							productId={selectedProduct?.id ?? null}
-							productName={selectedProduct?.product_display_name ?? null}
-							executionPackageId={
-								workspacePackage?.workspace_execution_package_id ?? null
-							}
-							plannedBlocks={extendAuthority.plan
-								.slice(1)
-								.map((_blockDuration, i) => ({
-									block_index: i + 2,
-									position: i + 1,
-									prompt: `Native Extend continuation block ${i + 2}`,
-									is_final: i === extendAuthority.plan.length - 2,
-								}))}
-						/>
-					)}
 					<div className="mt-4 grid gap-3 md:grid-cols-2">
 						<div className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-3 text-[11px] text-slate-300">
 							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
@@ -2729,6 +2711,49 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					) : null}
 				</div>
 			)}
+
+			{/* ── STEP 5: Generate Video (one full video, generated in parts) ──
+			    Presentation-only relocation (2026-07-13 operator UX request): the
+			    SAME NativeExtendPanel that previously rendered inside Step 1 now
+			    sits after Step 4 so the page reads top-to-bottom — settings →
+			    product → copy → load → final prompt → GENERATE VIDEO. Props,
+			    state, and behavior are unchanged. */}
+			{mode !== "IMG" && (
+				<div className="mb-6 rounded-2xl border border-emerald-500/20 bg-slate-900/40 p-4">
+					<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+						Step 5 — Generate Video
+					</div>
+					<div className="mb-4 text-[11px] text-slate-400">
+						After the final prompt is saved above, generate the one complete
+						video here. The initial part, the Native Flow Extend continuation,
+						and the final combined MP4 run automatically.
+					</div>
+					{extendAuthority ? (
+						<NativeExtendPanel
+							totalDurationSeconds={requestedTotalDuration}
+							productId={selectedProduct?.id ?? null}
+							productName={selectedProduct?.product_display_name ?? null}
+							executionPackageId={
+								workspacePackage?.workspace_execution_package_id ?? null
+							}
+							plannedBlocks={extendAuthority.plan
+								.slice(1)
+								.map((_blockDuration, i) => ({
+									block_index: i + 2,
+									position: i + 1,
+									prompt: `Native Extend continuation block ${i + 2}`,
+									is_final: i === extendAuthority.plan.length - 2,
+								}))}
+						/>
+					) : (
+						<div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-100">
+							Select EXTEND with one Total Video Duration in Step 1 to enable
+							video generation.
+						</div>
+					)}
+				</div>
+			)}
+
 
 			<div
 				className={`mb-6 rounded-2xl border px-4 py-3 text-sm ${notice.tone === "error" ? "border-red-500/40 bg-red-500/10 text-red-200" : notice.tone === "success" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200" : notice.tone === "info" ? "border-blue-500/40 bg-blue-500/10 text-blue-200" : notice.tone === "warning" ? "border-amber-500/40 bg-amber-500/10 text-amber-200" : "border-slate-800 bg-slate-900/40 text-slate-300"}`}
