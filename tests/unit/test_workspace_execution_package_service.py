@@ -3,10 +3,35 @@ import json
 import pytest
 
 from agent.services.workspace_execution_package_service import (
+    _bind_f2v_reference_assets,
     compile_workspace_prompt_preview,
     create_workspace_execution_package,
     list_workspace_execution_packages,
 )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("product_reference_asset_id", "start_frame_asset_id", "end_frame_asset_id"),
+    [
+        (None, None, None),
+        ("ca_product", "ca_extra", None),
+        ("ca_product", None, "ca_extra"),
+    ],
+)
+async def test_hybrid_reference_binding_requires_exactly_one_product_reference(
+    product_reference_asset_id,
+    start_frame_asset_id,
+    end_frame_asset_id,
+):
+    with pytest.raises(ValueError, match="HYBRID_EXACTLY_ONE_PRODUCT_REFERENCE_REQUIRED"):
+        await _bind_f2v_reference_assets(
+            [],
+            source_mode="HYBRID",
+            product_reference_asset_id=product_reference_asset_id,
+            start_frame_asset_id=start_frame_asset_id,
+            end_frame_asset_id=end_frame_asset_id,
+        )
 
 
 @pytest.mark.asyncio
@@ -102,19 +127,61 @@ async def test_workspace_execution_package_uses_product_cached_asset(monkeypatch
         captured.update(kwargs)
         return kwargs
 
+    async def fake_validate(asset_id: str, **kwargs):
+        assert asset_id == "ca_start"
+        assert kwargs == {
+            "semantic_role": "COMPOSITE_FRAME_REFERENCE",
+            "allowed_mode": "F2V",
+            "engine_slot": "start_frame",
+            "require_approved": True,
+        }
+        return type(
+            "ValidationResult",
+            (),
+            {
+                "valid": True,
+                "blockers": [],
+                "asset": type(
+                    "Asset",
+                    (),
+                    {
+                        "asset_id": "ca_start",
+                        "display_name": "Operator selected start frame",
+                        "source_type": "UPLOAD",
+                        "local_file_path": "C:/tmp/start.png",
+                        "remote_source_url": None,
+                        "preview_url": "/api/creative-assets/ca_start/preview",
+                        "download_url": "/api/creative-assets/ca_start/download",
+                        "media_id": "media-start",
+                    },
+                )(),
+            },
+        )()
+
     monkeypatch.setattr("agent.services.workspace_execution_package_service.get_approved_product_package", fake_package)
     monkeypatch.setattr("agent.services.workspace_execution_package_service.compile_workspace_prompt_preview", fake_compile)
     monkeypatch.setattr("agent.services.workspace_execution_package_service.crud.create_or_replace_workspace_execution_package", fake_store)
+    monkeypatch.setattr("agent.services.workspace_execution_package_service.validate_selectable_asset", fake_validate)
 
     # copy_fallback_confirmed=True: this test exercises package mechanics, not the
     # copy gate; no Copy Set is selected so fallback must be intentionally confirmed
     # (Explicit-Fallback-Confirmation V1).
     result = await create_workspace_execution_package(
-        "prod-001", "F2V", 8, "9:16", "Veo 3.1 - Lite", False, copy_fallback_confirmed=True
+        "prod-001",
+        "F2V",
+        8,
+        "9:16",
+        "Veo 3.1 - Lite",
+        False,
+        source_mode="FRAMES",
+        start_frame_asset_id="ca_start",
+        copy_fallback_confirmed=True,
     )
 
     assert result["readiness"] == "READY"
-    assert result["resolved_assets"][0]["asset_source"] == "PRODUCT_IMAGE_CACHE"
+    assert result["resolved_assets"][0]["asset_source"] == "UPLOAD"
+    assert result["resolved_assets"][0]["media_id"] == "media-start"
+    assert result["resolved_assets"][0]["slot_key"] == "start_frame"
     assert result["prompt_text"].startswith("Block 1")
     assert result["generation_mode"] == "SINGLE"
     assert result["source_mode"] == "HYBRID"

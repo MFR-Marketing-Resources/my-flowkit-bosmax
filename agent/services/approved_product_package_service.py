@@ -348,13 +348,20 @@ async def _resolved_safe_package(product_id: str) -> dict[str, Any]:
     return package
 
 
-async def get_product_package_readiness(product_id: str, mode: str) -> dict[str, Any]:
+async def get_product_package_readiness(
+    product_id: str,
+    mode: str,
+    *,
+    source_mode: str | None = None,
+) -> dict[str, Any]:
     normalized_mode = normalize_mode(mode)
+    normalized_source_mode = _clean(source_mode) or normalized_mode
     if normalized_mode not in SUPPORTED_MODES:
         blocker = "UNSUPPORTED_MODE"
         return {
             "product_id": product_id,
             "mode": normalized_mode or str(mode or "").strip().upper(),
+            "source_mode": normalized_source_mode,
             "readiness_status": blocker,
             "blocker": blocker,
             "detail": _detail_for_blocker(blocker, mode=normalized_mode),
@@ -374,6 +381,7 @@ async def get_product_package_readiness(product_id: str, mode: str) -> dict[str,
             "product_id": product_id,
             "product_name": reference_product.get("product_display_name") or reference_product.get("raw_product_title"),
             "mode": normalized_mode,
+            "source_mode": normalized_source_mode,
             "readiness_status": REFERENCE_ONLY_BLOCKER,
             "blocker": REFERENCE_ONLY_BLOCKER,
             "detail": _detail_for_blocker(REFERENCE_ONLY_BLOCKER, mode=normalized_mode, image_reference_status=image_reference_status),
@@ -419,6 +427,7 @@ async def get_product_package_readiness(product_id: str, mode: str) -> dict[str,
         return {
             "product_id": product_id,
             "mode": normalized_mode,
+            "source_mode": normalized_source_mode,
             "readiness_status": blocker,
             "blocker": blocker,
             "detail": _detail_for_blocker(blocker, mode=normalized_mode),
@@ -506,6 +515,7 @@ async def get_product_package_readiness(product_id: str, mode: str) -> dict[str,
         "product_id": product_id,
         "product_name": product_name,
         "mode": normalized_mode,
+        "source_mode": normalized_source_mode,
         "readiness_status": blocker,
         "blocker": None if blocker == "READY" else blocker,
         "detail": _detail_for_blocker(blocker, mode=normalized_mode, image_reference_status=image_reference_status),

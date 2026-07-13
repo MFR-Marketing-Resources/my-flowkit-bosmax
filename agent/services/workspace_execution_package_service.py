@@ -27,6 +27,10 @@ from agent.services.ugc_video_prompt_compiler_service import (
 from agent.services.i2v_semantic_slot_resolver_service import (
     resolve_i2v_semantic_slots,
 )
+from agent.services.creative_asset_service import (
+    build_resolved_workspace_asset,
+    validate_selectable_asset,
+)
 from agent.models.i2v_semantic_slot_resolver import (
     I2VSemanticSlotResolverRequest,
 )
@@ -102,6 +106,53 @@ def _merge_i2v_resolved_assets(
         if slot_key in resolved_by_slot:
             slot["resolved_asset"] = resolved_by_slot[slot_key]
             slot["default_source"] = resolved_by_slot[slot_key].get("asset_source") or slot.get("default_source")
+    return merged
+
+
+async def _bind_f2v_reference_assets(
+    asset_slots: list[dict[str, Any]],
+    *,
+    source_mode: str | None,
+    product_reference_asset_id: str | None,
+    start_frame_asset_id: str | None,
+    end_frame_asset_id: str | None,
+) -> list[dict[str, Any]]:
+    """Replace only explicitly selected F2V reference slots with validated assets."""
+    normalized_source_mode = str(source_mode or "").upper()
+    selected_slots: list[tuple[str, str, str]] = []
+    if normalized_source_mode == "HYBRID":
+        if not product_reference_asset_id or start_frame_asset_id or end_frame_asset_id:
+            raise ValueError("HYBRID_EXACTLY_ONE_PRODUCT_REFERENCE_REQUIRED")
+        selected_slots.append(("start_frame", product_reference_asset_id, "PRODUCT_REFERENCE"))
+    if normalized_source_mode == "FRAMES":
+        if start_frame_asset_id:
+            selected_slots.append(("start_frame", start_frame_asset_id, "COMPOSITE_FRAME_REFERENCE"))
+        if end_frame_asset_id:
+            selected_slots.append(("end_frame", end_frame_asset_id, "COMPOSITE_FRAME_REFERENCE"))
+
+    merged = copy.deepcopy(asset_slots)
+    for slot_key, asset_id, semantic_role in selected_slots:
+        validation = await validate_selectable_asset(
+            asset_id,
+            semantic_role=semantic_role,
+            allowed_mode="F2V",
+            engine_slot=slot_key,  # type: ignore[arg-type]
+            require_approved=True,
+        )
+        if not validation.valid or validation.asset is None:
+            raise ValueError(
+                f"{slot_key.upper()}_REFERENCE_INVALID:{','.join(validation.blockers)}"
+            )
+        resolved_asset = build_resolved_workspace_asset(
+            asset=validation.asset,
+            slot_key=slot_key,
+        )
+        resolved_asset["semantic_role"] = semantic_role
+        for slot in merged:
+            if slot.get("slot_key") == slot_key:
+                slot["resolved_asset"] = resolved_asset
+                slot["default_source"] = resolved_asset["asset_source"]
+                break
     return merged
 
 
@@ -196,6 +247,8 @@ async def create_workspace_execution_package(
     dialogue_enabled: bool = True,
     recipe_id: str = "PRODUCT_HELD_BY_CHARACTER_IN_SCENE",
     product_reference_asset_id: str | None = None,
+    start_frame_asset_id: str | None = None,
+    end_frame_asset_id: str | None = None,
     character_reference_asset_id: str | None = None,
     scene_context_reference_asset_id: str | None = None,
     style_reference_asset_id: str | None = None,
@@ -279,7 +332,15 @@ async def create_workspace_execution_package(
     )
     semantic_slot_resolver: dict[str, Any] | None = None
     package_asset_slots = copy.deepcopy(package["asset_slots"])
-    if normalized_mode == "I2V":
+    if normalized_mode == "F2V":
+        package_asset_slots = await _bind_f2v_reference_assets(
+            package_asset_slots,
+            source_mode=resolved_source_mode,
+            product_reference_asset_id=product_reference_asset_id,
+            start_frame_asset_id=start_frame_asset_id,
+            end_frame_asset_id=end_frame_asset_id,
+        )
+    elif normalized_mode == "I2V":
         semantic_slot_resolver = (
             await resolve_i2v_semantic_slots(
                 I2VSemanticSlotResolverRequest(

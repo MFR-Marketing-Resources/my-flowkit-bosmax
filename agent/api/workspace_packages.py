@@ -51,6 +51,8 @@ class WorkspaceExecutionPackageRequest(BaseModel):
     dialogue_enabled: bool = True
     recipe_id: str = "PRODUCT_HELD_BY_CHARACTER_IN_SCENE"
     product_reference_asset_id: str | None = None
+    start_frame_asset_id: str | None = None
+    end_frame_asset_id: str | None = None
     character_reference_asset_id: str | None = None
     scene_context_reference_asset_id: str | None = None
     style_reference_asset_id: str | None = None
@@ -85,6 +87,7 @@ class WorkspacePromptCompileRequest(BaseModel):
 
 class WorkspacePackageReadinessRequest(BaseModel):
     mode: str
+    source_mode: str | None = None
     product_ids: list[str]
 
 
@@ -107,6 +110,8 @@ async def post_workspace_execution_package(request: WorkspaceExecutionPackageReq
             dialogue_enabled=request.dialogue_enabled,
             recipe_id=request.recipe_id,
             product_reference_asset_id=request.product_reference_asset_id,
+            start_frame_asset_id=request.start_frame_asset_id,
+            end_frame_asset_id=request.end_frame_asset_id,
             character_reference_asset_id=request.character_reference_asset_id,
             scene_context_reference_asset_id=request.scene_context_reference_asset_id,
             style_reference_asset_id=request.style_reference_asset_id,
@@ -144,9 +149,16 @@ async def post_workspace_package_readiness(
     normalized_mode = normalize_mode(request.mode)
     items = []
     for product_id in request.product_ids:
-        items.append(await get_product_package_readiness(product_id, normalized_mode))
+        items.append(
+            await get_product_package_readiness(
+                product_id,
+                normalized_mode,
+                source_mode=request.source_mode,
+            )
+        )
     return {
         "mode": normalized_mode,
+        "source_mode": request.source_mode,
         "items": items,
     }
 

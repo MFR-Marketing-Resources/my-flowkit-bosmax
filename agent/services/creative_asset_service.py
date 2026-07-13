@@ -184,7 +184,7 @@ def _get_audit_surface_spec(
     if surface == "HYBRID_START_FRAME_PICKER":
         return {
             "surface_label": "Hybrid Start Frame Picker",
-            "required_semantic_role": "COMPOSITE_FRAME_REFERENCE",
+            "required_semantic_role": "PRODUCT_REFERENCE",
             "required_allowed_mode": "F2V",
             "required_engine_slot": "start_frame",
             "disallow_rendered_text": True,

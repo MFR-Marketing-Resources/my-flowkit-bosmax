@@ -346,6 +346,9 @@ domains:
       - dashboard/src/components/workspace/T2VModule.test.tsx
       - dashboard/src/components/workspace/F2VModule.tsx
       - dashboard/src/components/workspace/F2VModule.test.tsx
+
+      # Canonical API-first reference binding surface (no DOM generation lane).
+      - dashboard/src/components/workspace/CanonicalReferenceBindingControls.tsx
       - dashboard/src/components/workspace/I2VModule.tsx
       - dashboard/src/components/workspace/I2VModule.test.tsx
       - dashboard/src/components/workspace/IMGModule.tsx
