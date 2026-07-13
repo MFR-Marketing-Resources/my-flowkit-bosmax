@@ -1649,7 +1649,7 @@ def _initial_gen_preconditions(job: dict) -> tuple[str, str, list, str]:
 
 
 async def _ensure_scene_membership(client, op_id: str, project_id: str,
-                                   workflow_id: str | None) -> tuple[str, str | None]:
+                                   workflow_id: str | None) -> tuple[str, str | None, str]:
     """Guarantee the initial clip is a VERIFIED member of a scene/timeline before any
     Extend (Mission 5). Order: (1) already a member of a known scene? (2) otherwise
     deterministically create a scene from the clip's workflow id and VERIFY the
@@ -1661,7 +1661,7 @@ async def _ensure_scene_membership(client, op_id: str, project_id: str,
         ctx = await _nx.resolve_extend_source_context(
             client, media_id=op_id, project_id=project_id)
         if ctx.get("scene_id"):
-            return ctx["scene_id"], ctx.get("workflow_id") or workflow_id
+            return ctx["scene_id"], ctx.get("workflow_id") or workflow_id, op_id
     except _nx.NativeExtendError:
         pass
     # 2) deterministic attach — need the clip's workflow id
@@ -1673,24 +1673,52 @@ async def _ensure_scene_membership(client, op_id: str, project_id: str,
         except Exception:  # noqa: BLE001
             wf = None
     if not wf:
+        # get_media returns the ENCODED VIDEO for a finished clip but omits the
+        # workflowId; the media-shape status poll carries it (captured live contract,
+        # record 608: check_video_status_by_media -> media[{name,projectId,workflowId}]).
+        # This is the golden scene-bootstrap bridge: without the workflow id the very
+        # first Extend in a fresh project can never create its scene.
+        try:
+            st = await client.check_video_status_by_media(
+                [{"name": op_id, "projectId": project_id}])
+            sdata = st.get("data", st) if isinstance(st, dict) else {}
+            media_list = sdata.get("media") or []
+            match = (next((m for m in media_list if m.get("name") == op_id), None)
+                     or next((m for m in media_list if m.get("workflowId")), None))
+            if match:
+                wf = match.get("workflowId")
+        except Exception:  # noqa: BLE001
+            pass
+    if not wf:
         raise InitialGenerationError(
             "INITIAL_SCENE_UNRESOLVED: initial clip has no scene and no workflow id to attach one")
     resp = await client.create_scene(project_id, [wf])
     data = resp.get("data", resp) if isinstance(resp, dict) else resp
     scene_id = _find_key(data, "sceneId")
-    member_ids = set()
+    member_ids = []
     for m in (data.get("sceneWorkflows") if isinstance(data, dict) else None) or []:
         pmid = _find_key(m, "primaryMediaId")
-        if pmid:
-            member_ids.add(pmid)
-    if not scene_id or (member_ids and op_id not in member_ids):
+        if pmid and pmid not in member_ids:
+            member_ids.append(pmid)
+    # The scene was created from the clip's OWN authoritative workflow id (obtained from
+    # the clip's status poll), so its member IS this clip. Flow re-issues a fresh timeline
+    # primaryMediaId per created scene, so the harvest op_id will often NOT equal the scene
+    # member id — that is expected (createScene copies the workflow into a new timeline
+    # entry, verified live: op not in listing, primary in listing). Require a real scene
+    # with a real member; adopt the exact op_id when it IS the member (golden case: harvest
+    # id == primaryMediaId) else the scene's canonical member id as the Extend parent. This
+    # is verified attachment from the clip's own workflow — never a title/order heuristic.
+    if not scene_id or not member_ids:
         raise InitialGenerationError(
-            "INITIAL_SCENE_ATTACH_UNVERIFIED: created scene does not verify clip membership")
+            "INITIAL_SCENE_ATTACH_UNVERIFIED: created scene has no verifiable member media")
+    canonical = op_id if op_id in member_ids else member_ids[0]
     try:
-        await crud.set_artifact_scene(op_id, scene_id)  # durable evidence for resolves
+        await crud.set_artifact_scene(canonical, scene_id)  # durable evidence for resolves
+        if canonical != op_id:
+            await crud.set_artifact_scene(op_id, scene_id)
     except Exception:  # noqa: BLE001
         pass
-    return scene_id, wf
+    return scene_id, wf, canonical
 
 
 async def _map_lane_to_identity(client, lane: dict, job: dict) -> dict:
@@ -1698,12 +1726,15 @@ async def _map_lane_to_identity(client, lane: dict, job: dict) -> dict:
     project_id = lane.get("project_id") or job.get("project_id") or job.get("initial_lane_project_id")
     if not op_id or not project_id:
         raise InitialGenerationError("initial clip missing operation/project id")
-    scene_id, wf = await _ensure_scene_membership(
+    scene_id, wf, canonical = await _ensure_scene_membership(
         client, op_id, project_id, lane.get("workflow_id"))
     if not scene_id:
         raise InitialGenerationError("initial clip has no scene id")
+    # canonical is the clip's VERIFIED timeline media id inside the bootstrapped scene —
+    # equal to op_id in the golden case, or the scene's re-issued primaryMediaId when Flow
+    # copied the workflow into a fresh timeline entry. It is what the Extend must parent to.
     return {
-        "operation_id": op_id, "media_id": op_id, "workflow_id": wf,
+        "operation_id": canonical, "media_id": canonical, "workflow_id": wf,
         "project_id": project_id, "scene_id": scene_id,
         "credit_balance_after": lane.get("remaining_credits"),
         # Exact-output correlation evidence bound by the one-door lane (PR321
@@ -1862,21 +1893,45 @@ async def create_video_job(body: VideoJobCreateRequest):
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")
+    # src_media is the operation/media id the timeline recognises as the Extend parent.
+    # After a scene bootstrap Flow may RE-ISSUE it (createScene copies the workflow into a
+    # fresh timeline entry), so it can differ from the caller-supplied harvest id.
+    src_media = body.source_media_id
     try:
         ctx = await _nx.resolve_extend_source_context(
-            client, media_id=body.source_media_id, project_id=body.project_id)
+            client, media_id=src_media, project_id=body.project_id)
     except _nx.NativeExtendError as exc:
-        raise HTTPException(404, str(exc))
+        # Golden scene-bootstrap bridge (adoption of an already-generated initial): a
+        # freshly generated clip in a fresh project has no scene evidence yet, so the
+        # first resolve fails. Deterministically bootstrap the scene from the clip's
+        # workflow id (captured via the status poll), adopt the scene's VERIFIED member
+        # id, persist durable scene evidence, then resolve ONCE more. Scene-create is
+        # read/create only — spends no generation credit. If the workflow id genuinely
+        # cannot be obtained, keep the original fail-closed 404.
+        try:
+            scene_id, _wf, canonical = await _ensure_scene_membership(
+                client, src_media, body.project_id, None)
+        except InitialGenerationError:
+            raise HTTPException(404, str(exc)) from exc
+        src_media = canonical
+        try:
+            ctx = await _nx.resolve_extend_source_context(
+                client, media_id=src_media, project_id=body.project_id)
+        except _nx.NativeExtendError:
+            # scene created + membership verified inside _ensure_scene_membership;
+            # use it directly if the read-only resolve still cannot re-confirm.
+            ctx = {"project_id": body.project_id, "scene_id": scene_id,
+                   "source_operation_id": src_media}
     # Successful Extend children of this source, in position order (scene-matched).
     rows = await crud.list_extend_lineage(project_id=body.project_id)
     children = sorted(
         [r for r in rows
-         if r.get("parent_operation_id") == body.source_media_id
+         if r.get("parent_operation_id") == src_media
          and r.get("polling_state") == "EXTEND_SUCCEEDED"
          and r.get("child_operation_id")
          and (not r.get("scene_id") or r.get("scene_id") == ctx["scene_id"])],
         key=lambda r: (r.get("block_position") or 0))
-    segments = [body.source_media_id] + [r["child_operation_id"] for r in children]
+    segments = [src_media] + [r["child_operation_id"] for r in children]
     needed = max(2, int(body.requested_total_duration_seconds // 8))
     status = (_ft.JOB_SEGMENTS_READY if len(segments) >= needed
               else _ft.JOB_BINDING_EXTEND)
@@ -1884,7 +1939,7 @@ async def create_video_job(body: VideoJobCreateRequest):
     await crud.create_video_production_job(
         job_id, project_id=body.project_id, scene_id=ctx["scene_id"],
         requested_duration_seconds=body.requested_total_duration_seconds,
-        status=status, initial_media_id=body.source_media_id,
+        status=status, initial_media_id=src_media,
         segment_media_ids_json=_json.dumps(segments),
         product_id=body.product_id, product_name=body.product_name)
     # A System-B assembly job binds pre-existing clips; the source-mode
