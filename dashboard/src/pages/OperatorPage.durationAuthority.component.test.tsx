@@ -71,6 +71,12 @@ describe("OperatorPage duration authority controls", () => {
 
 			expect(screen.getByTitle("Total video duration")).toBeInTheDocument();
 			expect(screen.queryByTitle("Video duration")).not.toBeInTheDocument();
+			expect(
+				screen.getByTestId("canonical-video-production-control"),
+			).toBeInTheDocument();
+			expect(
+				screen.queryByTestId("mock-t2v-package"),
+			).not.toBeInTheDocument();
 			expect(screen.getByTestId("operator-duration-authority-summary")).toHaveTextContent(
 				"Select one Total Video Duration",
 			);
@@ -79,7 +85,7 @@ describe("OperatorPage duration authority controls", () => {
 		},
 	);
 
-	it("clears a stale EXTEND total and execution package when switched to SINGLE", async () => {
+	it("clears a stale EXTEND total and keeps SINGLE outside the production route", async () => {
 		renderOperator("T2V", {
 			workspaceExecutionPackage: {
 				mode: "T2V",
@@ -91,21 +97,16 @@ describe("OperatorPage duration authority controls", () => {
 			},
 		});
 
-		await waitFor(() => {
-			expect(screen.getByTestId("mock-t2v-package")).toHaveTextContent(
-				"exec-stale-extend",
-			);
-		});
 		const generationMode = screen.getByTitle("Generation mode");
 		await waitFor(() => expect(generationMode).toHaveValue("EXTEND"));
 		expect(screen.getByTitle("Total video duration")).toHaveValue("24");
 
 		fireEvent.change(generationMode, { target: { value: "SINGLE" } });
 
-		await waitFor(() => {
-			expect(screen.getByTestId("mock-t2v-package")).toHaveTextContent("none");
-		});
 		expect(screen.getByTitle("Video duration")).toBeInTheDocument();
+		expect(
+			screen.getByTestId("canonical-video-production-requires-extend"),
+		).toBeInTheDocument();
 		fireEvent.change(generationMode, { target: { value: "EXTEND" } });
 		expect(screen.getByTitle("Total video duration")).toHaveValue("");
 	});
