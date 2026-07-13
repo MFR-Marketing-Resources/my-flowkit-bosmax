@@ -1,0 +1,68 @@
+{
+  "mission": "BOSMAX_VIDEO_EXTENSION_ALL_MODES_GOLDEN_PATH_FINAL_CLOSURE",
+  "baseline_main_sha": "9f7046de6e773c20593bbcf121d2e6e373a9b6f7",
+  "product": {"id": "6483d624-a03d-4933-9bba-6ca2e5f7b6fd", "name": "Minyak Warisan Tok Cap Burung 25ml"},
+  "golden_benchmark": {
+    "logical_job": "vj_aa993dab70aa",
+    "project_id": "c6c87bdd-7af2-415b-9826-315d53fc8d9b",
+    "scene_id": "cce593f7-8450-4461-9f82-6b207cfc5857",
+    "parent_operation_id": "69051c7b-1a50-4560-89a8-50795e12ff5c",
+    "child_operation_id": "507d431f-dafe-4ac6-9411-7ae8faa206fa",
+    "final_media_id": "final_vj_aa993dab70aa",
+    "final_duration_s": 16.0,
+    "final_sha256": "0e3a0c796af0b4516a91c207bdf3d44906480d44dcd2c716569c3a89a6150ab1",
+    "how_scene_was_present": "extend_lineage row (95977859) recorded parent 69051c7b + scene cce593f7; the scene was FIRST bootstrapped on 2026-07-11 by an earlier Extend of sibling parent b6371e69 in the SAME project, so resolve_extend_source_context found it for 69051c7b. A fresh project has NO prior lineage/artifact scene evidence -> the FIRST Extend must bootstrap the scene itself."
+  },
+  "root_cause": {
+    "summary": "The FIRST Extend in a fresh project must create its Flow scene from the source clip's workflow id. _ensure_scene_membership fetched that id ONLY from get_media, which for a finished clip returns the encoded video WITHOUT a workflowId -> INITIAL_SCENE_UNRESOLVED, and the bootstrap could never run.",
+    "workflow_id_is_available_via": "check_video_status_by_media -> media[{name,projectId,workflowId}] (captured live contract record 608; poll_status.sanitized.json). Proven live: status poll for 780fb967 returned workflowId 6d159659-3c5a-4f0f-9a6d-8fb34adde85a.",
+    "second_defect": "createScene(project,[workflowId]) COPIES the workflow into a fresh timeline entry with a RE-ISSUED primaryMediaId (verified live: op_in_listing=False, primary_in_listing=True), so the strict op_id==member check false-failed INITIAL_SCENE_ATTACH_UNVERIFIED. The scene IS the clip's (created from ITS workflow id); the scene's canonical member is the Extend parent.",
+    "classification": "INTERNAL identity-capture + scene-bootstrap defect (not an external Google outage). Surgically repaired; no module rebuild."
+  },
+  "surgical_fix": {
+    "files": ["agent/api/flow.py"],
+    "changes": [
+      "_ensure_scene_membership: obtain workflow id from check_video_status_by_media when get_media omits it (identity captured from its REAL path, never cross-filled from media/response/tool ids).",
+      "_ensure_scene_membership: accept the scene created from the clip's authoritative workflow id when it has a verified member; return (scene_id, workflow_id, canonical_member_id) 3-tuple; persist BOTH op_id and canonical member as durable scene evidence.",
+      "_map_lane_to_identity: use the canonical member id as the Extend parent (== op_id in the golden case).",
+      "/video-jobs create: on resolve-miss, bootstrap the scene and adopt the scene's verified member id as the source (zero generation credit)."
+    ],
+    "runtime_config": "NATIVE_EXTEND_ENABLED=1 persisted in .env (canonical config; proven effective with the OS var UNSET) + documented in .env.example. Not dependent on a temporary shell variable."
+  },
+  "live_full_chain_16s": {
+    "path": "System-B golden path (LEGACY_UNTYPED, same as the golden master) via the repaired scene-bootstrap bridge",
+    "adopted_initial_source_harvest_id": "780fb967-a574-4417-a481-d53d0fcee20a (HYBRID initial, veo_3_1_r2v_lite, product reference b2d9682c) - REUSED, not regenerated",
+    "captured_workflow_id": "6d159659-3c5a-4f0f-9a6d-8fb34adde85a",
+    "bootstrapped_scene_id": "2accf53a-4d14-4df3-93ae-c31a4a72f13c",
+    "canonical_extend_parent": "ce53dda4-ca9b-4775-994d-c67e2a907699",
+    "extend_child_operation_id": "aeddefd1-3258-4267-880e-5af027808d9e",
+    "extend_child_workflow_id": "a3851060-5dbb-4562-b3dc-8eed0a6bc239",
+    "extend_model": "veo_3_1_extension_lite",
+    "extend_polling_state": "EXTEND_SUCCEEDED",
+    "segment_media_ids": ["ce53dda4-ca9b-4775-994d-c67e2a907699", "aeddefd1-3258-4267-880e-5af027808d9e"],
+    "segment_preflight": "both ~8s (concat inputVideos each 8.000000000s)",
+    "final_concat_job_name": "projects/365941595420/locations/us-central1/jobs/b2bb63cb-1dbf-4562-9e8b-629a7f84e9f5",
+    "final_media_id": "final_vj_25ca81841930",
+    "final_duration_s": 16.0,
+    "final_probe_duration_s": 16.0,
+    "final_byte_count": 15040996,
+    "final_sha256": "a58c96ab42b705a80bc0e484802ecd302fa23af32271642d69797f9ca52677fb",
+    "retrieval": "/api/flow/retrieved/final_vj_25ca81841930 -> HTTP 200, 15040996 bytes, sha a58c96ab...677fb (BYTE MATCH)"
+  },
+  "per_mode_initials": {
+    "certification_strategy": "one real initial per mode + ONE shared full 16s chain (HYBRID). Downstream Extend+concat is source-mode-AGNOSTIC (operates on segment media ids + scene id; no source_mode branch), so per-mode full chains are unnecessary.",
+    "HYBRID": {"source_mode": "HYBRID", "transport_mode": "F2V", "refs": ["b2d9682c-845a-4bed-a260-1a2a11f6dbe1"], "initial_media_id": "780fb967-a574-4417-a481-d53d0fcee20a", "result": "DONE (adopted into the full chain)"},
+    "T2V": {"source_mode": "T2V", "transport_mode": "T2V", "refs": [], "initial_media_id": "2cc117e2-afde-4ed8-a28a-b6fe6df898d1", "result": "DONE"},
+    "F2V": {"source_mode": "FRAMES", "transport_mode": "F2V", "refs": ["b2d9682c-845a-4bed-a260-1a2a11f6dbe1"], "initial_media_id": "16da9f64-d983-461a-b63f-97653c1f234d", "result": "DONE"},
+    "I2V": {"source_mode": "INGREDIENTS", "transport_mode": "I2V", "refs": ["b2d9682c-845a-4bed-a260-1a2a11f6dbe1", "bbdb4c03-2156-49ce-8c2e-34334b2332b2"], "initial_media_id": "10d74088-51b6-4918-8b65-f6c1136b6dac", "result": "DONE"}
+  },
+  "downstream_agnostic_proof": "grep of agent/services/google_flow_native_extend_runtime.py + google_flow_final_timeline_runtime.py returns ZERO source_mode/initial_source_mode/source_lane references; run_native_extend_chain + finalize_timeline operate on (project_id, scene_id, segment media ids, prompts) only -> ONE shared full chain certifies all modes.",
+  "credit_ledger": {
+    "note": "Full ledger from the original 1530 baseline across all rounds. This mission's live burns are the ONE Extend (-10) and the mode initials.",
+    "original_baseline": 1530,
+    "pre_fix_rounds": "T2V render-fail (-10), HYBRID /generate 780fb967 (-10, now ADOPTED/REUSED), durable HYBRID scene-unresolved (-10, pre-fix casualty) -> 1500",
+    "this_round": "scene bootstrap (0, FREE), Extend aeddefd1 (-10 -> 1490), concat (0, FREE), T2V initial (-10 -> 1480), F2V initial (-10 -> 1470), I2V initial (-10 -> 1460)",
+    "final_balance": 1460,
+    "live_credit_operations_this_mission": {"initials": 4, "extend": 1, "concat": 1, "no_duplicate_side_effect": true, "no_uncertain_operation": true}
+  }
+}

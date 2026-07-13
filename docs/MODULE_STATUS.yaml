@@ -102,6 +102,17 @@ domains:
       - agent/services/prompt_compiler_runtime_config_service.py
       - agent/services/canonical_prompt_compiler.py
       - agent/services/extend_route_planner.py
+      # =====================================================================
+      # VIDEO EXTENSION MODULE: CLOSED (2026-07-13)
+      # All four modes LIVE-PROVEN end-to-end (T2V/HYBRID/F2V/I2V initials) plus one
+      # shared full 16s chain (initial -> Native Extend -> server concat) matching the
+      # golden master vj_aa993dab70aa. Root cause of the prior block (first-Extend scene
+      # bootstrap) fixed surgically in agent/api/flow.py by capturing the clip workflow
+      # id from check_video_status_by_media and adopting the scene's canonical member.
+      # NATIVE_EXTEND_ENABLED=1 persisted in .env. Final deliverable final_vj_25ca81841930
+      # = 16.0s, sha a58c96ab...677fb, retrievable. Evidence:
+      # docs/evidence/video_extension_all_modes_golden_path_closure.sanitized.json
+      # =====================================================================
       # Native Google Flow Extend (runtime lane, capability authority, lineage)
       - .ai/decisions/ADR-009-google-flow-native-video-extend.md
       - agent/config.py
@@ -118,6 +129,10 @@ domains:
       - tests/unit/test_google_flow_native_extend_runtime.py
       - tests/api/test_extend_api.py
       - tests/unit/test_native_extend_source_resolver.py
+      # Golden scene-bootstrap bridge (all-modes closure): workflow-id capture from
+      # the media status poll so the first Extend in a fresh project can create its scene
+      - tests/api/test_scene_bootstrap_bridge.py
+      - docs/evidence/video_extension_all_modes_golden_path_closure.sanitized.json
       - agent/services/google_flow_final_timeline_runtime.py
       - agent/services/video_production_orchestrator.py
       - agent/services/production_plan_resolver.py

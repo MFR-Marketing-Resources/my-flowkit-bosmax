@@ -145,14 +145,32 @@ async def test_adapter_fails_closed_when_attach_unverified(monkeypatch):
 
     class _BadAttach(_AttachClient):
         async def create_scene(self, project_id, workflow_ids):
-            # scene created but does NOT list our clip → membership unverified
-            return {"scene": {"sceneId": "scene-x"},
-                    "sceneWorkflows": [{"workflow": {"metadata": {
-                        "primaryMediaId": "some-other-clip"}}}]}
+            # scene created but lists NO member media → membership cannot be verified
+            return {"scene": {"sceneId": "scene-x"}, "sceneWorkflows": []}
 
     monkeypatch.setattr(flow, "get_flow_client", lambda: _BadAttach())
     with pytest.raises(flow.InitialGenerationError):
         await flow._production_initial_generator(_job())
+
+
+async def test_adapter_adopts_reissued_scene_member(monkeypatch):
+    """createScene copies the workflow into the timeline and RE-ISSUES a fresh
+    primaryMediaId (proven live). Because the scene was created from THIS clip's own
+    workflow id, its member IS this clip; the adapter adopts the re-issued member as
+    the Extend parent instead of false-failing on op_id mismatch."""
+    _wire(monkeypatch, scene_raises=True)
+
+    class _ReissueAttach(_AttachClient):
+        async def create_scene(self, project_id, workflow_ids):
+            return {"scene": {"sceneId": "scene-created-1"},
+                    "sceneWorkflows": [{"workflow": {"metadata": {
+                        "primaryMediaId": "reissued-timeline-media"}}}]}
+
+    monkeypatch.setattr(flow, "get_flow_client", lambda: _ReissueAttach())
+    out = await flow._production_initial_generator(_job())
+    assert out["scene_id"] == "scene-created-1"
+    assert out["operation_id"] == "reissued-timeline-media"
+    assert out["media_id"] == "reissued-timeline-media"
 
 
 # ── poll-only resume states (item 1) ─────────────────────────────────────────
