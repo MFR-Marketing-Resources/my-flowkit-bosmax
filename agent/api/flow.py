@@ -1628,9 +1628,22 @@ def _initial_gen_preconditions(job: dict) -> tuple[str, str, list, str]:
             "never inherited into a text-only generation")
     if mode in ("I2V", "F2V") and not refs:
         raise InitialGenerationError(f"{mode} initial requires an approved product asset media id")
-    violation = _refc.service_hard_violation(mode, len(refs))
-    if violation:
-        raise InitialGenerationError(violation)
+    # Execution-boundary contract re-validation. A TYPED job carries the canonical
+    # source_mode (persisted by the plan resolver) — enforce the FULL per-source-mode
+    # bounds (min AND max), so HYBRID = exactly 1 is enforced here, not just the
+    # transport upper-cap. A LEGACY_UNTYPED job (no persisted source_mode) keeps the
+    # lenient transport hard-cap only: it cannot certify a mode and must not be
+    # rejected by min-bounds it never declared.
+    source_mode = job.get("initial_source_mode")
+    if source_mode:
+        ref_ok, ref_code, ref_detail = _refc.validate_reference_count(
+            mode, len(refs), source_mode=source_mode)
+        if not ref_ok:
+            raise InitialGenerationError(ref_detail or ref_code)
+    else:
+        violation = _refc.service_hard_violation(mode, len(refs))
+        if violation:
+            raise InitialGenerationError(violation)
     aspect = _VIDEO_ASPECT_TO_RATIO.get(job.get("aspect_ratio") or "", "9:16")
     return prompt, mode, refs, aspect
 
@@ -1845,6 +1858,7 @@ async def create_video_job(body: VideoJobCreateRequest):
     import json as _json
     from agent.services import google_flow_native_extend_runtime as _nx
     from agent.services import google_flow_final_timeline_runtime as _ft
+    from agent.services import flow_mode_reference_contract as _refc
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")
@@ -1873,9 +1887,14 @@ async def create_video_job(body: VideoJobCreateRequest):
         status=status, initial_media_id=body.source_media_id,
         segment_media_ids_json=_json.dumps(segments),
         product_id=body.product_id, product_name=body.product_name)
+    # A System-B assembly job binds pre-existing clips; the source-mode
+    # certification belongs to whatever ORIGINAL generation produced the source,
+    # so this job is honestly LEGACY_UNTYPED and is never per-mode certification.
     return {
         "job_id": job_id, "status": status, "scene_id": ctx["scene_id"],
         "segments": segments, "segments_needed": needed,
+        "source_mode": None,
+        "source_mode_certification": _refc.certify_source_mode(None),
         "next": ("finalize" if status == _ft.JOB_SEGMENTS_READY
                  else "run native Extend for the missing continuation block(s)"),
     }

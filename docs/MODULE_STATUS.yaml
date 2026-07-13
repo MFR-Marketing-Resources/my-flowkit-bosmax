@@ -124,6 +124,7 @@ domains:
       # Unified all-mode reference contract (F2V 1-2 / HYBRID 1 / I2V 2-3 / T2V 0)
       - agent/services/flow_mode_reference_contract.py
       - tests/unit/test_flow_mode_reference_contract.py
+      - tests/unit/test_initial_gen_mode_authority.py
       - tests/unit/test_initial_reference_contract.py
       - tests/unit/test_server_mode_authority.py
       - tests/fixtures/google_flow_media_resource/media_resource.sanitized.json

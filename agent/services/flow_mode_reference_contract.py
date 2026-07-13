@@ -124,6 +124,18 @@ def normalize_source_mode(value) -> str | None:
     return _SOURCE_MODE_ALIASES.get(str(value or "").strip().upper())
 
 
+# A job/plan certifies a SOURCE MODE only when one is persisted. A null-mode job
+# (legacy, or an assembly of externally-generated clips) proves the shared
+# downstream pipeline but NEVER a specific source mode.
+CERTIFY_TYPED = "TYPED"
+CERTIFY_LEGACY_UNTYPED = "LEGACY_UNTYPED"
+
+
+def certify_source_mode(source_mode) -> str:
+    """TYPED when a canonical source mode is present, else LEGACY_UNTYPED."""
+    return CERTIFY_TYPED if normalize_source_mode(source_mode) else CERTIFY_LEGACY_UNTYPED
+
+
 def derive_package_source_mode(pkg: dict | None) -> str | None:
     """The SERVER-OWNED canonical source mode of a persisted execution package.
 

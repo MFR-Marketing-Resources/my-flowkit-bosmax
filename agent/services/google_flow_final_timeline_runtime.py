@@ -59,6 +59,11 @@ FAIL_FINAL_RENDER = "FINAL_RENDER_FAILED"
 FAIL_FINAL_MEDIA_MISSING = "FINAL_MEDIA_ID_MISSING"
 FAIL_FINAL_DOWNLOAD = "FINAL_DOWNLOAD_FAILED"
 FAIL_FINAL_DURATION = "FINAL_DURATION_MISMATCH"
+# Pre-concat segment-duration preflight (uniform 8s contract, verified before submit).
+SEGMENT_DURATION_UNAVAILABLE = "SEGMENT_DURATION_UNAVAILABLE"
+SEGMENT_DURATION_MISMATCH = "SEGMENT_DURATION_MISMATCH"
+SEGMENT_TOTAL_DURATION_MISMATCH = "SEGMENT_TOTAL_DURATION_MISMATCH"
+SEGMENT_COUNT_MISMATCH = "SEGMENT_COUNT_MISMATCH"
 
 LIVE_CONFIRMATION_REQUIRED = "LIVE_CREDIT_CONFIRMATION_REQUIRED"
 FINAL_TIMELINE_DISABLED = "FINAL_TIMELINE_DISABLED"
@@ -107,6 +112,92 @@ def build_concat_input(segment_media_ids: list[str],
         "startTimeOffset": "0.000000000s",
         "endTimeOffset": f"{int(segment_seconds)}.000000000s",
     } for mid in segment_media_ids]
+
+
+def _deep_find_encoded_video(obj: object) -> Optional[str]:
+    """Find the first ``encodedVideo`` base64 string in a media response."""
+    stack = [obj]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, dict):
+            for key, val in cur.items():
+                if key == "encodedVideo" and isinstance(val, str) and val:
+                    return val
+                stack.append(val)
+        elif isinstance(cur, list):
+            stack.extend(cur)
+    return None
+
+
+def _decode_segment_to_probe(encoded_video_b64: str, out_dir: Path, mid: str) -> Optional[float]:
+    """Decode an inline-base64 segment to a scratch file and probe its duration."""
+    try:
+        data = base64.b64decode(encoded_video_b64)
+    except Exception:  # noqa: BLE001
+        return None
+    if not data:
+        return None
+    scratch = Path(out_dir) / f".probe_{mid}.mp4"
+    scratch.parent.mkdir(parents=True, exist_ok=True)
+    scratch.write_bytes(data)
+    try:
+        return probe_mp4_duration_seconds(scratch)
+    finally:
+        try:
+            scratch.unlink()
+        except OSError:
+            pass
+
+
+async def preflight_segment_durations(
+    client, segment_media_ids: list[str], requested_seconds: int, out_dir: Path,
+    segment_seconds: int = _SEGMENT_SECONDS,
+    tolerance: float = DURATION_TOLERANCE_SECONDS,
+) -> dict:
+    """Measure EVERY segment's real duration BEFORE the concat submit (zero credit).
+
+    The native-Extend contract is uniform ``segment_seconds`` blocks; this proves it
+    per clip instead of assuming it (build_concat_input hard-codes the length). Reuses
+    the on-disk retrieved clip when present, else fetches media (get_media, free).
+    Fails closed — a concat is never submitted when a duration is unknown or off.
+    """
+    expected_count = max(2, int(requested_seconds) // int(segment_seconds))
+    if len(segment_media_ids) != expected_count:
+        raise FinalTimelineError(
+            SEGMENT_COUNT_MISMATCH,
+            f"expected {expected_count} segments for {requested_seconds}s, "
+            f"got {len(segment_media_ids)}")
+    measured: list[float] = []
+    for mid in segment_media_ids:
+        dur: Optional[float] = None
+        local = Path(out_dir) / f"{mid}.mp4"
+        if local.is_file():
+            dur = probe_mp4_duration_seconds(local)
+        if dur is None:
+            media = await client.get_media(mid)
+            mdata = media.get("data", media) if isinstance(media, dict) else media
+            enc = _deep_find_encoded_video(mdata)
+            if enc:
+                dur = _decode_segment_to_probe(enc, out_dir, mid)
+        if dur is None:
+            raise FinalTimelineError(
+                SEGMENT_DURATION_UNAVAILABLE,
+                f"segment {mid} duration could not be measured — refusing to concat "
+                "with an unverified segment length")
+        if abs(dur - float(segment_seconds)) > tolerance:
+            raise FinalTimelineError(
+                SEGMENT_DURATION_MISMATCH,
+                f"segment {mid} measured {dur:.3f}s, expected ~{segment_seconds}s "
+                f"(±{tolerance}s) — native-Extend blocks must be uniform")
+        measured.append(round(dur, 3))
+    total = round(sum(measured), 3)
+    if abs(total - float(requested_seconds)) > tolerance:
+        raise FinalTimelineError(
+            SEGMENT_TOTAL_DURATION_MISMATCH,
+            f"segments total {total}s != requested {requested_seconds}s "
+            f"(±{tolerance}s)")
+    return {"segment_durations_s": measured, "total_duration_s": total,
+            "segment_count": len(measured)}
 
 
 def _unwrap(resp: object) -> dict:
@@ -272,7 +363,12 @@ async def finalize_timeline(client, *, job_id: str, segment_media_ids: list[str]
         envelope = {"operation": {"operation": {"name": job["final_concat_job_name"]}}}
         job_name = job["final_concat_job_name"]
         resumed = True
+        preflight = None
     else:
+        # Duration preflight (zero credit) — prove every segment is a real ~8s block
+        # and the total matches BEFORE submitting the concat. Fails closed.
+        preflight = await preflight_segment_durations(
+            client, segment_media_ids, requested_seconds, out_dir)
         await _crud.update_video_production_job(job_id, status=JOB_FINALIZING)
         submit = await client.run_video_concatenation(input_videos)
         if submit.get("error") or (isinstance(submit.get("status"), int)
@@ -315,5 +411,6 @@ async def finalize_timeline(client, *, job_id: str, segment_media_ids: list[str]
         **plan, "dry_run": False, "resumed": resumed,
         "final_concat_job_name": job_name,
         **saved, "measured_duration_s": measured,
+        "segment_preflight": preflight,
         "status": JOB_COMPLETE,
     }

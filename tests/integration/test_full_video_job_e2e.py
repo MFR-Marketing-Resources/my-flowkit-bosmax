@@ -50,7 +50,9 @@ class _ExtendConcatClient:
             "mediaGenerationStatus": "MEDIA_GENERATION_STATUS_SUCCESSFUL"}}]}
 
     async def get_media(self, mid):
-        return {"fifeUrl": f"https://flow-content/{mid}"}
+        # Each segment is a real ~8s block for the pre-concat duration preflight.
+        return {"encodedVideo": base64.b64encode(_mp4(8.0)).decode(),
+                "fifeUrl": f"https://flow-content/{mid}"}
 
     async def run_video_concatenation(self, input_videos):
         self.concat_submits += 1

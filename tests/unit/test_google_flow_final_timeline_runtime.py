@@ -139,6 +139,11 @@ class _Client:
         self.polls += 1
         return resp
 
+    async def get_media(self, media_id):
+        # Each segment is a real ~8s block for the duration preflight.
+        return {"data": {"encodedVideo":
+                         base64.b64encode(_mp4_bytes(8.0)).decode()}}
+
 
 def _patch_job_store(monkeypatch, existing=None):
     store = {"job": dict(existing or {})}
@@ -247,3 +252,84 @@ def test_finalize_failed_render_fails_closed(monkeypatch, tmp_path):
             requested_seconds=16, out_dir=tmp_path, dry_run=False,
             confirm_live_credit_burn=True, poll_interval_s=0))
     assert exc.value.code == ft.FAIL_FINAL_RENDER
+
+
+# ── pre-concat segment-duration preflight ───────────────────────────────────
+class _DurClient:
+    """Client whose get_media returns a segment of a declared duration (or none)."""
+
+    def __init__(self, durations: dict):
+        self.durations = durations
+        self.submits = []
+
+    async def get_media(self, media_id):
+        secs = self.durations.get(media_id)
+        if secs is None:
+            return {"data": {}}  # no encodedVideo → duration unavailable
+        return {"data": {"encodedVideo": base64.b64encode(_mp4_bytes(secs)).decode()}}
+
+    async def run_video_concatenation(self, input_videos):
+        self.submits.append(input_videos)
+        return _fx("concat_submit_response.sanitized.json")
+
+    async def check_video_concatenation_status(self, envelope):
+        return {"status": "MEDIA_GENERATION_STATUS_SUCCESSFUL", "inputsCount": 2,
+                "encodedVideo": base64.b64encode(_mp4_bytes(16.0)).decode()}
+
+
+def test_preflight_two_8s_segments_pass(tmp_path):
+    out = asyncio.run(ft.preflight_segment_durations(
+        _DurClient({"a": 8.0, "b": 8.0}), ["a", "b"], 16, tmp_path))
+    assert out["segment_count"] == 2
+    assert out["total_duration_s"] == pytest.approx(16.0, abs=0.05)
+
+
+def test_preflight_10s_plus_8s_fails_before_submit(tmp_path):
+    with pytest.raises(ft.FinalTimelineError) as exc:
+        asyncio.run(ft.preflight_segment_durations(
+            _DurClient({"a": 10.0, "b": 8.0}), ["a", "b"], 16, tmp_path))
+    assert exc.value.code == ft.SEGMENT_DURATION_MISMATCH
+
+
+def test_preflight_unknown_duration_fails(tmp_path):
+    with pytest.raises(ft.FinalTimelineError) as exc:
+        asyncio.run(ft.preflight_segment_durations(
+            _DurClient({"a": 8.0}), ["a", "b"], 16, tmp_path))
+    assert exc.value.code == ft.SEGMENT_DURATION_UNAVAILABLE
+
+
+def test_preflight_wrong_segment_count_fails(tmp_path):
+    with pytest.raises(ft.FinalTimelineError) as exc:
+        asyncio.run(ft.preflight_segment_durations(
+            _DurClient({"a": 8.0}), ["a"], 16, tmp_path))
+    assert exc.value.code == ft.SEGMENT_COUNT_MISMATCH
+
+
+def test_preflight_total_mismatch_fails(tmp_path):
+    # each 9.4s is within ±1.5 of 8, but the total 18.8 != 16 (±1.5)
+    with pytest.raises(ft.FinalTimelineError) as exc:
+        asyncio.run(ft.preflight_segment_durations(
+            _DurClient({"a": 9.4, "b": 9.4}), ["a", "b"], 16, tmp_path))
+    assert exc.value.code == ft.SEGMENT_TOTAL_DURATION_MISMATCH
+
+
+def test_no_concat_submit_after_failed_preflight(monkeypatch, tmp_path):
+    monkeypatch.setenv("NATIVE_EXTEND_ENABLED", "1")
+    _patch_job_store(monkeypatch)
+    client = _DurClient({"a": 10.0, "b": 8.0})  # bad segment
+    with pytest.raises(ft.FinalTimelineError) as exc:
+        asyncio.run(ft.finalize_timeline(
+            client, job_id="vj_pf", segment_media_ids=["a", "b"],
+            requested_seconds=16, out_dir=tmp_path, dry_run=False,
+            confirm_live_credit_burn=True, poll_interval_s=0))
+    assert exc.value.code == ft.SEGMENT_DURATION_MISMATCH
+    assert client.submits == []  # concat never fired after a failed preflight
+
+
+def test_preflight_prefers_ondisk_segment(tmp_path):
+    # a real retrieved clip on disk is probed directly (no get_media fetch needed)
+    (tmp_path / "a.mp4").write_bytes(_mp4_bytes(8.0))
+    (tmp_path / "b.mp4").write_bytes(_mp4_bytes(8.0))
+    out = asyncio.run(ft.preflight_segment_durations(
+        _DurClient({}), ["a", "b"], 16, tmp_path))  # empty client → must use disk
+    assert out["segment_count"] == 2
