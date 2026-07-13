@@ -518,3 +518,110 @@ def test_manual_lane_rejects_client_source_mode_contradicting_package(monkeypatc
     result = _run(flow_api._run_manual_job_via_generate(ok, "I2V", None))
     assert result["ok"] is True
     assert calls["start_generate"]["image_media_ids"] == [_UUID_A, _UUID_B]
+
+
+# ── SEV-0 canonical-mode DOM-route guard (runtime-skew closure) ──────────────
+# The incident proved a canonical job could reach the dead DOM lane
+# (JOB_PROMPT_EMPTY inside content-flow-dom.js::executeFlowJob) during a runtime
+# restart window. The execute_flow_job() handler now fails closed for any
+# canonical/source-canonical payload BEFORE client.execute_flow_job (the DOM
+# dispatch), so the DOM lane can never run a canonical production job.
+
+def _guard_wire(monkeypatch, calls):
+    class _C:
+        connected = True
+
+        async def execute_flow_job(self, body):  # the legacy DOM dispatch
+            calls["dom_dispatch"] = body.get("request_id")
+            return {"ok": True, "dispatched": True}
+
+    async def fake_get_request(request_id):
+        return {"id": request_id, "status": "WAITING_FLOW"}
+
+    async def fake_stage(request_id, stage, status, message, source, **kw):
+        calls.setdefault("stages", []).append(stage)
+
+    async def fake_upsert(request_id, **kw):
+        calls.setdefault("telemetry", []).append(kw.get("status"))
+
+    monkeypatch.setattr(flow_api, "get_flow_client", lambda: _C())
+    monkeypatch.setattr(flow_api.crud, "get_request", fake_get_request)
+    monkeypatch.setattr(flow_api.crud, "add_stage_event", fake_stage)
+    monkeypatch.setattr(flow_api.crud, "upsert_request_telemetry", fake_upsert)
+
+
+def test_execute_flow_job_fails_closed_on_source_canonical_mode(monkeypatch):
+    """A canonical/source-canonical payload that slips past the mode reroute
+    (only source_mode set) FAILS CLOSED before the dead DOM lane."""
+    calls = {}
+    _guard_wire(monkeypatch, calls)
+    body = {"request_id": "guard_hybrid", "prompt": "make it", "source_mode": "HYBRID"}
+    with pytest.raises(HTTPException) as exc:
+        _run(flow_api.execute_flow_job(body))
+    assert exc.value.status_code == 422
+    assert "ERR_CANONICAL_MODE_LEGACY_DOM_ROUTE_FORBIDDEN" in str(exc.value.detail)
+    assert "dom_dispatch" not in calls  # DOM lane never reached
+
+
+def test_execute_flow_job_does_not_over_block_legacy_non_mode_payload(monkeypatch):
+    """The guard must not over-block: a genuinely legacy payload with NO canonical
+    mode and NO canonical source_mode still reaches the frozen DOM dispatch."""
+    calls = {}
+    _guard_wire(monkeypatch, calls)
+    body = {"request_id": "legacy_probe", "prompt": "diagnostic"}
+    result = _run(flow_api.execute_flow_job(body))
+    assert result.get("ok") is True
+    assert calls.get("dom_dispatch") == "legacy_probe"  # DOM lane reached
+
+
+def test_execute_flow_job_smoke_probe_is_not_canonical_blocked(monkeypatch):
+    """A smoke readiness probe (smoke_test) carries a canonical mode but must NOT
+    be 422-blocked — it reaches the bridge and short-circuits without generating."""
+    calls = {}
+    _guard_wire(monkeypatch, calls)
+    body = {"request_id": "smoke_probe", "source_mode": "HYBRID", "smoke_test": True}
+    result = _run(flow_api.execute_flow_job(body))
+    assert result.get("ok") is True
+    assert calls.get("dom_dispatch") == "smoke_probe"  # reached bridge, not 422
+
+
+def test_flow_client_execute_flow_job_blocks_canonical_at_chokepoint(monkeypatch):
+    """Defense-in-depth: the shared WS chokepoint refuses canonical modes (covering
+    durable SDK visual-feedback + batch execute-variant even when the extension
+    guard is stale/absent), while non-canonical and smoke probes pass through."""
+    from agent.services import flow_client as fc
+    client = fc.FlowClient.__new__(fc.FlowClient)  # no __init__ side effects
+    sent = {}
+
+    async def fake_send(method, params, timeout=120):
+        sent["method"] = method
+        return {"ok": True}
+
+    client._send = fake_send
+
+    # canonical transport mode -> blocked, never dispatched
+    r = _run(client.execute_flow_job({"mode": "F2V", "prompt": "x"}))
+    assert r["ok"] is False
+    assert r["error"] == "ERR_CANONICAL_MODE_LEGACY_DOM_ROUTE_FORBIDDEN"
+    assert "method" not in sent
+
+    # source-canonical alias -> blocked
+    r2 = _run(client.execute_flow_job({"source_mode": "HYBRID"}))
+    assert r2["error"] == "ERR_CANONICAL_MODE_LEGACY_DOM_ROUTE_FORBIDDEN"
+    assert "method" not in sent
+
+    # OR-logic: aliased non-canonical mode + canonical source_mode -> blocked
+    r2b = _run(client.execute_flow_job({"mode": "SMOKE", "source_mode": "I2V"}))
+    assert r2b["error"] == "ERR_CANONICAL_MODE_LEGACY_DOM_ROUTE_FORBIDDEN"
+    assert r2b["mode"] == "I2V"
+    assert "method" not in sent
+
+    # smoke probe with a canonical mode -> passes through to dispatch
+    r3 = _run(client.execute_flow_job({"mode": "F2V", "smoke_test": True}))
+    assert sent.get("method") == "EXECUTE_FLOW_JOB"
+    assert r3["ok"] is True
+
+    # genuinely non-canonical -> passes through
+    sent.clear()
+    _run(client.execute_flow_job({"mode": "SMOKE"}))
+    assert sent.get("method") == "EXECUTE_FLOW_JOB"

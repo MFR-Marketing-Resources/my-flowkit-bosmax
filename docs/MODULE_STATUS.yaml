@@ -362,6 +362,7 @@ domains:
       - extension/popup.js
       - dashboard/src/types/index.ts
       - scripts/test-f2v-asset-picker-modal.js
+      - scripts/test-canonical-dom-route-guard.js
       - scripts/test-f2v-cdp-file-chooser-poc.js
       - scripts/test-f2v-playwright-persistent-context.js
       - scripts/test-flow-selector-registry.js

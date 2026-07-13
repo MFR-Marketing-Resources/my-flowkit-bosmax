@@ -43,6 +43,15 @@ def resolve_image_model_name(model: str | None) -> str:
     return value
 
 
+# ADR-007: the canonical production modes generate API-first only; the extension
+# DOM-clicking generation lane is DEAD for them. execute_flow_job() refuses to
+# dispatch any of these over the bridge (source modes HYBRID/FRAMES/INGREDIENTS
+# map to transport F2V/F2V/I2V and are refused under either label).
+_CANONICAL_DOM_FORBIDDEN_MODES = frozenset(
+    {"IMG", "T2V", "I2V", "F2V", "HYBRID", "FRAMES", "INGREDIENTS"}
+)
+
+
 class FlowClient:
     """Sends commands to Chrome extension via WebSocket."""
 
@@ -266,6 +275,37 @@ class FlowClient:
 
     async def execute_flow_job(self, job_data: dict) -> dict:
         """Trigger DOM automation in the extension for a generation job."""
+        # ADR-007 defense-in-depth (SEV-0 runtime-skew closure): canonical
+        # production modes generate API-first only; the DOM lane is dead for
+        # them. Refuse to dispatch one over the bridge even when a backend caller
+        # reaches here directly (durable SDK visual-feedback in
+        # agent/sdk/services/operations.py; batch execute-variant in
+        # agent/services/batch_executor.py) — so a stale/absent extension guard
+        # during a restart window can never let a canonical job run the dead
+        # lane. Returns the same error-dict shape those callers already handle
+        # (report.get("error")). Non-generating smoke probes use
+        # smoke_execute_flow_job (a separate method) and are unaffected.
+        _jd = job_data or {}
+        # OR-logic across mode AND source_mode (matches the extension predicates):
+        # catch a canonical value under EITHER field, not just the first present.
+        _canonical = next(
+            (
+                m
+                for m in (str(_jd.get(k) or "").strip().upper() for k in ("mode", "source_mode"))
+                if m in _CANONICAL_DOM_FORBIDDEN_MODES
+            ),
+            "",
+        )
+        if (not _jd.get("smoke_test")) and _canonical:
+            return {
+                "ok": False,
+                "error": "ERR_CANONICAL_MODE_LEGACY_DOM_ROUTE_FORBIDDEN",
+                "mode": _canonical,
+                "detail": (
+                    "Canonical production modes generate API-first "
+                    "(make_video.start_generate); the DOM lane is dead."
+                ),
+            }
         return await self._send("EXECUTE_FLOW_JOB", {"job": job_data}, timeout=120)
 
     async def debug_flow_dom_execution(self, mode: str, job: Optional[dict] = None) -> dict:

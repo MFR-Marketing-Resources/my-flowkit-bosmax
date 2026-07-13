@@ -2925,6 +2925,27 @@ async def execute_flow_job(body: dict):
         return await _run_manual_job_via_generate(
             body, _api_mode, _start_asset if _start_asset_present else None)
 
+    # ── ADR-007 defense-in-depth: no canonical production job may reach the dead
+    # DOM lane. The reroute above already returns for IMG/T2V/I2V/F2V; this fails
+    # closed for any canonical/source-canonical payload that slipped past it
+    # (e.g. an aliased/missing transport mode carrying only a source_mode),
+    # turning a silent DOM-lane JOB_PROMPT_EMPTY into a loud, actionable error
+    # instead of a DOM dispatch. Genuinely legacy non-mode payloads (no canonical
+    # mode AND no canonical source_mode) still fall through to the frozen lane.
+    _src_mode = str(body.get("source_mode") or "").upper()
+    _CANONICAL_SOURCE_MODES = {
+        "IMG", "T2V", "I2V", "F2V", "HYBRID", "FRAMES", "INGREDIENTS",
+    }
+    if (not body.get("smoke_test")) and (
+        _api_mode in ("IMG", "T2V", "I2V", "F2V") or _src_mode in _CANONICAL_SOURCE_MODES
+    ):
+        raise HTTPException(
+            422,
+            "ERR_CANONICAL_MODE_LEGACY_DOM_ROUTE_FORBIDDEN: "
+            f"mode={_api_mode or 'n/a'} source_mode={_src_mode or 'n/a'} "
+            "must run API-first (make_video.start_generate), never the DOM lane.",
+        )
+
     result = await client.execute_flow_job(body)
     if result.get("error"):
         failure_report = await _build_manual_flow_failure_report(body["request_id"], result)
