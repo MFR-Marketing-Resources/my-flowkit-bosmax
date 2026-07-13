@@ -368,6 +368,40 @@ async def test_expiry_after_extend_submitted_finalizes_on_resume(monkeypatch, tm
     assert client.extend_submits == 0 and client.concat_submits == 1
 
 
+async def test_safe_not_attempted_extend_is_retryable_on_resume(monkeypatch, tmp_path):
+    """A pre-submit fail-closed EXTEND (NOT_ATTEMPTED / NOT_SPENT / SAFE, no
+    operation_ref — live: vj_2502426e7791 EXTEND_UNSUPPORTED_MODEL) must be
+    retryable under a fresh authorization: exactly ONE new submit, never a
+    stranded job. UNCERTAIN rows stay non-retryable."""
+    planned, _ = await _drive_to_initial(monkeypatch, tmp_path, "saferetry")
+    job = await crud.get_video_production_job(planned["job_id"])
+    conts = json.loads(job["continuation_prompts_json"])
+    from agent.services import google_flow_native_extend_runtime as _nx
+    parent = "init-saferetry"
+    idem = orch._stage_key(
+        job, "EXTEND", f"{parent}|{_nx._prompt_hash(conts[0]['prompt'])}|pos1")
+    await crud.reserve_video_job_side_effect(idem, job_id=job["job_id"], stage="EXTEND")
+    await crud.increment_side_effect_submit_count(idem)
+    await crud.update_video_job_side_effect(
+        idem, submission_state=orch.SUB_NOT_ATTEMPTED, credit_state=orch.CR_NOT_SPENT,
+        retry_safety=orch.RS_SAFE, detail="EXTEND_UNSUPPORTED_MODEL:9:16")
+    await crud.update_video_production_job_full(
+        job["job_id"], status=orch.F_EXTEND, error_code=orch.F_EXTEND)
+    auth2 = await orch.authorize_job(
+        planned["job_id"], confirmed_plan_fingerprint=planned["plan_fingerprint"])
+    client = FakeClient("saferetry")
+    done = await orch.advance_job(
+        client, planned["job_id"], authorization_token=auth2["authorization_token"],
+        generate_initial=_initial_gen([], "saferetry"), out_dir=tmp_path,
+        poll_interval_s=0)
+    assert done["complete"] is True
+    assert client.extend_submits == 1  # exactly one controlled retry
+    row = next(r for r in await crud.list_video_job_side_effects(planned["job_id"])
+               if r["idempotency_key"] == idem)
+    assert row["submission_state"] == orch.SUB_TERMINAL
+    assert int(row["effective_submit_count"]) == 2  # honest audit of the retry
+
+
 # ── mid-flight INITIAL restart recovery via persisted lane (Mission 1 / item 1) ─
 async def _submit_initial_no_terminal(monkeypatch, nonce, lane="lane-x"):
     """Reach: INITIAL reserved + SUBMITTED (credit MAY be spent), lane handle

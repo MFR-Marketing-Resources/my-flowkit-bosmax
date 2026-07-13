@@ -535,7 +535,20 @@ async def advance_job(
             if _gate_stage_start(job, authorization_token, now) == _AUTH_EXPIRED:
                 return await _stop_auth_expired(job_id)
         r = await _reserve_or_resume(idem, job_id, "EXTEND")
-        if r["reserved"]:
+        # retry_safety=SAFE contract: a pre-submit fail-closed error leaves the
+        # row NOT_ATTEMPTED / NOT_SPENT with no operation_ref — provably zero
+        # provider side effect. That is the ONE retryable state; without this,
+        # the stale row holds the idempotency key forever and the job can never
+        # resume (live: vj_2502426e7791 stuck AUTHORIZED after
+        # EXTEND_UNSUPPORTED_MODEL). UNCERTAIN/SUBMITTED rows stay non-retryable.
+        _row = r["row"] or {}
+        _safe_retry = (
+            not r["reserved"]
+            and not _row.get("operation_ref")
+            and _row.get("submission_state") == SUB_NOT_ATTEMPTED
+            and _row.get("retry_safety") == RS_SAFE
+        )
+        if r["reserved"] or _safe_retry:
             await _crud.update_video_production_job_full(job_id, status=S_EXTEND_SUBMITTING)
             await _crud.increment_side_effect_submit_count(idem)
             await _crud.update_video_job_side_effect(
