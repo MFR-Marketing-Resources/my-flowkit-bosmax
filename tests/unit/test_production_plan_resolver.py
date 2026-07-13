@@ -80,6 +80,39 @@ async def test_invalid_duration_flagged_missing():
     assert "valid_duration_plan" in out["missing"]
 
 
+async def test_blocked_execution_package_never_mints_a_production_plan():
+    # Fail-closed package gate: a BLOCKED package (readiness blockers, e.g. a
+    # missing required I2V recipe role) must be rejected at plan time even when
+    # its media-ref count still lands inside the transport contract.
+    product = await crud.create_product("Blocked Package Product")
+    pid = product["id"]
+    await crud.create_or_replace_workspace_execution_package(
+        "wep_blocked", product_id=pid, mode="I2V", duration_seconds=16,
+        aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT", model="veo_3_1_extension_lite",
+        manual_override=False, prompt_text="single-block prompt",
+        prompt_fingerprint="pf", prompt_package_snapshot_id="snap",
+        asset_slots=json.dumps([]),
+        resolved_assets=json.dumps([
+            {"asset_id": f"product-image:{pid}:subject",
+             "asset_fingerprint": "sha-a", "slot_key": "subject",
+             "media_id": "media-a"},
+            {"asset_id": "ca_character", "asset_fingerprint": "sha-b",
+             "slot_key": "scene", "media_id": "media-b"},
+        ]),
+        readiness="BLOCKED", execution_allowed=False,
+        production_generation_allowed=False,
+        manual_fallback="{}",
+        blockers=json.dumps(["MISSING_SCENE_CONTEXT_REFERENCE"]),
+        request_lineage_payload=json.dumps(
+            {"compiler": {"source_mode": "INGREDIENTS"}}),
+        source_of_truth_notes="[]")
+    out = await resolver.resolve_production_authority({
+        "product_id": pid, "execution_package_id": "wep_blocked",
+        "requested_duration_seconds": 16,
+    }, trust_client_authority=False)
+    assert "execution_package_execution_allowed" in out["missing"]
+
+
 async def test_reads_real_execution_package(monkeypatch):
     # a REAL product + persisted execution package: authority for model/aspect/asset/prompt
     product = await crud.create_product("Minyak Warisan Tok Cap Burung 25ml")

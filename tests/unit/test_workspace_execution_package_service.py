@@ -1,25 +1,103 @@
+import copy
 import json
 
 import pytest
 
 from agent.services.workspace_execution_package_service import (
     _bind_f2v_reference_assets,
+    _workspace_execution_package_id,
     compile_workspace_prompt_preview,
     create_workspace_execution_package,
     list_workspace_execution_packages,
 )
 
 
+def test_package_id_binds_reference_selection_identity():
+    # Two packages that differ ONLY in their operator-selected reference
+    # bindings must never share one wep_ id — a same-id create_or_replace
+    # silently swapped resolved assets under an already-planned job.
+    common = (
+        "prod-001", "F2V", "prompt_fp", 16, "9:16", "Veo 3.1 - Lite",
+        False, "EXTEND", "BM_MS", "UGC_IPHONE_RAW", "VISIBLE_CREATOR",
+    )
+    id_a = _workspace_execution_package_id(*common, ["asset_fp_a"])
+    id_b = _workspace_execution_package_id(*common, ["asset_fp_b"])
+    id_a_again = _workspace_execution_package_id(*common, ["asset_fp_a"])
+    assert id_a != id_b
+    assert id_a == id_a_again
+
+
+def _fake_asset(**overrides):
+    fields = {
+        "asset_id": "ca_ref",
+        "display_name": "Reference asset",
+        "source_type": "UPLOAD",
+        "local_file_path": "C:/tmp/ref.png",
+        "remote_source_url": None,
+        "preview_url": "/api/creative-assets/ca_ref/preview",
+        "download_url": "/api/creative-assets/ca_ref/download",
+        "media_id": "media-ref",
+        "product_id": None,
+    }
+    fields.update(overrides)
+    return type("Asset", (), fields)()
+
+
+def _fake_validation(asset=None, blockers=None):
+    return type(
+        "ValidationResult",
+        (),
+        {"valid": not blockers, "blockers": blockers or [], "asset": asset},
+    )()
+
+
+_ANCHOR_SLOTS = [
+    {
+        "slot_key": "start_frame",
+        "required": True,
+        "default_source": "PRODUCT_IMAGE_CACHE",
+        "resolved_asset": {
+            "asset_id": "product-image:prod-001:start_frame",
+            "asset_fingerprint": "asset_fp_001",
+            "slot_key": "start_frame",
+            "asset_source": "PRODUCT_IMAGE_CACHE",
+            "media_id": "media-product",
+        },
+    },
+    {"slot_key": "end_frame", "required": False, "resolved_asset": None},
+]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_binding_defaults_to_package_product_anchor():
+    # HYBRID automatic product-anchor authority (pre-PR#338 proven behavior):
+    # no manual pick → the approved package's own resolved anchor stands, and
+    # exactly one effective product reference remains.
+    merged = await _bind_f2v_reference_assets(
+        copy.deepcopy(_ANCHOR_SLOTS),
+        product_id="prod-001",
+        source_mode="HYBRID",
+        product_reference_asset_id=None,
+        start_frame_asset_id=None,
+        end_frame_asset_id=None,
+    )
+    assert merged == _ANCHOR_SLOTS
+    resolved = [slot["resolved_asset"] for slot in merged if slot.get("resolved_asset")]
+    assert len(resolved) == 1
+    assert resolved[0]["asset_id"] == "product-image:prod-001:start_frame"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("product_reference_asset_id", "start_frame_asset_id", "end_frame_asset_id"),
     [
-        (None, None, None),
         ("ca_product", "ca_extra", None),
         ("ca_product", None, "ca_extra"),
+        (None, "ca_extra", None),
+        (None, None, "ca_extra"),
     ],
 )
-async def test_hybrid_reference_binding_requires_exactly_one_product_reference(
+async def test_hybrid_reference_binding_rejects_frame_selections(
     product_reference_asset_id,
     start_frame_asset_id,
     end_frame_asset_id,
@@ -27,6 +105,7 @@ async def test_hybrid_reference_binding_requires_exactly_one_product_reference(
     with pytest.raises(ValueError, match="HYBRID_EXACTLY_ONE_PRODUCT_REFERENCE_REQUIRED"):
         await _bind_f2v_reference_assets(
             [],
+            product_id="prod-001",
             source_mode="HYBRID",
             product_reference_asset_id=product_reference_asset_id,
             start_frame_asset_id=start_frame_asset_id,
@@ -35,7 +114,93 @@ async def test_hybrid_reference_binding_requires_exactly_one_product_reference(
 
 
 @pytest.mark.asyncio
-async def test_workspace_execution_package_uses_product_cached_asset(monkeypatch):
+async def test_frames_binding_requires_explicit_start_frame():
+    # FRAMES server-side truth: the raw product image must never silently stand
+    # in for a finished composite start frame.
+    with pytest.raises(ValueError, match="FRAMES_START_FRAME_REFERENCE_REQUIRED"):
+        await _bind_f2v_reference_assets(
+            copy.deepcopy(_ANCHOR_SLOTS),
+            product_id="prod-001",
+            source_mode="FRAMES",
+            product_reference_asset_id=None,
+            start_frame_asset_id=None,
+            end_frame_asset_id=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_binding_rejects_cross_product_reference(monkeypatch):
+    async def fake_validate(asset_id: str, **kwargs):
+        return _fake_validation(asset=_fake_asset(product_id="prod-OTHER"))
+
+    monkeypatch.setattr(
+        "agent.services.workspace_execution_package_service.validate_selectable_asset",
+        fake_validate,
+    )
+    with pytest.raises(ValueError, match="START_FRAME_REFERENCE_INVALID:WRONG_PRODUCT"):
+        await _bind_f2v_reference_assets(
+            copy.deepcopy(_ANCHOR_SLOTS),
+            product_id="prod-001",
+            source_mode="FRAMES",
+            product_reference_asset_id=None,
+            start_frame_asset_id="ca_other_product",
+            end_frame_asset_id=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_binding_rejects_reference_without_media_identity(monkeypatch):
+    async def fake_validate(asset_id: str, **kwargs):
+        return _fake_validation(asset=_fake_asset(product_id="prod-001", media_id=None))
+
+    monkeypatch.setattr(
+        "agent.services.workspace_execution_package_service.validate_selectable_asset",
+        fake_validate,
+    )
+    with pytest.raises(ValueError, match="START_FRAME_REFERENCE_INVALID:MEDIA_IDENTITY_MISSING"):
+        await _bind_f2v_reference_assets(
+            copy.deepcopy(_ANCHOR_SLOTS),
+            product_id="prod-001",
+            source_mode="HYBRID",
+            product_reference_asset_id="ca_no_media",
+            start_frame_asset_id=None,
+            end_frame_asset_id=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_hybrid_explicit_pick_overrides_anchor(monkeypatch):
+    captured_kwargs = {}
+
+    async def fake_validate(asset_id: str, **kwargs):
+        captured_kwargs.update(kwargs)
+        return _fake_validation(
+            asset=_fake_asset(asset_id=asset_id, product_id="prod-001"),
+        )
+
+    monkeypatch.setattr(
+        "agent.services.workspace_execution_package_service.validate_selectable_asset",
+        fake_validate,
+    )
+    merged = await _bind_f2v_reference_assets(
+        copy.deepcopy(_ANCHOR_SLOTS),
+        product_id="prod-001",
+        source_mode="HYBRID",
+        product_reference_asset_id="ca_pick",
+        start_frame_asset_id=None,
+        end_frame_asset_id=None,
+    )
+    # picker parity: the binder enforces the same rendered-text ban as the
+    # eligibility-audit surfaces.
+    assert captured_kwargs["disallow_rendered_text"] is True
+    assert captured_kwargs["semantic_role"] == "PRODUCT_REFERENCE"
+    start = next(s for s in merged if s["slot_key"] == "start_frame")
+    assert start["resolved_asset"]["asset_id"] == "ca_pick"
+    assert start["resolved_asset"]["semantic_role"] == "PRODUCT_REFERENCE"
+
+
+@pytest.mark.asyncio
+async def test_workspace_execution_package_frames_binds_selected_start_frame(monkeypatch):
     captured = {}
 
     async def fake_package(product_id: str, mode: str):
@@ -133,30 +298,20 @@ async def test_workspace_execution_package_uses_product_cached_asset(monkeypatch
             "semantic_role": "COMPOSITE_FRAME_REFERENCE",
             "allowed_mode": "F2V",
             "engine_slot": "start_frame",
+            "disallow_rendered_text": True,
             "require_approved": True,
         }
-        return type(
-            "ValidationResult",
-            (),
-            {
-                "valid": True,
-                "blockers": [],
-                "asset": type(
-                    "Asset",
-                    (),
-                    {
-                        "asset_id": "ca_start",
-                        "display_name": "Operator selected start frame",
-                        "source_type": "UPLOAD",
-                        "local_file_path": "C:/tmp/start.png",
-                        "remote_source_url": None,
-                        "preview_url": "/api/creative-assets/ca_start/preview",
-                        "download_url": "/api/creative-assets/ca_start/download",
-                        "media_id": "media-start",
-                    },
-                )(),
-            },
-        )()
+        return _fake_validation(
+            asset=_fake_asset(
+                asset_id="ca_start",
+                display_name="Operator selected start frame",
+                local_file_path="C:/tmp/start.png",
+                preview_url="/api/creative-assets/ca_start/preview",
+                download_url="/api/creative-assets/ca_start/download",
+                media_id="media-start",
+                product_id="prod-001",
+            ),
+        )
 
     monkeypatch.setattr("agent.services.workspace_execution_package_service.get_approved_product_package", fake_package)
     monkeypatch.setattr("agent.services.workspace_execution_package_service.compile_workspace_prompt_preview", fake_compile)
@@ -194,6 +349,98 @@ async def test_workspace_execution_package_uses_product_cached_asset(monkeypatch
     stored_lineage = json.loads(captured["request_lineage_payload"])
     assert stored_lineage["compiler"]["planner_result"] == result["planner_result"]
     assert stored_lineage["compiler"]["canonical_package_fingerprint"] == "canonical_fp_001"
+
+
+@pytest.mark.asyncio
+async def test_workspace_execution_package_hybrid_uses_automatic_product_anchor(
+    monkeypatch,
+):
+    """HYBRID with NO manual pick persists the package's own product anchor —
+    the selected product package supplies the reference authority automatically
+    (regression guard for the PR#338 mandatory-manual-pick break)."""
+    captured = {}
+
+    async def fake_package(product_id: str, mode: str):
+        return {
+            "prompt_package_snapshot_id": "pkg_hybrid",
+            "product_id": product_id,
+            "product_name": "Minyak Warisan Tok Cap Burung 25ml",
+            "mode": mode,
+            "production_generation_allowed": False,
+            "prompt_text": "Hybrid prompt",
+            "prompt_fingerprint": "fingerprint_hybrid",
+            "asset_slots": copy.deepcopy(_ANCHOR_SLOTS),
+            "manual_fallback": {"copy_prompt_available": True},
+            "blockers": [],
+            "source_of_truth_notes": ["Product truth remains on the product row."],
+            "claim_safe_rewrite": "Safe rewrite",
+        }
+
+    async def fake_compile(**kwargs):
+        return {
+            "final_compiled_prompt_text": "Block 1 (ANCHOR)",
+            "prompt_blocks": [
+                {
+                    "block_id": "block_1",
+                    "block_index": 1,
+                    "block_role": "ANCHOR",
+                    "duration_seconds": 8,
+                    "shot_count": 2,
+                    "dialogue_word_budget": 13,
+                    "continuation_from_block_id": None,
+                    "compiled_prompt_text": "Block 1",
+                    "shot_plan": ["Shot 1"],
+                }
+            ],
+            "compiler_version": "ugc_video_prompt_compiler_v1",
+            "source_mode": "HYBRID",
+            "generation_mode": "SINGLE",
+            "total_duration_seconds": 8,
+            "camera_style": "UGC_IPHONE_RAW",
+            "character_presence": "VISIBLE_CREATOR",
+            "creator_persona": "DEFAULT_CREATOR",
+            "target_language": "BM_MS",
+            "shot_plan": [{"block_index": 1, "shot_count": 1, "shots": ["Shot 1"]}],
+            "dialogue_word_budget_per_block": [13],
+            "prompt_fingerprint": "compiled_fp_hybrid",
+            "warnings": [],
+            "blockers": [],
+            "source_of_truth_notes": ["Compiler note"],
+            "continuation_lineage": [],
+            "runtime_config_snapshot": {"defaults": {"block_duration_seconds": 8}},
+        }
+
+    async def fake_store(**kwargs):
+        captured.update(kwargs)
+        return kwargs
+
+    async def fail_validate(asset_id: str, **kwargs):
+        raise AssertionError(
+            "validate_selectable_asset must not run for the automatic anchor",
+        )
+
+    monkeypatch.setattr("agent.services.workspace_execution_package_service.get_approved_product_package", fake_package)
+    monkeypatch.setattr("agent.services.workspace_execution_package_service.compile_workspace_prompt_preview", fake_compile)
+    monkeypatch.setattr("agent.services.workspace_execution_package_service.crud.create_or_replace_workspace_execution_package", fake_store)
+    monkeypatch.setattr("agent.services.workspace_execution_package_service.validate_selectable_asset", fail_validate)
+
+    result = await create_workspace_execution_package(
+        "prod-001",
+        "F2V",
+        8,
+        "9:16",
+        "Veo 3.1 - Lite",
+        False,
+        source_mode="HYBRID",
+        copy_fallback_confirmed=True,
+    )
+
+    assert result["readiness"] == "READY"
+    assert len(result["resolved_assets"]) == 1
+    assert result["resolved_assets"][0]["asset_source"] == "PRODUCT_IMAGE_CACHE"
+    assert result["resolved_assets"][0]["asset_id"] == "product-image:prod-001:start_frame"
+    stored_assets = json.loads(captured["resolved_assets"])
+    assert stored_assets[0]["media_id"] == "media-product"
 
 
 @pytest.mark.asyncio

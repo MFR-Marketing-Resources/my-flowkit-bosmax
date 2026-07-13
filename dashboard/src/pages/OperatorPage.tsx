@@ -19,6 +19,7 @@ import NativeExtendPanel from "../components/NativeExtendPanel";
 import RequestReportPanel from "../components/reporting/RequestReportPanel";
 import SocialCopyPackagePanel from "../components/SocialCopyPackagePanel";
 import CanonicalReferenceBindingControls, {
+	EMPTY_BINDING,
 	type CanonicalReferenceBinding,
 } from "../components/workspace/CanonicalReferenceBindingControls";
 import CopySelectionPanel from "../components/workspace/CopySelectionPanel";
@@ -399,6 +400,28 @@ export function resolveOperatorSourceMode(
 	return "T2V";
 }
 
+// Canonical per-mode reference-binding gate (pure + hoisted so the contract is
+// unit-testable without rendering the page). Mirrors the SERVER contract:
+// HYBRID needs NO manual pick (the approved package supplies the product anchor
+// automatically; a pick is an override) · FRAMES requires an explicit start
+// frame (end optional) · INGREDIENTS requires the default recipe's character +
+// scene context roles (style optional) · T2V/IMAGES bind nothing.
+export function referenceBindingBlocker(
+	mode: string,
+	binding: CanonicalReferenceBinding,
+): string | null {
+	if (mode === "F2V" && !binding.startFrameAssetId) {
+		return "FRAMES requires an approved composite start frame reference (end frame optional).";
+	}
+	if (
+		mode === "I2V" &&
+		!(binding.characterReferenceAssetId && binding.sceneContextReferenceAssetId)
+	) {
+		return "INGREDIENTS requires the recipe's character and scene context references (style optional).";
+	}
+	return null;
+}
+
 // Owner Phase-1 (SEV-0 manual_faf40cf6): a HYBRID failure must never surface as a
 // bare "F2V failed" — the SOURCE mode is the user-facing identity; the shared
 // transport mode is a diagnostic detail. Pure + hoisted so the mapping is
@@ -573,19 +596,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const [isLoadingProducts, setIsLoadingProducts] = useState(false);
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const [referenceBinding, setReferenceBinding] =
-		useState<CanonicalReferenceBinding>({
-			productReferenceAssetId: null,
-			startFrameAssetId: null,
-			endFrameAssetId: null,
-			characterReferenceAssetId: null,
-			sceneContextReferenceAssetId: null,
-			styleReferenceAssetId: null,
-		});
-	const i2vReferenceCount = [
-		referenceBinding.characterReferenceAssetId,
-		referenceBinding.sceneContextReferenceAssetId,
-		referenceBinding.styleReferenceAssetId,
-	].filter(Boolean).length;
+		useState<CanonicalReferenceBinding>(EMPTY_BINDING);
 	const [packageReadiness, setPackageReadiness] = useState<
 		Record<string, WorkspacePackageReadinessItem>
 	>({});
@@ -679,6 +690,14 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// jobMode; the surface identity stays HYBRID.
 	const jobMode: "T2V" | "F2V" | "I2V" | "IMG" =
 		mode === "HYBRID" ? "F2V" : mode;
+	// Stale-reference law: a mode or product switch invalidates every prior
+	// reference selection (the server's WRONG_PRODUCT / per-mode contract checks
+	// stay the authority; this keeps the UI from carrying another product's or
+	// another mode's pick into the next package).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reset-on-change effect
+	useEffect(() => {
+		setReferenceBinding(EMPTY_BINDING);
+	}, [mode, selectedProduct?.id]);
 	const selectedReadiness = selectedProduct
 		? (packageReadiness[selectedProduct.id] ?? null)
 		: null;
@@ -1438,15 +1457,15 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			});
 			return;
 		}
-		if (
-			(mode === "HYBRID" && !referenceBinding.productReferenceAssetId) ||
-			(mode === "F2V" && !referenceBinding.startFrameAssetId) ||
-			(mode === "I2V" && i2vReferenceCount < 2)
-		) {
+		const previewBindingBlocker = referenceBindingBlocker(
+			mode,
+			referenceBinding,
+		);
+		if (previewBindingBlocker) {
 			setNotice({
 				tone: "error",
 				title: "Reference binding required",
-				detail: `${resolveSourceMode(mode)} requires its canonical approved reference before package load.`,
+				detail: previewBindingBlocker,
 				requestId: null,
 			});
 			return;
@@ -1507,15 +1526,15 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			});
 			return;
 		}
-		if (
-			(mode === "HYBRID" && !referenceBinding.productReferenceAssetId) ||
-			(mode === "F2V" && !referenceBinding.startFrameAssetId) ||
-			(mode === "I2V" && i2vReferenceCount < 2)
-		) {
+		const persistBindingBlocker = referenceBindingBlocker(
+			mode,
+			referenceBinding,
+		);
+		if (persistBindingBlocker) {
 			setNotice({
 				tone: "error",
 				title: "Reference binding required",
-				detail: `${resolveSourceMode(mode)} requires its canonical approved reference before package persistence.`,
+				detail: persistBindingBlocker,
 				requestId: null,
 			});
 			return;
@@ -1537,14 +1556,23 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				camera_style: cameraStyle,
 				character_presence: characterPresence,
 				creator_persona: creatorPersona,
-				product_reference_asset_id: referenceBinding.productReferenceAssetId,
-				start_frame_asset_id: referenceBinding.startFrameAssetId,
-				end_frame_asset_id: referenceBinding.endFrameAssetId,
+				// Per-mode reference payload hygiene: only the selected mode's
+				// binding fields are ever sent — a stale pick from another mode
+				// must never reach the server-side binding contract.
+				product_reference_asset_id:
+					mode === "HYBRID" ? referenceBinding.productReferenceAssetId : null,
+				start_frame_asset_id:
+					mode === "F2V" ? referenceBinding.startFrameAssetId : null,
+				end_frame_asset_id:
+					mode === "F2V" ? referenceBinding.endFrameAssetId : null,
 				character_reference_asset_id:
-					referenceBinding.characterReferenceAssetId,
+					mode === "I2V" ? referenceBinding.characterReferenceAssetId : null,
 				scene_context_reference_asset_id:
-					referenceBinding.sceneContextReferenceAssetId,
-				style_reference_asset_id: referenceBinding.styleReferenceAssetId,
+					mode === "I2V"
+						? referenceBinding.sceneContextReferenceAssetId
+						: null,
+				style_reference_asset_id:
+					mode === "I2V" ? referenceBinding.styleReferenceAssetId : null,
 			});
 			setWorkspacePackage(pkg);
 			setPreviewPackage(null);

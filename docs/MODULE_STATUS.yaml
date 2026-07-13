@@ -312,6 +312,7 @@ domains:
       - dashboard/src/utils/promptRepresentationUi.test.ts
       - dashboard/src/utils/promptRepresentationUi.ts
       - dashboard/src/pages/OperatorPage.sourceMode.test.ts
+      - dashboard/src/pages/OperatorPage.referenceBinding.test.ts
       - dashboard/src/pages/OperatorPage.durationAuthority.test.ts
       - dashboard/src/pages/OperatorPage.durationAuthority.component.test.tsx
       - dashboard/src/api/workspacePackages.durationAuthority.test.ts
