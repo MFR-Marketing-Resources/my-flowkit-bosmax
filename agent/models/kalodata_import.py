@@ -79,6 +79,9 @@ class KalodataImportReport(BaseModel):
     price_ranges_parsed: int = 0
     hub_matched: int = 0
     hub_unmatched_rows: list[int] = Field(default_factory=list)
+    # HUB rows whose copy text belongs to ANOTHER product (source-file
+    # corruption) — excluded from enrichment; fix them in the Excel and re-import
+    hub_internally_corrupt_rows: list[int] = Field(default_factory=list)
     staged_catalog_path: str = ""
     staged_hub_path: str = ""
 

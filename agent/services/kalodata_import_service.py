@@ -352,11 +352,60 @@ def _normalize_name(name: str) -> str:
     return re.sub(r"\s+", " ", _clean(name)).lower()
 
 
+def _name_tokens(name: str) -> set[str]:
+    return {w.lower() for w in re.findall(r"[A-Za-z]{4,}", str(name or ""))}
+
+
+def _hub_copy_blob(hub: KalodataHubRow) -> str:
+    return " ".join(
+        str(v or "")
+        for v in (
+            hub.target_avatar, hub.pain_point, hub.emotion_trigger,
+            hub.dream_outcome, hub.key_ingredient_feature, hub.main_benefit,
+            hub.secondary_benefit, hub.usp, hub.hook_type,
+        )
+    ).lower()
+
+
+def find_hub_internal_corruption(hub_rows: list[KalodataHubRow]) -> set[int]:
+    """Source-corruption guard (live workbook audit 2026-07-14: dozens of HUB
+    rows carry ANOTHER product's copy — scattered offsets, unrecoverable
+    automatically; e.g. the SZINDORE perfume row held FOCALLURE lip-clay copy).
+    A row is corrupt when its copy names a DISTINCTIVE brand token of a
+    different product (token appearing in ≤2 product names) while naming none
+    of its own. Copy that merely omits the product name stays accepted —
+    wrong-brand copy must never apply, but a missing mention is not proof."""
+    token_owners: dict[str, set[int]] = {}
+    row_tokens: dict[int, set[str]] = {}
+    for hub in hub_rows:
+        tokens = _name_tokens(hub.product_name)
+        row_tokens[hub.row_no] = tokens
+        for t in tokens:
+            token_owners.setdefault(t, set()).add(hub.row_no)
+    distinctive = {t for t, owners in token_owners.items() if len(owners) <= 2}
+    corrupt: set[int] = set()
+    for hub in hub_rows:
+        if not hub.has_any_enrichment():
+            continue
+        blob = _hub_copy_blob(hub)
+        own = row_tokens.get(hub.row_no, set())
+        if any(t in blob for t in own):
+            continue
+        foreign = distinctive - own
+        if any(
+            not token_owners[t].issubset({hub.row_no})
+            and re.search(rf"\b{re.escape(t)}\b", blob)
+            for t in foreign
+        ):
+            corrupt.add(hub.row_no)
+    return corrupt
+
+
 def build_hub_enrichment(
     hub_rows: list[KalodataHubRow],
     merged_rows: list[KalodataMergedRow],
     staged_by_row_no: dict[int, dict[str, Any]],
-) -> tuple[dict[str, dict[str, str]], int, list[int]]:
+) -> tuple[dict[str, dict[str, str]], int, list[int], list[int]]:
     """Join HUB rows to staged reference ids by NORMALIZED PRODUCT NAME and map
     columns into the exact `import_enrichment` item field names.
 
@@ -369,11 +418,16 @@ def build_hub_enrichment(
         for row in merged_rows
         if staged_by_row_no.get(row.row_no)
     }
+    corrupt_rows = find_hub_internal_corruption(hub_rows)
     enrichment: dict[str, dict[str, str]] = {}
     matched = 0
     unmatched: list[int] = []
+    internally_corrupt: list[int] = []
     for hub in hub_rows:
         if not hub.has_any_enrichment():
+            continue
+        if hub.row_no in corrupt_rows:
+            internally_corrupt.append(hub.row_no)
             continue
         record = by_name.get(_normalize_name(hub.product_name))
         if not record:
@@ -408,7 +462,7 @@ def build_hub_enrichment(
             item["price"] = price
         enrichment[reference_id] = item
         matched += 1
-    return enrichment, matched, unmatched
+    return enrichment, matched, unmatched, internally_corrupt
 
 
 def _atomic_write_json(path: Path, payload: Any) -> None:
@@ -468,11 +522,12 @@ def import_workbook(
         if row.price_raw and row.price_min is not None and row.price_min != row.price_max:
             report.price_ranges_parsed += 1
 
-    enrichment, matched, unmatched = build_hub_enrichment(
+    enrichment, matched, unmatched, internally_corrupt = build_hub_enrichment(
         hub_rows, merged_rows, staged_by_row_no
     )
     report.hub_matched = matched
     report.hub_unmatched_rows = unmatched[:50]
+    report.hub_internally_corrupt_rows = internally_corrupt[:100]
 
     catalog_path = staged_catalog_path()
     hub_path = staged_hub_path()

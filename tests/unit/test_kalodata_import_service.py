@@ -209,6 +209,87 @@ def test_import_dedupes_same_tid_within_file(tmp_path, monkeypatch):
     assert report.skipped_duplicate_in_file == 1
 
 
+# ── HUB source-corruption guard ──────────────────────────────────────────────
+def _hub_row(row_no, name, **copy):
+    from agent.models.kalodata_import import KalodataHubRow
+
+    return KalodataHubRow(row_no=row_no, product_name=name, **copy)
+
+
+def test_hub_guard_flags_wrong_brand_copy_and_keeps_own_brand():
+    rows = [
+        # corrupt: SZINDORE perfume row carrying FOCALLURE copy (real workbook case)
+        _hub_row(1, "SZINDORE BBW AROMA PERFUME",
+                 main_benefit="FOCALLURE lip clay tahan lama, warna pekat"),
+        # clean: names its own brand
+        _hub_row(2, "FOCALLURE Lip Clay Matte",
+                 main_benefit="Focallure lip clay tekstur mousse"),
+        # clean: copy omits the name entirely — not proof of corruption
+        _hub_row(3, "Pengedap Vakum Mudah Alih",
+                 main_benefit="Makanan tahan lebih lama, seal kedap udara"),
+    ]
+    assert svc.find_hub_internal_corruption(rows) == {1}
+
+
+def test_hub_guard_ignores_common_tokens():
+    # "perfume" appears in 3 names → not distinctive; mentioning it is fine
+    rows = [
+        _hub_row(1, "BELLA PERFUME PINK", main_benefit="Perfume tahan 8 jam"),
+        _hub_row(2, "SZINDORE PERFUME MEN", main_benefit="Perfume lelaki premium"),
+        _hub_row(3, "AROMA PERFUME CLASSIC", main_benefit="Perfume bau segar"),
+    ]
+    assert svc.find_hub_internal_corruption(rows) == set()
+
+
+def test_import_quarantines_internally_corrupt_hub_rows(tmp_path, monkeypatch):
+    import openpyxl
+
+    monkeypatch.setattr(svc, "OPERATOR_PACK_DIR", tmp_path)
+    wb = openpyxl.Workbook()
+    merged = wb.active
+    merged.title = svc.MERGED_SHEET
+    merged.append(["No", "Sumber", "Product Name", "Image URL", "Category",
+                   "Price (RM)", "Launch Date", "Product Rating", "Item Sold",
+                   "Avg Unit Price", "Commission Rate", "Creator Number",
+                   "Conversion", "TikTok URL", "Product ID", "Source URL"])
+    merged.append([1, "KALODATA", "SZINDORE BBW AROMA PERFUME", None, "Beauty",
+                   "RM20", None, None, None, None, None, None, None,
+                   "https://shop-my.tiktok.com/pdp/1000000000000000001", None, "https://k/1"])
+    merged.append([2, "KALODATA", "FOCALLURE Lip Clay Matte", None, "Beauty",
+                   "RM15", None, None, None, None, None, None, None,
+                   "https://shop-my.tiktok.com/pdp/1000000000000000002", None, "https://k/2"])
+    hub = wb.create_sheet(svc.HUB_SHEET)
+    hub.append(["No", "Product ID", "Product Name", "Product Type", "Category",
+                "Price (RM)", "Image URL", "Target Avatar", "Pain Point",
+                "Emotion/Trigger", "Dream Outcome", "Key Ingredient/Feature",
+                "Main Benefit", "Secondary Benefit", "USP", "Hook Type"])
+    # corrupt at source: perfume row carries the lip-clay product's copy
+    hub.append([1, None, "SZINDORE BBW AROMA PERFUME", None, "Beauty", "RM20",
+                None, "Makeup lovers", None, None, None, None,
+                "FOCALLURE lip clay warna pekat", None, None, None])
+    # clean row
+    hub.append([2, None, "FOCALLURE Lip Clay Matte", None, "Beauty", "RM15",
+                None, "Makeup lovers", None, None, None, None,
+                "Focallure lip clay tekstur mousse", None, None, None])
+    path = tmp_path / "corrupt.xlsx"
+    wb.save(path)
+
+    report = svc.import_workbook(path)
+    assert report.hub_internally_corrupt_rows == [1]
+    assert report.hub_matched == 1
+    staged_hub = json.loads(
+        (tmp_path / svc.STAGED_HUB_FILENAME).read_text(encoding="utf-8")
+    )
+    # only the clean row's enrichment landed; the perfume got NO foreign copy
+    assert len(staged_hub) == 1
+    (ref_id,) = staged_hub
+    catalog = json.loads(
+        (tmp_path / svc.STAGED_CATALOG_FILENAME).read_text(encoding="utf-8")
+    )
+    focallure = next(r for r in catalog if "FOCALLURE" in r["raw_product_title"])
+    assert ref_id == focallure["id"]
+
+
 def test_import_workbook_is_idempotent(staged_env):
     first = svc.import_workbook(staged_env)
     second = svc.import_workbook(staged_env)
