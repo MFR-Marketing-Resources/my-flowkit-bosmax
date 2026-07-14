@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -84,13 +85,24 @@ def _clean_text(value: Any) -> str:
 
 
 def _pick_benefit_phrase(benefits: str) -> str:
+    # Neutral fallback — must fit ANY category (curtains, tools, food),
+    # never assume a self-care / beauty routine.
     benefit = _clean_text(benefits)
     if not benefit:
-        return "rutin penjagaan diri yang lebih kemas dan premium"
+        return "keperluan harian yang praktikal"
     sentence = benefit.split(".")[0].strip()
     if not sentence:
-        return "rutin penjagaan diri yang lebih kemas dan premium"
+        return "keperluan harian yang praktikal"
     return sentence.rstrip(".")
+
+
+def _matches_any_token(text: str, tokens: set[str]) -> bool:
+    """Word-boundary token match. Substring matching misclassified products
+    ('Skirting Table Top' curtain matched fashion token 'skirt' and was sold
+    as a daily beauty product) — a token only counts as a whole word/phrase."""
+    return any(
+        re.search(rf"(?<!\w){re.escape(token)}(?!\w)", text) for token in tokens
+    )
 
 
 def _combined_payload_text(payload: dict[str, Any]) -> str:
@@ -120,13 +132,13 @@ def _is_sensitive(payload: dict[str, Any]) -> bool:
 
 def _is_beauty(payload: dict[str, Any]) -> bool:
     combined = _combined_payload_text(payload)
-    return any(token in combined for token in BEAUTY_CONTEXT_TOKENS)
+    return _matches_any_token(combined, BEAUTY_CONTEXT_TOKENS)
 
 
 def _is_fashion_female(payload: dict[str, Any]) -> bool:
     """Return True if the product is clearly female-primary fashion or baby/childcare."""
     combined = _combined_payload_text(payload)
-    return any(token in combined for token in FASHION_FEMALE_CONTEXT_TOKENS)
+    return _matches_any_token(combined, FASHION_FEMALE_CONTEXT_TOKENS)
 
 
 FEMALE_SENSITIVE_TOKENS = {"vagina", "faraj", "miss v", "keputihan", "tightening"}
@@ -141,17 +153,18 @@ def _detect_address_style(payload: dict[str, Any], *, sensitive: bool, beauty: b
         if _is_fashion_female(payload):
             return ADDRESS_SAYA_AKAK
         # Explicit male signals in sensitive products → abang
-        if any(token in combined for token in ("lelaki", "men ", "men's", "testosterone", "prostate")):
+        if _matches_any_token(combined, {"lelaki", "men", "men's", "testosterone", "prostate"}):
             return ADDRESS_SAYA_ABANG
         # Unknown sensitive product — safer to use neutral AKU_KORANG than assume male
         return ADDRESS_AKU_KORANG
     if beauty or _is_fashion_female(payload):
         return ADDRESS_SAYA_AKAK
     target_customer = _clean_text(payload.get("target_customer_text")).casefold()
-    if any(token in target_customer for token in ("lelaki", "men", "man", "abang")):
-        return ADDRESS_SAYA_ABANG
-    if any(token in target_customer for token in ("wanita", "perempuan", "ladies", "women", "akak")):
+    # word-boundary: bare substring "men" also matched "woMEN"
+    if _matches_any_token(target_customer, {"wanita", "perempuan", "ladies", "women", "akak"}):
         return ADDRESS_SAYA_AKAK
+    if _matches_any_token(target_customer, {"lelaki", "men", "man", "abang"}):
+        return ADDRESS_SAYA_ABANG
     return ADDRESS_AKU_KORANG
 
 
@@ -184,16 +197,30 @@ def generate_registration_hook_cta(payload: dict[str, Any]) -> dict[str, list[st
         ]
     else:
         if address_style == ADDRESS_SAYA_AKAK:
-            hooks = [
-                f"Akak, kalau tengah cari produk beauty harian, saya rasa {product_name} ni memang senang nak cuba.",
-                f"Saya suka {product_name} ni sebab produk beauty harian macam ni tak rasa serabut sangat nak masuk rutin.",
-                f"Jujur cakap, pada saya {product_name} ni jenis produk beauty harian yang nampak simple dan senang capai.",
-            ]
-            ctas = [
-                f"Kalau akak tengah cari produk beauty harian, boleh la try {product_name} ni dulu.",
-                f"Saya rasa {product_name} ni okay je kalau akak nak masuk dalam rutin produk beauty harian sendiri.",
-                f"{product_name} ni senang je nak cuba kalau akak suka produk beauty harian yang tak over sangat.",
-            ]
+            if beauty:
+                # "produk beauty harian" is ONLY valid for actual beauty
+                # products — an akak-tier curtain was being sold as beauty.
+                hooks = [
+                    f"Akak, kalau tengah cari produk beauty harian, saya rasa {product_name} ni memang senang nak cuba.",
+                    f"Saya suka {product_name} ni sebab produk beauty harian macam ni tak rasa serabut sangat nak masuk rutin.",
+                    f"Jujur cakap, pada saya {product_name} ni jenis produk beauty harian yang nampak simple dan senang capai.",
+                ]
+                ctas = [
+                    f"Kalau akak tengah cari produk beauty harian, boleh la try {product_name} ni dulu.",
+                    f"Saya rasa {product_name} ni okay je kalau akak nak masuk dalam rutin produk beauty harian sendiri.",
+                    f"{product_name} ni senang je nak cuba kalau akak suka produk beauty harian yang tak over sangat.",
+                ]
+            else:
+                hooks = [
+                    f"Akak, kalau tengah cari {benefit_phrase.lower()}, saya rasa {product_name} ni memang senang nak cuba.",
+                    f"Saya suka {product_name} ni sebab kegunaan dia terus jelas dan tak serabut sangat.",
+                    f"Jujur cakap, pada saya {product_name} ni nampak simple dan senang nak masuk dalam keperluan harian akak.",
+                ]
+                ctas = [
+                    f"Kalau akak rasa ngam dengan {benefit_phrase.lower()}, boleh la try {product_name} ni dulu.",
+                    f"Saya rasa {product_name} ni okay je kalau akak nak cuba ikut keperluan sendiri.",
+                    f"{product_name} ni senang je nak tengok sama ada sesuai atau tak dengan keperluan akak.",
+                ]
         elif address_style == ADDRESS_SAYA_ABANG:
             hooks = [
                 f"Abang, kalau tengah cari untuk {benefit_phrase.lower()}, saya rasa {product_name} ni okay je.",

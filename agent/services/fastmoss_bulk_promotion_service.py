@@ -268,11 +268,33 @@ def _product_row_is_canonical_truth(row: dict[str, Any] | None) -> bool:
     return False
 
 
+def _staged_hub_enrichment_for(reference_id: str) -> dict[str, Any]:
+    """Staged Kalodata HUB copy for this reference, if any. Draft creation
+    MUST carry it — before this, only /apply-hub-enrichment wrote these
+    fields, so any later draft rebuild silently wiped the Owner's HUB copy
+    (live incident 2026-07-14: langsir draft with all knowledge fields empty
+    while its staged HUB entry existed)."""
+    if not reference_id:
+        return {}
+    try:
+        from agent.services.kalodata_import_service import load_hub_enrichment
+
+        return dict(load_hub_enrichment().get(reference_id) or {})
+    except Exception as exc:  # noqa: BLE001 — staged file optional
+        logger.warning("staged hub enrichment unavailable for %s: %s", reference_id, exc)
+        return {}
+
+
 def _ref_to_completion_request(ref: dict[str, Any]) -> ProductKnowledgeCompleteRequest:
     raw_title = _clean(ref.get("raw_product_title"))
     category = _clean(ref.get("category")) or None
     commission_rate = _clean(ref.get("commission_rate")) or None
     sold_count = ref.get("sold_count")
+    hub = _staged_hub_enrichment_for(_clean(ref.get("id")))
+
+    def _hub_text(key: str) -> str | None:
+        value = str(hub.get(key) or "").strip()
+        return value or None
 
     # Populate paste_anything_about_product from available ref metadata so
     # PRODUCT_DESCRIPTION_OR_KNOWLEDGE is not falsely flagged as missing.
@@ -285,6 +307,13 @@ def _ref_to_completion_request(ref: dict[str, Any]) -> ProductKnowledgeCompleteR
     if commission_rate:
         knowledge_parts.append(f"Commission: {commission_rate}")
     paste_knowledge = " | ".join(knowledge_parts) or None
+    hub_knowledge = _hub_text("product_knowledge_text")
+    if hub_knowledge:
+        paste_knowledge = (
+            f"{paste_knowledge}\n\n{hub_knowledge}" if paste_knowledge else hub_knowledge
+        )
+
+    hub_price = hub.get("price")
 
     return ProductKnowledgeCompleteRequest(
         product_name=raw_title,
@@ -295,8 +324,13 @@ def _ref_to_completion_request(ref: dict[str, Any]) -> ProductKnowledgeCompleteR
         source_url=_clean(ref.get("source_url")) or None,
         tiktok_product_url=_clean(ref.get("tiktok_product_url")) or None,
         commission_rate=commission_rate,
-        price=ref.get("price"),
+        price=ref.get("price") if ref.get("price") is not None else hub_price,
         currency=ref.get("currency") or "MYR",
+        benefits_text=_hub_text("benefits_text"),
+        usage_text=_hub_text("usage_text"),
+        target_customer_text=_hub_text("target_customer_text"),
+        ingredients_text=_hub_text("ingredients_text"),
+        warnings_text=_hub_text("warnings_text"),
     )
 
 
