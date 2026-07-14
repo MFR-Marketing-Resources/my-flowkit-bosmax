@@ -357,8 +357,13 @@ def build_hub_enrichment(
     merged_rows: list[KalodataMergedRow],
     staged_by_row_no: dict[int, dict[str, Any]],
 ) -> tuple[dict[str, dict[str, str]], int, list[int]]:
-    """Join HUB rows to staged reference ids (by row №, fallback normalized
-    name) and map columns into the exact `import_enrichment` item field names."""
+    """Join HUB rows to staged reference ids by NORMALIZED PRODUCT NAME and map
+    columns into the exact `import_enrichment` item field names.
+
+    NEVER by row № — the COPYWRITING HUB sheet is ordered differently from
+    MERGED PRODUCTS (live workbook audit 2026-07-14: 590/591 № misaligned),
+    and a №-first join attached jeans copy to a perfume. The HUB Product ID
+    cells are float-lossy, so the name is the only reliable join key."""
     by_name = {
         _normalize_name(row.product_name): staged_by_row_no.get(row.row_no)
         for row in merged_rows
@@ -370,9 +375,7 @@ def build_hub_enrichment(
     for hub in hub_rows:
         if not hub.has_any_enrichment():
             continue
-        record = staged_by_row_no.get(hub.row_no) or by_name.get(
-            _normalize_name(hub.product_name)
-        )
+        record = by_name.get(_normalize_name(hub.product_name))
         if not record:
             unmatched.append(hub.row_no)
             continue
@@ -509,19 +512,36 @@ def load_hub_enrichment() -> dict[str, dict[str, Any]]:
         return {}
 
 
+# Queue rows in these states are HISTORY (committed / resolved) — re-applying
+# enrichment would demote or re-open them.
+_ENRICHMENT_TERMINAL_STATUSES = {"APPROVED", "DUPLICATE_LINKED", "REJECTED"}
+
+
 async def apply_hub_enrichment(reference_ids: list[str] | None = None) -> dict[str, Any]:
     """Push staged HUB payloads through the EXISTING import_enrichment door
-    (recompute-safe; never PATCHes derived product columns)."""
+    (recompute-safe; never PATCHes derived product columns). Terminal queue
+    rows (approved / duplicate-linked / rejected) are never touched."""
+    from agent.db import crud
     from agent.services.fastmoss_bulk_promotion_service import import_enrichment
 
     staged = load_hub_enrichment()
     if reference_ids:
         wanted = {r for r in reference_ids if r}
         staged = {k: v for k, v in staged.items() if k in wanted}
-    items = [{"reference_id": ref_id, **fields} for ref_id, fields in staged.items()]
+    items = []
+    skipped_terminal = 0
+    for ref_id, fields in staged.items():
+        row = await crud.get_bulk_queue_row(ref_id)
+        if row and row.get("promotion_status") in _ENRICHMENT_TERMINAL_STATUSES:
+            skipped_terminal += 1
+            continue
+        items.append({"reference_id": ref_id, **fields})
     if not items:
-        return {"total": 0, "recomputed": 0, "skipped": 0, "failed": 0, "results": []}
-    return await import_enrichment(items)
+        return {"total": 0, "recomputed": 0, "skipped": 0, "failed": 0,
+                "skipped_terminal": skipped_terminal, "results": []}
+    result = await import_enrichment(items)
+    result["skipped_terminal"] = skipped_terminal
+    return result
 
 
 async def collect_system_tids() -> set[str]:

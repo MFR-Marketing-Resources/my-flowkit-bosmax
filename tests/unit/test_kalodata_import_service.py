@@ -101,14 +101,16 @@ def _build_workbook(path):
         "Emotion/Trigger", "Dream Outcome", "Key Ingredient/Feature",
         "Main Benefit", "Secondary Benefit", "USP", "Hook Type",
     ])
-    hub.append([
-        1, None, "Pengedap Vakum Mudah Alih", "Home", "Home Supplies", "RM26.50",
+    # DELIBERATELY MISALIGNED row №s (mirrors the real workbook: HUB ordering
+    # differs from MERGED PRODUCTS — the join must be by NAME, never by №).
+    hub.append([  # № says 2, but the copy belongs to Pengedap Vakum (merged №1)
+        2, None, "Pengedap Vakum Mudah Alih", "Home", "Home Supplies", "RM26.50",
         "https://img/1.jpg", "Ibu rumah yang kemas", "Makanan cepat basi",
         "Geram bila bazir", "Dapur tersusun", "Vacuum seal technology",
         "Makanan tahan lebih lama", "Jimat ruang", "Seal kedap udara", "Problem-Solution",
     ])
     hub.append([  # empty enrichment row → skipped
-        2, None, "Jalur Pemutih Gigi", None, None, None, None,
+        1, None, "Jalur Pemutih Gigi", None, None, None, None,
         None, None, None, None, None, None, None, None, None,
     ])
     hub.append([  # unmatched product name
@@ -151,7 +153,10 @@ def test_import_workbook_stages_records_and_hub(staged_env, tmp_path):
     hub = json.loads((tmp_path / svc.STAGED_HUB_FILENAME).read_text(encoding="utf-8"))
     assert len(hub) == 1
     (ref_id, item), = hub.items()
+    # NAME join: HUB row carries № 2, yet its copy lands on the product whose
+    # NAME matches (Pengedap Vakum) — never on merged № 2 (Jalur Pemutih Gigi).
     assert ref_id == first["id"]
+    assert "Pengedap" in first["raw_product_title"]
     assert item["target_customer_text"] == "Ibu rumah yang kemas"
     assert "Vacuum seal technology" == item["ingredients_text"]
     assert "Makanan tahan lebih lama" in item["benefits_text"]
