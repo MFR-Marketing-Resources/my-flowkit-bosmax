@@ -82,6 +82,13 @@ def test_import_endpoint_404_on_missing_workbook(monkeypatch):
     assert "WORKBOOK_NOT_FOUND" in response.text
 
 
+def test_copy_intelligence_dry_run_requires_explicit_source_path():
+    client = TestClient(_build_app())
+    response = client.post("/api/kalodata/copy-intelligence/dry-run", json={})
+    assert response.status_code == 422
+    assert response.json()["detail"] == "SOURCE_PATH_REQUIRED"
+
+
 def test_apply_hub_enrichment_delegates(monkeypatch):
     captured = {}
 

@@ -322,6 +322,194 @@ def test_import_workbook_is_idempotent(staged_env):
     assert svc.load_staged_catalog() == svc.load_staged_catalog()
 
 
+def test_copy_intelligence_dry_run_preserves_scripts_and_quarantines_ambiguous_names(tmp_path):
+    """The review-only lane reads current HUB headers without row-number joins."""
+    import openpyxl
+
+    workbook = openpyxl.Workbook()
+    merged = workbook.active
+    merged.title = svc.MERGED_SHEET
+    merged.append(["No", "Sumber", "Product Name", "Image URL", "Category", "Price (RM)",
+                   "Launch Date", "Product Rating", "Item Sold", "Avg Unit Price",
+                   "Commission Rate", "Creator Number", "Conversion", "TikTok URL",
+                   "Product ID", "Source URL"])
+    merged.append([1, "KALODATA", "Produk Unik", None, "Home", "RM10", None, None,
+                   None, None, None, None, None,
+                   "https://shop.tiktok.com/view/product/1731147231842430988", None, None])
+    merged.append([2, "KALODATA", "Produk Sama", None, "Home", "RM11", None, None,
+                   None, None, None, None, None,
+                   "https://shop.tiktok.com/view/product/1731147231842430999", None, None])
+    hub = workbook.create_sheet(svc.HUB_SHEET)
+    hub.append(["No", "Product ID", "Product Name", "Target Avatar 1", "Pain Point 1",
+                "Emotion/Trigger 1", "Dream Outcome 1", "Key Feature 1", "Benefit 1",
+                "Hook Type", "Hook Script 1", "CTA Type", "CTA Script 1"])
+    hub.append([99, 1.73114723184243e18, "Produk Unik", "Ibu sibuk", "Ruang sempit",
+                "Tenang", "Rumah kemas", "Saiz kompak", "Mudah simpan", "Problem-Solution",
+                "Rumah sempit? Cuba susun begini.", "Direct", "Tambah ke cart."])
+    hub.append([1, None, "Produk Sama", "A", "P", "E", "D", "K", "B", "H", "H", "C", "C"])
+    hub.append([2, None, "Produk Sama", "A", "P", "E", "D", "K", "B", "H", "H", "C", "C"])
+    path = tmp_path / "copy_intelligence.xlsx"
+    workbook.save(path)
+
+    report = svc.build_copy_intelligence_dry_run(path)
+
+    assert report.total_source_rows == 3
+    assert report.usable_rows == 3
+    assert report.matched_high_confidence == 0
+    assert report.matched_medium_confidence == 1
+    assert report.low_confidence_quarantined == 2
+    assert report.unmatched == 0
+    assert report.duplicates == 2
+    unique = next(record for record in report.records if record.source_product_name == "Produk Unik")
+    assert unique.source_row == 2  # provenance, never identity
+    assert unique.key_ingredients_features == "Saiz kompak"
+    assert unique.hook_type == "Problem-Solution"
+    assert unique.hook_script == "Rumah sempit? Cuba susun begini."
+    assert unique.cta_type == "Direct"
+    assert unique.cta_script == "Tambah ke cart."
+    assert unique.status == "NEEDS_REVIEW"
+    assert unique.match_method == "UNIQUE_NORMALIZED_NAME_TO_SOURCE_REFERENCE"
+    ambiguous = [record for record in report.records if record.source_product_name == "Produk Sama"]
+    assert {record.match_method for record in ambiguous} == {"AMBIGUOUS_NORMALIZED_NAME"}
+
+    high = svc.build_copy_intelligence_dry_run(
+        path, {"1731147231842430988": "product-truth-001"}
+    )
+    linked = next(record for record in high.records if record.source_product_name == "Produk Unik")
+    assert high.matched_high_confidence == 1
+    assert linked.target_product_id == "product-truth-001"
+    assert linked.match_method == "TIKTOK_PRODUCT_ID_MATCH"
+
+
+def test_copy_intelligence_duplicate_product_truth_tid_is_quarantined(tmp_path):
+    """A duplicated Product Truth TikTok ID can never select an arbitrary target."""
+    workbook_path = tmp_path / "duplicate-tid.xlsx"
+    _build_workbook(workbook_path)
+    import openpyxl
+    workbook = openpyxl.load_workbook(workbook_path)
+    workbook[svc.MERGED_SHEET].delete_rows(4, 1)  # remove fixture's duplicate source row
+    workbook.save(workbook_path)
+
+    report = svc.build_copy_intelligence_dry_run(
+        workbook_path,
+        {"1731147231842430988": ["product-a", "product-b"]},
+    )
+
+    row = next(record for record in report.records if record.source_product_name == "Pengedap Vakum Mudah Alih")
+    assert row.confidence == "LOW"
+    assert row.target_product_id is None
+    assert row.match_method == "DUPLICATE_PRODUCT_TRUTH_TIKTOK_ID"
+    assert report.low_confidence_quarantined >= 1
+
+
+@pytest.mark.asyncio
+async def test_system_copy_intelligence_dry_run_executes_without_seed_write(tmp_path, monkeypatch):
+    """The API-facing read-only wrapper must resolve Product Truth candidates."""
+    from agent.db import crud
+
+    workbook_path = tmp_path / "system-dry-run.xlsx"
+    _build_workbook(workbook_path)
+
+    async def list_products(*, include_archived: bool):
+        assert include_archived is True
+        return []
+
+    monkeypatch.setattr(crud, "list_products", list_products)
+
+    report = await svc.build_copy_intelligence_dry_run_for_system(workbook_path)
+
+    assert report.total_source_rows == 3
+    assert report.matched_high_confidence == 0
+
+
+@pytest.mark.asyncio
+async def test_copy_intelligence_seed_is_idempotent_and_never_touches_product_truth():
+    from agent.db import crud
+
+    payload = {
+        "source_fingerprint": "copy-hub-test-fingerprint",
+        "source_workbook": "fixture.xlsx",
+        "source_sheet": "COPYWRITING HUB",
+        "source_row": 2,
+        "source_product_name": "Produk Ujian",
+        "match_method": "UNMATCHED",
+        "confidence": "LOW",
+        "status": "NEEDS_REVIEW",
+        "provenance_json": '{"sheet":"COPYWRITING HUB"}',
+    }
+    first = await crud.create_copy_intelligence_seed(**payload)
+    second = await crud.create_copy_intelligence_seed(**payload)
+
+    assert first["seed_id"] == second["seed_id"]
+    assert first["status"] == "NEEDS_REVIEW"
+    assert first["target_product_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_seed_reimport_preserves_product_truth_and_approved_copy_set():
+    """The seed ledger is additive: it cannot mutate product or approved copy."""
+    from agent.db import crud
+    from agent.models.kalodata_import import CopyIntelligenceSourceRow
+
+    product = await crud.create_product(
+        source="MANUAL", raw_product_title="Produk Truth", product_display_name="Produk Truth",
+        product_short_name="Produk Truth", copywriting_angle="Manual authority",
+    )
+    approved = await crud.create_copy_set(
+        product["id"], hook="Approved hook", cta="Approved CTA", usp_set_json='["Approved USP"]',
+        status="COPY_APPROVED",
+    )
+    source = CopyIntelligenceSourceRow(
+        source_workbook="fixture.xlsx", source_sheet="COPYWRITING HUB", source_row=7,
+        source_product_name="Produk Truth", target_product_id=product["id"],
+        match_method="TIKTOK_PRODUCT_ID_MATCH", confidence="HIGH", source_fingerprint="seed-reimport-proof",
+        hook_script="Imported hook remains review-only", provenance={"workbook": "fixture.xlsx"},
+    )
+    before_product = await crud.get_product(product["id"])
+    before_copy = await crud.get_copy_set(approved["copy_set_id"])
+
+    await svc.persist_copy_intelligence_seed_records([source])
+    await svc.persist_copy_intelligence_seed_records([source])
+
+    db = await crud.get_db()
+    cursor = await db.execute(
+        "SELECT COUNT(*) FROM copy_intelligence_seed WHERE source_fingerprint=?",
+        (source.source_fingerprint,),
+    )
+    assert (await cursor.fetchone())[0] == 1
+    assert await crud.get_product(product["id"]) == before_product
+    assert await crud.get_copy_set(approved["copy_set_id"]) == before_copy
+
+
+@pytest.mark.asyncio
+async def test_normal_seed_persist_skips_unmatched_and_low_confidence_records():
+    from agent.models.kalodata_import import CopyIntelligenceSourceRow
+
+    records = [
+        CopyIntelligenceSourceRow(
+            source_workbook="fixture.xlsx", source_sheet="COPYWRITING HUB", source_row=81,
+            source_product_name="Unmatched", match_method="UNMATCHED", confidence="LOW",
+            source_fingerprint="skip-unmatched", provenance={},
+        ),
+        CopyIntelligenceSourceRow(
+            source_workbook="fixture.xlsx", source_sheet="COPYWRITING HUB", source_row=82,
+            source_product_name="Duplicate target", match_method="DUPLICATE_PRODUCT_TRUTH_TIKTOK_ID",
+            confidence="LOW", source_fingerprint="skip-low", provenance={"quarantine_reason": "DUPLICATE_PRODUCT_TRUTH_TIKTOK_ID"},
+        ),
+    ]
+
+    result = await svc.persist_copy_intelligence_seed_records(records)
+
+    assert result == {
+        "records_processed": 2,
+        "created_or_existing": 0,
+        "skipped_quarantined": 1,
+        "skipped_low_confidence": 0,
+        "skipped_unmatched": 1,
+        "status": "NEEDS_REVIEW_ONLY",
+    }
+
+
 def test_import_workbook_missing_file_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(svc, "OPERATOR_PACK_DIR", tmp_path)
     with pytest.raises(FileNotFoundError):

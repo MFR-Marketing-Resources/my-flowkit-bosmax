@@ -1944,6 +1944,44 @@ CREATE INDEX IF NOT EXISTS idx_video_side_effect_job ON video_job_side_effect(jo
             logger.info("Migrated: added scene_id column to generated_artifact")
         await db.commit()
 
+        # COPYWRITING HUB seed ledger. This is intentionally separate from
+        # product truth and copy_set: imported workbook text is review-only
+        # evidence, never an approved production copy mutation.
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS copy_intelligence_seed (
+    seed_id                     TEXT PRIMARY KEY,
+    source_fingerprint          TEXT NOT NULL UNIQUE,
+    source_workbook             TEXT NOT NULL,
+    source_sheet                TEXT NOT NULL,
+    source_row                  INTEGER NOT NULL,
+    source_product_name         TEXT NOT NULL,
+    reference_id                TEXT,
+    target_product_id           TEXT REFERENCES product(id) ON DELETE SET NULL,
+    match_method                TEXT NOT NULL,
+    confidence                  TEXT NOT NULL CHECK(confidence IN ('HIGH','MEDIUM','LOW')),
+    status                      TEXT NOT NULL CHECK(status IN ('SEEDED','NEEDS_REVIEW','APPROVED','REJECTED','SUPERSEDED')),
+    target_avatar               TEXT,
+    pain_point                  TEXT,
+    emotion_trigger             TEXT,
+    dream_outcome               TEXT,
+    key_ingredients_features    TEXT,
+    hook_type                   TEXT,
+    hook_script                 TEXT,
+    body_script                 TEXT,
+    cta_type                    TEXT,
+    cta_script                  TEXT,
+    tone                        TEXT,
+    pronoun                     TEXT,
+    copy_angle                  TEXT,
+    provenance_json             TEXT NOT NULL DEFAULT '{}',
+    created_at                  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at                  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_copy_intelligence_seed_reference
+    ON copy_intelligence_seed(reference_id, status);
+""")
+        await db.commit()
+
         # Copy Set foundation (Copy Strategy Studio Phase 1). Additive table —
         # persists an explicitly-approvable Copy Set (product → angle / hook /
         # subhook / usp / cta) that later feeds the canonical prompt compiler as
