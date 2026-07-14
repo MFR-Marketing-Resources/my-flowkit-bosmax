@@ -598,6 +598,9 @@ domains:
       # COPYWRITING_SET_REGISTRY: product-scoped AI copy-set registry + CRUD
       - dashboard/src/pages/CopySetRegistryPage.tsx
       - dashboard/src/pages/CopySetRegistryPage.test.tsx
+      - dashboard/src/api/copyIntelligence.ts
+      - dashboard/src/pages/CopyIntelligencePage.tsx
+      - dashboard/src/pages/CopyIntelligencePage.test.tsx
       - docs/copywriting/COPY_SET_REGISTRY_V1.md
       # COPY_GROUNDING: product-knowledge + customer-avatar grounding for copy gen
       - agent/models/copy_grounding.py

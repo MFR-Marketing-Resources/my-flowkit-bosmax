@@ -43,6 +43,7 @@ import ImgCockpitPage from "./pages/ImgCockpitPage";
 import ImgFastlanePage from "./pages/ImgFastlanePage";
 import CreativeLibraryWorkspacePage from "./pages/CreativeLibraryWorkspacePage";
 import CockpitSettingsPage from "./pages/CockpitSettingsPage";
+import CopyIntelligencePage from "./pages/CopyIntelligencePage";
 import CopySetRegistryPage from "./pages/CopySetRegistryPage";
 import DashboardPage from "./pages/DashboardPage";
 import GalleryPage from "./pages/GalleryPage";
@@ -150,6 +151,11 @@ const NAV_GROUPS = [
 				to: "/creative/copy-registry",
 				icon: PenLine,
 				label: "Copy Registry",
+			},
+			{
+				to: "/creative/copy-intelligence",
+				icon: Users,
+				label: "Copy Intelligence",
 			},
 			{ to: "/products", icon: PackageSearch, label: "Products" },
 			{ to: "/projects", icon: FolderOpen, label: "Projects" },
@@ -551,6 +557,10 @@ function Layout() {
 						<Route
 							path="/creative/copy-registry"
 							element={<CopySetRegistryPage />}
+						/>
+						<Route
+							path="/creative/copy-intelligence"
+							element={<CopyIntelligencePage />}
 						/>
 						<Route path="/products" element={<ProductsSalesAnalyzerPage />} />
 						<Route path="/projects" element={<ProjectsPage />} />

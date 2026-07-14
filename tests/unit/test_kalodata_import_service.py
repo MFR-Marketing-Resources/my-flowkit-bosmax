@@ -403,6 +403,26 @@ def test_copy_intelligence_duplicate_product_truth_tid_is_quarantined(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_system_copy_intelligence_dry_run_executes_without_seed_write(tmp_path, monkeypatch):
+    """The API-facing read-only wrapper must resolve Product Truth candidates."""
+    from agent.db import crud
+
+    workbook_path = tmp_path / "system-dry-run.xlsx"
+    _build_workbook(workbook_path)
+
+    async def list_products(*, include_archived: bool):
+        assert include_archived is True
+        return []
+
+    monkeypatch.setattr(crud, "list_products", list_products)
+
+    report = await svc.build_copy_intelligence_dry_run_for_system(workbook_path)
+
+    assert report.total_source_rows == 3
+    assert report.matched_high_confidence == 0
+
+
+@pytest.mark.asyncio
 async def test_copy_intelligence_seed_is_idempotent_and_never_touches_product_truth():
     from agent.db import crud
 
