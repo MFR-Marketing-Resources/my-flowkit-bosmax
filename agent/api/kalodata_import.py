@@ -48,6 +48,20 @@ async def import_external_catalog(body: KalodataImportRequest):
         raise HTTPException(422, f"IMPORT_FAILED:{exc}") from exc
 
 
+@router.post("/copy-intelligence/dry-run")
+async def dry_run_copy_intelligence_seed(body: KalodataImportRequest):
+    """Read COPYWRITING HUB and return a review-only seed audit."""
+    source_path = (body.source_path or "").strip()
+    if not source_path:
+        raise HTTPException(422, "SOURCE_PATH_REQUIRED")
+    try:
+        return await _svc.build_copy_intelligence_dry_run_for_system(source_path)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, f"WORKBOOK_NOT_FOUND:{exc}") from exc
+    except Exception as exc:  # noqa: BLE001 — fail closed before any seed action
+        raise HTTPException(422, f"COPY_INTELLIGENCE_DRY_RUN_FAILED:{exc}") from exc
+
+
 @router.post("/purge-duplicates")
 async def purge_duplicates(dry_run: bool = False):
     """Purge never-drafted queue rows whose TikTok product id duplicates

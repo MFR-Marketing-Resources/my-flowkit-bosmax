@@ -96,3 +96,51 @@ class KalodataApplyHubRequest(BaseModel):
 
 class KalodataCacheImagesRequest(BaseModel):
     product_ids: list[str]
+
+
+class CopyIntelligenceSourceRow(BaseModel):
+    """One immutable COPYWRITING HUB source row for the review-only seed lane."""
+
+    source_workbook: str
+    source_sheet: str
+    source_row: int
+    source_product_name: str
+    target_avatar: str | None = None
+    pain_point: str | None = None
+    emotion_trigger: str | None = None
+    dream_outcome: str | None = None
+    key_ingredients_features: str | None = None
+    hook_type: str | None = None
+    hook_script: str | None = None
+    body_script: str | None = None
+    cta_type: str | None = None
+    cta_script: str | None = None
+    tone: str | None = None
+    pronoun: str | None = None
+    copy_angle: str | None = None
+    reference_id: str | None = None
+    target_product_id: str | None = None
+    match_method: str
+    confidence: str
+    status: str = "NEEDS_REVIEW"
+    provenance: dict[str, str]
+    source_fingerprint: str
+
+
+class CopyIntelligenceDryRunReport(BaseModel):
+    """Read-only audit output. No Product Truth or database mutation occurs."""
+
+    source_workbook: str
+    source_sheet: str = "COPYWRITING HUB"
+    total_source_rows: int = 0
+    usable_rows: int = 0
+    matched_high_confidence: int = 0
+    matched_medium_confidence: int = 0
+    low_confidence_quarantined: int = 0
+    unmatched: int = 0
+    duplicates: int = 0
+    conflicts: int = 0
+    blank_no_copy_rows: int = 0
+    suspicious_cross_product_copy: int = 0
+    examples: dict[str, list[dict[str, str | int]]] = Field(default_factory=dict)
+    records: list[CopyIntelligenceSourceRow] = Field(default_factory=list)

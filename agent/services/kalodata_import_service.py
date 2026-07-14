@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import re
+import hashlib
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,6 +31,8 @@ from typing import Any
 
 from agent.config import OPERATOR_PACK_DIR
 from agent.models.kalodata_import import (
+    CopyIntelligenceDryRunReport,
+    CopyIntelligenceSourceRow,
     KalodataHubRow,
     KalodataImportReport,
     KalodataMergedRow,
@@ -350,6 +353,226 @@ def build_staged_record(row: KalodataMergedRow, *, source_file: str) -> dict[str
 
 def _normalize_name(name: str) -> str:
     return re.sub(r"\s+", " ", _clean(name)).lower()
+
+
+_COPY_HUB_HEADERS = {
+    "product_name": ("Product Name",),
+    "target_avatar": ("Target Avatar",),
+    "pain_point": ("Pain Point",),
+    "emotion_trigger": ("Emotion/Trigger",),
+    "dream_outcome": ("Dream Outcome",),
+    "key_ingredients_features": ("Key Feature", "Key Ingredient/Feature"),
+    "hook_type": ("Hook Type",),
+    "hook_script": ("Hook Script",),
+    "body_script": ("Body Script",),
+    "cta_type": ("CTA Type",),
+    "cta_script": ("CTA Script",),
+    "tone": ("Tone",),
+    "pronoun": ("Pronoun",),
+    "copy_angle": ("Copy Angle",),
+}
+
+
+def _copy_hub_header_index(header: tuple[Any, ...], candidates: tuple[str, ...]) -> int | None:
+    normalized = [_clean(value).casefold() for value in header]
+    for candidate in candidates:
+        candidate_normalized = candidate.casefold()
+        for index, value in enumerate(normalized):
+            if value.startswith(candidate_normalized):
+                return index
+    return None
+
+
+def parse_copy_intelligence_hub(path: Path) -> list[dict[str, str | int | None]]:
+    """Read COPYWRITING HUB without altering the legacy staging parser."""
+    import openpyxl
+
+    workbook = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    if HUB_SHEET not in workbook.sheetnames:
+        workbook.close()
+        raise ValueError(f"SHEET_NOT_FOUND:{HUB_SHEET}")
+    sheet = workbook[HUB_SHEET]
+    iterator = sheet.iter_rows(values_only=True)
+    header = next(iterator, None)
+    if not header:
+        workbook.close()
+        return []
+    indexes = {key: _copy_hub_header_index(header, candidates) for key, candidates in _COPY_HUB_HEADERS.items()}
+    rows: list[dict[str, str | int | None]] = []
+    for source_row, values in enumerate(iterator, start=2):
+        def value(key: str) -> str | None:
+            index = indexes[key]
+            return _clean(values[index]) or None if index is not None and index < len(values) else None
+        product_name = value("product_name")
+        if not product_name:
+            continue
+        rows.append({"source_row": source_row, "source_product_name": product_name, **{key: value(key) for key in indexes if key != "product_name"}})
+    workbook.close()
+    return rows
+
+
+def build_copy_intelligence_dry_run(
+    source_path: str | Path,
+    product_id_by_tiktok_id: dict[str, str | list[str]] | None = None,
+) -> CopyIntelligenceDryRunReport:
+    """Build an auditable, no-write COPYWRITING HUB seed plan.
+
+    Workbook numeric IDs are intentionally excluded: they are float-lossy. A
+    unique normalized name may identify the workbook reference at MEDIUM only;
+    duplicate names are quarantined and no row is auto-approved.
+    """
+    path = Path(source_path)
+    if not path.exists():
+        raise FileNotFoundError(str(path))
+    merged_rows, _ = parse_workbook(path)
+    source_rows = parse_copy_intelligence_hub(path)
+    report = CopyIntelligenceDryRunReport(source_workbook=path.name)
+    known_product_ids = product_id_by_tiktok_id or {}
+    report.total_source_rows = len(source_rows)
+    report.examples = {key: [] for key in ("medium", "quarantined", "blank", "suspicious")}
+    merged_by_name: dict[str, list[KalodataMergedRow]] = {}
+    hub_name_count: dict[str, int] = {}
+    for merged in merged_rows:
+        merged_by_name.setdefault(_normalize_name(merged.product_name), []).append(merged)
+    for row in source_rows:
+        name = _normalize_name(str(row["source_product_name"]))
+        hub_name_count[name] = hub_name_count.get(name, 0) + 1
+    source_fingerprints: set[str] = set()
+    target_counts: dict[str, int] = {}
+    corruption_probe = [KalodataHubRow(
+        row_no=int(row["source_row"]), product_name=str(row["source_product_name"]),
+        target_avatar=row.get("target_avatar"), pain_point=row.get("pain_point"),
+        emotion_trigger=row.get("emotion_trigger"), dream_outcome=row.get("dream_outcome"),
+        key_ingredient_feature=row.get("key_ingredients_features"),
+        main_benefit=row.get("body_script"), usp=row.get("hook_script"),
+    ) for row in source_rows]
+    suspicious_rows = find_hub_internal_corruption(corruption_probe)
+    for row in source_rows:
+        copy_values = [value for key, value in row.items() if key not in {"source_row", "source_product_name"} and value]
+        if not copy_values:
+            report.blank_no_copy_rows += 1
+            report.examples["blank"].append({"source_row": int(row["source_row"]), "product": str(row["source_product_name"])})
+            continue
+        report.usable_rows += 1
+        normalized_name = _normalize_name(str(row["source_product_name"]))
+        candidates = merged_by_name.get(normalized_name, [])
+        duplicate_name = hub_name_count[normalized_name] > 1 or len(candidates) != 1
+        match_method = "UNMATCHED"
+        confidence = "LOW"
+        reference_id: str | None = None
+        target_product_id: str | None = None
+        quarantine_reason: str | None = None
+        duplicate_product_ids: list[str] = []
+        if len(candidates) == 1 and not duplicate_name:
+            reference_id = build_staged_record(candidates[0], source_file=path.name)["id"]
+            source_tid = candidates[0].tiktok_product_id
+            raw_product_ids = known_product_ids.get(source_tid or "")
+            product_ids = [raw_product_ids] if isinstance(raw_product_ids, str) else (raw_product_ids or [])
+            if len(product_ids) == 1:
+                target_product_id = product_ids[0]
+                match_method = "TIKTOK_PRODUCT_ID_MATCH"
+                confidence = "HIGH"
+                report.matched_high_confidence += 1
+            elif len(product_ids) > 1:
+                match_method = "DUPLICATE_PRODUCT_TRUTH_TIKTOK_ID"
+                duplicate_product_ids = sorted(product_ids)
+                quarantine_reason = match_method
+                report.low_confidence_quarantined += 1
+                report.examples["quarantined"].append({"source_row": int(row["source_row"]), "product": str(row["source_product_name"]), "reason": quarantine_reason, "candidate_product_ids": ",".join(duplicate_product_ids)})
+            else:
+                match_method = "UNIQUE_NORMALIZED_NAME_TO_SOURCE_REFERENCE"
+                confidence = "MEDIUM"
+                report.matched_medium_confidence += 1
+            target_counts[reference_id] = target_counts.get(reference_id, 0) + 1
+        elif not candidates:
+            report.unmatched += 1
+        else:
+            report.low_confidence_quarantined += 1
+            report.duplicates += max(0, hub_name_count[normalized_name] - 1)
+            report.examples["quarantined"].append({"source_row": int(row["source_row"]), "product": str(row["source_product_name"]), "reason": "AMBIGUOUS_NORMALIZED_NAME"})
+        if int(row["source_row"]) in suspicious_rows:
+            report.suspicious_cross_product_copy += 1
+            report.examples["suspicious"].append({"source_row": int(row["source_row"]), "product": str(row["source_product_name"])})
+        fingerprint_input = f"{path.name}|{HUB_SHEET}|{row['source_row']}|{reference_id or normalized_name}"
+        fingerprint = hashlib.sha256(fingerprint_input.encode("utf-8")).hexdigest()
+        if fingerprint in source_fingerprints:
+            report.duplicates += 1
+            continue
+        source_fingerprints.add(fingerprint)
+        record = CopyIntelligenceSourceRow(
+            source_workbook=path.name, source_sheet=HUB_SHEET, source_row=int(row["source_row"]),
+            source_product_name=str(row["source_product_name"]), reference_id=reference_id,
+            target_product_id=target_product_id,
+            target_avatar=row.get("target_avatar"), pain_point=row.get("pain_point"),
+            emotion_trigger=row.get("emotion_trigger"), dream_outcome=row.get("dream_outcome"),
+            key_ingredients_features=row.get("key_ingredients_features"), hook_type=row.get("hook_type"),
+            hook_script=row.get("hook_script"), body_script=row.get("body_script"),
+            cta_type=row.get("cta_type"), cta_script=row.get("cta_script"), tone=row.get("tone"),
+            pronoun=row.get("pronoun"), copy_angle=row.get("copy_angle"),
+            match_method=match_method, confidence=confidence, source_fingerprint=fingerprint,
+            provenance={"workbook": path.name, "sheet": HUB_SHEET, "source_row": str(row["source_row"]), "match_method": match_method, **({"quarantine_reason": quarantine_reason, "duplicate_product_ids": ",".join(duplicate_product_ids)} if quarantine_reason else {})},
+        )
+        report.records.append(record)
+        if confidence == "MEDIUM" and len(report.examples["medium"]) < 3:
+            report.examples["medium"].append({"source_row": record.source_row, "product": record.source_product_name, "reference_id": reference_id or ""})
+    report.conflicts = sum(count - 1 for count in target_counts.values() if count > 1)
+    return report
+
+
+async def persist_copy_intelligence_seed_records(records: list[CopyIntelligenceSourceRow]) -> dict[str, int]:
+    """Explicit write primitive for an owner-authorized seed only.
+
+    No route calls this function. It writes review-only ledger records and
+    deliberately cannot mutate Product Truth or approved Copy Sets.
+    """
+    from agent.db import crud
+
+    created_or_existing = skipped_quarantined = skipped_low_confidence = skipped_unmatched = 0
+    for record in records:
+        if record.provenance.get("quarantine_reason"):
+            skipped_quarantined += 1
+            continue
+        if record.match_method == "UNMATCHED":
+            skipped_unmatched += 1
+            continue
+        if record.confidence == "LOW":
+            skipped_low_confidence += 1
+            continue
+        row = await crud.create_copy_intelligence_seed(
+            source_fingerprint=record.source_fingerprint,
+            source_workbook=record.source_workbook, source_sheet=record.source_sheet,
+            source_row=record.source_row, source_product_name=record.source_product_name,
+            reference_id=record.reference_id, target_product_id=record.target_product_id,
+            match_method=record.match_method,
+            confidence=record.confidence, status="NEEDS_REVIEW",
+            target_avatar=record.target_avatar, pain_point=record.pain_point,
+            emotion_trigger=record.emotion_trigger, dream_outcome=record.dream_outcome,
+            key_ingredients_features=record.key_ingredients_features, hook_type=record.hook_type,
+            hook_script=record.hook_script, body_script=record.body_script,
+            cta_type=record.cta_type, cta_script=record.cta_script, tone=record.tone,
+            pronoun=record.pronoun, copy_angle=record.copy_angle,
+            provenance_json=json.dumps(record.provenance, ensure_ascii=False, sort_keys=True),
+        )
+        if row.get("created_at"):
+            created_or_existing += 1
+    return {"records_processed": len(records), "created_or_existing": created_or_existing, "skipped_quarantined": skipped_quarantined, "skipped_low_confidence": skipped_low_confidence, "skipped_unmatched": skipped_unmatched, "status": "NEEDS_REVIEW_ONLY"}
+
+
+async def build_copy_intelligence_dry_run_for_system(
+    source_path: str | Path,
+) -> CopyIntelligenceDryRunReport:
+    """Resolve high-confidence Product Truth links from URL IDs, read-only."""
+    from agent.db import crud
+
+    product_id_by_tiktok_id: dict[str, list[str]] = {}
+    for product in await crud.list_products(include_archived=True):
+        product_id = _clean(product.get("id"))
+        tiktok_id, confidence = extract_tiktok_product_id(product.get("tiktok_product_url"), None)
+        if product_id and tiktok_id and confidence == "URL":
+            product_id_by_tiktok_id.setdefault(tiktok_id, []).append(product_id)
+    return await asyncio.to_thread(
+        build_copy_intelligence_dry_run, source_path, product_id_by_tiktok_id
+    )
 
 
 def _name_tokens(name: str) -> set[str]:
