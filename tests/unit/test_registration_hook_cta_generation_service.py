@@ -110,6 +110,85 @@ def test_mens_supplement_maps_to_saya_abang():
     )
 
 
+def test_curtain_with_skirting_in_name_is_not_sold_as_beauty():
+    """Live incident 2026-07-14: 'Skirting Table Top' (curtain) matched the
+    fashion token 'skirt' by SUBSTRING and was pitched as 'produk beauty
+    harian'. Word-boundary matching + category-true phrasing must hold."""
+    result = generate_registration_hook_cta(
+        {
+            "product_name": "HOT Langsir Kabinet DESIGN ( RENDA LEKAT ) viral, Skirting Table Top",
+            "benefits_text": "",
+            "target_customer_text": "",
+            "usage_text": "",
+            "category": "Textiles & Soft Furnishings > Household Textiles > Curtain & Blind Accessories",
+            "claim_gate": "CLAIM_SAFE",
+            "claim_tokens": [],
+            "copy_route": "DIRECT",
+            "silo": "home_01",
+        }
+    )
+    combined = " ".join(result["hook_angles"] + result["cta_angles"]).casefold()
+    assert "beauty" not in combined
+    assert "penjagaan diri" not in combined
+
+
+def test_akak_tier_fashion_product_does_not_claim_beauty():
+    """Baju kurung stays akak-tier but must NOT be called a beauty product."""
+    result = generate_registration_hook_cta(
+        {
+            "product_name": "Bidasari Kurung Cotton Embroidery",
+            "benefits_text": "Kain cotton selesa untuk dipakai seharian.",
+            "target_customer_text": "Wanita moden",
+            "usage_text": "",
+            "claim_gate": "CLAIM_SAFE",
+            "claim_tokens": [],
+            "copy_route": "DIRECT",
+            "silo": "fashion_01",
+        }
+    )
+    combined = " ".join(result["hook_angles"] + result["cta_angles"]).casefold()
+    assert "akak" in combined
+    assert "beauty" not in combined
+
+
+def test_beauty_product_keeps_beauty_phrasing():
+    result = generate_registration_hook_cta(
+        {
+            "product_name": "GlowUp Lip Serum Vitamin E",
+            "benefits_text": "Bibir lembap sepanjang hari.",
+            "target_customer_text": "",
+            "usage_text": "Sapu pada bibir.",
+            "category": "Beauty & Personal Care > Lip",
+            "claim_gate": "CLAIM_SAFE",
+            "claim_tokens": [],
+            "copy_route": "DIRECT",
+            "silo": "beauty_01",
+        }
+    )
+    combined = " ".join(result["hook_angles"] + result["cta_angles"]).casefold()
+    assert "akak" in combined
+    assert "produk beauty harian" in combined
+
+
+def test_women_target_customer_not_misrouted_to_abang():
+    """Substring bug: 'men' in 'women' routed female-target products to abang."""
+    result = generate_registration_hook_cta(
+        {
+            "product_name": "Ergo Kitchen Organizer Rack",
+            "benefits_text": "Susun atur dapur lebih kemas.",
+            "target_customer_text": "Working women",
+            "usage_text": "",
+            "claim_gate": "CLAIM_SAFE",
+            "claim_tokens": [],
+            "copy_route": "DIRECT",
+            "silo": "home_02",
+        }
+    )
+    combined = " ".join(result["hook_angles"] + result["cta_angles"]).casefold()
+    assert "abang" not in combined
+    assert "akak" in combined
+
+
 def test_sensitive_product_without_gender_signal_defaults_aku_korang_not_abang():
     """Sensitive product with no clear gender signal must NOT default to abang."""
     result = generate_registration_hook_cta(

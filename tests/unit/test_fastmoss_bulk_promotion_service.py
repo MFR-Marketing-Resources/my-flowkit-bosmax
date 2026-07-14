@@ -1357,6 +1357,42 @@ def test_ref_to_completion_minimal_ref_no_crash():
     assert "Basic Lotion" in req.paste_anything_about_product
 
 
+def test_ref_to_completion_merges_staged_hub_enrichment(monkeypatch):
+    """Draft creation must carry staged Kalodata HUB copy — before this fix
+    only /apply-hub-enrichment wrote these fields, so any draft rebuild wiped
+    them (live incident: langsir draft with all knowledge fields empty)."""
+    from agent.services import kalodata_import_service
+
+    monkeypatch.setattr(
+        kalodata_import_service,
+        "load_hub_enrichment",
+        lambda: {
+            "fastmoss-ref:hub001": {
+                "target_customer_text": "Ibu rumah yang kemas",
+                "benefits_text": "Kabinet nampak kemas\nRenda lekat mudah pasang",
+                "ingredients_text": "Fabrik soft cotton",
+                "product_knowledge_text": "Pain point: Kabinet dapur nampak boring",
+                "price": 12.5,
+            }
+        },
+    )
+    ref = {"id": "fastmoss-ref:hub001", "raw_product_title": "Langsir Kabinet Renda"}
+    req = _ref_to_completion_request(ref)
+    assert req.target_customer_text == "Ibu rumah yang kemas"
+    assert "Renda lekat" in req.benefits_text
+    assert req.ingredients_text == "Fabrik soft cotton"
+    assert "Pain point: Kabinet dapur nampak boring" in req.paste_anything_about_product
+    assert "Langsir Kabinet Renda" in req.paste_anything_about_product
+    assert req.price == 12.5
+
+    # refs WITHOUT a staged entry stay untouched
+    req_plain = _ref_to_completion_request(
+        {"id": "fastmoss-ref:other", "raw_product_title": "Basic Lotion", "price": 9.9}
+    )
+    assert req_plain.benefits_text is None
+    assert req_plain.price == 9.9
+
+
 # ---------------------------------------------------------------------------
 # create_draft_from_reference — error_message and READY_FOR_APPROVAL path
 # ---------------------------------------------------------------------------

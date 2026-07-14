@@ -206,6 +206,7 @@ def complete_product_knowledge(
             "benefits_text": request.benefits_text,
             "target_customer_text": request.target_customer_text,
             "usage_text": request.usage_text,
+            "category": request.category,
             "claim_gate": claim_gate,
             "claim_tokens": claim_tokens,
             "copy_route": intelligence.get("copy_route"),
