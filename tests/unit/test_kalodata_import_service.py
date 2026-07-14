@@ -166,6 +166,31 @@ def test_import_workbook_stages_records_and_hub(staged_env, tmp_path):
     assert item["price"] == 26.5
 
 
+def test_tid_skipped_rows_still_get_hub_enrichment(staged_env, tmp_path):
+    """Rows refused at the tid gate already exist in the QUEUE from earlier
+    imports — their HUB copy must still land in the staged hub map, or
+    Recompute rebuilds those drafts with empty knowledge fields (Owner-
+    reported live incident 2026-07-14)."""
+    report = svc.import_workbook(
+        staged_env, existing_tids={"1731147231842430988"}
+    )
+    # Pengedap Vakum (the hub-matched product) was tid-skipped, NOT staged...
+    assert report.staged == 2
+    # ...yet its HUB copy is still mapped under its reference id
+    assert report.hub_matched == 1
+    hub = json.loads(
+        (tmp_path / svc.STAGED_HUB_FILENAME).read_text(encoding="utf-8")
+    )
+    (ref_id, item), = hub.items()
+    assert item["target_customer_text"] == "Ibu rumah yang kemas"
+    catalog_ids = {
+        r["id"] for r in json.loads(
+            (tmp_path / svc.STAGED_CATALOG_FILENAME).read_text(encoding="utf-8")
+        )
+    }
+    assert ref_id not in catalog_ids  # hub entry exists WITHOUT being staged
+
+
 def test_import_skips_tids_already_in_system(staged_env, tmp_path):
     # Duplicate law: TikTok Product ID = product identity. Row 1's tid already
     # exists in the system → never staged; the others stage normally.

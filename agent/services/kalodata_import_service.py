@@ -404,7 +404,7 @@ def find_hub_internal_corruption(hub_rows: list[KalodataHubRow]) -> set[int]:
 def build_hub_enrichment(
     hub_rows: list[KalodataHubRow],
     merged_rows: list[KalodataMergedRow],
-    staged_by_row_no: dict[int, dict[str, Any]],
+    record_by_row_no: dict[int, dict[str, Any]],
 ) -> tuple[dict[str, dict[str, str]], int, list[int], list[int]]:
     """Join HUB rows to staged reference ids by NORMALIZED PRODUCT NAME and map
     columns into the exact `import_enrichment` item field names.
@@ -414,9 +414,9 @@ def build_hub_enrichment(
     and a №-first join attached jeans copy to a perfume. The HUB Product ID
     cells are float-lossy, so the name is the only reliable join key."""
     by_name = {
-        _normalize_name(row.product_name): staged_by_row_no.get(row.row_no)
+        _normalize_name(row.product_name): record_by_row_no.get(row.row_no)
         for row in merged_rows
-        if staged_by_row_no.get(row.row_no)
+        if record_by_row_no.get(row.row_no)
     }
     corrupt_rows = find_hub_internal_corruption(hub_rows)
     enrichment: dict[str, dict[str, str]] = {}
@@ -494,7 +494,12 @@ def import_workbook(
     )
 
     staged_records: list[dict[str, Any]] = []
-    staged_by_row_no: dict[int, dict[str, Any]] = {}
+    # HUB lookup covers EVERY valid row — including tid-skipped ones. Their
+    # reference ids already live in the queue (first import) or as committed
+    # products; dropping them from the lookup silently discarded their HUB
+    # copy, so Recompute rebuilt those drafts with empty knowledge fields
+    # (Owner-reported 2026-07-14).
+    hub_lookup_by_row_no: dict[int, dict[str, Any]] = {}
     seen_ids: set[str] = set()
     seen_tids: set[str] = set()
     system_tids = {t for t in (existing_tids or set()) if t}
@@ -503,6 +508,7 @@ def import_workbook(
             report.skipped_invalid += 1
             continue
         record = build_staged_record(row, source_file=path.name)
+        hub_lookup_by_row_no[row.row_no] = record
         tid = row.tiktok_product_id
         if tid and tid in system_tids:
             report.skipped_existing_tid += 1
@@ -514,7 +520,6 @@ def import_workbook(
         if tid:
             seen_tids.add(tid)
         staged_records.append(record)
-        staged_by_row_no[row.row_no] = record
         if row.tiktok_product_id_confidence == "URL":
             report.product_id_from_url += 1
         elif row.tiktok_product_id_confidence == "LOW":
@@ -523,7 +528,7 @@ def import_workbook(
             report.price_ranges_parsed += 1
 
     enrichment, matched, unmatched, internally_corrupt = build_hub_enrichment(
-        hub_rows, merged_rows, staged_by_row_no
+        hub_rows, merged_rows, hub_lookup_by_row_no
     )
     report.hub_matched = matched
     report.hub_unmatched_rows = unmatched[:50]
