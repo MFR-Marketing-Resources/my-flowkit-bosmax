@@ -358,6 +358,7 @@ def test_copy_intelligence_dry_run_preserves_scripts_and_quarantines_ambiguous_n
     assert report.matched_high_confidence == 0
     assert report.matched_medium_confidence == 1
     assert report.low_confidence_quarantined == 2
+    assert report.unmatched == 0
     assert report.duplicates == 2
     unique = next(record for record in report.records if record.source_product_name == "Produk Unik")
     assert unique.source_row == 2  # provenance, never identity
@@ -368,6 +369,8 @@ def test_copy_intelligence_dry_run_preserves_scripts_and_quarantines_ambiguous_n
     assert unique.cta_script == "Tambah ke cart."
     assert unique.status == "NEEDS_REVIEW"
     assert unique.match_method == "UNIQUE_NORMALIZED_NAME_TO_SOURCE_REFERENCE"
+    ambiguous = [record for record in report.records if record.source_product_name == "Produk Sama"]
+    assert {record.match_method for record in ambiguous} == {"AMBIGUOUS_NORMALIZED_NAME"}
 
     high = svc.build_copy_intelligence_dry_run(
         path, {"1731147231842430988": "product-truth-001"}

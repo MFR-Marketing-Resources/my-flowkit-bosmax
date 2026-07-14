@@ -487,6 +487,7 @@ def build_copy_intelligence_dry_run(
         elif not candidates:
             report.unmatched += 1
         else:
+            match_method = "AMBIGUOUS_NORMALIZED_NAME"
             report.low_confidence_quarantined += 1
             report.duplicates += max(0, hub_name_count[normalized_name] - 1)
             report.examples["quarantined"].append({"source_row": int(row["source_row"]), "product": str(row["source_product_name"]), "reason": "AMBIGUOUS_NORMALIZED_NAME"})
