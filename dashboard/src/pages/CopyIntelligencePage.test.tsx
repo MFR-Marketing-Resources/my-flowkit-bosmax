@@ -5,6 +5,7 @@ import CopyIntelligencePage from "./CopyIntelligencePage";
 import {
 	approveCopyIntelligenceSeed,
 	listCopyIntelligenceSeedLedger,
+	promoteApprovedCopyIntelligenceSeed,
 	rejectCopyIntelligenceSeed,
 	runUploadedCopyIntelligenceDryRun,
 	uploadCopyIntelligenceWorkbook,
@@ -17,6 +18,7 @@ vi.mock("../api/copyIntelligence", () => ({
 	listCopyIntelligenceSeedLedger: vi.fn(),
 	approveCopyIntelligenceSeed: vi.fn(),
 	rejectCopyIntelligenceSeed: vi.fn(),
+	promoteApprovedCopyIntelligenceSeed: vi.fn(),
 }));
 
 const mockedUpload = vi.mocked(uploadCopyIntelligenceWorkbook);
@@ -24,6 +26,7 @@ const mockedDryRun = vi.mocked(runUploadedCopyIntelligenceDryRun);
 const mockedLedger = vi.mocked(listCopyIntelligenceSeedLedger);
 const mockedApprove = vi.mocked(approveCopyIntelligenceSeed);
 const mockedReject = vi.mocked(rejectCopyIntelligenceSeed);
+const mockedPromote = vi.mocked(promoteApprovedCopyIntelligenceSeed);
 
 function seedRow(overrides: Partial<CopyIntelligenceSeedLedgerRow> = {}): CopyIntelligenceSeedLedgerRow {
 	return {
@@ -173,6 +176,31 @@ describe("CopyIntelligencePage", () => {
 		expect(modal).toHaveTextContent("Easier routine");
 		expect(modal).toHaveTextContent("TIKTOK_PRODUCT_ID_MATCH");
 		expect(screen.queryByTestId("medium-confidence-warning")).not.toBeInTheDocument();
+	});
+
+	it("offers Create review draft only for APPROVED rows and shows the created draft", async () => {
+		mockedLedger.mockResolvedValue({
+			total: 2,
+			items: [
+				seedRow({ seed_id: "seed-approved", source_product_name: "Approved product", status: "APPROVED" }),
+				seedRow({ seed_id: "seed-open", source_product_name: "Pending product", status: "NEEDS_REVIEW" }),
+			],
+		});
+		mockedPromote.mockResolvedValue({
+			seed_id: "seed-approved", draft_id: "draft-abcdef12", product_id: "prod-1",
+			review_status: "NEEDS_REVISION", created_from: "APPROVED_COPY_INTELLIGENCE",
+		});
+
+		render(<CopyIntelligencePage />);
+		// Promote action only on the APPROVED row; NEEDS_REVIEW row shows Review, not promote.
+		expect(await screen.findByTestId("promote-seed-seed-approved")).toBeInTheDocument();
+		expect(screen.queryByTestId("promote-seed-seed-open")).not.toBeInTheDocument();
+		expect(screen.getByTestId("review-seed-seed-open")).toBeInTheDocument();
+
+		fireEvent.click(screen.getByTestId("promote-seed-seed-approved"));
+		await waitFor(() => expect(mockedPromote).toHaveBeenCalledWith("seed-approved"));
+		expect(await screen.findByTestId("promote-result-seed-approved")).toHaveTextContent("NEEDS_REVISION");
+		expect(screen.getByTestId("promote-result-seed-approved")).toHaveTextContent("draft-ab");
 	});
 
 	it("shows the stronger MEDIUM warning and approves via the approve endpoint", async () => {

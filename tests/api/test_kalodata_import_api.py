@@ -504,3 +504,60 @@ def test_approved_context_endpoint_empty_ok(monkeypatch):
     response = client.get("/api/kalodata/copy-intelligence/approved-context")
     assert response.status_code == 200
     assert response.json() == {"total": 0, "items": []}
+
+
+# ── Promote APPROVED seed -> review draft endpoint ───────────────────────────
+def test_promote_endpoint_routes_and_returns_draft(monkeypatch):
+    captured = {}
+
+    async def fake_promote(seed_id):
+        captured["seed_id"] = seed_id
+        return {
+            "seed_id": seed_id, "draft_id": "draft-1", "product_id": "prod-1",
+            "review_status": "NEEDS_REVISION", "created_from": "APPROVED_COPY_INTELLIGENCE",
+        }
+
+    async def review_must_not_run(*args, **kwargs):
+        raise AssertionError("promotion must not invoke the review/transition primitive")
+
+    async def seed_must_not_run(_records):
+        raise AssertionError("promotion must not invoke the seed primitive")
+
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.promote_approved_copy_intelligence_to_review_draft", fake_promote
+    )
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.review_copy_intelligence_seed", review_must_not_run
+    )
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.persist_copy_intelligence_seed_records", seed_must_not_run
+    )
+    client = TestClient(_build_app())
+    response = client.post("/api/kalodata/copy-intelligence/seeds/seed-1/promote-to-review-draft")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["draft_id"] == "draft-1"
+    assert body["review_status"] == "NEEDS_REVISION"
+    assert body["created_from"] == "APPROVED_COPY_INTELLIGENCE"
+    assert captured == {"seed_id": "seed-1"}
+
+
+def test_promote_endpoint_maps_fail_closed_errors(monkeypatch):
+    from agent.services import kalodata_import_service as _svc
+
+    scenarios = [
+        ("COPY_INTELLIGENCE_SEED_NOT_FOUND", 404),
+        ("SEED_NOT_APPROVED", 409),
+        ("SEED_HAS_NO_TARGET_PRODUCT", 409),
+    ]
+    for code, status_code in scenarios:
+        async def fake_promote(seed_id, _code=code, _sc=status_code):
+            raise _svc.CopyIntelligencePromotionError(_code, _sc, {"seed_id": seed_id})
+
+        monkeypatch.setattr(
+            "agent.services.kalodata_import_service.promote_approved_copy_intelligence_to_review_draft", fake_promote
+        )
+        client = TestClient(_build_app())
+        response = client.post("/api/kalodata/copy-intelligence/seeds/seed-1/promote-to-review-draft")
+        assert response.status_code == status_code
+        assert response.json()["detail"]["error"] == code

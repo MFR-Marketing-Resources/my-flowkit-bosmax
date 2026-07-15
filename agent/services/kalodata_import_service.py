@@ -683,6 +683,109 @@ async def get_approved_copy_intelligence_context(
     return {"total": total, "items": items}
 
 
+class CopyIntelligencePromotionError(Exception):
+    """Fail-closed promotion error. Callers (the API) surface it verbatim; a
+    promotion that cannot be validated NEVER creates a draft."""
+
+    def __init__(self, code: str, status_code: int = 422, detail: object = None):
+        super().__init__(code)
+        self.code = code
+        self.status_code = status_code
+        self.detail = detail
+
+
+def _nonempty_list(*values: object) -> list[str]:
+    out: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            out.append(text)
+    return out
+
+
+async def promote_approved_copy_intelligence_to_review_draft(seed_id: str) -> dict[str, object]:
+    """Materialize ONE APPROVED Copy Intelligence seed into a Product Intelligence
+    review DRAFT via the existing, validated review-draft path.
+
+    Safety boundaries (fail-closed):
+    - The seed MUST be `status='APPROVED'` — NEEDS_REVIEW / REJECTED are rejected.
+    - The seed MUST have a `target_product_id` (the draft is product-keyed).
+    - Only avatar/pain/emotion/dream become buyer persona; hook/CTA/features
+      become strategy + paste-anything evidence. product_description / benefits /
+      usp are NOT populated, so no unverified workbook claim enters as a product
+      FACT. The result is a non-approved DRAFT that still must pass the existing
+      draft->snapshot approval gate before any grounding/generation use.
+    - No Product Truth overwrite, no Copy Set write, no AI call, no auto-approve.
+    """
+    from agent.db import crud
+    from agent.models.product_intelligence_review_draft import (
+        ProductIntelligenceReviewDraftCreateRequest,
+    )
+    from agent.services import product_intelligence_review_draft_service as _draft_svc
+
+    row = await crud.get_copy_intelligence_seed(seed_id)
+    if not row:
+        raise CopyIntelligencePromotionError(
+            "COPY_INTELLIGENCE_SEED_NOT_FOUND", 404, {"seed_id": seed_id}
+        )
+    if row.get("status") != "APPROVED":
+        raise CopyIntelligencePromotionError(
+            "SEED_NOT_APPROVED", 409, {"seed_id": seed_id, "status": row.get("status")}
+        )
+    target_product_id = row.get("target_product_id")
+    if not target_product_id:
+        raise CopyIntelligencePromotionError(
+            "SEED_HAS_NO_TARGET_PRODUCT", 409, {"seed_id": seed_id}
+        )
+
+    avatar = str(row.get("target_avatar") or "").strip()
+    persona = {
+        "audience": avatar,
+        "pains": _nonempty_list(row.get("pain_point")),
+        "desires": _nonempty_list(row.get("dream_outcome")),
+        "triggers": _nonempty_list(row.get("emotion_trigger")),
+    }
+    strategy = {
+        "hook": str(row.get("hook_script") or "").strip() or None,
+        "cta": str(row.get("cta_script") or "").strip() or None,
+        "key_features": str(row.get("key_ingredients_features") or "").strip() or None,
+        "source": "approved_copy_intelligence",
+    }
+    provenance_line = (
+        f"Promoted from APPROVED Copy Intelligence seed {seed_id} "
+        f"(source {row.get('source_workbook')}/{row.get('source_sheet')} row {row.get('source_row')}); "
+        f"seed reviewed_by {row.get('reviewed_by')} at {row.get('reviewed_at')}: {row.get('review_note')}. "
+        "Review-only draft — not Product Truth; must pass the review gate before use."
+    )
+    paste_summary_lines = [
+        "APPROVED Copy Intelligence (workbook evidence — review before approving):",
+        f"Avatar: {avatar or '—'}",
+        f"Pain: {row.get('pain_point') or '—'}",
+        f"Emotion: {row.get('emotion_trigger') or '—'}",
+        f"Dream: {row.get('dream_outcome') or '—'}",
+        f"Features: {row.get('key_ingredients_features') or '—'}",
+        f"Hook: {row.get('hook_script') or '—'}",
+        f"CTA: {row.get('cta_script') or '—'}",
+    ]
+
+    request = ProductIntelligenceReviewDraftCreateRequest(
+        target_customer_text=avatar or None,
+        paste_anything_summary="\n".join(paste_summary_lines),
+        buyer_persona_snapshot_json=persona,
+        copy_strategy_summary_json=strategy,
+        reviewer_note=provenance_line,
+        created_by="copy_intelligence_promotion",
+    )
+    draft = await _draft_svc.create_review_draft(target_product_id, request)
+    return {
+        "seed_id": seed_id,
+        "draft_id": draft.draft_id,
+        "product_id": target_product_id,
+        "review_status": draft.review_status,
+        "created_from": "APPROVED_COPY_INTELLIGENCE",
+    }
+
+
 # ── Copy Intelligence seed review/approval layer ──────────────────────────────
 # One owner reviews ONE persisted ledger row at a time. Approval/rejection is
 # fail-closed and audit-stamped; it NEVER exposes a row to generation. Nothing

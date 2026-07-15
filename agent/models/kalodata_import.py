@@ -161,6 +161,18 @@ class CopyIntelligenceApprovedContextResponse(BaseModel):
     items: list[CopyIntelligenceApprovedContextRow] = Field(default_factory=list)
 
 
+class CopyIntelligencePromoteResult(BaseModel):
+    """Result of promoting one APPROVED Copy Intelligence seed into a Product
+    Intelligence review DRAFT. The draft is non-approved and must pass the
+    existing review gate before it can influence grounding/generation."""
+
+    seed_id: str
+    draft_id: str
+    product_id: str
+    review_status: str
+    created_from: str
+
+
 class CopyIntelligenceSeedReviewRequest(BaseModel):
     """A single owner review decision on ONE persisted ledger row. There is no
     batch form: the reviewer confirms one seed at a time, with an explicit
