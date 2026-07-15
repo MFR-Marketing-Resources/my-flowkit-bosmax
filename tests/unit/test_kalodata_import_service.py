@@ -667,3 +667,205 @@ async def test_apply_hub_enrichment_delegates_to_import_enrichment(staged_env, m
         "target_customer_text", "ingredients_text", "warnings_text",
         "product_knowledge_text",
     }
+
+
+# ── Copy Intelligence seed review/approval layer ─────────────────────────────
+async def _make_needs_review_seed(fingerprint: str, confidence: str = "HIGH") -> dict:
+    from agent.db import crud
+
+    return await crud.create_copy_intelligence_seed(
+        source_fingerprint=fingerprint,
+        source_workbook="fixture.xlsx", source_sheet="COPYWRITING HUB",
+        source_row=2, source_product_name="Produk Review",
+        match_method="TIKTOK_PRODUCT_ID_MATCH", confidence=confidence,
+        status="NEEDS_REVIEW", hook_script="Hook", cta_script="CTA",
+        provenance_json='{"sheet":"COPYWRITING HUB"}',
+    )
+
+
+@pytest.mark.asyncio
+async def test_review_high_needs_review_to_approved_persists_audit():
+    from agent.db import crud
+
+    seed = await _make_needs_review_seed("review-approve-high")
+    result = await svc.review_copy_intelligence_seed(
+        seed["seed_id"], action="APPROVE", reviewed_by="owner",
+        review_note="Verified product identity",
+        confirmation_phrase="APPROVE COPY INTELLIGENCE",
+    )
+    assert result["previous_status"] == "NEEDS_REVIEW"
+    assert result["new_status"] == "APPROVED"
+    assert result["reviewed_by"] == "owner"
+    assert result["review_note"] == "Verified product identity"
+    assert result["reviewed_at"]
+
+    row = await crud.get_copy_intelligence_seed(seed["seed_id"])
+    assert row["status"] == "APPROVED"
+    assert row["previous_status"] == "NEEDS_REVIEW"
+    assert row["review_action"] == "APPROVE"
+    assert row["reviewed_by"] == "owner"
+    assert row["reviewed_at"] == result["reviewed_at"]
+    assert row["review_note"] == "Verified product identity"
+
+
+@pytest.mark.asyncio
+async def test_review_high_needs_review_to_rejected():
+    from agent.db import crud
+
+    seed = await _make_needs_review_seed("review-reject-high")
+    result = await svc.review_copy_intelligence_seed(
+        seed["seed_id"], action="REJECT", reviewed_by="owner",
+        review_note="Wrong mapping", confirmation_phrase="REJECT COPY INTELLIGENCE",
+    )
+    assert result["new_status"] == "REJECTED"
+    row = await crud.get_copy_intelligence_seed(seed["seed_id"])
+    assert row["status"] == "REJECTED"
+    assert row["review_action"] == "REJECT"
+
+
+@pytest.mark.asyncio
+async def test_review_medium_approval_with_normal_phrase_is_rejected():
+    from agent.db import crud
+
+    seed = await _make_needs_review_seed("review-medium-normal", confidence="MEDIUM")
+    with pytest.raises(svc.CopyIntelligenceReviewError) as exc:
+        await svc.review_copy_intelligence_seed(
+            seed["seed_id"], action="APPROVE", reviewed_by="owner",
+            review_note="note", confirmation_phrase="APPROVE COPY INTELLIGENCE",
+        )
+    assert exc.value.code == "MEDIUM_CONFIDENCE_PHRASE_REQUIRED"
+    assert exc.value.status_code == 422
+    row = await crud.get_copy_intelligence_seed(seed["seed_id"])
+    assert row["status"] == "NEEDS_REVIEW"
+
+
+@pytest.mark.asyncio
+async def test_review_medium_approval_with_stronger_phrase_succeeds():
+    from agent.db import crud
+
+    seed = await _make_needs_review_seed("review-medium-strong", confidence="MEDIUM")
+    result = await svc.review_copy_intelligence_seed(
+        seed["seed_id"], action="APPROVE", reviewed_by="owner",
+        review_note="Confirmed identity carefully",
+        confirmation_phrase="APPROVE MEDIUM CONFIDENCE COPY INTELLIGENCE",
+    )
+    assert result["new_status"] == "APPROVED"
+    assert (await crud.get_copy_intelligence_seed(seed["seed_id"]))["status"] == "APPROVED"
+
+
+@pytest.mark.asyncio
+async def test_review_wrong_phrase_rejected_fail_closed():
+    from agent.db import crud
+
+    seed = await _make_needs_review_seed("review-wrong-phrase")
+    with pytest.raises(svc.CopyIntelligenceReviewError) as exc:
+        await svc.review_copy_intelligence_seed(
+            seed["seed_id"], action="APPROVE", reviewed_by="owner",
+            review_note="note", confirmation_phrase="approve",
+        )
+    assert exc.value.code == "CONFIRMATION_PHRASE_MISMATCH"
+    assert (await crud.get_copy_intelligence_seed(seed["seed_id"]))["status"] == "NEEDS_REVIEW"
+
+
+@pytest.mark.asyncio
+async def test_review_missing_note_rejected():
+    seed = await _make_needs_review_seed("review-missing-note")
+    with pytest.raises(svc.CopyIntelligenceReviewError) as exc:
+        await svc.review_copy_intelligence_seed(
+            seed["seed_id"], action="APPROVE", reviewed_by="owner",
+            review_note="   ", confirmation_phrase="APPROVE COPY INTELLIGENCE",
+        )
+    assert exc.value.code == "REVIEW_NOTE_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_review_missing_reviewer_rejected():
+    seed = await _make_needs_review_seed("review-missing-reviewer")
+    with pytest.raises(svc.CopyIntelligenceReviewError) as exc:
+        await svc.review_copy_intelligence_seed(
+            seed["seed_id"], action="APPROVE", reviewed_by="",
+            review_note="note", confirmation_phrase="APPROVE COPY INTELLIGENCE",
+        )
+    assert exc.value.code == "REVIEWER_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_review_unknown_seed_is_404():
+    with pytest.raises(svc.CopyIntelligenceReviewError) as exc:
+        await svc.review_copy_intelligence_seed(
+            "does-not-exist", action="APPROVE", reviewed_by="owner",
+            review_note="note", confirmation_phrase="APPROVE COPY INTELLIGENCE",
+        )
+    assert exc.value.code == "COPY_INTELLIGENCE_SEED_NOT_FOUND"
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_review_invalid_source_status_is_409():
+    from agent.db import crud
+
+    seed = await _make_needs_review_seed("review-invalid-status")
+    await svc.review_copy_intelligence_seed(
+        seed["seed_id"], action="APPROVE", reviewed_by="owner",
+        review_note="note", confirmation_phrase="APPROVE COPY INTELLIGENCE",
+    )
+    with pytest.raises(svc.CopyIntelligenceReviewError) as exc:
+        await svc.review_copy_intelligence_seed(
+            seed["seed_id"], action="REJECT", reviewed_by="owner",
+            review_note="note", confirmation_phrase="REJECT COPY INTELLIGENCE",
+        )
+    assert exc.value.code == "INVALID_SOURCE_STATUS"
+    assert exc.value.status_code == 409
+    assert (await crud.get_copy_intelligence_seed(seed["seed_id"]))["status"] == "APPROVED"
+
+
+@pytest.mark.asyncio
+async def test_review_does_not_create_snapshot_copy_set_or_touch_product_truth():
+    """Approval transitions the seed ONLY — no materialization into generation."""
+    from agent.db import crud
+
+    product = await crud.create_product(
+        source="MANUAL", raw_product_title="Truth", product_display_name="Truth",
+        product_short_name="Truth", copywriting_angle="Manual",
+    )
+    before_product = await crud.get_product(product["id"])
+    db = await crud.get_db()
+
+    async def _count(table: str) -> int:
+        cur = await db.execute(f"SELECT COUNT(*) FROM {table}")
+        return (await cur.fetchone())[0]
+
+    seed = await _make_needs_review_seed("review-isolation")
+    products_before = await _count("product")
+    copy_sets_before = await _count("copy_set")
+    snapshots_before = await _count("product_intelligence_snapshot")
+    seeds_before = await _count("copy_intelligence_seed")
+
+    await svc.review_copy_intelligence_seed(
+        seed["seed_id"], action="APPROVE", reviewed_by="owner",
+        review_note="note", confirmation_phrase="APPROVE COPY INTELLIGENCE",
+    )
+
+    assert await _count("product") == products_before
+    assert await _count("copy_set") == copy_sets_before
+    assert await _count("product_intelligence_snapshot") == snapshots_before
+    assert await _count("copy_intelligence_seed") == seeds_before  # transition, not insert
+    assert await crud.get_product(product["id"]) == before_product
+
+
+def test_invariant_generation_services_never_reference_seed_table():
+    """The generation/compiler/DeepSeek services must not read the seed table."""
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+    generation_files = [
+        "agent/services/canonical_prompt_compiler.py",
+        "agent/services/ai_copy_assist_service.py",
+        "agent/services/ai_copy_provider_adapter.py",
+        "agent/services/copy_grounding_service.py",
+        "agent/services/copy_binding_service.py",
+        "agent/services/workspace_execution_package_service.py",
+    ]
+    for rel in generation_files:
+        text = (repo_root / rel).read_text(encoding="utf-8")
+        assert "copy_intelligence_seed" not in text, f"{rel} must not reference the seed table"

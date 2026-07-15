@@ -1,13 +1,126 @@
 import { useEffect, useState } from "react";
 import {
+	approveCopyIntelligenceSeed,
 	listCopyIntelligenceSeedLedger,
+	rejectCopyIntelligenceSeed,
 	runUploadedCopyIntelligenceDryRun,
 	type CopyIntelligenceSeedLedgerResponse,
+	type CopyIntelligenceSeedLedgerRow,
 	uploadCopyIntelligenceWorkbook,
 	type CopyIntelligenceDryRunReport,
 	type CopyIntelligenceWorkbookUploadReport,
 } from "../api/copyIntelligence";
 import { Badge, HelperText, Section } from "../components/ui";
+
+const APPROVE_PHRASE = "APPROVE COPY INTELLIGENCE";
+const APPROVE_MEDIUM_PHRASE = "APPROVE MEDIUM CONFIDENCE COPY INTELLIGENCE";
+const REJECT_PHRASE = "REJECT COPY INTELLIGENCE";
+const MEDIUM_WARNING =
+	"Warning: this row was matched by normalized product name, not a verified TikTok Product ID. Confirm product identity carefully before approval.";
+
+function SeedReviewModal({
+	row,
+	onClose,
+	onReviewed,
+}: {
+	row: CopyIntelligenceSeedLedgerRow;
+	onClose: () => void;
+	onReviewed: () => void;
+}) {
+	const [reviewer, setReviewer] = useState("");
+	const [note, setNote] = useState("");
+	const [phrase, setPhrase] = useState("");
+	const [submitting, setSubmitting] = useState(false);
+	const [error, setError] = useState("");
+	const isMedium = row.confidence === "MEDIUM";
+	const approvePhrase = isMedium ? APPROVE_MEDIUM_PHRASE : APPROVE_PHRASE;
+
+	const submit = async (action: "approve" | "reject") => {
+		setSubmitting(true);
+		setError("");
+		try {
+			const input = { reviewed_by: reviewer, review_note: note, confirmation_phrase: phrase };
+			if (action === "approve") {
+				await approveCopyIntelligenceSeed(row.seed_id, input);
+			} else {
+				await rejectCopyIntelligenceSeed(row.seed_id, input);
+			}
+			onReviewed();
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : "Review gagal.");
+		} finally {
+			setSubmitting(false);
+		}
+	};
+
+	const field = (label: string, value: string | number | null | undefined) => (
+		<div>
+			<div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</div>
+			<div className="text-sm text-slate-200">{value || "—"}</div>
+		</div>
+	);
+
+	return (
+		<div
+			className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+			role="dialog"
+			aria-modal="true"
+			aria-label="Review copy intelligence seed"
+			data-testid="copy-intelligence-review-modal"
+		>
+			<div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-700 bg-slate-950 p-6 shadow-2xl">
+				<div className="flex items-start justify-between gap-4">
+					<h3 className="text-lg font-bold text-slate-100">Review seed · {row.confidence}</h3>
+					<button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-200" aria-label="Close review">✕</button>
+				</div>
+
+				<div className="mt-4 grid gap-3 sm:grid-cols-2">
+					{field("Product / source", row.source_product_name)}
+					{field("Target avatar", row.target_avatar)}
+					{field("Pain point", row.pain_point)}
+					{field("Emotion trigger", row.emotion_trigger)}
+					{field("Dream outcome", row.dream_outcome)}
+					{field("Ingredients / features", row.key_ingredients_features)}
+					{field("Hook script", row.hook_script)}
+					{field("CTA script", row.cta_script)}
+					{field("Confidence", row.confidence)}
+					{field("Match method", row.match_method)}
+					{field("Workbook / sheet", `${row.source_workbook} · ${row.source_sheet}`)}
+					{field("Source row", row.provenance.source_row || row.source_row)}
+				</div>
+
+				{isMedium && (
+					<p className="mt-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs font-medium text-amber-100" role="alert" data-testid="medium-confidence-warning">
+						{MEDIUM_WARNING}
+					</p>
+				)}
+
+				<div className="mt-4 space-y-3">
+					<label className="block text-xs font-semibold text-slate-300">Reviewer identity
+						<input aria-label="Reviewer identity" value={reviewer} onChange={(e) => setReviewer(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" placeholder="Your name or id" />
+					</label>
+					<label className="block text-xs font-semibold text-slate-300">Review note (required)
+						<textarea aria-label="Review note" value={note} onChange={(e) => setNote(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" rows={2} placeholder="Why is this decision correct?" />
+					</label>
+					<label className="block text-xs font-semibold text-slate-300">Confirmation phrase
+						<input aria-label="Confirmation phrase" value={phrase} onChange={(e) => setPhrase(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" placeholder={approvePhrase} />
+					</label>
+					<p className="text-[11px] text-slate-500">
+						Approve: type <span className="font-mono text-slate-300">{approvePhrase}</span> · Reject: type <span className="font-mono text-slate-300">{REJECT_PHRASE}</span>
+					</p>
+				</div>
+
+				{error && <p className="mt-3 text-xs font-medium text-red-300" role="alert">Review error: {error}</p>}
+
+				<div className="mt-5 flex flex-wrap justify-end gap-2">
+					<button type="button" onClick={onClose} className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-300 hover:bg-slate-800">Cancel</button>
+					<button type="button" data-testid="reject-seed" disabled={submitting} onClick={() => void submit("reject")} className="rounded-lg border border-red-400/40 bg-red-500/15 px-4 py-2 text-xs font-bold uppercase tracking-wide text-red-100 hover:bg-red-500/25 disabled:opacity-50">Reject</button>
+					<button type="button" data-testid="approve-seed" disabled={submitting} onClick={() => void submit("approve")} className="rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-4 py-2 text-xs font-bold uppercase tracking-wide text-emerald-100 hover:bg-emerald-500/25 disabled:opacity-50">Approve</button>
+				</div>
+			</div>
+		</div>
+	);
+}
 
 function CountCard({ label, value, tone }: { label: string; value: number; tone: "success" | "info" | "warn" | "danger" }) {
 	return (
@@ -33,6 +146,8 @@ export default function CopyIntelligencePage() {
 	const [uploadError, setUploadError] = useState("");
 	const [ledgerError, setLedgerError] = useState("");
 	const [ledgerLoading, setLedgerLoading] = useState(true);
+	const [reviewRow, setReviewRow] = useState<CopyIntelligenceSeedLedgerRow | null>(null);
+	const [refreshKey, setRefreshKey] = useState(0);
 
 	useEffect(() => {
 		let active = true;
@@ -53,7 +168,7 @@ export default function CopyIntelligencePage() {
 			if (active) setLedgerLoading(false);
 		});
 		return () => { active = false; };
-	}, [ledgerConfidence, ledgerSearch, ledgerStatus]);
+	}, [ledgerConfidence, ledgerSearch, ledgerStatus, refreshKey]);
 
 	const runDryRun = async () => {
 		if (!workbook) {
@@ -169,12 +284,23 @@ export default function CopyIntelligencePage() {
 					<div className="overflow-x-auto" data-testid="copy-intelligence-seed-ledger">
 						<p className="mb-3 text-xs text-slate-400">{ledger?.total ?? 0} persisted review records</p>
 						<table className="min-w-[1400px] text-left text-xs text-slate-300">
-							<thead className="border-b border-slate-700 text-[10px] uppercase tracking-wide text-slate-500"><tr><th>Source</th><th>Product</th><th>Avatar</th><th>Pain / emotion</th><th>Dream / features</th><th>Hook</th><th>CTA</th><th>Confidence</th><th>Match</th><th>Status</th><th>Provenance</th></tr></thead>
-							<tbody>{ledger?.items.map((row) => <tr key={row.seed_id} className="border-b border-slate-800 align-top"><td className="p-2">{row.source_row}</td><td className="p-2 font-medium text-slate-100">{row.source_product_name}</td><td className="p-2">{row.target_avatar || "—"}</td><td className="p-2">{row.pain_point || "—"}<br />{row.emotion_trigger || "—"}</td><td className="p-2">{row.dream_outcome || "—"}<br />{row.key_ingredients_features || "—"}</td><td className="p-2">{row.hook_script || "—"}</td><td className="p-2">{row.cta_script || "—"}</td><td className="p-2">{row.confidence}</td><td className="p-2">{row.match_method}</td><td className="p-2">{row.status}</td><td className="p-2">{row.source_workbook}<br />{row.source_sheet} · row {row.provenance.source_row || row.source_row}</td></tr>)}</tbody>
+							<thead className="border-b border-slate-700 text-[10px] uppercase tracking-wide text-slate-500"><tr><th>Source</th><th>Product</th><th>Avatar</th><th>Pain / emotion</th><th>Dream / features</th><th>Hook</th><th>CTA</th><th>Confidence</th><th>Match</th><th>Status</th><th>Provenance</th><th>Review</th></tr></thead>
+							<tbody>{ledger?.items.map((row) => <tr key={row.seed_id} className="border-b border-slate-800 align-top"><td className="p-2">{row.source_row}</td><td className="p-2 font-medium text-slate-100">{row.source_product_name}</td><td className="p-2">{row.target_avatar || "—"}</td><td className="p-2">{row.pain_point || "—"}<br />{row.emotion_trigger || "—"}</td><td className="p-2">{row.dream_outcome || "—"}<br />{row.key_ingredients_features || "—"}</td><td className="p-2">{row.hook_script || "—"}</td><td className="p-2">{row.cta_script || "—"}</td><td className="p-2">{row.confidence}</td><td className="p-2">{row.match_method}</td><td className="p-2">{row.status}</td><td className="p-2">{row.source_workbook}<br />{row.source_sheet} · row {row.provenance.source_row || row.source_row}</td><td className="p-2">{row.status === "NEEDS_REVIEW" ? <button type="button" data-testid={`review-seed-${row.seed_id}`} onClick={() => setReviewRow(row)} className="rounded-md border border-blue-400/40 bg-blue-500/15 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-blue-100 hover:bg-blue-500/25">Review</button> : <span className="text-[10px] uppercase tracking-wide text-slate-500">{row.status}</span>}</td></tr>)}</tbody>
 						</table>
 					</div>
 				)}
 			</Section>
+
+			{reviewRow && (
+				<SeedReviewModal
+					row={reviewRow}
+					onClose={() => setReviewRow(null)}
+					onReviewed={() => {
+						setReviewRow(null);
+						setRefreshKey((key) => key + 1);
+					}}
+				/>
+			)}
 		</div>
 	);
 }

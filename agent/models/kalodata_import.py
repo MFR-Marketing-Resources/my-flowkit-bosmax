@@ -119,11 +119,34 @@ class CopyIntelligenceSeedLedgerRow(BaseModel):
     source_workbook: str
     source_sheet: str
     provenance: dict[str, str] = Field(default_factory=dict)
+    reviewed_by: str | None = None
+    reviewed_at: str | None = None
+    review_note: str | None = None
 
 
 class CopyIntelligenceSeedLedgerResponse(BaseModel):
     total: int
     items: list[CopyIntelligenceSeedLedgerRow] = Field(default_factory=list)
+
+
+class CopyIntelligenceSeedReviewRequest(BaseModel):
+    """A single owner review decision on ONE persisted ledger row. There is no
+    batch form: the reviewer confirms one seed at a time, with an explicit
+    phrase, a non-empty note, and their identity."""
+
+    reviewed_by: str
+    review_note: str
+    confirmation_phrase: str
+
+
+class CopyIntelligenceSeedReviewResult(BaseModel):
+    seed_id: str
+    previous_status: str
+    new_status: str
+    confidence: str
+    reviewed_by: str
+    reviewed_at: str
+    review_note: str
 
 
 class KalodataApplyHubRequest(BaseModel):

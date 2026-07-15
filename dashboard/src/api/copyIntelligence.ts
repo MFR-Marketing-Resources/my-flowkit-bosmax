@@ -41,11 +41,30 @@ export interface CopyIntelligenceSeedLedgerRow {
 	source_workbook: string;
 	source_sheet: string;
 	provenance: Record<string, string>;
+	reviewed_by: string | null;
+	reviewed_at: string | null;
+	review_note: string | null;
 }
 
 export interface CopyIntelligenceSeedLedgerResponse {
 	total: number;
 	items: CopyIntelligenceSeedLedgerRow[];
+}
+
+export interface CopyIntelligenceSeedReviewResult {
+	seed_id: string;
+	previous_status: string;
+	new_status: string;
+	confidence: string;
+	reviewed_by: string;
+	reviewed_at: string;
+	review_note: string;
+}
+
+export interface CopyIntelligenceSeedReviewInput {
+	reviewed_by: string;
+	review_note: string;
+	confirmation_phrase: string;
 }
 
 export function uploadCopyIntelligenceWorkbook(workbook: File) {
@@ -76,5 +95,25 @@ export function listCopyIntelligenceSeedLedger(filters: {
 	const query = params.toString();
 	return getAPI<CopyIntelligenceSeedLedgerResponse>(
 		`/api/kalodata/copy-intelligence/seeds${query ? `?${query}` : ""}`,
+	);
+}
+
+export function approveCopyIntelligenceSeed(
+	seedId: string,
+	input: CopyIntelligenceSeedReviewInput,
+) {
+	return postAPI<CopyIntelligenceSeedReviewResult>(
+		`/api/kalodata/copy-intelligence/seeds/${encodeURIComponent(seedId)}/approve`,
+		input,
+	);
+}
+
+export function rejectCopyIntelligenceSeed(
+	seedId: string,
+	input: CopyIntelligenceSeedReviewInput,
+) {
+	return postAPI<CopyIntelligenceSeedReviewResult>(
+		`/api/kalodata/copy-intelligence/seeds/${encodeURIComponent(seedId)}/reject`,
+		input,
 	);
 }
