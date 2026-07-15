@@ -632,6 +632,57 @@ async def list_copy_intelligence_seed_records(
     return {"total": total, "items": items}
 
 
+async def get_approved_copy_intelligence_context(
+    *, target_product_id: str | None = None, reference_id: str | None = None,
+    seed_id: str | None = None, limit: int = 100,
+) -> dict[str, object]:
+    """Read-only APPROVED-only Copy Intelligence context for a product/reference.
+
+    This is the SAFE consumption boundary: it returns only `status='APPROVED'`
+    rows (NEEDS_REVIEW / REJECTED are structurally excluded by the crud helper),
+    projected to compact grounding fields. It never mutates Product Truth or
+    Copy Sets, never creates a snapshot, never calls an AI provider, and does not
+    route rows to generation. It lives in the import/ledger service — NOT in any
+    generation/compiler service — so the "generation never reads the seed table"
+    invariant is preserved.
+    """
+    from agent.db import crud
+
+    total, rows = await crud.list_approved_copy_intelligence_seeds(
+        target_product_id=target_product_id, reference_id=reference_id,
+        seed_id=seed_id, limit=limit,
+    )
+    items = []
+    for row in rows:
+        try:
+            provenance = json.loads(row.get("provenance_json") or "{}")
+        except json.JSONDecodeError:
+            provenance = {}
+        items.append({
+            "seed_id": row.get("seed_id"),
+            "source_product_name": row.get("source_product_name"),
+            "target_product_id": row.get("target_product_id"),
+            "reference_id": row.get("reference_id"),
+            "target_avatar": row.get("target_avatar"),
+            "pain_point": row.get("pain_point"),
+            "emotion_trigger": row.get("emotion_trigger"),
+            "dream_outcome": row.get("dream_outcome"),
+            "key_ingredients_features": row.get("key_ingredients_features"),
+            "hook_script": row.get("hook_script"),
+            "cta_script": row.get("cta_script"),
+            "confidence": row.get("confidence"),
+            "match_method": row.get("match_method"),
+            "status": row.get("status"),
+            "source_workbook": row.get("source_workbook"),
+            "source_sheet": row.get("source_sheet"),
+            "provenance": provenance,
+            "reviewed_by": row.get("reviewed_by"),
+            "reviewed_at": row.get("reviewed_at"),
+            "review_note": row.get("review_note"),
+        })
+    return {"total": total, "items": items}
+
+
 # ── Copy Intelligence seed review/approval layer ──────────────────────────────
 # One owner reviews ONE persisted ledger row at a time. Approval/rejection is
 # fail-closed and audit-stamped; it NEVER exposes a row to generation. Nothing

@@ -19,6 +19,7 @@ from agent.models.kalodata_import import (
     KalodataImportReport,
     KalodataImportRequest,
     CopyIntelligenceUploadedSourceRequest,
+    CopyIntelligenceApprovedContextResponse,
     CopyIntelligenceSeedLedgerResponse,
     CopyIntelligenceSeedReviewRequest,
     CopyIntelligenceSeedReviewResult,
@@ -114,6 +115,29 @@ async def list_copy_intelligence_seed_ledger(
     """List persisted review rows only; this endpoint has no seed side effect."""
     return await _svc.list_copy_intelligence_seed_records(
         confidence=confidence, status=status, search=search, limit=limit,
+    )
+
+
+@router.get(
+    "/copy-intelligence/approved-context",
+    response_model=CopyIntelligenceApprovedContextResponse,
+)
+async def list_approved_copy_intelligence_context(
+    target_product_id: str | None = None,
+    reference_id: str | None = None,
+    seed_id: str | None = None,
+    limit: int = Query(default=100, ge=1, le=200),
+):
+    """Read-only APPROVED-only Copy Intelligence context for a product/reference.
+
+    The safe consumption boundary for downstream Copy Assistant / Smart
+    Registration: returns ONLY approved rows (NEEDS_REVIEW / REJECTED excluded),
+    empty list when none. No seed/review/generation side effect; does not mutate
+    Product Truth or Copy Sets and does not call any AI provider.
+    """
+    return await _svc.get_approved_copy_intelligence_context(
+        target_product_id=target_product_id, reference_id=reference_id,
+        seed_id=seed_id, limit=limit,
     )
 
 
