@@ -14,10 +14,12 @@ These tests pin every layer that must refuse a multi-block prompt:
 Single-block prompts remain untouched — the proven video-1 flow is unchanged.
 """
 import pytest
+from copy import deepcopy
 from fastapi import HTTPException
 
 from agent.api import flow
 from agent.services import production_plan_resolver as resolver
+from agent.services.ugc_video_prompt_compiler_service import compile_ugc_video_prompt
 
 _HDR = "SECTION 1 - ROLE & OBJECTIVE"
 BLOCK1 = f"{_HDR}\nYou are generating an 8-second block (opening block 1 of 2).\n...body..."
@@ -115,3 +117,43 @@ async def test_durable_adapter_rejects_multi_block_last_line():
            "initial_prompt_text": MULTI}
     with pytest.raises(flow.InitialGenerationError):
         flow._initial_gen_preconditions(job)
+
+
+_SINGLE_PRODUCT = {
+    "id": "prod-single-guard", "name": "Minyak Warisan Tok Cap Burung 25ml",
+    "product_display_name": "Minyak Warisan Tok Cap Burung 25ml",
+    "category": "Health & Personal Care",
+}
+_SINGLE_COPY = {
+    "copy_source": "selected_copy_set", "formula_family": "PAS", "angle": "Rutin malam",
+    "hook": "Anak susah tidur?", "subhook": "Hati ibu terganggu.",
+    "usps": ["Formula tradisional."], "cta": "Cuba malam ini.",
+}
+
+
+def test_single_block_carries_no_audio_handoff_metadata():
+    """SINGLE = one complete 8s block, no seam. It must NOT inherit any Extend-only
+    handoff timing metadata or seam prompt wording; its initial prompt stays the
+    unchanged independent-block prompt."""
+    compiled = compile_ugc_video_prompt(
+        product=deepcopy(_SINGLE_PRODUCT),
+        approved_package={"scene_context": "bedroom"},
+        mode="F2V", source_mode="HYBRID", generation_mode="SINGLE",
+        engine_duration_target="GOOGLE_FLOW",
+        target_language="BM_MS",
+        copy_intelligence=deepcopy(_SINGLE_COPY),
+    )
+    blocks = compiled["prompt_blocks"]
+    assert len(blocks) == 1
+    block = blocks[0]
+    assert block["is_final"] is True
+    assert block["flow_extend_prompt_text"] in (None, "")
+    # SINGLE prompt text is unchanged: the research seam is never injected.
+    assert block["initial_generation_prompt_text"] == block["independent_block_prompt_text"]
+    assert "half a second before" not in (block["initial_generation_prompt_text"] or "").lower()
+    # No outgoing/incoming handoff boundary is attached to a lone final block.
+    contract = block["audio_seam_contract"]
+    assert contract["outgoing_dialogue_deadline_s"] is None
+    assert contract["incoming_new_dialogue_onset_floor_s"] is None
+    assert contract["forbid_new_spoken_phrase_in_final_handoff_window"] is False
+    assert contract["forbid_new_speech_before_onset_floor"] is False

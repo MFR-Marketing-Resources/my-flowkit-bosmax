@@ -9,7 +9,10 @@ from agent.services import canonical_prompt_compiler as canonical
 from agent.services import ugc_video_prompt_compiler_service as ugc_compiler
 from agent.services.full_storyboard_extend_planner import (
     PLAN_VERSION,
+    DialogueUtterance,
+    FullDialoguePlan,
     PlannerValidationError,
+    _allocate_dialogue_utterances,
     _build_dialogue_plan,
     _build_story_plan,
     plan_full_storyboard,
@@ -570,3 +573,100 @@ def test_handoff_payloads_retain_the_exact_previewed_planner_result() -> None:
 
     assert manual["storyboard_plan"] == planner
     assert scaffold["prompt"]["planner_result"] == planner
+
+
+@pytest.mark.parametrize(
+    "source_mode",
+    ["FRAMES", "T2V", "HYBRID", "INGREDIENTS"],
+)
+@pytest.mark.parametrize(
+    ("block_plan", "total"),
+    [([8, 8], 16), ([8, 8, 8], 24)],
+)
+def test_extend_seam_handoff_timing_all_modes(
+    source_mode: str, block_plan: list[int], total: int
+) -> None:
+    """The global EXTEND audio handoff holds for every mode and both 16s/24s chains:
+    outgoing dialogue ends by end-0.5s, incoming dialogue starts at/after start+0.5s,
+    and nothing is dropped, duplicated, or reordered."""
+    result = plan_full_storyboard(
+        route_id="GOOGLE_FLOW_INDEPENDENT_8S_BLOCKS",
+        source_mode=source_mode,
+        product=PRODUCT,
+        copy_intelligence=COPY,
+        resolved_block_plan=block_plan,
+        target_language="BM_MS",
+        wps_mode="SAFE",
+        shot_count_by_block=[2] * len(block_plan),
+    )
+    eps = 1e-6
+    for allocation in result.block_allocations:
+        utts = list(allocation.assigned_dialogue_utterances)
+        if not utts:
+            continue
+        first_start = min(u.start_s for u in utts)
+        last_end = max(u.end_s for u in utts)
+        if not allocation.is_final:
+            assert last_end <= allocation.end_s - 0.5 + eps, (
+                source_mode, allocation.block_index, last_end, allocation.end_s,
+            )
+        if allocation.block_index >= 2:
+            assert first_start >= allocation.start_s + 0.5 - eps, (
+                source_mode, allocation.block_index, first_start, allocation.start_s,
+            )
+    # Complete, ordered, no-loss preservation.
+    concat = " ".join(
+        allocation.exact_dialogue_slice for allocation in result.block_allocations
+    ).split()
+    assert concat == result.full_dialogue_plan.full_dialogue_text.split()
+
+
+def test_single_block_receives_no_seam_handoff_margins() -> None:
+    """SINGLE = one complete block, no seam. Its dialogue timing must span the
+    whole block (start at 0.0, end at the block end) — no handoff margin applied."""
+    result = plan_full_storyboard(
+        route_id="GOOGLE_FLOW_INDEPENDENT_8S_BLOCKS",
+        source_mode="HYBRID",
+        product=PRODUCT,
+        copy_intelligence=COPY,
+        resolved_block_plan=[8],
+        target_language="BM_MS",
+        wps_mode="SAFE",
+        shot_count_by_block=[2],
+    )
+    assert len(result.block_allocations) == 1
+    allocation = result.block_allocations[0]
+    assert allocation.is_final is True
+    utts = list(allocation.assigned_dialogue_utterances)
+    assert utts, "single block should carry dialogue"
+    assert min(u.start_s for u in utts) == 0.0        # no incoming margin
+    assert max(u.end_s for u in utts) == float(allocation.end_s)  # no outgoing margin
+
+
+def test_extend_seam_handoff_fails_closed_when_block_cannot_fit() -> None:
+    """A block too short to hold both 0.5s seam handoff margins (no positive speaking
+    window) fails closed with the existing planner-error style. Dialogue is never
+    dropped, reordered, or crammed past the seam to force a fit."""
+    hook = " ".join(["kata"] * 22)   # fills the first 8s block to budget
+    mid = "satu dua tiga empat"       # 4 words forced into a 1s middle block → window 0
+    cta = "beli sekarang juga terus"  # final CTA
+    plan = FullDialoguePlan(
+        plan_version="fail_closed_probe",
+        target_language="BM_MS",
+        wps_mode="SWEET",
+        total_duration_seconds=17,
+        total_word_budget=30,
+        actual_total_word_count=30,
+        full_dialogue_text=f"{hook} {mid} {cta}",
+        utterances=(
+            DialogueUtterance("u1", "HOOK", 0.0, 0.0, hook, 22, "test"),
+            DialogueUtterance("u2", "USP", 0.0, 0.0, mid, 4, "test"),
+            DialogueUtterance("u3", "CTA", 0.0, 0.0, cta, 4, "test"),
+        ),
+        approved_copy_provenance={},
+        compliance_metadata={},
+    )
+    with pytest.raises(
+        PlannerValidationError, match="DIALOGUE_CANNOT_FORM_NATURAL_EXTENSION_SEAMS"
+    ):
+        _allocate_dialogue_utterances(plan, [8, 1, 8])
