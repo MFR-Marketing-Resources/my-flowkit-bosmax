@@ -102,6 +102,30 @@ class CopyIntelligenceWorkbookUploadReport(BaseModel):
     required_sheets: list[str]
 
 
+class CopyIntelligenceSeedLedgerRow(BaseModel):
+    seed_id: str
+    source_row: int
+    source_product_name: str
+    target_avatar: str | None = None
+    pain_point: str | None = None
+    emotion_trigger: str | None = None
+    dream_outcome: str | None = None
+    key_ingredients_features: str | None = None
+    hook_script: str | None = None
+    cta_script: str | None = None
+    confidence: str
+    match_method: str
+    status: str
+    source_workbook: str
+    source_sheet: str
+    provenance: dict[str, str] = Field(default_factory=dict)
+
+
+class CopyIntelligenceSeedLedgerResponse(BaseModel):
+    total: int
+    items: list[CopyIntelligenceSeedLedgerRow] = Field(default_factory=list)
+
+
 class KalodataApplyHubRequest(BaseModel):
     reference_ids: list[str] | None = None
 

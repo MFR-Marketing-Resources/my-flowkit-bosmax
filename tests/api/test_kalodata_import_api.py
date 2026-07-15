@@ -230,6 +230,51 @@ def test_uploaded_copy_intelligence_dry_run_never_calls_seed_primitive(
     assert response.status_code == 200
 
 
+def test_copy_intelligence_seed_ledger_lists_review_rows_without_seed_write(monkeypatch):
+    captured = {}
+
+    async def fake_list(*, confidence=None, status=None, search=None, limit=100):
+        captured.update(
+            confidence=confidence, status=status, search=search, limit=limit
+        )
+        return {
+            "total": 1,
+            "items": [{
+                "seed_id": "seed-1", "source_row": 12,
+                "source_product_name": "Ledger product", "target_avatar": "Parents",
+                "pain_point": "Time", "emotion_trigger": "Relief",
+                "dream_outcome": "Easier routine", "key_ingredients_features": "Feature A",
+                "hook_script": "Hook", "cta_script": "CTA", "confidence": "HIGH",
+                "match_method": "TIKTOK_PRODUCT_ID_MATCH", "status": "NEEDS_REVIEW",
+                "source_workbook": "seed.xlsx", "source_sheet": "COPYWRITING HUB",
+                "provenance": {"source_row": "12"},
+            }],
+        }
+
+    async def seed_must_not_run(_records):
+        raise AssertionError("ledger read must not invoke the seed primitive")
+
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.list_copy_intelligence_seed_records",
+        fake_list,
+    )
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.persist_copy_intelligence_seed_records",
+        seed_must_not_run,
+    )
+    client = TestClient(_build_app())
+    response = client.get(
+        "/api/kalodata/copy-intelligence/seeds",
+        params={"confidence": "HIGH", "status": "NEEDS_REVIEW", "search": "Ledger", "limit": 25},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["source_product_name"] == "Ledger product"
+    assert captured == {
+        "confidence": "HIGH", "status": "NEEDS_REVIEW", "search": "Ledger", "limit": 25,
+    }
+
+
 def test_apply_hub_enrichment_delegates(monkeypatch):
     captured = {}
 

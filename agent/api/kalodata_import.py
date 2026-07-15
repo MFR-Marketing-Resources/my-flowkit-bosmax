@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
 from agent.models.kalodata_import import (
     KalodataApplyHubRequest,
@@ -19,6 +19,7 @@ from agent.models.kalodata_import import (
     KalodataImportReport,
     KalodataImportRequest,
     CopyIntelligenceUploadedSourceRequest,
+    CopyIntelligenceSeedLedgerResponse,
     CopyIntelligenceWorkbookUploadReport,
 )
 from agent.services import kalodata_import_service as _svc
@@ -96,6 +97,22 @@ async def dry_run_uploaded_copy_intelligence_seed(
         raise HTTPException(422, f"COPY_INTELLIGENCE_UPLOADED_SOURCE_INVALID:{exc}") from exc
     except Exception as exc:  # noqa: BLE001 — fail closed before any seed action
         raise HTTPException(422, f"COPY_INTELLIGENCE_DRY_RUN_FAILED:{exc}") from exc
+
+
+@router.get(
+    "/copy-intelligence/seeds",
+    response_model=CopyIntelligenceSeedLedgerResponse,
+)
+async def list_copy_intelligence_seed_ledger(
+    confidence: str | None = None,
+    status: str | None = None,
+    search: str | None = None,
+    limit: int = Query(default=100, ge=1, le=200),
+):
+    """List persisted review rows only; this endpoint has no seed side effect."""
+    return await _svc.list_copy_intelligence_seed_records(
+        confidence=confidence, status=status, search=search, limit=limit,
+    )
 
 
 @router.post("/purge-duplicates")

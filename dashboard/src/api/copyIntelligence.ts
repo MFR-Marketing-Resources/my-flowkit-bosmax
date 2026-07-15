@@ -1,4 +1,4 @@
-import { postAPI, postMultipartAPI } from "./client";
+import { getAPI, postAPI, postMultipartAPI } from "./client";
 
 export interface CopyIntelligenceDryRunReport {
 	source_workbook: string;
@@ -24,6 +24,30 @@ export interface CopyIntelligenceWorkbookUploadReport {
 	required_sheets: string[];
 }
 
+export interface CopyIntelligenceSeedLedgerRow {
+	seed_id: string;
+	source_row: number;
+	source_product_name: string;
+	target_avatar: string | null;
+	pain_point: string | null;
+	emotion_trigger: string | null;
+	dream_outcome: string | null;
+	key_ingredients_features: string | null;
+	hook_script: string | null;
+	cta_script: string | null;
+	confidence: string;
+	match_method: string;
+	status: string;
+	source_workbook: string;
+	source_sheet: string;
+	provenance: Record<string, string>;
+}
+
+export interface CopyIntelligenceSeedLedgerResponse {
+	total: number;
+	items: CopyIntelligenceSeedLedgerRow[];
+}
+
 export function uploadCopyIntelligenceWorkbook(workbook: File) {
 	const body = new FormData();
 	body.append("workbook", workbook);
@@ -37,5 +61,20 @@ export function runUploadedCopyIntelligenceDryRun(sourceId: string) {
 	return postAPI<CopyIntelligenceDryRunReport>(
 		"/api/kalodata/copy-intelligence/dry-run-upload",
 		{ source_id: sourceId },
+	);
+}
+
+export function listCopyIntelligenceSeedLedger(filters: {
+	confidence?: string;
+	status?: string;
+	search?: string;
+} = {}) {
+	const params = new URLSearchParams();
+	for (const [key, value] of Object.entries(filters)) {
+		if (value) params.set(key, value);
+	}
+	const query = params.toString();
+	return getAPI<CopyIntelligenceSeedLedgerResponse>(
+		`/api/kalodata/copy-intelligence/seeds${query ? `?${query}` : ""}`,
 	);
 }
