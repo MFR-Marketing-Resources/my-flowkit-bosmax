@@ -800,7 +800,7 @@ export default function RegistrationReviewDraftPanel({
 										)}
 									</div>
 								</div>
-								<div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+								<div className="grid grid-cols-1 gap-3">
 									<div className="min-w-0 rounded-xl border border-slate-800 bg-slate-900/70 p-3">
 										<div className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
 											Image Asset Status
