@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 import {
 	approveCopyIntelligenceSeed,
 	listCopyIntelligenceSeedLedger,
+	promoteApprovedCopyIntelligenceSeed,
 	rejectCopyIntelligenceSeed,
 	runUploadedCopyIntelligenceDryRun,
+	type CopyIntelligencePromoteResult,
 	type CopyIntelligenceSeedLedgerResponse,
 	type CopyIntelligenceSeedLedgerRow,
 	uploadCopyIntelligenceWorkbook,
@@ -148,6 +150,22 @@ export default function CopyIntelligencePage() {
 	const [ledgerLoading, setLedgerLoading] = useState(true);
 	const [reviewRow, setReviewRow] = useState<CopyIntelligenceSeedLedgerRow | null>(null);
 	const [refreshKey, setRefreshKey] = useState(0);
+	const [promoting, setPromoting] = useState("");
+	const [promoteResults, setPromoteResults] = useState<Record<string, CopyIntelligencePromoteResult>>({});
+	const [promoteErrors, setPromoteErrors] = useState<Record<string, string>>({});
+
+	const promoteSeed = async (seedId: string) => {
+		setPromoting(seedId);
+		setPromoteErrors((prev) => ({ ...prev, [seedId]: "" }));
+		try {
+			const result = await promoteApprovedCopyIntelligenceSeed(seedId);
+			setPromoteResults((prev) => ({ ...prev, [seedId]: result }));
+		} catch (cause) {
+			setPromoteErrors((prev) => ({ ...prev, [seedId]: cause instanceof Error ? cause.message : "Promote gagal." }));
+		} finally {
+			setPromoting("");
+		}
+	};
 
 	useEffect(() => {
 		let active = true;
@@ -285,7 +303,7 @@ export default function CopyIntelligencePage() {
 						<p className="mb-3 text-xs text-slate-400">{ledger?.total ?? 0} persisted review records</p>
 						<table className="min-w-[1400px] text-left text-xs text-slate-300">
 							<thead className="border-b border-slate-700 text-[10px] uppercase tracking-wide text-slate-500"><tr><th>Source</th><th>Product</th><th>Avatar</th><th>Pain / emotion</th><th>Dream / features</th><th>Hook</th><th>CTA</th><th>Confidence</th><th>Match</th><th>Status</th><th>Provenance</th><th>Review</th></tr></thead>
-							<tbody>{ledger?.items.map((row) => <tr key={row.seed_id} className="border-b border-slate-800 align-top"><td className="p-2">{row.source_row}</td><td className="p-2 font-medium text-slate-100">{row.source_product_name}</td><td className="p-2">{row.target_avatar || "—"}</td><td className="p-2">{row.pain_point || "—"}<br />{row.emotion_trigger || "—"}</td><td className="p-2">{row.dream_outcome || "—"}<br />{row.key_ingredients_features || "—"}</td><td className="p-2">{row.hook_script || "—"}</td><td className="p-2">{row.cta_script || "—"}</td><td className="p-2">{row.confidence}</td><td className="p-2">{row.match_method}</td><td className="p-2">{row.status}</td><td className="p-2">{row.source_workbook}<br />{row.source_sheet} · row {row.provenance.source_row || row.source_row}</td><td className="p-2">{row.status === "NEEDS_REVIEW" ? <button type="button" data-testid={`review-seed-${row.seed_id}`} onClick={() => setReviewRow(row)} className="rounded-md border border-blue-400/40 bg-blue-500/15 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-blue-100 hover:bg-blue-500/25">Review</button> : <span className="text-[10px] uppercase tracking-wide text-slate-500">{row.status}</span>}</td></tr>)}</tbody>
+							<tbody>{ledger?.items.map((row) => <tr key={row.seed_id} className="border-b border-slate-800 align-top"><td className="p-2">{row.source_row}</td><td className="p-2 font-medium text-slate-100">{row.source_product_name}</td><td className="p-2">{row.target_avatar || "—"}</td><td className="p-2">{row.pain_point || "—"}<br />{row.emotion_trigger || "—"}</td><td className="p-2">{row.dream_outcome || "—"}<br />{row.key_ingredients_features || "—"}</td><td className="p-2">{row.hook_script || "—"}</td><td className="p-2">{row.cta_script || "—"}</td><td className="p-2">{row.confidence}</td><td className="p-2">{row.match_method}</td><td className="p-2">{row.status}</td><td className="p-2">{row.source_workbook}<br />{row.source_sheet} · row {row.provenance.source_row || row.source_row}</td><td className="p-2">{row.status === "NEEDS_REVIEW" ? <button type="button" data-testid={`review-seed-${row.seed_id}`} onClick={() => setReviewRow(row)} className="rounded-md border border-blue-400/40 bg-blue-500/15 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-blue-100 hover:bg-blue-500/25">Review</button> : row.status === "APPROVED" ? <div className="space-y-1"><span className="block text-[10px] uppercase tracking-wide text-emerald-400">APPROVED</span>{promoteResults[row.seed_id] ? <span className="block text-[10px] text-slate-400" data-testid={`promote-result-${row.seed_id}`}>Draft {promoteResults[row.seed_id].draft_id.slice(0, 8)} · {promoteResults[row.seed_id].review_status}</span> : <button type="button" data-testid={`promote-seed-${row.seed_id}`} disabled={promoting === row.seed_id} onClick={() => void promoteSeed(row.seed_id)} className="rounded-md border border-emerald-400/40 bg-emerald-500/15 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-100 hover:bg-emerald-500/25 disabled:opacity-50">{promoting === row.seed_id ? "Creating…" : "Create review draft"}</button>}{promoteErrors[row.seed_id] && <span className="block text-[10px] text-red-300" role="alert">{promoteErrors[row.seed_id]}</span>}</div> : <span className="text-[10px] uppercase tracking-wide text-slate-500">{row.status}</span>}</td></tr>)}</tbody>
 						</table>
 					</div>
 				)}

@@ -98,6 +98,21 @@ export function listCopyIntelligenceSeedLedger(filters: {
 	);
 }
 
+export interface CopyIntelligencePromoteResult {
+	seed_id: string;
+	draft_id: string;
+	product_id: string;
+	review_status: string;
+	created_from: string;
+}
+
+export function promoteApprovedCopyIntelligenceSeed(seedId: string) {
+	return postAPI<CopyIntelligencePromoteResult>(
+		`/api/kalodata/copy-intelligence/seeds/${encodeURIComponent(seedId)}/promote-to-review-draft`,
+		{},
+	);
+}
+
 export function approveCopyIntelligenceSeed(
 	seedId: string,
 	input: CopyIntelligenceSeedReviewInput,

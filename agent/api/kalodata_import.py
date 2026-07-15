@@ -20,6 +20,7 @@ from agent.models.kalodata_import import (
     KalodataImportRequest,
     CopyIntelligenceUploadedSourceRequest,
     CopyIntelligenceApprovedContextResponse,
+    CopyIntelligencePromoteResult,
     CopyIntelligenceSeedLedgerResponse,
     CopyIntelligenceSeedReviewRequest,
     CopyIntelligenceSeedReviewResult,
@@ -179,6 +180,24 @@ async def reject_copy_intelligence_seed(seed_id: str, body: CopyIntelligenceSeed
     """Reject ONE persisted ledger row (NEEDS_REVIEW -> REJECTED). Requires the
     exact reject phrase, a non-empty note, and reviewer identity."""
     return await _review_copy_intelligence_seed(seed_id, "REJECT", body)
+
+
+@router.post(
+    "/copy-intelligence/seeds/{seed_id}/promote-to-review-draft",
+    response_model=CopyIntelligencePromoteResult,
+)
+async def promote_copy_intelligence_seed_to_review_draft(seed_id: str):
+    """Promote ONE APPROVED Copy Intelligence seed into a Product Intelligence
+    review DRAFT (via the existing validated review-draft path). Fails closed for
+    NEEDS_REVIEW / REJECTED seeds or seeds with no target product. Creates a
+    non-approved DRAFT only — no Product Truth overwrite, no Copy Set write, no AI
+    call, no auto-approve. The draft must pass the existing review gate before use."""
+    try:
+        return await _svc.promote_approved_copy_intelligence_to_review_draft(seed_id)
+    except _svc.CopyIntelligencePromotionError as exc:
+        raise HTTPException(
+            exc.status_code, {"error": exc.code, "detail": exc.detail}
+        ) from exc
 
 
 @router.post("/purge-duplicates")

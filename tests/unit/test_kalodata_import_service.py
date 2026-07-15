@@ -984,3 +984,133 @@ def test_invariant_generation_services_never_reference_approved_context():
         text = (repo_root / rel).read_text(encoding="utf-8")
         assert "get_approved_copy_intelligence_context" not in text, f"{rel} must not consume approved context yet"
         assert "list_approved_copy_intelligence_seeds" not in text, f"{rel} must not query the seed table"
+
+
+# ── Approved Copy Intelligence -> Product Intelligence review draft bridge ────
+async def _make_approved_seed(fingerprint, *, status="APPROVED", target_product_id=None):
+    from agent.db import crud
+
+    return await crud.create_copy_intelligence_seed(
+        source_fingerprint=fingerprint,
+        source_workbook="fixture.xlsx", source_sheet="COPYWRITING HUB",
+        source_row=7, source_product_name="Promo product",
+        match_method="TIKTOK_PRODUCT_ID_MATCH", confidence="HIGH", status=status,
+        target_product_id=target_product_id,
+        target_avatar="Busy parents", pain_point="No time",
+        emotion_trigger="Relief", dream_outcome="Calm routine",
+        key_ingredients_features="Fast acting", hook_script="Tired at 3pm?",
+        cta_script="Add to cart", reviewed_by="owner",
+        reviewed_at="2026-07-15T00:00:00Z", review_note="verified",
+        provenance_json='{"source_row":"7"}',
+    )
+
+
+async def _count(table):
+    from agent.db import crud
+
+    db = await crud.get_db()
+    cur = await db.execute(f"SELECT COUNT(*) FROM {table}")
+    return (await cur.fetchone())[0]
+
+
+@pytest.mark.asyncio
+async def test_promote_approved_seed_creates_non_approved_review_draft():
+    from agent.db import crud
+
+    product = await crud.create_product(
+        source="MANUAL", raw_product_title="P", product_display_name="P",
+        product_short_name="P", copywriting_angle="Manual",
+    )
+    seed = await _make_approved_seed("promo-ok", target_product_id=product["id"])
+
+    before = {t: await _count(t) for t in ("product", "copy_set", "product_intelligence_snapshot", "copy_intelligence_seed")}
+    drafts_before = await _count("product_intelligence_review_draft")
+
+    result = await svc.promote_approved_copy_intelligence_to_review_draft(seed["seed_id"])
+
+    assert result["product_id"] == product["id"]
+    assert result["created_from"] == "APPROVED_COPY_INTELLIGENCE"
+    assert result["review_status"] != "APPROVED"  # never auto-approved
+    assert result["draft_id"]
+
+    # Exactly one draft created; product / copy_set / snapshot / seed all unchanged.
+    assert await _count("product_intelligence_review_draft") == drafts_before + 1
+    after = {t: await _count(t) for t in before}
+    assert after == before
+
+    # Provenance + persona preserved; product FACTS (benefits/usp/description) NOT populated.
+    draft = await crud.get_product_intelligence_review_draft(result["draft_id"])
+    assert seed["seed_id"] in (draft.get("reviewer_note") or "")
+    assert "Busy parents" in (draft.get("buyer_persona_snapshot_json") or "")
+    assert "Tired at 3pm?" in (draft.get("paste_anything_summary") or "")
+    assert draft.get("review_status") != "APPROVED"
+    assert (draft.get("benefits_json") or "[]") == "[]"
+    assert (draft.get("usp_json") or "[]") == "[]"
+
+
+@pytest.mark.asyncio
+async def test_promote_rejects_needs_review_seed_fail_closed():
+    from agent.db import crud
+
+    product = await crud.create_product(
+        source="MANUAL", raw_product_title="P2", product_display_name="P2",
+        product_short_name="P2", copywriting_angle="Manual",
+    )
+    seed = await _make_approved_seed("promo-needs", status="NEEDS_REVIEW", target_product_id=product["id"])
+    drafts_before = await _count("product_intelligence_review_draft")
+
+    with pytest.raises(svc.CopyIntelligencePromotionError) as exc:
+        await svc.promote_approved_copy_intelligence_to_review_draft(seed["seed_id"])
+    assert exc.value.code == "SEED_NOT_APPROVED"
+    assert exc.value.status_code == 409
+    assert await _count("product_intelligence_review_draft") == drafts_before  # no draft written
+
+
+@pytest.mark.asyncio
+async def test_promote_rejects_rejected_seed():
+    from agent.db import crud
+
+    product = await crud.create_product(
+        source="MANUAL", raw_product_title="P3", product_display_name="P3",
+        product_short_name="P3", copywriting_angle="Manual",
+    )
+    seed = await _make_approved_seed("promo-rej", status="REJECTED", target_product_id=product["id"])
+    with pytest.raises(svc.CopyIntelligencePromotionError) as exc:
+        await svc.promote_approved_copy_intelligence_to_review_draft(seed["seed_id"])
+    assert exc.value.code == "SEED_NOT_APPROVED"
+
+
+@pytest.mark.asyncio
+async def test_promote_rejects_seed_without_target_product():
+    seed = await _make_approved_seed("promo-notarget", target_product_id=None)
+    with pytest.raises(svc.CopyIntelligencePromotionError) as exc:
+        await svc.promote_approved_copy_intelligence_to_review_draft(seed["seed_id"])
+    assert exc.value.code == "SEED_HAS_NO_TARGET_PRODUCT"
+    assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_promote_unknown_seed_is_404():
+    with pytest.raises(svc.CopyIntelligencePromotionError) as exc:
+        await svc.promote_approved_copy_intelligence_to_review_draft("nope")
+    assert exc.value.code == "COPY_INTELLIGENCE_SEED_NOT_FOUND"
+    assert exc.value.status_code == 404
+
+
+def test_invariant_generation_services_never_reference_promotion():
+    """Generation/compiler services must not import the promotion bridge either."""
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+    generation_files = [
+        "agent/services/canonical_prompt_compiler.py",
+        "agent/services/ai_copy_assist_service.py",
+        "agent/services/ai_copy_provider_adapter.py",
+        "agent/services/copy_grounding_service.py",
+        "agent/services/copy_binding_service.py",
+        "agent/services/workspace_execution_package_service.py",
+    ]
+    for rel in generation_files:
+        text = (repo_root / rel).read_text(encoding="utf-8")
+        assert "promote_approved_copy_intelligence_to_review_draft" not in text
+        assert "copy_intelligence_seed" not in text
