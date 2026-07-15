@@ -8,7 +8,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "poster_copy_set", "poster_deliverable", "extend_lineage"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "creative_product_selection", "poster_copy_set", "poster_deliverable", "extend_lineage"})
 
 
 def _validate_table(table: str) -> None:
@@ -54,6 +54,7 @@ _COLUMNS = {
     "avatar_product_fit": {"avatar_code", "product_category", "fit_score", "suitability_notes", "updated_at"},
     "creative_scene_prompt": {"template_id", "cluster", "source_category", "cluster_source", "main_action", "setting", "full_prompt_template", "base_prompt", "combined_prompt_suggestion", "negative_prompt", "variant", "notes", "provenance", "updated_at"},
     "creative_camera_preset": {"preset_code", "preset_name", "shot_type", "distance_angle", "movement", "block_group", "provenance", "updated_at"},
+    "creative_product_selection": {"product_id", "selection_id", "cluster", "cluster_source", "selected_avatar_code", "selected_scene_template_id", "selected_camera_preset_code", "selected_block_purpose", "selected_content_type", "notes", "preview_json", "provenance_json", "status", "reviewer_note", "created_at", "updated_at", "reviewed_at"},
     "product_intelligence_review_field_provenance": {"draft_id", "product_id", "field_name", "declared_value", "normalized_value", "source_type", "source_url", "source_lane", "evidence_kind", "extraction_method", "confidence_score", "verification_status", "claim_risk_flag", "reviewer_decision", "reviewer_note", "updated_at"},
     "extend_lineage": {"workspace_generation_package_id", "project_id", "scene_id", "block_index", "block_position", "parent_operation_id", "parent_primary_media_id", "child_operation_id", "child_primary_media_id", "child_workflow_id", "batch_id", "model_key", "aspect_ratio", "start_frame_index", "end_frame_index", "continuation_prompt_hash", "idempotency_key", "polling_state", "retry_attempt", "output_url", "error_code", "error_message", "updated_at", "completed_at"},
 }
@@ -905,6 +906,62 @@ async def list_creative_camera_presets(
     params.append(limit)
     cur = await db.execute(q, params)
     return [dict(r) for r in await cur.fetchall()]
+
+
+# --- creative_product_selection (Creative Intelligence Round 4) ---
+
+# Columns updated on save (selection_id + created_at are preserved across saves).
+_SELECTION_MUTABLE = (
+    "cluster", "cluster_source", "selected_avatar_code", "selected_scene_template_id",
+    "selected_camera_preset_code", "selected_block_purpose", "selected_content_type",
+    "notes", "preview_json", "provenance_json", "status",
+)
+
+
+async def upsert_creative_product_selection(**kw) -> dict:
+    """Insert-or-update ONE selection per product. On update, selection_id and
+    created_at are preserved; a re-save resets status to whatever is passed
+    (the service passes DRAFT). Only touches this config table."""
+    db = await get_db()
+    now = _now()
+    product_id = kw.get("product_id", "")
+    if not product_id:
+        raise ValueError("product_id is required")
+    set_cols = [c for c in _SELECTION_MUTABLE if c in kw]
+    insert_cols = ["product_id", "selection_id", "created_at", "updated_at"] + set_cols
+    insert_vals = [product_id, kw.get("selection_id") or _uuid(), now, now] + [kw[c] for c in set_cols]
+    update_assign = ", ".join(f"{c}=?" for c in set_cols + ["updated_at"])
+    update_vals = [kw[c] for c in set_cols] + [now]
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO creative_product_selection ({', '.join(insert_cols)}) "
+            f"VALUES ({', '.join(['?'] * len(insert_cols))}) "
+            f"ON CONFLICT(product_id) DO UPDATE SET {update_assign}",
+            insert_vals + update_vals,
+        )
+        await db.commit()
+    return await _get("creative_product_selection", "product_id", product_id)
+
+
+async def get_creative_product_selection(product_id: str):
+    return await _get("creative_product_selection", "product_id", product_id)
+
+
+async def set_creative_product_selection_status(
+    product_id: str, status: str, reviewer_note: Optional[str] = None
+) -> dict:
+    """Review transition (status + reviewer_note + reviewed_at). Caller guards
+    the allowed transition; this only writes."""
+    db = await get_db()
+    now = _now()
+    async with _db_lock:
+        await db.execute(
+            "UPDATE creative_product_selection SET status=?, reviewer_note=?, "
+            "reviewed_at=?, updated_at=? WHERE product_id=?",
+            (status, reviewer_note, now, now, product_id),
+        )
+        await db.commit()
+    return await _get("creative_product_selection", "product_id", product_id)
 
 
 # --- Copy Set (Copy Strategy Studio Phase 1) ---
