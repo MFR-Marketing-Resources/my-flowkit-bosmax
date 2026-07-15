@@ -12,6 +12,7 @@ import ProductIntelligenceReviewDraftPanel from "../components/product-intellige
 import RecommendedAvatarsCard from "../components/product-intelligence/RecommendedAvatarsCard";
 import RecommendedScenePromptsCard from "../components/product-intelligence/RecommendedScenePromptsCard";
 import RecommendedCameraPresetsCard from "../components/product-intelligence/RecommendedCameraPresetsCard";
+import CreativeSetupPanel from "../components/product-intelligence/CreativeSetupPanel";
 import { HelperText } from "../components/ui";
 import type {
 	FastMossImportBatchReport,
@@ -2633,6 +2634,9 @@ export default function ProductsSalesAnalyzerPage() {
 										) : null}
 										{selectedProduct ? (
 											<RecommendedCameraPresetsCard productId={selectedProduct.id} />
+										) : null}
+										{selectedProduct ? (
+											<CreativeSetupPanel productId={selectedProduct.id} />
 										) : null}
 										{selectedProduct ? (
 											<ProductIntelligenceReviewDraftPanel

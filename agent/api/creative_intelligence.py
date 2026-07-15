@@ -18,12 +18,50 @@ and are never written to product camera columns or sent to generation.
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from agent.services import creative_avatar_recommendation_service as _svc
 from agent.services import creative_scene_prompt_service as _scene
 from agent.services import creative_camera_preset_service as _camera
+from agent.services import creative_setup_service as _setup
 
 router = APIRouter(prefix="/creative-intelligence", tags=["creative-intelligence"])
+
+
+class CreativeSelectionSaveRequest(BaseModel):
+    product_id: str
+    selected_avatar_code: str | None = None
+    selected_scene_template_id: str | None = None
+    selected_camera_preset_code: str | None = None
+    selected_block_purpose: str | None = None
+    selected_content_type: str | None = None
+    notes: str | None = None
+
+
+class CreativeSelectionReviewRequest(BaseModel):
+    product_id: str
+    action: str  # APPROVE | REJECT
+    reviewer_note: str | None = None
+
+
+# Round 4 service error code -> HTTP status.
+_SETUP_ERROR_STATUS = {
+    "PRODUCT_NOT_FOUND": 404,
+    "SELECTION_NOT_FOUND": 404,
+    "INVALID_AVATAR_CODE": 422,
+    "INVALID_SCENE_TEMPLATE_ID": 422,
+    "INVALID_CAMERA_PRESET_CODE": 422,
+    "INVALID_ACTION": 422,
+    "NOT_IN_DRAFT": 409,
+}
+
+
+def _raise_setup_error(exc: ValueError):
+    code = str(exc)
+    status = _SETUP_ERROR_STATUS.get(code)
+    if status:
+        raise HTTPException(status_code=status, detail=code) from exc
+    raise exc
 
 
 @router.get("/avatar-recommendation")
@@ -123,3 +161,59 @@ async def camera_preset_seed(dry_run: bool = True) -> dict:
     creative_camera_preset config table — no Product Truth / product-row / Copy /
     generation effect."""
     return await _camera.seed_camera_presets(dry_run=dry_run)
+
+
+# --- Round 4: unified creative setup + saved selection (review-gated) ---
+
+
+@router.get("/creative-setup")
+async def creative_setup(product_id: str | None = None) -> dict:
+    """Unified read-only creative setup for a product: recommended avatars +
+    scene templates + camera presets, plus the saved selection (if any). Never
+    mutates, never generates."""
+    if not product_id:
+        raise HTTPException(status_code=422, detail="product_id is required")
+    try:
+        return await _setup.resolve_creative_setup(product_id)
+    except ValueError as exc:
+        _raise_setup_error(exc)
+
+
+@router.get("/creative-selection")
+async def creative_selection_get(product_id: str | None = None) -> dict:
+    """Return the product's saved creative selection (or ``{selection: null}``)."""
+    if not product_id:
+        raise HTTPException(status_code=422, detail="product_id is required")
+    return {"product_id": product_id, "selection": await _setup.get_creative_selection(product_id)}
+
+
+@router.post("/creative-selection")
+async def creative_selection_save(req: CreativeSelectionSaveRequest) -> dict:
+    """Create/update a product's creative selection (avatar + scene + camera),
+    validated against the live pool/libraries. Starts review-gated at DRAFT.
+    Only writes the creative_product_selection config table — no product-row /
+    Product Truth / Copy / generation effect."""
+    try:
+        return await _setup.save_creative_selection(
+            req.product_id,
+            selected_avatar_code=req.selected_avatar_code,
+            selected_scene_template_id=req.selected_scene_template_id,
+            selected_camera_preset_code=req.selected_camera_preset_code,
+            selected_block_purpose=req.selected_block_purpose,
+            selected_content_type=req.selected_content_type,
+            notes=req.notes,
+        )
+    except ValueError as exc:
+        _raise_setup_error(exc)
+
+
+@router.post("/creative-selection/review")
+async def creative_selection_review(req: CreativeSelectionReviewRequest) -> dict:
+    """Transition a DRAFT selection to APPROVED or REJECTED. Fail-closed on
+    missing selection (404) or non-DRAFT status (409). No generation effect."""
+    try:
+        return await _setup.review_creative_selection(
+            req.product_id, req.action, req.reviewer_note
+        )
+    except ValueError as exc:
+        _raise_setup_error(exc)

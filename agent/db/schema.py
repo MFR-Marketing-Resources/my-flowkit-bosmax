@@ -2138,6 +2138,36 @@ CREATE INDEX IF NOT EXISTS idx_creative_camera_preset_block
 """)
         await db.commit()
 
+        # Creative Intelligence Round 4 — saved creative selection (per product).
+        # Review-gated planning artifact only: records the chosen avatar + scene
+        # template + camera preset for a product. NEVER writes product rows/camera
+        # columns and NEVER triggers or feeds generation.
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS creative_product_selection (
+    product_id                  TEXT PRIMARY KEY REFERENCES product(id) ON DELETE CASCADE,
+    selection_id                TEXT NOT NULL,
+    cluster                     TEXT,
+    cluster_source              TEXT,
+    selected_avatar_code        TEXT,
+    selected_scene_template_id  TEXT,
+    selected_camera_preset_code TEXT,
+    selected_block_purpose      TEXT,
+    selected_content_type       TEXT,
+    notes                       TEXT,
+    preview_json                TEXT,
+    provenance_json             TEXT,
+    status                      TEXT NOT NULL DEFAULT 'DRAFT'
+        CHECK(status IN ('DRAFT','APPROVED','REJECTED')),
+    reviewer_note               TEXT,
+    created_at                  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at                  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    reviewed_at                 TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_creative_product_selection_status
+    ON creative_product_selection(status);
+""")
+        await db.commit()
+
         # Product Intelligence Snapshot foundation (Product Intelligence Backbone
         # PR 1). Durable sidecar storage only — this does not change product-row
         # truth, registration commit behavior, or ProductTruthService.
