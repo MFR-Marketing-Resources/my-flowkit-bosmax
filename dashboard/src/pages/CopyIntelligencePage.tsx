@@ -1,7 +1,9 @@
 import { useState } from "react";
 import {
-	runCopyIntelligenceDryRun,
+	runUploadedCopyIntelligenceDryRun,
+	uploadCopyIntelligenceWorkbook,
 	type CopyIntelligenceDryRunReport,
+	type CopyIntelligenceWorkbookUploadReport,
 } from "../api/copyIntelligence";
 import { Badge, HelperText, Section } from "../components/ui";
 
@@ -18,21 +20,23 @@ function CountCard({ label, value, tone }: { label: string; value: number; tone:
 }
 
 export default function CopyIntelligencePage() {
-	const [sourcePath, setSourcePath] = useState("");
+	const [workbook, setWorkbook] = useState<File | null>(null);
+	const [uploadedSource, setUploadedSource] = useState<CopyIntelligenceWorkbookUploadReport | null>(null);
 	const [report, setReport] = useState<CopyIntelligenceDryRunReport | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState("");
 
 	const runDryRun = async () => {
-		const trimmedPath = sourcePath.trim();
-		if (!trimmedPath) {
-			setError("Masukkan laluan workbook COPYWRITING HUB dahulu.");
+		if (!workbook) {
+			setError("Pilih fail .xlsx penuh Kalodata & Fastmoss dahulu.");
 			return;
 		}
 		setLoading(true);
 		setError("");
 		try {
-			setReport(await runCopyIntelligenceDryRun(trimmedPath));
+			const uploaded = await uploadCopyIntelligenceWorkbook(workbook);
+			setUploadedSource(uploaded);
+			setReport(await runUploadedCopyIntelligenceDryRun(uploaded.source_id));
 		} catch (cause) {
 			setReport(null);
 			setError(cause instanceof Error ? cause.message : "Dry-run gagal.");
@@ -53,34 +57,38 @@ export default function CopyIntelligencePage() {
 				</p>
 			</div>
 
-			<Section step="1" title="COPYWRITING HUB source" helper="Dry-run reads the selected workbook only after you explicitly start it.">
-				<label className="block text-xs font-semibold text-slate-300" htmlFor="copy-intelligence-source-path">
-					COPYWRITING HUB workbook path
+			<Section step="1" title="Full workbook upload" helper="Upload then dry-run is explicit and review-only.">
+				<p className="text-sm font-medium text-slate-200">Upload the full Kalodata & Fastmoss workbook</p>
+				<HelperText>Do not create a COPYWRITING HUB-only workbook. Matching requires both COPYWRITING HUB and MERGED PRODUCTS.</HelperText>
+				<label className="block text-xs font-semibold text-slate-300" htmlFor="copy-intelligence-workbook">
+					Full workbook (.xlsx)
 				</label>
 				<div className="mt-2 flex flex-col gap-3 sm:flex-row">
 					<input
-						id="copy-intelligence-source-path"
-						value={sourcePath}
-						onChange={(event) => setSourcePath(event.target.value)}
-						placeholder="C:\\path\\to\\workbook.xlsx"
+						id="copy-intelligence-workbook"
+						type="file"
+						accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+						onChange={(event) => setWorkbook(event.target.files?.[0] ?? null)}
 						className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600"
 					/>
 					<button
 						type="button"
-						data-testid="run-copy-intelligence-dry-run"
+						data-testid="upload-copy-intelligence-workbook"
 						disabled={loading}
 						onClick={() => void runDryRun()}
 						className="rounded-lg border border-blue-400/40 bg-blue-500/15 px-4 py-2 text-xs font-bold uppercase tracking-wide text-blue-100 hover:bg-blue-500/25 disabled:opacity-50"
 					>
-						{loading ? "Running dry-run…" : "Run dry-run"}
+						{loading ? "Uploading and running…" : "Upload and run dry-run"}
 					</button>
 				</div>
+				{workbook && <p className="text-xs text-slate-400">Selected: {workbook.name}</p>}
+				{uploadedSource && <p className="text-xs text-slate-400">Stored source: {uploadedSource.original_filename} · fingerprint {uploadedSource.fingerprint}</p>}
 				<HelperText>Nothing is seeded from this page. Seed execution requires separate owner authorization.</HelperText>
 				{error && <p className="text-xs font-medium text-red-300" role="alert">{error}</p>}
 			</Section>
 
 			{report && (
-				<Section title="Review summary" helper={`Source: ${report.source_workbook}`}>
+				<Section title="Review summary" helper={`Source: ${uploadedSource?.original_filename ?? report.source_workbook}`}>
 					<div className="flex flex-wrap gap-2">
 						<Badge tone="info">NEEDS_REVIEW only</Badge>
 						<Badge tone="success">No Product Truth mutation</Badge>

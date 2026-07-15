@@ -2,18 +2,30 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import CopyIntelligencePage from "./CopyIntelligencePage";
-import { runCopyIntelligenceDryRun } from "../api/copyIntelligence";
+import {
+	runUploadedCopyIntelligenceDryRun,
+	uploadCopyIntelligenceWorkbook,
+} from "../api/copyIntelligence";
 
 vi.mock("../api/copyIntelligence", () => ({
-	runCopyIntelligenceDryRun: vi.fn(),
+	uploadCopyIntelligenceWorkbook: vi.fn(),
+	runUploadedCopyIntelligenceDryRun: vi.fn(),
 }));
 
-const mockedDryRun = vi.mocked(runCopyIntelligenceDryRun);
+const mockedUpload = vi.mocked(uploadCopyIntelligenceWorkbook);
+const mockedDryRun = vi.mocked(runUploadedCopyIntelligenceDryRun);
 
 describe("CopyIntelligencePage", () => {
 	afterEach(() => vi.resetAllMocks());
 
-	it("runs only an explicit review-only dry-run and presents safe and quarantined counts", async () => {
+	it("uploads the full workbook before an explicit review-only dry-run", async () => {
+		mockedUpload.mockResolvedValue({
+			source_id: "a".repeat(64),
+			original_filename: "Kalodata & Fastmoss 600.xlsx",
+			fingerprint: "a".repeat(64),
+			sheet_names: ["MERGED PRODUCTS", "COPYWRITING HUB"],
+			required_sheets: ["COPYWRITING HUB", "MERGED PRODUCTS"],
+		});
 		mockedDryRun.mockResolvedValue({
 			source_workbook: "authorized.xlsx",
 			total_source_rows: 10,
@@ -33,13 +45,20 @@ describe("CopyIntelligencePage", () => {
 		render(<CopyIntelligencePage />);
 		expect(screen.getByTestId("copy-intelligence-page")).toHaveTextContent("review-only");
 		expect(screen.queryByTestId("seed-copy-intelligence")).not.toBeInTheDocument();
+		expect(screen.getByText("Upload the full Kalodata & Fastmoss workbook")).toBeInTheDocument();
 
-		fireEvent.change(screen.getByLabelText("COPYWRITING HUB workbook path"), {
-			target: { value: "C:\\authorized.xlsx" },
+		const workbook = new File(["workbook"], "Kalodata & Fastmoss 600.xlsx", {
+			type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 		});
-		fireEvent.click(screen.getByTestId("run-copy-intelligence-dry-run"));
+		fireEvent.change(screen.getByLabelText("Full workbook (.xlsx)"), {
+			target: { files: [workbook] },
+		});
+		fireEvent.click(screen.getByTestId("upload-copy-intelligence-workbook"));
 
-		await waitFor(() => expect(mockedDryRun).toHaveBeenCalledWith("C:\\authorized.xlsx"));
+		await waitFor(() => expect(mockedUpload).toHaveBeenCalledWith(workbook));
+		await waitFor(() => expect(mockedDryRun).toHaveBeenCalledWith("a".repeat(64)));
+		expect(screen.queryByLabelText("COPYWRITING HUB workbook path")).not.toBeInTheDocument();
+		expect(screen.getByText(/Stored source: Kalodata & Fastmoss 600\.xlsx/)).toBeInTheDocument();
 		expect(await screen.findByTestId("copy-intelligence-summary")).toHaveTextContent("High confidence");
 		expect(screen.getByText("7 safe review records")).toBeInTheDocument();
 		expect(screen.getByText("3 quarantined or low-confidence records")).toBeInTheDocument();

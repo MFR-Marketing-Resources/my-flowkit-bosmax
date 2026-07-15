@@ -11,13 +11,15 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from agent.models.kalodata_import import (
     KalodataApplyHubRequest,
     KalodataCacheImagesRequest,
     KalodataImportReport,
     KalodataImportRequest,
+    CopyIntelligenceUploadedSourceRequest,
+    CopyIntelligenceWorkbookUploadReport,
 )
 from agent.services import kalodata_import_service as _svc
 
@@ -58,6 +60,40 @@ async def dry_run_copy_intelligence_seed(body: KalodataImportRequest):
         return await _svc.build_copy_intelligence_dry_run_for_system(source_path)
     except FileNotFoundError as exc:
         raise HTTPException(404, f"WORKBOOK_NOT_FOUND:{exc}") from exc
+    except Exception as exc:  # noqa: BLE001 — fail closed before any seed action
+        raise HTTPException(422, f"COPY_INTELLIGENCE_DRY_RUN_FAILED:{exc}") from exc
+
+
+@router.post(
+    "/copy-intelligence/workbooks",
+    response_model=CopyIntelligenceWorkbookUploadReport,
+)
+async def upload_copy_intelligence_workbook(
+    workbook: UploadFile = File(...),
+):
+    """Accept the full workbook source without exposing runtime file paths."""
+    try:
+        return await asyncio.to_thread(
+            _svc.store_copy_intelligence_workbook_upload,
+            original_filename=workbook.filename or "",
+            payload=await workbook.read(),
+        )
+    except ValueError as exc:
+        raise HTTPException(422, f"COPY_INTELLIGENCE_WORKBOOK_INVALID:{exc}") from exc
+
+
+@router.post("/copy-intelligence/dry-run-upload")
+async def dry_run_uploaded_copy_intelligence_seed(
+    body: CopyIntelligenceUploadedSourceRequest,
+):
+    """Run the existing read-only audit against a validated uploaded source."""
+    try:
+        source_path = _svc.resolve_copy_intelligence_workbook_source(body.source_id)
+        return await _svc.build_copy_intelligence_dry_run_for_system(source_path)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, f"UPLOADED_WORKBOOK_NOT_FOUND:{exc}") from exc
+    except ValueError as exc:
+        raise HTTPException(422, f"COPY_INTELLIGENCE_UPLOADED_SOURCE_INVALID:{exc}") from exc
     except Exception as exc:  # noqa: BLE001 — fail closed before any seed action
         raise HTTPException(422, f"COPY_INTELLIGENCE_DRY_RUN_FAILED:{exc}") from exc
 

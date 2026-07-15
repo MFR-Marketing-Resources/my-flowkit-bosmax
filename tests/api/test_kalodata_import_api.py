@@ -1,9 +1,15 @@
 """Kalodata import API contract tests."""
+import io
+
+import openpyxl
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from agent.api.kalodata_import import router
-from agent.models.kalodata_import import KalodataImportReport
+from agent.models.kalodata_import import (
+    CopyIntelligenceDryRunReport,
+    KalodataImportReport,
+)
 
 
 def _build_app() -> FastAPI:
@@ -87,6 +93,141 @@ def test_copy_intelligence_dry_run_requires_explicit_source_path():
     response = client.post("/api/kalodata/copy-intelligence/dry-run", json={})
     assert response.status_code == 422
     assert response.json()["detail"] == "SOURCE_PATH_REQUIRED"
+
+
+def test_copy_intelligence_workbook_upload_preserves_full_xlsx_and_required_sheets(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.COPY_INTELLIGENCE_WORKBOOKS_DIR",
+        tmp_path,
+    )
+    workbook = openpyxl.Workbook()
+    workbook.active.title = "MERGED PRODUCTS"
+    workbook.create_sheet("COPYWRITING HUB")
+    payload = io.BytesIO()
+    workbook.save(payload)
+    original = payload.getvalue()
+
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/kalodata/copy-intelligence/workbooks",
+        files={
+            "workbook": (
+                "Kalodata & Fastmoss 600.xlsx",
+                original,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    report = response.json()
+    assert report["original_filename"] == "Kalodata & Fastmoss 600.xlsx"
+    assert report["source_id"] == report["fingerprint"]
+    assert report["required_sheets"] == ["COPYWRITING HUB", "MERGED PRODUCTS"]
+    assert report["sheet_names"] == ["MERGED PRODUCTS", "COPYWRITING HUB"]
+    assert (tmp_path / f"{report['source_id']}.xlsx").read_bytes() == original
+
+
+def test_copy_intelligence_workbook_upload_rejects_non_xlsx(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.COPY_INTELLIGENCE_WORKBOOKS_DIR",
+        tmp_path,
+    )
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/kalodata/copy-intelligence/workbooks",
+        files={"workbook": ("copy.csv", b"not a workbook", "text/csv")},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"].endswith("XLSX_REQUIRED")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_copy_intelligence_workbook_upload_requires_both_full_workbook_sheets(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.COPY_INTELLIGENCE_WORKBOOKS_DIR",
+        tmp_path,
+    )
+    workbook = openpyxl.Workbook()
+    workbook.active.title = "COPYWRITING HUB"
+    payload = io.BytesIO()
+    workbook.save(payload)
+
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/kalodata/copy-intelligence/workbooks",
+        files={"workbook": ("hub-only.xlsx", payload.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"].endswith("MISSING_REQUIRED_SHEETS:MERGED PRODUCTS")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_uploaded_copy_intelligence_dry_run_uses_stored_source_only(tmp_path, monkeypatch):
+    source_id = "a" * 64
+    source_path = tmp_path / f"{source_id}.xlsx"
+    source_path.write_bytes(b"full workbook bytes")
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.COPY_INTELLIGENCE_WORKBOOKS_DIR",
+        tmp_path,
+    )
+    captured = {}
+
+    async def fake_dry_run(path):
+        captured["path"] = path
+        return CopyIntelligenceDryRunReport(source_workbook=path.name)
+
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.build_copy_intelligence_dry_run_for_system",
+        fake_dry_run,
+    )
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/kalodata/copy-intelligence/dry-run-upload",
+        json={"source_id": source_id},
+    )
+
+    assert response.status_code == 200
+    assert captured["path"] == source_path
+
+
+def test_uploaded_copy_intelligence_dry_run_never_calls_seed_primitive(
+    tmp_path, monkeypatch
+):
+    source_id = "b" * 64
+    (tmp_path / f"{source_id}.xlsx").write_bytes(b"full workbook bytes")
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.COPY_INTELLIGENCE_WORKBOOKS_DIR",
+        tmp_path,
+    )
+
+    async def fake_dry_run(_path):
+        return CopyIntelligenceDryRunReport(source_workbook="uploaded.xlsx")
+
+    async def seed_must_not_run(_records):
+        raise AssertionError("seed primitive must not run during dry-run")
+
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.build_copy_intelligence_dry_run_for_system",
+        fake_dry_run,
+    )
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.persist_copy_intelligence_seed_records",
+        seed_must_not_run,
+    )
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/kalodata/copy-intelligence/dry-run-upload",
+        json={"source_id": source_id},
+    )
+
+    assert response.status_code == 200
 
 
 def test_apply_hub_enrichment_delegates(monkeypatch):

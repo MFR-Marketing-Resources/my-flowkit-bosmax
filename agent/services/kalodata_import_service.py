@@ -25,12 +25,13 @@ import logging
 import os
 import re
 import hashlib
+from io import BytesIO
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from agent.config import OPERATOR_PACK_DIR
+from agent.config import BASE_DIR, OPERATOR_PACK_DIR
 from agent.models.kalodata_import import (
     CopyIntelligenceDryRunReport,
     CopyIntelligenceSourceRow,
@@ -44,9 +45,59 @@ logger = logging.getLogger(__name__)
 
 STAGED_CATALOG_FILENAME = "KALODATA_REFERENCE_CATALOG.json"
 STAGED_HUB_FILENAME = "KALODATA_HUB_ENRICHMENT.json"
+COPY_INTELLIGENCE_WORKBOOKS_DIR = BASE_DIR / "data" / "fastmoss" / "imports" / "copy_intelligence"
 
 MERGED_SHEET = "MERGED PRODUCTS"
 HUB_SHEET = "COPYWRITING HUB"
+
+
+def store_copy_intelligence_workbook_upload(
+    *, original_filename: str, payload: bytes
+) -> dict[str, str | list[str]]:
+    """Store an unmodified full workbook after required-sheet validation."""
+    if Path(original_filename).suffix.lower() != ".xlsx":
+        raise ValueError("XLSX_REQUIRED")
+    if not payload:
+        raise ValueError("WORKBOOK_EMPTY")
+
+    import openpyxl
+
+    try:
+        workbook = openpyxl.load_workbook(BytesIO(payload), read_only=True, data_only=False)
+    except Exception as exc:  # noqa: BLE001 — malformed workbook is never stored
+        raise ValueError("INVALID_XLSX") from exc
+    try:
+        sheet_names = list(workbook.sheetnames)
+    finally:
+        workbook.close()
+
+    required_sheets = [HUB_SHEET, MERGED_SHEET]
+    missing = [sheet for sheet in required_sheets if sheet not in sheet_names]
+    if missing:
+        raise ValueError(f"MISSING_REQUIRED_SHEETS:{','.join(missing)}")
+
+    fingerprint = hashlib.sha256(payload).hexdigest()
+    destination = COPY_INTELLIGENCE_WORKBOOKS_DIR / f"{fingerprint}.xlsx"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if not destination.exists():
+        destination.write_bytes(payload)
+    return {
+        "source_id": fingerprint,
+        "original_filename": Path(original_filename).name,
+        "fingerprint": fingerprint,
+        "sheet_names": sheet_names,
+        "required_sheets": required_sheets,
+    }
+
+
+def resolve_copy_intelligence_workbook_source(source_id: str) -> Path:
+    """Resolve an upload fingerprint without accepting a caller filesystem path."""
+    if not re.fullmatch(r"[0-9a-f]{64}", source_id or ""):
+        raise ValueError("INVALID_SOURCE_ID")
+    path = COPY_INTELLIGENCE_WORKBOOKS_DIR / f"{source_id}.xlsx"
+    if not path.is_file():
+        raise FileNotFoundError(source_id)
+    return path
 
 # 19-digit TikTok product ids exceed float64's 53-bit mantissa — an Excel
 # numeric cell is unrecoverable; the URL is the only lossless source.
