@@ -8,7 +8,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "avatar_product_fit", "poster_copy_set", "poster_deliverable", "extend_lineage"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "avatar_product_fit", "creative_scene_prompt", "poster_copy_set", "poster_deliverable", "extend_lineage"})
 
 
 def _validate_table(table: str) -> None:
@@ -52,6 +52,7 @@ _COLUMNS = {
     "product_intelligence_review_draft": {"product_id", "review_status", "product_description", "benefits_json", "usp_json", "usage_text", "ingredients_text", "warnings_text", "target_customer_text", "paste_anything_summary", "source_urls_json", "image_evidence_json", "package_notes", "size_or_volume", "product_form_factor", "packaging_description", "product_truth_lock", "claim_gate", "claim_risk_level", "claim_tokens_json", "allowed_claims_json", "blocked_claims_json", "buyer_persona_snapshot_json", "copy_strategy_summary_json", "confidence_score", "completeness_score", "readiness_status", "reviewer_note", "created_by", "reviewed_by", "approved_by", "approved_at", "rejected_by", "rejected_at", "updated_at"},
     "copy_generation_batch": {"product_id", "requested_count", "created_count", "deduped_count", "rejected_count", "source", "provider_lane", "provider_model", "updated_at"},
     "avatar_product_fit": {"avatar_code", "product_category", "fit_score", "suitability_notes", "updated_at"},
+    "creative_scene_prompt": {"template_id", "cluster", "source_category", "cluster_source", "main_action", "setting", "full_prompt_template", "base_prompt", "combined_prompt_suggestion", "negative_prompt", "variant", "notes", "provenance", "updated_at"},
     "product_intelligence_review_field_provenance": {"draft_id", "product_id", "field_name", "declared_value", "normalized_value", "source_type", "source_url", "source_lane", "evidence_kind", "extraction_method", "confidence_score", "verification_status", "claim_risk_flag", "reviewer_decision", "reviewer_note", "updated_at"},
     "extend_lineage": {"workspace_generation_package_id", "project_id", "scene_id", "block_index", "block_position", "parent_operation_id", "parent_primary_media_id", "child_operation_id", "child_primary_media_id", "child_workflow_id", "batch_id", "model_key", "aspect_ratio", "start_frame_index", "end_frame_index", "continuation_prompt_hash", "idempotency_key", "polling_state", "retry_attempt", "output_url", "error_code", "error_message", "updated_at", "completed_at"},
 }
@@ -800,6 +801,56 @@ async def list_avatar_product_fits(
         q += " AND product_category=?"
         params.append(product_category)
     q += " ORDER BY fit_score DESC LIMIT ?"
+    params.append(limit)
+    cur = await db.execute(q, params)
+    return [dict(r) for r in await cur.fetchall()]
+
+
+# --- creative_scene_prompt (Creative Intelligence Round 2) ---
+
+async def upsert_creative_scene_prompt(**kw) -> dict:
+    db = await get_db()
+    now = _now()
+    template_id = kw.get("template_id", "")
+    if not template_id:
+        raise ValueError("template_id is required")
+    allowed = _COLUMNS["creative_scene_prompt"]
+    cols: list[str] = []
+    vals: list[object] = []
+    for k, v in kw.items():
+        if k in allowed and k != "template_id":
+            cols.append(k)
+            vals.append(v)
+    if "updated_at" not in cols:
+        cols.append("updated_at")
+        vals.append(now)
+    set_clause = ", ".join(f"{c}=?" for c in cols)
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO creative_scene_prompt (template_id, {', '.join(cols)}) "
+            f"VALUES (?, {', '.join(['?'] * len(cols))}) "
+            f"ON CONFLICT(template_id) DO UPDATE SET {set_clause}",
+            [template_id] + vals + list(vals),
+        )
+        await db.commit()
+    cur = await db.execute(
+        "SELECT * FROM creative_scene_prompt WHERE template_id=?", (template_id,)
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else {}
+
+
+async def list_creative_scene_prompts(
+    cluster: str | None = None,
+    limit: int = 200,
+) -> list[dict]:
+    db = await get_db()
+    q = "SELECT * FROM creative_scene_prompt WHERE 1=1"
+    params: list[object] = []
+    if cluster:
+        q += " AND cluster=?"
+        params.append(cluster)
+    q += " ORDER BY template_id ASC LIMIT ?"
     params.append(limit)
     cur = await db.execute(q, params)
     return [dict(r) for r in await cur.fetchall()]
