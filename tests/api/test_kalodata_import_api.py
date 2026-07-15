@@ -437,3 +437,70 @@ def test_review_endpoint_requires_body_fields():
         json={"reviewed_by": "owner"},
     )
     assert response.status_code == 422
+
+
+# ── Approved Copy Intelligence context endpoint ──────────────────────────────
+def test_approved_context_endpoint_routes_read_only(monkeypatch):
+    captured = {}
+
+    async def fake_context(*, target_product_id=None, reference_id=None, seed_id=None, limit=100):
+        captured.update(
+            target_product_id=target_product_id, reference_id=reference_id,
+            seed_id=seed_id, limit=limit,
+        )
+        return {
+            "total": 1,
+            "items": [{
+                "seed_id": "seed-1", "source_product_name": "Approved product",
+                "target_product_id": "prod-1", "reference_id": None,
+                "target_avatar": "Parents", "pain_point": "Time",
+                "emotion_trigger": "Relief", "dream_outcome": "Easier",
+                "key_ingredients_features": "Feature", "hook_script": "Hook",
+                "cta_script": "CTA", "confidence": "HIGH",
+                "match_method": "TIKTOK_PRODUCT_ID_MATCH", "status": "APPROVED",
+                "source_workbook": "seed.xlsx", "source_sheet": "COPYWRITING HUB",
+                "provenance": {"source_row": "2"}, "reviewed_by": "owner",
+                "reviewed_at": "2026-07-15T00:00:00Z", "review_note": "ok",
+            }],
+        }
+
+    async def review_must_not_run(*args, **kwargs):
+        raise AssertionError("approved-context read must not invoke review/transition")
+
+    async def seed_must_not_run(_records):
+        raise AssertionError("approved-context read must not invoke the seed primitive")
+
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.get_approved_copy_intelligence_context", fake_context
+    )
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.review_copy_intelligence_seed", review_must_not_run
+    )
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.persist_copy_intelligence_seed_records", seed_must_not_run
+    )
+    client = TestClient(_build_app())
+    response = client.get(
+        "/api/kalodata/copy-intelligence/approved-context",
+        params={"target_product_id": "prod-1", "reference_id": "ref-9", "seed_id": "seed-1", "limit": 50},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["items"][0]["status"] == "APPROVED"
+    assert captured == {
+        "target_product_id": "prod-1", "reference_id": "ref-9", "seed_id": "seed-1", "limit": 50,
+    }
+
+
+def test_approved_context_endpoint_empty_ok(monkeypatch):
+    async def fake_context(*, target_product_id=None, reference_id=None, seed_id=None, limit=100):
+        return {"total": 0, "items": []}
+
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.get_approved_copy_intelligence_context", fake_context
+    )
+    client = TestClient(_build_app())
+    response = client.get("/api/kalodata/copy-intelligence/approved-context")
+    assert response.status_code == 200
+    assert response.json() == {"total": 0, "items": []}

@@ -129,6 +129,38 @@ class CopyIntelligenceSeedLedgerResponse(BaseModel):
     items: list[CopyIntelligenceSeedLedgerRow] = Field(default_factory=list)
 
 
+class CopyIntelligenceApprovedContextRow(BaseModel):
+    """Compact APPROVED-only Copy Intelligence context for safe downstream
+    consumption. This model is deliberately a read projection — it carries no
+    write affordance and is never routed to generation by this layer."""
+
+    seed_id: str
+    source_product_name: str
+    target_product_id: str | None = None
+    reference_id: str | None = None
+    target_avatar: str | None = None
+    pain_point: str | None = None
+    emotion_trigger: str | None = None
+    dream_outcome: str | None = None
+    key_ingredients_features: str | None = None
+    hook_script: str | None = None
+    cta_script: str | None = None
+    confidence: str
+    match_method: str
+    status: str
+    source_workbook: str
+    source_sheet: str
+    provenance: dict[str, str] = Field(default_factory=dict)
+    reviewed_by: str | None = None
+    reviewed_at: str | None = None
+    review_note: str | None = None
+
+
+class CopyIntelligenceApprovedContextResponse(BaseModel):
+    total: int
+    items: list[CopyIntelligenceApprovedContextRow] = Field(default_factory=list)
+
+
 class CopyIntelligenceSeedReviewRequest(BaseModel):
     """A single owner review decision on ONE persisted ledger row. There is no
     batch form: the reviewer confirms one seed at a time, with an explicit

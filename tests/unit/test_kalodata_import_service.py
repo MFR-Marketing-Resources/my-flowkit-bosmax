@@ -869,3 +869,118 @@ def test_invariant_generation_services_never_reference_seed_table():
     for rel in generation_files:
         text = (repo_root / rel).read_text(encoding="utf-8")
         assert "copy_intelligence_seed" not in text, f"{rel} must not reference the seed table"
+
+
+# ── Approved Copy Intelligence safe-consumption layer ────────────────────────
+async def _make_seed(fingerprint, *, status, confidence="HIGH",
+                     target_product_id=None, reference_id=None, name="Produk"):
+    from agent.db import crud
+
+    return await crud.create_copy_intelligence_seed(
+        source_fingerprint=fingerprint,
+        source_workbook="fixture.xlsx", source_sheet="COPYWRITING HUB",
+        source_row=2, source_product_name=name, match_method="TIKTOK_PRODUCT_ID_MATCH",
+        confidence=confidence, status=status, target_product_id=target_product_id,
+        reference_id=reference_id, hook_script="Hook", cta_script="CTA",
+        provenance_json='{"sheet":"COPYWRITING HUB"}',
+    )
+
+
+@pytest.mark.asyncio
+async def test_approved_context_returns_only_approved_rows():
+    # Scope by a unique reference_id so the assertion is independent of any other
+    # rows already present in the shared test DB.
+    ref = "ref-onlyapproved"
+    await _make_seed("ctx-approved", status="APPROVED", reference_id=ref, name="Approved product")
+    await _make_seed("ctx-needs", status="NEEDS_REVIEW", reference_id=ref, name="Pending product")
+    await _make_seed("ctx-rejected", status="REJECTED", reference_id=ref, name="Rejected product")
+
+    result = await svc.get_approved_copy_intelligence_context(reference_id=ref, limit=100)
+    names = {item["source_product_name"] for item in result["items"]}
+    statuses = {item["status"] for item in result["items"]}
+    assert names == {"Approved product"}
+    assert statuses == {"APPROVED"}
+    assert "Pending product" not in names
+    assert "Rejected product" not in names
+    assert result["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_approved_context_lookup_by_target_product_id():
+    from agent.db import crud
+
+    product = await crud.create_product(
+        source="MANUAL", raw_product_title="Truth", product_display_name="Truth",
+        product_short_name="Truth", copywriting_angle="Manual",
+    )
+    await _make_seed("ctx-tpid-hit", status="APPROVED", target_product_id=product["id"], name="Bound")
+    await _make_seed("ctx-tpid-other", status="APPROVED", name="Unbound")
+
+    result = await svc.get_approved_copy_intelligence_context(target_product_id=product["id"])
+    assert {i["source_product_name"] for i in result["items"]} == {"Bound"}
+    assert result["items"][0]["target_product_id"] == product["id"]
+
+
+@pytest.mark.asyncio
+async def test_approved_context_lookup_by_reference_id():
+    await _make_seed("ctx-ref-hit", status="APPROVED", reference_id="fastmoss-ref:123", name="ByRef")
+    await _make_seed("ctx-ref-miss", status="NEEDS_REVIEW", reference_id="fastmoss-ref:123", name="ByRefPending")
+
+    result = await svc.get_approved_copy_intelligence_context(reference_id="fastmoss-ref:123")
+    assert {i["source_product_name"] for i in result["items"]} == {"ByRef"}
+    assert result["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_approved_context_empty_when_no_approved_rows():
+    ref = "ref-emptyapproved"
+    await _make_seed("ctx-only-pending", status="NEEDS_REVIEW", reference_id=ref, name="Pending")
+    result = await svc.get_approved_copy_intelligence_context(reference_id=ref)
+    assert result == {"total": 0, "items": []}
+
+
+@pytest.mark.asyncio
+async def test_approved_context_is_read_only_and_isolated():
+    """Reading approved context mutates nothing — no product/copy_set/seed change."""
+    from agent.db import crud
+
+    product = await crud.create_product(
+        source="MANUAL", raw_product_title="T", product_display_name="T",
+        product_short_name="T", copywriting_angle="Manual",
+    )
+    await _make_seed("ctx-iso", status="APPROVED", name="Iso")
+    db = await crud.get_db()
+
+    async def _count(table):
+        cur = await db.execute(f"SELECT COUNT(*) FROM {table}")
+        return (await cur.fetchone())[0]
+
+    before = {t: await _count(t) for t in ("product", "copy_set", "product_intelligence_snapshot", "copy_intelligence_seed")}
+    before_product = await crud.get_product(product["id"])
+
+    await svc.get_approved_copy_intelligence_context()
+    await svc.get_approved_copy_intelligence_context(target_product_id=product["id"])
+
+    after = {t: await _count(t) for t in before}
+    assert before == after
+    assert await crud.get_product(product["id"]) == before_product
+
+
+def test_invariant_generation_services_never_reference_approved_context():
+    """The approved-context reader lives in the import/ledger service, NOT in any
+    generation/compiler service — generation still never reads the seed table."""
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+    generation_files = [
+        "agent/services/canonical_prompt_compiler.py",
+        "agent/services/ai_copy_assist_service.py",
+        "agent/services/ai_copy_provider_adapter.py",
+        "agent/services/copy_grounding_service.py",
+        "agent/services/copy_binding_service.py",
+        "agent/services/workspace_execution_package_service.py",
+    ]
+    for rel in generation_files:
+        text = (repo_root / rel).read_text(encoding="utf-8")
+        assert "get_approved_copy_intelligence_context" not in text, f"{rel} must not consume approved context yet"
+        assert "list_approved_copy_intelligence_seeds" not in text, f"{rel} must not query the seed table"

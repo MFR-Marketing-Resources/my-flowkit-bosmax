@@ -930,6 +930,38 @@ async def list_copy_intelligence_seeds(
     return total, [dict(row) for row in await rows_cursor.fetchall()]
 
 
+async def list_approved_copy_intelligence_seeds(
+    *, target_product_id: str | None = None, reference_id: str | None = None,
+    seed_id: str | None = None, limit: int = 100,
+) -> tuple[int, list[dict]]:
+    """Read APPROVED-only seed ledger rows for safe consumption. The APPROVED
+    filter is a hardcoded literal (never a parameter), so NEEDS_REVIEW / REJECTED
+    / SEEDED / SUPERSEDED rows can never be returned. Read-only — never writes."""
+    db = await get_db()
+    clauses: list[str] = ["status='APPROVED'"]
+    params: list[object] = []
+    if target_product_id:
+        clauses.append("target_product_id=?")
+        params.append(target_product_id)
+    if reference_id:
+        clauses.append("reference_id=?")
+        params.append(reference_id)
+    if seed_id:
+        clauses.append("seed_id=?")
+        params.append(seed_id)
+    where = f" WHERE {' AND '.join(clauses)}"
+    total_cursor = await db.execute(
+        f"SELECT COUNT(*) FROM copy_intelligence_seed{where}", params
+    )
+    total = int((await total_cursor.fetchone())[0])
+    rows_cursor = await db.execute(
+        "SELECT * FROM copy_intelligence_seed"
+        f"{where} ORDER BY source_workbook, source_sheet, source_row LIMIT ?",
+        [*params, limit],
+    )
+    return total, [dict(row) for row in await rows_cursor.fetchall()]
+
+
 # --- Poster Copy Set + Poster Deliverable (POSTER_BUILDER_V2) ---
 # Poster copy is a SEPARATE domain from the video copy_set table; these helpers
 # never touch copy_set so poster rows can never enter video selection.
