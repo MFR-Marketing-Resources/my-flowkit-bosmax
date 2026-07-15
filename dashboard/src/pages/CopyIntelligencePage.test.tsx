@@ -103,6 +103,23 @@ describe("CopyIntelligencePage", () => {
 		await waitFor(() => expect(mockedLedger).toHaveBeenLastCalledWith({ confidence: "HIGH", status: undefined, search: undefined }));
 	});
 
+	it("filters the ledger by APPROVED and REJECTED status", async () => {
+		mockedLedger.mockResolvedValue({ total: 1, items: [seedRow({ status: "APPROVED" })] });
+
+		render(<CopyIntelligencePage />);
+		await screen.findByTestId("copy-intelligence-seed-ledger");
+
+		const statusFilter = screen.getByLabelText("Ledger status");
+		expect(screen.getByRole("option", { name: "APPROVED" })).toBeInTheDocument();
+		expect(screen.getByRole("option", { name: "REJECTED" })).toBeInTheDocument();
+
+		fireEvent.change(statusFilter, { target: { value: "APPROVED" } });
+		await waitFor(() => expect(mockedLedger).toHaveBeenLastCalledWith({ confidence: undefined, status: "APPROVED", search: undefined }));
+
+		fireEvent.change(statusFilter, { target: { value: "REJECTED" } });
+		await waitFor(() => expect(mockedLedger).toHaveBeenLastCalledWith({ confidence: undefined, status: "REJECTED", search: undefined }));
+	});
+
 	it("shows a ledger-specific error instead of a false empty state", async () => {
 		mockedLedger.mockRejectedValue(new Error('API 404: {"detail":"Not Found"}'));
 

@@ -267,7 +267,7 @@ export default function CopyIntelligencePage() {
 					</label>
 					<label className="text-xs font-semibold text-slate-300">Ledger status
 						<select aria-label="Ledger status" value={ledgerStatus} onChange={(event) => setLedgerStatus(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
-							<option value="">All statuses</option><option value="NEEDS_REVIEW">NEEDS_REVIEW</option>
+							<option value="">All statuses</option><option value="NEEDS_REVIEW">NEEDS_REVIEW</option><option value="APPROVED">APPROVED</option><option value="REJECTED">REJECTED</option>
 						</select>
 					</label>
 					<label className="text-xs font-semibold text-slate-300">Search ledger
