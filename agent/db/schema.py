@@ -1974,12 +1974,25 @@ CREATE TABLE IF NOT EXISTS copy_intelligence_seed (
     pronoun                     TEXT,
     copy_angle                  TEXT,
     provenance_json             TEXT NOT NULL DEFAULT '{}',
+    reviewed_by                 TEXT,
+    reviewed_at                 TEXT,
+    review_note                 TEXT,
+    previous_status             TEXT,
+    review_action               TEXT,
     created_at                  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     updated_at                  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_copy_intelligence_seed_reference
     ON copy_intelligence_seed(reference_id, status);
 """)
+        # Additive migration: human-review audit trail on existing seed ledgers.
+        # Review-only metadata — it never exposes a row to generation.
+        seed_cols_cursor = await db.execute("PRAGMA table_info(copy_intelligence_seed)")
+        seed_cols = {row[1] for row in await seed_cols_cursor.fetchall()}
+        for _col in ("reviewed_by", "reviewed_at", "review_note", "previous_status", "review_action"):
+            if _col not in seed_cols:
+                await db.execute(f"ALTER TABLE copy_intelligence_seed ADD COLUMN {_col} TEXT")
+                logger.info("Migrated: added %s column to copy_intelligence_seed", _col)
         await db.commit()
 
         # Copy Set foundation (Copy Strategy Studio Phase 1). Additive table —

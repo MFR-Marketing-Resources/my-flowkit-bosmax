@@ -348,3 +348,92 @@ def test_cache_images_sequential_with_results(monkeypatch):
     # 'bad' retried 3 times, successes once each
     assert calls.count("bad") == 3
     assert calls.count("p1") == calls.count("p2") == 1
+
+
+# ── Copy Intelligence seed review/approval endpoints ─────────────────────────
+def test_approve_seed_endpoint_routes_and_returns_result(monkeypatch):
+    captured = {}
+
+    async def fake_review(seed_id, *, action, reviewed_by, review_note, confirmation_phrase):
+        captured.update(
+            seed_id=seed_id, action=action, reviewed_by=reviewed_by,
+            review_note=review_note, confirmation_phrase=confirmation_phrase,
+        )
+        return {
+            "seed_id": seed_id, "previous_status": "NEEDS_REVIEW", "new_status": "APPROVED",
+            "confidence": "HIGH", "reviewed_by": reviewed_by,
+            "reviewed_at": "2026-07-15T00:00:00Z", "review_note": review_note,
+        }
+
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.review_copy_intelligence_seed", fake_review
+    )
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/kalodata/copy-intelligence/seeds/seed-1/approve",
+        json={"reviewed_by": "owner", "review_note": "verified", "confirmation_phrase": "APPROVE COPY INTELLIGENCE"},
+    )
+    assert response.status_code == 200
+    assert response.json()["new_status"] == "APPROVED"
+    assert captured == {
+        "seed_id": "seed-1", "action": "APPROVE", "reviewed_by": "owner",
+        "review_note": "verified", "confirmation_phrase": "APPROVE COPY INTELLIGENCE",
+    }
+
+
+def test_reject_seed_endpoint_routes_with_reject_action(monkeypatch):
+    captured = {}
+
+    async def fake_review(seed_id, *, action, reviewed_by, review_note, confirmation_phrase):
+        captured["action"] = action
+        return {
+            "seed_id": seed_id, "previous_status": "NEEDS_REVIEW", "new_status": "REJECTED",
+            "confidence": "HIGH", "reviewed_by": reviewed_by,
+            "reviewed_at": "2026-07-15T00:00:00Z", "review_note": review_note,
+        }
+
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.review_copy_intelligence_seed", fake_review
+    )
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/kalodata/copy-intelligence/seeds/seed-1/reject",
+        json={"reviewed_by": "owner", "review_note": "wrong", "confirmation_phrase": "REJECT COPY INTELLIGENCE"},
+    )
+    assert response.status_code == 200
+    assert response.json()["new_status"] == "REJECTED"
+    assert captured["action"] == "REJECT"
+
+
+def test_review_endpoint_maps_fail_closed_errors_to_status_codes(monkeypatch):
+    from agent.services import kalodata_import_service as _svc
+
+    scenarios = [
+        ("COPY_INTELLIGENCE_SEED_NOT_FOUND", 404),
+        ("INVALID_SOURCE_STATUS", 409),
+        ("CONFIRMATION_PHRASE_MISMATCH", 422),
+        ("MEDIUM_CONFIDENCE_PHRASE_REQUIRED", 422),
+    ]
+    for code, status_code in scenarios:
+        async def fake_review(*args, _code=code, _sc=status_code, **kwargs):
+            raise _svc.CopyIntelligenceReviewError(_code, _sc, {"seed_id": "seed-1"})
+
+        monkeypatch.setattr(
+            "agent.services.kalodata_import_service.review_copy_intelligence_seed", fake_review
+        )
+        client = TestClient(_build_app())
+        response = client.post(
+            "/api/kalodata/copy-intelligence/seeds/seed-1/approve",
+            json={"reviewed_by": "owner", "review_note": "note", "confirmation_phrase": "x"},
+        )
+        assert response.status_code == status_code
+        assert response.json()["detail"]["error"] == code
+
+
+def test_review_endpoint_requires_body_fields():
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/kalodata/copy-intelligence/seeds/seed-1/approve",
+        json={"reviewed_by": "owner"},
+    )
+    assert response.status_code == 422

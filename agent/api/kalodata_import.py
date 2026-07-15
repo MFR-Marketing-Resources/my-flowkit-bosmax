@@ -20,6 +20,8 @@ from agent.models.kalodata_import import (
     KalodataImportRequest,
     CopyIntelligenceUploadedSourceRequest,
     CopyIntelligenceSeedLedgerResponse,
+    CopyIntelligenceSeedReviewRequest,
+    CopyIntelligenceSeedReviewResult,
     CopyIntelligenceWorkbookUploadReport,
 )
 from agent.services import kalodata_import_service as _svc
@@ -113,6 +115,46 @@ async def list_copy_intelligence_seed_ledger(
     return await _svc.list_copy_intelligence_seed_records(
         confidence=confidence, status=status, search=search, limit=limit,
     )
+
+
+async def _review_copy_intelligence_seed(seed_id: str, action: str, body: CopyIntelligenceSeedReviewRequest):
+    """Shared handler for the approve/reject transition routes. Fail-closed: any
+    guard failure raises, and no status transition is written. This endpoint
+    never seeds, never materializes, and never routes a row to generation."""
+    try:
+        return await _svc.review_copy_intelligence_seed(
+            seed_id,
+            action=action,
+            reviewed_by=body.reviewed_by,
+            review_note=body.review_note,
+            confirmation_phrase=body.confirmation_phrase,
+        )
+    except _svc.CopyIntelligenceReviewError as exc:
+        raise HTTPException(
+            exc.status_code, {"error": exc.code, "detail": exc.detail}
+        ) from exc
+
+
+@router.post(
+    "/copy-intelligence/seeds/{seed_id}/approve",
+    response_model=CopyIntelligenceSeedReviewResult,
+)
+async def approve_copy_intelligence_seed(seed_id: str, body: CopyIntelligenceSeedReviewRequest):
+    """Approve ONE persisted ledger row (NEEDS_REVIEW -> APPROVED). Requires the
+    exact confirmation phrase (stronger for MEDIUM confidence), a non-empty note,
+    and reviewer identity. Approval records audit metadata only — it does not
+    expose the row to Product Truth, Copy Sets, DeepSeek, or the compiler."""
+    return await _review_copy_intelligence_seed(seed_id, "APPROVE", body)
+
+
+@router.post(
+    "/copy-intelligence/seeds/{seed_id}/reject",
+    response_model=CopyIntelligenceSeedReviewResult,
+)
+async def reject_copy_intelligence_seed(seed_id: str, body: CopyIntelligenceSeedReviewRequest):
+    """Reject ONE persisted ledger row (NEEDS_REVIEW -> REJECTED). Requires the
+    exact reject phrase, a non-empty note, and reviewer identity."""
+    return await _review_copy_intelligence_seed(seed_id, "REJECT", body)
 
 
 @router.post("/purge-duplicates")

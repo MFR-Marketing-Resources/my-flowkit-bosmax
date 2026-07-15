@@ -44,7 +44,7 @@ _COLUMNS = {
     "postiz_publish_record": {"artifact_media_id", "source_local_path", "source_public_url", "upload_mode", "postiz_media_id", "postiz_media_path", "post_type", "scheduled_at", "content", "integration_ids_json", "provider_settings_json", "postiz_response_json", "status", "error", "updated_at"},
     "social_copy_package": {"artifact_media_id", "source_mode", "platform", "caption", "first_comment", "hashtags_json", "call_to_action", "tone", "language", "status", "compliance_status", "blockers_json", "warnings_json", "approval_note", "approved_at", "postiz_record_id", "updated_at"},
     "copy_set": {"angle", "hook", "subhook", "usp_set_json", "cta", "platform", "language", "route_type", "formula_family", "status", "dedupe_key", "source", "provenance_json", "claim_review_json", "reviewer_note", "approved_at", "approved_by", "usage_count", "last_used_at", "used_in_modes", "uniqueness_score", "similar_to_copy_set_id", "similarity_score", "archived", "updated_at"},
-    "copy_intelligence_seed": {"source_fingerprint", "source_workbook", "source_sheet", "source_row", "source_product_name", "reference_id", "target_product_id", "match_method", "confidence", "status", "target_avatar", "pain_point", "emotion_trigger", "dream_outcome", "key_ingredients_features", "hook_type", "hook_script", "body_script", "cta_type", "cta_script", "tone", "pronoun", "copy_angle", "provenance_json", "updated_at"},
+    "copy_intelligence_seed": {"source_fingerprint", "source_workbook", "source_sheet", "source_row", "source_product_name", "reference_id", "target_product_id", "match_method", "confidence", "status", "target_avatar", "pain_point", "emotion_trigger", "dream_outcome", "key_ingredients_features", "hook_type", "hook_script", "body_script", "cta_type", "cta_script", "tone", "pronoun", "copy_angle", "provenance_json", "reviewed_by", "reviewed_at", "review_note", "previous_status", "review_action", "updated_at"},
     "poster_copy_set": {"campaign_id", "objective", "archetype", "angle", "primary_message", "support_message", "proof_points_json", "offer_json", "cta", "disclaimer", "tone", "language", "variants_json", "field_provenance_json", "ai_model", "prompt_version", "status", "version", "parent_poster_copy_set_id", "archived", "reject_reason", "approved_at", "approved_by", "updated_at"},
     "poster_deliverable": {"poster_copy_set_id", "recipe_id", "template_version", "composition_strategy", "render_manifest_json", "background_media_id", "background_local_path", "output_path", "output_sha256", "creative_asset_id", "qa_report_json", "settings_json", "status", "updated_at"},
     "product_intelligence_snapshot": {"product_id", "version", "status", "product_description", "benefits_json", "usp_json", "usage_text", "ingredients_text", "warnings_text", "target_customer_text", "paste_anything_summary", "source_urls_json", "image_evidence_json", "package_notes", "size_or_volume", "product_form_factor", "packaging_description", "product_truth_lock", "claim_gate", "claim_risk_level", "claim_tokens_json", "allowed_claims_json", "blocked_claims_json", "buyer_persona_snapshot_json", "copy_strategy_summary_json", "confidence_score", "completeness_score", "readiness_status", "created_from_review_draft_id", "created_by", "approved_by", "approved_at", "supersedes_snapshot_id", "updated_at"},
@@ -883,6 +883,17 @@ async def create_copy_intelligence_seed(**kw) -> dict:
         )
         await db.commit()
     return await _get_with_db(db, "copy_intelligence_seed", "seed_id", seed_id)
+
+
+async def get_copy_intelligence_seed(seed_id: str) -> Optional[dict]:
+    """Read one seed ledger row by id. Read-only, never writes."""
+    return await _get("copy_intelligence_seed", "seed_id", seed_id)
+
+
+async def update_copy_intelligence_seed(seed_id: str, **kw) -> Optional[dict]:
+    """Write whitelisted seed columns (review audit trail only). This helper
+    never touches product, copy_set, or any snapshot table."""
+    return await _update("copy_intelligence_seed", "seed_id", seed_id, **kw)
 
 
 async def list_copy_intelligence_seeds(

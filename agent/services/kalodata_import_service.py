@@ -26,7 +26,7 @@ import os
 import re
 import hashlib
 from io import BytesIO
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -630,6 +630,122 @@ async def list_copy_intelligence_seed_records(
             row["provenance"] = {}
         items.append(row)
     return {"total": total, "items": items}
+
+
+# ── Copy Intelligence seed review/approval layer ──────────────────────────────
+# One owner reviews ONE persisted ledger row at a time. Approval/rejection is
+# fail-closed and audit-stamped; it NEVER exposes a row to generation. Nothing
+# downstream (compiler, DeepSeek, Product Truth, Copy Set) reads these rows —
+# this layer only transitions status + records who/when/why.
+APPROVE_COPY_INTELLIGENCE_PHRASE = "APPROVE COPY INTELLIGENCE"
+APPROVE_MEDIUM_COPY_INTELLIGENCE_PHRASE = "APPROVE MEDIUM CONFIDENCE COPY INTELLIGENCE"
+REJECT_COPY_INTELLIGENCE_PHRASE = "REJECT COPY INTELLIGENCE"
+_REVIEWABLE_SOURCE_STATUS = "NEEDS_REVIEW"
+
+
+class CopyIntelligenceReviewError(Exception):
+    """Fail-closed review error. Callers (the API) surface it verbatim; a review
+    that cannot be validated NEVER writes a status transition."""
+
+    def __init__(self, code: str, status_code: int = 422, detail: object = None):
+        super().__init__(code)
+        self.code = code
+        self.status_code = status_code
+        self.detail = detail
+
+
+async def review_copy_intelligence_seed(
+    seed_id: str,
+    *,
+    action: str,
+    reviewed_by: str,
+    review_note: str,
+    confirmation_phrase: str,
+) -> dict[str, object]:
+    """Approve or reject ONE ledger row. Fail-closed on every guard.
+
+    Allowed transitions are ONLY ``NEEDS_REVIEW -> APPROVED`` and
+    ``NEEDS_REVIEW -> REJECTED``. MEDIUM-confidence approval requires the
+    stronger confirmation phrase. This function writes only the seed row's
+    review audit columns; it never creates a snapshot or Copy Set, never calls
+    an AI provider, and never routes the row to generation.
+    """
+    from agent.db import crud
+
+    decision = (action or "").strip().upper()
+    if decision not in ("APPROVE", "REJECT"):
+        raise CopyIntelligenceReviewError("INVALID_REVIEW_ACTION", 422, {"action": action})
+
+    reviewer = (reviewed_by or "").strip()
+    if not reviewer:
+        raise CopyIntelligenceReviewError("REVIEWER_REQUIRED", 422)
+
+    note = (review_note or "").strip()
+    if not note:
+        raise CopyIntelligenceReviewError("REVIEW_NOTE_REQUIRED", 422)
+
+    row = await crud.get_copy_intelligence_seed(seed_id)
+    if not row:
+        raise CopyIntelligenceReviewError(
+            "COPY_INTELLIGENCE_SEED_NOT_FOUND", 404, {"seed_id": seed_id}
+        )
+
+    current_status = row.get("status")
+    if current_status != _REVIEWABLE_SOURCE_STATUS:
+        raise CopyIntelligenceReviewError(
+            "INVALID_SOURCE_STATUS",
+            409,
+            {"seed_id": seed_id, "status": current_status},
+        )
+
+    confidence = row.get("confidence")
+    phrase = (confirmation_phrase or "").strip()
+
+    if decision == "APPROVE":
+        if confidence == "MEDIUM":
+            required_phrase = APPROVE_MEDIUM_COPY_INTELLIGENCE_PHRASE
+            if phrase == APPROVE_COPY_INTELLIGENCE_PHRASE:
+                # Normal phrase on a MEDIUM row is explicitly not enough.
+                raise CopyIntelligenceReviewError(
+                    "MEDIUM_CONFIDENCE_PHRASE_REQUIRED",
+                    422,
+                    {"required_phrase": required_phrase},
+                )
+        else:
+            required_phrase = APPROVE_COPY_INTELLIGENCE_PHRASE
+        if phrase != required_phrase:
+            raise CopyIntelligenceReviewError(
+                "CONFIRMATION_PHRASE_MISMATCH", 422, {"required_phrase": required_phrase}
+            )
+        new_status = "APPROVED"
+    else:
+        if phrase != REJECT_COPY_INTELLIGENCE_PHRASE:
+            raise CopyIntelligenceReviewError(
+                "CONFIRMATION_PHRASE_MISMATCH",
+                422,
+                {"required_phrase": REJECT_COPY_INTELLIGENCE_PHRASE},
+            )
+        new_status = "REJECTED"
+
+    reviewed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    await crud.update_copy_intelligence_seed(
+        seed_id,
+        status=new_status,
+        previous_status=current_status,
+        review_action=decision,
+        review_note=note,
+        reviewed_by=reviewer,
+        reviewed_at=reviewed_at,
+    )
+    return {
+        "seed_id": seed_id,
+        "previous_status": current_status,
+        "new_status": new_status,
+        "confidence": confidence,
+        "reviewed_by": reviewer,
+        "reviewed_at": reviewed_at,
+        "review_note": note,
+    }
 
 
 async def build_copy_intelligence_dry_run_for_system(
