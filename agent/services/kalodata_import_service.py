@@ -611,6 +611,27 @@ async def persist_copy_intelligence_seed_records(records: list[CopyIntelligenceS
     return {"records_processed": len(records), "created_or_existing": created_or_existing, "skipped_quarantined": skipped_quarantined, "skipped_low_confidence": skipped_low_confidence, "skipped_unmatched": skipped_unmatched, "status": "NEEDS_REVIEW_ONLY"}
 
 
+async def list_copy_intelligence_seed_records(
+    *, confidence: str | None = None, status: str | None = None,
+    search: str | None = None, limit: int = 100,
+) -> dict[str, object]:
+    """Read the immutable review ledger without invoking the seed primitive."""
+    from agent.db import crud
+
+    total, rows = await crud.list_copy_intelligence_seeds(
+        confidence=confidence, status=status, search=search, limit=limit,
+    )
+    items = []
+    for row in rows:
+        provenance = row.pop("provenance_json", "{}")
+        try:
+            row["provenance"] = json.loads(provenance or "{}")
+        except json.JSONDecodeError:
+            row["provenance"] = {}
+        items.append(row)
+    return {"total": total, "items": items}
+
+
 async def build_copy_intelligence_dry_run_for_system(
     source_path: str | Path,
 ) -> CopyIntelligenceDryRunReport:

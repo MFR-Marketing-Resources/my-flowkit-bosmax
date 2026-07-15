@@ -885,6 +885,40 @@ async def create_copy_intelligence_seed(**kw) -> dict:
     return await _get_with_db(db, "copy_intelligence_seed", "seed_id", seed_id)
 
 
+async def list_copy_intelligence_seeds(
+    *, confidence: str | None = None, status: str | None = None,
+    search: str | None = None, limit: int = 100,
+) -> tuple[int, list[dict]]:
+    """Read review-only ledger rows; this helper never writes any table."""
+    db = await get_db()
+    clauses: list[str] = []
+    params: list[object] = []
+    if confidence:
+        clauses.append("confidence=?")
+        params.append(confidence)
+    if status:
+        clauses.append("status=?")
+        params.append(status)
+    if search:
+        clauses.append(
+            "(LOWER(source_product_name) LIKE ? OR LOWER(COALESCE(target_avatar, '')) LIKE ? "
+            "OR LOWER(COALESCE(hook_script, '')) LIKE ?)"
+        )
+        needle = f"%{search.lower()}%"
+        params.extend((needle, needle, needle))
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    total_cursor = await db.execute(
+        f"SELECT COUNT(*) FROM copy_intelligence_seed{where}", params
+    )
+    total = int((await total_cursor.fetchone())[0])
+    rows_cursor = await db.execute(
+        "SELECT * FROM copy_intelligence_seed"
+        f"{where} ORDER BY source_workbook, source_sheet, source_row LIMIT ?",
+        [*params, limit],
+    )
+    return total, [dict(row) for row in await rows_cursor.fetchall()]
+
+
 # --- Poster Copy Set + Poster Deliverable (POSTER_BUILDER_V2) ---
 # Poster copy is a SEPARATE domain from the video copy_set table; these helpers
 # never touch copy_set so poster rows can never enter video selection.

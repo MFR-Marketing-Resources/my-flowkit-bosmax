@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
+	listCopyIntelligenceSeedLedger,
 	runUploadedCopyIntelligenceDryRun,
+	type CopyIntelligenceSeedLedgerResponse,
 	uploadCopyIntelligenceWorkbook,
 	type CopyIntelligenceDryRunReport,
 	type CopyIntelligenceWorkbookUploadReport,
@@ -24,22 +26,49 @@ export default function CopyIntelligencePage() {
 	const [uploadedSource, setUploadedSource] = useState<CopyIntelligenceWorkbookUploadReport | null>(null);
 	const [report, setReport] = useState<CopyIntelligenceDryRunReport | null>(null);
 	const [loading, setLoading] = useState(false);
-	const [error, setError] = useState("");
+	const [ledger, setLedger] = useState<CopyIntelligenceSeedLedgerResponse | null>(null);
+	const [ledgerConfidence, setLedgerConfidence] = useState("");
+	const [ledgerStatus, setLedgerStatus] = useState("");
+	const [ledgerSearch, setLedgerSearch] = useState("");
+	const [uploadError, setUploadError] = useState("");
+	const [ledgerError, setLedgerError] = useState("");
+	const [ledgerLoading, setLedgerLoading] = useState(true);
+
+	useEffect(() => {
+		let active = true;
+		setLedgerLoading(true);
+		setLedgerError("");
+		void listCopyIntelligenceSeedLedger({
+			confidence: ledgerConfidence || undefined,
+			status: ledgerStatus || undefined,
+			search: ledgerSearch || undefined,
+		}).then((response) => {
+			if (active) setLedger(response);
+		}).catch((cause) => {
+			if (active) {
+				setLedger(null);
+				setLedgerError(cause instanceof Error ? cause.message : "Ledger tidak dapat dimuatkan.");
+			}
+		}).finally(() => {
+			if (active) setLedgerLoading(false);
+		});
+		return () => { active = false; };
+	}, [ledgerConfidence, ledgerSearch, ledgerStatus]);
 
 	const runDryRun = async () => {
 		if (!workbook) {
-			setError("Pilih fail .xlsx penuh Kalodata & Fastmoss dahulu.");
+			setUploadError("Pilih fail .xlsx penuh Kalodata & Fastmoss dahulu.");
 			return;
 		}
 		setLoading(true);
-		setError("");
+		setUploadError("");
 		try {
 			const uploaded = await uploadCopyIntelligenceWorkbook(workbook);
 			setUploadedSource(uploaded);
 			setReport(await runUploadedCopyIntelligenceDryRun(uploaded.source_id));
 		} catch (cause) {
 			setReport(null);
-			setError(cause instanceof Error ? cause.message : "Dry-run gagal.");
+			setUploadError(cause instanceof Error ? cause.message : "Dry-run gagal.");
 		} finally {
 			setLoading(false);
 		}
@@ -84,7 +113,7 @@ export default function CopyIntelligencePage() {
 				{workbook && <p className="text-xs text-slate-400">Selected: {workbook.name}</p>}
 				{uploadedSource && <p className="text-xs text-slate-400">Stored source: {uploadedSource.original_filename} · fingerprint {uploadedSource.fingerprint}</p>}
 				<HelperText>Nothing is seeded from this page. Seed execution requires separate owner authorization.</HelperText>
-				{error && <p className="text-xs font-medium text-red-300" role="alert">{error}</p>}
+				{uploadError && <p className="text-xs font-medium text-red-300" role="alert">Upload and dry-run error: {uploadError}</p>}
 			</Section>
 
 			{report && (
@@ -113,6 +142,39 @@ export default function CopyIntelligencePage() {
 					</div>
 				</Section>
 			)}
+
+			<Section title="Seeded review ledger" helper="Persisted HIGH and MEDIUM records only. Viewing this ledger never seeds, approves, or routes copy.">
+				<div className="grid gap-3 md:grid-cols-3">
+					<label className="text-xs font-semibold text-slate-300">Ledger confidence
+						<select aria-label="Ledger confidence" value={ledgerConfidence} onChange={(event) => setLedgerConfidence(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
+							<option value="">All confidence</option><option value="HIGH">HIGH</option><option value="MEDIUM">MEDIUM</option>
+						</select>
+					</label>
+					<label className="text-xs font-semibold text-slate-300">Ledger status
+						<select aria-label="Ledger status" value={ledgerStatus} onChange={(event) => setLedgerStatus(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100">
+							<option value="">All statuses</option><option value="NEEDS_REVIEW">NEEDS_REVIEW</option>
+						</select>
+					</label>
+					<label className="text-xs font-semibold text-slate-300">Search ledger
+						<input aria-label="Search ledger" value={ledgerSearch} onChange={(event) => setLedgerSearch(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" placeholder="Product, avatar, or hook" />
+					</label>
+				</div>
+				{ledgerLoading ? (
+					<p className="text-sm text-slate-400">Loading seeded review records…</p>
+				) : ledgerError ? (
+					<p className="text-sm font-medium text-red-300" role="alert">Unable to load ledger: {ledgerError}</p>
+				) : ledger?.total === 0 ? (
+					<p className="text-sm text-slate-400">No seeded review records yet</p>
+				) : (
+					<div className="overflow-x-auto" data-testid="copy-intelligence-seed-ledger">
+						<p className="mb-3 text-xs text-slate-400">{ledger?.total ?? 0} persisted review records</p>
+						<table className="min-w-[1400px] text-left text-xs text-slate-300">
+							<thead className="border-b border-slate-700 text-[10px] uppercase tracking-wide text-slate-500"><tr><th>Source</th><th>Product</th><th>Avatar</th><th>Pain / emotion</th><th>Dream / features</th><th>Hook</th><th>CTA</th><th>Confidence</th><th>Match</th><th>Status</th><th>Provenance</th></tr></thead>
+							<tbody>{ledger?.items.map((row) => <tr key={row.seed_id} className="border-b border-slate-800 align-top"><td className="p-2">{row.source_row}</td><td className="p-2 font-medium text-slate-100">{row.source_product_name}</td><td className="p-2">{row.target_avatar || "—"}</td><td className="p-2">{row.pain_point || "—"}<br />{row.emotion_trigger || "—"}</td><td className="p-2">{row.dream_outcome || "—"}<br />{row.key_ingredients_features || "—"}</td><td className="p-2">{row.hook_script || "—"}</td><td className="p-2">{row.cta_script || "—"}</td><td className="p-2">{row.confidence}</td><td className="p-2">{row.match_method}</td><td className="p-2">{row.status}</td><td className="p-2">{row.source_workbook}<br />{row.source_sheet} · row {row.provenance.source_row || row.source_row}</td></tr>)}</tbody>
+						</table>
+					</div>
+				)}
+			</Section>
 		</div>
 	);
 }
