@@ -1,0 +1,339 @@
+{
+ "_meta": {
+  "version": "v1",
+  "canonical_pool": "avatar_registry.list_pool (AVATAR_POOL_NORMALIZED.csv, BOS_ scheme)",
+  "note": "AV01-AV08 workbook codes are NOT live; every code here is validated against the live pool",
+  "env_variants": {
+   "office": "01",
+   "home": "02",
+   "event": "03",
+   "studio": "08"
+  }
+ },
+ "crosswalk": {
+  "Beauty": [
+   {
+    "avatar_code": "BOS_F_ALYA_08",
+    "fit_score": 0.92,
+    "suitability_notes": "Beauty: female presenter 'Alya' in studio setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_ZARA_08",
+    "fit_score": 0.9,
+    "suitability_notes": "Beauty: female presenter 'Zara' in studio setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_SOFIA_08",
+    "fit_score": 0.88,
+    "suitability_notes": "Beauty: female presenter 'Sofia' in studio setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_MIRA_02",
+    "fit_score": 0.82,
+    "suitability_notes": "Beauty: female presenter 'Mira' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_AISYAH_02",
+    "fit_score": 0.8,
+    "suitability_notes": "Beauty: female presenter 'Aisyah' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   }
+  ],
+  "Baby & Kids": [
+   {
+    "avatar_code": "BOS_F_NADIA_02",
+    "fit_score": 0.92,
+    "suitability_notes": "Baby & Kids: female presenter 'Nadia' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_FARAH_02",
+    "fit_score": 0.9,
+    "suitability_notes": "Baby & Kids: female presenter 'Farah' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_AISYAH_02",
+    "fit_score": 0.86,
+    "suitability_notes": "Baby & Kids: female presenter 'Aisyah' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_LIYANA_02",
+    "fit_score": 0.84,
+    "suitability_notes": "Baby & Kids: female presenter 'Liyana' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_HANA_02",
+    "fit_score": 0.8,
+    "suitability_notes": "Baby & Kids: female presenter 'Hana' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   }
+  ],
+  "Fashion": [
+   {
+    "avatar_code": "BOS_F_MIA_08",
+    "fit_score": 0.9,
+    "suitability_notes": "Fashion: female presenter 'Mia' in studio setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_BELLA_08",
+    "fit_score": 0.88,
+    "suitability_notes": "Fashion: female presenter 'Bella' in studio setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_JULIA_03",
+    "fit_score": 0.86,
+    "suitability_notes": "Fashion: female presenter 'Julia' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_AINA_03",
+    "fit_score": 0.84,
+    "suitability_notes": "Fashion: female presenter 'Aina' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_SOFIA_08",
+    "fit_score": 0.82,
+    "suitability_notes": "Fashion: female presenter 'Sofia' in studio setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   }
+  ],
+  "Home & Living": [
+   {
+    "avatar_code": "BOS_F_FARAH_02",
+    "fit_score": 0.9,
+    "suitability_notes": "Home & Living: female presenter 'Farah' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_NADIA_02",
+    "fit_score": 0.88,
+    "suitability_notes": "Home & Living: female presenter 'Nadia' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_HANA_02",
+    "fit_score": 0.86,
+    "suitability_notes": "Home & Living: female presenter 'Hana' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_RINA_02",
+    "fit_score": 0.84,
+    "suitability_notes": "Home & Living: female presenter 'Rina' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_SARA_02",
+    "fit_score": 0.82,
+    "suitability_notes": "Home & Living: female presenter 'Sara' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   }
+  ],
+  "Food & Beverage": [
+   {
+    "avatar_code": "BOS_F_HANA_02",
+    "fit_score": 0.9,
+    "suitability_notes": "Food & Beverage: female presenter 'Hana' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_RINA_02",
+    "fit_score": 0.88,
+    "suitability_notes": "Food & Beverage: female presenter 'Rina' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_SARA_02",
+    "fit_score": 0.86,
+    "suitability_notes": "Food & Beverage: female presenter 'Sara' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_FARAH_02",
+    "fit_score": 0.84,
+    "suitability_notes": "Food & Beverage: female presenter 'Farah' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_DINA_02",
+    "fit_score": 0.82,
+    "suitability_notes": "Food & Beverage: female presenter 'Dina' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   }
+  ],
+  "Islamic & Books": [
+   {
+    "avatar_code": "BOS_F_AISYAH_02",
+    "fit_score": 0.9,
+    "suitability_notes": "Islamic & Books: female presenter 'Aisyah' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_QISTINA_02",
+    "fit_score": 0.88,
+    "suitability_notes": "Islamic & Books: female presenter 'Qistina' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_YASMIN_08",
+    "fit_score": 0.84,
+    "suitability_notes": "Islamic & Books: female presenter 'Yasmin' in studio setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_AMIRA_02",
+    "fit_score": 0.84,
+    "suitability_notes": "Islamic & Books: female presenter 'Amira' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_FARAH_08",
+    "fit_score": 0.8,
+    "suitability_notes": "Islamic & Books: female presenter 'Farah' in studio setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   }
+  ],
+  "Office & Stationery": [
+   {
+    "avatar_code": "BOS_F_ALYA_01",
+    "fit_score": 0.9,
+    "suitability_notes": "Office & Stationery: female presenter 'Alya' in office setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_ZARA_01",
+    "fit_score": 0.88,
+    "suitability_notes": "Office & Stationery: female presenter 'Zara' in office setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_SOFIA_01",
+    "fit_score": 0.86,
+    "suitability_notes": "Office & Stationery: female presenter 'Sofia' in office setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_HARIS_01",
+    "fit_score": 0.82,
+    "suitability_notes": "Office & Stationery: male presenter 'Haris' in office setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_RAFI_01",
+    "fit_score": 0.8,
+    "suitability_notes": "Office & Stationery: male presenter 'Rafi' in office setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   }
+  ],
+  "Electronics & Gadgets": [
+   {
+    "avatar_code": "BOS_F_HARIS_01",
+    "fit_score": 0.88,
+    "suitability_notes": "Electronics & Gadgets: male presenter 'Haris' in office setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_DANISH_08",
+    "fit_score": 0.86,
+    "suitability_notes": "Electronics & Gadgets: male presenter 'Danish' in studio setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_AMIR_01",
+    "fit_score": 0.84,
+    "suitability_notes": "Electronics & Gadgets: male presenter 'Amir' in office setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_ALYA_08",
+    "fit_score": 0.82,
+    "suitability_notes": "Electronics & Gadgets: female presenter 'Alya' in studio setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_SOFIA_01",
+    "fit_score": 0.8,
+    "suitability_notes": "Electronics & Gadgets: female presenter 'Sofia' in office setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   }
+  ],
+  "Automotive": [
+   {
+    "avatar_code": "BOS_F_HARIS_03",
+    "fit_score": 0.9,
+    "suitability_notes": "Automotive: male presenter 'Haris' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_DANISH_03",
+    "fit_score": 0.88,
+    "suitability_notes": "Automotive: male presenter 'Danish' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_AMIR_08",
+    "fit_score": 0.84,
+    "suitability_notes": "Automotive: male presenter 'Amir' in studio setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_FAIZ_03",
+    "fit_score": 0.82,
+    "suitability_notes": "Automotive: male presenter 'Faiz' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_RAFI_01",
+    "fit_score": 0.78,
+    "suitability_notes": "Automotive: male presenter 'Rafi' in office setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   }
+  ],
+  "Sports & Outdoors": [
+   {
+    "avatar_code": "BOS_F_DANISH_03",
+    "fit_score": 0.9,
+    "suitability_notes": "Sports & Outdoors: male presenter 'Danish' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_RAFI_03",
+    "fit_score": 0.88,
+    "suitability_notes": "Sports & Outdoors: male presenter 'Rafi' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_AMIR_03",
+    "fit_score": 0.86,
+    "suitability_notes": "Sports & Outdoors: male presenter 'Amir' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_FAIZ_03",
+    "fit_score": 0.84,
+    "suitability_notes": "Sports & Outdoors: male presenter 'Faiz' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_MIA_03",
+    "fit_score": 0.78,
+    "suitability_notes": "Sports & Outdoors: female presenter 'Mia' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   }
+  ],
+  "Tools & Home Improvement": [
+   {
+    "avatar_code": "BOS_F_HARIS_03",
+    "fit_score": 0.9,
+    "suitability_notes": "Tools & Home Improvement: male presenter 'Haris' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_DANISH_01",
+    "fit_score": 0.86,
+    "suitability_notes": "Tools & Home Improvement: male presenter 'Danish' in office setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_AMIR_03",
+    "fit_score": 0.84,
+    "suitability_notes": "Tools & Home Improvement: male presenter 'Amir' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_FAIZ_01",
+    "fit_score": 0.82,
+    "suitability_notes": "Tools & Home Improvement: male presenter 'Faiz' in office setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_RAFI_03",
+    "fit_score": 0.8,
+    "suitability_notes": "Tools & Home Improvement: male presenter 'Rafi' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   }
+  ],
+  "Pet Care": [
+   {
+    "avatar_code": "BOS_F_DINA_02",
+    "fit_score": 0.88,
+    "suitability_notes": "Pet Care: female presenter 'Dina' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_HANI_02",
+    "fit_score": 0.86,
+    "suitability_notes": "Pet Care: female presenter 'Hani' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_LIYANA_02",
+    "fit_score": 0.84,
+    "suitability_notes": "Pet Care: female presenter 'Liyana' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_MIRA_02",
+    "fit_score": 0.82,
+    "suitability_notes": "Pet Care: female presenter 'Mira' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   },
+   {
+    "avatar_code": "BOS_F_RINA_02",
+    "fit_score": 0.8,
+    "suitability_notes": "Pet Care: female presenter 'Rina' in home setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+   }
+  ]
+ }
+}

@@ -89,6 +89,18 @@ domains:
       - agent/services/kalodata_import_service.py
       - tests/unit/test_kalodata_import_service.py
       - tests/api/test_kalodata_import_api.py
+
+      # Creative Intelligence Round 1 — avatar recommendation (read-only, non-generative)
+      - agent/authority/creative_category_cluster_map.json
+      - agent/authority/creative_avatar_cluster_crosswalk.json
+      - agent/services/creative_avatar_recommendation_service.py
+      - agent/api/creative_intelligence.py
+      - tests/unit/test_creative_avatar_recommendation_service.py
+      - tests/api/test_creative_intelligence_api.py
+      - dashboard/src/api/creativeIntelligence.ts
+      - dashboard/src/components/product-intelligence/RecommendedAvatarsCard.tsx
+      - dashboard/src/components/product-intelligence/RecommendedAvatarsCard.test.tsx
+
       - agent/services/bosmax_product_family.py
       - agent/services/claim_safe_rewrite_service.py
       - agent/services/ai_provider_settings_service.py

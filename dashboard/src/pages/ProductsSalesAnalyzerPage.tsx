@@ -9,6 +9,7 @@ import {
 	fetchProductIntelligenceSnapshots,
 } from "../api/products";
 import ProductIntelligenceReviewDraftPanel from "../components/product-intelligence/ProductIntelligenceReviewDraftPanel";
+import RecommendedAvatarsCard from "../components/product-intelligence/RecommendedAvatarsCard";
 import { HelperText } from "../components/ui";
 import type {
 	FastMossImportBatchReport,
@@ -2622,6 +2623,9 @@ export default function ProductsSalesAnalyzerPage() {
 
 								{activeTab === "INTELLIGENCE" && (
 									<div className="space-y-6">
+										{selectedProduct ? (
+											<RecommendedAvatarsCard productId={selectedProduct.id} />
+										) : null}
 										{selectedProduct ? (
 											<ProductIntelligenceReviewDraftPanel
 												productId={selectedProduct.id}
