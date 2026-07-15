@@ -4,6 +4,8 @@ from fastapi import APIRouter, HTTPException
 
 from agent.models.product_intelligence import ProductIntelligenceResolveRequest
 from agent.models.product_intelligence_review_draft import (
+    ProductIntelligenceAIFillRequest,
+    ProductIntelligenceAIFillResult,
     ProductIntelligenceReviewDraftApproveRequest,
     ProductIntelligenceReviewDraftRejectRequest,
     ProductIntelligenceReviewDraftUpdateRequest,
@@ -21,6 +23,7 @@ from agent.services.product_intelligence_snapshot_service import (
     get_provenance_list_response,
 )
 from agent.services.product_intelligence_review_draft_service import (
+    ai_fill_missing_review_draft,
     approve_review_draft,
     get_review_draft_by_id,
     reject_review_draft,
@@ -101,6 +104,35 @@ async def product_intelligence_review_draft_validate(draft_id: str) -> dict:
     except ValueError as exc:
         if str(exc) == "DRAFT_NOT_FOUND":
             raise HTTPException(status_code=404, detail="DRAFT_NOT_FOUND") from exc
+        raise
+
+
+@router.post("/review-drafts/{draft_id}/ai-fill-missing")
+async def product_intelligence_review_draft_ai_fill_missing(
+    draft_id: str,
+    request: ProductIntelligenceAIFillRequest | None = None,
+) -> ProductIntelligenceAIFillResult:
+    """AI Fill Missing — DeepSeek proposes DRAFT values for missing/selected
+    Product Truth fields only. Distinct from deterministic Recompute (no AI).
+    Fail-closed (409) when the provider lane is unconfigured; 502 on a provider
+    call failure. Never approves, never overwrites valid human evidence, never
+    creates a snapshot. Result is a review draft with field-level provenance."""
+    from agent.services import ai_copy_provider_adapter as _prov
+
+    selected = request.selected_fields if request else None
+    try:
+        result = await ai_fill_missing_review_draft(draft_id, selected_fields=selected)
+        return ProductIntelligenceAIFillResult(**result)
+    except _prov.AICopyProviderNotConfigured as exc:
+        raise HTTPException(status_code=409, detail={"error": exc.code}) from exc
+    except _prov.AICopyProviderError as exc:
+        raise HTTPException(status_code=502, detail={"error": exc.code, "detail": exc.detail}) from exc
+    except ValueError as exc:
+        code = str(exc)
+        if code == "DRAFT_NOT_FOUND":
+            raise HTTPException(status_code=404, detail=code) from exc
+        if code.startswith("DRAFT_UPDATE_FORBIDDEN:"):
+            raise HTTPException(status_code=409, detail=code) from exc
         raise
 
 

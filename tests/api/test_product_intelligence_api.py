@@ -138,3 +138,69 @@ def test_post_product_intelligence_backfill_preview(monkeypatch):
     payload = response.json()
     assert payload["resolved"] == 299
     assert payload["write_back_status"] == "READ_ONLY_NO_DB_WRITES"
+
+
+# ── AI Fill Missing route ────────────────────────────────────────────────────
+def test_ai_fill_missing_route_returns_result(monkeypatch):
+    captured = {}
+
+    async def fake_fill(draft_id, *, selected_fields=None):
+        captured["draft_id"] = draft_id
+        captured["selected_fields"] = selected_fields
+        return {
+            "draft_id": draft_id, "product_id": "prod-1", "review_status": "NEEDS_REVISION",
+            "provider": "deepseek", "model": "deepseek-chat", "prompt_version": "product_intel_ai_fill_v1",
+            "generated_at": "2026-07-15T00:00:00Z", "targeted_fields": ["benefits_json"],
+            "proposed": [{"field": "benefits_json", "status": "INFERENCE", "confidence": 0.6,
+                          "rationale": "category", "previous_value": None, "proposed_value": ["Cold drinks"]}],
+            "unresolved": [], "provider_configured": True,
+        }
+
+    monkeypatch.setattr(
+        "agent.api.product_intelligence.ai_fill_missing_review_draft", fake_fill
+    )
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/product-intelligence/review-drafts/draft-1/ai-fill-missing",
+        json={"selected_fields": ["benefits_json"]},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider"] == "deepseek"
+    assert body["review_status"] == "NEEDS_REVISION"
+    assert body["proposed"][0]["field"] == "benefits_json"
+    assert captured == {"draft_id": "draft-1", "selected_fields": ["benefits_json"]}
+
+
+def test_ai_fill_missing_route_maps_errors(monkeypatch):
+    from agent.services import ai_copy_provider_adapter as prov
+
+    async def not_configured(draft_id, *, selected_fields=None):
+        raise prov.AICopyProviderNotConfigured(prov.ERR_NOT_CONFIGURED)
+
+    monkeypatch.setattr(
+        "agent.api.product_intelligence.ai_fill_missing_review_draft", not_configured
+    )
+    client = TestClient(_build_app())
+    r1 = client.post("/api/product-intelligence/review-drafts/draft-1/ai-fill-missing", json={})
+    assert r1.status_code == 409
+    assert r1.json()["detail"]["error"] == prov.ERR_NOT_CONFIGURED
+
+    async def provider_error(draft_id, *, selected_fields=None):
+        raise prov.AICopyProviderError(prov.ERR_CALL_FAILED, detail="boom")
+
+    monkeypatch.setattr(
+        "agent.api.product_intelligence.ai_fill_missing_review_draft", provider_error
+    )
+    r2 = client.post("/api/product-intelligence/review-drafts/draft-1/ai-fill-missing", json={})
+    assert r2.status_code == 502
+    assert r2.json()["detail"]["error"] == prov.ERR_CALL_FAILED
+
+    async def not_found(draft_id, *, selected_fields=None):
+        raise ValueError("DRAFT_NOT_FOUND")
+
+    monkeypatch.setattr(
+        "agent.api.product_intelligence.ai_fill_missing_review_draft", not_found
+    )
+    r3 = client.post("/api/product-intelligence/review-drafts/draft-1/ai-fill-missing", json={})
+    assert r3.status_code == 404
