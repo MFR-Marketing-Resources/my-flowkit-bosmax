@@ -124,6 +124,13 @@ domains:
       - dashboard/src/components/product-intelligence/CreativeSetupPanel.tsx
       - dashboard/src/components/product-intelligence/CreativeSetupPanel.test.tsx
 
+      # Creative Intelligence Round 5 — gated generation handoff preview (APPROVED-only, read-only, non-generative)
+      - agent/services/creative_handoff_service.py
+      - tests/unit/test_creative_handoff_service.py
+      - tests/api/test_creative_handoff_api.py
+      - dashboard/src/components/product-intelligence/CreativeHandoffPreview.tsx
+      - dashboard/src/components/product-intelligence/CreativeHandoffPreview.test.tsx
+
       - agent/services/bosmax_product_family.py
       - agent/services/claim_safe_rewrite_service.py
       - agent/services/ai_provider_settings_service.py
