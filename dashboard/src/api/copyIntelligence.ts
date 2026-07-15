@@ -1,4 +1,4 @@
-import { postAPI } from "./client";
+import { postAPI, postMultipartAPI } from "./client";
 
 export interface CopyIntelligenceDryRunReport {
 	source_workbook: string;
@@ -16,9 +16,26 @@ export interface CopyIntelligenceDryRunReport {
 	records: unknown[];
 }
 
-export function runCopyIntelligenceDryRun(sourcePath: string) {
+export interface CopyIntelligenceWorkbookUploadReport {
+	source_id: string;
+	original_filename: string;
+	fingerprint: string;
+	sheet_names: string[];
+	required_sheets: string[];
+}
+
+export function uploadCopyIntelligenceWorkbook(workbook: File) {
+	const body = new FormData();
+	body.append("workbook", workbook);
+	return postMultipartAPI<CopyIntelligenceWorkbookUploadReport>(
+		"/api/kalodata/copy-intelligence/workbooks",
+		body,
+	);
+}
+
+export function runUploadedCopyIntelligenceDryRun(sourceId: string) {
 	return postAPI<CopyIntelligenceDryRunReport>(
-		"/api/kalodata/copy-intelligence/dry-run",
-		{ source_path: sourcePath },
+		"/api/kalodata/copy-intelligence/dry-run-upload",
+		{ source_id: sourceId },
 	);
 }

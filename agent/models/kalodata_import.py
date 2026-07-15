@@ -90,6 +90,18 @@ class KalodataImportRequest(BaseModel):
     source_path: str | None = None
 
 
+class CopyIntelligenceUploadedSourceRequest(BaseModel):
+    source_id: str
+
+
+class CopyIntelligenceWorkbookUploadReport(BaseModel):
+    source_id: str
+    original_filename: str
+    fingerprint: str
+    sheet_names: list[str]
+    required_sheets: list[str]
+
+
 class KalodataApplyHubRequest(BaseModel):
     reference_ids: list[str] | None = None
 
