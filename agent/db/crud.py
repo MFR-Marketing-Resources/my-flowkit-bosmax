@@ -8,7 +8,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "avatar_product_fit", "creative_scene_prompt", "poster_copy_set", "poster_deliverable", "extend_lineage"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "poster_copy_set", "poster_deliverable", "extend_lineage"})
 
 
 def _validate_table(table: str) -> None:
@@ -53,6 +53,7 @@ _COLUMNS = {
     "copy_generation_batch": {"product_id", "requested_count", "created_count", "deduped_count", "rejected_count", "source", "provider_lane", "provider_model", "updated_at"},
     "avatar_product_fit": {"avatar_code", "product_category", "fit_score", "suitability_notes", "updated_at"},
     "creative_scene_prompt": {"template_id", "cluster", "source_category", "cluster_source", "main_action", "setting", "full_prompt_template", "base_prompt", "combined_prompt_suggestion", "negative_prompt", "variant", "notes", "provenance", "updated_at"},
+    "creative_camera_preset": {"preset_code", "preset_name", "shot_type", "distance_angle", "movement", "block_group", "provenance", "updated_at"},
     "product_intelligence_review_field_provenance": {"draft_id", "product_id", "field_name", "declared_value", "normalized_value", "source_type", "source_url", "source_lane", "evidence_kind", "extraction_method", "confidence_score", "verification_status", "claim_risk_flag", "reviewer_decision", "reviewer_note", "updated_at"},
     "extend_lineage": {"workspace_generation_package_id", "project_id", "scene_id", "block_index", "block_position", "parent_operation_id", "parent_primary_media_id", "child_operation_id", "child_primary_media_id", "child_workflow_id", "batch_id", "model_key", "aspect_ratio", "start_frame_index", "end_frame_index", "continuation_prompt_hash", "idempotency_key", "polling_state", "retry_attempt", "output_url", "error_code", "error_message", "updated_at", "completed_at"},
 }
@@ -851,6 +852,56 @@ async def list_creative_scene_prompts(
         q += " AND cluster=?"
         params.append(cluster)
     q += " ORDER BY template_id ASC LIMIT ?"
+    params.append(limit)
+    cur = await db.execute(q, params)
+    return [dict(r) for r in await cur.fetchall()]
+
+
+# --- creative_camera_preset (Creative Intelligence Round 3) ---
+
+async def upsert_creative_camera_preset(**kw) -> dict:
+    db = await get_db()
+    now = _now()
+    preset_code = kw.get("preset_code", "")
+    if not preset_code:
+        raise ValueError("preset_code is required")
+    allowed = _COLUMNS["creative_camera_preset"]
+    cols: list[str] = []
+    vals: list[object] = []
+    for k, v in kw.items():
+        if k in allowed and k != "preset_code":
+            cols.append(k)
+            vals.append(v)
+    if "updated_at" not in cols:
+        cols.append("updated_at")
+        vals.append(now)
+    set_clause = ", ".join(f"{c}=?" for c in cols)
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO creative_camera_preset (preset_code, {', '.join(cols)}) "
+            f"VALUES (?, {', '.join(['?'] * len(cols))}) "
+            f"ON CONFLICT(preset_code) DO UPDATE SET {set_clause}",
+            [preset_code] + vals + list(vals),
+        )
+        await db.commit()
+    cur = await db.execute(
+        "SELECT * FROM creative_camera_preset WHERE preset_code=?", (preset_code,)
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else {}
+
+
+async def list_creative_camera_presets(
+    block_group: str | None = None,
+    limit: int = 200,
+) -> list[dict]:
+    db = await get_db()
+    q = "SELECT * FROM creative_camera_preset WHERE 1=1"
+    params: list[object] = []
+    if block_group:
+        q += " AND block_group=?"
+        params.append(block_group)
+    q += " ORDER BY preset_code ASC LIMIT ?"
     params.append(limit)
     cur = await db.execute(q, params)
     return [dict(r) for r in await cur.fetchall()]

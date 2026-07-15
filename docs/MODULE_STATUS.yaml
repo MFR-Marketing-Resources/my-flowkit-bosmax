@@ -109,6 +109,14 @@ domains:
       - dashboard/src/components/product-intelligence/RecommendedScenePromptsCard.tsx
       - dashboard/src/components/product-intelligence/RecommendedScenePromptsCard.test.tsx
 
+      # Creative Intelligence Round 3 — camera / video preset library (read-only, non-generative)
+      - agent/authority/creative_camera_preset_library.json
+      - agent/services/creative_camera_preset_service.py
+      - tests/unit/test_creative_camera_preset_service.py
+      - tests/api/test_creative_camera_preset_api.py
+      - dashboard/src/components/product-intelligence/RecommendedCameraPresetsCard.tsx
+      - dashboard/src/components/product-intelligence/RecommendedCameraPresetsCard.test.tsx
+
       - agent/services/bosmax_product_family.py
       - agent/services/claim_safe_rewrite_service.py
       - agent/services/ai_provider_settings_service.py

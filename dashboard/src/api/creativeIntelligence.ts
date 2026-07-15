@@ -67,3 +67,58 @@ export function getScenePromptRecommendationForProduct(productId: string) {
 		`/api/creative-intelligence/scene-prompt-recommendation?product_id=${encodeURIComponent(productId)}`,
 	);
 }
+
+// --- Round 3: Camera / Video Presets (read-only) ---
+
+export interface CameraPreset {
+	preset_code: string;
+	preset_name?: string;
+	shot_type?: string;
+	distance_angle?: string;
+	movement?: string;
+	block_group?: string;
+	source_row?: number;
+}
+
+export interface CameraBlockRecommendation {
+	block_purpose?: string;
+	content_type?: string;
+	recommended_preset?: CameraPreset | null;
+	alt_presets: CameraPreset[];
+	source_row?: number;
+}
+
+export interface CameraVocabularyEntry {
+	code?: string;
+	name?: string;
+	shot_type?: string;
+	description?: string;
+	effect?: string;
+	use_case?: string;
+}
+
+export interface CameraPresetRecommendation {
+	product_id?: string;
+	product_name?: string | null;
+	category?: string | null;
+	cluster: string;
+	cluster_source: string;
+	block_groups: string[];
+	block_recommendation_count: number;
+	block_recommendations: CameraBlockRecommendation[];
+	library: {
+		shot_distances: CameraVocabularyEntry[];
+		camera_angles: CameraVocabularyEntry[];
+		camera_movements: CameraVocabularyEntry[];
+		ecomm_shot_types: CameraVocabularyEntry[];
+		named_presets: CameraPreset[];
+	};
+	filtered_by: { block: string | null; content_type: string | null };
+	has_recommendations: boolean;
+}
+
+export function getCameraPresetRecommendationForProduct(productId: string) {
+	return getAPI<CameraPresetRecommendation>(
+		`/api/creative-intelligence/camera-preset-recommendation?product_id=${encodeURIComponent(productId)}`,
+	);
+}

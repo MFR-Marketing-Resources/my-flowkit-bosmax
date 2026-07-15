@@ -2118,6 +2118,26 @@ CREATE INDEX IF NOT EXISTS idx_creative_scene_prompt_cluster
 """)
         await db.commit()
 
+        # Creative Intelligence Round 3 — read-only Camera / Video Preset library.
+        # Config/reference table only: named HOOK/BODY/CTA/TRANS presets ingested
+        # from the workbook CameraSettings sheet. Reference-only — nothing here is
+        # written to product camera columns or fed to generation.
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS creative_camera_preset (
+    preset_code     TEXT PRIMARY KEY,
+    preset_name     TEXT,
+    shot_type       TEXT,
+    distance_angle  TEXT,
+    movement        TEXT,
+    block_group     TEXT,
+    provenance      TEXT,
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_creative_camera_preset_block
+    ON creative_camera_preset(block_group);
+""")
+        await db.commit()
+
         # Product Intelligence Snapshot foundation (Product Intelligence Backbone
         # PR 1). Durable sidecar storage only — this does not change product-row
         # truth, registration commit behavior, or ProductTruthService.

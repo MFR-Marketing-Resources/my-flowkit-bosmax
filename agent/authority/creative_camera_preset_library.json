@@ -1,0 +1,559 @@
+{
+  "library_version": "CREATIVE_CAMERA_PRESET_v1",
+  "source_workbook": "Structure prompt video.xlsx",
+  "source_sheet": "CameraSettings",
+  "provenance": "Ingested read-only from the workbook CameraSettings sheet (7 side-by-side tables). Reference/preview only — camera presets are NEVER written to product rows, product camera columns, or generation. Helper/dropdown display columns (28-31) are intentionally excluded as derived, non-authority strings.",
+  "block_groups": [
+    "BODY",
+    "CTA",
+    "HOOK",
+    "TRANS"
+  ],
+  "counts": {
+    "shot_distances": 7,
+    "camera_angles": 8,
+    "camera_movements": 15,
+    "ecomm_shot_types": 15,
+    "named_presets": 17,
+    "block_content_mapping": 12
+  },
+  "shot_distances": [
+    {
+      "code": "ECU",
+      "name": "Extreme Close-Up",
+      "description": "Detail produk, texture kulit, ingredient close-up",
+      "source_row": 3
+    },
+    {
+      "code": "CU",
+      "name": "Close-Up",
+      "description": "Muka penuh atau produk penuh dalam frame",
+      "source_row": 4
+    },
+    {
+      "code": "MCU",
+      "name": "Medium Close-Up",
+      "description": "Dada ke atas, conversational feel",
+      "source_row": 5
+    },
+    {
+      "code": "MS",
+      "name": "Medium Shot",
+      "description": "Pinggang ke atas, demo aplikasi",
+      "source_row": 6
+    },
+    {
+      "code": "MLS",
+      "name": "Medium Long Shot",
+      "description": "Lutut ke atas, body language visible",
+      "source_row": 7
+    },
+    {
+      "code": "FS",
+      "name": "Full Shot",
+      "description": "Full body, lifestyle context",
+      "source_row": 8
+    },
+    {
+      "code": "WS",
+      "name": "Wide Shot",
+      "description": "Environment, establishing shot",
+      "source_row": 9
+    }
+  ],
+  "camera_angles": [
+    {
+      "code": "EYE",
+      "name": "Eye Level",
+      "effect": "Natural, relatable, conversational",
+      "source_row": 3
+    },
+    {
+      "code": "HIGH",
+      "name": "High Angle",
+      "effect": "Subject kelihatan kecil, vulnerable, sympathetic",
+      "source_row": 4
+    },
+    {
+      "code": "LOW",
+      "name": "Low Angle",
+      "effect": "Subject kelihatan powerful, confident",
+      "source_row": 5
+    },
+    {
+      "code": "DUTCH",
+      "name": "Dutch Angle",
+      "effect": "Dramatic tension, unease",
+      "source_row": 6
+    },
+    {
+      "code": "OTS",
+      "name": "Over-the-Shoulder",
+      "effect": "Intimate, POV conversation",
+      "source_row": 7
+    },
+    {
+      "code": "TOPDOWN",
+      "name": "Top Down / Bird's Eye",
+      "effect": "Product flat lay, overhead demo",
+      "source_row": 8
+    },
+    {
+      "code": "POV",
+      "name": "Point of View",
+      "effect": "First person, immersive experience",
+      "source_row": 9
+    },
+    {
+      "code": "WORM",
+      "name": "Worm's Eye",
+      "effect": "Extreme low, heroic product shot",
+      "source_row": 10
+    }
+  ],
+  "camera_movements": [
+    {
+      "code": "STATIC",
+      "name": "Static",
+      "use_case": "Stable, professional, talking head",
+      "source_row": 3
+    },
+    {
+      "code": "PAN_L",
+      "name": "Pan Left",
+      "use_case": "Reveal environment, transition",
+      "source_row": 4
+    },
+    {
+      "code": "PAN_R",
+      "name": "Pan Right",
+      "use_case": "Reveal environment, transition",
+      "source_row": 5
+    },
+    {
+      "code": "TILT_UP",
+      "name": "Tilt Up",
+      "use_case": "Reveal product dari bawah, dramatic",
+      "source_row": 6
+    },
+    {
+      "code": "TILT_DN",
+      "name": "Tilt Down",
+      "use_case": "Reveal dari atas, scanning",
+      "source_row": 7
+    },
+    {
+      "code": "ZOOM_IN",
+      "name": "Zoom In",
+      "use_case": "Focus attention, emphasis",
+      "source_row": 8
+    },
+    {
+      "code": "ZOOM_OUT",
+      "name": "Zoom Out",
+      "use_case": "Reveal context, end shot",
+      "source_row": 9
+    },
+    {
+      "code": "DOLLY_IN",
+      "name": "Dolly In",
+      "use_case": "Move closer, intimate",
+      "source_row": 10
+    },
+    {
+      "code": "DOLLY_OUT",
+      "name": "Dolly Out",
+      "use_case": "Pull back, reveal",
+      "source_row": 11
+    },
+    {
+      "code": "TRACK_L",
+      "name": "Track Left",
+      "use_case": "Follow subject, dynamic",
+      "source_row": 12
+    },
+    {
+      "code": "TRACK_R",
+      "name": "Track Right",
+      "use_case": "Follow subject, dynamic",
+      "source_row": 13
+    },
+    {
+      "code": "ORBIT",
+      "name": "Orbit / Arc",
+      "use_case": "360° around subject, product showcase",
+      "source_row": 14
+    },
+    {
+      "code": "HANDHELD",
+      "name": "Handheld",
+      "use_case": "Organic, authentic, documentary feel",
+      "source_row": 15
+    },
+    {
+      "code": "CRANE_UP",
+      "name": "Crane Up",
+      "use_case": "Rising, uplifting, establishing",
+      "source_row": 16
+    },
+    {
+      "code": "CRANE_DN",
+      "name": "Crane Down",
+      "use_case": "Descending, focusing in",
+      "source_row": 17
+    }
+  ],
+  "ecomm_shot_types": [
+    {
+      "code": "HERO",
+      "shot_type": "Product Hero Shot",
+      "description": "Glamour shot produk, lighting perfect",
+      "source_row": 3
+    },
+    {
+      "code": "UNBOX",
+      "shot_type": "Unboxing Shot",
+      "description": "Reveal produk dari packaging",
+      "source_row": 4
+    },
+    {
+      "code": "DEMO",
+      "shot_type": "Application Demo",
+      "description": "Tunjuk cara guna produk",
+      "source_row": 5
+    },
+    {
+      "code": "TEXTURE",
+      "shot_type": "Texture Close-Up",
+      "description": "Detail texture produk/kulit",
+      "source_row": 6
+    },
+    {
+      "code": "BEFORE",
+      "shot_type": "Before State",
+      "description": "Masalah sebelum guna produk",
+      "source_row": 7
+    },
+    {
+      "code": "AFTER",
+      "shot_type": "After State",
+      "description": "Hasil selepas guna produk",
+      "source_row": 8
+    },
+    {
+      "code": "SPLIT",
+      "shot_type": "Before/After Split",
+      "description": "Split screen comparison",
+      "source_row": 9
+    },
+    {
+      "code": "INGRED",
+      "shot_type": "Ingredient Spotlight",
+      "description": "Highlight bahan utama",
+      "source_row": 10
+    },
+    {
+      "code": "TESTI",
+      "shot_type": "Testimonial Frame",
+      "description": "Customer/avatar speaking",
+      "source_row": 11
+    },
+    {
+      "code": "LIFE",
+      "shot_type": "Lifestyle Shot",
+      "description": "Produk dalam daily life context",
+      "source_row": 12
+    },
+    {
+      "code": "FLAT",
+      "shot_type": "Flat Lay",
+      "description": "Top-down product arrangement",
+      "source_row": 13
+    },
+    {
+      "code": "ROTATE",
+      "shot_type": "Product Rotation",
+      "description": "360° product spin",
+      "source_row": 14
+    },
+    {
+      "code": "CTA",
+      "shot_type": "CTA Frame",
+      "description": "Call-to-action with product",
+      "source_row": 15
+    },
+    {
+      "code": "LOGO",
+      "shot_type": "Logo End Card",
+      "description": "Brand logo closing",
+      "source_row": 16
+    },
+    {
+      "code": "PAIN",
+      "shot_type": "Pain Point Visual",
+      "description": "Visualize masalah customer",
+      "source_row": 17
+    }
+  ],
+  "named_presets": [
+    {
+      "preset_code": "HOOK_A",
+      "preset_name": "Hook - Pain Question",
+      "shot_type": "PAIN",
+      "distance_angle": "MCU + EYE",
+      "movement": "STATIC",
+      "block_group": "HOOK",
+      "source_row": 3
+    },
+    {
+      "preset_code": "HOOK_B",
+      "preset_name": "Hook - Dramatic Reveal",
+      "shot_type": "HERO",
+      "distance_angle": "CU + LOW",
+      "movement": "ZOOM_IN",
+      "block_group": "HOOK",
+      "source_row": 4
+    },
+    {
+      "preset_code": "HOOK_C",
+      "preset_name": "Hook - Lifestyle Problem",
+      "shot_type": "LIFE",
+      "distance_angle": "MS + EYE",
+      "movement": "HANDHELD",
+      "block_group": "HOOK",
+      "source_row": 5
+    },
+    {
+      "preset_code": "HOOK_D",
+      "preset_name": "Hook - Before State",
+      "shot_type": "BEFORE",
+      "distance_angle": "CU + HIGH",
+      "movement": "STATIC",
+      "block_group": "HOOK",
+      "source_row": 6
+    },
+    {
+      "preset_code": "BODY_A",
+      "preset_name": "Body - Demo Application",
+      "shot_type": "DEMO",
+      "distance_angle": "MCU + EYE",
+      "movement": "STATIC",
+      "block_group": "BODY",
+      "source_row": 7
+    },
+    {
+      "preset_code": "BODY_B",
+      "preset_name": "Body - Ingredient Focus",
+      "shot_type": "INGRED",
+      "distance_angle": "ECU + TOPDOWN",
+      "movement": "ZOOM_IN",
+      "block_group": "BODY",
+      "source_row": 8
+    },
+    {
+      "preset_code": "BODY_C",
+      "preset_name": "Body - Texture Reveal",
+      "shot_type": "TEXTURE",
+      "distance_angle": "ECU + EYE",
+      "movement": "DOLLY_IN",
+      "block_group": "BODY",
+      "source_row": 9
+    },
+    {
+      "preset_code": "BODY_D",
+      "preset_name": "Body - Testimonial",
+      "shot_type": "TESTI",
+      "distance_angle": "MCU + EYE",
+      "movement": "STATIC",
+      "block_group": "BODY",
+      "source_row": 10
+    },
+    {
+      "preset_code": "BODY_E",
+      "preset_name": "Body - Product Showcase",
+      "shot_type": "ROTATE",
+      "distance_angle": "CU + EYE",
+      "movement": "ORBIT",
+      "block_group": "BODY",
+      "source_row": 11
+    },
+    {
+      "preset_code": "BODY_F",
+      "preset_name": "Body - Lifestyle Use",
+      "shot_type": "LIFE",
+      "distance_angle": "MS + EYE",
+      "movement": "TRACK_R",
+      "block_group": "BODY",
+      "source_row": 12
+    },
+    {
+      "preset_code": "CTA_A",
+      "preset_name": "CTA - Product Hero",
+      "shot_type": "HERO",
+      "distance_angle": "CU + LOW",
+      "movement": "ZOOM_OUT",
+      "block_group": "CTA",
+      "source_row": 13
+    },
+    {
+      "preset_code": "CTA_B",
+      "preset_name": "CTA - After Result",
+      "shot_type": "AFTER",
+      "distance_angle": "MCU + EYE",
+      "movement": "STATIC",
+      "block_group": "CTA",
+      "source_row": 14
+    },
+    {
+      "preset_code": "CTA_C",
+      "preset_name": "CTA - Logo End",
+      "shot_type": "LOGO",
+      "distance_angle": "MS + EYE",
+      "movement": "STATIC",
+      "block_group": "CTA",
+      "source_row": 15
+    },
+    {
+      "preset_code": "CTA_D",
+      "preset_name": "CTA - Pack Shot",
+      "shot_type": "FLAT",
+      "distance_angle": "FS + TOPDOWN",
+      "movement": "STATIC",
+      "block_group": "CTA",
+      "source_row": 16
+    },
+    {
+      "preset_code": "TRANS_A",
+      "preset_name": "Transition - Pan Reveal",
+      "shot_type": "LIFE",
+      "distance_angle": "WS + EYE",
+      "movement": "PAN_R",
+      "block_group": "TRANS",
+      "source_row": 17
+    },
+    {
+      "preset_code": "TRANS_B",
+      "preset_name": "Transition - Zoom Bridge",
+      "shot_type": "HERO",
+      "distance_angle": "CU + EYE",
+      "movement": "ZOOM_IN",
+      "block_group": "TRANS",
+      "source_row": 18
+    },
+    {
+      "preset_code": "TRANS_C",
+      "preset_name": "Transition - Tilt Down",
+      "shot_type": "DEMO",
+      "distance_angle": "MS + HIGH",
+      "movement": "TILT_DN",
+      "block_group": "TRANS",
+      "source_row": 19
+    }
+  ],
+  "block_content_mapping": [
+    {
+      "block_purpose": "Hook Block",
+      "content_type": "Pain Point Question",
+      "recommended_preset": "HOOK_A",
+      "alt_preset_1": "HOOK_C",
+      "alt_preset_2": "HOOK_D",
+      "source_row": 3
+    },
+    {
+      "block_purpose": "Hook Block",
+      "content_type": "Dramatic Statement",
+      "recommended_preset": "HOOK_B",
+      "alt_preset_1": "HOOK_A",
+      "alt_preset_2": "HOOK_C",
+      "source_row": 4
+    },
+    {
+      "block_purpose": "Hook Block",
+      "content_type": "Story Opening",
+      "recommended_preset": "HOOK_C",
+      "alt_preset_1": "HOOK_D",
+      "alt_preset_2": "HOOK_A",
+      "source_row": 5
+    },
+    {
+      "block_purpose": "Body Block",
+      "content_type": "Product Demo",
+      "recommended_preset": "BODY_A",
+      "alt_preset_1": "BODY_C",
+      "alt_preset_2": "BODY_F",
+      "source_row": 6
+    },
+    {
+      "block_purpose": "Body Block",
+      "content_type": "Ingredient Highlight",
+      "recommended_preset": "BODY_B",
+      "alt_preset_1": "BODY_C",
+      "alt_preset_2": "BODY_E",
+      "source_row": 7
+    },
+    {
+      "block_purpose": "Body Block",
+      "content_type": "USP Explanation",
+      "recommended_preset": "BODY_D",
+      "alt_preset_1": "BODY_A",
+      "alt_preset_2": "BODY_F",
+      "source_row": 8
+    },
+    {
+      "block_purpose": "Body Block",
+      "content_type": "Testimonial/Story",
+      "recommended_preset": "BODY_D",
+      "alt_preset_1": "BODY_F",
+      "alt_preset_2": "BODY_A",
+      "source_row": 9
+    },
+    {
+      "block_purpose": "Body Block",
+      "content_type": "Before/After",
+      "recommended_preset": "BODY_C",
+      "alt_preset_1": "BODY_A",
+      "alt_preset_2": "BODY_E",
+      "source_row": 10
+    },
+    {
+      "block_purpose": "CTA Block",
+      "content_type": "Call to Action",
+      "recommended_preset": "CTA_A",
+      "alt_preset_1": "CTA_B",
+      "alt_preset_2": "CTA_C",
+      "source_row": 11
+    },
+    {
+      "block_purpose": "CTA Block",
+      "content_type": "Result Showcase",
+      "recommended_preset": "CTA_B",
+      "alt_preset_1": "CTA_A",
+      "alt_preset_2": "CTA_D",
+      "source_row": 12
+    },
+    {
+      "block_purpose": "CTA Block",
+      "content_type": "Brand Close",
+      "recommended_preset": "CTA_C",
+      "alt_preset_1": "CTA_D",
+      "alt_preset_2": "CTA_A",
+      "source_row": 13
+    },
+    {
+      "block_purpose": "Transition",
+      "content_type": "Scene Change",
+      "recommended_preset": "TRANS_A",
+      "alt_preset_1": "TRANS_B",
+      "alt_preset_2": "TRANS_C",
+      "source_row": 14
+    }
+  ],
+  "dangling_preset_references": [],
+  "quarantine": [
+    {
+      "section": "HELPER_DROPDOWNS",
+      "columns": "28-31",
+      "reason": "DERIVED_DISPLAY_STRINGS_NOT_AUTHORITY (excluded by design)"
+    }
+  ]
+}
