@@ -111,6 +111,20 @@ def test_product_registration_review_draft_ui_contract():
     assert "Smart Product Registration" in content
 
 
+def test_review_draft_status_cards_do_not_force_two_columns_in_narrow_preview_layout():
+    """Long status values must remain inside their cards beside the image preview."""
+    root = Path(__file__).parent.parent.parent
+    content = (
+        root
+        / "dashboard/src/components/product-registration/RegistrationReviewDraftPanel.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "grid grid-cols-1 gap-3 xl:grid-cols-2" in content
+    assert content.count("min-w-0 rounded-xl border border-slate-800 bg-slate-900/70 p-3") == 2
+    assert "break-words text-sm font-semibold text-emerald-300" in content
+    assert "break-words text-sm font-semibold text-sky-300" in content
+
+
 # ---------------------------------------------------------------------------
 # Hotfix: bulk FastMoss Convert entrypoint discoverability
 # ---------------------------------------------------------------------------
