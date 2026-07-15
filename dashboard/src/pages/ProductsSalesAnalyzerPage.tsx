@@ -557,12 +557,25 @@ function ImageFallback({
 
 const PAGE_SIZE_PRODUCTS = 20;
 
+// Demo-safe initial source filter. Normal `/products` keeps the FASTMOSS default,
+// but when arriving via the Smart Registration bridge (?tab=INTELLIGENCE) or a
+// deep-link that names a product, default to ALL so manually-registered products
+// are discoverable and don't appear "missing". An explicit ?source= always wins.
+export function resolveInitialSourceFilter(params: URLSearchParams): string {
+	const explicit = params.get("source");
+	if (explicit) return explicit;
+	if (params.get("tab") === "INTELLIGENCE" || params.get("product")) return "ALL";
+	return "FASTMOSS";
+}
+
 export default function ProductsSalesAnalyzerPage() {
 	const [products, setProducts] = useState<Product[]>([]);
 	const [searchParams] = useSearchParams();
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const [search, setSearch] = useState("");
-	const [sourceFilter, setSourceFilter] = useState("FASTMOSS");
+	const [sourceFilter, setSourceFilter] = useState(() =>
+		resolveInitialSourceFilter(new URLSearchParams(window.location.search)),
+	);
 	const [groupFilter, setGroupFilter] = useState("ALL");
 	const [familyFilter, setFamilyFilter] = useState("ALL");
 	const [copyRouteFilter, setCopyRouteFilter] = useState("ALL");
