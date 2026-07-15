@@ -1,5 +1,6 @@
 import type { ChangeEvent, FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import { fetchAPI, patchAPI, postAPI, postMultipartAPI } from "../api/client";
 import {
@@ -558,6 +559,7 @@ const PAGE_SIZE_PRODUCTS = 20;
 
 export default function ProductsSalesAnalyzerPage() {
 	const [products, setProducts] = useState<Product[]>([]);
+	const [searchParams] = useSearchParams();
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const [search, setSearch] = useState("");
 	const [sourceFilter, setSourceFilter] = useState("FASTMOSS");
@@ -851,6 +853,23 @@ export default function ProductsSalesAnalyzerPage() {
 			return;
 		setSelectedId(filteredProducts[0]?.id || null);
 	}, [filteredProducts, selectedId]);
+
+	// Deep-link bridge (from Smart Registration): ?tab=INTELLIGENCE opens the
+	// Product Intelligence / AI Fill Missing tab; ?product=<id> preselects it.
+	// Applied once after products load; never overrides later user navigation.
+	const deepLinkApplied = useRef(false);
+	useEffect(() => {
+		if (deepLinkApplied.current || products.length === 0) return;
+		const tabParam = searchParams.get("tab");
+		const productParam = searchParams.get("product");
+		if (productParam && products.some((product) => product.id === productParam)) {
+			setSelectedId(productParam);
+		}
+		if (tabParam === "INTELLIGENCE") {
+			setActiveTab("INTELLIGENCE");
+		}
+		deepLinkApplied.current = true;
+	}, [products, searchParams]);
 
 	useEffect(() => {
 		setSelectedImageUrl(selectedProduct?.image_url || "");

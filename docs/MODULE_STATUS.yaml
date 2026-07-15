@@ -353,6 +353,7 @@ domains:
       - tests/unit/test_production_queue_service.py
       - tests/api/test_batch_prompt_and_production_api.py
       - dashboard/src/pages/ProductRegistrationPage.tsx
+      - dashboard/src/pages/ProductRegistrationPage.test.tsx
       - dashboard/src/components/product-registration/ProductKnowledgeIntakeForm.tsx
       - dashboard/src/components/product-registration/RegistrationReviewDraftPanel.tsx
       - dashboard/src/components/product-registration/BulkFastMossConvertTab.tsx

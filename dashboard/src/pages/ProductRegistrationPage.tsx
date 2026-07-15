@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { getAPI, postAPI } from "../api/client";
 import AIFormPack from "../components/product-registration/AIFormPack";
 import BulkFastMossConvertTab from "../components/product-registration/BulkFastMossConvertTab";
@@ -171,6 +171,45 @@ export default function ProductRegistrationPage() {
 						</button>
 					)}
 				</div>
+			</div>
+
+			<div
+				data-testid="product-intelligence-bridge"
+				className="mb-6 rounded-xl border border-sky-500/30 bg-sky-500/5 p-4"
+			>
+				<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+					<div className="space-y-1">
+						<div className="text-sm font-bold text-sky-100">
+							Product Truth &amp; AI Fill Missing (Product Intelligence)
+						</div>
+						<p className="max-w-2xl text-xs leading-relaxed text-slate-400">
+							Registration captures raw evidence. To review, enrich, and approve{" "}
+							<span className="font-semibold text-slate-200">Product Truth</span>{" "}
+							(Product Knowledge, Benefits, Usage, Ingredients, Warnings, Target
+							Customer), open the Product Intelligence panel for the product —{" "}
+							<span className="font-semibold text-amber-200">Recompute</span> is
+							deterministic (no AI), and{" "}
+							<span className="font-semibold text-sky-200">AI Fill Missing</span>{" "}
+							uses DeepSeek to propose review-only draft values for empty fields.
+							Manual and imported products use the same panel.
+						</p>
+					</div>
+					<Link
+						to="/products?tab=INTELLIGENCE"
+						data-testid="open-product-intelligence-link"
+						className="shrink-0 rounded-lg border border-sky-400/40 bg-sky-500/15 px-4 py-2 text-center text-[11px] font-bold uppercase tracking-widest text-sky-100 hover:bg-sky-500/25"
+					>
+						Open Product Intelligence / AI Fill Missing
+					</Link>
+				</div>
+				<p className="mt-2 text-[10px] text-slate-500">
+					Workflow: <span className="text-slate-300">Copy Intelligence</span> = avatar
+					/ copy context review · <span className="text-slate-300">Smart Registration
+					/ Product Intelligence</span> = Product Truth review &amp; enrichment ·{" "}
+					<span className="text-slate-300">Copy Registry</span> = approved / generated
+					copy output library. Nothing here auto-approves Product Truth or routes raw
+					seed data to generation.
+				</p>
 			</div>
 
 			<div className="mb-6 flex gap-1 rounded-xl bg-slate-900/60 border border-slate-800 p-1 w-fit">
