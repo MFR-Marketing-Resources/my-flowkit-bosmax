@@ -6,6 +6,34 @@ import {
 } from "../../api/creativeIntelligence";
 
 /**
+ * Map a fail-closed handoff error (raw message like `API 409: {"detail":"CODE"}`)
+ * to clear, demo-ready copy for each blocked state. Still a preview boundary —
+ * no generation is implied by any of these messages.
+ */
+export function handoffBlockedMessage(raw: string): string {
+	const m = raw || "";
+	if (m.includes("SELECTION_NOT_APPROVED")) {
+		return "This creative setup is not APPROVED yet. Approve the saved selection above (DRAFT/REJECTED cannot hand off) before preparing a generation handoff.";
+	}
+	if (m.includes("SELECTION_NOT_FOUND")) {
+		return "No saved creative selection for this product yet. Save and approve a creative setup above first.";
+	}
+	if (m.includes("PRODUCT_NOT_FOUND")) {
+		return "Product not found — reselect a product.";
+	}
+	if (m.includes("INVALID_AVATAR_CODE")) {
+		return "The selected avatar is no longer valid. Update and re-approve the creative setup above.";
+	}
+	if (m.includes("INVALID_SCENE_TEMPLATE_ID")) {
+		return "The selected scene template is no longer valid. Update and re-approve the creative setup above.";
+	}
+	if (m.includes("INVALID_CAMERA_PRESET_CODE")) {
+		return "The selected camera preset is no longer valid. Update and re-approve the creative setup above.";
+	}
+	return `Handoff blocked: ${m}`;
+}
+
+/**
  * Creative Generation Handoff PREVIEW (Creative Intelligence — Round 5).
  * On explicit user action, reads the product's APPROVED creative selection and
  * resolves [AVATAR]/[PRODUCT] at this boundary to show a generation-ready PREVIEW.
@@ -61,8 +89,8 @@ export default function CreativeHandoffPreview({ productId }: { productId: strin
 			</button>
 
 			{error && (
-				<p className="mt-3 text-xs font-medium text-red-300" role="alert" data-testid="creative-handoff-error">
-					Handoff blocked: {error}
+				<p className="mt-3 text-xs font-medium text-amber-200" role="alert" data-testid="creative-handoff-error">
+					{handoffBlockedMessage(error)}
 				</p>
 			)}
 
