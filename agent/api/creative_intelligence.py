@@ -24,6 +24,7 @@ from agent.services import creative_avatar_recommendation_service as _svc
 from agent.services import creative_scene_prompt_service as _scene
 from agent.services import creative_camera_preset_service as _camera
 from agent.services import creative_setup_service as _setup
+from agent.services import creative_handoff_service as _handoff
 
 router = APIRouter(prefix="/creative-intelligence", tags=["creative-intelligence"])
 
@@ -44,7 +45,7 @@ class CreativeSelectionReviewRequest(BaseModel):
     reviewer_note: str | None = None
 
 
-# Round 4 service error code -> HTTP status.
+# Round 4/5 service error code -> HTTP status.
 _SETUP_ERROR_STATUS = {
     "PRODUCT_NOT_FOUND": 404,
     "SELECTION_NOT_FOUND": 404,
@@ -53,6 +54,7 @@ _SETUP_ERROR_STATUS = {
     "INVALID_CAMERA_PRESET_CODE": 422,
     "INVALID_ACTION": 422,
     "NOT_IN_DRAFT": 409,
+    "SELECTION_NOT_APPROVED": 409,  # Round 5: DRAFT/REJECTED cannot hand off
 }
 
 
@@ -215,5 +217,23 @@ async def creative_selection_review(req: CreativeSelectionReviewRequest) -> dict
         return await _setup.review_creative_selection(
             req.product_id, req.action, req.reviewer_note
         )
+    except ValueError as exc:
+        _raise_setup_error(exc)
+
+
+# --- Round 5: gated generation handoff PREVIEW (APPROVED-only, read-only) ---
+
+
+@router.get("/creative-handoff")
+async def creative_handoff(product_id: str | None = None) -> dict:
+    """Prepare a read-only generation handoff PREVIEW from an APPROVED creative
+    selection. Resolves [AVATAR]/[PRODUCT] at this boundary only and returns a
+    payload labelled auto_generated=False / requires_confirmation=True. Fail-closed:
+    404 missing product/selection, 409 non-APPROVED (DRAFT/REJECTED), 422 invalid id.
+    NEVER generates, enqueues, burns credits, or writes anything."""
+    if not product_id:
+        raise HTTPException(status_code=422, detail="product_id is required")
+    try:
+        return await _handoff.prepare_generation_handoff(product_id)
     except ValueError as exc:
         _raise_setup_error(exc)

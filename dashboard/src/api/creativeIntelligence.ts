@@ -192,3 +192,42 @@ export function reviewCreativeSelection(productId: string, action: "APPROVE" | "
 		reviewer_note: reviewerNote ?? null,
 	});
 }
+
+// --- Round 5: gated generation handoff preview (APPROVED-only, read-only) ---
+
+export interface CreativeHandoff {
+	product_id: string;
+	product_name: string;
+	selection_id?: string | null;
+	selection_status: string;
+	cluster?: string | null;
+	cluster_source?: string | null;
+	avatar: { avatar_code?: string | null; character_name?: string | null; resolved_descriptor?: string | null };
+	scene_template: {
+		template_id?: string | null;
+		variant?: string | null;
+		main_action?: string | null;
+		setting?: string | null;
+		raw_prompt_template?: string | null;
+	};
+	camera_preset: {
+		preset_code?: string | null;
+		preset_name?: string | null;
+		shot_type?: string | null;
+		distance_angle?: string | null;
+		movement?: string | null;
+	};
+	resolved_prompt_preview?: string | null;
+	placeholders_resolved: Record<string, boolean>;
+	provenance: Record<string, unknown>;
+	auto_generated: boolean;
+	requires_confirmation: boolean;
+	handoff_status: string;
+	note: string;
+}
+
+export function getCreativeHandoffForProduct(productId: string) {
+	return getAPI<CreativeHandoff>(
+		`/api/creative-intelligence/creative-handoff?product_id=${encodeURIComponent(productId)}`,
+	);
+}
