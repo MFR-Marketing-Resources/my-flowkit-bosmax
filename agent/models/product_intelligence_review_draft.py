@@ -12,6 +12,45 @@ ReviewDraftStatus = Literal[
     "REJECTED",
     "APPROVED",
 ]
+
+
+class ProductIntelligenceAIFillRequest(BaseModel):
+    """AI Fill Missing input. selected_fields (optional) restricts enrichment to
+    those fields; when omitted, only currently-empty target fields are filled."""
+
+    selected_fields: list[str] | None = None
+
+
+class ProductIntelligenceAIFillProposal(BaseModel):
+    field: str
+    status: str
+    confidence: float | None = None
+    rationale: str = ""
+    previous_value: Any = None
+    proposed_value: Any = None
+
+
+class ProductIntelligenceAIFillUnresolved(BaseModel):
+    field: str
+    status: str
+    rationale: str = ""
+
+
+class ProductIntelligenceAIFillResult(BaseModel):
+    """AI Fill Missing result. Proposals are stored in the draft as review-only
+    suggestions with provenance; the draft is never auto-approved."""
+
+    draft_id: str
+    product_id: str
+    review_status: str
+    provider: str | None = None
+    model: str | None = None
+    prompt_version: str
+    generated_at: str | None = None
+    targeted_fields: list[str] = Field(default_factory=list)
+    proposed: list[ProductIntelligenceAIFillProposal] = Field(default_factory=list)
+    unresolved: list[ProductIntelligenceAIFillUnresolved] = Field(default_factory=list)
+    provider_configured: bool = True
 ProductIntelligenceClaimGate = Literal[
     "CLAIM_SAFE",
     "CLAIM_REVIEW_REQUIRED",

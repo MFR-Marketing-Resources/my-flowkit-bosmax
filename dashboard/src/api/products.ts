@@ -113,6 +113,43 @@ export async function prepareProductForCopywriting(
 	);
 }
 
+export interface ProductIntelligenceAIFillProposal {
+	field: string;
+	status: string;
+	confidence: number | null;
+	rationale: string;
+	previous_value: unknown;
+	proposed_value: unknown;
+}
+
+export interface ProductIntelligenceAIFillResult {
+	draft_id: string;
+	product_id: string;
+	review_status: string;
+	provider: string | null;
+	model: string | null;
+	prompt_version: string;
+	generated_at: string | null;
+	targeted_fields: string[];
+	proposed: ProductIntelligenceAIFillProposal[];
+	unresolved: { field: string; status: string; rationale: string }[];
+	provider_configured: boolean;
+}
+
+export async function aiFillMissingProductIntelligenceReviewDraft(
+	draftId: string,
+	selectedFields?: string[],
+): Promise<ProductIntelligenceAIFillResult> {
+	return fetchAPI<ProductIntelligenceAIFillResult>(
+		`/api/product-intelligence/review-drafts/${encodeURIComponent(draftId)}/ai-fill-missing`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(selectedFields ? { selected_fields: selectedFields } : {}),
+		},
+	);
+}
+
 export async function createProductIntelligenceReviewDraft(
 	productId: string,
 	payload: ProductIntelligenceReviewDraftMutationRequest,

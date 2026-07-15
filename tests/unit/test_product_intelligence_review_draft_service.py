@@ -266,3 +266,183 @@ async def test_claim_review_required_draft_cannot_be_approved_without_override()
             draft.draft_id,
             ProductIntelligenceReviewDraftApproveRequest(approved_by="reviewer-4"),
         )
+
+
+# ── AI Fill Missing (DeepSeek-backed) — provider mocked, never spends credits ──
+def _fake_fields_payload():
+    return {"fields": {
+        "product_description": {"value": "Stainless steel insulated bottle.", "status": "FACT", "confidence": 0.9, "rationale": "title"},
+        "benefits_json": {"value": ["Keeps drinks cold for hours"], "status": "INFERENCE", "confidence": 0.6, "rationale": "category"},
+        "usp_json": {"value": ["Double-wall vacuum insulation"], "status": "INFERENCE", "confidence": 0.5, "rationale": "category"},
+        "usage_text": {"value": "Fill with a beverage and seal the lid.", "status": "FACT", "confidence": 0.8, "rationale": "form"},
+        "target_customer_text": {"value": "Commuters who want a reusable bottle.", "status": "INFERENCE", "confidence": 0.7, "rationale": "avatar"},
+        "ingredients_text": {"value": "Food-grade stainless steel body.", "status": "FACT", "confidence": 0.8, "rationale": "material"},
+        "warnings_text": {"value": "Hand wash only.", "status": "INFERENCE", "confidence": 0.5, "rationale": "care"},
+    }}
+
+
+def _mock_provider(monkeypatch, *, configured=True, payload=None, capture=None):
+    from agent.services import ai_copy_provider_adapter as prov
+    monkeypatch.setattr(prov, "is_configured", lambda: configured)
+    monkeypatch.setattr(prov, "provider_status", lambda: {
+        "lane": "text_assist", "configured": configured,
+        "provider_id": "deepseek", "model_id": "deepseek-chat", "execution_enabled": configured,
+    })
+
+    def fake_complete_json(system, user):
+        if capture is not None:
+            capture["system"] = system
+            capture["user"] = user
+        return payload if payload is not None else _fake_fields_payload()
+
+    monkeypatch.setattr(prov, "complete_json", fake_complete_json)
+    return prov
+
+
+async def _empty_draft(product_id):
+    return await svc.create_review_draft(
+        product_id,
+        ProductIntelligenceReviewDraftCreateRequest(
+            buyer_persona_snapshot_json={"audience": "commuters"}, created_by="promo"
+        ),
+    )
+
+
+async def _count_table(table):
+    db = await crud.get_db()
+    cur = await db.execute(f"SELECT COUNT(*) FROM {table}")
+    return (await cur.fetchone())[0]
+
+
+@pytest.mark.asyncio
+async def test_ai_fill_fills_only_empty_fields_records_provenance_no_snapshot(monkeypatch):
+    product = await crud.create_product(
+        source="MANUAL", raw_product_title="Bottle", product_display_name="Bottle",
+        product_short_name="Bottle", copywriting_angle="x",
+    )
+    draft = await _empty_draft(product["id"])
+    capture = {}
+    _mock_provider(monkeypatch, capture=capture)
+
+    snaps_before = await _count_table("product_intelligence_snapshot")
+    cs_before = await _count_table("copy_set")
+
+    result = await svc.ai_fill_missing_review_draft(draft.draft_id)
+
+    assert result["provider"] == "deepseek"
+    assert result["model"] == "deepseek-chat"
+    assert result["review_status"] != "APPROVED"
+    filled = {p["field"] for p in result["proposed"]}
+    assert {"product_description", "benefits_json", "usp_json", "usage_text",
+            "ingredients_text", "warnings_text", "target_customer_text"} <= filled
+
+    after = await svc.get_review_draft_by_id(draft.draft_id)
+    assert after.product_description == "Stainless steel insulated bottle."
+    assert after.benefits_json == ["Keeps drinks cold for hours"]
+    assert after.usp_json == ["Double-wall vacuum insulation"]
+    assert after.review_status != "APPROVED"
+
+    db = await crud.get_db()
+    cur = await db.execute(
+        "SELECT field_name, source_type, verification_status, extraction_method FROM "
+        "product_intelligence_review_field_provenance WHERE draft_id=? AND source_type='AI_ENRICHMENT'",
+        (draft.draft_id,),
+    )
+    prov_rows = await cur.fetchall()
+    prov_fields = {r[0] for r in prov_rows}
+    assert "product_description" in prov_fields and "benefits_json" in prov_fields
+    assert all(r[1] == "AI_ENRICHMENT" and r[2] == "AI_PROPOSED" for r in prov_rows)
+    assert all("deepseek" in (r[3] or "") for r in prov_rows)
+
+    assert await _count_table("product_intelligence_snapshot") == snaps_before
+    assert await _count_table("copy_set") == cs_before
+    assert '"hook"' not in capture["user"] and '"cta"' not in capture["user"]
+
+
+@pytest.mark.asyncio
+async def test_ai_fill_preserves_non_empty_human_evidence(monkeypatch):
+    product = await crud.create_product(
+        source="MANUAL", raw_product_title="Bottle", product_display_name="Bottle",
+        product_short_name="Bottle", copywriting_angle="x",
+    )
+    draft = await svc.create_review_draft(
+        product["id"],
+        ProductIntelligenceReviewDraftCreateRequest(
+            product_description="HUMAN-authored truth.",
+            buyer_persona_snapshot_json={"audience": "commuters"}, created_by="human",
+        ),
+    )
+    _mock_provider(monkeypatch)
+
+    await svc.ai_fill_missing_review_draft(draft.draft_id)
+
+    after = await svc.get_review_draft_by_id(draft.draft_id)
+    assert after.product_description == "HUMAN-authored truth."  # never overwritten
+    assert after.usage_text == "Fill with a beverage and seal the lid."  # empty field filled
+
+
+@pytest.mark.asyncio
+async def test_ai_fill_leaves_insufficient_evidence_unresolved(monkeypatch):
+    product = await crud.create_product(
+        source="MANUAL", raw_product_title="Bottle", product_display_name="Bottle",
+        product_short_name="Bottle", copywriting_angle="x",
+    )
+    draft = await _empty_draft(product["id"])
+    payload = {"fields": {
+        "warnings_text": {"value": "", "status": "INSUFFICIENT_EVIDENCE", "confidence": 0.0, "rationale": "no evidence"},
+        "product_description": {"value": "Steel bottle.", "status": "FACT", "confidence": 0.9, "rationale": "title"},
+    }}
+    _mock_provider(monkeypatch, payload=payload)
+
+    result = await svc.ai_fill_missing_review_draft(draft.draft_id)
+
+    unresolved_fields = {u["field"] for u in result["unresolved"]}
+    assert "warnings_text" in unresolved_fields
+    after = await svc.get_review_draft_by_id(draft.draft_id)
+    assert not after.warnings_text  # never fabricated
+    assert after.product_description == "Steel bottle."
+
+
+@pytest.mark.asyncio
+async def test_ai_fill_fail_closed_when_provider_unconfigured(monkeypatch):
+    from agent.services import ai_copy_provider_adapter as prov
+
+    product = await crud.create_product(
+        source="MANUAL", raw_product_title="Bottle", product_display_name="Bottle",
+        product_short_name="Bottle", copywriting_angle="x",
+    )
+    draft = await _empty_draft(product["id"])
+    _mock_provider(monkeypatch, configured=False)
+
+    with pytest.raises(prov.AICopyProviderNotConfigured):
+        await svc.ai_fill_missing_review_draft(draft.draft_id)
+    after = await svc.get_review_draft_by_id(draft.draft_id)
+    assert not after.product_description  # nothing written on fail-closed
+
+
+@pytest.mark.asyncio
+async def test_ai_fill_only_approved_ci_and_hook_cta_stripped(monkeypatch):
+    product = await crud.create_product(
+        source="MANUAL", raw_product_title="Bottle", product_display_name="Bottle",
+        product_short_name="Bottle", copywriting_angle="x",
+    )
+    draft = await _empty_draft(product["id"])
+    capture = {}
+    _mock_provider(monkeypatch, capture=capture)
+
+    async def fake_ci(*, target_product_id=None, reference_id=None, seed_id=None, limit=100):
+        assert target_product_id == product["id"]
+        return {"total": 1, "items": [{
+            "target_avatar": "Commuters", "pain_point": "Warm drinks", "emotion_trigger": "Relief",
+            "dream_outcome": "Cold all day", "key_ingredients_features": "Insulated",
+            "hook_script": "STILL drinking warm water", "cta_script": "BUY NOW",
+        }]}
+
+    monkeypatch.setattr(
+        "agent.services.kalodata_import_service.get_approved_copy_intelligence_context", fake_ci
+    )
+    await svc.ai_fill_missing_review_draft(draft.draft_id)
+
+    assert "Commuters" in capture["user"]  # approved avatar reached the prompt
+    assert "STILL drinking warm water" not in capture["user"]  # hook stripped
+    assert "BUY NOW" not in capture["user"]  # cta stripped

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import {
+	aiFillMissingProductIntelligenceReviewDraft,
 	approveProductIntelligenceReviewDraft,
 	createProductIntelligenceReviewDraft,
 	prepareProductForCopywriting,
@@ -9,6 +10,7 @@ import {
 	rejectProductIntelligenceReviewDraft,
 	updateProductIntelligenceReviewDraft,
 	validateProductIntelligenceReviewDraft,
+	type ProductIntelligenceAIFillResult,
 } from "../../api/products";
 import type {
 	ProductIntelligenceReviewDraft,
@@ -532,8 +534,9 @@ export default function ProductIntelligenceReviewDraftPanel({
 	const [validation, setValidation] =
 		useState<ProductIntelligenceReviewDraftValidationResponse | null>(null);
 	const [busyAction, setBusyAction] = useState<
-		"CREATE" | "PREPARE" | "SAVE" | "VALIDATE" | "APPROVE" | "REJECT" | null
+		"CREATE" | "PREPARE" | "AI_FILL" | "SAVE" | "VALIDATE" | "APPROVE" | "REJECT" | null
 	>(null);
+	const [aiFillResult, setAiFillResult] = useState<ProductIntelligenceAIFillResult | null>(null);
 	const [message, setMessage] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	// Amber "action needed" notice for a draft that fails the fail-closed approval
@@ -680,6 +683,37 @@ export default function ProductIntelligenceReviewDraftPanel({
 		} catch (err) {
 			setError(
 				formatReviewDraftError(err, "Failed to prepare product for copywriting"),
+			);
+		} finally {
+			setBusyAction(null);
+		}
+	};
+
+	const handleAiFillMissing = async () => {
+		if (!activeDraft) return;
+		setBusyAction("AI_FILL");
+		setError(null);
+		setMessage(null);
+		setBlockerNotice(null);
+		setAiFillResult(null);
+		try {
+			const result = await aiFillMissingProductIntelligenceReviewDraft(
+				activeDraft.draft_id,
+			);
+			setAiFillResult(result);
+			// Refresh the draft so the proposed values + recalculated status show.
+			const refreshed = await fetchProductIntelligenceReviewDraft(activeDraft.draft_id);
+			syncDraftInList(refreshed);
+			setValidation(null);
+			const filledCount = result.proposed.length;
+			setMessage(
+				filledCount > 0
+					? `AI proposed ${filledCount} field(s) as review-only draft suggestions (provider: ${result.provider ?? "?"}). Review every proposal, then Validate and Approve — nothing is auto-approved.`
+					: "AI Fill Missing found no empty fields to propose (or insufficient evidence). Nothing was changed.",
+			);
+		} catch (err) {
+			setError(
+				formatReviewDraftError(err, "AI Fill Missing failed"),
 			);
 		} finally {
 			setBusyAction(null);
@@ -970,7 +1004,16 @@ export default function ProductIntelligenceReviewDraftPanel({
 											disabled={busyAction !== null}
 											className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
 										>
-											{busyAction === "VALIDATE" ? "Validating..." : "Validate Draft"}
+											{busyAction === "VALIDATE" ? "Recompute (deterministic)" : "Recompute (Validate)"}
+										</button>
+										<button
+											type="button"
+											data-testid="ai-fill-missing-button"
+											onClick={handleAiFillMissing}
+											disabled={busyAction !== null}
+											className="rounded border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-[11px] font-semibold text-sky-100 disabled:cursor-not-allowed disabled:opacity-60"
+										>
+											{busyAction === "AI_FILL" ? "AI filling..." : "AI Fill Missing (DeepSeek)"}
 										</button>
 										<button
 											type="button"
@@ -989,6 +1032,59 @@ export default function ProductIntelligenceReviewDraftPanel({
 											{busyAction === "REJECT" ? "Rejecting..." : "Reject Draft"}
 										</button>
 									</div>
+									<p className="text-[10px] leading-relaxed text-slate-500">
+										<span className="font-semibold text-amber-200">Recompute</span> rebuilds
+										candidates and readiness from current saved evidence — deterministic,
+										no AI, generates no missing product information.{" "}
+										<span className="font-semibold text-sky-200">AI Fill Missing</span>{" "}
+										uses DeepSeek + approved evidence to propose values for empty Product
+										Truth fields only; existing human evidence is never overwritten and
+										nothing is auto-approved.
+									</p>
+									{aiFillResult && (
+										<div
+											data-testid="ai-fill-result"
+											className="rounded border border-sky-500/30 bg-sky-500/5 p-3 text-[11px] text-slate-200"
+										>
+											<div className="mb-2 font-semibold text-sky-100">
+												AI Fill Missing — review-only proposals ({aiFillResult.provider ?? "?"}
+												{aiFillResult.model ? ` · ${aiFillResult.model}` : ""}) · status{" "}
+												{aiFillResult.review_status}
+											</div>
+											{aiFillResult.proposed.length > 0 ? (
+												<ul className="space-y-1">
+													{aiFillResult.proposed.map((p) => (
+														<li key={p.field}>
+															<span className="font-semibold text-slate-100">{p.field}</span>
+															<span className="ml-1 rounded bg-slate-800 px-1 text-[9px] uppercase text-slate-300">
+																{p.status}
+															</span>
+															{typeof p.confidence === "number" && (
+																<span className="ml-1 text-slate-400">
+																	conf {p.confidence}
+																</span>
+															)}
+															{p.rationale && (
+																<span className="ml-1 text-slate-400">— {p.rationale}</span>
+															)}
+														</li>
+													))}
+												</ul>
+											) : (
+												<p className="text-slate-400">No fields proposed.</p>
+											)}
+											{aiFillResult.unresolved.length > 0 && (
+												<p className="mt-2 text-slate-400">
+													Left unresolved (insufficient evidence):{" "}
+													{aiFillResult.unresolved.map((u) => u.field).join(", ")}
+												</p>
+											)}
+											<p className="mt-2 text-[10px] text-slate-500">
+												Proposals are stored as draft suggestions with field-level provenance.
+												Approve through the existing gate — no Product Truth is auto-approved.
+											</p>
+										</div>
+									)}
 								</div>
 							</div>
 

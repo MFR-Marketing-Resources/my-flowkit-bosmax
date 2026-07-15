@@ -850,3 +850,249 @@ async def approve_review_draft(
     if not snapshot_row:
         raise ValueError("SNAPSHOT_NOT_FOUND")
     return _snapshot_from_row(snapshot_row)
+
+
+# ── AI Fill Missing (DeepSeek-backed draft field enrichment) ──────────────────
+# DISTINCT from deterministic Recompute: this is the ONLY draft action that calls
+# the AI provider. It proposes DRAFT values for missing/selected Product Truth
+# fields only, records field-level provenance + AI metadata, and NEVER approves.
+# It reuses the existing text_assist provider adapter (DeepSeek) — no new
+# framework, no hardcoded secrets — and the existing update_review_draft path
+# (exclude_unset preserves valid human evidence). Copy Intelligence enters ONLY
+# as APPROVED supporting persona/strategy; hook/CTA never become product facts.
+AI_FILL_TARGET_FIELDS = (
+    "product_description",   # Product Knowledge Text
+    "benefits_json",         # Benefits Text (factual benefits list)
+    "usp_json",              # Unique selling propositions (factual list)
+    "usage_text",            # Usage Text
+    "target_customer_text",  # Target Customer Text
+    "ingredients_text",      # Ingredients Text
+    "warnings_text",         # Warnings Text
+)
+_AI_FILL_LIST_FIELDS = ("benefits_json", "usp_json")
+AI_FILL_PROMPT_VERSION = "product_intel_ai_fill_v1"
+
+_AI_FILL_SYSTEM = (
+    "You enrich a PRODUCT TRUTH review draft for human approval. You propose "
+    "DRAFT values for ONLY the requested fields, grounded strictly in the supplied "
+    "evidence. You NEVER approve anything and NEVER invent facts. When evidence is "
+    "insufficient, you MUST return status INSUFFICIENT_EVIDENCE rather than "
+    "fabricating.\n"
+    "Field contracts (fill only requested fields):\n"
+    "- product_description: factual product description / supported details.\n"
+    "- benefits_json: factual, evidence-supported benefits as an array of short "
+    "strings. NOT hooks, hashtags, CTA, music/duration instructions, or hype.\n"
+    "- usp_json: factual unique selling propositions as an array of short strings "
+    "(distinctive product attributes). NOT marketing hooks or CTA.\n"
+    "- usage_text: how the product is used; INSUFFICIENT_EVIDENCE if unsupported.\n"
+    "- target_customer_text: a grounded audience/customer segment. The supplied "
+    "approved Copy Intelligence avatar MAY support this; do NOT copy a hook or "
+    "promotional sentence.\n"
+    "- ingredients_text: actual ingredients / materials / components / features, or "
+    "NOT_APPLICABLE for the product type. NEVER put CTA or marketing copy here.\n"
+    "- warnings_text: real warnings / cautions / restrictions, or "
+    "INSUFFICIENT_EVIDENCE. Do NOT invent warnings.\n"
+    "Copy Intelligence (avatar/pain/emotion/dream/hook/cta/strategy) is SUPPORTING "
+    "persona & angle evidence only — it is NOT product truth. Never turn hook/CTA "
+    "text into a product fact. No medical/cure/treatment/guaranteed-result claims. "
+    "Return STRICT JSON only: {\"fields\": {\"<field>\": {\"value\": <string or "
+    "array for benefits_json>, \"status\": \"FACT|INFERENCE|NOT_APPLICABLE|"
+    "INSUFFICIENT_EVIDENCE\", \"confidence\": <0..1>, \"rationale\": <short>}}}."
+)
+
+
+def _ai_fill_field_value(draft: ProductIntelligenceReviewDraft, field: str) -> Any:
+    return getattr(draft, field, None)
+
+
+def _coerce_ai_fill_value(field: str, value: Any) -> Any:
+    """Coerce a model-proposed value to the field's storage shape (list for
+    benefits_json/usp_json, trimmed string otherwise). Returns None when empty."""
+    if field in _AI_FILL_LIST_FIELDS:
+        items = _normalize_list(value)
+        return items or None
+    text = str(value or "").strip()
+    return text or None
+
+
+def _build_ai_fill_user_prompt(
+    product: dict[str, Any] | None,
+    draft: ProductIntelligenceReviewDraft,
+    approved_ci: dict[str, Any],
+    targets: list[str],
+) -> str:
+    product = product or {}
+    product_meta = {
+        "title": product.get("product_display_name") or product.get("raw_product_title"),
+        "category": product.get("category"),
+        "subcategory": product.get("subcategory"),
+        "type": product.get("type") or product.get("product_type"),
+        "brand": product.get("brand"),
+        "price": product.get("price"),
+        "currency": product.get("currency"),
+        "product_url": product.get("tiktok_product_url") or product.get("source_url"),
+        "product_scale": product.get("product_scale"),
+        "physics_class": product.get("physics_class"),
+    }
+    current_evidence = {
+        "product_description": draft.product_description,
+        "benefits": list(draft.benefits_json or []),
+        "usp": list(getattr(draft, "usp_json", []) or []),
+        "usage_text": draft.usage_text,
+        "target_customer_text": draft.target_customer_text,
+        "ingredients_text": draft.ingredients_text,
+        "warnings_text": draft.warnings_text,
+        "paste_anything_summary": draft.paste_anything_summary,
+        "package_notes": draft.package_notes,
+        "size_or_volume": draft.size_or_volume,
+        "product_form_factor": draft.product_form_factor,
+        "packaging_description": draft.packaging_description,
+    }
+    # Defence-in-depth: hook_script / cta_script are deliberately EXCLUDED — they
+    # are marketing copy and must never seed a product FACT. Only persona/angle
+    # signals cross into the enrichment prompt (they support target_customer).
+    supporting_ci = [
+        {
+            "target_avatar": item.get("target_avatar"),
+            "pain_point": item.get("pain_point"),
+            "emotion_trigger": item.get("emotion_trigger"),
+            "dream_outcome": item.get("dream_outcome"),
+            "key_features": item.get("key_ingredients_features"),
+        }
+        for item in (approved_ci.get("items") or [])
+    ]
+    guardrails = {
+        "claim_gate": draft.claim_gate,
+        "claim_risk_level": draft.claim_risk_level,
+        "allowed_claims": list(getattr(draft, "allowed_claims_json", []) or []),
+        "blocked_claims": list(getattr(draft, "blocked_claims_json", []) or []),
+    }
+    context = {
+        "fields_to_fill": targets,
+        "product_metadata": product_meta,
+        "current_draft_evidence": current_evidence,
+        "approved_copy_intelligence_supporting_only": supporting_ci,
+        "claim_guardrails": guardrails,
+    }
+    return (
+        "Fill ONLY these fields: " + ", ".join(targets) + ".\n"
+        "Use only the evidence below. Prefer INSUFFICIENT_EVIDENCE over guessing.\n\n"
+        + json.dumps(context, ensure_ascii=False, default=str)
+    )
+
+
+async def ai_fill_missing_review_draft(
+    draft_id: str,
+    *,
+    selected_fields: list[str] | None = None,
+) -> dict[str, Any]:
+    """Propose DeepSeek draft values for missing (or explicitly selected) Product
+    Truth fields. Fail-closed when the provider lane is unconfigured. Never
+    overwrites valid human evidence, never approves, never creates a snapshot,
+    never mutates Product Truth or Copy Sets. Persists proposals into the existing
+    draft + field-level provenance with AI metadata; result stays a review draft."""
+    from agent.services import ai_copy_provider_adapter as _prov
+    from agent.services import kalodata_import_service as _ci
+
+    draft = await get_review_draft_by_id(draft_id)
+    if not draft:
+        raise ValueError("DRAFT_NOT_FOUND")
+    if draft.review_status in TERMINAL_STATUSES:
+        raise ValueError(f"DRAFT_UPDATE_FORBIDDEN:{draft.review_status}")
+
+    provider_id = None
+    model_id = None
+    try:
+        status = _prov.provider_status()
+        provider_id = status.get("provider_id")
+        model_id = status.get("model_id")
+    except Exception:
+        pass
+    if not _prov.is_configured():
+        raise _prov.AICopyProviderNotConfigured(_prov.ERR_NOT_CONFIGURED)
+
+    selected = {f for f in (selected_fields or []) if f in AI_FILL_TARGET_FIELDS}
+    if selected:
+        targets = [f for f in AI_FILL_TARGET_FIELDS if f in selected]
+    else:
+        targets = [f for f in AI_FILL_TARGET_FIELDS if not _has_value(_ai_fill_field_value(draft, f))]
+    if not targets:
+        return {
+            "draft_id": draft_id, "product_id": draft.product_id,
+            "review_status": draft.review_status, "provider": provider_id,
+            "model": model_id, "prompt_version": AI_FILL_PROMPT_VERSION,
+            "targeted_fields": [], "proposed": [], "unresolved": [],
+            "provider_configured": True,
+        }
+
+    product = await crud.get_product(draft.product_id)
+    approved_ci = await _ci.get_approved_copy_intelligence_context(
+        target_product_id=draft.product_id, limit=20
+    )
+    user_prompt = _build_ai_fill_user_prompt(product, draft, approved_ci, targets)
+    raw = _prov.complete_json(_AI_FILL_SYSTEM, user_prompt)  # DeepSeek structured JSON
+    fields_out = raw.get("fields") if isinstance(raw.get("fields"), dict) else raw
+
+    generated_at = _now_iso()
+    update_fields: dict[str, Any] = {}
+    proposed: list[dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
+    for field in targets:
+        entry = fields_out.get(field) if isinstance(fields_out, dict) else None
+        if not isinstance(entry, dict):
+            unresolved.append({"field": field, "status": "INSUFFICIENT_EVIDENCE", "rationale": "no proposal returned"})
+            continue
+        status_value = str(entry.get("status") or "INSUFFICIENT_EVIDENCE").upper()
+        coerced = _coerce_ai_fill_value(field, entry.get("value"))
+        if status_value in ("INSUFFICIENT_EVIDENCE", "NOT_APPLICABLE") or coerced is None:
+            unresolved.append({"field": field, "status": status_value, "rationale": str(entry.get("rationale") or "")})
+            continue
+        # Defence-in-depth: never overwrite a non-empty human field unless explicitly selected.
+        if field not in selected and _has_value(_ai_fill_field_value(draft, field)):
+            unresolved.append({"field": field, "status": "SKIPPED_NON_EMPTY", "rationale": "existing human evidence preserved"})
+            continue
+        update_fields[field] = coerced
+        proposed.append({
+            "field": field, "status": status_value,
+            "confidence": entry.get("confidence"),
+            "rationale": str(entry.get("rationale") or ""),
+            "previous_value": _ai_fill_field_value(draft, field),
+            "proposed_value": coerced,
+        })
+
+    if update_fields:
+        request = ProductIntelligenceReviewDraftUpdateRequest(**update_fields)
+        await update_review_draft(draft_id, request)  # never yields APPROVED
+        for item in proposed:
+            await crud.create_product_intelligence_review_field_provenance(
+                draft_id=draft_id,
+                product_id=draft.product_id,
+                field_name=item["field"],
+                source_type="AI_ENRICHMENT",
+                evidence_kind=item["status"],
+                extraction_method=f"deepseek:{model_id or 'unknown'}",
+                verification_status="AI_PROPOSED",
+                declared_value=json.dumps(item["proposed_value"], ensure_ascii=False, default=str),
+                confidence_score=item["confidence"] if isinstance(item["confidence"], (int, float)) else None,
+                source_lane=_prov.LANE,
+                reviewer_note=(
+                    f"{AI_FILL_PROMPT_VERSION} | provider={provider_id} model={model_id} "
+                    f"generated_at={generated_at} | previous={item['previous_value']!r} | "
+                    f"rationale={item['rationale']}"
+                ),
+            )
+
+    after = await get_review_draft_by_id(draft_id)
+    return {
+        "draft_id": draft_id,
+        "product_id": draft.product_id,
+        "review_status": after.review_status if after else draft.review_status,
+        "provider": provider_id,
+        "model": model_id,
+        "prompt_version": AI_FILL_PROMPT_VERSION,
+        "generated_at": generated_at,
+        "targeted_fields": targets,
+        "proposed": proposed,
+        "unresolved": unresolved,
+        "provider_configured": True,
+    }
