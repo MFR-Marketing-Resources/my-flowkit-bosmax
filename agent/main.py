@@ -62,6 +62,7 @@ from agent.api.copywriting import router as copywriting_router
 from agent.api.product_asset_generator import router as product_asset_generator_router
 from agent.api.product_image_analysis import router as product_image_analysis_router
 from agent.api.product_intelligence import router as product_intelligence_router
+from agent.api.creative_intelligence import router as creative_intelligence_router
 from agent.worker.processor import get_worker_controller
 from agent.services.flow_client import get_flow_client
 from agent.services.event_bus import event_bus
@@ -294,6 +295,7 @@ app.include_router(copy_sets_router, prefix="/api")
 app.include_router(product_asset_generator_router, prefix="/api")
 app.include_router(product_image_analysis_router, prefix="/api")
 app.include_router(product_intelligence_router, prefix="/api")
+app.include_router(creative_intelligence_router, prefix="/api")
 app.include_router(characters_router, prefix="/api")
 app.include_router(projects_router, prefix="/api")
 app.include_router(videos_router, prefix="/api")
