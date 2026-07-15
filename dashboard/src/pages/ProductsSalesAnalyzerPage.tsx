@@ -10,6 +10,7 @@ import {
 } from "../api/products";
 import ProductIntelligenceReviewDraftPanel from "../components/product-intelligence/ProductIntelligenceReviewDraftPanel";
 import RecommendedAvatarsCard from "../components/product-intelligence/RecommendedAvatarsCard";
+import RecommendedScenePromptsCard from "../components/product-intelligence/RecommendedScenePromptsCard";
 import { HelperText } from "../components/ui";
 import type {
 	FastMossImportBatchReport,
@@ -2625,6 +2626,9 @@ export default function ProductsSalesAnalyzerPage() {
 									<div className="space-y-6">
 										{selectedProduct ? (
 											<RecommendedAvatarsCard productId={selectedProduct.id} />
+										) : null}
+										{selectedProduct ? (
+											<RecommendedScenePromptsCard productId={selectedProduct.id} />
 										) : null}
 										{selectedProduct ? (
 											<ProductIntelligenceReviewDraftPanel

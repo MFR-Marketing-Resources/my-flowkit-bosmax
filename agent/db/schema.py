@@ -2092,6 +2092,32 @@ CREATE TABLE IF NOT EXISTS avatar_product_fit (
                 )
                 logger.info("Migrated: added updated_at column to %s table", tbl)
 
+        # Creative Intelligence Round 2 — read-only Scene / Image Prompt library.
+        # Config/reference table only: reconciled workbook IMAGE_PROMPTS templates
+        # keyed on the canonical creative cluster. Placeholders [AVATAR]/[PRODUCT]
+        # are stored unresolved; nothing here feeds generation.
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS creative_scene_prompt (
+    template_id                TEXT PRIMARY KEY,
+    cluster                    TEXT NOT NULL,
+    source_category            TEXT,
+    cluster_source             TEXT,
+    main_action                TEXT,
+    setting                    TEXT,
+    full_prompt_template       TEXT,
+    base_prompt                TEXT,
+    combined_prompt_suggestion TEXT,
+    negative_prompt            TEXT,
+    variant                    TEXT,
+    notes                      TEXT,
+    provenance                 TEXT,
+    updated_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_creative_scene_prompt_cluster
+    ON creative_scene_prompt(cluster);
+""")
+        await db.commit()
+
         # Product Intelligence Snapshot foundation (Product Intelligence Backbone
         # PR 1). Durable sidecar storage only — this does not change product-row
         # truth, registration commit behavior, or ProductTruthService.
