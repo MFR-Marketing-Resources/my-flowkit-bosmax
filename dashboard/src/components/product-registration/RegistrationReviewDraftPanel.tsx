@@ -800,29 +800,29 @@ export default function RegistrationReviewDraftPanel({
 										)}
 									</div>
 								</div>
-								<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-									<div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+								<div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+									<div className="min-w-0 rounded-xl border border-slate-800 bg-slate-900/70 p-3">
 										<div className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
 											Image Asset Status
 										</div>
-										<div className="mt-1 text-sm font-semibold text-emerald-300">
+										<div className="mt-1 break-words text-sm font-semibold text-emerald-300">
 											{draft.image_asset_status}
 										</div>
-										<p className="mt-2 text-xs text-slate-400">
+										<p className="mt-2 break-words text-xs text-slate-400">
 											{draft.image_asset_detail}
 										</p>
 									</div>
-									<div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+									<div className="min-w-0 rounded-xl border border-slate-800 bg-slate-900/70 p-3">
 										<div className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
 											Semantic Vision Status
 										</div>
-										<div className="mt-1 text-sm font-semibold text-sky-300">
+										<div className="mt-1 break-words text-sm font-semibold text-sky-300">
 											{String(
 												draft.system_inferred_fields.image_analysis_status ||
 													"UNKNOWN",
 											)}
 										</div>
-										<p className="mt-2 text-xs text-slate-400">
+										<p className="mt-2 break-words text-xs text-slate-400">
 											Provider:{" "}
 											{String(
 												draft.system_inferred_fields.image_analysis_provider ||
