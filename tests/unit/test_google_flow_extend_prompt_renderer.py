@@ -126,10 +126,11 @@ def test_audio_seam_and_dialogue_seams(source_key: str):
     assert non_final["audio_seam_contract"]["forbid_silent_final_hold"] is True
     assert final["audio_seam_contract"]["voice_active_in_final_second"] is False
 
-    # Production independent keeps seam-ready hold; research initial gets voice-active seam.
+    # Production independent keeps seam-ready hold; research initial gets the
+    # audio-ownership handoff seam (clause complete before the final half-second).
     assert "seam-ready hold" in non_final["engine_prompt_text"].lower()
     assert "seam-ready hold" in (non_final.get("independent_block_prompt_text") or "").lower()
-    assert "naturally speaking and moving" in (non_final.get("initial_generation_prompt_text") or "").lower()
+    assert "half a second before" in (non_final.get("initial_generation_prompt_text") or "").lower()
     assert non_final["initial_generation_prompt_text"] != non_final["independent_block_prompt_text"]
 
     # Dialogue seams natural + concat equals full plan.
@@ -154,6 +155,54 @@ def test_audio_seam_and_dialogue_seams(source_key: str):
     assert cta in (final.get("exact_dialogue_slice") or "")
     for block in blocks[:-1]:
         assert cta not in (block.get("exact_dialogue_slice") or "")
+
+
+@pytest.mark.parametrize("source_key", list(MODE_MATRIX))
+@pytest.mark.parametrize("duration", [16, 24])
+def test_seam_audio_ownership_boundary_all_modes(source_key: str, duration: int):
+    """ONE global EXTEND audio-handoff policy across T2V/HYBRID/FRAMES/INGREDIENTS
+    for 16s and 24s chains. Each seam must satisfy:
+      * outgoing (non-final) allocated dialogue ends by block_end - 0.5s;
+      * incoming (continuation) allocated dialogue starts at/after block_start + 0.5s;
+      * dialogue is complete, ordered, and never lost across the split;
+      * the rendered prompt text carries the outgoing + incoming handoff wording.
+    """
+    result = _compile(source_key, duration)
+    blocks = result["prompt_blocks"]
+    allocations = result["planner_result"]["block_allocations"]
+    eps = 1e-6
+
+    # No lost / reordered / duplicated dialogue across the split.
+    full = " ".join(result["planner_result"]["full_dialogue_plan"]["full_dialogue_text"].split())
+    concat = " ".join(
+        " ".join((b.get("exact_dialogue_slice") or "").split()) for b in blocks
+    )
+    assert " ".join(concat.split()) == full
+
+    for alloc in allocations:
+        utts = list(alloc.get("assigned_dialogue_utterances") or [])
+        if not utts:
+            continue
+        start_s = float(alloc["start_s"])
+        end_s = float(alloc["end_s"])
+        first_start = min(float(u["start_s"]) for u in utts)
+        last_end = max(float(u["end_s"]) for u in utts)
+        if not alloc.get("is_final"):
+            # Outgoing deadline: dialogue completes at or before end-0.5s.
+            assert last_end <= end_s - 0.5 + eps, (source_key, duration, alloc["block_index"], last_end, end_s)
+        if int(alloc["block_index"]) >= 2:
+            # Incoming onset floor: first new dialogue at or after start+0.5s.
+            assert first_start >= start_s + 0.5 - eps, (source_key, duration, alloc["block_index"], first_start, start_s)
+
+    # Prompt-text handoff wording.
+    non_final_initial = (blocks[0].get("initial_generation_prompt_text") or "").lower()
+    assert "half a second before" in non_final_initial
+    for block in blocks[1:]:
+        extend = (block.get("flow_extend_prompt_text") or "").lower()
+        assert "first half second" in extend  # incoming onset guard
+        if not block.get("is_final"):
+            assert "half a second before" in extend  # outgoing deadline guard
+        assert "naturally speaking and moving" not in extend  # defect wording removed
 
 
 def test_hybrid_16s_before_after_shape():

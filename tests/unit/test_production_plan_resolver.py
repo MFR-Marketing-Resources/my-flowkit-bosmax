@@ -188,3 +188,35 @@ async def test_maps_compile_door_block_prompts(monkeypatch):
     assert out["continuation_prompt_fingerprints"] == [
         resolver._fp("EXTEND to block 2"), resolver._fp("EXTEND to block 3, final")]
     assert out["missing"] == []  # 24s → 2 extends, both resolved
+
+
+async def test_dispatch_never_ships_a_multi_block_document_as_the_initial(monkeypatch):
+    """Dispatch invariant protected by the audio-seam repair: Block 1 resolves to the
+    reviewed `initial_generation_prompt_text` and Block 2+ to the reviewed
+    `flow_extend_prompt_text` — the whole multi-block document is NEVER the initial
+    generation prompt (which would collapse both seams into one clip)."""
+    _HDR = "SECTION 1 - ROLE & OBJECTIVE"
+    b1 = f"{_HDR}\nYou are generating an 8-second block (opening block 1 of 2)."
+    b2 = "Extend this video from the exact ending of Video 1. ...continuation..."
+    whole_document = b1 + "\n\n" + f"{_HDR}\nYou are generating an 8-second block (final block 2 of 2)."
+
+    async def fake_compile(**kwargs):
+        return {"prompt_blocks": [
+            {"block_index": 1, "initial_generation_prompt_text": b1,
+             "flow_extend_prompt_text": None, "engine_prompt_text": whole_document},
+            {"block_index": 2, "flow_extend_prompt_text": b2, "is_final": True},
+        ]}
+    import agent.services.workspace_execution_package_service as weps
+    monkeypatch.setattr(weps, "compile_workspace_prompt_preview", fake_compile)
+
+    out = await resolver.resolve_production_authority({
+        "product_id": "6483d624", "execution_package_id": "wep_stub",
+        "approved_asset_id": "product-image:6483d624:subject",
+        "approved_asset_sha256": "sha", "initial_asset_media_id": "m", "initial_mode": "I2V",
+        "engine": "GOOGLE_FLOW", "model": "veo", "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+        "requested_duration_seconds": 16,
+    }, trust_client_authority=True)
+    assert out["initial_prompt_text"] == b1                       # reviewed block-1 initial
+    assert out["initial_prompt_text"] != whole_document          # never the whole document
+    assert [c["prompt"] for c in out["continuation_prompts"]] == [b2]  # reviewed extend
+    assert out["missing"] == []

@@ -18,6 +18,12 @@ from agent.services import canonical_prompt_compiler as canonical
 
 PLAN_VERSION = "full_storyboard_first_extend_planner_v2"
 
+# EXTEND-only seam audio-ownership handoff margin (seconds). At every non-final
+# seam, outgoing dialogue must complete by ``end - _SEAM_HANDOFF_MARGIN_S`` and a
+# continuation block must not begin new dialogue before ``start + _SEAM_HANDOFF_MARGIN_S``.
+# SINGLE blocks receive no margin.
+_SEAM_HANDOFF_MARGIN_S = 0.5
+
 
 class PlannerValidationError(ValueError):
     """A stable production invariant failure for a storyboard planner result."""
@@ -769,14 +775,33 @@ def _allocate_dialogue_utterances(
     cursor = 0
     total_blocks = len(resolved_block_plan)
     for position, seconds in enumerate(resolved_block_plan):
-        word_total = sum(u.word_count for u in allocated_by_block[position]) or 1
+        is_first_block = position == 0
+        is_final_block = position == total_blocks - 1
+        # Seam audio-ownership handoff (EXTEND only): a continuation block begins no
+        # new dialogue in its first 0.5s, and a non-final block completes its dialogue
+        # at least 0.5s before the seam. SINGLE (first AND final) keeps the full block
+        # window unchanged, so its dialogue timing is byte-identical to before.
+        in_margin = 0.0 if is_first_block else _SEAM_HANDOFF_MARGIN_S
+        out_margin = 0.0 if is_final_block else _SEAM_HANDOFF_MARGIN_S
+        window_start = float(cursor) + in_margin
+        window_end = float(cursor + int(seconds)) - out_margin
+        speaking_window = window_end - window_start
+        block_words = sum(u.word_count for u in allocated_by_block[position])
+        # Fail closed rather than compress, cut, or overrun the seam: a block that
+        # carries dialogue must retain a positive speaking window after reserving both
+        # handoff margins. Never drop or reorder allocated dialogue to make room.
+        if block_words and speaking_window <= 0:
+            raise PlannerValidationError(
+                "DIALOGUE_CANNOT_FORM_NATURAL_EXTENSION_SEAMS",
+                f"block={position + 1} words={block_words} window={speaking_window:.3f}s",
+            )
+        word_total = block_words or 1
         block_cursor_words = 0
         block_rows: list[DialogueUtterance] = []
-        is_final_block = position == total_blocks - 1
         for utterance in allocated_by_block[position]:
-            start_s = cursor + (seconds * block_cursor_words / word_total)
+            start_s = window_start + (speaking_window * block_cursor_words / word_total)
             block_cursor_words += utterance.word_count
-            end_s = cursor + (seconds * block_cursor_words / word_total)
+            end_s = window_start + (speaking_window * block_cursor_words / word_total)
             block_rows.append(
                 replace(
                     utterance,
@@ -786,10 +811,11 @@ def _allocate_dialogue_utterances(
                 )
             )
         if block_rows and not is_final_block:
-            block_end = float(cursor + int(seconds))
+            # Keep the outgoing voice present up to the handoff deadline (end-0.5s),
+            # never past it — a clean audio-ownership boundary at the seam.
             last = block_rows[-1]
-            if float(last.end_s) < (block_end - 0.95):
-                block_rows[-1] = replace(last, end_s=block_end)
+            if float(last.end_s) < (window_end - 0.95):
+                block_rows[-1] = replace(last, end_s=window_end)
         allocated_utterances.extend(block_rows)
         allocated_by_block[position] = block_rows
         cursor += int(seconds)
