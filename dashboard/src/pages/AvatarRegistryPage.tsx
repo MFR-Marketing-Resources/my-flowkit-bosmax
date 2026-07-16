@@ -56,6 +56,17 @@ interface AvatarPoolResponse {
 	bridge_active: boolean;
 }
 
+// Controlled vocabulary endpoint payload, incl. the gender-aware layer: personas
+// split by gender, which descriptor fields depend on gender, and those fields'
+// per-gender allowed values.
+interface VocabResponse {
+	vocab: Record<string, string[]>;
+	personas: string[];
+	personas_by_gender?: Record<string, string[]>;
+	gender_specific_fields?: string[];
+	vocab_by_gender?: Record<string, Record<string, string[]>>;
+}
+
 // CSV Factory — staged seed-schema candidate batches (validate -> review ->
 // approve/reject -> export/sync). Candidates never write the bridge directly.
 interface CsvFactoryIssue {
@@ -173,12 +184,24 @@ export default function AvatarRegistryPage() {
 	const [autoEnvironment, setAutoEnvironment] = useState("");
 	const [autoWardrobe, setAutoWardrobe] = useState("");
 	const [autoUsageTag, setAutoUsageTag] = useState("");
+	// Gender-aware vocabulary: personas + gender_specific field values split by
+	// gender, so Gender=M never exposes female-only options (and vice-versa).
+	const [personasByGender, setPersonasByGender] = useState<
+		Record<string, string[]>
+	>({});
+	const [genderSpecificFields, setGenderSpecificFields] = useState<string[]>([]);
+	const [vocabByGender, setVocabByGender] = useState<
+		Record<string, Record<string, string[]>>
+	>({});
 	useEffect(() => {
 		fetch("/api/workspace/avatar-registry/vocab")
 			.then((r) => r.json())
-			.then((d: { vocab: Record<string, string[]>; personas: string[] }) => {
+			.then((d: VocabResponse) => {
 				setVocab(d.vocab);
 				setPersonas(d.personas || []);
+				setPersonasByGender(d.personas_by_gender || {});
+				setGenderSpecificFields(d.gender_specific_fields || []);
+				setVocabByGender(d.vocab_by_gender || {});
 				// Prefill descriptor dropdowns with the first allowed value so a quick
 				// add is always vocab-valid.
 				setManualForm((f) => ({
@@ -199,6 +222,23 @@ export default function AvatarRegistryPage() {
 			})
 			.catch(() => {});
 	}, []);
+
+	// Gender-filtered option helpers: a gender_specific field (e.g. wardrobe)
+	// shows only the values allowed for the chosen gender; shared fields and an
+	// unknown gender fall back to the full vocab list.
+	const optionsFor = (field: string, gender: string): string[] => {
+		if (
+			genderSpecificFields.includes(field) &&
+			(gender === "F" || gender === "M")
+		) {
+			return vocabByGender[gender]?.[field] ?? vocab?.[field] ?? [];
+		}
+		return vocab?.[field] ?? [];
+	};
+	const personasForGender = (gender: string): string[] =>
+		gender === "F" || gender === "M"
+			? (personasByGender[gender] ?? personas)
+			: personas;
 
 	const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set());
 	const [bulkMaxParallel, setBulkMaxParallel] = useState(2);
@@ -1167,7 +1207,7 @@ export default function AvatarRegistryPage() {
 									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
 								>
 									<option value="">— pilih persona —</option>
-									{personas.map((p) => (
+									{personasForGender(manualForm.gender).map((p) => (
 										<option key={p} value={p}>
 											{p}
 										</option>
@@ -1200,13 +1240,26 @@ export default function AvatarRegistryPage() {
 								</span>
 								<select
 									value={manualForm.gender}
-									onChange={(e) =>
+									onChange={(e) => {
+										const g = e.target.value;
+										const wardrobeOpts = optionsFor("wardrobe", g);
+										const personaOk =
+											manualPersonaNew ||
+											personasForGender(g).includes(manualForm.character_name);
+										if (!personaOk) setManualPersonaNew(false);
 										setManualForm((f) => ({
 											...f,
-											gender: e.target.value,
-											hijab: e.target.value === "M" ? false : f.hijab,
-										}))
-									}
+											gender: g,
+											// Gender drives dependent fields: force hijab off for M,
+											// and drop any now-incompatible wardrobe/persona so a male
+											// avatar can never keep a female-only selection.
+											hijab: g === "M" ? false : f.hijab,
+											wardrobe: wardrobeOpts.includes(f.wardrobe)
+												? f.wardrobe
+												: (wardrobeOpts[0] ?? ""),
+											character_name: personaOk ? f.character_name : "",
+										}));
+									}}
 									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
 								>
 									<option value="F">F</option>
@@ -1274,7 +1327,7 @@ export default function AvatarRegistryPage() {
 									}
 									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
 								>
-									{(vocab?.wardrobe ?? []).map((o) => (
+									{optionsFor("wardrobe", manualForm.gender).map((o) => (
 										<option key={o} value={o}>
 											{o}
 										</option>
@@ -1388,7 +1441,19 @@ export default function AvatarRegistryPage() {
 								</span>
 								<select
 									value={autoGender}
-									onChange={(e) => setAutoGender(e.target.value)}
+									onChange={(e) => {
+										const g = e.target.value;
+										setAutoGender(g);
+										// Drop a now-incompatible wardrobe constraint (e.g. switching
+										// to M after picking a female-only wardrobe).
+										if (
+											(g === "F" || g === "M") &&
+											autoWardrobe &&
+											!optionsFor("wardrobe", g).includes(autoWardrobe)
+										) {
+											setAutoWardrobe("");
+										}
+									}}
 									className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
 								>
 									<option value="">Auto</option>
@@ -1435,7 +1500,10 @@ export default function AvatarRegistryPage() {
 									className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
 								>
 									<option value="">Auto</option>
-									{(vocab?.wardrobe ?? []).map((o) => (
+									{(autoGender === "F" || autoGender === "M"
+										? optionsFor("wardrobe", autoGender)
+										: (vocab?.wardrobe ?? [])
+									).map((o) => (
 										<option key={o} value={o}>
 											{o}
 										</option>

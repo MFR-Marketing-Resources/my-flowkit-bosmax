@@ -44,13 +44,21 @@ _VOCAB_FILE = _AUTHORITY_DIR / "avatar_registry_vocab.json"
 _VOCAB_REQUIRED_FIELDS = ("skin_tone", "hair_style", "wardrobe", "expression")
 _VOCAB_OPTIONAL_FIELDS = ("environment", "lighting", "camera")
 _PERSONA_RE = re.compile(r"^BOS_[FM]_([A-Z0-9]+)_[0-9]{2,}$")
+# Same shape as _PERSONA_RE but also captures the gender letter (used to derive
+# per-gender persona lists from the pool AvatarCode prefix).
+_PERSONA_GENDER_RE = re.compile(r"^BOS_([FM])_([A-Z0-9]+)_[0-9]{2,}$")
+
+
+@lru_cache(maxsize=1)
+def _vocab_doc() -> dict:
+    """Parsed vocabulary JSON (fields + gender rules). Cache mirrors load_vocab."""
+    return json.loads(_VOCAB_FILE.read_text(encoding="utf-8"))
 
 
 @lru_cache(maxsize=1)
 def load_vocab() -> dict[str, list[str]]:
     """Controlled vocabulary per descriptor field. Edit the JSON to add a value."""
-    data = json.loads(_VOCAB_FILE.read_text(encoding="utf-8"))
-    return {k: list(v) for k, v in data.get("fields", {}).items()}
+    return {k: list(v) for k, v in _vocab_doc().get("fields", {}).items()}
 
 
 def _vocab_set(field: str) -> set[str]:
@@ -67,6 +75,45 @@ def snap_to_vocab(field: str, value: str | None) -> str | None:
         if str(canonical).strip().casefold() == want:
             return str(canonical)
     return None
+
+
+# ── Gender-aware vocabulary. `fields` is the full superset (canonical casing +
+# membership); `gender_specific_fields` narrow per gender via `by_gender`. A
+# field not listed for a gender is shared (full list applies).
+
+def gender_specific_fields() -> list[str]:
+    """Descriptor fields whose allowed values depend on gender (e.g. wardrobe)."""
+    return list(_vocab_doc().get("gender_specific_fields", []))
+
+
+def vocab_for_gender(gender: str) -> dict[str, list[str]]:
+    """Full descriptor vocab with the gender_specific_fields narrowed to the
+    values allowed for ``gender`` ('F'/'M'); shared fields returned in full.
+    An unknown gender yields the full superset (fail-open only for display —
+    the fail-closed gate is validate_gender_compatibility)."""
+    g = str(gender or "").strip().upper()
+    by_gender = _vocab_doc().get("by_gender", {}).get(g, {})
+    return {
+        field: list(by_gender.get(field, values))
+        for field, values in load_vocab().items()
+    }
+
+
+def _gender_allowed_set(field: str, gender: str) -> set[str]:
+    return {str(v).strip().casefold() for v in vocab_for_gender(gender).get(field, [])}
+
+
+def snap_to_vocab_for_gender(field: str, value: str | None, gender: str) -> str | None:
+    """snap_to_vocab, but for a gender_specific field the canonical value must ALSO
+    be allowed for ``gender`` — else None (so an AI male + female-only wardrobe is
+    rejected, not silently kept). Shared fields behave exactly like snap_to_vocab."""
+    canonical = snap_to_vocab(field, value)
+    if canonical is None:
+        return None
+    if field in gender_specific_fields() and \
+            canonical.strip().casefold() not in _gender_allowed_set(field, gender):
+        return None
+    return canonical
 
 
 def validate_usage_tags(raw) -> None:
@@ -106,6 +153,66 @@ def personas_from_pool() -> list[str]:
         if len(token) <= 16 and token not in seen:
             seen[token] = None
     return sorted(seen)
+
+
+def personas_by_gender() -> dict[str, list[str]]:
+    """Persona tokens split by gender, derived from the pool AvatarCode prefix
+    (BOS_F_/BOS_M_). Powers the gender-filtered persona dropdown. The pool prefix
+    is the gender authority (repaired PR #377); a token appearing under both
+    genders is placed in neither bucket (ambiguous → unconstrained)."""
+    buckets: dict[str, set[str]] = {"F": set(), "M": set()}
+    conflict: set[str] = set()
+    for row in list_pool():
+        code = str(row.get("avatar_code") or "").strip().upper()
+        match = _PERSONA_GENDER_RE.match(code)
+        if not match:
+            continue
+        gender, token = match.group(1), match.group(2)
+        if len(token) > 16:
+            continue
+        other = "M" if gender == "F" else "F"
+        if token in buckets[other]:
+            conflict.add(token)
+        buckets[gender].add(token)
+    for token in conflict:
+        buckets["F"].discard(token)
+        buckets["M"].discard(token)
+    return {"F": sorted(buckets["F"]), "M": sorted(buckets["M"])}
+
+
+def persona_gender(name: str) -> str | None:
+    """Gender ('F'/'M') of an EXISTING pool persona token, else None (token not in
+    the pool — e.g. a brand-new persona — or ambiguous). Case-insensitive."""
+    key = str(name or "").strip().upper()
+    if not key:
+        return None
+    buckets = personas_by_gender()
+    found = [g for g, tokens in buckets.items() if key in tokens]
+    return found[0] if len(found) == 1 else None
+
+
+def validate_gender_compatibility(payload: dict) -> None:
+    """Fail-closed gender-dependency gate for a manual/AI avatar payload. Raises
+    ValueError on the first violation:
+      - AVATAR_GENDER_INVALID:<g>          gender not F/M
+      - AVATAR_HIJAB_MALE_INVALID          hijab requested on a male
+      - AVATAR_VALUE_NOT_FOR_GENDER:<field> a gender_specific descriptor value
+                                            not allowed for the chosen gender
+      - AVATAR_PERSONA_GENDER_MISMATCH     an existing persona vs the other gender
+    Membership (value in the field superset) is validate_descriptors' job; this
+    layer only enforces the gender dependency on top of it."""
+    gender = str(payload.get("gender") or "").strip().upper()
+    if gender not in ("F", "M"):
+        raise ValueError(f"AVATAR_GENDER_INVALID:{payload.get('gender')}")
+    if bool(payload.get("hijab")) and gender == "M":
+        raise ValueError("AVATAR_HIJAB_MALE_INVALID")
+    for field in gender_specific_fields():
+        value = str(payload.get(field) or "").strip()
+        if value and value.casefold() not in _gender_allowed_set(field, gender):
+            raise ValueError(f"AVATAR_VALUE_NOT_FOR_GENDER:{field}")
+    expected = persona_gender(payload.get("character_name") or "")
+    if expected is not None and expected != gender:
+        raise ValueError("AVATAR_PERSONA_GENDER_MISMATCH")
 
 
 def sync_pool_csv(csv_bytes: bytes) -> dict:
