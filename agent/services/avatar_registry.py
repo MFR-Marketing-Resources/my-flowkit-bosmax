@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import json
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -35,6 +36,76 @@ REQUIRED_COLUMNS = {"CharacterName", "AvatarCode", "SkinTone", "HairStyle",
 
 def _active_pool_file() -> Path:
     return _BRIDGE_FILE if _BRIDGE_FILE.exists() else _POOL_FILE
+
+
+# ── Controlled descriptor vocabulary (single source of truth for the Create
+# Avatar dropdowns, the AI allowed-values prompt, and fail-closed validation).
+_VOCAB_FILE = _AUTHORITY_DIR / "avatar_registry_vocab.json"
+_VOCAB_REQUIRED_FIELDS = ("skin_tone", "hair_style", "wardrobe", "expression")
+_VOCAB_OPTIONAL_FIELDS = ("environment", "lighting", "camera")
+_PERSONA_RE = re.compile(r"^BOS_[FM]_([A-Z0-9]+)_[0-9]{2,}$")
+
+
+@lru_cache(maxsize=1)
+def load_vocab() -> dict[str, list[str]]:
+    """Controlled vocabulary per descriptor field. Edit the JSON to add a value."""
+    data = json.loads(_VOCAB_FILE.read_text(encoding="utf-8"))
+    return {k: list(v) for k, v in data.get("fields", {}).items()}
+
+
+def _vocab_set(field: str) -> set[str]:
+    return {str(v).strip().casefold() for v in load_vocab().get(field, [])}
+
+
+def snap_to_vocab(field: str, value: str | None) -> str | None:
+    """Case-insensitive snap of ``value`` to its canonical vocab entry, or None if
+    the value is not in the vocabulary. Used to normalize AI-returned values."""
+    want = str(value or "").strip().casefold()
+    if not want:
+        return None
+    for canonical in load_vocab().get(field, []):
+        if str(canonical).strip().casefold() == want:
+            return str(canonical)
+    return None
+
+
+def validate_usage_tags(raw) -> None:
+    """Every tag (comma/pipe list) must be in the usage_tags vocabulary."""
+    allowed = _vocab_set("usage_tags")
+    for tag in _parse_usage_tags(raw):
+        if tag.strip().casefold() not in allowed:
+            raise ValueError("AVATAR_VALUE_NOT_IN_VOCAB:usage_tags")
+
+
+def validate_descriptors(payload: dict) -> None:
+    """Fail-closed vocab check for a manual/AI avatar payload. Raises
+    ``ValueError('AVATAR_VALUE_NOT_IN_VOCAB:<field>')`` on any off-vocab value.
+    Required descriptors must be present + in-vocab; optional ones (environment/
+    lighting/camera) are checked only when provided; usage_tags each in-vocab."""
+    for field in _VOCAB_REQUIRED_FIELDS:
+        if str(payload.get(field) or "").strip().casefold() not in _vocab_set(field):
+            raise ValueError(f"AVATAR_VALUE_NOT_IN_VOCAB:{field}")
+    for field in _VOCAB_OPTIONAL_FIELDS:
+        value = str(payload.get(field) or "").strip()
+        if value and value.casefold() not in _vocab_set(field):
+            raise ValueError(f"AVATAR_VALUE_NOT_IN_VOCAB:{field}")
+    validate_usage_tags(payload.get("usage_tags"))
+
+
+def personas_from_pool() -> list[str]:
+    """Distinct clean persona tokens (single segment, <= 16 chars) parsed from the
+    live pool AvatarCodes — powers the Create Avatar 'existing persona' dropdown.
+    Multi-segment descriptor-slug leaks are excluded by the single-segment regex."""
+    seen: dict[str, None] = {}
+    for row in list_pool():
+        code = str(row.get("avatar_code") or "").strip().upper()
+        match = _PERSONA_RE.match(code)
+        if not match:
+            continue
+        token = match.group(1)
+        if len(token) <= 16 and token not in seen:
+            seen[token] = None
+    return sorted(seen)
 
 
 def sync_pool_csv(csv_bytes: bytes) -> dict:

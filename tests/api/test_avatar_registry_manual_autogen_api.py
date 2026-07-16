@@ -35,15 +35,18 @@ def test_add_manual_redundant_avatar_409():
 
 
 def test_add_manual_happy_path(monkeypatch):
-    """A distinct avatar is added through the (mocked) add_avatar door."""
+    """A distinct avatar (controlled-vocabulary values) is added through the
+    (mocked) add_avatar door, and the code is name-only (BOS_F_ZARA_NN)."""
     captured: dict = {}
 
     def fake_add_avatar(row):
         captured["row"] = row
-        return {"rows": 251, "approved_loaded": 251, "bridge_path": "x"}
+        return {"rows": 252, "approved_loaded": 252, "bridge_path": "x"}
 
     monkeypatch.setattr(
         "agent.services.avatar_registry.add_avatar", fake_add_avatar)
+    monkeypatch.setattr(
+        "agent.services.avatar_registry.find_duplicate_avatar", lambda *a: None)
 
     client = TestClient(_build_app())
     response = client.post(
@@ -51,19 +54,21 @@ def test_add_manual_happy_path(monkeypatch):
         json={
             "character_name": "Zara",
             "gender": "F",
-            "skin_tone": "Deep dark",
-            "hair_style": "Long wavy",
-            "wardrobe": "Batik kebaya",
+            "skin_tone": "Tan SEA",
+            "hair_style": "Short neat",
+            "wardrobe": "Modern baju kurung",
             "hijab": True,
-            "expression": "Warm smile",
-            "usage_tags": "raya|festive",
+            "expression": "Friendly neutral",
+            "usage_tags": "event",
         },
     )
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["redundant"] is False
     assert body["character_name"] == "Zara"
-    assert body["avatar_code"].startswith("BOS_F_ZARA_BATIK_KEBAYA_")
+    # Name-only code — wardrobe never enters the slug.
+    assert body["avatar_code"].startswith("BOS_F_ZARA_")
+    assert "BAJU" not in body["avatar_code"]
     row = captured["row"]
     assert row["approved_flag"] == "TRUE"
     assert "Identity: Zara" in row["PromptV1"]
@@ -104,28 +109,32 @@ def test_auto_generate_happy_path_mocked_adapter(monkeypatch):
         "agent.services.ai_copy_provider_adapter.is_configured", lambda: True)
 
     def fake_complete_json(system, user):
+        # The model returns controlled-vocabulary values (+ off-vocab casing to
+        # exercise the case-insensitive snap).
         return {
             "character_name": "Farah",
             "gender": "F",
-            "skin_tone": "Warm tan",
-            "hair_style": "Shoulder-length curly",
-            "wardrobe": "Modern hijab abaya",
+            "skin_tone": "tan sea",
+            "hair_style": "Tied-back sporty",
+            "wardrobe": "Modest sportswear",
             "hijab": True,
-            "expression": "Bright confident",
-            "environment": "Bright pharmacy interior",
-            "lighting": "Soft daylight",
+            "expression": "Confident neutral",
+            "environment": "Jogging park",
+            "lighting": "Soft outdoor",
             "camera": "Waist-up",
-            "usage_tags": ["pharmacy", "health"],
+            "usage_tags": ["studio", "event"],
         }
 
     monkeypatch.setattr(
         "agent.services.ai_copy_provider_adapter.complete_json", fake_complete_json)
+    monkeypatch.setattr(
+        "agent.services.avatar_registry.find_duplicate_avatar", lambda *a: None)
 
     captured: dict = {}
 
     def fake_add_avatar(row):
         captured["row"] = row
-        return {"rows": 251, "approved_loaded": 251, "bridge_path": "x"}
+        return {"rows": 252, "approved_loaded": 252, "bridge_path": "x"}
 
     monkeypatch.setattr(
         "agent.services.avatar_registry.add_avatar", fake_add_avatar)
@@ -140,7 +149,9 @@ def test_auto_generate_happy_path_mocked_adapter(monkeypatch):
     assert body["generated"] is True
     assert body["character_name"] == "Farah"
     assert body["avatar_code"].startswith("BOS_F_FARAH_")
-    assert captured["row"]["usage_tags"] == "pharmacy|health"
+    # Snapped to canonical casing + filtered to in-vocab tags.
+    assert captured["row"]["SkinTone"] == "Tan SEA"
+    assert captured["row"]["usage_tags"] == "studio|event"
     assert "hijab" in captured["row"]["PromptV1"].lower()
 
 
@@ -218,3 +229,111 @@ def test_delete_avatar_unknown_code_404(monkeypatch):
     response = client.delete("/api/workspace/avatar-registry/BOS_F_NOPE_00")
     assert response.status_code == 404
     assert "AVATAR_CODE_NOT_FOUND" in response.text
+
+
+# ── Standardization: controlled vocabulary + gender/hijab rule ──────────────
+
+def test_avatar_registry_vocab_endpoint():
+    client = TestClient(_build_app())
+    r = client.get("/api/workspace/avatar-registry/vocab")
+    assert r.status_code == 200
+    body = r.json()
+    assert "Tan SEA" in body["vocab"]["skin_tone"]
+    assert "Waist-up" in body["vocab"]["camera"]
+    assert isinstance(body["personas"], list)
+    # Personas are clean single tokens — no descriptor-slug leaks.
+    assert all("_" not in p for p in body["personas"])
+
+
+def test_add_manual_rejects_off_vocab_422(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.avatar_registry.find_duplicate_avatar", lambda *a: None)
+    client = TestClient(_build_app())
+    r = client.post(
+        "/api/workspace/avatar-registry/add-manual",
+        json={
+            "character_name": "Nova",
+            "gender": "F",
+            "skin_tone": "Neon purple",  # off-vocab
+            "hair_style": "Short neat",
+            "wardrobe": "Smart office wear",
+            "expression": "Calm neutral",
+        },
+    )
+    assert r.status_code == 422
+    assert "AVATAR_VALUE_NOT_IN_VOCAB:skin_tone" in r.text
+
+
+def test_add_manual_rejects_hijab_on_male_422():
+    client = TestClient(_build_app())
+    r = client.post(
+        "/api/workspace/avatar-registry/add-manual",
+        json={
+            "character_name": "Amir",
+            "gender": "M",
+            "hijab": True,
+            "skin_tone": "Tan SEA",
+            "hair_style": "Short neat",
+            "wardrobe": "Baju melayu modern",
+            "expression": "Calm neutral",
+        },
+    )
+    assert r.status_code == 422
+    assert "AVATAR_HIJAB_MALE_INVALID" in r.text
+
+
+def test_auto_generate_forces_hijab_off_for_male(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.ai_copy_provider_adapter.is_configured", lambda: True)
+    monkeypatch.setattr(
+        "agent.services.avatar_registry.find_duplicate_avatar", lambda *a: None)
+
+    def fake_complete_json(system, user):
+        return {  # model wrongly set hijab=true for a male
+            "character_name": "Amir",
+            "gender": "M",
+            "hijab": True,
+            "skin_tone": "Tan SEA",
+            "hair_style": "Short neat",
+            "wardrobe": "Baju melayu modern",
+            "expression": "Calm neutral",
+            "usage_tags": ["office"],
+        }
+
+    monkeypatch.setattr(
+        "agent.services.ai_copy_provider_adapter.complete_json", fake_complete_json)
+    captured: dict = {}
+    monkeypatch.setattr(
+        "agent.services.avatar_registry.add_avatar",
+        lambda row: captured.__setitem__("row", row) or {"rows": 1})
+
+    client = TestClient(_build_app())
+    r = client.post(
+        "/api/workspace/avatar-registry/auto-generate",
+        json={"brief": "a male farmer", "gender": "M"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["avatar_code"].startswith("BOS_M_AMIR_")
+    # Hijab forced off for male → PromptV1 never mentions hijab.
+    assert "hijab" not in captured["row"]["PromptV1"].lower()
+
+
+def test_auto_generate_off_vocab_descriptor_502(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.ai_copy_provider_adapter.is_configured", lambda: True)
+    monkeypatch.setattr(
+        "agent.services.ai_copy_provider_adapter.complete_json",
+        lambda system, user: {
+            "character_name": "Nova",
+            "gender": "F",
+            "skin_tone": "Neon purple",  # off-vocab → cannot snap
+            "hair_style": "Short neat",
+            "wardrobe": "Smart office wear",
+            "expression": "Calm neutral",
+        },
+    )
+    client = TestClient(_build_app())
+    r = client.post(
+        "/api/workspace/avatar-registry/auto-generate", json={"brief": "x"})
+    assert r.status_code == 502
+    assert "AI_AVATAR_INVALID" in r.text

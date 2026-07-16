@@ -144,3 +144,43 @@ def test_delete_avatar_case_insensitive(tmp_pool):
 def test_delete_avatar_unknown_code_fails_closed(tmp_pool):
     with pytest.raises(ValueError, match="(?i)AVATAR_CODE_NOT_FOUND"):
         ar.delete_avatar("BOS_F_DOES_NOT_EXIST_00")
+
+
+# ── Standardization: controlled vocabulary + persona helpers ────────────────
+
+def test_load_vocab_has_all_fields():
+    vocab = ar.load_vocab()
+    for field in ("skin_tone", "hair_style", "wardrobe", "expression",
+                  "environment", "lighting", "camera", "usage_tags"):
+        assert vocab.get(field), f"missing vocab field {field}"
+    assert "Tan SEA" in vocab["skin_tone"]
+    assert "Waist-up" in vocab["camera"]
+
+
+def test_snap_to_vocab_case_insensitive():
+    assert ar.snap_to_vocab("skin_tone", "tan sea") == "Tan SEA"
+    assert ar.snap_to_vocab("wardrobe", "MODEST SPORTSWEAR") == "Modest sportswear"
+    assert ar.snap_to_vocab("skin_tone", "neon purple") is None
+    assert ar.snap_to_vocab("skin_tone", "") is None
+
+
+def test_validate_descriptors_fail_closed():
+    good = {
+        "skin_tone": "Tan SEA", "hair_style": "Short neat",
+        "wardrobe": "Smart office wear", "expression": "Calm neutral",
+        "environment": "Modern office interior", "usage_tags": "UGC|office",
+    }
+    ar.validate_descriptors(good)  # no raise
+    with pytest.raises(ValueError, match="AVATAR_VALUE_NOT_IN_VOCAB:wardrobe"):
+        ar.validate_descriptors({**good, "wardrobe": "Batik kebaya"})
+    with pytest.raises(ValueError, match="AVATAR_VALUE_NOT_IN_VOCAB:usage_tags"):
+        ar.validate_descriptors({**good, "usage_tags": "raya"})
+    with pytest.raises(ValueError, match="AVATAR_VALUE_NOT_IN_VOCAB:environment"):
+        ar.validate_descriptors({**good, "environment": "Moon base"})
+
+
+def test_personas_from_pool_are_clean_tokens(tmp_pool):
+    personas = ar.personas_from_pool()
+    assert personas  # non-empty
+    # Every persona is a single clean alnum token (no descriptor-slug leaks, no NN).
+    assert all("_" not in p and p.isalnum() for p in personas)

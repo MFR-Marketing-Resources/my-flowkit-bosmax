@@ -387,12 +387,25 @@ async def avatar_registry_status():
     }
 
 
+@router.get("/avatar-registry/vocab")
+async def avatar_registry_vocab():
+    """Read-only controlled vocabulary + existing personas for the Create Avatar
+    dropdowns. Single source of truth (agent/authority/avatar_registry_vocab.json)."""
+    from agent.services import avatar_registry
+    return {
+        "vocab": avatar_registry.load_vocab(),
+        "personas": avatar_registry.personas_from_pool(),
+    }
+
+
 # ── Manual add + AI auto-generate (additive). Both build a full pool row and add
 # it through the fail-closed avatar_registry.add_avatar() door. Redundancy on the
 # descriptor tuple fails closed with 409 so the pool never gains a duplicate face.
+# Descriptor values are validated against the controlled vocabulary (fail-closed
+# 422) so free-text can never leak into the shared pool.
 
 class AvatarManualAddRequest(BaseModel):
-    character_name: str
+    character_name: str = Field(pattern=r"^[A-Za-z][A-Za-z ]{0,15}$")
     gender: str = Field(pattern="^[FM]$")
     skin_tone: str
     hair_style: str
@@ -407,7 +420,9 @@ class AvatarManualAddRequest(BaseModel):
 
 def _build_avatar_pool_row(avatar_registry, payload: dict) -> tuple[str, dict]:
     """Build (avatar_code, full pool row dict) from a validated manual/AI payload."""
-    descriptor = f"{payload['character_name']} {payload['wardrobe']}"
+    # Name-only descriptor — wardrobe never enters the AvatarCode slug (keeps codes
+    # clean, e.g. BOS_F_ALYA_11, not a slugified wardrobe sentence).
+    descriptor = str(payload["character_name"])
     avatar_code = avatar_registry.next_avatar_code(payload["gender"], descriptor)
     prompt_profile = {
         "CharacterName": payload["character_name"],
@@ -446,6 +461,12 @@ async def avatar_registry_add_manual(request: AvatarManualAddRequest):
     """Manual single-avatar add. Fail-closed 409 on a redundant descriptor
     (same skin+hair+wardrobe+expression+gender combo already in the pool)."""
     from agent.services import avatar_registry
+    try:
+        avatar_registry.validate_descriptors(request.model_dump())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if request.hijab and request.gender == "M":
+        raise HTTPException(422, "AVATAR_HIJAB_MALE_INVALID")
     existing = avatar_registry.find_duplicate_avatar(
         request.skin_tone, request.hair_style, request.wardrobe,
         request.expression, request.gender)
@@ -464,6 +485,9 @@ class AvatarAutoGenRequest(BaseModel):
     brief: str | None = None
     gender: str | None = None
     hijab: bool | None = None
+    environment: str | None = None
+    wardrobe: str | None = None
+    usage_tag: str | None = None
 
 
 _AVATAR_AI_REQUIRED_KEYS = (
@@ -473,8 +497,12 @@ _AVATAR_AI_REQUIRED_KEYS = (
 
 
 def _coerce_ai_avatar_profile(data: dict) -> dict | None:
-    """Validate + coerce the AI-returned dict into a manual-add payload, or None
-    if required keys are missing. usage_tags array → pipe-delimited string."""
+    """Validate + coerce the AI-returned dict into a manual-add payload, or None if
+    required keys are missing or a required descriptor is off-vocab. Required
+    descriptors are SNAPPED case-insensitively to the controlled vocabulary;
+    optional off-vocab descriptors are dropped; usage_tags filtered to in-vocab;
+    hijab forced false for male. usage_tags → pipe-delimited string."""
+    from agent.services import avatar_registry
     if not isinstance(data, dict):
         return None
     if any(not str(data.get(key) or "").strip() for key in _AVATAR_AI_REQUIRED_KEYS):
@@ -482,21 +510,32 @@ def _coerce_ai_avatar_profile(data: dict) -> dict | None:
     gender = str(data.get("gender") or "").strip().upper()
     if gender not in ("F", "M"):
         return None
-    usage_tags = data.get("usage_tags")
-    if isinstance(usage_tags, list):
-        usage_tags = "|".join(str(t).strip() for t in usage_tags if str(t).strip())
+    snapped: dict[str, str] = {}
+    for field in ("skin_tone", "hair_style", "wardrobe", "expression"):
+        canonical = avatar_registry.snap_to_vocab(field, data.get(field))
+        if canonical is None:
+            return None
+        snapped[field] = canonical
+    optional = {
+        field: avatar_registry.snap_to_vocab(field, data.get(field))
+        for field in ("environment", "lighting", "camera")
+    }
+    raw_tags = data.get("usage_tags")
+    if not isinstance(raw_tags, list):
+        raw_tags = [raw_tags] if raw_tags else []
+    tags = [t for t in (avatar_registry.snap_to_vocab("usage_tags", x) for x in raw_tags) if t]
     return {
-        "character_name": str(data["character_name"]).strip(),
+        "character_name": str(data["character_name"]).strip()[:16],
         "gender": gender,
-        "skin_tone": str(data["skin_tone"]).strip(),
-        "hair_style": str(data["hair_style"]).strip(),
-        "wardrobe": str(data["wardrobe"]).strip(),
-        "hijab": bool(data.get("hijab")),
-        "expression": str(data["expression"]).strip(),
-        "environment": str(data.get("environment") or "").strip() or None,
-        "lighting": str(data.get("lighting") or "").strip() or None,
-        "camera": str(data.get("camera") or "").strip() or None,
-        "usage_tags": str(usage_tags or "").strip() or None,
+        "skin_tone": snapped["skin_tone"],
+        "hair_style": snapped["hair_style"],
+        "wardrobe": snapped["wardrobe"],
+        "hijab": bool(data.get("hijab")) and gender != "M",
+        "expression": snapped["expression"],
+        "environment": optional["environment"],
+        "lighting": optional["lighting"],
+        "camera": optional["camera"],
+        "usage_tags": "|".join(tags) or None,
     }
 
 
@@ -513,19 +552,36 @@ async def avatar_registry_auto_generate(request: AvatarAutoGenRequest):
     existing_descriptors = ", ".join(
         "+".join(avatar_registry.descriptor_key(p)) for p in avatar_registry.list_pool()
     )
+    _vocab = avatar_registry.load_vocab()
+
+    def _allowed(field: str) -> str:
+        return ", ".join(_vocab.get(field, []))
+
     system = (
         "You generate ONE Malaysian commercial UGC avatar profile as STRICT JSON. "
         "Avoid duplicating any of these existing avatars (do NOT repeat the same "
         "skin+hair+wardrobe+expression combo): " + existing_descriptors + ". "
-        "Return JSON keys: character_name, gender('F'|'M'), skin_tone, hair_style, "
-        "wardrobe, hijab(bool), expression, environment, lighting, camera, "
-        "usage_tags(array of strings)."
+        "Return JSON keys: character_name(short single word), gender('F'|'M'), "
+        "skin_tone, hair_style, wardrobe, hijab(bool), expression, environment, "
+        "lighting, camera, usage_tags(array of strings). Each descriptor MUST be "
+        "chosen EXACTLY from these allowed values — "
+        f"skin_tone: [{_allowed('skin_tone')}]; hair_style: [{_allowed('hair_style')}]; "
+        f"wardrobe: [{_allowed('wardrobe')}]; expression: [{_allowed('expression')}]; "
+        f"environment: [{_allowed('environment')}]; lighting: [{_allowed('lighting')}]; "
+        f"camera: [{_allowed('camera')}]; usage_tags from [{_allowed('usage_tags')}]. "
+        "If gender is 'M', hijab MUST be false."
     )
     constraints = []
     if request.gender:
         constraints.append(f"gender must be '{str(request.gender).strip().upper()}'")
     if request.hijab is not None:
         constraints.append(f"hijab must be {bool(request.hijab)}")
+    if request.environment:
+        constraints.append(f"environment must be '{request.environment}'")
+    if request.wardrobe:
+        constraints.append(f"wardrobe must be '{request.wardrobe}'")
+    if request.usage_tag:
+        constraints.append(f"usage_tags must include '{request.usage_tag}'")
     user = str(request.brief or "Generate a fresh commercial UGC avatar.")
     if constraints:
         user += "\nConstraints: " + "; ".join(constraints) + "."

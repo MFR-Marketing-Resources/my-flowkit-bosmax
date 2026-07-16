@@ -228,6 +228,7 @@ domains:
       - tests/fixtures/google_flow_native_extend/poll_status.sanitized.json
       - agent/services/product_lock_builder.py
       - agent/services/avatar_registry.py
+      - agent/authority/avatar_registry_vocab.json
       - agent/services/avatar_csv_factory_service.py
       - tests/unit/test_avatar_csv_factory_service.py
       - tests/unit/test_avatar_registry_usage_tags.py

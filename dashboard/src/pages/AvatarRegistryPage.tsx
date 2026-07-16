@@ -155,6 +155,10 @@ export default function AvatarRegistryPage() {
 		wardrobe: "",
 		hijab: false,
 		expression: "",
+		environment: "",
+		lighting: "",
+		camera: "",
+		usage_tags: [] as string[],
 	});
 	const [isAddingManual, setIsAddingManual] = useState(false);
 	const [autoBrief, setAutoBrief] = useState("");
@@ -162,6 +166,39 @@ export default function AvatarRegistryPage() {
 	const [autoHijab, setAutoHijab] = useState(false);
 	const [isAutoGenerating, setIsAutoGenerating] = useState(false);
 	const [deletingCode, setDeletingCode] = useState<string | null>(null);
+	// Controlled vocabulary (single source of truth) for the Create Avatar dropdowns.
+	const [vocab, setVocab] = useState<Record<string, string[]> | null>(null);
+	const [personas, setPersonas] = useState<string[]>([]);
+	const [manualPersonaNew, setManualPersonaNew] = useState(false);
+	const [autoEnvironment, setAutoEnvironment] = useState("");
+	const [autoWardrobe, setAutoWardrobe] = useState("");
+	const [autoUsageTag, setAutoUsageTag] = useState("");
+	useEffect(() => {
+		fetch("/api/workspace/avatar-registry/vocab")
+			.then((r) => r.json())
+			.then((d: { vocab: Record<string, string[]>; personas: string[] }) => {
+				setVocab(d.vocab);
+				setPersonas(d.personas || []);
+				// Prefill descriptor dropdowns with the first allowed value so a quick
+				// add is always vocab-valid.
+				setManualForm((f) => ({
+					...f,
+					skin_tone: f.skin_tone || d.vocab.skin_tone?.[0] || "",
+					hair_style: f.hair_style || d.vocab.hair_style?.[0] || "",
+					wardrobe: f.wardrobe || d.vocab.wardrobe?.[0] || "",
+					expression: f.expression || d.vocab.expression?.[0] || "",
+					environment: f.environment || d.vocab.environment?.[0] || "",
+					lighting: f.lighting || d.vocab.lighting?.[0] || "",
+					camera: f.camera || d.vocab.camera?.[0] || "",
+					usage_tags: f.usage_tags.length
+						? f.usage_tags
+						: d.vocab.usage_tags?.[0]
+							? [d.vocab.usage_tags[0]]
+							: [],
+				}));
+			})
+			.catch(() => {});
+	}, []);
 
 	const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set());
 	const [bulkMaxParallel, setBulkMaxParallel] = useState(2);
@@ -251,11 +288,15 @@ export default function AvatarRegistryPage() {
 					body: JSON.stringify({
 						character_name: manualForm.character_name.trim(),
 						gender: manualForm.gender,
-						skin_tone: manualForm.skin_tone.trim(),
-						hair_style: manualForm.hair_style.trim(),
-						wardrobe: manualForm.wardrobe.trim(),
-						hijab: manualForm.hijab,
-						expression: manualForm.expression.trim(),
+						skin_tone: manualForm.skin_tone,
+						hair_style: manualForm.hair_style,
+						wardrobe: manualForm.wardrobe,
+						hijab: manualForm.gender === "M" ? false : manualForm.hijab,
+						expression: manualForm.expression,
+						environment: manualForm.environment,
+						lighting: manualForm.lighting,
+						camera: manualForm.camera,
+						usage_tags: manualForm.usage_tags.join("|"),
 					}),
 				},
 			);
@@ -271,15 +312,10 @@ export default function AvatarRegistryPage() {
 				throw new Error(detail);
 			}
 			setSuccessMsg(`Avatar ${data.avatar_code} ditambah`);
-			setManualForm({
-				character_name: "",
-				gender: "F",
-				skin_tone: "",
-				hair_style: "",
-				wardrobe: "",
-				hijab: false,
-				expression: "",
-			});
+			// Keep the descriptor dropdown selections (still vocab-valid) so adding a
+			// sibling variant is quick; just clear the persona + hijab.
+			setManualForm((f) => ({ ...f, character_name: "", hijab: false }));
+			setManualPersonaNew(false);
 			await refresh();
 			// One press = profile + a generated reference image in the Library, not
 			// just a text row. Image gen is FREE (only video burns credit), so chain
@@ -307,7 +343,10 @@ export default function AvatarRegistryPage() {
 			const body: Record<string, unknown> = {};
 			if (autoBrief.trim()) body.brief = autoBrief.trim();
 			if (autoGender) body.gender = autoGender;
-			if (autoHijab) body.hijab = true;
+			if (autoHijab && autoGender !== "M") body.hijab = true;
+			if (autoEnvironment) body.environment = autoEnvironment;
+			if (autoWardrobe) body.wardrobe = autoWardrobe;
+			if (autoUsageTag) body.usage_tag = autoUsageTag;
 			const response = await fetch(
 				"/api/workspace/avatar-registry/auto-generate",
 				{
@@ -1111,19 +1150,50 @@ export default function AvatarRegistryPage() {
 						<div className="grid grid-cols-2 gap-3">
 							<label className="col-span-2 text-[10px] text-slate-400">
 								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
-									Character name
+									Character name (persona)
 								</span>
-								<input
-									value={manualForm.character_name}
-									onChange={(e) =>
-										setManualForm((f) => ({
-											...f,
-											character_name: e.target.value,
-										}))
-									}
+								<select
+									value={manualPersonaNew ? "__new__" : manualForm.character_name}
+									onChange={(e) => {
+										const v = e.target.value;
+										if (v === "__new__") {
+											setManualPersonaNew(true);
+											setManualForm((f) => ({ ...f, character_name: "" }));
+										} else {
+											setManualPersonaNew(false);
+											setManualForm((f) => ({ ...f, character_name: v }));
+										}
+									}}
 									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
-								/>
+								>
+									<option value="">— pilih persona —</option>
+									{personas.map((p) => (
+										<option key={p} value={p}>
+											{p}
+										</option>
+									))}
+									<option value="__new__">+ New persona…</option>
+								</select>
 							</label>
+							{manualPersonaNew && (
+								<label className="col-span-2 text-[10px] text-slate-400">
+									<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+										New persona name
+									</span>
+									<input
+										value={manualForm.character_name}
+										maxLength={16}
+										placeholder="cth: Aisha (huruf sahaja)"
+										onChange={(e) =>
+											setManualForm((f) => ({
+												...f,
+												character_name: e.target.value,
+											}))
+										}
+										className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+									/>
+								</label>
+							)}
 							<label className="text-[10px] text-slate-400">
 								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
 									Gender
@@ -1131,7 +1201,11 @@ export default function AvatarRegistryPage() {
 								<select
 									value={manualForm.gender}
 									onChange={(e) =>
-										setManualForm((f) => ({ ...f, gender: e.target.value }))
+										setManualForm((f) => ({
+											...f,
+											gender: e.target.value,
+											hijab: e.target.value === "M" ? false : f.hijab,
+										}))
 									}
 									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
 								>
@@ -1143,63 +1217,142 @@ export default function AvatarRegistryPage() {
 								<input
 									type="checkbox"
 									checked={manualForm.hijab}
+									disabled={manualForm.gender === "M"}
 									onChange={(e) =>
 										setManualForm((f) => ({ ...f, hijab: e.target.checked }))
 									}
-									className="rounded border-slate-700 bg-slate-950"
+									className="rounded border-slate-700 bg-slate-950 disabled:opacity-40"
 								/>
 								<span className="font-semibold uppercase tracking-[0.12em] text-slate-500">
-									Hijab
+									Hijab{manualForm.gender === "M" ? " (F only)" : ""}
 								</span>
 							</label>
 							<label className="text-[10px] text-slate-400">
 								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
 									Skin tone
 								</span>
-								<input
+								<select
 									value={manualForm.skin_tone}
 									onChange={(e) =>
 										setManualForm((f) => ({ ...f, skin_tone: e.target.value }))
 									}
 									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
-								/>
+								>
+									{(vocab?.skin_tone ?? []).map((o) => (
+										<option key={o} value={o}>
+											{o}
+										</option>
+									))}
+								</select>
 							</label>
 							<label className="text-[10px] text-slate-400">
 								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
 									Hair style
 								</span>
-								<input
+								<select
 									value={manualForm.hair_style}
 									onChange={(e) =>
 										setManualForm((f) => ({ ...f, hair_style: e.target.value }))
 									}
 									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
-								/>
+								>
+									{(vocab?.hair_style ?? []).map((o) => (
+										<option key={o} value={o}>
+											{o}
+										</option>
+									))}
+								</select>
 							</label>
 							<label className="text-[10px] text-slate-400">
 								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
 									Wardrobe
 								</span>
-								<input
+								<select
 									value={manualForm.wardrobe}
 									onChange={(e) =>
 										setManualForm((f) => ({ ...f, wardrobe: e.target.value }))
 									}
 									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
-								/>
+								>
+									{(vocab?.wardrobe ?? []).map((o) => (
+										<option key={o} value={o}>
+											{o}
+										</option>
+									))}
+								</select>
 							</label>
 							<label className="text-[10px] text-slate-400">
 								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
 									Expression
 								</span>
-								<input
+								<select
 									value={manualForm.expression}
 									onChange={(e) =>
 										setManualForm((f) => ({ ...f, expression: e.target.value }))
 									}
 									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
-								/>
+								>
+									{(vocab?.expression ?? []).map((o) => (
+										<option key={o} value={o}>
+											{o}
+										</option>
+									))}
+								</select>
 							</label>
+							{(
+								[
+									["environment", "Environment"],
+									["lighting", "Lighting"],
+									["camera", "Camera"],
+								] as const
+							).map(([field, label]) => (
+								<label key={field} className="text-[10px] text-slate-400">
+									<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+										{label}
+									</span>
+									<select
+										value={manualForm[field]}
+										onChange={(e) =>
+											setManualForm((f) => ({ ...f, [field]: e.target.value }))
+										}
+										className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+									>
+										{(vocab?.[field] ?? []).map((o) => (
+											<option key={o} value={o}>
+												{o}
+											</option>
+										))}
+									</select>
+								</label>
+							))}
+							<div className="col-span-2 text-[10px] text-slate-400">
+								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+									Usage tags
+								</span>
+								<div className="flex flex-wrap gap-2">
+									{(vocab?.usage_tags ?? []).map((tag) => (
+										<label
+											key={tag}
+											className="flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-950/60 px-2 py-1"
+										>
+											<input
+												type="checkbox"
+												checked={manualForm.usage_tags.includes(tag)}
+												onChange={(e) =>
+													setManualForm((f) => ({
+														...f,
+														usage_tags: e.target.checked
+															? [...f.usage_tags, tag]
+															: f.usage_tags.filter((t) => t !== tag),
+													}))
+												}
+												className="rounded border-slate-700 bg-slate-950"
+											/>
+											<span>{tag}</span>
+										</label>
+									))}
+								</div>
+							</div>
 						</div>
 						<button
 							type="button"
@@ -1246,13 +1399,65 @@ export default function AvatarRegistryPage() {
 							<label className="flex items-center gap-2 pb-1.5 text-[10px] text-slate-400">
 								<input
 									type="checkbox"
-									checked={autoHijab}
+									checked={autoHijab && autoGender !== "M"}
+									disabled={autoGender === "M"}
 									onChange={(e) => setAutoHijab(e.target.checked)}
-									className="rounded border-slate-700 bg-slate-950"
+									className="rounded border-slate-700 bg-slate-950 disabled:opacity-40"
 								/>
 								<span className="font-semibold uppercase tracking-[0.12em] text-slate-500">
-									Hijab
+									Hijab{autoGender === "M" ? " (F only)" : ""}
 								</span>
+							</label>
+							<label className="text-[10px] text-slate-400">
+								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+									Environment
+								</span>
+								<select
+									value={autoEnvironment}
+									onChange={(e) => setAutoEnvironment(e.target.value)}
+									className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+								>
+									<option value="">Auto</option>
+									{(vocab?.environment ?? []).map((o) => (
+										<option key={o} value={o}>
+											{o}
+										</option>
+									))}
+								</select>
+							</label>
+							<label className="text-[10px] text-slate-400">
+								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+									Wardrobe
+								</span>
+								<select
+									value={autoWardrobe}
+									onChange={(e) => setAutoWardrobe(e.target.value)}
+									className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+								>
+									<option value="">Auto</option>
+									{(vocab?.wardrobe ?? []).map((o) => (
+										<option key={o} value={o}>
+											{o}
+										</option>
+									))}
+								</select>
+							</label>
+							<label className="text-[10px] text-slate-400">
+								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+									Usage tag
+								</span>
+								<select
+									value={autoUsageTag}
+									onChange={(e) => setAutoUsageTag(e.target.value)}
+									className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+								>
+									<option value="">Auto</option>
+									{(vocab?.usage_tags ?? []).map((o) => (
+										<option key={o} value={o}>
+											{o}
+										</option>
+									))}
+								</select>
 							</label>
 						</div>
 						<button

@@ -1,0 +1,78 @@
+{
+  "_meta": {
+    "purpose": "Controlled vocabulary for the Create Avatar form (manual + AI auto-generate). Single source of truth: drives the dashboard dropdowns, the AI allowed-values prompt, and fail-closed backend validation. Add an allowed value by editing the arrays below.",
+    "sourced_from": "Distinct values in the live avatar authority pool (data/avatar_registry/AVATAR_POOL_NORMALIZED.csv), cleaned of the two legacy free-text rows.",
+    "version": "AVATAR_REGISTRY_VOCAB_v1"
+  },
+  "fields": {
+    "skin_tone": [
+      "Tan SEA",
+      "Light-medium",
+      "Medium tan",
+      "Light tan"
+    ],
+    "hair_style": [
+      "Medium tidy",
+      "Short neat",
+      "Tied-back sporty",
+      "Short sporty"
+    ],
+    "wardrobe": [
+      "Smart office wear",
+      "Home casual wear",
+      "Campus casual",
+      "Café casual",
+      "Shopping casual",
+      "Neutral studio wear",
+      "Travel casual",
+      "Night casual",
+      "Modest sportswear",
+      "Modern baju kurung",
+      "Sportswear",
+      "Baju melayu modern"
+    ],
+    "expression": [
+      "Calm neutral",
+      "Neutral confident",
+      "Relaxed neutral",
+      "Confident neutral",
+      "Friendly neutral",
+      "Calm confident",
+      "Calm polite",
+      "Calm relaxed"
+    ],
+    "environment": [
+      "Modern office interior",
+      "Living room interior",
+      "Jogging park",
+      "University hallway",
+      "Coffee shop interior",
+      "Mall interior",
+      "Plain neutral backdrop",
+      "Airport interior",
+      "City street night",
+      "Event hall"
+    ],
+    "lighting": [
+      "Soft natural",
+      "Balanced commercial",
+      "Soft outdoor",
+      "Soft warm",
+      "Balanced studio",
+      "Soft ambient",
+      "Balanced warm"
+    ],
+    "camera": [
+      "Waist-up",
+      "Half-body",
+      "Close product hold"
+    ],
+    "usage_tags": [
+      "UGC",
+      "home",
+      "office",
+      "studio",
+      "event"
+    ]
+  }
+}
