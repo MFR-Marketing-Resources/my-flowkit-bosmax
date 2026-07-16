@@ -2,9 +2,26 @@
 
 ## Status
 
-Planning baseline approved for documentation.
+**Planning baseline — NOT approved for implementation.** (G0 amendment M1.)
+
+"Planning baseline" means this document may be read, cited, and amended. It does **not** authorize
+any coding, Playwright work, or round to begin. Authorization comes only from the owner via
+`docs/bosmax-rpa-g0-governance-gate.md` (the G0 gate). At the time of this amendment, **Round A is
+BLOCKED** and no round is authorized.
 
 This document is a secondary/reference specification for AI agents or developers who will later implement the BOSMAX Playwright RPA Click Operator. It must be read before any implementation mission.
+
+**Governing authority (G0 amendment M9).** This document is subordinate to, and must be read with:
+
+- `AGENTS.md` (repo-wide agent contract)
+- `.ai/decisions/ADR-007-abandon-dom-wiring-api-first-rebuild.md` (generation is API-first; DOM
+  generation lanes are dead and delete-only)
+- `.ai/contracts/*` (operating, telemetry-lockdown, and report-rejection rules)
+- `docs/bosmax-rpa-g0-governance-gate.md` (G0 gate — authority, proof, and blockers)
+
+**On conflict, `AGENTS.md` and `.ai/contracts/*` OVERRIDE this document.** A conflict must be
+recorded and routed to the owner, never silently resolved. See the G0 Amendments section at the end
+of this document for the binding amendments accepted by the owner.
 
 ## Purpose
 
@@ -88,7 +105,11 @@ Round 3 planning synthesis concluded:
 
 ## Workflow Map
 
-| Phase | Mandatory | Initial RPA role | Required state before next phase | Evidence surface |
+**Naming (G0 amendment M15):** the column below is a workflow **Stage**, not a delivery "Phase".
+Delivery units in this workstream are **Round A-F** only. "Phase A-E" is retired — it omitted Round F
+and collided with the closed *Creative Registry Modernization Phase A-E* workstream.
+
+| Stage | Mandatory | Initial RPA role | Required state before next stage | Evidence surface |
 |---|---:|---|---|---|
 | Health/preflight | Yes | Safe checker | Dashboard/backend reachable; warnings captured | Health banner, disabled reasons |
 | Product selection | Yes | RPA-safe | Immutable product ID selected | Product readiness panel |
@@ -297,11 +318,160 @@ The RPA must stop and report if:
 
 ## Next Owner Decision
 
-Authorize **Round A and Round B** as the first implementation package:
+> **RETRACTED — superseded by the G0 gate (G0 amendments M1 + M4).**
+>
+> This section previously read: *"Authorize **Round A and Round B** as the first implementation
+> package."* That recommendation is **withdrawn**. It bundled Round A with Round B, which the G0 gate
+> now forbids: Round A exists to *discover* that the selector model is incomplete, and bundling would
+> let the same mission both find the gaps and improvise around them inside a click mission.
+>
+> **Binding replacement:**
+>
+> - **Each round requires a SEPARATE owner decision.** `A+B`, `D+E`, and `E+F` must **never** be bundled.
+> - **No round is authorized by this document.** Authorization comes only from the owner via
+>   `docs/bosmax-rpa-g0-governance-gate.md`.
+> - **Round A is currently BLOCKED** pending the G0 blockers and the unresolved owner-only fields.
 
-- Round A: selector/state normalization only.
-- Round B: Hybrid Production-Prep Click Operator for Steps 1-4.
-
-Before Round B validation, manually prepare one Hybrid-ready test product with one approved Copy Set and authorized EXTEND/duration configuration.
+Before any Round B validation, a **designated non-production** Hybrid-ready test product with one
+approved Copy Set and authorized EXTEND/duration configuration must exist in an **isolated test DB**.
+This is a hard prerequisite, not a preparation step (G0 amendment M8) — see
+`OWNER_DECISION_REQUIRED: safe non-production product + isolated DB for Round B`.
 
 Do not authorize Step 5 live generation, Copy Set candidate generation, auto-approval, retries, or batch/daily repeats until the bounded MVP evidence is accepted.
+
+---
+
+## G0 Amendments (Binding)
+
+Accepted by the owner from the G0 Decision Ledger
+(`docs/bosmax-rpa-g0-governance-gate.md` §12). These amendments **override** any conflicting text
+earlier in this document. Ledger IDs are given for traceability.
+
+### A. Runtime target origin — PINNED (M3)
+
+- The canonical RPA target origin is **`http://127.0.0.1:8100`**, the **built** runtime.
+- **`http://127.0.0.1:5173` (Vite dev) is NOT an accepted target or proof surface** unless it is
+  explicitly launched for a named task **and** the report validates against it explicitly.
+- Because `:8100` serves a **built** bundle, a source-only change is invisible there until
+  `npm run build` re-runs. Any rendered-selector proof must come from a bundle **rebuilt from the
+  commit under review**, and must quote live `git_head` plus `source_stale_since_start=false`.
+- The Evidence Baseline in this document recorded the dashboard at `:5173`. That reading is
+  **superseded** by this amendment (see also O5 below).
+
+### B. Round A selector/state model — corrections (M5, B1)
+
+The Minimal Selector / State Patch list is amended as follows.
+
+1. **Step 1 setting controls are IN SCOPE and mandatory.** The MVP requires the operator to set
+   EXTEND and authorized duration, so each control the MVP must set requires its own selector:
+   generation mode (SINGLE/EXTEND), total video duration (EXTEND), block/video duration (SINGLE),
+   engine, video model, target language, camera style, character presence, creator persona.
+   Each must expose its **current value as a readable attribute** (e.g. `data-value`), not only as
+   rendered text — button enablement is not proof that a setting took effect.
+2. **The Hybrid fallback-confirmation gate is IN SCOPE.** It is a Protected Area and it **disables
+   the Step 4 action while open**, at which point the "continue with fallback" control becomes the
+   only enabled control inside the Step 4 container. It requires its own selector and its own state.
+   Round B must never click it, and must produce **positive evidence that it did not fire**.
+3. **`action-generate-video` inside `workflow-step-5` is REMOVED as an unconditional requirement.**
+   Step 5 renders no clickable generation control when EXTEND/duration prerequisites are unmet.
+   The selector is **conditional**: required only in a state where the control actually renders.
+4. **B1 DECISION — per-step error/completion (owner: option (a)).** The dashboard exposes a
+   **single global notice object shared by Steps 3/4/5**, with no step attribution and no freshness
+   marker. Per-step error attribution is therefore **not derivable from existing state**.
+   **Accepted resolution: tag the existing single global notice, and downgrade the per-step error
+   requirement to a GLOBAL STOP.** Any error notice is a **global STOP** for the RPA; it must not be
+   attributed to a step and must not be treated as recoverable.
+   **State-plumbing is NOT authorized** — Round A must not split, re-scope, or add step attribution
+   to the notice. If a future round needs per-step attribution, that is a **new owner decision**.
+5. The requirement for "a visible prerequisite/error/completion region for each step" is amended to:
+   "a visible prerequisite region per step, plus **one** global notice region treated as a global STOP."
+
+### C. Round A acceptance — build gate added (M6)
+
+Round A is accepted only when, **in addition to** the existing acceptance criteria:
+
+- `scripts/verify-gate.ps1` passes locally — the **real** build (`npm run build` = `tsc -b && vite build`),
+  vitest, backend pytest smoke, and mandor-check. **`tsc --noEmit` is NOT sufficient.**
+- Every changed file is registered in `docs/MODULE_STATUS.yaml` `owned_paths` and staged before
+  mandor-check runs.
+- The report **explicitly names which non-HYBRID modes were re-rendered and confirmed unbroken.**
+  The Hybrid workflow surface is shared with **T2V, I2V, F2V and IMG**; a Round A patch that is only
+  DOM-inspected is **NOT accepted**, because a DOM inspection cannot see a build break.
+- The rendered locator audit must be **falsifiable**: each selector asserted in **at least two
+  states** (e.g. `NOT_READY` and `READY`). An audit that only ever runs in the one already-observed
+  state (Step 4 disabled, Step 5 absent, Queue empty) passes vacuously and is **not accepted**.
+
+### D. Copy Set integrity + prerequisites (M7, M8)
+
+- **Copy Set approval currently has NO server-side actor identity.** The approval actor is recorded
+  as a fixed literal, and the approval phrase is a client-side constant. Consequently an RPA approval
+  would be **indistinguishable from a human approval** in the record: the rule "RPA must not approve
+  Copy Sets" is **unenforceable server-side and forensically unauditable** as built.
+- **Round B is READ-ONLY with respect to approval.** It may read, select and verify an approved Copy
+  Set. It must never write approval state.
+- **A server-side actor/provenance check on Copy Set approval is a hard prerequisite for Round F**
+  (AI candidate generation).
+- **Safe test data is a hard prerequisite for Round B**, not a preparation nicety: a **designated
+  non-production product** with an immutable ID, in an **isolated test DB**. Round B must not run
+  against production data in the live DB.
+- **Deterministic selection must be defined before Round B**: when more than one approved Copy Set
+  exists for a product, the rule for which one the RPA selects must be stated. It is currently
+  undefined, and multiple approved sets per product already exist.
+- **Approval state is a stale, un-polled client cache.** Mid-run revocation or approval-drop is
+  invisible. Round B must re-verify the approved Copy Set immediately before the Step 4 action.
+
+### E. Live Step 5 proof (M14)
+
+Round E is accepted only with **all** of:
+
+1. **Per-run written owner authorization**, quoted in the report. Never standing, never inferred.
+2. A **pre-run baseline**: credit balance and job/request/artifact counts.
+3. A **post-run delta** against that baseline proving **exactly one** submission.
+4. `REQUEST_ID` + `COMMIT_SHA` + a telemetry-backed stage list. `REQUEST_ID=N/A` is auto-rejected.
+5. A **duplicate-submission detection method defined in advance** (idempotency key or request-count
+   delta) — not asserted after the fact.
+6. Explicit reconciliation with `AGENTS.md`'s live-UAT rule; state which rule governs.
+
+**Negative claims require positive evidence.** "The RPA stopped before Step 5" must be proven by a
+**generation-request-count delta of zero** against the baseline — never self-reported.
+
+Screenshots are **supporting evidence only, never sole proof** (`AGENTS.md`: no manual
+screenshot-only proof).
+
+### F. Accepted optional amendments
+
+- **O1 — state model.** The step state vocabulary adds **`AWAITING_HUMAN_CONFIRMATION`**. Step state
+  is **not monotonic**: a Step 3 `COMPLETED` can revert to `NOT_READY` with no operator action (for
+  example when a prerequisite is invalidated). The RPA must not assume a reached state is durable and
+  must re-verify before acting on it.
+- **O3 — Round C report format.** Round C's report format must be pre-cleared against
+  `.ai/contracts/REPORT_REJECTION_RULES.md` **before** Round C begins. A report that would be
+  auto-rejected (for example `REQUEST_ID=N/A`) is not an acceptable deliverable.
+- **O5 — staleness.** The **Evidence Baseline in this document is STALE** and must be treated as
+  historical, not current: it records the dashboard at `:5173` (superseded by amendment A) and a
+  runtime/DB state that has since changed. It must be re-verified before it is relied on. This
+  document must be **re-reviewed whenever the G0 gate is amended**, and before any new round is
+  authorized.
+
+### G. Parked
+
+- **O4 — dedupe key strengthening: PARKED until Round F.** The current dedupe is an exact-match
+  blind-duplicate guard, which offers near-zero protection for AI candidate generation while still
+  reporting a "deduped" signal. This is **not an active prerequisite for Round A**. It **must be
+  resolved before Round F** is authorized.
+
+### H. Retained unchanged (D1-D6)
+
+The following are explicitly **retained as written** and are not amended: Owner Intent Lock;
+Non-Goals; Protected Areas; the "stop before Step 5" MVP boundary; human-only Copy Set approval with
+no auto-approval in the first MVP; the Round A-F decomposition shape. This workstream is **not**
+reduced to Workspace Jobs monitoring — the prep-click MVP remains correct.
+
+### I. Unresolved owner-only fields
+
+These block Round A and must be supplied by the owner. They must **not** be invented by any agent.
+
+- `OWNER_DECISION_REQUIRED: BOSMAX auditor human name`
+- `OWNER_DECISION_REQUIRED: Round A PR reviewer`
+- `OWNER_DECISION_REQUIRED: rollback owner`
+- `OWNER_DECISION_REQUIRED: safe non-production product + isolated DB for Round B`

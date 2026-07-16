@@ -2,11 +2,25 @@
 
 ## Status
 
-`G0_READY_FOR_OWNER_REVIEW` — awaiting owner classification of the Decision Ledger.
+`G0_LEDGER_CLASSIFIED — AMENDMENTS APPLIED` (was `G0_READY_FOR_OWNER_REVIEW`).
 
-This document is **governance only**. It authorizes nothing by itself. No round of the
-BOSMAX Playwright RPA Click Operator workstream may begin until the owner classifies the
-Decision Ledger (§12) and the Blockers (§13) are cleared.
+**The owner has classified the Decision Ledger (§12) and the accepted amendments have been applied**
+to `docs/bosmax-rpa-click-operator-workflow-mvp-spec.md` and
+`docs/claude-fable-5-full-delivery-feasibility-contract.md` (see the "G0 Amendments (Binding)"
+section at the end of each). Classification summary is recorded in §12 below.
+
+This document is **governance only**. It authorizes nothing by itself.
+
+**ROUND A REMAINS BLOCKED.** Applying the amendments cleared the *documentary* blockers (B1-B5), but
+Round A cannot start while the **unresolved owner-only fields** stand — they cannot be invented by an
+agent:
+
+- `OWNER_DECISION_REQUIRED: BOSMAX auditor human name`
+- `OWNER_DECISION_REQUIRED: Round A PR reviewer`
+- `OWNER_DECISION_REQUIRED: rollback owner`
+- `OWNER_DECISION_REQUIRED: safe non-production product + isolated DB for Round B`
+
+**Rounds B-F remain BLOCKED** additionally on B6-B7 (environmental — no wording can fix them).
 
 ## Source Documents
 
@@ -281,9 +295,31 @@ Step 5" must be proven by a zero request-count delta, not asserted.
 Per the feasibility contract's Counter-Review Audit Rule: a counter-review does not change the plan.
 The BOSMAX auditor must classify each row. **Only `Accept`ed rows amend the source documents.**
 
-**Recording requirement (proposed by M10):** each classification should be recorded with a one-line
-reason; a `Reject` should state which disqualifier applies (conflicts with owner intent | lacks
-evidence). An unrecorded `Reject` of a BLOCKER-derived row should require owner countersignature.
+**Recording requirement (M10 — now accepted and applied):** each classification is recorded with a
+one-line reason; a `Reject` must state which disqualifier applies (conflicts with owner intent |
+lacks evidence). An unrecorded `Reject` is void. A `Reject` of a BLOCKER-derived row requires owner
+countersignature.
+
+### CLASSIFICATION — RECORDED
+
+| Group | Classification | Applied to |
+|---|---|---|
+| **M1-M15** (all fifteen) | **ACCEPT** | SPEC + CONTRACT "G0 Amendments (Binding)" sections |
+| **O1** state model (`AWAITING_HUMAN_CONFIRMATION`, non-monotonic states) | **ACCEPT** | SPEC §F |
+| **O2** evidence redaction/retention | **ACCEPT** | CONTRACT §7 |
+| **O3** Round C report format pre-cleared vs REPORT_REJECTION_RULES | **ACCEPT** | SPEC §F |
+| **O4** dedupe key beyond exact-match | **PARK — until Round F** | SPEC §G, CONTRACT §8 — **not** a Round A prerequisite; **must** be resolved before Round F |
+| **O5** expiry / re-review trigger; stale Evidence Baseline | **ACCEPT** | SPEC §F, CONTRACT §7 |
+| **O6** answer key is readable by the interviewee | **ACCEPT** | CONTRACT §7 |
+| **D1-D6** | **ACCEPT as "keep as-is"** — retained unchanged | SPEC §H, CONTRACT §9 |
+
+**B1 decision (owner): option (a) — ACCEPTED.** Tag the **single existing global notice** and
+**downgrade the per-step error requirement to a GLOBAL STOP**. Any error notice is a global STOP; it
+must not be attributed to a step and must not be treated as recoverable.
+**State-plumbing is NOT authorized** — Round A must not split, re-scope, or add step attribution to
+the notice. Per-step attribution would be a **new owner decision**. Recorded in SPEC §B.4.
+
+*The ballot tables below are retained as the historical record of what was put to the owner.*
 
 ### Must-update
 
@@ -332,6 +368,21 @@ evidence). An unrecorded `Reject` of a BLOCKER-derived row should require owner 
 ## 13. Risk Register & Blockers Before Round A
 
 ### Blockers — Round A cannot start while these stand
+
+> **STATUS UPDATE (ledger applied).** The **documentary** blockers **B1-B5 are now RESOLVED** by the
+> accepted amendments (see the "G0 Amendments (Binding)" section in each source doc). **Round A is
+> still BLOCKED** — on the four unresolved `OWNER_DECISION_REQUIRED` fields (§Status), which no agent
+> may invent. **B6-B7 remain open** and additionally block Rounds B-F.
+>
+> - **B1 → RESOLVED**: owner chose **option (a)** — tag the single global notice; per-step error
+>   downgraded to a **global STOP**; **state-plumbing NOT authorized**.
+> - **B2 → RESOLVED**: Step 1 control selectors (with readable `data-value`) added to Round A scope (M5).
+> - **B3 → RESOLVED**: `action-generate-video` made conditional, not unconditional (M5).
+> - **B4 → RESOLVED**: both source docs now bind to `AGENTS.md` / ADR-007 / `.ai/contracts` and state
+>   that `AGENTS.md` overrides (M9). *Residual:* adding the two docs to AGENTS.md's own Read First list
+>   was **not** performed — `AGENTS.md` is outside this amendment's authorized scope and is a
+>   repo-wide contract. → `OWNER_DECISION_REQUIRED: authorize AGENTS.md Read First insertion`.
+> - **B5 → RESOLVED**: `spec` "Next Owner Decision" retracted; A+B bundling forbidden (M1 + M4).
 
 | # | Blocker | Evidence | Clears when |
 |---|---|---|---|
@@ -397,6 +448,16 @@ read; the runtime origin question is **resolved and pinned** (`:8100`, §4), so 
 `G0_BLOCKED_MISSING_CONTRACT_INPUT` nor `G0_BLOCKED_RUNTIME_ACCESS_UNCLEAR` applies.
 
 **This verdict authorizes nothing.** It states that the gate is ready for the owner to act on.
+
+> **SUPERSEDED — the owner has since acted.** Current state:
+> **`G0_LEDGER_CLASSIFIED — AMENDMENTS APPLIED`** (see the Status block at the top).
+> M1-M15 Accepted; O1/O2/O3/O5/O6 Accepted; **O4 Parked until Round F**; D1-D6 Accepted as
+> "keep as-is"; **B1 resolved as option (a)** — tag the single global notice, downgrade to a global
+> STOP, **state-plumbing not authorized**. The accepted amendments are applied to both source
+> documents ("G0 Amendments (Binding)" in each).
+> **Round A is still BLOCKED** on the four unresolved `OWNER_DECISION_REQUIRED` fields; Rounds B-F
+> additionally on B6-B7. The verdict line above is retained as the historical record of the gate as
+> first presented.
 
 **Round A remains BLOCKED** pending: owner classification of §12, acceptance and application of
 M1–M9, and clearance of blockers B1–B5.
