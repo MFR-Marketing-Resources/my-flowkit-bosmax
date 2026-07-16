@@ -312,6 +312,8 @@ domains:
       - dashboard/src/App.tsx
       - dashboard/src/pages/OperatorPage.tsx
       - dashboard/src/pages/OperatorPage.promptRepresentation.component.test.tsx
+      - dashboard/src/pages/OperatorPage.rpaSelectors.component.test.tsx
+      - dashboard/src/components/workspace/rpaSelectors.component.test.tsx
       - dashboard/src/utils/promptRepresentationUi.test.ts
       - dashboard/src/utils/promptRepresentationUi.ts
       - tests/unit/test_artifact_library_retention.py
