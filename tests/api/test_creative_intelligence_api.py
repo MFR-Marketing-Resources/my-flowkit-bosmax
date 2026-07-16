@@ -221,6 +221,101 @@ def test_registry_reconciliation_counts_selection_references(monkeypatch):
     assert body["selection"]["distinct_scene_template_ids"] == ["SCN-0001"]
 
 
+class _RouteDB:
+    """Fake DB that routes by SQL substring (selection vs creative_asset)."""
+
+    def __init__(self, *, selection_rows, asset_rows):
+        self._selection = selection_rows
+        self._asset = asset_rows
+
+    async def execute(self, sql, *args, **kwargs):
+        if "creative_product_selection" in sql:
+            return _FakeCursor(self._selection)
+        if "creative_asset" in sql:
+            return _FakeCursor(self._asset)
+        return _FakeCursor([])
+
+
+def test_registry_cleanup_plan_classifies_and_never_marks_delete_safe(monkeypatch):
+    async def fake_fits(limit=200):
+        return [{"avatar_code": "BOS_F_ALYA_01"}]  # mapped -> KEEP_ACTIVE
+
+    async def fake_get_db():
+        # ZARA referenced by a generated asset; no saved selections.
+        return _RouteDB(selection_rows=[], asset_rows=[("BOS_F_ZARA_01",)])
+
+    monkeypatch.setattr("agent.db.crud.list_avatar_product_fits", fake_fits)
+    monkeypatch.setattr("agent.db.crud.get_db", fake_get_db)
+    monkeypatch.setattr(
+        "agent.services.avatar_registry.list_pool",
+        lambda: [
+            {"avatar_code": "BOS_F_ALYA_01", "character_name": "Alya"},
+            {"avatar_code": "BOS_F_ZARA_01", "character_name": "Zara"},
+            {"avatar_code": "BOS_F_UNUSED_01", "character_name": "Unused"},
+        ],
+    )
+    monkeypatch.setattr(
+        "agent.services.scene_context_registry.list_pool",
+        lambda: [{"scene_code": "SCN_A"}, {"scene_code": "SCN_B"}],
+    )
+
+    client = TestClient(_build_app())
+    r = client.get("/api/creative-intelligence/registry-cleanup-plan")
+    assert r.status_code == 200
+    body = r.json()
+
+    assert body["dry_run"] is True
+    assert body["mutations"] == 0
+    assert body["owner_approval_required"] is True
+    assert body["future_archive_eligible_total"] == 0
+
+    ac = body["avatar"]["classification_counts"]
+    assert ac["KEEP_ACTIVE"] == 1          # ALYA_01 in fit
+    assert ac["BLOCKED_REFERENCED"] == 1   # ZARA asset-referenced
+    assert ac["REVIEW_CANDIDATE"] == 1     # UNUSED, no refs
+    assert ac["FUTURE_ARCHIVE_ELIGIBLE"] == 0
+
+    sc = body["scene"]["classification_counts"]
+    assert sc["BLOCKED_UNKNOWN_MAPPING"] == 2
+    assert sc["FUTURE_ARCHIVE_ELIGIBLE"] == 0
+
+    # Never delete-safe; dry-run framing present.
+    blob = str(body).lower()
+    assert "safe to delete" not in blob
+    assert "delete now" not in blob
+    assert "read-only dry-run" in body["notice"].lower()
+    assert "owner approval" in body["notice"].lower()
+
+
+def test_registry_cleanup_plan_blocks_selection_referenced_avatar(monkeypatch):
+    async def fake_fits(limit=200):
+        return []
+
+    async def fake_get_db():
+        return _RouteDB(
+            selection_rows=[{"selected_avatar_code": "BOS_F_SELECTED_01"}],
+            asset_rows=[],
+        )
+
+    monkeypatch.setattr("agent.db.crud.list_avatar_product_fits", fake_fits)
+    monkeypatch.setattr("agent.db.crud.get_db", fake_get_db)
+    monkeypatch.setattr(
+        "agent.services.avatar_registry.list_pool",
+        lambda: [{"avatar_code": "BOS_F_SELECTED_01"}],
+    )
+    monkeypatch.setattr("agent.services.scene_context_registry.list_pool", lambda: [])
+
+    client = TestClient(_build_app())
+    body = client.get("/api/creative-intelligence/registry-cleanup-plan").json()
+    assert body["avatar"]["classification_counts"]["BLOCKED_REFERENCED"] == 1
+    assert body["avatar"]["classification_counts"]["FUTURE_ARCHIVE_ELIGIBLE"] == 0
+    sample = body["avatar"]["candidates_sample"]
+    assert any(
+        c["classification"] == "BLOCKED_REFERENCED" and c["required_evidence"]
+        for c in sample
+    )
+
+
 def test_avatar_recommendation_product_not_found(monkeypatch):
     async def fake(product_id):
         raise ValueError("PRODUCT_NOT_FOUND")
