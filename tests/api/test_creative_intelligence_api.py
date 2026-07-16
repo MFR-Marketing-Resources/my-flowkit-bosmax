@@ -123,6 +123,104 @@ def test_registry_coverage_aggregates_and_computes_gaps(monkeypatch):
     assert body["used_by"]["scene"]
 
 
+class _FakeCursor:
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def fetchall(self):
+        return self._rows
+
+
+class _FakeDB:
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def execute(self, *args, **kwargs):
+        return _FakeCursor(self._rows)
+
+
+def _patch_reconciliation(monkeypatch, *, pool_avatars, fit_codes, pool_scenes,
+                          prompt_ids, selection_rows):
+    async def fake_fits(limit=200):
+        return [{"avatar_code": c} for c in fit_codes]
+
+    async def fake_prompts(limit=200):
+        return [{"template_id": t} for t in prompt_ids]
+
+    async def fake_get_db():
+        return _FakeDB(list(selection_rows))
+
+    monkeypatch.setattr("agent.db.crud.list_avatar_product_fits", fake_fits)
+    monkeypatch.setattr("agent.db.crud.list_creative_scene_prompts", fake_prompts)
+    monkeypatch.setattr("agent.db.crud.get_db", fake_get_db)
+    monkeypatch.setattr(
+        "agent.services.avatar_registry.list_pool",
+        lambda: [{"avatar_code": c} for c in pool_avatars],
+    )
+    monkeypatch.setattr(
+        "agent.services.scene_context_registry.list_pool",
+        lambda: [{"scene_code": c} for c in pool_scenes],
+    )
+
+
+def test_registry_reconciliation_maps_pool_vs_fit_and_flags_review_candidates(monkeypatch):
+    _patch_reconciliation(
+        monkeypatch,
+        pool_avatars=["BOS_F_ALYA_01", "BOS_F_ALYA_02", "BOS_F_ZARA_01", "BOS_F_AINA_09"],
+        fit_codes=["BOS_F_ALYA_01", "BOS_F_ALYA_02"],
+        pool_scenes=[f"SCN_{i}" for i in range(20)],
+        prompt_ids=["SCN-0001", "SCN-PET-01"],
+        selection_rows=[],  # no saved selections
+    )
+    client = TestClient(_build_app())
+    r = client.get("/api/creative-intelligence/registry-reconciliation")
+    assert r.status_code == 200
+    body = r.json()
+
+    # Avatar mapping is exact (same id space).
+    assert body["avatar"]["pool_total"] == 4
+    assert body["avatar"]["mapped_to_fit"] == 2
+    assert body["avatar"]["unmapped"] == 2
+    assert body["avatar"]["review_candidate_count"] == 2
+    assert body["avatar"]["referenced_by_selection"] == 0
+    assert set(body["avatar"]["review_candidate_sample"]) == {"BOS_F_ZARA_01", "BOS_F_AINA_09"}
+
+    # Scene pool <-> prompt is NOT invented.
+    assert body["scene"]["pool_total"] == 20
+    assert body["scene"]["prompt_template_total"] == 2
+    assert body["scene"]["pool_to_prompt_mapping"] == "NOT_DIRECTLY_MAPPED"
+    assert body["scene"]["referenced_by_selection"] == 0
+    assert body["selection"]["total"] == 0
+
+    # Non-destructive framing — never "delete-safe".
+    blob = str(body).lower()
+    assert "safe to delete" not in blob
+    assert "delete now" not in blob
+    assert "review_candidate" in body["disclaimer"].lower()
+
+
+def test_registry_reconciliation_counts_selection_references(monkeypatch):
+    _patch_reconciliation(
+        monkeypatch,
+        pool_avatars=["BOS_F_ALYA_01", "BOS_F_ZARA_01"],
+        fit_codes=["BOS_F_ALYA_01"],
+        pool_scenes=["SCN_A"],
+        prompt_ids=["SCN-0001"],
+        selection_rows=[
+            {"selected_avatar_code": "BOS_F_ZARA_01",
+             "selected_scene_template_id": "SCN-0001", "status": "APPROVED"},
+        ],
+    )
+    client = TestClient(_build_app())
+    r = client.get("/api/creative-intelligence/registry-reconciliation")
+    body = r.json()
+    assert body["avatar"]["referenced_by_selection"] == 1
+    assert body["scene"]["referenced_by_selection"] == 1
+    assert body["selection"]["total"] == 1
+    assert body["selection"]["distinct_avatar_codes"] == ["BOS_F_ZARA_01"]
+    assert body["selection"]["distinct_scene_template_ids"] == ["SCN-0001"]
+
+
 def test_avatar_recommendation_product_not_found(monkeypatch):
     async def fake(product_id):
         raise ValueError("PRODUCT_NOT_FOUND")

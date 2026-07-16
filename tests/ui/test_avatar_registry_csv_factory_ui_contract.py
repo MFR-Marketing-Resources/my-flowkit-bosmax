@@ -108,3 +108,16 @@ def test_avatar_registry_coverage_lens_present():
     assert "Creative Setup" in src
     assert "prompt compiler" in src
     assert "(R5)" in src
+
+
+def test_avatar_registry_reconciliation_panel_present():
+    """Phase C: read-only reconciliation panel with non-destructive labels."""
+    src = _read("dashboard/src/pages/AvatarRegistryPage.tsx")
+    assert "getRegistryReconciliation" in src
+    assert "Registry Reconciliation" in src
+    assert "Mapped" in src
+    assert "Referenced" in src
+    assert "Review candidates" in src
+    # Candidates are never labelled delete-safe.
+    assert "safe to delete" not in src.lower()
+    assert "delete now" not in src.lower()

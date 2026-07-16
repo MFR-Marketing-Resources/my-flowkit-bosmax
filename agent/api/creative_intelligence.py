@@ -143,6 +143,103 @@ async def registry_coverage() -> dict:
     }
 
 
+@router.get("/registry-reconciliation")
+async def registry_reconciliation() -> dict:
+    """READ-ONLY item-level reconciliation of the Avatar + Scene authority pools
+    against the Creative Intelligence tables.
+
+    Surfaces which pool entries are MAPPED (avatar pool code present in
+    ``avatar_product_fit``), REFERENCED (by a saved ``creative_product_selection``),
+    or UNMAPPED review candidates. Never mutates, seeds, archives, or deletes.
+    ``REVIEW_CANDIDATE`` items are informational only — NEVER flagged as delete-safe.
+    """
+    from agent.db import crud
+    from agent.services import avatar_registry, scene_context_registry
+
+    # Avatar pool <-> product-fit: same AvatarCode id space, so mapping is exact.
+    avatar_pool = {
+        str(a.get("avatar_code") or "").strip()
+        for a in avatar_registry.list_pool()
+        if a.get("avatar_code")
+    }
+    fits = await crud.list_avatar_product_fits(limit=5000)
+    fit_codes = {str(f.get("avatar_code") or "").strip() for f in fits if f.get("avatar_code")}
+    avatar_mapped = sorted(avatar_pool & fit_codes)
+    avatar_unmapped = sorted(avatar_pool - fit_codes)
+
+    # Scene pool + scene-prompt templates: SEPARATE id spaces (SceneCode vs
+    # template_id) — no row-level link exists, so do not invent one.
+    scene_pool = {
+        str(s.get("scene_code") or "").strip()
+        for s in scene_context_registry.list_pool()
+        if s.get("scene_code")
+    }
+    prompts = await crud.list_creative_scene_prompts(limit=5000)
+    prompt_ids = {str(p.get("template_id") or "").strip() for p in prompts if p.get("template_id")}
+
+    # Saved selections (usually empty at this stage). No bulk list crud exists, so
+    # read-only direct query — never written.
+    db = await crud.get_db()
+    cur = await db.execute(
+        "SELECT selected_avatar_code, selected_scene_template_id, status "
+        "FROM creative_product_selection"
+    )
+    sel_rows = [dict(r) for r in await cur.fetchall()]
+    sel_avatar = {
+        str(r.get("selected_avatar_code") or "").strip()
+        for r in sel_rows if r.get("selected_avatar_code")
+    }
+    sel_scene = {
+        str(r.get("selected_scene_template_id") or "").strip()
+        for r in sel_rows if r.get("selected_scene_template_id")
+    }
+    avatar_referenced = sorted(avatar_pool & sel_avatar)
+    scene_referenced = sorted(prompt_ids & sel_scene)
+
+    return {
+        "avatar": {
+            "pool_total": len(avatar_pool),
+            "mapped_to_fit": len(avatar_mapped),
+            "referenced_by_selection": len(avatar_referenced),
+            "unmapped": len(avatar_unmapped),
+            "review_candidate_count": len(avatar_unmapped),
+            "review_candidate_sample": avatar_unmapped[:10],
+            "mapping_basis": (
+                "avatar_product_fit.avatar_code matched against the avatar authority "
+                "pool (AvatarCode) — same id space, exact. Review candidates are pool "
+                "avatars not yet in the product-fit crosswalk or a saved selection; "
+                "some may still be referenced by generated library assets. Informational "
+                "only — NOT a deletion signal."
+            ),
+        },
+        "scene": {
+            "pool_total": len(scene_pool),
+            "prompt_template_total": len(prompt_ids),
+            "referenced_by_selection": len(scene_referenced),
+            "pool_to_prompt_mapping": "NOT_DIRECTLY_MAPPED",
+            "review_candidate_count": len(scene_pool),
+            "review_candidate_sample": sorted(scene_pool)[:10],
+            "mapping_basis": (
+                "Scene pool plates (SceneCode) and scene-prompt templates (template_id) "
+                "use separate id spaces; no row-level link exists yet — not invented. "
+                "Scene plates also feed the IMG/I2V reference lane + compiler, whose "
+                "usage is not tracked in this lens. Review candidates are a review "
+                "prompt, NOT an unused/deletion signal."
+            ),
+        },
+        "selection": {
+            "total": len(sel_rows),
+            "distinct_avatar_codes": sorted(sel_avatar),
+            "distinct_scene_template_ids": sorted(sel_scene),
+        },
+        "disclaimer": (
+            "REVIEW_CANDIDATE items are pool entries not yet referenced by product-fit "
+            "or saved selections. This lens is READ-ONLY and informational — nothing "
+            "here is flagged for deletion or archival."
+        ),
+    }
+
+
 @router.get("/avatar-recommendation")
 async def avatar_recommendation(
     product_id: str | None = None,
