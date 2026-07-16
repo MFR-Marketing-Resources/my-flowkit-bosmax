@@ -178,3 +178,17 @@ def test_create_avatar_dropdowns_are_gender_filtered():
     # Changing gender drops a now-incompatible wardrobe/persona (not just hijab).
     assert "wardrobeOpts" in src
     assert "personaOk" in src
+
+
+def test_avatar_registry_phase_e_closeout_note():
+    """Phase E closeout: the cleanup panel shows a read-only finalization note —
+    Registry Modernization complete, no current archive/delete eligibility (when
+    future_archive_eligible_total is 0), and owner approval + zero-reference
+    dry-run proof required for any future cleanup. No delete/archive action added."""
+    src = _read("dashboard/src/pages/AvatarRegistryPage.tsx")
+    assert "Registry Modernization (Phases A" in src
+    assert "No records are currently eligible for archive or delete" in src
+    assert "zero-reference dry-run proof" in src
+    assert "cleanup.future_archive_eligible_total === 0" in src
+    assert "safe to delete" not in src.lower()
+    assert "delete now" not in src.lower()
