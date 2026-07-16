@@ -190,29 +190,29 @@
     "suitability_notes": "Office & Stationery: female presenter 'Sofia' in office setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_HARIS_01",
+    "avatar_code": "BOS_M_HARIS_01",
     "fit_score": 0.82,
     "suitability_notes": "Office & Stationery: male presenter 'Haris' in office setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_RAFI_01",
+    "avatar_code": "BOS_M_RAFI_01",
     "fit_score": 0.8,
     "suitability_notes": "Office & Stationery: male presenter 'Rafi' in office setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    }
   ],
   "Electronics & Gadgets": [
    {
-    "avatar_code": "BOS_F_HARIS_01",
+    "avatar_code": "BOS_M_HARIS_01",
     "fit_score": 0.88,
     "suitability_notes": "Electronics & Gadgets: male presenter 'Haris' in office setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_DANISH_08",
+    "avatar_code": "BOS_M_DANISH_08",
     "fit_score": 0.86,
     "suitability_notes": "Electronics & Gadgets: male presenter 'Danish' in studio setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_AMIR_01",
+    "avatar_code": "BOS_M_AMIR_01",
     "fit_score": 0.84,
     "suitability_notes": "Electronics & Gadgets: male presenter 'Amir' in office setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
@@ -229,49 +229,49 @@
   ],
   "Automotive": [
    {
-    "avatar_code": "BOS_F_HARIS_03",
+    "avatar_code": "BOS_M_HARIS_03",
     "fit_score": 0.9,
     "suitability_notes": "Automotive: male presenter 'Haris' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_DANISH_03",
+    "avatar_code": "BOS_M_DANISH_03",
     "fit_score": 0.88,
     "suitability_notes": "Automotive: male presenter 'Danish' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_AMIR_08",
+    "avatar_code": "BOS_M_AMIR_08",
     "fit_score": 0.84,
     "suitability_notes": "Automotive: male presenter 'Amir' in studio setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_FAIZ_03",
+    "avatar_code": "BOS_M_FAIZ_03",
     "fit_score": 0.82,
     "suitability_notes": "Automotive: male presenter 'Faiz' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_RAFI_01",
+    "avatar_code": "BOS_M_RAFI_01",
     "fit_score": 0.78,
     "suitability_notes": "Automotive: male presenter 'Rafi' in office setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    }
   ],
   "Sports & Outdoors": [
    {
-    "avatar_code": "BOS_F_DANISH_03",
+    "avatar_code": "BOS_M_DANISH_03",
     "fit_score": 0.9,
     "suitability_notes": "Sports & Outdoors: male presenter 'Danish' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_RAFI_03",
+    "avatar_code": "BOS_M_RAFI_03",
     "fit_score": 0.88,
     "suitability_notes": "Sports & Outdoors: male presenter 'Rafi' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_AMIR_03",
+    "avatar_code": "BOS_M_AMIR_03",
     "fit_score": 0.86,
     "suitability_notes": "Sports & Outdoors: male presenter 'Amir' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_FAIZ_03",
+    "avatar_code": "BOS_M_FAIZ_03",
     "fit_score": 0.84,
     "suitability_notes": "Sports & Outdoors: male presenter 'Faiz' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
@@ -283,27 +283,27 @@
   ],
   "Tools & Home Improvement": [
    {
-    "avatar_code": "BOS_F_HARIS_03",
+    "avatar_code": "BOS_M_HARIS_03",
     "fit_score": 0.9,
     "suitability_notes": "Tools & Home Improvement: male presenter 'Haris' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_DANISH_01",
+    "avatar_code": "BOS_M_DANISH_01",
     "fit_score": 0.86,
     "suitability_notes": "Tools & Home Improvement: male presenter 'Danish' in office setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_AMIR_03",
+    "avatar_code": "BOS_M_AMIR_03",
     "fit_score": 0.84,
     "suitability_notes": "Tools & Home Improvement: male presenter 'Amir' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_FAIZ_01",
+    "avatar_code": "BOS_M_FAIZ_01",
     "fit_score": 0.82,
     "suitability_notes": "Tools & Home Improvement: male presenter 'Faiz' in office setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_RAFI_03",
+    "avatar_code": "BOS_M_RAFI_03",
     "fit_score": 0.8,
     "suitability_notes": "Tools & Home Improvement: male presenter 'Rafi' in event setting. Derived from live avatar pool metadata + AVATAR_LIBRARY/CATEGORY_AVATAR_TEMPLATES intent. [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    }

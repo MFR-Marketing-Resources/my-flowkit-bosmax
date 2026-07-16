@@ -40,6 +40,42 @@ def test_crosswalk_codes_all_resolve_in_live_pool():
             avatar_registry.resolve_presenter(avatar_id=code)
 
 
+def test_crosswalk_code_gender_prefix_matches_seed():
+    """Regression guard for the BOS_F_/BOS_M_ misprefix: every crosswalk avatar
+    code's gender prefix must match the SEED pool's gender for that persona (the
+    seed is the gender authority). Catches a male persona wrongly prefixed BOS_F_
+    (or vice-versa) in the committed crosswalk."""
+    import csv
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    code_re = re.compile(r"BOS_([FM])_([A-Z0-9]+)_[0-9]{2,}")
+    seed_gender: dict[str, str] = {}
+    with open(
+        root / "agent/authority/AVATAR_POOL_NORMALIZED.csv",
+        encoding="utf-8-sig",
+        newline="",
+    ) as f:
+        for row in csv.DictReader(f):
+            m = code_re.match(str(row.get("AvatarCode") or ""))
+            if m:
+                seed_gender.setdefault(m.group(2), m.group(1))
+    assert seed_gender.get("AMIR") == "M"  # sanity: seed knows AMIR is male
+
+    bad = []
+    for rows in svc._crosswalk()["crosswalk"].values():
+        for row in rows:
+            m = code_re.match(str(row["avatar_code"]))
+            if not m:
+                continue
+            gender, token = m.group(1), m.group(2)
+            expected = seed_gender.get(token)
+            if expected and gender != expected:
+                bad.append((row["avatar_code"], f"persona is {expected}"))
+    assert not bad, f"crosswalk codes with wrong gender prefix vs seed: {bad}"
+
+
 @pytest.mark.asyncio
 async def test_seed_dry_run_writes_nothing():
     before = await _count("avatar_product_fit")
