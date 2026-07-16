@@ -66,6 +66,83 @@ def _raise_setup_error(exc: ValueError):
     raise exc
 
 
+@router.get("/registry-coverage")
+async def registry_coverage() -> dict:
+    """READ-ONLY coverage/usage lens for the Avatar + Scene authority pools.
+
+    Aggregates the existing config tables (``avatar_product_fit`` /
+    ``creative_scene_prompt`` / ``creative_camera_preset``) and the CSV-bridge
+    pools against the canonical cluster list, so the Avatar/Scene Registry pages
+    can show what is covered vs thin/missing. Reads only — never seeds, mutates,
+    or calls a provider. Powers the Phase A registry coverage cards.
+    """
+    from agent.db import crud
+    from agent.services import avatar_fit_service, avatar_registry, scene_context_registry
+
+    canonical = _svc.canonical_clusters()
+
+    # Avatar authority pool (CSV bridge) + product-fit coverage (R1).
+    avatar_pool = avatar_registry.list_pool()
+    fits = await crud.list_avatar_product_fits(limit=2000)
+    fit_categories = {str(f.get("product_category") or "") for f in fits}
+    avatar_covered = [
+        c for c in canonical
+        if avatar_fit_service.normalise_category(c) in fit_categories
+    ]
+    avatar_missing = [c for c in canonical if c not in avatar_covered]
+
+    # Scene authority pool (CSV bridge) + scene-prompt coverage (R2).
+    scene_pool = scene_context_registry.list_pool()
+    prompts = await crud.list_creative_scene_prompts(limit=2000)
+    prompt_clusters = {str(p.get("cluster") or "") for p in prompts}
+    scene_covered = [c for c in canonical if c in prompt_clusters]
+    scene_missing = [c for c in canonical if c not in prompt_clusters]
+
+    presets = await crud.list_creative_camera_presets(limit=2000)
+    block_groups = sorted(
+        {str(p.get("block_group") or "") for p in presets if p.get("block_group")}
+    )
+
+    return {
+        "canonical_clusters": canonical,
+        "cluster_total": len(canonical),
+        "product_total": await crud.count_products(),
+        "avatar": {
+            "pool_total": len(avatar_pool),
+            "bridge_active": avatar_registry._BRIDGE_FILE.exists(),
+            "fit_total": len(fits),
+            "distinct_avatars_in_fit": len(
+                {str(f.get("avatar_code") or "") for f in fits}
+            ),
+            "clusters_covered": avatar_covered,
+            "clusters_missing": avatar_missing,
+        },
+        "scene": {
+            "pool_total": len(scene_pool),
+            "bridge_active": scene_context_registry._BRIDGE_FILE.exists(),
+            "prompt_total": len(prompts),
+            "clusters_covered": scene_covered,
+            "clusters_missing": scene_missing,
+        },
+        "camera": {
+            "preset_total": len(presets),
+            "block_groups": block_groups,
+        },
+        "used_by": {
+            "avatar": [
+                "Avatar Recommendation (R1)",
+                "Creative Setup (R4)",
+                "Creative Handoff (R5)",
+                "prompt compiler",
+            ],
+            "scene": [
+                "Scene reference (IMG Fastlane / I2V scene-style)",
+                "prompt compiler",
+            ],
+        },
+    }
+
+
 @router.get("/avatar-recommendation")
 async def avatar_recommendation(
     product_id: str | None = None,

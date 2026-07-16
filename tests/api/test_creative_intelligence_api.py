@@ -54,6 +54,75 @@ def test_avatar_recommendation_requires_a_selector():
     assert r.status_code == 422
 
 
+def test_registry_coverage_aggregates_and_computes_gaps(monkeypatch):
+    """Read-only coverage lens: aggregates pools + config tables and computes
+    covered vs missing clusters against the canonical list. Hermetic (no DB)."""
+    from agent.services import avatar_fit_service
+
+    beauty_cat = avatar_fit_service.normalise_category("Beauty")
+    fashion_cat = avatar_fit_service.normalise_category("Fashion")
+
+    async def fake_fits(limit=200):
+        return [
+            {"avatar_code": "BOS_F_ALYA_01", "product_category": beauty_cat},
+            {"avatar_code": "BOS_F_ALYA_02", "product_category": fashion_cat},
+            {"avatar_code": "BOS_F_ALYA_01", "product_category": fashion_cat},
+        ]
+
+    async def fake_prompts(limit=200):
+        return [
+            {"template_id": "t1", "cluster": "Beauty"},
+            {"template_id": "t2", "cluster": "Fashion"},
+        ]
+
+    async def fake_presets(limit=200):
+        return [{"preset_code": "HOOK_A", "block_group": "HOOK"}]
+
+    async def fake_count():
+        return 659
+
+    monkeypatch.setattr("agent.db.crud.list_avatar_product_fits", fake_fits)
+    monkeypatch.setattr("agent.db.crud.list_creative_scene_prompts", fake_prompts)
+    monkeypatch.setattr("agent.db.crud.list_creative_camera_presets", fake_presets)
+    monkeypatch.setattr("agent.db.crud.count_products", fake_count)
+    monkeypatch.setattr(
+        "agent.services.avatar_registry.list_pool",
+        lambda: [{"avatar_code": f"A{i}"} for i in range(251)],
+    )
+    monkeypatch.setattr(
+        "agent.services.scene_context_registry.list_pool",
+        lambda: [{"scene_code": f"S{i}"} for i in range(20)],
+    )
+
+    client = TestClient(_build_app())
+    r = client.get("/api/creative-intelligence/registry-coverage")
+    assert r.status_code == 200
+    body = r.json()
+
+    assert body["cluster_total"] == 12
+    assert len(body["canonical_clusters"]) == 12
+    assert body["product_total"] == 659
+
+    assert body["avatar"]["pool_total"] == 251
+    assert body["avatar"]["fit_total"] == 3
+    assert body["avatar"]["distinct_avatars_in_fit"] == 2
+    assert set(body["avatar"]["clusters_covered"]) == {"Beauty", "Fashion"}
+    assert "Pet Care" in body["avatar"]["clusters_missing"]
+
+    assert body["scene"]["pool_total"] == 20
+    assert body["scene"]["prompt_total"] == 2
+    assert set(body["scene"]["clusters_covered"]) == {"Beauty", "Fashion"}
+    assert "Pet Care" in body["scene"]["clusters_missing"]
+    assert "Office & Stationery" in body["scene"]["clusters_missing"]
+
+    assert body["camera"]["preset_total"] == 1
+    assert body["camera"]["block_groups"] == ["HOOK"]
+
+    # Dependency notes surfaced so the registry pages can render "used by".
+    assert any("R1" in note for note in body["used_by"]["avatar"])
+    assert body["used_by"]["scene"]
+
+
 def test_avatar_recommendation_product_not_found(monkeypatch):
     async def fake(product_id):
         raise ValueError("PRODUCT_NOT_FOUND")

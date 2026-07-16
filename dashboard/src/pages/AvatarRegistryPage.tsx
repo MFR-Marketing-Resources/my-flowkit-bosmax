@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useImageGenSettings } from "../api/imageGenSettings";
+import {
+	getRegistryCoverage,
+	type RegistryCoverage,
+} from "../api/creativeIntelligence";
 import { DataTable } from "../components/ui";
 import {
 	createAvatarImageBulk,
@@ -112,6 +116,7 @@ export default function AvatarRegistryPage() {
 	const [imageModel, setImageModel] = useState<string>("Nano Banana 2");
 	const [avatars, setAvatars] = useState<AvatarProfile[]>([]);
 	const [bridgeActive, setBridgeActive] = useState(false);
+	const [coverage, setCoverage] = useState<RegistryCoverage | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [successMsg, setSuccessMsg] = useState<string | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
@@ -201,6 +206,9 @@ export default function AvatarRegistryPage() {
 			const data = (await response.json()) as AvatarPoolResponse;
 			setAvatars(data.avatars || []);
 			setBridgeActive(Boolean(data.bridge_active));
+			getRegistryCoverage()
+				.then(setCoverage)
+				.catch(() => {});
 		} catch (err) {
 			setError(
 				err instanceof Error ? err.message : "Failed to load avatar registry.",
@@ -853,10 +861,15 @@ export default function AvatarRegistryPage() {
 				</div>
 				<div className="mb-4 flex items-center justify-between gap-3">
 					<div>
+						<div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-400/80">
+							Live Avatar Authority Pool
+						</div>
 						<div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-100">
 							Avatar Registry
 						</div>
 						<div className="mt-1 text-xs text-slate-400">
+							Live presenter pool consumed by Creative Intelligence — not just a
+							manual gallery.{" "}
 							{isLoading
 								? "Loading..."
 								: `${avatars.length} approved avatar${avatars.length !== 1 ? "s" : ""} · ${avatars.filter((a) => a.image_generated).length} generated · source: ${bridgeActive ? "synced bridge CSV" : "repo seed"}`}
@@ -884,7 +897,57 @@ export default function AvatarRegistryPage() {
 						</button>
 					</div>
 				</div>
-				{/* Sub-tab switcher */}
+				{coverage && (
+						<div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+							<div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+								<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+									<div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+										Avatar Pool
+									</div>
+									<div className="mt-1 text-lg font-bold text-slate-100">
+										{coverage.avatar.pool_total}
+									</div>
+									<div className="text-[11px] text-slate-400">
+										{coverage.avatar.bridge_active
+											? "synced bridge CSV"
+											: "repo seed"}{" "}
+										· {coverage.avatar.distinct_avatars_in_fit} in product-fit
+									</div>
+								</div>
+								<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+									<div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+										Product-Fit Coverage
+									</div>
+									<div className="mt-1 text-lg font-bold text-slate-100">
+										{coverage.avatar.clusters_covered.length}/
+										{coverage.cluster_total} clusters
+									</div>
+									<div className="text-[11px] text-slate-400">
+										{coverage.avatar.fit_total} fits · {coverage.product_total}{" "}
+										products
+									</div>
+								</div>
+								<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+									<div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+										Coverage Gaps
+									</div>
+									<div
+										className={`mt-1 text-sm font-semibold ${coverage.avatar.clusters_missing.length ? "text-amber-400" : "text-emerald-400"}`}
+									>
+										{coverage.avatar.clusters_missing.length
+											? `Thin: ${coverage.avatar.clusters_missing.join(", ")}`
+											: "Full 12/12 clusters"}
+									</div>
+								</div>
+							</div>
+							<div className="mt-3 text-[11px] text-slate-500">
+								Used by Avatar Recommendation (R1), Creative Setup (R4), Creative
+								Handoff (R5), and the prompt compiler. Read-only — editing here
+								changes the live pool those modules resolve against.
+							</div>
+						</div>
+					)}
+					{/* Sub-tab switcher */}
 				<div className="flex gap-1 rounded-xl border border-slate-800 bg-slate-950 p-1">
 					<button
 						type="button"

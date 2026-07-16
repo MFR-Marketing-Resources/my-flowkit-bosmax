@@ -92,3 +92,19 @@ def test_legacy_direct_sync_is_demoted_and_warned():
     assert "BYPASSES" in handler or "bypass" in handler.lower()
     # Legacy control still targets the legacy endpoint (not removed).
     assert "/api/workspace/avatar-registry/sync" in src
+
+
+def test_avatar_registry_coverage_lens_present():
+    """Phase A modernization: the page is framed as a live authority pool and
+    shows the read-only coverage/usage lens with dependency notes."""
+    src = _read("dashboard/src/pages/AvatarRegistryPage.tsx")
+    assert "Live Avatar Authority Pool" in src
+    assert "getRegistryCoverage" in src
+    assert "Product-Fit Coverage" in src
+    assert "Coverage Gaps" in src
+    # Dependency notes for the modules that resolve against this pool.
+    # (JSX line-wraps prose across newlines, so assert on wrap-stable tokens.)
+    assert "Avatar Recommendation" in src
+    assert "Creative Setup" in src
+    assert "prompt compiler" in src
+    assert "(R5)" in src

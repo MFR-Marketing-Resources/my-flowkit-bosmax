@@ -49,3 +49,16 @@ def test_create_scene_reuses_page_error_success_state():
     assert "setSuccessMsg" in handler
     assert "setError" in handler
     assert "await refresh()" in handler
+
+
+def test_scene_registry_coverage_lens_present():
+    """Phase A modernization: the page is framed as a live authority pool and
+    shows the read-only coverage/usage lens with dependency notes."""
+    src = _read("dashboard/src/pages/SceneContextRegistryPage.tsx")
+    assert "Live Scene / Context Authority Pool" in src
+    assert "getRegistryCoverage" in src
+    assert "Scene-Prompt Coverage" in src
+    assert "Coverage Gaps" in src
+    # Dependency note: scene reference lanes + Creative Intelligence context.
+    assert "scene reference lanes" in src
+    assert "Creative Intelligence context" in src
