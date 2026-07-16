@@ -150,10 +150,31 @@ def test_create_avatar_uses_controlled_dropdowns():
     # Persona dropdown + New persona option (no more raw free-text name).
     assert "manualPersonaNew" in src
     assert "New persona" in src
-    assert "personas.map" in src
+    # Persona list is rendered from the (now gender-filtered) persona source.
+    assert "personasForGender" in src
     # Usage tags + constraint fields exist.
     assert "Usage tags" in src
     assert "usage_tags" in src
     # Dependent constraint: gender = M disables hijab (manual + auto forms).
     assert 'manualForm.gender === "M"' in src
     assert 'autoGender === "M"' in src
+
+
+def test_create_avatar_dropdowns_are_gender_filtered():
+    """Gender-aware standardization: the vocab endpoint supplies per-gender
+    persona + wardrobe lists, and the form filters dependent dropdowns by the
+    selected gender (so Gender=M never exposes female-only personas/wardrobe)."""
+    src = _read("dashboard/src/pages/AvatarRegistryPage.tsx")
+    # Gender-aware payload is consumed from the vocab endpoint.
+    assert "personas_by_gender" in src
+    assert "gender_specific_fields" in src
+    assert "vocab_by_gender" in src
+    # Gender-filter helpers drive the dependent dropdowns.
+    assert "personasForGender" in src
+    assert 'optionsFor("wardrobe"' in src
+    # Persona dropdown + manual wardrobe are filtered by the selected gender.
+    assert "personasForGender(manualForm.gender)" in src
+    assert 'optionsFor("wardrobe", manualForm.gender)' in src
+    # Changing gender drops a now-incompatible wardrobe/persona (not just hijab).
+    assert "wardrobeOpts" in src
+    assert "personaOk" in src

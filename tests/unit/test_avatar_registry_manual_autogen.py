@@ -184,3 +184,79 @@ def test_personas_from_pool_are_clean_tokens(tmp_pool):
     assert personas  # non-empty
     # Every persona is a single clean alnum token (no descriptor-slug leaks, no NN).
     assert all("_" not in p and p.isalnum() for p in personas)
+
+
+# ── Gender-aware vocabulary + gender-dependency validation ──────────────────
+
+def test_gender_specific_fields_lists_wardrobe():
+    assert "wardrobe" in ar.gender_specific_fields()
+
+
+def test_vocab_for_gender_narrows_wardrobe_only():
+    full = ar.load_vocab()
+    f = ar.vocab_for_gender("F")
+    m = ar.vocab_for_gender("M")
+    # Shared fields are identical to the superset for both genders.
+    assert f["skin_tone"] == full["skin_tone"]
+    assert m["expression"] == full["expression"]
+    # Wardrobe is gender-partitioned: baju kurung/modest = F only, baju melayu = M only.
+    assert "Modern baju kurung" in f["wardrobe"]
+    assert "Modest sportswear" in f["wardrobe"]
+    assert "Baju melayu modern" not in f["wardrobe"]
+    assert "Baju melayu modern" in m["wardrobe"]
+    assert "Modern baju kurung" not in m["wardrobe"]
+    # A shared wardrobe value is valid for both.
+    assert "Smart office wear" in f["wardrobe"]
+    assert "Smart office wear" in m["wardrobe"]
+
+
+def test_snap_to_vocab_for_gender_rejects_off_gender():
+    # Canonical-but-off-gender snaps to None (fail-closed), shared/on-gender pass.
+    assert ar.snap_to_vocab_for_gender("wardrobe", "modern baju kurung", "F") == "Modern baju kurung"
+    assert ar.snap_to_vocab_for_gender("wardrobe", "Modern baju kurung", "M") is None
+    assert ar.snap_to_vocab_for_gender("wardrobe", "baju melayu modern", "M") == "Baju melayu modern"
+    assert ar.snap_to_vocab_for_gender("wardrobe", "Baju melayu modern", "F") is None
+    # A shared / non-gender field ignores gender.
+    assert ar.snap_to_vocab_for_gender("skin_tone", "tan sea", "M") == "Tan SEA"
+
+
+def test_personas_by_gender_split_from_pool_prefix(tmp_pool):
+    buckets = ar.personas_by_gender()
+    assert "AMIR" in buckets["M"] and "AMIR" not in buckets["F"]
+    assert "ALYA" in buckets["F"] and "ALYA" not in buckets["M"]
+    # No token appears in both buckets.
+    assert not (set(buckets["F"]) & set(buckets["M"]))
+
+
+def test_persona_gender_case_insensitive(tmp_pool):
+    assert ar.persona_gender("amir") == "M"
+    assert ar.persona_gender("Alya") == "F"
+    assert ar.persona_gender("BrandNewPersona") is None  # not in pool → unconstrained
+    assert ar.persona_gender("") is None
+
+
+def test_validate_gender_compatibility_fail_closed(tmp_pool):
+    base = {
+        "character_name": "NewFace", "gender": "F", "hijab": False,
+        "skin_tone": "Tan SEA", "hair_style": "Short neat",
+        "wardrobe": "Smart office wear", "expression": "Calm neutral",
+    }
+    ar.validate_gender_compatibility(base)  # shared wardrobe, no persona → ok
+    ar.validate_gender_compatibility({**base, "wardrobe": "Modern baju kurung"})  # F-only on F ok
+    # hijab on a male
+    with pytest.raises(ValueError, match="AVATAR_HIJAB_MALE_INVALID"):
+        ar.validate_gender_compatibility({**base, "gender": "M", "hijab": True,
+                                          "wardrobe": "Smart office wear"})
+    # female-only wardrobe on a male
+    with pytest.raises(ValueError, match="AVATAR_VALUE_NOT_FOR_GENDER:wardrobe"):
+        ar.validate_gender_compatibility({**base, "gender": "M",
+                                          "wardrobe": "Modern baju kurung"})
+    # male-only wardrobe on a female
+    with pytest.raises(ValueError, match="AVATAR_VALUE_NOT_FOR_GENDER:wardrobe"):
+        ar.validate_gender_compatibility({**base, "wardrobe": "Baju melayu modern"})
+    # existing male persona claimed as female
+    with pytest.raises(ValueError, match="AVATAR_PERSONA_GENDER_MISMATCH"):
+        ar.validate_gender_compatibility({**base, "character_name": "Amir"})
+    # unknown gender
+    with pytest.raises(ValueError, match="AVATAR_GENDER_INVALID"):
+        ar.validate_gender_compatibility({**base, "gender": "X"})

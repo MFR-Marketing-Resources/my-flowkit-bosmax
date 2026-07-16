@@ -392,9 +392,18 @@ async def avatar_registry_vocab():
     """Read-only controlled vocabulary + existing personas for the Create Avatar
     dropdowns. Single source of truth (agent/authority/avatar_registry_vocab.json)."""
     from agent.services import avatar_registry
+    gender_fields = avatar_registry.gender_specific_fields()
     return {
         "vocab": avatar_registry.load_vocab(),
         "personas": avatar_registry.personas_from_pool(),
+        # Gender-aware layer (additive): personas split by pool prefix, which
+        # descriptor fields depend on gender, and those fields' per-gender values.
+        "personas_by_gender": avatar_registry.personas_by_gender(),
+        "gender_specific_fields": gender_fields,
+        "vocab_by_gender": {
+            g: {f: avatar_registry.vocab_for_gender(g)[f] for f in gender_fields}
+            for g in ("F", "M")
+        },
     }
 
 
@@ -463,10 +472,11 @@ async def avatar_registry_add_manual(request: AvatarManualAddRequest):
     from agent.services import avatar_registry
     try:
         avatar_registry.validate_descriptors(request.model_dump())
+        # Gender-dependency gate (hijab-on-male, gender-incompatible wardrobe,
+        # persona/gender mismatch) on top of the membership check above.
+        avatar_registry.validate_gender_compatibility(request.model_dump())
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    if request.hijab and request.gender == "M":
-        raise HTTPException(422, "AVATAR_HIJAB_MALE_INVALID")
     existing = avatar_registry.find_duplicate_avatar(
         request.skin_tone, request.hair_style, request.wardrobe,
         request.expression, request.gender)
@@ -510,9 +520,21 @@ def _coerce_ai_avatar_profile(data: dict) -> dict | None:
     gender = str(data.get("gender") or "").strip().upper()
     if gender not in ("F", "M"):
         return None
+    # Reject an AI name that collides with an existing OTHER-gender persona, so the
+    # AI lane can never mint a cross-gender persona code (e.g. male "Alya").
+    if avatar_registry.persona_gender(data.get("character_name")) not in (None, gender):
+        return None
+    gender_fields = set(avatar_registry.gender_specific_fields())
     snapped: dict[str, str] = {}
     for field in ("skin_tone", "hair_style", "wardrobe", "expression"):
-        canonical = avatar_registry.snap_to_vocab(field, data.get(field))
+        # Gender-specific descriptors (e.g. wardrobe) snap ONLY within the
+        # values allowed for the returned gender — an off-gender value is
+        # rejected (None → 502) rather than silently kept.
+        if field in gender_fields:
+            canonical = avatar_registry.snap_to_vocab_for_gender(
+                field, data.get(field), gender)
+        else:
+            canonical = avatar_registry.snap_to_vocab(field, data.get(field))
         if canonical is None:
             return None
         snapped[field] = canonical
@@ -552,7 +574,16 @@ async def avatar_registry_auto_generate(request: AvatarAutoGenRequest):
     existing_descriptors = ", ".join(
         "+".join(avatar_registry.descriptor_key(p)) for p in avatar_registry.list_pool()
     )
-    _vocab = avatar_registry.load_vocab()
+    # When a gender is requested up-front, offer the AI only that gender's
+    # allowed values (e.g. no female-only wardrobe for a male). With no gender
+    # constraint the full superset is offered and enforced after the AI returns
+    # its gender (via _coerce_ai_avatar_profile's gender-aware snap).
+    _req_gender = str(request.gender or "").strip().upper()
+    _vocab = (
+        avatar_registry.vocab_for_gender(_req_gender)
+        if _req_gender in ("F", "M")
+        else avatar_registry.load_vocab()
+    )
 
     def _allowed(field: str) -> str:
         return ", ".join(_vocab.get(field, []))

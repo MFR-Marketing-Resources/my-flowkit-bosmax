@@ -337,3 +337,125 @@ def test_auto_generate_off_vocab_descriptor_502(monkeypatch):
         "/api/workspace/avatar-registry/auto-generate", json={"brief": "x"})
     assert r.status_code == 502
     assert "AI_AVATAR_INVALID" in r.text
+
+
+# ── Gender-aware vocabulary + gender-dependency validation ──────────────────
+
+def test_vocab_endpoint_is_gender_aware():
+    client = TestClient(_build_app())
+    body = client.get("/api/workspace/avatar-registry/vocab").json()
+    assert body["gender_specific_fields"] == ["wardrobe"]
+    # Personas split by pool prefix; no token in both buckets.
+    pbg = body["personas_by_gender"]
+    assert "AMIR" in pbg["M"] and "ALYA" in pbg["F"]
+    assert not (set(pbg["F"]) & set(pbg["M"]))
+    # Per-gender wardrobe is partitioned (female-only vs male-only traditional wear).
+    vbg = body["vocab_by_gender"]
+    assert "Modern baju kurung" in vbg["F"]["wardrobe"]
+    assert "Modern baju kurung" not in vbg["M"]["wardrobe"]
+    assert "Baju melayu modern" in vbg["M"]["wardrobe"]
+    assert "Baju melayu modern" not in vbg["F"]["wardrobe"]
+
+
+def test_add_manual_rejects_female_wardrobe_on_male_422():
+    """M + female-only wardrobe (baju kurung) fails closed 422."""
+    client = TestClient(_build_app())
+    r = client.post(
+        "/api/workspace/avatar-registry/add-manual",
+        json={
+            "character_name": "Newman",  # new persona → no persona-gender clash
+            "gender": "M",
+            "skin_tone": "Tan SEA",
+            "hair_style": "Short neat",
+            "wardrobe": "Modern baju kurung",  # female-only
+            "expression": "Calm neutral",
+        },
+    )
+    assert r.status_code == 422
+    assert "AVATAR_VALUE_NOT_FOR_GENDER:wardrobe" in r.text
+
+
+def test_add_manual_rejects_male_wardrobe_on_female_422():
+    """F + male-only wardrobe (baju melayu) fails closed 422."""
+    client = TestClient(_build_app())
+    r = client.post(
+        "/api/workspace/avatar-registry/add-manual",
+        json={
+            "character_name": "Newfem",
+            "gender": "F",
+            "skin_tone": "Tan SEA",
+            "hair_style": "Short neat",
+            "wardrobe": "Baju melayu modern",  # male-only
+            "expression": "Calm neutral",
+        },
+    )
+    assert r.status_code == 422
+    assert "AVATAR_VALUE_NOT_FOR_GENDER:wardrobe" in r.text
+
+
+def test_add_manual_rejects_persona_gender_mismatch_422():
+    """An existing male persona (Amir) claimed as female fails closed 422."""
+    client = TestClient(_build_app())
+    r = client.post(
+        "/api/workspace/avatar-registry/add-manual",
+        json={
+            "character_name": "Amir",  # male persona in the pool
+            "gender": "F",
+            "skin_tone": "Tan SEA",
+            "hair_style": "Short neat",
+            "wardrobe": "Smart office wear",
+            "expression": "Calm neutral",
+        },
+    )
+    assert r.status_code == 422
+    assert "AVATAR_PERSONA_GENDER_MISMATCH" in r.text
+
+
+def test_auto_generate_rejects_off_gender_wardrobe_502(monkeypatch):
+    """AI returns a male avatar wearing a female-only wardrobe → rejected 502
+    (the gender-aware snap cannot place it in the male-allowed set)."""
+    monkeypatch.setattr(
+        "agent.services.ai_copy_provider_adapter.is_configured", lambda: True)
+    monkeypatch.setattr(
+        "agent.services.ai_copy_provider_adapter.complete_json",
+        lambda system, user: {
+            "character_name": "Rizal",
+            "gender": "M",
+            "skin_tone": "Tan SEA",
+            "hair_style": "Short neat",
+            "wardrobe": "Modern baju kurung",  # female-only on a male
+            "expression": "Calm neutral",
+        },
+    )
+    client = TestClient(_build_app())
+    r = client.post(
+        "/api/workspace/avatar-registry/auto-generate",
+        json={"brief": "a male teacher", "gender": "M"},
+    )
+    assert r.status_code == 502
+    assert "AI_AVATAR_INVALID" in r.text
+
+
+def test_auto_generate_rejects_cross_gender_persona_502(monkeypatch):
+    """AI names a male avatar after an existing female persona (Alya) → rejected
+    502, so the AI lane can never mint a cross-gender persona code."""
+    monkeypatch.setattr(
+        "agent.services.ai_copy_provider_adapter.is_configured", lambda: True)
+    monkeypatch.setattr(
+        "agent.services.ai_copy_provider_adapter.complete_json",
+        lambda system, user: {
+            "character_name": "Alya",  # existing FEMALE persona
+            "gender": "M",
+            "skin_tone": "Tan SEA",
+            "hair_style": "Short neat",
+            "wardrobe": "Smart office wear",
+            "expression": "Calm neutral",
+        },
+    )
+    client = TestClient(_build_app())
+    r = client.post(
+        "/api/workspace/avatar-registry/auto-generate",
+        json={"brief": "a male manager", "gender": "M"},
+    )
+    assert r.status_code == 502
+    assert "AI_AVATAR_INVALID" in r.text
