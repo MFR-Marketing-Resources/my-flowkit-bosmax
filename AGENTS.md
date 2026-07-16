@@ -13,6 +13,19 @@ This repository is under an architecture reset. All agents must inherit the same
 8. `docs/agent-delivery-sop.md`
 9. `.ai/contracts/GIT_PROOF_REQUIREMENTS.md`
 10. The relevant `.ai/architecture/*.md` and `.ai/decisions/*.md` files for the current phase
+11. **BOSMAX RPA / Playwright Click Operator workstream ONLY** — before ANY planning
+    or coding on that workstream, ALSO read, in this order:
+    1. `docs/bosmax-rpa-g0-governance-gate.md` — the G0 gate (delivery authority,
+       mandatory proof, blockers). **No RPA round is authorized without an explicit
+       owner authorization recorded here.**
+    2. `docs/bosmax-rpa-click-operator-workflow-mvp-spec.md` — RPA workflow + MVP spec.
+    3. `docs/claude-fable-5-full-delivery-feasibility-contract.md` — feasibility /
+       counter-review contract.
+
+    These three govern the RPA workstream **under** this file. `AGENTS.md` and
+    `.ai/contracts/*` remain the top-level repo instruction and **override** all three
+    on conflict; a conflict must be recorded for the owner, never silently resolved.
+    They do not apply to non-RPA work.
 
 ## Current Strategic Decision
 - **ADR-007 is in force (2026-07-02): generation is API-FIRST.** The Chrome
