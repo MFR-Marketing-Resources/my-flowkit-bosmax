@@ -135,3 +135,25 @@ def test_avatar_registry_archive_delete_planning_present():
     assert "REVIEW_CANDIDATE" in src
     assert "safe to delete" not in src.lower()
     assert "delete now" not in src.lower()
+
+
+def test_create_avatar_uses_controlled_dropdowns():
+    """Standardization: Create Avatar wires descriptor fields to controlled
+    dropdowns fed by the vocab endpoint, a persona dropdown + New persona, adds
+    the previously-missing fields, and ties hijab to gender (M disables hijab)."""
+    src = _read("dashboard/src/pages/AvatarRegistryPage.tsx")
+    # Vocab endpoint drives the dropdowns.
+    assert "/api/workspace/avatar-registry/vocab" in src
+    assert "vocab?.skin_tone" in src
+    assert "vocab?.wardrobe" in src
+    assert "vocab?.expression" in src
+    # Persona dropdown + New persona option (no more raw free-text name).
+    assert "manualPersonaNew" in src
+    assert "New persona" in src
+    assert "personas.map" in src
+    # Usage tags + constraint fields exist.
+    assert "Usage tags" in src
+    assert "usage_tags" in src
+    # Dependent constraint: gender = M disables hijab (manual + auto forms).
+    assert 'manualForm.gender === "M"' in src
+    assert 'autoGender === "M"' in src
