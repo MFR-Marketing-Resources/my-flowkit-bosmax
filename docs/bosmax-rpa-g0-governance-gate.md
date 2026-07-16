@@ -120,6 +120,25 @@ bundle. Verified at G0 authoring time: `:5173` → not running; `:8100/` → HTT
 deliverable is rendered selectors; proving them on one origin while the operator drives the other is
 exactly the `CI/runtime mismatch` risk the feasibility contract itself lists.
 
+**Sandbox exception (owner-authorized, Rounds B-D only).** An **isolated sandbox**
+runtime may be validated on **`http://127.0.0.1:8123`** (`FLOW_AGENT_DIR=<sandbox>`,
+`API_PORT=8123`, `WS_PORT=8124`) for Round B fixture work. This exception is narrow:
+
+- **`:8100` remains the canonical origin** for all merged-code and production-like
+  validation. A sandbox run may never be presented as canonical proof.
+- The sandbox origin is only valid for **isolated fixture runs against a synthetic,
+  non-production product** in a sandbox DB. It must never touch the live DB.
+- A sandbox report must state the origin, the resolved `DB_PATH` (proving it is NOT
+  the repo-root `flow_agent.db`), plus `git_head` and `source_stale_since_start`.
+- `FLOW_AGENT_DIR` relocates **runtime storage only** (DB, `.local-agent`, outputs,
+  product images). **Served code and built assets always resolve from the source
+  root** — that boundary is what makes the sandbox's git/staleness/SPA proofs real
+  rather than vacuous.
+- **Known gap:** `FLOW_AGENT_DIR` does **not** isolate the avatar/scene bridge CSV
+  (it is source-relative). Round B must not write the avatar registry.
+- **Known gap:** FastMoss reference rows are read from a repo pack file and appear
+  read-only in a sandbox. Round B must **never select a `fastmoss-ref:` product**.
+
 **Mandatory consequences:**
 
 1. Any report that claims a rendered selector/state proof **must name the origin** and the SHA the

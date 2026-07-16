@@ -15,6 +15,15 @@ from pydantic import BaseModel
 
 from agent.config import BASE_DIR
 
+# BASE_DIR is RUNTIME STORAGE (DB, .local-agent state, outputs) and is relocatable
+# via FLOW_AGENT_DIR — e.g. the isolated RPA sandbox. _SOURCE_ROOT is where the CODE
+# and its BUILT ASSETS live, and is derived from this module's own location. Anything
+# describing "the code/assets this process serves" (git provenance, staleness scan,
+# dashboard bundle) must resolve from _SOURCE_ROOT; anything describing runtime state
+# must stay on BASE_DIR. With FLOW_AGENT_DIR unset the two are the same path, so
+# normal runtime behavior is unchanged.
+_SOURCE_ROOT = Path(__file__).resolve().parent.parent.parent
+
 router = APIRouter(prefix="/api/local-agent", tags=["local-agent"])
 
 LOCAL_AGENT_TASK_NAME = "BOSMAX Flow Kit Local Agent"
@@ -75,7 +84,10 @@ def _default_registration() -> LocalAgentRegistration:
 
 
 def get_dashboard_paths() -> tuple[Path, Path]:
-    dist_dir = BASE_DIR / "dashboard" / "dist"
+    # The built SPA is a SOURCE asset (dashboard/dist), not runtime storage, so it
+    # must resolve from _SOURCE_ROOT. Under FLOW_AGENT_DIR this previously pointed
+    # into the sandbox, which has no dashboard/dist -> BACKEND_BUILD_REQUIRED.
+    dist_dir = _SOURCE_ROOT / "dashboard" / "dist"
     return dist_dir, dist_dir / "index.html"
 
 
@@ -353,7 +365,7 @@ class LocalAgentVersionProof(BaseModel):
 def _git_output(*args: str) -> str | None:
     try:
         return subprocess.check_output(
-            ["git", *args], cwd=str(BASE_DIR), stderr=subprocess.DEVNULL,
+            ["git", *args], cwd=str(_SOURCE_ROOT), stderr=subprocess.DEVNULL,
             text=True, timeout=5,
         ).strip() or None
     except Exception:
@@ -364,7 +376,7 @@ def _served_dashboard_bundle() -> str | None:
     try:
         import re
 
-        index_html = (BASE_DIR / "dashboard" / "dist" / "index.html").read_text(
+        index_html = (_SOURCE_ROOT / "dashboard" / "dist" / "index.html").read_text(
             encoding="utf-8"
         )
         m = re.search(r"assets/(index-[\w-]+\.js)", index_html)
@@ -381,11 +393,14 @@ def _stale_backend_sources() -> list[str]:
     stale: list[str] = []
     started = _PROCESS_STARTED_AT_DT.timestamp()
     try:
-        for path in (BASE_DIR / "agent").rglob("*.py"):
+        # Scan the SERVED source tree (_SOURCE_ROOT), not runtime storage: under
+        # FLOW_AGENT_DIR the BASE_DIR sandbox has no `agent/` tree, so this loop
+        # found zero files and reported "not stale" without checking anything.
+        for path in (_SOURCE_ROOT / "agent").rglob("*.py"):
             if "__pycache__" in path.parts:
                 continue
             if path.stat().st_mtime > started:
-                stale.append(str(path.relative_to(BASE_DIR)))
+                stale.append(str(path.relative_to(_SOURCE_ROOT)))
                 if len(stale) >= 5:
                     break
     except Exception:
