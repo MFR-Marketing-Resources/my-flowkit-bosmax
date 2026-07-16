@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useImageGenSettings } from "../api/imageGenSettings";
+import {
+	getRegistryCoverage,
+	type RegistryCoverage,
+} from "../api/creativeIntelligence";
 
 interface SceneProfile {
 	scene_code: string;
@@ -28,6 +32,7 @@ export default function SceneContextRegistryPage() {
 	const [error, setError] = useState<string | null>(null);
 	const [successMsg, setSuccessMsg] = useState<string | null>(null);
 	const [generating, setGenerating] = useState<Record<string, GenStage>>({});
+	const [coverage, setCoverage] = useState<RegistryCoverage | null>(null);
 
 	const [aspect, setAspect] = useState<string>("9:16");
 	const [count, setCount] = useState<number>(1);
@@ -52,6 +57,9 @@ export default function SceneContextRegistryPage() {
 			const data = await response.json();
 			if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`);
 			setPool(data);
+			getRegistryCoverage()
+				.then(setCoverage)
+				.catch(() => {});
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to load scene pool.");
 		} finally {
@@ -304,6 +312,9 @@ export default function SceneContextRegistryPage() {
 						← Operator
 					</a>
 				</div>
+				<div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-400/80">
+					Live Scene / Context Authority Pool
+				</div>
 				<h1 className="text-2xl font-bold text-slate-100">Scene Context Registry</h1>
 				<p className="text-sm text-slate-400">
 					Bank scene/background yang boleh guna semula. Jana imej scene (credit-free)
@@ -317,6 +328,54 @@ export default function SceneContextRegistryPage() {
 					</p>
 				)}
 			</header>
+
+			{coverage && (
+				<div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+					<div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+						<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+							<div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+								Scene Pool
+							</div>
+							<div className="mt-1 text-lg font-bold text-slate-100">
+								{coverage.scene.pool_total}
+							</div>
+							<div className="text-[11px] text-slate-400">
+								{coverage.scene.bridge_active ? "synced bridge CSV" : "repo seed"} ·{" "}
+								{coverage.scene.prompt_total} scene prompts
+							</div>
+						</div>
+						<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+							<div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+								Scene-Prompt Coverage
+							</div>
+							<div className="mt-1 text-lg font-bold text-slate-100">
+								{coverage.scene.clusters_covered.length}/{coverage.cluster_total}{" "}
+								clusters
+							</div>
+							<div className="text-[11px] text-slate-400">
+								{coverage.product_total} products
+							</div>
+						</div>
+						<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+							<div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+								Coverage Gaps
+							</div>
+							<div
+								className={`mt-1 text-sm font-semibold ${coverage.scene.clusters_missing.length ? "text-amber-400" : "text-emerald-400"}`}
+							>
+								{coverage.scene.clusters_missing.length
+									? `Missing: ${coverage.scene.clusters_missing.join(", ")}`
+									: "Full 12/12 clusters"}
+							</div>
+						</div>
+					</div>
+					<div className="mt-3 text-[11px] text-slate-500">
+						Used by scene reference lanes (IMG Fastlane · I2V scene/style) and
+						Creative Intelligence context. Read-only — editing here changes the live
+						pool those lanes resolve against.
+					</div>
+				</div>
+			)}
 
 			{/* Image-gen settings (shared SSOT) */}
 			<div className="flex flex-wrap items-end gap-4 rounded-2xl border border-slate-800 bg-slate-900/50 p-4">

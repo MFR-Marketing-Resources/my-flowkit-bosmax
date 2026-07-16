@@ -26,6 +26,32 @@ export function getAvatarRecommendationForProduct(productId: string) {
 	);
 }
 
+// --- Registry coverage lens (read-only; powers Avatar/Scene Registry cards) ---
+
+export interface RegistryClusterCoverage {
+	pool_total: number;
+	bridge_active: boolean;
+	clusters_covered: string[];
+	clusters_missing: string[];
+}
+
+export interface RegistryCoverage {
+	canonical_clusters: string[];
+	cluster_total: number;
+	product_total: number;
+	avatar: RegistryClusterCoverage & {
+		fit_total: number;
+		distinct_avatars_in_fit: number;
+	};
+	scene: RegistryClusterCoverage & { prompt_total: number };
+	camera: { preset_total: number; block_groups: string[] };
+	used_by: { avatar: string[]; scene: string[] };
+}
+
+export function getRegistryCoverage() {
+	return getAPI<RegistryCoverage>("/api/creative-intelligence/registry-coverage");
+}
+
 // --- Round 2: Scene / Image Prompt templates (read-only) ---
 
 export interface ScenePromptTemplate {
