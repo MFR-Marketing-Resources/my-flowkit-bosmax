@@ -4,7 +4,7 @@
 
 Use this document before assigning any coding work to Claude Fable 5, Claude Code, Codex, or another execution agent for the BOSMAX RPA Click Operator project.
 
-This is not an implementation mission. It is a feasibility and capability interview contract.
+This is not an implementation mission. It is a feasibility, counter-review, and capability interview contract.
 
 ## Purpose
 
@@ -37,9 +37,113 @@ This feasibility interview must align with:
 
 The executor must not contradict the RPA workflow spec unless it provides exact evidence and labels the contradiction as a planning concern for owner decision.
 
+## Recommended Use Sequence
+
+Use this contract in two passes:
+
+1. **Counter Review Pass**
+   - Ask Claude Fable 5 to challenge this contract and the RPA plan.
+   - Do not ask it to code.
+   - Do not ask it to produce implementation patches.
+   - Use the answer to identify missing risks, overreach, unsafe assumptions, or delivery-mode problems.
+
+2. **Feasibility Interview Pass**
+   - After valid counter-review findings are accepted or rejected by the BOSMAX auditor, ask Claude Fable 5 to answer the full-delivery feasibility interview.
+   - Do not approve coding until the feasibility answer passes the BOSMAX Auditor Rule in this document.
+
+If the counter-review reveals major blockers, update the RPA workflow spec and this contract before any coding mission.
+
+## Counter Review Prompt
+
+Paste the following prompt into Notion AI / Claude Fable 5 first if the owner wants Claude to challenge the plan before the full feasibility interview.
+
+```text
+You are reviewing a feasibility interview contract for a future BOSMAX Playwright RPA Click Operator delivery.
+
+Do not write code.
+Do not propose implementation patches.
+Do not accept the contract at face value.
+
+Your job is to challenge, counter-check, and improve the contract before any coding mission is approved.
+
+Context:
+The BOSMAX RPA plan is documented in:
+- `docs/bosmax-rpa-click-operator-workflow-mvp-spec.md`
+- `docs/claude-fable-5-full-delivery-feasibility-contract.md`
+
+Core owner intent:
+- Playwright is only a UI-click RPA operator.
+- Existing API-backed image/video modules must not be touched or replaced.
+- RPA should follow the human-visible workflow sections.
+- Copy Set readiness and approval are mandatory prerequisites.
+- Phase A-E may eventually include selector/state normalization, Hybrid Steps 1-4, evidence reporting, Production Queue dry-run, and one serial live Step 5 test with explicit authorization.
+- The owner is considering whether a future Claude/Claude Code agent can handle FULL DELIVERY: commit, push, PR, merge, and post-merge validation.
+
+Task:
+Review the contract critically.
+
+Answer in exactly these sections:
+
+1. AGREEMENTS
+What parts of the contract are correct and should remain unchanged?
+
+2. DISAGREEMENTS
+What parts are wrong, unsafe, too broad, too narrow, or misleading?
+
+3. MISSING BLINDSPOTS
+What important risks, prerequisites, access issues, runtime constraints, or workflow steps are missing?
+
+4. FULL DELIVERY CHALLENGE
+Is it realistic to grant FULL DELIVERY for Phase A-E?
+If not, what delivery mode should be used and why?
+
+5. PHASE BREAKDOWN CHALLENGE
+Should Phase A-E be split differently?
+Which phases should never be bundled together?
+
+6. COPY SET / AI ASSISTANT CHALLENGE
+Does the contract handle Copy Set generation, review, approval, dedupe, and product grounding safely?
+What is missing?
+
+7. RUNTIME / ACCESS CHALLENGE
+What exact access would be required to make any full-delivery claim credible?
+Include repo, CI, runtime, credentials, browser, test data, merge, deployment, and post-merge validation.
+
+8. PROOF CHALLENGE
+What proof should be mandatory before accepting:
+- selector/state patch
+- Hybrid Steps 1-4 RPA
+- evidence reporting
+- Production Queue dry-run
+- one live Step 5 test
+- merge/post-merge validation
+
+9. CONTRACT UPDATE RECOMMENDATIONS
+List the exact changes you recommend adding to the contract.
+Separate:
+- must update
+- optional update
+- do not update
+
+10. FINAL COUNTER-VERDICT
+Use one:
+- CONTRACT IS READY
+- CONTRACT NEEDS MINOR UPDATE
+- CONTRACT NEEDS MAJOR UPDATE
+- CONTRACT IS UNSAFE FOR EXECUTION PLANNING
+
+Hard rules:
+- Do not write code.
+- Do not produce implementation steps.
+- Do not assume access that has not been granted.
+- Do not approve FULL DELIVERY unless runtime, merge, and post-merge validation conditions are concrete.
+- Do not ignore owner intent.
+- Do not reduce the project to monitoring only.
+```
+
 ## Interview Prompt
 
-Paste the following prompt into Notion AI / Claude Fable 5.
+Paste the following prompt into Notion AI / Claude Fable 5 after the counter-review pass is resolved.
 
 ```text
 You are being interviewed for a future full-delivery coding mission. Do not write code. Do not propose implementation patches yet. This is a feasibility and capability assessment only.
@@ -251,3 +355,15 @@ Do not approve Claude Fable 5 for full delivery unless its answer proves:
 6. It does not overclaim runtime or merge capability.
 
 If any of those are missing, the maximum acceptable next step is phased delivery, not full delivery.
+
+## Counter-Review Audit Rule
+
+A Claude counter-review does not automatically change the plan.
+
+After receiving the counter-review, the BOSMAX auditor must classify each recommendation as:
+
+- **Accept**: valid and should update the contract or RPA workflow spec.
+- **Reject**: conflicts with owner intent or lacks evidence.
+- **Park**: valid observation but not part of the current delivery decision.
+
+Only accepted recommendations should amend this contract or `docs/bosmax-rpa-click-operator-workflow-mvp-spec.md`.
