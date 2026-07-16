@@ -131,3 +131,67 @@ def test_git_provenance_survives_relocated_base_dir(monkeypatch, tmp_path):
     assert head == local_agent._git_output("rev-parse", "HEAD")
     if head is not None:
         assert len(head) == 40
+
+
+# ── Gap D: FLOW_AGENT_DIR must relocate RUNTIME STORAGE only. The built SPA is a
+# SOURCE asset; pointing it at BASE_DIR made a sandbox serve 503 build_required for
+# every page, leaving no UI for an RPA operator to drive.
+
+def test_dashboard_dist_resolves_from_source_root_not_runtime_storage(monkeypatch, tmp_path):
+    """dashboard/dist must not follow a relocated BASE_DIR."""
+    from agent.api import local_agent
+
+    monkeypatch.setattr(local_agent, "BASE_DIR", tmp_path)
+    dist_dir, index_file = local_agent.get_dashboard_paths()
+
+    # Must NOT have followed BASE_DIR into the sandbox...
+    assert tmp_path not in dist_dir.parents and dist_dir != tmp_path
+    # ...and must point at the real source tree.
+    assert dist_dir == local_agent._SOURCE_ROOT / "dashboard" / "dist"
+    assert index_file == dist_dir / "index.html"
+
+
+def test_dashboard_serving_mode_survives_relocated_base_dir(monkeypatch, tmp_path):
+    """A sandbox must still report BACKEND_SERVED_STATIC when the repo is built."""
+    from agent.api import local_agent
+
+    _, index_file = local_agent.get_dashboard_paths()
+    built = index_file.exists()
+
+    monkeypatch.setattr(local_agent, "BASE_DIR", tmp_path)
+    mode = local_agent.get_dashboard_serving_mode()
+    # The answer must depend on the SOURCE tree's build state, never on BASE_DIR.
+    assert mode == ("BACKEND_SERVED_STATIC" if built else "BACKEND_BUILD_REQUIRED")
+
+
+def test_path_boundary_storage_vs_source(monkeypatch, tmp_path):
+    """The whole point of the sandbox: DB isolates, served assets/code do not."""
+    from agent.api import local_agent
+
+    monkeypatch.setattr(local_agent, "BASE_DIR", tmp_path)
+
+    # SOURCE side: code + built assets stay at the source root.
+    assert (local_agent._SOURCE_ROOT / "agent").is_dir()
+    assert local_agent.get_dashboard_paths()[0].parent.parent == local_agent._SOURCE_ROOT
+
+    # STORAGE side: agent.config resolves DB under FLOW_AGENT_DIR, away from source.
+    import os
+    import subprocess
+    import sys
+
+    # agent.config auto-isolates DB_PATH to a temp file when it detects pytest, so
+    # the pytest markers must be REMOVED (an empty value still counts as present).
+    child_env = {k: v for k, v in os.environ.items()
+                 if k not in ("PYTEST_CURRENT_TEST", "PYTEST_VERSION")}
+    child_env["FLOW_AGENT_DIR"] = str(tmp_path)
+    out = subprocess.run(
+        [sys.executable, "-c",
+         "from agent.config import DB_PATH, BASE_DIR; print(DB_PATH); print(BASE_DIR)"],
+        capture_output=True, text=True, env=child_env,
+        cwd=str(local_agent._SOURCE_ROOT),
+    )
+    assert out.returncode == 0, out.stderr
+    db_path, base_dir = [ln.strip() for ln in out.stdout.strip().splitlines()[:2]]
+    assert str(tmp_path) in db_path, f"DB did not isolate: {db_path}"
+    assert str(tmp_path) in base_dir
+    assert str(local_agent._SOURCE_ROOT) not in db_path

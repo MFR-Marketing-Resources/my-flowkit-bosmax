@@ -15,6 +15,15 @@ from pydantic import BaseModel
 
 from agent.config import BASE_DIR
 
+# BASE_DIR is RUNTIME STORAGE (DB, .local-agent state, outputs) and is relocatable
+# via FLOW_AGENT_DIR — e.g. the isolated RPA sandbox. _SOURCE_ROOT is where the CODE
+# and its BUILT ASSETS live, and is derived from this module's own location. Anything
+# describing "the code/assets this process serves" (git provenance, staleness scan,
+# dashboard bundle) must resolve from _SOURCE_ROOT; anything describing runtime state
+# must stay on BASE_DIR. With FLOW_AGENT_DIR unset the two are the same path, so
+# normal runtime behavior is unchanged.
+_SOURCE_ROOT = Path(__file__).resolve().parent.parent.parent
+
 router = APIRouter(prefix="/api/local-agent", tags=["local-agent"])
 
 LOCAL_AGENT_TASK_NAME = "BOSMAX Flow Kit Local Agent"
@@ -75,7 +84,10 @@ def _default_registration() -> LocalAgentRegistration:
 
 
 def get_dashboard_paths() -> tuple[Path, Path]:
-    dist_dir = BASE_DIR / "dashboard" / "dist"
+    # The built SPA is a SOURCE asset (dashboard/dist), not runtime storage, so it
+    # must resolve from _SOURCE_ROOT. Under FLOW_AGENT_DIR this previously pointed
+    # into the sandbox, which has no dashboard/dist -> BACKEND_BUILD_REQUIRED.
+    dist_dir = _SOURCE_ROOT / "dashboard" / "dist"
     return dist_dir, dist_dir / "index.html"
 
 
@@ -350,18 +362,6 @@ class LocalAgentVersionProof(BaseModel):
     stale_source_sample: list[str]
 
 
-# Provenance describes the CODE THIS PROCESS IS SERVING, which always lives at the
-# source root. BASE_DIR is RUNTIME STORAGE and is relocatable via FLOW_AGENT_DIR
-# (e.g. an isolated sandbox), so resolving provenance from it made `git_head` report
-# None and — worse — made the staleness scan pass VACUOUSLY (it scanned a directory
-# with no `agent/` tree, found nothing, and reported "not stale"). When
-# FLOW_AGENT_DIR is unset these two paths are identical, so normal runtime behavior
-# is unchanged. `_served_dashboard_bundle` deliberately still uses BASE_DIR: it must
-# mirror what agent/main.py ACTUALLY serves, so reporting None where no dashboard is
-# served is the truthful answer.
-_SOURCE_ROOT = Path(__file__).resolve().parent.parent.parent
-
-
 def _git_output(*args: str) -> str | None:
     try:
         return subprocess.check_output(
@@ -376,7 +376,7 @@ def _served_dashboard_bundle() -> str | None:
     try:
         import re
 
-        index_html = (BASE_DIR / "dashboard" / "dist" / "index.html").read_text(
+        index_html = (_SOURCE_ROOT / "dashboard" / "dist" / "index.html").read_text(
             encoding="utf-8"
         )
         m = re.search(r"assets/(index-[\w-]+\.js)", index_html)

@@ -436,7 +436,15 @@ async def dashboard_ws(websocket: WebSocket):
         event_bus.unsubscribe(q)
 
 
-_DASHBOARD_DIST_DIR = BASE_DIR / "dashboard" / "dist"
+# The built SPA is a SOURCE asset, not runtime storage: it ships with the code in
+# `dashboard/dist`. BASE_DIR is relocatable via FLOW_AGENT_DIR (the isolated RPA
+# sandbox), and pointing the SPA at it made a sandbox serve HTTP 503
+# `build_required` for every page — i.e. no UI to operate. Resolve from the source
+# root instead. With FLOW_AGENT_DIR unset the two are the same path, so normal
+# :8100 serving is unchanged. `_PRODUCT_IMAGE_DIR` stays on BASE_DIR: product
+# images are runtime data and SHOULD isolate per sandbox.
+_SOURCE_ROOT = Path(__file__).resolve().parent.parent
+_DASHBOARD_DIST_DIR = _SOURCE_ROOT / "dashboard" / "dist"
 _DASHBOARD_INDEX_FILE = _DASHBOARD_DIST_DIR / "index.html"
 _PRODUCT_IMAGE_DIR = BASE_DIR / "data" / "products" / "images"
 
