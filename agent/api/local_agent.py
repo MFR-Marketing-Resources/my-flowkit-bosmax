@@ -350,10 +350,22 @@ class LocalAgentVersionProof(BaseModel):
     stale_source_sample: list[str]
 
 
+# Provenance describes the CODE THIS PROCESS IS SERVING, which always lives at the
+# source root. BASE_DIR is RUNTIME STORAGE and is relocatable via FLOW_AGENT_DIR
+# (e.g. an isolated sandbox), so resolving provenance from it made `git_head` report
+# None and — worse — made the staleness scan pass VACUOUSLY (it scanned a directory
+# with no `agent/` tree, found nothing, and reported "not stale"). When
+# FLOW_AGENT_DIR is unset these two paths are identical, so normal runtime behavior
+# is unchanged. `_served_dashboard_bundle` deliberately still uses BASE_DIR: it must
+# mirror what agent/main.py ACTUALLY serves, so reporting None where no dashboard is
+# served is the truthful answer.
+_SOURCE_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
 def _git_output(*args: str) -> str | None:
     try:
         return subprocess.check_output(
-            ["git", *args], cwd=str(BASE_DIR), stderr=subprocess.DEVNULL,
+            ["git", *args], cwd=str(_SOURCE_ROOT), stderr=subprocess.DEVNULL,
             text=True, timeout=5,
         ).strip() or None
     except Exception:
@@ -381,11 +393,14 @@ def _stale_backend_sources() -> list[str]:
     stale: list[str] = []
     started = _PROCESS_STARTED_AT_DT.timestamp()
     try:
-        for path in (BASE_DIR / "agent").rglob("*.py"):
+        # Scan the SERVED source tree (_SOURCE_ROOT), not runtime storage: under
+        # FLOW_AGENT_DIR the BASE_DIR sandbox has no `agent/` tree, so this loop
+        # found zero files and reported "not stale" without checking anything.
+        for path in (_SOURCE_ROOT / "agent").rglob("*.py"):
             if "__pycache__" in path.parts:
                 continue
             if path.stat().st_mtime > started:
-                stale.append(str(path.relative_to(BASE_DIR)))
+                stale.append(str(path.relative_to(_SOURCE_ROOT)))
                 if len(stale) >= 5:
                     break
     except Exception:
