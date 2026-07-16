@@ -3,7 +3,9 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useImageGenSettings } from "../api/imageGenSettings";
 import {
 	getRegistryCoverage,
+	getRegistryReconciliation,
 	type RegistryCoverage,
+	type RegistryReconciliation,
 } from "../api/creativeIntelligence";
 import { DataTable } from "../components/ui";
 import {
@@ -117,6 +119,7 @@ export default function AvatarRegistryPage() {
 	const [avatars, setAvatars] = useState<AvatarProfile[]>([]);
 	const [bridgeActive, setBridgeActive] = useState(false);
 	const [coverage, setCoverage] = useState<RegistryCoverage | null>(null);
+	const [recon, setRecon] = useState<RegistryReconciliation | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [successMsg, setSuccessMsg] = useState<string | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
@@ -208,6 +211,9 @@ export default function AvatarRegistryPage() {
 			setBridgeActive(Boolean(data.bridge_active));
 			getRegistryCoverage()
 				.then(setCoverage)
+				.catch(() => {});
+			getRegistryReconciliation()
+				.then(setRecon)
 				.catch(() => {});
 		} catch (err) {
 			setError(
@@ -945,6 +951,58 @@ export default function AvatarRegistryPage() {
 								Handoff (R5), and the prompt compiler. Read-only — editing here
 								changes the live pool those modules resolve against.
 							</div>
+						</div>
+					)}
+					{recon && (
+						<div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+							<div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300">
+								Registry Reconciliation
+							</div>
+							<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+								<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+									<div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+										Pool
+									</div>
+									<div className="mt-1 text-lg font-bold text-slate-100">
+										{recon.avatar.pool_total}
+									</div>
+								</div>
+								<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+									<div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+										Mapped
+									</div>
+									<div className="mt-1 text-lg font-bold text-emerald-400">
+										{recon.avatar.mapped_to_fit}
+									</div>
+									<div className="text-[10px] text-slate-500">product-fit</div>
+								</div>
+								<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+									<div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+										Referenced
+									</div>
+									<div className="mt-1 text-lg font-bold text-sky-400">
+										{recon.avatar.referenced_by_selection}
+									</div>
+									<div className="text-[10px] text-slate-500">saved selections</div>
+								</div>
+								<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+									<div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+										Review candidates
+									</div>
+									<div className="mt-1 text-lg font-bold text-amber-400">
+										{recon.avatar.review_candidate_count}
+									</div>
+									<div className="text-[10px] text-slate-500">unmapped</div>
+								</div>
+							</div>
+							{recon.avatar.review_candidate_sample.length > 0 && (
+								<div className="mt-2 text-[11px] text-slate-500">
+									Review candidate sample:{" "}
+									{recon.avatar.review_candidate_sample.slice(0, 6).join(", ")}
+									{recon.avatar.review_candidate_count > 6 ? ", …" : ""}
+								</div>
+							)}
+							<div className="mt-2 text-[11px] text-slate-500">{recon.disclaimer}</div>
 						</div>
 					)}
 					{/* Sub-tab switcher */}

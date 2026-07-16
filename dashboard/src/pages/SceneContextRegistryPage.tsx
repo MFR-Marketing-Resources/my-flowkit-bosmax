@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { useImageGenSettings } from "../api/imageGenSettings";
 import {
 	getRegistryCoverage,
+	getRegistryReconciliation,
 	type RegistryCoverage,
+	type RegistryReconciliation,
 } from "../api/creativeIntelligence";
 
 interface SceneProfile {
@@ -33,6 +35,7 @@ export default function SceneContextRegistryPage() {
 	const [successMsg, setSuccessMsg] = useState<string | null>(null);
 	const [generating, setGenerating] = useState<Record<string, GenStage>>({});
 	const [coverage, setCoverage] = useState<RegistryCoverage | null>(null);
+	const [recon, setRecon] = useState<RegistryReconciliation | null>(null);
 
 	const [aspect, setAspect] = useState<string>("9:16");
 	const [count, setCount] = useState<number>(1);
@@ -59,6 +62,9 @@ export default function SceneContextRegistryPage() {
 			setPool(data);
 			getRegistryCoverage()
 				.then(setCoverage)
+				.catch(() => {});
+			getRegistryReconciliation()
+				.then(setRecon)
 				.catch(() => {});
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to load scene pool.");
@@ -377,6 +383,58 @@ export default function SceneContextRegistryPage() {
 				</div>
 			)}
 
+			{recon && (
+				<div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+					<div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300">
+						Registry Reconciliation
+					</div>
+					<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+						<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+							<div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+								Pool
+							</div>
+							<div className="mt-1 text-lg font-bold text-slate-100">
+								{recon.scene.pool_total}
+							</div>
+						</div>
+						<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+							<div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+								Scene Prompts
+							</div>
+							<div className="mt-1 text-lg font-bold text-emerald-400">
+								{recon.scene.prompt_template_total}
+							</div>
+							<div className="text-[10px] text-slate-500">templates</div>
+						</div>
+						<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+							<div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+								Referenced
+							</div>
+							<div className="mt-1 text-lg font-bold text-sky-400">
+								{recon.scene.referenced_by_selection}
+							</div>
+							<div className="text-[10px] text-slate-500">saved selections</div>
+						</div>
+						<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+							<div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+								Review candidates
+							</div>
+							<div className="mt-1 text-lg font-bold text-amber-400">
+								{recon.scene.review_candidate_count}
+							</div>
+							<div className="text-[10px] text-slate-500">pool plates</div>
+						</div>
+					</div>
+					<div className="mt-2 text-[11px] text-slate-500">
+						Pool ↔ prompt:{" "}
+						{recon.scene.pool_to_prompt_mapping === "NOT_DIRECTLY_MAPPED"
+							? "not directly mapped (separate id spaces)"
+							: recon.scene.pool_to_prompt_mapping}
+						. Scene plates also feed the IMG/I2V reference lane.
+					</div>
+					<div className="mt-2 text-[11px] text-slate-500">{recon.disclaimer}</div>
+				</div>
+			)}
 			{/* Image-gen settings (shared SSOT) */}
 			<div className="flex flex-wrap items-end gap-4 rounded-2xl border border-slate-800 bg-slate-900/50 p-4">
 				<label className="text-[11px] text-slate-300">

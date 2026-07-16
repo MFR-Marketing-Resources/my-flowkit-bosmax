@@ -52,6 +52,41 @@ export function getRegistryCoverage() {
 	return getAPI<RegistryCoverage>("/api/creative-intelligence/registry-coverage");
 }
 
+// --- Registry reconciliation lens (read-only; mapped / referenced / review) ---
+
+export interface RegistryReconciliation {
+	avatar: {
+		pool_total: number;
+		mapped_to_fit: number;
+		referenced_by_selection: number;
+		unmapped: number;
+		review_candidate_count: number;
+		review_candidate_sample: string[];
+		mapping_basis: string;
+	};
+	scene: {
+		pool_total: number;
+		prompt_template_total: number;
+		referenced_by_selection: number;
+		pool_to_prompt_mapping: string;
+		review_candidate_count: number;
+		review_candidate_sample: string[];
+		mapping_basis: string;
+	};
+	selection: {
+		total: number;
+		distinct_avatar_codes: string[];
+		distinct_scene_template_ids: string[];
+	};
+	disclaimer: string;
+}
+
+export function getRegistryReconciliation() {
+	return getAPI<RegistryReconciliation>(
+		"/api/creative-intelligence/registry-reconciliation",
+	);
+}
+
 // --- Round 2: Scene / Image Prompt templates (read-only) ---
 
 export interface ScenePromptTemplate {

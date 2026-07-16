@@ -62,3 +62,16 @@ def test_scene_registry_coverage_lens_present():
     # Dependency note: scene reference lanes + Creative Intelligence context.
     assert "scene reference lanes" in src
     assert "Creative Intelligence context" in src
+
+
+def test_scene_registry_reconciliation_panel_present():
+    """Phase C: read-only reconciliation panel with non-destructive labels."""
+    src = _read("dashboard/src/pages/SceneContextRegistryPage.tsx")
+    assert "getRegistryReconciliation" in src
+    assert "Registry Reconciliation" in src
+    assert "Scene Prompts" in src
+    assert "Referenced" in src
+    assert "Review candidates" in src
+    assert "not directly mapped" in src
+    assert "safe to delete" not in src.lower()
+    assert "delete now" not in src.lower()
