@@ -240,6 +240,153 @@ async def registry_reconciliation() -> dict:
     }
 
 
+@router.get("/registry-cleanup-plan")
+async def registry_cleanup_plan() -> dict:
+    """READ-ONLY DRY-RUN archive/delete PLANNING report for the Avatar + Scene
+    authority pools.
+
+    Classifies each pool entry — KEEP_ACTIVE / BLOCKED_REFERENCED /
+    REVIEW_CANDIDATE / BLOCKED_UNKNOWN_MAPPING / FUTURE_ARCHIVE_ELIGIBLE — with the
+    dependency evidence and the evidence still required before any future action.
+
+    Mutates NOTHING: no delete, archive, reseed, or write of any kind — only reads.
+    Nothing is ever labelled 'safe to delete now'; FUTURE_ARCHIVE_ELIGIBLE
+    additionally requires explicit owner approval before any real action.
+    """
+    from agent.db import crud
+    from agent.services import avatar_registry, scene_context_registry
+
+    pool = avatar_registry.list_pool()
+    fits = await crud.list_avatar_product_fits(limit=5000)
+    fit_codes = {str(f.get("avatar_code") or "").strip() for f in fits if f.get("avatar_code")}
+    scene_pool = scene_context_registry.list_pool()
+
+    # Read-only reads of downstream references (no bulk-list crud exists).
+    db = await crud.get_db()
+    sel_cur = await db.execute(
+        "SELECT selected_avatar_code FROM creative_product_selection"
+    )
+    sel_avatar = {
+        str(dict(r).get("selected_avatar_code") or "").strip()
+        for r in await sel_cur.fetchall()
+    }
+    sel_avatar.discard("")
+    asset_cur = await db.execute(
+        "SELECT DISTINCT avatar_code FROM creative_asset "
+        "WHERE avatar_code IS NOT NULL AND avatar_code <> ''"
+    )
+    asset_avatar = {str(r[0]).strip() for r in await asset_cur.fetchall() if r[0]}
+
+    _CLASSES = (
+        "KEEP_ACTIVE", "BLOCKED_REFERENCED", "REVIEW_CANDIDATE",
+        "BLOCKED_UNKNOWN_MAPPING", "FUTURE_ARCHIVE_ELIGIBLE",
+    )
+
+    # --- Avatar classification (per pool AvatarCode) ---
+    avatar_counts = {k: 0 for k in _CLASSES}
+    avatar_samples: list[dict] = []
+    for a in pool:
+        code = str(a.get("avatar_code") or "").strip()
+        if not code:
+            continue
+        in_fit = code in fit_codes
+        sel_ref = 1 if code in sel_avatar else 0
+        asset_ref = 1 if code in asset_avatar else 0
+        if in_fit:
+            cls = "KEEP_ACTIVE"
+            reason = "Mapped in avatar_product_fit — actively used by R1 avatar recommendation."
+            req = "None — actively used; not an archive candidate."
+        elif sel_ref or asset_ref:
+            cls = "BLOCKED_REFERENCED"
+            reason = "Referenced by a saved creative selection and/or a generated library asset."
+            req = "Clear all selection + asset references, then re-run this plan to confirm zero references."
+        else:
+            cls = "REVIEW_CANDIDATE"
+            reason = (
+                "Not in the product-fit crosswalk and not referenced by a selection/asset "
+                "— thin, but NOT provably unused: resolve_presenter can still pick any pool "
+                "member as a deterministic fallback at generation time."
+            )
+            req = (
+                "Prove no resolve_presenter/seed path can select it, + owner approval. "
+                "Not archive-eligible on current evidence."
+            )
+        avatar_counts[cls] += 1
+        if cls != "KEEP_ACTIVE" and len(avatar_samples) < 10:
+            avatar_samples.append({
+                "id": code,
+                "name": str(a.get("character_name") or ""),
+                "classification": cls,
+                "reason": reason,
+                "product_fit_refs": 1 if in_fit else 0,
+                "selection_refs": sel_ref,
+                "asset_refs": asset_ref,
+                "required_evidence": req,
+            })
+
+    # --- Scene classification (per pool SceneCode) ---
+    scene_counts = {k: 0 for k in _CLASSES}
+    scene_samples: list[dict] = []
+    _scene_reason = (
+        "Scene pool plates (SceneCode) use a separate id space from scene-prompt "
+        "templates and saved selections, and feed the compiler + IMG/I2V reference "
+        "lane whose usage is not tracked in these tables. A safe dependency "
+        "determination is not possible from current data."
+    )
+    _scene_req = (
+        "Add scene-plate usage tracking in the compiler/IMG-I2V lane, prove zero "
+        "references, + owner approval before any real action."
+    )
+    for s in scene_pool:
+        code = str(s.get("scene_code") or "").strip()
+        if not code:
+            continue
+        scene_counts["BLOCKED_UNKNOWN_MAPPING"] += 1
+        if len(scene_samples) < 10:
+            scene_samples.append({
+                "id": code,
+                "name": str(s.get("scene_name") or ""),
+                "classification": "BLOCKED_UNKNOWN_MAPPING",
+                "reason": _scene_reason,
+                "scene_prompt_refs": None,
+                "selection_refs": 0,
+                "required_evidence": _scene_req,
+            })
+
+    future_eligible = (
+        avatar_counts["FUTURE_ARCHIVE_ELIGIBLE"]
+        + scene_counts["FUTURE_ARCHIVE_ELIGIBLE"]
+    )
+    return {
+        "dry_run": True,
+        "mutations": 0,
+        "future_archive_eligible_total": future_eligible,
+        "owner_approval_required": True,
+        "notice": (
+            "READ-ONLY DRY-RUN. No records are archived or deleted from this planning "
+            "report. FUTURE_ARCHIVE_ELIGIBLE requires zero references, fully-known "
+            "mapping, AND explicit owner approval before any real action."
+        ),
+        "classification_legend": {
+            "KEEP_ACTIVE": "Actively mapped/used in R1-R5 coverage.",
+            "BLOCKED_REFERENCED": "Referenced by saved selections, prompts, assets, or product-fit — cannot archive.",
+            "BLOCKED_UNKNOWN_MAPPING": "Current data does not support a safe dependency determination.",
+            "REVIEW_CANDIDATE": "Unmapped/thin but not proven safe.",
+            "FUTURE_ARCHIVE_ELIGIBLE": "All known references zero AND mapping fully known — even then owner approval is required before any real action.",
+        },
+        "avatar": {
+            "total": len(pool),
+            "classification_counts": avatar_counts,
+            "candidates_sample": avatar_samples,
+        },
+        "scene": {
+            "total": len(scene_pool),
+            "classification_counts": scene_counts,
+            "candidates_sample": scene_samples,
+        },
+    }
+
+
 @router.get("/avatar-recommendation")
 async def avatar_recommendation(
     product_id: str | None = None,

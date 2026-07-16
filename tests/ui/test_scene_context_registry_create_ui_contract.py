@@ -75,3 +75,17 @@ def test_scene_registry_reconciliation_panel_present():
     assert "not directly mapped" in src
     assert "safe to delete" not in src.lower()
     assert "delete now" not in src.lower()
+
+
+def test_scene_registry_archive_delete_planning_present():
+    """Phase D: read-only archive/delete planning panel with dry-run framing."""
+    src = _read("dashboard/src/pages/SceneContextRegistryPage.tsx")
+    assert "getRegistryCleanupPlan" in src
+    assert "Archive / Delete Planning" in src
+    assert "Read-only dry-run" in src
+    assert "No records are changed" in src
+    assert "Owner approval required" in src
+    assert "BLOCKED_UNKNOWN_MAPPING" in src
+    assert "FUTURE_ARCHIVE_ELIGIBLE" in src
+    assert "safe to delete" not in src.lower()
+    assert "delete now" not in src.lower()

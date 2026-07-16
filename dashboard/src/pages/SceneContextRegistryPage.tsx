@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { useImageGenSettings } from "../api/imageGenSettings";
 import {
+	getRegistryCleanupPlan,
 	getRegistryCoverage,
 	getRegistryReconciliation,
+	type RegistryCleanupPlan,
 	type RegistryCoverage,
 	type RegistryReconciliation,
 } from "../api/creativeIntelligence";
@@ -36,6 +38,7 @@ export default function SceneContextRegistryPage() {
 	const [generating, setGenerating] = useState<Record<string, GenStage>>({});
 	const [coverage, setCoverage] = useState<RegistryCoverage | null>(null);
 	const [recon, setRecon] = useState<RegistryReconciliation | null>(null);
+	const [cleanup, setCleanup] = useState<RegistryCleanupPlan | null>(null);
 
 	const [aspect, setAspect] = useState<string>("9:16");
 	const [count, setCount] = useState<number>(1);
@@ -65,6 +68,9 @@ export default function SceneContextRegistryPage() {
 				.catch(() => {});
 			getRegistryReconciliation()
 				.then(setRecon)
+				.catch(() => {});
+			getRegistryCleanupPlan()
+				.then(setCleanup)
 				.catch(() => {});
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to load scene pool.");
@@ -433,6 +439,52 @@ export default function SceneContextRegistryPage() {
 						. Scene plates also feed the IMG/I2V reference lane.
 					</div>
 					<div className="mt-2 text-[11px] text-slate-500">{recon.disclaimer}</div>
+				</div>
+			)}
+			{cleanup && (
+				<div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+					<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300">
+						Archive / Delete Planning
+					</div>
+					<div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-300/90">
+						Read-only dry-run · No records are changed · Owner approval required before
+						any real archive/delete.
+					</div>
+					<div className="flex flex-wrap gap-2">
+						{(
+							[
+								"KEEP_ACTIVE",
+								"BLOCKED_REFERENCED",
+								"REVIEW_CANDIDATE",
+								"BLOCKED_UNKNOWN_MAPPING",
+								"FUTURE_ARCHIVE_ELIGIBLE",
+							] as const
+						).map((k) => (
+							<span
+								key={k}
+								className="rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[10px] text-slate-300"
+							>
+								{k}:{" "}
+								<span className="font-bold text-slate-100">
+									{cleanup.scene.classification_counts[k] ?? 0}
+								</span>
+							</span>
+						))}
+					</div>
+					{cleanup.scene.candidates_sample.length > 0 && (
+						<div className="mt-3 space-y-1">
+							{cleanup.scene.candidates_sample.slice(0, 4).map((c) => (
+								<div key={c.id} className="text-[11px] text-slate-500">
+									<span className="font-mono text-slate-400">{c.id}</span> —{" "}
+									{c.classification}: {c.reason}
+								</div>
+							))}
+						</div>
+					)}
+					<div className="mt-2 text-[11px] text-slate-500">
+						Future-archive eligible: {cleanup.future_archive_eligible_total} — owner
+						approval still required.
+					</div>
 				</div>
 			)}
 			{/* Image-gen settings (shared SSOT) */}

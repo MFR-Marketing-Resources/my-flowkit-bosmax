@@ -87,6 +87,43 @@ export function getRegistryReconciliation() {
 	);
 }
 
+// --- Archive/Delete planning (read-only dry-run; classifies pool entries) ---
+
+export interface CleanupCandidate {
+	id: string;
+	name?: string;
+	classification: string;
+	reason: string;
+	required_evidence: string;
+	product_fit_refs?: number;
+	selection_refs?: number;
+	asset_refs?: number;
+	scene_prompt_refs?: number | null;
+}
+
+export interface RegistryCleanupPlanSide {
+	total: number;
+	classification_counts: Record<string, number>;
+	candidates_sample: CleanupCandidate[];
+}
+
+export interface RegistryCleanupPlan {
+	dry_run: boolean;
+	mutations: number;
+	future_archive_eligible_total: number;
+	owner_approval_required: boolean;
+	notice: string;
+	classification_legend: Record<string, string>;
+	avatar: RegistryCleanupPlanSide;
+	scene: RegistryCleanupPlanSide;
+}
+
+export function getRegistryCleanupPlan() {
+	return getAPI<RegistryCleanupPlan>(
+		"/api/creative-intelligence/registry-cleanup-plan",
+	);
+}
+
 // --- Round 2: Scene / Image Prompt templates (read-only) ---
 
 export interface ScenePromptTemplate {

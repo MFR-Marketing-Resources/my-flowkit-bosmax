@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useImageGenSettings } from "../api/imageGenSettings";
 import {
+	getRegistryCleanupPlan,
 	getRegistryCoverage,
 	getRegistryReconciliation,
+	type RegistryCleanupPlan,
 	type RegistryCoverage,
 	type RegistryReconciliation,
 } from "../api/creativeIntelligence";
@@ -120,6 +122,7 @@ export default function AvatarRegistryPage() {
 	const [bridgeActive, setBridgeActive] = useState(false);
 	const [coverage, setCoverage] = useState<RegistryCoverage | null>(null);
 	const [recon, setRecon] = useState<RegistryReconciliation | null>(null);
+	const [cleanup, setCleanup] = useState<RegistryCleanupPlan | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [successMsg, setSuccessMsg] = useState<string | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
@@ -214,6 +217,9 @@ export default function AvatarRegistryPage() {
 				.catch(() => {});
 			getRegistryReconciliation()
 				.then(setRecon)
+				.catch(() => {});
+			getRegistryCleanupPlan()
+				.then(setCleanup)
 				.catch(() => {});
 		} catch (err) {
 			setError(
@@ -1003,6 +1009,52 @@ export default function AvatarRegistryPage() {
 								</div>
 							)}
 							<div className="mt-2 text-[11px] text-slate-500">{recon.disclaimer}</div>
+						</div>
+					)}
+					{cleanup && (
+						<div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+							<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-300">
+								Archive / Delete Planning
+							</div>
+							<div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-300/90">
+								Read-only dry-run · No records are changed · Owner approval required
+								before any real archive/delete.
+							</div>
+							<div className="flex flex-wrap gap-2">
+								{(
+									[
+										"KEEP_ACTIVE",
+										"BLOCKED_REFERENCED",
+										"REVIEW_CANDIDATE",
+										"BLOCKED_UNKNOWN_MAPPING",
+										"FUTURE_ARCHIVE_ELIGIBLE",
+									] as const
+								).map((k) => (
+									<span
+										key={k}
+										className="rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[10px] text-slate-300"
+									>
+										{k}:{" "}
+										<span className="font-bold text-slate-100">
+											{cleanup.avatar.classification_counts[k] ?? 0}
+										</span>
+									</span>
+								))}
+							</div>
+							{cleanup.avatar.candidates_sample.length > 0 && (
+								<div className="mt-3 space-y-1">
+									{cleanup.avatar.candidates_sample.slice(0, 4).map((c) => (
+										<div key={c.id} className="text-[11px] text-slate-500">
+											<span className="font-mono text-slate-400">{c.id}</span> —{" "}
+											{c.classification}: {c.reason}
+										</div>
+									))}
+								</div>
+							)}
+							<div className="mt-2 text-[11px] text-slate-500">
+								Future-archive eligible: {cleanup.future_archive_eligible_total} —
+								owner approval still required.
+							</div>
 						</div>
 					)}
 					{/* Sub-tab switcher */}
