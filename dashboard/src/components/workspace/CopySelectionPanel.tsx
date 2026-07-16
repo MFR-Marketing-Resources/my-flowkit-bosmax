@@ -279,6 +279,16 @@ export default function CopySelectionPanel({
 							return (
 								<div
 									key={cs.copy_set_id}
+									// RPA Round A: row keyed by the immutable copy_set_id, exposing
+									// status + approval metadata + selected marker so a UI-click
+									// operator can VERIFY it selected an approved set (read-only —
+									// the RPA must never approve a Copy Set; see G0 amendment M7).
+									data-testid="copy-set-row"
+									data-copy-set-id={cs.copy_set_id}
+									data-status={cs.status}
+									data-approved={isApproved ? "true" : "false"}
+									data-approved-by={cs.approved_by ?? ""}
+									data-selected={isSelected ? "true" : "false"}
 									className={`rounded-xl border px-3 py-3 ${
 										isSelected
 											? "border-emerald-500/50 bg-emerald-500/5"

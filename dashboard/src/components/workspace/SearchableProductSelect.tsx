@@ -216,6 +216,15 @@ export default function SearchableProductSelect({
 									<button
 										type="button"
 										key={product.id}
+										// RPA Round A: option keyed by the IMMUTABLE product id so a
+										// UI-click operator selects by id, never by mutable title text.
+										data-testid="product-option"
+										data-product-id={product.id}
+										data-readiness={status}
+										data-reference-only={referenceOnly ? "true" : "false"}
+										data-selected={
+											selectedProduct?.id === product.id ? "true" : "false"
+										}
 										disabled={referenceOnly}
 										onClick={() => {
 											if (referenceOnly) return;

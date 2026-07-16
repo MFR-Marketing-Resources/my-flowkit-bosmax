@@ -1812,7 +1812,14 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	};
 
 	return (
-		<div className="flex h-full flex-col bg-slate-950 px-4 py-4 md:px-8 md:py-8">
+		// RPA Round A (selector/state normalization): stable root + mode marker so a
+		// future UI-click operator can confirm it is on the intended workflow before
+		// acting. Attributes only — no behavior change.
+		<div
+			data-testid="hybrid-workflow"
+			data-mode={mode}
+			className="flex h-full flex-col bg-slate-950 px-4 py-4 md:px-8 md:py-8"
+		>
 			<div className="mb-6 flex flex-col gap-4 lg:mb-8 lg:flex-row lg:items-center lg:justify-between">
 				<div>
 					<h2 className="text-xl font-bold tracking-tight text-white md:text-2xl">
@@ -1857,7 +1864,14 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 
 			{/* ── STEP 1: UGC Prompt Compiler Controls (video modes only) ── */}
 			{mode !== "IMG" && (
-				<div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+				// RPA Round A: Step 1 is settings-only (no action). Its state reports
+				// whether the EXTEND total-duration prerequisite still blocks Load /
+				// Generate — derived from the existing `extendTotalRequired` gate.
+				<div
+					data-testid="workflow-step-1"
+					data-state={extendTotalRequired ? "NOT_READY" : "READY"}
+					className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4"
+				>
 					<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
 						Step 1 — UGC Prompt Compiler Controls
 					</div>
@@ -1874,6 +1888,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								id="operator-generation-mode"
 								name="operator_generation_mode"
 								title="Generation mode"
+								data-testid="setting-generation-mode"
+								data-value={generationMode}
 								value={generationMode}
 								onChange={(e) =>
 									handleGenerationModeChange(
@@ -1926,6 +1942,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								id="operator-video-model"
 								name="operator_video_model"
 								title="Video model"
+								data-testid="setting-video-model"
+								data-value={videoModel}
 								value={videoModel}
 								onChange={(e) => handleVideoModelChange(e.target.value)}
 								className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
@@ -1975,6 +1993,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									id="operator-extend-total-duration"
 									name="operator_extend_total_duration"
 									title="Total video duration"
+									data-testid="setting-total-duration"
+									data-value={
+										requestedTotalDuration === null
+											? ""
+											: String(requestedTotalDuration)
+									}
 									value={
 										requestedTotalDuration === null
 											? ""
@@ -2004,6 +2028,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									id="operator-video-duration"
 									name="operator_video_duration"
 									title="Video duration"
+									data-testid="setting-block-duration"
+									data-value={String(videoDurationSeconds)}
 									value={String(videoDurationSeconds)}
 									onChange={(e) =>
 										handleSingleDurationChange(Number(e.target.value))
@@ -2315,7 +2341,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			)}
 
 			{/* ── STEP 2: Select Product ────────────────────────────────── */}
-			<div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+			<div
+				data-testid="workflow-step-2"
+				data-state={selectedProduct ? "COMPLETED" : "NOT_READY"}
+				data-selected-product-id={selectedProduct?.id ?? ""}
+				className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4"
+			>
 				<div className="mb-3 rounded-xl border border-indigo-500/20 bg-indigo-500/5 px-3 py-3 text-[11px] text-indigo-100">
 					<div className="text-[10px] font-bold uppercase tracking-[0.2em] text-indigo-300">
 						Approved Package Bridge
@@ -2516,7 +2547,24 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 
 			{/* ── STEP 3: Load Package (video modes only) ──────────────── */}
 			{mode !== "IMG" && (
-				<div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+				// RPA Round A: Step 3 state is DERIVED from the existing gates that
+				// already drive the button's `disabled` expression below — no new state.
+				<div
+					data-testid="workflow-step-3"
+					data-state={
+						isLoadingPreview
+							? "RUNNING"
+							: !selectedProduct ||
+									selectedReadinessLoading ||
+									selectedReadiness?.readiness_status !== "READY" ||
+									extendTotalRequired
+								? "NOT_READY"
+								: previewPackage
+									? "COMPLETED"
+									: "READY"
+					}
+					className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4"
+				>
 					<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
 						Step 3 — Load {mode} Package
 					</div>
@@ -2543,6 +2591,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					) : null}
 					<button
 						type="button"
+						data-testid="action-load-hybrid-package"
 						onClick={() => void handleLoadPreview()}
 						disabled={
 							!selectedProduct ||
@@ -2682,7 +2731,23 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 
 			{/* ── STEP 4: Generate Final Prompt (video modes only) ─────── */}
 			{mode !== "IMG" && (
-				<div className="mb-6 rounded-2xl border border-blue-500/20 bg-slate-900/40 p-4">
+				// RPA Round A: Step 4 state is DERIVED from the existing gates that already
+				// drive the button's `disabled` expression below — no new state.
+				// AWAITING_HUMAN_CONFIRMATION (G0 amendment O1) marks the fallback gate:
+				// the RPA must STOP there, never click through it.
+				<div
+					data-testid="workflow-step-4"
+					data-state={
+						showFallbackConfirm
+							? "AWAITING_HUMAN_CONFIRMATION"
+							: isLoadingPackage
+								? "RUNNING"
+								: !previewPackage || extendTotalRequired
+									? "NOT_READY"
+									: "READY"
+					}
+					className="mb-6 rounded-2xl border border-blue-500/20 bg-slate-900/40 p-4"
+				>
 					<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
 						Step 4 — Generate Final Prompt
 					</div>
@@ -2703,6 +2768,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					)}
 					<button
 						type="button"
+						data-testid="action-generate-final-prompt"
 						onClick={() => void handleGeneratePackage()}
 						disabled={
 							!previewPackage ||
@@ -2718,7 +2784,15 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					    presses Generate with NO approved Copy Set selected. Backend also
 					    enforces this (copy_fallback_confirmed); this UI is not the sole gate. */}
 					{showFallbackConfirm ? (
-						<div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-[12px] text-amber-100">
+						// RPA Round A: the fallback-confirmation gate is a Protected Area and a
+						// hard STOP for any UI-click operator. It is tagged so the RPA can DETECT
+						// it and halt — never to click through it (that would ship fallback copy).
+						<div
+							data-testid="workflow-fallback-confirm"
+							data-state="AWAITING_HUMAN_CONFIRMATION"
+							data-rpa-stop="true"
+							className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-[12px] text-amber-100"
+						>
 							<div className="mb-2 font-bold uppercase tracking-[0.15em] text-amber-300">
 								Confirm fallback copy
 							</div>
@@ -2877,7 +2951,17 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			    product → copy → load → final prompt → GENERATE VIDEO. Props,
 			    state, and behavior are unchanged. */}
 			{mode !== "IMG" && (
-				<div className="mb-6 rounded-2xl border border-emerald-500/20 bg-slate-900/40 p-4">
+				// RPA Round A: Step 5 is the LIVE, credit-bearing step. It is tagged for
+				// DETECTION only, so an operator can prove it stopped before Step 5 — the
+				// generate action itself lives in NativeExtendPanel and is deliberately
+				// NOT tagged in Round A (Round B stops at Step 4; see G0 amendment B3 —
+				// the action only renders when the EXTEND/duration prerequisite is met).
+				<div
+					data-testid="workflow-step-5"
+					data-state={extendAuthority ? "READY" : "NOT_READY"}
+					data-rpa-stop="true"
+					className="mb-6 rounded-2xl border border-emerald-500/20 bg-slate-900/40 p-4"
+				>
 					<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
 						Step 5 — Generate Video
 					</div>
@@ -2913,7 +2997,17 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			)}
 
 
+			{/* RPA Round A — G0 decision B1 option (a). This is the ONE global notice
+			    shared by Steps 3/4/5; it carries no step attribution and no freshness
+			    marker, so per-step error attribution is NOT derivable from existing
+			    state. Rather than plumb new state (explicitly NOT authorized), the
+			    notice is tagged as-is and any error tone is a GLOBAL STOP: a UI-click
+			    operator must halt, and must not attribute the error to a step or treat
+			    it as recoverable. Attributes only — tone/render logic unchanged. */}
 			<div
+				data-testid="workflow-notice"
+				data-notice-tone={notice.tone}
+				data-rpa-stop={notice.tone === "error" ? "true" : "false"}
 				className={`mb-6 rounded-2xl border px-4 py-3 text-sm ${notice.tone === "error" ? "border-red-500/40 bg-red-500/10 text-red-200" : notice.tone === "success" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200" : notice.tone === "info" ? "border-blue-500/40 bg-blue-500/10 text-blue-200" : notice.tone === "warning" ? "border-amber-500/40 bg-amber-500/10 text-amber-200" : "border-slate-800 bg-slate-900/40 text-slate-300"}`}
 			>
 				<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
