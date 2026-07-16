@@ -15,12 +15,26 @@ async def _count(table):
 def test_library_loads_with_global_config_and_templates():
     lib = svc._library()
     assert lib["library_version"] == svc.LIBRARY_SOURCE
-    assert lib["template_count"] == len(svc.library_templates()) == 154
+    assert lib["template_count"] == len(svc.library_templates()) == 168
     cfg = svc.global_config()
     assert cfg["style_suffix"]  # IMG_CONFIG global style suffix captured
     assert cfg["negative_prompt"]  # IMG_CONFIG global negative captured
     assert set(cfg["common_actions"]) == {"holding_demo", "using_in_scene", "lifestyle"}
     assert all(cfg["common_actions"].values())
+
+
+def test_all_canonical_clusters_have_scene_templates_phase_b():
+    """Phase B closes the last gaps: every canonical cluster has >= 1 template —
+    Pet Care + Office & Stationery specifically — with stable unique ids."""
+    templates = svc.library_templates()
+    covered = {t["cluster"] for t in templates}
+    canonical = set(avatar_svc.canonical_clusters())
+    assert canonical <= covered, f"missing: {sorted(canonical - covered)}"
+    assert sum(t["cluster"] == "Pet Care" for t in templates) >= 3
+    assert sum(t["cluster"] == "Office & Stationery" for t in templates) >= 3
+    ids = [t["template_id"] for t in templates]
+    assert len(ids) == len(set(ids))  # idempotent upsert key
+    assert svc.clusters_without_templates() == []
 
 
 def test_reconciliation_maps_all_source_categories_to_canonical_clusters():
@@ -65,7 +79,7 @@ async def test_seed_dry_run_writes_nothing():
     report = await svc.seed_scene_prompts(dry_run=True)
     assert report["dry_run"] is True
     assert report["written"] == 0
-    assert report["templates_available"] == 154
+    assert report["templates_available"] == 168
     assert await _count("creative_scene_prompt") == before
 
 
@@ -76,13 +90,13 @@ async def test_seed_writes_idempotently_with_provenance():
     copy_before = await _count("copy_set")
 
     r1 = await svc.seed_scene_prompts(dry_run=False)
-    assert r1["written"] == 154
-    assert await _count("creative_scene_prompt") == 154
+    assert r1["written"] == 168
+    assert await _count("creative_scene_prompt") == 168
 
     # Re-seed is idempotent (upsert keyed on template_id).
     r2 = await svc.seed_scene_prompts(dry_run=False)
-    assert r2["written"] == 154
-    assert await _count("creative_scene_prompt") == 154
+    assert r2["written"] == 168
+    assert await _count("creative_scene_prompt") == 168
 
     rows = await crud.list_creative_scene_prompts(cluster="Home & Living")
     assert rows
@@ -124,17 +138,23 @@ async def test_recommend_parity_manual_and_imported_product():
 
 
 @pytest.mark.asyncio
-async def test_uncovered_cluster_returns_empty_without_crashing():
-    # Pet Care is a canonical cluster with no IMAGE_PROMPTS templates.
+async def test_pet_care_now_covered_after_phase_b():
+    # Phase B: Pet Care is a canonical cluster that now HAS scene templates.
     manual = await crud.create_product(
         source="MANUAL", raw_product_title="Dog Chew", product_display_name="Dog Chew",
         product_short_name="Chew", category="Pet Care",
     )
     result = await svc.recommend_scene_prompts_for_product(manual["id"])
     assert result["cluster"] == "Pet Care"
-    assert result["template_count"] == 0
-    assert result["cluster_has_templates"] is False
-    assert result["templates"] == []
+    assert result["template_count"] >= 3
+    assert result["cluster_has_templates"] is True
+    assert all("[AVATAR]" in t["full_prompt_template"] for t in result["templates"])
+    assert all("[PRODUCT]" in t["full_prompt_template"] for t in result["templates"])
+
+
+def test_templates_for_unknown_cluster_returns_empty_without_crashing():
+    # Defensive invariant preserved: a non-canonical cluster name yields [].
+    assert svc.templates_for_cluster("__no_such_cluster__") == []
 
 
 @pytest.mark.asyncio
