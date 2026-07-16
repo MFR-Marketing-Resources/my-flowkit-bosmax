@@ -144,7 +144,9 @@ async function safeClick(page, testid, why) {
   try {
     // ── Step 0: open the Hybrid workflow like a human.
     log(`[open] ${BASE}/operator/hybrid`);
-    await page.goto(`${BASE}/operator/hybrid`, { waitUntil: "networkidle" });
+    // domcontentloaded (not networkidle): the operator dashboard polls readiness, so
+    // the network never idles. The explicit waitForSelector below is the real gate.
+    await page.goto(`${BASE}/operator/hybrid`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-testid="hybrid-workflow"]', { timeout: 15000 });
     evidence.initial = await readWorkflow(page);
     assert.equal(evidence.initial.root_mode, "HYBRID", "not on the HYBRID workflow");
