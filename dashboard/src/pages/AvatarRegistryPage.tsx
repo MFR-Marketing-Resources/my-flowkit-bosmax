@@ -1134,6 +1134,16 @@ export default function AvatarRegistryPage() {
 								Future-archive eligible: {cleanup.future_archive_eligible_total} —
 								owner approval still required.
 							</div>
+							<div className="mt-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-300/90">
+								<span className="font-semibold">
+									Registry Modernization (Phases A–E) complete.
+								</span>{" "}
+								{cleanup.future_archive_eligible_total === 0
+									? "No records are currently eligible for archive or delete."
+									: `${cleanup.future_archive_eligible_total} record(s) flagged for future review — none auto-eligible.`}{" "}
+								Any future archive/delete requires owner approval and a
+								zero-reference dry-run proof.
+							</div>
 						</div>
 					)}
 					{/* Sub-tab switcher */}
