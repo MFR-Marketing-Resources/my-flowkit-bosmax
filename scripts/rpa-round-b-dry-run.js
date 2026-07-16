@@ -39,14 +39,20 @@ const FORBIDDEN_REQUEST_PATTERNS = [
   /\/api\/bulk-generation/i,
   /\/api\/production-queue\/.*\/(run|execute|start)/i,
   /aisandbox|labs\.google|googleapis\.com\/.*generate/i,
-  /\/api\/workspace\/execution-package/i, // Step 4 saves the package — not in this dry-run
 ];
 /** testids the operator must NEVER click. */
 const FORBIDDEN_CLICK_TESTIDS = new Set([
-  "action-generate-final-prompt", // Step 4 action (mission hard rule)
-  "action-generate-video",        // Step 5 action
-  "workflow-fallback-confirm",    // would ship fallback copy
+  "action-generate-video",        // Step 5 action — ALWAYS forbidden
+  "workflow-fallback-confirm",    // would ship fallback copy — ALWAYS forbidden
 ]);
+/**
+ * Step 4 (`action-generate-final-prompt`) is OWNER-AUTHORIZED for the SANDBOX ONLY.
+ * Proven provider-free / credit-free: agent/services/workspace_execution_package_service.py
+ * has ZERO refs to provider/flow/generate/queue; it only calls
+ * crud.create_or_replace_workspace_execution_package (:458) — a durable DB write into the
+ * ISOLATED sandbox DB, which is what Round C needs to correlate. Step 5 stays forbidden.
+ */
+const STEP4_AUTHORIZED = true;
 
 function arg(name, def) {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -134,6 +140,19 @@ async function safeClick(page, testid, why) {
     }
     return route.continue();
   });
+  page.on("response", async (res) => {
+    if (res.url().includes("/api/workspace/execution-package") && res.request().method() === "POST") {
+      try {
+        const b = await res.json();
+        evidence.network.package_write = {
+          status: res.status(),
+          workspace_execution_package_id: b?.workspace_execution_package_id ?? b?.package?.workspace_execution_package_id ?? null,
+          request_id: b?.request_id ?? null,
+          keys: Object.keys(b || {}).slice(0, 12),
+        };
+      } catch { /* non-json */ }
+    }
+  });
   page.on("request", (r) => {
     const u = r.url();
     if (u.startsWith(BASE) && u.includes("/api/")) evidence.network.allowed.push({ method: r.method(), url: u });
@@ -162,8 +181,19 @@ async function safeClick(page, testid, why) {
 
     // ── Step 2: select the synthetic product BY IMMUTABLE ID through the visible picker.
     log(`[step-2] select product by immutable id ${PRODUCT_ID}`);
-    await page.click('[data-testid="workflow-step-2"] button'); // open the picker
-    await page.waitForSelector('[data-testid="product-option"]', { timeout: 10000 });
+    // The picker only lists options once the catalog has loaded; clicking before that
+    // toggles a menu that the next render throws away. Open it, and re-open if empty.
+    await page.waitForSelector('[data-testid="workflow-step-2"] button:not([disabled])', { timeout: 20000 });
+    await page.waitForTimeout(2500);
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      await page.click('[data-testid="workflow-step-2"] button'); // open the picker
+      const opened = await page
+        .waitForSelector('[data-testid="product-option"]', { timeout: 5000 })
+        .then(() => true, () => false);
+      if (opened) break;
+      assert.ok(attempt < 4, "product picker never listed any option");
+      await page.waitForTimeout(2000);
+    }
     const opts = await page.$$eval('[data-testid="product-option"]', (els) =>
       els.map((e) => ({ id: e.getAttribute("data-product-id"), ref: e.getAttribute("data-reference-only") })));
     evidence.product_options = opts;
@@ -217,9 +247,36 @@ async function safeClick(page, testid, why) {
     await shot(page, "05-step3-after-load");
     log(`  step3=${evidence.after_step3.steps[3]?.state}  step4=${evidence.after_step3.steps[4]?.state}`);
 
-    // ── Step 4 + 5: OBSERVE ONLY. Nothing is clicked here, by design.
-    const fin = evidence.after_step3;
-    evidence.step4 = { state: fin.steps[4]?.state, generate_disabled: fin.generate_disabled, clicked: false };
+    // ── Step 4: OWNER-AUTHORIZED sandbox package write (provider-free, credit-free).
+    const pre4 = evidence.after_step3;
+    if (STEP4_AUTHORIZED && pre4.generate_disabled === false) {
+      await safeClick(page, "action-generate-final-prompt", "Step 4 Generate Final Prompt (sandbox package write; provider-free)");
+      await page.waitForFunction(() => {
+        const s = document.querySelector('[data-testid="workflow-step-4"]')?.getAttribute("data-state");
+        return s === "COMPLETED" || s === "READY" || s === "NOT_READY" || s === "FAILED";
+      }, null, { timeout: 45000 }).catch(() => {});
+      await page.waitForTimeout(2500);
+      evidence.after_step4 = await readWorkflow(page);
+      evidence.durable = await page.evaluate(() => {
+        const t = document.body.innerText || "";
+        const req = t.match(/req\s+([\w-]{6,})/i);
+        return { notice_request_id: req ? req[1] : null };
+      });
+      evidence.step4 = {
+        state: evidence.after_step4.steps[4]?.state,
+        clicked: true,
+        package_write_response: evidence.network.package_write || null,
+      };
+      log(`  [step-4] state=${evidence.step4.state} durable=${JSON.stringify(evidence.durable)} pkg=${JSON.stringify(evidence.network.package_write)}`);
+    } else {
+      evidence.after_step4 = pre4;
+      evidence.step4 = { state: pre4.steps[4]?.state, generate_disabled: pre4.generate_disabled, clicked: false };
+      log("  [step-4] not clicked (action disabled)");
+    }
+    await shot(page, "07-step4-package-written");
+
+    // ── Step 5: ALWAYS observe-only.
+    const fin = evidence.after_step4;
     evidence.step5 = { state: fin.steps[5]?.state, rpa_stop: fin.steps[5]?.stop, clicked: false };
     assert.ok(!fin.fallback_gate_open, "GUARDRAIL: fallback gate opened — operator must STOP");
     assert.equal(fin.steps[5]?.stop, "true", "Step 5 stop marker missing");
