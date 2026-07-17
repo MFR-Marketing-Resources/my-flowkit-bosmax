@@ -293,6 +293,17 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
             "gen_seed": st.get("gen_seed"),
             "tool_call_id": st.get("tool_call_id"),
             "response_id": st.get("response_id"),
+            # Every toolName the SSE actually exposed. Identity above is only
+            # captured for names in _GEN_TOOLS; when a generation fires under a
+            # name that is NOT in that tuple, every anchor comes back None and
+            # the run can never be bound (live g_e71cd329b524: T2V, all five
+            # anchors null while approved=True and the render fired). Carrying
+            # the observed names makes that gap diagnosable from the run itself
+            # instead of requiring another paid capture — this is the evidence
+            # AGENTS.md's "text-only generation tool name pending one captured
+            # approved-SSE" is waiting for.
+            "tools_seen": list(st.get("tools") or []),
+            "gen_tool_matched": bool(st.get("started_tool")),
         }
 
     state = await send(prompt, media=media_ids)

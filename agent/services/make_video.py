@@ -500,7 +500,7 @@ def _seed_value(raw):
 # reported as GENERATED_BUT_UNRETRIEVED, never as a plain generation FAILED.
 _RETRIEVAL_PHASE_MARKERS = (
     "EDITOR_TAB_LOST", "TAB_DRIFT", "PROJECT_DRIFT", "OUTPUT_CORRELATION_UNAVAILABLE",
-    "CURRENT_OUTPUT_IDENTITY_MISMATCH",
+    "CURRENT_OUTPUT_IDENTITY_MISMATCH", "OUTPUT_IDENTITY_NOT_CAPTURED",
     "video not found/retrieved in time")
 
 # Fast-failure bound (Owner Phase-1): once the SAME non-empty set of COMPLETED
@@ -515,6 +515,24 @@ _IDENTITY_MISMATCH_MIN_TRIES = 6  # never before ~4.5 min total (120s + 6 polls)
 
 def _is_retrieval_phase_error(msg) -> bool:
     return any(m in (msg or "") for m in _RETRIEVAL_PHASE_MARKERS)
+
+
+# The anchors _accept_correlated_output can actually bind an output with. Any ONE
+# of them is enough to make a candidate decidable; NONE of them means the run is
+# unverifiable no matter what is retrieved.
+_IDENTITY_ANCHORS = ("sse_prompt", "seed", "expected_model", "tool_call_id")
+
+
+def _identity_captured(identity) -> bool:
+    """True when the submission exposed at least one correlation anchor.
+
+    False is not a failure of retrieval — it means binding was impossible from the
+    moment the generation fired, so the run must fail closed with
+    OUTPUT_IDENTITY_NOT_CAPTURED rather than blame the polling window.
+    """
+    if not isinstance(identity, dict):
+        return False
+    return any(identity.get(k) not in (None, "") for k in _IDENTITY_ANCHORS)
 
 
 async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
@@ -657,6 +675,15 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         }
         job["generation_identity"] = {
             k: v for k, v in correlation.items() if k != "submitted_prompt"}
+        # Identity-capture status (PR392 follow-up). Anchors are only captured for
+        # toolNames in agent_video._GEN_TOOLS; a generation firing under any other
+        # name leaves EVERY anchor None, and retrieval can then never bind an
+        # output — the run is unverifiable before a single poll runs. Record that
+        # as a first-class fact (with the toolNames actually seen) instead of
+        # letting it surface later as a generic "not found in time".
+        job["identity_captured"] = _identity_captured(job["generation_identity"])
+        job["tools_seen"] = list(nres.get("tools_seen") or [])
+        job["gen_tool_matched"] = bool(nres.get("gen_tool_matched"))
         corr_stats = {"unverifiable": 0, "prompt_mismatched": 0,
                       "model_mismatched": 0, "seed_mismatched": 0,
                       "unverifiable_ids": [], "normalization_failures": {},
@@ -817,9 +844,19 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
                 "bound (no usable prompt metadata; normalization="
                 f"{corr_stats.get('normalization_failures') or {} }) — refusing an "
                 "uncorrelated candidate as this run's output")
-        # Render started but no mp4 harvested in the polling window — treat as a retrieval-phase
-        # failure (classified below as GENERATED_BUT_UNRETRIEVED), not a generation failure.
+        # Render started but no mp4 harvested in the polling window.
         job["correlation_stats"] = dict(corr_stats)
+        # Distinguish "we could not find it" from "we could never have bound it".
+        # With no anchors, no amount of polling could have produced a bindable
+        # output — reporting a timeout there sends the operator hunting a
+        # retrieval bug that does not exist (live g_e71cd329b524).
+        if not job.get("identity_captured"):
+            raise RuntimeError(
+                "OUTPUT_IDENTITY_NOT_CAPTURED: the generation fired but exposed no "
+                "correlation anchor (seed/sse_prompt/model/tool_call_id all absent), "
+                "so no retrieved media can be deterministically bound to this run. "
+                f"toolNames seen={job.get('tools_seen') or []}; "
+                "add the generation toolName to agent_video._GEN_TOOLS")
         raise RuntimeError("video not found/retrieved in time")
     except Exception as e:  # noqa: BLE001
         msg = str(e)
