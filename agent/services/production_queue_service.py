@@ -354,6 +354,10 @@ async def _persist_generation_identity(wgp_id: str, job_id: str) -> dict:
             "identity_captured": bool(job.get("identity_captured")),
             "gen_tool_matched": bool(job.get("gen_tool_matched")),
             "tools_seen": job.get("tools_seen") or [],
+            # Present ONLY when identity capture failed: the raw approve stream,
+            # so the missing generation toolName (or its absence) is recoverable
+            # from this run's record instead of costing another live submission.
+            "identity_gap_sse": job.get("identity_gap_sse"),
             "submitted_at": _now(),
         }
         await crud.update_workspace_generation_package(
