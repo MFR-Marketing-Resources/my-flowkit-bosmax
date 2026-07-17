@@ -396,6 +396,8 @@ domains:
       - dashboard/src/pages/ProductionQueuePage.tsx
       - dashboard/src/pages/RpaQueueControlPage.tsx
       - dashboard/src/pages/RpaQueueControlPage.component.test.tsx
+      - dashboard/src/pages/RpaProductionStudioPage.tsx
+      - dashboard/src/pages/RpaProductionStudioPage.component.test.tsx
       - dashboard/src/api/productionQueue.ts
       - dashboard/src/api/workspaceGenerationPackages.ts
       - dashboard/src/api/bulkGeneration.ts
