@@ -1581,6 +1581,25 @@ INSERT INTO workspace_generation_package
             await db.commit()
             logger.info("Migrated: added operator_notes column to workspace_generation_package")
 
+        # Migration: durable generation identity on the prompt package. The
+        # correlation anchors previously lived ONLY in make_video's in-memory
+        # _JOBS dict, so they died on restart and nothing recorded whether an
+        # output could ever be bound. Persisting them is what lets a retrieval
+        # refuse foreign media instead of guessing.
+        #
+        # MUST stay AFTER the ARCHIVED rebuild above: that path RENAMEs the table
+        # and recreates it from a hardcoded column list, so any column added
+        # earlier in init_db is silently dropped on a fresh DB.
+        cursor = await db.execute("PRAGMA table_info(workspace_generation_package)")
+        wgp_cols3 = {row[1] for row in await cursor.fetchall()}
+        if "generation_identity_json" not in wgp_cols3:
+            await db.execute(
+                "ALTER TABLE workspace_generation_package "
+                "ADD COLUMN generation_identity_json TEXT")
+            await db.commit()
+            logger.info("Migrated: added generation_identity_json to "
+                        "workspace_generation_package table")
+
         # P4: Create scheduled_batch_run table if missing
         await db.executescript("""
 CREATE TABLE IF NOT EXISTS scheduled_batch_run (

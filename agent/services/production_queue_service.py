@@ -328,6 +328,48 @@ async def retry_failed_items(run_id: str) -> dict:
 # ── Execution ─────────────────────────────────────────────────────────────
 
 
+async def _persist_generation_identity(wgp_id: str, job_id: str) -> dict:
+    """Snapshot the provider identity of `job_id` onto its package, durably.
+
+    Fail-soft: identity is evidence, not a gate — a snapshot error must never
+    abort a submission that already spent credits. What it must never do is
+    invent an anchor; absent anchors are recorded as absent.
+    """
+    from agent.services import make_video
+
+    identity: dict = {}
+    try:
+        job = make_video.get_job(job_id) or {}
+        identity = {
+            "provider_job_id": job_id,
+            "mode": job.get("mode"),
+            "requested_model": job.get("model"),
+            "num_videos": job.get("num_videos"),
+            "project_id": (job.get("binding") or {}).get("project_id"),
+            "flow_tab_id": (job.get("binding") or {}).get("flow_tab_id"),
+            "anchors": job.get("generation_identity") or {},
+            # The decisive field: False means NO retrieved media can ever be bound
+            # to this run, so a later "not retrieved" is a capture gap, not a
+            # retrieval bug (live g_e71cd329b524).
+            "identity_captured": bool(job.get("identity_captured")),
+            "gen_tool_matched": bool(job.get("gen_tool_matched")),
+            "tools_seen": job.get("tools_seen") or [],
+            "submitted_at": _now(),
+        }
+        await crud.update_workspace_generation_package(
+            wgp_id, generation_identity_json=_json(identity),
+        )
+        if not identity["identity_captured"]:
+            logger.warning(
+                "OUTPUT_IDENTITY_NOT_CAPTURED wgp=%s job=%s tools_seen=%s — this run "
+                "cannot bind any output; add the generation toolName to "
+                "agent_video._GEN_TOOLS", wgp_id, job_id, identity["tools_seen"],
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("identity snapshot failed wgp=%s job=%s: %s", wgp_id, job_id, exc)
+    return identity
+
+
 async def _assert_one_serial_t2v_live(
     run: dict,
     *,
@@ -664,6 +706,10 @@ async def _fire_and_wait_inner(make_video, payload: dict, wgp_id: str) -> dict:
         return {"ok": False, "error": str(err)}
 
     await crud.update_workspace_generation_package(wgp_id, production_job_id=job_id)
+    # Persist the submission's correlation identity the moment it exists. It
+    # previously lived only in make_video's in-memory _JOBS, so a restart erased
+    # the only record of whether this run's output could ever be bound.
+    await _persist_generation_identity(wgp_id, job_id)
 
     waited = 0
     while waited < _JOB_TIMEOUT_SECONDS:
