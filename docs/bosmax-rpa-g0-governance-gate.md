@@ -491,3 +491,176 @@ named reviewer, against `:8100`.
 *G0 authored from the adversarial counter-review of the RPA spec and feasibility contract. All
 environment facts in §8 and §9 were verified read-only at authoring time and carry no mutation. This
 document contains no implementation instructions.*
+
+---
+
+## 16. Round D — Production Queue Dry-Run: Boundary, Blockers, Authorization
+
+**Status: NOT AUTHORIZED. NOT STARTED.** Added 2026-07-17 after Rounds A/B/C merged, per **O5**
+(re-review before any new round) and §5 (each round needs its own recorded owner decision). Every
+fact below was verified read-only at `main = ce11ece4c42f18bc512d4167ed68e89125cedcbf`. No queue was
+run, no endpoint called, no provider touched, no row mutated.
+
+### 16.1 Verified queue surface
+
+Router `prefix="/workspace/production-queue"` (`agent/api/production_queue.py:16`), mounted under
+`/api` (`agent/main.py:282`) -> effective base `/api/workspace/production-queue`. **7 routes; only 2
+are read-only.**
+
+| Route | Effect | Fires? |
+|---|---|---|
+| `GET ""` (`:53`) | list runs | **READ-ONLY** |
+| `GET /{run_id}` (`:59`) | run + item detail | **READ-ONLY** |
+| `POST ""` (`:34`) | enqueue APPROVED packages: INSERTs `production_run` (`dry_run=1`, `PENDING`), flips packages to `production_status='QUEUED'` | no |
+| `POST /{run_id}/start` (`:67`) | **the only fire door** | only if `confirm_live_credit_burn=true` |
+| `POST /{run_id}/pause` (`:82`) | in-memory signal; loop writes `PAUSED` | no |
+| `POST /{run_id}/cancel` (`:93`) | mutates (`CANCELLED`) | no |
+| `POST /{run_id}/retry` (`:109`) | re-arms FAILED -> `QUEUED`, run -> `PENDING` | no |
+
+**The dry/live split is one branch on one boolean.** `production_queue_service.py:332`
+`if not confirm_live_credit_burn:` -> report, then **early return at `:339`**. The live side
+(`:341-344`) sets `dry_run=0, status="RUNNING"` and schedules `_live_production_loop`, which reaches
+`make_video.start_generate` (`:475-482`) **for every queued item** — a fan-out, not one generation.
+`make_video` is imported lazily *inside* the loop (`:377`), so it is unreachable from the dry branch.
+
+Three claims were adversarially tested (2 independent skeptics each, instructed to refute; **0/2
+refuted, high confidence, all three SURVIVE**):
+
+1. The dry-run path **cannot** reach a provider / Flow generation / credit burn. SURVIVES.
+2. A dry-run **cannot** transition a run to live `RUNNING` by itself. SURVIVES.
+3. A dry-run **does write rows** — it is **NOT** read-only. SURVIVES (confirmed true):
+   `production_queue_service.py:336` persists `config_json.last_dry_run_report` via
+   `crud.update_production_run` -> committed `UPDATE` (`crud.py:77-90`).
+
+> **Correction to a common assumption:** "dry-run" here means **no firing and no credits** — it does
+> **not** mean no database write. Any Round D proof that treats dry-run as zero-side-effect is wrong.
+
+### 16.2 The WEP -> queue gap (blocks Round D's stated premise)
+
+Round C's handle `wep_c2f8a2a5d5cf4e11` is a **`workspace_execution_package`**. The queue's unit of
+work is a **`workspace_generation_package`** (WGP) — a different table. The queue surface references
+`workspace_execution_package` **0 times** (service, API and `ProductionQueuePage.tsx` alike).
+
+The link exists as a column — `workspace_generation_package.workspace_execution_package_id` — but
+**Step 4 does not populate it**: the Round C run's WGP delta was **0** while its WEP delta was **1**.
+Live: 5 WGP rows, **all `production_status='NONE'`**; Round C's WEP has **0** WGP rows.
+
+Bridging WEP -> queue-ready requires two steps **Rounds A-C never exercised**:
+`POST /api/workspace/generation-packages/from-execution-package`
+(`agent/api/workspace_generation_packages.py:201`), then `POST .../approve` (`:504`), before
+`POST /api/workspace/production-queue` can enqueue it. **Both are DB-mutating and unproven by any
+RPA round.** Round D therefore cannot begin by "correlating the existing WEP to queue-ready state" —
+no such state exists yet.
+
+### 16.3 Round D boundary (binding if authorized)
+
+**Allowed**
+- Read-only queue inspection: `GET ""`, `GET /{run_id}` only.
+- Read-only correlation of a WEP -> WGP -> run, via DB reads and the two GET routes.
+- Dry-run (`POST /{run_id}/start` with `confirm_live_credit_burn` **absent or false**) **only in the
+  `:8123` sandbox**, and only once the round's own before/after delta method is fixed in advance.
+- Evidence report generation (Round C format, pre-cleared vs `REPORT_REJECTION_RULES.md`).
+
+**Forbidden**
+- Any provider call, credit burn, or `make_video.start_generate`.
+- `confirm_live_credit_burn=true` — in **any** environment, under any framing.
+- Queue run/execute/start against the canonical `:8100` runtime or the live DB.
+- Live DB mutation; production product data; any `fastmoss-ref:` product.
+- Step 5 execution.
+- `POST ""`, `/cancel`, `/retry`, `/pause` against live data (all mutate).
+- Treating dry-run as non-mutating in any proof.
+
+**What counts as queue dry-run proof** — all four, or the round fails:
+1. `production_run.dry_run = 1` and `status` never `RUNNING`, read back from the **sandbox DB**.
+2. Before/after delta = **0** across submission-bearing tables (Round C's 14-table method), plus the
+   *expected, declared-in-advance* deltas (`production_run` +1 on enqueue; `config_json` updated on
+   dry-run) — expected writes are declared, not discovered.
+3. Zero requests matching the provider/generation/credit patterns in the network log.
+4. `last_dry_run_report` retrieved via `GET /{run_id}`, correlated to the WEP/WGP id.
+
+**What counts as production mutation (immediate stop)** — any write to the live DB; any
+`production_status` change on a live WGP; any `production_run` row in the live DB; any
+`generated_artifact`/`video_production_job`/`request` delta; any `make_video` call.
+
+**Stop conditions — halt and report, do not work around:**
+- **S1** No sandbox-safe path to a queue-ready WGP without mutating live data.
+- **S2** The dry-run endpoint is found to mutate production tables beyond the declared expected set.
+- **S3** Any provider/credit path is reachable from the dry branch.
+- **S4** Queue proof would require live execution.
+- **S5** `ProductionQueuePage.tsx` still exposes **0** `data-testid` — a *UI-click* Round D is
+  impossible; only an API-level dry-run is (see B8).
+- **S6** The WEP -> WGP bridge cannot be exercised sandbox-only.
+
+### 16.4 Blockers — Round D cannot start while these stand
+
+| ID | Blocker | Evidence | Clears when |
+|---|---|---|---|
+| **B8** | **The queue UI has no RPA locators.** `ProductionQueuePage.tsx` -> **0** `data-testid`; this spec's REQUIRED queue locators (`spec:193-196`) are unimplemented. Rounds A-C were *click* operators; Round D cannot be one. | verified read-only | Either a Round-A-style selector normalization for the queue is authorized as its own round, **or** the owner accepts Round D as **API-level dry-run only**, explicitly. |
+| **B9** | **No queue-ready item exists to dry-run.** WGP delta 0 from Step 4; all 5 live WGPs are `production_status='NONE'`. | §16.2 | The WEP -> WGP -> approve -> enqueue bridge is authorized and proven sandbox-only. |
+| **B10** | **Round D's premise is stated on the wrong handle.** The mission names `wep_c2f8a2a5d5cf4e11`, which the queue cannot see. | §16.2 | Owner re-states the target as a **WGP id minted in the sandbox**, not the Round C WEP. |
+| **B11** | **One boolean separates dry from live**, and the live branch fans out across every queued item. | `:332` vs `:341-344`, `:475-482` | Owner records that `confirm_live_credit_burn=true` is forbidden for Round D in all environments (§16.3 does this; needs the owner's signature). |
+
+`OWNER_DECISION_REQUIRED: Round D scope — API-level dry-run only, or authorize a queue-selector round first?`
+`OWNER_DECISION_REQUIRED: Round D reviewer`
+`OWNER_DECISION_REQUIRED: Round D rollback owner`
+
+### 16.5 Owner authorization — DRAFT WORDING (not authorization)
+
+> **This is a draft for the owner to accept, amend, or reject. It is NOT authorization, and no agent
+> may treat it as such. Round D starts only when the owner records this decision themselves.**
+
+```text
+ROUND D AUTHORIZATION — BOSMAX RPA PRODUCTION QUEUE DRY-RUN
+Decision: ☐ AUTHORIZE  ☐ REJECT  ☐ PARK
+Date: __________   Owner: __________   Reviewer: __________   Rollback owner: __________
+
+TARGET ENVIRONMENT
+- Sandbox ONLY: FLOW_AGENT_DIR=<temp>, API_PORT=8123, WS_PORT=8124.
+- The canonical :8100 runtime and the live DB are OUT OF SCOPE for every write.
+
+SCOPE (tick one — B8 forces this choice)
+  ☐ D-API   API-level dry-run only. No UI clicking. Accepts that the queue has no data-testid.
+  ☐ D-UI    Authorize a queue selector-normalization round FIRST; Round D waits for it.
+
+TARGET HANDLE (B10)
+- NOT wep_c2f8a2a5d5cf4e11 — the queue cannot see a workspace_execution_package.
+- Use a workspace_generation_package id minted in the sandbox: ____________________
+- Bridge authorized: ☐ POST /generation-packages/from-execution-package  ☐ POST /approve
+  ☐ POST /production-queue (enqueue)      [all sandbox-only; all DB-mutating]
+
+ALLOWED
+- GET /api/workspace/production-queue, GET /{run_id}.
+- POST /{run_id}/start with confirm_live_credit_burn absent/false, sandbox only.
+- Read-only WEP -> WGP -> run correlation; evidence report generation.
+
+FORBIDDEN (any occurrence = immediate stop + report)
+- confirm_live_credit_burn=true, in ANY environment, under ANY framing.
+- Provider call, credit burn, make_video.start_generate, Step 5.
+- Any write to the live DB or avatar registry CSV; production product; fastmoss-ref:.
+- Queue run/execute/start against :8100.
+
+REQUIRED EVIDENCE (all four; Round C format, pre-cleared vs REPORT_REJECTION_RULES.md)
+1. production_run.dry_run=1 and status never RUNNING, read from the sandbox DB.
+2. Before/after deltas: 0 across the 14 submission-bearing tables, plus ONLY the
+   expected writes declared in advance (production_run +1; config_json updated).
+3. Zero provider/generation/credit requests in the network log.
+4. last_dry_run_report retrieved via GET /{run_id} and correlated to the WGP id.
+Screenshots are supporting evidence only, never sole proof.
+
+NO-MUTATION / ROLLBACK PROOF
+- Live DB bytes + mtime_ns + row counts (product, copy_set, request, video_production_job,
+  workspace_execution_package, workspace_generation_package, production_run) identical
+  before and after; avatar CSV sha256 identical.
+- Rollback: the sandbox directory is deleted. Nothing to roll back on :8100 by construction —
+  if that is ever untrue, the round has already failed.
+
+I authorize ONLY the above. Anything not listed is NOT authorized.
+Signed: __________________________
+```
+
+### 16.6 Verdict
+
+**Round D is implementable as a safe, provider-free, credit-free dry-run — but only at API level,
+only in the sandbox, and only after the WEP -> WGP bridge is authorized.** It is **not** implementable
+as a UI-click round today (B8). Blockers **B8-B11** stand. No agent may start Round D until the owner
+records §16.5.
