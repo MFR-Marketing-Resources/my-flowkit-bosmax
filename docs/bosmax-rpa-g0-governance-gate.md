@@ -695,17 +695,32 @@ repo for **any** RPA round. The §16.5 template is still unsigned. PRs #389/#390
 O4) did not amend this gate. *"Rounds A–E are merged"* is therefore **not** evidence that any round
 was authorized, and must not be cited as precedent.
 
-### 17.2 Owner decision (recorded 2026-07-17)
+### 17.2 Owner decisions (recorded 2026-07-17)
 
-The owner was presented with the conflict and chose: **build it, PR it, stop.**
+**Decision 1 — initial (superseded in part by Decision 2).** The owner was presented with the
+conflict and chose: **build it, PR it, stop.**
 
 - **AUTHORIZED:** implement the live gate UI, the server-side one-serial T2V guard, and the result
   viewer; test; commit; push; open a PR. Then **STOP**.
-- **NOT AUTHORIZED:** self-merge; agent-fired live run; any credit burn.
-- Merge and the one live T2V run remain **owner actions**, consistent with §5 and §11.
+- **NOT AUTHORIZED** *(at that time)*: self-merge; agent-fired live run; any credit burn.
 
-This decision authorizes **code only**. It is **not** a live-run authorization and must not be read
-as one. Firing the gate still requires a per-run written authorization under §10 Round E / §11.3.
+**Decision 2 — mode raised to FULL DELIVERY for PR #392 (owner Faris, 2026-07-17).**
+
+Per §5 ("Only the owner may raise a round's mode"), owner **Faris** raised **PR #392** to
+**`FULL DELIVERY`** and **authorized the merge**. Recorded facts:
+
+- **Reviewer: Faris.** **Rollback owner: Faris.** (These close the §Status gaps for this PR only.)
+- PR #392 merged at **`f62a1b976cbe8402f119ecb5d88ad60d6950239e`**.
+- **Disclosure — the §5 reviewer control was WAIVED, not satisfied.** GitHub `reviewDecision` on
+  #392 was empty at merge time: the agent authored the code and performed the merge, so **no
+  independent human read it**. §5 says "No agent may merge its own PR." The owner overrode this
+  knowingly and in full sight of the conflict analysis. This is recorded, not papered over.
+- §14's preconditions for FULL DELIVERY (CI, branch protection, required human review) are **still
+  absent**. This decision is a **per-PR owner override**, NOT evidence that §14 is satisfied, and
+  **must not be cited as precedent** for any future round.
+
+Decision 2 authorizes **merge only**. The live-run authorization is separate and is recorded in
+**§17.7**.
 
 ### 17.3 What was built (PR: Round F one-serial T2V live gate)
 
@@ -745,3 +760,60 @@ as one. Firing the gate still requires a per-run written authorization under §1
 test — but it has never been fired, and no agent may fire it.** Blockers **B12-B14** stand.
 The next action is an owner action: review and merge the PR, then decide separately whether to
 record a live-run authorization.
+
+---
+
+## 17.7 ROUND F LIVE UAT AUTHORIZATION — one serial T2V run (owner Faris, 2026-07-17)
+
+**This is the per-run written authorization required by §10 Round E and §11.3.** It is recorded
+here so it can be quoted verbatim in the run report, per §10.
+
+```text
+ROUND F AUTHORIZATION — ONE SERIAL T2V LIVE UAT
+Decision: AUTHORIZE            Date: 2026-07-17
+Owner: Faris                   Reviewer: Faris          Rollback owner: Faris
+
+AUTHORIZED — exactly this and nothing more:
+- ONE (1) serial T2V live generation, fired through the RPA Queue Control UI
+  (/rpa-queue-control) against the canonical :8100 runtime at merge SHA
+  f62a1b976cbe8402f119ecb5d88ad60d6950239e.
+- The live request MUST carry: confirm_live_credit_burn=true,
+  live_gate=ONE_SERIAL_T2V, confirm_phrase=AUTHORIZE_ONE_T2V_LIVE_RUN,
+  and the expect_package_id of the single prepared WGP.
+- Preparing/approving/enqueuing/dry-running exactly ONE T2V package.
+- This run WILL spend real credits. The owner accepts that cost.
+
+B13 WAIVER (narrow):
+- B13 (no non-production product, no isolated DB) is WAIVED **only** for this
+  single named live UAT, run against the current LIVE flow_agent.db.
+- The waiver is exhausted by this one run. It does not carry to any other run,
+  round, mode, or product, and it does not clear B13 generally.
+
+NOT AUTHORIZED (any occurrence = immediate stop + report):
+- Bulk generation, or any run with more than one queued item.
+- F2V / I2V live generation.
+- A second live click, or any retry AFTER a provider submission has occurred.
+  Retry is permitted ONLY if the system positively proves NO provider
+  submission occurred (i.e. production_job_id was never written).
+- Weakening O4.
+- Reporting a fake or assumed result. A provider failure must be reported as a
+  failure, truthfully.
+
+PRECONDITION — if the dry run does not show checked=1 ready=1 blocked=0 with
+mode=T2V and exactly one queued item, DO NOT FIRE. Stop and report.
+
+I authorize ONLY the above. Anything not listed is NOT authorized.
+Signed: Faris (owner), 2026-07-17
+```
+
+### 17.8 Blocker status after this authorization
+
+| ID | Was | Now |
+|---|---|---|
+| **B12** no per-run written authorization | BLOCKING | **CLEARED** by §17.7 above (this run only) |
+| **B13** no safe test data / isolated DB | BLOCKING | **WAIVED for this one named run only.** Still BLOCKING for every other run — the waiver is exhausted on use and B13 is *not* cleared generally |
+| **B14** no named reviewer / rollback owner | BLOCKING | **CLEARED**: Faris is both, for PR #392 and this UAT |
+
+**After this run, B13 reverts to BLOCKING.** A second live run — including a retry after a provider
+submission — requires a NEW owner authorization recorded here. Bulk remains unauthorized and is not
+in scope of any decision recorded in this document.
