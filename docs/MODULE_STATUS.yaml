@@ -18,6 +18,7 @@ domains:
       - scripts/local-agent-common.ps1
       - scripts/start-local-agent.ps1
       - scripts/rpa-round-b-dry-run.js
+      - scripts/rpa-round-d-api-dry-run.js
       - scripts/setup-postiz-runtime.ps1
       - scripts/doctor-postiz-runtime.ps1
       - agent/api/ai_provider_settings.py
