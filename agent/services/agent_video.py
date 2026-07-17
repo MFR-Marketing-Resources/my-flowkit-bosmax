@@ -39,9 +39,15 @@ _STARTED_PHRASES = ("started generating", "i'm generating",
                     "generating the", "kicking off", "i've started")
 
 # Tool names that mean a video generation actually fired (the HARD started signal).
-# NOTE: `generate_video_from_text` (Omni T2V) is NOT added yet — current evidence only shows
-# it in thinking/denied-tool TEXT, not as a real toolInvocation.toolName in an APPROVED SSE.
-# Pending one approved-SSE capture before adding it.
+# The generation toolNames whose toolArguments carry the correlation anchors
+# (prompt / seed / model / tool_call_id). parse_agent_sse captures identity ONLY
+# for a toolName in this tuple; a generation firing under any other name leaves
+# every anchor None and its output can never be bound.
+# CAUTION: the F2V/I2V/plain names below are ASSUMED, never confirmed by an
+# approved live SSE. T2V proved that matters — its real tool turned out to be
+# `generate_video_from_text` (captured live 2026-07-17), not any assumed name.
+# Treat the unconfirmed entries as provisional until a live approved-SSE proves
+# each one, exactly as was done for T2V.
 _GEN_TOOLS = ("generate_video", "generate_videos", "start_generation", "submit_generation",
               "generate_video_with_references", "generate_video_with_first_frame",
               # T2V text-only. Captured live 2026-07-17 from g_b1ed597a9789's approve
