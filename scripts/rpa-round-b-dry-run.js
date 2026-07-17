@@ -40,10 +40,36 @@ const FORBIDDEN_REQUEST_PATTERNS = [
   /\/api\/production-queue\/.*\/(run|execute|start)/i,
   /aisandbox|labs\.google|googleapis\.com\/.*generate/i,
 ];
-/** testids the operator must NEVER click. */
+/**
+ * testids the operator must NEVER click.
+ *
+ * `action-generate-video` used to be listed here and has been REMOVED: it is a phantom.
+ * It renders nowhere in dashboard/src, so guarding it proved nothing and overstated the
+ * safety claim. Step 5 is a STOP panel (`workflow-step-5` + data-rpa-stop="true") that
+ * renders no clickable action at all — the only action controls that exist are
+ * action-load-hybrid-package (Step 3) and action-generate-final-prompt (Step 4).
+ *
+ * Step 5 safety therefore rests on three controls that are real, each asserted below:
+ *   1. the CLOSED click surface — every click is recorded and must be in ALLOWED_CLICK_KEYS;
+ *   2. FORBIDDEN_REQUEST_PATTERNS — generation/credit routes are aborted at the network layer;
+ *   3. the workflow-step-5 data-rpa-stop marker assert.
+ */
 const FORBIDDEN_CLICK_TESTIDS = new Set([
-  "action-generate-video",        // Step 5 action — ALWAYS forbidden
   "workflow-fallback-confirm",    // would ship fallback copy — ALWAYS forbidden
+]);
+/** Step 2 picker: the toggle carries no testid of its own, so it is keyed by selector. */
+const PICKER_TOGGLE = '[data-testid="workflow-step-2"] button';
+const PICKER_SEARCH = 'input[placeholder*="Search all products"]';
+/**
+ * The ONLY controls this operator may click. Any recorded click outside this set fails the
+ * run. This is the real Step 5 protection: the click surface is closed by construction.
+ */
+const ALLOWED_CLICK_KEYS = new Set([
+  `selector:${PICKER_TOGGLE}`,     // opens/closes the Step 2 picker; changes no workflow state
+  "product-option",                // Step 2: select the synthetic product by immutable id
+  "copy-set-row",                  // Copy Set: select the already-approved set (never approves)
+  "action-load-hybrid-package",    // Step 3: compile-only, provider-free
+  "action-generate-final-prompt",  // Step 4: sandbox package write (owner-authorized)
 ]);
 /**
  * Step 4 (`action-generate-final-prompt`) is OWNER-AUTHORIZED for the SANDBOX ONLY.
@@ -108,14 +134,84 @@ async function readWorkflow(page) {
   });
 }
 
+/**
+ * The single click ledger. Every click in this file goes through here, and records what was
+ * ACTUALLY clicked — never a hardcoded label, so the audit trail cannot drift from reality.
+ */
+function recordClick({ testid = null, selector = null, why, ...rest }) {
+  const key = testid ?? `selector:${selector}`;
+  evidence.clicks.push({ key, testid, selector, why, ...rest, at: new Date().toISOString() });
+  log(`  [click] ${key}${why ? ` — ${why}` : ""}`);
+  return key;
+}
+
 /** Click guard: refuses forbidden testids no matter what the caller asks for. */
 async function safeClick(page, testid, why) {
   if (FORBIDDEN_CLICK_TESTIDS.has(testid)) {
     throw new Error(`GUARDRAIL: refused to click forbidden control "${testid}"`);
   }
-  await page.click(`[data-testid="${testid}"]`);
-  evidence.clicks.push({ testid, why, at: new Date().toISOString() });
-  log(`  [click] ${testid} — ${why}`);
+  const selector = `[data-testid="${testid}"]`;   // testid is a literal from this file, never input
+  await page.click(selector);
+  recordClick({ testid, selector, why });
+}
+
+/**
+ * Click a resolved element and record the testid READ BACK OFF IT, so the ledger reports the
+ * control that actually received the click.
+ */
+async function clickHandle(handle, why, extra = {}) {
+  const testid = await handle.getAttribute("data-testid");
+  if (FORBIDDEN_CLICK_TESTIDS.has(testid)) {
+    throw new Error(`GUARDRAIL: refused to click forbidden control "${testid}"`);
+  }
+  await handle.click();
+  recordClick({ testid, why, ...extra });
+}
+
+/**
+ * Resolve an element by EXACT attribute value WITHOUT interpolating the value into a CSS
+ * selector. An immutable id is caller-supplied: quotes or brackets in it could otherwise
+ * break out of the selector string and silently match a different control. String equality
+ * has no such failure mode, so any arbitrary id is handled safely.
+ */
+async function findByAttr(page, testid, attr, value) {
+  for (const handle of await page.$$(`[data-testid="${testid}"]`)) {
+    if ((await handle.getAttribute(attr)) === value) return handle;
+  }
+  return null;
+}
+
+/** True only when the Step 2 picker menu is really open (its search box is mounted). */
+async function pickerIsOpen(page) {
+  return Boolean(await page.$(PICKER_SEARCH));
+}
+
+/**
+ * Open the Step 2 picker DETERMINISTICALLY.
+ *
+ * The control is a toggle, and the catalog is not listed until GET /api/products resolves.
+ * A blind retry click therefore CLOSES a menu that is already open — that is exactly the
+ * cold-start flake (1 run in 3). Read the open state before every click, and only click to
+ * change it: open when closed, and close an open-but-empty menu so the next pass re-opens
+ * against loaded data instead of toggling blind.
+ */
+async function ensurePickerOpen(page) {
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    if (!(await pickerIsOpen(page))) {
+      await page.click(PICKER_TOGGLE);
+      recordClick({ selector: PICKER_TOGGLE, why: `open Step 2 picker (attempt ${attempt})` });
+    }
+    const listed = await page
+      .waitForSelector('[data-testid="product-option"]', { timeout: 5000 })
+      .then(() => true, () => false);
+    if (listed) return attempt;
+    if (await pickerIsOpen(page)) {
+      await page.click(PICKER_TOGGLE);
+      recordClick({ selector: PICKER_TOGGLE, why: `close empty Step 2 picker (attempt ${attempt})` });
+    }
+    await page.waitForTimeout(1500);
+  }
+  return assert.fail("product picker never listed any option after 5 deterministic attempts");
 }
 
 (async () => {
@@ -163,6 +259,18 @@ async function safeClick(page, testid, why) {
   try {
     // ── Step 0: open the Hybrid workflow like a human.
     log(`[open] ${BASE}/operator/hybrid`);
+    // Catalog readiness is what Step 2 actually depends on: the picker lists nothing until
+    // GET /api/products resolves. Register the wait BEFORE navigating, so the response
+    // cannot land before we are listening.
+    const catalogReady = page
+      .waitForResponse(
+        (r) => {
+          try { return new URL(r.url()).pathname === "/api/products" && r.request().method() === "GET" && r.ok(); }
+          catch { return false; }
+        },
+        { timeout: 30000 },
+      )
+      .then(() => true, () => false);
     // domcontentloaded (not networkidle): the operator dashboard polls readiness, so
     // the network never idles. The explicit waitForSelector below is the real gate.
     await page.goto(`${BASE}/operator/hybrid`, { waitUntil: "domcontentloaded" });
@@ -181,28 +289,18 @@ async function safeClick(page, testid, why) {
 
     // ── Step 2: select the synthetic product BY IMMUTABLE ID through the visible picker.
     log(`[step-2] select product by immutable id ${PRODUCT_ID}`);
-    // The picker only lists options once the catalog has loaded; clicking before that
-    // toggles a menu that the next render throws away. Open it, and re-open if empty.
-    await page.waitForSelector('[data-testid="workflow-step-2"] button:not([disabled])', { timeout: 20000 });
-    await page.waitForTimeout(2500);
-    for (let attempt = 1; attempt <= 4; attempt += 1) {
-      await page.click('[data-testid="workflow-step-2"] button'); // open the picker
-      const opened = await page
-        .waitForSelector('[data-testid="product-option"]', { timeout: 5000 })
-        .then(() => true, () => false);
-      if (opened) break;
-      assert.ok(attempt < 4, "product picker never listed any option");
-      await page.waitForTimeout(2000);
-    }
+    evidence.catalog_loaded = await catalogReady;
+    log(`  catalog GET /api/products resolved=${evidence.catalog_loaded}`);
+    await page.waitForSelector(`${PICKER_TOGGLE}:not([disabled])`, { timeout: 20000 });
+    evidence.picker_open_attempt = await ensurePickerOpen(page);
+    log(`  picker open (deterministic) on attempt ${evidence.picker_open_attempt}`);
     const opts = await page.$$eval('[data-testid="product-option"]', (els) =>
       els.map((e) => ({ id: e.getAttribute("data-product-id"), ref: e.getAttribute("data-reference-only") })));
     evidence.product_options = opts;
     assert.ok(!opts.some((o) => o.id === PRODUCT_ID && o.ref === "true"), "GUARDRAIL: target product is reference-only");
-    const target = `[data-testid="product-option"][data-product-id="${PRODUCT_ID}"]`;
-    await page.waitForSelector(target, { timeout: 10000 });
-    await page.click(target);
-    evidence.clicks.push({ testid: "product-option", product_id: PRODUCT_ID, at: new Date().toISOString() });
-    log(`  [click] product-option data-product-id=${PRODUCT_ID}`);
+    const targetOption = await findByAttr(page, "product-option", "data-product-id", PRODUCT_ID);
+    assert.ok(targetOption, `product-option for immutable id ${PRODUCT_ID} is not listed`);
+    await clickHandle(targetOption, "Step 2 select synthetic product by immutable id", { product_id: PRODUCT_ID });
     await page.waitForFunction(
       (pid) => document.querySelector('[data-testid="workflow-step-2"]')?.getAttribute("data-selected-product-id") === pid,
       PRODUCT_ID, { timeout: 10000 });
@@ -221,8 +319,13 @@ async function safeClick(page, testid, why) {
     assert.ok(approvedRow, `approved Copy Set ${COPY_SET_ID} not rendered`);
     assert.equal(approvedRow.status, "COPY_APPROVED", "target Copy Set is not COPY_APPROVED");
     if (approvedRow.selected !== "true") {
-      const sel = `[data-testid="copy-set-row"][data-copy-set-id="${COPY_SET_ID}"] button`;
-      if (await page.$(sel)) { await page.click(sel); log("  [click] copy-set select"); }
+      const rowEl = await findByAttr(page, "copy-set-row", "data-copy-set-id", COPY_SET_ID);
+      const selectBtn = rowEl ? await rowEl.$("button") : null;
+      if (selectBtn) {
+        await selectBtn.click();
+        // Recorded on the ledger like every other click: this used to be clicked silently.
+        recordClick({ testid: "copy-set-row", why: "select the approved Copy Set", copy_set_id: COPY_SET_ID });
+      }
     }
     rows = (await readWorkflow(page)).copy_set_rows;
     evidence.copy_set_rows = rows;
@@ -283,8 +386,23 @@ async function safeClick(page, testid, why) {
     for (const t of FORBIDDEN_CLICK_TESTIDS) {
       assert.ok(!evidence.clicks.some((c) => c.testid === t), `GUARDRAIL VIOLATION: ${t} was clicked`);
     }
+    // The real Step 5 protection: the click surface is CLOSED. Every click the ledger
+    // actually recorded must be one this operator is allowed to make.
+    const unexpected = evidence.clicks.filter((c) => !ALLOWED_CLICK_KEYS.has(c.key));
+    assert.ok(unexpected.length === 0, `GUARDRAIL VIOLATION: unexpected click(s) ${JSON.stringify(unexpected)}`);
+    evidence.closed_click_surface = {
+      allowed: [...ALLOWED_CLICK_KEYS],
+      recorded: evidence.clicks.map((c) => c.key),
+      unexpected: [],
+    };
+    evidence.guards = {
+      forbidden_request_patterns: FORBIDDEN_REQUEST_PATTERNS.map(String),
+      forbidden_click_testids: [...FORBIDDEN_CLICK_TESTIDS],
+      allowed_click_keys: [...ALLOWED_CLICK_KEYS],
+      step4_authorized_sandbox_only: STEP4_AUTHORIZED,
+    };
     await shot(page, "06-stopped-before-step5");
-    log(`[stop] step4=${evidence.step4.state} (NOT clicked)  step5=${evidence.step5.state} rpa_stop=${evidence.step5.rpa_stop} (NOT clicked)`);
+    log(`[stop] step4=${evidence.step4.state} clicked=${evidence.step4.clicked}  step5=${evidence.step5.state} rpa_stop=${evidence.step5.rpa_stop} clicked=${evidence.step5.clicked}`);
 
     evidence.console_errors = consoleErrors;
     evidence.ROUND_B_DRY_RUN_STOPPED_BEFORE_STEP_5 = true;
