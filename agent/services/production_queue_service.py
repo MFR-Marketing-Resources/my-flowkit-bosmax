@@ -370,6 +370,51 @@ async def _persist_generation_identity(wgp_id: str, job_id: str) -> dict:
     return identity
 
 
+async def _persist_binding_outcome(wgp_id: str, job_id: str) -> None:
+    """Record WHY binding succeeded or failed, durably, once the job is terminal.
+
+    The submission snapshot says whether an output *could* be bound; this says
+    what actually happened to the candidates. Without it the rejection evidence
+    (which media were refused, and for which reason) lives only in make_video's
+    in-memory _JOBS and is gone on restart — exactly the state that made
+    g_e71cd329b524 impossible to adjudicate after the fact.
+
+    Fail-soft and merge-only: never overwrite the submission anchors, never
+    raise into a paid job.
+    """
+    from agent.services import make_video
+
+    try:
+        job = make_video.get_job(job_id) or {}
+        row = await crud.get_workspace_generation_package(wgp_id) or {}
+        identity = _loads(row.get("generation_identity_json"), {}) or {}
+        stats = job.get("correlation_stats") or {}
+        identity["binding_outcome"] = {
+            "job_status": job.get("status"),
+            "bound_media_id": job.get("media_id"),
+            "bound": bool(job.get("media_id")),
+            # The acceptance receipt when bound: what it matched on and why
+            # (make_video stores it as output_correlation).
+            "evidence": job.get("output_correlation"),
+            # The refusal receipt when not bound.
+            "rejected_candidate_ids": list(stats.get("round_rejected_ids") or []),
+            "unverifiable_ids": list(stats.get("unverifiable_ids") or []),
+            "prompt_mismatched": stats.get("prompt_mismatched"),
+            "model_mismatched": stats.get("model_mismatched"),
+            "seed_mismatched": stats.get("seed_mismatched"),
+            "unverifiable": stats.get("unverifiable"),
+            "reason": job.get("error") or job.get("original_error"),
+            "credit_spent_likely": bool(job.get("credit_spent_likely")),
+            "recorded_at": _now(),
+        }
+        await crud.update_workspace_generation_package(
+            wgp_id, generation_identity_json=_json(identity),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("binding outcome snapshot failed wgp=%s job=%s: %s",
+                       wgp_id, job_id, exc)
+
+
 async def _assert_one_serial_t2v_live(
     run: dict,
     *,
@@ -727,6 +772,9 @@ async def _fire_and_wait_inner(make_video, payload: dict, wgp_id: str) -> dict:
 
     job = make_video.get_job(job_id) or {}
     status = job.get("status")
+    # Durably record what happened to the candidates BEFORE branching on status,
+    # so a refusal leaves the same audit trail as an acceptance.
+    await _persist_binding_outcome(wgp_id, job_id)
     if status == "DONE":
         media_ids = [a.get("media_id") for a in (job.get("artifacts") or []) if a.get("media_id")]
         if not media_ids and job.get("media_id"):
