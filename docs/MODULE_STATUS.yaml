@@ -397,12 +397,15 @@ domains:
       - dashboard/src/pages/RpaQueueControlPage.tsx
       - dashboard/src/pages/RpaQueueControlPage.component.test.tsx
       - dashboard/src/api/productionQueue.ts
+      - dashboard/src/api/workspaceGenerationPackages.ts
       - dashboard/src/api/bulkGeneration.ts
       - tests/unit/test_batch_prompt_planner.py
       - tests/unit/test_batch_prompt_run.py
       - tests/unit/test_production_queue_service.py
       - tests/unit/test_production_queue_dedupe.py
+      - tests/unit/test_production_queue_live_gate.py
       - tests/api/test_batch_prompt_and_production_api.py
+      - docs/bosmax-rpa-g0-governance-gate.md
       - dashboard/src/pages/ProductRegistrationPage.tsx
       - dashboard/src/pages/ProductRegistrationPage.test.tsx
       - dashboard/src/components/product-registration/ProductKnowledgeIntakeForm.tsx

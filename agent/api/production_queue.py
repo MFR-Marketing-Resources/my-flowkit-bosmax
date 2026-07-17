@@ -29,6 +29,11 @@ class SendToProductionRequest(BaseModel):
 
 class StartRunRequest(BaseModel):
     confirm_live_credit_burn: bool = False
+    # Round F one-serial T2V lane. Opt-in: omitting live_gate leaves the
+    # pre-existing live path (a protected system, G0 §3) unchanged.
+    live_gate: str | None = None
+    confirm_phrase: str | None = None
+    expect_package_id: str | None = None
 
 
 @router.post("")
@@ -71,6 +76,9 @@ async def start_run(run_id: str, request: StartRunRequest):
     try:
         return await pq.run_production_queue(
             run_id, confirm_live_credit_burn=request.confirm_live_credit_burn,
+            live_gate=request.live_gate,
+            confirm_phrase=request.confirm_phrase,
+            expect_package_id=request.expect_package_id,
         )
     except ValueError as exc:
         message = str(exc)

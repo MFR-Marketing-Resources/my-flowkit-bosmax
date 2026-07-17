@@ -191,6 +191,22 @@ export interface ProductionStartResponse {
 	dry_run: boolean;
 	status?: string;
 	report?: ProductionDryRunReport;
+	live_gate?: string | null;
+	package_id?: string | null;
+}
+
+/**
+ * Round F — the one-serial T2V live lane. Opting in makes the server refuse
+ * anything that is not exactly one ready T2V item confirmed by the exact
+ * phrase. Omitting it leaves the pre-existing live path unchanged.
+ */
+export const LIVE_GATE_ONE_SERIAL_T2V = "ONE_SERIAL_T2V";
+export const LIVE_CONFIRM_PHRASE = "AUTHORIZE_ONE_T2V_LIVE_RUN";
+
+export interface LiveGateOptions {
+	live_gate: typeof LIVE_GATE_ONE_SERIAL_T2V;
+	confirm_phrase: string;
+	expect_package_id: string;
 }
 
 // ─── Video model standard ────────────────────────────────────
@@ -237,10 +253,11 @@ export async function getProductionRun(
 export async function startProductionRun(
 	runId: string,
 	confirmLiveCreditBurn: boolean,
+	liveGate?: LiveGateOptions,
 ): Promise<ProductionStartResponse> {
 	return postAPI<ProductionStartResponse>(
 		`${PROD_BASE}/${encodeURIComponent(runId)}/start`,
-		{ confirm_live_credit_burn: confirmLiveCreditBurn },
+		{ confirm_live_credit_burn: confirmLiveCreditBurn, ...(liveGate ?? {}) },
 	);
 }
 

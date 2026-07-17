@@ -53,6 +53,23 @@ export async function createI2VGenerationPackage(
 	return postAPI<WorkspaceGenerationPackage>(`${BASE}/i2v`, input);
 }
 
+/**
+ * T2V packages have their own route: the from-execution-package bridge rejects
+ * T2V outright ("Unsupported mode"), so this is the only way to mint one.
+ */
+export interface T2VGenerationPackageRequest {
+	product_id: string;
+	workspace_execution_package_id?: string | null;
+	generation_mode?: string;
+	duration_seconds?: number;
+}
+
+export async function createT2VGenerationPackage(
+	input: T2VGenerationPackageRequest,
+): Promise<WorkspaceGenerationPackage> {
+	return postAPI<WorkspaceGenerationPackage>(`${BASE}/t2v`, input);
+}
+
 export async function createFromExecutionPackage(
 	workspaceExecutionPackageId: string,
 	mode: "F2V" | "I2V" = "F2V",
