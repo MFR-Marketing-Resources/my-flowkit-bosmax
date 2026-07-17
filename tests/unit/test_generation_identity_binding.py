@@ -417,3 +417,59 @@ def test_harvest_video_is_tagged_uncorrelated_at_every_exit():
     assert src.count("_UNCORRELATED_WARNING") == 3
     assert "NO output correlation" in (flow_api.harvest_video.__doc__ or "")
     assert "must never be registered" in flow_api._UNCORRELATED_WARNING
+
+
+# ── Identity-gap capture: make the paid run guaranteed-informative ────────
+
+
+def test_last_approve_sse_returns_the_final_turns_raw_stream():
+    raw = 'data: {"agentMessage": {"agentEvents": [{"toolInvocation": {"toolName": "x"}}]}}'
+    nres = {"transcript": [{"turn": 0, "raw_sse": "first"}, {"turn": 1, "raw_sse": raw}]}
+    assert mv._last_approve_sse(nres) == raw
+
+
+@pytest.mark.parametrize("nres", [{}, {"transcript": []}, {"transcript": None},
+                                  {"transcript": [{"turn": 0}]}, "not-a-dict"])
+def test_last_approve_sse_is_none_when_unavailable(nres):
+    assert mv._last_approve_sse(nres) is None
+
+
+def test_last_approve_sse_is_truncated():
+    nres = {"transcript": [{"raw_sse": "x" * 99999}]}
+    assert len(mv._last_approve_sse(nres)) == mv._IDENTITY_GAP_SSE_LIMIT
+
+
+@pytest.mark.asyncio
+async def test_identity_gap_sse_is_persisted_so_the_tool_name_survives_restart(
+        monkeypatch, wgp_writes):
+    """The live gap died in memory on restart. It must now be recoverable from
+    the record — otherwise diagnosing it costs another live credit."""
+    import agent.services.make_video as _mv
+    import json as _json_mod
+
+    raw = 'data: {"agentMessage": {"agentEvents": [{"toolInvocation": {"toolName": "mystery_t2v_tool"}}]}}'
+    monkeypatch.setattr(_mv, "get_job", lambda jid: _fake_job(
+        generation_identity={"sse_prompt": None, "expected_model": None,
+                             "tool_call_id": None, "response_id": None, "seed": None},
+        identity_captured=False, gen_tool_matched=False, tools_seen=[],
+        identity_gap_sse=raw,
+    ))
+
+    identity = await pq._persist_generation_identity("wgp_1", "g_gap")
+
+    assert identity["identity_captured"] is False
+    assert identity["tools_seen"] == []          # no invocation was recognised...
+    assert "mystery_t2v_tool" in identity["identity_gap_sse"]   # ...but the stream still has it
+    saved = _json_mod.loads(
+        [w for w in wgp_writes if "generation_identity_json" in w][0]["generation_identity_json"])
+    assert "mystery_t2v_tool" in saved["identity_gap_sse"]
+
+
+@pytest.mark.asyncio
+async def test_no_gap_sse_is_kept_when_identity_was_captured(monkeypatch, wgp_writes):
+    """A healthy run needs no breadcrumb — don't hoard raw streams."""
+    import agent.services.make_video as _mv
+    monkeypatch.setattr(_mv, "get_job", lambda jid: _fake_job())
+    identity = await pq._persist_generation_identity("wgp_1", "g_ok")
+    assert identity["identity_captured"] is True
+    assert identity["identity_gap_sse"] is None

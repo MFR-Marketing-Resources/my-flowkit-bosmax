@@ -523,6 +523,25 @@ def _is_retrieval_phase_error(msg) -> bool:
 _IDENTITY_ANCHORS = ("sse_prompt", "seed", "expected_model", "tool_call_id")
 
 
+_IDENTITY_GAP_SSE_LIMIT = 20000
+
+
+def _last_approve_sse(nres) -> str | None:
+    """The raw SSE of the LAST negotiation turn (the approve stream).
+
+    negotiate_and_generate returns a transcript carrying raw_sse per turn, but the
+    generate lane discarded it — so when identity capture failed there was nothing
+    left to diagnose from and the only way forward was another paid run. Truncated:
+    this is a breadcrumb, not an archive.
+    """
+    transcript = nres.get("transcript") if isinstance(nres, dict) else None
+    if not isinstance(transcript, list) or not transcript:
+        return None
+    last = transcript[-1]
+    raw = last.get("raw_sse") if isinstance(last, dict) else None
+    return str(raw)[:_IDENTITY_GAP_SSE_LIMIT] if raw else None
+
+
 def _identity_captured(identity) -> bool:
     """True when the submission exposed at least one correlation anchor.
 
@@ -684,6 +703,15 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         job["identity_captured"] = _identity_captured(job["generation_identity"])
         job["tools_seen"] = list(nres.get("tools_seen") or [])
         job["gen_tool_matched"] = bool(nres.get("gen_tool_matched"))
+        if not job["identity_captured"]:
+            # IDENTITY-GAP CAPTURE. tools_seen only names a tool if the stream
+            # actually carried a toolInvocation. T2V's post-approve stream reports
+            # "started" via soft TEXT (_STARTED_PHRASES), not started_tool, so it
+            # may carry no invocation at all — in which case tools_seen is empty
+            # and the paid run reveals nothing. Keep the raw approve stream so the
+            # real identity source can be found from THIS run instead of buying
+            # another. Diagnostic only: never parsed, never an anchor.
+            job["identity_gap_sse"] = _last_approve_sse(nres)
         corr_stats = {"unverifiable": 0, "prompt_mismatched": 0,
                       "model_mismatched": 0, "seed_mismatched": 0,
                       "unverifiable_ids": [], "normalization_failures": {},
