@@ -426,7 +426,9 @@ async function ensurePickerOpen(page) {
     step3: evidence.after_step3?.steps?.[3]?.state,
     step4: evidence.step4,
     step5: evidence.step5,
-    clicks: evidence.clicks.map((c) => c.testid),
+    // c.key, not c.testid: the picker toggle carries no testid and is keyed by selector, so
+    // c.testid printed it as `null` and the summary failed to name what was clicked.
+    clicks: evidence.clicks.map((c) => c.key),
     forbidden_requests_blocked: evidence.network.forbidden_attempts.length,
     console_errors: (evidence.console_errors || []).length,
     evidence_dir: OUT,
