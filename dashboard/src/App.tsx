@@ -55,6 +55,7 @@ import PostizPublishPage from "./pages/PostizPublishPage";
 import ResultsHubPage from "./pages/ResultsHubPage";
 import ProductAssetGeneratorPage from "./pages/ProductAssetGeneratorPage";
 import ProductionQueuePage from "./pages/ProductionQueuePage";
+import RpaProductionStudioPage from "./pages/RpaProductionStudioPage";
 import RpaQueueControlPage from "./pages/RpaQueueControlPage";
 import ProductRegistrationPage from "./pages/ProductRegistrationPage";
 import ProductsSalesAnalyzerPage from "./pages/ProductsSalesAnalyzerPage";
@@ -92,6 +93,7 @@ const NAV_GROUPS = [
 			},
 			{ to: "/batches", icon: Briefcase, label: "Batch Prompt Builder" },
 			{ to: "/production-queue", icon: Film, label: "Production Queue" },
+			{ to: "/rpa-production-studio", icon: Video, label: "RPA Production Studio" },
 			{ to: "/rpa-queue-control", icon: Bot, label: "RPA Queue Control" },
 			{ to: "/postiz", icon: Send, label: "Postiz Publish" },
 		],
@@ -514,6 +516,10 @@ function Layout() {
 						<Route
 							path="/production-queue"
 							element={<ProductionQueuePage />}
+						/>
+						<Route
+							path="/rpa-production-studio"
+							element={<RpaProductionStudioPage />}
 						/>
 						<Route
 							path="/rpa-queue-control"
