@@ -473,3 +473,76 @@ async def test_no_gap_sse_is_kept_when_identity_was_captured(monkeypatch, wgp_wr
     identity = await pq._persist_generation_identity("wgp_1", "g_ok")
     assert identity["identity_captured"] is True
     assert identity["identity_gap_sse"] is None
+
+
+# ── The T2V tool name, captured live from g_b1ed597a9789 ──────────────────
+
+
+def test_t2v_text_only_generation_tool_is_recognised():
+    """generate_video_from_text is the real T2V toolName (captured live
+    2026-07-17). Its absence from _GEN_TOOLS is why every T2V anchor was None."""
+    from agent.services import agent_video as av
+    assert "generate_video_from_text" in av._GEN_TOOLS
+
+
+def test_real_t2v_approve_stream_now_yields_the_binding_anchor():
+    """Replays the SHAPE of the live approve stream: the compiled prompt +
+    t2v model key must now be captured, so a T2V output becomes bindable."""
+    from agent.services import agent_video as av
+
+    sse = (
+        'data: {"agentMessage": {"responseId": "r_1", "agentEvents": [{"toolInvocation": '
+        '{"toolName": "generate_video_from_text", "toolCallId": "tc_t2v", "toolArguments": '
+        '{"model_display_name": "Veo 3.1 - Lite", "model_usage_key": "veo_3_1_t2v_lite", '
+        '"prompt": "9:16 handheld vertical social commerce video."}}}]}}'
+    )
+    out = av.parse_agent_sse(sse)
+    assert out["started_tool"] is True
+    assert out["gen_prompt"] == "9:16 handheld vertical social commerce video."
+    assert out["model"] == "veo_3_1_t2v_lite"
+    assert mv._identity_captured({"sse_prompt": out["gen_prompt"],
+                                  "expected_model": out["model"],
+                                  "seed": out["gen_seed"]}) is True
+
+
+def test_t2v_model_key_resolves_to_the_requested_model():
+    """veo_3_1_t2v_lite is a THIRD alias of Veo 3.1 - Lite; it must match Lite
+    and must NOT match a different tier."""
+    from agent.services import video_models as vm
+    assert vm.model_matches("veo_3_1_t2v_lite", "Veo 3.1 - Lite") is True
+    assert vm.model_matches("veo_3_1_t2v_lite", "Veo 3.1 - Fast") is False
+
+
+@pytest.mark.asyncio
+async def test_terminal_snapshot_refreshes_anchors_the_submission_snapshot_could_not_see(
+        monkeypatch, wgp_writes):
+    """The submission snapshot fires before async _run_generate parses the
+    approve stream, so it always reads identity_captured=false. The terminal
+    read must correct that (live g_b1ed597a9789)."""
+    import agent.services.make_video as _mv
+    import json as _json_mod
+
+    monkeypatch.setattr(_mv, "get_job", lambda jid: _fake_job(
+        status="DONE", media_id="m_ours",
+        generation_identity={"sse_prompt": "compiled", "seed": None,
+                             "expected_model": "veo_3_1_t2v_lite",
+                             "tool_call_id": "tc_t2v", "response_id": "r_1"},
+        identity_captured=True, gen_tool_matched=True,
+        tools_seen=["generate_video_from_text"],
+        correlation_stats={"round_rejected_ids": []},
+    ))
+
+    async def get_wgp(wgp_id):
+        # what the too-early submission snapshot wrote
+        return {"generation_identity_json":
+                '{"provider_job_id": "g_x", "identity_captured": false, "tools_seen": []}'}
+
+    monkeypatch.setattr(pq.crud, "get_workspace_generation_package", get_wgp)
+    await pq._persist_binding_outcome("wgp_1", "g_x")
+
+    saved = _json_mod.loads(
+        [w for w in wgp_writes if "generation_identity_json" in w][0]["generation_identity_json"])
+    assert saved["identity_captured"] is True          # corrected
+    assert saved["tools_seen"] == ["generate_video_from_text"]
+    assert saved["anchors"]["expected_model"] == "veo_3_1_t2v_lite"
+    assert saved["provider_job_id"] == "g_x"           # submission data preserved
