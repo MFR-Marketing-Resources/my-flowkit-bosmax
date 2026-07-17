@@ -392,6 +392,17 @@ async def _persist_binding_outcome(wgp_id: str, job_id: str) -> None:
         job = make_video.get_job(job_id) or {}
         row = await crud.get_workspace_generation_package(wgp_id) or {}
         identity = _loads(row.get("generation_identity_json"), {}) or {}
+        # Refresh the anchors. The submission snapshot is taken the instant
+        # start_generate returns a job id, but _run_generate is still async and has
+        # not parsed the approve stream yet — so the submission row ALWAYS reads
+        # identity_captured=false, even for a run that captured everything (live
+        # g_b1ed597a9789). The terminal read is the first point the anchors exist.
+        if job.get("generation_identity"):
+            identity["anchors"] = job.get("generation_identity") or {}
+            identity["identity_captured"] = bool(job.get("identity_captured"))
+            identity["gen_tool_matched"] = bool(job.get("gen_tool_matched"))
+            identity["tools_seen"] = job.get("tools_seen") or []
+            identity["identity_gap_sse"] = job.get("identity_gap_sse")
         stats = job.get("correlation_stats") or {}
         identity["binding_outcome"] = {
             "job_status": job.get("status"),

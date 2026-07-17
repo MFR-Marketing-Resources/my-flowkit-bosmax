@@ -43,7 +43,15 @@ _STARTED_PHRASES = ("started generating", "i'm generating",
 # it in thinking/denied-tool TEXT, not as a real toolInvocation.toolName in an APPROVED SSE.
 # Pending one approved-SSE capture before adding it.
 _GEN_TOOLS = ("generate_video", "generate_videos", "start_generation", "submit_generation",
-              "generate_video_with_references", "generate_video_with_first_frame")
+              "generate_video_with_references", "generate_video_with_first_frame",
+              # T2V text-only. Captured live 2026-07-17 from g_b1ed597a9789's approve
+              # stream (tools_seen=["generate_video_from_text"]) — the SSE capture
+              # AGENTS.md recorded as "pending". Its absence here is why every T2V
+              # anchor came back None and no T2V output could EVER be bound: with
+              # sse_prompt=None the only anchor left is the raw prompt, which never
+              # equals the compiled prompt the provider stores. Its toolArguments
+              # carry prompt + model_usage_key (veo_3_1_t2v_lite) + model_display_name.
+              "generate_video_from_text")
 
 # Post-approve failure knowledge (captured live 2026-07-02, Faris' screenshots):
 # when the render dies server-side the agent posts a "Failed / Something went
