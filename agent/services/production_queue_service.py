@@ -16,6 +16,7 @@ Item lifecycle (workspace_generation_package.production_status):
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import random
@@ -40,6 +41,9 @@ _FLOW_MEDIA_UUID_RE = re.compile(
 
 # run_id → "PAUSE" | "CANCEL" control signals for the live loop
 _run_control: dict[str, str] = {}
+# O4: dedupe keys of submissions currently in flight. In-process by design — it
+# guards the single provider boundary inside this worker, like _run_control above.
+_inflight_dedupe: set[str] = set()
 
 _POLL_SECONDS = 5
 _JOB_TIMEOUT_SECONDS = 30 * 60
@@ -301,6 +305,10 @@ async def retry_failed_items(run_id: str) -> dict:
             await crud.update_workspace_generation_package(
                 item["workspace_generation_package_id"],
                 production_status="QUEUED", production_error=None,
+                # Explicit retry identity (O4): clearing the prior job id is what
+                # authorises a second submission of this package. Without it the
+                # duplicate guard in _fire_and_wait would refuse the retry.
+                production_job_id=None,
             )
             retried += 1
     if retried:
@@ -468,8 +476,73 @@ async def _live_production_loop(run_id: str) -> None:
     logger.info("Production run %s finished: %d ok, %d failed", run_id, completed, failed)
 
 
+def compute_dedupe_key(payload: dict, wgp_id: str) -> str:
+    """Stable identity for one logical submission (G0 amendment O4).
+
+    Derived from the inputs that decide what the provider would actually produce:
+    the package, the engine/logical mode, model, duration, aspect, count and the
+    resolved Flow media bindings, plus the prompt itself. Two attempts that would
+    submit the same work therefore collide by construction; a genuinely different
+    job (different model, duration, media or prompt) does not.
+    """
+    basis = {
+        "wgp": wgp_id,
+        "logical_mode": payload.get("logical_mode"),
+        "engine_mode": payload.get("mode"),
+        "model": payload.get("model"),
+        "duration_s": payload.get("duration_s"),
+        "aspect": payload.get("aspect"),
+        "num_videos": payload.get("num_videos"),
+        "image_media_ids": sorted(payload.get("image_media_ids") or []),
+        "prompt_sha": hashlib.sha256((payload.get("prompt") or "").encode("utf-8")).hexdigest(),
+    }
+    digest = hashlib.sha256(json.dumps(basis, sort_keys=True).encode("utf-8")).hexdigest()
+    return f"ddk_{digest[:32]}"
+
+
 async def _fire_and_wait(make_video, payload: dict, wgp_id: str) -> dict:
-    """Fire one item through the locked generate door and wait for terminal."""
+    """Fire one item through the locked generate door and wait for terminal.
+
+    O4 — idempotency. This is the ONLY provider boundary in the queue, so the
+    duplicate-submission guard lives here and cannot be routed around:
+
+      1. Already submitted -> `production_job_id` is written only after a provider
+         submission succeeds (see below), so a non-empty value proves this exact
+         package already went to the provider. Re-firing it would spend credits
+         twice for the same work, so it FAILS CLOSED. `retry_failed_items` clears
+         the id deliberately — that is the explicit retry identity, and the only
+         supported way to submit a package a second time.
+      2. Concurrent duplicate -> a double click, a retried request or two loops
+         racing the same package resolve to the same dedupe key. The key is held
+         in-process for the lifetime of the submission, so the second caller is
+         refused before `start_generate` is reached rather than after.
+    """
+    fresh = await crud.get_workspace_generation_package(wgp_id) or {}
+    prior_job = str(fresh.get("production_job_id") or "").strip()
+    if prior_job:
+        logger.warning(
+            "DUPLICATE_SUBMISSION_BLOCKED wgp=%s already submitted as job=%s", wgp_id, prior_job,
+        )
+        await crud.update_workspace_generation_package(
+            wgp_id,
+            production_status="FAILED",
+            production_error=f"DUPLICATE_SUBMISSION_BLOCKED:{prior_job}",
+        )
+        return {"ok": False, "error": f"DUPLICATE_SUBMISSION_BLOCKED:{prior_job}", "job_id": prior_job}
+
+    dedupe_key = compute_dedupe_key(payload, wgp_id)
+    if dedupe_key in _inflight_dedupe:
+        logger.warning("DUPLICATE_SUBMISSION_IN_FLIGHT wgp=%s key=%s", wgp_id, dedupe_key)
+        return {"ok": False, "error": f"DUPLICATE_SUBMISSION_IN_FLIGHT:{dedupe_key}"}
+    _inflight_dedupe.add(dedupe_key)
+    logger.info("Submission accepted wgp=%s dedupe_key=%s", wgp_id, dedupe_key)
+    try:
+        return await _fire_and_wait_inner(make_video, payload, wgp_id)
+    finally:
+        _inflight_dedupe.discard(dedupe_key)
+
+
+async def _fire_and_wait_inner(make_video, payload: dict, wgp_id: str) -> dict:
     attempts = 0
     while True:
         result = await make_video.start_generate(

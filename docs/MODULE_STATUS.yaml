@@ -401,6 +401,7 @@ domains:
       - tests/unit/test_batch_prompt_planner.py
       - tests/unit/test_batch_prompt_run.py
       - tests/unit/test_production_queue_service.py
+      - tests/unit/test_production_queue_dedupe.py
       - tests/api/test_batch_prompt_and_production_api.py
       - dashboard/src/pages/ProductRegistrationPage.tsx
       - dashboard/src/pages/ProductRegistrationPage.test.tsx
