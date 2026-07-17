@@ -1,5 +1,6 @@
 import {
 	Activity,
+	Bot,
 	Briefcase,
 	Film,
 	FolderOpen,
@@ -54,6 +55,7 @@ import PostizPublishPage from "./pages/PostizPublishPage";
 import ResultsHubPage from "./pages/ResultsHubPage";
 import ProductAssetGeneratorPage from "./pages/ProductAssetGeneratorPage";
 import ProductionQueuePage from "./pages/ProductionQueuePage";
+import RpaQueueControlPage from "./pages/RpaQueueControlPage";
 import ProductRegistrationPage from "./pages/ProductRegistrationPage";
 import ProductsSalesAnalyzerPage from "./pages/ProductsSalesAnalyzerPage";
 import ProjectsPage from "./pages/ProjectsPage";
@@ -90,6 +92,7 @@ const NAV_GROUPS = [
 			},
 			{ to: "/batches", icon: Briefcase, label: "Batch Prompt Builder" },
 			{ to: "/production-queue", icon: Film, label: "Production Queue" },
+			{ to: "/rpa-queue-control", icon: Bot, label: "RPA Queue Control" },
 			{ to: "/postiz", icon: Send, label: "Postiz Publish" },
 		],
 	},
@@ -511,6 +514,10 @@ function Layout() {
 						<Route
 							path="/production-queue"
 							element={<ProductionQueuePage />}
+						/>
+						<Route
+							path="/rpa-queue-control"
+							element={<RpaQueueControlPage />}
 						/>
 						<Route path="/postiz" element={<PostizPublishPage />} />
 						<Route path="/asset-registry" element={<AssetRegistryPage />} />
