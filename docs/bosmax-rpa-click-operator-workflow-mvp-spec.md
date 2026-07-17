@@ -79,6 +79,11 @@ Do not touch unless separately authorized:
 
 ## Evidence Baseline
 
+> **O5 REFRESH — 2026-07-17. The Round 1-3 findings below are HISTORICAL.** They are retained for
+> provenance, not as current fact. Amendment O5 requires this baseline to be re-verified before any
+> new round is authorized; the re-verification is recorded in **"Current Baseline (verified
+> 2026-07-17)"** immediately after it. Where the two disagree, the current baseline wins.
+
 Round 1 source-level review found:
 
 - BOSMAX has ordered workflow pages and job/status surfaces.
@@ -102,6 +107,52 @@ Round 3 planning synthesis concluded:
 - The first RPA MVP should replace real preparation clicks while stopping before live generation.
 - Copy Set readiness is a mandatory prerequisite.
 - Copy Set generation/approval should not be automated in the first MVP.
+
+## Current Baseline (verified 2026-07-17)
+
+Satisfies amendment **O5**. Every value below was verified read-only at `main =
+ce11ece4c42f18bc512d4167ed68e89125cedcbf` (PR #387 merge). No mutation, no queue run, no provider
+call was performed to produce it. Values not verified are marked UNKNOWN rather than guessed.
+
+### Delivery state
+
+| Round | State | Merge SHA |
+|---|---|---|
+| A — selector/state normalization | MERGED + validated | `eef8a0b` (PR #383) |
+| B — Hybrid Steps 1-4 UI-click dry-run | MERGED + validated | `2b98714f…` (#385), `1339394e…` (#386) |
+| C — evidence/report attachment | MERGED + validated | `ce11ece4…` (#387) |
+| D — Production Queue dry-run | **NOT AUTHORIZED, NOT STARTED** | — |
+
+### Runtime (supersedes the `:5173` reading)
+
+| Fact | Historical baseline | Verified 2026-07-17 |
+|---|---|---|
+| Dashboard origin | `:5173` (Vite dev) | **`:8100`** serves the built bundle; `:5173` -> not running (000). Amendment A binds `:8100`. |
+| Backend | `:8100` | `:8100` health 200, `git_head = ce11ece4…`, `git_branch = main`, `source_stale_since_start = false`, `route_count = 409`, 0 missing critical routes |
+| Sandbox exception | not recorded | `:8123` (`FLOW_AGENT_DIR` isolated) per the G0 §4 amendment; not running at rest |
+
+### Hybrid workflow (supersedes the Step 4 reading)
+
+| Fact | Historical baseline | Verified 2026-07-17 |
+|---|---|---|
+| Step 4 | disabled — Copywriting `NOT_READY`, Approved Copy Sets `0` | **Reachable and clicked** in sandbox with an approved Copy Set fixture. Rounds B/C minted durable packages, latest `wep_c2f8a2a5d5cf4e11`. The old reading described a missing fixture, not a missing capability. |
+| Step 5 | rendered no clickable generation control | **STILL TRUE.** `action-generate-video` has **0** matches in `dashboard/src`; `workflow-step-5` renders `data-rpa-stop="true"` and exposes no action control. Recorded as G0 **B3**. |
+| Step 5 stop proof | not defined | Proven by a **request-count delta of zero** across 14 submission-bearing tables (contract §6), never self-reported |
+
+### Production Queue (supersedes the "empty state" reading)
+
+| Fact | Historical baseline | Verified 2026-07-17 |
+|---|---|---|
+| `production_run` rows (live) | "fail-closed empty state, no production runs" | **0** — still true |
+| `workspace_generation_package` rows (live) | not recorded | 5, **all `production_status = 'NONE'`**; 2 carry a `workspace_execution_package_id` |
+| Queue UI RPA readiness | "stable test IDs are needed" | **`ProductionQueuePage.tsx` has 0 `data-testid`.** The REQUIRED queue locators in this document remain **unimplemented**. |
+| Credit door | not localised | Exactly one: `POST /api/workspace/production-queue/{run_id}/start` with `confirm_live_credit_burn=true` |
+
+### Risk posture
+
+Rounds A-C touched only prepare-and-stop surfaces. Round D targets the Production Queue, whose live
+branch fans out `make_video.start_generate` across **every** queued item — a materially higher risk
+class than anything A-C exercised. Round D's boundary is recorded in the G0 gate, not here.
 
 ## Workflow Map
 
