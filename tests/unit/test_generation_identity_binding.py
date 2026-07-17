@@ -314,3 +314,106 @@ async def test_t2v_without_sse_prompt_can_never_bind_the_compiled_output(tmp_pat
     )
     assert mid is None
     assert stats["prompt_mismatched"] == 1
+
+
+# ── The binding OUTCOME is persisted, not just the submission identity ────
+
+
+@pytest.mark.asyncio
+async def test_persists_refusal_evidence_when_nothing_bound(monkeypatch, wgp_writes):
+    """A refusal must leave the same audit trail as an acceptance.
+
+    Before this, the rejection evidence lived only in the in-memory _JOBS dict and
+    vanished on restart — which is exactly why g_e71cd329b524 could not be
+    adjudicated after the fact.
+    """
+    import agent.services.make_video as _mv
+
+    monkeypatch.setattr(_mv, "get_job", lambda jid: {
+        "status": "GENERATED_BUT_UNRETRIEVED", "media_id": None,
+        "credit_spent_likely": True,
+        "error": "OUTPUT_IDENTITY_NOT_CAPTURED: the generation fired but exposed no anchor",
+        "correlation_stats": {"prompt_mismatched": 2, "model_mismatched": 1,
+                              "seed_mismatched": 0, "unverifiable": 1,
+                              "round_rejected_ids": ["m_old_1", "m_old_2"],
+                              "unverifiable_ids": ["m_bare"]},
+    })
+
+    async def get_wgp(wgp_id):
+        return {"generation_identity_json": '{"provider_job_id": "g_x", "identity_captured": false}'}
+
+    monkeypatch.setattr(pq.crud, "get_workspace_generation_package", get_wgp)
+
+    await pq._persist_binding_outcome("wgp_1", "g_x")
+
+    written = [w for w in wgp_writes if "generation_identity_json" in w]
+    assert len(written) == 1
+    import json as _json_mod
+    saved = _json_mod.loads(written[0]["generation_identity_json"])
+    outcome = saved["binding_outcome"]
+    assert outcome["bound"] is False
+    assert outcome["bound_media_id"] is None
+    assert outcome["rejected_candidate_ids"] == ["m_old_1", "m_old_2"]
+    assert outcome["unverifiable_ids"] == ["m_bare"]
+    assert outcome["prompt_mismatched"] == 2
+    assert outcome["credit_spent_likely"] is True
+    assert "OUTPUT_IDENTITY_NOT_CAPTURED" in outcome["reason"]
+    # The submission anchors must survive — outcome is merged, never overwriting.
+    assert saved["provider_job_id"] == "g_x"
+
+
+@pytest.mark.asyncio
+async def test_persists_acceptance_receipt_when_bound(monkeypatch, wgp_writes):
+    import agent.services.make_video as _mv
+    import json as _json_mod
+
+    monkeypatch.setattr(_mv, "get_job", lambda jid: {
+        "status": "DONE", "media_id": "m_ours",
+        "output_correlation": {"media_id": "m_ours", "matched_on": "sse_tool_prompt",
+                               "seed_matched": True},
+        "correlation_stats": {"round_rejected_ids": []},
+    })
+
+    async def get_wgp(wgp_id):
+        return {"generation_identity_json": '{"provider_job_id": "g_ok"}'}
+
+    monkeypatch.setattr(pq.crud, "get_workspace_generation_package", get_wgp)
+
+    await pq._persist_binding_outcome("wgp_1", "g_ok")
+
+    saved = _json_mod.loads(
+        [w for w in wgp_writes if "generation_identity_json" in w][0]["generation_identity_json"])
+    outcome = saved["binding_outcome"]
+    assert outcome["bound"] is True
+    assert outcome["bound_media_id"] == "m_ours"
+    assert outcome["evidence"]["matched_on"] == "sse_tool_prompt"
+
+
+@pytest.mark.asyncio
+async def test_binding_outcome_snapshot_never_raises(monkeypatch, wgp_writes):
+    import agent.services.make_video as _mv
+
+    def boom(jid):
+        raise RuntimeError("job store exploded")
+
+    monkeypatch.setattr(_mv, "get_job", boom)
+    await pq._persist_binding_outcome("wgp_1", "g_x")  # must not raise
+
+
+# ── The uncorrelated harvest diagnostic cannot masquerade as retrieval ────
+
+
+def test_harvest_video_is_tagged_uncorrelated_at_every_exit():
+    """/api/flow/harvest-video takes whatever the tab shows, with NO identity
+    check — it is how a dirty timeline yields foreign media that looks retrieved
+    (live: it returned an r2v clip for a text-only T2V investigation). Every
+    response must say so."""
+    import inspect
+    from agent.api import flow as flow_api
+
+    src = inspect.getsource(flow_api.harvest_video)
+    # Every return path carries the tag, so no caller can mistake it for a bind.
+    assert src.count('"correlated": False') == 3
+    assert src.count("_UNCORRELATED_WARNING") == 3
+    assert "NO output correlation" in (flow_api.harvest_video.__doc__ or "")
+    assert "must never be registered" in flow_api._UNCORRELATED_WARNING

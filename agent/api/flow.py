@@ -615,9 +615,26 @@ async def captured_media():
     return {"videos": vids, "video_count": len(vids), "all_count": len(_CAPTURED_MEDIA_URLS)}
 
 
+_UNCORRELATED_WARNING = (
+    "UNCORRELATED_DIAGNOSTIC: this media was taken from the Flow tab with no identity check and may belong to an older or unrelated run — it is NOT proof of any job's output and must never be registered as one.")
+
+
 @router.get("/harvest-video")
 async def harvest_video():
-    """Scan the Flow tab DOM for the finished video URL and download it into the system."""
+    """DIAGNOSTIC ONLY — download the first finished video URL visible in the Flow tab.
+
+    This performs NO output correlation. It takes whatever media the tab exposes,
+    which on a project with history is very often OLDER media from an unrelated
+    run (live: a hand-call against a dirty project returned an r2v clip while the
+    job under investigation was text-only T2V). It cannot know which job a clip
+    belongs to and it registers nothing.
+
+    It is NOT the retrieval path. Job output binding goes through
+    make_video._accept_correlated_output, which matches candidates against the
+    submission's identity anchors and refuses foreign media. Never present this
+    endpoint's output as a job's artifact — every response is tagged
+    correlated=false to make that impossible to miss.
+    """
     from agent.config import OUTPUT_DIR
     client = get_flow_client()
     if not client.connected:
@@ -655,10 +672,12 @@ async def harvest_video():
             vpath = outdir / f"{mid}.mp4"
             vpath.write_bytes(vbytes)
             return {"ok": True, "media_id": mid, "via": "get_media.encodedVideo",
-                    "local_path": str(vpath), "size_mb": round(len(vbytes) / 1024 / 1024, 2)}
+                    "local_path": str(vpath), "size_mb": round(len(vbytes) / 1024 / 1024, 2),
+                    "correlated": False, "warning": _UNCORRELATED_WARNING}
         url = _find_gcs_url(mdata)
     if not url:
         return {"ok": False, "urls": [], "media_ids": media_ids, "diag": inner,
+                "correlated": False, "warning": _UNCORRELATED_WARNING,
                 "note": "no video URL resolved (try get_media or play the video)"}
     if not mid:
         m = re.search(r"/video/([0-9a-f-]{36})", url)
@@ -675,7 +694,8 @@ async def harvest_video():
     path.write_bytes(data)
     return {"ok": True, "media_id": mid, "url": url,
             "local_path": str(path), "size_mb": round(len(data) / 1024 / 1024, 2),
-            "found": len(urls)}
+            "found": len(urls),
+            "correlated": False, "warning": _UNCORRELATED_WARNING}
 
 
 class MakeVideoRequest(BaseModel):
