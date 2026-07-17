@@ -48,6 +48,15 @@ _inflight_dedupe: set[str] = set()
 _POLL_SECONDS = 5
 _JOB_TIMEOUT_SECONDS = 30 * 60
 _INFLIGHT_RETRY_SECONDS = 30
+
+# Round F — the one-serial T2V live lane.
+#
+# This gate is OPT-IN: it applies only when a caller asks for the
+# LIVE_GATE_ONE_SERIAL_T2V lane. The pre-existing live path (ProductionQueuePage)
+# is a protected system (G0 §3) and keeps its own semantics untouched — widening
+# this gate to cover it would be a separate owner decision, not a Round F change.
+LIVE_GATE_ONE_SERIAL_T2V = "ONE_SERIAL_T2V"
+LIVE_CONFIRM_PHRASE = "AUTHORIZE_ONE_T2V_LIVE_RUN"
 _INFLIGHT_MAX_RETRIES = 20
 
 
@@ -319,10 +328,74 @@ async def retry_failed_items(run_id: str) -> dict:
 # ── Execution ─────────────────────────────────────────────────────────────
 
 
+async def _assert_one_serial_t2v_live(
+    run: dict,
+    *,
+    confirm_phrase: str | None,
+    expect_package_id: str | None,
+) -> dict:
+    """Round F gate: refuse anything that is not ONE ready serial T2V item.
+
+    Every check raises rather than returning a flag — the live branch must be
+    unreachable unless all of them pass. Readiness is RE-DERIVED here from
+    build_execution_payload rather than read from `last_dry_run_report`, so a
+    package that changed between the dry run and the live click cannot fire on a
+    stale green report. Returns the single validated item.
+    """
+    if (confirm_phrase or "").strip() != LIVE_CONFIRM_PHRASE:
+        raise ValueError("LIVE_CONFIRM_PHRASE_INVALID")
+
+    items = await crud.list_production_queue_packages(
+        production_run_id=run["production_run_id"], production_status="QUEUED",
+    )
+    # The live loop fans out over EVERY queued item, so >1 item is a bulk run.
+    if len(items) != 1:
+        raise ValueError(f"LIVE_REQUIRES_EXACTLY_ONE_ITEM:{len(items)}")
+    item = items[0]
+    package_id = item["workspace_generation_package_id"]
+
+    if expect_package_id and expect_package_id != package_id:
+        raise ValueError(f"LIVE_PACKAGE_MISMATCH:{package_id}")
+
+    product_id = str(item.get("product_id") or "")
+    if product_id.startswith("fastmoss-ref:"):
+        raise ValueError(f"LIVE_FASTMOSS_REF_FORBIDDEN:{product_id}")
+
+    # Pre-flight duplicate check. O4's guard inside _fire_and_wait is the real
+    # provider-boundary defence and is NOT replaced — this only fails faster.
+    prior_job = str(item.get("production_job_id") or "").strip()
+    if prior_job:
+        raise ValueError(f"LIVE_DUPLICATE_SUBMISSION:{prior_job}")
+
+    cfg = _loads(run.get("config_json"), {})
+    payload, blockers = await build_execution_payload(item, cfg)
+    logical_mode = (payload.get("logical_mode") or "").strip().upper()
+    if logical_mode != "T2V":
+        raise ValueError(f"LIVE_T2V_ONLY:{logical_mode or 'UNKNOWN'}")
+    if blockers:
+        raise ValueError(f"LIVE_ITEM_BLOCKED:{','.join(blockers)}")
+
+    # A dry run must actually have been performed and been green. This is the
+    # procedural gate (operator followed the drill); the re-derivation above is
+    # the authoritative one.
+    report = cfg.get("last_dry_run_report")
+    if not isinstance(report, dict):
+        raise ValueError("LIVE_REQUIRES_DRY_RUN_READY:NO_DRY_RUN")
+    if int(report.get("ready") or 0) != 1 or int(report.get("blocked") or 0) != 0:
+        raise ValueError(
+            f"LIVE_REQUIRES_DRY_RUN_READY:ready={report.get('ready')},"
+            f"blocked={report.get('blocked')}"
+        )
+    return item
+
+
 async def run_production_queue(
     run_id: str,
     *,
     confirm_live_credit_burn: bool = False,
+    live_gate: str | None = None,
+    confirm_phrase: str | None = None,
+    expect_package_id: str | None = None,
 ) -> dict:
     """Start a production run.
 
@@ -330,6 +403,9 @@ async def run_production_queue(
     item's payload is validated and reported, no generation fires, no credits
     are spent, items stay QUEUED. With confirmation the live loop fires each
     item through make_video.start_generate honouring interval + cooldown.
+
+    live_gate=ONE_SERIAL_T2V opts into the Round F gate, which refuses anything
+    that is not exactly one ready T2V item confirmed by the exact phrase.
     """
     run = await crud.get_production_run(run_id)
     if not run:
@@ -346,10 +422,24 @@ async def run_production_queue(
         )
         return {"run_id": run_id, "dry_run": True, "report": report}
 
+    gated_package_id: str | None = None
+    if live_gate:
+        if live_gate != LIVE_GATE_ONE_SERIAL_T2V:
+            raise ValueError(f"LIVE_GATE_UNKNOWN:{live_gate}")
+        # Raises on any refusal — before any state change, so a refused live
+        # request leaves the run exactly as it was (still dry, still PENDING).
+        item = await _assert_one_serial_t2v_live(
+            run, confirm_phrase=confirm_phrase, expect_package_id=expect_package_id,
+        )
+        gated_package_id = item["workspace_generation_package_id"]
+
     await crud.update_production_run(run_id, dry_run=0, status="RUNNING")
     _run_control.pop(run_id, None)
     asyncio.ensure_future(_live_production_loop(run_id))
-    return {"run_id": run_id, "dry_run": False, "status": "RUNNING"}
+    return {
+        "run_id": run_id, "dry_run": False, "status": "RUNNING",
+        "live_gate": live_gate, "package_id": gated_package_id,
+    }
 
 
 async def _dry_run_report(run: dict) -> dict:

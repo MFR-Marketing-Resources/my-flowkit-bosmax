@@ -658,9 +658,90 @@ I authorize ONLY the above. Anything not listed is NOT authorized.
 Signed: __________________________
 ```
 
-### 16.6 Verdict
+### 16.6 Verdict — Round D
 
 **Round D is implementable as a safe, provider-free, credit-free dry-run — but only at API level,
 only in the sandbox, and only after the WEP -> WGP bridge is authorized.** It is **not** implementable
 as a UI-click round today (B8). Blockers **B8-B11** stand. No agent may start Round D until the owner
 records §16.5.
+
+---
+
+## 17. Round F — One-Serial T2V Live Gate: conflict record + build decision
+
+**Status: BUILT, NOT AUTHORIZED TO FIRE. No live run has occurred.** Added 2026-07-17 per §5
+(each round needs its own recorded owner decision) and the `AGENTS.md` Conflict Rule ("a conflict
+must be recorded for the owner, never silently resolved").
+
+### 17.1 The conflict that was raised
+
+A mission was issued requesting `FULL DELIVERY` of the Round F one-serial T2V live gate —
+including self-review, self-merge, and one agent-fired live credit-burning T2V run. That mission
+conflicted with this gate on five counts, each verified read-only against `main = fbea42c`:
+
+| Mission asked for | This gate says |
+|---|---|
+| `FULL DELIVERY` | §5: FULL DELIVERY is **refused for every round** of this workstream |
+| Agent reviews own diff, then merges | §5: **no agent may merge its own PR**; reviewer must be a named human |
+| Agent fires one live T2V run | §6: Round E (live Step 5) = `OWNER-ONLY`, **Not authorized**. §11.4: the agent may **never** self-authorize a live action |
+| Live gate + live run + viewer in one round | §6 bundling: **D+E NEVER**, **E+F NEVER** |
+| Round F delivery | §6: Round F = `OWNER-ONLY` / not planned. §14.8: live generation stays `OWNER-ONLY` **regardless** |
+
+Additionally **B6 stands**: no designated non-production product and no isolated DB exist, so a
+live T2V run today fires against the single live `flow_agent.db` bound to `:8100`.
+
+**Search result at the time of the conflict:** no signed owner authorization exists anywhere in the
+repo for **any** RPA round. The §16.5 template is still unsigned. PRs #389/#390/#391 (Rounds D, E,
+O4) did not amend this gate. *"Rounds A–E are merged"* is therefore **not** evidence that any round
+was authorized, and must not be cited as precedent.
+
+### 17.2 Owner decision (recorded 2026-07-17)
+
+The owner was presented with the conflict and chose: **build it, PR it, stop.**
+
+- **AUTHORIZED:** implement the live gate UI, the server-side one-serial T2V guard, and the result
+  viewer; test; commit; push; open a PR. Then **STOP**.
+- **NOT AUTHORIZED:** self-merge; agent-fired live run; any credit burn.
+- Merge and the one live T2V run remain **owner actions**, consistent with §5 and §11.
+
+This decision authorizes **code only**. It is **not** a live-run authorization and must not be read
+as one. Firing the gate still requires a per-run written authorization under §10 Round E / §11.3.
+
+### 17.3 What was built (PR: Round F one-serial T2V live gate)
+
+- `production_queue_service._assert_one_serial_t2v_live` — refuses unless: exact phrase
+  `AUTHORIZE_ONE_T2V_LIVE_RUN`; **exactly one** QUEUED item; item is T2V; item re-derives ready with
+  zero blockers; a green dry run (`ready=1 blocked=0`) was recorded; no prior `production_job_id`;
+  not a `fastmoss-ref:` product. Every refusal raises **before** any state change, so a refused live
+  request leaves the run dry and `PENDING`.
+- The gate is **OPT-IN** (`live_gate=ONE_SERIAL_T2V`). The pre-existing live path used by
+  `ProductionQueuePage` is a **protected system** (§3) and is deliberately left unchanged.
+- Readiness is **re-derived at fire time**, not read from `last_dry_run_report` — a stale green
+  report cannot fire a package that has since become blocked.
+- O4 (`DUPLICATE_SUBMISSION_BLOCKED` in `_fire_and_wait`) is **untouched** and remains the
+  provider-boundary defence; the new pre-flight duplicate check only fails faster.
+
+### 17.4 Residual finding — pre-existing, NOT introduced by Round F
+
+> `ProductionQueuePage.tsx:188` calls `startProductionRun(runId, true)` — an **unphrased, bulk,
+> multi-item** live start against the live DB. It predates Round F and was not touched.
+>
+> Round F's gate is strict, but it does **not** close this door, because doing so would change a
+> protected system's credit-confirmation behavior (§3) — a separate owner decision.
+> → `OWNER_DECISION_REQUIRED: should the ProductionQueuePage bulk live start be brought under a
+> phrase/one-item gate too?`
+
+### 17.5 Blockers — Round F cannot FIRE while these stand
+
+| ID | Blocker | Clears when |
+|---|---|---|
+| **B12** | **No per-run written owner authorization for a live T2V run.** §11.3 requires it per run; none exists. | Owner records one, quoted in the run report. |
+| **B13** | **B6 still stands** — no non-production product, no isolated DB. A live run hits the live DB. | Safe test data exists, or the owner waives B6 in writing for one named product. |
+| **B14** | **No named human reviewer / rollback owner** (§Status, four open `OWNER_DECISION_REQUIRED` fields). `main` is unprotected and there is no CI. | Owner names both. |
+
+### 17.6 Verdict — Round F
+
+**The gate is implementable and is now implemented, tested, and provably fail-closed under unit
+test — but it has never been fired, and no agent may fire it.** Blockers **B12-B14** stand.
+The next action is an owner action: review and merge the PR, then decide separately whether to
+record a live-run authorization.
