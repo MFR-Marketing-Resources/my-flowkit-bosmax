@@ -332,6 +332,29 @@ def build_product_lock(
         else ""
     )
 
+    # Absolute no-modification clause (owner-directed, reverse-engineered from a
+    # working external prompt whose product NEVER drifted): the engine obeys a
+    # blunt, total prohibition better than enumerated morph rules alone. Emitted
+    # for BOTH image and video lanes.
+    no_modification_lock = (
+        "PRODUCT NO-MODIFICATION LOCK: Do NOT modify, change, restyle, redesign, or "
+        "reinterpret the product in ANY way. The product must retain ALL of its original "
+        "details, design, colors, label text, typography, materials, finish, and packaging "
+        "EXACTLY as shown in the product reference image."
+    )
+
+    # Scale anchor + legibility decoupling (same source): oversize happens when the
+    # engine 'helps' readability by enlarging or pushing the product at the lens.
+    # Anchor the product to the presenter's natural grip and state explicitly that
+    # legibility comes from facing/focus/lighting — never from size.
+    scale_anchor_lock = (
+        "PRODUCT SCALE ANCHOR: When a presenter holds the product, keep it in a natural "
+        "grip at chest level or lower, at its true real-world size relative to the hand, "
+        "fingers, and face. The product must never drift toward the camera, float, or fill "
+        "the frame. Keep it clearly legible by FACING it to the camera with sharp focus and "
+        "good lighting — NEVER by enlarging it."
+    )
+
     # VIDEO-lane hand negative. The anti-finger keyword set existed ONLY in the
     # IMAGE-lane authority (creative_scene_prompt_library.json), so every compiled
     # VIDEO prompt shipped with no hand-anatomy negative at all — live F2V
@@ -356,6 +379,8 @@ def build_product_lock(
         "negative_morph": negative_morph,
         "frame_persistence": frame_persistence,
         "hand_anatomy_lock": hand_anatomy_lock,
+        "no_modification_lock": no_modification_lock,
+        "scale_anchor_lock": scale_anchor_lock,
         "matched_product_id": matched_id,
     }
 
@@ -375,9 +400,12 @@ def section_2_lock_lines(
         lock["geometry_lock"],
         lock["scale_lock"],
         lock["negative_morph"],
+        # Both lanes (owner-directed all-out hardening): the absolute
+        # no-modification clause + the scale anchor / legibility decoupling.
+        lock["no_modification_lock"],
+        lock["scale_anchor_lock"],
     ]
-    # Video-only (empty string for IMG — the image lane keeps its own library
-    # negatives and its proven prompt stays byte-identical).
+    # Video-only (the image lane keeps its own library hand negatives).
     if lock["hand_anatomy_lock"]:
         lines.append(lock["hand_anatomy_lock"])
     return lines
