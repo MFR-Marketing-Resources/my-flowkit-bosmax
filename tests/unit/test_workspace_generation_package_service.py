@@ -39,21 +39,30 @@ FAKE_COMPILE_RESULT = {
     "prompt_fingerprint": "fp_compiled_001",
 }
 
+# The REAL resolver contract (I2VSemanticSlotResolverResponse.model_dump()):
+# resolved_assets with slot_key in subject/scene/style — NOT the old invented
+# "resolved_slots" shape, which hid a live crash (the service called dict .get()
+# on the pydantic model and read a non-existent key; every real I2V create died
+# with "'I2VSemanticSlotResolverResponse' object has no attribute 'get'").
 FAKE_RESOLVER_RESULT = {
-    "resolved_slots": [
+    "mode": "I2V",
+    "recipe_id": "PRODUCT_HELD_BY_CHARACTER_IN_SCENE",
+    "resolved_assets": [
         {
-            "slot_key": "character_reference",
+            "slot_key": "subject",
+            "semantic_role": "character_reference",
             "asset_id": "asset_char_001",
             "asset_fingerprint": "af_char",
-            "label": "Test Character",
+            "display_name": "Test Character",
             "preview_url": "/api/creative-assets/asset_char_001/preview",
             "download_url": "/api/creative-assets/asset_char_001/download",
         },
         {
-            "slot_key": "scene_context",
+            "slot_key": "scene",
+            "semantic_role": "scene_context",
             "asset_id": "asset_scene_001",
             "asset_fingerprint": "af_scene",
-            "label": "Test Scene",
+            "display_name": "Test Scene",
             "preview_url": "/api/creative-assets/asset_scene_001/preview",
             "download_url": "/api/creative-assets/asset_scene_001/download",
         },
@@ -365,7 +374,7 @@ async def test_i2v_package_creation_ready_manual(monkeypatch):
     async def fake_create(wgp_id, *, status, source_lane, resolver_output_json, **kw):
         assert source_lane == "I2V"
         resolver = json.loads(resolver_output_json)
-        assert "resolved_slots" in resolver
+        assert "resolved_assets" in resolver  # the REAL resolver contract persists
         row = {**FAKE_WGP_ROW, "workspace_generation_package_id": wgp_id, "status": status, "mode": "I2V", "source_lane": "I2V"}
         return row
 
