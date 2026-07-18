@@ -15,7 +15,7 @@ default:
 categories:
   - match: [food, beverage, makanan, minuman, snack, drink, spaghetti, coffee, tea]
     background: a bright modern Malaysian home kitchen counter with warm appetizing light
-    model: a Malaysian woman with warm home-cook styling and a clean apron
+    model: a neutral adult presenter; preserve approved avatar or uploaded-reference identity and use an operator-selected food-preparation role only when supplied
     float_elements: real ingredients and appetizing texture elements true to the product flavour
 
   - match: [beauty, skincare, kecantikan, personal care, cosmetic, serum, soap, fragrance, perfume, pewangi]
@@ -25,7 +25,7 @@ categories:
 
   - match: [haircare, shampoo, rambut]
     background: a bright modern bathroom shelf with soft backlight
-    model: a Malaysian woman with healthy styled hair
+    model: a neutral adult presenter; preserve approved avatar or uploaded-reference identity and use an operator-selected haircare role only when supplied
     float_elements: flowing hair strands and botanical elements
 
   - match: [health, wellness, kesihatan, herbal, minyak, oil, supplement, vitamin]
@@ -45,7 +45,7 @@ categories:
 
   - match: [baby, bayi, diaper, lampin, toy, mainan]
     background: a soft bright nursery corner with gentle pastel light
-    model: a Malaysian mother with gentle caring styling
+    model: a neutral adult presenter or caregiver role only when supplied by approved product, operator, avatar, or uploaded-reference context
     float_elements: soft playful rounded forms in gentle pastel tones
 
   - match: [fashion, muslim, apparel, baju, tudung, shawl, jersi, seluar, kurung, sock, stokin, underwear, windbreaker]
@@ -55,5 +55,5 @@ categories:
 
   - match: [automotive, motorcycle, kereta, car, coolant, wax]
     background: a clean modern car interior or garage bay with controlled lighting
-    model: a Malaysian man in practical smart-casual wear
+    model: a neutral adult presenter; preserve approved avatar or uploaded-reference identity and use an operator-selected automotive role only when supplied
     float_elements: precise metallic elements and subtle motion streaks

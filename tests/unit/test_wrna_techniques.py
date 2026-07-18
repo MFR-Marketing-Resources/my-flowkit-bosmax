@@ -3,6 +3,8 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from agent.db import crud
 from agent.models.img_asset_factory import ImgFastlanePromptPreviewRequest
 from agent.services.img_asset_factory_service import (
@@ -28,6 +30,26 @@ def test_category_adapt_matches_and_defaults():
     assert "studio" in unknown["background"]  # fail-closed default
 
     assert "studio" in resolve_category_adapt(None)["background"]
+
+
+@pytest.mark.parametrize(
+    ("category", "expected_background"),
+    [
+        ("Food & Beverages", "kitchen"),
+        ("Haircare", "bathroom"),
+        ("Baby & Kids", "nursery"),
+        ("Automotive", "garage"),
+    ],
+)
+def test_category_adapt_does_not_assign_fixed_gender_or_role(category, expected_background):
+    model = resolve_category_adapt({"category": category})["model"].lower()
+
+    assert expected_background in resolve_category_adapt({"category": category})["background"]
+    assert "neutral adult presenter" in model
+    assert "woman" not in model
+    assert " man " not in f" {model} "
+    assert "mother" not in model
+    assert "father" not in model
 
 
 def test_category_adapt_matches_on_name_when_category_missing():
