@@ -61,6 +61,9 @@ class ManifestProvenance(BaseModel):
     creative_mode: str = ""
     creative_direction_authority_version: str = ""
     representation_policy_version: str = ""
+    composition_schema_version: str = ""
+    composition_profile_id: str = ""
+    composition_signature: str = ""
 
 
 class PosterRenderManifest(BaseModel):

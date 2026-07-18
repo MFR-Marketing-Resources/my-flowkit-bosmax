@@ -26,6 +26,7 @@ from agent.models.poster_render_manifest import (
     PosterRenderManifest,
     ProductLayer,
 )
+from agent.services.poster_composition_service import resolve_poster_composition
 from agent.models.poster_recipe import PosterRecipe
 from agent.services import poster_recipe_service
 
@@ -174,6 +175,19 @@ def build_render_manifest(
         )
 
     creative_direction = creative_direction or {}
+    composition = resolve_poster_composition(
+        creative_direction=type("Direction", (), {"mode": creative_direction.get("mode", "")})(),
+        recipe_id=recipe_id,
+        frame_ratio="9:16",
+        fields={},
+    )
+    signature = "|".join(str(value) for value in (
+        composition.get("profile_id", ""),
+        composition.get("product", {}).get("anchor", ""),
+        composition.get("product", {}).get("dominance", ""),
+        composition.get("scene", {}).get("human_presence", ""),
+        composition.get("scene", {}).get("lighting", ""),
+    ))
     return PosterRenderManifest(
         background_media_id=background_media_id,
         background_local_path=background_local_path,
@@ -203,5 +217,8 @@ def build_render_manifest(
             creative_mode=str(creative_direction.get("mode") or ""),
             creative_direction_authority_version=str(creative_direction.get("authority_version") or ""),
             representation_policy_version=str(creative_direction.get("representation_policy_version") or ""),
+            composition_schema_version=str(composition.get("schema_version") or ""),
+            composition_profile_id=str(composition.get("profile_id") or ""),
+            composition_signature=signature,
         ),
     )
