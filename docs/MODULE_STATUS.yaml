@@ -511,6 +511,7 @@ domains:
       - tests/api/test_ugc_video_prompt_compiler_api.py
       - tests/api/test_workspace_execution_package_api.py
       - tests/api/test_workspace_generation_package_api.py
+      - tests/api/test_bridge_preserves_resolved_slots.py
       - tests/api/test_flow_request_lineage_payload_api.py
       - tests/api/test_claim_safe_rewrite_api.py
       - tests/api/test_ai_provider_settings_api.py
