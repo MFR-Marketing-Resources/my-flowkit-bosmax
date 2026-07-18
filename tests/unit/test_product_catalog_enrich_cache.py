@@ -83,3 +83,32 @@ def test_reference_cache_guard_tracks_load_cap_not_item_count():
     assert F._REFERENCE_CACHE_LOADED_LIMIT >= 500
     # The old len-based guard would have failed here (300 >= 500 is False).
     assert not (len(F._REFERENCE_CACHE_ITEMS) >= 500)
+
+
+def test_catalog_enriches_only_requested_page_without_readiness_filter(monkeypatch):
+    """A cold catalog must not enrich every stored row before pagination."""
+    rows = [
+        {"id": f"p{i}", "source": "MANUAL", "lifecycle_status": "ACTIVE"}
+        for i in range(4)
+    ]
+    calls: list[str] = []
+
+    async def fake_list_products(**kwargs):
+        return rows
+
+    async def fake_enrich(product, *, persist=False):
+        calls.append(product["id"])
+        return dict(product, prompt_readiness_status="READY")
+
+    async def fake_references(limit=500):
+        return []
+
+    monkeypatch.setattr(P.crud, "list_products", fake_list_products)
+    monkeypatch.setattr(P, "_enrich_product", fake_enrich)
+    monkeypatch.setattr(P, "list_fastmoss_reference_products", fake_references)
+    P._CATALOG_ENRICH_CACHE.clear()
+
+    result = asyncio.run(P._list_products_response(limit=1, offset=0))
+
+    assert result["returned_count"] == 1
+    assert calls == [result["items"][0]["id"]]

@@ -577,18 +577,34 @@ async def _list_products_response(
         include_archived=db_include_archived,
         lifecycle_status=requested_lifecycle,
     )
-    enriched_all = [await _enrich_product_cached(product) for product in db_products]
-    merged_products = await _merge_catalog_products(
-        enriched_all,
-        requested_source=requested_source,
-        requested_source_lane=requested_source_lane,
+    generation_purpose = (purpose or "").strip().upper() == "GENERATION"
+    # Reference-only FastMoss rows are never eligible for generation.  Avoid
+    # loading and enriching that workbook on this path only to discard every
+    # row below; the first cold load can otherwise starve the API event loop.
+    merged_products = (
+        list(db_products)
+        if generation_purpose
+        else await _merge_catalog_products(
+            db_products,
+            requested_source=requested_source,
+            requested_source_lane=requested_source_lane,
+        )
     )
-    if (purpose or "").strip().upper() == "GENERATION":
+    if generation_purpose:
         merged_products = [
             product
             for product in merged_products
             if not product.get("reference_only")
             and not is_fastmoss_reference_product_id(str(product.get("id") or ""))
+        ]
+    # Filter and page persisted rows before deterministic enrichment.  The old
+    # order enriched every catalog row before applying ``limit``; a cold
+    # 659-row runtime blocked Fastlane's product request long enough for the
+    # browser to time out.  ``readiness`` is derived by enrichment, so retain
+    # the complete path only for callers that explicitly filter by it.
+    if readiness:
+        merged_products = [
+            await _enrich_product_cached(product) for product in merged_products
         ]
     filtered_all = _filter_products_for_catalog(
         merged_products,
@@ -603,14 +619,9 @@ async def _list_products_response(
     enriched = []
     for product in filtered_all[offset:offset + limit]:
         refreshed_product = await _refresh_claim_safe_product_row_if_needed(product)
-        if refreshed_product is product:
-            enriched.append(product)
-            continue
-        # The claim-safe check returns a fresh DB row for EVERY row that has a
-        # payload (even when nothing changed), so this branch fires for the whole
-        # page. Use the cached enricher: unchanged rows keep the same mutation-key
-        # and hit the cache; genuinely refreshed rows bump claim_safe_copy_updated_at
-        # and re-enrich correctly.
+        # The claim-safe check can return a fresh DB row even when no payload
+        # changed.  Always use the cached enricher: unchanged rows hit their
+        # mutation key, while a refreshed row re-enriches with its new marker.
         enriched.append(await _enrich_product_cached(refreshed_product))
 
     # Annotate every row with the shared Product Truth Gateway lifecycle state so
@@ -644,7 +655,7 @@ def _catalog_priority(product: dict[str, Any]) -> tuple[int, int, int, int, int]
     }.get(source, 4)
     prompt_rank = {"READY": 0, "NEEDS_REVIEW": 1}.get(prompt_status, 2)
     image_rank = 0 if image_status in {"IMAGE_READY", "IMAGE_CACHE_READY"} else 1
-    test_rank = 1 if product.get("is_test_product") else 0
+    test_rank = 1 if product.get("is_test_product", _is_test_product(product)) else 0
     return (lifecycle_rank, test_rank, source_rank, prompt_rank, image_rank)
 
 
@@ -652,8 +663,8 @@ def _matches_catalog_source(product: dict[str, Any], requested_source: str | Non
     if requested_source == "ALL":
         return True
     if requested_source == "TEST":
-        return bool(product.get("is_test_product"))
-    if product.get("is_test_product"):
+        return bool(product.get("is_test_product", _is_test_product(product)))
+    if product.get("is_test_product", _is_test_product(product)):
         return False
     if not requested_source:
         return True

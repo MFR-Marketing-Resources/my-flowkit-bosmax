@@ -97,7 +97,11 @@ def test_generation_catalog_excludes_fastmoss_reference_rows(monkeypatch):
     async def fake_enrich_product(product, **kwargs):
         return dict(product)
 
+    reference_calls = 0
+
     async def fake_list_fastmoss_reference_products(limit=500):
+        nonlocal reference_calls
+        reference_calls += 1
         return [_reference_product()]
 
     monkeypatch.setattr("agent.api.products.crud.list_products", fake_list_products)
@@ -112,6 +116,7 @@ def test_generation_catalog_excludes_fastmoss_reference_rows(monkeypatch):
         payload = response.json()
         assert [item["id"] for item in payload["items"]] == ["canonical-serum-001"]
         assert payload["total_count"] == 1
+    assert reference_calls == 0
 
 
 def test_archived_fastmoss_products_remain_filtered_by_lifecycle(monkeypatch):
