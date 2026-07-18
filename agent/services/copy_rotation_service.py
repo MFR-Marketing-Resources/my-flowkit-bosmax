@@ -26,6 +26,7 @@ Phase-1 usage/fatigue columns (usage_count / last_used_at / archived).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from typing import Any
@@ -106,6 +107,111 @@ async def select_rotation_copy_sets(product_id: str, count: int) -> dict[str, An
 async def record_rotation_usage(copy_set_id: str, mode: str) -> dict[str, Any]:
     """Record one real use (a package was actually created from this script)."""
     return await increment_copy_usage(copy_set_id, mode)
+
+
+# ── Content combination ledger (P2) ───────────────────────────────────────
+# The on-platform uniqueness law: a CONTENT is the combination
+# (script x visual identity x scene). Each produced combination is recorded
+# once under a UNIQUE fingerprint; producing the same combination again is
+# refused — that is the mathematical anti-duplicate guarantee behind bulk.
+
+
+def visual_key_for_plan(plan: dict) -> dict[str, str]:
+    """The visual identity of one planner item, per logical mode.
+
+    T2V/HYBRID: the avatar face. I2V: character + scene + style references.
+    F2V: the finished frame IS the visual. All modes include the scene
+    context, because the same avatar in a different setting is a different
+    visual on-platform.
+    """
+    mode = str(plan.get("logical_mode") or "").upper()
+    key: dict[str, str] = {
+        "scene_context": str(plan.get("scene_context_override") or ""),
+    }
+    if mode in ("T2V", "HYBRID"):
+        key["avatar_code"] = str(plan.get("avatar_code") or "")
+    elif mode == "I2V":
+        key["character_asset_id"] = str(plan.get("character_asset_id") or "")
+        key["scene_asset_id"] = str(plan.get("scene_asset_id") or "")
+        key["style_asset_id"] = str(plan.get("style_asset_id") or "")
+    elif mode == "F2V":
+        key["finished_frame_asset_id"] = str(plan.get("finished_frame_asset_id") or "")
+    return key
+
+
+def script_key_for_plan(plan: dict, *, dialogue_fingerprint: str | None = None) -> str:
+    """The script identity, strongest evidence first.
+
+    Library copy_set = FIXED text, known before compile. Without lineage the
+    hook is only an ANGLE — DIFF_DIALOGUE strategies intentionally diverge
+    the compiled dialogue from the same angle, so post-compile the real
+    script identity is the dialogue fingerprint, and the hook text is only
+    the pre-compile fallback.
+    """
+    copy_set_id = plan.get("copy_set_id")
+    if copy_set_id:
+        return f"copy_set:{copy_set_id}"
+    if dialogue_fingerprint:
+        return f"dialogue:{dialogue_fingerprint}"
+    hook = " ".join(str(plan.get("hook_override") or "").lower().split())
+    return f"hook:{hook}"
+
+
+def combination_fingerprint(
+    product_id: str, logical_mode: str, script_key: str, visual_key: dict[str, str]
+) -> str:
+    """Deterministic sha256 over the canonical combination identity."""
+    canonical = json.dumps(
+        {
+            "product_id": str(product_id),
+            "logical_mode": str(logical_mode or "").upper(),
+            "script_key": script_key,
+            "visual_key": {k: visual_key[k] for k in sorted(visual_key)},
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def plan_combination_fingerprint(
+    product_id: str, plan: dict, *, dialogue_fingerprint: str | None = None
+) -> str:
+    """Fingerprint one planner item plan directly."""
+    return combination_fingerprint(
+        product_id,
+        str(plan.get("logical_mode") or ""),
+        script_key_for_plan(plan, dialogue_fingerprint=dialogue_fingerprint),
+        visual_key_for_plan(plan),
+    )
+
+
+async def combination_already_used(fingerprint: str) -> bool:
+    return await crud.get_content_combination_by_fingerprint(fingerprint) is not None
+
+
+async def record_combination(
+    *,
+    product_id: str,
+    logical_mode: str,
+    plan: dict,
+    fingerprint: str,
+    dialogue_fingerprint: str | None = None,
+    workspace_generation_package_id: str | None = None,
+    batch_run_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Record one PRODUCED combination. Returns None when the fingerprint is
+    already in the ledger (duplicate combination — caller must not ship it)."""
+    return await crud.create_content_combination(
+        product_id=product_id,
+        logical_mode=str(logical_mode or "").upper(),
+        copy_set_id=plan.get("copy_set_id"),
+        script_key=script_key_for_plan(plan, dialogue_fingerprint=dialogue_fingerprint),
+        visual_key_json=json.dumps(visual_key_for_plan(plan), sort_keys=True),
+        combination_fingerprint=fingerprint,
+        workspace_generation_package_id=workspace_generation_package_id,
+        batch_run_id=batch_run_id,
+    )
 
 
 async def clone_copy_set_to_product(
