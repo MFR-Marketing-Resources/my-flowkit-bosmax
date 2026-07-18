@@ -101,6 +101,9 @@ def select_creative_direction_directives(
     operator_human_presence: str = "",
     identity_reference_locked: bool = False,
     composition_constraint_locked: bool = False,
+    lighting_constraint_locked: bool = False,
+    environment_constraint_locked: bool = False,
+    human_presence_constraint_locked: bool = False,
 ) -> list[tuple[str, str]]:
     """Return only mode directives that do not yield to a higher authority.
 
@@ -125,6 +128,14 @@ def select_creative_direction_directives(
         suppressed.add("Props")
     if composition_constraint_locked:
         suppressed.update({"Composition", "Framing"})
-    if operator_human_presence.strip() or identity_reference_locked:
+    if lighting_constraint_locked:
+        suppressed.add("Lighting")
+    if environment_constraint_locked:
+        suppressed.add("Environment")
+    if (
+        operator_human_presence.strip()
+        or identity_reference_locked
+        or human_presence_constraint_locked
+    ):
         suppressed.add("Human presence")
     return [(label, value) for label, value in directives if label not in suppressed]

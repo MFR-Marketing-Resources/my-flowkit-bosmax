@@ -221,4 +221,27 @@ def test_img_fastlane_precedence_suppresses_identity_and_preset_conflicts(monkey
     assert f"Framing: {direction.camera_framing}" not in preview.prompt_text
     assert "Human presence:" not in preview.prompt_text
     assert f"Props: {direction.props}" not in preview.prompt_text
-    assert f"Lighting: {direction.lighting}" in preview.prompt_text
+    assert f"Lighting: {direction.lighting}" not in preview.prompt_text
+    assert f"Environment: {direction.environment}" not in preview.prompt_text
+
+
+def test_product_only_cgi_preset_suppresses_ugc_conflicts_but_keeps_safe_negative(monkeypatch):
+    monkeypatch.setattr(crud, "get_product", _fake_product("Beauty & Personal Care"))
+    preview = asyncio.run(compile_img_fastlane_prompt_preview(
+        ImgFastlanePromptPreviewRequest(
+            preset_id="WRNA_CGI_COMMERCIAL_FLOAT",
+            route="INGREDIENTS",
+            ingredient_role="PRODUCT_REFERENCE",
+            product_id="prod-x",
+            creative_mode="UGC_AUTHENTIC",
+        )
+    ))
+    direction = resolve_creative_direction("UGC_AUTHENTIC", product={"category": "Beauty & Personal Care"})
+    assert "dramatic cinematic lighting" in preview.prompt_text
+    assert "No humans in frame — product is the only hero." in preview.negative_rules
+    assert f"Lighting: {direction.lighting}" not in preview.prompt_text
+    assert f"Environment: {direction.environment}" not in preview.prompt_text
+    assert f"Composition: {direction.composition_direction}" not in preview.prompt_text
+    assert "Human presence:" not in preview.prompt_text
+    assert "cinematic grade" not in preview.negative_rules
+    assert "product distortion" in preview.negative_rules

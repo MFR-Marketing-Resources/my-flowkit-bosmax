@@ -253,6 +253,48 @@ _CLEAN_FRAME_NEGATIVE_RULES: tuple[str, ...] = (
 )
 
 
+# Each profile represents hard instructions already emitted by the selected
+# preset. Mode fields may fill only the fields not listed here. Keeping this
+# table at the preset boundary makes precedence deterministic and auditable.
+_PRESET_CREATIVE_CONSTRAINTS: dict[str, dict[str, object]] = {
+    "BOSMAX_SERUM_AVATAR_PRODUCT_SCENE_3REF": {"product_truth": True, "human_presence": True},
+    "BOSMAX_SERUM_AVATAR_PRODUCT_2REF": {"product_truth": True, "human_presence": True},
+    "MWCB_WG40_AVATAR_BOTTLE": {"product_truth": True, "human_presence": True},
+    "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS": {"product_truth": True, "human_presence": True},
+    "MWCB_WG40_PRODUCT_ONLY_POSTER_LOCK": {"product_truth": True, "composition": True},
+    "WRNA_CGI_COMMERCIAL_FLOAT": {
+        "product_truth": True,
+        "composition": True,
+        "lighting": True,
+        "environment": True,
+        "human_presence": True,
+        "blocked_mode_negative_rules": {"cinematic grade"},
+    },
+    "WRNA_ECOM_LIFESTYLE": {
+        "product_truth": True,
+        "composition": True,
+        "lighting": True,
+        "environment": True,
+        "human_presence": True,
+    },
+}
+
+
+def _preset_creative_constraints(preset_id: str) -> dict[str, object]:
+    """Return the declared hard locks for a known IMG preset."""
+    return _PRESET_CREATIVE_CONSTRAINTS.get(preset_id, {})
+
+
+def _compatible_mode_negative_rules(
+    rules: list[str], constraints: dict[str, object]
+) -> list[str]:
+    blocked = {
+        str(rule).strip().lower()
+        for rule in constraints.get("blocked_mode_negative_rules", set())
+    }
+    return [rule for rule in rules if rule.strip().lower() not in blocked]
+
+
 def _effective_negative_rules(preset: dict[str, object]) -> list[str]:
     """Preset negative rules plus the clean-frame no-text guard for non-poster lanes."""
     rules = [str(rule) for rule in list(preset.get("negative_rules") or [])]
@@ -606,6 +648,7 @@ async def compile_img_fastlane_prompt_preview(
         prompt_lines.append("- No product selected. Select a product for product-truth locking.")
     prompt_lines.append("")
     preset_directives = _preset_directives(request.preset_id, product)
+    constraints = _preset_creative_constraints(request.preset_id)
     prompt_lines.append("COMPOSITION DIRECTIVES:")
     prompt_lines.extend(f"- {line}" for line in preset_directives)
     creative_directives: list[str] = []
@@ -616,9 +659,12 @@ async def compile_img_fastlane_prompt_preview(
                 f"{label}: {value}"
                 for label, value in select_creative_direction_directives(
                     creative_direction,
-                    product_truth_locked=product is not None,
+                    product_truth_locked=bool(constraints.get("product_truth")),
                     identity_reference_locked=bool(request.character_reference_asset_id),
-                    composition_constraint_locked=bool(preset_directives),
+                    composition_constraint_locked=bool(constraints.get("composition")),
+                    lighting_constraint_locked=bool(constraints.get("lighting")),
+                    environment_constraint_locked=bool(constraints.get("environment")),
+                    human_presence_constraint_locked=bool(constraints.get("human_presence")),
                 )
             ),
         ]
@@ -636,7 +682,12 @@ async def compile_img_fastlane_prompt_preview(
         prompt_lines.append(f"- {_clean_text(request.advanced_override_notes)}")
     effective_negative_rules = _effective_negative_rules(preset)
     if creative_direction is not None:
-        effective_negative_rules = [*effective_negative_rules, *creative_direction.negative_rules]
+        effective_negative_rules = [
+            *effective_negative_rules,
+            *_compatible_mode_negative_rules(
+                creative_direction.negative_rules, constraints
+            ),
+        ]
     prompt_lines.append("")
     prompt_lines.append("NEGATIVE RULES:")
     prompt_lines.extend(f"- {rule}" for rule in effective_negative_rules)
