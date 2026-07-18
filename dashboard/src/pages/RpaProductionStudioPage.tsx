@@ -8,10 +8,10 @@
  * prepare, validate, run one live job, see the result.
  *
  * It REUSES the exact backend contract and safety gates — no new server routes, no
- * weakened guards. In particular the live door is the same one-serial T2V gate
- * (live_gate=ONE_SERIAL_T2V + confirmation phrase), and O4 duplicate protection is
- * untouched. F2V/I2V/Hybrid/IMG and bulk are rendered as explicitly locked with the
- * reason.
+ * weakened guards. ALL FOUR video lanes are one-click wired through their own
+ * phrased one-serial gates (T2V / first-frame family F2V+HYBRID / I2V), with
+ * mode-exact server authorization; O4 duplicate protection is untouched. Bulk
+ * stays locked.
  *
  * Durations beyond the engine's single-shot max run through the PROVEN multi-block
  * EXTEND lane instead of the queue: workspace execution package (per-block canonical
@@ -44,11 +44,22 @@ import {
 	fetchVideoModels,
 	getProductionRun,
 	LIVE_CONFIRM_PHRASE,
+	LIVE_F2V_CONFIRM_PHRASE,
+	LIVE_GATE_ONE_SERIAL_F2V,
+	LIVE_GATE_ONE_SERIAL_I2V,
 	LIVE_GATE_ONE_SERIAL_T2V,
+	LIVE_I2V_CONFIRM_PHRASE,
 	startProductionRun,
 	type VideoModelInfo,
 } from "../api/productionQueue";
-import { createT2VGenerationPackage } from "../api/workspaceGenerationPackages";
+import {
+	createFromExecutionPackage,
+	createI2VGenerationPackage,
+	createT2VGenerationPackage,
+} from "../api/workspaceGenerationPackages";
+import { fetchCreativeAssets } from "../api/creativeAssets";
+import { fetchFlowPageState, openFlowNewProject } from "../api/operator";
+import type { CreativeAsset } from "../types";
 import {
 	authorizeVideoJob,
 	getVideoJobStatus,
@@ -82,20 +93,19 @@ const EXTEND_ASPECT_ENUM: Record<string, string> = {
 	"1:1": "VIDEO_ASPECT_RATIO_SQUARE",
 };
 
-/** Future lanes — rendered, never wired. The reason is shown so a user is not left guessing. */
-// Video lanes PROVEN live via the gated Queue Control lanes (first bound
-// artifacts 2026-07-18: F2V 0a18ca6a · HYBRID 80afc332 · I2V b7564ded). They
-// fire today through Queue Control (ONE_SERIAL_F2V / ONE_SERIAL_I2V + phrase);
-// one-click Studio wiring for them is the next step — the lock here is about
-// THIS page's UI, not the pipeline.
-const LOCKED_MODES = [
+// All four video lanes are LIVE-PROVEN (first bound artifacts 2026-07-18:
+// T2V cb0c8b36 · F2V 0a18ca6a · HYBRID 80afc332 · I2V b7564ded) and one-click
+// wired here through their own phrased gates.
+const VIDEO_MODES = [
+	{ key: "T2V", label: "Text → Video", icon: Video,
+	  hint: "Text-only. PROVEN (cb0c8b36)." },
 	{ key: "F2V", label: "Frames → Video", icon: Layers,
-	  reason: "PROVEN live (artifact 0a18ca6a). Fire today via Queue Control's ONE_SERIAL_F2V gated lane — one-click Studio wiring is next. Needs an approved 9:16 start frame (make one with the IMG frame factory)." },
-	{ key: "I2V", label: "Image → Video", icon: Video,
-	  reason: "PROVEN live (artifact b7564ded). Fire today via Queue Control's ONE_SERIAL_I2V gated lane — one-click Studio wiring is next." },
+	  hint: "Needs an APPROVED 9:16 start frame (make one in the Frame Factory). PROVEN (0a18ca6a)." },
 	{ key: "HYBRID", label: "Hybrid", icon: Sparkles,
-	  reason: "PROVEN live (artifact 80afc332). Runs on the first-frame engine; fire today via Queue Control's ONE_SERIAL_F2V family gate — one-click Studio wiring is next." },
-];
+	  hint: "Product-anchor presenter on the first-frame engine. Needs an APPROVED 9:16 product reference. PROVEN (80afc332)." },
+	{ key: "I2V", label: "Ingredients → Video", icon: Video,
+	  hint: "Character + scene references. PROVEN (b7564ded)." },
+] as const;
 
 interface DryRunItem {
 	package_id?: string;
@@ -161,6 +171,19 @@ export default function RpaProductionStudioPage() {
 	const [liveError, setLiveError] = useState<string | null>(null);
 	const [jobItem, setJobItem] = useState<RunItem | null>(null);
 	const [runStatus, setRunStatus] = useState<string | null>(null);
+	// ── one-click mode (all four video lanes are live-proven) ──
+	const [studioMode, setStudioMode] = useState<"T2V" | "F2V" | "HYBRID" | "I2V">("T2V");
+	// Per-mode reference selections (server re-validates roles/approval on prepare).
+	const [startFrameAssetId, setStartFrameAssetId] = useState("");
+	const [productRefAssetId, setProductRefAssetId] = useState("");
+	const [characterAssetId, setCharacterAssetId] = useState("");
+	const [sceneAssetId, setSceneAssetId] = useState("");
+	const [frameAssets, setFrameAssets] = useState<CreativeAsset[]>([]);
+	const [productRefAssets, setProductRefAssets] = useState<CreativeAsset[]>([]);
+	const [characterAssets, setCharacterAssets] = useState<CreativeAsset[]>([]);
+	const [sceneAssets, setSceneAssets] = useState<CreativeAsset[]>([]);
+	// Flow tab readiness (ADVISORY pre-fire drill — CAPTCHA/build-mismatch lessons).
+	const [flowTab, setFlowTab] = useState<{ ready: boolean; buildMatch: boolean } | null>(null);
 	// ── EXTEND (multi-block) lane state ──
 	const [wepId, setWepId] = useState<string | null>(null);
 	const [extendPlan, setExtendPlan] = useState<VideoJobPlan | null>(null);
@@ -201,10 +224,24 @@ export default function RpaProductionStudioPage() {
 	const singleDurations = selectedModelInfo?.allowed_durations_s ?? [duration];
 	const maxSingle = Math.max(...singleDurations);
 	// Multi-block EXTEND totals (N × the engine's single-shot max) — the proven
-	// storyboard-planner + orchestrator lane, not N independent clips.
-	const extendTotals = EXTEND_MULTIPLES.map((n) => n * maxSingle);
+	// storyboard-planner + orchestrator lane, not N independent clips. EXTEND is
+	// wired for the T2V lane only for now.
+	const extendTotals = studioMode === "T2V" ? EXTEND_MULTIPLES.map((n) => n * maxSingle) : [];
 	const durationOptions = [...singleDurations, ...extendTotals];
-	const isExtend = duration > maxSingle;
+	const isExtend = studioMode === "T2V" && duration > maxSingle;
+
+	// Per-lane gate identity. F2V + HYBRID share the live-proven first-frame
+	// family gate; I2V has its own; T2V unchanged. The server enforces the real
+	// phrase — these constants only wire the UI to the right lane.
+	const laneGate = studioMode === "I2V" ? LIVE_GATE_ONE_SERIAL_I2V
+		: studioMode === "T2V" ? LIVE_GATE_ONE_SERIAL_T2V : LIVE_GATE_ONE_SERIAL_F2V;
+	const lanePhrase = studioMode === "I2V" ? LIVE_I2V_CONFIRM_PHRASE
+		: studioMode === "T2V" ? LIVE_CONFIRM_PHRASE : LIVE_F2V_CONFIRM_PHRASE;
+	// Per-mode required references (server re-validates on prepare AND at the gate).
+	const refsChosen = studioMode === "T2V" ? true
+		: studioMode === "F2V" ? Boolean(startFrameAssetId)
+		: studioMode === "HYBRID" ? Boolean(productRefAssetId)
+		: Boolean(characterAssetId && sceneAssetId);
 
 	/** Reset the whole pipeline when the product or config changes — a stale run must never be firable. */
 	const resetPipeline = useCallback(() => {
@@ -229,6 +266,62 @@ export default function RpaProductionStudioPage() {
 		setSelectedProduct(p);
 		resetPipeline();
 	};
+
+	const pickMode = (m: "T2V" | "F2V" | "HYBRID" | "I2V") => {
+		setStudioMode(m);
+		setStartFrameAssetId("");
+		setProductRefAssetId("");
+		setCharacterAssetId("");
+		setSceneAssetId("");
+		setDuration(8);
+		resetPipeline();
+	};
+
+	// Load the reference libraries the selected mode needs. APPROVED only — the
+	// backend gates re-validate role + approval, this just keeps the picker honest.
+	useEffect(() => {
+		if (studioMode === "T2V") return;
+		const approved = (items: CreativeAsset[]) =>
+			items.filter((a) => a.review_status === "APPROVED");
+		if (studioMode === "F2V" && selectedProduct) {
+			void fetchCreativeAssets({
+				semantic_role: "COMPOSITE_FRAME_REFERENCE", status: "ACTIVE",
+				product_id: selectedProduct.id, limit: 100,
+			}).then((r) => setFrameAssets(approved(r.items))).catch(() => setFrameAssets([]));
+		}
+		if (studioMode === "HYBRID" && selectedProduct) {
+			void fetchCreativeAssets({
+				semantic_role: "PRODUCT_REFERENCE", status: "ACTIVE",
+				product_id: selectedProduct.id, limit: 100,
+			}).then((r) => setProductRefAssets(approved(r.items))).catch(() => setProductRefAssets([]));
+		}
+		if (studioMode === "I2V") {
+			void fetchCreativeAssets({
+				semantic_role: "CHARACTER_REFERENCE", status: "ACTIVE", limit: 100,
+			}).then((r) => setCharacterAssets(approved(r.items))).catch(() => setCharacterAssets([]));
+			void fetchCreativeAssets({
+				semantic_role: "SCENE_CONTEXT_REFERENCE", status: "ACTIVE", limit: 100,
+			}).then((r) => setSceneAssets(approved(r.items))).catch(() => setSceneAssets([]));
+		}
+	}, [studioMode, selectedProduct]);
+
+	// ADVISORY Flow-tab readiness (never gates the button — both failure modes are
+	// proven 0-credit + retryable; this just surfaces the drill before the click).
+	const refreshFlowTab = useCallback(async () => {
+		try {
+			const d = await fetchFlowPageState(studioMode === "T2V" ? "T2V" : "F2V");
+			setFlowTab({
+				ready: Boolean(d.editor_capability_ready) && String(d.flow_url ?? "").includes("/project/"),
+				buildMatch: d.build_match !== false,
+			});
+		} catch {
+			setFlowTab(null);
+		}
+	}, [studioMode]);
+
+	useEffect(() => {
+		if (stage === "PREPARED" || stage === "VALIDATED") void refreshFlowTab();
+	}, [stage, refreshFlowTab]);
 
 	/** EXTEND prepare = create the PROVEN multi-block execution package (per-block
 	 *  9-section canonical prompts with WPS-allocated dialogue budgets), then ask the
@@ -308,9 +401,75 @@ export default function RpaProductionStudioPage() {
 		}
 	};
 
-	/** Prepare = create the T2V package, approve it, enqueue it. All no-credit. */
+	/** Shared tail: approve the package + enqueue a 1-item run. All no-credit. */
+	const approveAndEnqueue = async (wgp: string) => {
+		const approve = await approvePackages([wgp]);
+		if (!approve.results?.[0]?.ok) {
+			throw new Error(`Could not approve the package: ${approve.results?.[0]?.error ?? "unknown"}`);
+		}
+		const run = await createProductionRun({ package_ids: [wgp], model, aspect, count: 1 });
+		setWgpId(wgp);
+		setRunId(run.production_run_id);
+		setStage("PREPARED");
+	};
+
+	/** F2V / HYBRID prepare — the PROVEN chain: execution package (server-validated
+	 *  reference roles) → bridge (preserves the resolved assets) → approve → enqueue. */
+	const handlePrepareImageMode = async () => {
+		if (!selectedProduct || !refsChosen) return;
+		setBusy("prepare");
+		setError(null);
+		try {
+			const wep = await createWorkspaceExecutionPackage({
+				product_id: selectedProduct.id,
+				mode: "F2V",
+				source_mode: studioMode === "F2V" ? "FRAMES" : "HYBRID",
+				generation_mode: "SINGLE",
+				duration_seconds: 8,
+				aspect_ratio: aspect,
+				model,
+				dialogue_enabled: true,
+				copy_fallback_confirmed: true,
+				...(studioMode === "F2V"
+					? { start_frame_asset_id: startFrameAssetId }
+					: { product_reference_asset_id: productRefAssetId }),
+			});
+			const wepIdNew = (wep as { workspace_execution_package_id?: string })
+				.workspace_execution_package_id;
+			if (!wepIdNew) throw new Error("execution package returned no id");
+			const pkg = await createFromExecutionPackage(wepIdNew, "F2V");
+			await approveAndEnqueue(pkg.workspace_generation_package_id);
+		} catch (e) {
+			setError(`Prepare failed (nothing firable, no credit): ${e instanceof Error ? e.message : String(e)}`);
+		} finally {
+			setBusy(null);
+		}
+	};
+
+	/** I2V prepare — direct package create with role-validated references. */
+	const handlePrepareI2V = async () => {
+		if (!selectedProduct || !refsChosen) return;
+		setBusy("prepare");
+		setError(null);
+		try {
+			const pkg = await createI2VGenerationPackage({
+				product_id: selectedProduct.id,
+				character_reference_asset_id: characterAssetId,
+				scene_context_reference_asset_id: sceneAssetId,
+			});
+			await approveAndEnqueue(pkg.workspace_generation_package_id);
+		} catch (e) {
+			setError(`I2V prepare failed (nothing firable, no credit): ${e instanceof Error ? e.message : String(e)}`);
+		} finally {
+			setBusy(null);
+		}
+	};
+
+	/** Prepare = create the package for the selected mode, approve it, enqueue it. */
 	const handlePrepare = async () => {
 		if (!selectedProduct) return;
+		if (studioMode === "F2V" || studioMode === "HYBRID") return handlePrepareImageMode();
+		if (studioMode === "I2V") return handlePrepareI2V();
 		if (isExtend) return handlePrepareExtend();
 		setBusy("prepare");
 		setError(null);
@@ -388,7 +547,9 @@ export default function RpaProductionStudioPage() {
 		setBusy("live");
 		try {
 			const res = await startProductionRun(runId, true, {
-				live_gate: LIVE_GATE_ONE_SERIAL_T2V,
+				// The lane's own gate + the operator-typed phrase; the server enforces
+				// the exact phrase and re-derives readiness (mode-exact authorization).
+				live_gate: laneGate,
 				confirm_phrase: phrase,
 				expect_package_id: wgpId,
 			});
@@ -406,7 +567,7 @@ export default function RpaProductionStudioPage() {
 	const dryRunGreen = stage !== "IDLE" && report?.checked === 1 && report?.ready === 1 && report?.blocked === 0;
 	const oneItemOnly = (report?.items?.length ?? 0) === 1;
 	const noPriorJob = !jobItem?.production_job_id;
-	const phraseOk = phrase === LIVE_CONFIRM_PHRASE;
+	const phraseOk = phrase === lanePhrase;
 	const liveGateOpen = !isExtend && Boolean(selectedProduct) && dryRunGreen && oneItemOnly && noPriorJob && phraseOk && !liveSubmitted && busy === null;
 
 	// ── EXTEND gate: a reviewed orchestrator plan + the extend phrase. The server
@@ -519,11 +680,24 @@ export default function RpaProductionStudioPage() {
 			<section className="mb-6 rounded-xl border border-slate-800 bg-slate-900/40 p-4">
 				<h2 className="mb-3 text-sm font-semibold text-slate-200">2 · Choose a mode</h2>
 				<div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-					<div className="rounded-lg border border-emerald-500/50 bg-emerald-500/10 p-3" data-testid="studio-mode-t2v" data-enabled="true">
-						<Video size={16} className="mb-1 text-emerald-300" />
-						<div className="text-[11px] font-semibold text-emerald-200">Text → Video</div>
-						<div className="text-[9px] text-emerald-300/80">T2V · enabled</div>
-					</div>
+					{VIDEO_MODES.map((m) => {
+						const Icon = m.icon;
+						const selected = studioMode === m.key;
+						return (
+							<button key={m.key} type="button"
+								data-testid={`studio-mode-${m.key.toLowerCase()}`}
+								data-enabled="true" data-selected={selected ? "true" : "false"}
+								onClick={() => pickMode(m.key)}
+								title={m.hint}
+								className={`rounded-lg border p-3 text-left ${selected
+									? "border-emerald-500/50 bg-emerald-500/10"
+									: "border-slate-700 bg-slate-950/60 hover:bg-slate-900"}`}>
+								<Icon size={16} className={`mb-1 ${selected ? "text-emerald-300" : "text-slate-400"}`} />
+								<div className={`text-[11px] font-semibold ${selected ? "text-emerald-200" : "text-slate-300"}`}>{m.label}</div>
+								<div className={`text-[9px] ${selected ? "text-emerald-300/80" : "text-slate-500"}`}>{m.key}{selected ? " · selected" : ""}</div>
+							</button>
+						);
+					})}
 					{/* IMG = the FRAME FACTORY, wired as a deep-link into the proven IMG
 					    Fastlane flow (compile preview → generate → truth-gated save). It
 					    lands there with THIS studio's product pre-selected. Deliberately a
@@ -540,19 +714,9 @@ export default function RpaProductionStudioPage() {
 						<div className="text-[11px] font-semibold text-sky-200">Image · Frame Factory</div>
 						<div className="text-[9px] text-sky-300/80">IMG · opens Fastlane{selectedProduct ? " with this product" : ""}</div>
 					</button>
-					{LOCKED_MODES.map((m) => {
-						const Icon = m.icon;
-						return (
-							<div key={m.key} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 opacity-70" data-testid={`studio-mode-${m.key.toLowerCase()}`} data-enabled="false" data-locked="true" title={m.reason}>
-								<div className="mb-1 flex items-center gap-1"><Icon size={16} className="text-slate-600" /><Lock size={10} className="text-slate-600" /></div>
-								<div className="text-[11px] font-semibold text-slate-400">{m.label}</div>
-								<div className="text-[9px] text-slate-600">{m.key} · proven — fire via Queue Control</div>
-							</div>
-						);
-					})}
 				</div>
 				<p className="mt-2 text-[10px] text-slate-500" data-testid="studio-locked-reason">
-					F2V / HYBRID / I2V are PROVEN live and fire today through Queue Control's gated one-serial lanes; their one-click Studio wiring is the next step. IMG opens the proven Fastlane frame factory.
+					All four video lanes are PROVEN live and fire through their own phrased one-serial gates. IMG opens the proven Fastlane frame factory.
 				</p>
 			</section>
 
@@ -598,6 +762,61 @@ export default function RpaProductionStudioPage() {
 						<span className="mt-0.5 block text-[9px] text-slate-600">Fixed to 1 for the MVP</span>
 					</label>
 				</div>
+
+				{/* Per-mode reference pickers (APPROVED assets only; server re-validates). */}
+				{studioMode === "F2V" && (
+					<div className="mt-3" data-testid="studio-refs-f2v">
+						<label className="block">
+							<span className="mb-1 block text-[10px] uppercase tracking-wider text-slate-500">Start frame (approved 9:16 composite)</span>
+							<select data-testid="studio-ref-start-frame" value={startFrameAssetId}
+								onChange={(e) => { setStartFrameAssetId(e.target.value); resetPipeline(); }}
+								className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-slate-100 focus:outline-none">
+								<option value="">— choose a start frame —</option>
+								{frameAssets.map((a) => <option key={a.asset_id} value={a.asset_id}>{a.display_name}</option>)}
+							</select>
+						</label>
+						{frameAssets.length === 0 && (
+							<p className="mt-1 text-[10px] text-amber-300" data-testid="studio-refs-f2v-empty">
+								No approved 9:16 frames for this product yet — make one with the <strong>Image · Frame Factory</strong> card, approve it, then come back.
+							</p>
+						)}
+					</div>
+				)}
+				{studioMode === "HYBRID" && (
+					<div className="mt-3" data-testid="studio-refs-hybrid">
+						<label className="block">
+							<span className="mb-1 block text-[10px] uppercase tracking-wider text-slate-500">Product reference (approved, 9:16)</span>
+							<select data-testid="studio-ref-product" value={productRefAssetId}
+								onChange={(e) => { setProductRefAssetId(e.target.value); resetPipeline(); }}
+								className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-slate-100 focus:outline-none">
+								<option value="">— choose a product reference —</option>
+								{productRefAssets.map((a) => <option key={a.asset_id} value={a.asset_id}>{a.display_name}</option>)}
+							</select>
+						</label>
+					</div>
+				)}
+				{studioMode === "I2V" && (
+					<div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2" data-testid="studio-refs-i2v">
+						<label className="block">
+							<span className="mb-1 block text-[10px] uppercase tracking-wider text-slate-500">Character reference</span>
+							<select data-testid="studio-ref-character" value={characterAssetId}
+								onChange={(e) => { setCharacterAssetId(e.target.value); resetPipeline(); }}
+								className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-slate-100 focus:outline-none">
+								<option value="">— choose a character —</option>
+								{characterAssets.map((a) => <option key={a.asset_id} value={a.asset_id}>{a.display_name}</option>)}
+							</select>
+						</label>
+						<label className="block">
+							<span className="mb-1 block text-[10px] uppercase tracking-wider text-slate-500">Scene reference</span>
+							<select data-testid="studio-ref-scene" value={sceneAssetId}
+								onChange={(e) => { setSceneAssetId(e.target.value); resetPipeline(); }}
+								className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-slate-100 focus:outline-none">
+								<option value="">— choose a scene —</option>
+								{sceneAssets.map((a) => <option key={a.asset_id} value={a.asset_id}>{a.display_name}</option>)}
+							</select>
+						</label>
+					</div>
+				)}
 			</section>
 
 			{error && (
@@ -623,7 +842,7 @@ export default function RpaProductionStudioPage() {
 				</div>
 				<div className="flex flex-wrap gap-2">
 					<button type="button" data-testid="studio-action-prepare" onClick={() => void handlePrepare()}
-						disabled={!selectedProduct || busy !== null || stage !== "IDLE"}
+						disabled={!selectedProduct || !refsChosen || busy !== null || stage !== "IDLE"}
 						className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/50 bg-blue-500/15 px-3 py-2 text-[11px] font-semibold text-blue-100 hover:bg-blue-500/25 disabled:cursor-not-allowed disabled:opacity-40">
 						{busy === "prepare" ? <Loader2 size={12} className="animate-spin" /> : <PackageCheck size={12} />}
 						{isExtend ? "Prepare EXTEND package + reviewed plan" : "Prepare package"}
@@ -681,7 +900,7 @@ export default function RpaProductionStudioPage() {
 
 			{/* ── 5 · One live T2V ── */}
 			<section className="mb-6 rounded-xl border border-red-500/40 bg-red-500/5 p-4" data-testid="studio-live-gate" data-gate-open={(isExtend ? extendGateOpen : liveGateOpen) ? "true" : "false"} data-lane={isExtend ? "EXTEND" : "SINGLE"}>
-				<h2 className="mb-2 flex items-center gap-2 text-sm font-semibold text-red-200"><Flame size={14} /> 5 · {isExtend ? `Run one live EXTEND job (${duration}s multi-block)` : "Run one live T2V"}</h2>
+				<h2 className="mb-2 flex items-center gap-2 text-sm font-semibold text-red-200"><Flame size={14} /> 5 · {isExtend ? `Run one live EXTEND job (${duration}s multi-block)` : `Run one live ${studioMode}`}</h2>
 				<div className="mb-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-[11px] text-red-100" data-testid="studio-live-warning">
 					<strong>This spends real credits.</strong>{" "}
 					{isExtend
@@ -710,11 +929,36 @@ export default function RpaProductionStudioPage() {
 						</div>
 					))}
 				</div>
+				{/* Flow tab readiness — ADVISORY (both failure modes are proven 0-credit +
+				    retryable): encodes the live drill (fresh clean project · build_match ·
+				    warm-up) so the operator sees it BEFORE burning an attempt. */}
+				<div className="mb-3 flex flex-wrap items-center gap-2" data-testid="studio-flowtab-row">
+					<span className={`rounded border px-2 py-1 text-[10px] ${flowTab?.ready ? "border-emerald-500/40 text-emerald-200" : "border-amber-500/40 text-amber-200"}`}
+						data-testid="studio-flowtab-ready" data-ok={flowTab?.ready ? "true" : "false"}>
+						{flowTab == null ? "Flow tab: unknown" : flowTab.ready ? "Flow editor open ✓" : "Flow editor NOT ready"}
+					</span>
+					<span className={`rounded border px-2 py-1 text-[10px] ${flowTab?.buildMatch ? "border-emerald-500/40 text-emerald-200" : "border-amber-500/40 text-amber-200"}`}
+						data-testid="studio-flowtab-build" data-ok={flowTab?.buildMatch ? "true" : "false"}>
+						{flowTab == null ? "build: unknown" : flowTab.buildMatch ? "content script fresh ✓" : "content script STALE — reload the Flow tab"}
+					</span>
+					<button type="button" data-testid="studio-flowtab-open"
+						onClick={() => { void openFlowNewProject(studioMode === "T2V" ? "T2V" : "F2V").then(() => window.setTimeout(() => void refreshFlowTab(), 6000)); }}
+						disabled={busy !== null}
+						className="rounded-lg border border-slate-700 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800 disabled:opacity-40">
+						Open fresh Flow project
+					</button>
+					<button type="button" data-testid="studio-flowtab-refresh"
+						onClick={() => void refreshFlowTab()} disabled={busy !== null}
+						className="rounded-lg border border-slate-700 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800 disabled:opacity-40">
+						Re-check
+					</button>
+					<span className="text-[9px] text-slate-500">Fire into a FRESH clean project; after opening, wait ~40s (warm-up) before firing.</span>
+				</div>
 				<label className="mb-1 block text-[10px] uppercase tracking-wider text-slate-400" htmlFor="studio-phrase">
-					Type <code className="text-red-300">{isExtend ? EXTEND_CONFIRM_PHRASE : LIVE_CONFIRM_PHRASE}</code> to authorize
+					Type <code className="text-red-300">{isExtend ? EXTEND_CONFIRM_PHRASE : lanePhrase}</code> to authorize
 				</label>
 				<input id="studio-phrase" data-testid="studio-phrase-input" type="text" value={phrase} disabled={liveSubmitted}
-					onChange={(e) => setPhrase(e.target.value)} placeholder={isExtend ? EXTEND_CONFIRM_PHRASE : LIVE_CONFIRM_PHRASE} autoComplete="off" spellCheck={false}
+					onChange={(e) => setPhrase(e.target.value)} placeholder={isExtend ? EXTEND_CONFIRM_PHRASE : lanePhrase} autoComplete="off" spellCheck={false}
 					className="mb-3 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-[11px] text-slate-100 placeholder:text-slate-700 focus:border-red-500/60 focus:outline-none disabled:opacity-40" />
 				<button type="button" data-testid="studio-action-go-live" data-enabled={(isExtend ? extendGateOpen : liveGateOpen) ? "true" : "false"}
 					onClick={() => void (isExtend ? handleGoLiveExtend() : handleGoLive())} disabled={isExtend ? !extendGateOpen : !liveGateOpen}
@@ -724,7 +968,7 @@ export default function RpaProductionStudioPage() {
 						? "Live run submitted"
 						: isExtend
 							? `Run ONE live EXTEND job — ${duration}s multi-block (burns credits)`
-							: "Run ONE live T2V (burns credits)"}
+							: `Run ONE live ${studioMode} (burns credits)`}
 				</button>
 				{liveError && (
 					<div className="mt-3 flex items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-[11px] text-red-200" data-testid="studio-live-refused">

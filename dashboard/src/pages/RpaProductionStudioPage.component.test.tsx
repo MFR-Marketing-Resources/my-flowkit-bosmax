@@ -28,8 +28,22 @@ vi.mock("../api/products", () => ({
 	fetchProductCatalog: (...a: unknown[]) => fetchProductCatalog(...a),
 	searchProducts: (...a: unknown[]) => searchProducts(...a),
 }));
+const createFromExecutionPackage = vi.fn();
+const createI2VGenerationPackage = vi.fn();
 vi.mock("../api/workspaceGenerationPackages", () => ({
 	createT2VGenerationPackage: (...a: unknown[]) => createT2VGenerationPackage(...a),
+	createFromExecutionPackage: (...a: unknown[]) => createFromExecutionPackage(...a),
+	createI2VGenerationPackage: (...a: unknown[]) => createI2VGenerationPackage(...a),
+}));
+const fetchCreativeAssets = vi.fn();
+vi.mock("../api/creativeAssets", () => ({
+	fetchCreativeAssets: (...a: unknown[]) => fetchCreativeAssets(...a),
+}));
+const fetchFlowPageState = vi.fn();
+const openFlowNewProject = vi.fn();
+vi.mock("../api/operator", () => ({
+	fetchFlowPageState: (...a: unknown[]) => fetchFlowPageState(...a),
+	openFlowNewProject: (...a: unknown[]) => openFlowNewProject(...a),
 }));
 vi.mock("../api/productionQueue", () => ({
 	approvePackages: (...a: unknown[]) => approvePackages(...a),
@@ -39,6 +53,10 @@ vi.mock("../api/productionQueue", () => ({
 	fetchVideoModels: (...a: unknown[]) => fetchVideoModels(...a),
 	LIVE_GATE_ONE_SERIAL_T2V: "ONE_SERIAL_T2V",
 	LIVE_CONFIRM_PHRASE: "AUTHORIZE_ONE_T2V_LIVE_RUN",
+	LIVE_GATE_ONE_SERIAL_F2V: "ONE_SERIAL_F2V",
+	LIVE_F2V_CONFIRM_PHRASE: "AUTHORIZE_ONE_F2V_LIVE_RUN",
+	LIVE_GATE_ONE_SERIAL_I2V: "ONE_SERIAL_I2V",
+	LIVE_I2V_CONFIRM_PHRASE: "AUTHORIZE_ONE_I2V_LIVE_RUN",
 }));
 
 // ── EXTEND (multi-block) lane fakes ──
@@ -126,17 +144,15 @@ describe("Production Studio — rendered contract", () => {
 		}
 	});
 
-	it("enables T2V + IMG (frame factory), locks F2V/I2V/Hybrid + bulk", async () => {
+	it("all four video lanes + IMG are enabled; T2V selected by default; bulk stays locked", async () => {
 		primeHappyPath();
 		renderPage();
 		await screen.findByTestId("studio-mode-t2v");
-		expect(screen.getByTestId("studio-mode-t2v")).toHaveAttribute("data-enabled", "true");
-		// IMG is WIRED: a deep-link entry into the proven IMG Fastlane frame factory.
-		expect(screen.getByTestId("studio-mode-img")).toHaveAttribute("data-enabled", "true");
-		for (const m of ["f2v", "i2v", "hybrid"]) {
-			expect(screen.getByTestId(`studio-mode-${m}`)).toHaveAttribute("data-locked", "true");
-			expect(screen.getByTestId(`studio-mode-${m}`)).toHaveAttribute("data-enabled", "false");
+		for (const m of ["t2v", "f2v", "hybrid", "i2v", "img"]) {
+			expect(screen.getByTestId(`studio-mode-${m}`)).toHaveAttribute("data-enabled", "true");
 		}
+		expect(screen.getByTestId("studio-mode-t2v")).toHaveAttribute("data-selected", "true");
+		expect(screen.getByTestId("studio-mode-f2v")).toHaveAttribute("data-selected", "false");
 		expect(screen.getByTestId("studio-bulk-locked")).toHaveAttribute("data-locked", "true");
 	});
 
@@ -429,5 +445,138 @@ describe("Production Studio — EXTEND multi-block lane", () => {
 		await waitFor(() => {
 			expect(screen.getByTestId("studio-extend-result")).toBeInTheDocument();
 		});
+	});
+});
+
+// ═══ One-click F2V / HYBRID / I2V lanes — proven pipeline, per-lane gates ═══
+
+const FRAME_ASSET = { asset_id: "ca_frame_916", display_name: "Frame 9:16", review_status: "APPROVED" };
+const PRODREF_ASSET = { asset_id: "ca_prodref_916", display_name: "Anchor 9:16", review_status: "APPROVED" };
+const CHAR_ASSET = { asset_id: "ca_char", display_name: "Char", review_status: "APPROVED" };
+const SCENE_ASSET = { asset_id: "ca_scene", display_name: "Scene", review_status: "APPROVED" };
+
+function primeImageModes() {
+	primeHappyPath();
+	fetchCreativeAssets.mockImplementation((input: { semantic_role?: string }) => {
+		const role = input?.semantic_role;
+		const items = role === "COMPOSITE_FRAME_REFERENCE" ? [FRAME_ASSET]
+			: role === "PRODUCT_REFERENCE" ? [PRODREF_ASSET]
+			: role === "CHARACTER_REFERENCE" ? [CHAR_ASSET]
+			: role === "SCENE_CONTEXT_REFERENCE" ? [SCENE_ASSET] : [];
+		return Promise.resolve({ items });
+	});
+	createWorkspaceExecutionPackage.mockResolvedValue({ workspace_execution_package_id: "wep_x" });
+	createFromExecutionPackage.mockResolvedValue({ workspace_generation_package_id: "wgp_1" });
+	createI2VGenerationPackage.mockResolvedValue({ workspace_generation_package_id: "wgp_1" });
+	fetchFlowPageState.mockResolvedValue({ editor_capability_ready: true, build_match: true, flow_url: "x/project/p1" });
+}
+
+async function pickSelect(testid: string, value: string) {
+	await act(async () => { fireEvent.change(screen.getByTestId(testid), { target: { value } }); });
+}
+
+describe("Production Studio — one-click F2V / HYBRID / I2V", () => {
+	afterEach(cleanup);
+
+	it("F2V prepare runs the PROVEN chain: WEP(FRAMES + start frame) → bridge → approve → enqueue", async () => {
+		primeImageModes();
+		renderPage();
+		await pickProduct();
+		await click("studio-mode-f2v");
+		// Prepare is held until the start frame is chosen.
+		expect(screen.getByTestId("studio-action-prepare")).toBeDisabled();
+		await pickSelect("studio-ref-start-frame", "ca_frame_916");
+		await click("studio-action-prepare");
+
+		expect(createWorkspaceExecutionPackage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				mode: "F2V", source_mode: "FRAMES",
+				start_frame_asset_id: "ca_frame_916",
+			}),
+		);
+		expect(createFromExecutionPackage).toHaveBeenCalledWith("wep_x", "F2V");
+		expect(approvePackages).toHaveBeenCalledWith(["wgp_1"]);
+		expect(createProductionRun).toHaveBeenCalled();
+		expect(createT2VGenerationPackage).not.toHaveBeenCalled();
+	});
+
+	it("HYBRID prepare uses source_mode HYBRID with the product reference", async () => {
+		primeImageModes();
+		renderPage();
+		await pickProduct();
+		await click("studio-mode-hybrid");
+		await pickSelect("studio-ref-product", "ca_prodref_916");
+		await click("studio-action-prepare");
+		expect(createWorkspaceExecutionPackage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				mode: "F2V", source_mode: "HYBRID",
+				product_reference_asset_id: "ca_prodref_916",
+			}),
+		);
+	});
+
+	it("I2V prepare creates the package directly with character + scene", async () => {
+		primeImageModes();
+		renderPage();
+		await pickProduct();
+		await click("studio-mode-i2v");
+		expect(screen.getByTestId("studio-action-prepare")).toBeDisabled();
+		await pickSelect("studio-ref-character", "ca_char");
+		await pickSelect("studio-ref-scene", "ca_scene");
+		await click("studio-action-prepare");
+		expect(createI2VGenerationPackage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				product_id: "prod-1",
+				character_reference_asset_id: "ca_char",
+				scene_context_reference_asset_id: "ca_scene",
+			}),
+		);
+		expect(createWorkspaceExecutionPackage).not.toHaveBeenCalled();
+	});
+
+	it("F2V fire uses the first-frame family gate + F2V phrase (T2V phrase refused by UI)", async () => {
+		primeImageModes();
+		renderPage();
+		await pickProduct();
+		await click("studio-mode-f2v");
+		await pickSelect("studio-ref-start-frame", "ca_frame_916");
+		await click("studio-action-prepare");
+		await waitFor(() => expect(screen.getByTestId("studio-status-wgp")).toHaveTextContent("wgp_1"));
+		await click("studio-action-validate");
+		await waitFor(() => expect(screen.getByTestId("studio-dryrun-report")).toBeInTheDocument());
+
+		await typePhrase("AUTHORIZE_ONE_T2V_LIVE_RUN");
+		expect(screen.getByTestId("studio-live-gate")).toHaveAttribute("data-gate-open", "false");
+		await typePhrase("AUTHORIZE_ONE_F2V_LIVE_RUN");
+		expect(screen.getByTestId("studio-live-gate")).toHaveAttribute("data-gate-open", "true");
+
+		primeLiveResult([{ package_id: "wgp_1", production_status: "RUNNING", production_job_id: "g_x" }]);
+		await click("studio-action-go-live");
+		expect(startProductionRun).toHaveBeenLastCalledWith("prun_1", true, expect.objectContaining({
+			live_gate: "ONE_SERIAL_F2V",
+			confirm_phrase: "AUTHORIZE_ONE_F2V_LIVE_RUN",
+			expect_package_id: "wgp_1",
+		}));
+	});
+
+	it("I2V fire uses the I2V gate + phrase", async () => {
+		primeImageModes();
+		renderPage();
+		await pickProduct();
+		await click("studio-mode-i2v");
+		await pickSelect("studio-ref-character", "ca_char");
+		await pickSelect("studio-ref-scene", "ca_scene");
+		await click("studio-action-prepare");
+		await waitFor(() => expect(screen.getByTestId("studio-status-wgp")).toHaveTextContent("wgp_1"));
+		await click("studio-action-validate");
+		await waitFor(() => expect(screen.getByTestId("studio-dryrun-report")).toBeInTheDocument());
+		await typePhrase("AUTHORIZE_ONE_I2V_LIVE_RUN");
+		expect(screen.getByTestId("studio-live-gate")).toHaveAttribute("data-gate-open", "true");
+		primeLiveResult([{ package_id: "wgp_1", production_status: "RUNNING", production_job_id: "g_y" }]);
+		await click("studio-action-go-live");
+		expect(startProductionRun).toHaveBeenLastCalledWith("prun_1", true, expect.objectContaining({
+			live_gate: "ONE_SERIAL_I2V",
+			confirm_phrase: "AUTHORIZE_ONE_I2V_LIVE_RUN",
+		}));
 	});
 });
