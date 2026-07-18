@@ -298,3 +298,61 @@ def test_parse_identities_absent_stay_none():
     st = av.parse_agent_sse(_POST_APPROVE)
     assert st["gen_prompt"] is None and st["gen_seed"] is None
     assert st["tool_call_id"] is None   # synthetic minimal shape has no toolCallId
+
+
+# ── Text-only routing guard (live g_7d71f6b020cb: a T2V fired R2V in a dirty project) ──
+
+
+def test_decide_steer_instructs_text_only_when_no_reference():
+    """A T2V (no reference) steer must positively say text-only, so the agent does
+    not acquire a stray reference and route to generate_video_with_references."""
+    _, steer, _ = av.decide(None, "Veo 3.1 - Lite", 8, 1, has_reference=False)
+    assert "text prompt" in steer
+    assert "no reference image" in steer
+
+
+def test_decide_steer_preserves_reference_when_present():
+    """SEV-0 law regression: the F2V/I2V (has-reference) steer is unchanged — it
+    preserves the attached reference and never gains the text-only wording."""
+    _, steer, _ = av.decide(None, "Veo 3.1 - Lite", 8, 1, has_reference=True)
+    assert "using the attached reference image" in steer
+    assert "no reference image" not in steer
+    assert "text prompt" not in steer
+
+
+class _CaptureClient:
+    """Fake Flow client: records what was sent, fires a generation tool on the first
+    turn so negotiate_and_generate returns immediately (no provider, no credit)."""
+
+    def __init__(self):
+        self.sent = []
+
+    async def agent_stream_chat(self, session_id, project_id, turn, text,
+                                media_ids=None, permission_action=None):
+        self.sent.append({"text": text, "media_ids": media_ids})
+        return {"data": (
+            'data: {"agentMessage": {"responseId": "r1", "agentEvents": '
+            '[{"toolInvocation": {"toolName": "generate_video_from_text", '
+            '"toolCallId": "tc1", "toolArguments": {"prompt": "compiled", '
+            '"model_usage_key": "veo_3_1_t2v_lite", "duration": 8}}}]}}')}
+
+
+def test_negotiate_prepends_text_only_directive_when_no_media():
+    client = _CaptureClient()
+    _run(av.negotiate_and_generate(client, "proj", "sid", "MY CREATIVE PROMPT", [],
+                                   target_model="Veo 3.1 - Lite", target_duration_s=8))
+    first = client.sent[0]["text"]
+    assert first.startswith(av._TEXT_ONLY_DIRECTIVE)
+    assert "MY CREATIVE PROMPT" in first
+    assert "TEXT-TO-VIDEO" in first
+
+
+def test_negotiate_does_not_add_directive_when_reference_present():
+    """F2V/I2V: a reference is attached, so the directive must NOT appear — the sent
+    text is the creative prompt verbatim."""
+    client = _CaptureClient()
+    _run(av.negotiate_and_generate(client, "proj", "sid", "MY CREATIVE PROMPT", ["m1"],
+                                   target_model="Veo 3.1 - Lite", target_duration_s=8))
+    first = client.sent[0]["text"]
+    assert first == "MY CREATIVE PROMPT"
+    assert av._TEXT_ONLY_DIRECTIVE not in first

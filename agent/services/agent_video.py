@@ -59,6 +59,16 @@ _GEN_TOOLS = ("generate_video", "generate_videos", "start_generation", "submit_g
               # carry prompt + model_usage_key (veo_3_1_t2v_lite) + model_display_name.
               "generate_video_from_text")
 
+# Prepended to the first agent message for a no-reference (T2V) run so the agent
+# generates text-to-video and does not attach a stray reference from a shared/dirty
+# Flow project (which routed a T2V to generate_video_with_references/R2V live and the
+# render failed — g_7d71f6b020cb). Applied ONLY when there is no reference media; the
+# F2V/I2V path never sees it. A nudge on the agent's FIRST tool choice, not a hard gate.
+_TEXT_ONLY_DIRECTIVE = (
+    "Generate this strictly as a TEXT-TO-VIDEO. Do not attach, select, or reuse any "
+    "existing image, start frame, or project media as a reference — produce the video "
+    "purely from the description below.\n\n")
+
 # Post-approve failure knowledge (captured live 2026-07-02, Faris' screenshots):
 # when the render dies server-side the agent posts a "Failed / Something went
 # wrong" toast and then EXPLAINS itself in chat. The most common cause is a
@@ -242,7 +252,14 @@ def decide(permission, target_model=None, target_duration_s=None, desired_num=1,
     # count=2 means a 2-video proposal is the CORRECT one and costs ~2× the unit cap.
     ceiling = video_models.expected_cost(spec["key"], dur) * max(1, int(desired_num or 1))
     video_word = "video" if desired_num == 1 else "videos"
-    keep_ref = (" using the attached reference image" if has_reference else "")
+    # STEER WORDING LAW, opposite direction (live g_7d71f6b020cb): the has_reference
+    # branch PRESERVES the F2V/I2V reference (unchanged). The no-reference branch must
+    # now be equally explicit that a T2V run is TEXT-ONLY — otherwise, in a shared/dirty
+    # Flow project, the agent acquires a stray reference and fires
+    # generate_video_with_references (R2V) for what must be text-only. The F2V path is
+    # byte-identical; only the T2V (else) wording gains a positive text-only instruction.
+    keep_ref = (" using the attached reference image" if has_reference
+                else " generated only from the text prompt, with no reference image")
     steer = (f"{spec['agent_label']}, {dur} second {video_word}, "
              f"{desired_num} {video_word} only{keep_ref}, no separate image generations")
     if not permission:
@@ -320,7 +337,15 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
             "gen_tool_matched": bool(st.get("started_tool")),
         }
 
-    state = await send(prompt, media=media_ids)
+    # Text-only guard on the FIRST message (the reactive steer above only fires on a
+    # rejected proposal; the agent's first tool choice is made from this send alone).
+    # With no reference media, instruct text-to-video explicitly so the agent cannot
+    # pick up a stray reference from a shared/dirty project and route to R2V. The
+    # directive is prepended only to what is SENT — the creative `prompt` (and thus the
+    # correlation anchor make_video captures) is untouched. F2V/I2V (media present) is
+    # unchanged.
+    initial_text = prompt if media_ids else _TEXT_ONLY_DIRECTIVE + prompt
+    state = await send(initial_text, media=media_ids)
     while turn < max_turns:
         if state["error"]:
             return {"ok": False, "stage": "error",
