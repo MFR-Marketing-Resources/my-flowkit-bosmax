@@ -323,6 +323,29 @@ async def _generate_one(
     if sales_clarity["gaps"]:
         warnings.append("SALES_CLARITY_GAPS:" + ",".join(sales_clarity["gaps"]))
 
+    # Script-library redundancy law (owner scale: ~6000 contents/month must never
+    # repeat a script beyond its visual-rotation budget): exact duplicates are
+    # rejected above by dedupe_key; NEAR-duplicates are ANNOTATED here at the
+    # door (zero-provider Jaccard/Levenshtein, stdlib only) so the review page
+    # shows the collision + score instead of silently stacking same-ish scripts.
+    from agent.services.copy_similarity_service import (
+        compute_uniqueness_score,
+        find_nearest,
+    )
+    _existing_rows = await crud.list_copy_sets_for_product(req.product_id)
+    _threshold = getattr(req, "dedupe_threshold", None)
+    _nearest, _near_score = find_nearest(
+        fields, _existing_rows,
+        threshold=0.80 if _threshold is None else float(_threshold),
+    )
+    _uniqueness = compute_uniqueness_score(
+        fields, [r for r in _existing_rows if r.get("status") == "COPY_APPROVED"],
+    )
+    if _nearest is not None:
+        warnings.append(
+            f"NEAR_DUPLICATE:{_nearest.get('copy_set_id')}:{_near_score:.2f}"
+        )
+
     # AI-generated copy ALWAYS enters review — never DRAFT-clean, never approved.
     claim_review = {
         "completeness": completeness,
@@ -352,6 +375,11 @@ async def _generate_one(
         source=SOURCE_AI_COPY_ASSIST,
         provenance_json=json.dumps(_internal_provenance(ai)),
         claim_review_json=json.dumps(claim_review),
+        # Library similarity annotations (Phase-1 columns): persisted at creation
+        # so the library page can sort/flag redundancy without recomputation.
+        uniqueness_score=_uniqueness,
+        similar_to_copy_set_id=(_nearest or {}).get("copy_set_id"),
+        similarity_score=_near_score if _nearest is not None else None,
     )
     return {
         "copy_set": serialize_copy_set(row),
@@ -473,6 +501,10 @@ async def generate_ai_copy_candidates_batch(
         angle=req.angle,
         hook=req.hook,
         candidate_count=1,
+        # Thread the batch's dedupe threshold so the per-candidate near-dup
+        # annotation (library redundancy law) honors the SAME threshold as the
+        # batch-level dedupe below (extra="allow" carries it).
+        dedupe_threshold=req.dedupe_threshold,
     )
 
     # ── dry_run: validate only, no provider call, no persistence ──

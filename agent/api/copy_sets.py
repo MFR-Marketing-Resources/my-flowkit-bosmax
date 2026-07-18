@@ -16,6 +16,7 @@ only creates/reviews/approves Copy Sets. Errors fail closed with operator-readab
 codes.
 """
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from agent.models.copy_set import (
     APPROVAL_PHRASE,
@@ -172,3 +173,38 @@ async def delete_copy_set(copy_set_id: str):
         return await svc.delete_copy_set(copy_set_id)
     except svc.CopySetError as error:
         _raise(error)
+
+
+# ── Script Library rotation (owner scale: 200/day, combination-unique) ─────
+
+
+class RotationSelectionRequest(BaseModel):
+    product_id: str
+    count: int = 10
+
+
+@router.post("/rotation-selection")
+async def rotation_selection(request: RotationSelectionRequest):
+    """Deterministic LRU pick of APPROVED scripts for a batch (usage_count <
+    reuse cap 15, never-used first). Read-only preview — usage is recorded only
+    when a package is actually created from the script. Empty items =
+    NO_APPROVED_COPY_AVAILABLE (generate + approve first; never a silent
+    fallback)."""
+    from agent.services.copy_rotation_service import select_rotation_copy_sets
+    result = await select_rotation_copy_sets(request.product_id, request.count)
+    result["items"] = [svc.serialize_copy_set(r) for r in result["items"]]
+    return result
+
+
+@router.post("/{copy_set_id}/clone-to/{target_product_id}")
+async def clone_copy_set(copy_set_id: str, target_product_id: str):
+    """Share a script with a SIMILAR product (owner rule: e.g. two vanilla car
+    perfumes). Explicit only; the clone re-enters review with a fresh
+    claim-safety scan against the TARGET product — never auto-approved."""
+    from agent.services.copy_rotation_service import clone_copy_set_to_product
+    try:
+        return await clone_copy_set_to_product(copy_set_id, target_product_id)
+    except ValueError as exc:
+        message = str(exc)
+        status = 404 if "NOT_FOUND" in message else 409
+        raise HTTPException(status_code=status, detail=message)
