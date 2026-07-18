@@ -58,14 +58,17 @@ _INFLIGHT_RETRY_SECONDS = 30
 LIVE_GATE_ONE_SERIAL_T2V = "ONE_SERIAL_T2V"
 LIVE_CONFIRM_PHRASE = "AUTHORIZE_ONE_T2V_LIVE_RUN"
 
-# Round F (Option 2) — the one-serial F2V live lane. Same opt-in contract as the
-# T2V lane above: it applies ONLY when a caller asks for LIVE_GATE_ONE_SERIAL_F2V
-# with the DISTINCT F2V phrase, so a T2V confirmation can never authorize an F2V
-# fire and vice-versa. The ungated ProductionQueuePage bulk path (G0 §3) stays
-# strictly T2V-only — this lane does NOT widen it. A gated F2V pass records
-# authorized_live_mode='F2V' into the run config so the live loop (a second,
-# universal chokepoint) allows exactly that one pre-validated F2V item; every
-# other run leaves the flag absent and the loop defaults fail-closed to T2V-only.
+# Round F (Option 2) — the one-serial FIRST-FRAME live lane (F2V and HYBRID —
+# both fire the live-proven first-frame engine: generate_video_with_first_frame /
+# veo_3_1_i2v_lite). Same opt-in contract as the T2V lane above: it applies ONLY
+# when a caller asks for LIVE_GATE_ONE_SERIAL_F2V with the DISTINCT phrase, so a
+# T2V confirmation can never authorize a first-frame fire and vice-versa. The
+# ungated ProductionQueuePage bulk path (G0 §3) stays strictly T2V-only — this
+# lane does NOT widen it. A gated pass records authorized_live_mode=<validated
+# mode> (F2V or HYBRID, exactly as validated) into the run config so the live
+# loop (a second, universal chokepoint) allows exactly that one pre-validated
+# item; every other run leaves the flag absent and the loop defaults fail-closed
+# to T2V-only.
 LIVE_GATE_ONE_SERIAL_F2V = "ONE_SERIAL_F2V"
 LIVE_F2V_CONFIRM_PHRASE = "AUTHORIZE_ONE_F2V_LIVE_RUN"
 _INFLIGHT_MAX_RETRIES = 20
@@ -754,15 +757,20 @@ async def _assert_one_serial_f2v_live(
     confirm_phrase: str | None,
     expect_package_id: str | None,
 ) -> dict:
-    """Round F (Option 2) gate: refuse anything that is not ONE ready serial F2V item.
+    """FIRST-FRAME family gate: refuse anything that is not ONE ready serial
+    F2V or HYBRID item.
 
-    A byte-for-byte mirror of _assert_one_serial_t2v_live, changing only the
-    confirmation phrase and the accepted mode literal ('F2V'). HYBRID, I2V and
-    T2V all raise LIVE_F2V_ONLY here, so this lane admits exactly the genuine
-    first-frame F2V lineage and nothing else. Every check raises rather than
-    returning a flag, and readiness is RE-DERIVED from build_execution_payload
-    (never read from a stale green report), so the live branch is unreachable
-    unless all of them pass. Returns the single validated item.
+    A mirror of _assert_one_serial_t2v_live (phrase + accepted modes differ).
+    F2V and HYBRID both fire the SAME live-proven first-frame engine
+    (generate_video_with_first_frame / veo_3_1_i2v_lite — g_ba088e7195df);
+    HYBRID is the product-anchor presenter lane on that engine, so it shares
+    this lane's exact credit/risk profile. I2V and T2V still raise
+    LIVE_F2V_ONLY. Every check raises rather than returning a flag, and
+    readiness is RE-DERIVED from build_execution_payload (never read from a
+    stale green report), so the live branch is unreachable unless all of them
+    pass. Returns (item, validated_logical_mode) — the dispatcher authorizes
+    the loop for EXACTLY that mode, so a HYBRID-authorized run can never fire
+    a swapped-in F2V item and vice versa.
     """
     if (confirm_phrase or "").strip() != LIVE_F2V_CONFIRM_PHRASE:
         raise ValueError("LIVE_CONFIRM_PHRASE_INVALID")
@@ -789,7 +797,7 @@ async def _assert_one_serial_f2v_live(
     cfg = _loads(run.get("config_json"), {})
     payload, blockers = await build_execution_payload(item, cfg)
     logical_mode = (payload.get("logical_mode") or "").strip().upper()
-    if logical_mode != "F2V":
+    if logical_mode not in ("F2V", "HYBRID"):
         raise ValueError(f"LIVE_F2V_ONLY:{logical_mode or 'UNKNOWN'}")
     if blockers:
         raise ValueError(f"LIVE_ITEM_BLOCKED:{','.join(blockers)}")
@@ -802,7 +810,7 @@ async def _assert_one_serial_f2v_live(
             f"LIVE_REQUIRES_DRY_RUN_READY:ready={report.get('ready')},"
             f"blocked={report.get('blocked')}"
         )
-    return item
+    return item, logical_mode
 
 
 async def run_production_queue(
@@ -862,13 +870,14 @@ async def run_production_queue(
             )
             gated_package_id = item["workspace_generation_package_id"]
         elif live_gate == LIVE_GATE_ONE_SERIAL_F2V:
-            item = await _assert_one_serial_f2v_live(
+            item, validated_mode = await _assert_one_serial_f2v_live(
                 run, confirm_phrase=confirm_phrase, expect_package_id=expect_package_id,
             )
             gated_package_id = item["workspace_generation_package_id"]
-            # Authorize the loop to fire THIS one pre-validated F2V item, and
-            # nothing else — the gate already guaranteed exactly one QUEUED item.
-            cfg["authorized_live_mode"] = "F2V"
+            # Authorize the loop for EXACTLY the validated mode (F2V or HYBRID —
+            # the first-frame family) of THIS one pre-validated item; the gate
+            # already guaranteed exactly one QUEUED item.
+            cfg["authorized_live_mode"] = validated_mode
         else:
             raise ValueError(f"LIVE_GATE_UNKNOWN:{live_gate}")
 
@@ -928,8 +937,10 @@ async def _live_production_loop(run_id: str) -> None:
     # 'F2V' (set in run_production_queue, popped on every other live start), which
     # — and only which — widens the set to admit that one pre-validated F2V item.
     allowed_live_modes = {"T2V"}
-    if str(cfg.get("authorized_live_mode") or "").strip().upper() == "F2V":
-        allowed_live_modes = {"F2V"}
+    _auth = str(cfg.get("authorized_live_mode") or "").strip().upper()
+    if _auth in ("F2V", "HYBRID"):
+        # First-frame family: the gate validated ONE item of exactly this mode.
+        allowed_live_modes = {_auth}
     interval_min = int(run.get("interval_min_seconds") or 45)
     interval_max = int(run.get("interval_max_seconds") or 120)
     cooldown_n = int(run.get("cooldown_after_n_jobs") or 5)
