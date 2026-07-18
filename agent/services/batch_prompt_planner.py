@@ -149,6 +149,7 @@ def plan_batch_items(
     style_asset_ids: list[str] | None = None,
     scene_contexts: list[str] | None = None,
     hook_angles: list[str] | None = None,
+    copy_set_ids: list[str] | None = None,
     finished_frame_asset_id: str | None = None,
 ) -> list[dict]:
     """Expand Qty N into N deterministic item plans (round-robin rotation).
@@ -189,7 +190,12 @@ def plan_batch_items(
         plan["scene_context_override"] = _rotate(contexts, seed, i)
         # Script: same hook for all items when the strategy fixes the script;
         # otherwise rotate the hook angle so dialogue actually diverges.
+        # copy_set_ids is index-aligned with hook_angles (Script Library
+        # rotation) and MUST rotate with the identical (seed, i) so the
+        # copy_set lineage stays paired with its hook text.
         plan["hook_override"] = (hooks[0] if hooks else None) if same_script else _rotate(hooks, seed, i)
+        cs_ids = list(copy_set_ids or [])
+        plan["copy_set_id"] = (cs_ids[0] if cs_ids else None) if same_script else _rotate(cs_ids, seed, i)
         items.append(plan)
     return items
 

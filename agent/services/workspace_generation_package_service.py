@@ -1299,6 +1299,7 @@ async def _run_batch_prompt_plan_task(
 
     Prompt generation ONLY — no Google Flow execution, no credits."""
     from agent.services import batch_prompt_planner as _planner
+    from agent.services import copy_rotation_service as _rotation
 
     creator = _MODE_CREATORS.get(logical_mode)
     if creator is None:
@@ -1335,6 +1336,21 @@ async def _run_batch_prompt_plan_task(
             cancelled = True
             break
         try:
+            # Combination ledger gate (P2): the same (script x avatar x scene)
+            # must never be produced twice — the on-platform uniqueness law.
+            # Pre-create refusal applies only to Script Library items, whose
+            # text is FIXED before compile; angle-based items diverge their
+            # dialogue at compile time, so their real script identity (the
+            # dialogue fingerprint) is only known post-create and is checked
+            # at record time below.
+            if plan.get("copy_set_id"):
+                combo_fp = _rotation.plan_combination_fingerprint(product_id, plan)
+                if await _rotation.combination_already_used(combo_fp):
+                    raise ValueError(
+                        "COMBINATION_ALREADY_USED:"
+                        "same_script_avatar_scene_already_produced:"
+                        "vary_scripts_or_visuals"
+                    )
             row = await creator(
                 product_id=product_id,
                 generation_mode=generation_mode,
@@ -1368,8 +1384,49 @@ async def _run_batch_prompt_plan_task(
                     f"item#{plan['item_index'] + 1}: BLOCKED {','.join(hard)}"
                 )
             else:
-                completed += 1
-                batch_seen.append(fingerprints)
+                # P2: burn the combination + record one real script use only
+                # for a package that actually came out usable (not BLOCKED).
+                # Angle-based items get their true script identity here — the
+                # compiled dialogue fingerprint — so the UNIQUE index catches
+                # a real duplicate even across batches.
+                dialogue_fp = fingerprints.get("dialogue_fingerprint") or None
+                combo_fp = _rotation.plan_combination_fingerprint(
+                    product_id, plan, dialogue_fingerprint=dialogue_fp
+                )
+                combo_row = await _rotation.record_combination(
+                    product_id=product_id,
+                    logical_mode=logical_mode,
+                    plan=plan,
+                    fingerprint=combo_fp,
+                    dialogue_fingerprint=dialogue_fp,
+                    workspace_generation_package_id=row.get(
+                        "workspace_generation_package_id"
+                    ),
+                    batch_run_id=batch_run_id,
+                )
+                if combo_row is None:
+                    failed += 1
+                    errors.append(
+                        f"item#{plan['item_index'] + 1}: COMBINATION_DUPLICATE_AT_RECORD"
+                    )
+                    wgp_id = row.get("workspace_generation_package_id")
+                    if wgp_id:
+                        await crud.update_workspace_generation_package(
+                            wgp_id, status="BLOCKED"
+                        )
+                else:
+                    completed += 1
+                    batch_seen.append(fingerprints)
+                    if plan.get("copy_set_id"):
+                        try:
+                            await _rotation.record_rotation_usage(
+                                plan["copy_set_id"], logical_mode
+                            )
+                        except Exception as usage_exc:
+                            _batch_logger.warning(
+                                "BatchPrompt %s: usage record failed for %s: %s",
+                                batch_run_id, plan["copy_set_id"], usage_exc,
+                            )
         except Exception as exc:
             failed += 1
             errors.append(f"item#{plan['item_index'] + 1}: {exc}")
@@ -1487,12 +1544,39 @@ async def start_batch_prompt_run(
         except Exception:
             resolved_avatars = []
 
-    # Hook rotation: explicit, else claim-safe hook angles from product truth.
+    # Script source priority (Script Library P2): explicit hooks win, then
+    # the approved Script Library via deterministic LRU rotation, then the
+    # claim-safe hook angles from product truth (legacy fallback so products
+    # with an empty library keep working).
     resolved_hooks = [h for h in (hook_angles or []) if h]
+    resolved_copy_set_ids: list[str] = []
+    copy_rotation_warnings: list[str] = []
+    copy_source = "EXPLICIT_HOOKS" if resolved_hooks else None
+    if not resolved_hooks:
+        try:
+            from agent.services import copy_rotation_service as _rotation
+            selection = await _rotation.select_rotation_copy_sets(product_id, quantity)
+            copy_rotation_warnings = list(selection.get("warnings") or [])
+            seen_cs: set[str] = set()
+            for cs_row in selection.get("items") or []:
+                cs_id = str(cs_row.get("copy_set_id") or "")
+                cs_hook = str(cs_row.get("hook") or cs_row.get("angle") or "").strip()
+                if not cs_id or not cs_hook or cs_id in seen_cs:
+                    continue
+                seen_cs.add(cs_id)
+                resolved_copy_set_ids.append(cs_id)
+                resolved_hooks.append(cs_hook)
+            if resolved_hooks:
+                copy_source = "SCRIPT_LIBRARY"
+        except Exception as exc:
+            _batch_logger.warning("BatchPrompt: script library unavailable: %s", exc)
+            resolved_hooks, resolved_copy_set_ids = [], []
     if not resolved_hooks and product_row:
         try:
             payload = json.loads(product_row.get("claim_safe_copy_payload") or "{}")
             resolved_hooks = [h for h in (payload.get("safe_hook_angles") or []) if h]
+            if resolved_hooks:
+                copy_source = "CLAIM_SAFE_ANGLES"
         except Exception:
             resolved_hooks = []
 
@@ -1507,6 +1591,7 @@ async def start_batch_prompt_run(
         style_asset_ids=style_asset_ids,
         scene_contexts=scene_contexts,
         hook_angles=resolved_hooks,
+        copy_set_ids=resolved_copy_set_ids,
         finished_frame_asset_id=finished_frame_asset_id,
     )
 
@@ -1539,6 +1624,9 @@ async def start_batch_prompt_run(
         "style_asset_ids": style_asset_ids or [],
         "scene_contexts": scene_contexts or [],
         "hook_angles": resolved_hooks,
+        "copy_source": copy_source,
+        "copy_set_ids": resolved_copy_set_ids,
+        "copy_rotation_warnings": copy_rotation_warnings,
         "finished_frame_asset_id": finished_frame_asset_id,
     }
 

@@ -8,7 +8,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "creative_product_selection", "poster_copy_set", "poster_deliverable", "extend_lineage"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "content_combination", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "creative_product_selection", "poster_copy_set", "poster_deliverable", "extend_lineage"})
 
 
 def _validate_table(table: str) -> None:
@@ -51,6 +51,7 @@ _COLUMNS = {
     "product_intelligence_field_provenance": {"snapshot_id", "product_id", "field_name", "declared_value", "normalized_value", "source_type", "source_url", "source_lane", "evidence_kind", "extraction_method", "confidence_score", "verification_status", "claim_risk_flag", "reviewer_decision", "reviewer_note", "updated_at"},
     "product_intelligence_review_draft": {"product_id", "review_status", "product_description", "benefits_json", "usp_json", "usage_text", "ingredients_text", "warnings_text", "target_customer_text", "paste_anything_summary", "source_urls_json", "image_evidence_json", "package_notes", "size_or_volume", "product_form_factor", "packaging_description", "product_truth_lock", "claim_gate", "claim_risk_level", "claim_tokens_json", "allowed_claims_json", "blocked_claims_json", "buyer_persona_snapshot_json", "copy_strategy_summary_json", "confidence_score", "completeness_score", "readiness_status", "reviewer_note", "created_by", "reviewed_by", "approved_by", "approved_at", "rejected_by", "rejected_at", "updated_at"},
     "copy_generation_batch": {"product_id", "requested_count", "created_count", "deduped_count", "rejected_count", "source", "provider_lane", "provider_model", "updated_at"},
+    "content_combination": {"product_id", "logical_mode", "copy_set_id", "script_key", "visual_key_json", "combination_fingerprint", "workspace_generation_package_id", "batch_run_id"},
     "avatar_product_fit": {"avatar_code", "product_category", "fit_score", "suitability_notes", "updated_at"},
     "creative_scene_prompt": {"template_id", "cluster", "source_category", "cluster_source", "main_action", "setting", "full_prompt_template", "base_prompt", "combined_prompt_suggestion", "negative_prompt", "variant", "notes", "provenance", "updated_at"},
     "creative_camera_preset": {"preset_code", "preset_name", "shot_type", "distance_angle", "movement", "block_group", "provenance", "updated_at"},
@@ -748,6 +749,59 @@ async def list_copy_generation_batches(
     q += " ORDER BY created_at DESC LIMIT ?"
     params.append(limit)
     cur = await db.execute(q, params)
+    return [dict(r) for r in await cur.fetchall()]
+
+
+# --- content_combination (Script Library P2 — produced-combination ledger) ---
+
+async def create_content_combination(**kw) -> dict | None:
+    """Insert one produced combination. Returns None when the UNIQUE
+    fingerprint already exists (combination already produced) — the caller
+    treats None as the duplicate signal, never as an error to retry."""
+    db = await get_db()
+    cid, now = _uuid(), _now()
+    cols = ["combination_id", "created_at"]
+    vals: list[object] = [cid, now]
+    allowed = _COLUMNS["content_combination"]
+    for k, v in kw.items():
+        if k in allowed and k not in cols:
+            cols.append(k)
+            vals.append(v)
+    col_str = ",".join(cols)
+    placeholders = ",".join(["?"] * len(cols))
+    async with _db_lock:
+        try:
+            await db.execute(
+                f"INSERT INTO content_combination ({col_str}) VALUES ({placeholders})",
+                vals,
+            )
+            await db.commit()
+        except Exception as exc:
+            if "unique" in str(exc).lower():
+                return None
+            raise
+    return await _get_with_db(db, "content_combination", "combination_id", cid)
+
+
+async def get_content_combination_by_fingerprint(fingerprint: str) -> dict | None:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM content_combination WHERE combination_fingerprint=?",
+        (fingerprint,),
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def list_content_combinations_for_product(
+    product_id: str, limit: int = 500
+) -> list[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM content_combination WHERE product_id=?"
+        " ORDER BY created_at DESC LIMIT ?",
+        (product_id, limit),
+    )
     return [dict(r) for r in await cur.fetchall()]
 
 

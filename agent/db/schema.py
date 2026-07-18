@@ -2087,6 +2087,30 @@ CREATE INDEX IF NOT EXISTS idx_copy_generation_batch_product
 """)
         await db.commit()
 
+        # Script Library P2 — content combination ledger. One row per
+        # PRODUCED combination (script x avatar/visuals x scene); the UNIQUE
+        # fingerprint is the mathematical anti-duplicate guarantee: the batch
+        # planner refuses to produce the same combination twice.
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS content_combination (
+    combination_id    TEXT PRIMARY KEY,
+    product_id        TEXT NOT NULL,
+    logical_mode      TEXT NOT NULL,
+    copy_set_id       TEXT,
+    script_key        TEXT NOT NULL DEFAULT '',
+    visual_key_json   TEXT NOT NULL DEFAULT '{}',
+    combination_fingerprint TEXT NOT NULL,
+    workspace_generation_package_id TEXT,
+    batch_run_id      TEXT,
+    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_content_combination_fingerprint
+    ON content_combination(combination_fingerprint);
+CREATE INDEX IF NOT EXISTS idx_content_combination_product
+    ON content_combination(product_id, created_at);
+""")
+        await db.commit()
+
         # Copy Intelligence Phase 1 — avatar-product fit mapping.
         await db.executescript("""
 CREATE TABLE IF NOT EXISTS avatar_product_fit (
