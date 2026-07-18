@@ -809,3 +809,51 @@ def test_unknown_scene_context_code_warns_not_crashes(monkeypatch):
     )
     assert "SCENE_CONTEXT_NOT_FOUND" in preview.warnings
     assert "SCENE CONTEXT" not in preview.prompt_text  # nothing injected on miss
+
+
+# ── Clean-frame anti-leak hardening (owner-reported live leak) ─────────────
+#
+# A frames output rendered social-app UI (like/share icons, an order button, a
+# template-name chip) + engine-invented garbled Malay marketing copy. Root
+# nudges: the output spec literally asked for a "TikTok" image, and the clean
+# rules banned text but not the interface family.
+
+
+def test_fastlane_output_spec_never_names_a_platform_and_declares_clean_frame():
+    from agent.services.img_asset_factory_service import _FASTLANE_OUTPUT_SPEC
+    assert "tiktok" not in _FASTLANE_OUTPUT_SPEC.lower()
+    for kw in ("no text", "no captions", "no buttons", "no icons", "no interface elements"):
+        assert kw in _FASTLANE_OUTPUT_SPEC.lower(), f"missing: {kw}"
+
+
+def test_clean_frame_rules_ban_the_social_ui_family_and_invented_copy():
+    from agent.services.img_asset_factory_service import _CLEAN_FRAME_NEGATIVE_RULES
+    joined = " ".join(_CLEAN_FRAME_NEGATIVE_RULES).lower()
+    for kw in ("like/comment/share icons", "order buttons", "template/preset name chips",
+               "phone status bars", "invented marketing copy"):
+        assert kw in joined, f"missing: {kw}"
+
+
+@pytest.mark.asyncio
+async def test_generic_frames_engine_prompt_carries_all_locks_and_no_platform_word(monkeypatch):
+    """End-to-end compile of the exact preset from the leak: the engine brief must
+    carry the no-modification + scale-anchor locks, the interface-family ban, and
+    must never contain 'TikTok' or the preset id."""
+    from agent.services import img_asset_factory_service as svc
+    from agent.models.img_asset_factory import ImgFastlanePromptPreviewRequest
+
+    async def fake_get_product(pid):
+        return {"id": pid, "product_display_name": "Minyak Warisan Tok Cap Burung 25ml",
+                "product_truth_ref": "MWTCB_25ML_CAP_BURUNG", "media_id": "m1",
+                "local_image_path": "x.png"}
+    monkeypatch.setattr(svc.crud, "get_product", fake_get_product)
+
+    preview = await svc.compile_img_fastlane_prompt_preview(ImgFastlanePromptPreviewRequest(
+        preset_id="GENERIC_FRAMES_AVATAR_PRODUCT", route="FRAMES", product_id="p1",
+    ))
+    ep = preview.engine_prompt_text
+    assert "PRODUCT NO-MODIFICATION LOCK:" in ep
+    assert "PRODUCT SCALE ANCHOR:" in ep
+    assert "like/comment/share icons" in ep
+    assert "tiktok" not in ep.lower()
+    assert "GENERIC_FRAMES_AVATAR_PRODUCT" not in ep   # routing metadata never leaks

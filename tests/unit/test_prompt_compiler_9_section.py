@@ -41,3 +41,35 @@ async def test_prompt_compiler_9_sections():
     assert ">" not in prompt
     assert "{" not in prompt
     assert "}" not in prompt
+
+
+# ── SECTION 9 — NO UI elements (all-out anti-leak, owner-reported) ─────────
+#
+# A live output rendered a social-app interface (like/share icons, an order
+# button, a template-name chip) plus engine-invented marketing copy. "No
+# captions" does not stop interface graphics — SECTION 9 now bans the family
+# explicitly in BOTH branches (overlay allowed and NO_OVERLAY), and the
+# NO_OVERLAY branch states the gem-proven "all dialogue is AUDIO ONLY".
+
+
+def _s9_of(text: str) -> str:
+    idx = text.find("SECTION 9")
+    return text[idx:] if idx >= 0 else text
+
+
+@pytest.mark.asyncio
+async def test_section9_no_overlay_bans_ui_chrome_and_states_audio_only():
+    product_id = await _create_sumikko_product()
+    prompt = await compile_9_section_prompt(product_id, {
+        "hook_angle": "Trust-led baby care",
+        "scene_context": "clean nursery product table",
+        "camera_route": "front pack reveal with slow push-in",
+        "overlay_strategy": "soft trust overlay",
+    })
+    s9 = _s9_of(prompt)
+    for kw in ("NO UI elements", "like/comment/share icons", "template/preset name chips",
+               "invented marketing copy", "AUDIO ONLY"):
+        assert kw in s9, f"missing in SECTION 9: {kw}"
+    # The all-lane product-truth locks reach the compiled video prompt too.
+    assert "PRODUCT NO-MODIFICATION LOCK:" in prompt
+    assert "PRODUCT SCALE ANCHOR:" in prompt
