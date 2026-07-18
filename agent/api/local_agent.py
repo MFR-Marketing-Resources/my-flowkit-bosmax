@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -192,6 +194,28 @@ $result | ConvertTo-Json -Compress
     return defaults
 
 
+# Autostart inspection spawns PowerShell (Get-ScheduledTask), which costs ~1-3s per
+# call on Windows. The dashboard polls /api/local-agent/status frequently, so calling
+# _inspect_autostart_metadata() synchronously on the event loop blocked the WHOLE loop
+# for the duration of every poll — starving even /health and making the dashboard read
+# the agent as offline/unreachable. Two guards: (1) NEVER run it on the event loop —
+# offload to a thread; (2) cache the result briefly so repeated polls don't respawn
+# PowerShell each time (autostart config changes rarely).
+_AUTOSTART_CACHE: dict[str, Any] = {"value": None, "expires_at": 0.0}
+_AUTOSTART_CACHE_TTL_SECONDS = 30.0
+
+
+async def _get_autostart_metadata_cached() -> dict[str, str | bool | None]:
+    now = time.monotonic()
+    cached = _AUTOSTART_CACHE.get("value")
+    if cached is not None and now < float(_AUTOSTART_CACHE["expires_at"] or 0.0):
+        return cached
+    value = await asyncio.to_thread(_inspect_autostart_metadata)
+    _AUTOSTART_CACHE["value"] = value
+    _AUTOSTART_CACHE["expires_at"] = now + _AUTOSTART_CACHE_TTL_SECONDS
+    return value
+
+
 def load_registration() -> LocalAgentRegistration:
     LOCAL_AGENT_STATE_DIR.mkdir(parents=True, exist_ok=True)
     if not LOCAL_AGENT_REGISTRATION_FILE.exists():
@@ -240,7 +264,7 @@ async def get_local_agent_status():
     extension_status = await client.get_status(
         timeout=LOCAL_AGENT_EXTENSION_STATUS_TIMEOUT_SECONDS,
     )
-    autostart = _inspect_autostart_metadata()
+    autostart = await _get_autostart_metadata_cached()
 
     offline_reason = None
     if not client.connected:
