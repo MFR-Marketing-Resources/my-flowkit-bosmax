@@ -71,6 +71,15 @@ LIVE_CONFIRM_PHRASE = "AUTHORIZE_ONE_T2V_LIVE_RUN"
 # to T2V-only.
 LIVE_GATE_ONE_SERIAL_F2V = "ONE_SERIAL_F2V"
 LIVE_F2V_CONFIRM_PHRASE = "AUTHORIZE_ONE_F2V_LIVE_RUN"
+
+# The one-serial I2V (ingredients/references) live lane. Same opt-in contract,
+# DISTINCT phrase. I2V fires generate_video_with_references / veo_3_1_r2v_lite —
+# the exact tool+model HYBRID live-proved (g_8845373fbb86) — so the tool-name
+# discovery risk is already retired; this lane's residual risk is only the
+# ordinary generation quality/binding, guarded by the same deterministic
+# correlation. Mode-exact authorization like the first-frame lane.
+LIVE_GATE_ONE_SERIAL_I2V = "ONE_SERIAL_I2V"
+LIVE_I2V_CONFIRM_PHRASE = "AUTHORIZE_ONE_I2V_LIVE_RUN"
 _INFLIGHT_MAX_RETRIES = 20
 
 
@@ -541,8 +550,13 @@ async def _resolve_and_upload_image_slots(item: dict, cfg: dict) -> list[str]:
     for slot_key, asset_ref in slots.items():
         if not asset_ref:
             continue
+        # The FRAMING gate applies to output-frame slots only. I2V ingredient
+        # references (subject/scene/style — identity sources, not frames) have
+        # no output-aspect contract; forcing them to 9:16 would wrongly block
+        # perfectly valid reference imagery.
+        slot_aspect = run_aspect if str(slot_key) in ("start_frame", "end_frame") else None
         _media_id, blk = await _upload_slot_to_flow_media(
-            str(asset_ref), item, client, aspect=run_aspect,
+            str(asset_ref), item, client, aspect=slot_aspect,
         )
         if blk:
             blockers.append(f"SLOT_UPLOAD_FAILED:{slot_key}:{blk}")
@@ -813,6 +827,63 @@ async def _assert_one_serial_f2v_live(
     return item, logical_mode
 
 
+async def _assert_one_serial_i2v_live(
+    run: dict,
+    *,
+    confirm_phrase: str | None,
+    expect_package_id: str | None,
+) -> tuple[dict, str]:
+    """INGREDIENTS/references gate: refuse anything that is not ONE ready serial
+    I2V item.
+
+    Mirror of the first-frame gate with the I2V phrase and mode literal. I2V
+    fires generate_video_with_references / veo_3_1_r2v_lite — live-proved by the
+    HYBRID fire (g_8845373fbb86) — through the same one door with the same
+    credit profile. Every check raises; readiness is RE-DERIVED from
+    build_execution_payload. Returns (item, "I2V") for mode-exact loop
+    authorization.
+    """
+    if (confirm_phrase or "").strip() != LIVE_I2V_CONFIRM_PHRASE:
+        raise ValueError("LIVE_CONFIRM_PHRASE_INVALID")
+
+    items = await crud.list_production_queue_packages(
+        production_run_id=run["production_run_id"], production_status="QUEUED",
+    )
+    if len(items) != 1:
+        raise ValueError(f"LIVE_REQUIRES_EXACTLY_ONE_ITEM:{len(items)}")
+    item = items[0]
+    package_id = item["workspace_generation_package_id"]
+
+    if expect_package_id and expect_package_id != package_id:
+        raise ValueError(f"LIVE_PACKAGE_MISMATCH:{package_id}")
+
+    product_id = str(item.get("product_id") or "")
+    if product_id.startswith("fastmoss-ref:"):
+        raise ValueError(f"LIVE_FASTMOSS_REF_FORBIDDEN:{product_id}")
+
+    prior_job = str(item.get("production_job_id") or "").strip()
+    if prior_job:
+        raise ValueError(f"LIVE_DUPLICATE_SUBMISSION:{prior_job}")
+
+    cfg = _loads(run.get("config_json"), {})
+    payload, blockers = await build_execution_payload(item, cfg)
+    logical_mode = (payload.get("logical_mode") or "").strip().upper()
+    if logical_mode != "I2V":
+        raise ValueError(f"LIVE_I2V_ONLY:{logical_mode or 'UNKNOWN'}")
+    if blockers:
+        raise ValueError(f"LIVE_ITEM_BLOCKED:{','.join(blockers)}")
+
+    report = cfg.get("last_dry_run_report")
+    if not isinstance(report, dict):
+        raise ValueError("LIVE_REQUIRES_DRY_RUN_READY:NO_DRY_RUN")
+    if int(report.get("ready") or 0) != 1 or int(report.get("blocked") or 0) != 0:
+        raise ValueError(
+            f"LIVE_REQUIRES_DRY_RUN_READY:ready={report.get('ready')},"
+            f"blocked={report.get('blocked')}"
+        )
+    return item, logical_mode
+
+
 async def run_production_queue(
     run_id: str,
     *,
@@ -878,6 +949,12 @@ async def run_production_queue(
             # the first-frame family) of THIS one pre-validated item; the gate
             # already guaranteed exactly one QUEUED item.
             cfg["authorized_live_mode"] = validated_mode
+        elif live_gate == LIVE_GATE_ONE_SERIAL_I2V:
+            item, validated_mode = await _assert_one_serial_i2v_live(
+                run, confirm_phrase=confirm_phrase, expect_package_id=expect_package_id,
+            )
+            gated_package_id = item["workspace_generation_package_id"]
+            cfg["authorized_live_mode"] = validated_mode
         else:
             raise ValueError(f"LIVE_GATE_UNKNOWN:{live_gate}")
 
@@ -938,8 +1015,8 @@ async def _live_production_loop(run_id: str) -> None:
     # — and only which — widens the set to admit that one pre-validated F2V item.
     allowed_live_modes = {"T2V"}
     _auth = str(cfg.get("authorized_live_mode") or "").strip().upper()
-    if _auth in ("F2V", "HYBRID"):
-        # First-frame family: the gate validated ONE item of exactly this mode.
+    if _auth in ("F2V", "HYBRID", "I2V"):
+        # A phrased gate validated ONE item of exactly this mode.
         allowed_live_modes = {_auth}
     interval_min = int(run.get("interval_min_seconds") or 45)
     interval_max = int(run.get("interval_max_seconds") or 120)
