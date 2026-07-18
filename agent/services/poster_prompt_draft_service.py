@@ -20,6 +20,7 @@ from agent.services.poster_copy_quality_service import (
     map_legacy_to_poster,
 )
 from agent.services.poster_prompt_composer import compose_recipe_poster
+from agent.services.poster_composition_service import resolve_poster_composition, render_composition_instruction
 from agent.services.poster_readiness_service import PosterReadinessService
 from agent.models.poster_copy_set import (
     STATUS_POSTER_COPY_APPROVED,
@@ -510,6 +511,15 @@ class PosterPromptDraftService:
                 restricted_mode=restricted_mode,
             )
 
+        composition_plan = resolve_poster_composition(
+            creative_direction=creative_direction,
+            recipe_id=recipe_id,
+            frame_ratio=fields["frame_ratio"],
+            fields=fields,
+        )
+        if composition_plan:
+            poster_prompt += "\n=== PROFESSIONAL COMPOSITION PLAN ===\n" + render_composition_instruction(composition_plan)
+
         production_allowed = readiness.poster_status == PosterReadinessStatus.POSTER_READY
         prompt_status = (
             PromptPackageStatus.PREVIEW_ONLY
@@ -572,4 +582,5 @@ class PosterPromptDraftService:
             validation_warnings=validation_warnings,
             poster_spec=poster_spec,
             overlay_spec=overlay_spec,
+            composition_plan=composition_plan,
         )

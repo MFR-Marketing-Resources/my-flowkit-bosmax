@@ -82,3 +82,4 @@ class PosterPromptDraftResponse(BaseModel):
     # provided. Null on the legacy path — poster_prompt stays byte-identical there.
     poster_spec: PosterSpec | None = None
     overlay_spec: OverlaySpec | None = None
+    composition_plan: dict[str, Any] = Field(default_factory=dict)
