@@ -16,6 +16,7 @@ from agent.services.poster_prompt_draft_service import (
     PosterPromptDraftService,
     PosterPromptDraftValidationError,
 )
+from agent.services.creative_direction_service import CreativeDirectionError
 
 router = APIRouter(prefix="/poster", tags=["poster"])
 
@@ -34,6 +35,11 @@ async def create_poster_prompt_draft(body: PosterPromptDraftRequest):
     """Assemble a poster prompt package from product readiness + operator copy fields."""
     try:
         result = await PosterPromptDraftService.build_draft(body)
+    except CreativeDirectionError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": str(exc), "message": str(exc)},
+        ) from exc
     except PosterPromptDraftValidationError as exc:
         if str(exc) == "PRODUCT_NOT_FOUND":
             raise HTTPException(status_code=404, detail="PRODUCT_NOT_FOUND") from exc

@@ -64,6 +64,7 @@ export interface ImgFastlanePromptPreviewInput {
 	// A scene-context registry SceneCode; injects the scene's Background: text into
 	// the compiled prompt (any of the 20 scenes usable without a generated image).
 	scene_context_code?: string | null;
+	creative_mode?: string | null;
 }
 
 export interface ImgFastlanePromptPreview {
