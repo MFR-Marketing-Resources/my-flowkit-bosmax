@@ -545,11 +545,44 @@ def test_video_section2_lines_include_hand_anatomy():
     assert any(line.startswith("HAND ANATOMY LOCK:") for line in lines)
 
 
-def test_img_lane_has_no_hand_lock_and_stays_byte_identical():
-    """IMG keeps its own library negatives — its lock output must not change."""
+def test_img_lane_has_no_hand_lock():
+    """IMG keeps its own library hand negatives — no HAND ANATOMY line; but it DOES
+    carry the all-out no-modification + scale-anchor locks (owner-directed)."""
     lock = plb.build_product_lock(MW25, is_video=False, has_product_reference=True)
     assert lock["hand_anatomy_lock"] == ""
     lines = plb.section_2_lock_lines(MW25, is_video=False, has_product_reference=True)
     assert not any("HAND ANATOMY" in line for line in lines)
-    # Exactly the four original lines — nothing appended for IMG.
-    assert len(lines) == 4
+    # Original four + the two new all-lane locks.
+    assert len(lines) == 6
+
+
+# ── NO-MODIFICATION + SCALE ANCHOR — the all-out product-truth locks ──────
+#
+# Reverse-engineered from a working external prompt whose product never drifted:
+# (1) a blunt, absolute no-modification clause; (2) anchoring the product to the
+# presenter's natural chest-level grip; (3) decoupling legibility from size
+# ("clearly legible and facing camera", never enlarged). Emitted for EVERY lane
+# (T2V/F2V/I2V/Hybrid via the canonical compiler, IMG via the fastlane).
+
+
+@pytest.mark.parametrize("is_video", [True, False])
+def test_no_modification_lock_present_in_every_lane(is_video):
+    lock = plb.build_product_lock(MW25, is_video=is_video, has_product_reference=True)
+    nml = lock["no_modification_lock"]
+    assert nml.startswith("PRODUCT NO-MODIFICATION LOCK:")
+    for kw in ("Do NOT modify", "EXACTLY as shown in the product reference image",
+               "label text", "packaging"):
+        assert kw in nml, f"missing: {kw}"
+    lines = plb.section_2_lock_lines(MW25, is_video=is_video, has_product_reference=True)
+    assert any(line.startswith("PRODUCT NO-MODIFICATION LOCK:") for line in lines)
+
+
+@pytest.mark.parametrize("is_video", [True, False])
+def test_scale_anchor_lock_present_in_every_lane(is_video):
+    lock = plb.build_product_lock(MW25, is_video=is_video, has_product_reference=True)
+    sal = lock["scale_anchor_lock"]
+    assert sal.startswith("PRODUCT SCALE ANCHOR:")
+    for kw in ("chest level", "never drift toward the camera", "NEVER by enlarging"):
+        assert kw in sal, f"missing: {kw}"
+    lines = plb.section_2_lock_lines(MW25, is_video=is_video, has_product_reference=True)
+    assert any(line.startswith("PRODUCT SCALE ANCHOR:") for line in lines)

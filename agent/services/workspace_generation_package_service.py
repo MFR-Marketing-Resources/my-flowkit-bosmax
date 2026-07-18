@@ -412,9 +412,17 @@ async def create_i2v_generation_package(
         scene_context_reference_asset_id=scene_context_reference_asset_id,
         style_reference_asset_id=style_reference_asset_id,
     )
+    # The resolver returns a pydantic I2VSemanticSlotResolverResponse; this
+    # function consumed it with dict .get() and a non-existent "resolved_slots"
+    # key, so EVERY I2V package creation crashed live ('...object has no
+    # attribute get') — I2V was never creatable through this door (the test
+    # stubs returned plain dicts, hiding it). Normalize to a dict and read the
+    # real field (resolved_assets: [{slot_key, asset_id, ...}]).
     resolver_output = await resolve_i2v_semantic_slots(resolver_req)
+    if hasattr(resolver_output, "model_dump"):
+        resolver_output = resolver_output.model_dump()
 
-    resolved_slots: list = resolver_output.get("resolved_slots", [])
+    resolved_slots: list = resolver_output.get("resolved_assets", [])
     resolver_warnings: list = resolver_output.get("warnings", [])
     resolver_blockers: list = resolver_output.get("blockers", [])
 

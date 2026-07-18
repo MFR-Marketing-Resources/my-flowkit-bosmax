@@ -44,7 +44,15 @@ from agent.services.creative_direction_service import (
 )
 
 
-_FASTLANE_OUTPUT_SPEC = "Vertical TikTok 9:16 commercial image."
+# NOTE: deliberately NOT worded as a "TikTok image". Live leak (owner-reported):
+# a frames output rendered social-app UI chrome (like/share icons, a CTA button,
+# a template-name chip) plus garbled engine-invented Malay marketing copy — the
+# platform word itself invites the engine to draw the platform's interface. The
+# spec now states the clean-frame contract positively.
+_FASTLANE_OUTPUT_SPEC = (
+    "Vertical 9:16 commercial photo frame for social video use. A completely clean "
+    "frame: no text, no captions, no buttons, no icons, no interface elements of any kind."
+)
 
 
 IMG_FASTLANE_PRESETS: list[dict[str, object]] = [
@@ -250,6 +258,12 @@ def _resolve_preset(preset_id: str, route: str, ingredient_role: str | None) -> 
 _CLEAN_FRAME_NEGATIVE_RULES: tuple[str, ...] = (
     "No rendered text, captions, headlines, CTAs, price tags, subtitles, or logos-as-typography baked into the image.",
     "No watermark, sticker, badge, or UI chrome; keep a clean commercial frame so any copy is layered later, never drawn by the image model.",
+    # Live leak (owner-reported): the engine drew a social-app interface onto a
+    # frames output — like/comment/share icons, a follow button, an order/CTA
+    # button, and a template-name chip — plus invented marketing copy. Ban the
+    # interface family explicitly, not just 'UI chrome'.
+    "No social-media interface elements of any kind: no like/comment/share icons, no follow or order buttons, no username or template/preset name chips, no progress bars, no phone status bars.",
+    "No invented marketing copy, slogans, or taglines drawn into the frame — the only readable text anywhere is the text physically printed on the real product label.",
 )
 
 
@@ -463,6 +477,10 @@ def _product_lock_lines(product: dict[str, object] | None, *, is_video: bool) ->
         lock["reference_lock"],
         lock["frame_persistence"],
         lock["negative_morph"],
+        # All-out product-truth hardening (owner-directed): absolute
+        # no-modification clause + scale anchor / legibility decoupling.
+        lock["no_modification_lock"],
+        lock["scale_anchor_lock"],
     ]
 
 

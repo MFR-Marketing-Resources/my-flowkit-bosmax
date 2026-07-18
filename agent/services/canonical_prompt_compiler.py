@@ -1902,23 +1902,35 @@ def render_block(
             trigger_id=trigger_id,
             cta_type=cta_type,
         )
+    # UI-chrome ban shared by both branches. Live leak (owner-reported): an
+    # output rendered a social-app interface — like/comment/share icons, a
+    # follow/order button, a template-name chip — plus engine-invented marketing
+    # copy. "No captions" alone does not stop interface graphics; ban the family.
+    _no_ui = (
+        "NO UI elements: no social-media interface graphics of any kind — no "
+        "like/comment/share icons, no follow or order buttons, no username or "
+        "template/preset name chips, no progress bars, no phone status bars, and "
+        "no invented marketing copy or slogans drawn into the frame."
+    )
     if overlay_allowed and overlay_text:
         s9 = (
             f"On-screen text is permitted for this block only: '{_clean(overlay_text)}'. "
             "No other captions, subtitles, lower-thirds, sticker text, floating text, price "
             "text, label callouts, or watermarks, and no metadata-style text — never draw the "
             "product name, pack size, founding year, tagline, or any label wording onto the "
-            "frame as a graphic. Apart from the approved overlay text above, the only readable "
-            "text is the text physically printed on the real product label itself."
+            "frame as a graphic. " + _no_ui + " Apart from the approved overlay text above, "
+            "the only readable text is the text physically printed on the real product label "
+            "itself."
         )
     else:
         s9 = (
             "No on-screen text of any kind: no captions, no subtitles, no lower-thirds, no "
             "sticker text, no floating text, no price text, no label callouts, no watermarks, "
             "and no metadata-style text — never draw the product name, pack size, founding "
-            "year, tagline, or any label wording onto the frame as a graphic. The only "
-            "readable text allowed is the text physically printed on the real product label "
-            "itself. Everything persuasive is spoken."
+            "year, tagline, or any label wording onto the frame as a graphic. " + _no_ui + " "
+            "The only readable text allowed is the text physically printed on the real "
+            "product label itself. Everything persuasive is spoken — all dialogue is AUDIO "
+            "ONLY."
         )
 
     bodies = (s1, s2, s3, s4, s5, s6, s7, s8, s9)
