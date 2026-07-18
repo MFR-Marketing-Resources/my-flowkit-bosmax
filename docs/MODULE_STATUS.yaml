@@ -407,6 +407,7 @@ domains:
       - tests/unit/test_production_queue_dedupe.py
       - tests/unit/test_production_queue_live_gate.py
       - tests/unit/test_production_queue_live_loop_guard.py
+      - tests/unit/test_f2v_media_upload_prepass.py
       - tests/unit/test_generation_identity_binding.py
       - tests/api/test_batch_prompt_and_production_api.py
       - docs/bosmax-rpa-g0-governance-gate.md
