@@ -617,6 +617,27 @@ async def _live_production_loop(run_id: str) -> None:
         wgp_id = item["workspace_generation_package_id"]
 
         payload, blockers = await build_execution_payload(item, cfg)
+        # Live-fire is T2V-only for now, exactly like the ONE_SERIAL_T2V gate
+        # (LIVE_T2V_ONLY at _assert_one_serial_t2v_live). This unphrased bulk loop
+        # is reached via confirm_live_credit_burn=True with NO live_gate
+        # (ProductionQueuePage), so it never passed through that gate — guard it
+        # here too. Without this, an image-mode item that reaches ready=1 (no
+        # blockers, e.g. once its Flow media is uploaded) would fire UNGATED here.
+        # Refuse before start_generate; mark FAILED so the item leaves the QUEUED
+        # set (a bare `continue` on a still-QUEUED item would loop forever).
+        logical_mode = (payload.get("logical_mode") or "").strip().upper()
+        if logical_mode != "T2V":
+            failed += 1
+            reason = f"LIVE_T2V_ONLY:{logical_mode or 'UNKNOWN'}"
+            errors.append(f"{wgp_id}: {reason}")
+            await crud.update_workspace_generation_package(
+                wgp_id, production_status="FAILED", production_error=reason,
+            )
+            await crud.update_production_run(
+                run_id, total_completed=completed, total_failed=failed,
+                error_log_json=_json(errors[-50:]),
+            )
+            continue
         if blockers:
             failed += 1
             errors.append(f"{wgp_id}: {','.join(blockers)}")
