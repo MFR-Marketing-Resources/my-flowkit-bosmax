@@ -249,17 +249,42 @@ async def create_from_execution_package(
             else {}
         )
 
+        # Preserve the WEP's RESOLVED asset slots. The execution package already
+        # resolved each slot to a reviewed asset (e.g. an APPROVED 9:16 composite
+        # start frame); seeding the generation package without them silently
+        # re-defaults every slot to the raw product-image — which the aspect gate
+        # then (correctly) blocks. Live: wep_c35fff00bc18ef8b resolved start_frame
+        # -> ca_e468d188d12d4343, but the bridged wgp_7026a574a51a63c0 carried
+        # product-image:* and dry-ran blocked SLOT_ASPECT_MISMATCH.
+        _wep_slots = wep.get("asset_slots") or []
+        if isinstance(_wep_slots, str):
+            try:
+                _wep_slots = json.loads(_wep_slots or "[]")
+            except json.JSONDecodeError:
+                _wep_slots = []
+        _slot_asset: dict = {}
+        for _slot in _wep_slots if isinstance(_wep_slots, list) else []:
+            _ra = (_slot or {}).get("resolved_asset") or {}
+            if _slot.get("slot_key") and _ra.get("asset_id"):
+                _slot_asset[_slot["slot_key"]] = _ra["asset_id"]
+
         if wep_mode == "F2V":
             package = await create_f2v_generation_package(
                 product_id=product_id,
                 workspace_execution_package_id=workspace_execution_package_id,
                 source_mode=source_mode,
+                start_frame_asset_id=_slot_asset.get("start_frame"),
+                end_frame_asset_id=_slot_asset.get("end_frame"),
                 **_seed_plan_kwargs,
             )
         elif wep_mode == "I2V":
             package = await create_i2v_generation_package(
                 product_id=product_id,
                 workspace_execution_package_id=workspace_execution_package_id,
+                product_reference_asset_id=_slot_asset.get("product_reference"),
+                character_reference_asset_id=_slot_asset.get("character_reference"),
+                scene_context_reference_asset_id=_slot_asset.get("scene_context_reference"),
+                style_reference_asset_id=_slot_asset.get("style_reference"),
                 **_seed_plan_kwargs,
             )
         elif wep_mode == "T2V":
