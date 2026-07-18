@@ -367,7 +367,47 @@ async def _upload_local_image(client, local_path: str | None) -> tuple[str | Non
     return str(media_id), None
 
 
-async def _upload_slot_to_flow_media(asset_ref: str, pkg: dict, client) -> tuple[str | None, str | None]:
+def _aspect_ratio_of(aspect: str | None) -> float | None:
+    """'9:16' → 0.5625. None/garbage → None (gate off, never guessed)."""
+    try:
+        w, h = str(aspect or "").strip().split(":")
+        wf, hf = float(w), float(h)
+        return (wf / hf) if hf else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _slot_image_aspect_blocker(local_path: str | None, aspect: str | None) -> str | None:
+    """Fail-closed FRAMING gate for image slots (dry-run pre-pass only).
+
+    The first live F2V fire (g_7b29b837c259) used the RAW 4:5 catalog product
+    photo (1122x1402) as the start frame of a 9:16 run — the proven pipeline
+    composes a clean frame at the TARGET aspect first (IMG lane). Wrong-aspect
+    frames produce letterboxed/oversized renders, so block readiness when the
+    slot's source image aspect differs from the run aspect by >3%. Only enforced
+    when BOTH a run aspect and a readable local source image exist — a bare Flow
+    UUID slot has no local file here and stays unverified (never guessed)."""
+    target = _aspect_ratio_of(aspect)
+    if target is None or not local_path:
+        return None
+    try:
+        from PIL import Image
+        with Image.open(local_path) as im:
+            w, h = im.size
+    except Exception:  # noqa: BLE001
+        return None  # unreadable file surfaces as IMAGE_FILE_* later, not here
+    if not h:
+        return None
+    actual = w / h
+    if abs(actual - target) / target > 0.03:
+        return (
+            f"SLOT_ASPECT_MISMATCH:{w}x{h}({actual:.3f})_vs_{aspect}({target:.4f})"
+            "_COMPOSE_A_TARGET_ASPECT_FRAME_FIRST"
+        )
+    return None
+
+
+async def _upload_slot_to_flow_media(asset_ref: str, pkg: dict, client, aspect: str | None = None) -> tuple[str | None, str | None]:
     """Ensure one image slot has a LIVE Flow UUID, uploading the on-disk image and
     persisting the UUID if needed. Returns (media_id, None) or (None, blocker).
     Existing-UUID-first with liveness self-heal; persists so re-runs are idempotent."""
@@ -378,6 +418,12 @@ async def _upload_slot_to_flow_media(asset_ref: str, pkg: dict, client) -> tuple
 
     if asset_ref.startswith("product-image:"):
         product = await crud.get_product(pkg.get("product_id") or "") or {}
+        # FRAMING gate BEFORE reuse-or-upload: a wrong-aspect source (raw catalog
+        # photo on a 9:16 run) must never reach ready, even if a live Flow UUID
+        # for it already exists.
+        aspect_blk = _slot_image_aspect_blocker(product.get("local_image_path"), aspect)
+        if aspect_blk:
+            return None, aspect_blk
         existing = product.get("media_id") or ""
         if _FLOW_MEDIA_UUID_RE.match(existing) and await _flow_media_is_live(client, existing):
             return existing, None
@@ -395,6 +441,9 @@ async def _upload_slot_to_flow_media(asset_ref: str, pkg: dict, client) -> tuple
     except Exception:  # noqa: BLE001
         asset = None
     asset = asset or {}
+    aspect_blk = _slot_image_aspect_blocker(asset.get("local_file_path"), aspect)
+    if aspect_blk:
+        return None, aspect_blk
     existing = asset.get("media_id") or ""
     if _FLOW_MEDIA_UUID_RE.match(existing) and await _flow_media_is_live(client, existing):
         return existing, None
@@ -432,10 +481,13 @@ async def _resolve_and_upload_image_slots(item: dict, cfg: dict) -> list[str]:
         return ["EXTENSION_OFFLINE_FOR_UPLOAD"]
 
     blockers: list[str] = []
+    run_aspect = str((cfg or {}).get("aspect") or "").strip() or None
     for slot_key, asset_ref in slots.items():
         if not asset_ref:
             continue
-        _media_id, blk = await _upload_slot_to_flow_media(str(asset_ref), item, client)
+        _media_id, blk = await _upload_slot_to_flow_media(
+            str(asset_ref), item, client, aspect=run_aspect,
+        )
         if blk:
             blockers.append(f"SLOT_UPLOAD_FAILED:{slot_key}:{blk}")
     return blockers

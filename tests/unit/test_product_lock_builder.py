@@ -522,3 +522,34 @@ def test_bosmax_inherits_readability_precedence_without_mwtcb_contamination():
     # 5ml<->10ml separation intact (qualitative anchors, no numeric leak)
     bos5_scale = plb.build_product_lock(BOS5, is_video=True, has_product_reference=False)["scale_lock"].lower()
     assert "chapstick" not in bos5_scale and "10ml" not in bos5_scale
+
+
+# ── HAND ANATOMY LOCK — the video-lane anti-finger negative ───────────────
+#
+# Live F2V g_7b29b837c259 rendered a presenter hand with extra fingers around
+# the product: the anti-finger keyword set existed ONLY in the IMAGE-lane
+# authority, so compiled VIDEO prompts carried no hand-anatomy negative at all.
+# The lock is video-only so the proven IMG-lane prompt stays byte-identical.
+
+
+def test_video_lock_carries_hand_anatomy_negative():
+    lock = plb.build_product_lock(MW25, is_video=True, has_product_reference=True)
+    hand = lock["hand_anatomy_lock"]
+    assert hand.startswith("HAND ANATOMY LOCK:")
+    for kw in ("exactly five fingers", "extra fingers", "double thumbs", "distorted hands"):
+        assert kw in hand, f"missing anti-finger keyword: {kw}"
+
+
+def test_video_section2_lines_include_hand_anatomy():
+    lines = plb.section_2_lock_lines(MW25, is_video=True, has_product_reference=True)
+    assert any(line.startswith("HAND ANATOMY LOCK:") for line in lines)
+
+
+def test_img_lane_has_no_hand_lock_and_stays_byte_identical():
+    """IMG keeps its own library negatives — its lock output must not change."""
+    lock = plb.build_product_lock(MW25, is_video=False, has_product_reference=True)
+    assert lock["hand_anatomy_lock"] == ""
+    lines = plb.section_2_lock_lines(MW25, is_video=False, has_product_reference=True)
+    assert not any("HAND ANATOMY" in line for line in lines)
+    # Exactly the four original lines — nothing appended for IMG.
+    assert len(lines) == 4

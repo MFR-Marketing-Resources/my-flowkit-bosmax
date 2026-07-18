@@ -296,3 +296,83 @@ async def test_upload_returning_a_non_uuid_media_id_blocks_and_persists_nothing(
         _f2v_item({"start_frame": "product-image:prod-1"}), {})
     assert any("UPLOAD_BAD_MEDIA_ID" in b for b in blockers)
     assert persisted == {}          # nothing garbage written
+
+
+# ── SLOT ASPECT GATE — wrong-frame source can never reach ready ───────────
+#
+# Live F2V g_7b29b837c259 fired with the RAW 4:5 catalog photo (1122x1402) as
+# the start frame of a 9:16 run → letterboxed/oversized render. The pre-pass now
+# fail-closes readiness when the slot's source image aspect differs from the run
+# aspect by >3% — compose a target-aspect frame first (proven IMG lane).
+
+
+def _png(tmp_path, name, w, h):
+    from PIL import Image
+    p = tmp_path / name
+    Image.new("RGB", (w, h), (0, 128, 0)).save(p)
+    return str(p)
+
+
+@pytest.mark.asyncio
+async def test_wrong_aspect_catalog_photo_blocks_readiness(flow, monkeypatch, tmp_path):
+    """The exact live failure: 4:5 catalog photo on a 9:16 run → blocked, no upload."""
+    img = _png(tmp_path, "catalog_4x5.png", 1122, 1402)
+    monkeypatch.setattr(pq.crud, "get_product",
+                        _aret({"id": "prod-1", "media_id": "", "local_image_path": img}))
+    monkeypatch.setattr(pq.crud, "update_product", _noop)
+    blockers = await pq._resolve_and_upload_image_slots(
+        _f2v_item({"start_frame": "product-image:prod-1"}), {"aspect": "9:16"})
+    assert any("SLOT_ASPECT_MISMATCH" in b for b in blockers)
+    assert flow.upload_calls == []          # never uploaded a wrong-frame source
+
+
+@pytest.mark.asyncio
+async def test_wrong_aspect_blocks_even_when_a_live_uuid_already_exists(flow, monkeypatch, tmp_path):
+    """A previously-uploaded (live) UUID for a wrong-aspect source must not slip
+    through the reuse path."""
+    img = _png(tmp_path, "catalog_4x5.png", 800, 1000)
+    monkeypatch.setattr(pq.crud, "get_product",
+                        _aret({"id": "prod-1", "media_id": UUID, "local_image_path": img}))
+    monkeypatch.setattr(pq.crud, "update_product", _noop)
+    blockers = await pq._resolve_and_upload_image_slots(
+        _f2v_item({"start_frame": "product-image:prod-1"}), {"aspect": "9:16"})
+    assert any("SLOT_ASPECT_MISMATCH" in b for b in blockers)
+    assert flow.get_media_calls == []       # gate fires before the liveness check
+
+
+@pytest.mark.asyncio
+async def test_correct_aspect_frame_passes_and_uploads(flow, monkeypatch, tmp_path):
+    img = _png(tmp_path, "composed_9x16.png", 1080, 1920)
+    persisted = {}
+
+    async def update_product(pid, **kw):
+        persisted.update(kw)
+    monkeypatch.setattr(pq.crud, "get_product",
+                        _aret({"id": "prod-1", "media_id": "", "local_image_path": img}))
+    monkeypatch.setattr(pq.crud, "update_product", update_product)
+    blockers = await pq._resolve_and_upload_image_slots(
+        _f2v_item({"start_frame": "product-image:prod-1"}), {"aspect": "9:16"})
+    assert blockers == []
+    assert flow.upload_calls == ["composed_9x16.png"]
+    assert persisted["media_id"] == UUID
+
+
+@pytest.mark.asyncio
+async def test_no_run_aspect_leaves_the_gate_off(flow, monkeypatch, tmp_path):
+    """Empty cfg (no aspect) → gate off — pre-existing behaviour unchanged."""
+    img = _png(tmp_path, "catalog_4x5.png", 1122, 1402)
+    monkeypatch.setattr(pq.crud, "get_product",
+                        _aret({"id": "prod-1", "media_id": "", "local_image_path": img}))
+    monkeypatch.setattr(pq.crud, "update_product", _noop)
+    blockers = await pq._resolve_and_upload_image_slots(
+        _f2v_item({"start_frame": "product-image:prod-1"}), {})
+    assert blockers == []
+    assert flow.upload_calls == ["catalog_4x5.png"]
+
+
+def test_aspect_ratio_parser_fails_closed_to_none():
+    assert pq._aspect_ratio_of("9:16") == pytest.approx(0.5625)
+    assert pq._aspect_ratio_of("16:9") == pytest.approx(1.7778, rel=1e-3)
+    assert pq._aspect_ratio_of(None) is None
+    assert pq._aspect_ratio_of("garbage") is None
+    assert pq._aspect_ratio_of("9:0") is None
