@@ -278,13 +278,22 @@ async def create_from_execution_package(
                 **_seed_plan_kwargs,
             )
         elif wep_mode == "I2V":
+            # I2V WEP slot keys are subject/scene/style; the seeding service's
+            # resolver takes reference-asset ids. subject may be the auto-seeded
+            # product-image:* ref — that is NOT a creative-asset id; leave it
+            # None so the resolver's own product auto-seed applies.
+            def _ca_only(value: str | None) -> str | None:
+                return value if value and not str(value).startswith("product-image:") else None
             package = await create_i2v_generation_package(
                 product_id=product_id,
                 workspace_execution_package_id=workspace_execution_package_id,
-                product_reference_asset_id=_slot_asset.get("product_reference"),
-                character_reference_asset_id=_slot_asset.get("character_reference"),
-                scene_context_reference_asset_id=_slot_asset.get("scene_context_reference"),
-                style_reference_asset_id=_slot_asset.get("style_reference"),
+                product_reference_asset_id=_ca_only(_slot_asset.get("product_reference")),
+                character_reference_asset_id=_ca_only(
+                    _slot_asset.get("character_reference") or _slot_asset.get("subject")),
+                scene_context_reference_asset_id=_ca_only(
+                    _slot_asset.get("scene_context_reference") or _slot_asset.get("scene")),
+                style_reference_asset_id=_ca_only(
+                    _slot_asset.get("style_reference") or _slot_asset.get("style")),
                 **_seed_plan_kwargs,
             )
         elif wep_mode == "T2V":
