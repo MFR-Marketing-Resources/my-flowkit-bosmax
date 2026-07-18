@@ -10,8 +10,16 @@
  * It REUSES the exact backend contract and safety gates — no new server routes, no
  * weakened guards. In particular the live door is the same one-serial T2V gate
  * (live_gate=ONE_SERIAL_T2V + confirmation phrase), and O4 duplicate protection is
- * untouched. T2V is the only wired lane; F2V/I2V/Hybrid/IMG and bulk are rendered as
- * explicitly locked with the reason.
+ * untouched. F2V/I2V/Hybrid/IMG and bulk are rendered as explicitly locked with the
+ * reason.
+ *
+ * Durations beyond the engine's single-shot max run through the PROVEN multi-block
+ * EXTEND lane instead of the queue: workspace execution package (per-block canonical
+ * 9-section prompts, WPS dialogue budgets from the storyboard planner) → the durable
+ * /video-jobs orchestrator (plan → authorize → advance: INITIAL → EXTEND → CONCAT →
+ * final media). The queue lane refuses EXTEND packages outright
+ * (EXTEND_PACKAGE_SINGLE_SHOT_FORBIDDEN), so a 16s request can never be silently
+ * truncated to one 8s clip.
  */
 import {
 	AlertTriangle,
@@ -41,11 +49,38 @@ import {
 	type VideoModelInfo,
 } from "../api/productionQueue";
 import { createT2VGenerationPackage } from "../api/workspaceGenerationPackages";
+import {
+	authorizeVideoJob,
+	getVideoJobStatus,
+	planVideoJob,
+	startVideoJob,
+	type VideoJobPlan,
+	type VideoJobStatus,
+} from "../api/nativeExtend";
+import { createWorkspaceExecutionPackage } from "../api/workspacePackages";
 import type { Product } from "../types";
 
 const ASPECTS = ["9:16", "16:9", "1:1"];
 const POLL_MS = 5000;
 const TERMINAL_STATUSES = new Set(["GENERATED", "DOWNLOADED", "FAILED", "CANCELLED"]);
+
+// ── EXTEND (multi-block) lane ──────────────────────────────────────────────
+// Totals beyond the engine's single-shot max run through the PROVEN multi-block
+// pipeline: workspace execution package (per-block 9-section canonical prompts,
+// dialogue budgets WPS-allocated by the storyboard planner) → the durable
+// /video-jobs orchestrator (plan → authorize → advance: INITIAL → EXTEND →
+// CONCAT → final media). Nothing here re-implements planning or prompting —
+// this page only WIRES the proven lane. The single-shot queue lane refuses
+// EXTEND packages outright (EXTEND_PACKAGE_SINGLE_SHOT_FORBIDDEN).
+const EXTEND_MULTIPLES = [2, 3]; // 16 s and 24 s on an 8 s engine
+/** UI-only latch for the extend fire button; the REAL gate is the server-side
+ *  authorize step (plan-fingerprint-bound, expiring token). */
+const EXTEND_CONFIRM_PHRASE = "AUTHORIZE_EXTEND_VIDEO_JOB";
+const EXTEND_ASPECT_ENUM: Record<string, string> = {
+	"9:16": "VIDEO_ASPECT_RATIO_PORTRAIT",
+	"16:9": "VIDEO_ASPECT_RATIO_LANDSCAPE",
+	"1:1": "VIDEO_ASPECT_RATIO_SQUARE",
+};
 
 /** Future lanes — rendered, never wired. The reason is shown so a user is not left guessing. */
 const LOCKED_MODES = [
@@ -123,6 +158,12 @@ export default function RpaProductionStudioPage() {
 	const [liveError, setLiveError] = useState<string | null>(null);
 	const [jobItem, setJobItem] = useState<RunItem | null>(null);
 	const [runStatus, setRunStatus] = useState<string | null>(null);
+	// ── EXTEND (multi-block) lane state ──
+	const [wepId, setWepId] = useState<string | null>(null);
+	const [extendPlan, setExtendPlan] = useState<VideoJobPlan | null>(null);
+	const [extendWpsBudgets, setExtendWpsBudgets] = useState<number[] | null>(null);
+	const [extendBlockCount, setExtendBlockCount] = useState<number | null>(null);
+	const [extendJob, setExtendJob] = useState<VideoJobStatus | null>(null);
 	const pollRef = useRef<number | null>(null);
 
 	const loadProducts = useCallback(async (q: string) => {
@@ -154,7 +195,13 @@ export default function RpaProductionStudioPage() {
 	}, [loadProducts]);
 
 	const selectedModelInfo = useMemo(() => models.find((m) => m.ui_label === model), [models, model]);
-	const durationOptions = selectedModelInfo?.allowed_durations_s ?? [duration];
+	const singleDurations = selectedModelInfo?.allowed_durations_s ?? [duration];
+	const maxSingle = Math.max(...singleDurations);
+	// Multi-block EXTEND totals (N × the engine's single-shot max) — the proven
+	// storyboard-planner + orchestrator lane, not N independent clips.
+	const extendTotals = EXTEND_MULTIPLES.map((n) => n * maxSingle);
+	const durationOptions = [...singleDurations, ...extendTotals];
+	const isExtend = duration > maxSingle;
 
 	/** Reset the whole pipeline when the product or config changes — a stale run must never be firable. */
 	const resetPipeline = useCallback(() => {
@@ -168,6 +215,11 @@ export default function RpaProductionStudioPage() {
 		setLiveError(null);
 		setJobItem(null);
 		setRunStatus(null);
+		setWepId(null);
+		setExtendPlan(null);
+		setExtendWpsBudgets(null);
+		setExtendBlockCount(null);
+		setExtendJob(null);
 	}, []);
 
 	const pickProduct = (p: Product) => {
@@ -175,9 +227,88 @@ export default function RpaProductionStudioPage() {
 		resetPipeline();
 	};
 
+	/** EXTEND prepare = create the PROVEN multi-block execution package (per-block
+	 *  9-section canonical prompts with WPS-allocated dialogue budgets), then ask the
+	 *  durable orchestrator for its ONE reviewed plan. Both steps spend nothing; an
+	 *  incomplete/invalid plan is a structured 422 — fail-closed, nothing firable. */
+	const handlePrepareExtend = async () => {
+		if (!selectedProduct) return;
+		setBusy("prepare");
+		setError(null);
+		try {
+			const wep = await createWorkspaceExecutionPackage({
+				product_id: selectedProduct.id,
+				mode: "T2V",
+				source_mode: "T2V",
+				generation_mode: "EXTEND",
+				requested_total_duration_seconds: duration,
+				duration_seconds: maxSingle,
+				aspect_ratio: aspect,
+				model,
+				dialogue_enabled: true,
+				// Explicit-Fallback-Confirmation V1: the operator's Prepare click is the
+				// explicit confirmation when no approved Copy Set is bound (backend still
+				// fails closed on every other contract violation).
+				copy_fallback_confirmed: true,
+			});
+			const wepIdNew = (wep as { workspace_execution_package_id?: string })
+				.workspace_execution_package_id;
+			if (!wepIdNew) throw new Error("execution package returned no id");
+			// Surface the WPS truth: per-block dialogue word budgets + block count from
+			// the canonical compiler lineage (each block is a full 9-section prompt).
+			let lineage = (wep as { request_lineage_payload?: unknown }).request_lineage_payload;
+			if (typeof lineage === "string") { try { lineage = JSON.parse(lineage); } catch { lineage = null; } }
+			const compilerInfo = (lineage as { compiler?: Record<string, unknown> } | null)?.compiler;
+			const budgets = compilerInfo?.dialogue_word_budget_per_block;
+			const blocks = compilerInfo?.prompt_blocks;
+			setExtendWpsBudgets(Array.isArray(budgets) ? budgets.map((b) => Number(b)) : null);
+			setExtendBlockCount(Array.isArray(blocks) ? blocks.length : null);
+
+			const plan = await planVideoJob({
+				product_id: selectedProduct.id,
+				execution_package_id: wepIdNew,
+				requested_total_duration_seconds: duration,
+				model,
+				aspect_ratio: EXTEND_ASPECT_ENUM[aspect] ?? "VIDEO_ASPECT_RATIO_PORTRAIT",
+			});
+			setWepId(wepIdNew);
+			setExtendPlan(plan);
+			// The orchestrator plan IS the server-side validation (422 fail-closed),
+			// so a returned plan means the lane is reviewed and ready to authorize.
+			setStage("VALIDATED");
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			setError(`Extend prepare failed (nothing firable, no credit): ${msg}`);
+		} finally {
+			setBusy(null);
+		}
+	};
+
+	/** EXTEND fire = authorize the reviewed plan fingerprint, then start the durable
+	 *  job. The server gate is the plan-fingerprint-bound expiring token — a changed
+	 *  plan is rejected. This is the ONE credit-spending door of the extend lane. */
+	const handleGoLiveExtend = async () => {
+		if (!extendPlan || !extendGateOpen) return;
+		setLiveSubmitted(true);
+		setLiveError(null);
+		setBusy("live");
+		try {
+			await authorizeVideoJob(extendPlan.job_id, extendPlan.plan_fingerprint);
+			const status = await startVideoJob(extendPlan.job_id);
+			setExtendJob(status);
+			setStage("LIVE_SUBMITTED");
+		} catch (e) {
+			setLiveError(e instanceof Error ? e.message : String(e));
+			setLiveSubmitted(false);
+		} finally {
+			setBusy(null);
+		}
+	};
+
 	/** Prepare = create the T2V package, approve it, enqueue it. All no-credit. */
 	const handlePrepare = async () => {
 		if (!selectedProduct) return;
+		if (isExtend) return handlePrepareExtend();
 		setBusy("prepare");
 		setError(null);
 		try {
@@ -273,7 +404,13 @@ export default function RpaProductionStudioPage() {
 	const oneItemOnly = (report?.items?.length ?? 0) === 1;
 	const noPriorJob = !jobItem?.production_job_id;
 	const phraseOk = phrase === LIVE_CONFIRM_PHRASE;
-	const liveGateOpen = Boolean(selectedProduct) && dryRunGreen && oneItemOnly && noPriorJob && phraseOk && !liveSubmitted && busy === null;
+	const liveGateOpen = !isExtend && Boolean(selectedProduct) && dryRunGreen && oneItemOnly && noPriorJob && phraseOk && !liveSubmitted && busy === null;
+
+	// ── EXTEND gate: a reviewed orchestrator plan + the extend phrase. The server
+	//    re-gates with the fingerprint-bound authorize token — this is UI safety only.
+	const extendPlanReady = Boolean(extendPlan?.plan_fingerprint);
+	const extendPhraseOk = phrase === EXTEND_CONFIRM_PHRASE;
+	const extendGateOpen = isExtend && Boolean(selectedProduct) && extendPlanReady && extendPhraseOk && !liveSubmitted && busy === null;
 
 	const jobTerminal = TERMINAL_STATUSES.has(jobItem?.production_status ?? "");
 	const jobArtifacts = jobItem?.artifact_media_ids ?? [];
@@ -288,13 +425,23 @@ export default function RpaProductionStudioPage() {
 	const plainFailure = Boolean(jobItem?.production_error) && !registered && !generatedNotRegistered;
 
 	useEffect(() => {
-		if (stage !== "LIVE_SUBMITTED" || !runId || jobTerminal) {
+		if (stage !== "LIVE_SUBMITTED" || !runId || jobTerminal || isExtend) {
 			if (pollRef.current) { window.clearInterval(pollRef.current); pollRef.current = null; }
 			return;
 		}
 		pollRef.current = window.setInterval(() => { void refresh(runId, true); }, POLL_MS);
 		return () => { if (pollRef.current) { window.clearInterval(pollRef.current); pollRef.current = null; } };
-	}, [stage, runId, jobTerminal, refresh]);
+	}, [stage, runId, jobTerminal, refresh, isExtend]);
+
+	// EXTEND job polling — reads the durable orchestrator status (resumable server
+	// job; polling never re-submits anything).
+	useEffect(() => {
+		if (!isExtend || stage !== "LIVE_SUBMITTED" || !extendPlan || extendJob?.complete) return;
+		const t = window.setInterval(() => {
+			void getVideoJobStatus(extendPlan.job_id).then(setExtendJob).catch(() => undefined);
+		}, POLL_MS);
+		return () => window.clearInterval(t);
+	}, [isExtend, stage, extendPlan, extendJob?.complete]);
 
 	const chip = (label: string, value: string | null, testid: string) => (
 		<div className="rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2" data-testid={testid}>
@@ -406,8 +553,17 @@ export default function RpaProductionStudioPage() {
 						<span className="mb-1 block text-[10px] uppercase tracking-wider text-slate-500">Duration (s)</span>
 						<select data-testid="studio-duration" value={duration} onChange={(e) => { setDuration(Number(e.target.value)); resetPipeline(); }}
 							className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-slate-100 focus:outline-none">
-							{durationOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+							{durationOptions.map((d) => (
+								<option key={d} value={d}>
+									{d > maxSingle ? `${d} — EXTEND multi-block (${d / maxSingle}×${maxSingle}s)` : d}
+								</option>
+							))}
 						</select>
+						{isExtend && (
+							<span className="mt-0.5 block text-[9px] text-sky-300" data-testid="studio-extend-note">
+								Multi-block EXTEND — per-block 9-section prompts, WPS dialogue budgets, seam handoff + final concat.
+							</span>
+						)}
 					</label>
 					<label className="block">
 						<span className="mb-1 block text-[10px] uppercase tracking-wider text-slate-500">Aspect</span>
@@ -436,22 +592,58 @@ export default function RpaProductionStudioPage() {
 				<h2 className="mb-3 text-sm font-semibold text-slate-200">4 · Prepare &amp; validate (no credits)</h2>
 				<div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-4">
 					{chip("Product", selectedProduct?.id ?? null, "studio-status-product")}
-					{chip("WGP id", wgpId, "studio-status-wgp")}
-					{chip("Run id", runId, "studio-status-run")}
-					{chip("Dry-run ready", report ? `${report.ready ?? 0}/${report.checked ?? 0} · blocked ${report.blocked ?? 0}` : null, "studio-status-dryrun")}
+					{isExtend
+						? chip("WEP id", wepId, "studio-status-wep")
+						: chip("WGP id", wgpId, "studio-status-wgp")}
+					{isExtend
+						? chip("Video job", extendPlan?.job_id ?? null, "studio-status-videojob")
+						: chip("Run id", runId, "studio-status-run")}
+					{isExtend
+						? chip("Reviewed plan", extendPlan ? `${extendPlan.plan.segment_count} segments · fp ${extendPlan.plan_fingerprint.slice(0, 10)}…` : null, "studio-status-extend-plan")
+						: chip("Dry-run ready", report ? `${report.ready ?? 0}/${report.checked ?? 0} · blocked ${report.blocked ?? 0}` : null, "studio-status-dryrun")}
 				</div>
 				<div className="flex flex-wrap gap-2">
 					<button type="button" data-testid="studio-action-prepare" onClick={() => void handlePrepare()}
 						disabled={!selectedProduct || busy !== null || stage !== "IDLE"}
 						className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/50 bg-blue-500/15 px-3 py-2 text-[11px] font-semibold text-blue-100 hover:bg-blue-500/25 disabled:cursor-not-allowed disabled:opacity-40">
-						{busy === "prepare" ? <Loader2 size={12} className="animate-spin" /> : <PackageCheck size={12} />} Prepare package
+						{busy === "prepare" ? <Loader2 size={12} className="animate-spin" /> : <PackageCheck size={12} />}
+						{isExtend ? "Prepare EXTEND package + reviewed plan" : "Prepare package"}
 					</button>
-					<button type="button" data-testid="studio-action-validate" onClick={() => void handleValidate()}
-						disabled={!runId || busy !== null || stage !== "PREPARED"}
-						className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/50 bg-emerald-500/15 px-3 py-2 text-[11px] font-semibold text-emerald-100 hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-40">
-						{busy === "validate" ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />} Run validation (dry run)
-					</button>
+					{!isExtend && (
+						<button type="button" data-testid="studio-action-validate" onClick={() => void handleValidate()}
+							disabled={!runId || busy !== null || stage !== "PREPARED"}
+							className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/50 bg-emerald-500/15 px-3 py-2 text-[11px] font-semibold text-emerald-100 hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-40">
+							{busy === "validate" ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />} Run validation (dry run)
+						</button>
+					)}
 				</div>
+
+				{isExtend && extendPlan && (
+					<div className="mt-3 rounded-lg border border-sky-500/30 bg-sky-500/5 p-3" data-testid="studio-extend-plan"
+						data-segments={String(extendPlan.plan.segment_count)} data-fingerprint={extendPlan.plan_fingerprint}>
+						<div className="text-[11px] text-sky-200">
+							Reviewed multi-block plan · <strong>{extendPlan.plan.requested_seconds}s</strong> total ·{" "}
+							<strong>{extendPlan.plan.segment_count}</strong> segments ·{" "}
+							{extendPlan.plan.operation_counts.initial_generation} initial + {extendPlan.plan.operation_counts.extend} extend + {extendPlan.plan.operation_counts.final_render} concat
+							<span className="ml-2 text-sky-300/70">· plan only — no provider call, no credit</span>
+						</div>
+						{extendBlockCount != null && (
+							<div className="mt-1 text-[10px] text-sky-300/90" data-testid="studio-extend-blocks">
+								{extendBlockCount} canonical 9-section block prompt{extendBlockCount === 1 ? "" : "s"} compiled (ADR-008 — the final prompt of every block).
+							</div>
+						)}
+						{extendWpsBudgets && extendWpsBudgets.length > 0 && (
+							<div className="mt-1 flex flex-wrap gap-1.5" data-testid="studio-extend-wps">
+								{extendWpsBudgets.map((b, i) => (
+									<span key={`${i}-${b}`} data-testid="studio-extend-wps-block"
+										className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[9px] text-sky-200">
+										Block {i + 1}: ≤{b} dialogue words (WPS budget)
+									</span>
+								))}
+							</div>
+						)}
+					</div>
+				)}
 
 				{report && (
 					<div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/60 p-3" data-testid="studio-dryrun-report" data-ready={String(report.ready ?? 0)} data-blocked={String(report.blocked ?? 0)}>
@@ -469,22 +661,30 @@ export default function RpaProductionStudioPage() {
 			</section>
 
 			{/* ── 5 · One live T2V ── */}
-			<section className="mb-6 rounded-xl border border-red-500/40 bg-red-500/5 p-4" data-testid="studio-live-gate" data-gate-open={liveGateOpen ? "true" : "false"}>
-				<h2 className="mb-2 flex items-center gap-2 text-sm font-semibold text-red-200"><Flame size={14} /> 5 · Run one live T2V</h2>
+			<section className="mb-6 rounded-xl border border-red-500/40 bg-red-500/5 p-4" data-testid="studio-live-gate" data-gate-open={(isExtend ? extendGateOpen : liveGateOpen) ? "true" : "false"} data-lane={isExtend ? "EXTEND" : "SINGLE"}>
+				<h2 className="mb-2 flex items-center gap-2 text-sm font-semibold text-red-200"><Flame size={14} /> 5 · {isExtend ? `Run one live EXTEND job (${duration}s multi-block)` : "Run one live T2V"}</h2>
 				<div className="mb-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-[11px] text-red-100" data-testid="studio-live-warning">
-					<strong>This spends real credits.</strong> It calls the real provider and runs exactly one T2V
-					generation. It cannot be undone. After it submits, do <strong>not</strong> retry unless the
-					system proves no provider submission occurred.
+					<strong>This spends real credits.</strong>{" "}
+					{isExtend
+						? `It authorizes the reviewed plan fingerprint and runs the full durable job: 1 initial + ${extendPlan?.plan.operation_counts.extend ?? "N"} extend + final concat. The server re-gates every stage with the plan-bound token.`
+						: "It calls the real provider and runs exactly one T2V generation. It cannot be undone. After it submits, do not retry unless the system proves no provider submission occurred."}
 				</div>
 				<div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-3" data-testid="studio-live-checks">
-					{[
-						{ id: "product", label: "Product selected", ok: Boolean(selectedProduct) },
-						{ id: "dryrun", label: "Dry run ready=1 blocked=0", ok: Boolean(dryRunGreen) },
-						{ id: "one-item", label: "Exactly 1 item", ok: oneItemOnly },
-						{ id: "no-prior-job", label: "No prior provider job", ok: noPriorJob },
-						{ id: "phrase", label: "Confirmation phrase", ok: phraseOk },
-						{ id: "not-submitted", label: "Not already submitted", ok: !liveSubmitted },
-					].map((c) => (
+					{(isExtend
+						? [
+							{ id: "product", label: "Product selected", ok: Boolean(selectedProduct) },
+							{ id: "extend-plan", label: "Reviewed orchestrator plan", ok: extendPlanReady },
+							{ id: "phrase", label: "Confirmation phrase", ok: extendPhraseOk },
+							{ id: "not-submitted", label: "Not already submitted", ok: !liveSubmitted },
+						]
+						: [
+							{ id: "product", label: "Product selected", ok: Boolean(selectedProduct) },
+							{ id: "dryrun", label: "Dry run ready=1 blocked=0", ok: Boolean(dryRunGreen) },
+							{ id: "one-item", label: "Exactly 1 item", ok: oneItemOnly },
+							{ id: "no-prior-job", label: "No prior provider job", ok: noPriorJob },
+							{ id: "phrase", label: "Confirmation phrase", ok: phraseOk },
+							{ id: "not-submitted", label: "Not already submitted", ok: !liveSubmitted },
+						]).map((c) => (
 						<div key={c.id} data-testid={`studio-check-${c.id}`} data-ok={c.ok ? "true" : "false"}
 							className={`rounded-lg border px-2 py-1.5 text-[10px] ${c.ok ? "border-emerald-500/40 bg-emerald-500/5 text-emerald-200" : "border-slate-700 bg-slate-900/60 text-slate-500"}`}>
 							{c.ok ? "✓" : "○"} {c.label}
@@ -492,16 +692,20 @@ export default function RpaProductionStudioPage() {
 					))}
 				</div>
 				<label className="mb-1 block text-[10px] uppercase tracking-wider text-slate-400" htmlFor="studio-phrase">
-					Type <code className="text-red-300">{LIVE_CONFIRM_PHRASE}</code> to authorize
+					Type <code className="text-red-300">{isExtend ? EXTEND_CONFIRM_PHRASE : LIVE_CONFIRM_PHRASE}</code> to authorize
 				</label>
 				<input id="studio-phrase" data-testid="studio-phrase-input" type="text" value={phrase} disabled={liveSubmitted}
-					onChange={(e) => setPhrase(e.target.value)} placeholder={LIVE_CONFIRM_PHRASE} autoComplete="off" spellCheck={false}
+					onChange={(e) => setPhrase(e.target.value)} placeholder={isExtend ? EXTEND_CONFIRM_PHRASE : LIVE_CONFIRM_PHRASE} autoComplete="off" spellCheck={false}
 					className="mb-3 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-[11px] text-slate-100 placeholder:text-slate-700 focus:border-red-500/60 focus:outline-none disabled:opacity-40" />
-				<button type="button" data-testid="studio-action-go-live" data-enabled={liveGateOpen ? "true" : "false"}
-					onClick={() => void handleGoLive()} disabled={!liveGateOpen}
+				<button type="button" data-testid="studio-action-go-live" data-enabled={(isExtend ? extendGateOpen : liveGateOpen) ? "true" : "false"}
+					onClick={() => void (isExtend ? handleGoLiveExtend() : handleGoLive())} disabled={isExtend ? !extendGateOpen : !liveGateOpen}
 					className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/60 bg-red-500/20 px-3 py-2 text-[11px] font-semibold text-red-100 hover:bg-red-500/30 disabled:cursor-not-allowed disabled:opacity-40">
 					{busy === "live" ? <Loader2 size={12} className="animate-spin" /> : <Flame size={12} />}
-					{liveSubmitted ? "Live run submitted" : "Run ONE live T2V (burns credits)"}
+					{liveSubmitted
+						? "Live run submitted"
+						: isExtend
+							? `Run ONE live EXTEND job — ${duration}s multi-block (burns credits)`
+							: "Run ONE live T2V (burns credits)"}
 				</button>
 				{liveError && (
 					<div className="mt-3 flex items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-[11px] text-red-200" data-testid="studio-live-refused">
@@ -525,7 +729,39 @@ export default function RpaProductionStudioPage() {
 
 				{stage !== "LIVE_SUBMITTED" && <div className="text-[11px] text-slate-500" data-testid="studio-result-empty">No live job yet. The result appears here after you run one.</div>}
 
-				{stage === "LIVE_SUBMITTED" && (
+				{stage === "LIVE_SUBMITTED" && isExtend && (
+					<div data-testid="studio-extend-result" data-job-status={extendJob?.status ?? ""} data-complete={extendJob?.complete ? "true" : "false"}>
+						<div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-3">
+							{chip("Video job", extendPlan?.job_id ?? null, "studio-extend-result-job")}
+							{chip("Status", extendJob?.status ?? null, "studio-extend-result-status")}
+							{chip("Stage", extendJob?.human_stage ?? null, "studio-extend-result-stage")}
+							{chip("Credits", extendJob?.credit_summary ?? null, "studio-extend-result-credits")}
+							{chip("Final duration", extendJob?.final_duration_s != null ? `${extendJob.final_duration_s}s` : null, "studio-extend-result-duration")}
+						</div>
+						{!extendJob?.complete && (
+							<div className="flex items-center gap-2 text-[11px] text-slate-400" data-testid="studio-extend-result-inflight">
+								<Loader2 size={12} className="animate-spin" /> Durable job advancing — polling every {POLL_MS / 1000}s. Polling never re-submits.
+							</div>
+						)}
+						{extendJob?.error_code && (
+							<div className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-[11px] text-red-200" data-testid="studio-extend-result-error">
+								<strong>Job error.</strong> {explainFailure(extendJob.error_code)}
+							</div>
+						)}
+						{extendJob?.complete && extendJob?.final_media_id && (
+							<div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-[11px] text-emerald-200" data-testid="studio-extend-result-success">
+								<strong>Complete ✓ — final concatenated video.</strong>{" "}
+								<a data-testid="studio-extend-result-final" data-media-id={extendJob.final_media_id}
+									href={`/api/flow/retrieved/${encodeURIComponent(extendJob.final_media_id)}`}
+									target="_blank" rel="noreferrer" className="font-mono underline hover:text-emerald-100">
+									{extendJob.final_media_id}
+								</a>
+							</div>
+						)}
+					</div>
+				)}
+
+				{stage === "LIVE_SUBMITTED" && !isExtend && (
 					<div data-testid="studio-result" data-job-status={jobItem?.production_status ?? ""} data-terminal={jobTerminal ? "true" : "false"} data-registered={registered ? "true" : "false"}>
 						<div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-3">
 							{chip("Run id", runId, "studio-result-run")}

@@ -227,6 +227,19 @@ async def build_execution_payload(pkg: dict, run_config: dict | None = None) -> 
     engine_mode = planner.ENGINE_MODES.get(logical_mode)
     if not engine_mode:
         return {}, [f"UNSUPPORTED_LOGICAL_MODE:{logical_mode}"]
+    # EXTEND packages are MULTI-BLOCK: firing one through this single-shot lane
+    # would silently render ONE 8s block for a 16s+ request (truncation) and skip
+    # the seam/concat pipeline entirely. Multi-block execution belongs to the
+    # durable orchestrator lane (/api/flow/video-jobs plan→authorize→advance),
+    # which runs the reviewed per-block 9-section prompts with their WPS word
+    # budgets. Fail closed here — this lane is SINGLE-only. logical_mode is kept
+    # in the refused payload so the loop reports THIS blocker, not a mode error.
+    generation_mode = (pkg.get("generation_mode") or "SINGLE").strip().upper()
+    if generation_mode == "EXTEND":
+        total = pkg.get("requested_total_duration_seconds") or "?"
+        return {"logical_mode": logical_mode}, [
+            f"EXTEND_PACKAGE_SINGLE_SHOT_FORBIDDEN:{total}s_USE_VIDEO_JOBS_ORCHESTRATOR"
+        ]
 
     prompt = pkg.get("final_prompt_text") or ""
     if not prompt.strip():

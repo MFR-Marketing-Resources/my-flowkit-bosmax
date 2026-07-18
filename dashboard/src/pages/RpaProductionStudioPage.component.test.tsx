@@ -41,6 +41,23 @@ vi.mock("../api/productionQueue", () => ({
 	LIVE_CONFIRM_PHRASE: "AUTHORIZE_ONE_T2V_LIVE_RUN",
 }));
 
+// ── EXTEND (multi-block) lane fakes ──
+const createWorkspaceExecutionPackage = vi.fn();
+const planVideoJob = vi.fn();
+const authorizeVideoJob = vi.fn();
+const startVideoJob = vi.fn();
+const getVideoJobStatus = vi.fn();
+
+vi.mock("../api/workspacePackages", () => ({
+	createWorkspaceExecutionPackage: (...a: unknown[]) => createWorkspaceExecutionPackage(...a),
+}));
+vi.mock("../api/nativeExtend", () => ({
+	planVideoJob: (...a: unknown[]) => planVideoJob(...a),
+	authorizeVideoJob: (...a: unknown[]) => authorizeVideoJob(...a),
+	startVideoJob: (...a: unknown[]) => startVideoJob(...a),
+	getVideoJobStatus: (...a: unknown[]) => getVideoJobStatus(...a),
+}));
+
 import RpaProductionStudioPage from "./RpaProductionStudioPage";
 
 const PRODUCT = { id: "prod-1", product_display_name: "ZZ Test Product", category: "Beauty", reference_only: false };
@@ -275,5 +292,122 @@ describe("Production Studio — result panel is honest", () => {
 
 		expect(await screen.findByTestId("studio-result-generated-not-registered")).toHaveTextContent(/not a success/i);
 		expect(screen.queryByTestId("studio-result-success")).not.toBeInTheDocument();
+	});
+});
+
+// ═══ EXTEND multi-block lane — wired to the PROVEN orchestrator, never the queue ═══
+
+const EXTEND_WEP = {
+	workspace_execution_package_id: "wep_ext1",
+	request_lineage_payload: {
+		compiler: {
+			dialogue_word_budget_per_block: [18, 14],
+			prompt_blocks: [{ block_index: 1 }, { block_index: 2 }],
+		},
+	},
+};
+const EXTEND_PLAN = {
+	job_id: "vj_ext1",
+	status: "CREATED",
+	plan_fingerprint: "fp_abcdef1234567890",
+	plan: {
+		requested_seconds: 16,
+		segment_count: 2,
+		operation_counts: { initial_generation: 1, extend: 1, final_render: 1, total: 3 },
+		credit_estimate: {},
+	},
+};
+
+function primeExtend() {
+	primeHappyPath();
+	createWorkspaceExecutionPackage.mockResolvedValue(EXTEND_WEP);
+	planVideoJob.mockResolvedValue(EXTEND_PLAN);
+	authorizeVideoJob.mockResolvedValue({ job_id: "vj_ext1", authorization_token: "tok", expires_in_seconds: 300 });
+	startVideoJob.mockResolvedValue({ job_id: "vj_ext1", status: "INITIAL_SUBMITTING", human_stage: "initial", complete: false, credit_summary: "MAY_HAVE_SPENT", no_credit_used: false });
+	getVideoJobStatus.mockResolvedValue({ job_id: "vj_ext1", status: "INITIAL_POLLING", human_stage: "initial", complete: false, credit_summary: "MAY_HAVE_SPENT", no_credit_used: false });
+}
+
+async function pickExtendDuration(total: string) {
+	await act(async () => {
+		fireEvent.change(screen.getByTestId("studio-duration"), { target: { value: total } });
+	});
+}
+
+describe("Production Studio — EXTEND multi-block lane", () => {
+	afterEach(cleanup);
+
+	it("offers extend totals beyond the single-shot max and marks them as EXTEND", async () => {
+		primeExtend();
+		renderPage();
+		await screen.findByTestId("studio-product-option");
+		const options = Array.from(
+			(screen.getByTestId("studio-duration") as HTMLSelectElement).options,
+		).map((o) => o.text);
+		expect(options.some((t) => t.includes("16") && t.includes("EXTEND"))).toBe(true);
+		expect(options.some((t) => t.includes("24") && t.includes("EXTEND"))).toBe(true);
+	});
+
+	it("prepares an EXTEND execution package + reviewed plan — and NEVER touches the queue lane", async () => {
+		primeExtend();
+		renderPage();
+		await pickProduct();
+		await pickExtendDuration("16");
+		expect(screen.getByTestId("studio-extend-note")).toBeInTheDocument();
+
+		await click("studio-action-prepare");
+
+		// The PROVEN lane: WEP with generation_mode EXTEND + the orchestrator plan.
+		expect(createWorkspaceExecutionPackage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				mode: "T2V",
+				generation_mode: "EXTEND",
+				requested_total_duration_seconds: 16,
+			}),
+		);
+		expect(planVideoJob).toHaveBeenCalledWith(
+			expect.objectContaining({
+				execution_package_id: "wep_ext1",
+				requested_total_duration_seconds: 16,
+				aspect_ratio: "VIDEO_ASPECT_RATIO_PORTRAIT",
+			}),
+		);
+		// The single-shot queue lane must NOT be used for a multi-block request.
+		expect(createT2VGenerationPackage).not.toHaveBeenCalled();
+		expect(createProductionRun).not.toHaveBeenCalled();
+		expect(startProductionRun).not.toHaveBeenCalled();
+
+		// The reviewed plan + per-block WPS budgets are shown (the compiled blocks
+		// are the canonical 9-section prompts; budgets come from the planner).
+		expect(screen.getByTestId("studio-extend-plan")).toHaveAttribute("data-segments", "2");
+		expect(screen.getAllByTestId("studio-extend-wps-block")).toHaveLength(2);
+		expect(screen.getByTestId("studio-extend-blocks").textContent).toContain("2 canonical 9-section");
+	});
+
+	it("extend gate opens ONLY with the extend phrase, and firing authorizes the plan fingerprint then starts", async () => {
+		primeExtend();
+		renderPage();
+		await pickProduct();
+		await pickExtendDuration("16");
+		await click("studio-action-prepare");
+
+		const gate = screen.getByTestId("studio-live-gate");
+		expect(gate).toHaveAttribute("data-lane", "EXTEND");
+		expect(gate).toHaveAttribute("data-gate-open", "false");
+
+		// The T2V phrase must NOT open the extend gate.
+		await typePhrase("AUTHORIZE_ONE_T2V_LIVE_RUN");
+		expect(screen.getByTestId("studio-live-gate")).toHaveAttribute("data-gate-open", "false");
+
+		await typePhrase("AUTHORIZE_EXTEND_VIDEO_JOB");
+		expect(screen.getByTestId("studio-live-gate")).toHaveAttribute("data-gate-open", "true");
+
+		await click("studio-action-go-live");
+		expect(authorizeVideoJob).toHaveBeenCalledWith("vj_ext1", "fp_abcdef1234567890");
+		expect(startVideoJob).toHaveBeenCalledWith("vj_ext1");
+		// Queue live door untouched.
+		expect(startProductionRun).not.toHaveBeenCalled();
+		await waitFor(() => {
+			expect(screen.getByTestId("studio-extend-result")).toBeInTheDocument();
+		});
 	});
 });
