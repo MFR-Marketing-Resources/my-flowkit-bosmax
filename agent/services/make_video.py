@@ -319,19 +319,27 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
 
 
 def _reference_run_dropped_reference(refs, model_used):
-    """True when a REFERENCE run verifiably fired a TEXT-ONLY generation tool.
+    """True when a REFERENCE run verifiably fired a TEXT-ONLY generation tool
+    (the attached image was dropped) — NOT merely a different image-based engine.
 
-    Captured contract (live g_09ced57d5d4b): an attached start image fires the
-    r2v variant (model_used veo_3_1_r2v_lite); a text-only run fires the plain
-    veo_3_1_* key. Only the veo_3_1 family is captured — other engines return
-    None (unverified, flagged upstream) rather than guessed. No refs → None.
+    Captured contract:
+      - g_09ced57d5d4b: an attached start image on a T2V-style run fires the r2v
+        variant (model_used veo_3_1_r2v_lite); a text-only run fires the plain
+        veo_3_1_* key.
+      - g_7b29b837c259 (first live F2V, 2026-07-18): a genuine first-frame F2V run
+        fires the i2v variant (model_used veo_3_1_i2v_lite).
+    BOTH r2v (reference-to-video) and i2v (image-to-video) CONSUME the attached
+    image — neither dropped it — so only a plain/t2v veo_3_1 key is a text-only
+    fallback. Flagging i2v as "dropped" was a false positive that fail-closed a
+    valid F2V generation. Only the veo_3_1 family is captured — other engines
+    return None (unverified, flagged upstream) rather than guessed. No refs → None.
     """
     if not refs or not isinstance(model_used, str) or not model_used:
         return None
     mu = model_used.lower()
     if not mu.startswith("veo_3_1"):
         return None  # contract not captured for this engine — never guess
-    return "r2v" not in mu
+    return not ("r2v" in mu or "i2v" in mu)
 
 
 async def _durable_media_exclusion() -> set:
@@ -645,6 +653,25 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         job["model_ok"] = nres.get("model_ok")
         job["duration_used"] = nres.get("duration_used")
         job["duration_ok"] = nres.get("duration_ok")
+        # DIAGNOSABILITY: persist the captured identity (toolNames seen, anchors, and
+        # the raw approve SSE on a gap) HERE — before any post-approve guard below can
+        # raise — so a REJECTED run still reveals what tool/model it fired instead of
+        # forcing another paid capture. (F2V live g_7b29b837c259: the agent fired
+        # veo_3_1_i2v_lite, the reference-dropped guard rejected it, and every
+        # persisted anchor came back empty ONLY because this capture used to run after
+        # the guard.) Idempotent: the success path re-confirms the same values below.
+        job["generation_identity"] = {
+            "sse_prompt": nres.get("gen_prompt"),
+            "expected_model": nres.get("model_used"),
+            "tool_call_id": nres.get("tool_call_id"),
+            "response_id": nres.get("response_id"),
+            "seed": nres.get("gen_seed"),
+        }
+        job["identity_captured"] = _identity_captured(job["generation_identity"])
+        job["tools_seen"] = list(nres.get("tools_seen") or [])
+        job["gen_tool_matched"] = bool(nres.get("gen_tool_matched"))
+        if not job["identity_captured"]:
+            job["identity_gap_sse"] = _last_approve_sse(nres)
         # Post-approve verification (Layer A): a CONFIRMED model OR duration mismatch hard-fails.
         if nres.get("model_ok") is False:
             raise RuntimeError(

@@ -546,3 +546,43 @@ async def test_terminal_snapshot_refreshes_anchors_the_submission_snapshot_could
     assert saved["tools_seen"] == ["generate_video_from_text"]
     assert saved["anchors"]["expected_model"] == "veo_3_1_t2v_lite"
     assert saved["provider_job_id"] == "g_x"           # submission data preserved
+
+
+# ── _reference_run_dropped_reference: r2v AND i2v both consume the image ──
+#
+# The guard fail-closes a reference run that fired a TEXT-ONLY tool (image
+# dropped). It used to treat ONLY r2v as reference-anchored, so a genuine F2V
+# first-frame run — which fires the i2v variant (live g_7b29b837c259:
+# veo_3_1_i2v_lite) — was wrongly rejected as "reference dropped". i2v
+# (image-to-video) consumes the image exactly like r2v; only plain/t2v is a
+# text-only fallback.
+
+
+@pytest.mark.parametrize("model_used,expected_dropped", [
+    ("veo_3_1_r2v_lite", False),      # reference-to-video — image used
+    ("veo_3_1_i2v_lite", False),      # image-to-video — image used (the F2V fix)
+    ("veo_3_1_i2v_fast", False),      # i2v family, any tier
+    ("veo_3_1_r2v_quality", False),
+    ("veo_3_1_t2v_lite", True),       # text-only — image DROPPED
+    ("veo_3_1_lite", True),           # plain key = text-only fallback — DROPPED
+])
+def test_reference_run_dropped_reference_classifies_by_engine(model_used, expected_dropped):
+    assert mv._reference_run_dropped_reference(["m1"], model_used) is expected_dropped
+
+
+def test_i2v_is_no_longer_a_false_positive_drop():
+    """Regression pin for the first live F2V (g_7b29b837c259): i2v_lite must NOT
+    be classified as a dropped reference — that fail-closed a valid F2V run."""
+    assert mv._reference_run_dropped_reference(["prod_media"], "veo_3_1_i2v_lite") is False
+
+
+def test_reference_run_dropped_reference_unknown_engine_is_unverified_not_guessed():
+    # Non-veo_3_1 engine → None (flagged upstream), never a hard True/False guess.
+    assert mv._reference_run_dropped_reference(["m1"], "abra_r2v_10s") is None
+    assert mv._reference_run_dropped_reference(["m1"], "kling_v2") is None
+
+
+def test_reference_run_dropped_reference_none_when_no_refs_or_no_model():
+    assert mv._reference_run_dropped_reference([], "veo_3_1_t2v_lite") is None
+    assert mv._reference_run_dropped_reference(["m1"], None) is None
+    assert mv._reference_run_dropped_reference(["m1"], "") is None
