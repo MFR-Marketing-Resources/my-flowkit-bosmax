@@ -621,8 +621,12 @@ domains:
 
       # WRNA poster/IMG techniques (Phase C — category visual auto-adapt)
       - agent/authority/CATEGORY_SCENE_MODEL_MAP.yaml
+      - agent/authority/CREATIVE_DIRECTION_MODES.yaml
       - agent/services/img_category_adapt_service.py
+      - agent/models/creative_direction.py
+      - agent/services/creative_direction_service.py
       - tests/unit/test_wrna_techniques.py
+      - tests/unit/test_creative_direction_service.py
       - agent/models/poster_recipe.py
       - agent/services/poster_recipe_service.py
       - agent/services/poster_prompt_composer.py

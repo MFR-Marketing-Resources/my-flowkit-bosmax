@@ -10,7 +10,7 @@
 # stack below — no font bundling/licensing needed for V1. The stack pins a
 # deterministic priority order for reproducible rendering on the local runtime.
 schema_version: poster-template-tokens-v1
-template_version: "1.0.0"
+template_version: "1.1.0"
 
 font_tokens:
   display:  { family: "'Segoe UI', 'Noto Sans', Arial, sans-serif", size: 76, weight: 800, color: "#1c1c1c", line_height: 1.08, letter_spacing: "-0.5px" }
@@ -74,3 +74,7 @@ recipes:
     product_safe_region: { x: 15, y: 30, w: 70, h: 47 }
     palette: { text: "#2b2b34", accent: "#5b5b8a", chip_bg: "rgba(255,255,255,0.88)" }
     background_constraints: "Calm warm mood scene; no clinical or before/after cues."
+  wrna_ads_poster_916:
+    product_safe_region: { x: 14, y: 30, w: 72, h: 40 }
+    palette: { text: "#16324f", accent: "#f4b942", chip_bg: "rgba(255,255,255,0.90)" }
+    background_constraints: "Premium category-relevant scene; preserve clear headline space above and copy, chip, and CTA space below the product region."

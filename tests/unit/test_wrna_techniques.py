@@ -11,13 +11,15 @@ from agent.services.img_asset_factory_service import (
 )
 from agent.services.img_category_adapt_service import resolve_category_adapt
 from agent.services.poster_recipe_service import get_recipe, list_recipes
+from agent.services.poster_template_service import template_contract
 
 
 # ── category adapt resolver ──────────────────────────────────────────────────
 def test_category_adapt_matches_and_defaults():
     beauty = resolve_category_adapt({"category": "Beauty & Personal Care"})
     assert "vanity" in beauty["background"]
-    assert "hijab" in beauty["model"]
+    assert "approved avatar" in beauty["model"]
+    assert "hijab" not in beauty["model"]
 
     food = resolve_category_adapt({"category": "Food & Beverages"})
     assert "kitchen" in food["background"]
@@ -41,6 +43,13 @@ def test_wrna_ads_recipe_loads_and_validates():
     assert recipe.max_chips == 3
     assert {z.role for z in recipe.zones} == {"HEADLINE", "SUBHEADLINE", "CHIP", "CTA"}
     assert recipe.safety_posture == "STANDARD"
+
+
+def test_wrna_ads_recipe_has_a_complete_production_template_contract():
+    contract = template_contract("wrna_ads_poster_916")
+    assert contract["product_safe_region"] == {"x": 14, "y": 30, "w": 72, "h": 40}
+    assert contract["palette"]
+    assert contract["background_constraints"]
 
 
 def test_existing_recipe_ids_unchanged():

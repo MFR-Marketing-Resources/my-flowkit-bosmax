@@ -1,0 +1,73 @@
+# Round 1 creative-direction authority. It remains inert until a later approved
+# compiler-integration round explicitly consumes the typed resolver.
+schema_version: creative-direction-modes-v1
+representation_policy:
+  schema_version: malaysian-representation-policy-v1
+  rules:
+    - "Do not mandate or prohibit hijab, headwear, or religious styling globally."
+    - "Use religious styling only when selected by the operator, preserved by an approved avatar, or established by an uploaded reference."
+    - "Do not infer religion, ethnicity, attire, or identity from a name."
+    - "Do not use skin tone as proof of Malaysian identity."
+    - "Preserve approved avatar and uploaded-reference identity."
+    - "Localise through environment, language, everyday ritual, architecture, culturally credible props, wardrobe context, and product-use context."
+modes:
+  PGC_CAMPAIGN:
+    label: "PGC Campaign"
+    composition_direction: "Product-dominant campaign hierarchy with deliberate depth layers and controlled negative space."
+    product_dominance: "hero"
+    lighting: "Layered directional commercial lighting with controlled highlights and tactile material definition."
+    camera_framing: "Purposeful premium commercial framing that keeps the product silhouette clear."
+    props: "Purposeful category-relevant props that support the sales story without overpowering the product."
+    environment: "Polished category-relevant commercial environment with Malaysian context where credible."
+    human_presence_policy: "optional_commercial_role"
+    product_interaction: "purposeful_or_none"
+    negative_rules: ["empty generic scene", "overpowering props", "flat lighting", "fantasy elements", "uncontrolled clutter"]
+    malaysian_localisation_cues: ["category-relevant local environment", "credible everyday props", "product-use context"]
+  UGC_AUTHENTIC:
+    label: "UGC Authentic"
+    composition_direction: "Credible everyday ritual with naturally imperfect, off-centre framing."
+    product_dominance: "visible_in_use"
+    lighting: "Ambient window, home, workplace, or practical light with natural exposure variation."
+    camera_framing: "Relaxed handheld-style framing with subtle imperfection and no fake device branding."
+    props: "Only incidental, believable ritual props."
+    environment: "Lived-in but controlled Malaysian everyday setting appropriate to the product ritual."
+    human_presence_policy: "optional_natural_interaction"
+    product_interaction: "believable_mid_action"
+    negative_rules: ["studio look", "cinematic grade", "symmetrical staged composition", "fake social UI", "product distortion"]
+    malaysian_localisation_cues: ["everyday ritual", "ambient local light", "credible home or lifestyle setting"]
+  MODEL_AMBASSADOR:
+    label: "Model Ambassador"
+    composition_direction: "Premium spokesperson composition with credible posture and a clear commercial relationship to the product."
+    product_dominance: "product_and_spokesperson_balanced"
+    lighting: "Polished advertising light that preserves product readability and approved identity."
+    camera_framing: "Commercial portrait or half-body framing with purposeful product visibility."
+    props: "Role-appropriate props only."
+    environment: "Commercially credible setting matched to product use and selected role."
+    human_presence_policy: "approved_avatar_or_operator_selected_role"
+    product_interaction: "purposeful_hold_or_use"
+    negative_rules: ["identity inference", "religious attire inference", "racial descriptors", "skin-tone descriptors", "influencer self-shoot tone"]
+    malaysian_localisation_cues: ["commercial wardrobe context", "credible local role", "environment and product-use context"]
+  CLEAN_STUDIO_CATALOGUE:
+    label: "Clean Studio / Clean Catalogue"
+    composition_direction: "Product-forward composition with disciplined negative space and restrained supporting detail."
+    product_dominance: "hero"
+    lighting: "Clean controlled studio lighting that reveals material, edges, and label visibility."
+    camera_framing: "Clear catalogue or hero framing with accurate product visibility."
+    props: "None or minimal category-compatible props."
+    environment: "Neutral or category-compatible clean studio surface."
+    human_presence_policy: "none_by_default"
+    product_interaction: "none"
+    negative_rules: ["unnecessary props", "busy background", "fake typography", "label morphing", "product warping"]
+    malaysian_localisation_cues: ["use only when category context requires it"]
+  LIFESTYLE_EDITORIAL:
+    label: "Lifestyle Editorial"
+    composition_direction: "Aspirational but believable editorial scene with refined natural commercial polish."
+    product_dominance: "contextual_hero"
+    lighting: "Refined natural or practical light with controlled commercial finish."
+    camera_framing: "Editorial framing that balances product, interaction, and setting."
+    props: "Curated category-relevant contextual props."
+    environment: "A credible lifestyle setting grounded in product use."
+    human_presence_policy: "optional_contextual_role"
+    product_interaction: "credible_lifestyle_use"
+    negative_rules: ["fantasy setting", "unrelated luxury signalling", "stereotypical representation", "product scale drift"]
+    malaysian_localisation_cues: ["everyday ritual", "architecture", "credible props", "language context when operator supplied"]
