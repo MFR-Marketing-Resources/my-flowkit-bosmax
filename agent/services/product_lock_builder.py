@@ -332,6 +332,22 @@ def build_product_lock(
         else ""
     )
 
+    # VIDEO-lane hand negative. The anti-finger keyword set existed ONLY in the
+    # IMAGE-lane authority (creative_scene_prompt_library.json), so every compiled
+    # VIDEO prompt shipped with no hand-anatomy negative at all — live F2V
+    # g_7b29b837c259 rendered a presenter hand with extra fingers around the
+    # product. Video-only so the proven IMG-lane prompt stays byte-identical.
+    hand_anatomy_lock = (
+        (
+            "HAND ANATOMY LOCK: Any hand that holds or touches the product must be anatomically "
+            "correct — exactly five fingers per hand with natural length, joints, and spacing. "
+            "Forbidden — extra fingers, duplicated, fused, or missing fingers, double thumbs, "
+            "warped knuckles, elongated or distorted hands, especially in the grip around the product."
+        )
+        if is_video
+        else ""
+    )
+
     return {
         "identity_lock": identity_lock,
         "geometry_lock": geometry_lock,
@@ -339,6 +355,7 @@ def build_product_lock(
         "reference_lock": reference_lock,
         "negative_morph": negative_morph,
         "frame_persistence": frame_persistence,
+        "hand_anatomy_lock": hand_anatomy_lock,
         "matched_product_id": matched_id,
     }
 
@@ -353,12 +370,17 @@ def section_2_lock_lines(
     lock = build_product_lock(
         product, is_video=is_video, has_product_reference=has_product_reference,
     )
-    return [
+    lines = [
         lock["identity_lock"],
         lock["geometry_lock"],
         lock["scale_lock"],
         lock["negative_morph"],
     ]
+    # Video-only (empty string for IMG — the image lane keeps its own library
+    # negatives and its proven prompt stays byte-identical).
+    if lock["hand_anatomy_lock"]:
+        lines.append(lock["hand_anatomy_lock"])
+    return lines
 
 
 def section_3_lock_lines(

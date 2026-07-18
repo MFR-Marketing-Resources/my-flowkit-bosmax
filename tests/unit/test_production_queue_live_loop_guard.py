@@ -122,3 +122,59 @@ async def test_non_t2v_refused_but_a_t2v_sibling_in_the_same_run_still_fires(loo
         u.get("production_error", "").startswith("LIVE_T2V_ONLY:F2V")
         for u in loop["updates"]
     )
+
+
+# ── EXTEND packages must NEVER fire through the single-shot lane ──────────
+#
+# An EXTEND package is multi-block (16s+ = N blocks + seam handoff + concat).
+# Firing it here would silently render ONE 8s block for the whole request —
+# truncation presented as success. Multi-block execution belongs to the durable
+# /video-jobs orchestrator lane.
+
+
+@pytest.mark.asyncio
+async def test_extend_package_is_refused_by_build_execution_payload():
+    payload, blockers = await pq.build_execution_payload(
+        {
+            "workspace_generation_package_id": "wgp_ext",
+            "logical_mode": "T2V", "mode": "T2V",
+            "generation_mode": "EXTEND",
+            "requested_total_duration_seconds": 16,
+            "final_prompt_text": "block 1 prompt",
+        },
+        {"model": "Veo 3.1 - Lite", "aspect": "9:16"},
+    )
+    assert payload == {"logical_mode": "T2V"}  # mode kept so the loop reports THIS blocker
+    assert blockers == ["EXTEND_PACKAGE_SINGLE_SHOT_FORBIDDEN:16s_USE_VIDEO_JOBS_ORCHESTRATOR"]
+
+
+@pytest.mark.asyncio
+async def test_extend_item_never_fires_in_the_live_loop(loop, monkeypatch):
+    """End-to-end through the loop: an EXTEND item FAILS with the blocker, no fire."""
+    real_bep = pq.build_execution_payload
+
+    async def bep(item, cfg):
+        return await real_bep(item, cfg)
+    monkeypatch.setattr(pq, "build_execution_payload", bep)
+    loop["queue"] = [{
+        "workspace_generation_package_id": "wgp_ext",
+        "logical_mode": "T2V", "mode": "T2V",
+        "generation_mode": "EXTEND",
+        "requested_total_duration_seconds": 16,
+        "final_prompt_text": "block 1 prompt",
+    }]
+
+    await pq._live_production_loop(RUN_ID)
+
+    assert loop["fired"] == []
+    failed = [u for u in loop["updates"] if u.get("production_status") == "FAILED"]
+    assert failed and "EXTEND_PACKAGE_SINGLE_SHOT_FORBIDDEN" in failed[0]["production_error"]
+
+
+@pytest.mark.asyncio
+async def test_single_package_unaffected_by_the_extend_guard(loop, monkeypatch):
+    """generation_mode SINGLE (or absent) keeps the exact existing behaviour."""
+    monkeypatch.setattr(pq, "build_execution_payload", _payload("T2V", []))
+    loop["queue"] = [{"workspace_generation_package_id": "wgp_single"}]
+    await pq._live_production_loop(RUN_ID)
+    assert loop["fired"] == ["wgp_single"]
