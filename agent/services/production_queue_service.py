@@ -289,6 +289,147 @@ async def _resolve_flow_media_id(asset_ref: str, pkg: dict) -> str | None:
     return media_id if _FLOW_MEDIA_UUID_RE.match(media_id) else None
 
 
+# ── Image-slot upload (dry-run pre-pass; CREDIT-FREE) ─────────────────────
+#
+# F2V/I2V/HYBRID need their reference image present in Flow as a real media
+# UUID before build_execution_payload can resolve the slot. upload_image is an
+# asset upload (api_request to /v1/flow/uploadImage) — NOT make_video.start_generate
+# and NO Generate click — so this whole path spends ZERO credits. It is invoked
+# ONLY from the dry-run pre-pass (_resolve_and_upload_image_slots), never from
+# _resolve_flow_media_id / build_execution_payload, which stay pure reads on the
+# fire path. There is no workspace_generation_package-keyed durable history
+# primitive (crud stage-events are request_id-keyed and queue packages have no
+# request_id), so upload evidence is a best-effort log, not a fabricated stage event.
+
+
+async def _flow_media_is_live(client, media_id: str) -> bool:
+    """True if an existing Flow media UUID still resolves (self-heal authority —
+    never trust a stored id by pattern alone; mirrors the manual lane)."""
+    try:
+        check = await client.get_media(str(media_id))
+    except Exception:  # noqa: BLE001
+        return False
+    if not isinstance(check, dict) or check.get("error"):
+        return False
+    status = check.get("status")
+    return status is None or (isinstance(status, int) and status < 400)
+
+
+async def _upload_local_image(client, local_path: str | None) -> tuple[str | None, str | None]:
+    """Upload an on-disk image to Flow → (media_uuid, None) or (None, blocker).
+    Credit-free asset upload; never raises — failures become blocker strings."""
+    import base64
+    import mimetypes
+    import os
+
+    if not local_path or not os.path.exists(local_path):
+        return None, "IMAGE_FILE_MISSING"
+    try:
+        raw = open(local_path, "rb").read()
+    except Exception:  # noqa: BLE001
+        return None, "IMAGE_FILE_UNREADABLE"
+    if not raw:
+        return None, "IMAGE_FILE_EMPTY"
+    b64 = base64.b64encode(raw).decode()
+    sha = hashlib.sha256(raw).hexdigest()
+    mime = mimetypes.guess_type(local_path)[0] or "image/png"
+    try:
+        up = await client.upload_image(
+            b64, mime_type=mime, project_id="", file_name=os.path.basename(local_path),
+        )
+    except Exception as exc:  # noqa: BLE001
+        return None, f"UPLOAD_FAILED:{str(exc)[:60]}"
+    media_id = up.get("_mediaId") if isinstance(up, dict) else None
+    if not media_id:
+        return None, "UPLOAD_NO_MEDIA_ID"
+    # Validate the returned id is a real Flow UUID BEFORE we persist it — never
+    # stamp a non-UUID into product.media_id / asset_status=UPLOADED_TO_FLOW (the
+    # pure-read _resolve_flow_media_id would reject it anyway, but don't write
+    # garbage). Gives a precise blocker instead of a later generic one.
+    if not _FLOW_MEDIA_UUID_RE.match(str(media_id)):
+        return None, f"UPLOAD_BAD_MEDIA_ID:{str(media_id)[:40]}"
+    # Best-effort asset-authority evidence (no queue-package stage-event primitive).
+    logger.info(
+        "queue image-slot upload: %s -> media_id=%s sha256=%s",
+        os.path.basename(local_path), media_id, sha[:16],
+    )
+    return str(media_id), None
+
+
+async def _upload_slot_to_flow_media(asset_ref: str, pkg: dict, client) -> tuple[str | None, str | None]:
+    """Ensure one image slot has a LIVE Flow UUID, uploading the on-disk image and
+    persisting the UUID if needed. Returns (media_id, None) or (None, blocker).
+    Existing-UUID-first with liveness self-heal; persists so re-runs are idempotent."""
+    # Slot value is already a Flow UUID — build_execution_payload resolves it;
+    # only re-upload is impossible for a bare id, so trust liveness or fail.
+    if _FLOW_MEDIA_UUID_RE.match(asset_ref):
+        return (asset_ref, None) if await _flow_media_is_live(client, asset_ref) else (None, "MEDIA_DEAD")
+
+    if asset_ref.startswith("product-image:"):
+        product = await crud.get_product(pkg.get("product_id") or "") or {}
+        existing = product.get("media_id") or ""
+        if _FLOW_MEDIA_UUID_RE.match(existing) and await _flow_media_is_live(client, existing):
+            return existing, None
+        media_id, blk = await _upload_local_image(client, product.get("local_image_path"))
+        if blk:
+            return None, blk
+        await crud.update_product(
+            pkg.get("product_id") or "", media_id=media_id, asset_status="UPLOADED_TO_FLOW",
+        )
+        return media_id, None
+
+    # Creative asset reference.
+    try:
+        asset = await crud.get_creative_asset(asset_ref)
+    except Exception:  # noqa: BLE001
+        asset = None
+    asset = asset or {}
+    existing = asset.get("media_id") or ""
+    if _FLOW_MEDIA_UUID_RE.match(existing) and await _flow_media_is_live(client, existing):
+        return existing, None
+    media_id, blk = await _upload_local_image(client, asset.get("local_file_path"))
+    if blk:
+        return None, blk
+    await crud.update_creative_asset(asset_ref, media_id=media_id)
+    return media_id, None
+
+
+async def _resolve_and_upload_image_slots(item: dict, cfg: dict) -> list[str]:
+    """DRY-RUN PRE-PASS (side-effectful by design; never on the fire path).
+
+    For an F2V/I2V/HYBRID item, upload each not-yet-live slot image to Flow and
+    persist the UUID, so the subsequent build_execution_payload READ resolves the
+    slot and the item reaches ready. Returns blocker strings for slots that could
+    not be resolved (offline extension, missing file, dead media). T2V/IMG have no
+    image slots and return [] before touching the Flow client — T2V dry-run is
+    unaffected."""
+    logical_mode = (item.get("logical_mode") or "").strip().upper()
+    if not logical_mode:
+        mode = (item.get("mode") or "").strip().upper()
+        lane = (item.get("source_lane") or "").strip().upper()
+        logical_mode = "HYBRID" if (mode == "F2V" and lane == "HYBRID") else mode
+    engine_mode = planner.ENGINE_MODES.get(logical_mode)
+    if engine_mode not in ("F2V", "I2V"):
+        return []
+    slots = _loads(item.get("resolved_engine_slots_json"), {})
+    if not isinstance(slots, dict) or not slots:
+        return []
+
+    from agent.services.flow_client import get_flow_client
+    client = get_flow_client()
+    if not getattr(client, "connected", False):
+        return ["EXTENSION_OFFLINE_FOR_UPLOAD"]
+
+    blockers: list[str] = []
+    for slot_key, asset_ref in slots.items():
+        if not asset_ref:
+            continue
+        _media_id, blk = await _upload_slot_to_flow_media(str(asset_ref), item, client)
+        if blk:
+            blockers.append(f"SLOT_UPLOAD_FAILED:{slot_key}:{blk}")
+    return blockers
+
+
 # ── Run control ───────────────────────────────────────────────────────────
 
 
@@ -506,6 +647,13 @@ async def run_production_queue(
     are spent, items stay QUEUED. With confirmation the live loop fires each
     item through make_video.start_generate honouring interval + cooldown.
 
+    NOTE — the dry run is no longer read-only for IMAGE modes (F2V/I2V/HYBRID):
+    it now runs a credit-free pre-pass that uploads each slot's reference image to
+    Flow and persists the resulting media UUID (product.media_id /
+    creative_asset.media_id, asset_status=UPLOADED_TO_FLOW) so the item can reach
+    ready. This spends ZERO credits (asset upload, not generation) and is
+    idempotent (a live UUID is reused, not re-uploaded). T2V dry-run is unchanged.
+
     live_gate=ONE_SERIAL_T2V opts into the Round F gate, which refuses anything
     that is not exactly one ready T2V item confirmed by the exact phrase.
     """
@@ -552,7 +700,12 @@ async def _dry_run_report(run: dict) -> dict:
     results = []
     ready = 0
     for item in items:
+        # PRE-PASS (dry-run only, credit-free): upload any image-mode slot image to
+        # Flow + persist its UUID, so the pure build_execution_payload READ below can
+        # resolve it. No-op for T2V/IMG. Its blockers merge into the reported ones.
+        upload_blockers = await _resolve_and_upload_image_slots(item, cfg)
         payload, blockers = await build_execution_payload(item, cfg)
+        blockers = list(dict.fromkeys(upload_blockers + blockers))
         ok = not blockers
         ready += 1 if ok else 0
         results.append({
