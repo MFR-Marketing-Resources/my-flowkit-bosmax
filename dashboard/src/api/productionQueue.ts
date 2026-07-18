@@ -202,9 +202,19 @@ export interface ProductionStartResponse {
  */
 export const LIVE_GATE_ONE_SERIAL_T2V = "ONE_SERIAL_T2V";
 export const LIVE_CONFIRM_PHRASE = "AUTHORIZE_ONE_T2V_LIVE_RUN";
+// First-frame family lane (F2V + HYBRID — both live-proven on the same engine)
+// and the ingredients/references lane (I2V). Each lane has its own DISTINCT
+// phrase server-side; a T2V confirmation can never authorize an image-mode fire.
+export const LIVE_GATE_ONE_SERIAL_F2V = "ONE_SERIAL_F2V";
+export const LIVE_F2V_CONFIRM_PHRASE = "AUTHORIZE_ONE_F2V_LIVE_RUN";
+export const LIVE_GATE_ONE_SERIAL_I2V = "ONE_SERIAL_I2V";
+export const LIVE_I2V_CONFIRM_PHRASE = "AUTHORIZE_ONE_I2V_LIVE_RUN";
 
 export interface LiveGateOptions {
-	live_gate: typeof LIVE_GATE_ONE_SERIAL_T2V;
+	live_gate:
+		| typeof LIVE_GATE_ONE_SERIAL_T2V
+		| typeof LIVE_GATE_ONE_SERIAL_F2V
+		| typeof LIVE_GATE_ONE_SERIAL_I2V;
 	confirm_phrase: string;
 	expect_package_id: string;
 }

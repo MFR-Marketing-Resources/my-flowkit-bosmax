@@ -400,6 +400,7 @@ domains:
       - dashboard/src/pages/RpaProductionStudioPage.component.test.tsx
       - dashboard/src/api/productionQueue.ts
       - dashboard/src/api/workspaceGenerationPackages.ts
+      - dashboard/src/api/operator.ts
       - dashboard/src/api/bulkGeneration.ts
       - tests/unit/test_batch_prompt_planner.py
       - tests/unit/test_batch_prompt_run.py
