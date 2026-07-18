@@ -84,6 +84,7 @@ export async function composePoster(payload: {
 	poster_copy_set_id: string;
 	recipe_id: string;
 	background_media_id?: string;
+	creative_mode?: string;
 	settings?: Record<string, unknown>;
 }): Promise<PosterComposeResponse> {
 	return postAPI("/poster/compose", payload);

@@ -489,6 +489,11 @@ function AngleStep({ wf }: { wf: WF }) {
 				Pilih sudut jualan untuk{" "}
 				{goalForArchetype(wf.goalArchetype ?? "").title}.
 			</p>
+			<label className="block text-xs text-slate-300">Creative Direction
+				<select data-testid="poster-creative-mode" value={wf.creativeMode} onChange={(event) => wf.setCreativeMode(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 p-2">
+					<option value="">No governed mode (legacy)</option><option value="PGC_CAMPAIGN">PGC Campaign</option><option value="UGC_AUTHENTIC">UGC Authentic</option><option value="MODEL_AMBASSADOR">Model Ambassador</option><option value="CLEAN_STUDIO_CATALOGUE">Clean Studio / Clean Catalogue</option><option value="LIFESTYLE_EDITORIAL">Lifestyle Editorial</option>
+				</select>
+			</label>
 			{wf.anglesLoading ? <Busy label="Menjana sudut jualan…" /> : null}
 			{wf.anglesError ? (
 				<div className="flex items-center gap-3">

@@ -177,6 +177,8 @@ export interface PosterGuidedWorkflow {
 	forkError: string;
 	// visual
 	recipeId: string | null;
+	creativeMode: string;
+	setCreativeMode: (mode: string) => void;
 	selectRecipe: (recipeId: string) => void;
 	// scene
 	backgroundMediaId: string;
@@ -246,6 +248,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 	const [forkError, setForkError] = useState("");
 
 	const [recipeId, setRecipeId] = useState<string | null>(null);
+	const [creativeMode, setCreativeMode] = useState("");
 	const [backgroundMediaId, setBackgroundMediaId] = useState("");
 
 	const [deliverable, setDeliverable] = useState<PosterComposeResponse | null>(
@@ -583,6 +586,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			setEditingCopySetId(null);
 			setForkError("");
 			setRecipeId(recon.deliverable.recipe_id ?? null);
+			setCreativeMode(String((recon.render_manifest?.provenance as { creative_mode?: string } | undefined)?.creative_mode ?? ""));
 			setBackgroundMediaId(recon.deliverable.background_media_id ?? "");
 			setDeliverable({
 				deliverable: recon.deliverable,
@@ -663,6 +667,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 				poster_copy_set_id: approvedCopySet.poster_copy_set_id,
 				recipe_id: recipeId,
 				background_media_id: backgroundMediaId || undefined,
+				creative_mode: creativeMode || undefined,
 			});
 			setDeliverable(res);
 			setSavedAssetId(null);
@@ -677,7 +682,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		} finally {
 			setComposeLoading(false);
 		}
-	}, [product, approvedCopySet, recipeId, backgroundMediaId]);
+	}, [product, approvedCopySet, recipeId, backgroundMediaId, creativeMode]);
 
 	const save = useCallback(async () => {
 		if (!deliverable) return;
@@ -748,6 +753,8 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		forkLoading,
 		forkError,
 		recipeId,
+		creativeMode,
+		setCreativeMode,
 		selectRecipe,
 		backgroundMediaId,
 		setBackgroundMediaId,

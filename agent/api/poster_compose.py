@@ -34,6 +34,7 @@ class ComposeRequest(BaseModel):
     background_media_id: str = ""
     background_local_path: str = ""
     image_model: str = ""
+    creative_mode: str | None = None
     settings: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -55,6 +56,7 @@ async def compose_poster(req: ComposeRequest):
             background_media_id=req.background_media_id,
             background_local_path=req.background_local_path,
             image_model=req.image_model,
+            creative_mode=req.creative_mode,
             settings=req.settings,
         )
     except PosterDeliverableError as exc:
