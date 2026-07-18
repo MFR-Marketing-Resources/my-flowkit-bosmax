@@ -270,8 +270,22 @@ async def build_execution_payload(pkg: dict, run_config: dict | None = None) -> 
                 image_media_ids.append(media_id)
             else:
                 blockers.append(f"SLOT_NOT_UPLOADED_TO_FLOW:{slot_key}")
+    # Dedupe (order-preserving): distinct slots can resolve to the SAME media —
+    # live I2V wgp_99e9961ae1ac5413 carried subject + product_reference both
+    # auto-seeded from the product image, and the duplicate pushed 3 real refs
+    # to 4, tripping the door's I2V cap. A repeated id adds nothing.
+    image_media_ids = list(dict.fromkeys(image_media_ids))
     if engine_mode in ("F2V", "I2V") and not image_media_ids:
         blockers.append("NO_FLOW_MEDIA_FOR_IMAGE_MODE")
+    # Reference-count contract as a DRY-RUN blocker. The one door rejects a
+    # violation synchronously at FIRE time (ERR_REFERENCE_COUNT_CONTRACT), but
+    # nothing checked it at dry-run — the exact I2V fire above dry-ran GREEN and
+    # then died at the door. Same authority, checked early, fail-closed.
+    if engine_mode in ("T2V", "F2V", "I2V"):
+        from agent.services import flow_mode_reference_contract as _refc
+        _violation = _refc.service_hard_violation(engine_mode, len(image_media_ids))
+        if _violation:
+            blockers.append(f"REFERENCE_COUNT_CONTRACT:{_violation}")
 
     duration_s = None
     dom = _loads(pkg.get("dom_handoff_payload_json"), {})
