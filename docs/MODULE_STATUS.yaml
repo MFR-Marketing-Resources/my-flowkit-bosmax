@@ -589,6 +589,7 @@ domains:
       - agent/models/poster_prompt_draft.py
       - agent/services/poster_prompt_draft_service.py
       - tests/unit/test_poster_prompt_draft_service.py
+      - tests/api/test_poster_prompt_draft_api.py
       - tests/unit/test_poster_copy_governance.py
       - dashboard/src/components/poster/PosterPromptPackagePreview.tsx
       - dashboard/src/poster/posterKitToDraft.ts

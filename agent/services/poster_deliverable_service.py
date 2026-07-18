@@ -23,6 +23,7 @@ from typing import Any
 from agent.config import OUTPUT_DIR
 from agent.db import crud
 from agent.models.creative_asset import CreativeAssetCreateRequest
+from agent.services.creative_direction_service import resolve_creative_direction
 from agent.models.poster_copy_set import (
     STATUS_POSTER_COPY_APPROVED,
     serialize_poster_copy_set,
@@ -266,6 +267,7 @@ class PosterDeliverableService:
         background_media_id: str = "",
         background_local_path: str = "",
         image_model: str = "",
+        creative_mode: str | None = None,
         settings: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         product_id = _norm(product_id)
@@ -287,6 +289,8 @@ class PosterDeliverableService:
                 status_code=409,
             )
         copy_set = serialize_poster_copy_set(pcs_row)
+        settings = settings or {}
+        direction = resolve_creative_direction(creative_mode, product=dict(product)) if creative_mode is not None else None
 
         media_id, bg_local = await _resolve_background(
             background_media_id, background_local_path
@@ -299,6 +303,7 @@ class PosterDeliverableService:
                 background_media_id=media_id,
                 background_local_path=bg_local,
                 image_model=_norm(image_model),
+                creative_direction=({"mode": direction.mode.value, "authority_version": direction.authority_version, "representation_policy_version": direction.representation_policy_version} if direction else None),
             )
         except PosterTemplateError as exc:
             raise PosterDeliverableError(exc.code, str(exc), status_code=exc.status_code)

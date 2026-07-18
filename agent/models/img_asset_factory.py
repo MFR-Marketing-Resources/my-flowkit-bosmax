@@ -62,6 +62,9 @@ class SaveImgOutputRequest(BaseModel):
     source_prompt_fingerprint: str | None = None
     source_workspace_execution_package_id: str | None = None
     source_prompt_package_snapshot_id: str | None = None
+    # Only the canonical mode is client supplied. Provenance versions are always
+    # server-derived by the existing Creative Direction resolver.
+    creative_mode: str | None = None
 
     # Catalog tags
     category: str | None = None
@@ -134,6 +137,8 @@ class ImgFastlanePromptPreviewRequest(BaseModel):
     # so any of the 20 seeded scenes is usable immediately, without first generating
     # a scene image. Independent of scene_reference_asset_id (the image reference).
     scene_context_code: str | None = None
+    # Optional governed mode. Omission preserves the legacy fastlane preview.
+    creative_mode: str | None = None
 
 
 class ImgFastlanePromptPreviewResponse(BaseModel):
@@ -153,3 +158,4 @@ class ImgFastlanePromptPreviewResponse(BaseModel):
     output_spec: str
     negative_rules: list[str] = Field(default_factory=list)
     reference_map: list[str] = Field(default_factory=list)
+    creative_direction: dict[str, Any] = Field(default_factory=dict)

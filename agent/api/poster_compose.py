@@ -19,6 +19,7 @@ from agent.services.poster_deliverable_service import (
     PosterDeliverableError,
     PosterDeliverableService,
 )
+from agent.services.creative_direction_service import CreativeDirectionError
 
 router = APIRouter(prefix="/poster", tags=["poster-compose"])
 
@@ -34,6 +35,7 @@ class ComposeRequest(BaseModel):
     background_media_id: str = ""
     background_local_path: str = ""
     image_model: str = ""
+    creative_mode: str | None = None
     settings: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -55,10 +57,13 @@ async def compose_poster(req: ComposeRequest):
             background_media_id=req.background_media_id,
             background_local_path=req.background_local_path,
             image_model=req.image_model,
+            creative_mode=req.creative_mode,
             settings=req.settings,
         )
     except PosterDeliverableError as exc:
         raise _http(exc, exc.code, exc.status_code)
+    except CreativeDirectionError as exc:
+        raise _http(exc, str(exc), 422)
 
 
 @router.get("/deliverables")

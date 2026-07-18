@@ -38,6 +38,10 @@ from agent.services.img_asset_lane_config import (
     validate_img_lane_inputs,
 )
 from agent.services.product_lock_builder import build_product_lock
+from agent.services.creative_direction_service import (
+    resolve_creative_direction,
+    select_creative_direction_directives,
+)
 
 
 # NOTE: deliberately NOT worded as a "TikTok image". Live leak (owner-reported):
@@ -261,6 +265,48 @@ _CLEAN_FRAME_NEGATIVE_RULES: tuple[str, ...] = (
     "No social-media interface elements of any kind: no like/comment/share icons, no follow or order buttons, no username or template/preset name chips, no progress bars, no phone status bars.",
     "No invented marketing copy, slogans, or taglines drawn into the frame — the only readable text anywhere is the text physically printed on the real product label.",
 )
+
+
+# Each profile represents hard instructions already emitted by the selected
+# preset. Mode fields may fill only the fields not listed here. Keeping this
+# table at the preset boundary makes precedence deterministic and auditable.
+_PRESET_CREATIVE_CONSTRAINTS: dict[str, dict[str, object]] = {
+    "BOSMAX_SERUM_AVATAR_PRODUCT_SCENE_3REF": {"product_truth": True, "human_presence": True},
+    "BOSMAX_SERUM_AVATAR_PRODUCT_2REF": {"product_truth": True, "human_presence": True},
+    "MWCB_WG40_AVATAR_BOTTLE": {"product_truth": True, "human_presence": True},
+    "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS": {"product_truth": True, "human_presence": True},
+    "MWCB_WG40_PRODUCT_ONLY_POSTER_LOCK": {"product_truth": True, "composition": True},
+    "WRNA_CGI_COMMERCIAL_FLOAT": {
+        "product_truth": True,
+        "composition": True,
+        "lighting": True,
+        "environment": True,
+        "human_presence": True,
+        "blocked_mode_negative_rules": {"cinematic grade"},
+    },
+    "WRNA_ECOM_LIFESTYLE": {
+        "product_truth": True,
+        "composition": True,
+        "lighting": True,
+        "environment": True,
+        "human_presence": True,
+    },
+}
+
+
+def _preset_creative_constraints(preset_id: str) -> dict[str, object]:
+    """Return the declared hard locks for a known IMG preset."""
+    return _PRESET_CREATIVE_CONSTRAINTS.get(preset_id, {})
+
+
+def _compatible_mode_negative_rules(
+    rules: list[str], constraints: dict[str, object]
+) -> list[str]:
+    blocked = {
+        str(rule).strip().lower()
+        for rule in constraints.get("blocked_mode_negative_rules", set())
+    }
+    return [rule for rule in rules if rule.strip().lower() not in blocked]
 
 
 def _effective_negative_rules(preset: dict[str, object]) -> list[str]:
@@ -523,6 +569,11 @@ async def compile_img_fastlane_prompt_preview(
         if found_product is None:
             raise ValueError("PRODUCT_NOT_FOUND")
         product = dict(found_product)
+    creative_direction = (
+        resolve_creative_direction(request.creative_mode, product=product)
+        if request.creative_mode is not None
+        else None
+    )
 
     selected_character = (
         await get_creative_asset(request.character_reference_asset_id)
@@ -614,10 +665,30 @@ async def compile_img_fastlane_prompt_preview(
     else:
         prompt_lines.append("- No product selected. Select a product for product-truth locking.")
     prompt_lines.append("")
+    preset_directives = _preset_directives(request.preset_id, product)
+    constraints = _preset_creative_constraints(request.preset_id)
     prompt_lines.append("COMPOSITION DIRECTIVES:")
-    prompt_lines.extend(
-        f"- {line}" for line in _preset_directives(request.preset_id, product)
-    )
+    prompt_lines.extend(f"- {line}" for line in preset_directives)
+    creative_directives: list[str] = []
+    if creative_direction is not None:
+        creative_directives = [
+            "Higher-authority conflicts suppressed before this mode is applied.",
+            *(
+                f"{label}: {value}"
+                for label, value in select_creative_direction_directives(
+                    creative_direction,
+                    product_truth_locked=bool(constraints.get("product_truth")),
+                    identity_reference_locked=bool(request.character_reference_asset_id),
+                    composition_constraint_locked=bool(constraints.get("composition")),
+                    lighting_constraint_locked=bool(constraints.get("lighting")),
+                    environment_constraint_locked=bool(constraints.get("environment")),
+                    human_presence_constraint_locked=bool(constraints.get("human_presence")),
+                )
+            ),
+        ]
+        prompt_lines.append("")
+        prompt_lines.append("GOVERNED CREATIVE DIRECTION:")
+        prompt_lines.extend(f"- {line}" for line in creative_directives)
     if scene_context_text:
         prompt_lines.append("")
         prompt_lines.append("SCENE CONTEXT (background):")
@@ -628,6 +699,13 @@ async def compile_img_fastlane_prompt_preview(
         prompt_lines.append("ADVANCED OVERRIDE NOTES (optional):")
         prompt_lines.append(f"- {_clean_text(request.advanced_override_notes)}")
     effective_negative_rules = _effective_negative_rules(preset)
+    if creative_direction is not None:
+        effective_negative_rules = [
+            *effective_negative_rules,
+            *_compatible_mode_negative_rules(
+                creative_direction.negative_rules, constraints
+            ),
+        ]
     prompt_lines.append("")
     prompt_lines.append("NEGATIVE RULES:")
     prompt_lines.extend(f"- {rule}" for rule in effective_negative_rules)
@@ -646,7 +724,7 @@ async def compile_img_fastlane_prompt_preview(
             product_reference_label,
         ),
         product_lock_lines=product_lock_lines,
-        directives=_preset_directives(request.preset_id, product),
+        directives=[*preset_directives, *creative_directives],
         override_notes=_clean_text(request.advanced_override_notes)
         if request.advanced_override_notes
         else "",
@@ -672,6 +750,14 @@ async def compile_img_fastlane_prompt_preview(
             scene_label,
             style_label,
             product_reference_label,
+        ),
+        creative_direction=(
+            {
+                "mode": creative_direction.mode.value,
+                "authority_version": creative_direction.authority_version,
+                "representation_policy_version": creative_direction.representation_policy_version,
+            }
+            if creative_direction is not None else {}
         ),
     )
 
@@ -795,8 +881,13 @@ async def save_img_output_to_library(request: SaveImgOutputRequest) -> CreativeA
         raise ValueError("IMG_LANE_INPUT_BLOCKED:" + ",".join(input_blockers))
 
     # The bound product must actually exist — never bottom out in a DB FK 500.
+    product: dict[str, object] | None = None
+    if request.product_id:
+        found_product = await crud.get_product(request.product_id)
+        if found_product is None:
+            raise ValueError("PRODUCT_NOT_FOUND")
+        product = dict(found_product)
     if lane["requires_product_id"]:
-        product = await crud.get_product(request.product_id)
         if product is None:
             raise ValueError("PRODUCT_NOT_FOUND")
 
@@ -843,6 +934,11 @@ async def save_img_output_to_library(request: SaveImgOutputRequest) -> CreativeA
     ):
         raise ValueError("APPROVAL_REQUIRES_ALL_TRUTH_PASS")
 
+    direction = (
+        resolve_creative_direction(request.creative_mode, product=product)
+        if request.creative_mode is not None
+        else None
+    )
     create_request = CreativeAssetCreateRequest(
         semantic_role=governance["semantic_role"],  # type: ignore[arg-type]
         display_name=request.display_name,
@@ -871,6 +967,17 @@ async def save_img_output_to_library(request: SaveImgOutputRequest) -> CreativeA
         scale_truth_status=scale_truth_status,
         claim_safety_status=claim_safety_status,
         review_status=request.review_status,
+        mode_a_metadata_handoff=(
+            {
+                "creative_direction": {
+                    "mode": direction.mode.value,
+                    "authority_version": direction.authority_version,
+                    "representation_policy_version": direction.representation_policy_version,
+                }
+            }
+            if direction is not None
+            else None
+        ),
         image_base64=image_base64,
         file_name=file_name,
     )

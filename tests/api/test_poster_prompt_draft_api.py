@@ -35,6 +35,23 @@ def test_prompt_draft_validation_422(monkeypatch):
     assert detail["error"] == "POSTER_PROMPT_VALIDATION_FAILED"
 
 
+def test_prompt_draft_invalid_creative_mode_is_controlled_4xx(monkeypatch):
+    from agent.services.creative_direction_service import CreativeDirectionError
+
+    async def fake_build(_req):
+        raise CreativeDirectionError("UNSUPPORTED_CREATIVE_MODE")
+
+    monkeypatch.setattr(
+        "agent.api.poster_prompt.PosterPromptDraftService.build_draft", fake_build
+    )
+    response = _client().post(
+        "/api/poster/prompt-draft",
+        json={"product_id": "p1", "hook": "x", "cta": "y", "creative_mode": "UNSAFE_MODE"},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["error"] == "UNSUPPORTED_CREATIVE_MODE"
+
+
 def test_prompt_draft_repair_required_shape(monkeypatch):
     async def fake_build(_req):
         from agent.models.poster_prompt_draft import PosterPromptDraftResponse, PromptPackageStatus

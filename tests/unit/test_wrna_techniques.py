@@ -11,6 +11,7 @@ from agent.services.img_asset_factory_service import (
     IMG_FASTLANE_PRESETS,
     compile_img_fastlane_prompt_preview,
 )
+from agent.services.creative_direction_service import resolve_creative_direction
 from agent.services.img_category_adapt_service import resolve_category_adapt
 from agent.services.poster_recipe_service import get_recipe, list_recipes
 from agent.services.poster_template_service import template_contract
@@ -167,3 +168,80 @@ def test_ecom_lifestyle_unknown_category_uses_default(monkeypatch):
         )
     )
     assert "neutral premium studio surface" in preview.prompt_text
+
+
+def test_img_fastlane_explicit_creative_modes_are_distinct_and_versioned(monkeypatch):
+    monkeypatch.setattr(crud, "get_product", _fake_product("Food & Beverages"))
+    outputs = {}
+    for mode in (
+        "PGC_CAMPAIGN", "UGC_AUTHENTIC", "MODEL_AMBASSADOR",
+        "CLEAN_STUDIO_CATALOGUE", "LIFESTYLE_EDITORIAL",
+    ):
+        preview = asyncio.run(compile_img_fastlane_prompt_preview(
+            ImgFastlanePromptPreviewRequest(
+                preset_id="WRNA_ECOM_LIFESTYLE", route="FRAMES",
+                product_id="prod-x", creative_mode=mode,
+            )
+        ))
+        outputs[mode] = preview
+        assert preview.creative_direction["mode"] == mode
+        assert preview.creative_direction["authority_version"] == "creative-direction-modes-v1"
+        assert preview.creative_direction["representation_policy_version"] == "malaysian-representation-policy-v1"
+    assert len({item.engine_prompt_text for item in outputs.values()}) == 5
+
+
+def test_img_fastlane_absent_mode_is_legacy_and_invalid_mode_fails_closed(monkeypatch):
+    monkeypatch.setattr(crud, "get_product", _fake_product("Food & Beverages"))
+    legacy = asyncio.run(compile_img_fastlane_prompt_preview(
+        ImgFastlanePromptPreviewRequest(
+            preset_id="WRNA_ECOM_LIFESTYLE", route="FRAMES", product_id="prod-x",
+        )
+    ))
+    assert legacy.creative_direction == {}
+    with pytest.raises(ValueError, match="UNSUPPORTED_CREATIVE_MODE"):
+        asyncio.run(compile_img_fastlane_prompt_preview(
+            ImgFastlanePromptPreviewRequest(
+                preset_id="WRNA_ECOM_LIFESTYLE", route="FRAMES", product_id="prod-x",
+                creative_mode="UNSAFE_MODE",
+            )
+        ))
+
+
+def test_img_fastlane_precedence_suppresses_identity_and_preset_conflicts(monkeypatch):
+    monkeypatch.setattr(crud, "get_product", _fake_product("Food & Beverages"))
+    preview = asyncio.run(compile_img_fastlane_prompt_preview(
+        ImgFastlanePromptPreviewRequest(
+            preset_id="WRNA_ECOM_LIFESTYLE", route="FRAMES", product_id="prod-x",
+            character_reference_asset_id="ca-approved-avatar",
+            creative_mode="MODEL_AMBASSADOR",
+        )
+    ))
+    direction = resolve_creative_direction("MODEL_AMBASSADOR", product={"category": "Food & Beverages"})
+    assert f"Composition: {direction.composition_direction}" not in preview.prompt_text
+    assert f"Framing: {direction.camera_framing}" not in preview.prompt_text
+    assert "Human presence:" not in preview.prompt_text
+    assert f"Props: {direction.props}" not in preview.prompt_text
+    assert f"Lighting: {direction.lighting}" not in preview.prompt_text
+    assert f"Environment: {direction.environment}" not in preview.prompt_text
+
+
+def test_product_only_cgi_preset_suppresses_ugc_conflicts_but_keeps_safe_negative(monkeypatch):
+    monkeypatch.setattr(crud, "get_product", _fake_product("Beauty & Personal Care"))
+    preview = asyncio.run(compile_img_fastlane_prompt_preview(
+        ImgFastlanePromptPreviewRequest(
+            preset_id="WRNA_CGI_COMMERCIAL_FLOAT",
+            route="INGREDIENTS",
+            ingredient_role="PRODUCT_REFERENCE",
+            product_id="prod-x",
+            creative_mode="UGC_AUTHENTIC",
+        )
+    ))
+    direction = resolve_creative_direction("UGC_AUTHENTIC", product={"category": "Beauty & Personal Care"})
+    assert "dramatic cinematic lighting" in preview.prompt_text
+    assert "No humans in frame — product is the only hero." in preview.negative_rules
+    assert f"Lighting: {direction.lighting}" not in preview.prompt_text
+    assert f"Environment: {direction.environment}" not in preview.prompt_text
+    assert f"Composition: {direction.composition_direction}" not in preview.prompt_text
+    assert "Human presence:" not in preview.prompt_text
+    assert "cinematic grade" not in preview.negative_rules
+    assert "product distortion" in preview.negative_rules

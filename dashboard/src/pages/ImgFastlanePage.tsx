@@ -195,6 +195,7 @@ export default function ImgFastlanePage() {
 	const [refreshing, setRefreshing] = useState(false);
 	const [framePresetId, setFramePresetId] = useState("");
 	const [advancedOverrideNotes, setAdvancedOverrideNotes] = useState("");
+	const [creativeMode, setCreativeMode] = useState("");
 
 	const [prompt, setPrompt] = useState("");
 	const [promptCopied, setPromptCopied] = useState(false);
@@ -485,6 +486,7 @@ export default function ImgFastlanePage() {
 				style_reference_asset_id: styleAssetId || null,
 				advanced_override_notes: advancedOverrideNotes || null,
 				scene_context_code: sceneContextCode || null,
+				creative_mode: creativeMode || null,
 			});
 			setCompiledPreview(preview);
 			// Send + display the CLEAN engine brief (no internal routing ids), which
@@ -513,6 +515,7 @@ export default function ImgFastlanePage() {
 		styleAssetId,
 		advancedOverrideNotes,
 		sceneContextCode,
+		creativeMode,
 	]);
 
 	useEffect(() => {
@@ -614,6 +617,7 @@ export default function ImgFastlanePage() {
 				scale_truth_status: scaleStatus,
 				claim_safety_status: claimStatus,
 				review_status: reviewDecision,
+				creative_mode: creativeMode || null,
 			};
 			const output =
 				outputMode === "artifact"
@@ -785,6 +789,19 @@ export default function ImgFastlanePage() {
 					{/* Section 4: Prompt Creator */}
 					<Section step="4" title="Final Prompt → Google Flow">
 						<div className="grid gap-4 md:grid-cols-2">
+							<label className="block text-[11px] text-slate-300 space-y-1">
+								<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
+									Creative Direction optional
+								</span>
+								<select value={creativeMode} onChange={(event) => setCreativeMode(event.target.value)} className="w-full rounded-xl border border-slate-800 bg-slate-950 p-2.5 text-xs text-slate-200">
+									<option value="">No governed mode (legacy)</option>
+									<option value="PGC_CAMPAIGN">PGC Campaign</option>
+									<option value="UGC_AUTHENTIC">UGC Authentic</option>
+									<option value="MODEL_AMBASSADOR">Model Ambassador</option>
+									<option value="CLEAN_STUDIO_CATALOGUE">Clean Studio / Clean Catalogue</option>
+									<option value="LIFESTYLE_EDITORIAL">Lifestyle Editorial</option>
+								</select>
+							</label>
 							<label className="block text-[11px] text-slate-300 space-y-1">
 								<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
 									Advanced Override Notes optional

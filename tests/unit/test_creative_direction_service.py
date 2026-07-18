@@ -7,6 +7,7 @@ from agent.models.creative_direction import CreativeMode
 from agent.services.creative_direction_service import (
     CreativeDirectionError,
     resolve_creative_direction,
+    select_creative_direction_directives,
 )
 
 
@@ -46,3 +47,22 @@ def test_model_ambassador_policy_rejects_identity_inference_rules():
     assert "identity inference" in negatives
     assert "religious attire inference" in negatives
     assert "skin-tone descriptors" in negatives
+
+
+def test_precedence_suppresses_only_mode_fields_conflicting_with_higher_locks():
+    direction = resolve_creative_direction(CreativeMode.MODEL_AMBASSADOR)
+    labels = dict(
+        select_creative_direction_directives(
+            direction,
+            product_truth_locked=True,
+            operator_human_presence="product only",
+            identity_reference_locked=True,
+            composition_constraint_locked=True,
+        )
+    )
+    assert "Composition" not in labels
+    assert "Framing" not in labels
+    assert "Human presence" not in labels
+    assert "Props" not in labels
+    assert labels["Lighting"] == direction.lighting
+    assert labels["Environment"] == direction.environment

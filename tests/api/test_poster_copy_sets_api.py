@@ -206,6 +206,26 @@ def test_deliverable_by_asset_route_404_when_unknown():
     assert r.json()["detail"]["code"] == "POSTER_DELIVERABLE_NOT_FOUND"
 
 
+def test_compose_invalid_creative_mode_is_controlled_4xx(monkeypatch):
+    from agent.services.creative_direction_service import CreativeDirectionError
+
+    async def fake_compose(**_kwargs):
+        raise CreativeDirectionError("UNSUPPORTED_CREATIVE_MODE")
+
+    monkeypatch.setattr(
+        "agent.api.poster_compose.PosterDeliverableService.compose_poster", fake_compose
+    )
+    r = _client().post(
+        "/api/poster/compose",
+        json={
+            "product_id": "p1", "poster_copy_set_id": "pcs1", "recipe_id": "r1",
+            "creative_mode": "UNSAFE_MODE",
+        },
+    )
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "UNSUPPORTED_CREATIVE_MODE"
+
+
 def test_compose_rejects_background_path_outside_roots(product_id, tmp_path):
     """API surface: arbitrary client paths are refused with a structured 422."""
     c = _client()
