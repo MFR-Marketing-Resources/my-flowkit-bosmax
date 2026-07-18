@@ -178,3 +178,64 @@ async def test_single_package_unaffected_by_the_extend_guard(loop, monkeypatch):
     loop["queue"] = [{"workspace_generation_package_id": "wgp_single"}]
     await pq._live_production_loop(RUN_ID)
     assert loop["fired"] == ["wgp_single"]
+
+
+# ── Reference dedupe + reference-count contract at DRY-RUN ────────────────
+#
+# Live I2V wgp_99e9961ae1ac5413: subject + product_reference both auto-seeded
+# from the product image → the duplicate pushed 3 real refs to 4 and the fire
+# died at the door (ERR_REFERENCE_COUNT_CONTRACT) AFTER a green dry-run.
+# build_execution_payload now dedupes media ids and applies the same contract
+# authority as a dry-run blocker.
+
+
+@pytest.mark.asyncio
+async def test_duplicate_slot_media_ids_are_deduped(monkeypatch):
+    async def fake_resolve(asset_ref, pkg):
+        return {"product-image:p1:subject": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "product-image:p1:product_reference": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "ca_char": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "ca_scene": "cccccccc-cccc-cccc-cccc-cccccccccccc"}.get(asset_ref)
+    monkeypatch.setattr(pq, "_resolve_flow_media_id", fake_resolve)
+
+    import json as _j
+    payload, blockers = await pq.build_execution_payload(
+        {"workspace_generation_package_id": "wgp_i", "logical_mode": "I2V",
+         "final_prompt_text": "p",
+         "resolved_engine_slots_json": _j.dumps({
+             "subject": "product-image:p1:subject",
+             "scene": "ca_char", "style": "ca_scene",
+             "product_reference": "product-image:p1:product_reference"})},
+        {"model": "Veo 3.1 - Lite", "aspect": "9:16"},
+    )
+    assert blockers == []
+    # 4 slots, but the duplicate product image collapses to 3 unique refs ≤ cap.
+    assert payload["image_media_ids"] == [
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        "cccccccc-cccc-cccc-cccc-cccccccccccc",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reference_count_contract_is_a_dry_run_blocker(monkeypatch):
+    """4 UNIQUE refs on I2V (cap 3) blocks at payload build — the dry run can
+    never again report GREEN for an item the door would reject."""
+    ids = iter(["11111111-1111-1111-1111-111111111111",
+                "22222222-2222-2222-2222-222222222222",
+                "33333333-3333-3333-3333-333333333333",
+                "44444444-4444-4444-4444-444444444444"])
+
+    async def fake_resolve(asset_ref, pkg):
+        return next(ids)
+    monkeypatch.setattr(pq, "_resolve_flow_media_id", fake_resolve)
+
+    import json as _j
+    payload, blockers = await pq.build_execution_payload(
+        {"workspace_generation_package_id": "wgp_i", "logical_mode": "I2V",
+         "final_prompt_text": "p",
+         "resolved_engine_slots_json": _j.dumps({
+             "a": "r1", "b": "r2", "c": "r3", "d": "r4"})},
+        {"model": "Veo 3.1 - Lite", "aspect": "9:16"},
+    )
+    assert any(b.startswith("REFERENCE_COUNT_CONTRACT:") for b in blockers)
