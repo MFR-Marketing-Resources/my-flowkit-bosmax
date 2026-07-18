@@ -31,7 +31,10 @@ from agent.services.poster_template_service import (
     template_contract,
 )
 from agent.services.product_truth_service import ProductTruthService
-from agent.services.creative_direction_service import resolve_creative_direction
+from agent.services.creative_direction_service import (
+    resolve_creative_direction,
+    select_creative_direction_directives,
+)
 
 CRITICAL_FIELDS: tuple[str, ...] = (
     "poster_objective",
@@ -210,20 +213,28 @@ def _creative_direction_payload(direction: Any) -> dict[str, Any]:
     }
 
 
-def _apply_creative_direction(visual: str, direction: Any | None) -> str:
+def _apply_creative_direction(
+    visual: str,
+    direction: Any | None,
+    *,
+    operator_human_presence: str = "",
+    recipe_constraint_locked: bool = False,
+) -> str:
     if direction is None:
         return visual
-    return "\n".join((
-        visual,
-        "Governed Creative Direction (subordinate to product truth, operator settings, recipe and template constraints):",
-        f"Composition: {direction.composition_direction}",
-        f"Lighting: {direction.lighting}",
-        f"Framing: {direction.camera_framing}",
-        f"Props: {direction.props}",
-        f"Environment: {direction.environment}",
-        f"Human presence: {direction.human_presence_policy}; interaction: {direction.product_interaction}",
-        "Localisation cues: " + ", ".join(direction.malaysian_localisation_cues),
-    ))
+    directives = select_creative_direction_directives(
+        direction,
+        operator_human_presence=operator_human_presence,
+        composition_constraint_locked=recipe_constraint_locked,
+    )
+    return "\n".join(
+        (
+            visual,
+            "Governed Creative Direction (after deterministic higher-authority conflict suppression):",
+            *(f"{label}: {value}" for label, value in directives),
+            "Localisation cues: " + ", ".join(direction.malaysian_localisation_cues),
+        )
+    )
 
 
 def _build_text_overlay(fields: dict[str, str]) -> str:
@@ -438,7 +449,10 @@ class PosterPromptDraftService:
             guardrails.append("Preview-only diagnostic package — not for production approval.")
 
         visual = _apply_creative_direction(
-            _build_visual_instruction(fields, readiness.image_tier.value), creative_direction
+            _build_visual_instruction(fields, readiness.image_tier.value),
+            creative_direction,
+            operator_human_presence=fields["human_presence_mode"],
+            recipe_constraint_locked=bool(request.poster_recipe_id),
         )
         overlay = _build_text_overlay(fields)
         # Recipe V2 routing. A recipe_id composes a recipe-structured prompt +

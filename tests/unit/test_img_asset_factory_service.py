@@ -99,6 +99,33 @@ def test_save_from_generated_artifact_image(tmp_path, monkeypatch):
     _run_db(scenario)
 
 
+def test_save_and_read_preserves_server_resolved_creative_direction(tmp_path, monkeypatch):
+    monkeypatch.setattr(creative_asset_service, "CREATIVE_ASSET_UPLOAD_DIR", tmp_path)
+
+    async def scenario():
+        image = tmp_path / "governed.png"
+        image.write_bytes(b"\x89PNG\r\n\x1a\n-governed")
+        await _insert_artifact("media-governed", "image", image)
+        rec = await save_img_output_to_library(
+            SaveImgOutputRequest(
+                lane_id="PRODUCT_ONLY_HERO",
+                display_name="Governed Hero",
+                generated_artifact_media_id="media-governed",
+                product_id="prod-1",
+                creative_mode="CLEAN_STUDIO_CATALOGUE",
+            )
+        )
+        restored = await creative_asset_service.get_creative_asset(rec.asset_id)
+        metadata = restored.mode_a_metadata_handoff["creative_direction"]
+        assert metadata == {
+            "mode": "CLEAN_STUDIO_CATALOGUE",
+            "authority_version": "creative-direction-modes-v1",
+            "representation_policy_version": "malaysian-representation-policy-v1",
+        }
+
+    _run_db(scenario)
+
+
 def test_save_from_video_artifact_fails_closed(tmp_path, monkeypatch):
     monkeypatch.setattr(creative_asset_service, "CREATIVE_ASSET_UPLOAD_DIR", tmp_path)
 

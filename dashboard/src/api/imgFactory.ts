@@ -106,6 +106,7 @@ export interface SaveImgOutputInput {
 	source_prompt_fingerprint?: string | null;
 	source_workspace_execution_package_id?: string | null;
 	source_prompt_package_snapshot_id?: string | null;
+	creative_mode?: string | null;
 	category?: string | null;
 	silo?: string | null;
 	product_type?: string | null;

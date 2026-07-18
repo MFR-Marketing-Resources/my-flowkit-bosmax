@@ -38,7 +38,10 @@ from agent.services.img_asset_lane_config import (
     validate_img_lane_inputs,
 )
 from agent.services.product_lock_builder import build_product_lock
-from agent.services.creative_direction_service import resolve_creative_direction
+from agent.services.creative_direction_service import (
+    resolve_creative_direction,
+    select_creative_direction_directives,
+)
 
 
 _FASTLANE_OUTPUT_SPEC = "Vertical TikTok 9:16 commercial image."
@@ -608,13 +611,15 @@ async def compile_img_fastlane_prompt_preview(
     creative_directives: list[str] = []
     if creative_direction is not None:
         creative_directives = [
-            "Governed mode is subordinate to product truth locks, selected references and preset constraints.",
-            f"Composition: {creative_direction.composition_direction}",
-            f"Lighting: {creative_direction.lighting}",
-            f"Framing: {creative_direction.camera_framing}",
-            f"Props: {creative_direction.props}",
-            f"Environment: {creative_direction.environment}",
-            f"Human presence: {creative_direction.human_presence_policy}; interaction: {creative_direction.product_interaction}",
+            "Higher-authority conflicts suppressed before this mode is applied.",
+            *(
+                f"{label}: {value}"
+                for label, value in select_creative_direction_directives(
+                    creative_direction,
+                    identity_reference_locked=bool(request.character_reference_asset_id),
+                    composition_constraint_locked=bool(preset_directives),
+                )
+            ),
         ]
         prompt_lines.append("")
         prompt_lines.append("GOVERNED CREATIVE DIRECTION:")
@@ -806,8 +811,13 @@ async def save_img_output_to_library(request: SaveImgOutputRequest) -> CreativeA
         raise ValueError("IMG_LANE_INPUT_BLOCKED:" + ",".join(input_blockers))
 
     # The bound product must actually exist — never bottom out in a DB FK 500.
+    product: dict[str, object] | None = None
+    if request.product_id:
+        found_product = await crud.get_product(request.product_id)
+        if found_product is None:
+            raise ValueError("PRODUCT_NOT_FOUND")
+        product = dict(found_product)
     if lane["requires_product_id"]:
-        product = await crud.get_product(request.product_id)
         if product is None:
             raise ValueError("PRODUCT_NOT_FOUND")
 
@@ -854,6 +864,11 @@ async def save_img_output_to_library(request: SaveImgOutputRequest) -> CreativeA
     ):
         raise ValueError("APPROVAL_REQUIRES_ALL_TRUTH_PASS")
 
+    direction = (
+        resolve_creative_direction(request.creative_mode, product=product)
+        if request.creative_mode is not None
+        else None
+    )
     create_request = CreativeAssetCreateRequest(
         semantic_role=governance["semantic_role"],  # type: ignore[arg-type]
         display_name=request.display_name,
@@ -882,6 +897,17 @@ async def save_img_output_to_library(request: SaveImgOutputRequest) -> CreativeA
         scale_truth_status=scale_truth_status,
         claim_safety_status=claim_safety_status,
         review_status=request.review_status,
+        mode_a_metadata_handoff=(
+            {
+                "creative_direction": {
+                    "mode": direction.mode.value,
+                    "authority_version": direction.authority_version,
+                    "representation_policy_version": direction.representation_policy_version,
+                }
+            }
+            if direction is not None
+            else None
+        ),
         image_base64=image_base64,
         file_name=file_name,
     )

@@ -106,6 +106,21 @@ def test_fastlane_preview_endpoint_maps_value_error_to_400(monkeypatch):
     assert response.json()["detail"] == "UNKNOWN_FASTLANE_PRESET"
 
 
+def test_fastlane_preview_invalid_creative_mode_is_controlled_4xx(monkeypatch):
+    from agent.services.creative_direction_service import CreativeDirectionError
+
+    async def fake_compile(request):
+        raise CreativeDirectionError("UNSUPPORTED_CREATIVE_MODE")
+
+    monkeypatch.setattr("agent.api.img_factory.compile_img_fastlane_prompt_preview", fake_compile)
+    response = TestClient(_build_app()).post(
+        "/api/img-factory/fastlane-preview",
+        json={"preset_id": "UNKNOWN", "route": "FRAMES", "creative_mode": "UNSAFE_MODE"},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "UNSUPPORTED_CREATIVE_MODE"
+
+
 def test_save_multiple_sources_returns_400(monkeypatch):
     async def fake_save(request):
         raise ValueError("MULTIPLE_OUTPUT_SOURCES_NOT_ALLOWED")

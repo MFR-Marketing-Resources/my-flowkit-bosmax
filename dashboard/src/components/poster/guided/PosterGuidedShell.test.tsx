@@ -310,6 +310,9 @@ describe("PosterGuidedShell", () => {
 		expect(await screen.findByText(/Disyorkan/)).toBeInTheDocument();
 
 		fireEvent.click(screen.getByTestId("poster-goal-card-PRODUCT_HERO"));
+		fireEvent.change(await screen.findByTestId("poster-creative-mode"), {
+			target: { value: "LIFESTYLE_EDITORIAL" },
+		});
 		fireEvent.click(await screen.findByTestId("poster-angle-card-0"));
 
 		// Three copy directions to compare; pick + edit + regen a field.
@@ -346,6 +349,9 @@ describe("PosterGuidedShell", () => {
 		fireEvent.click(await screen.findByTestId("poster-guided-continue")); // scene → compose
 		fireEvent.click(await screen.findByTestId("poster-compose"));
 		await waitFor(() => expect(composePoster).toHaveBeenCalled());
+		expect(vi.mocked(composePoster).mock.lastCall?.[0]).toMatchObject({
+			creative_mode: "LIFESTYLE_EDITORIAL",
+		});
 		expect(await screen.findByTestId("poster-preview")).toBeInTheDocument();
 		expect(screen.getByTestId("poster-qa-passed")).toBeInTheDocument();
 

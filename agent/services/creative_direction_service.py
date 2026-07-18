@@ -92,3 +92,36 @@ def resolve_creative_direction(
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise CreativeDirectionError("CREATIVE_DIRECTION_AUTHORITY_INVALID") from exc
+
+
+def select_creative_direction_directives(
+    direction: CreativeDirection,
+    *,
+    operator_human_presence: str = "",
+    identity_reference_locked: bool = False,
+    composition_constraint_locked: bool = False,
+) -> list[tuple[str, str]]:
+    """Return only mode directives that do not yield to a higher authority.
+
+    This is an application policy, not a second resolver: the canonical mode is
+    always resolved above.  The caller supplies already-known higher-authority
+    locks and this function deterministically removes the conflicting mode
+    fields before a final prompt is assembled.
+    """
+    directives = [
+        ("Composition", direction.composition_direction),
+        ("Lighting", direction.lighting),
+        ("Framing", direction.camera_framing),
+        ("Props", direction.props),
+        ("Environment", direction.environment),
+        (
+            "Human presence",
+            f"{direction.human_presence_policy}; interaction: {direction.product_interaction}",
+        ),
+    ]
+    suppressed: set[str] = set()
+    if composition_constraint_locked:
+        suppressed.update({"Composition", "Framing"})
+    if operator_human_presence.strip() or identity_reference_locked:
+        suppressed.add("Human presence")
+    return [(label, value) for label, value in directives if label not in suppressed]

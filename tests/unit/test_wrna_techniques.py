@@ -11,6 +11,7 @@ from agent.services.img_asset_factory_service import (
     IMG_FASTLANE_PRESETS,
     compile_img_fastlane_prompt_preview,
 )
+from agent.services.creative_direction_service import resolve_creative_direction
 from agent.services.img_category_adapt_service import resolve_category_adapt
 from agent.services.poster_recipe_service import get_recipe, list_recipes
 from agent.services.poster_template_service import template_contract
@@ -204,3 +205,19 @@ def test_img_fastlane_absent_mode_is_legacy_and_invalid_mode_fails_closed(monkey
                 creative_mode="UNSAFE_MODE",
             )
         ))
+
+
+def test_img_fastlane_precedence_suppresses_identity_and_preset_conflicts(monkeypatch):
+    monkeypatch.setattr(crud, "get_product", _fake_product("Food & Beverages"))
+    preview = asyncio.run(compile_img_fastlane_prompt_preview(
+        ImgFastlanePromptPreviewRequest(
+            preset_id="WRNA_ECOM_LIFESTYLE", route="FRAMES", product_id="prod-x",
+            character_reference_asset_id="ca-approved-avatar",
+            creative_mode="MODEL_AMBASSADOR",
+        )
+    ))
+    direction = resolve_creative_direction("MODEL_AMBASSADOR", product={"category": "Food & Beverages"})
+    assert f"Composition: {direction.composition_direction}" not in preview.prompt_text
+    assert f"Framing: {direction.camera_framing}" not in preview.prompt_text
+    assert "Human presence:" not in preview.prompt_text
+    assert f"Lighting: {direction.lighting}" in preview.prompt_text

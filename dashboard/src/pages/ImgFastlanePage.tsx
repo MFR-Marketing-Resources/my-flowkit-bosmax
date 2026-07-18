@@ -617,6 +617,7 @@ export default function ImgFastlanePage() {
 				scale_truth_status: scaleStatus,
 				claim_safety_status: claimStatus,
 				review_status: reviewDecision,
+				creative_mode: creativeMode || null,
 			};
 			const output =
 				outputMode === "artifact"

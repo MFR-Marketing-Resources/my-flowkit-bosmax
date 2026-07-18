@@ -62,6 +62,9 @@ class SaveImgOutputRequest(BaseModel):
     source_prompt_fingerprint: str | None = None
     source_workspace_execution_package_id: str | None = None
     source_prompt_package_snapshot_id: str | None = None
+    # Only the canonical mode is client supplied. Provenance versions are always
+    # server-derived by the existing Creative Direction resolver.
+    creative_mode: str | None = None
 
     # Catalog tags
     category: str | None = None

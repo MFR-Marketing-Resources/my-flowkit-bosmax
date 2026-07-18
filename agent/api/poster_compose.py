@@ -19,6 +19,7 @@ from agent.services.poster_deliverable_service import (
     PosterDeliverableError,
     PosterDeliverableService,
 )
+from agent.services.creative_direction_service import CreativeDirectionError
 
 router = APIRouter(prefix="/poster", tags=["poster-compose"])
 
@@ -61,6 +62,8 @@ async def compose_poster(req: ComposeRequest):
         )
     except PosterDeliverableError as exc:
         raise _http(exc, exc.code, exc.status_code)
+    except CreativeDirectionError as exc:
+        raise _http(exc, str(exc), 422)
 
 
 @router.get("/deliverables")

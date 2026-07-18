@@ -123,6 +123,27 @@ async def test_compose_persists_manifest_qa_and_hash(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_compose_and_reopen_preserves_server_resolved_creative_direction(tmp_path, monkeypatch):
+    pid = await _seed_product()
+    pcs = await _seed_copy_set(pid)
+    monkeypatch.setattr(compositor, "compose", _fake_compose(tmp_path))
+    result = await PosterDeliverableService.compose_poster(
+        product_id=pid,
+        poster_copy_set_id=pcs["poster_copy_set_id"],
+        recipe_id="product_hero_night_routine",
+        background_local_path=_bg(tmp_path),
+        creative_mode="LIFESTYLE_EDITORIAL",
+    )
+    restored = await PosterDeliverableService.get_with_manifest(
+        result["deliverable"]["poster_deliverable_id"]
+    )
+    provenance = restored["render_manifest"]["provenance"]
+    assert provenance["creative_mode"] == "LIFESTYLE_EDITORIAL"
+    assert provenance["creative_direction_authority_version"] == "creative-direction-modes-v1"
+    assert provenance["representation_policy_version"] == "malaysian-representation-policy-v1"
+
+
+@pytest.mark.asyncio
 async def test_save_registers_creative_asset_with_poster_governance(tmp_path, monkeypatch):
     pid = await _seed_product()
     pcs = await _seed_copy_set(pid)
