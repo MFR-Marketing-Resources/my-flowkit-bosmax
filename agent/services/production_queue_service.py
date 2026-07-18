@@ -390,6 +390,48 @@ def _aspect_ratio_of(aspect: str | None) -> float | None:
         return None
 
 
+def _image_dimensions(local_path: str) -> tuple[int, int] | None:
+    """(width, height) of a PNG/JPEG via PURE stdlib header parsing.
+
+    Deliberately NOT Pillow: the aspect gate first shipped on PIL and was
+    silently OFF in production — the runtime venv has no Pillow, so Image.open
+    raised, the except returned None, and the exact live failure the gate exists
+    for (4:5 catalog photo on a 9:16 run) sailed through ready=1 while every
+    PIL-equipped test env passed. Header parsing works in ANY venv. Unknown
+    format/corrupt header → None (cannot verify)."""
+    import struct
+
+    try:
+        with open(local_path, "rb") as f:
+            head = f.read(32)
+            if len(head) >= 24 and head[:8] == b"\x89PNG\r\n\x1a\n":
+                w, h = struct.unpack(">II", head[16:24])
+                return int(w), int(h)
+            if head[:3] == b"\xff\xd8\xff":  # JPEG: scan for a SOFn frame header
+                f.seek(2)
+                while True:
+                    marker = f.read(2)
+                    if len(marker) < 2 or marker[0] != 0xFF:
+                        return None
+                    code = marker[1]
+                    if code in (0xD8, 0x01) or 0xD0 <= code <= 0xD7:
+                        continue  # standalone markers, no length
+                    seg = f.read(2)
+                    if len(seg) < 2:
+                        return None
+                    (length,) = struct.unpack(">H", seg)
+                    if 0xC0 <= code <= 0xCF and code not in (0xC4, 0xC8, 0xCC):
+                        body = f.read(5)
+                        if len(body) < 5:
+                            return None
+                        h, w = struct.unpack(">HH", body[1:5])
+                        return int(w), int(h)
+                    f.seek(length - 2, 1)
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
 def _slot_image_aspect_blocker(local_path: str | None, aspect: str | None) -> str | None:
     """Fail-closed FRAMING gate for image slots (dry-run pre-pass only).
 
@@ -403,12 +445,10 @@ def _slot_image_aspect_blocker(local_path: str | None, aspect: str | None) -> st
     target = _aspect_ratio_of(aspect)
     if target is None or not local_path:
         return None
-    try:
-        from PIL import Image
-        with Image.open(local_path) as im:
-            w, h = im.size
-    except Exception:  # noqa: BLE001
-        return None  # unreadable file surfaces as IMAGE_FILE_* later, not here
+    dims = _image_dimensions(local_path)
+    if not dims:
+        return None  # unreadable/unknown format surfaces as IMAGE_FILE_* later, not here
+    w, h = dims
     if not h:
         return None
     actual = w / h
