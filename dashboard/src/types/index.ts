@@ -849,6 +849,51 @@ export interface CopySet {
 	approved_by: string | null;
 	created_at: string | null;
 	updated_at: string | null;
+	// Script Library (Phase-1 usage/fatigue + similarity annotation).
+	usage_count: number;
+	last_used_at: string | null;
+	used_in_modes: string[];
+	uniqueness_score: number | null;
+	similar_to_copy_set_id: string | null;
+	similarity_score: number | null;
+	archived: number;
+}
+
+export interface SimilarityBackfillItem {
+	copy_set_id: string;
+	status: CopySetStatus;
+	hook: string;
+	similar_to_copy_set_id: string | null;
+	similarity_score: number | null;
+	uniqueness_score: number | null;
+	flagged: boolean;
+	changed: boolean;
+	applied: boolean;
+}
+
+export interface SimilarityBackfillResponse {
+	product_id: string;
+	scanned: number;
+	flagged: number;
+	updated: number;
+	apply: boolean;
+	threshold: number;
+	items: SimilarityBackfillItem[];
+}
+
+export interface CopySetCloneResponse {
+	copy_set: CopySet;
+	created: boolean;
+	dedupe_match: boolean;
+	warnings: string[];
+}
+
+// Script Library rotation preview (POST /api/copy-sets/rotation-selection).
+// Read-only: usage is recorded only when a package is actually created.
+export interface RotationSelectionResponse {
+	items: CopySet[];
+	pool_size: number;
+	warnings: string[];
 }
 
 export interface CopySetListResponse {

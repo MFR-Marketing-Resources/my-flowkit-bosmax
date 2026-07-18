@@ -196,6 +196,25 @@ async def rotation_selection(request: RotationSelectionRequest):
     return result
 
 
+class SimilarityBackfillRequest(BaseModel):
+    product_id: str
+    apply: bool = False
+    threshold: float = 0.80
+
+
+@router.post("/similarity-backfill")
+async def similarity_backfill(request: SimilarityBackfillRequest):
+    """Recompute near-dup + uniqueness metadata for a product's whole script
+    pool (scripts created before the door existed carry none). Dry-run by
+    default; apply=true persists. ANNOTATION ONLY — status is never touched."""
+    from agent.services.copy_rotation_service import backfill_similarity_scan
+    if not (0.0 < request.threshold <= 1.0):
+        raise HTTPException(status_code=422, detail="THRESHOLD_OUT_OF_RANGE:0<t<=1")
+    return await backfill_similarity_scan(
+        request.product_id, threshold=request.threshold, apply=request.apply
+    )
+
+
 @router.post("/{copy_set_id}/clone-to/{target_product_id}")
 async def clone_copy_set(copy_set_id: str, target_product_id: str):
     """Share a script with a SIMILAR product (owner rule: e.g. two vanilla car

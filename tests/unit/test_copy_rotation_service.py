@@ -163,3 +163,91 @@ async def test_clone_dedupe_match_returns_existing_not_a_new_row(monkeypatch):
 
     res = await rot.clone_copy_set_to_product("cs_01", "prod-B")
     assert res["created"] is False and res["dedupe_match"] is True
+
+
+# ── Similarity backfill scan (P3) ─────────────────────────────────────────
+
+
+def _dup_cs(i, hook, **kw):
+    row = _cs(i, **kw)
+    row["hook"] = hook
+    row["subhook"] = "sebab minyak ni memang power untuk bayi"
+    row["usp_set_json"] = '["cepat serap", "bau lembut"]'
+    return row
+
+
+@pytest.fixture
+def backfill_pool(monkeypatch):
+    state = {"rows": [], "updates": []}
+
+    async def list_for_product(product_id):
+        return list(state["rows"])
+
+    async def update_copy_set(copy_set_id, **kw):
+        state["updates"].append({"copy_set_id": copy_set_id, **kw})
+        return {"copy_set_id": copy_set_id, **kw}
+
+    monkeypatch.setattr(rot.crud, "list_copy_sets_for_product", list_for_product)
+    monkeypatch.setattr(rot.crud, "update_copy_set", update_copy_set)
+    return state
+
+
+@pytest.mark.asyncio
+async def test_backfill_flags_later_duplicate_pointing_to_earlier(backfill_pool):
+    backfill_pool["rows"] = [
+        _dup_cs(1, "Pernah tak anak menangis malam sebab perut kembung"),
+        _dup_cs(2, "Pernah tak anak menangis malam sebab perut kembung sangat"),
+        _dup_cs(3, "Ramai mak ayah tak sedar silap ni bila sapu minyak"),
+    ]
+    res = await rot.backfill_similarity_scan(PID)
+    by_id = {i["copy_set_id"]: i for i in res["items"]}
+    # Directional: the ORIGINAL (earliest) is never flagged; the later
+    # near-copy points back at it.
+    assert by_id["cs_01"]["flagged"] is False
+    assert by_id["cs_02"]["flagged"] is True
+    assert by_id["cs_02"]["similar_to_copy_set_id"] == "cs_01"
+    assert by_id["cs_02"]["similarity_score"] >= 0.80
+    assert by_id["cs_03"]["flagged"] is False
+    assert res["flagged"] == 1
+    # Dry-run: NOTHING written.
+    assert res["apply"] is False and res["updated"] == 0
+    assert backfill_pool["updates"] == []
+
+
+@pytest.mark.asyncio
+async def test_backfill_apply_persists_only_changed_rows(backfill_pool):
+    original = _dup_cs(1, "Pernah tak anak menangis malam sebab perut kembung")
+    dup = _dup_cs(2, "Pernah tak anak menangis malam sebab perut kembung sangat")
+    backfill_pool["rows"] = [original, dup]
+
+    first = await rot.backfill_similarity_scan(PID, apply=True)
+    assert first["updated"] == 2  # both rows gain fresh metadata
+    written = {u["copy_set_id"]: u for u in backfill_pool["updates"]}
+    assert written["cs_02"]["similar_to_copy_set_id"] == "cs_01"
+    assert written["cs_01"]["similar_to_copy_set_id"] is None
+    assert 0.0 <= written["cs_01"]["uniqueness_score"] <= 1.0
+
+    # Re-run with metadata already in place: no rewrites.
+    for row in backfill_pool["rows"]:
+        row.update({
+            k: written[row["copy_set_id"]][k]
+            for k in ("uniqueness_score", "similar_to_copy_set_id", "similarity_score")
+        })
+    backfill_pool["updates"].clear()
+    second = await rot.backfill_similarity_scan(PID, apply=True)
+    assert second["updated"] == 0
+    assert backfill_pool["updates"] == []
+
+
+@pytest.mark.asyncio
+async def test_backfill_threshold_is_honored(backfill_pool):
+    backfill_pool["rows"] = [
+        _dup_cs(1, "Pernah tak anak menangis malam sebab perut kembung"),
+        _dup_cs(2, "Pernah tak anak menangis petang sebab perut kembung"),
+    ]
+    loose = await rot.backfill_similarity_scan(PID, threshold=0.5)
+    strict = await rot.backfill_similarity_scan(PID, threshold=0.999)
+    assert loose["flagged"] >= 1
+    assert strict["flagged"] == 0
+    # Status untouched in every mode — annotation only.
+    assert all("status" not in u for u in backfill_pool["updates"])

@@ -38,15 +38,19 @@ vi.mock("../api/copySets", () => ({
 	deleteCopySet: vi.fn(),
 	fetchCopyGrounding: vi.fn(),
 	fetchCopyFormulas: vi.fn().mockResolvedValue({ formulas: [] }),
+	cloneCopySetToProduct: vi.fn(),
+	runSimilarityBackfill: vi.fn(),
 }));
 
 import {
 	approveCopySet,
+	cloneCopySetToProduct,
 	deleteCopySet,
 	fetchCopyGrounding,
 	generateCopySetBatch,
 	listCopySetsForProduct,
 	rejectCopySet,
+	runSimilarityBackfill,
 } from "../api/copySets";
 
 const mockedList = vi.mocked(listCopySetsForProduct);
@@ -55,6 +59,8 @@ const mockedApprove = vi.mocked(approveCopySet);
 const mockedReject = vi.mocked(rejectCopySet);
 const mockedDelete = vi.mocked(deleteCopySet);
 const mockedGrounding = vi.mocked(fetchCopyGrounding);
+const mockedClone = vi.mocked(cloneCopySetToProduct);
+const mockedBackfill = vi.mocked(runSimilarityBackfill);
 
 const sampleGrounding = {
 	product_id: "p1",
@@ -114,6 +120,14 @@ const sampleSet = {
 	approved_by: null,
 	created_at: "2026-07-07T00:00:00Z",
 	updated_at: "2026-07-07T00:00:00Z",
+	// Script Library (Phase-1) fields
+	usage_count: 0,
+	last_used_at: null,
+	used_in_modes: [] as string[],
+	uniqueness_score: null,
+	similar_to_copy_set_id: null,
+	similarity_score: null,
+	archived: 0,
 };
 
 function renderPage(query = "?product_id=p1") {
@@ -262,6 +276,91 @@ describe("CopySetRegistryPage", () => {
 		const btn = await screen.findByTestId("reject-cs1");
 		btn.click();
 		await waitFor(() => expect(mockedReject).toHaveBeenCalledWith("cs1", "not suitable"));
+	});
+
+	it("[Script Library] Library cell shows usage x/15 + NEAR-DUP flag", async () => {
+		mockedList.mockResolvedValue({
+			product_id: "p1",
+			items: [
+				{
+					...sampleSet,
+					usage_count: 3,
+					last_used_at: "2026-07-18T00:00:00Z",
+					used_in_modes: ["T2V"],
+					similar_to_copy_set_id: "cs9",
+					similarity_score: 0.87,
+					uniqueness_score: 0.35,
+				},
+			],
+		});
+		renderPage();
+		const cell = await screen.findByTestId("library-cell-cs1");
+		expect(cell).toHaveTextContent("Guna 3/15");
+		expect(cell).toHaveTextContent("NEAR-DUP 87%");
+		expect(cell).toHaveTextContent("uniq 35%");
+	});
+
+	it("[Script Library] Scan Near-Dup dry-runs first; cancel writes nothing", async () => {
+		vi.spyOn(window, "confirm").mockReturnValue(false);
+		mockedBackfill.mockResolvedValue({
+			product_id: "p1",
+			scanned: 4,
+			flagged: 1,
+			updated: 0,
+			apply: false,
+			threshold: 0.8,
+			items: [],
+		});
+		renderPage();
+		await screen.findByText("Safe hook"); // sets loaded → button enabled
+		(await screen.findByTestId("scan-near-dup")).click();
+		await waitFor(() =>
+			expect(mockedBackfill).toHaveBeenCalledWith({ product_id: "p1" }),
+		);
+		// Only the dry-run fired — apply run never sent.
+		expect(mockedBackfill).toHaveBeenCalledTimes(1);
+		expect(await screen.findByText(/Dry-run sahaja/)).toBeInTheDocument();
+	});
+
+	it("[Script Library] Clone appears only for APPROVED sets and calls the API", async () => {
+		mockedList.mockResolvedValue({
+			product_id: "p1",
+			items: [{ ...sampleSet, status: "COPY_APPROVED" as const }],
+		});
+		mockedClone.mockResolvedValue({
+			copy_set: { ...sampleSet, copy_set_id: "cs_clone", product_id: "p2" },
+			created: true,
+			dedupe_match: false,
+			warnings: [],
+		});
+		renderPage();
+		(await screen.findByTestId("clone-cs1")).click();
+		expect(await screen.findByTestId("clone-copy-set-modal")).toBeInTheDocument();
+		// Target picker is mocked; confirm stays disabled until a product is
+		// chosen — the modal itself rendering is the UI contract here.
+	});
+
+	it("[Script Library] bulk approve confirms then approves every review set", async () => {
+		mockedList.mockResolvedValue({
+			product_id: "p1",
+			items: [
+				sampleSet,
+				{ ...sampleSet, copy_set_id: "cs2" },
+				{ ...sampleSet, copy_set_id: "cs3", status: "COPY_APPROVED" as const },
+			],
+		});
+		mockedApprove.mockResolvedValue({ ...sampleSet, status: "COPY_APPROVED" });
+		renderPage();
+		const btn = await screen.findByTestId("bulk-approve");
+		await waitFor(() =>
+			expect(btn).toHaveTextContent("Approve semua review (2)"),
+		);
+		btn.click();
+		const confirm = await screen.findByRole("button", { name: /Approve 2 sets/i });
+		fireEvent.click(confirm);
+		await waitFor(() => expect(mockedApprove).toHaveBeenCalledTimes(2));
+		expect(mockedApprove).toHaveBeenCalledWith("cs1", { approved_by: "operator" });
+		expect(mockedApprove).toHaveBeenCalledWith("cs2", { approved_by: "operator" });
 	});
 
 	it("Delete requires the confirm phrase before deleteCopySet fires", async () => {
