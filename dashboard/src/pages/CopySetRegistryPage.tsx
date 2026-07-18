@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
 	approveCopySet,
+	cloneCopySetToProduct,
 	type CopyGroundingSummary,
 	deleteCopySet,
 	type CopyFormula,
@@ -13,6 +14,7 @@ import {
 	listCopySetsForProduct,
 	patchCopySet,
 	rejectCopySet,
+	runSimilarityBackfill,
 } from "../api/copySets";
 import { fetchProductCatalog, prepareProductForCopywriting } from "../api/products";
 import {
@@ -30,6 +32,10 @@ import type { CopySet, CopySetStatus, Product } from "../types";
 
 const GENERATE_COUNT = 5;
 const DELETE_PHRASE = "DELETE";
+// Owner decision 2026-07-19: one script reused (with different visuals) at
+// most 15x before rotation retires it. Display-only here; the cap itself is
+// enforced server-side by copy_rotation_service.
+const REUSE_CAP = 15;
 
 const STATUS_TONE: Record<CopySetStatus, BadgeTone> = {
 	DRAFT_COPY: "neutral",
@@ -139,6 +145,75 @@ function EditCopySetModal({
 	);
 }
 
+// ---- Clone modal --------------------------------------------------------
+// Owner rule: similar products (e.g. two vanilla car perfumes) share scripts
+// via EXPLICIT clone only — the clone re-enters review against the TARGET
+// product and starts with a fresh reuse budget.
+
+function CloneCopySetModal({
+	set,
+	products,
+	busy,
+	onClone,
+	onCancel,
+}: {
+	set: CopySet;
+	products: Product[];
+	busy: boolean;
+	onClone: (target: Product) => void;
+	onCancel: () => void;
+}) {
+	const [target, setTarget] = useState<Product | null>(null);
+	const candidates = useMemo(
+		() => products.filter((p) => p.id !== set.product_id),
+		[products, set.product_id],
+	);
+	return (
+		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+			<div
+				className="w-full max-w-xl rounded-2xl border border-slate-700 bg-slate-950 p-5"
+				data-testid="clone-copy-set-modal"
+			>
+				<h3 className="text-sm font-bold text-slate-100">
+					Clone skrip ke produk serupa
+				</h3>
+				<p className="mt-1 text-xs text-slate-400">
+					Hook: “{set.hook || set.angle}”. Clone masuk semula sebagai{" "}
+					<span className="font-semibold text-amber-200">Review required</span>{" "}
+					dengan claim-safety scan terhadap produk sasaran — tidak pernah
+					auto-approve. Usage bermula 0 (bajet reuse baharu).
+				</p>
+				<div className="mt-4">
+					<SearchableProductSelect
+						products={candidates}
+						selectedProduct={target}
+						onSelect={setTarget}
+					/>
+				</div>
+				<div className="mt-5 flex justify-end gap-2">
+					<button
+						type="button"
+						onClick={onCancel}
+						disabled={busy}
+						className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300"
+					>
+						Cancel
+					</button>
+					<button
+						type="button"
+						data-testid="confirm-clone-copy-set"
+						disabled={busy || !target}
+						onClick={() => target && onClone(target)}
+						className="rounded-lg border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40"
+					>
+						{busy ? "Cloning…" : "Clone ke produk ini"}
+					</button>
+				</div>
+			</div>
+		</div>
+	);
+}
+
 // ---- Page ---------------------------------------------------------------
 
 export default function CopySetRegistryPage() {
@@ -153,6 +228,10 @@ export default function CopySetRegistryPage() {
 	const [success, setSuccess] = useState("");
 	const [editTarget, setEditTarget] = useState<CopySet | null>(null);
 	const [deleteTarget, setDeleteTarget] = useState<CopySet | null>(null);
+	const [cloneTarget, setCloneTarget] = useState<CopySet | null>(null);
+	const [scanning, setScanning] = useState(false);
+	const [bulkApproving, setBulkApproving] = useState(false);
+	const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
 	const [grounding, setGrounding] = useState<CopyGroundingSummary | null>(null);
 	const [formulas, setFormulas] = useState<CopyFormula[]>([]);
 	const [formulaId, setFormulaId] = useState("");
@@ -331,6 +410,90 @@ export default function CopySetRegistryPage() {
 		});
 	};
 
+	const handleClone = (targetProduct: Product) => {
+		if (!cloneTarget) return;
+		const source = cloneTarget;
+		void withBusy(source.copy_set_id, async () => {
+			const res = await cloneCopySetToProduct(source.copy_set_id, targetProduct.id);
+			setSuccess(
+				res.created
+					? `Skrip di-clone ke "${targetProduct.product_display_name ?? targetProduct.id}" — masuk semula review di produk itu.`
+					: "Skrip serupa sudah wujud di produk sasaran (dedupe match) — tiada clone baharu.",
+			);
+			setCloneTarget(null);
+		});
+	};
+
+	// Near-dup backfill scan: dry-run first (report), operator confirms apply.
+	const handleScan = async () => {
+		if (!selectedProduct || scanning) return;
+		setScanning(true);
+		setError("");
+		setSuccess("");
+		try {
+			const dry = await runSimilarityBackfill({ product_id: selectedProduct.id });
+			if (dry.scanned === 0) {
+				setSuccess("Tiada skrip untuk discan.");
+				return;
+			}
+			const wantApply = window.confirm(
+				`Scan (dry-run): ${dry.scanned} skrip, ${dry.flagged} near-dup dikesan, ${dry.items.filter((i) => i.changed).length} baris akan dikemas kini.\n\nTulis metadata similarity/uniqueness ke library? (Status TIDAK disentuh — anda tetap yang approve/reject.)`,
+			);
+			if (!wantApply) {
+				setSuccess(
+					`Dry-run sahaja: ${dry.scanned} skrip discan, ${dry.flagged} near-dup dikesan. Tiada apa-apa ditulis.`,
+				);
+				return;
+			}
+			const applied = await runSimilarityBackfill({
+				product_id: selectedProduct.id,
+				apply: true,
+			});
+			setSuccess(
+				`Scan siap: ${applied.scanned} skrip, ${applied.flagged} near-dup, ${applied.updated} baris dikemas kini.`,
+			);
+			await loadSets(selectedProduct.id);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : "Scan gagal.");
+		} finally {
+			setScanning(false);
+		}
+	};
+
+	const reviewRequired = sets.filter((s) => s.status === "COPY_REVIEW_REQUIRED");
+
+	// Bulk approve = approve every review-required set for this product,
+	// serially through the SAME approval endpoint (phrase + gates intact).
+	const confirmBulkApprove = async () => {
+		if (bulkApproving || reviewRequired.length === 0) {
+			setBulkApproveOpen(false);
+			return;
+		}
+		setBulkApproving(true);
+		setError("");
+		let ok = 0;
+		const failures: string[] = [];
+		for (const s of reviewRequired) {
+			try {
+				await approveCopySet(s.copy_set_id, { approved_by: "operator" });
+				ok += 1;
+			} catch (e) {
+				failures.push(
+					`${s.hook || s.copy_set_id}: ${e instanceof Error ? e.message : "gagal"}`,
+				);
+			}
+		}
+		setBulkApproving(false);
+		setBulkApproveOpen(false);
+		if (failures.length) {
+			setError(
+				`${failures.length} set gagal approve (gate menolak): ${failures.slice(0, 3).join(" · ")}${failures.length > 3 ? " · …" : ""}`,
+			);
+		}
+		if (ok) setSuccess(`${ok} set diluluskan (bulk).`);
+		if (selectedProduct) await loadSets(selectedProduct.id);
+	};
+
 	const columns: DataTableColumn<CopySet>[] = useMemo(
 		() => [
 			{
@@ -374,6 +537,50 @@ export default function CopySetRegistryPage() {
 				key: "cta",
 				header: "CTA",
 				render: (r) => <span className="text-slate-300">{r.cta || "—"}</span>,
+			},
+			{
+				key: "library",
+				header: "Library",
+				sortValue: (r) => r.usage_count ?? 0,
+				render: (r) => {
+					const usage = r.usage_count ?? 0;
+					const capped = usage >= REUSE_CAP;
+					const uniq = r.uniqueness_score;
+					return (
+						<div
+							className="space-y-0.5 text-[10px]"
+							data-testid={`library-cell-${r.copy_set_id}`}
+						>
+							<div
+								className={capped ? "font-bold text-rose-300" : "text-slate-300"}
+								title={
+									r.last_used_at
+										? `Kali terakhir dipakai: ${r.last_used_at}${r.used_in_modes.length ? ` · mod: ${r.used_in_modes.join(", ")}` : ""}`
+										: "Belum pernah dipakai"
+								}
+							>
+								Guna {usage}/{REUSE_CAP}
+								{capped ? " · RETIRED" : ""}
+							</div>
+							{r.similar_to_copy_set_id ? (
+								<div
+									className="font-bold text-amber-300"
+									title={`Hampir sama dengan set ${r.similar_to_copy_set_id}`}
+								>
+									NEAR-DUP{" "}
+									{r.similarity_score != null
+										? `${Math.round(r.similarity_score * 100)}%`
+										: ""}
+								</div>
+							) : null}
+							{uniq != null ? (
+								<div className={uniq < 0.4 ? "text-amber-300" : "text-slate-500"}>
+									uniq {Math.round(uniq * 100)}%
+								</div>
+							) : null}
+						</div>
+					);
+				},
 			},
 			{
 				key: "formula",
@@ -470,6 +677,18 @@ export default function CopySetRegistryPage() {
 						className="rounded border border-amber-500/40 px-2 py-1 text-[10px] font-bold uppercase text-amber-200 disabled:opacity-40"
 					>
 						Reject
+					</button>
+				) : null}
+				{r.status === "COPY_APPROVED" ? (
+					<button
+						type="button"
+						data-testid={`clone-${r.copy_set_id}`}
+						disabled={busy}
+						onClick={() => setCloneTarget(r)}
+						title="Kongsi skrip dengan produk serupa (masuk semula review di sana)"
+						className="rounded border border-blue-500/40 px-2 py-1 text-[10px] font-bold uppercase text-blue-200 disabled:opacity-40"
+					>
+						Clone
 					</button>
 				) : null}
 				<button
@@ -679,7 +898,32 @@ export default function CopySetRegistryPage() {
 
 					<Section
 						title="Copywriting sets"
-						helper="Edit / Approve / Reject / Delete. Approved set auto dipakai builder & video."
+						helper="Edit / Approve / Reject / Delete. Approved set auto dipakai builder & video. Kolum Library: guna x/15 (rotation cap) + flag NEAR-DUP."
+						action={
+							<div className="flex flex-wrap items-center gap-2">
+								<button
+									type="button"
+									data-testid="scan-near-dup"
+									disabled={scanning || loading || sets.length === 0}
+									onClick={() => void handleScan()}
+									title="Kira semula metadata near-dup + uniqueness untuk semua skrip produk ini (dry-run dulu, confirm sebelum tulis). Status tidak disentuh."
+									className="rounded-xl border border-amber-500/40 px-4 py-2 text-xs font-bold uppercase text-amber-200 disabled:opacity-40"
+								>
+									{scanning ? "Scanning…" : "Scan Near-Dup"}
+								</button>
+								<button
+									type="button"
+									data-testid="bulk-approve"
+									disabled={bulkApproving || loading || reviewRequired.length === 0}
+									onClick={() => setBulkApproveOpen(true)}
+									className="rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40"
+								>
+									{bulkApproving
+										? "Approving…"
+										: `Approve semua review (${reviewRequired.length})`}
+								</button>
+							</div>
+						}
 					>
 						{loading ? (
 							<p className="text-sm text-slate-400">Memuatkan…</p>
@@ -718,6 +962,26 @@ export default function CopySetRegistryPage() {
 					onCancel={() => setEditTarget(null)}
 				/>
 			) : null}
+
+			{cloneTarget ? (
+				<CloneCopySetModal
+					set={cloneTarget}
+					products={products}
+					busy={busyId === cloneTarget.copy_set_id}
+					onClone={handleClone}
+					onCancel={() => setCloneTarget(null)}
+				/>
+			) : null}
+
+			<ConfirmActionModal
+				open={bulkApproveOpen}
+				title={`Approve ${reviewRequired.length} set sekali gus?`}
+				body="Setiap set melalui endpoint approval yang SAMA (gate formula/claim kekal berkuat kuasa — set yang ditolak gate akan dilaporkan gagal). Approved set terus masuk rotation Script Library."
+				confirmLabel={`Approve ${reviewRequired.length} sets`}
+				busy={bulkApproving}
+				onConfirm={() => void confirmBulkApprove()}
+				onCancel={() => setBulkApproveOpen(false)}
+			/>
 
 			<ConfirmActionModal
 				open={!!deleteTarget}

@@ -2,8 +2,11 @@ import type {
 	AICopyAssistBatchResponse,
 	AICopyAssistResponse,
 	CopySet,
+	CopySetCloneResponse,
 	CopySetGenerateResponse,
 	CopySetListResponse,
+	RotationSelectionResponse,
+	SimilarityBackfillResponse,
 } from "../types";
 import { COPY_SET_APPROVAL_PHRASE } from "../types";
 import { fetchAPI, getAPI, patchAPI, postAPI } from "./client";
@@ -205,5 +208,42 @@ export async function rejectCopySet(
 	return postAPI<CopySet>(
 		`/api/copy-sets/${encodeURIComponent(copySetId)}/reject`,
 		{ reviewer_note: reviewerNote },
+	);
+}
+
+// Script Library P3 — clone a script to a SIMILAR product (explicit only;
+// clone re-enters review against the target product, never auto-approved).
+export async function cloneCopySetToProduct(
+	copySetId: string,
+	targetProductId: string,
+): Promise<CopySetCloneResponse> {
+	return postAPI<CopySetCloneResponse>(
+		`/api/copy-sets/${encodeURIComponent(copySetId)}/clone-to/${encodeURIComponent(targetProductId)}`,
+		{},
+	);
+}
+
+// Script Library P3 — read-only LRU rotation preview for a batch (which
+// approved scripts the batch WILL use; usage is only recorded on creation).
+export async function fetchRotationSelection(input: {
+	product_id: string;
+	count?: number;
+}): Promise<RotationSelectionResponse> {
+	return postAPI<RotationSelectionResponse>(
+		"/api/copy-sets/rotation-selection",
+		input,
+	);
+}
+
+// Script Library P3 — near-dup + uniqueness backfill for a product's pool.
+// Dry-run by default; apply=true persists. Annotation only, never status.
+export async function runSimilarityBackfill(input: {
+	product_id: string;
+	apply?: boolean;
+	threshold?: number;
+}): Promise<SimilarityBackfillResponse> {
+	return postAPI<SimilarityBackfillResponse>(
+		"/api/copy-sets/similarity-backfill",
+		input,
 	);
 }

@@ -8,6 +8,7 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { fetchAPI } from "../api/client";
+import { fetchRotationSelection } from "../api/copySets";
 import { fetchCreativeAssets } from "../api/creativeAssets";
 import { fetchProductCatalog } from "../api/products";
 import type {
@@ -21,7 +22,11 @@ import {
 	startBatchPrompts,
 } from "../api/productionQueue";
 import { ProductPicker } from "../components/batches/ProductPicker";
-import type { CreativeAsset, Product } from "../types";
+import type {
+	CreativeAsset,
+	Product,
+	RotationSelectionResponse,
+} from "../types";
 
 // BATCH PROMPT BUILDER — Prompt-generation only. Builds a batch of
 // generation packages (prompts) into the Prompt Queue. NO video
@@ -214,6 +219,15 @@ export default function BatchPromptBuilderPage() {
 	);
 	const [sceneContextsText, setSceneContextsText] = useState("");
 	const [hookAnglesText, setHookAnglesText] = useState("");
+	// Script source (Script Library P2/P3): LIBRARY (default) leaves
+	// hook_angles empty so the server rotates APPROVED scripts via
+	// deterministic LRU; MANUAL sends explicit hook angles.
+	const [scriptSource, setScriptSource] = useState<"LIBRARY" | "MANUAL">(
+		"LIBRARY",
+	);
+	const [rotationPreview, setRotationPreview] =
+		useState<RotationSelectionResponse | null>(null);
+	const [rotationPreviewLoading, setRotationPreviewLoading] = useState(false);
 	const [durationSeconds, setDurationSeconds] = useState(8);
 	const [allowedDurations, setAllowedDurations] = useState<number[]>([8]);
 	const [targetLanguage, setTargetLanguage] = useState("BM_MS");
@@ -407,6 +421,30 @@ export default function BatchPromptBuilderPage() {
 			`/api/products/${encodeURIComponent(selectedProduct.id)}/image`
 		: null;
 
+	// Read-only preview of which library scripts the batch will rotate
+	// (usage is only recorded when packages are actually created).
+	useEffect(() => {
+		if (!productId || scriptSource !== "LIBRARY") {
+			setRotationPreview(null);
+			return;
+		}
+		let cancelled = false;
+		setRotationPreviewLoading(true);
+		fetchRotationSelection({ product_id: productId, count: quantity })
+			.then((resp) => {
+				if (!cancelled) setRotationPreview(resp);
+			})
+			.catch(() => {
+				if (!cancelled) setRotationPreview(null);
+			})
+			.finally(() => {
+				if (!cancelled) setRotationPreviewLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [productId, quantity, scriptSource]);
+
 	const canSubmit =
 		Boolean(productId) &&
 		Boolean(mode) &&
@@ -438,7 +476,10 @@ export default function BatchPromptBuilderPage() {
 				scene_asset_ids: mode === "I2V" ? sceneAssetIds : [],
 				style_asset_ids: mode === "I2V" ? styleAssetIds : [],
 				scene_contexts: isTextLane ? splitLines(sceneContextsText) : [],
-				hook_angles: splitLines(hookAnglesText),
+				// LIBRARY source sends NO hooks — the server then pulls approved
+				// scripts via deterministic LRU rotation (Script Library P2).
+				hook_angles:
+					scriptSource === "MANUAL" ? splitLines(hookAnglesText) : [],
 				finished_frame_asset_id: mode === "F2V" ? finishedFrameAssetId : null,
 			});
 			setBatchRunId(resp.batch_run_id);
@@ -655,16 +696,106 @@ export default function BatchPromptBuilderPage() {
 						</div>
 					)}
 
-					{/* Hook angles — all modes */}
+					{/* Script source — Script Library rotation vs manual hooks */}
 					<div>
-						<FieldLabel text="Hook Angles (one per line)" />
-						<textarea
-							value={hookAnglesText}
-							onChange={(e) => setHookAnglesText(e.target.value)}
-							rows={4}
-							placeholder={"problem-agitate opener\nprice shock reveal\nbefore/after transformation"}
-							className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 resize-none outline-none focus:border-blue-400/50"
-						/>
+						<FieldLabel text="Script Source" />
+						<div className="flex gap-2" data-testid="script-source-toggle">
+							{(
+								[
+									["LIBRARY", "Script Library (LRU auto)"],
+									["MANUAL", "Manual hook angles"],
+								] as const
+							).map(([value, label]) => (
+								<button
+									key={value}
+									type="button"
+									data-testid={`script-source-${value.toLowerCase()}`}
+									onClick={() => setScriptSource(value)}
+									className={`rounded-lg border px-3 py-2 text-xs font-semibold ${
+										scriptSource === value
+											? "border-blue-400/60 bg-blue-600/20 text-blue-100"
+											: "border-slate-700 bg-slate-950 text-slate-400"
+									}`}
+								>
+									{label}
+								</button>
+							))}
+						</div>
+
+						{scriptSource === "LIBRARY" ? (
+							<div
+								className="mt-2 rounded-lg border border-slate-800 bg-slate-950 p-3 text-xs"
+								data-testid="rotation-preview"
+							>
+								{rotationPreviewLoading ? (
+									<span className="text-slate-500">Memuatkan pool skrip…</span>
+								) : !rotationPreview ? (
+									<span className="text-slate-500">
+										Pilih produk untuk lihat pool Script Library.
+									</span>
+								) : rotationPreview.items.length === 0 ? (
+									<div className="space-y-1">
+										<div className="font-bold text-amber-300">
+											Library kosong — tiada skrip APPROVED untuk produk ini.
+										</div>
+										<div className="text-slate-400">
+											Server akan fallback ke claim-safe hook angles produk. Untuk
+											skrip sebenar: jana + approve di{" "}
+											<button
+												type="button"
+												onClick={() =>
+													navigate(
+														`/creative/copy-registry?product_id=${encodeURIComponent(productId)}`,
+													)
+												}
+												className="font-semibold text-blue-300 underline"
+											>
+												Copywriting Set Registry
+											</button>
+											.
+										</div>
+									</div>
+								) : (
+									<div className="space-y-1">
+										<div className="text-slate-300">
+											Pool: {rotationPreview.pool_size} skrip approved — batch ini
+											akan rotate (LRU, deterministik):
+										</div>
+										<ul className="list-disc pl-4 text-slate-400">
+											{[
+												...new Map(
+													rotationPreview.items.map((s) => [s.copy_set_id, s]),
+												).values(),
+											]
+												.slice(0, 5)
+												.map((s) => (
+													<li key={s.copy_set_id}>
+														{s.hook || s.angle}{" "}
+														<span className="text-slate-600">
+															(guna {s.usage_count}/15)
+														</span>
+													</li>
+												))}
+										</ul>
+										{rotationPreview.warnings.map((w) => (
+											<div key={w} className="text-amber-300">
+												{w.startsWith("POOL_SMALLER_THAN_BATCH")
+													? "Pool lebih kecil dari batch — skrip akan berulang dengan visual berbeza (dibenarkan, dikira pada cap 15)."
+													: w}
+											</div>
+										))}
+									</div>
+								)}
+							</div>
+						) : (
+							<textarea
+								value={hookAnglesText}
+								onChange={(e) => setHookAnglesText(e.target.value)}
+								rows={4}
+								placeholder={"problem-agitate opener\nprice shock reveal\nbefore/after transformation"}
+								className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 resize-none outline-none focus:border-blue-400/50"
+							/>
+						)}
 					</div>
 
 					{/* HYBRID — avatar codes multi-select */}
