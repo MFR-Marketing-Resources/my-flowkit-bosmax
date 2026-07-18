@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { archiveCreativeAsset, fetchCreativeAssets } from "../api/creativeAssets";
 import {
 	compileImgFastlanePromptPreview,
@@ -165,6 +166,9 @@ function ReferenceField({
 
 export default function ImgFastlanePage() {
 	const imgGen = useImageGenSettings();
+	// Deep-link wiring (RPA Production Studio IMG card): /assets/img-fastlane?product_id=…
+	// lands here with the Studio's product pre-selected — same proven flow, no re-picking.
+	const [searchParams] = useSearchParams();
 
 	const [lanes, setLanes] = useState<ImgAssetLane[]>([]);
 	const [presets, setPresets] = useState<ImgFastlanePreset[]>([]);
@@ -293,6 +297,15 @@ export default function ImgFastlanePage() {
 		window.addEventListener("focus", onFocus);
 		return () => window.removeEventListener("focus", onFocus);
 	}, [loadReferences]);
+
+	// Studio deep-link: once the catalog is loaded, pre-select the product the
+	// Studio sent us with (?product_id=…). Never overrides a manual selection.
+	useEffect(() => {
+		const pid = searchParams.get("product_id");
+		if (!pid || selectedProduct) return;
+		const hit = products.find((p) => p.id === pid);
+		if (hit) setSelectedProduct(hit);
+	}, [products, searchParams, selectedProduct]);
 
 	// Automatically choose the correct lane based on selections.
 	const lane = useMemo(() => {
