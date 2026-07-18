@@ -224,6 +224,7 @@ def _apply_creative_direction(
         return visual
     directives = select_creative_direction_directives(
         direction,
+        product_truth_locked=True,
         operator_human_presence=operator_human_presence,
         composition_constraint_locked=recipe_constraint_locked,
     )

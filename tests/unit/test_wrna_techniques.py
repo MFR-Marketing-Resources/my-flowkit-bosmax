@@ -220,4 +220,5 @@ def test_img_fastlane_precedence_suppresses_identity_and_preset_conflicts(monkey
     assert f"Composition: {direction.composition_direction}" not in preview.prompt_text
     assert f"Framing: {direction.camera_framing}" not in preview.prompt_text
     assert "Human presence:" not in preview.prompt_text
+    assert f"Props: {direction.props}" not in preview.prompt_text
     assert f"Lighting: {direction.lighting}" in preview.prompt_text

@@ -616,6 +616,7 @@ async def compile_img_fastlane_prompt_preview(
                 f"{label}: {value}"
                 for label, value in select_creative_direction_directives(
                     creative_direction,
+                    product_truth_locked=product is not None,
                     identity_reference_locked=bool(request.character_reference_asset_id),
                     composition_constraint_locked=bool(preset_directives),
                 )

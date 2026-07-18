@@ -97,6 +97,7 @@ def resolve_creative_direction(
 def select_creative_direction_directives(
     direction: CreativeDirection,
     *,
+    product_truth_locked: bool = False,
     operator_human_presence: str = "",
     identity_reference_locked: bool = False,
     composition_constraint_locked: bool = False,
@@ -120,6 +121,8 @@ def select_creative_direction_directives(
         ),
     ]
     suppressed: set[str] = set()
+    if product_truth_locked:
+        suppressed.add("Props")
     if composition_constraint_locked:
         suppressed.update({"Composition", "Framing"})
     if operator_human_presence.strip() or identity_reference_locked:
