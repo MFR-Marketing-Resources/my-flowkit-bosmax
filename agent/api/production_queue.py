@@ -29,8 +29,10 @@ class SendToProductionRequest(BaseModel):
 
 class StartRunRequest(BaseModel):
     confirm_live_credit_burn: bool = False
-    # Round F one-serial T2V lane. Opt-in: omitting live_gate leaves the
-    # pre-existing live path (a protected system, G0 §3) unchanged.
+    # Round F one-serial live lanes: 'ONE_SERIAL_T2V' or 'ONE_SERIAL_F2V', each
+    # with its own DISTINCT confirm_phrase. Opt-in: omitting live_gate leaves the
+    # pre-existing bulk live path (a protected system, G0 §3) unchanged and
+    # strictly T2V-only.
     live_gate: str | None = None
     confirm_phrase: str | None = None
     expect_package_id: str | None = None
