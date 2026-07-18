@@ -376,3 +376,52 @@ def test_aspect_ratio_parser_fails_closed_to_none():
     assert pq._aspect_ratio_of(None) is None
     assert pq._aspect_ratio_of("garbage") is None
     assert pq._aspect_ratio_of("9:0") is None
+
+
+# ── _image_dimensions is PURE STDLIB — the gate must work in a venv with no
+#    Pillow (the runtime venv has none; the PIL-based first version was silently
+#    OFF in production and let the exact live failure through ready=1) ─────────
+
+
+def _stdlib_png(tmp_path, name, w, h):
+    """Build a minimal PNG header with struct only — proves no PIL is needed."""
+    import struct
+    import zlib
+    sig = b"\x89PNG\r\n\x1a\n"
+    ihdr_data = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+    ihdr = struct.pack(">I", len(ihdr_data)) + b"IHDR" + ihdr_data + struct.pack(
+        ">I", zlib.crc32(b"IHDR" + ihdr_data) & 0xFFFFFFFF)
+    p = tmp_path / name
+    p.write_bytes(sig + ihdr)
+    return str(p)
+
+
+def test_image_dimensions_reads_png_without_pil(tmp_path, monkeypatch):
+    import builtins
+    real_import = builtins.__import__
+
+    def no_pil(name, *a, **k):
+        if name == "PIL" or name.startswith("PIL."):
+            raise ImportError("PIL unavailable (runtime venv)")
+        return real_import(name, *a, **k)
+    monkeypatch.setattr(builtins, "__import__", no_pil)
+
+    p = _stdlib_png(tmp_path, "cat_4x5.png", 1122, 1402)
+    assert pq._image_dimensions(p) == (1122, 1402)
+    blk = pq._slot_image_aspect_blocker(p, "9:16")
+    assert blk is not None and "SLOT_ASPECT_MISMATCH" in blk
+
+
+def test_image_dimensions_reads_jpeg(tmp_path):
+    from PIL import Image
+    p = tmp_path / "j.jpg"
+    Image.new("RGB", (1080, 1920), (0, 0, 0)).save(p, format="JPEG")
+    assert pq._image_dimensions(str(p)) == (1080, 1920)
+    assert pq._slot_image_aspect_blocker(str(p), "9:16") is None  # 9:16 passes
+
+
+def test_image_dimensions_unknown_format_is_none_not_a_guess(tmp_path):
+    p = tmp_path / "junk.bin"
+    p.write_bytes(b"not an image at all")
+    assert pq._image_dimensions(str(p)) is None
+    assert pq._slot_image_aspect_blocker(str(p), "9:16") is None  # cannot verify → no gate
