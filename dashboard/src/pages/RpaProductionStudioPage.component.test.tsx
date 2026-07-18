@@ -126,16 +126,36 @@ describe("Production Studio — rendered contract", () => {
 		}
 	});
 
-	it("enables T2V and locks F2V/I2V/Hybrid/IMG + bulk", async () => {
+	it("enables T2V + IMG (frame factory), locks F2V/I2V/Hybrid + bulk", async () => {
 		primeHappyPath();
 		renderPage();
 		await screen.findByTestId("studio-mode-t2v");
 		expect(screen.getByTestId("studio-mode-t2v")).toHaveAttribute("data-enabled", "true");
-		for (const m of ["f2v", "i2v", "hybrid", "img"]) {
+		// IMG is WIRED: a deep-link entry into the proven IMG Fastlane frame factory.
+		expect(screen.getByTestId("studio-mode-img")).toHaveAttribute("data-enabled", "true");
+		for (const m of ["f2v", "i2v", "hybrid"]) {
 			expect(screen.getByTestId(`studio-mode-${m}`)).toHaveAttribute("data-locked", "true");
 			expect(screen.getByTestId(`studio-mode-${m}`)).toHaveAttribute("data-enabled", "false");
 		}
 		expect(screen.getByTestId("studio-bulk-locked")).toHaveAttribute("data-locked", "true");
+	});
+
+	it("IMG card deep-links to the Fastlane with the selected product", async () => {
+		primeHappyPath();
+		renderPage();
+		await pickProduct();
+		const assign = vi.fn();
+		const original = window.location;
+		Object.defineProperty(window, "location", {
+			value: { ...original, assign },
+			writable: true,
+		});
+		try {
+			await click("studio-mode-img");
+			expect(assign).toHaveBeenCalledWith("/assets/img-fastlane?product_id=prod-1");
+		} finally {
+			Object.defineProperty(window, "location", { value: original, writable: true });
+		}
 	});
 
 	it("fixes quantity to 1 and offers no way to change it", async () => {

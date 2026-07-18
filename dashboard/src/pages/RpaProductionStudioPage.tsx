@@ -83,15 +83,18 @@ const EXTEND_ASPECT_ENUM: Record<string, string> = {
 };
 
 /** Future lanes — rendered, never wired. The reason is shown so a user is not left guessing. */
+// Video lanes PROVEN live via the gated Queue Control lanes (first bound
+// artifacts 2026-07-18: F2V 0a18ca6a · HYBRID 80afc332 · I2V b7564ded). They
+// fire today through Queue Control (ONE_SERIAL_F2V / ONE_SERIAL_I2V + phrase);
+// one-click Studio wiring for them is the next step — the lock here is about
+// THIS page's UI, not the pipeline.
 const LOCKED_MODES = [
 	{ key: "F2V", label: "Frames → Video", icon: Layers,
-	  reason: "Needs a product image uploaded to Google Flow first — that upload path is not yet wired into this studio." },
+	  reason: "PROVEN live (artifact 0a18ca6a). Fire today via Queue Control's ONE_SERIAL_F2V gated lane — one-click Studio wiring is next. Needs an approved 9:16 start frame (make one with the IMG frame factory)." },
 	{ key: "I2V", label: "Image → Video", icon: Video,
-	  reason: "Needs uploaded Flow reference media; the RPA upload chain is not proven yet." },
+	  reason: "PROVEN live (artifact b7564ded). Fire today via Queue Control's ONE_SERIAL_I2V gated lane — one-click Studio wiring is next." },
 	{ key: "HYBRID", label: "Hybrid", icon: Sparkles,
-	  reason: "Runs on the F2V engine, so it inherits the same media-upload requirement." },
-	{ key: "IMG", label: "Image / Poster", icon: ImageIcon,
-	  reason: "A separate image lane, not part of the T2V video studio MVP." },
+	  reason: "PROVEN live (artifact 80afc332). Runs on the first-frame engine; fire today via Queue Control's ONE_SERIAL_F2V family gate — one-click Studio wiring is next." },
 ];
 
 interface DryRunItem {
@@ -521,19 +524,35 @@ export default function RpaProductionStudioPage() {
 						<div className="text-[11px] font-semibold text-emerald-200">Text → Video</div>
 						<div className="text-[9px] text-emerald-300/80">T2V · enabled</div>
 					</div>
+					{/* IMG = the FRAME FACTORY, wired as a deep-link into the proven IMG
+					    Fastlane flow (compile preview → generate → truth-gated save). It
+					    lands there with THIS studio's product pre-selected. Deliberately a
+					    link, not a rebuilt flow — the fastlane already owns the truth/save
+					    gates and rebuilding them here would be duplication that drifts. */}
+					<button type="button" data-testid="studio-mode-img" data-enabled="true"
+						onClick={() => {
+							const q = selectedProduct ? `?product_id=${encodeURIComponent(selectedProduct.id)}` : "";
+							window.location.assign(`/assets/img-fastlane${q}`);
+						}}
+						title="Generate the clean 9:16 composite frames (avatar + product) that the F2V/HYBRID lanes require — via the proven IMG Fastlane."
+						className="rounded-lg border border-sky-500/50 bg-sky-500/10 p-3 text-left hover:bg-sky-500/20">
+						<ImageIcon size={16} className="mb-1 text-sky-300" />
+						<div className="text-[11px] font-semibold text-sky-200">Image · Frame Factory</div>
+						<div className="text-[9px] text-sky-300/80">IMG · opens Fastlane{selectedProduct ? " with this product" : ""}</div>
+					</button>
 					{LOCKED_MODES.map((m) => {
 						const Icon = m.icon;
 						return (
 							<div key={m.key} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 opacity-70" data-testid={`studio-mode-${m.key.toLowerCase()}`} data-enabled="false" data-locked="true" title={m.reason}>
 								<div className="mb-1 flex items-center gap-1"><Icon size={16} className="text-slate-600" /><Lock size={10} className="text-slate-600" /></div>
 								<div className="text-[11px] font-semibold text-slate-400">{m.label}</div>
-								<div className="text-[9px] text-slate-600">{m.key} · locked</div>
+								<div className="text-[9px] text-slate-600">{m.key} · proven — fire via Queue Control</div>
 							</div>
 						);
 					})}
 				</div>
 				<p className="mt-2 text-[10px] text-slate-500" data-testid="studio-locked-reason">
-					Locked modes need an image uploaded to Google Flow (or are a separate lane) — not yet wired into this studio.
+					F2V / HYBRID / I2V are PROVEN live and fire today through Queue Control's gated one-serial lanes; their one-click Studio wiring is the next step. IMG opens the proven Fastlane frame factory.
 				</p>
 			</section>
 
