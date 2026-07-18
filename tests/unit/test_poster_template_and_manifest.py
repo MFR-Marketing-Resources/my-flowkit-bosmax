@@ -29,10 +29,10 @@ _COPY = {
 
 
 def test_every_launch_recipe_has_a_production_template_contract():
-    """All six archetypes must carry tokens + a product-safe region that no
+    """All production recipes must carry tokens + a product-safe region that no
     text zone intersects (validated inside template_contract/build)."""
     recipes = poster_recipe_service.list_recipes()
-    assert len(recipes) == 6
+    assert len(recipes) == 7
     for r in recipes:
         contract = template_contract(r.recipe_id)
         safe = contract["product_safe_region"]
