@@ -57,6 +57,17 @@ _INFLIGHT_RETRY_SECONDS = 30
 # this gate to cover it would be a separate owner decision, not a Round F change.
 LIVE_GATE_ONE_SERIAL_T2V = "ONE_SERIAL_T2V"
 LIVE_CONFIRM_PHRASE = "AUTHORIZE_ONE_T2V_LIVE_RUN"
+
+# Round F (Option 2) — the one-serial F2V live lane. Same opt-in contract as the
+# T2V lane above: it applies ONLY when a caller asks for LIVE_GATE_ONE_SERIAL_F2V
+# with the DISTINCT F2V phrase, so a T2V confirmation can never authorize an F2V
+# fire and vice-versa. The ungated ProductionQueuePage bulk path (G0 §3) stays
+# strictly T2V-only — this lane does NOT widen it. A gated F2V pass records
+# authorized_live_mode='F2V' into the run config so the live loop (a second,
+# universal chokepoint) allows exactly that one pre-validated F2V item; every
+# other run leaves the flag absent and the loop defaults fail-closed to T2V-only.
+LIVE_GATE_ONE_SERIAL_F2V = "ONE_SERIAL_F2V"
+LIVE_F2V_CONFIRM_PHRASE = "AUTHORIZE_ONE_F2V_LIVE_RUN"
 _INFLIGHT_MAX_RETRIES = 20
 
 
@@ -632,6 +643,63 @@ async def _assert_one_serial_t2v_live(
     return item
 
 
+async def _assert_one_serial_f2v_live(
+    run: dict,
+    *,
+    confirm_phrase: str | None,
+    expect_package_id: str | None,
+) -> dict:
+    """Round F (Option 2) gate: refuse anything that is not ONE ready serial F2V item.
+
+    A byte-for-byte mirror of _assert_one_serial_t2v_live, changing only the
+    confirmation phrase and the accepted mode literal ('F2V'). HYBRID, I2V and
+    T2V all raise LIVE_F2V_ONLY here, so this lane admits exactly the genuine
+    first-frame F2V lineage and nothing else. Every check raises rather than
+    returning a flag, and readiness is RE-DERIVED from build_execution_payload
+    (never read from a stale green report), so the live branch is unreachable
+    unless all of them pass. Returns the single validated item.
+    """
+    if (confirm_phrase or "").strip() != LIVE_F2V_CONFIRM_PHRASE:
+        raise ValueError("LIVE_CONFIRM_PHRASE_INVALID")
+
+    items = await crud.list_production_queue_packages(
+        production_run_id=run["production_run_id"], production_status="QUEUED",
+    )
+    if len(items) != 1:
+        raise ValueError(f"LIVE_REQUIRES_EXACTLY_ONE_ITEM:{len(items)}")
+    item = items[0]
+    package_id = item["workspace_generation_package_id"]
+
+    if expect_package_id and expect_package_id != package_id:
+        raise ValueError(f"LIVE_PACKAGE_MISMATCH:{package_id}")
+
+    product_id = str(item.get("product_id") or "")
+    if product_id.startswith("fastmoss-ref:"):
+        raise ValueError(f"LIVE_FASTMOSS_REF_FORBIDDEN:{product_id}")
+
+    prior_job = str(item.get("production_job_id") or "").strip()
+    if prior_job:
+        raise ValueError(f"LIVE_DUPLICATE_SUBMISSION:{prior_job}")
+
+    cfg = _loads(run.get("config_json"), {})
+    payload, blockers = await build_execution_payload(item, cfg)
+    logical_mode = (payload.get("logical_mode") or "").strip().upper()
+    if logical_mode != "F2V":
+        raise ValueError(f"LIVE_F2V_ONLY:{logical_mode or 'UNKNOWN'}")
+    if blockers:
+        raise ValueError(f"LIVE_ITEM_BLOCKED:{','.join(blockers)}")
+
+    report = cfg.get("last_dry_run_report")
+    if not isinstance(report, dict):
+        raise ValueError("LIVE_REQUIRES_DRY_RUN_READY:NO_DRY_RUN")
+    if int(report.get("ready") or 0) != 1 or int(report.get("blocked") or 0) != 0:
+        raise ValueError(
+            f"LIVE_REQUIRES_DRY_RUN_READY:ready={report.get('ready')},"
+            f"blocked={report.get('blocked')}"
+        )
+    return item
+
+
 async def run_production_queue(
     run_id: str,
     *,
@@ -672,18 +740,36 @@ async def run_production_queue(
         )
         return {"run_id": run_id, "dry_run": True, "report": report}
 
+    # Loop authorization is fail-closed: clear any prior authorization on EVERY
+    # live start (unconditionally, before the gate branch) so an ungated
+    # ProductionQueuePage bulk run — or a run resumed-as-bulk after a pause —
+    # can never inherit a stale F2V grant. Only a passing F2V gate re-sets it.
+    cfg = _loads(run.get("config_json"), {})
+    cfg.pop("authorized_live_mode", None)
     gated_package_id: str | None = None
     if live_gate:
-        if live_gate != LIVE_GATE_ONE_SERIAL_T2V:
+        # Both gates raise on any refusal BEFORE the state write below, so a
+        # refused live request leaves the run exactly as it was (still dry,
+        # still PENDING/PAUSED) — nothing is persisted.
+        if live_gate == LIVE_GATE_ONE_SERIAL_T2V:
+            item = await _assert_one_serial_t2v_live(
+                run, confirm_phrase=confirm_phrase, expect_package_id=expect_package_id,
+            )
+            gated_package_id = item["workspace_generation_package_id"]
+        elif live_gate == LIVE_GATE_ONE_SERIAL_F2V:
+            item = await _assert_one_serial_f2v_live(
+                run, confirm_phrase=confirm_phrase, expect_package_id=expect_package_id,
+            )
+            gated_package_id = item["workspace_generation_package_id"]
+            # Authorize the loop to fire THIS one pre-validated F2V item, and
+            # nothing else — the gate already guaranteed exactly one QUEUED item.
+            cfg["authorized_live_mode"] = "F2V"
+        else:
             raise ValueError(f"LIVE_GATE_UNKNOWN:{live_gate}")
-        # Raises on any refusal — before any state change, so a refused live
-        # request leaves the run exactly as it was (still dry, still PENDING).
-        item = await _assert_one_serial_t2v_live(
-            run, confirm_phrase=confirm_phrase, expect_package_id=expect_package_id,
-        )
-        gated_package_id = item["workspace_generation_package_id"]
 
-    await crud.update_production_run(run_id, dry_run=0, status="RUNNING")
+    await crud.update_production_run(
+        run_id, dry_run=0, status="RUNNING", config_json=_json(cfg),
+    )
     _run_control.pop(run_id, None)
     asyncio.ensure_future(_live_production_loop(run_id))
     return {
@@ -731,6 +817,14 @@ async def _live_production_loop(run_id: str) -> None:
 
     run = await crud.get_production_run(run_id)
     cfg = _loads(run.get("config_json"), {})
+    # Fail-closed live-mode authorization. Default is T2V-only: the ungated
+    # ProductionQueuePage bulk path and every non-F2V-gated run land here. Only a
+    # run that passed the ONE_SERIAL_F2V gate carries cfg['authorized_live_mode']=
+    # 'F2V' (set in run_production_queue, popped on every other live start), which
+    # — and only which — widens the set to admit that one pre-validated F2V item.
+    allowed_live_modes = {"T2V"}
+    if str(cfg.get("authorized_live_mode") or "").strip().upper() == "F2V":
+        allowed_live_modes = {"F2V"}
     interval_min = int(run.get("interval_min_seconds") or 45)
     interval_max = int(run.get("interval_max_seconds") or 120)
     cooldown_n = int(run.get("cooldown_after_n_jobs") or 5)
@@ -770,18 +864,24 @@ async def _live_production_loop(run_id: str) -> None:
         wgp_id = item["workspace_generation_package_id"]
 
         payload, blockers = await build_execution_payload(item, cfg)
-        # Live-fire is T2V-only for now, exactly like the ONE_SERIAL_T2V gate
-        # (LIVE_T2V_ONLY at _assert_one_serial_t2v_live). This unphrased bulk loop
-        # is reached via confirm_live_credit_burn=True with NO live_gate
-        # (ProductionQueuePage), so it never passed through that gate — guard it
-        # here too. Without this, an image-mode item that reaches ready=1 (no
-        # blockers, e.g. once its Flow media is uploaded) would fire UNGATED here.
-        # Refuse before start_generate; mark FAILED so the item leaves the QUEUED
-        # set (a bare `continue` on a still-QUEUED item would loop forever).
+        # Second, UNIVERSAL chokepoint. Every queued item converges here — both
+        # the ungated ProductionQueuePage bulk path (confirm_live_credit_burn=True,
+        # no live_gate) and a gated run. The default authorized set is {"T2V"}, so
+        # the bulk path and any non-F2V-gated run stay strictly T2V-only exactly as
+        # before; only a run that passed the ONE_SERIAL_F2V gate widened the set to
+        # {"F2V"} for its one pre-validated item. Refuse before start_generate and
+        # mark FAILED so the item leaves the QUEUED set (a bare `continue` on a
+        # still-QUEUED item would loop forever).
         logical_mode = (payload.get("logical_mode") or "").strip().upper()
-        if logical_mode != "T2V":
+        if logical_mode not in allowed_live_modes:
             failed += 1
-            reason = f"LIVE_T2V_ONLY:{logical_mode or 'UNKNOWN'}"
+            # Preserve the exact proven message on the default/bulk (T2V-only)
+            # lane; a stray item inside an authorized-F2V run gets a distinct code.
+            reason = (
+                f"LIVE_T2V_ONLY:{logical_mode or 'UNKNOWN'}"
+                if allowed_live_modes == {"T2V"}
+                else f"LIVE_MODE_NOT_AUTHORIZED:{logical_mode or 'UNKNOWN'}"
+            )
             errors.append(f"{wgp_id}: {reason}")
             await crud.update_workspace_generation_package(
                 wgp_id, production_status="FAILED", production_error=reason,
