@@ -194,17 +194,36 @@ async def test_zero_queued_items_refuses(queue):
     _assert_nothing_fired(queue)
 
 
-# ── F2V-only gate ─────────────────────────────────────────────────────────
+# ── FIRST-FRAME family gate: F2V + HYBRID admitted, T2V/I2V refused ───────
 
 
-@pytest.mark.parametrize("mode", ["T2V", "I2V", "HYBRID"])
+@pytest.mark.parametrize("mode", ["T2V", "I2V"])
 @pytest.mark.asyncio
-async def test_non_f2v_item_refuses(queue, mode):
-    """HYBRID rides the same engine but is NOT genuine F2V — it must refuse too."""
+async def test_non_first_frame_item_refuses(queue, mode):
     queue["payload_mode"] = mode
     with pytest.raises(ValueError, match="LIVE_F2V_ONLY|LIVE_ITEM_BLOCKED"):
         await _go_live_f2v()
     _assert_nothing_fired(queue)
+
+
+@pytest.mark.asyncio
+async def test_hybrid_item_goes_live_and_authorizes_exactly_hybrid(queue):
+    """HYBRID fires the SAME live-proven first-frame engine (g_ba088e7195df:
+    generate_video_with_first_frame / veo_3_1_i2v_lite), so the family gate
+    admits it — and authorizes the loop for EXACTLY HYBRID, not F2V."""
+    queue["payload_mode"] = "HYBRID"
+    res = await _go_live_f2v()
+    assert res["status"] == "RUNNING"
+    written = json.loads(_live_write(queue)["config_json"])
+    assert written.get("authorized_live_mode") == "HYBRID"
+
+
+@pytest.mark.asyncio
+async def test_f2v_item_authorizes_exactly_f2v(queue):
+    queue["payload_mode"] = "F2V"
+    await _go_live_f2v()
+    written = json.loads(_live_write(queue)["config_json"])
+    assert written.get("authorized_live_mode") == "F2V"
 
 
 # ── Dry-run-ready gate ────────────────────────────────────────────────────
@@ -430,3 +449,37 @@ async def test_authorized_f2v_run_refuses_a_stray_non_f2v_item(loop, monkeypatch
     assert loop["fired"] == []
     failed = [u for u in loop["updates"] if u.get("production_status") == "FAILED"]
     assert failed and failed[0]["production_error"].startswith("LIVE_MODE_NOT_AUTHORIZED:T2V")
+
+
+@pytest.mark.asyncio
+async def test_authorized_hybrid_run_fires_hybrid_and_refuses_stray_f2v(loop, monkeypatch):
+    """Mode-exact authorization: a HYBRID-authorized run fires its HYBRID item but
+    refuses a swapped-in F2V item (and vice versa is covered by the F2V tests)."""
+    loop["cfg"] = {"authorized_live_mode": "HYBRID"}
+    monkeypatch.setattr(pq, "build_execution_payload", _lpayload("HYBRID", []))
+    loop["queue"] = [{"workspace_generation_package_id": "wgp_hy"}]
+    await pq._live_production_loop(RUN_ID)
+    assert loop["fired"] == ["wgp_hy"]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_authorization_does_not_admit_f2v(loop, monkeypatch):
+    loop["cfg"] = {"authorized_live_mode": "HYBRID"}
+    monkeypatch.setattr(pq, "build_execution_payload", _lpayload("F2V", []))
+    loop["queue"] = [{"workspace_generation_package_id": "wgp_f2v_stray"}]
+    await pq._live_production_loop(RUN_ID)
+    assert loop["fired"] == []
+    failed = [u for u in loop["updates"] if u.get("production_status") == "FAILED"]
+    assert failed and failed[0]["production_error"].startswith("LIVE_MODE_NOT_AUTHORIZED:F2V")
+
+
+@pytest.mark.asyncio
+async def test_unauthorized_hybrid_still_blocked_in_the_loop(loop, monkeypatch):
+    """The bulk path stays T2V-only: HYBRID without gate authorization never fires."""
+    loop["cfg"] = {}
+    monkeypatch.setattr(pq, "build_execution_payload", _lpayload("HYBRID", []))
+    loop["queue"] = [{"workspace_generation_package_id": "wgp_hy"}]
+    await pq._live_production_loop(RUN_ID)
+    assert loop["fired"] == []
+    failed = [u for u in loop["updates"] if u.get("production_status") == "FAILED"]
+    assert failed and failed[0]["production_error"].startswith("LIVE_T2V_ONLY:HYBRID")
