@@ -22,6 +22,8 @@ class PosterPromptDraftRequest(BaseModel):
     poster_objective: str = ""
     poster_type: str = ""
     visual_route: str = ""
+    # Optional governed mode. Empty preserves the legacy compiler output.
+    creative_mode: str | None = None
     human_presence_mode: str = ""
     frame_ratio: str = ""
     language: str = ""
@@ -67,6 +69,7 @@ class PosterPromptDraftResponse(BaseModel):
     negative_prompt: str = ""
     copy_layout: PosterCopyLayout = Field(default_factory=PosterCopyLayout)
     visual_instruction: str = ""
+    creative_direction: dict[str, Any] = Field(default_factory=dict)
     text_overlay_instruction: str = ""
     product_truth_lock: str = ""
     safety_guardrails: list[str] = Field(default_factory=list)

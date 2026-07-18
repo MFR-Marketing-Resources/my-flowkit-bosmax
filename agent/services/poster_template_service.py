@@ -123,6 +123,7 @@ def build_render_manifest(
     background_local_path: str = "",
     image_model: str = "",
     background_prompt_fingerprint: str = "",
+    creative_direction: dict[str, str] | None = None,
 ) -> PosterRenderManifest:
     """Approved poster copy + template contract → versioned render manifest.
 
@@ -172,6 +173,7 @@ def build_render_manifest(
             "Poster copy set has no renderable text (primary message required)",
         )
 
+    creative_direction = creative_direction or {}
     return PosterRenderManifest(
         background_media_id=background_media_id,
         background_local_path=background_local_path,
@@ -198,5 +200,8 @@ def build_render_manifest(
             prompt_version=str(copy_set.get("prompt_version") or ""),
             image_model=image_model,
             background_prompt_fingerprint=background_prompt_fingerprint,
+            creative_mode=str(creative_direction.get("mode") or ""),
+            creative_direction_authority_version=str(creative_direction.get("authority_version") or ""),
+            representation_policy_version=str(creative_direction.get("representation_policy_version") or ""),
         ),
     )

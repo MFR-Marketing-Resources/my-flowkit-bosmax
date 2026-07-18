@@ -38,6 +38,7 @@ from agent.services.img_asset_lane_config import (
     validate_img_lane_inputs,
 )
 from agent.services.product_lock_builder import build_product_lock
+from agent.services.creative_direction_service import resolve_creative_direction
 
 
 _FASTLANE_OUTPUT_SPEC = "Vertical TikTok 9:16 commercial image."
@@ -505,6 +506,11 @@ async def compile_img_fastlane_prompt_preview(
         if found_product is None:
             raise ValueError("PRODUCT_NOT_FOUND")
         product = dict(found_product)
+    creative_direction = (
+        resolve_creative_direction(request.creative_mode, product=product)
+        if request.creative_mode is not None
+        else None
+    )
 
     selected_character = (
         await get_creative_asset(request.character_reference_asset_id)
@@ -596,10 +602,23 @@ async def compile_img_fastlane_prompt_preview(
     else:
         prompt_lines.append("- No product selected. Select a product for product-truth locking.")
     prompt_lines.append("")
+    preset_directives = _preset_directives(request.preset_id, product)
     prompt_lines.append("COMPOSITION DIRECTIVES:")
-    prompt_lines.extend(
-        f"- {line}" for line in _preset_directives(request.preset_id, product)
-    )
+    prompt_lines.extend(f"- {line}" for line in preset_directives)
+    creative_directives: list[str] = []
+    if creative_direction is not None:
+        creative_directives = [
+            "Governed mode is subordinate to product truth locks, selected references and preset constraints.",
+            f"Composition: {creative_direction.composition_direction}",
+            f"Lighting: {creative_direction.lighting}",
+            f"Framing: {creative_direction.camera_framing}",
+            f"Props: {creative_direction.props}",
+            f"Environment: {creative_direction.environment}",
+            f"Human presence: {creative_direction.human_presence_policy}; interaction: {creative_direction.product_interaction}",
+        ]
+        prompt_lines.append("")
+        prompt_lines.append("GOVERNED CREATIVE DIRECTION:")
+        prompt_lines.extend(f"- {line}" for line in creative_directives)
     if scene_context_text:
         prompt_lines.append("")
         prompt_lines.append("SCENE CONTEXT (background):")
@@ -610,6 +629,8 @@ async def compile_img_fastlane_prompt_preview(
         prompt_lines.append("ADVANCED OVERRIDE NOTES (optional):")
         prompt_lines.append(f"- {_clean_text(request.advanced_override_notes)}")
     effective_negative_rules = _effective_negative_rules(preset)
+    if creative_direction is not None:
+        effective_negative_rules = [*effective_negative_rules, *creative_direction.negative_rules]
     prompt_lines.append("")
     prompt_lines.append("NEGATIVE RULES:")
     prompt_lines.extend(f"- {rule}" for rule in effective_negative_rules)
@@ -628,7 +649,7 @@ async def compile_img_fastlane_prompt_preview(
             product_reference_label,
         ),
         product_lock_lines=product_lock_lines,
-        directives=_preset_directives(request.preset_id, product),
+        directives=[*preset_directives, *creative_directives],
         override_notes=_clean_text(request.advanced_override_notes)
         if request.advanced_override_notes
         else "",
@@ -654,6 +675,14 @@ async def compile_img_fastlane_prompt_preview(
             scene_label,
             style_label,
             product_reference_label,
+        ),
+        creative_direction=(
+            {
+                "mode": creative_direction.mode.value,
+                "authority_version": creative_direction.authority_version,
+                "representation_policy_version": creative_direction.representation_policy_version,
+            }
+            if creative_direction is not None else {}
         ),
     )
 

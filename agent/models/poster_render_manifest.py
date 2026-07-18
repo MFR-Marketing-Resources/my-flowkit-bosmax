@@ -58,6 +58,9 @@ class ManifestProvenance(BaseModel):
     prompt_version: str = ""
     image_model: str = ""
     background_prompt_fingerprint: str = ""
+    creative_mode: str = ""
+    creative_direction_authority_version: str = ""
+    representation_policy_version: str = ""
 
 
 class PosterRenderManifest(BaseModel):

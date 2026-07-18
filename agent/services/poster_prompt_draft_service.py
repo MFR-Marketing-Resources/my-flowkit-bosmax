@@ -31,6 +31,7 @@ from agent.services.poster_template_service import (
     template_contract,
 )
 from agent.services.product_truth_service import ProductTruthService
+from agent.services.creative_direction_service import resolve_creative_direction
 
 CRITICAL_FIELDS: tuple[str, ...] = (
     "poster_objective",
@@ -201,6 +202,30 @@ def _build_visual_instruction(fields: dict[str, str], readiness_image_tier: str)
     )
 
 
+def _creative_direction_payload(direction: Any) -> dict[str, Any]:
+    return {
+        "mode": direction.mode.value,
+        "authority_version": direction.authority_version,
+        "representation_policy_version": direction.representation_policy_version,
+    }
+
+
+def _apply_creative_direction(visual: str, direction: Any | None) -> str:
+    if direction is None:
+        return visual
+    return "\n".join((
+        visual,
+        "Governed Creative Direction (subordinate to product truth, operator settings, recipe and template constraints):",
+        f"Composition: {direction.composition_direction}",
+        f"Lighting: {direction.lighting}",
+        f"Framing: {direction.camera_framing}",
+        f"Props: {direction.props}",
+        f"Environment: {direction.environment}",
+        f"Human presence: {direction.human_presence_policy}; interaction: {direction.product_interaction}",
+        "Localisation cues: " + ", ".join(direction.malaysian_localisation_cues),
+    ))
+
+
 def _build_text_overlay(fields: dict[str, str]) -> str:
     density = fields.get("text_density") or "medium"
     lang = fields.get("language") or "ms"
@@ -307,6 +332,11 @@ class PosterPromptDraftService:
             raise PosterPromptDraftValidationError("PRODUCT_NOT_FOUND")
 
         product = dict(row)
+        creative_direction = (
+            resolve_creative_direction(request.creative_mode, product=product)
+            if request.creative_mode is not None
+            else None
+        )
         readiness = await PosterReadinessService.evaluate_product(product, enrich=False)
         fields = _request_as_dict(request)
         readiness_meta = readiness.model_dump(mode="json")
@@ -407,7 +437,9 @@ class PosterPromptDraftService:
         if readiness.poster_status == PosterReadinessStatus.POSTER_PREVIEW_ONLY:
             guardrails.append("Preview-only diagnostic package — not for production approval.")
 
-        visual = _build_visual_instruction(fields, readiness.image_tier.value)
+        visual = _apply_creative_direction(
+            _build_visual_instruction(fields, readiness.image_tier.value), creative_direction
+        )
         overlay = _build_text_overlay(fields)
         # Recipe V2 routing. A recipe_id composes a recipe-structured prompt +
         # poster_spec/overlay_spec. NO recipe_id → the legacy assembler runs
@@ -415,6 +447,8 @@ class PosterPromptDraftService:
         poster_spec = None
         overlay_spec = None
         negative_prompt = _negative_prompt(restricted_mode)
+        if creative_direction is not None:
+            negative_prompt += ", " + ", ".join(creative_direction.negative_rules)
         recipe_id = _norm(request.poster_recipe_id)
         if recipe_id:
             recipe = poster_recipe_service.get_recipe(recipe_id)
@@ -509,6 +543,10 @@ class PosterPromptDraftService:
                 cta=fields["cta"],
             ),
             visual_instruction=visual,
+            creative_direction=(
+                _creative_direction_payload(creative_direction)
+                if creative_direction is not None else {}
+            ),
             text_overlay_instruction=overlay,
             product_truth_lock=truth_lock,
             safety_guardrails=guardrails,

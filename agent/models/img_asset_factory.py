@@ -134,6 +134,8 @@ class ImgFastlanePromptPreviewRequest(BaseModel):
     # so any of the 20 seeded scenes is usable immediately, without first generating
     # a scene image. Independent of scene_reference_asset_id (the image reference).
     scene_context_code: str | None = None
+    # Optional governed mode. Omission preserves the legacy fastlane preview.
+    creative_mode: str | None = None
 
 
 class ImgFastlanePromptPreviewResponse(BaseModel):
@@ -153,3 +155,4 @@ class ImgFastlanePromptPreviewResponse(BaseModel):
     output_spec: str
     negative_rules: list[str] = Field(default_factory=list)
     reference_map: list[str] = Field(default_factory=list)
+    creative_direction: dict[str, Any] = Field(default_factory=dict)

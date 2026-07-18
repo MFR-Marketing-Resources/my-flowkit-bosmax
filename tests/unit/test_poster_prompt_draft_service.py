@@ -282,3 +282,33 @@ async def test_preview_only_package_status(monkeypatch):
     assert result.prompt_package_status == "PREVIEW_ONLY"
     assert result.poster_prompt
     assert result.production_allowed is False
+
+
+@pytest.mark.asyncio
+async def test_explicit_creative_modes_enrich_poster_and_preserve_legacy(monkeypatch):
+    product = _ready_base()
+
+    async def fake_get(_pid):
+        return product
+
+    monkeypatch.setattr(
+        "agent.services.poster_prompt_draft_service.crud.get_product", fake_get,
+    )
+    legacy = await PosterPromptDraftService.build_draft(_full_request())
+    assert legacy.creative_direction == {}
+    outputs = []
+    for mode in (
+        "PGC_CAMPAIGN", "UGC_AUTHENTIC", "MODEL_AMBASSADOR",
+        "CLEAN_STUDIO_CATALOGUE", "LIFESTYLE_EDITORIAL",
+    ):
+        result = await PosterPromptDraftService.build_draft(
+            _full_request(creative_mode=mode),
+        )
+        assert result.creative_direction["mode"] == mode
+        assert result.creative_direction["authority_version"] == "creative-direction-modes-v1"
+        outputs.append(result.visual_instruction)
+    assert len(set(outputs)) == 5
+    with pytest.raises(ValueError, match="UNSUPPORTED_CREATIVE_MODE"):
+        await PosterPromptDraftService.build_draft(
+            _full_request(creative_mode="UNSAFE_MODE"),
+        )

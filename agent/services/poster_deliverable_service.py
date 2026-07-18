@@ -287,6 +287,7 @@ class PosterDeliverableService:
                 status_code=409,
             )
         copy_set = serialize_poster_copy_set(pcs_row)
+        settings = settings or {}
 
         media_id, bg_local = await _resolve_background(
             background_media_id, background_local_path
@@ -299,6 +300,11 @@ class PosterDeliverableService:
                 background_media_id=media_id,
                 background_local_path=bg_local,
                 image_model=_norm(image_model),
+                creative_direction=(
+                    settings.get("creative_direction")
+                    if isinstance(settings.get("creative_direction"), dict)
+                    else None
+                ),
             )
         except PosterTemplateError as exc:
             raise PosterDeliverableError(exc.code, str(exc), status_code=exc.status_code)
