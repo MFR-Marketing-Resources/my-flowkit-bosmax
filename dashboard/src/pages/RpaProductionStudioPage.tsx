@@ -4,8 +4,8 @@
  * RPA Queue Control proved the machinery (bridge/approve/enqueue/dry-run/live gate),
  * but it reads like a debug panel: it starts from an execution-package handle, not a
  * product, and exposes every internal step. This page is the same PROVEN pipeline,
- * re-presented as a studio a normal user can drive: pick a product, configure T2V,
- * prepare, validate, run one live job, see the result.
+ * re-presented as a studio a normal user can drive: pick a product, configure the
+ * selected logical mode, prepare, validate, run one live job, see the result.
  *
  * It REUSES the exact backend contract and safety gates — no new server routes, no
  * weakened guards. ALL FOUR video lanes are one-click wired through their own
@@ -96,16 +96,60 @@ const EXTEND_ASPECT_ENUM: Record<string, string> = {
 // All four video lanes are LIVE-PROVEN (first bound artifacts 2026-07-18:
 // T2V cb0c8b36 · F2V 0a18ca6a · HYBRID 80afc332 · I2V b7564ded) and one-click
 // wired here through their own phrased gates.
-const VIDEO_MODES = [
-	{ key: "T2V", label: "Text → Video", icon: Video,
-	  hint: "Text-only. PROVEN (cb0c8b36)." },
-	{ key: "F2V", label: "Frames → Video", icon: Layers,
-	  hint: "Needs an APPROVED 9:16 start frame (make one in the Frame Factory). PROVEN (0a18ca6a)." },
-	{ key: "HYBRID", label: "Hybrid", icon: Sparkles,
-	  hint: "Product-anchor presenter on the first-frame engine. Needs an APPROVED 9:16 product reference. PROVEN (80afc332)." },
-	{ key: "I2V", label: "Ingredients → Video", icon: Video,
-	  hint: "Character + scene references. PROVEN (b7564ded)." },
-] as const;
+type StudioMode = "T2V" | "F2V" | "HYBRID" | "I2V";
+type ReferenceKind = "none" | "frame" | "product_anchor" | "ingredients";
+type PrepareKind = "t2v" | "image" | "i2v";
+
+/**
+ * The Studio's UI authority. Backend transport intentionally remains separate:
+ * HYBRID is a logical product-anchor mode that rides the proven F2V transport.
+ */
+const MODE_PROFILES: Record<StudioMode | "IMG", {
+	label: string;
+	hint: string;
+	icon: typeof Video;
+	referenceKind: ReferenceKind;
+	prepareKind?: PrepareKind;
+	sourceMode?: "T2V" | "FRAMES" | "HYBRID";
+	flowDiagnosticMode?: "T2V" | "F2V";
+	liveGate?: typeof LIVE_GATE_ONE_SERIAL_T2V | typeof LIVE_GATE_ONE_SERIAL_F2V | typeof LIVE_GATE_ONE_SERIAL_I2V;
+	confirmationPhrase?: typeof LIVE_CONFIRM_PHRASE | typeof LIVE_F2V_CONFIRM_PHRASE | typeof LIVE_I2V_CONFIRM_PHRASE;
+	liveWarning: string;
+}> = {
+	T2V: {
+		label: "Text → Video", hint: "Text-only. PROVEN (cb0c8b36).", icon: Video,
+		referenceKind: "none", prepareKind: "t2v", sourceMode: "T2V", flowDiagnosticMode: "T2V",
+		liveGate: LIVE_GATE_ONE_SERIAL_T2V, confirmationPhrase: LIVE_CONFIRM_PHRASE,
+		liveWarning: "It calls the real provider and runs exactly one T2V generation. It cannot be undone. After it submits, do not retry unless the system proves no provider submission occurred.",
+	},
+	F2V: {
+		label: "Frames → Video", hint: "Needs an APPROVED 9:16 start frame (make one in the Frame Factory). PROVEN (0a18ca6a).", icon: Layers,
+		referenceKind: "frame", prepareKind: "image", sourceMode: "FRAMES", flowDiagnosticMode: "F2V",
+		liveGate: LIVE_GATE_ONE_SERIAL_F2V, confirmationPhrase: LIVE_F2V_CONFIRM_PHRASE,
+		liveWarning: "It calls the real provider and runs exactly one Frames → Video generation. It cannot be undone. After it submits, do not retry unless the system proves no provider submission occurred.",
+	},
+	HYBRID: {
+		label: "Hybrid", hint: "Product-anchor presenter. Needs an APPROVED 9:16 product reference. PROVEN (80afc332).", icon: Sparkles,
+		referenceKind: "product_anchor", prepareKind: "image", sourceMode: "HYBRID", flowDiagnosticMode: "F2V",
+		liveGate: LIVE_GATE_ONE_SERIAL_F2V, confirmationPhrase: LIVE_F2V_CONFIRM_PHRASE,
+		liveWarning: "It calls the real provider for one HYBRID product-anchor generation. HYBRID uses the proven first-frame transport internally; it cannot be undone. After it submits, do not retry unless the system proves no provider submission occurred.",
+	},
+	I2V: {
+		label: "Ingredients → Video", hint: "Character + scene references. PROVEN (b7564ded).", icon: Video,
+		referenceKind: "ingredients", prepareKind: "i2v", flowDiagnosticMode: "F2V",
+		liveGate: LIVE_GATE_ONE_SERIAL_I2V, confirmationPhrase: LIVE_I2V_CONFIRM_PHRASE,
+		liveWarning: "It calls the real provider and runs exactly one Ingredients → Video generation. It cannot be undone. After it submits, do not retry unless the system proves no provider submission occurred.",
+	},
+	IMG: {
+		label: "Image · Frame Factory", hint: "Opens the proven IMG Fastlane frame factory.", icon: ImageIcon,
+		referenceKind: "none", liveWarning: "IMG is prepared in the Fastlane, not submitted from this Studio.",
+	},
+};
+
+const VIDEO_MODES = (["T2V", "F2V", "HYBRID", "I2V"] as const).map((key) => ({
+	key,
+	...MODE_PROFILES[key],
+}));
 
 interface DryRunItem {
 	package_id?: string;
@@ -143,6 +187,13 @@ function explainFailure(raw: string | null | undefined): string {
 	return s;
 }
 
+function displayBlocker(raw: string, profile: typeof MODE_PROFILES[StudioMode]): string {
+	if (profile.referenceKind === "product_anchor" && raw.includes("SLOT_ASPECT_MISMATCH")) {
+		return "Product anchor aspect does not match the selected output aspect. Compose an approved target-aspect product anchor first.";
+	}
+	return raw;
+}
+
 export default function RpaProductionStudioPage() {
 	// ── product selection ──
 	const [query, setQuery] = useState("");
@@ -172,7 +223,7 @@ export default function RpaProductionStudioPage() {
 	const [jobItem, setJobItem] = useState<RunItem | null>(null);
 	const [runStatus, setRunStatus] = useState<string | null>(null);
 	// ── one-click mode (all four video lanes are live-proven) ──
-	const [studioMode, setStudioMode] = useState<"T2V" | "F2V" | "HYBRID" | "I2V">("T2V");
+	const [studioMode, setStudioMode] = useState<StudioMode>("T2V");
 	// Per-mode reference selections (server re-validates roles/approval on prepare).
 	const [startFrameAssetId, setStartFrameAssetId] = useState("");
 	const [productRefAssetId, setProductRefAssetId] = useState("");
@@ -221,6 +272,7 @@ export default function RpaProductionStudioPage() {
 	}, [loadProducts]);
 
 	const selectedModelInfo = useMemo(() => models.find((m) => m.ui_label === model), [models, model]);
+	const activeProfile = MODE_PROFILES[studioMode];
 	const singleDurations = selectedModelInfo?.allowed_durations_s ?? [duration];
 	const maxSingle = Math.max(...singleDurations);
 	// Multi-block EXTEND totals (N × the engine's single-shot max) — the proven
@@ -233,15 +285,13 @@ export default function RpaProductionStudioPage() {
 	// Per-lane gate identity. F2V + HYBRID share the live-proven first-frame
 	// family gate; I2V has its own; T2V unchanged. The server enforces the real
 	// phrase — these constants only wire the UI to the right lane.
-	const laneGate = studioMode === "I2V" ? LIVE_GATE_ONE_SERIAL_I2V
-		: studioMode === "T2V" ? LIVE_GATE_ONE_SERIAL_T2V : LIVE_GATE_ONE_SERIAL_F2V;
-	const lanePhrase = studioMode === "I2V" ? LIVE_I2V_CONFIRM_PHRASE
-		: studioMode === "T2V" ? LIVE_CONFIRM_PHRASE : LIVE_F2V_CONFIRM_PHRASE;
+	const laneGate = activeProfile.liveGate!;
+	const lanePhrase = activeProfile.confirmationPhrase!;
 	// Per-mode required references (server re-validates on prepare AND at the gate).
-	const refsChosen = studioMode === "T2V" ? true
-		: studioMode === "F2V" ? Boolean(startFrameAssetId)
-		: studioMode === "HYBRID" ? Boolean(productRefAssetId)
-		: Boolean(characterAssetId && sceneAssetId);
+	const refsChosen = activeProfile.referenceKind === "none"
+		|| (activeProfile.referenceKind === "frame" && Boolean(startFrameAssetId))
+		|| (activeProfile.referenceKind === "product_anchor" && Boolean(productRefAssetId))
+		|| (activeProfile.referenceKind === "ingredients" && Boolean(characterAssetId && sceneAssetId));
 
 	/** Reset the whole pipeline when the product or config changes — a stale run must never be firable. */
 	const resetPipeline = useCallback(() => {
@@ -267,7 +317,7 @@ export default function RpaProductionStudioPage() {
 		resetPipeline();
 	};
 
-	const pickMode = (m: "T2V" | "F2V" | "HYBRID" | "I2V") => {
+	const pickMode = (m: StudioMode) => {
 		setStudioMode(m);
 		setStartFrameAssetId("");
 		setProductRefAssetId("");
@@ -280,22 +330,22 @@ export default function RpaProductionStudioPage() {
 	// Load the reference libraries the selected mode needs. APPROVED only — the
 	// backend gates re-validate role + approval, this just keeps the picker honest.
 	useEffect(() => {
-		if (studioMode === "T2V") return;
+		if (activeProfile.referenceKind === "none") return;
 		const approved = (items: CreativeAsset[]) =>
 			items.filter((a) => a.review_status === "APPROVED");
-		if (studioMode === "F2V" && selectedProduct) {
+		if (activeProfile.referenceKind === "frame" && selectedProduct) {
 			void fetchCreativeAssets({
 				semantic_role: "COMPOSITE_FRAME_REFERENCE", status: "ACTIVE",
 				product_id: selectedProduct.id, limit: 100,
 			}).then((r) => setFrameAssets(approved(r.items))).catch(() => setFrameAssets([]));
 		}
-		if (studioMode === "HYBRID" && selectedProduct) {
+		if (activeProfile.referenceKind === "product_anchor" && selectedProduct) {
 			void fetchCreativeAssets({
 				semantic_role: "PRODUCT_REFERENCE", status: "ACTIVE",
 				product_id: selectedProduct.id, limit: 100,
 			}).then((r) => setProductRefAssets(approved(r.items))).catch(() => setProductRefAssets([]));
 		}
-		if (studioMode === "I2V") {
+		if (activeProfile.referenceKind === "ingredients") {
 			void fetchCreativeAssets({
 				semantic_role: "CHARACTER_REFERENCE", status: "ACTIVE", limit: 100,
 			}).then((r) => setCharacterAssets(approved(r.items))).catch(() => setCharacterAssets([]));
@@ -303,13 +353,13 @@ export default function RpaProductionStudioPage() {
 				semantic_role: "SCENE_CONTEXT_REFERENCE", status: "ACTIVE", limit: 100,
 			}).then((r) => setSceneAssets(approved(r.items))).catch(() => setSceneAssets([]));
 		}
-	}, [studioMode, selectedProduct]);
+	}, [activeProfile.referenceKind, selectedProduct]);
 
 	// ADVISORY Flow-tab readiness (never gates the button — both failure modes are
 	// proven 0-credit + retryable; this just surfaces the drill before the click).
 	const refreshFlowTab = useCallback(async () => {
 		try {
-			const d = await fetchFlowPageState(studioMode === "T2V" ? "T2V" : "F2V");
+			const d = await fetchFlowPageState(activeProfile.flowDiagnosticMode ?? "F2V");
 			setFlowTab({
 				ready: Boolean(d.editor_capability_ready) && String(d.flow_url ?? "").includes("/project/"),
 				buildMatch: d.build_match !== false,
@@ -317,7 +367,7 @@ export default function RpaProductionStudioPage() {
 		} catch {
 			setFlowTab(null);
 		}
-	}, [studioMode]);
+	}, [activeProfile.flowDiagnosticMode]);
 
 	useEffect(() => {
 		if (stage === "PREPARED" || stage === "VALIDATED") void refreshFlowTab();
@@ -423,14 +473,14 @@ export default function RpaProductionStudioPage() {
 			const wep = await createWorkspaceExecutionPackage({
 				product_id: selectedProduct.id,
 				mode: "F2V",
-				source_mode: studioMode === "F2V" ? "FRAMES" : "HYBRID",
+				source_mode: activeProfile.sourceMode,
 				generation_mode: "SINGLE",
 				duration_seconds: 8,
 				aspect_ratio: aspect,
 				model,
 				dialogue_enabled: true,
 				copy_fallback_confirmed: true,
-				...(studioMode === "F2V"
+				...(activeProfile.referenceKind === "frame"
 					? { start_frame_asset_id: startFrameAssetId }
 					: { product_reference_asset_id: productRefAssetId }),
 			});
@@ -468,8 +518,8 @@ export default function RpaProductionStudioPage() {
 	/** Prepare = create the package for the selected mode, approve it, enqueue it. */
 	const handlePrepare = async () => {
 		if (!selectedProduct) return;
-		if (studioMode === "F2V" || studioMode === "HYBRID") return handlePrepareImageMode();
-		if (studioMode === "I2V") return handlePrepareI2V();
+		if (activeProfile.prepareKind === "image") return handlePrepareImageMode();
+		if (activeProfile.prepareKind === "i2v") return handlePrepareI2V();
 		if (isExtend) return handlePrepareExtend();
 		setBusy("prepare");
 		setError(null);
@@ -621,16 +671,16 @@ export default function RpaProductionStudioPage() {
 					<Video size={20} className="text-blue-400" /> RPA Production Studio
 				</h1>
 				<p className="mt-1 text-xs text-slate-400">
-					Pick a product, configure a text-to-video generation, validate it with a free dry run,
-					then run <strong className="text-slate-200">one</strong> live T2V job and see the result.
+					Pick a product, configure the selected generation mode, validate it with a free dry run,
+					then run <strong className="text-slate-200">one</strong> live job and see the result.
 				</p>
 			</div>
 
 			<div className="mb-6 flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3" data-testid="studio-bulk-locked" data-locked="true">
 				<Lock size={16} className="text-amber-300 shrink-0" />
 				<div className="text-[11px] text-amber-100">
-					<strong>MVP scope: one serial T2V job only.</strong> Bulk generation and the F2V / I2V /
-					Hybrid / Image modes are locked below — this studio runs a single text-to-video job at a time.
+					<strong>MVP scope: one serial output / one queued item only.</strong> Bulk generation is locked;
+					the selected mode can only prepare and submit one job at a time.
 				</div>
 			</div>
 
@@ -708,15 +758,15 @@ export default function RpaProductionStudioPage() {
 							const q = selectedProduct ? `?product_id=${encodeURIComponent(selectedProduct.id)}` : "";
 							window.location.assign(`/assets/img-fastlane${q}`);
 						}}
-						title="Generate the clean 9:16 composite frames (avatar + product) that the F2V/HYBRID lanes require — via the proven IMG Fastlane."
+						title={MODE_PROFILES.IMG.hint}
 						className="rounded-lg border border-sky-500/50 bg-sky-500/10 p-3 text-left hover:bg-sky-500/20">
 						<ImageIcon size={16} className="mb-1 text-sky-300" />
-						<div className="text-[11px] font-semibold text-sky-200">Image · Frame Factory</div>
+						<div className="text-[11px] font-semibold text-sky-200">{MODE_PROFILES.IMG.label}</div>
 						<div className="text-[9px] text-sky-300/80">IMG · opens Fastlane{selectedProduct ? " with this product" : ""}</div>
 					</button>
 				</div>
 				<p className="mt-2 text-[10px] text-slate-500" data-testid="studio-locked-reason">
-					All four video lanes are PROVEN live and fire through their own phrased one-serial gates. IMG opens the proven Fastlane frame factory.
+					The selected video mode uses its own logical contract and one-serial gate. IMG opens the proven Fastlane frame factory.
 				</p>
 			</section>
 
@@ -755,16 +805,16 @@ export default function RpaProductionStudioPage() {
 							{ASPECTS.map((a) => <option key={a} value={a}>{a}</option>)}
 						</select>
 					</label>
-					<label className="block">
+					<div data-testid="studio-quantity-status" className="block">
 						<span className="mb-1 block text-[10px] uppercase tracking-wider text-slate-500">Quantity</span>
-						<input data-testid="studio-quantity" value="1" disabled readOnly
-							className="w-full rounded-lg border border-slate-800 bg-slate-900 px-2 py-1.5 text-[11px] text-slate-400" />
-						<span className="mt-0.5 block text-[9px] text-slate-600">Fixed to 1 for the MVP</span>
-					</label>
+						<div className="rounded-lg border border-slate-800 bg-slate-900 px-2 py-1.5 text-[11px] text-slate-400">
+							MVP limit: 1 output / 1 queued item
+						</div>
+					</div>
 				</div>
 
 				{/* Per-mode reference pickers (APPROVED assets only; server re-validates). */}
-				{studioMode === "F2V" && (
+				{activeProfile.referenceKind === "frame" && (
 					<div className="mt-3" data-testid="studio-refs-f2v">
 						<label className="block">
 							<span className="mb-1 block text-[10px] uppercase tracking-wider text-slate-500">Start frame (approved 9:16 composite)</span>
@@ -782,20 +832,20 @@ export default function RpaProductionStudioPage() {
 						)}
 					</div>
 				)}
-				{studioMode === "HYBRID" && (
+				{activeProfile.referenceKind === "product_anchor" && (
 					<div className="mt-3" data-testid="studio-refs-hybrid">
 						<label className="block">
-							<span className="mb-1 block text-[10px] uppercase tracking-wider text-slate-500">Product reference (approved, 9:16)</span>
+							<span className="mb-1 block text-[10px] uppercase tracking-wider text-slate-500">Product anchor (approved, 9:16)</span>
 							<select data-testid="studio-ref-product" value={productRefAssetId}
 								onChange={(e) => { setProductRefAssetId(e.target.value); resetPipeline(); }}
 								className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-slate-100 focus:outline-none">
-								<option value="">— choose a product reference —</option>
+								<option value="">— choose a product anchor —</option>
 								{productRefAssets.map((a) => <option key={a.asset_id} value={a.asset_id}>{a.display_name}</option>)}
 							</select>
 						</label>
 					</div>
 				)}
-				{studioMode === "I2V" && (
+				{activeProfile.referenceKind === "ingredients" && (
 					<div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2" data-testid="studio-refs-i2v">
 						<label className="block">
 							<span className="mb-1 block text-[10px] uppercase tracking-wider text-slate-500">Character reference</span>
@@ -891,7 +941,7 @@ export default function RpaProductionStudioPage() {
 						</div>
 						{(report.items ?? []).map((it) => it.ok === false && (
 							<ul key={it.package_id} className="mt-1 pl-4" data-testid="studio-dryrun-blockers">
-								{(it.blockers ?? []).map((b) => <li key={b} data-testid="studio-blocker" className="list-disc text-[10px] text-red-300">{b}</li>)}
+								{(it.blockers ?? []).map((b) => <li key={b} data-testid="studio-blocker" className="list-disc text-[10px] text-red-300">{displayBlocker(b, activeProfile)}</li>)}
 							</ul>
 						))}
 					</div>
@@ -905,7 +955,7 @@ export default function RpaProductionStudioPage() {
 					<strong>This spends real credits.</strong>{" "}
 					{isExtend
 						? `It authorizes the reviewed plan fingerprint and runs the full durable job: 1 initial + ${extendPlan?.plan.operation_counts.extend ?? "N"} extend + final concat. The server re-gates every stage with the plan-bound token.`
-						: "It calls the real provider and runs exactly one T2V generation. It cannot be undone. After it submits, do not retry unless the system proves no provider submission occurred."}
+						: activeProfile.liveWarning}
 				</div>
 				<div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-3" data-testid="studio-live-checks">
 					{(isExtend
@@ -930,8 +980,8 @@ export default function RpaProductionStudioPage() {
 					))}
 				</div>
 				{/* Flow tab readiness — ADVISORY (both failure modes are proven 0-credit +
-				    retryable): encodes the live drill (fresh clean project · build_match ·
-				    warm-up) so the operator sees it BEFORE burning an attempt. */}
+					    retryable): pre-flight/runtime status only. It never replaces the
+					    server's credit and phrase gates, and does not block this button. */}
 				<div className="mb-3 flex flex-wrap items-center gap-2" data-testid="studio-flowtab-row">
 					<span className={`rounded border px-2 py-1 text-[10px] ${flowTab?.ready ? "border-emerald-500/40 text-emerald-200" : "border-amber-500/40 text-amber-200"}`}
 						data-testid="studio-flowtab-ready" data-ok={flowTab?.ready ? "true" : "false"}>
@@ -942,7 +992,7 @@ export default function RpaProductionStudioPage() {
 						{flowTab == null ? "build: unknown" : flowTab.buildMatch ? "content script fresh ✓" : "content script STALE — reload the Flow tab"}
 					</span>
 					<button type="button" data-testid="studio-flowtab-open"
-						onClick={() => { void openFlowNewProject(studioMode === "T2V" ? "T2V" : "F2V").then(() => window.setTimeout(() => void refreshFlowTab(), 6000)); }}
+						onClick={() => { void openFlowNewProject(activeProfile.flowDiagnosticMode ?? "F2V").then(() => window.setTimeout(() => void refreshFlowTab(), 6000)); }}
 						disabled={busy !== null}
 						className="rounded-lg border border-slate-700 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800 disabled:opacity-40">
 						Open fresh Flow project
@@ -952,10 +1002,10 @@ export default function RpaProductionStudioPage() {
 						className="rounded-lg border border-slate-700 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800 disabled:opacity-40">
 						Re-check
 					</button>
-					<span className="text-[9px] text-slate-500">Fire into a FRESH clean project; after opening, wait ~40s (warm-up) before firing.</span>
+					<span className="text-[9px] text-slate-500">Pre-flight/runtime status only. Fire into a fresh clean project; after opening, wait ~40s (warm-up) before firing.</span>
 				</div>
 				<label className="mb-1 block text-[10px] uppercase tracking-wider text-slate-400" htmlFor="studio-phrase">
-					Type <code className="text-red-300">{isExtend ? EXTEND_CONFIRM_PHRASE : lanePhrase}</code> to authorize
+					Type <code className="text-red-300">{isExtend ? EXTEND_CONFIRM_PHRASE : lanePhrase}</code> to authorize {isExtend ? "the EXTEND plan" : activeProfile.referenceKind === "product_anchor" ? "one HYBRID product-anchor run" : `one ${activeProfile.label} run`}
 				</label>
 				<input id="studio-phrase" data-testid="studio-phrase-input" type="text" value={phrase} disabled={liveSubmitted}
 					onChange={(e) => setPhrase(e.target.value)} placeholder={isExtend ? EXTEND_CONFIRM_PHRASE : lanePhrase} autoComplete="off" spellCheck={false}
