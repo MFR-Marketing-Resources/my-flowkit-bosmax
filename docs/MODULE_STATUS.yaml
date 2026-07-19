@@ -47,6 +47,7 @@ domains:
       - agent/services/copy_rotation_service.py
       - tests/unit/test_copy_rotation_service.py
       - tests/unit/test_content_combination_p2.py
+      - tests/unit/test_batch_hybrid_anchor.py
       - tests/unit/test_copy_set_service.py
       - tests/unit/test_copyset_approval_formula_gate.py
       - tests/api/test_copy_sets_api.py

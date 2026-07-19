@@ -151,6 +151,7 @@ def plan_batch_items(
     hook_angles: list[str] | None = None,
     copy_set_ids: list[str] | None = None,
     finished_frame_asset_id: str | None = None,
+    product_reference_asset_id: str | None = None,
 ) -> list[dict]:
     """Expand Qty N into N deterministic item plans (round-robin rotation).
 
@@ -187,6 +188,11 @@ def plan_batch_items(
             plan["style_asset_id"] = _rotate(styles, seed, i)
         if mode == "F2V":
             plan["finished_frame_asset_id"] = finished_frame_asset_id
+        if mode == "HYBRID":
+            # The product anchor (PRODUCT_REFERENCE-role, target-aspect padded)
+            # is CONSTANT across the batch — visuals rotate via avatar + scene,
+            # never via the product's visual truth.
+            plan["product_reference_asset_id"] = product_reference_asset_id
         plan["scene_context_override"] = _rotate(contexts, seed, i)
         # Script: same hook for all items when the strategy fixes the script;
         # otherwise rotate the hook angle so dialogue actually diverges.

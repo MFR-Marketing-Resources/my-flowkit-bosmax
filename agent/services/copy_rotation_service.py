@@ -109,6 +109,111 @@ async def record_rotation_usage(copy_set_id: str, mode: str) -> dict[str, Any]:
     return await increment_copy_usage(copy_set_id, mode)
 
 
+# ── Similarity backfill (P3) ──────────────────────────────────────────────
+# The near-dup door (ai_copy_assist) only annotates NEW candidates; scripts
+# created before the door existed carry no similarity metadata. This scan
+# recomputes it for one product's whole pool. ANNOTATION ONLY — it never
+# touches status (the review decision stays human).
+
+
+def _similarity_fields(row: dict) -> dict[str, Any]:
+    """Normalize a raw copy_set row to the fields dict the similarity
+    service compares (raw rows carry usp_set_json; the comparator reads
+    usp_set as a list)."""
+    try:
+        usp = json.loads(row.get("usp_set_json") or "[]")
+    except (TypeError, ValueError):
+        usp = []
+    return {
+        "copy_set_id": row.get("copy_set_id"),
+        "angle": row.get("angle") or "",
+        "hook": row.get("hook") or "",
+        "subhook": row.get("subhook") or "",
+        "usp_set": usp if isinstance(usp, list) else [],
+        "cta": row.get("cta") or "",
+    }
+
+
+async def backfill_similarity_scan(
+    product_id: str, *, threshold: float = 0.80, apply: bool = False
+) -> dict[str, Any]:
+    """Recompute near-dup + uniqueness metadata for a product's script pool.
+
+    Directional: each row is compared for NEAR-DUP against rows created
+    BEFORE it (the earliest of a duplicate pair is the original and stays
+    unflagged; the later one points back). uniqueness_score is measured
+    against ALL OTHER approved rows — how unique the script is in the pool
+    as it stands today.
+
+    Dry-run by default: ``apply=False`` reports without writing; ``apply=True``
+    persists uniqueness_score / similar_to_copy_set_id / similarity_score.
+    """
+    from agent.services.copy_similarity_service import (
+        compute_uniqueness_score,
+        find_nearest,
+    )
+
+    threshold = float(threshold)
+    rows = await crud.list_copy_sets_for_product(product_id)
+    rows = sorted(
+        rows,
+        key=lambda r: (str(r.get("created_at") or ""), str(r.get("copy_set_id") or "")),
+    )
+    fields = [_similarity_fields(r) for r in rows]
+    approved = [
+        f for f, r in zip(fields, rows) if r.get("status") == STATUS_COPY_APPROVED
+    ]
+
+    items: list[dict[str, Any]] = []
+    flagged = 0
+    updated = 0
+    for idx, (row, f) in enumerate(zip(rows, fields)):
+        nearest, score = find_nearest(f, fields[:idx], threshold=threshold)
+        others_approved = [a for a in approved if a is not f]
+        uniqueness = round(compute_uniqueness_score(f, others_approved), 4)
+        nearest_id = nearest.get("copy_set_id") if nearest else None
+        similarity = round(score, 4) if nearest else None
+        if nearest_id:
+            flagged += 1
+
+        changed = (
+            (row.get("similar_to_copy_set_id") or None) != nearest_id
+            or row.get("similarity_score") != similarity
+            or row.get("uniqueness_score") != uniqueness
+        )
+        entry: dict[str, Any] = {
+            "copy_set_id": row.get("copy_set_id"),
+            "status": row.get("status"),
+            "hook": row.get("hook") or "",
+            "similar_to_copy_set_id": nearest_id,
+            "similarity_score": similarity,
+            "uniqueness_score": uniqueness,
+            "flagged": nearest_id is not None,
+            "changed": changed,
+            "applied": False,
+        }
+        if apply and changed:
+            await crud.update_copy_set(
+                row["copy_set_id"],
+                uniqueness_score=uniqueness,
+                similar_to_copy_set_id=nearest_id,
+                similarity_score=similarity,
+            )
+            updated += 1
+            entry["applied"] = True
+        items.append(entry)
+
+    return {
+        "product_id": product_id,
+        "scanned": len(rows),
+        "flagged": flagged,
+        "updated": updated,
+        "apply": apply,
+        "threshold": threshold,
+        "items": items,
+    }
+
+
 # ── Content combination ledger (P2) ───────────────────────────────────────
 # The on-platform uniqueness law: a CONTENT is the combination
 # (script x visual identity x scene). Each produced combination is recorded
