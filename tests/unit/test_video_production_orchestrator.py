@@ -405,6 +405,93 @@ async def test_safe_not_attempted_extend_is_retryable_on_resume(monkeypatch, tmp
     assert int(row["effective_submit_count"]) == 2  # honest audit of the retry
 
 
+async def test_extend_child_missing_is_provider_touched_not_safe(monkeypatch, tmp_path):
+    """EXTEND_CHILD_MEDIA_ID_MISSING is raised AFTER generate_video_extend — the
+    provider was touched, so credit must be UNCERTAIN/MAY_HAVE_SPENT/BLOCKED, NOT
+    NOT_ATTEMPTED/NOT_SPENT/SAFE (live: vj_bb28f65c189e was wrongly SAFE). Concat
+    must not be called and the job must not reach COMPLETE."""
+    planned, auth = await _plan_authorize(monkeypatch, "extchild")
+
+    class _EmptyExtend(FakeClient):
+        async def generate_video_extend(self, **kw):
+            self.extend_submits += 1
+            return {"remainingCredits": 1, "media": [], "workflows": []}  # no child
+
+    client = _EmptyExtend("extchild")
+    with pytest.raises(orch.OrchestratorError):
+        await orch.advance_job(
+            client, planned["job_id"], authorization_token=auth["authorization_token"],
+            generate_initial=_initial_gen([], "extchild"), out_dir=tmp_path,
+            poll_interval_s=0)
+
+    row = next(r for r in await crud.list_video_job_side_effects(planned["job_id"])
+               if r["stage"] == "EXTEND")
+    assert row["submission_state"] == orch.SUB_UNCERTAIN
+    assert row["credit_state"] == orch.CR_MAY_HAVE_SPENT
+    assert row["retry_safety"] == orch.RS_BLOCKED
+    # fail-closed: the extend RPC fired once, concat NEVER, no COMPLETE, no final id
+    assert client.extend_submits == 1
+    assert client.concat_submits == 0
+    job = await crud.get_video_production_job(planned["job_id"])
+    assert job["status"] == orch.F_EXTEND
+    assert job["status"] != orch.S_COMPLETE
+    assert job.get("final_media_id") is None
+
+
+async def test_extend_child_missing_persists_sanitized_shape_to_lineage(monkeypatch, tmp_path):
+    """Proves the sanitized shape is actually PERSISTED to extend_lineage on
+    EXTEND_CHILD_MEDIA_ID_MISSING (not merely produced by the helper)."""
+    planned, auth = await _plan_authorize(monkeypatch, "extpersist")
+
+    class _EmptyExtend(FakeClient):
+        async def generate_video_extend(self, **kw):
+            self.extend_submits += 1
+            return {"remainingCredits": 1, "media": [], "workflows": []}
+
+    client = _EmptyExtend("extpersist")
+    with pytest.raises(orch.OrchestratorError):
+        await orch.advance_job(
+            client, planned["job_id"], authorization_token=auth["authorization_token"],
+            generate_initial=_initial_gen([], "extpersist"), out_dir=tmp_path,
+            poll_interval_s=0)
+
+    rows = await crud.list_extend_lineage(project_id="proj-extpersist")
+    assert rows, "expected an extend_lineage row"
+    msgs = " ".join(str(r.get("error_message") or "") for r in rows)
+    assert "shape=" in msgs                 # the sanitized shape landed
+    assert "no child in response" in msgs
+    assert "workflow_count" in msgs         # a real structural field of the shape
+
+
+async def test_extend_error_body_secret_never_reaches_lineage(monkeypatch, tmp_path):
+    """A provider error body carrying tokens must NOT be persisted anywhere —
+    only safe code/status/shape metadata (the B-01 blocker)."""
+    planned, auth = await _plan_authorize(monkeypatch, "extsecret")
+
+    class _SecretErr(FakeClient):
+        async def generate_video_extend(self, **kw):
+            self.extend_submits += 1
+            return {"error": {"code": 403, "status": "PERMISSION_DENIED",
+                              "message": "token=SECRET_TOKEN_QQ recaptcha=SECRET_CAP",
+                              "details": {"sessionId": "SECRET_SESSION_ZZ"}}}
+
+    client = _SecretErr("extsecret")
+    with pytest.raises(orch.OrchestratorError):
+        await orch.advance_job(
+            client, planned["job_id"], authorization_token=auth["authorization_token"],
+            generate_initial=_initial_gen([], "extsecret"), out_dir=tmp_path,
+            poll_interval_s=0)
+
+    lineage = await crud.list_extend_lineage(project_id="proj-extsecret")
+    side_effects = await crud.list_video_job_side_effects(planned["job_id"])
+    blob = json.dumps([dict(r) for r in lineage] + [dict(r) for r in side_effects])
+    assert "SECRET_TOKEN_QQ" not in blob
+    assert "SECRET_CAP" not in blob
+    assert "SECRET_SESSION_ZZ" not in blob
+    # the safe structural metadata IS retained for diagnosis
+    assert "PERMISSION_DENIED" in blob and "403" in blob
+
+
 async def test_initial_pre_submit_rejection_is_safe_and_retryable(monkeypatch, tmp_path):
     """INITIAL-stage mirror of the EXTEND SAFE contract (live: vj_efed7c24d9cc
     stuck AUTHORIZED forever after a rate-limiter rejection). A rejection with
