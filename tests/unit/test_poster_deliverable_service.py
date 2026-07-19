@@ -660,3 +660,126 @@ async def test_media_id_artifact_symlink_escape_rejected(
     with pytest.raises(PosterDeliverableError) as exc:
         await deliverable_svc._resolve_background("m1", "")
     assert exc.value.code == "POSTER_BACKGROUND_ARTIFACT_PATH_FORBIDDEN"
+
+
+# ── WRNA Round 3 (B-01/B-03/B-04): canonical composition plan lifecycle ──────
+
+
+@pytest.mark.asyncio
+async def test_compose_reopen_roundtrip_preserves_canonical_composition_plan(
+    tmp_path, monkeypatch
+):
+    """The REAL persistence roundtrip: compose resolves the canonical plan once
+    (with actual product-truth + recipe constraints), the manifest persists it,
+    and reopen returns the IDENTICAL plan, signature and engine prompt."""
+    from agent.services.poster_composition_service import (
+        render_composition_instruction,
+    )
+
+    pid = await _seed_product()
+    pcs = await _seed_copy_set(pid)
+    monkeypatch.setattr(compositor, "compose", _fake_compose(tmp_path))
+    result = await PosterDeliverableService.compose_poster(
+        product_id=pid,
+        poster_copy_set_id=pcs["poster_copy_set_id"],
+        recipe_id="product_hero_night_routine",
+        background_local_path=_bg(tmp_path),
+        creative_mode="PGC_CAMPAIGN",
+    )
+    plan_a = result["composition_plan"]
+    assert plan_a["schema_version"] == "wrna-poster-composition-v1"
+    assert plan_a["creative_mode"] == "PGC_CAMPAIGN"
+    # B-01 on the compose path: the recipe safe region genuinely overrode the
+    # mode anchor and Product Truth is an ACTIVE lock, not a symbolic note.
+    assert plan_a["product"]["anchor"] == "middle-center"
+    assert any(
+        s["reason"] == "RECIPE_SAFE_REGION_LOCK"
+        for s in plan_a["provenance"]["suppressions"]
+    )
+    assert "PRODUCT_TRUTH" in plan_a["provenance"]["active_locks"]
+    # The plan carries the ACTUAL manifest canvas ratio.
+    assert plan_a["canvas"]["frame_ratio"] == "9:16"
+
+    restored = await PosterDeliverableService.get_with_manifest(
+        result["deliverable"]["poster_deliverable_id"]
+    )
+    prov = restored["render_manifest"]["provenance"]
+    plan_b = prov["composition_plan"]
+    assert plan_b == plan_a
+    assert plan_b["signature"] == plan_a["signature"]
+    assert prov["composition_signature"] == plan_a["signature"]
+    assert prov["composition_profile_id"] == plan_a["profile_id"]
+    assert render_composition_instruction(plan_b) == render_composition_instruction(
+        plan_a
+    )
+    # Product binding, approved copy and recipe survive alongside the plan.
+    assert restored["deliverable"]["product_id"] == pid
+    assert prov["poster_copy_set_id"] == pcs["poster_copy_set_id"]
+    assert prov["recipe_id"] == "product_hero_night_routine"
+    assert prov["creative_direction_authority_version"] == "creative-direction-modes-v1"
+
+
+@pytest.mark.asyncio
+async def test_preview_composition_plan_matches_compose_exactly(tmp_path, monkeypatch):
+    """B-04 backend contract: the read-only Guided preview resolves the SAME
+    plan (same signature) that a compile preserves."""
+    pid = await _seed_product()
+    pcs = await _seed_copy_set(pid)
+    monkeypatch.setattr(compositor, "compose", _fake_compose(tmp_path))
+    composed = await PosterDeliverableService.compose_poster(
+        product_id=pid,
+        poster_copy_set_id=pcs["poster_copy_set_id"],
+        recipe_id="product_hero_night_routine",
+        background_local_path=_bg(tmp_path),
+        creative_mode="LIFESTYLE_EDITORIAL",
+    )
+    preview = await PosterDeliverableService.preview_composition_plan(
+        product_id=pid,
+        creative_mode="LIFESTYLE_EDITORIAL",
+        recipe_id="product_hero_night_routine",
+        poster_copy_set_id=pcs["poster_copy_set_id"],
+    )
+    assert preview["composition_plan"] == composed["composition_plan"]
+    assert (
+        preview["composition_plan"]["signature"]
+        == composed["composition_plan"]["signature"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_compose_without_mode_has_empty_plan(tmp_path, monkeypatch):
+    pid = await _seed_product()
+    pcs = await _seed_copy_set(pid)
+    monkeypatch.setattr(compositor, "compose", _fake_compose(tmp_path))
+    result = await PosterDeliverableService.compose_poster(
+        product_id=pid,
+        poster_copy_set_id=pcs["poster_copy_set_id"],
+        recipe_id="product_hero_night_routine",
+        background_local_path=_bg(tmp_path),
+    )
+    assert result["composition_plan"] == {}
+    restored = await PosterDeliverableService.get_with_manifest(
+        result["deliverable"]["poster_deliverable_id"]
+    )
+    assert restored["render_manifest"]["provenance"]["composition_plan"] == {}
+
+
+@pytest.mark.asyncio
+async def test_preview_composition_plan_fails_closed(monkeypatch):
+    with pytest.raises(PosterDeliverableError) as exc:
+        await PosterDeliverableService.preview_composition_plan(
+            product_id="missing-product", creative_mode="PGC_CAMPAIGN"
+        )
+    assert exc.value.code == "PRODUCT_NOT_FOUND"
+    pid = await _seed_product()
+    with pytest.raises(PosterDeliverableError) as exc:
+        await PosterDeliverableService.preview_composition_plan(
+            product_id=pid,
+            creative_mode="PGC_CAMPAIGN",
+            recipe_id="does_not_exist",
+        )
+    assert exc.value.code == "POSTER_RECIPE_UNKNOWN"
+    with pytest.raises(ValueError, match="UNSUPPORTED_CREATIVE_MODE"):
+        await PosterDeliverableService.preview_composition_plan(
+            product_id=pid, creative_mode="UNSAFE_MODE"
+        )

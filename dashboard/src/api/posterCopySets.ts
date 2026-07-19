@@ -1,6 +1,7 @@
 // Poster Copy Set + AI Poster Copy Assistant + compositor API clients
 // (POSTER_BUILDER_V2). Poster-native domain — separate from /api/copy-sets.
 import { getAPI, patchAPI, postAPI } from "./client";
+import type { CompositionPlan } from "../types/posterCompositionPlan";
 import type {
 	PosterAngleRecommendation,
 	PosterComposeResponse,
@@ -88,6 +89,20 @@ export async function composePoster(payload: {
 	settings?: Record<string, unknown>;
 }): Promise<PosterComposeResponse> {
 	return postAPI("/poster/compose", payload);
+}
+
+// Backend-resolved canonical composition plan (read-only preview): the SAME
+// resolver + constraint assembly the compile uses — the UI never invents a
+// frontend default.
+export async function fetchCompositionPlan(payload: {
+	product_id: string;
+	creative_mode: string;
+	recipe_id?: string;
+	poster_copy_set_id?: string;
+	human_presence_mode?: string;
+	frame_ratio?: string;
+}): Promise<{ composition_plan: CompositionPlan }> {
+	return postAPI("/poster/composition-plan", payload);
 }
 
 export async function savePosterToLibrary(

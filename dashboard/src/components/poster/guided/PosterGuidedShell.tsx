@@ -13,9 +13,12 @@ import {
 	type ImageArtifact,
 } from "../../../api/imgFactory";
 import {
+	fetchCompositionPlan,
 	fetchPosterDeliverableByAsset,
 	posterDeliverableOutputUrl,
 } from "../../../api/posterCopySets";
+import type { CompositionPlan } from "../../../types/posterCompositionPlan";
+import CompositionPlanSummary from "../CompositionPlanSummary";
 import { usePosterRecipes } from "../../../api/posterRecipes";
 import { fetchProductCatalog } from "../../../api/products";
 import {
@@ -204,6 +207,49 @@ export default function PosterGuidedShell() {
 	const [reopenError, setReopenError] = useState("");
 	const restoredRef = useRef(false);
 
+	// B-04: BACKEND-resolved composition plan for the selected governed mode.
+	// Refetched whenever the mode / product / recipe / approved copy changes;
+	// the UI never derives plan values locally.
+	const [compositionPlan, setCompositionPlan] = useState<CompositionPlan | null>(
+		null,
+	);
+	const [planLoading, setPlanLoading] = useState(false);
+	const [planError, setPlanError] = useState("");
+	const planFetchRef = useRef(0);
+	const productId = wf.product?.id ?? "";
+	const approvedCopySetId = wf.approvedCopySet?.poster_copy_set_id ?? "";
+	useEffect(() => {
+		const fetchId = ++planFetchRef.current;
+		if (!productId || !wf.creativeMode) {
+			setCompositionPlan(null);
+			setPlanError("");
+			setPlanLoading(false);
+			return;
+		}
+		setPlanLoading(true);
+		setPlanError("");
+		void fetchCompositionPlan({
+			product_id: productId,
+			creative_mode: wf.creativeMode,
+			recipe_id: wf.recipeId ?? "",
+			poster_copy_set_id: approvedCopySetId,
+		})
+			.then((res) => {
+				if (planFetchRef.current !== fetchId) return;
+				setCompositionPlan(res.composition_plan ?? null);
+			})
+			.catch(() => {
+				if (planFetchRef.current !== fetchId) return;
+				setCompositionPlan(null);
+				setPlanError(
+					"Gagal mendapatkan pelan komposisi dari backend. Cuba tukar mod semula.",
+				);
+			})
+			.finally(() => {
+				if (planFetchRef.current === fetchId) setPlanLoading(false);
+			});
+	}, [productId, wf.creativeMode, wf.recipeId, approvedCopySetId]);
+
 	useEffect(() => {
 		void fetchProductCatalog(60)
 			.then((res) => setProducts(res.items ?? []))
@@ -324,7 +370,15 @@ export default function PosterGuidedShell() {
 					<StepNav wf={wf} />
 				</div>
 
-				<PosterSummary wf={wf} />
+				<div className="space-y-4">
+					<PosterSummary wf={wf} />
+					<CompositionPlanSummary
+						plan={compositionPlan}
+						loading={planLoading}
+						error={planError}
+						compiledSignature={wf.deliverable?.composition_plan?.signature ?? ""}
+					/>
+				</div>
 			</div>
 		</section>
 	);

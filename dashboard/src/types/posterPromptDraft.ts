@@ -57,4 +57,5 @@ export interface PosterPromptDraftResponse {
 	validation_warnings?: string[];
 	poster_spec?: PosterSpec | null;
 	overlay_spec?: OverlaySpec | null;
+	composition_plan?: Record<string, unknown>;
 }

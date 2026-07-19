@@ -174,7 +174,59 @@ vi.mock("../../../api/posterCopySets", () => {
 			},
 			render_report: {},
 			qa_report: { ok: true, findings: [], block_count: 0, warn_count: 0 },
+			// The plan the manifest preserved — same signature the preview shows
+			// for this mode, so the UI can prove compile == displayed plan.
+			composition_plan: { signature: "sig-LIFESTYLE_EDITORIAL" },
 		}),
+		// Backend-resolved plan preview: derived from the REQUESTED mode so the
+		// tests observe real refetch-on-change behaviour (values themselves are
+		// proven by the backend composition tests).
+		fetchCompositionPlan: vi.fn().mockImplementation(
+			({ creative_mode }: { creative_mode: string }) =>
+				Promise.resolve({
+					composition_plan: {
+						schema_version: "wrna-poster-composition-v1",
+						profile_id: `${creative_mode.toLowerCase()}_profile_v1`,
+						creative_mode,
+						provenance: {
+							active_locks: ["PRODUCT_TRUTH"],
+							suppressions: [
+								{
+									property: "product.anchor",
+									mode_value: "middle-right",
+									resolved_value: "middle-center",
+									reason: "RECIPE_SAFE_REGION_LOCK",
+									authority: "RECIPE",
+								},
+							],
+						},
+						canvas: { frame_ratio: "9:16", safe_margin: "5%" },
+						reading_order: ["product", "hook", "cta", "usp"],
+						product: { anchor: "middle-center", dominance: "70-80%" },
+						copy: {
+							hook_zone: "top-center",
+							usp_zone: "lower-center band",
+							cta_zone: "bottom-center",
+						},
+						typography: {
+							hook: "bold campaign headline",
+							usp: "two tight proof lines",
+							cta: "high-contrast campaign button",
+							intensity: "high-impact display",
+						},
+						scene: {
+							lighting: "campaign key light",
+							human_presence: "optional",
+							identity_policy: "unrestricted natural person",
+							face_safe_rule: "upper-right protected when present",
+							background_complexity: "controlled cinematic gradient",
+						},
+						warnings: ["PRODUCT_COPY_ZONE_CONFLICT_RESOLVED"],
+						blockers: [],
+						signature: `sig-${creative_mode}`,
+					},
+				}),
+		),
 		savePosterToLibrary: vi
 			.fn()
 			.mockResolvedValue({ creative_asset_id: "ca-1", already_saved: false }),
@@ -207,6 +259,7 @@ import {
 	approvePosterCopySet,
 	composePoster,
 	createPosterCopySet,
+	fetchCompositionPlan,
 	fetchPosterDeliverableByAsset,
 	forkPosterCopySetFromHistorical,
 	generatePosterDirections,
@@ -690,5 +743,143 @@ describe("PosterGuidedShell closure", () => {
 		expect(goalEvidence("PORTABILITY", plainProduct).supported).toBe(false);
 		expect(goalEvidence("HERITAGE_TRUST", plainProduct).supported).toBe(false);
 		expect(goalEvidence("PRODUCT_HERO", plainProduct).supported).toBe(true);
+	});
+});
+
+// ── WRNA Round 3 (B-04): backend-resolved composition summary ────────────────
+
+describe("PosterGuidedShell composition plan (B-04)", () => {
+	beforeEach(() => vi.clearAllMocks());
+	afterEach(() => cleanup());
+
+	const ALL_MODES = [
+		"PGC_CAMPAIGN",
+		"UGC_AUTHENTIC",
+		"MODEL_AMBASSADOR",
+		"CLEAN_STUDIO_CATALOGUE",
+		"LIFESTYLE_EDITORIAL",
+	];
+
+	it("renders the backend-resolved plan for all five modes and updates on mode change", async () => {
+		renderShell();
+		fireEvent.click(screen.getByTestId("pick-product"));
+		fireEvent.click(await screen.findByTestId("poster-goal-card-PRODUCT_HERO"));
+		const select = await screen.findByTestId("poster-creative-mode");
+		for (const mode of ALL_MODES) {
+			fireEvent.change(select, { target: { value: mode } });
+			await waitFor(() =>
+				expect(
+					screen
+						.getByTestId("poster-composition-plan")
+						.getAttribute("data-mode"),
+				).toBe(mode),
+			);
+			// The plan came from the BACKEND resolver for THIS mode.
+			expect(vi.mocked(fetchCompositionPlan).mock.lastCall?.[0]).toMatchObject({
+				product_id: "prod-1",
+				creative_mode: mode,
+			});
+			const panel = screen.getByTestId("poster-composition-plan");
+			expect(panel.textContent).toContain(mode);
+			expect(panel.textContent).toContain("middle-center");
+			expect(panel.textContent).toContain("5%");
+		}
+	});
+
+	it("shows no plan panel and calls no resolver in legacy no-mode state", async () => {
+		renderShell();
+		fireEvent.click(screen.getByTestId("pick-product"));
+		await screen.findByTestId("poster-readiness-banner");
+		expect(screen.queryByTestId("poster-composition-plan")).toBeNull();
+		expect(fetchCompositionPlan).not.toHaveBeenCalled();
+	});
+
+	it("mode change preserves product, approved copy, angle and recipe state", async () => {
+		renderShell();
+		await driveToApproved();
+		fireEvent.click(screen.getByTestId("poster-guided-continue")); // approve → visual
+		fireEvent.click(
+			await screen.findByTestId("poster-visual-card-product_hero_night_routine"),
+		); // recipe selected → scene
+		fireEvent.click(screen.getByTestId("poster-guided-step-angle"));
+		fireEvent.change(await screen.findByTestId("poster-creative-mode"), {
+			target: { value: "UGC_AUTHENTIC" },
+		});
+		await waitFor(() =>
+			expect(
+				screen.getByTestId("poster-composition-plan").getAttribute("data-mode"),
+			).toBe("UGC_AUTHENTIC"),
+		);
+		// NOTHING downstream was invalidated by the mode switch.
+		const summary = screen.getByTestId("poster-guided-summary");
+		expect(summary.textContent).toContain("Minyak Warisan Tok"); // product
+		expect(summary.textContent).toContain("Disahkan"); // approved copy status
+		expect(summary.textContent).toContain("Tajuk 0"); // approved copy text
+		expect(summary.textContent).toContain("Premium hero"); // selected angle
+		for (const s of ["visual", "scene"]) {
+			expect(
+				(screen.getByTestId(`poster-guided-step-${s}`) as HTMLButtonElement)
+					.disabled,
+			).toBe(false);
+		}
+	});
+
+	it("renders locks, suppressions and warnings; compile uses the same displayed plan", async () => {
+		renderShell();
+		fireEvent.click(screen.getByTestId("pick-product"));
+		fireEvent.click(await screen.findByTestId("poster-goal-card-PRODUCT_HERO"));
+		fireEvent.change(await screen.findByTestId("poster-creative-mode"), {
+			target: { value: "LIFESTYLE_EDITORIAL" },
+		});
+		await waitFor(() =>
+			expect(
+				screen.getByTestId("poster-composition-plan").getAttribute("data-mode"),
+			).toBe("LIFESTYLE_EDITORIAL"),
+		);
+		expect(
+			screen.getByTestId("poster-composition-locks").textContent,
+		).toContain("PRODUCT_TRUTH");
+		expect(
+			screen.getByTestId("poster-composition-suppressions").textContent,
+		).toContain("RECIPE_SAFE_REGION_LOCK");
+		expect(
+			screen.getByTestId("poster-composition-warnings").textContent,
+		).toContain("PRODUCT_COPY_ZONE_CONFLICT_RESOLVED");
+
+		// Drive to compose with the SAME mode; the compose response's preserved
+		// plan signature matches the displayed plan → identity proven in-UI.
+		fireEvent.click(await screen.findByTestId("poster-angle-card-0"));
+		fireEvent.click(await screen.findByTestId("poster-copy-direction-0"));
+		fireEvent.click(await screen.findByTestId("poster-guided-continue")); // → approve
+		fireEvent.click(await screen.findByTestId("poster-approve-copy"));
+		await screen.findByTestId("poster-copy-approved");
+		fireEvent.click(screen.getByTestId("poster-guided-continue")); // → visual
+		fireEvent.click(
+			await screen.findByTestId("poster-visual-card-product_hero_night_routine"),
+		);
+		fireEvent.click(await screen.findByTestId("poster-scene-card-scene-media-1"));
+		fireEvent.click(await screen.findByTestId("poster-guided-continue")); // → compose
+		fireEvent.click(await screen.findByTestId("poster-compose"));
+		await waitFor(() => expect(composePoster).toHaveBeenCalled());
+		expect(vi.mocked(composePoster).mock.lastCall?.[0]).toMatchObject({
+			creative_mode: "LIFESTYLE_EDITORIAL",
+		});
+		expect(
+			await screen.findByTestId("poster-composition-plan-match"),
+		).toBeInTheDocument();
+	});
+
+	it("resolver failure is visible and never replaced by an invented frontend plan", async () => {
+		vi.mocked(fetchCompositionPlan).mockRejectedValueOnce(new Error("HTTP 502"));
+		renderShell();
+		fireEvent.click(screen.getByTestId("pick-product"));
+		fireEvent.click(await screen.findByTestId("poster-goal-card-PRODUCT_HERO"));
+		fireEvent.change(await screen.findByTestId("poster-creative-mode"), {
+			target: { value: "PGC_CAMPAIGN" },
+		});
+		expect(
+			await screen.findByTestId("poster-composition-plan-error"),
+		).toBeInTheDocument();
+		expect(screen.queryByTestId("poster-composition-plan")).toBeNull();
 	});
 });

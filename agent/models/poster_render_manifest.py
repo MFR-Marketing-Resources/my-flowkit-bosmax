@@ -61,6 +61,14 @@ class ManifestProvenance(BaseModel):
     creative_mode: str = ""
     creative_direction_authority_version: str = ""
     representation_policy_version: str = ""
+    composition_schema_version: str = ""
+    composition_profile_id: str = ""
+    composition_signature: str = ""
+    # The FULL canonical composition plan (already resolved by the caller from
+    # the real authorities). Persisting it verbatim is what makes save/reopen
+    # deterministic — reopen reads this plan back instead of re-deriving a
+    # second plan from fabricated defaults. Empty on the legacy no-mode path.
+    composition_plan: dict[str, Any] = Field(default_factory=dict)
 
 
 class PosterRenderManifest(BaseModel):

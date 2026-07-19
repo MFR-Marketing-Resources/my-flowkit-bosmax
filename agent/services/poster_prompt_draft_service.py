@@ -20,6 +20,11 @@ from agent.services.poster_copy_quality_service import (
     map_legacy_to_poster,
 )
 from agent.services.poster_prompt_composer import compose_recipe_poster
+from agent.services.poster_composition_service import (
+    build_composition_constraints,
+    render_composition_instruction,
+    resolve_poster_composition,
+)
 from agent.services.poster_readiness_service import PosterReadinessService
 from agent.models.poster_copy_set import (
     STATUS_POSTER_COPY_APPROVED,
@@ -465,6 +470,8 @@ class PosterPromptDraftService:
         if creative_direction is not None:
             negative_prompt += ", " + ", ".join(creative_direction.negative_rules)
         recipe_id = _norm(request.poster_recipe_id)
+        _recipe_obj = None
+        _template_contract = None
         if recipe_id:
             recipe = poster_recipe_service.get_recipe(recipe_id)
             if recipe is None:
@@ -484,6 +491,8 @@ class PosterPromptDraftService:
                     "Poster template contract unavailable",
                     field_errors=[f"{exc.code}: {exc}"],
                 )
+            _recipe_obj = recipe
+            _template_contract = _contract
             _safe = _contract["product_safe_region"]
             overlay = _build_clean_scene_instruction(_safe, _contract["background_constraints"])
             poster_prompt, poster_spec, overlay_spec = compose_recipe_poster(
@@ -510,6 +519,33 @@ class PosterPromptDraftService:
                 restricted_mode=restricted_mode,
             )
 
+        # B-01: the PRODUCTION caller passes the REAL resolved higher-authority
+        # constraints into the canonical resolver — actual Product Truth profile,
+        # representation-policy identity rule, the operator's hard human-presence
+        # selection, the recipe template contract and the copy-quality report.
+        composition_constraints = (
+            build_composition_constraints(
+                product=product,
+                truth_profile=profile,
+                creative_direction=creative_direction,
+                operator_human_presence=fields["human_presence_mode"],
+                recipe=_recipe_obj,
+                template_contract=_template_contract,
+                copy_quality_report=_q_report,
+            )
+            if creative_direction is not None
+            else None
+        )
+        composition_plan = resolve_poster_composition(
+            creative_direction=creative_direction,
+            recipe_id=recipe_id,
+            frame_ratio=fields["frame_ratio"],
+            fields=fields,
+            constraints=composition_constraints,
+        )
+        if composition_plan:
+            poster_prompt += "\n=== PROFESSIONAL COMPOSITION PLAN ===\n" + render_composition_instruction(composition_plan)
+
         production_allowed = readiness.poster_status == PosterReadinessStatus.POSTER_READY
         prompt_status = (
             PromptPackageStatus.PREVIEW_ONLY
@@ -522,6 +558,16 @@ class PosterPromptDraftService:
         # only when the caller explicitly declares a non-approved source and has not
         # confirmed fallback — legacy callers that omit copy_source keep prior behavior.
         validation_warnings: list[str] = list(_q_warnings)
+        # Deterministic composition governance is surfaced, never hidden. The
+        # legacy no-mode path has an empty plan and stays byte-identical.
+        validation_warnings.extend(
+            f"COMPOSITION_WARN {code}"
+            for code in composition_plan.get("warnings", [])
+        )
+        validation_warnings.extend(
+            f"COMPOSITION_BLOCKER {code}"
+            for code in composition_plan.get("blockers", [])
+        )
         copy_source = _norm(request.copy_source)
         if poster_copy_set is not None:
             copy_source = (
@@ -572,4 +618,5 @@ class PosterPromptDraftService:
             validation_warnings=validation_warnings,
             poster_spec=poster_spec,
             overlay_spec=overlay_spec,
+            composition_plan=composition_plan,
         )

@@ -115,6 +115,19 @@ def _validate_zones_against_safe_region(
             )
 
 
+def manifest_frame_ratio(canvas: dict[str, int] | None = None) -> str:
+    """The ACTUAL manifest canvas ratio (reduced), derived from the canvas the
+    compositor renders — never a fabricated default."""
+    canvas = canvas or {"w": 1080, "h": 1920}
+    w, h = int(canvas.get("w") or 0), int(canvas.get("h") or 0)
+    if w <= 0 or h <= 0:
+        return ""
+    from math import gcd
+
+    d = gcd(w, h)
+    return f"{w // d}:{h // d}"
+
+
 def build_render_manifest(
     *,
     recipe_id: str,
@@ -124,6 +137,7 @@ def build_render_manifest(
     image_model: str = "",
     background_prompt_fingerprint: str = "",
     creative_direction: dict[str, str] | None = None,
+    composition_plan: dict[str, Any] | None = None,
 ) -> PosterRenderManifest:
     """Approved poster copy + template contract → versioned render manifest.
 
@@ -174,6 +188,11 @@ def build_render_manifest(
         )
 
     creative_direction = creative_direction or {}
+    # The canonical composition plan is resolved ONCE by the caller (with the
+    # real product-truth / identity / operator / recipe constraints) and passed
+    # in verbatim. The manifest never re-derives a second plan from fabricated
+    # defaults — an absent plan is preserved honestly as absent (legacy path).
+    composition_plan = composition_plan or {}
     return PosterRenderManifest(
         background_media_id=background_media_id,
         background_local_path=background_local_path,
@@ -203,5 +222,9 @@ def build_render_manifest(
             creative_mode=str(creative_direction.get("mode") or ""),
             creative_direction_authority_version=str(creative_direction.get("authority_version") or ""),
             representation_policy_version=str(creative_direction.get("representation_policy_version") or ""),
+            composition_schema_version=str(composition_plan.get("schema_version") or ""),
+            composition_profile_id=str(composition_plan.get("profile_id") or ""),
+            composition_signature=str(composition_plan.get("signature") or ""),
+            composition_plan=composition_plan,
         ),
     )

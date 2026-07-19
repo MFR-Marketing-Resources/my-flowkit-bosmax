@@ -88,6 +88,9 @@ export interface PosterComposeResponse {
 	deliverable: PosterDeliverableRow;
 	render_report: Record<string, unknown>;
 	qa_report: PosterQAReport;
+	// The EXACT canonical composition plan the manifest preserved (empty/absent
+	// on the legacy no-mode path) — lets the UI prove compile == displayed plan.
+	composition_plan?: import("./posterCompositionPlan").CompositionPlan;
 }
 
 // Creative Library round trip: full reconstruction of a saved poster.
