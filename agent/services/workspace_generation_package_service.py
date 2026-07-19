@@ -1223,6 +1223,45 @@ async def _run_batch_generation_task(
 # ─── Batch Prompt Runner (prompt/production split) ───────────
 
 
+async def _resolve_hybrid_anchor_916(product_id: str) -> tuple[str | None, list[str]]:
+    """Auto-pick the product's padded 9:16 PRODUCT_REFERENCE anchor for a
+    HYBRID batch.
+
+    HYBRID's visual truth is the product anchor, and the production queue's
+    aspect gate (frame slots only) refuses any start frame that does not match
+    the 9:16 production standard — a raw catalog image (e.g. 1122x1402) blocks
+    at the gate. Deterministic pick: APPROVED PRODUCT_REFERENCE assets whose
+    LOCAL image parses to 9:16 (same stdlib parser as the gate, +-3%), ordered
+    by asset_id. No match -> (None, warning): the batch still builds against
+    the raw product image and the queue gate stays the enforcement point.
+    """
+    import os
+    from agent.services.production_queue_service import _image_dimensions
+
+    rows = await crud.list_creative_assets(
+        semantic_role="PRODUCT_REFERENCE", product_id=product_id,
+    )
+    candidates = sorted(
+        (r for r in rows if r.get("review_status") == "APPROVED"),
+        key=lambda r: str(r.get("asset_id") or ""),
+    )
+    target = 9 / 16
+    for row in candidates:
+        path = row.get("local_file_path") or ""
+        if not path or not os.path.isfile(path):
+            continue
+        dims = _image_dimensions(path)
+        if not dims or not dims[1]:
+            continue
+        ratio = dims[0] / dims[1]
+        if abs(ratio - target) / target <= 0.03:
+            return str(row["asset_id"]), []
+    return None, [
+        "HYBRID_ANCHOR_916_NOT_FOUND:raw_product_image_will_block_at_queue_gate:"
+        "create_a_padded_916_PRODUCT_REFERENCE_asset"
+    ]
+
+
 def _plan_creator_kwargs(plan: dict, asset_cache: dict) -> dict:
     """Map one planner item plan to creator kwargs for its logical mode."""
     mode = plan["logical_mode"]
@@ -1237,6 +1276,16 @@ def _plan_creator_kwargs(plan: dict, asset_cache: dict) -> dict:
         frame_id = plan["finished_frame_asset_id"]
         kwargs["start_frame_asset_id"] = frame_id
         row = asset_cache.get(frame_id, {})
+        if row.get("preview_url"):
+            kwargs["start_frame_preview_url"] = row["preview_url"]
+        if row.get("download_url"):
+            kwargs["start_frame_download_url"] = row["download_url"]
+    if mode == "HYBRID" and plan.get("product_reference_asset_id"):
+        # The padded 9:16 PRODUCT_REFERENCE anchor rides the F2V creator's
+        # start-frame slot (HYBRID = F2V creator with source_mode=HYBRID).
+        ref_id = plan["product_reference_asset_id"]
+        kwargs["start_frame_asset_id"] = ref_id
+        row = asset_cache.get(ref_id, {})
         if row.get("preview_url"):
             kwargs["start_frame_preview_url"] = row["preview_url"]
         if row.get("download_url"):
@@ -1313,12 +1362,17 @@ async def _run_batch_prompt_plan_task(
     history_fps = {r["prompt_fingerprint"] for r in history_rows if r.get("prompt_fingerprint")}
 
     asset_cache: dict = {}
-    frame_id = item_plans[0].get("finished_frame_asset_id") if item_plans else None
-    if frame_id:
+    _plan0 = item_plans[0] if item_plans else {}
+    for _aid in (
+        _plan0.get("finished_frame_asset_id"),
+        _plan0.get("product_reference_asset_id"),
+    ):
+        if not _aid:
+            continue
         try:
-            frame_row = await crud.get_creative_asset(frame_id)
-            if frame_row:
-                asset_cache[frame_id] = frame_row
+            _row = await crud.get_creative_asset(_aid)
+            if _row:
+                asset_cache[_aid] = _row
         except Exception:
             pass
 
@@ -1495,6 +1549,7 @@ async def start_batch_prompt_run(
     scene_contexts: list[str] | None = None,
     hook_angles: list[str] | None = None,
     finished_frame_asset_id: str | None = None,
+    product_reference_asset_id: str | None = None,
 ) -> dict:
     """Batch Prompt Builder entry point. ONE logical mode per batch (mode law).
 
@@ -1532,6 +1587,14 @@ async def start_batch_prompt_run(
             raise ValueError(
                 f"MODE_CONTRACT_VIOLATION:DURATION_NOT_IN_AUTHORITY:{duration_seconds}"
             )
+
+    # HYBRID product anchor: explicit PRODUCT_REFERENCE asset wins, else
+    # auto-pick the padded 9:16 anchor (queue aspect gate refuses raw images).
+    anchor_warnings: list[str] = []
+    if logical_mode == "HYBRID" and not product_reference_asset_id:
+        product_reference_asset_id, anchor_warnings = await _resolve_hybrid_anchor_916(
+            product_id
+        )
 
     # Avatar rotation pool: explicit subset, else the full approved registry.
     resolved_avatars = [a for a in (avatar_codes or []) if a]
@@ -1593,6 +1656,7 @@ async def start_batch_prompt_run(
         hook_angles=resolved_hooks,
         copy_set_ids=resolved_copy_set_ids,
         finished_frame_asset_id=finished_frame_asset_id,
+        product_reference_asset_id=product_reference_asset_id,
     )
 
     rotation_pool_size = max(
@@ -1628,6 +1692,8 @@ async def start_batch_prompt_run(
         "copy_set_ids": resolved_copy_set_ids,
         "copy_rotation_warnings": copy_rotation_warnings,
         "finished_frame_asset_id": finished_frame_asset_id,
+        "product_reference_asset_id": product_reference_asset_id,
+        "anchor_warnings": anchor_warnings,
     }
 
     run = await crud.create_batch_generation_run(
