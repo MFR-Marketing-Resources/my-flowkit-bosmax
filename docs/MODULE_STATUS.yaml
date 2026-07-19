@@ -743,3 +743,12 @@ domains:
       - tests/api/test_poster_copy_sets_api.py
       - tests/ui/test_poster_compositor_service_contract.py
       - docs/poster/POSTER_BUILDER_V2.md
+      # WRNA ROUND 3 (PR #420): canonical five-mode professional-poster
+      # composition resolver (higher-authority precedence + suppression
+      # provenance), manifest plan preservation, backend-resolved Poster
+      # Guided composition summary.
+      - agent/services/poster_composition_service.py
+      - tests/unit/test_poster_composition_service.py
+      - dashboard/src/types/posterCompositionPlan.ts
+      - dashboard/src/components/poster/CompositionPlanSummary.tsx
+      - dashboard/src/components/poster/CompositionPlanSummary.test.tsx

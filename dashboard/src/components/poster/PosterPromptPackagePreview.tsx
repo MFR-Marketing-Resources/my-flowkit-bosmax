@@ -1,4 +1,6 @@
+import type { CompositionPlan } from "../../types/posterCompositionPlan";
 import type { PosterPromptDraftResponse } from "../../types/posterPromptDraft";
+import CompositionPlanSummary from "./CompositionPlanSummary";
 
 interface PosterPromptPackagePreviewProps {
 	package_: PosterPromptDraftResponse | null;
@@ -48,12 +50,11 @@ export default function PosterPromptPackagePreview({
 					Bind an approved Copy Set or explicitly confirm fallback before production.
 				</div>
 			) : null}
-			{package_.composition_plan && Object.keys(package_.composition_plan).length ? (
-				<div data-testid="poster-composition-plan" className="mt-3 rounded-xl border border-sky-500/30 bg-sky-500/10 p-3 text-xs text-sky-100">
-					<strong>Composition Plan</strong>
-					<p className="mt-1">{String(package_.composition_plan.profile_id)} · product {String((package_.composition_plan.product as Record<string, unknown>)?.anchor)} · {String((package_.composition_plan.product as Record<string, unknown>)?.dominance)}</p>
-				</div>
-			) : null}
+			<div className="mt-3">
+				<CompositionPlanSummary
+					plan={(package_.composition_plan ?? null) as CompositionPlan | null}
+				/>
+			</div>
 			{package_.poster_prompt ? (
 				<>
 					<p className="mt-3 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">

@@ -39,12 +39,43 @@ class ComposeRequest(BaseModel):
     settings: dict[str, Any] = Field(default_factory=dict)
 
 
+class CompositionPlanPreviewRequest(BaseModel):
+    product_id: str
+    creative_mode: str
+    recipe_id: str = ""
+    poster_copy_set_id: str = ""
+    human_presence_mode: str = ""
+    frame_ratio: str = ""
+
+
 @router.get("/compositor/probe")
 async def compositor_probe():
     try:
         return await compositor.probe(force=True)
     except compositor.PosterCompositorError as exc:
         raise _http(exc, exc.code, exc.status_code)
+
+
+@router.post("/composition-plan")
+async def composition_plan_preview(req: CompositionPlanPreviewRequest):
+    """Backend-resolved composition plan for the Poster Guided summary.
+
+    Read-only: resolves the SAME canonical plan a compile would preserve (same
+    resolver, same constraint assembly). No mutation, no generation, no credit
+    spend."""
+    try:
+        return await PosterDeliverableService.preview_composition_plan(
+            product_id=req.product_id,
+            creative_mode=req.creative_mode,
+            recipe_id=req.recipe_id,
+            poster_copy_set_id=req.poster_copy_set_id,
+            human_presence_mode=req.human_presence_mode,
+            frame_ratio=req.frame_ratio,
+        )
+    except PosterDeliverableError as exc:
+        raise _http(exc, exc.code, exc.status_code)
+    except CreativeDirectionError as exc:
+        raise _http(exc, str(exc), 422)
 
 
 @router.post("/compose")
