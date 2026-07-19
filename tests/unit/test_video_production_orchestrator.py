@@ -28,7 +28,10 @@ def _mp4(seconds: float, pad=60_000) -> bytes:
     ftyp = box(b"ftyp", b"isom" + struct.pack(">I", 512) + b"isomiso2avc1mp41")
     mvhd = box(b"mvhd", b"\x00\x00\x00\x00" + struct.pack(">II", 0, 0)
                + struct.pack(">I", 1000) + struct.pack(">I", int(seconds * 1000)) + b"\x00" * 80)
-    return ftyp + box(b"moov", mvhd) + b"\x00" * pad
+    # media-data mdat (proportional to duration) so the concat output passes the
+    # final-render honesty gate (verify_final_media_payload); preflight ignores it.
+    mdat = box(b"mdat", b"\x11" * int(max(1, seconds) * 20_000))
+    return ftyp + box(b"moov", mvhd) + mdat
 
 
 def _continuations(nonce, duration):

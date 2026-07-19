@@ -37,6 +37,27 @@ def _mp4_bytes(duration_seconds: float, timescale: int = 1000,
     return blob + b"\x00" * max(0, pad_to - len(blob))  # plausible file size
 
 
+def _real_mp4_bytes(duration_seconds: float, timescale: int = 1000,
+                    bytes_per_second: int = 20_000) -> bytes:
+    """ftyp + moov/mvhd + a real-ish ``mdat`` sized proportional to duration —
+    a blob WITH a media-data payload that passes verify_final_media_payload
+    (unlike header-only _mp4_bytes). 20_000 B/s → 16s ≈ 320 KB mdat, above the
+    160 KB floor. (Note: real bytes, but not a decodable video track.)"""
+    def box(typ: bytes, payload: bytes) -> bytes:
+        return struct.pack(">I", 8 + len(payload)) + typ + payload
+
+    ftyp = box(b"ftyp", b"isom" + struct.pack(">I", 512) + b"isomiso2avc1mp41")
+    mvhd_payload = (
+        b"\x00" + b"\x00\x00\x00"
+        + struct.pack(">II", 0, 0)
+        + struct.pack(">I", timescale)
+        + struct.pack(">I", int(duration_seconds * timescale))
+        + b"\x00" * 80)
+    moov = box(b"moov", box(b"mvhd", mvhd_payload))
+    mdat = box(b"mdat", b"\x11" * int(max(1, duration_seconds) * bytes_per_second))
+    return ftyp + moov + mdat
+
+
 # ── contract shapes (captured fixtures) ──────────────────────────────────────
 def test_build_concat_input_matches_captured_shape():
     built = ft.build_concat_input(
@@ -122,6 +143,37 @@ def test_save_rejects_implausibly_small_video(tmp_path):
     assert exc.value.code == ft.FAIL_FINAL_DOWNLOAD
 
 
+# ── media-payload gate (defeats the header-only "fake 16s" vector) ───────────
+def test_verify_final_media_payload_accepts_media_payload(tmp_path):
+    p = tmp_path / "real.mp4"
+    p.write_bytes(_real_mp4_bytes(16.0))
+    assert ft.verify_final_media_payload(p, 16) > 0
+
+
+def test_verify_final_media_payload_rejects_header_only(tmp_path):
+    # header-only: declares 16s in mvhd but carries NO mdat media data
+    p = tmp_path / "fake.mp4"
+    p.write_bytes(_mp4_bytes(16.0))
+    with pytest.raises(ft.FinalTimelineError) as exc:
+        ft.verify_final_media_payload(p, 16)
+    assert exc.value.code == ft.FAIL_FINAL_NO_MEDIA_PAYLOAD
+
+
+def test_verify_final_media_payload_rejects_tiny_mdat(tmp_path):
+    # has an mdat, but far below the per-second media-data floor → still rejected
+    p = tmp_path / "tiny_mdat.mp4"
+    p.write_bytes(_real_mp4_bytes(16.0, bytes_per_second=10))
+    with pytest.raises(ft.FinalTimelineError) as exc:
+        ft.verify_final_media_payload(p, 16)
+    assert exc.value.code == ft.FAIL_FINAL_NO_MEDIA_PAYLOAD
+
+
+def test_verify_final_media_payload_missing_file(tmp_path):
+    with pytest.raises(ft.FinalTimelineError) as exc:
+        ft.verify_final_media_payload(tmp_path / "nope.mp4", 16)
+    assert exc.value.code == ft.FAIL_FINAL_NO_MEDIA_PAYLOAD
+
+
 # ── finalize orchestration: gates + happy path + resume ─────────────────────
 class _Client:
     def __init__(self, poll_sequence, submit=None):
@@ -200,7 +252,7 @@ def test_finalize_live_requires_kill_switch(monkeypatch):
 def test_finalize_live_happy_path_saves_and_validates(monkeypatch, tmp_path):
     monkeypatch.setenv("NATIVE_EXTEND_ENABLED", "1")
     store = _patch_job_store(monkeypatch)
-    encoded = base64.b64encode(_mp4_bytes(16.0)).decode()
+    encoded = base64.b64encode(_real_mp4_bytes(16.0)).decode()
     client = _Client([
         _fx("concat_poll_active.sanitized.json"),
         {"status": "MEDIA_GENERATION_STATUS_SUCCESSFUL", "outputUri": "",
@@ -226,7 +278,7 @@ def test_finalize_resumes_existing_job_without_resubmitting(monkeypatch, tmp_pat
         "final_concat_job_name":
             "projects/365941595420/locations/us-central1/jobs/b5eaf875-0405-4d3f-85d6-8156d8b5661f",
     })
-    encoded = base64.b64encode(_mp4_bytes(16.0)).decode()
+    encoded = base64.b64encode(_real_mp4_bytes(16.0)).decode()
     client = _Client([
         {"status": "MEDIA_GENERATION_STATUS_SUCCESSFUL", "outputUri": "",
          "mediaGenerationId": "", "inputsCount": 3, "encodedVideo": encoded},
@@ -237,6 +289,51 @@ def test_finalize_resumes_existing_job_without_resubmitting(monkeypatch, tmp_pat
         poll_interval_s=0))
     assert out["resumed"] is True
     assert client.submits == []          # NEVER double-submit after a prior submit
+
+
+def test_finalize_rejects_fake_16s_header_only_not_complete(monkeypatch, tmp_path):
+    """The keystone: a header-only 60KB blob that DECLARES 16s passes both
+    save_final_video (>=50KB) and validate_final_duration (mvhd=16s), yet the
+    job can NEVER reach COMPLETE — the fake-16s path is closed."""
+    monkeypatch.setenv("NATIVE_EXTEND_ENABLED", "1")
+    store = _patch_job_store(monkeypatch)
+    encoded = base64.b64encode(_mp4_bytes(16.0)).decode()  # header-only, no frames
+    client = _Client([
+        {"status": "MEDIA_GENERATION_STATUS_SUCCESSFUL", "outputUri": "",
+         "mediaGenerationId": "", "inputsCount": 3, "encodedVideo": encoded},
+    ])
+    with pytest.raises(ft.FinalTimelineError) as exc:
+        asyncio.run(ft.finalize_timeline(
+            client, job_id="vj_fake", segment_media_ids=SEGS, requested_seconds=16,
+            out_dir=tmp_path, dry_run=False, confirm_live_credit_burn=True,
+            poll_interval_s=0))
+    assert exc.value.code == ft.FAIL_FINAL_NO_MEDIA_PAYLOAD
+    assert store["job"]["status"] != ft.JOB_COMPLETE
+    assert store["job"]["status"] == ft.JOB_RETRIEVING     # left honest at last state
+    assert store["job"].get("final_media_id") is None      # never minted
+
+
+def test_finalize_complete_row_never_without_file(monkeypatch, tmp_path):
+    """A COMPLETE row must never point at a file that was never written."""
+    monkeypatch.setenv("NATIVE_EXTEND_ENABLED", "1")
+    store = _patch_job_store(monkeypatch)
+
+    def _save_without_writing(encoded_video_b64, out_dir, job_id):
+        return {"final_media_id": f"final_{job_id}",
+                "local_path": str(tmp_path / "never_written.mp4"),
+                "size_mb": 9.9, "sha256": "deadbeef"}
+    monkeypatch.setattr(ft, "save_final_video", _save_without_writing)
+    client = _Client([
+        {"status": "MEDIA_GENERATION_STATUS_SUCCESSFUL", "outputUri": "",
+         "mediaGenerationId": "", "inputsCount": 3, "encodedVideo": "x"},
+    ])
+    with pytest.raises(ft.FinalTimelineError) as exc:
+        asyncio.run(ft.finalize_timeline(
+            client, job_id="vj_nofile", segment_media_ids=SEGS, requested_seconds=16,
+            out_dir=tmp_path, dry_run=False, confirm_live_credit_burn=True,
+            poll_interval_s=0))
+    assert exc.value.code == ft.FAIL_FINAL_NO_MEDIA_PAYLOAD
+    assert store["job"]["status"] != ft.JOB_COMPLETE
 
 
 def test_finalize_failed_render_fails_closed(monkeypatch, tmp_path):
