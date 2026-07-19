@@ -446,6 +446,45 @@ async def test_initial_pre_submit_rejection_is_safe_and_retryable(monkeypatch, t
     assert int(row["effective_submit_count"]) == 2  # honest audit of the retry
 
 
+async def test_initial_zero_credit_signature_is_safe_despite_lane_handle(monkeypatch, tmp_path):
+    """A lane-terminal failure carrying a known zero-credit rejection signature
+    (NO_OPEN_EDITOR / CAPTCHA / RATE_LIMITED...) is provably pre-generation
+    even though the lane handle was persisted — the row stays SAFE-retryable
+    (live: vj_bda8259b2780 stranded on NO_OPEN_EDITOR)."""
+    planned, auth = await _plan_authorize(monkeypatch, "initsig")
+
+    async def editor_closed(job):
+        await crud.update_video_production_job_full(
+            job["job_id"], initial_lane_job_id="lane-initsig")
+        raise RuntimeError(
+            "initial generation FAILED: NO_OPEN_EDITOR: the Flow tab is not an editor")
+
+    client = FakeClient("initsig")
+    with pytest.raises(orch.OrchestratorError):
+        await orch.advance_job(
+            client, planned["job_id"], authorization_token=auth["authorization_token"],
+            generate_initial=editor_closed, out_dir=tmp_path, poll_interval_s=0)
+
+    job = await crud.get_video_production_job(planned["job_id"])
+    idem = orch._stage_key(job, "INITIAL", job["logical_job_key"])
+    row = next(r for r in await crud.list_video_job_side_effects(planned["job_id"])
+               if r["idempotency_key"] == idem)
+    assert row["submission_state"] == orch.SUB_NOT_ATTEMPTED
+    assert row["credit_state"] == orch.CR_NOT_SPENT
+    assert row["retry_safety"] == orch.RS_SAFE
+
+    # Editor repaired -> a fresh authorization completes the job.
+    auth2 = await orch.authorize_job(
+        planned["job_id"], confirmed_plan_fingerprint=planned["plan_fingerprint"])
+    calls = []
+    done = await orch.advance_job(
+        client, planned["job_id"], authorization_token=auth2["authorization_token"],
+        generate_initial=_initial_gen(calls, "initsig"), out_dir=tmp_path,
+        poll_interval_s=0)
+    assert done["complete"] is True
+    assert calls == [planned["job_id"]]
+
+
 async def test_initial_post_submit_failure_stays_blocked(monkeypatch, tmp_path):
     """A failure AFTER the lane handle was persisted (submission accepted —
     credits may have been spent) keeps the conservative UNCERTAIN / BLOCKED
