@@ -402,6 +402,84 @@ async def test_safe_not_attempted_extend_is_retryable_on_resume(monkeypatch, tmp
     assert int(row["effective_submit_count"]) == 2  # honest audit of the retry
 
 
+async def test_initial_pre_submit_rejection_is_safe_and_retryable(monkeypatch, tmp_path):
+    """INITIAL-stage mirror of the EXTEND SAFE contract (live: vj_efed7c24d9cc
+    stuck AUTHORIZED forever after a rate-limiter rejection). A rejection with
+    NO persisted lane handle is provably zero-side-effect: the row records
+    NOT_ATTEMPTED / NOT_SPENT / SAFE and a fresh authorization may submit
+    again — exactly one controlled retry, never a stranded job."""
+    planned, auth = await _plan_authorize(monkeypatch, "initsafe")
+
+    async def rejected(job):
+        # One-door lane rejection BEFORE any lane handle exists (CAPTCHA /
+        # rate limiter): nothing persisted, nothing spent.
+        raise RuntimeError("one-door lane rejected initial: RATE_LIMITED")
+
+    client = FakeClient("initsafe")
+    with pytest.raises(orch.OrchestratorError):
+        await orch.advance_job(
+            client, planned["job_id"], authorization_token=auth["authorization_token"],
+            generate_initial=rejected, out_dir=tmp_path, poll_interval_s=0)
+
+    job = await crud.get_video_production_job(planned["job_id"])
+    assert job["status"] == orch.F_INITIAL
+    idem = orch._stage_key(job, "INITIAL", job["logical_job_key"])
+    row = next(r for r in await crud.list_video_job_side_effects(planned["job_id"])
+               if r["idempotency_key"] == idem)
+    assert row["submission_state"] == orch.SUB_NOT_ATTEMPTED
+    assert row["credit_state"] == orch.CR_NOT_SPENT
+    assert row["retry_safety"] == orch.RS_SAFE
+
+    # Fresh authorization → the SAFE row submits again and the job completes.
+    auth2 = await orch.authorize_job(
+        planned["job_id"], confirmed_plan_fingerprint=planned["plan_fingerprint"])
+    calls = []
+    done = await orch.advance_job(
+        client, planned["job_id"], authorization_token=auth2["authorization_token"],
+        generate_initial=_initial_gen(calls, "initsafe"), out_dir=tmp_path,
+        poll_interval_s=0)
+    assert done["complete"] is True
+    assert calls == [planned["job_id"]]  # exactly one controlled retry
+    row = next(r for r in await crud.list_video_job_side_effects(planned["job_id"])
+               if r["idempotency_key"] == idem)
+    assert row["submission_state"] == orch.SUB_TERMINAL
+    assert int(row["effective_submit_count"]) == 2  # honest audit of the retry
+
+
+async def test_initial_post_submit_failure_stays_blocked(monkeypatch, tmp_path):
+    """A failure AFTER the lane handle was persisted (submission accepted —
+    credits may have been spent) keeps the conservative UNCERTAIN / BLOCKED
+    row: re-authorization must NOT trigger a second submit."""
+    planned, auth = await _plan_authorize(monkeypatch, "initblocked")
+
+    async def failed_after_submit(job):
+        await crud.update_video_production_job_full(
+            job["job_id"], initial_lane_job_id="lane-initblocked")
+        raise RuntimeError("initial generation FAILED: engine error mid-flight")
+
+    client = FakeClient("initblocked")
+    with pytest.raises(orch.OrchestratorError):
+        await orch.advance_job(
+            client, planned["job_id"], authorization_token=auth["authorization_token"],
+            generate_initial=failed_after_submit, out_dir=tmp_path, poll_interval_s=0)
+
+    job = await crud.get_video_production_job(planned["job_id"])
+    idem = orch._stage_key(job, "INITIAL", job["logical_job_key"])
+    row = next(r for r in await crud.list_video_job_side_effects(planned["job_id"])
+               if r["idempotency_key"] == idem)
+    assert row["submission_state"] == orch.SUB_UNCERTAIN
+    assert row["retry_safety"] == orch.RS_BLOCKED
+
+    auth2 = await orch.authorize_job(
+        planned["job_id"], confirmed_plan_fingerprint=planned["plan_fingerprint"])
+    calls = []
+    await orch.advance_job(
+        client, planned["job_id"], authorization_token=auth2["authorization_token"],
+        generate_initial=_initial_gen(calls, "initblocked"), out_dir=tmp_path,
+        poll_interval_s=0)
+    assert calls == []  # UNCERTAIN row: surfaced, never resubmitted
+
+
 # ── mid-flight INITIAL restart recovery via persisted lane (Mission 1 / item 1) ─
 async def _submit_initial_no_terminal(monkeypatch, nonce, lane="lane-x"):
     """Reach: INITIAL reserved + SUBMITTED (credit MAY be spent), lane handle

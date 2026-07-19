@@ -481,7 +481,20 @@ async def advance_job(
             if _gate_stage_start(job, authorization_token, now) == _AUTH_EXPIRED:
                 return await _stop_auth_expired(job_id)
             r = await _reserve_or_resume(idem, job_id, "INITIAL")
-            if not r["reserved"]:
+            # retry_safety=SAFE contract, INITIAL-stage mirror of the EXTEND fix:
+            # a pre-submit rejection leaves the row NOT_ATTEMPTED / NOT_SPENT /
+            # SAFE with no operation_ref — provably zero provider side effect —
+            # and MAY submit again under a fresh authorization (live:
+            # vj_efed7c24d9cc stuck AUTHORIZED forever after a rate-limiter
+            # rejection). Any other existing row still resumes, never resubmits.
+            _row = r["row"] or {}
+            _safe_retry = (
+                not r["reserved"]
+                and not _row.get("operation_ref")
+                and _row.get("submission_state") == SUB_NOT_ATTEMPTED
+                and _row.get("retry_safety") == RS_SAFE
+            )
+            if not r["reserved"] and not _safe_retry:
                 # lost the reserve race to a concurrent caller — resume, don't submit
                 return await _drive_initial_resume(job_id, idem, resume_initial, client)
             bal_before = await _safe_credits(client)
@@ -493,9 +506,25 @@ async def advance_job(
             try:
                 seg = await generate_initial(job)
             except Exception as exc:  # noqa: BLE001
-                await _crud.update_video_job_side_effect(
-                    idem, submission_state=SUB_UNCERTAIN, credit_state=CR_MAY_HAVE_SPENT,
-                    retry_safety=RS_BLOCKED, detail=str(exc)[:200])
+                # Evidence-based classification: the one-door lane persists the
+                # durable lane handle (initial_lane_job_id) the INSTANT a submit
+                # is accepted, BEFORE any long poll. No handle on the job row =>
+                # the provider never accepted a submission (e.g. a CAPTCHA /
+                # rate-limiter rejection) => provably zero credit side effect =>
+                # the row stays SAFE-retryable instead of stranding the job.
+                # A handle present means a real submission happened — stay
+                # UNCERTAIN / BLOCKED (credits may have been spent).
+                fresh = await _crud.get_video_production_job(job_id) or {}
+                if not str(fresh.get("initial_lane_job_id") or "").strip():
+                    await _crud.update_video_job_side_effect(
+                        idem, submission_state=SUB_NOT_ATTEMPTED,
+                        credit_state=CR_NOT_SPENT, retry_safety=RS_SAFE,
+                        detail=str(exc)[:200])
+                else:
+                    await _crud.update_video_job_side_effect(
+                        idem, submission_state=SUB_UNCERTAIN,
+                        credit_state=CR_MAY_HAVE_SPENT,
+                        retry_safety=RS_BLOCKED, detail=str(exc)[:200])
                 await _crud.update_video_production_job_full(
                     job_id, status=F_INITIAL, error_code=F_INITIAL)
                 raise OrchestratorError(F_INITIAL, str(exc)[:200]) from exc
