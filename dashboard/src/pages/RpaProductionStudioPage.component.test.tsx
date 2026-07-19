@@ -136,7 +136,7 @@ describe("Production Studio — rendered contract", () => {
 		expect(await screen.findByTestId("rpa-production-studio")).toBeInTheDocument();
 		for (const id of [
 			"studio-bulk-locked", "studio-product-search", "studio-mode-t2v",
-			"studio-model", "studio-duration", "studio-aspect", "studio-quantity",
+			"studio-model", "studio-duration", "studio-aspect", "studio-quantity-status",
 			"studio-action-prepare", "studio-action-validate", "studio-live-gate",
 			"studio-phrase-input", "studio-action-go-live", "studio-result-panel",
 		]) {
@@ -174,12 +174,12 @@ describe("Production Studio — rendered contract", () => {
 		}
 	});
 
-	it("fixes quantity to 1 and offers no way to change it", async () => {
+	it("shows quantity as immutable MVP status, not an editable input", async () => {
 		primeHappyPath();
 		renderPage();
-		const qty = await screen.findByTestId("studio-quantity");
-		expect(qty).toHaveValue("1");
-		expect(qty).toBeDisabled();
+		const quantity = await screen.findByTestId("studio-quantity-status");
+		expect(quantity).toHaveTextContent("MVP limit: 1 output / 1 queued item");
+		expect(screen.queryByTestId("studio-quantity")).not.toBeInTheDocument();
 	});
 
 	it("excludes reference-only products from the selector", async () => {
@@ -478,6 +478,32 @@ async function pickSelect(testid: string, value: string) {
 describe("Production Studio — one-click F2V / HYBRID / I2V", () => {
 	afterEach(cleanup);
 
+	it("derives visible reference controls from the selected mode profile", async () => {
+		primeImageModes();
+		renderPage();
+		await screen.findByTestId("studio-mode-t2v");
+		expect(screen.queryByTestId("studio-ref-start-frame")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("studio-ref-product")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("studio-ref-character")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("studio-ref-scene")).not.toBeInTheDocument();
+
+		await click("studio-mode-f2v");
+		expect(screen.getByTestId("studio-ref-start-frame")).toBeInTheDocument();
+		expect(screen.queryByTestId("studio-ref-product")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("studio-ref-character")).not.toBeInTheDocument();
+
+		await click("studio-mode-hybrid");
+		expect(screen.getByTestId("studio-ref-product")).toBeInTheDocument();
+		expect(screen.queryByTestId("studio-ref-start-frame")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("studio-ref-character")).not.toBeInTheDocument();
+
+		await click("studio-mode-i2v");
+		expect(screen.getByTestId("studio-ref-character")).toBeInTheDocument();
+		expect(screen.getByTestId("studio-ref-scene")).toBeInTheDocument();
+		expect(screen.queryByTestId("studio-ref-start-frame")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("studio-ref-product")).not.toBeInTheDocument();
+	});
+
 	it("F2V prepare runs the PROVEN chain: WEP(FRAMES + start frame) → bridge → approve → enqueue", async () => {
 		primeImageModes();
 		renderPage();
@@ -513,6 +539,57 @@ describe("Production Studio — one-click F2V / HYBRID / I2V", () => {
 				product_reference_asset_id: "ca_prodref_916",
 			}),
 		);
+		expect(screen.getByTestId("studio-refs-hybrid")).toHaveTextContent("Product anchor");
+		expect(screen.queryByTestId("studio-ref-start-frame")).not.toBeInTheDocument();
+		expect(screen.queryByText(/start frame/i)).not.toBeInTheDocument();
+	});
+
+	it("HYBRID uses its logical copy with the server-compatible first-frame phrase and gate", async () => {
+		primeImageModes();
+		renderPage();
+		await pickProduct();
+		await click("studio-mode-hybrid");
+		await pickSelect("studio-ref-product", "ca_prodref_916");
+		await click("studio-action-prepare");
+		await waitFor(() => expect(screen.getByTestId("studio-status-wgp")).toHaveTextContent("wgp_1"));
+		await click("studio-action-validate");
+		await waitFor(() => expect(screen.getByTestId("studio-dryrun-report")).toBeInTheDocument());
+
+		expect(screen.getByTestId("studio-live-warning")).toHaveTextContent("HYBRID product-anchor");
+		expect(screen.getByText(/authorize one HYBRID product-anchor run/i)).toBeInTheDocument();
+		await typePhrase("AUTHORIZE_ONE_T2V_LIVE_RUN");
+		expect(screen.getByTestId("studio-action-go-live")).toBeDisabled();
+		await typePhrase("AUTHORIZE_ONE_F2V_LIVE_RUN");
+		expect(screen.getByTestId("studio-action-go-live")).toBeEnabled();
+
+		primeLiveResult([{ package_id: "wgp_1", production_status: "RUNNING", production_job_id: "g_hybrid" }]);
+		await click("studio-action-go-live");
+		expect(startProductionRun).toHaveBeenLastCalledWith("prun_1", true, expect.objectContaining({
+			live_gate: "ONE_SERIAL_F2V",
+			confirm_phrase: "AUTHORIZE_ONE_F2V_LIVE_RUN",
+			expect_package_id: "wgp_1",
+		}));
+	});
+
+	it("switching mode clears stale reference, package, run, dry-run, and phrase state", async () => {
+		primeImageModes();
+		renderPage();
+		await pickProduct();
+		await click("studio-mode-f2v");
+		await pickSelect("studio-ref-start-frame", "ca_frame_916");
+		await click("studio-action-prepare");
+		await waitFor(() => expect(screen.getByTestId("studio-status-wgp")).toHaveTextContent("wgp_1"));
+		await click("studio-action-validate");
+		await typePhrase("AUTHORIZE_ONE_F2V_LIVE_RUN");
+
+		await click("studio-mode-hybrid");
+		expect(screen.getByTestId("studio-refs-hybrid")).toBeInTheDocument();
+		expect(screen.queryByTestId("studio-ref-start-frame")).not.toBeInTheDocument();
+		expect(screen.getByTestId("studio-status-wgp")).toHaveTextContent("—");
+		expect(screen.getByTestId("studio-status-run")).toHaveTextContent("—");
+		expect(screen.queryByTestId("studio-dryrun-report")).not.toBeInTheDocument();
+		expect(screen.getByTestId("studio-phrase-input")).toHaveValue("");
+		expect(screen.getByTestId("studio-action-prepare")).toBeDisabled();
 	});
 
 	it("I2V prepare creates the package directly with character + scene", async () => {
