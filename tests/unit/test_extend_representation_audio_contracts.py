@@ -52,9 +52,10 @@ def test_each_representation_carries_distinct_audio_contract():
 
 
 def test_audio_seam_contract_carries_explicit_handoff_boundary():
-    """Every seam must expose the 0.5s audio-ownership boundary: the outgoing
-    (non-final) block declares an outgoing dialogue deadline at end-0.5s, and the
-    incoming (continuation) block declares a new-dialogue onset floor at start+0.5s.
+    """Every seam must expose the asymmetric audio-ownership boundary: the outgoing
+    (non-final) block declares an outgoing dialogue deadline at end - 0.78s (the wider
+    tail), and the incoming (continuation) block declares a new-dialogue onset floor at
+    start + 0.5s.
     """
     compiled = compile_ugc_video_prompt(
         product=deepcopy(PRODUCT),
@@ -71,17 +72,26 @@ def test_audio_seam_contract_carries_explicit_handoff_boundary():
     c1 = b1["audio_seam_contract"]
     c2 = b2["audio_seam_contract"]
 
-    # Outgoing (non-final block 1): dialogue must end by block_end - 0.5s, and no
-    # new spoken phrase may begin in the trailing 0.5s handoff window.
-    assert c1["outgoing_dialogue_deadline_s"] == 7.5
+    # Outgoing (non-final block 1): dialogue must end by block_end - 0.78s (the wider
+    # outgoing tail), and no new spoken phrase may begin in the trailing handoff window.
+    assert c1["outgoing_dialogue_deadline_s"] == 7.22
+    assert c1["seam_outgoing_margin_s"] == 0.78
     assert c1["forbid_new_spoken_phrase_in_final_handoff_window"] is True
-    # Block 1 is the first block — it owns no incoming seam.
+    # Block 1 is the first block — it owns no incoming seam and no voice-continuity lock.
     assert c1["incoming_new_dialogue_onset_floor_s"] is None
     assert c1["forbid_new_speech_before_onset_floor"] is False
+    assert c1["voice_continuity_required"] is False
+    assert c1["voice_profile_lock"] is None
 
     # Incoming (continuation block 2): no new dialogue before block_start + 0.5s.
     assert c2["incoming_new_dialogue_onset_floor_s"] == 8.5
+    assert c2["seam_incoming_margin_s"] == 0.5
     assert c2["forbid_new_speech_before_onset_floor"] is True
     # Block 2 is the final block of a 16s chain — it owns no outgoing seam.
     assert c2["outgoing_dialogue_deadline_s"] is None
     assert c2["forbid_new_spoken_phrase_in_final_handoff_window"] is False
+    # Continuation block must carry the voice-continuity lock (same speaker voice reused).
+    assert c2["voice_continuity_required"] is True
+    assert c2["voice_profile_lock"] == "REUSE_PREVIOUS_BLOCK_SPEAKER_VOICE_EXACTLY"
+    assert c2["forbid_voice_change_or_new_narrator"] is True
+    assert c2["forbid_speaker_age_accent_gender_drift"] is True
