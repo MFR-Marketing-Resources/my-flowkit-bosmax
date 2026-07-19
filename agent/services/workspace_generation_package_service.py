@@ -1532,6 +1532,217 @@ def allowed_batch_durations(engine: str = "GOOGLE_FLOW") -> list[int]:
     })
 
 
+# ── Stage 1 quantity PREVIEW (credit-free; never fires, approves, or enqueues) ──
+
+QUANTITY_PREVIEW_MAX = 5
+
+
+def _norm_dialogue(text: str) -> str:
+    """Whitespace/case-normalised spoken dialogue for stable in-preview hashing."""
+    return " ".join(str(text or "").split()).strip().lower()
+
+
+def _preview_dialogue_text(compiled: dict) -> str:
+    """Full spoken dialogue of one compiled item, robust across SINGLE and EXTEND.
+
+    Prefers the storyboard planner's canonical full dialogue (EXTEND), then the
+    per-block exact slices, then SECTION-6 extraction from the final prompt text.
+    """
+    from agent.services import batch_prompt_planner as _planner
+
+    planner_result = compiled.get("planner_result") or {}
+    full = str((planner_result.get("full_dialogue_plan") or {}).get("full_dialogue_text") or "").strip()
+    if full:
+        return full
+    slices = [
+        str((b or {}).get("exact_dialogue_slice") or "").strip()
+        for b in (compiled.get("prompt_blocks") or [])
+    ]
+    slices = [s for s in slices if s]
+    if slices:
+        return "\n".join(slices)
+    return _planner.extract_dialogue(str(compiled.get("final_compiled_prompt_text") or ""))
+
+
+def _extract_seam_voice_preview(compiled: dict) -> dict | None:
+    """Read-only echo of the PR #428 seam/voice contract from a compiled EXTEND
+    preview (the preview never generates — this only surfaces the compiled fields)."""
+    blocks = compiled.get("prompt_blocks") or []
+    if len(blocks) < 2:
+        return None
+    first = (blocks[0] or {}).get("audio_seam_contract") or {}
+    last = (blocks[-1] or {}).get("audio_seam_contract") or {}
+    return {
+        "outgoing_dialogue_deadline_s": first.get("outgoing_dialogue_deadline_s"),
+        "seam_outgoing_margin_s": first.get("seam_outgoing_margin_s"),
+        "incoming_new_dialogue_onset_floor_s": last.get("incoming_new_dialogue_onset_floor_s"),
+        "seam_incoming_margin_s": last.get("seam_incoming_margin_s"),
+        "voice_continuity_required": last.get("voice_continuity_required"),
+        "voice_profile_lock": last.get("voice_profile_lock"),
+    }
+
+
+def _evaluate_preview_uniqueness(items: list[dict]) -> dict:
+    """FAIL-CLOSED dialogue-uniqueness verdict over compiled preview items.
+
+    A preview passes ONLY when every item compiled to a non-empty dialogue AND all
+    dialogue fingerprints are distinct. Any exact-duplicate dialogue (the pool<N
+    reuse case) or any item that failed to compile / produced empty dialogue BLOCKS
+    the whole preview. This is the 'no repeated same dialogue' contract made
+    fail-closed instead of warning-only.
+    """
+    blockers: list[str] = []
+    by_fp: dict[str, list] = {}
+    for it in items:
+        idx = it.get("item_index")
+        if it.get("compile_error"):
+            blockers.append(f"ITEM_{idx}_COMPILE_FAILED:{it['compile_error']}")
+            continue
+        fp = it.get("dialogue_fingerprint")
+        if not fp or not str(it.get("dialogue_summary") or "").strip():
+            blockers.append(f"ITEM_{idx}_EMPTY_DIALOGUE")
+            continue
+        by_fp.setdefault(fp, []).append(idx)
+    duplicate_groups = [idxs for idxs in by_fp.values() if len(idxs) > 1]
+    for group in duplicate_groups:
+        blockers.append("DUPLICATE_DIALOGUE_ACROSS_ITEMS:" + ",".join(str(i) for i in group))
+    status = "UNIQUE" if not blockers else "DUPLICATE_DIALOGUE_BLOCKED"
+    return {"status": status, "blockers": blockers, "duplicate_groups": duplicate_groups}
+
+
+async def preview_quantity_copy_plans(
+    *,
+    product_id: str,
+    logical_mode: str,
+    source_mode: str | None = None,
+    generation_mode: str = "SINGLE",
+    duration_seconds: int = 8,
+    requested_total_duration_seconds: int | None = None,
+    quantity: int = 1,
+    target_language: str = "BM_MS",
+    variation_strategy: str = "SAME_ANGLE_DIFF_DIALOGUE_DIFF_VISUALS",
+) -> dict:
+    """Stage-1 CREDIT-FREE quantity preview.
+
+    Plans N items and compiles each item's prompt with ZERO provider calls, ZERO
+    Flow calls, ZERO DB writes and ZERO credit — purely to preview the planned
+    copy/dialogue variants. Dialogue uniqueness is enforced FAIL-CLOSED (see
+    ``_evaluate_preview_uniqueness``): an approved-copy pool smaller than N, or any
+    repeated dialogue, BLOCKS the preview rather than warning. This NEVER approves,
+    enqueues, or fires anything; live bulk fan-out is Stage 2 and stays unbuilt.
+    """
+    import hashlib
+
+    from agent.services import batch_prompt_planner as _planner
+    from agent.services import copy_rotation_service as _rotation
+    from agent.services import workspace_execution_package_service as _wxp
+
+    mode = str(logical_mode or "").strip().upper()
+    n = int(quantity)
+    if n < 1 or n > QUANTITY_PREVIEW_MAX:
+        raise ValueError(f"QUANTITY_OUT_OF_RANGE:1..{QUANTITY_PREVIEW_MAX}")
+
+    is_extend = str(generation_mode or "").strip().upper() == "EXTEND"
+
+    # Resolve up to N approved copy sets (deterministic LRU) — the dialogue source.
+    resolved_hooks: list[str] = []
+    resolved_copy_set_ids: list[str] = []
+    copy_rotation_warnings: list[str] = []
+    copy_source: str | None = None
+    try:
+        selection = await _rotation.select_rotation_copy_sets(product_id, n)
+        copy_rotation_warnings = list(selection.get("warnings") or [])
+        seen: set[str] = set()
+        for row in selection.get("items") or []:
+            cs_id = str(row.get("copy_set_id") or "")
+            cs_hook = str(row.get("hook") or row.get("angle") or "").strip()
+            if not cs_id or cs_id in seen:
+                continue
+            seen.add(cs_id)
+            resolved_copy_set_ids.append(cs_id)
+            resolved_hooks.append(cs_hook)
+        if resolved_copy_set_ids:
+            copy_source = "SCRIPT_LIBRARY"
+    except Exception as exc:  # rotation must never fire a provider; surface, don't crash
+        copy_rotation_warnings.append(f"COPY_ROTATION_UNAVAILABLE:{type(exc).__name__}")
+
+    item_plans = _planner.plan_batch_items(
+        logical_mode=mode,
+        variation_strategy=variation_strategy,
+        quantity=n,
+        product_id=product_id,
+        hook_angles=resolved_hooks,
+        copy_set_ids=resolved_copy_set_ids,
+    )
+
+    engine_duration_target = "GOOGLE_FLOW" if is_extend else None
+    items: list[dict] = []
+    for plan in item_plans:
+        copy_set_id = plan.get("copy_set_id")
+        entry: dict = {
+            "item_index": plan.get("item_index"),
+            "variation_salt": plan.get("variation_salt"),
+            "copy_variant_id": copy_set_id,
+            "hook": plan.get("hook_override"),
+            "dialogue_summary": None,
+            "dialogue_fingerprint": None,
+            "seam_voice": None,
+            "compile_error": None,
+        }
+        try:
+            compiled = await _wxp.compile_workspace_prompt_preview(
+                product_id=product_id,
+                mode=mode,
+                duration_seconds=int(duration_seconds),
+                generation_mode=generation_mode,
+                target_language=target_language,
+                source_mode=source_mode,
+                engine_duration_target=engine_duration_target,
+                requested_total_duration_seconds=requested_total_duration_seconds,
+                copy_set_id=copy_set_id,
+            )
+        except Exception as exc:  # compile is credit-free; a failure blocks that item only
+            entry["compile_error"] = f"{type(exc).__name__}:{str(exc)[:80]}"
+            items.append(entry)
+            continue
+        dialogue = _preview_dialogue_text(compiled)
+        norm = _norm_dialogue(dialogue)
+        entry["dialogue_fingerprint"] = hashlib.sha1(norm.encode("utf-8")).hexdigest() if norm else None
+        entry["hook"] = entry["hook"] or _planner.extract_hook(dialogue) or None
+        collapsed = " ".join(dialogue.split())
+        entry["dialogue_summary"] = (collapsed[:220] + "…") if len(collapsed) > 220 else collapsed
+        if is_extend:
+            entry["seam_voice"] = _extract_seam_voice_preview(compiled)
+        items.append(entry)
+
+    verdict = _evaluate_preview_uniqueness(items)
+    blockers = list(verdict["blockers"])
+    pool_short = any("POOL_SMALLER_THAN_BATCH" in w for w in copy_rotation_warnings)
+    if pool_short and verdict["status"] != "UNIQUE":
+        blockers.append(f"APPROVED_COPY_POOL_SMALLER_THAN_QUANTITY:pool<{n}")
+
+    return {
+        "quantity_requested": n,
+        "quantity_max": QUANTITY_PREVIEW_MAX,
+        "planned_item_count": len(items),
+        "logical_mode": mode,
+        "generation_mode": generation_mode,
+        "variation_strategy": variation_strategy,
+        "copy_source": copy_source,
+        "copy_rotation_warnings": copy_rotation_warnings,
+        "items": items,
+        "dialogue_uniqueness_status": verdict["status"],
+        "duplicate_dialogue_groups": verdict["duplicate_groups"],
+        "blockers": blockers,
+        "preview_ready": verdict["status"] == "UNIQUE" and not blockers,
+        "live_bulk_status": "Bulk live fan-out not enabled yet",
+        "live_bulk_stage": "STAGE_2_REQUIRED",
+        "credit": "NONE",
+        "provider_calls": 0,
+        "flow_calls": 0,
+    }
+
+
 async def start_batch_prompt_run(
     *,
     product_id: str,

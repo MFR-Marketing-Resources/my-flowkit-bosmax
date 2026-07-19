@@ -103,6 +103,53 @@ export async function createWorkspaceExecutionPackage(input: {
 	);
 }
 
+// ── Stage 1 quantity PREVIEW (credit-free; no provider/Flow/live) ──
+export interface QuantityPreviewItem {
+	item_index: number;
+	variation_salt: string | null;
+	copy_variant_id: string | null;
+	hook: string | null;
+	dialogue_summary: string | null;
+	dialogue_fingerprint: string | null;
+	seam_voice: Record<string, unknown> | null;
+	compile_error: string | null;
+}
+
+export interface QuantityPreviewResult {
+	quantity_requested: number;
+	quantity_max: number;
+	planned_item_count: number;
+	logical_mode: string;
+	generation_mode: string;
+	copy_source: string | null;
+	copy_rotation_warnings: string[];
+	items: QuantityPreviewItem[];
+	dialogue_uniqueness_status: string;
+	duplicate_dialogue_groups: number[][];
+	blockers: string[];
+	preview_ready: boolean;
+	live_bulk_status: string;
+	live_bulk_stage: string;
+	credit: string;
+	provider_calls: number;
+	flow_calls: number;
+}
+
+/** Stage-1 credit-free preview of N unique-copy plans. NEVER fires, approves,
+ *  enqueues, or spends credit — the server plans + compiles only. */
+export async function previewQuantityCopyPlans(input: {
+	product_id: string;
+	mode: WorkspaceMode;
+	source_mode?: string | null;
+	generation_mode?: PromptGenerationMode;
+	duration_seconds?: number;
+	requested_total_duration_seconds?: number | null;
+	quantity: number;
+	target_language?: PromptTargetLanguage;
+}): Promise<QuantityPreviewResult> {
+	return postAPI<QuantityPreviewResult>("/api/workspace/quantity-preview", input);
+}
+
 export async function fetchWorkspaceExecutionPackageHistory(
 	productId?: string,
 	mode?: WorkspaceMode,
