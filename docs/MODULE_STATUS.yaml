@@ -475,6 +475,7 @@ domains:
       - tests/unit/test_google_flow_extend_prompt_renderer.py
       - tests/unit/test_extend_prompt_sqlite_persistence.py
       - tests/unit/test_extend_representation_audio_contracts.py
+      - tests/unit/test_quantity_preview.py
       - tests/fixtures/hermetic/ai-provider-settings.json
       - tests/fixtures/hermetic/sanitized.env
       - tests/support/__init__.py

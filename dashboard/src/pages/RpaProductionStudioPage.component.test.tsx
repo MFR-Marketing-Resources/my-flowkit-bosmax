@@ -61,6 +61,7 @@ vi.mock("../api/productionQueue", () => ({
 
 // ── EXTEND (multi-block) lane fakes ──
 const createWorkspaceExecutionPackage = vi.fn();
+const previewQuantityCopyPlans = vi.fn();
 const planVideoJob = vi.fn();
 const authorizeVideoJob = vi.fn();
 const startVideoJob = vi.fn();
@@ -68,6 +69,7 @@ const getVideoJobStatus = vi.fn();
 
 vi.mock("../api/workspacePackages", () => ({
 	createWorkspaceExecutionPackage: (...a: unknown[]) => createWorkspaceExecutionPackage(...a),
+	previewQuantityCopyPlans: (...a: unknown[]) => previewQuantityCopyPlans(...a),
 }));
 vi.mock("../api/nativeExtend", () => ({
 	planVideoJob: (...a: unknown[]) => planVideoJob(...a),
@@ -174,12 +176,14 @@ describe("Production Studio — rendered contract", () => {
 		}
 	});
 
-	it("shows quantity as immutable MVP status, not an editable input", async () => {
+	it("exposes quantity as a capped stepper (Stage 1 preview), default 1", async () => {
 		primeHappyPath();
 		renderPage();
-		const quantity = await screen.findByTestId("studio-quantity-status");
-		expect(quantity).toHaveTextContent("MVP limit: 1 output / 1 queued item");
-		expect(screen.queryByTestId("studio-quantity")).not.toBeInTheDocument();
+		const input = await screen.findByTestId("studio-quantity-input");
+		expect(input).toHaveAttribute("type", "number");
+		expect(input).toHaveAttribute("min", "1");
+		expect(input).toHaveAttribute("max", "5");
+		expect(input).toHaveValue(1);
 	});
 
 	it("excludes reference-only products from the selector", async () => {
@@ -239,6 +243,86 @@ describe("Production Studio — the live gate is fail-closed", () => {
 		await typePhrase("AUTHORIZE_ONE_T2V_LIVE_RUN"); // phrase before any dry run
 		expect(screen.getByTestId("studio-check-dryrun")).toHaveAttribute("data-ok", "false");
 		expect(screen.getByTestId("studio-action-go-live")).toBeDisabled();
+	});
+});
+
+describe("Production Studio — Stage 1 quantity preview (credit-free, live stays blocked)", () => {
+	async function setQuantity(n: number) {
+		await act(async () => {
+			fireEvent.change(await screen.findByTestId("studio-quantity-input"), { target: { value: String(n) } });
+		});
+	}
+
+	const UNIQUE_PREVIEW = {
+		quantity_requested: 3, quantity_max: 5, planned_item_count: 3, logical_mode: "T2V",
+		generation_mode: "SINGLE", copy_source: "SCRIPT_LIBRARY", copy_rotation_warnings: [],
+		items: [
+			{ item_index: 0, variation_salt: "v1", copy_variant_id: "cs0", hook: "h0", dialogue_summary: "one", dialogue_fingerprint: "aaaa1111", seam_voice: null, compile_error: null },
+			{ item_index: 1, variation_salt: "v2", copy_variant_id: "cs1", hook: "h1", dialogue_summary: "two", dialogue_fingerprint: "bbbb2222", seam_voice: null, compile_error: null },
+			{ item_index: 2, variation_salt: "v3", copy_variant_id: "cs2", hook: "h2", dialogue_summary: "three", dialogue_fingerprint: "cccc3333", seam_voice: null, compile_error: null },
+		],
+		dialogue_uniqueness_status: "UNIQUE", duplicate_dialogue_groups: [], blockers: [],
+		preview_ready: true, live_bulk_status: "Bulk live fan-out not enabled yet",
+		live_bulk_stage: "STAGE_2_REQUIRED", credit: "NONE", provider_calls: 0, flow_calls: 0,
+	};
+
+	it("quantity > 1 blocks live submit and is preview-only (Stage 2 note shown)", async () => {
+		primeHappyPath();
+		renderPage();
+		await pickProduct();
+		await setQuantity(3);
+		expect(screen.getByTestId("studio-live-gate")).toHaveAttribute("data-gate-open", "false");
+		expect(screen.getByTestId("studio-action-go-live")).toBeDisabled();
+		expect(screen.getByTestId("studio-live-bulk-blocked")).toHaveAttribute("data-blocked", "true");
+		expect(screen.getByTestId("studio-action-prepare")).toBeDisabled();
+		expect(createProductionRun).not.toHaveBeenCalled();
+	});
+
+	it("preview plans N unique copy variants credit-free — no createProductionRun", async () => {
+		primeHappyPath();
+		previewQuantityCopyPlans.mockResolvedValue(UNIQUE_PREVIEW);
+		renderPage();
+		await pickProduct();
+		await setQuantity(3);
+		await click("studio-action-preview");
+		const preview = await screen.findByTestId("studio-quantity-preview");
+		expect(preview).toHaveAttribute("data-uniqueness", "UNIQUE");
+		expect(preview).toHaveAttribute("data-count", "3");
+		expect(screen.getAllByTestId("studio-preview-item")).toHaveLength(3);
+		expect(previewQuantityCopyPlans).toHaveBeenCalledWith(expect.objectContaining({ quantity: 3 }));
+		expect(createProductionRun).not.toHaveBeenCalled();
+	});
+
+	it("preview BLOCKS on duplicate dialogue (fail-closed, not warning)", async () => {
+		primeHappyPath();
+		previewQuantityCopyPlans.mockResolvedValue({
+			...UNIQUE_PREVIEW,
+			items: [
+				{ item_index: 0, variation_salt: "v1", copy_variant_id: "cs0", hook: "h", dialogue_summary: "dup", dialogue_fingerprint: "same", seam_voice: null, compile_error: null },
+				{ item_index: 1, variation_salt: "v2", copy_variant_id: "cs0", hook: "h", dialogue_summary: "dup", dialogue_fingerprint: "same", seam_voice: null, compile_error: null },
+				{ item_index: 2, variation_salt: "v3", copy_variant_id: "cs1", hook: "h2", dialogue_summary: "ok", dialogue_fingerprint: "diff", seam_voice: null, compile_error: null },
+			],
+			dialogue_uniqueness_status: "DUPLICATE_DIALOGUE_BLOCKED", duplicate_dialogue_groups: [[0, 1]],
+			blockers: ["DUPLICATE_DIALOGUE_ACROSS_ITEMS:0,1"], preview_ready: false,
+		});
+		renderPage();
+		await pickProduct();
+		await setQuantity(3);
+		await click("studio-action-preview");
+		const preview = await screen.findByTestId("studio-quantity-preview");
+		expect(preview).toHaveAttribute("data-uniqueness", "DUPLICATE_DIALOGUE_BLOCKED");
+		expect(preview).toHaveAttribute("data-ready", "false");
+		expect(screen.getByTestId("studio-preview-blocker")).toHaveTextContent("DUPLICATE_DIALOGUE_ACROSS_ITEMS");
+		expect(createProductionRun).not.toHaveBeenCalled();
+	});
+
+	it("quantity 1 keeps the single-serial live path (no bulk-blocked note)", async () => {
+		primeHappyPath();
+		renderPage();
+		await pickProduct();
+		expect(screen.getByTestId("studio-quantity-input")).toHaveValue(1);
+		expect(screen.queryByTestId("studio-live-bulk-blocked")).not.toBeInTheDocument();
+		expect(screen.getByTestId("studio-action-prepare")).not.toBeDisabled();
 	});
 });
 

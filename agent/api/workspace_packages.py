@@ -7,6 +7,10 @@ from agent.services.prompt_compiler_runtime_config_service import (
     get_runtime_config,
 )
 from agent.services.copy_binding_service import CopyBindingError
+from agent.services.workspace_generation_package_service import (
+    QUANTITY_PREVIEW_MAX,
+    preview_quantity_copy_plans,
+)
 from agent.services.workspace_execution_package_service import (
     compile_workspace_prompt_preview,
     create_workspace_execution_package,
@@ -89,6 +93,19 @@ class WorkspacePackageReadinessRequest(BaseModel):
     mode: str
     source_mode: str | None = None
     product_ids: list[str]
+
+
+class QuantityPreviewRequest(BaseModel):
+    """Stage-1 quantity preview — credit-free plan of N unique-copy items.
+    NEVER fires, approves, enqueues, or spends credit."""
+    product_id: str
+    mode: str
+    source_mode: str | None = None
+    generation_mode: str = "SINGLE"
+    duration_seconds: int = 8
+    requested_total_duration_seconds: int | None = None
+    quantity: int = 1
+    target_language: str = "BM_MS"
 
 
 @router.post("/execution-package")
@@ -196,6 +213,30 @@ async def post_workspace_prompt_compile(request: WorkspacePromptCompileRequest):
     except ValueError as exc:
         message = str(exc)
         status_code = 404 if message == "PRODUCT_NOT_FOUND" else 409
+        raise HTTPException(status_code=status_code, detail=message) from exc
+
+
+@router.post("/quantity-preview")
+async def post_quantity_preview(request: QuantityPreviewRequest):
+    """Stage-1 quantity preview: plan + compile N unique-copy items, CREDIT-FREE.
+
+    No provider call, no Flow call, no DB write, no approval, no enqueue, no live
+    generation. Dialogue uniqueness is fail-closed — duplicate/pool<N dialogue is a
+    BLOCKER, not a warning. Live bulk fan-out remains Stage 2 (unbuilt)."""
+    try:
+        return await preview_quantity_copy_plans(
+            product_id=request.product_id,
+            logical_mode=request.mode,
+            source_mode=request.source_mode,
+            generation_mode=request.generation_mode,
+            duration_seconds=request.duration_seconds,
+            requested_total_duration_seconds=request.requested_total_duration_seconds,
+            quantity=request.quantity,
+            target_language=request.target_language,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if message == "PRODUCT_NOT_FOUND" else 422
         raise HTTPException(status_code=status_code, detail=message) from exc
 
 

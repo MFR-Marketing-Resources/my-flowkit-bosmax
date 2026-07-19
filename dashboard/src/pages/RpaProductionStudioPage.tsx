@@ -68,10 +68,18 @@ import {
 	type VideoJobPlan,
 	type VideoJobStatus,
 } from "../api/nativeExtend";
-import { createWorkspaceExecutionPackage } from "../api/workspacePackages";
-import type { Product } from "../types";
+import {
+	createWorkspaceExecutionPackage,
+	previewQuantityCopyPlans,
+	type QuantityPreviewResult,
+} from "../api/workspacePackages";
+import type { Product, WorkspaceMode } from "../types";
 
 const ASPECTS = ["9:16", "16:9", "1:1"];
+// Stage 1 quantity PREVIEW cap. quantity>1 is preview-only (credit-free unique-copy
+// planning); live bulk fan-out is Stage 2 and stays blocked. Keep in lockstep with
+// the backend QUANTITY_PREVIEW_MAX (workspace_generation_package_service.py).
+const QUANTITY_MAX = 5;
 const POLL_MS = 5000;
 const TERMINAL_STATUSES = new Set(["GENERATED", "DOWNLOADED", "FAILED", "CANCELLED"]);
 
@@ -207,6 +215,10 @@ export default function RpaProductionStudioPage() {
 	const [model, setModel] = useState<string>("");
 	const [duration, setDuration] = useState<number>(8);
 	const [aspect, setAspect] = useState<string>("9:16");
+	// ── Stage 1 quantity preview (credit-free; live stays single-serial) ──
+	const [quantity, setQuantity] = useState<number>(1);
+	const [previewResult, setPreviewResult] = useState<QuantityPreviewResult | null>(null);
+	const [previewError, setPreviewError] = useState<string | null>(null);
 
 	// ── pipeline ──
 	const [busy, setBusy] = useState<string | null>(null);
@@ -281,6 +293,10 @@ export default function RpaProductionStudioPage() {
 	const extendTotals = studioMode === "T2V" ? EXTEND_MULTIPLES.map((n) => n * maxSingle) : [];
 	const durationOptions = [...singleDurations, ...extendTotals];
 	const isExtend = studioMode === "T2V" && duration > maxSingle;
+	// Stage 1: quantity>1 is PREVIEW-ONLY. It never enables live submission and never
+	// touches the single-serial createProductionRun({count:1}) path — live bulk
+	// fan-out is Stage 2 (unbuilt). This flag force-closes the live gates below.
+	const bulkPreview = quantity > 1;
 
 	// Per-lane gate identity. F2V + HYBRID share the live-proven first-frame
 	// family gate; I2V has its own; T2V unchanged. The server enforces the real
@@ -310,7 +326,38 @@ export default function RpaProductionStudioPage() {
 		setExtendWpsBudgets(null);
 		setExtendBlockCount(null);
 		setExtendJob(null);
+		setPreviewResult(null);
+		setPreviewError(null);
 	}, []);
+
+	/** Stage 1 quantity preview — credit-free plan of N unique-copy variants.
+	 *  NEVER fires, approves, enqueues, or spends credit; the single-serial live
+	 *  path (createProductionRun count:1) is not touched. HYBRID rides the F2V
+	 *  transport (mode F2V + source_mode HYBRID), matching the live lane. */
+	const handlePreviewQuantity = async () => {
+		if (!selectedProduct) return;
+		const previewMode = (studioMode === "HYBRID" ? "F2V" : studioMode) as WorkspaceMode;
+		setBusy("preview");
+		setPreviewError(null);
+		setPreviewResult(null);
+		try {
+			const result = await previewQuantityCopyPlans({
+				product_id: selectedProduct.id,
+				mode: previewMode,
+				source_mode: activeProfile.sourceMode ?? null,
+				generation_mode: isExtend ? "EXTEND" : "SINGLE",
+				duration_seconds: isExtend ? maxSingle : duration,
+				requested_total_duration_seconds: isExtend ? duration : null,
+				quantity,
+				target_language: "BM_MS",
+			});
+			setPreviewResult(result);
+		} catch (e) {
+			setPreviewError(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy(null);
+		}
+	};
 
 	const pickProduct = (p: Product) => {
 		setSelectedProduct(p);
@@ -618,13 +665,13 @@ export default function RpaProductionStudioPage() {
 	const oneItemOnly = (report?.items?.length ?? 0) === 1;
 	const noPriorJob = !jobItem?.production_job_id;
 	const phraseOk = phrase === lanePhrase;
-	const liveGateOpen = !isExtend && Boolean(selectedProduct) && dryRunGreen && oneItemOnly && noPriorJob && phraseOk && !liveSubmitted && busy === null;
+	const liveGateOpen = !bulkPreview && !isExtend && Boolean(selectedProduct) && dryRunGreen && oneItemOnly && noPriorJob && phraseOk && !liveSubmitted && busy === null;
 
 	// ── EXTEND gate: a reviewed orchestrator plan + the extend phrase. The server
 	//    re-gates with the fingerprint-bound authorize token — this is UI safety only.
 	const extendPlanReady = Boolean(extendPlan?.plan_fingerprint);
 	const extendPhraseOk = phrase === EXTEND_CONFIRM_PHRASE;
-	const extendGateOpen = isExtend && Boolean(selectedProduct) && extendPlanReady && extendPhraseOk && !liveSubmitted && busy === null;
+	const extendGateOpen = !bulkPreview && isExtend && Boolean(selectedProduct) && extendPlanReady && extendPhraseOk && !liveSubmitted && busy === null;
 
 	const jobTerminal = TERMINAL_STATUSES.has(jobItem?.production_status ?? "");
 	const jobArtifacts = jobItem?.artifact_media_ids ?? [];
@@ -806,9 +853,18 @@ export default function RpaProductionStudioPage() {
 						</select>
 					</label>
 					<div data-testid="studio-quantity-status" className="block">
-						<span className="mb-1 block text-[10px] uppercase tracking-wider text-slate-500">Quantity</span>
-						<div className="rounded-lg border border-slate-800 bg-slate-900 px-2 py-1.5 text-[11px] text-slate-400">
-							MVP limit: 1 output / 1 queued item
+						<span className="mb-1 block text-[10px] uppercase tracking-wider text-slate-500">Quantity (preview)</span>
+						<input type="number" data-testid="studio-quantity-input" min={1} max={QUANTITY_MAX} value={quantity}
+							onChange={(e) => {
+								const n = Math.max(1, Math.min(QUANTITY_MAX, Math.floor(Number(e.target.value) || 1)));
+								setQuantity(n);
+								resetPipeline();
+							}}
+							className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-slate-100 focus:outline-none" />
+						<div className="mt-1 text-[9px] text-slate-500" data-testid="studio-quantity-note">
+							{bulkPreview
+								? `1–${QUANTITY_MAX}. Quantity > 1 is preview-only — live bulk fan-out is Stage 2.`
+								: "1 = single live run. Raise for a credit-free unique-copy preview."}
 						</div>
 					</div>
 				</div>
@@ -892,7 +948,7 @@ export default function RpaProductionStudioPage() {
 				</div>
 				<div className="flex flex-wrap gap-2">
 					<button type="button" data-testid="studio-action-prepare" onClick={() => void handlePrepare()}
-						disabled={!selectedProduct || !refsChosen || busy !== null || stage !== "IDLE"}
+						disabled={!selectedProduct || !refsChosen || busy !== null || stage !== "IDLE" || bulkPreview}
 						className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/50 bg-blue-500/15 px-3 py-2 text-[11px] font-semibold text-blue-100 hover:bg-blue-500/25 disabled:cursor-not-allowed disabled:opacity-40">
 						{busy === "prepare" ? <Loader2 size={12} className="animate-spin" /> : <PackageCheck size={12} />}
 						{isExtend ? "Prepare EXTEND package + reviewed plan" : "Prepare package"}
@@ -904,6 +960,12 @@ export default function RpaProductionStudioPage() {
 							{busy === "validate" ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />} Run validation (dry run)
 						</button>
 					)}
+					<button type="button" data-testid="studio-action-preview" onClick={() => void handlePreviewQuantity()}
+						disabled={!selectedProduct || busy !== null}
+						className="inline-flex items-center gap-1.5 rounded-lg border border-violet-500/50 bg-violet-500/15 px-3 py-2 text-[11px] font-semibold text-violet-100 hover:bg-violet-500/25 disabled:cursor-not-allowed disabled:opacity-40">
+						{busy === "preview" ? <Loader2 size={12} className="animate-spin" /> : <PackageCheck size={12} />}
+						{bulkPreview ? `Preview ${quantity} unique copy plans (no credit)` : "Preview copy plan (no credit)"}
+					</button>
 				</div>
 
 				{isExtend && extendPlan && (
@@ -948,9 +1010,62 @@ export default function RpaProductionStudioPage() {
 				)}
 			</section>
 
+			<section className="mb-6 rounded-xl border border-violet-500/30 bg-violet-500/5 p-4" data-testid="studio-quantity-preview-section">
+				<h2 className="mb-2 flex items-center gap-2 text-sm font-semibold text-violet-200"><Sparkles size={14} /> 4b · Quantity preview (credit-free · Stage 1)</h2>
+				{previewError && (
+					<div className="mb-2 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-[11px] text-red-200" data-testid="studio-quantity-preview-error">
+						Preview failed — nothing fired, no credit: {previewError}
+					</div>
+				)}
+				{previewResult ? (
+					<div data-testid="studio-quantity-preview" data-uniqueness={previewResult.dialogue_uniqueness_status} data-ready={String(previewResult.preview_ready)} data-count={String(previewResult.planned_item_count)}>
+						<div className="text-[11px] text-violet-200">
+							Quantity <strong>{previewResult.quantity_requested}</strong> · planned <strong>{previewResult.planned_item_count}</strong> · dialogue uniqueness{" "}
+							<strong data-testid="studio-preview-uniqueness" className={previewResult.dialogue_uniqueness_status === "UNIQUE" ? "text-emerald-300" : "text-red-300"}>{previewResult.dialogue_uniqueness_status}</strong>
+							<span className="ml-2 text-emerald-300/80">· no provider call, no credit</span>
+						</div>
+						<div className="mt-1 text-[10px] text-amber-300" data-testid="studio-preview-live-status">
+							{previewResult.live_bulk_status} ({previewResult.live_bulk_stage})
+						</div>
+						{previewResult.blockers.length > 0 && (
+							<ul className="mt-2 pl-4" data-testid="studio-preview-blockers">
+								{previewResult.blockers.map((b) => <li key={b} data-testid="studio-preview-blocker" className="list-disc text-[10px] text-red-300">{b}</li>)}
+							</ul>
+						)}
+						<div className="mt-2 space-y-1.5">
+							{previewResult.items.map((it) => (
+								<div key={it.item_index} data-testid="studio-preview-item" data-index={String(it.item_index)}
+									className="rounded border border-slate-800 bg-slate-950/60 px-2 py-1.5">
+									<div className="flex items-center justify-between text-[10px] text-slate-400">
+										<span>#{it.item_index + 1} · variant {it.copy_variant_id ?? "—"} · {it.variation_salt}</span>
+										<span className="font-mono text-slate-500">fp {it.dialogue_fingerprint ? it.dialogue_fingerprint.slice(0, 8) : "—"}</span>
+									</div>
+									<div className="mt-0.5 text-[10px] text-slate-200" data-testid="studio-preview-dialogue">
+										{it.compile_error ? <span className="text-red-300">compile error: {it.compile_error}</span> : (it.dialogue_summary || "(no dialogue)")}
+									</div>
+									{it.seam_voice && (
+										<div className="mt-0.5 text-[9px] text-sky-300/80" data-testid="studio-preview-seam-voice">
+											seam/voice lock: {String((it.seam_voice as Record<string, unknown>).voice_profile_lock ?? "—")} · out {String((it.seam_voice as Record<string, unknown>).outgoing_dialogue_deadline_s ?? "—")}s · in-floor {String((it.seam_voice as Record<string, unknown>).incoming_new_dialogue_onset_floor_s ?? "—")}s
+										</div>
+									)}
+								</div>
+							))}
+						</div>
+					</div>
+				) : (
+					<div className="text-[11px] text-slate-500" data-testid="studio-preview-empty">
+						Set a quantity and click <strong>Preview</strong> to plan N unique-copy variants credit-free. Live bulk fan-out is Stage 2 (not enabled yet).
+					</div>
+				)}
+			</section>
 			{/* ── 5 · One live T2V ── */}
 			<section className="mb-6 rounded-xl border border-red-500/40 bg-red-500/5 p-4" data-testid="studio-live-gate" data-gate-open={(isExtend ? extendGateOpen : liveGateOpen) ? "true" : "false"} data-lane={isExtend ? "EXTEND" : "SINGLE"}>
 				<h2 className="mb-2 flex items-center gap-2 text-sm font-semibold text-red-200"><Flame size={14} /> 5 · {isExtend ? `Run one live EXTEND job (${duration}s multi-block)` : `Run one live ${studioMode}`}</h2>
+				{bulkPreview && (
+					<div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100" data-testid="studio-live-bulk-blocked" data-blocked="true">
+						<strong>Bulk live fan-out not enabled yet — Stage 2 required.</strong> Quantity {quantity} is preview-only: no live submission, no provider call, no credit. Set quantity to 1 to run one live item.
+					</div>
+				)}
 				<div className="mb-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-[11px] text-red-100" data-testid="studio-live-warning">
 					<strong>This spends real credits.</strong>{" "}
 					{isExtend
