@@ -23,10 +23,13 @@ from typing import Any, Mapping, Sequence
 RENDERER_VERSION = "google_flow_extend_prompt_renderer_v2"
 VALIDATION_VERSION = "flow_extend_validation_v2"
 
-# Seam audio-ownership handoff margin (seconds), mirrored from the planner. Non-final
-# blocks complete dialogue by end - margin; continuation blocks begin new dialogue only
-# after start + margin. The window each side is a visual-only, no-new-speech handoff.
-_SEAM_HANDOFF_MARGIN_S = 0.5
+# Seam audio-ownership handoff margins (seconds), mirrored from the planner and asymmetric
+# by direction. Non-final blocks complete dialogue by end - _SEAM_OUT_MARGIN_S; continuation
+# blocks begin new dialogue only after start + _SEAM_IN_MARGIN_S. Each side is a visual-only,
+# no-new-speech handoff; the wider outgoing tail keeps block-1 speech from bleeding across the
+# cut (the observed 16s overlap). Must stay in lockstep with full_storyboard_extend_planner.
+_SEAM_OUT_MARGIN_S = 0.78
+_SEAM_IN_MARGIN_S = 0.5
 
 PROMPT_REPRESENTATION_INITIAL = "INITIAL_GENERATION"
 PROMPT_REPRESENTATION_INDEPENDENT = "INDEPENDENT_BLOCK"
@@ -239,10 +242,11 @@ def _ending_policy(*, is_final: bool, end_frame_instruction: str, final_cta_text
         return " ".join(parts)
     return (
         "Do not close the commercial arc yet. Finish the spoken line as a complete, natural "
-        "clause and stop speaking at least half a second before the clip ends. During that final "
-        "half second the presenter begins no new spoken phrase — keep the mouth settling "
-        "naturally, hand motion, grip, camera direction, and emotional momentum alive so the "
-        "next video continues the same action and voice without any words overlapping the cut."
+        "clause and stop speaking about three-quarters of a second before the clip ends. During "
+        "that final three-quarter second the presenter begins no new spoken phrase — keep the mouth "
+        "settling naturally, hand motion, grip, camera direction, and emotional momentum alive so "
+        "the next video continues the same action and identical voice without any words overlapping "
+        "the cut."
     )
 
 
@@ -312,12 +316,13 @@ def build_audio_seam_contract(
         policy = "CLAUSE_COMPLETE_BY_DEADLINE_THEN_SILENT_VISUAL_HANDOFF"
 
     # Explicit audio-ownership boundary at every seam. The non-final block owns the
-    # audio up to end-0.5s (outgoing deadline); the continuation block owns the audio
-    # only from start+0.5s (incoming onset floor). The 0.5s each side is a visual-only
-    # handoff so trailing and incoming speech can never overlap at the cut.
-    outgoing_deadline = round(end_s - _SEAM_HANDOFF_MARGIN_S, 3) if not is_final else None
+    # audio up to end - _SEAM_OUT_MARGIN_S (outgoing deadline); the continuation block owns
+    # the audio only from start + _SEAM_IN_MARGIN_S (incoming onset floor). The margins are
+    # asymmetric (wider outgoing tail than incoming lead-in) so trailing and incoming speech
+    # can never overlap at the cut.
+    outgoing_deadline = round(end_s - _SEAM_OUT_MARGIN_S, 3) if not is_final else None
     incoming_onset_floor = (
-        round(start_s + _SEAM_HANDOFF_MARGIN_S, 3) if previous_allocation else None
+        round(start_s + _SEAM_IN_MARGIN_S, 3) if previous_allocation else None
     )
 
     return {
@@ -334,10 +339,22 @@ def build_audio_seam_contract(
         # through the final second UP TO the outgoing deadline, never past it.
         "voice_active_in_final_second": bool(voice_planned) if not is_final else False,
         "dialogue_continuation_policy": policy,
-        # Audio-ownership handoff boundary (EXTEND seams only).
-        "seam_handoff_margin_s": _SEAM_HANDOFF_MARGIN_S if (not is_final or previous_allocation) else None,
+        # Audio-ownership handoff boundary (EXTEND seams only). Margins are asymmetric:
+        # a wider outgoing tail than incoming lead-in, so trailing/incoming speech never overlap.
+        "seam_outgoing_margin_s": _SEAM_OUT_MARGIN_S if not is_final else None,
+        "seam_incoming_margin_s": _SEAM_IN_MARGIN_S if previous_allocation else None,
         "outgoing_dialogue_deadline_s": outgoing_deadline,
         "incoming_new_dialogue_onset_floor_s": incoming_onset_floor,
+        # Voice-continuity lock (continuation blocks only): the same speaker/character voice
+        # from the previous clip must be reused exactly — no narrator switch, no new voice, no
+        # accent/age/gender/pitch/timbre/pacing drift. Verified stays null until live evidence.
+        "voice_continuity_required": bool(previous_allocation),
+        "voice_profile_lock": (
+            "REUSE_PREVIOUS_BLOCK_SPEAKER_VOICE_EXACTLY" if previous_allocation else None
+        ),
+        "forbid_voice_change_or_new_narrator": bool(previous_allocation),
+        "forbid_speaker_age_accent_gender_drift": bool(previous_allocation),
+        "voice_continuity_verified": None,
         "forbid_new_spoken_phrase_in_final_handoff_window": not is_final,
         "forbid_new_speech_before_onset_floor": bool(previous_allocation),
         "previous_block_dialogue_end_s": prev_end if previous_allocation else None,
@@ -426,7 +443,10 @@ def render_flow_extend_prompt(
         ),
         (
             f"Preserve the same presenter, product, grip, wardrobe, room, lighting, camera distance, "
-            f"camera direction, motion, and emotional tone. Prior state to inherit: {state}."
+            f"camera direction, motion, and emotional tone. Use the identical speaking voice as the "
+            f"previous clip — the same speaker and character, same vocal age, gender, accent, pitch, "
+            f"timbre, and pacing. Do not switch narrator, introduce a new or different voice, or drift "
+            f"the accent, age, gender, or tone. Prior state to inherit: {state}."
         ),
         product_lock,
         (
@@ -438,9 +458,9 @@ def render_flow_extend_prompt(
         paragraphs.append(
             "For the first half second, only the visual motion carries over from the previous "
             "clip — the presenter begins no new words yet, so the seam has a clean audio handoff. "
-            f"Then the presenter continues speaking in {lang}: \"{dialogue}\" starting this line "
-            "only after that first half second, as a natural continuation. Do not repeat any "
-            "earlier hook, phrase, opening line, or call-to-action."
+            f"Then the presenter continues speaking in {lang}, in the same voice as the previous "
+            f"clip: \"{dialogue}\" starting this line only after that first half second, as a natural "
+            "continuation. Do not repeat any earlier hook, phrase, opening line, or call-to-action."
         )
     else:
         paragraphs.append(
@@ -632,12 +652,13 @@ def validate_dialogue_seams(allocations: Sequence[Mapping[str, Any]]) -> None:
 
 
 RESEARCH_SEAM_HANDOFF_END_FRAME = (
-    "Finish the spoken line as a complete, natural clause and stop speaking at least half a "
-    "second before this clip ends. During that final half second the presenter begins no new "
-    "words — keep the product in grip, face toward camera, the mouth settling naturally, hand "
-    "motion active, and camera momentum preserved so the next video continues the same action "
-    "and voice without any speech overlapping the cut. Do not end on a frozen silent pose, a "
-    "completed commercial closure, or a final CTA. Do not close the commercial arc yet."
+    "Finish the spoken line as a complete, natural clause and stop speaking about three-quarters "
+    "of a second before this clip ends. During that final three-quarter second the presenter "
+    "begins no new words — keep the product in grip, face toward camera, the mouth settling "
+    "naturally, hand motion active, and camera momentum preserved so the next video continues the "
+    "same action and identical voice without any speech overlapping the cut. Do not end on a "
+    "frozen silent pose, a completed commercial closure, or a final CTA. Do not close the "
+    "commercial arc yet."
 )
 
 

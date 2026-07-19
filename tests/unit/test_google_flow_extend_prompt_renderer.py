@@ -127,11 +127,19 @@ def test_audio_seam_and_dialogue_seams(source_key: str):
     assert final["audio_seam_contract"]["voice_active_in_final_second"] is False
 
     # Production independent keeps seam-ready hold; research initial gets the
-    # audio-ownership handoff seam (clause complete before the final half-second).
+    # audio-ownership handoff seam (clause complete ~0.78s before the cut).
     assert "seam-ready hold" in non_final["engine_prompt_text"].lower()
     assert "seam-ready hold" in (non_final.get("independent_block_prompt_text") or "").lower()
-    assert "half a second before" in (non_final.get("initial_generation_prompt_text") or "").lower()
+    assert "three-quarters of a second before" in (non_final.get("initial_generation_prompt_text") or "").lower()
     assert non_final["initial_generation_prompt_text"] != non_final["independent_block_prompt_text"]
+
+    # Continuation block (2) must lock voice continuity: same speaker voice reused, no drift.
+    c2 = final["audio_seam_contract"]
+    assert c2["voice_continuity_required"] is True
+    assert c2["voice_profile_lock"] == "REUSE_PREVIOUS_BLOCK_SPEAKER_VOICE_EXACTLY"
+    extend_lower = (final.get("flow_extend_prompt_text") or "").lower()
+    assert "same voice as the previous" in extend_lower
+    assert "do not switch narrator" in extend_lower
 
     # Dialogue seams natural + concat equals full plan.
     full = " ".join(
@@ -162,7 +170,7 @@ def test_audio_seam_and_dialogue_seams(source_key: str):
 def test_seam_audio_ownership_boundary_all_modes(source_key: str, duration: int):
     """ONE global EXTEND audio-handoff policy across T2V/HYBRID/FRAMES/INGREDIENTS
     for 16s and 24s chains. Each seam must satisfy:
-      * outgoing (non-final) allocated dialogue ends by block_end - 0.5s;
+      * outgoing (non-final) allocated dialogue ends by block_end - 0.78s (wider tail);
       * incoming (continuation) allocated dialogue starts at/after block_start + 0.5s;
       * dialogue is complete, ordered, and never lost across the split;
       * the rendered prompt text carries the outgoing + incoming handoff wording.
@@ -188,20 +196,23 @@ def test_seam_audio_ownership_boundary_all_modes(source_key: str, duration: int)
         first_start = min(float(u["start_s"]) for u in utts)
         last_end = max(float(u["end_s"]) for u in utts)
         if not alloc.get("is_final"):
-            # Outgoing deadline: dialogue completes at or before end-0.5s.
-            assert last_end <= end_s - 0.5 + eps, (source_key, duration, alloc["block_index"], last_end, end_s)
+            # Outgoing deadline: dialogue completes at or before end - 0.78s (wider tail).
+            assert last_end <= end_s - 0.78 + eps, (source_key, duration, alloc["block_index"], last_end, end_s)
         if int(alloc["block_index"]) >= 2:
             # Incoming onset floor: first new dialogue at or after start+0.5s.
             assert first_start >= start_s + 0.5 - eps, (source_key, duration, alloc["block_index"], first_start, start_s)
 
     # Prompt-text handoff wording.
     non_final_initial = (blocks[0].get("initial_generation_prompt_text") or "").lower()
-    assert "half a second before" in non_final_initial
+    assert "three-quarters of a second before" in non_final_initial
     for block in blocks[1:]:
         extend = (block.get("flow_extend_prompt_text") or "").lower()
         assert "first half second" in extend  # incoming onset guard
+        # Voice-continuity lock present on every continuation block, every lane.
+        assert "same voice as the previous" in extend
+        assert "do not switch narrator" in extend
         if not block.get("is_final"):
-            assert "half a second before" in extend  # outgoing deadline guard
+            assert "three-quarters of a second before" in extend  # outgoing deadline guard
         assert "naturally speaking and moving" not in extend  # defect wording removed
 
 

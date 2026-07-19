@@ -18,11 +18,16 @@ from agent.services import canonical_prompt_compiler as canonical
 
 PLAN_VERSION = "full_storyboard_first_extend_planner_v2"
 
-# EXTEND-only seam audio-ownership handoff margin (seconds). At every non-final
-# seam, outgoing dialogue must complete by ``end - _SEAM_HANDOFF_MARGIN_S`` and a
-# continuation block must not begin new dialogue before ``start + _SEAM_HANDOFF_MARGIN_S``.
-# SINGLE blocks receive no margin.
-_SEAM_HANDOFF_MARGIN_S = 0.5
+# EXTEND-only seam audio-ownership handoff margins (seconds), asymmetric by direction.
+# At every non-final seam the outgoing dialogue must complete by ``end - _SEAM_OUT_MARGIN_S``
+# (a wide tail so block-1 speech stops well before the cut and never bleeds across it), and a
+# continuation block must not begin new dialogue before ``start + _SEAM_IN_MARGIN_S`` (a short
+# lead-in silence so the new voice enters cleanly). SINGLE blocks receive no margin.
+# OUT (0.78s) > IN (0.5s) on purpose: the observed 16s overlap came from the outgoing side
+# running into the seam, so the outgoing tail is the wider guard. For an 8s block this makes
+# block-1 dialogue finish by 7.22s and block-2 dialogue begin at 8.5s.
+_SEAM_OUT_MARGIN_S = 0.78
+_SEAM_IN_MARGIN_S = 0.5
 
 
 class PlannerValidationError(ValueError):
@@ -778,11 +783,13 @@ def _allocate_dialogue_utterances(
         is_first_block = position == 0
         is_final_block = position == total_blocks - 1
         # Seam audio-ownership handoff (EXTEND only): a continuation block begins no
-        # new dialogue in its first 0.5s, and a non-final block completes its dialogue
-        # at least 0.5s before the seam. SINGLE (first AND final) keeps the full block
-        # window unchanged, so its dialogue timing is byte-identical to before.
-        in_margin = 0.0 if is_first_block else _SEAM_HANDOFF_MARGIN_S
-        out_margin = 0.0 if is_final_block else _SEAM_HANDOFF_MARGIN_S
+        # new dialogue in its first _SEAM_IN_MARGIN_S seconds, and a non-final block
+        # completes its dialogue at least _SEAM_OUT_MARGIN_S before the seam (the wider
+        # outgoing tail keeps trailing speech from bleeding across the cut). SINGLE
+        # (first AND final) keeps the full block window unchanged, so its dialogue
+        # timing is byte-identical to before.
+        in_margin = 0.0 if is_first_block else _SEAM_IN_MARGIN_S
+        out_margin = 0.0 if is_final_block else _SEAM_OUT_MARGIN_S
         window_start = float(cursor) + in_margin
         window_end = float(cursor + int(seconds)) - out_margin
         speaking_window = window_end - window_start
@@ -811,8 +818,9 @@ def _allocate_dialogue_utterances(
                 )
             )
         if block_rows and not is_final_block:
-            # Keep the outgoing voice present up to the handoff deadline (end-0.5s),
-            # never past it — a clean audio-ownership boundary at the seam.
+            # Keep the outgoing voice present up to the handoff deadline
+            # (window_end == end - _SEAM_OUT_MARGIN_S), never past it — a clean
+            # audio-ownership boundary at the seam.
             last = block_rows[-1]
             if float(last.end_s) < (window_end - 0.95):
                 block_rows[-1] = replace(last, end_s=window_end)

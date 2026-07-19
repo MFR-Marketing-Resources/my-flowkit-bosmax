@@ -587,8 +587,8 @@ def test_extend_seam_handoff_timing_all_modes(
     source_mode: str, block_plan: list[int], total: int
 ) -> None:
     """The global EXTEND audio handoff holds for every mode and both 16s/24s chains:
-    outgoing dialogue ends by end-0.5s, incoming dialogue starts at/after start+0.5s,
-    and nothing is dropped, duplicated, or reordered."""
+    outgoing dialogue ends by end-0.78s (wider tail), incoming dialogue starts at/after
+    start+0.5s, and nothing is dropped, duplicated, or reordered."""
     result = plan_full_storyboard(
         route_id="GOOGLE_FLOW_INDEPENDENT_8S_BLOCKS",
         source_mode=source_mode,
@@ -607,7 +607,7 @@ def test_extend_seam_handoff_timing_all_modes(
         first_start = min(u.start_s for u in utts)
         last_end = max(u.end_s for u in utts)
         if not allocation.is_final:
-            assert last_end <= allocation.end_s - 0.5 + eps, (
+            assert last_end <= allocation.end_s - 0.78 + eps, (
                 source_mode, allocation.block_index, last_end, allocation.end_s,
             )
         if allocation.block_index >= 2:
