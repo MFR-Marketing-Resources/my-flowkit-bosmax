@@ -26,13 +26,22 @@ from agent.models.creative_asset import CreativeAssetCreateRequest
 from agent.services.creative_direction_service import resolve_creative_direction
 from agent.models.poster_copy_set import (
     STATUS_POSTER_COPY_APPROVED,
+    poster_fields_to_zone_fields,
     serialize_poster_copy_set,
 )
+from agent.models.poster_copy_quality import PosterCopyQualityRequest
 from agent.models.poster_render_manifest import (
     PosterQAReport,
     build_qa_report,
 )
 from agent.services import poster_compositor_service as compositor
+from agent.services import poster_recipe_service
+from agent.services.poster_composition_service import (
+    build_composition_constraints,
+    resolve_poster_composition,
+)
+from agent.services.poster_copy_quality_service import evaluate_poster_copy
+from agent.services.product_truth_service import ProductTruthService
 from agent.services.creative_asset_service import (
     CREATIVE_ASSET_UPLOAD_DIR,
     create_creative_asset,
@@ -42,6 +51,8 @@ from agent.services.img_asset_lane_config import derive_asset_governance
 from agent.services.poster_template_service import (
     PosterTemplateError,
     build_render_manifest,
+    manifest_frame_ratio,
+    template_contract,
 )
 
 # HONEST product-truth stamping: REFERENCE_CONDITIONED generation cannot prove
@@ -167,6 +178,68 @@ def _validate_trusted_storage_path(
 # resolver (also applied to media-id-resolved artifact paths). Same signature and
 # error codes, so existing callers/tests are unaffected.
 _validate_client_background_path = _validate_trusted_storage_path
+
+
+def _quality_report_for_copy_set(copy_set: dict[str, Any], recipe: Any):
+    """Reuse the established poster copy-quality authority over the poster-
+    native copy set (never a duplicated validator)."""
+    return evaluate_poster_copy(
+        PosterCopyQualityRequest(
+            archetype=_norm(getattr(recipe, "archetype", "")),
+            language=_norm(copy_set.get("language")) or "ms",
+            max_chips=(getattr(recipe, "max_chips", 3) or 3),
+            poster_headline=_norm(copy_set.get("primary_message")),
+            poster_support_line=_norm(copy_set.get("support_message")),
+            poster_chips=[
+                _norm(c) for c in (copy_set.get("proof_points") or []) if _norm(c)
+            ],
+            poster_cta=_norm(copy_set.get("cta")),
+        )
+    )
+
+
+def _resolve_canonical_composition_plan(
+    *,
+    product: dict[str, Any],
+    copy_set: dict[str, Any] | None,
+    recipe_id: str,
+    direction: Any,
+    operator_human_presence: str = "",
+    frame_ratio: str = "",
+) -> dict[str, Any]:
+    """Resolve the ONE canonical composition plan from the real authorities.
+
+    Product Truth comes from the actual computed truth profile, identity policy
+    from the resolved Creative Direction, recipe constraints from the real
+    template contract, and copy governance from the established quality
+    authority. Legacy no-mode callers get {} — nothing is fabricated.
+    """
+    if direction is None:
+        return {}
+    recipe_id = _norm(recipe_id)
+    recipe_obj = poster_recipe_service.get_recipe(recipe_id) if recipe_id else None
+    contract = template_contract(recipe_id) if recipe_id else None
+    quality = (
+        _quality_report_for_copy_set(copy_set, recipe_obj) if copy_set else None
+    )
+    constraints = build_composition_constraints(
+        product=product,
+        truth_profile=ProductTruthService.build_computed_profile(product),
+        creative_direction=direction,
+        operator_human_presence=operator_human_presence,
+        recipe=recipe_obj,
+        template_contract=contract,
+        copy_quality_report=quality,
+    )
+    return resolve_poster_composition(
+        creative_direction=direction,
+        recipe_id=recipe_id,
+        # The compositor renders the manifest canvas — its REAL reduced ratio
+        # is the plan's frame ratio unless the caller supplies an actual one.
+        frame_ratio=_norm(frame_ratio) or manifest_frame_ratio(),
+        fields=poster_fields_to_zone_fields(copy_set) if copy_set else {},
+        constraints=constraints,
+    )
 
 
 async def _resolve_background(
@@ -297,6 +370,15 @@ class PosterDeliverableService:
         )
 
         try:
+            # B-01/B-03: the canonical plan is resolved ONCE here — with the
+            # real product-truth/identity/recipe constraints — and passed into
+            # the manifest verbatim so save/reopen preserves it deterministically.
+            composition_plan = _resolve_canonical_composition_plan(
+                product=dict(product),
+                copy_set=copy_set,
+                recipe_id=_norm(recipe_id),
+                direction=direction,
+            )
             manifest = build_render_manifest(
                 recipe_id=_norm(recipe_id),
                 copy_set=copy_set,
@@ -304,6 +386,7 @@ class PosterDeliverableService:
                 background_local_path=bg_local,
                 image_model=_norm(image_model),
                 creative_direction=({"mode": direction.mode.value, "authority_version": direction.authority_version, "representation_policy_version": direction.representation_policy_version} if direction else None),
+                composition_plan=composition_plan,
             )
         except PosterTemplateError as exc:
             raise PosterDeliverableError(exc.code, str(exc), status_code=exc.status_code)
@@ -336,7 +419,57 @@ class PosterDeliverableService:
             "deliverable": row,
             "render_report": report.model_dump(mode="json"),
             "qa_report": qa.model_dump(mode="json"),
+            # The EXACT plan the manifest preserves — so the UI can prove the
+            # compiled poster used the same plan it displayed.
+            "composition_plan": composition_plan,
         }
+
+    @staticmethod
+    async def preview_composition_plan(
+        *,
+        product_id: str,
+        creative_mode: str,
+        recipe_id: str = "",
+        poster_copy_set_id: str = "",
+        human_presence_mode: str = "",
+        frame_ratio: str = "",
+    ) -> dict[str, Any]:
+        """Read-only backend-resolved composition plan for the Guided summary.
+
+        Uses the SAME canonical resolver + constraint assembly as compose, so
+        the plan the operator sees is the plan a compile would preserve. No
+        mutation, no generation, no credit spend.
+        """
+        product = await crud.get_product(_norm(product_id))
+        if not product:
+            raise PosterDeliverableError("PRODUCT_NOT_FOUND", status_code=404)
+        direction = resolve_creative_direction(
+            _norm(creative_mode), product=dict(product)
+        )
+        copy_set = None
+        if _norm(poster_copy_set_id):
+            pcs_row = await crud.get_poster_copy_set(_norm(poster_copy_set_id))
+            if not pcs_row:
+                raise PosterDeliverableError(
+                    "POSTER_COPY_SET_NOT_FOUND", status_code=404
+                )
+            if _norm(pcs_row.get("product_id")) != _norm(product_id):
+                raise PosterDeliverableError(
+                    "POSTER_COPY_SET_PRODUCT_MISMATCH", status_code=409
+                )
+            copy_set = serialize_poster_copy_set(pcs_row)
+        try:
+            plan = _resolve_canonical_composition_plan(
+                product=dict(product),
+                copy_set=copy_set,
+                recipe_id=_norm(recipe_id),
+                direction=direction,
+                operator_human_presence=_norm(human_presence_mode),
+                frame_ratio=_norm(frame_ratio),
+            )
+        except PosterTemplateError as exc:
+            raise PosterDeliverableError(exc.code, str(exc), status_code=exc.status_code)
+        return {"composition_plan": plan}
 
     @staticmethod
     async def save_to_library(poster_deliverable_id: str) -> dict[str, Any]:
