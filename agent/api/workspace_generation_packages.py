@@ -474,6 +474,9 @@ class BatchPromptRequest(_BaseModel):
     scene_contexts: _List[str] = []
     hook_angles: _List[str] = []
     finished_frame_asset_id: str | None = None
+    # HYBRID only: explicit PRODUCT_REFERENCE anchor (padded 9:16). Omitted ->
+    # the server auto-picks the product's approved 9:16 anchor asset.
+    product_reference_asset_id: str | None = None
     # Legacy guard: old clients sending a modes list are rejected on mixes.
     modes: _List[str] | None = None
 
@@ -513,6 +516,7 @@ async def start_batch_prompts(request: BatchPromptRequest):
             scene_contexts=request.scene_contexts or None,
             hook_angles=request.hook_angles or None,
             finished_frame_asset_id=request.finished_frame_asset_id,
+            product_reference_asset_id=request.product_reference_asset_id,
         )
     except ValueError as exc:
         message = str(exc)
