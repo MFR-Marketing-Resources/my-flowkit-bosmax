@@ -72,6 +72,21 @@ CR_NOT_SPENT, CR_MAY_HAVE_SPENT, CR_SPENT, CR_UNKNOWN = (
     "NOT_SPENT", "MAY_HAVE_SPENT", "SPENT", "UNKNOWN")
 RS_SAFE, RS_RESUME_ONLY, RS_BLOCKED = "SAFE", "RESUME_ONLY", "BLOCKED"
 
+# One-door lane failures that are PROVABLY pre-generation (the lane refuses
+# locally or Google's anti-abuse layer rejects the request before any
+# generation starts — no credit is ever debited; #216 and the whole P4 ramp
+# confirmed every one of these at 0 credit). An INITIAL failure carrying one
+# of these signatures is SAFE to retry even when the lane handle was already
+# persisted, because the lane job existed but never submitted a generation.
+ZERO_CREDIT_REJECTION_SIGNATURES = (
+    "NO_OPEN_EDITOR",
+    "CAPTCHA_FAILED",
+    "RATE_LIMITED",
+    "CONTENT_BUILD_MISMATCH",
+    "Extension not connected",
+    "VIDEO_JOB_IN_FLIGHT",
+)
+
 AUTHORIZATION_TTL_SECONDS = 600
 _SEGMENT_SECONDS = 8
 
@@ -512,10 +527,18 @@ async def advance_job(
                 # the provider never accepted a submission (e.g. a CAPTCHA /
                 # rate-limiter rejection) => provably zero credit side effect =>
                 # the row stays SAFE-retryable instead of stranding the job.
-                # A handle present means a real submission happened — stay
-                # UNCERTAIN / BLOCKED (credits may have been spent).
+                # A handle present means a lane job existed — but a terminal
+                # error carrying a known zero-credit rejection signature
+                # (editor closed, CAPTCHA, rate limiter, build mismatch) is
+                # STILL provably pre-generation, so it stays retryable too
+                # (live: vj_bda8259b2780 stranded on NO_OPEN_EDITOR). Anything
+                # else stays UNCERTAIN / BLOCKED (credits may have been spent).
                 fresh = await _crud.get_video_production_job(job_id) or {}
-                if not str(fresh.get("initial_lane_job_id") or "").strip():
+                _err_text = str(exc)
+                _zero_credit = any(
+                    sig in _err_text for sig in ZERO_CREDIT_REJECTION_SIGNATURES
+                )
+                if not str(fresh.get("initial_lane_job_id") or "").strip() or _zero_credit:
                     await _crud.update_video_job_side_effect(
                         idem, submission_state=SUB_NOT_ATTEMPTED,
                         credit_state=CR_NOT_SPENT, retry_safety=RS_SAFE,
