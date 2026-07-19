@@ -87,6 +87,20 @@ ZERO_CREDIT_REJECTION_SIGNATURES = (
     "VIDEO_JOB_IN_FLIGHT",
 )
 
+# EXTEND error codes raised AFTER the generate_video_extend RPC (provider was
+# touched). Credit-honesty: an extend failure carrying one of these MUST NOT be
+# classified NOT_ATTEMPTED / NOT_SPENT / SAFE — the extend may have started a
+# credit-bearing child even when we could not extract it (live: vj_bb28f65c189e
+# EXTEND_CHILD_MEDIA_ID_MISSING was wrongly marked SAFE by fragile substring
+# matching). PRE-RPC failures (contract/validation before submit) stay SAFE.
+_EXTEND_POST_RPC_CODES = frozenset({
+    _nx.EXTEND_REQUEST_REJECTED,
+    _nx.EXTEND_CHILD_MEDIA_ID_MISSING,
+    _nx.EXTEND_LINEAGE_MISMATCH,
+    _nx.EXTEND_OPERATION_TIMEOUT,
+    _nx.EXTEND_OPERATION_FAILED,
+})
+
 AUTHORIZATION_TTL_SECONDS = 600
 _SEGMENT_SECONDS = 8
 
@@ -617,11 +631,22 @@ async def advance_job(
                     client, req, dry_run=False, confirm_live_credit_burn=True,
                     confirmed_extend_operation_count=1)
             except Exception as exc:  # noqa: BLE001
-                uncertain = "SUBMIT" in str(exc).upper() or "TIMEOUT" in str(exc).upper()
+                # Credit honesty: classify by whether the generate_video_extend RPC
+                # was reached (provider touched). A POST-RPC failure code — or a
+                # submit/timeout error — means a credit-bearing child MAY have
+                # started, so it is UNCERTAIN / MAY_HAVE_SPENT / BLOCKED (never
+                # auto-SAFE). Only PRE-RPC contract/validation failures stay SAFE.
+                _code = getattr(exc, "code", "") or ""
+                provider_touched = (
+                    _code in _EXTEND_POST_RPC_CODES
+                    or "SUBMIT" in str(exc).upper() or "TIMEOUT" in str(exc).upper()
+                )
                 await _crud.update_video_job_side_effect(
-                    idem, submission_state=(SUB_UNCERTAIN if uncertain else SUB_NOT_ATTEMPTED),
-                    credit_state=(CR_MAY_HAVE_SPENT if uncertain else CR_NOT_SPENT),
-                    retry_safety=(RS_BLOCKED if uncertain else RS_SAFE), detail=str(exc)[:200])
+                    idem,
+                    submission_state=(SUB_UNCERTAIN if provider_touched else SUB_NOT_ATTEMPTED),
+                    credit_state=(CR_MAY_HAVE_SPENT if provider_touched else CR_NOT_SPENT),
+                    retry_safety=(RS_BLOCKED if provider_touched else RS_SAFE),
+                    detail=str(exc)[:200])
                 await _crud.update_video_production_job_full(
                     job_id, status=F_EXTEND, error_code=F_EXTEND)
                 raise OrchestratorError(F_EXTEND, str(exc)[:200]) from exc

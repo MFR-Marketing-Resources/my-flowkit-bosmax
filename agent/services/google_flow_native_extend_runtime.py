@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import secrets
@@ -168,6 +169,58 @@ def extract_extend_child(response: dict) -> Optional[dict]:
         "batch_id": batch_id,
         "status": status,
         "length": length,
+    }
+
+
+def _sanitize_extend_response(response: Any) -> dict:
+    """Whitelist ONLY structural forensic fields from a generate_video_extend
+    response. Never dumps the raw body, so no auth/cookie/recaptcha/session token
+    can leak (secrets live in HTTP headers, not this parsed body, and unknown
+    fields are dropped by whitelisting). This is the evidence that lets the NEXT
+    authorized attempt diagnose EXTEND_CHILD_MEDIA_ID_MISSING — currently the raw
+    response is discarded, so an empty/no-child response has no forensic trail."""
+    if isinstance(response, dict) and "data" in response:
+        data = response.get("data")
+    else:
+        data = response
+    if not isinstance(data, dict):
+        return {"unusable_response_type": type(response).__name__}
+
+    def _s(v):
+        return str(v)[:80] if v is not None else None
+
+    def _scalar(v):
+        # only safe scalars survive; dicts/lists (where providers nest tokens,
+        # session ids, private urls) are dropped entirely.
+        if isinstance(v, (int, float, bool)):
+            return v
+        if isinstance(v, str):
+            return v[:60]
+        return None
+
+    media = data.get("media") if isinstance(data.get("media"), list) else []
+    workflows = data.get("workflows") if isinstance(data.get("workflows"), list) else []
+    error = data.get("error")
+    err_is_dict = isinstance(error, dict)
+    # Error is recorded as STRUCTURAL METADATA only — never the raw body/message,
+    # which can carry tokens, session ids, private urls, or nested payloads. Only
+    # the code/status scalars (never a leak site) and the key names are kept.
+    return {
+        "top_level_keys": sorted(str(k) for k in data.keys()),
+        "media_count": len(media),
+        "media_names": [_s(m.get("name")) for m in media[:3] if isinstance(m, dict)],
+        "workflow_count": len(workflows),
+        "workflow_names": [_s(w.get("name")) for w in workflows[:3] if isinstance(w, dict)],
+        "workflow_primary_media_ids": [
+            _s((w.get("metadata") or {}).get("primaryMediaId"))
+            for w in workflows[:3] if isinstance(w, dict)
+        ],
+        "has_error": bool(error),
+        "error_type": type(error).__name__ if error is not None else None,
+        "error_keys": sorted(str(k) for k in error.keys()) if err_is_dict else [],
+        "error_code": _scalar(error.get("code")) if err_is_dict else None,
+        "error_status": _scalar(error.get("status")) if err_is_dict else None,
+        "remaining_credits": data.get("remainingCredits"),
     }
 
 
@@ -574,22 +627,39 @@ async def _run_one_extend_block(
         start_frame_index=block.start_frame_index, end_frame_index=block.end_frame_index,
         seed=req.seed, user_paygate_tier=req.user_paygate_tier,
     )
+    # Instrumentation (runs BEFORE extraction): persist the sanitized response
+    # SHAPE so a future EXTEND_CHILD_MEDIA_ID_MISSING has forensic evidence. Only
+    # whitelisted structural fields — no secrets. Also logs the request params
+    # (parent id-kind, frame window, aspect) that are the live-diff candidates.
+    _shape = _sanitize_extend_response(resp)
+    _shape_json = json.dumps(_shape)[:480]
+    logger.info(
+        "extend RPC returned: parent=%s pos=%s frames=%s-%s aspect=%s shape=%s",
+        parent_op, block.position, block.start_frame_index, block.end_frame_index,
+        req.aspect_ratio, _shape_json)
+
     if not resp or resp.get("error"):
-        # a REJECTED submit spends no credit -> FAILED (retryable on resume)
-        detail = str(resp.get("error")) if resp else "no response"
+        # provider was called; whether a credit-bearing child started is UNCERTAIN.
+        # detail is SAFE metadata only (error code/status) — NEVER the raw error
+        # body, which may carry tokens / session ids / private urls.
+        detail = (
+            f"extend rejected code={_shape.get('error_code')} "
+            f"status={_shape.get('error_status')}" if resp else "no response")
         await _crud.update_extend_lineage(lineage_id, polling_state=STATE_FAILED,
                                           error_code=EXTEND_REQUEST_REJECTED,
-                                          error_message=detail)
+                                          error_message=f"{detail} | shape={_shape_json}")
         raise NativeExtendError(EXTEND_REQUEST_REJECTED, detail)
 
     child = extract_extend_child(resp)
     if not child or not child.get("child_operation_id"):
         await _crud.update_extend_lineage(lineage_id, polling_state=STATE_FAILED,
-                                          error_code=EXTEND_CHILD_MEDIA_ID_MISSING)
+                                          error_code=EXTEND_CHILD_MEDIA_ID_MISSING,
+                                          error_message=f"no child in response | shape={_shape_json}")
         raise NativeExtendError(EXTEND_CHILD_MEDIA_ID_MISSING)
     if child["child_operation_id"] == parent_op:
         await _crud.update_extend_lineage(lineage_id, polling_state=STATE_FAILED,
-                                          error_code=EXTEND_LINEAGE_MISMATCH)
+                                          error_code=EXTEND_LINEAGE_MISMATCH,
+                                          error_message=f"child == parent | shape={_shape_json}")
         raise NativeExtendError(EXTEND_LINEAGE_MISMATCH,
                                 "child == parent operation id")
 
