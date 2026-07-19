@@ -59,6 +59,11 @@ FAIL_FINAL_RENDER = "FINAL_RENDER_FAILED"
 FAIL_FINAL_MEDIA_MISSING = "FINAL_MEDIA_ID_MISSING"
 FAIL_FINAL_DOWNLOAD = "FINAL_DOWNLOAD_FAILED"
 FAIL_FINAL_DURATION = "FINAL_DURATION_MISMATCH"
+# Empty / header-only final artifact — the "fake 16s" vector: an MP4 whose mvhd
+# DECLARES a duration but which carries no real media-data (mdat) payload. This
+# checks for a plausibly-sized mdat box only; it does NOT decode or prove video
+# tracks/frames (see verify_final_media_payload).
+FAIL_FINAL_NO_MEDIA_PAYLOAD = "FINAL_NO_MEDIA_PAYLOAD"
 # Pre-concat segment-duration preflight (uniform 8s contract, verified before submit).
 SEGMENT_DURATION_UNAVAILABLE = "SEGMENT_DURATION_UNAVAILABLE"
 SEGMENT_DURATION_MISMATCH = "SEGMENT_DURATION_MISMATCH"
@@ -80,6 +85,13 @@ CAPTURE_EVIDENCE_CONCAT = "CAPTURE_20260711_100555:rid=9924.2526/2540/2542"
 DURATION_TOLERANCE_SECONDS = 1.5
 
 _SEGMENT_SECONDS = 8  # uniform native-extend block duration (proven)
+
+# Real H.264/AAC concat media runs ~930 KB/s (observed: a 16s render decodes to
+# ~14.9 MB from the inline base64). Require at least this many mdat (media-data)
+# bytes per second — set ~100x below reality so a genuine render never
+# false-rejects, but a header-only or token-stub blob (declares a duration,
+# carries no media data) always fails. Floor for verify_final_media_payload.
+MIN_MDAT_BYTES_PER_SECOND = 10_000
 
 
 class FinalTimelineError(RuntimeError):
@@ -326,6 +338,72 @@ def validate_final_duration(path: str | Path, requested_seconds: int,
     return measured
 
 
+def _iter_top_level_boxes(data: bytes):
+    """Yield ``(type, payload_start, payload_end)`` for each top-level ISO-BMFF
+    box. Stops on the first malformed/short box. Handles 64-bit (``size==1``) and
+    runs-to-EOF (``size==0``) boxes so a legitimate last-box ``mdat`` is never
+    mis-scanned."""
+    i, n = 0, len(data)
+    while i + 8 <= n:
+        size = struct.unpack(">I", data[i:i + 4])[0]
+        typ = data[i + 4:i + 8]
+        if size == 1:  # 64-bit extended size
+            if i + 16 > n:
+                break
+            size = struct.unpack(">Q", data[i + 8:i + 16])[0]
+            payload = i + 16
+        elif size == 0:  # box runs to EOF (legal for the last box)
+            yield typ, i + 8, n
+            break
+        else:
+            payload = i + 8
+        if size < 8 or i + size > n:
+            break
+        yield typ, payload, i + size
+        i += size
+
+
+def verify_final_media_payload(path: str | Path, requested_seconds: int) -> int:
+    """Fail closed unless the saved file carries a real media-data payload.
+
+    Defeats the fake-16s vector: a header-only ``ftyp+moov/mvhd`` blob that merely
+    DECLARES a duration but carries no media data. Requires a non-empty top-level
+    ``mdat`` box whose byte size is plausibly proportional to ``requested_seconds``,
+    and asserts the file is present and non-empty (reads the bytes). Returns the
+    total mdat payload size in bytes on success; raises
+    ``FinalTimelineError(FAIL_FINAL_NO_MEDIA_PAYLOAD)`` otherwise.
+
+    Scope of proof (deliberately shallow, pure-stdlib, no ffprobe dependency):
+    this proves *media bytes are present and plausibly sized* — it does NOT
+    decode the video, prove a video track / sample table, exclude an audio-only
+    payload, or guarantee playable frames. It is the honesty floor that stops a
+    header-only/empty/stub artifact from being reported COMPLETE, not a full
+    playability verifier.
+    """
+    try:
+        data = Path(path).read_bytes()
+    except OSError as exc:
+        raise FinalTimelineError(
+            FAIL_FINAL_NO_MEDIA_PAYLOAD,
+            f"final artifact unreadable: {exc}") from exc
+    mdat_bytes = sum(
+        end - start
+        for typ, start, end in _iter_top_level_boxes(data)
+        if typ == b"mdat"
+    )
+    if mdat_bytes <= 0:
+        raise FinalTimelineError(
+            FAIL_FINAL_NO_MEDIA_PAYLOAD,
+            "no mdat box — header-only MP4 carries no media data (fail closed)")
+    floor = MIN_MDAT_BYTES_PER_SECOND * max(1, int(requested_seconds))
+    if mdat_bytes < floor:
+        raise FinalTimelineError(
+            FAIL_FINAL_NO_MEDIA_PAYLOAD,
+            f"mdat {mdat_bytes} bytes < floor {floor} for {requested_seconds}s "
+            "— implausible media-data size (fail closed)")
+    return mdat_bytes
+
+
 # ── the finalize orchestration (submit → poll → save → validate) ────────────
 async def finalize_timeline(client, *, job_id: str, segment_media_ids: list[str],
                             requested_seconds: int, out_dir: Path,
@@ -400,6 +478,16 @@ async def finalize_timeline(client, *, job_id: str, segment_media_ids: list[str]
 
     await _crud.update_video_production_job(job_id, status=JOB_RETRIEVING)
     saved = save_final_video(last["encoded_video"], out_dir, job_id)
+    # Honesty gate — a COMPLETE row must never point at a missing/empty file or a
+    # header-only "declares 16s but carries no media data" blob. Both raise BEFORE
+    # the COMPLETE write, leaving the row at JOB_RETRIEVING and never minting a
+    # final_media_id — so a fake render can never be reported as delivered.
+    final_path = Path(saved["local_path"])
+    if not final_path.is_file() or final_path.stat().st_size <= 0:
+        raise FinalTimelineError(
+            FAIL_FINAL_NO_MEDIA_PAYLOAD,
+            f"final artifact absent at COMPLETE: {final_path}")
+    mdat_bytes = verify_final_media_payload(final_path, requested_seconds)
     measured = validate_final_duration(saved["local_path"], requested_seconds)
     await _crud.update_video_production_job(
         job_id, status=JOB_COMPLETE,
@@ -411,6 +499,7 @@ async def finalize_timeline(client, *, job_id: str, segment_media_ids: list[str]
         **plan, "dry_run": False, "resumed": resumed,
         "final_concat_job_name": job_name,
         **saved, "measured_duration_s": measured,
+        "final_mdat_bytes": mdat_bytes,
         "segment_preflight": preflight,
         "status": JOB_COMPLETE,
     }
