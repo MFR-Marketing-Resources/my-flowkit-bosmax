@@ -259,6 +259,67 @@ export async function fetchBulkFanoutPlan(input: {
 	return postAPI<BulkFanoutPlanResult>("/api/workspace/bulk-fanout-plan", input);
 }
 
+// ── Stage 2C bulk PREPARE: create -> approve -> enqueue N durable packages ──
+export interface BulkPreparedItem {
+	item_index: number | null;
+	copy_variant_id: string | null;
+	variation_salt: string | null;
+	dialogue_fingerprint: string | null;
+	hook: string | null;
+	dialogue_summary: string | null;
+	logical_mode: string;
+	source_mode: string | null;
+	generation_mode: string;
+	workspace_generation_package_id: string;
+	item_status: string;
+	credit_state: string;
+}
+
+export interface BulkPrepareResult {
+	bulk_run_id: string;
+	bulk_plan_fingerprint: string;
+	production_run_id: string | null;
+	product_id: string;
+	logical_mode: string;
+	generation_mode: string;
+	quantity_requested: number;
+	prepared_package_count: number;
+	package_ids: string[];
+	expect_dialogue_fingerprints: string[];
+	items: BulkPreparedItem[];
+	reused_existing_batch: boolean;
+	stage: string;
+	next_step: string;
+	live_bulk_status: string;
+	live_bulk_stage: string;
+	required_confirm_phrase: string;
+	credit: string;
+	provider_calls: number;
+	flow_calls: number;
+}
+
+/** Create + approve + enqueue N durable packages, one per planned item.
+ *  Credit-free: the run is created dry_run=1 and nothing fires. */
+export async function prepareBulkFanoutPackages(input: {
+	product_id: string;
+	mode: WorkspaceMode;
+	source_mode?: string | null;
+	generation_mode?: PromptGenerationMode;
+	duration_seconds?: number;
+	requested_total_duration_seconds?: number | null;
+	quantity: number;
+	target_language?: PromptTargetLanguage;
+	model?: string | null;
+	aspect?: string;
+	expect_bulk_plan_fingerprint?: string | null;
+	start_frame_asset_id?: string | null;
+	product_reference_asset_id?: string | null;
+	character_reference_asset_id?: string | null;
+	scene_context_reference_asset_id?: string | null;
+}): Promise<BulkPrepareResult> {
+	return postAPI<BulkPrepareResult>("/api/workspace/bulk-fanout-prepare", input);
+}
+
 export async function fetchWorkspaceExecutionPackageHistory(
 	productId?: string,
 	mode?: WorkspaceMode,

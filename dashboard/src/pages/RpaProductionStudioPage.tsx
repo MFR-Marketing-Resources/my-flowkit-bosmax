@@ -73,8 +73,10 @@ import {
 	createWorkspaceExecutionPackage,
 	fetchBulkFanoutPlan,
 	fetchCopyPoolReadiness,
+	prepareBulkFanoutPackages,
 	previewQuantityCopyPlans,
 	type BulkFanoutPlanResult,
+	type BulkPrepareResult,
 	type CopyPoolReadinessResult,
 	type QuantityPreviewResult,
 } from "../api/workspacePackages";
@@ -229,6 +231,11 @@ export default function RpaProductionStudioPage() {
 	// Stage 2A: the itemized bulk fan-out plan (N separate intents). Planning
 	// only — it never enables live; the server gate stops at the credit boundary.
 	const [bulkPlan, setBulkPlan] = useState<BulkFanoutPlanResult | null>(null);
+	// Stage 2C: the PREPARED itemized batch (N durable packages + one run).
+	// Credit-free; live still needs Stage 3 certification.
+	const [bulkPrepared, setBulkPrepared] = useState<BulkPrepareResult | null>(null);
+	const [bulkDryRun, setBulkDryRun] = useState<DryRunReport | null>(null);
+	const [bulkError, setBulkError] = useState<string | null>(null);
 	const [previewError, setPreviewError] = useState<string | null>(null);
 
 	// ── pipeline ──
@@ -341,6 +348,9 @@ export default function RpaProductionStudioPage() {
 		setPreviewError(null);
 		setPoolReadiness(null);
 		setBulkPlan(null);
+		setBulkPrepared(null);
+		setBulkDryRun(null);
+		setBulkError(null);
 	}, []);
 
 	/** Stage 1 quantity preview — credit-free plan of N unique-copy variants.
@@ -370,6 +380,9 @@ export default function RpaProductionStudioPage() {
 		setPreviewResult(null);
 		setPoolReadiness(null);
 		setBulkPlan(null);
+		setBulkPrepared(null);
+		setBulkDryRun(null);
+		setBulkError(null);
 		try {
 			const readiness = await fetchCopyPoolReadiness(copyPoolInput);
 			setPoolReadiness(readiness);
@@ -385,6 +398,48 @@ export default function RpaProductionStudioPage() {
 			}
 		} catch (e) {
 			setPreviewError(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy(null);
+		}
+	};
+
+	/** Stage 2C — create + approve + enqueue N durable packages, then dry-run all
+	 *  of them. Entirely credit-free: the run is created dry_run=1 and nothing
+	 *  fires. Live bulk still requires Stage 3 certification, so this NEVER
+	 *  opens the live gate. */
+	const handleBulkPrepare = async () => {
+		if (!selectedProduct || !bulkPlan?.bulk_authorizable) return;
+		const previewMode = (studioMode === "HYBRID" ? "F2V" : studioMode) as WorkspaceMode;
+		setBusy("bulk-prepare");
+		setBulkError(null);
+		setBulkDryRun(null);
+		try {
+			const prepared = await prepareBulkFanoutPackages({
+				product_id: selectedProduct.id,
+				mode: previewMode,
+				source_mode: activeProfile.sourceMode ?? null,
+				generation_mode: isExtend ? "EXTEND" : "SINGLE",
+				duration_seconds: isExtend ? maxSingle : duration,
+				requested_total_duration_seconds: isExtend ? duration : null,
+				quantity,
+				target_language: "BM_MS",
+				model,
+				aspect,
+				// Pin the plan the operator saw — the server refuses a stale preview.
+				expect_bulk_plan_fingerprint: bulkPlan.bulk_plan_fingerprint,
+				start_frame_asset_id: startFrameAssetId || null,
+				product_reference_asset_id: productRefAssetId || null,
+				character_reference_asset_id: characterAssetId || null,
+				scene_context_reference_asset_id: sceneAssetId || null,
+			});
+			setBulkPrepared(prepared);
+			// Dry-run validates EVERY queued item. No credit, nothing fires.
+			if (prepared.production_run_id) {
+				const res = await startProductionRun(prepared.production_run_id, false);
+				setBulkDryRun(res.report ?? null);
+			}
+		} catch (e) {
+			setBulkError(e instanceof Error ? e.message : String(e));
 		} finally {
 			setBusy(null);
 		}
@@ -1182,6 +1237,66 @@ export default function RpaProductionStudioPage() {
 							</div>
 						))}
 					</div>
+					<div className="mb-2 flex flex-wrap items-center gap-2">
+						<button
+							type="button"
+							data-testid="studio-action-bulk-prepare"
+							onClick={() => void handleBulkPrepare()}
+							disabled={!bulkPlan.bulk_authorizable || busy !== null || Boolean(bulkPrepared)}
+							className="rounded-lg bg-sky-600 px-3 py-1.5 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+						>
+							{busy === "bulk-prepare"
+								? "Preparing…"
+								: `Prepare ${bulkPlan.planned_intent_count} packages (no credit)`}
+						</button>
+						<span className="text-[10px] text-slate-400">
+							Creates + approves + queues {bulkPlan.planned_intent_count} separate packages, then dry-runs every item. Nothing fires.
+						</span>
+					</div>
+					{bulkError && (
+						<div className="mb-2 rounded-lg border border-red-500/40 bg-red-500/10 p-2 text-[11px] text-red-200" data-testid="studio-bulk-prepare-error">
+							Bulk prepare refused — nothing created, no credit: {bulkError}
+						</div>
+					)}
+					{bulkPrepared && (
+						<div
+							className="mb-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-2 text-[11px] text-emerald-100"
+							data-testid="studio-bulk-prepared"
+							data-stage={bulkPrepared.stage}
+							data-package-count={String(bulkPrepared.prepared_package_count)}
+							data-run={bulkPrepared.production_run_id ?? ""}
+							data-reused={String(bulkPrepared.reused_existing_batch)}
+						>
+							<div>
+								<strong>{bulkPrepared.prepared_package_count}</strong> packages prepared and queued
+								{bulkPrepared.production_run_id ? <> in run <code>{bulkPrepared.production_run_id}</code></> : null}.
+								{bulkPrepared.reused_existing_batch ? " (existing batch reused — no duplicates created)" : ""}
+							</div>
+							<div className="mt-1 space-y-0.5">
+								{bulkPrepared.items.map((it) => (
+									<div key={it.workspace_generation_package_id}
+										className="text-[10px] text-slate-300"
+										data-testid="studio-bulk-package"
+										data-index={String(it.item_index)}
+										data-package={it.workspace_generation_package_id}
+										data-variant={it.copy_variant_id ?? ""}
+										data-fingerprint={it.dialogue_fingerprint ?? ""}
+										data-status={it.item_status}>
+										#{(it.item_index ?? 0) + 1} · <code>{it.workspace_generation_package_id}</code> · copy {it.copy_variant_id ?? "—"} · fp {(it.dialogue_fingerprint ?? "").slice(0, 8)} · {it.item_status}
+									</div>
+								))}
+							</div>
+							{bulkDryRun && (
+								<div className="mt-1.5 rounded border border-slate-600 bg-slate-900/50 px-2 py-1 text-[10px] text-slate-300"
+									data-testid="studio-bulk-dryrun"
+									data-checked={String(bulkDryRun.checked ?? 0)}
+									data-ready={String(bulkDryRun.ready ?? 0)}
+									data-blocked={String(bulkDryRun.blocked ?? 0)}>
+									Dry run — checked {bulkDryRun.checked ?? 0} · ready {bulkDryRun.ready ?? 0} · blocked {bulkDryRun.blocked ?? 0} (no credit)
+								</div>
+							)}
+						</div>
+					)}
 					<div
 						className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100"
 						data-testid="studio-bulk-live-gate-state"
