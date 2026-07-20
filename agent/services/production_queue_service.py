@@ -80,6 +80,28 @@ LIVE_F2V_CONFIRM_PHRASE = "AUTHORIZE_ONE_F2V_LIVE_RUN"
 # correlation. Mode-exact authorization like the first-frame lane.
 LIVE_GATE_ONE_SERIAL_I2V = "ONE_SERIAL_I2V"
 LIVE_I2V_CONFIRM_PHRASE = "AUTHORIZE_ONE_I2V_LIVE_RUN"
+
+# ── Stage 2A: BULK FAN-OUT gate (N>1 itemized live run) ──────────────────────
+# The N-item fan-out MECHANISM already exists (send_to_production takes a LIST of
+# package_ids; the live loop iterates every QUEUED item). What did not exist is a
+# GATE for it: the three one-serial gates are opt-in, so a caller could reach the
+# loop with N items by passing confirm_live_credit_burn=True and NO live_gate —
+# no phrase, no readiness, no preview correlation. This gate is the missing
+# fail-closed door for the itemized bulk lane.
+#
+# Its phrase is DISTINCT from every single-run phrase, so a single-run
+# authorization can never be replayed as a bulk authorization.
+LIVE_GATE_BULK_FANOUT = "BULK_FANOUT"
+LIVE_BULK_CONFIRM_PHRASE = "AUTHORIZE_BULK_FANOUT_LIVE_RUN"
+
+# STAGE 3 CREDIT BOUNDARY. Every gate condition above is validated first, then
+# execution stops HERE unless bulk live has been runtime-certified. Stage 2A
+# ships the validated contract; it deliberately does NOT make credit spend
+# reachable, because bulk live fan-out has never been proven against the
+# provider. Flipping this without that runtime proof is a credit-safety
+# regression, not a feature flag.
+BULK_LIVE_EXECUTION_CERTIFIED = False
+
 _INFLIGHT_MAX_RETRIES = 20
 
 
@@ -898,6 +920,117 @@ async def _assert_one_serial_i2v_live(
     return item, logical_mode
 
 
+async def _assert_bulk_fanout_live(
+    run: dict,
+    *,
+    confirm_phrase: str | None,
+    expect_package_ids: list[str] | None,
+    expect_dialogue_fingerprints: list[str] | None,
+) -> list[dict]:
+    """Stage 2A gate: refuse anything that is not N READY, UNIQUE-dialogue items.
+
+    Mirrors the one-serial gates' discipline — every check RAISES, so the live
+    branch is unreachable unless all of them pass — but for the itemized bulk
+    lane. Readiness is RE-DERIVED from build_execution_payload rather than read
+    from ``last_dry_run_report``, so an item that changed after the dry run
+    cannot ride a stale green report.
+
+    The caller MUST pin the exact set it previewed: package ids AND the dialogue
+    fingerprints the operator actually saw. That binding is what stops a bulk
+    authorization from being replayed against a different (or duplicate-dialogue)
+    set. Returns the validated items.
+    """
+    if (confirm_phrase or "").strip() != LIVE_BULK_CONFIRM_PHRASE:
+        raise ValueError("LIVE_BULK_CONFIRM_PHRASE_INVALID")
+
+    items = await crud.list_production_queue_packages(
+        production_run_id=run["production_run_id"], production_status="QUEUED",
+    )
+    # This gate is the BULK door only. One item must go through its mode-exact
+    # one-serial gate, which enforces stricter per-lane rules.
+    if len(items) < 2:
+        raise ValueError(f"BULK_REQUIRES_MULTIPLE_ITEMS:{len(items)}")
+
+    # The client must pin the exact fan-out set — no implicit "whatever is queued".
+    pinned = [str(p) for p in (expect_package_ids or [])]
+    if not pinned:
+        raise ValueError("BULK_REQUIRES_EXPECT_PACKAGE_IDS")
+    queued_ids = [str(i["workspace_generation_package_id"]) for i in items]
+    if sorted(pinned) != sorted(queued_ids):
+        raise ValueError(
+            f"BULK_PACKAGE_SET_MISMATCH:expected={len(pinned)},queued={len(queued_ids)}"
+        )
+
+    cfg = _loads(run.get("config_json"), {})
+    seen_fingerprints: dict[str, str] = {}
+    validated: list[dict] = []
+
+    for item in items:
+        package_id = str(item["workspace_generation_package_id"])
+        product_id = str(item.get("product_id") or "")
+        if product_id.startswith("fastmoss-ref:"):
+            raise ValueError(f"LIVE_FASTMOSS_REF_FORBIDDEN:{product_id}")
+        prior_job = str(item.get("production_job_id") or "").strip()
+        if prior_job:
+            raise ValueError(f"LIVE_DUPLICATE_SUBMISSION:{package_id}:{prior_job}")
+
+        payload, blockers = await build_execution_payload(item, cfg)
+        if blockers:
+            # EXTEND surfaces here as EXTEND_PACKAGE_SINGLE_SHOT_FORBIDDEN — bulk
+            # EXTEND stays blocked, exactly as the single-shot lane blocks it.
+            raise ValueError(f"BULK_ITEM_BLOCKED:{package_id}:{','.join(blockers)}")
+        logical_mode = (payload.get("logical_mode") or "").strip().upper()
+        if not logical_mode:
+            raise ValueError(f"BULK_ITEM_MODE_UNKNOWN:{package_id}")
+
+        # Dialogue uniqueness is re-proven from the PERSISTED per-item
+        # fingerprint, never assumed from the preview. Two items sharing a
+        # dialogue is the exact failure Stage 1 made fail-closed; it must not
+        # become a warning just because the operator asked for N.
+        fingerprints = _loads(item.get("variation_fingerprints_json"), {})
+        dialogue_fp = str((fingerprints or {}).get("dialogue_fingerprint") or "").strip()
+        if not dialogue_fp:
+            raise ValueError(f"BULK_ITEM_DIALOGUE_FINGERPRINT_MISSING:{package_id}")
+        if dialogue_fp in seen_fingerprints:
+            raise ValueError(
+                f"BULK_DUPLICATE_DIALOGUE:{seen_fingerprints[dialogue_fp]},{package_id}"
+            )
+        seen_fingerprints[dialogue_fp] = package_id
+        validated.append(item)
+
+    # The operator authorizes the dialogue set they SAW. Any drift between the
+    # previewed fingerprints and the queued ones voids the authorization.
+    pinned_fps = [str(f) for f in (expect_dialogue_fingerprints or [])]
+    if not pinned_fps:
+        raise ValueError("BULK_REQUIRES_EXPECT_DIALOGUE_FINGERPRINTS")
+    if sorted(pinned_fps) != sorted(seen_fingerprints.keys()):
+        raise ValueError(
+            f"BULK_DIALOGUE_SET_MISMATCH:expected={len(set(pinned_fps))},"
+            f"queued={len(seen_fingerprints)}"
+        )
+
+    report = cfg.get("last_dry_run_report")
+    if not isinstance(report, dict):
+        raise ValueError("LIVE_REQUIRES_DRY_RUN_READY:NO_DRY_RUN")
+    if int(report.get("ready") or 0) != len(items) or int(report.get("blocked") or 0) != 0:
+        raise ValueError(
+            f"BULK_REQUIRES_ALL_ITEMS_DRY_RUN_READY:ready={report.get('ready')},"
+            f"blocked={report.get('blocked')},items={len(items)}"
+        )
+
+    # ── STAGE 3 CREDIT BOUNDARY ──
+    # Everything above is validated. Execution stops here: bulk live fan-out has
+    # never been certified against the provider, so Stage 2A refuses to spend
+    # credit even with a perfect gate. This is the LAST check on purpose — the
+    # operator gets the full validation verdict, not an early bail.
+    if not BULK_LIVE_EXECUTION_CERTIFIED:
+        raise ValueError(
+            f"BULK_LIVE_EXECUTION_NOT_CERTIFIED:validated_items={len(validated)}:"
+            "stage3_runtime_certification_required"
+        )
+    return validated
+
+
 async def run_production_queue(
     run_id: str,
     *,
@@ -905,6 +1038,8 @@ async def run_production_queue(
     live_gate: str | None = None,
     confirm_phrase: str | None = None,
     expect_package_id: str | None = None,
+    expect_package_ids: list[str] | None = None,
+    expect_dialogue_fingerprints: list[str] | None = None,
 ) -> dict:
     """Start a production run.
 
@@ -969,6 +1104,16 @@ async def run_production_queue(
             )
             gated_package_id = item["workspace_generation_package_id"]
             cfg["authorized_live_mode"] = validated_mode
+        elif live_gate == LIVE_GATE_BULK_FANOUT:
+            # Stage 2A: validates the whole itemized fan-out set fail-closed and
+            # then refuses at the credit boundary (BULK_LIVE_EXECUTION_CERTIFIED).
+            # It raises before the state write below, so the run stays dry.
+            await _assert_bulk_fanout_live(
+                run,
+                confirm_phrase=confirm_phrase,
+                expect_package_ids=expect_package_ids,
+                expect_dialogue_fingerprints=expect_dialogue_fingerprints,
+            )
         else:
             raise ValueError(f"LIVE_GATE_UNKNOWN:{live_gate}")
 
