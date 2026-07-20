@@ -2020,9 +2020,36 @@ async def prepare_bulk_fanout_packages(
         batch_run_id=bulk_run_id, limit=200
     )
     if existing:
+        # B-02: the listing comes back ordered created_at DESC, so zipping it
+        # against the plan's intents mis-attributed each dialogue to the wrong
+        # package on every re-run. Pair by the DURABLE item_index each package
+        # carries instead of by list order; if any package is missing that
+        # identity we cannot prove the pairing, so fail closed rather than
+        # report a manifest that might be wrong.
+        by_index: dict[int, str] = {}
+        for row in existing:
+            ident = row.get("generation_identity_json")
+            try:
+                ident = json.loads(ident) if isinstance(ident, str) and ident else (ident or {})
+            except (TypeError, ValueError):
+                ident = {}
+            bulk_item = (ident or {}).get("bulk_fanout_item") or {}
+            idx = bulk_item.get("item_index")
+            if idx is None:
+                raise ValueError(
+                    "BULK_REUSE_IDENTITY_MISSING:"
+                    f"{row['workspace_generation_package_id']}:cannot_pair_item_index"
+                )
+            by_index[int(idx)] = row["workspace_generation_package_id"]
+
+        expected = [int(i["item_index"]) for i in plan["intents"]]
+        missing = [i for i in expected if i not in by_index]
+        if missing:
+            raise ValueError(f"BULK_REUSE_INCOMPLETE_BATCH:missing_item_indexes={missing}")
+
         return _bulk_manifest(
             plan, bulk_run_id,
-            [r["workspace_generation_package_id"] for r in existing],
+            [by_index[i] for i in expected],
             production_run_id=(existing[0].get("production_run_id")),
             reused=True,
         )

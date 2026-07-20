@@ -17,6 +17,7 @@ The DB, creators, approval and enqueue seams are faked, so no provider, Flow,
 text-LLM or credit call is possible here.
 """
 import asyncio
+import json
 
 import pytest
 
@@ -259,18 +260,72 @@ def test_bulk_extend_remains_blocked_with_exact_blocker(monkeypatch):
 
 
 # ── idempotency ──────────────────────────────────────────────────────────────
+def _prev(idx, fp, pkg=None):
+    """An already-created package carrying its DURABLE bulk identity."""
+    return {
+        "workspace_generation_package_id": pkg or f"wgp_prev_{idx}",
+        "production_run_id": "prun_prev",
+        "generation_identity_json": json.dumps({
+            "bulk_fanout_item": {
+                "schema_version": "bulk-fanout-item-v1",
+                "item_index": idx, "dialogue_fingerprint": fp,
+            }
+        }),
+    }
+
+
 def test_rerunning_the_same_plan_does_not_duplicate_packages(monkeypatch):
     h = _Harness()
-    h.existing_batch = [
-        {"workspace_generation_package_id": f"wgp_prev_{i}", "production_run_id": "prun_prev"}
-        for i in range(3)
-    ]
+    plan, _ = _prepare(monkeypatch, THREE, UNIQUE3)          # learn the real fps
+    fps = [i["dialogue_fingerprint"] for i in plan["items"]]
+    h.existing_batch = [_prev(i, fps[i]) for i in range(3)]
     out, h2 = _prepare(monkeypatch, THREE, UNIQUE3, h)
     assert out["reused_existing_batch"] is True
-    assert out["package_ids"] == ["wgp_prev_0", "wgp_prev_1", "wgp_prev_2"]
     assert out["production_run_id"] == "prun_prev"
     assert h2.created == [], "created a second set of packages for the same plan"
     assert h2.approved == []
+
+
+def test_reuse_pairs_packages_by_item_index_not_list_order(monkeypatch):
+    """B-02 regression: the crud listing comes back created_at DESC, so zipping
+    it against the plan's intents attributed each dialogue to the WRONG package
+    on every re-run. Pairing must follow the durable item_index."""
+    h = _Harness()
+    plan, _ = _prepare(monkeypatch, THREE, UNIQUE3)
+    fps = [i["dialogue_fingerprint"] for i in plan["items"]]
+    # listing deliberately REVERSED, as the real created_at DESC order would be
+    h.existing_batch = [_prev(i, fps[i]) for i in (2, 1, 0)]
+
+    out, _ = _prepare(monkeypatch, THREE, UNIQUE3, h)
+
+    # every item must be paired with the package that actually carries its
+    # dialogue — not with whatever the listing happened to return first
+    for item in out["items"]:
+        assert item["workspace_generation_package_id"] == f"wgp_prev_{item['item_index']}"
+        assert item["dialogue_fingerprint"] == fps[item["item_index"]]
+    assert out["package_ids"] == ["wgp_prev_0", "wgp_prev_1", "wgp_prev_2"]
+
+
+def test_reuse_fails_closed_when_a_package_lacks_bulk_identity(monkeypatch):
+    """Without item_index the pairing is unprovable — refuse, never guess."""
+    h = _Harness()
+    plan, _ = _prepare(monkeypatch, THREE, UNIQUE3)
+    fps = [i["dialogue_fingerprint"] for i in plan["items"]]
+    h.existing_batch = [_prev(0, fps[0]), _prev(1, fps[1]),
+                        {"workspace_generation_package_id": "wgp_orphan",
+                         "production_run_id": "prun_prev"}]
+    with pytest.raises(ValueError, match="BULK_REUSE_IDENTITY_MISSING:wgp_orphan"):
+        _prepare(monkeypatch, THREE, UNIQUE3, h)
+
+
+def test_reuse_fails_closed_on_an_incomplete_batch(monkeypatch):
+    """A batch missing an item cannot satisfy the plan — refuse."""
+    h = _Harness()
+    plan, _ = _prepare(monkeypatch, THREE, UNIQUE3)
+    fps = [i["dialogue_fingerprint"] for i in plan["items"]]
+    h.existing_batch = [_prev(0, fps[0]), _prev(1, fps[1])]   # item 2 absent
+    with pytest.raises(ValueError, match=r"BULK_REUSE_INCOMPLETE_BATCH:missing_item_indexes=\[2\]"):
+        _prepare(monkeypatch, THREE, UNIQUE3, h)
 
 
 # ── credit / provider contract ───────────────────────────────────────────────
