@@ -635,7 +635,15 @@ def test_bulk_prepare_advances_rotation_usage_per_variant(monkeypatch):
 
 
 def test_ledger_duplicate_fails_closed_before_any_create(monkeypatch):
-    """Already-produced dialogue is refused BEFORE a single package exists."""
+    """Already-produced dialogue is refused BEFORE a single package exists.
+
+    B-12 moved the FIRST line of defense into the plan itself: the ledger-aware
+    preview skips burned dialogue at selection time, so with a 3-variant pool a
+    known burn now surfaces as a plan-level refusal (pool wraps -> duplicate ->
+    PREVIEW_NOT_UNIQUE / DIALOGUE_POOL_EXHAUSTED), not as the prepare gate.
+    Either way the invariant this test exists for holds: NOTHING is created,
+    approved, or enqueued when the dialogue is already in the ledger.
+    """
     _, h1 = _prepare(monkeypatch, THREE, UNIQUE3)
     burned = h1.combos[0]["fingerprint"]
 
@@ -644,9 +652,49 @@ def test_ledger_duplicate_fails_closed_before_any_create(monkeypatch):
     with pytest.raises(ValueError) as ei:
         _prepare(monkeypatch, THREE, UNIQUE3, h2)
     msg = str(ei.value)
+    assert (
+        "BULK_DUPLICATE_COMBINATION" in msg
+        or "PREVIEW_NOT_UNIQUE" in msg
+        or "DIALOGUE_POOL_EXHAUSTED" in msg
+    ), msg
+    assert h2.created == [], "a package was created despite a known duplicate"
+    assert h2.approved == []
+
+
+def test_ledger_race_between_plan_and_prepare_still_fails_closed(monkeypatch):
+    """The prepare pre-check remains the SECOND, independent chokepoint.
+
+    B-12's plan-time filter cannot see a burn that lands AFTER the plan was
+    made (two operators, or a batch run finishing in between). Simulate that
+    race: the ledger is clean while the plan compiles, then the fingerprint is
+    burned before prepare's pre-check reads it — prepare must refuse with
+    BULK_DUPLICATE_COMBINATION and created_before_failure=0.
+    """
+    _, h1 = _prepare(monkeypatch, THREE, UNIQUE3)
+    burned = h1.combos[0]["fingerprint"]
+
+    h2 = _install(monkeypatch, THREE, UNIQUE3, _Harness())
+    calls = {"n": 0}
+
+    async def _race(fp):
+        # Plan-time filter passes (ledger clean); the burn lands only once
+        # every plan-time candidate check has completed.
+        calls["n"] += 1
+        if calls["n"] > len(THREE):
+            h2.ledger_fps.add(burned)
+        return fp in h2.ledger_fps
+
+    monkeypatch.setattr(copy_rotation_service, "combination_already_used", _race)
+
+    with pytest.raises(ValueError) as ei:
+        asyncio.run(svc.prepare_bulk_fanout_packages(
+            product_id="P", logical_mode="T2V", source_mode="T2V",
+            quantity=len(THREE), model="Veo 3.1 - Lite", aspect="9:16",
+        ))
+    msg = str(ei.value)
     assert "BULK_DUPLICATE_COMBINATION" in msg
     assert "created_before_failure=0" in msg
-    assert h2.created == [], "a package was created despite a known duplicate"
+    assert h2.created == []
     assert h2.approved == []
     assert [r for r in h2.runs if "send" in r] == []
 
