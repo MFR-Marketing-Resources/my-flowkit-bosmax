@@ -210,14 +210,32 @@ export const LIVE_F2V_CONFIRM_PHRASE = "AUTHORIZE_ONE_F2V_LIVE_RUN";
 export const LIVE_GATE_ONE_SERIAL_I2V = "ONE_SERIAL_I2V";
 export const LIVE_I2V_CONFIRM_PHRASE = "AUTHORIZE_ONE_I2V_LIVE_RUN";
 
-export interface LiveGateOptions {
-	live_gate:
-		| typeof LIVE_GATE_ONE_SERIAL_T2V
-		| typeof LIVE_GATE_ONE_SERIAL_F2V
-		| typeof LIVE_GATE_ONE_SERIAL_I2V;
-	confirm_phrase: string;
-	expect_package_id: string;
-}
+// Stage 2A itemized BULK fan-out lane. Its phrase is DISTINCT from every
+// single-run phrase, so a single-run confirmation can never be replayed as a
+// bulk authorization. The server gate additionally stops at the Stage 3 credit
+// boundary — bulk live cannot spend credit until it is runtime-certified.
+export const LIVE_GATE_BULK_FANOUT = "BULK_FANOUT";
+export const LIVE_BULK_CONFIRM_PHRASE = "AUTHORIZE_BULK_FANOUT_LIVE_RUN";
+
+/** One-serial lanes keep `expect_package_id` REQUIRED; the bulk lane instead
+ *  requires the pinned itemized set. A discriminated union so neither lane can
+ *  be called with the other's shape. */
+export type LiveGateOptions =
+	| {
+			live_gate:
+				| typeof LIVE_GATE_ONE_SERIAL_T2V
+				| typeof LIVE_GATE_ONE_SERIAL_F2V
+				| typeof LIVE_GATE_ONE_SERIAL_I2V;
+			confirm_phrase: string;
+			expect_package_id: string;
+	  }
+	| {
+			live_gate: typeof LIVE_GATE_BULK_FANOUT;
+			confirm_phrase: string;
+			/** Pin the EXACT itemized set that was previewed. */
+			expect_package_ids: string[];
+			expect_dialogue_fingerprints: string[];
+	  };
 
 // ─── Video model standard ────────────────────────────────────
 

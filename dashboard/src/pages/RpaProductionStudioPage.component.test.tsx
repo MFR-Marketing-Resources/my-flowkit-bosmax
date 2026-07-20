@@ -63,6 +63,7 @@ vi.mock("../api/productionQueue", () => ({
 const createWorkspaceExecutionPackage = vi.fn();
 const previewQuantityCopyPlans = vi.fn();
 const fetchCopyPoolReadiness = vi.fn();
+const fetchBulkFanoutPlan = vi.fn();
 const planVideoJob = vi.fn();
 const authorizeVideoJob = vi.fn();
 const startVideoJob = vi.fn();
@@ -72,6 +73,7 @@ vi.mock("../api/workspacePackages", () => ({
 	createWorkspaceExecutionPackage: (...a: unknown[]) => createWorkspaceExecutionPackage(...a),
 	previewQuantityCopyPlans: (...a: unknown[]) => previewQuantityCopyPlans(...a),
 	fetchCopyPoolReadiness: (...a: unknown[]) => fetchCopyPoolReadiness(...a),
+	fetchBulkFanoutPlan: (...a: unknown[]) => fetchBulkFanoutPlan(...a),
 }));
 vi.mock("../api/nativeExtend", () => ({
 	planVideoJob: (...a: unknown[]) => planVideoJob(...a),
@@ -96,8 +98,30 @@ const READY_POOL = {
 	next_action: null, credit: "NONE", provider_calls: 0, flow_calls: 0,
 };
 
+/** Stage 2A itemized fan-out plan: N separate intents, all prerequisites proven,
+ *  yet live still refused at the Stage 3 credit boundary. */
+const BULK_PLAN = {
+	product_id: "prod-1", quantity_requested: 3, quantity_max: 5,
+	logical_mode: "T2V", generation_mode: "SINGLE", planned_intent_count: 3,
+	intents: [0, 1, 2].map((i) => ({
+		item_index: i, copy_variant_id: `cs${i}`, variation_salt: `v${i + 1}`,
+		dialogue_fingerprint: `fp${i}`, hook: `hook ${i}`, dialogue_summary: `line ${i}`,
+		seam_voice: null, logical_mode: "T2V", source_mode: "T2V", generation_mode: "SINGLE",
+		workspace_generation_package_id: null, production_run_id: null, production_job_id: null,
+		item_status: "PLANNED", compile_error: null,
+		credit_state: "NOT_AUTHORIZED", credit_warning: "This item spends provider credit when fired.",
+	})),
+	bulk_plan_fingerprint: "bulkfp", copy_pool_readiness_status: "READY",
+	dialogue_uniqueness_status: "UNIQUE", blockers: [], bulk_authorizable: true,
+	live_bulk_status: "Bulk live fan-out not certified yet",
+	live_bulk_stage: "STAGE_3_RUNTIME_CERTIFICATION_REQUIRED",
+	required_confirm_phrase: "AUTHORIZE_BULK_FANOUT_LIVE_RUN",
+	credit: "NONE", provider_calls: 0, flow_calls: 0,
+};
+
 function primeHappyPath(report: unknown = GREEN, items: unknown[] = []) {
 	fetchCopyPoolReadiness.mockResolvedValue(READY_POOL);
+	fetchBulkFanoutPlan.mockResolvedValue(BULK_PLAN);
 	fetchProductCatalog.mockResolvedValue({ items: [PRODUCT, REF_PRODUCT] });
 	searchProducts.mockResolvedValue({ items: [PRODUCT] });
 	fetchVideoModels.mockResolvedValue({
@@ -398,6 +422,87 @@ describe("Production Studio — Stage 1 quantity preview (credit-free, live stay
 		expect(screen.getByTestId("studio-action-prepare")).toBeDisabled();
 		expect(screen.getByTestId("studio-live-bulk-blocked")).toHaveAttribute("data-blocked", "true");
 		expect(createProductionRun).not.toHaveBeenCalled();
+	});
+
+	it("READY + UNIQUE preview plans N itemized intents with per-item identity", async () => {
+		primeHappyPath();
+		previewQuantityCopyPlans.mockResolvedValue(UNIQUE_PREVIEW);
+		renderPage();
+		await pickProduct();
+		await setQuantity(3);
+		await click("studio-action-preview");
+		const section = await screen.findByTestId("studio-bulk-fanout-section");
+		expect(section).toHaveAttribute("data-intent-count", "3");
+		expect(section).toHaveAttribute("data-authorizable", "true");
+		const intents = screen.getAllByTestId("studio-bulk-intent");
+		expect(intents).toHaveLength(3);
+		expect(new Set(intents.map((i) => i.getAttribute("data-fingerprint"))).size).toBe(3);
+		expect(new Set(intents.map((i) => i.getAttribute("data-variant"))).size).toBe(3);
+		for (const i of intents) {
+			expect(i).toHaveAttribute("data-credit", "NOT_AUTHORIZED");
+			expect(i).toHaveAttribute("data-status", "PLANNED");
+		}
+		expect(fetchBulkFanoutPlan).toHaveBeenCalledWith(expect.objectContaining({ quantity: 3 }));
+	});
+
+	it("an authorizable bulk plan STILL does not unlock live (credit boundary holds)", async () => {
+		primeHappyPath();
+		previewQuantityCopyPlans.mockResolvedValue(UNIQUE_PREVIEW);
+		renderPage();
+		await pickProduct();
+		await setQuantity(3);
+		await click("studio-action-preview");
+		await screen.findByTestId("studio-bulk-fanout-section");
+		expect(screen.getByTestId("studio-bulk-live-gate-state")).toHaveAttribute("data-live-blocked", "true");
+		expect(screen.getByTestId("studio-live-gate")).toHaveAttribute("data-gate-open", "false");
+		expect(screen.getByTestId("studio-action-go-live")).toBeDisabled();
+		expect(screen.getByTestId("studio-action-prepare")).toBeDisabled();
+		expect(screen.getByTestId("studio-live-bulk-blocked")).toHaveAttribute("data-blocked", "true");
+		expect(createProductionRun).not.toHaveBeenCalled();
+		expect(startProductionRun).not.toHaveBeenCalled();
+	});
+
+	it("does NOT plan a fan-out when the pool is short (blocked before preview)", async () => {
+		primeHappyPath();
+		fetchCopyPoolReadiness.mockResolvedValue({
+			...READY_POOL, unique_dialogue_count: 2, shortage_count: 1,
+			readiness_status: "COPY_POOL_SHORTAGE",
+		});
+		renderPage();
+		await pickProduct();
+		await setQuantity(3);
+		await click("studio-action-preview");
+		await screen.findByTestId("studio-copy-pool-readiness");
+		expect(previewQuantityCopyPlans).not.toHaveBeenCalled();
+		expect(fetchBulkFanoutPlan).not.toHaveBeenCalled();
+		expect(screen.queryByTestId("studio-bulk-fanout-section")).toBeNull();
+	});
+
+	it("does NOT plan a fan-out when the preview is duplicate-blocked", async () => {
+		primeHappyPath();
+		previewQuantityCopyPlans.mockResolvedValue({
+			...UNIQUE_PREVIEW,
+			dialogue_uniqueness_status: "DUPLICATE_DIALOGUE_BLOCKED",
+			blockers: ["DUPLICATE_DIALOGUE_ACROSS_ITEMS:0,1"], preview_ready: false,
+		});
+		renderPage();
+		await pickProduct();
+		await setQuantity(3);
+		await click("studio-action-preview");
+		await screen.findByTestId("studio-quantity-preview");
+		expect(fetchBulkFanoutPlan).not.toHaveBeenCalled();
+		expect(screen.queryByTestId("studio-bulk-fanout-section")).toBeNull();
+	});
+
+	it("quantity 1 plans no bulk fan-out at all", async () => {
+		primeHappyPath();
+		previewQuantityCopyPlans.mockResolvedValue({ ...UNIQUE_PREVIEW, quantity_requested: 1 });
+		renderPage();
+		await pickProduct();
+		await click("studio-action-preview");
+		await screen.findByTestId("studio-quantity-preview");
+		expect(fetchBulkFanoutPlan).not.toHaveBeenCalled();
+		expect(screen.queryByTestId("studio-bulk-fanout-section")).toBeNull();
 	});
 
 	it("quantity 1 keeps the single-serial live path (no bulk-blocked note)", async () => {
