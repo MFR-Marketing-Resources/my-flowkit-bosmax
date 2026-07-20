@@ -340,10 +340,36 @@ def presenter_prose(profile: dict) -> str:
     )
 
 
+# Reusable avatar references must keep empty hands so downstream F2V/I2V/IMG
+# product-composite generation can place a real product without prop confusion.
+AVATAR_FREE_HAND_REFERENCE_LAW = (
+    "AVATAR REFERENCE FREE-HAND LAW: This is a reusable identity reference image. "
+    "Hands must be empty and free — no held, touched, carried, or presented objects "
+    "(no cup, bottle, phone, book, food, bag, product, prop, package, label, tool, "
+    "or container). Keep the hand area clean so future product-composite generation "
+    "can place a real product without prop confusion, wrong scale, wrong grip, or "
+    "product replacement."
+)
+
+
+def _with_free_hand_law(prompt: str) -> str:
+    """Append the free-hand law once (idempotent for already-hardened PromptV1)."""
+    text = str(prompt or "").strip()
+    if not text:
+        return text
+    if "AVATAR REFERENCE FREE-HAND LAW" in text.upper():
+        return text
+    return f"{text} {AVATAR_FREE_HAND_REFERENCE_LAW}"
+
+
 def get_generation_prompt(avatar_code: str) -> dict:
     """Server-side only: the avatar's PromptV1 (full image-generation prompt)
     plus identity fields, for the IMG-lane avatar image factory. Raw prompt
-    text never reaches the dashboard — only the job it feeds."""
+    text never reaches the dashboard — only the job it feeds.
+
+    Runtime-hardens legacy CSV PromptV1 rows with the free-hand law so existing
+    avatar pool entries stay protected without manual CSV surgery.
+    """
     wanted = str(avatar_code or "").strip().upper()
     for row in _load_pool():
         if str(row.get("AvatarCode", "")).strip().upper() == wanted:
@@ -353,7 +379,7 @@ def get_generation_prompt(avatar_code: str) -> dict:
             return {
                 "avatar_code": str(row.get("AvatarCode")).strip(),
                 "character_name": str(row.get("CharacterName") or "").strip(),
-                "prompt": prompt,
+                "prompt": _with_free_hand_law(prompt),
             }
     raise ValueError(f"AVATAR_NOT_FOUND:{avatar_code}")
 
@@ -573,6 +599,7 @@ def build_avatar_prompt_v1(profile: dict) -> str:
         f"Environment: {environment or 'clean commercial'}, "
         f"{lighting or 'balanced commercial'} lighting. "
         f"Camera framing: {camera or 'Waist-up'}, clear face. "
+        f"{AVATAR_FREE_HAND_REFERENCE_LAW} "
         "Safety: Do not generate nudity, sexual content, gore, violence, hate "
         "symbols, illegal activity, or any harmful or unsafe depiction. Keep the "
         "character fully clothed, respectful, and suitable for general audience "

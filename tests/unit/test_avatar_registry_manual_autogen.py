@@ -112,6 +112,9 @@ def test_build_avatar_prompt_v1_mirrors_seed_and_flags_hijab():
     assert "Hair: Long straight" in prompt
     assert "hijab" in prompt.lower()
     assert "general audience and commercial use" in prompt
+    assert "AVATAR REFERENCE FREE-HAND LAW" in prompt
+    assert "empty and free" in prompt.lower()
+    assert "no cup, bottle, phone" in prompt.lower()
 
     # no hijab → no hijab mention
     no_hijab = ar.build_avatar_prompt_v1({
@@ -124,6 +127,39 @@ def test_build_avatar_prompt_v1_mirrors_seed_and_flags_hijab():
         "hijab": False,
     })
     assert "hijab" not in no_hijab.lower()
+    assert "AVATAR REFERENCE FREE-HAND LAW" in no_hijab
+
+
+def test_get_generation_prompt_hardens_legacy_promptv1_with_free_hand_law(tmp_pool):
+    """Existing CSV PromptV1 rows without free-hand law are protected at runtime."""
+    legacy = (
+        "Create a photorealistic avatar reference image. Identity: Legacy, "
+        "Code: BOS_F_LEGACY_FREEHAND_01. Demographic: Female."
+    )
+    ar.add_avatar({
+        "CharacterName": "Legacy",
+        "AvatarCode": "BOS_F_LEGACY_FREEHAND_01",
+        "SkinTone": "Deep dark",
+        "HairStyle": "Long wavy",
+        "Wardrobe": "Neon streetwear",
+        "Expression": "Confident",
+        "PromptV1": legacy,
+        "approved_flag": "TRUE",
+        "usage_tags": "test|ugc",
+    })
+    identity = ar.get_generation_prompt("BOS_F_LEGACY_FREEHAND_01")
+    assert identity["prompt"].startswith(legacy)
+    assert "AVATAR REFERENCE FREE-HAND LAW" in identity["prompt"]
+    assert "empty and free" in identity["prompt"].lower()
+    # Idempotent: already-hardened PromptV1 is not double-appended.
+    hardened = ar._with_free_hand_law(identity["prompt"])
+    assert hardened.count("AVATAR REFERENCE FREE-HAND LAW") == 1
+
+
+def test_get_generation_prompt_pool_seed_includes_free_hand_law():
+    identity = ar.get_generation_prompt("BOS_F_ALYA_01")
+    assert "AVATAR REFERENCE FREE-HAND LAW" in identity["prompt"]
+    assert "no cup, bottle, phone" in identity["prompt"].lower()
 
 
 def test_delete_avatar_removes_row(tmp_pool):
@@ -149,12 +185,17 @@ def test_delete_avatar_unknown_code_fails_closed(tmp_pool):
 # ── Standardization: controlled vocabulary + persona helpers ────────────────
 
 def test_load_vocab_has_all_fields():
+    ar._vocab_doc.cache_clear()
+    ar.load_vocab.cache_clear()
     vocab = ar.load_vocab()
     for field in ("skin_tone", "hair_style", "wardrobe", "expression",
                   "environment", "lighting", "camera", "usage_tags"):
         assert vocab.get(field), f"missing vocab field {field}"
     assert "Tan SEA" in vocab["skin_tone"]
     assert "Waist-up" in vocab["camera"]
+    assert "Close portrait" in vocab["camera"]
+    assert "Close product hold" not in vocab["camera"]
+    assert not any("product hold" in str(v).lower() for v in vocab["camera"])
 
 
 def test_snap_to_vocab_case_insensitive():

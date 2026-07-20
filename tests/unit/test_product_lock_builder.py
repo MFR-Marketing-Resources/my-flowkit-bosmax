@@ -547,13 +547,15 @@ def test_video_section2_lines_include_hand_anatomy():
 
 def test_img_lane_has_no_hand_lock():
     """IMG keeps its own library hand negatives — no HAND ANATOMY line; but it DOES
-    carry the all-out no-modification + scale-anchor locks (owner-directed)."""
+    carry the all-out no-modification + scale-anchor + object-authority + handling locks."""
     lock = plb.build_product_lock(MW25, is_video=False, has_product_reference=True)
     assert lock["hand_anatomy_lock"] == ""
     lines = plb.section_2_lock_lines(MW25, is_video=False, has_product_reference=True)
     assert not any("HAND ANATOMY" in line for line in lines)
-    # Original four + the two new all-lane locks.
-    assert len(lines) == 6
+    # Identity/geometry/scale/negative + no-mod + scale-anchor + object-authority + handling.
+    assert len(lines) == 8
+    assert any(line.startswith("OBJECT-IN-HAND AUTHORITY:") for line in lines)
+    assert any(line.startswith("PRODUCT HANDLING LOCK:") for line in lines)
 
 
 # ── NO-MODIFICATION + SCALE ANCHOR — the all-out product-truth locks ──────
@@ -582,7 +584,77 @@ def test_scale_anchor_lock_present_in_every_lane(is_video):
     lock = plb.build_product_lock(MW25, is_video=is_video, has_product_reference=True)
     sal = lock["scale_anchor_lock"]
     assert sal.startswith("PRODUCT SCALE ANCHOR:")
-    for kw in ("chest level", "never drift toward the camera", "NEVER by enlarging"):
+    for kw in ("chest level", "never drift toward the camera", "NEVER by enlarging",
+               "angle, lighting, focus, and grip", "reshaping"):
         assert kw in sal, f"missing: {kw}"
     lines = plb.section_2_lock_lines(MW25, is_video=is_video, has_product_reference=True)
     assert any(line.startswith("PRODUCT SCALE ANCHOR:") for line in lines)
+
+
+@pytest.mark.parametrize("is_video", [True, False])
+def test_object_in_hand_authority_outranks_avatar_reference(is_video):
+    lock = plb.build_product_lock(MW25, is_video=is_video, has_product_reference=True)
+    auth = lock["object_authority_lock"]
+    assert auth.startswith("OBJECT-IN-HAND AUTHORITY:")
+    for kw in (
+        "product reference outranks the avatar reference",
+        "object-in-hand identity",
+        "product scale",
+        "label text",
+        "geometry",
+        "packaging truth",
+        "face, hair, wardrobe",
+    ):
+        assert kw in auth, f"missing: {kw}"
+    s2 = "\n".join(
+        plb.section_2_lock_lines(MW25, is_video=is_video, has_product_reference=True)
+    )
+    assert "OBJECT-IN-HAND AUTHORITY:" in s2
+    assert "product reference outranks the avatar reference" in s2
+
+
+@pytest.mark.parametrize("is_video", [True, False])
+def test_mwtcb_handling_lock_compact_herbal_oil_grip(is_video):
+    lock = plb.build_product_lock(MW25, is_video=is_video, has_product_reference=True)
+    handling = lock["handling_lock"]
+    assert handling.startswith("PRODUCT HANDLING LOCK:")
+    for kw in (
+        "Compact herbal-oil bottle",
+        "two-finger side pinch",
+        "palm-cupped hold",
+        "label facing camera",
+        "fingers clear of the label",
+        "small relative to an adult hand",
+        "angle, lighting, focus, and grip",
+        "never by enlarging or reshaping",
+    ):
+        assert kw in handling, f"missing: {kw}"
+    s2 = "\n".join(
+        plb.section_2_lock_lines(MW25, is_video=is_video, has_product_reference=True)
+    )
+    assert "PRODUCT HANDLING LOCK:" in s2
+    assert "two-finger side pinch" in s2
+
+
+def test_product_holding_final_locks_complete_set():
+    """Engine-facing SECTION 2 carries full product truth + physics handling set."""
+    lines = plb.section_2_lock_lines(MW25, is_video=True, has_product_reference=True)
+    joined = "\n".join(lines)
+    for marker in (
+        "PRODUCT IDENTITY LOCK:",
+        "LABEL TEXT LOCK:",
+        "PRODUCT GEOMETRY LOCK:",
+        "PRODUCT SCALE LOCK:",
+        "PRODUCT NEGATIVE MORPH RULES:",
+        "PRODUCT NO-MODIFICATION LOCK:",
+        "PRODUCT SCALE ANCHOR:",
+        "OBJECT-IN-HAND AUTHORITY:",
+        "PRODUCT HANDLING LOCK:",
+        "HAND ANATOMY LOCK:",
+    ):
+        assert marker in joined, f"missing final lock: {marker}"
+    s3 = "\n".join(
+        plb.section_3_lock_lines(MW25, is_video=True, has_product_reference=True)
+    )
+    assert "PRODUCT REFERENCE LOCK:" in s3
+    assert "FRAME PERSISTENCE LOCK:" in s3

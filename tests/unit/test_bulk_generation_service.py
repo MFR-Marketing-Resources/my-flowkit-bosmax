@@ -280,3 +280,37 @@ async def test_live_video_loop_uses_build_execution_payload(monkeypatch):
     await svc._live_video_loop("run-v")
     assert any(c[0] == "build" for c in calls)
     assert any(c[0] == "fire" for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_avatar_bulk_prompt_snapshot_includes_free_hand_law(monkeypatch):
+    """Bulk avatar create must snapshot the runtime-hardened free-hand prompt."""
+    created_items: list[dict] = []
+
+    async def fake_create_bulk_generation_item(bulk_item_id, **kwargs):
+        created_items.append({"bulk_item_id": bulk_item_id, **kwargs})
+        return bulk_item_id
+
+    async def fake_create_bulk_generation_run(bulk_run_id, **kwargs):
+        return {"bulk_run_id": bulk_run_id, **kwargs}
+
+    monkeypatch.setattr(svc.crud, "create_bulk_generation_run", fake_create_bulk_generation_run)
+    monkeypatch.setattr(svc.crud, "create_bulk_generation_item", fake_create_bulk_generation_item)
+    monkeypatch.setattr(svc.crud, "list_creative_assets", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        svc.crud,
+        "get_bulk_generation_run",
+        AsyncMock(return_value={"bulk_run_id": "x", "status": "PENDING"}),
+    )
+
+    # Use the real get_generation_prompt (not mocked) so free-hand hardening is proven.
+    result = await svc.create_avatar_image_bulk_run(
+        ["BOS_F_ALYA_01"],
+        skip_already_generated=False,
+    )
+    assert result["total_expected"] == 1
+    assert len(created_items) == 1
+    snap = created_items[0]["prompt_snapshot"] or ""
+    assert "AVATAR REFERENCE FREE-HAND LAW" in snap
+    assert "empty and free" in snap.lower()
+    assert "no cup, bottle, phone" in snap.lower()

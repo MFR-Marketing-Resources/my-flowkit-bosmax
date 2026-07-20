@@ -1158,6 +1158,52 @@ def test_legacy_entrypoint_delegates_and_uncaps_blocks():
     assert len(multi["prompt_blocks"]) == 4, "the 2-block cap must be gone"
 
 
+def test_mwtcb_avatar_product_final_engine_prompt_carries_scale_truth_and_outrank():
+    """Final HYBRID engine prompt must carry product locks + object-in-hand authority."""
+    product = {
+        "id": "prod-mwtcb",
+        "name": "Minyak Warisan Tok Cap Burung 25ml",
+        "product_display_name": "Minyak Warisan Tok Cap Burung 25ml",
+        "category": "Health & Personal Care",
+        "type": "Minyak Angin",
+        "media_id": "media-mwtcb",
+    }
+    result = cpc.compile_prompt_set(
+        source_mode="HYBRID",
+        engine="GOOGLE_FLOW",
+        duration_seconds=8,
+        product=product,
+        copy=COPY,
+        avatar_id="BOS_F_ALYA_01",
+        target_language="BM_MS",
+        handling_notes=(
+            "Physics DNA: TRADITIONAL_HERBAL_OIL_BOTTLE. Scale: SMALL_OBJECT. "
+            "Recommended grip: two-finger side pinch or palm-cupped hold with the label facing camera."
+        ),
+    )
+    text = result["blocks"][0]["engine_prompt_text"]
+    for marker in (
+        "PRODUCT IDENTITY LOCK:",
+        "LABEL TEXT LOCK:",
+        "PRODUCT GEOMETRY LOCK:",
+        "PRODUCT SCALE LOCK:",
+        "PRODUCT NEGATIVE MORPH RULES:",
+        "PRODUCT REFERENCE LOCK:",
+        "PRODUCT SCALE ANCHOR:",
+        "OBJECT-IN-HAND AUTHORITY:",
+        "PRODUCT HANDLING LOCK:",
+        "product reference outranks the avatar reference",
+        "two-finger side pinch",
+        "angle, lighting, focus, and grip",
+        "Compact herbal-oil bottle",
+    ):
+        assert marker in text, f"missing in final engine prompt: {marker}"
+    # Physics DNA handling_notes also propagate into SECTION 2.
+    assert "TRADITIONAL_HERBAL_OIL_BOTTLE" in text or "Physics DNA" in text
+
+
+
+
 def test_prompt_intel_audit_minyak_warisan_maps_to_wellness_not_beauty():
     product = {
         "id": "prod-minyak",
