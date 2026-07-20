@@ -150,6 +150,54 @@ export async function previewQuantityCopyPlans(input: {
 	return postAPI<QuantityPreviewResult>("/api/workspace/quantity-preview", input);
 }
 
+// ── Approved copy-pool readiness (credit-free; read-only) ──
+// A copy set stores copy INGREDIENTS, not dialogue — dialogue only exists once the
+// compiler renders SECTION 6. So approved_copy_count alone never proves N unique
+// items are possible; unique_dialogue_count is the number that matters.
+export interface CopyPoolDuplicateGroup {
+	dialogue_fingerprint: string;
+	copy_set_ids: string[];
+}
+
+export type CopyPoolReadinessStatus =
+	| "READY"
+	| "COPY_POOL_SHORTAGE"
+	| "NO_APPROVED_COPY_AVAILABLE";
+
+export interface CopyPoolReadinessResult {
+	product_id: string;
+	quantity_requested: number;
+	quantity_max: number;
+	approved_copy_count: number;
+	unique_dialogue_count: number;
+	shortage_count: number;
+	readiness_status: CopyPoolReadinessStatus;
+	duplicate_fingerprint_groups: CopyPoolDuplicateGroup[];
+	scanned_copy_set_count: number;
+	pool_scan_capped: boolean;
+	compile_errors: string[];
+	next_action: string | null;
+	credit: string;
+	provider_calls: number;
+	flow_calls: number;
+}
+
+/** Read-only check of whether a product can supply N UNIQUE approved dialogues.
+ *  Compiles approved copy sets to count distinct dialogue. NEVER generates,
+ *  approves, enqueues or spends credit. */
+export async function fetchCopyPoolReadiness(input: {
+	product_id: string;
+	mode: WorkspaceMode;
+	source_mode?: string | null;
+	generation_mode?: PromptGenerationMode;
+	duration_seconds?: number;
+	requested_total_duration_seconds?: number | null;
+	quantity: number;
+	target_language?: PromptTargetLanguage;
+}): Promise<CopyPoolReadinessResult> {
+	return postAPI<CopyPoolReadinessResult>("/api/workspace/copy-pool-readiness", input);
+}
+
 export async function fetchWorkspaceExecutionPackageHistory(
 	productId?: string,
 	mode?: WorkspaceMode,

@@ -1610,6 +1610,138 @@ def _evaluate_preview_uniqueness(items: list[dict]) -> dict:
     return {"status": status, "blockers": blockers, "duplicate_groups": duplicate_groups}
 
 
+# Bound on how many approved copy sets a single readiness scan will compile.
+# Readiness early-exits as soon as it has found `quantity` distinct dialogues, so
+# this cap only bites on genuinely duplicate-heavy pools; it keeps one operator
+# click from compiling an unbounded pool. Compilation is credit-free either way.
+COPY_POOL_SCAN_CAP = 12
+
+READINESS_READY = "READY"
+READINESS_SHORTAGE = "COPY_POOL_SHORTAGE"
+READINESS_NO_APPROVED = "NO_APPROVED_COPY_AVAILABLE"
+
+
+async def evaluate_copy_pool_readiness(
+    *,
+    product_id: str,
+    logical_mode: str,
+    source_mode: str | None = None,
+    generation_mode: str = "SINGLE",
+    duration_seconds: int = 8,
+    requested_total_duration_seconds: int | None = None,
+    quantity: int = 1,
+    target_language: str = "BM_MS",
+) -> dict:
+    """Can this product supply ``quantity`` UNIQUE approved dialogues? (credit-free)
+
+    A copy set stores copy *ingredients* (angle/hook/subhook/usp/cta) — there is no
+    dialogue column anywhere on ``copy_set``. Dialogue only exists once the canonical
+    compiler renders SECTION 6, so "N unique dialogues available" is NOT answerable
+    by counting approved rows: two distinct approved copy sets can compile to the
+    same dialogue. This walks the rotation-eligible pool in rotation order, compiles
+    each candidate (ZERO provider calls, ZERO Flow calls, ZERO DB writes, ZERO
+    credit) and counts DISTINCT dialogue fingerprints.
+
+    Reports the shortage instead of hiding it; it never approves, never generates
+    and never relaxes the fail-closed uniqueness contract enforced by
+    ``_evaluate_preview_uniqueness`` at preview time.
+    """
+    import hashlib
+
+    from agent.services import batch_prompt_planner as _planner  # noqa: F401
+    from agent.services import copy_rotation_service as _rotation
+    from agent.services import workspace_execution_package_service as _wxp
+
+    mode = str(logical_mode or "").strip().upper()
+    n = int(quantity)
+    if n < 1 or n > QUANTITY_PREVIEW_MAX:
+        raise ValueError(f"QUANTITY_OUT_OF_RANGE:1..{QUANTITY_PREVIEW_MAX}")
+
+    is_extend = str(generation_mode or "").strip().upper() == "EXTEND"
+    engine_duration_target = "GOOGLE_FLOW" if is_extend else None
+
+    pool = await _rotation.list_eligible_copy_sets(product_id)
+    approved_copy_count = len(pool)
+
+    if not approved_copy_count:
+        return {
+            "product_id": product_id,
+            "quantity_requested": n,
+            "quantity_max": QUANTITY_PREVIEW_MAX,
+            "approved_copy_count": 0,
+            "unique_dialogue_count": 0,
+            "shortage_count": n,
+            "readiness_status": READINESS_NO_APPROVED,
+            "duplicate_fingerprint_groups": [],
+            "scanned_copy_set_count": 0,
+            "pool_scan_capped": False,
+            "compile_errors": [],
+            "next_action": "GENERATE_AND_APPROVE_COPY",
+            "credit": "NONE",
+            "provider_calls": 0,
+            "flow_calls": 0,
+        }
+
+    scan = pool[:COPY_POOL_SCAN_CAP]
+    by_fp: dict[str, list[str]] = {}
+    compile_errors: list[str] = []
+    scanned = 0
+
+    for row in scan:
+        cs_id = str(row.get("copy_set_id") or "")
+        scanned += 1
+        try:
+            compiled = await _wxp.compile_workspace_prompt_preview(
+                product_id=product_id,
+                mode=mode,
+                duration_seconds=int(duration_seconds),
+                generation_mode=generation_mode,
+                target_language=target_language,
+                source_mode=source_mode,
+                engine_duration_target=engine_duration_target,
+                requested_total_duration_seconds=requested_total_duration_seconds,
+                copy_set_id=cs_id,
+            )
+        except Exception as exc:  # a bad copy set blocks itself, never the report
+            compile_errors.append(f"{cs_id}:{type(exc).__name__}:{str(exc)[:80]}")
+            continue
+        norm = _norm_dialogue(_preview_dialogue_text(compiled))
+        if not norm:
+            compile_errors.append(f"{cs_id}:EMPTY_DIALOGUE")
+            continue
+        fp = hashlib.sha1(norm.encode("utf-8")).hexdigest()
+        by_fp.setdefault(fp, []).append(cs_id)
+        # Early exit: enough DISTINCT dialogue already proven for this quantity.
+        if len(by_fp) >= n:
+            break
+
+    unique_dialogue_count = len(by_fp)
+    shortage = max(0, n - unique_dialogue_count)
+    status = READINESS_READY if shortage == 0 else READINESS_SHORTAGE
+
+    return {
+        "product_id": product_id,
+        "quantity_requested": n,
+        "quantity_max": QUANTITY_PREVIEW_MAX,
+        "approved_copy_count": approved_copy_count,
+        "unique_dialogue_count": unique_dialogue_count,
+        "shortage_count": shortage,
+        "readiness_status": status,
+        "duplicate_fingerprint_groups": [
+            {"dialogue_fingerprint": fp, "copy_set_ids": ids}
+            for fp, ids in by_fp.items()
+            if len(ids) > 1
+        ],
+        "scanned_copy_set_count": scanned,
+        "pool_scan_capped": approved_copy_count > COPY_POOL_SCAN_CAP and shortage > 0,
+        "compile_errors": compile_errors,
+        "next_action": None if shortage == 0 else "GENERATE_AND_APPROVE_COPY",
+        "credit": "NONE",
+        "provider_calls": 0,
+        "flow_calls": 0,
+    }
+
+
 async def preview_quantity_copy_plans(
     *,
     product_id: str,

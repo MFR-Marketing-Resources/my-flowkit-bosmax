@@ -76,6 +76,17 @@ def _rotation_sort_key(row: dict):
     )
 
 
+async def list_eligible_copy_sets(product_id: str) -> list[dict]:
+    """The rotation-eligible approved pool, in deterministic rotation order.
+
+    ONE definition of "usable approved copy" shared by rotation and by copy-pool
+    readiness, so the readiness report can never disagree with what rotation will
+    actually hand out. Eligible = COPY_APPROVED, not archived, under REUSE_CAP.
+    """
+    rows = await crud.list_copy_sets_for_product(product_id)
+    return sorted((r for r in rows if _eligible(r)), key=_rotation_sort_key)
+
+
 async def select_rotation_copy_sets(product_id: str, count: int) -> dict[str, Any]:
     """Pick ``count`` approved copy sets for a batch, deterministically.
 
@@ -87,8 +98,7 @@ async def select_rotation_copy_sets(product_id: str, count: int) -> dict[str, An
     silent fallback to duplicate or unapproved copy).
     """
     count = max(1, int(count or 1))
-    rows = await crud.list_copy_sets_for_product(product_id)
-    pool = sorted((r for r in rows if _eligible(r)), key=_rotation_sort_key)
+    pool = await list_eligible_copy_sets(product_id)
     warnings: list[str] = []
     if not pool:
         return {

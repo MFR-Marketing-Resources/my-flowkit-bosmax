@@ -37,6 +37,7 @@ import {
 	Video,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { fetchProductCatalog, searchProducts } from "../api/products";
 import {
 	approvePackages,
@@ -70,7 +71,9 @@ import {
 } from "../api/nativeExtend";
 import {
 	createWorkspaceExecutionPackage,
+	fetchCopyPoolReadiness,
 	previewQuantityCopyPlans,
+	type CopyPoolReadinessResult,
 	type QuantityPreviewResult,
 } from "../api/workspacePackages";
 import type { Product, WorkspaceMode } from "../types";
@@ -218,6 +221,9 @@ export default function RpaProductionStudioPage() {
 	// ── Stage 1 quantity preview (credit-free; live stays single-serial) ──
 	const [quantity, setQuantity] = useState<number>(1);
 	const [previewResult, setPreviewResult] = useState<QuantityPreviewResult | null>(null);
+	// Approved copy-pool readiness, checked BEFORE every preview so a shortage is
+	// reported as an exact number + a seeding action, not as a bare uniqueness block.
+	const [poolReadiness, setPoolReadiness] = useState<CopyPoolReadinessResult | null>(null);
 	const [previewError, setPreviewError] = useState<string | null>(null);
 
 	// ── pipeline ──
@@ -328,29 +334,42 @@ export default function RpaProductionStudioPage() {
 		setExtendJob(null);
 		setPreviewResult(null);
 		setPreviewError(null);
+		setPoolReadiness(null);
 	}, []);
 
 	/** Stage 1 quantity preview — credit-free plan of N unique-copy variants.
 	 *  NEVER fires, approves, enqueues, or spends credit; the single-serial live
 	 *  path (createProductionRun count:1) is not touched. HYBRID rides the F2V
-	 *  transport (mode F2V + source_mode HYBRID), matching the live lane. */
+	 *  transport (mode F2V + source_mode HYBRID), matching the live lane.
+	 *
+	 *  Copy-pool readiness runs FIRST. A pool that cannot supply `quantity` unique
+	 *  approved dialogues stops here with an exact shortage + a seeding action,
+	 *  instead of spending the compile and returning a bare uniqueness block. Both
+	 *  calls are credit-free and read-only. */
 	const handlePreviewQuantity = async () => {
 		if (!selectedProduct) return;
 		const previewMode = (studioMode === "HYBRID" ? "F2V" : studioMode) as WorkspaceMode;
+		const copyPoolInput = {
+			product_id: selectedProduct.id,
+			mode: previewMode,
+			source_mode: activeProfile.sourceMode ?? null,
+			generation_mode: isExtend ? ("EXTEND" as const) : ("SINGLE" as const),
+			duration_seconds: isExtend ? maxSingle : duration,
+			requested_total_duration_seconds: isExtend ? duration : null,
+			quantity,
+			target_language: "BM_MS" as const,
+		};
 		setBusy("preview");
 		setPreviewError(null);
 		setPreviewResult(null);
+		setPoolReadiness(null);
 		try {
-			const result = await previewQuantityCopyPlans({
-				product_id: selectedProduct.id,
-				mode: previewMode,
-				source_mode: activeProfile.sourceMode ?? null,
-				generation_mode: isExtend ? "EXTEND" : "SINGLE",
-				duration_seconds: isExtend ? maxSingle : duration,
-				requested_total_duration_seconds: isExtend ? duration : null,
-				quantity,
-				target_language: "BM_MS",
-			});
+			const readiness = await fetchCopyPoolReadiness(copyPoolInput);
+			setPoolReadiness(readiness);
+			// Fail-closed: never preview against a pool that cannot supply N unique
+			// dialogues. The operator seeds + approves copy first.
+			if (readiness.readiness_status !== "READY") return;
+			const result = await previewQuantityCopyPlans(copyPoolInput);
 			setPreviewResult(result);
 		} catch (e) {
 			setPreviewError(e instanceof Error ? e.message : String(e));
@@ -1012,6 +1031,53 @@ export default function RpaProductionStudioPage() {
 
 			<section className="mb-6 rounded-xl border border-violet-500/30 bg-violet-500/5 p-4" data-testid="studio-quantity-preview-section">
 				<h2 className="mb-2 flex items-center gap-2 text-sm font-semibold text-violet-200"><Sparkles size={14} /> 4b · Quantity preview (credit-free · Stage 1)</h2>
+				{poolReadiness && (
+					<div
+						className={`mb-2 rounded-lg border p-3 text-[11px] ${
+							poolReadiness.readiness_status === "READY"
+								? "border-emerald-500/40 bg-emerald-500/10 text-emerald-100"
+								: "border-amber-500/40 bg-amber-500/10 text-amber-100"
+						}`}
+						data-testid="studio-copy-pool-readiness"
+						data-readiness={poolReadiness.readiness_status}
+						data-approved={String(poolReadiness.approved_copy_count)}
+						data-unique={String(poolReadiness.unique_dialogue_count)}
+						data-shortage={String(poolReadiness.shortage_count)}
+					>
+						<div>
+							Approved copy pool — approved <strong>{poolReadiness.approved_copy_count}</strong> ·
+							unique dialogue <strong data-testid="studio-copy-pool-unique">{poolReadiness.unique_dialogue_count}</strong> ·
+							needed <strong>{poolReadiness.quantity_requested}</strong>
+						</div>
+						{poolReadiness.readiness_status !== "READY" && (
+							<div className="mt-1" data-testid="studio-copy-pool-shortage">
+								<strong>
+									{poolReadiness.readiness_status === "NO_APPROVED_COPY_AVAILABLE"
+										? "No approved copy for this product yet."
+										: `Short by ${poolReadiness.shortage_count} unique dialogue${poolReadiness.shortage_count === 1 ? "" : "s"}.`}
+								</strong>{" "}
+								Preview is blocked until the pool can supply {poolReadiness.quantity_requested} unique
+								approved dialogues. Generate candidates and approve them, then preview again —
+								no credit is spent either way.
+								<div className="mt-1.5">
+									<Link
+										to={`/creative/copy-registry?product_id=${encodeURIComponent(poolReadiness.product_id)}`}
+										className="inline-block rounded-md border border-amber-400/50 bg-amber-500/20 px-2 py-1 font-semibold text-amber-50 hover:bg-amber-500/30"
+										data-testid="studio-copy-pool-seed-cta"
+									>
+										Open Copy Registry to generate + approve copy →
+									</Link>
+								</div>
+							</div>
+						)}
+						{poolReadiness.pool_scan_capped && (
+							<div className="mt-1 text-[10px] opacity-80" data-testid="studio-copy-pool-capped">
+								Scanned the first {poolReadiness.scanned_copy_set_count} approved sets of{" "}
+								{poolReadiness.approved_copy_count}; deeper duplicates were not scanned.
+							</div>
+						)}
+					</div>
+				)}
 				{previewError && (
 					<div className="mb-2 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-[11px] text-red-200" data-testid="studio-quantity-preview-error">
 						Preview failed — nothing fired, no credit: {previewError}
