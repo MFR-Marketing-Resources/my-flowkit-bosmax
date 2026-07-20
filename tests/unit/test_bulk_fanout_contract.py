@@ -158,12 +158,23 @@ def test_plan_quantity_out_of_range_fails_closed(monkeypatch):
 RUN = {"production_run_id": "prun_1", "config_json": {"last_dry_run_report": {"ready": 3, "blocked": 0}}}
 
 
-def _item(pkg, fp, **over):
+def _item(pkg, fp, *, source="batch", **over):
+    """A queued item whose dialogue fingerprint lives in one of the TWO durable
+    sources: the BATCH lane's variation_fingerprints_json, or Stage 2C's
+    generation_identity_json.bulk_fanout_item (B-01)."""
     row = {
         "workspace_generation_package_id": pkg, "product_id": "P",
         "production_job_id": None,
-        "variation_fingerprints_json": {"dialogue_fingerprint": fp},
     }
+    if source == "batch":
+        row["variation_fingerprints_json"] = {"dialogue_fingerprint": fp}
+    elif source == "bulk":
+        row["generation_identity_json"] = {
+            "bulk_fanout_item": {
+                "schema_version": "bulk-fanout-item-v1",
+                "dialogue_fingerprint": fp,
+            }
+        }
     row.update(over)
     return row
 
@@ -181,8 +192,9 @@ def _gate(monkeypatch, items, *, phrase=pq.LIVE_BULK_CONFIRM_PHRASE,
     monkeypatch.setattr(pq, "build_execution_payload", _payload)
     monkeypatch.setattr(pq, "BULK_LIVE_EXECUTION_CERTIFIED", certified)
     ids = pkg_ids if pkg_ids is not None else [i["workspace_generation_package_id"] for i in items]
+    # derive the pinned set from EITHER durable source, same as the gate does
     fingerprints = fps if fps is not None else [
-        i["variation_fingerprints_json"]["dialogue_fingerprint"] for i in items]
+        pq._persisted_dialogue_fingerprint(i) for i in items]
     return asyncio.run(pq._assert_bulk_fanout_live(
         run or RUN, confirm_phrase=phrase,
         expect_package_ids=ids, expect_dialogue_fingerprints=fingerprints))
@@ -271,6 +283,62 @@ def test_gate_passes_only_when_certified_and_everything_valid(monkeypatch):
     """Proves the refusal is the credit boundary, not a broken gate."""
     validated = _gate(monkeypatch, THREE, certified=True)
     assert [i["workspace_generation_package_id"] for i in validated] == ["wgp1", "wgp2", "wgp3"]
+
+
+def test_gate_reads_the_fingerprint_written_by_stage_2c(monkeypatch):
+    """B-01 regression: Stage 2C persists the fingerprint in
+    generation_identity_json.bulk_fanout_item, NOT variation_fingerprints_json.
+
+    The gate used to read only the batch column, so a 2C-prepared batch always
+    looked fingerprint-less and refused with
+    BULK_ITEM_DIALOGUE_FINGERPRINT_MISSING — it could never reach its own credit
+    boundary. Reaching BULK_LIVE_EXECUTION_NOT_CERTIFIED proves the whole gate
+    now validates a 2C batch end to end."""
+    bulk_items = [_item(f"wgp{i}", f"fp{i}", source="bulk") for i in range(1, 4)]
+    _expect(monkeypatch, bulk_items, "BULK_LIVE_EXECUTION_NOT_CERTIFIED")
+
+
+def test_gate_still_reads_the_batch_lane_fingerprint(monkeypatch):
+    """The batch lane must keep working — the fix is additive, not a swap."""
+    _expect(monkeypatch, THREE, "BULK_LIVE_EXECUTION_NOT_CERTIFIED")
+
+
+def test_gate_accepts_a_mixed_batch_of_both_sources(monkeypatch):
+    mixed = [_item("wgp1", "fp1", source="batch"),
+             _item("wgp2", "fp2", source="bulk"),
+             _item("wgp3", "fp3", source="bulk")]
+    _expect(monkeypatch, mixed, "BULK_LIVE_EXECUTION_NOT_CERTIFIED")
+
+
+def test_gate_passes_a_stage_2c_batch_when_certified(monkeypatch):
+    """Every check passes on a 2C batch; only the credit boundary stops it."""
+    bulk_items = [_item(f"wgp{i}", f"fp{i}", source="bulk") for i in range(1, 4)]
+    validated = _gate(monkeypatch, bulk_items, certified=True)
+    assert [i["workspace_generation_package_id"] for i in validated] == ["wgp1", "wgp2", "wgp3"]
+
+
+def test_neither_source_present_still_fails_closed(monkeypatch):
+    """Fail-closed is preserved: no fingerprint anywhere is still a refusal."""
+    items = [_item("wgp1", "fp1", source="bulk"),
+             _item("wgp2", "", source="none")]
+    _expect(monkeypatch, items, "BULK_ITEM_DIALOGUE_FINGERPRINT_MISSING:wgp2", fps=["fp1"])
+
+
+def test_duplicate_dialogue_still_fails_closed_across_sources(monkeypatch):
+    """A repeat is a repeat even when the two items store it in DIFFERENT
+    durable sources — the fix must not open a duplicate-dialogue hole."""
+    dupes = [_item("wgp1", "same", source="batch"),
+             _item("wgp2", "same", source="bulk"),
+             _item("wgp3", "fp3", source="bulk")]
+    _expect(monkeypatch, dupes, "BULK_DUPLICATE_DIALOGUE")
+
+
+def test_bulk_identity_wins_over_a_stale_batch_column(monkeypatch):
+    """When both columns are populated the 2C identity is authoritative — it is
+    written by the lane that actually built this batch."""
+    item = _item("wgp1", "bulk_fp", source="bulk")
+    item["variation_fingerprints_json"] = {"dialogue_fingerprint": "stale_batch_fp"}
+    assert pq._persisted_dialogue_fingerprint(item) == "bulk_fp"
 
 
 def test_bulk_live_is_not_certified_by_default():

@@ -920,6 +920,34 @@ async def _assert_one_serial_i2v_live(
     return item, logical_mode
 
 
+def _persisted_dialogue_fingerprint(item: dict) -> str:
+    """The per-item dialogue fingerprint, from EITHER durable source.
+
+    B-01: two lanes persist this in different columns, and the gate previously
+    read only one of them —
+
+      * the BATCH prompt lane writes ``variation_fingerprints_json`` via
+        ``_annotate_batch_prompt_item``;
+      * Stage 2C bulk prepare writes the namespaced, versioned
+        ``generation_identity_json.bulk_fanout_item`` and never touches
+        ``variation_fingerprints_json``.
+
+    Reading only the batch column meant every 2C-prepared package looked like it
+    had NO fingerprint, so the gate refused with
+    BULK_ITEM_DIALOGUE_FINGERPRINT_MISSING and could never reach its own credit
+    boundary. Prefer the bulk identity (written by the lane that built this
+    batch), fall back to the batch column, and return "" when neither is present
+    so the caller still FAILS CLOSED.
+    """
+    identity = _loads(item.get("generation_identity_json"), {}) or {}
+    bulk_item = identity.get("bulk_fanout_item") or {}
+    fp = str(bulk_item.get("dialogue_fingerprint") or "").strip()
+    if fp:
+        return fp
+    fingerprints = _loads(item.get("variation_fingerprints_json"), {}) or {}
+    return str(fingerprints.get("dialogue_fingerprint") or "").strip()
+
+
 async def _assert_bulk_fanout_live(
     run: dict,
     *,
@@ -987,8 +1015,7 @@ async def _assert_bulk_fanout_live(
         # fingerprint, never assumed from the preview. Two items sharing a
         # dialogue is the exact failure Stage 1 made fail-closed; it must not
         # become a warning just because the operator asked for N.
-        fingerprints = _loads(item.get("variation_fingerprints_json"), {})
-        dialogue_fp = str((fingerprints or {}).get("dialogue_fingerprint") or "").strip()
+        dialogue_fp = _persisted_dialogue_fingerprint(item)
         if not dialogue_fp:
             raise ValueError(f"BULK_ITEM_DIALOGUE_FINGERPRINT_MISSING:{package_id}")
         if dialogue_fp in seen_fingerprints:
