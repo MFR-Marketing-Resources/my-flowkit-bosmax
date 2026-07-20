@@ -674,10 +674,20 @@ async def _persist_generation_identity(wgp_id: str, job_id: str) -> dict:
             wgp_id, generation_identity_json=_json(identity),
         )
         if not identity["identity_captured"]:
-            logger.warning(
-                "OUTPUT_IDENTITY_NOT_CAPTURED wgp=%s job=%s tools_seen=%s — this run "
-                "cannot bind any output; add the generation toolName to "
-                "agent_video._GEN_TOOLS", wgp_id, job_id, identity["tools_seen"],
+            # NOT a verdict. This snapshot runs the instant start_generate returns a
+            # job id, while _run_generate is still async and has not parsed the
+            # approve stream — so anchors/tools/binding are EXPECTED to be empty here
+            # and this branch fires on every healthy run. Emitting the final
+            # OUTPUT_IDENTITY_NOT_CAPTURED verdict here (as it used to) produced a
+            # false alarm ~1s after submit that misdiagnosed its own cause, blaming a
+            # missing _GEN_TOOLS entry for a value that simply did not exist yet
+            # (Stage 3B T2V g_ba62f180717c: tools_seen=[], project_id/flow_tab_id
+            # null, identity_gap_sse null — 0.98s after fire). The real verdict is
+            # emitted post-loop by _persist_binding_outcome, where anchors exist.
+            logger.info(
+                "IDENTITY_PENDING_EARLY_SNAPSHOT wgp=%s job=%s — anchors not parsed "
+                "yet (expected at submit time); verdict deferred to the terminal "
+                "binding-outcome read", wgp_id, job_id,
             )
     except Exception as exc:  # noqa: BLE001
         logger.warning("identity snapshot failed wgp=%s job=%s: %s", wgp_id, job_id, exc)
@@ -735,6 +745,22 @@ async def _persist_binding_outcome(wgp_id: str, job_id: str) -> None:
         await crud.update_workspace_generation_package(
             wgp_id, generation_identity_json=_json(identity),
         )
+        # THE VERDICT. This is the first point anchors can exist, so it is the only
+        # honest place to declare that an output can never be bound. Still
+        # fail-closed: a genuinely uncaptured identity is reported loudly, with the
+        # observed toolNames and the terminal job status so the cause is
+        # adjudicable from the record instead of another paid capture.
+        if not identity.get("identity_captured"):
+            logger.warning(
+                "OUTPUT_IDENTITY_NOT_CAPTURED wgp=%s job=%s job_status=%s "
+                "tools_seen=%s gen_tool_matched=%s — no correlation anchor was ever "
+                "exposed, so no retrieved media can bind to this run. If a toolName "
+                "above is a real generation tool, it is missing from "
+                "agent_video._GEN_TOOLS; if the list is EMPTY the run never reached "
+                "the approve stream (check the job status and the binding outcome).",
+                wgp_id, job_id, identity.get("binding_outcome", {}).get("job_status"),
+                identity.get("tools_seen"), identity.get("gen_tool_matched"),
+            )
     except Exception as exc:  # noqa: BLE001
         logger.warning("binding outcome snapshot failed wgp=%s job=%s: %s",
                        wgp_id, job_id, exc)

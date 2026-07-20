@@ -479,6 +479,7 @@ domains:
       - tests/unit/test_copy_pool_readiness.py
       - tests/unit/test_bulk_fanout_contract.py
       - tests/unit/test_bulk_package_orchestration.py
+      - tests/unit/test_production_queue_identity_diagnostic.py
       - tests/unit/test_copy_binding_package_creation.py
       - tests/fixtures/hermetic/ai-provider-settings.json
       - tests/fixtures/hermetic/sanitized.env
