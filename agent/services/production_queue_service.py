@@ -644,13 +644,22 @@ async def _persist_generation_identity(wgp_id: str, job_id: str) -> dict:
     Fail-soft: identity is evidence, not a gate — a snapshot error must never
     abort a submission that already spent credits. What it must never do is
     invent an anchor; absent anchors are recorded as absent.
+
+    Merge-only (B-11): this snapshot used to build a fresh dict and overwrite
+    generation_identity_json wholesale, destroying every key another writer had
+    persisted — most damagingly the durable ``bulk_fanout_item`` pairing that
+    bulk prepare's reuse branch needs, which turned every bulk re-prepare into a
+    permanent BULK_REUSE_IDENTITY_MISSING 409. It now read-merges exactly like
+    the terminal writer (_persist_binding_outcome) always has.
     """
     from agent.services import make_video
 
     identity: dict = {}
     try:
         job = make_video.get_job(job_id) or {}
-        identity = {
+        row = await crud.get_workspace_generation_package(wgp_id) or {}
+        identity = _loads(row.get("generation_identity_json"), {}) or {}
+        identity.update({
             "provider_job_id": job_id,
             "mode": job.get("mode"),
             "requested_model": job.get("model"),
@@ -669,7 +678,7 @@ async def _persist_generation_identity(wgp_id: str, job_id: str) -> dict:
             # from this run's record instead of costing another live submission.
             "identity_gap_sse": job.get("identity_gap_sse"),
             "submitted_at": _now(),
-        }
+        })
         await crud.update_workspace_generation_package(
             wgp_id, generation_identity_json=_json(identity),
         )
