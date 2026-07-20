@@ -10,6 +10,8 @@ from agent.services.copy_binding_service import CopyBindingError
 from agent.services.workspace_generation_package_service import (
     QUANTITY_PREVIEW_MAX,
     evaluate_copy_pool_readiness,
+    plan_bulk_fanout_intents,
+    prepare_bulk_fanout_packages,
     preview_quantity_copy_plans,
 )
 from agent.services.workspace_execution_package_service import (
@@ -263,6 +265,80 @@ async def post_copy_pool_readiness(request: QuantityPreviewRequest):
     except ValueError as exc:
         message = str(exc)
         status_code = 404 if message == "PRODUCT_NOT_FOUND" else 422
+        raise HTTPException(status_code=status_code, detail=message) from exc
+
+
+@router.post("/bulk-fanout-plan")
+async def post_bulk_fanout_plan(request: QuantityPreviewRequest):
+    """Stage 2A: plan N ITEMIZED live-production intents. CREDIT-FREE.
+
+    Never a blind count:N batch — N separate intents, each with its own
+    item_index / copy_variant_id / variation_salt / dialogue_fingerprint /
+    per-item status / per-item credit metadata. Fail-closed on copy-pool
+    readiness and dialogue uniqueness. Plans only: no package created, nothing
+    approved, nothing enqueued, no provider call, no Flow call, no credit."""
+    try:
+        return await plan_bulk_fanout_intents(
+            product_id=request.product_id,
+            logical_mode=request.mode,
+            source_mode=request.source_mode,
+            generation_mode=request.generation_mode,
+            duration_seconds=request.duration_seconds,
+            requested_total_duration_seconds=request.requested_total_duration_seconds,
+            quantity=request.quantity,
+            target_language=request.target_language,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if message == "PRODUCT_NOT_FOUND" else 422
+        raise HTTPException(status_code=status_code, detail=message) from exc
+
+
+class BulkFanoutPrepareRequest(QuantityPreviewRequest):
+    """Stage 2C bulk prepare. Inherits the preview/readiness shape so the server
+    re-derives the SAME plan it is being asked to prepare."""
+    model: str | None = None
+    aspect: str = "9:16"
+    # Pin the plan the operator actually saw — a stale client preview is refused.
+    expect_bulk_plan_fingerprint: str | None = None
+    # Image-mode reference slots (shared by every item; only copy varies).
+    start_frame_asset_id: str | None = None
+    product_reference_asset_id: str | None = None
+    character_reference_asset_id: str | None = None
+    scene_context_reference_asset_id: str | None = None
+
+
+@router.post("/bulk-fanout-prepare")
+async def post_bulk_fanout_prepare(request: BulkFanoutPrepareRequest):
+    """Stage 2C: create -> approve -> enqueue N DURABLE packages. CREDIT-FREE.
+
+    N SEPARATE packages, each bound to its own approved Copy Set — never a
+    count:N submission. Fail-closed on copy-pool readiness, dialogue uniqueness,
+    a stale plan fingerprint, or any per-item creation failure (all-or-nothing).
+    Idempotent per plan. The run is created dry_run=1: no provider call, no Flow
+    call, no live generation, no credit. Live firing still requires the
+    BULK_FANOUT gate, which stops at the Stage 3 credit boundary."""
+    try:
+        return await prepare_bulk_fanout_packages(
+            product_id=request.product_id,
+            logical_mode=request.mode,
+            source_mode=request.source_mode,
+            generation_mode=request.generation_mode,
+            duration_seconds=request.duration_seconds,
+            requested_total_duration_seconds=request.requested_total_duration_seconds,
+            quantity=request.quantity,
+            target_language=request.target_language,
+            model=request.model,
+            aspect=request.aspect,
+            expect_bulk_plan_fingerprint=request.expect_bulk_plan_fingerprint,
+            start_frame_asset_id=request.start_frame_asset_id,
+            product_reference_asset_id=request.product_reference_asset_id,
+            character_reference_asset_id=request.character_reference_asset_id,
+            scene_context_reference_asset_id=request.scene_context_reference_asset_id,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if message == "PRODUCT_NOT_FOUND" else 409
         raise HTTPException(status_code=status_code, detail=message) from exc
 
 

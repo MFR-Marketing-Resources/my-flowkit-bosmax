@@ -253,11 +253,25 @@ async def test_dry_run_is_untouched_by_the_gate(queue):
 
 
 @pytest.mark.asyncio
-async def test_preexisting_live_path_without_live_gate_is_unchanged(queue):
-    """The pre-existing live path (ProductionQueuePage) is a protected system:
-    omitting live_gate must NOT start requiring a phrase. Widening the gate to
-    cover it would be a separate owner decision, not a Round F change."""
-    queue["items"] = [_item(), _item(workspace_generation_package_id="wgp_f_2")]
+async def test_preexisting_single_item_live_path_without_live_gate_is_unchanged(queue):
+    """The pre-existing SINGLE-item live path (ProductionQueuePage) is a protected
+    system: omitting live_gate must NOT start requiring a phrase for one item."""
+    queue["items"] = [_item()]
     res = await pq.run_production_queue(RUN_ID, confirm_live_credit_burn=True)
     assert res["dry_run"] is False
     assert res["status"] == "RUNNING"
+
+
+@pytest.mark.asyncio
+async def test_ungated_multi_item_live_is_now_refused(queue):
+    """Owner decision 2026-07-20 — supersedes the earlier carve-out that let the
+    pre-existing path start a MULTI-item live run with no gate at all.
+
+    `allowed_live_modes` in the live loop constrains MODE, never COUNT, so an
+    ungated N-item start used to fan out over every queued item with no phrase,
+    no readiness and no preview correlation. Bulk now requires an explicit gate;
+    single-item behaviour above is untouched."""
+    queue["items"] = [_item(), _item(workspace_generation_package_id="wgp_f_2")]
+    with pytest.raises(ValueError, match="BULK_LIVE_REQUIRES_BULK_GATE:2_items"):
+        await pq.run_production_queue(RUN_ID, confirm_live_credit_burn=True)
+    _assert_nothing_fired(queue)

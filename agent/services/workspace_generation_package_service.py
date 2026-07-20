@@ -197,10 +197,14 @@ async def create_f2v_generation_package(
     batch_run_id: str | None = None,
     avatar_id: str | None = None,
     copy_intelligence: dict | None = None,
+    copy_set_id: str | None = None,
     scene_context_override: str | None = None,
 ) -> dict:
     """Create a durable F2V workspace generation package."""
     mode = "F2V"
+    copy_intelligence = await _resolve_bound_copy_intelligence(
+        product_id, copy_set_id, copy_intelligence
+    )
     resolved_source_lane = _normalize_f2v_source_lane(source_mode)
     product_row = await crud.get_product(product_id)
     _assert_not_reference_only(product_id, product_row)
@@ -390,10 +394,14 @@ async def create_i2v_generation_package(
     operator_notes: str | None = None,
     batch_run_id: str | None = None,
     copy_intelligence: dict | None = None,
+    copy_set_id: str | None = None,
     scene_context_override: str | None = None,
 ) -> dict:
     """Create a durable I2V workspace generation package."""
     mode = "I2V"
+    copy_intelligence = await _resolve_bound_copy_intelligence(
+        product_id, copy_set_id, copy_intelligence
+    )
     product_row = await crud.get_product(product_id)
     _assert_not_reference_only(product_id, product_row)
     approved = await get_approved_product_package(product_id, normalize_mode(mode))
@@ -649,6 +657,42 @@ def _enrich_row(row: dict) -> dict:
 # ─── T2V ─────────────────────────────────────────────────────
 
 
+async def _resolve_bound_copy_intelligence(
+    product_id: str,
+    copy_set_id: str | None,
+    copy_intelligence: dict | None,
+) -> dict | None:
+    """Bind an APPROVED Copy Set into compiler copy for durable package creation.
+
+    Closes the Stage 2B gap: ``create_workspace_execution_package`` could bind a
+    copy variant, but seeding a durable package re-compiled WITHOUT it, so the
+    per-item copy binding was lost before the package existed. Bulk fan-out needs
+    each package to carry its own approved variant, otherwise "no duplicate
+    dialogue" is unenforceable at the package level.
+
+    Reuses the existing ``resolve_compiler_copy_intelligence`` seam — only
+    ``to_compiler_copy`` fields cross into the compiler, and an invalid /
+    product-mismatched / unapproved copy_set_id raises CopyBindingError
+    (fail-closed). Never fires a provider and never approves anything.
+
+    Precedence: the resolved Copy Set is the BASE; explicitly passed
+    ``copy_intelligence`` keys win on top of it (so the batch path's
+    ``hook_override`` still applies over a bound variant).
+
+    ``copy_set_id=None`` short-circuits — no resolver call, no DB read — so every
+    pre-existing caller keeps its exact current behaviour.
+    """
+    if not copy_set_id:
+        return copy_intelligence
+    from agent.services.copy_binding_service import resolve_compiler_copy_intelligence
+
+    binding = await resolve_compiler_copy_intelligence(product_id, copy_set_id)
+    bound = binding.get("copy_intelligence")
+    if not bound:
+        return copy_intelligence
+    return {**bound, **(copy_intelligence or {})}
+
+
 async def create_t2v_generation_package(
     *,
     product_id: str,
@@ -668,10 +712,14 @@ async def create_t2v_generation_package(
     batch_run_id: str | None = None,
     avatar_id: str | None = None,
     copy_intelligence: dict | None = None,
+    copy_set_id: str | None = None,
     scene_context_override: str | None = None,
 ) -> dict:
     """Create a durable T2V workspace generation package (text-only, no frame uploads)."""
     mode = "T2V"
+    copy_intelligence = await _resolve_bound_copy_intelligence(
+        product_id, copy_set_id, copy_intelligence
+    )
     product_row = await crud.get_product(product_id)
     _assert_not_reference_only(product_id, product_row)
     approved = await get_approved_product_package(product_id, normalize_mode(mode))
@@ -1736,6 +1784,395 @@ async def evaluate_copy_pool_readiness(
         "pool_scan_capped": approved_copy_count > COPY_POOL_SCAN_CAP and shortage > 0,
         "compile_errors": compile_errors,
         "next_action": None if shortage == 0 else "GENERATE_AND_APPROVE_COPY",
+        "credit": "NONE",
+        "provider_calls": 0,
+        "flow_calls": 0,
+    }
+
+
+async def plan_bulk_fanout_intents(
+    *,
+    product_id: str,
+    logical_mode: str,
+    source_mode: str | None = None,
+    generation_mode: str = "SINGLE",
+    duration_seconds: int = 8,
+    requested_total_duration_seconds: int | None = None,
+    quantity: int = 1,
+    target_language: str = "BM_MS",
+) -> dict:
+    """Stage 2A: plan N ITEMIZED live-production intents. CREDIT-FREE.
+
+    Bulk live must never be one blind ``count:N`` submission — ``count`` is the
+    provider's per-submission copy count (clamped 1..4), NOT an item multiplier.
+    This produces N SEPARATE intents, each carrying its own identity, so the
+    fan-out is auditable item-by-item instead of being an untracked batch.
+
+    Fail-closed chain, in order: copy-pool readiness must be READY, then the
+    quantity preview must be UNIQUE. Either failing yields a plan that is NOT
+    authorizable — duplicate dialogue can never reach the live fan-out.
+
+    Plans only. Creates no package, approves nothing, enqueues nothing, fires
+    nothing: ZERO provider calls, ZERO Flow calls, ZERO credit. Live execution
+    additionally requires the server-side BULK_FANOUT gate, which stops at the
+    Stage 3 credit boundary.
+    """
+    mode = str(logical_mode or "").strip().upper()
+    n = int(quantity)
+    if n < 1 or n > QUANTITY_PREVIEW_MAX:
+        raise ValueError(f"QUANTITY_OUT_OF_RANGE:1..{QUANTITY_PREVIEW_MAX}")
+
+    common = {
+        "product_id": product_id,
+        "logical_mode": mode,
+        "source_mode": source_mode,
+        "generation_mode": generation_mode,
+        "duration_seconds": duration_seconds,
+        "requested_total_duration_seconds": requested_total_duration_seconds,
+        "quantity": n,
+        "target_language": target_language,
+    }
+    blockers: list[str] = []
+
+    readiness = await evaluate_copy_pool_readiness(**common)
+    if readiness["readiness_status"] != READINESS_READY:
+        blockers.append(
+            f"COPY_POOL_NOT_READY:{readiness['readiness_status']}:"
+            f"short_by_{readiness['shortage_count']}"
+        )
+
+    preview = await preview_quantity_copy_plans(**common)
+    if not preview["preview_ready"]:
+        blockers.append(f"PREVIEW_NOT_UNIQUE:{preview['dialogue_uniqueness_status']}")
+
+    # Bulk EXTEND stays blocked: the single-shot production lane fails closed on
+    # EXTEND packages (multi-block belongs to the durable /video-jobs
+    # orchestrator, which is per-job, not per-run). Surfaced as an exact blocker
+    # rather than silently truncating a 16s request to one 8s block.
+    if str(generation_mode or "").strip().upper() == "EXTEND":
+        blockers.append(
+            "BULK_EXTEND_NOT_SUPPORTED:use_video_jobs_orchestrator_per_item"
+        )
+
+    intents: list[dict] = []
+    for item in preview.get("items") or []:
+        intents.append({
+            "item_index": item.get("item_index"),
+            "copy_variant_id": item.get("copy_variant_id"),
+            "variation_salt": item.get("variation_salt"),
+            "dialogue_fingerprint": item.get("dialogue_fingerprint"),
+            "hook": item.get("hook"),
+            "dialogue_summary": item.get("dialogue_summary"),
+            "seam_voice": item.get("seam_voice"),
+            "logical_mode": mode,
+            "source_mode": source_mode,
+            "generation_mode": generation_mode,
+            # Lineage stays UNBOUND until the package actually exists — reported
+            # as null rather than invented, so no intent claims a package it
+            # does not have.
+            "workspace_generation_package_id": None,
+            "production_run_id": None,
+            "production_job_id": None,
+            "item_status": "PLANNED" if not item.get("compile_error") else "BLOCKED",
+            "compile_error": item.get("compile_error"),
+            # Per-item credit metadata: every item is its own credit event.
+            "credit_state": "NOT_AUTHORIZED",
+            "credit_warning": "This item spends provider credit when fired.",
+        })
+
+    # One fingerprint over the whole authorized set. The live gate re-derives the
+    # per-item fingerprints and refuses if the set drifted from what was shown.
+    dialogue_fps = [str(i["dialogue_fingerprint"] or "") for i in intents]
+    plan_fingerprint = hashlib.sha256(
+        json.dumps(
+            {"product_id": product_id, "mode": mode, "generation_mode": generation_mode,
+             "quantity": n, "dialogue_fingerprints": sorted(dialogue_fps)},
+            sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+    return {
+        "product_id": product_id,
+        "quantity_requested": n,
+        "quantity_max": QUANTITY_PREVIEW_MAX,
+        "logical_mode": mode,
+        "generation_mode": generation_mode,
+        "planned_intent_count": len(intents),
+        "intents": intents,
+        "bulk_plan_fingerprint": plan_fingerprint,
+        "copy_pool_readiness_status": readiness["readiness_status"],
+        "dialogue_uniqueness_status": preview["dialogue_uniqueness_status"],
+        "blockers": blockers,
+        # Authorizable == every prerequisite proven. It does NOT mean the run may
+        # fire: the server gate still stops at the Stage 3 credit boundary.
+        "bulk_authorizable": not blockers and len(intents) == n,
+        "live_bulk_status": "Bulk live fan-out not certified yet",
+        "live_bulk_stage": "STAGE_3_RUNTIME_CERTIFICATION_REQUIRED",
+        "required_confirm_phrase": "AUTHORIZE_BULK_FANOUT_LIVE_RUN",
+        "credit": "NONE",
+        "provider_calls": 0,
+        "flow_calls": 0,
+    }
+
+
+BULK_PREPARE_SUPPORTED_MODES = ("T2V", "F2V", "HYBRID", "I2V")
+
+
+async def prepare_bulk_fanout_packages(
+    *,
+    product_id: str,
+    logical_mode: str,
+    source_mode: str | None = None,
+    generation_mode: str = "SINGLE",
+    duration_seconds: int = 8,
+    requested_total_duration_seconds: int | None = None,
+    quantity: int = 1,
+    target_language: str = "BM_MS",
+    model: str | None = None,
+    aspect: str = "9:16",
+    expect_bulk_plan_fingerprint: str | None = None,
+    start_frame_asset_id: str | None = None,
+    product_reference_asset_id: str | None = None,
+    character_reference_asset_id: str | None = None,
+    scene_context_reference_asset_id: str | None = None,
+) -> dict:
+    """Stage 2C: create → approve → enqueue N DURABLE packages. CREDIT-FREE.
+
+    Turns the Stage 2A itemized plan into N real ``workspace_generation_package``
+    rows, one per planned item, each bound to its OWN approved Copy Set via the
+    Stage 2B ``copy_set_id`` seam — so "no duplicate dialogue" is enforced at the
+    package level, not just in a preview.
+
+    Never a ``count:N`` submission: ``count`` is the provider's per-submission
+    copy count (clamped 1..4). This enqueues N SEPARATE package ids into one run,
+    which is what the queue's item loop and per-item dry run already understand.
+
+    FAIL-CLOSED, in order, and every check runs BEFORE anything is written:
+      1. copy-pool readiness must be READY and the preview UNIQUE (re-derived
+         server-side — a client cannot assert its own readiness);
+      2. ``expect_bulk_plan_fingerprint``, when supplied, must match the
+         server-recomputed plan, so a STALE client preview cannot be prepared;
+      3. every intent must carry a copy_variant_id and a dialogue_fingerprint;
+      4. fingerprints must be distinct across the batch.
+
+    Package creation is all-or-nothing: if any item fails, NOTHING is approved
+    and NOTHING is enqueued, and the failing item is reported by index.
+
+    Idempotent: re-running the same plan returns the existing batch instead of
+    silently creating a second set of packages.
+
+    Spends ZERO credit and makes ZERO provider/Flow calls — approval and
+    enqueueing are pure DB state transitions, and the run is created dry_run=1.
+    Live firing additionally needs the BULK_FANOUT gate, which stops at the
+    Stage 3 credit boundary.
+    """
+    from agent.db import crud as _crud
+    from agent.services import production_queue_service as _pq
+
+    mode = str(logical_mode or "").strip().upper()
+    if mode not in BULK_PREPARE_SUPPORTED_MODES:
+        raise ValueError(f"BULK_PREPARE_UNSUPPORTED_MODE:{mode or 'UNKNOWN'}")
+
+    # Bulk prepare is BULK-only. A single item must stay on its mode-exact
+    # one-serial path, which carries stricter per-lane rules than the bulk gate;
+    # the bulk LIVE gate already refuses a 1-item run
+    # (BULK_REQUIRES_MULTIPLE_ITEMS), so preparing one here would only ever
+    # produce a batch that can never be authorized as bulk. Refused BEFORE the
+    # plan and before any create/approve/enqueue/dry-run.
+    if int(quantity) < 2:
+        raise ValueError(f"BULK_PREPARE_REQUIRES_MULTIPLE_ITEMS:{int(quantity)}")
+
+    plan = await plan_bulk_fanout_intents(
+        product_id=product_id, logical_mode=mode, source_mode=source_mode,
+        generation_mode=generation_mode, duration_seconds=duration_seconds,
+        requested_total_duration_seconds=requested_total_duration_seconds,
+        quantity=quantity, target_language=target_language,
+    )
+    if not plan["bulk_authorizable"]:
+        raise ValueError("BULK_PREPARE_REFUSED:" + ";".join(plan["blockers"]))
+
+    # A stale client preview must never be prepared: the operator authorizes the
+    # dialogue set they SAW, and the server owns the comparison.
+    if expect_bulk_plan_fingerprint and expect_bulk_plan_fingerprint != plan["bulk_plan_fingerprint"]:
+        raise ValueError(
+            f"BULK_PLAN_FINGERPRINT_STALE:expected={expect_bulk_plan_fingerprint[:12]},"
+            f"server={plan['bulk_plan_fingerprint'][:12]}"
+        )
+
+    intents = plan["intents"]
+    seen_fp: dict[str, int] = {}
+    for intent in intents:
+        idx = intent["item_index"]
+        if not intent.get("copy_variant_id"):
+            raise ValueError(f"BULK_ITEM_MISSING_COPY_VARIANT:item#{idx}")
+        fp = str(intent.get("dialogue_fingerprint") or "")
+        if not fp:
+            raise ValueError(f"BULK_ITEM_MISSING_DIALOGUE_FINGERPRINT:item#{idx}")
+        if fp in seen_fp:
+            raise ValueError(f"BULK_DUPLICATE_DIALOGUE:item#{seen_fp[fp]},item#{idx}")
+        seen_fp[fp] = idx
+
+    # One durable group key per plan. `batch_run_id` is a REAL column with a
+    # crud filter, so the batch survives restart and gives us idempotency for
+    # free — no schema change, no in-memory bookkeeping.
+    bulk_run_id = f"bulk_{plan['bulk_plan_fingerprint'][:16]}"
+    existing = await _crud.list_workspace_generation_packages(
+        batch_run_id=bulk_run_id, limit=200
+    )
+    if existing:
+        return _bulk_manifest(
+            plan, bulk_run_id,
+            [r["workspace_generation_package_id"] for r in existing],
+            production_run_id=(existing[0].get("production_run_id")),
+            reused=True,
+        )
+
+    creator_kwargs: dict = {
+        "product_id": product_id,
+        "generation_mode": generation_mode,
+        "target_language": target_language,
+        "batch_run_id": bulk_run_id,
+        "requested_total_duration_seconds": requested_total_duration_seconds,
+    }
+    if mode in ("T2V", "F2V", "HYBRID"):
+        creator_kwargs["duration_seconds"] = duration_seconds
+
+    created: list[str] = []
+    for intent in intents:
+        idx = intent["item_index"]
+        try:
+            if mode == "T2V":
+                pkg = await create_t2v_generation_package(
+                    copy_set_id=intent["copy_variant_id"], **creator_kwargs)
+            elif mode in ("F2V", "HYBRID"):
+                pkg = await create_f2v_generation_package(
+                    copy_set_id=intent["copy_variant_id"],
+                    source_mode=source_mode or ("HYBRID" if mode == "HYBRID" else "FRAMES"),
+                    start_frame_asset_id=start_frame_asset_id,
+                    product_reference_asset_id=product_reference_asset_id,
+                    **creator_kwargs)
+            else:  # I2V
+                pkg = await create_i2v_generation_package(
+                    copy_set_id=intent["copy_variant_id"],
+                    character_reference_asset_id=character_reference_asset_id,
+                    scene_context_reference_asset_id=scene_context_reference_asset_id,
+                    **creator_kwargs)
+        except Exception as exc:
+            # All-or-nothing: report the exact failing item and stop. Nothing is
+            # approved or enqueued, so a partial batch can never reach a run.
+            raise ValueError(
+                f"BULK_PACKAGE_CREATE_FAILED:item#{idx}:{type(exc).__name__}:{str(exc)[:120]}"
+                f":created_before_failure={len(created)}"
+            ) from exc
+        wgp_id = pkg["workspace_generation_package_id"]
+        created.append(wgp_id)
+        # Durable per-item identity, merge-written into generation_identity_json
+        # (the column already has a read-modify-merge precedent). No migration.
+        await _persist_bulk_item_identity(wgp_id, bulk_run_id, plan, intent)
+
+    approve = await _pq.approve_packages(created)
+    if approve.get("approved") != len(created):
+        failures = [r for r in approve.get("results") or [] if not r.get("ok")]
+        raise ValueError("BULK_APPROVE_FAILED:" + json.dumps(failures)[:300])
+
+    run = await _pq.send_to_production(
+        created, aspect=aspect, model=model,
+        count=1,  # provider copies per submission — NOT the item fan-out
+    )
+    run_id = run["production_run_id"]
+
+    cfg = json.loads(run.get("config_json") or "{}") if isinstance(run.get("config_json"), str) else (run.get("config_json") or {})
+    cfg["bulk_fanout_manifest"] = {
+        "schema_version": "bulk-fanout-manifest-v1",
+        "bulk_run_id": bulk_run_id,
+        "bulk_plan_fingerprint": plan["bulk_plan_fingerprint"],
+        "items": [
+            {**{k: intent[k] for k in (
+                "item_index", "copy_variant_id", "variation_salt",
+                "dialogue_fingerprint", "logical_mode", "source_mode",
+                "generation_mode")},
+             "workspace_generation_package_id": wgp_id,
+             "requested_total_duration_seconds": requested_total_duration_seconds,
+             "duration_seconds": duration_seconds}
+            for intent, wgp_id in zip(intents, created)
+        ],
+    }
+    await _crud.update_production_run(run_id, config_json=json.dumps(cfg, ensure_ascii=False))
+
+    return _bulk_manifest(plan, bulk_run_id, created, production_run_id=run_id, reused=False)
+
+
+async def _persist_bulk_item_identity(
+    wgp_id: str, bulk_run_id: str, plan: dict, intent: dict
+) -> None:
+    """Merge per-item bulk identity into generation_identity_json (no migration).
+
+    Merge-write, mirroring _persist_binding_outcome: read the column back and add
+    a namespaced sub-object, so nothing already stored there is clobbered.
+    Fail-soft — identity bookkeeping must never break package creation.
+    """
+    from agent.db import crud as _crud
+    try:
+        row = await _crud.get_workspace_generation_package(wgp_id) or {}
+        raw = row.get("generation_identity_json")
+        identity = json.loads(raw) if isinstance(raw, str) and raw else (raw or {})
+        if not isinstance(identity, dict):
+            identity = {}
+        identity["bulk_fanout_item"] = {
+            "schema_version": "bulk-fanout-item-v1",
+            "bulk_run_id": bulk_run_id,
+            "bulk_plan_fingerprint": plan["bulk_plan_fingerprint"],
+            "item_index": intent["item_index"],
+            "copy_variant_id": intent["copy_variant_id"],
+            "variation_salt": intent["variation_salt"],
+            "dialogue_fingerprint": intent["dialogue_fingerprint"],
+            "logical_mode": intent["logical_mode"],
+            "source_mode": intent["source_mode"],
+            "generation_mode": intent["generation_mode"],
+        }
+        await _crud.update_workspace_generation_package(
+            wgp_id, generation_identity_json=json.dumps(identity, ensure_ascii=False)
+        )
+    except Exception:  # noqa: BLE001 — bookkeeping must not break creation
+        _batch_logger.warning(
+            "bulk item identity persist failed wgp=%s", wgp_id, exc_info=True
+        )
+
+
+def _bulk_manifest(
+    plan: dict, bulk_run_id: str, package_ids: list[str],
+    *, production_run_id: str | None, reused: bool,
+) -> dict:
+    """The itemized prepare result the Studio renders and the live gate pins."""
+    return {
+        "bulk_run_id": bulk_run_id,
+        "bulk_plan_fingerprint": plan["bulk_plan_fingerprint"],
+        "production_run_id": production_run_id,
+        "product_id": plan["product_id"],
+        "logical_mode": plan["logical_mode"],
+        "generation_mode": plan["generation_mode"],
+        "quantity_requested": plan["quantity_requested"],
+        "prepared_package_count": len(package_ids),
+        "package_ids": package_ids,
+        "expect_dialogue_fingerprints": [
+            i["dialogue_fingerprint"] for i in plan["intents"]
+        ],
+        "items": [
+            {**{k: i[k] for k in (
+                "item_index", "copy_variant_id", "variation_salt",
+                "dialogue_fingerprint", "hook", "dialogue_summary",
+                "logical_mode", "source_mode", "generation_mode")},
+             "workspace_generation_package_id": pkg,
+             "item_status": "PREPARED",
+             "credit_state": "NOT_AUTHORIZED"}
+            for i, pkg in zip(plan["intents"], package_ids)
+        ],
+        "reused_existing_batch": reused,
+        "stage": "PACKAGES_PREPARED",
+        "next_step": "DRY_RUN_VALIDATE_ALL_ITEMS",
+        "live_bulk_status": "Bulk live fan-out not certified yet",
+        "live_bulk_stage": "STAGE_3_RUNTIME_CERTIFICATION_REQUIRED",
+        "required_confirm_phrase": "AUTHORIZE_BULK_FANOUT_LIVE_RUN",
         "credit": "NONE",
         "provider_calls": 0,
         "flow_calls": 0,

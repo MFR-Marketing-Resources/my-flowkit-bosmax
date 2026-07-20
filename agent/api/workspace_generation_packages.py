@@ -232,6 +232,13 @@ async def create_from_execution_package(
                 lineage = {}
         compiler = lineage.get("compiler") or {}
         source_mode = compiler.get("source_mode")
+        # Stage 2B: carry the WEP's BOUND Copy Set into the durable package.
+        # Seeding re-compiles from the approved package, so without this the
+        # execution package's per-item copy variant was silently dropped and
+        # every seeded package fell back to landbank copy — which made
+        # "one approved variant per bulk item" unenforceable. Audit-only field;
+        # copy_set_id never enters the engine-facing prompt text.
+        _bound_copy_set_id = ((lineage.get("copy_binding") or {}).get("copy_set_id")) or None
         # Inherit the resolved plan from the execution package so the seeded
         # handoff agrees on the same block count (workbook authority parity).
         _seed_total = compiler.get("total_duration_seconds")
@@ -272,6 +279,7 @@ async def create_from_execution_package(
             package = await create_f2v_generation_package(
                 product_id=product_id,
                 workspace_execution_package_id=workspace_execution_package_id,
+                copy_set_id=_bound_copy_set_id,
                 source_mode=source_mode,
                 start_frame_asset_id=_slot_asset.get("start_frame"),
                 end_frame_asset_id=_slot_asset.get("end_frame"),
@@ -287,6 +295,7 @@ async def create_from_execution_package(
             package = await create_i2v_generation_package(
                 product_id=product_id,
                 workspace_execution_package_id=workspace_execution_package_id,
+                copy_set_id=_bound_copy_set_id,
                 product_reference_asset_id=_ca_only(_slot_asset.get("product_reference")),
                 character_reference_asset_id=_ca_only(
                     _slot_asset.get("character_reference") or _slot_asset.get("subject")),
@@ -300,6 +309,7 @@ async def create_from_execution_package(
             package = await create_t2v_generation_package(
                 product_id=product_id,
                 workspace_execution_package_id=workspace_execution_package_id,
+                copy_set_id=_bound_copy_set_id,
                 **_seed_plan_kwargs,
             )
         elif wep_mode == "IMG":

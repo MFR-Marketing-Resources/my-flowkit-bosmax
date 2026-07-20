@@ -198,6 +198,128 @@ export async function fetchCopyPoolReadiness(input: {
 	return postAPI<CopyPoolReadinessResult>("/api/workspace/copy-pool-readiness", input);
 }
 
+// ── Stage 2A itemized bulk fan-out plan (credit-free; read-only) ──
+// N SEPARATE intents, never one blind count:N batch — `count` is the provider's
+// per-submission copy count, not an item multiplier.
+export interface BulkFanoutIntent {
+	item_index: number | null;
+	copy_variant_id: string | null;
+	variation_salt: string | null;
+	dialogue_fingerprint: string | null;
+	hook: string | null;
+	dialogue_summary: string | null;
+	seam_voice: Record<string, unknown> | null;
+	logical_mode: string;
+	source_mode: string | null;
+	generation_mode: string;
+	workspace_generation_package_id: string | null;
+	production_run_id: string | null;
+	production_job_id: string | null;
+	item_status: string;
+	compile_error: string | null;
+	credit_state: string;
+	credit_warning: string;
+}
+
+export interface BulkFanoutPlanResult {
+	product_id: string;
+	quantity_requested: number;
+	quantity_max: number;
+	logical_mode: string;
+	generation_mode: string;
+	planned_intent_count: number;
+	intents: BulkFanoutIntent[];
+	bulk_plan_fingerprint: string;
+	copy_pool_readiness_status: string;
+	dialogue_uniqueness_status: string;
+	blockers: string[];
+	/** All prerequisites proven. Does NOT mean the run may fire — the server
+	 *  gate still stops at the Stage 3 credit boundary. */
+	bulk_authorizable: boolean;
+	live_bulk_status: string;
+	live_bulk_stage: string;
+	required_confirm_phrase: string;
+	credit: string;
+	provider_calls: number;
+	flow_calls: number;
+}
+
+/** Plan N itemized live-production intents. Plans only — creates no package,
+ *  approves nothing, enqueues nothing, fires nothing, spends no credit. */
+export async function fetchBulkFanoutPlan(input: {
+	product_id: string;
+	mode: WorkspaceMode;
+	source_mode?: string | null;
+	generation_mode?: PromptGenerationMode;
+	duration_seconds?: number;
+	requested_total_duration_seconds?: number | null;
+	quantity: number;
+	target_language?: PromptTargetLanguage;
+}): Promise<BulkFanoutPlanResult> {
+	return postAPI<BulkFanoutPlanResult>("/api/workspace/bulk-fanout-plan", input);
+}
+
+// ── Stage 2C bulk PREPARE: create -> approve -> enqueue N durable packages ──
+export interface BulkPreparedItem {
+	item_index: number | null;
+	copy_variant_id: string | null;
+	variation_salt: string | null;
+	dialogue_fingerprint: string | null;
+	hook: string | null;
+	dialogue_summary: string | null;
+	logical_mode: string;
+	source_mode: string | null;
+	generation_mode: string;
+	workspace_generation_package_id: string;
+	item_status: string;
+	credit_state: string;
+}
+
+export interface BulkPrepareResult {
+	bulk_run_id: string;
+	bulk_plan_fingerprint: string;
+	production_run_id: string | null;
+	product_id: string;
+	logical_mode: string;
+	generation_mode: string;
+	quantity_requested: number;
+	prepared_package_count: number;
+	package_ids: string[];
+	expect_dialogue_fingerprints: string[];
+	items: BulkPreparedItem[];
+	reused_existing_batch: boolean;
+	stage: string;
+	next_step: string;
+	live_bulk_status: string;
+	live_bulk_stage: string;
+	required_confirm_phrase: string;
+	credit: string;
+	provider_calls: number;
+	flow_calls: number;
+}
+
+/** Create + approve + enqueue N durable packages, one per planned item.
+ *  Credit-free: the run is created dry_run=1 and nothing fires. */
+export async function prepareBulkFanoutPackages(input: {
+	product_id: string;
+	mode: WorkspaceMode;
+	source_mode?: string | null;
+	generation_mode?: PromptGenerationMode;
+	duration_seconds?: number;
+	requested_total_duration_seconds?: number | null;
+	quantity: number;
+	target_language?: PromptTargetLanguage;
+	model?: string | null;
+	aspect?: string;
+	expect_bulk_plan_fingerprint?: string | null;
+	start_frame_asset_id?: string | null;
+	product_reference_asset_id?: string | null;
+	character_reference_asset_id?: string | null;
+	scene_context_reference_asset_id?: string | null;
+}): Promise<BulkPrepareResult> {
+	return postAPI<BulkPrepareResult>("/api/workspace/bulk-fanout-prepare", input);
+}
+
 export async function fetchWorkspaceExecutionPackageHistory(
 	productId?: string,
 	mode?: WorkspaceMode,

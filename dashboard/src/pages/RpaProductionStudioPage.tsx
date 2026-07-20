@@ -71,8 +71,12 @@ import {
 } from "../api/nativeExtend";
 import {
 	createWorkspaceExecutionPackage,
+	fetchBulkFanoutPlan,
 	fetchCopyPoolReadiness,
+	prepareBulkFanoutPackages,
 	previewQuantityCopyPlans,
+	type BulkFanoutPlanResult,
+	type BulkPrepareResult,
 	type CopyPoolReadinessResult,
 	type QuantityPreviewResult,
 } from "../api/workspacePackages";
@@ -224,6 +228,14 @@ export default function RpaProductionStudioPage() {
 	// Approved copy-pool readiness, checked BEFORE every preview so a shortage is
 	// reported as an exact number + a seeding action, not as a bare uniqueness block.
 	const [poolReadiness, setPoolReadiness] = useState<CopyPoolReadinessResult | null>(null);
+	// Stage 2A: the itemized bulk fan-out plan (N separate intents). Planning
+	// only — it never enables live; the server gate stops at the credit boundary.
+	const [bulkPlan, setBulkPlan] = useState<BulkFanoutPlanResult | null>(null);
+	// Stage 2C: the PREPARED itemized batch (N durable packages + one run).
+	// Credit-free; live still needs Stage 3 certification.
+	const [bulkPrepared, setBulkPrepared] = useState<BulkPrepareResult | null>(null);
+	const [bulkDryRun, setBulkDryRun] = useState<DryRunReport | null>(null);
+	const [bulkError, setBulkError] = useState<string | null>(null);
 	const [previewError, setPreviewError] = useState<string | null>(null);
 
 	// ── pipeline ──
@@ -335,6 +347,10 @@ export default function RpaProductionStudioPage() {
 		setPreviewResult(null);
 		setPreviewError(null);
 		setPoolReadiness(null);
+		setBulkPlan(null);
+		setBulkPrepared(null);
+		setBulkDryRun(null);
+		setBulkError(null);
 	}, []);
 
 	/** Stage 1 quantity preview — credit-free plan of N unique-copy variants.
@@ -363,6 +379,10 @@ export default function RpaProductionStudioPage() {
 		setPreviewError(null);
 		setPreviewResult(null);
 		setPoolReadiness(null);
+		setBulkPlan(null);
+		setBulkPrepared(null);
+		setBulkDryRun(null);
+		setBulkError(null);
 		try {
 			const readiness = await fetchCopyPoolReadiness(copyPoolInput);
 			setPoolReadiness(readiness);
@@ -371,8 +391,55 @@ export default function RpaProductionStudioPage() {
 			if (readiness.readiness_status !== "READY") return;
 			const result = await previewQuantityCopyPlans(copyPoolInput);
 			setPreviewResult(result);
+			// Stage 2A: only a UNIQUE preview earns an itemized fan-out plan. Still
+			// credit-free, and still not a live authorization.
+			if (quantity > 1 && result.preview_ready) {
+				setBulkPlan(await fetchBulkFanoutPlan(copyPoolInput));
+			}
 		} catch (e) {
 			setPreviewError(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy(null);
+		}
+	};
+
+	/** Stage 2C — create + approve + enqueue N durable packages, then dry-run all
+	 *  of them. Entirely credit-free: the run is created dry_run=1 and nothing
+	 *  fires. Live bulk still requires Stage 3 certification, so this NEVER
+	 *  opens the live gate. */
+	const handleBulkPrepare = async () => {
+		if (!selectedProduct || !bulkPlan?.bulk_authorizable) return;
+		const previewMode = (studioMode === "HYBRID" ? "F2V" : studioMode) as WorkspaceMode;
+		setBusy("bulk-prepare");
+		setBulkError(null);
+		setBulkDryRun(null);
+		try {
+			const prepared = await prepareBulkFanoutPackages({
+				product_id: selectedProduct.id,
+				mode: previewMode,
+				source_mode: activeProfile.sourceMode ?? null,
+				generation_mode: isExtend ? "EXTEND" : "SINGLE",
+				duration_seconds: isExtend ? maxSingle : duration,
+				requested_total_duration_seconds: isExtend ? duration : null,
+				quantity,
+				target_language: "BM_MS",
+				model,
+				aspect,
+				// Pin the plan the operator saw — the server refuses a stale preview.
+				expect_bulk_plan_fingerprint: bulkPlan.bulk_plan_fingerprint,
+				start_frame_asset_id: startFrameAssetId || null,
+				product_reference_asset_id: productRefAssetId || null,
+				character_reference_asset_id: characterAssetId || null,
+				scene_context_reference_asset_id: sceneAssetId || null,
+			});
+			setBulkPrepared(prepared);
+			// Dry-run validates EVERY queued item. No credit, nothing fires.
+			if (prepared.production_run_id) {
+				const res = await startProductionRun(prepared.production_run_id, false);
+				setBulkDryRun(res.report ?? null);
+			}
+		} catch (e) {
+			setBulkError(e instanceof Error ? e.message : String(e));
 		} finally {
 			setBusy(null);
 		}
@@ -1124,6 +1191,125 @@ export default function RpaProductionStudioPage() {
 					</div>
 				)}
 			</section>
+			{bulkPlan && (
+				<section
+					className="mb-6 rounded-xl border border-sky-500/30 bg-sky-500/5 p-4"
+					data-testid="studio-bulk-fanout-section"
+					data-authorizable={String(bulkPlan.bulk_authorizable)}
+					data-intent-count={String(bulkPlan.planned_intent_count)}
+					data-stage={bulkPlan.live_bulk_stage}
+				>
+					<h2 className="mb-2 flex items-center gap-2 text-sm font-semibold text-sky-200">
+						<Layers size={14} /> 4c · Itemized bulk fan-out (credit-free plan · Stage 2A)
+					</h2>
+					<div className="mb-2 text-[11px] text-sky-200">
+						<strong>{bulkPlan.planned_intent_count}</strong> separate production intents —
+						not one <code>count:N</code> submission. Each item is its own credit event.
+					</div>
+					{bulkPlan.blockers.length > 0 && (
+						<ul className="mb-2 space-y-1" data-testid="studio-bulk-blockers">
+							{bulkPlan.blockers.map((b) => (
+								<li key={b} className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-[11px] text-red-200" data-testid="studio-bulk-blocker">{b}</li>
+							))}
+						</ul>
+					)}
+					<div className="mb-2 space-y-1.5">
+						{bulkPlan.intents.map((it) => (
+							<div
+								key={`${it.item_index}-${it.dialogue_fingerprint}`}
+								className="rounded-lg border border-slate-700 bg-slate-900/50 p-2 text-[10px] text-slate-300"
+								data-testid="studio-bulk-intent"
+								data-index={String(it.item_index)}
+								data-status={it.item_status}
+								data-credit={it.credit_state}
+								data-variant={it.copy_variant_id ?? ""}
+								data-fingerprint={it.dialogue_fingerprint ?? ""}
+							>
+								<div className="flex flex-wrap gap-x-3 gap-y-0.5 text-slate-400">
+									<span>#{(it.item_index ?? 0) + 1}</span>
+									<span>salt {it.variation_salt ?? "—"}</span>
+									<span>copy {it.copy_variant_id ?? "—"}</span>
+									<span>fp {(it.dialogue_fingerprint ?? "").slice(0, 8) || "—"}</span>
+									<span>{it.logical_mode}/{it.generation_mode}</span>
+									<span className="text-amber-300">{it.credit_state}</span>
+								</div>
+								{it.dialogue_summary && <div className="mt-0.5 text-slate-300">{it.dialogue_summary}</div>}
+							</div>
+						))}
+					</div>
+					<div className="mb-2 flex flex-wrap items-center gap-2">
+						<button
+							type="button"
+							data-testid="studio-action-bulk-prepare"
+							onClick={() => void handleBulkPrepare()}
+							disabled={!bulkPlan.bulk_authorizable || busy !== null || Boolean(bulkPrepared)}
+							className="rounded-lg bg-sky-600 px-3 py-1.5 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+						>
+							{busy === "bulk-prepare"
+								? "Preparing…"
+								: `Prepare ${bulkPlan.planned_intent_count} packages (no credit)`}
+						</button>
+						<span className="text-[10px] text-slate-400">
+							Creates + approves + queues {bulkPlan.planned_intent_count} separate packages, then dry-runs every item. Nothing fires.
+						</span>
+					</div>
+					{bulkError && (
+						<div className="mb-2 rounded-lg border border-red-500/40 bg-red-500/10 p-2 text-[11px] text-red-200" data-testid="studio-bulk-prepare-error">
+							Bulk prepare refused — nothing created, no credit: {bulkError}
+						</div>
+					)}
+					{bulkPrepared && (
+						<div
+							className="mb-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-2 text-[11px] text-emerald-100"
+							data-testid="studio-bulk-prepared"
+							data-stage={bulkPrepared.stage}
+							data-package-count={String(bulkPrepared.prepared_package_count)}
+							data-run={bulkPrepared.production_run_id ?? ""}
+							data-reused={String(bulkPrepared.reused_existing_batch)}
+						>
+							<div>
+								<strong>{bulkPrepared.prepared_package_count}</strong> packages prepared and queued
+								{bulkPrepared.production_run_id ? <> in run <code>{bulkPrepared.production_run_id}</code></> : null}.
+								{bulkPrepared.reused_existing_batch ? " (existing batch reused — no duplicates created)" : ""}
+							</div>
+							<div className="mt-1 space-y-0.5">
+								{bulkPrepared.items.map((it) => (
+									<div key={it.workspace_generation_package_id}
+										className="text-[10px] text-slate-300"
+										data-testid="studio-bulk-package"
+										data-index={String(it.item_index)}
+										data-package={it.workspace_generation_package_id}
+										data-variant={it.copy_variant_id ?? ""}
+										data-fingerprint={it.dialogue_fingerprint ?? ""}
+										data-status={it.item_status}>
+										#{(it.item_index ?? 0) + 1} · <code>{it.workspace_generation_package_id}</code> · copy {it.copy_variant_id ?? "—"} · fp {(it.dialogue_fingerprint ?? "").slice(0, 8)} · {it.item_status}
+									</div>
+								))}
+							</div>
+							{bulkDryRun && (
+								<div className="mt-1.5 rounded border border-slate-600 bg-slate-900/50 px-2 py-1 text-[10px] text-slate-300"
+									data-testid="studio-bulk-dryrun"
+									data-checked={String(bulkDryRun.checked ?? 0)}
+									data-ready={String(bulkDryRun.ready ?? 0)}
+									data-blocked={String(bulkDryRun.blocked ?? 0)}>
+									Dry run — checked {bulkDryRun.checked ?? 0} · ready {bulkDryRun.ready ?? 0} · blocked {bulkDryRun.blocked ?? 0} (no credit)
+								</div>
+							)}
+						</div>
+					)}
+					<div
+						className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100"
+						data-testid="studio-bulk-live-gate-state"
+						data-live-blocked="true"
+					>
+						<strong>{bulkPlan.live_bulk_status} — {bulkPlan.live_bulk_stage}.</strong>{" "}
+						This plan spends no credit and does not authorize a live run. Bulk live
+						additionally requires the server <code>BULK_FANOUT</code> gate with the phrase{" "}
+						<code>{bulkPlan.required_confirm_phrase}</code>, which currently refuses at the
+						credit boundary until bulk live is runtime-certified.
+					</div>
+				</section>
+			)}
 			{/* ── 5 · One live T2V ── */}
 			<section className="mb-6 rounded-xl border border-red-500/40 bg-red-500/5 p-4" data-testid="studio-live-gate" data-gate-open={(isExtend ? extendGateOpen : liveGateOpen) ? "true" : "false"} data-lane={isExtend ? "EXTEND" : "SINGLE"}>
 				<h2 className="mb-2 flex items-center gap-2 text-sm font-semibold text-red-200"><Flame size={14} /> 5 · {isExtend ? `Run one live EXTEND job (${duration}s multi-block)` : `Run one live ${studioMode}`}</h2>
