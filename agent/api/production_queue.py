@@ -36,6 +36,11 @@ class StartRunRequest(BaseModel):
     live_gate: str | None = None
     confirm_phrase: str | None = None
     expect_package_id: str | None = None
+    # Stage 2A BULK_FANOUT gate only: the caller must pin the EXACT itemized set
+    # it previewed — package ids AND the dialogue fingerprints the operator saw.
+    # Unused by the one-serial lanes, which stay singular.
+    expect_package_ids: list[str] | None = None
+    expect_dialogue_fingerprints: list[str] | None = None
 
 
 @router.post("")
@@ -81,6 +86,8 @@ async def start_run(run_id: str, request: StartRunRequest):
             live_gate=request.live_gate,
             confirm_phrase=request.confirm_phrase,
             expect_package_id=request.expect_package_id,
+            expect_package_ids=request.expect_package_ids,
+            expect_dialogue_fingerprints=request.expect_dialogue_fingerprints,
         )
     except ValueError as exc:
         message = str(exc)

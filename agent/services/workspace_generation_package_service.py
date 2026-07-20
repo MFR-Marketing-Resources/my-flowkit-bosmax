@@ -1742,6 +1742,131 @@ async def evaluate_copy_pool_readiness(
     }
 
 
+async def plan_bulk_fanout_intents(
+    *,
+    product_id: str,
+    logical_mode: str,
+    source_mode: str | None = None,
+    generation_mode: str = "SINGLE",
+    duration_seconds: int = 8,
+    requested_total_duration_seconds: int | None = None,
+    quantity: int = 1,
+    target_language: str = "BM_MS",
+) -> dict:
+    """Stage 2A: plan N ITEMIZED live-production intents. CREDIT-FREE.
+
+    Bulk live must never be one blind ``count:N`` submission — ``count`` is the
+    provider's per-submission copy count (clamped 1..4), NOT an item multiplier.
+    This produces N SEPARATE intents, each carrying its own identity, so the
+    fan-out is auditable item-by-item instead of being an untracked batch.
+
+    Fail-closed chain, in order: copy-pool readiness must be READY, then the
+    quantity preview must be UNIQUE. Either failing yields a plan that is NOT
+    authorizable — duplicate dialogue can never reach the live fan-out.
+
+    Plans only. Creates no package, approves nothing, enqueues nothing, fires
+    nothing: ZERO provider calls, ZERO Flow calls, ZERO credit. Live execution
+    additionally requires the server-side BULK_FANOUT gate, which stops at the
+    Stage 3 credit boundary.
+    """
+    mode = str(logical_mode or "").strip().upper()
+    n = int(quantity)
+    if n < 1 or n > QUANTITY_PREVIEW_MAX:
+        raise ValueError(f"QUANTITY_OUT_OF_RANGE:1..{QUANTITY_PREVIEW_MAX}")
+
+    common = {
+        "product_id": product_id,
+        "logical_mode": mode,
+        "source_mode": source_mode,
+        "generation_mode": generation_mode,
+        "duration_seconds": duration_seconds,
+        "requested_total_duration_seconds": requested_total_duration_seconds,
+        "quantity": n,
+        "target_language": target_language,
+    }
+    blockers: list[str] = []
+
+    readiness = await evaluate_copy_pool_readiness(**common)
+    if readiness["readiness_status"] != READINESS_READY:
+        blockers.append(
+            f"COPY_POOL_NOT_READY:{readiness['readiness_status']}:"
+            f"short_by_{readiness['shortage_count']}"
+        )
+
+    preview = await preview_quantity_copy_plans(**common)
+    if not preview["preview_ready"]:
+        blockers.append(f"PREVIEW_NOT_UNIQUE:{preview['dialogue_uniqueness_status']}")
+
+    # Bulk EXTEND stays blocked: the single-shot production lane fails closed on
+    # EXTEND packages (multi-block belongs to the durable /video-jobs
+    # orchestrator, which is per-job, not per-run). Surfaced as an exact blocker
+    # rather than silently truncating a 16s request to one 8s block.
+    if str(generation_mode or "").strip().upper() == "EXTEND":
+        blockers.append(
+            "BULK_EXTEND_NOT_SUPPORTED:use_video_jobs_orchestrator_per_item"
+        )
+
+    intents: list[dict] = []
+    for item in preview.get("items") or []:
+        intents.append({
+            "item_index": item.get("item_index"),
+            "copy_variant_id": item.get("copy_variant_id"),
+            "variation_salt": item.get("variation_salt"),
+            "dialogue_fingerprint": item.get("dialogue_fingerprint"),
+            "hook": item.get("hook"),
+            "dialogue_summary": item.get("dialogue_summary"),
+            "seam_voice": item.get("seam_voice"),
+            "logical_mode": mode,
+            "source_mode": source_mode,
+            "generation_mode": generation_mode,
+            # Lineage stays UNBOUND until the package actually exists — reported
+            # as null rather than invented, so no intent claims a package it
+            # does not have.
+            "workspace_generation_package_id": None,
+            "production_run_id": None,
+            "production_job_id": None,
+            "item_status": "PLANNED" if not item.get("compile_error") else "BLOCKED",
+            "compile_error": item.get("compile_error"),
+            # Per-item credit metadata: every item is its own credit event.
+            "credit_state": "NOT_AUTHORIZED",
+            "credit_warning": "This item spends provider credit when fired.",
+        })
+
+    # One fingerprint over the whole authorized set. The live gate re-derives the
+    # per-item fingerprints and refuses if the set drifted from what was shown.
+    dialogue_fps = [str(i["dialogue_fingerprint"] or "") for i in intents]
+    plan_fingerprint = hashlib.sha256(
+        json.dumps(
+            {"product_id": product_id, "mode": mode, "generation_mode": generation_mode,
+             "quantity": n, "dialogue_fingerprints": sorted(dialogue_fps)},
+            sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+    return {
+        "product_id": product_id,
+        "quantity_requested": n,
+        "quantity_max": QUANTITY_PREVIEW_MAX,
+        "logical_mode": mode,
+        "generation_mode": generation_mode,
+        "planned_intent_count": len(intents),
+        "intents": intents,
+        "bulk_plan_fingerprint": plan_fingerprint,
+        "copy_pool_readiness_status": readiness["readiness_status"],
+        "dialogue_uniqueness_status": preview["dialogue_uniqueness_status"],
+        "blockers": blockers,
+        # Authorizable == every prerequisite proven. It does NOT mean the run may
+        # fire: the server gate still stops at the Stage 3 credit boundary.
+        "bulk_authorizable": not blockers and len(intents) == n,
+        "live_bulk_status": "Bulk live fan-out not certified yet",
+        "live_bulk_stage": "STAGE_3_RUNTIME_CERTIFICATION_REQUIRED",
+        "required_confirm_phrase": "AUTHORIZE_BULK_FANOUT_LIVE_RUN",
+        "credit": "NONE",
+        "provider_calls": 0,
+        "flow_calls": 0,
+    }
+
+
 async def preview_quantity_copy_plans(
     *,
     product_id: str,
