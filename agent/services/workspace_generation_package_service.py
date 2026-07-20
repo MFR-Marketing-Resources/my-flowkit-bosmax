@@ -1967,6 +1967,7 @@ async def prepare_bulk_fanout_packages(
     Stage 3 credit boundary.
     """
     from agent.db import crud as _crud
+    from agent.services import copy_rotation_service as _rotation
     from agent.services import production_queue_service as _pq
 
     mode = str(logical_mode or "").strip().upper()
@@ -2089,6 +2090,30 @@ async def prepare_bulk_fanout_packages(
             reused=True,
         )
 
+    # B-10 (pre-check): bulk consumes the copy pool, so it must PAY into the same
+    # content_combination ledger the batch lane does — it never did, which let a
+    # later plan re-select and re-produce already-produced dialogue (live proof:
+    # the 2026-07-20 T2V bulk run left 0 ledger rows and 0 usage increments, so
+    # the very next plan re-picked the same two variants byte-identically).
+    # This advisory pass rejects a plan whose dialogue is already in the ledger
+    # BEFORE any package exists; the UNIQUE index at record time below remains
+    # the authority. Runs only on the fresh-create path — a reused batch already
+    # paid when it was first prepared.
+    combo_fps: dict[int, str] = {}
+    for intent in intents:
+        idx = intent["item_index"]
+        combo_fps[idx] = _rotation.plan_combination_fingerprint(
+            product_id,
+            _bulk_combination_plan(mode, intent),
+            dialogue_fingerprint=str(intent["dialogue_fingerprint"]),
+        )
+        if await _rotation.combination_already_used(combo_fps[idx]):
+            raise ValueError(
+                f"BULK_DUPLICATE_COMBINATION:item#{idx}"
+                ":dialogue_already_produced_for_this_product_and_lane"
+                ":created_before_failure=0"
+            )
+
     creator_kwargs: dict = {
         "product_id": product_id,
         "generation_mode": generation_mode,
@@ -2141,6 +2166,36 @@ async def prepare_bulk_fanout_packages(
         # Durable per-item identity, merge-written into generation_identity_json
         # (the column already has a read-modify-merge precedent). No migration.
         await _persist_bulk_item_identity(wgp_id, bulk_run_id, plan, intent)
+        # B-10 (authority): burn the combination under the UNIQUE index BEFORE
+        # anything can be approved or enqueued. A duplicate here (a race the
+        # pre-check cannot see) aborts the whole batch — all-or-nothing holds
+        # because approve/enqueue only run after every item recorded cleanly.
+        combo_row = await _rotation.record_combination(
+            product_id=product_id,
+            logical_mode=mode,
+            plan=_bulk_combination_plan(mode, intent),
+            fingerprint=combo_fps[idx],
+            dialogue_fingerprint=str(intent["dialogue_fingerprint"]),
+            workspace_generation_package_id=wgp_id,
+            batch_run_id=bulk_run_id,
+        )
+        if combo_row is None:
+            raise ValueError(
+                f"BULK_DUPLICATE_COMBINATION:item#{idx}"
+                ":combination_already_in_ledger"
+                f":created_before_failure={len(created)}"
+            )
+        # One real script use per consumed variant, so the LRU pool ADVANCES and
+        # the next plan rotates to fresh copy instead of replaying this one.
+        # Fail-soft exactly like the batch lane: a usage-counter hiccup must
+        # never strand packages that already burned their combination.
+        try:
+            await _rotation.record_rotation_usage(intent["copy_variant_id"], mode)
+        except Exception as usage_exc:  # noqa: BLE001
+            _batch_logger.warning(
+                "BulkFanout %s: usage record failed for %s: %s",
+                bulk_run_id, intent["copy_variant_id"], usage_exc,
+            )
 
     approve = await _pq.approve_packages(created)
     if approve.get("approved") != len(created):
@@ -2172,6 +2227,24 @@ async def prepare_bulk_fanout_packages(
     await _crud.update_production_run(run_id, config_json=json.dumps(cfg, ensure_ascii=False))
 
     return _bulk_manifest(plan, bulk_run_id, created, production_run_id=run_id, reused=False)
+
+
+def _bulk_combination_plan(logical_mode: str, intent: dict) -> dict:
+    """Ledger identity of ONE bulk item: product x LOGICAL lane x compiled dialogue.
+
+    Deliberately WITHOUT copy_set_id: ``script_key_for_plan`` gives the copy set
+    precedence, which would pin the ledger identity to the variant itself and
+    permanently burn it after a single bulk use — breaking the reuse-under-cap
+    rotation design (REUSE_CAP allows a variant back once its dialogue diverges).
+    The bulk item's script truth is its compiled dialogue fingerprint, exactly
+    the batch lane's angle-based precedent: reusing a copy set stays legal until
+    it would compile the SAME dialogue again, and that is refused.
+
+    ``logical_mode`` is the LOGICAL lane (T2V/F2V/HYBRID/I2V), never the compile
+    remap — B-09's lesson: HYBRID compiles as F2V but is a different lane, and
+    the same dialogue on different lanes is a different on-platform combination.
+    """
+    return {"logical_mode": str(logical_mode or "").upper()}
 
 
 async def _persist_bulk_item_identity(

@@ -181,3 +181,99 @@ def test_diagnostic_change_did_not_touch_gen_tools():
 
 def test_certification_flag_untouched():
     assert pq.BULK_LIVE_EXECUTION_CERTIFIED is False
+
+
+# ── B-11 · identity writes are MERGE-ONLY, at both ends of the lifecycle ─────
+# The early snapshot used to build a fresh dict and overwrite
+# generation_identity_json wholesale, destroying the durable bulk_fanout_item
+# pairing that bulk prepare's reuse branch requires — every bulk re-prepare
+# then 409'd with BULK_REUSE_IDENTITY_MISSING (live proof: both packages of
+# bulk_acbde73b137a2748 lost their bulk_fanout_item the moment they fired).
+
+_BULK_ROW = {
+    "generation_identity_json": json.dumps({
+        "bulk_fanout_item": {
+            "schema_version": "bulk-fanout-item-v1",
+            "bulk_run_id": "bulk_test1", "item_index": 1,
+            "copy_variant_id": "cs_xyz", "dialogue_fingerprint": "fp_abc",
+        },
+        "unrelated_key": "must-survive",
+    })
+}
+
+
+def test_early_snapshot_preserves_bulk_fanout_item_and_unrelated_keys(monkeypatch):
+    written = _fake_crud(monkeypatch, _BULK_ROW)
+    _fake_make_video(monkeypatch, {"mode": "T2V", "model": "Veo 3.1 - Lite"})
+
+    asyncio.run(pq._persist_generation_identity("wgp_1", "g_job1"))
+
+    stored = json.loads(written["generation_identity_json"])
+    bulk = stored.get("bulk_fanout_item")
+    assert bulk is not None, "early snapshot clobbered bulk_fanout_item"
+    assert bulk["item_index"] == 1
+    assert bulk["dialogue_fingerprint"] == "fp_abc"
+    assert bulk["bulk_run_id"] == "bulk_test1"
+    assert stored["unrelated_key"] == "must-survive"
+    # and the submission evidence is still recorded on top
+    assert stored["provider_job_id"] == "g_job1"
+    assert stored["mode"] == "T2V"
+    assert "submitted_at" in stored
+
+
+def test_terminal_binding_outcome_preserves_bulk_fanout_item(monkeypatch):
+    written = _fake_crud(monkeypatch, _BULK_ROW)
+    _fake_make_video(monkeypatch, {
+        "status": "DONE", "media_id": "media_abc",
+        "generation_identity": {"sse_prompt": "hello"},
+        "identity_captured": True, "gen_tool_matched": True,
+        "tools_seen": ["generate_video_from_text"],
+    })
+
+    asyncio.run(pq._persist_binding_outcome("wgp_1", "g_job1"))
+
+    stored = json.loads(written["generation_identity_json"])
+    assert stored["bulk_fanout_item"]["dialogue_fingerprint"] == "fp_abc"
+    assert stored["unrelated_key"] == "must-survive"
+    assert stored["binding_outcome"]["bound"] is True
+
+
+def test_early_then_terminal_full_lifecycle_keeps_bulk_identity(monkeypatch):
+    """The exact live sequence that destroyed the pairing: prepare writes the
+    bulk identity, the fire-time snapshot lands, then the terminal outcome —
+    bulk_fanout_item must survive ALL of it."""
+    state = {"row": dict(_BULK_ROW)}
+
+    async def _get(wgp_id):
+        return dict(state["row"])
+
+    async def _update(wgp_id, **kw):
+        state["row"].update(kw)
+        return {}
+
+    monkeypatch.setattr(pq.crud, "get_workspace_generation_package", _get)
+    monkeypatch.setattr(pq.crud, "update_workspace_generation_package", _update)
+
+    import agent.services.make_video as mv
+    jobs = {
+        "early": {"mode": "T2V", "model": "Veo 3.1 - Lite", "num_videos": 1},
+        "terminal": {
+            "status": "DONE", "media_id": "media_abc",
+            "generation_identity": {"sse_prompt": "hello"},
+            "identity_captured": True, "gen_tool_matched": True,
+            "tools_seen": ["generate_video_from_text"],
+        },
+    }
+    monkeypatch.setattr(mv, "get_job", lambda job_id: dict(jobs["early"]))
+    asyncio.run(pq._persist_generation_identity("wgp_1", "g_job1"))
+
+    monkeypatch.setattr(mv, "get_job", lambda job_id: dict(jobs["terminal"]))
+    asyncio.run(pq._persist_binding_outcome("wgp_1", "g_job1"))
+
+    final = json.loads(state["row"]["generation_identity_json"])
+    assert final["bulk_fanout_item"]["item_index"] == 1, "lifecycle lost bulk identity"
+    assert final["bulk_fanout_item"]["copy_variant_id"] == "cs_xyz"
+    assert final["unrelated_key"] == "must-survive"
+    assert final["provider_job_id"] == "g_job1"
+    assert final["binding_outcome"]["bound_media_id"] == "media_abc"
+    assert final["identity_captured"] is True

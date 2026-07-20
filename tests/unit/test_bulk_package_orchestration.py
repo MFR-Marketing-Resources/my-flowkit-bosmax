@@ -69,6 +69,13 @@ class _Harness:
         self.existing_batch: list[dict] = []
         self.fail_on_index: int | None = None
         self.approve_ok = True
+        # B-10: the uniqueness ledger + rotation usage, faked so no test can
+        # touch the real DB. Pre-seed `ledger_fps` to simulate already-produced
+        # dialogue; every record_combination lands in `combos`, every usage
+        # advance in `usage`.
+        self.ledger_fps: set[str] = set()
+        self.combos: list[dict] = []
+        self.usage: list[tuple] = []
 
 
 def _install(monkeypatch, rows, dialogues, h: _Harness):
@@ -118,6 +125,26 @@ def _install(monkeypatch, rows, dialogues, h: _Harness):
 
     monkeypatch.setattr(pq, "approve_packages", _approve)
     monkeypatch.setattr(pq, "send_to_production", _send)
+
+    # B-10 seams: fingerprinting stays REAL (pure function); only the DB-backed
+    # ledger check/write and the usage counter are faked.
+    async def _already_used(fp):
+        return fp in h.ledger_fps
+
+    async def _record_combo(**kw):
+        h.combos.append(dict(kw))
+        if kw["fingerprint"] in h.ledger_fps:
+            return None  # UNIQUE index refusal — duplicate combination
+        h.ledger_fps.add(kw["fingerprint"])
+        return dict(kw)
+
+    async def _record_usage(copy_set_id, logical_mode):
+        h.usage.append((copy_set_id, logical_mode))
+        return {}
+
+    monkeypatch.setattr(copy_rotation_service, "combination_already_used", _already_used)
+    monkeypatch.setattr(copy_rotation_service, "record_combination", _record_combo)
+    monkeypatch.setattr(copy_rotation_service, "record_rotation_usage", _record_usage)
     return h
 
 
@@ -565,3 +592,141 @@ def test_bulk_live_gate_still_refuses_a_single_item_run():
     """The server-side live gate remains the second, independent chokepoint."""
     import inspect
     assert "BULK_REQUIRES_MULTIPLE_ITEMS" in inspect.getsource(pq._assert_bulk_fanout_live)
+
+
+# ── B-10 · bulk must PAY into the uniqueness ledger + rotation counters ──────
+# Live proof of the gap (2026-07-20): a T2V bulk run consumed two approved
+# variants and produced a real video, yet left ZERO content_combination rows
+# and ZERO usage increments — so the very next plan re-selected the same two
+# variants byte-identically and would have re-produced already-produced
+# dialogue. These tests pin the corrected contract: every prepared item burns
+# its combination BEFORE approve/enqueue, duplicates fail closed, and the LRU
+# pool advances so the next plan rotates to fresh copy.
+
+
+def test_bulk_prepare_records_one_combination_per_item(monkeypatch):
+    out, h = _prepare(monkeypatch, THREE, UNIQUE3)
+
+    assert len(h.combos) == 3, "every prepared item must burn a ledger row"
+    by_wgp = {c["workspace_generation_package_id"]: c for c in h.combos}
+    for item in out["items"]:
+        combo = by_wgp[item["workspace_generation_package_id"]]
+        assert combo["product_id"] == "P"
+        assert combo["logical_mode"] == "T2V"
+        assert combo["batch_run_id"] == out["bulk_run_id"]
+        assert combo["dialogue_fingerprint"] == item["dialogue_fingerprint"]
+        # the fingerprint is the REAL pure-function output for this identity —
+        # dialogue-keyed, so a copy set stays reusable until its dialogue repeats
+        expected_fp = copy_rotation_service.plan_combination_fingerprint(
+            "P", {"logical_mode": "T2V"},
+            dialogue_fingerprint=item["dialogue_fingerprint"],
+        )
+        assert combo["fingerprint"] == expected_fp
+        assert copy_rotation_service.script_key_for_plan(
+            combo["plan"], dialogue_fingerprint=combo["dialogue_fingerprint"]
+        ).startswith("dialogue:"), "bulk script identity must be dialogue-keyed"
+
+
+def test_bulk_prepare_advances_rotation_usage_per_variant(monkeypatch):
+    out, h = _prepare(monkeypatch, THREE, UNIQUE3)
+    assert len(h.usage) == 3, "one real use per consumed variant"
+    assert {u[0] for u in h.usage} == {"cs1", "cs2", "cs3"}
+    assert all(u[1] == "T2V" for u in h.usage), "usage recorded under the LOGICAL lane"
+
+
+def test_ledger_duplicate_fails_closed_before_any_create(monkeypatch):
+    """Already-produced dialogue is refused BEFORE a single package exists."""
+    _, h1 = _prepare(monkeypatch, THREE, UNIQUE3)
+    burned = h1.combos[0]["fingerprint"]
+
+    h2 = _Harness()
+    h2.ledger_fps.add(burned)
+    with pytest.raises(ValueError) as ei:
+        _prepare(monkeypatch, THREE, UNIQUE3, h2)
+    msg = str(ei.value)
+    assert "BULK_DUPLICATE_COMBINATION" in msg
+    assert "created_before_failure=0" in msg
+    assert h2.created == [], "a package was created despite a known duplicate"
+    assert h2.approved == []
+    assert [r for r in h2.runs if "send" in r] == []
+
+
+def test_record_time_duplicate_aborts_before_approve_and_enqueue(monkeypatch):
+    """The UNIQUE index is the authority: a race the pre-check missed still
+    fails closed after create, and NOTHING is approved or enqueued."""
+    _, h1 = _prepare(monkeypatch, THREE, UNIQUE3)
+    burned = h1.combos[1]["fingerprint"]
+
+    h2 = _Harness()
+    h2.ledger_fps.add(burned)
+    _install(monkeypatch, THREE, UNIQUE3, h2)
+
+    async def _blind(fp):   # the pre-check window: ledger row lands mid-flight
+        return False
+    monkeypatch.setattr(copy_rotation_service, "combination_already_used", _blind)
+
+    with pytest.raises(ValueError) as ei:
+        asyncio.run(svc.prepare_bulk_fanout_packages(
+            product_id="P", logical_mode="T2V", source_mode="T2V",
+            quantity=3, model="Veo 3.1 - Lite", aspect="9:16",
+        ))
+    msg = str(ei.value)
+    assert "BULK_DUPLICATE_COMBINATION" in msg
+    assert "created_before_failure=" in msg
+    assert h2.approved == [], "approved despite a duplicate combination"
+    assert [r for r in h2.runs if "send" in r] == [], "enqueued despite a duplicate"
+
+
+def test_reuse_does_not_rerecord_combinations_or_usage(monkeypatch):
+    """An idempotent re-prepare returns the existing batch WITHOUT double-burning
+    the ledger or double-counting usage."""
+    plan, _ = _prepare(monkeypatch, THREE, UNIQUE3)
+    fps = [i["dialogue_fingerprint"] for i in plan["items"]]
+
+    h2 = _Harness()
+    h2.existing_batch = [_prev(i, fps[i]) for i in range(3)]
+    out, _ = _prepare(monkeypatch, THREE, UNIQUE3, h2)
+    assert out["reused_existing_batch"] is True
+    assert h2.combos == [], "reuse re-burned the combination ledger"
+    assert h2.usage == [], "reuse double-counted rotation usage"
+
+
+def test_usage_advance_rotates_the_next_selection(monkeypatch):
+    """The whole point of recording usage: with alternatives in the pool, the
+    next selection must move OFF the just-consumed variants (real LRU, real
+    selection — only the DB listing is faked)."""
+    def _row(cs_id, used_at):
+        return {
+            "copy_set_id": cs_id, "product_id": "P", "status": "COPY_APPROVED",
+            "archived": 0, "usage_count": 1, "last_used_at": used_at,
+            "created_at": "2026-07-01T00:00:00Z", "hook": f"hook {cs_id}",
+        }
+
+    rows = {
+        "csA": _row("csA", "2026-07-10T00:00:01Z"),
+        "csB": _row("csB", "2026-07-10T00:00:02Z"),
+        "csC": _row("csC", "2026-07-10T00:00:03Z"),
+        "csD": _row("csD", "2026-07-10T00:00:04Z"),
+    }
+
+    async def _list(product_id):
+        return [dict(r) for r in rows.values()]
+    monkeypatch.setattr(
+        copy_rotation_service.crud, "list_copy_sets_for_product", _list)
+
+    first = asyncio.run(copy_rotation_service.select_rotation_copy_sets("P", 2))
+    picked = [i["copy_set_id"] for i in first["items"]]
+    assert picked == ["csA", "csB"], "LRU head must be the oldest-used variants"
+
+    # what the B-10 fix now does after preparing those two items
+    for cs in picked:
+        rows[cs]["usage_count"] += 1
+        rows[cs]["last_used_at"] = "2026-07-20T14:00:00Z"
+
+    second = asyncio.run(copy_rotation_service.select_rotation_copy_sets("P", 2))
+    repick = [i["copy_set_id"] for i in second["items"]]
+    assert set(repick).isdisjoint(picked), (
+        f"selection replayed consumed variants {set(repick) & set(picked)} "
+        "despite fresh alternatives"
+    )
+    assert repick == ["csC", "csD"]
