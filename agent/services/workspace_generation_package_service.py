@@ -1973,6 +1973,15 @@ async def prepare_bulk_fanout_packages(
     if mode not in BULK_PREPARE_SUPPORTED_MODES:
         raise ValueError(f"BULK_PREPARE_UNSUPPORTED_MODE:{mode or 'UNKNOWN'}")
 
+    # Bulk prepare is BULK-only. A single item must stay on its mode-exact
+    # one-serial path, which carries stricter per-lane rules than the bulk gate;
+    # the bulk LIVE gate already refuses a 1-item run
+    # (BULK_REQUIRES_MULTIPLE_ITEMS), so preparing one here would only ever
+    # produce a batch that can never be authorized as bulk. Refused BEFORE the
+    # plan and before any create/approve/enqueue/dry-run.
+    if int(quantity) < 2:
+        raise ValueError(f"BULK_PREPARE_REQUIRES_MULTIPLE_ITEMS:{int(quantity)}")
+
     plan = await plan_bulk_fanout_intents(
         product_id=product_id, logical_mode=mode, source_mode=source_mode,
         generation_mode=generation_mode, duration_seconds=duration_seconds,

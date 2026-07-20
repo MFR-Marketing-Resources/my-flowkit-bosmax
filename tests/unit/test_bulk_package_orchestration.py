@@ -290,15 +290,33 @@ def test_prepare_never_flips_the_certification_flag():
     assert pq.BULK_LIVE_EXECUTION_CERTIFIED is False
 
 
-def test_quantity_one_is_not_routed_through_bulk_prepare(monkeypatch):
-    """Stage 2C is bulk-only; a single item keeps its mode-exact one-serial path."""
+@pytest.mark.parametrize("qty", [1, 0, -1])
+def test_bulk_prepare_refuses_quantity_below_two(monkeypatch, qty):
+    """Stage 2C is BULK-only: a single item keeps its mode-exact one-serial path.
+
+    Hardening — previously quantity=1 would happily prepare one package even
+    though the bulk LIVE gate refuses a 1-item run, so that batch could never be
+    authorized as bulk. Now refused server-side BEFORE any create/approve/
+    enqueue/dry-run, regardless of what the UI routes.
+    """
     one = [_approved("cs1")]
-    out, h = _prepare(monkeypatch, one, {"cs1": "aaa"}, quantity=1)
-    # a 1-item plan is authorizable, but the single-serial gate — not the bulk
-    # gate — governs it; prepare must still refuse to pretend it is a bulk run.
-    assert out["prepared_package_count"] == 1
-    assert len(h.created) == 1
-    # the bulk LIVE gate rejects a 1-item run, which is what keeps qty=1 on the
-    # unchanged single-serial path
+    h = _Harness()
+    with pytest.raises(ValueError, match=f"BULK_PREPARE_REQUIRES_MULTIPLE_ITEMS:{qty}"):
+        _prepare(monkeypatch, one, {"cs1": "aaa"}, h, quantity=qty)
+    assert h.created == [], "packages created for a sub-bulk quantity"
+    assert h.approved == []
+    assert [r for r in h.runs if "send" in r] == [], "enqueued for a sub-bulk quantity"
+
+
+def test_quantity_two_is_the_minimum_accepted_bulk(monkeypatch):
+    """The boundary is exactly 2 — the guard must not over-reject real bulk."""
+    two = [_approved("cs1"), _approved("cs2")]
+    out, h = _prepare(monkeypatch, two, {"cs1": "aaa", "cs2": "bbb"}, quantity=2)
+    assert out["prepared_package_count"] == 2
+    assert len(h.created) == 2
+
+
+def test_bulk_live_gate_still_refuses_a_single_item_run():
+    """The server-side live gate remains the second, independent chokepoint."""
     import inspect
     assert "BULK_REQUIRES_MULTIPLE_ITEMS" in inspect.getsource(pq._assert_bulk_fanout_live)
