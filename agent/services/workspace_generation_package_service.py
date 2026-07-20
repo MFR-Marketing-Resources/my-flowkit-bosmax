@@ -1982,8 +1982,15 @@ async def prepare_bulk_fanout_packages(
     if int(quantity) < 2:
         raise ValueError(f"BULK_PREPARE_REQUIRES_MULTIPLE_ITEMS:{int(quantity)}")
 
+    # B-08: HYBRID is a LOGICAL mode; the compiler only knows the engine modes and
+    # raises UNSUPPORTED_MODE for "HYBRID". It compiles as F2V + source_mode=HYBRID
+    # (the same mapping the Studio applies client-side). `mode` stays the logical
+    # identity for creator dispatch; only the compile call is remapped.
+    compile_mode = "F2V" if mode == "HYBRID" else mode
+    resolved_source_mode = source_mode or ("HYBRID" if mode == "HYBRID" else None)
+
     plan = await plan_bulk_fanout_intents(
-        product_id=product_id, logical_mode=mode, source_mode=source_mode,
+        product_id=product_id, logical_mode=compile_mode, source_mode=resolved_source_mode,
         generation_mode=generation_mode, duration_seconds=duration_seconds,
         requested_total_duration_seconds=requested_total_duration_seconds,
         quantity=quantity, target_language=target_language,
@@ -2015,7 +2022,14 @@ async def prepare_bulk_fanout_packages(
     # One durable group key per plan. `batch_run_id` is a REAL column with a
     # crud filter, so the batch survives restart and gives us idempotency for
     # free — no schema change, no in-memory bookkeeping.
-    bulk_run_id = f"bulk_{plan['bulk_plan_fingerprint'][:16]}"
+    # B-09: the plan fingerprint is computed from the COMPILE mode, which is F2V
+    # for both F2V and HYBRID (see B-08). Keying the batch on it alone made a
+    # HYBRID request reuse an F2V batch — same dialogue, but FRAMES packages
+    # instead of the product-anchor ones. The group key must carry the LOGICAL
+    # lane identity, not just the compiled copy identity.
+    bulk_run_id = "bulk_" + hashlib.sha256(
+        f"{plan['bulk_plan_fingerprint']}|{mode}|{resolved_source_mode or ''}".encode("utf-8")
+    ).hexdigest()[:16]
     existing = await _crud.list_workspace_generation_packages(
         batch_run_id=bulk_run_id, limit=200
     )
@@ -2047,6 +2061,27 @@ async def prepare_bulk_fanout_packages(
         if missing:
             raise ValueError(f"BULK_REUSE_INCOMPLETE_BATCH:missing_item_indexes={missing}")
 
+        # B-07: a prior attempt can leave packages behind that never completed —
+        # e.g. created but BLOCKED, so approval refused and nothing was ever
+        # enqueued. Returning those as "PREPARED" produced a manifest claiming a
+        # prepared batch with production_run_id=None. Reuse only a batch that is
+        # genuinely usable; otherwise fail closed and name the reason.
+        blocked = [
+            r["workspace_generation_package_id"] for r in existing
+            if str(r.get("status") or "").upper() == "BLOCKED"
+        ]
+        if blocked:
+            raise ValueError(
+                f"BULK_REUSE_BATCH_BLOCKED:{','.join(sorted(blocked)[:5])}"
+                ":previous_attempt_left_blocked_packages"
+            )
+        prior_run = existing[0].get("production_run_id")
+        if not prior_run:
+            raise ValueError(
+                f"BULK_REUSE_BATCH_NOT_ENQUEUED:{bulk_run_id}"
+                ":previous_attempt_never_reached_a_production_run"
+            )
+
         return _bulk_manifest(
             plan, bulk_run_id,
             [by_index[i] for i in expected],
@@ -2072,11 +2107,21 @@ async def prepare_bulk_fanout_packages(
                 pkg = await create_t2v_generation_package(
                     copy_set_id=intent["copy_variant_id"], **creator_kwargs)
             elif mode in ("F2V", "HYBRID"):
+                # B-06: create_f2v_generation_package accepts start_frame_asset_id,
+                # NOT product_reference_asset_id (that is the I2V creator's param).
+                # Passing it raised TypeError and broke F2V/HYBRID bulk prepare
+                # outright — the mocked creators in the orchestration tests hid it.
+                # HYBRID's padded 9:16 PRODUCT_REFERENCE anchor rides the F2V
+                # creator's start-frame slot, exactly as the batch lane does it
+                # (see _annotate kwargs: "HYBRID = F2V creator with
+                # source_mode=HYBRID").
+                frame_id = (
+                    product_reference_asset_id if mode == "HYBRID" else start_frame_asset_id
+                )
                 pkg = await create_f2v_generation_package(
                     copy_set_id=intent["copy_variant_id"],
                     source_mode=source_mode or ("HYBRID" if mode == "HYBRID" else "FRAMES"),
-                    start_frame_asset_id=start_frame_asset_id,
-                    product_reference_asset_id=product_reference_asset_id,
+                    start_frame_asset_id=frame_id,
                     **creator_kwargs)
             else:  # I2V
                 pkg = await create_i2v_generation_package(

@@ -992,6 +992,12 @@ async def _assert_bulk_fanout_live(
     cfg = _loads(run.get("config_json"), {})
     seen_fingerprints: dict[str, str] = {}
     validated: list[dict] = []
+    # B-03: the live loop authorizes T2V by default and widens ONLY for a mode
+    # recorded in cfg['authorized_live_mode']. This gate never recorded one, so a
+    # validated F2V/HYBRID/I2V bulk set would still have died per item with
+    # LIVE_MODE_NOT_AUTHORIZED. Collect the modes actually validated here so the
+    # caller can record exactly that authorization — no wider.
+    validated_modes: set[str] = set()
 
     for item in items:
         package_id = str(item["workspace_generation_package_id"])
@@ -1010,6 +1016,7 @@ async def _assert_bulk_fanout_live(
         logical_mode = (payload.get("logical_mode") or "").strip().upper()
         if not logical_mode:
             raise ValueError(f"BULK_ITEM_MODE_UNKNOWN:{package_id}")
+        validated_modes.add(logical_mode)
 
         # Dialogue uniqueness is re-proven from the PERSISTED per-item
         # fingerprint, never assumed from the preview. Two items sharing a
@@ -1045,6 +1052,15 @@ async def _assert_bulk_fanout_live(
             f"blocked={report.get('blocked')},items={len(items)}"
         )
 
+    # Mode law: ONE batch = ONE logical mode. A mixed set cannot be authorized,
+    # because the live loop admits exactly one mode per run — authorizing the
+    # union would silently widen the grant beyond what was validated.
+    if len(validated_modes) != 1:
+        raise ValueError(
+            "BULK_MIXED_MODES_FORBIDDEN:" + ",".join(sorted(validated_modes))
+        )
+    validated_mode = next(iter(validated_modes))
+
     # ── STAGE 3 CREDIT BOUNDARY ──
     # Everything above is validated. Execution stops here: bulk live fan-out has
     # never been certified against the provider, so Stage 2A refuses to spend
@@ -1055,7 +1071,7 @@ async def _assert_bulk_fanout_live(
             f"BULK_LIVE_EXECUTION_NOT_CERTIFIED:validated_items={len(validated)}:"
             "stage3_runtime_certification_required"
         )
-    return validated
+    return validated, validated_mode
 
 
 async def run_production_queue(
@@ -1157,12 +1173,22 @@ async def run_production_queue(
             # Stage 2A: validates the whole itemized fan-out set fail-closed and
             # then refuses at the credit boundary (BULK_LIVE_EXECUTION_CERTIFIED).
             # It raises before the state write below, so the run stays dry.
-            await _assert_bulk_fanout_live(
+            _bulk_items, validated_mode = await _assert_bulk_fanout_live(
                 run,
                 confirm_phrase=confirm_phrase,
                 expect_package_ids=expect_package_ids,
                 expect_dialogue_fingerprints=expect_dialogue_fingerprints,
             )
+            # B-03: authorize the loop for EXACTLY the one mode this gate just
+            # validated across every item — the same mechanism (and the same
+            # scalar) the one-serial F2V/I2V gates already use. Without it a
+            # validated F2V/HYBRID/I2V bulk set would hit the loop's T2V-only
+            # default and fail per item with LIVE_MODE_NOT_AUTHORIZED. This
+            # widens nothing: the mode is derived from the validated items, the
+            # batch is mode-uniform by law, and EXTEND never reaches here
+            # (build_execution_payload blocks it as EXTEND_PACKAGE_SINGLE_SHOT_
+            # FORBIDDEN before any mode is collected).
+            cfg["authorized_live_mode"] = validated_mode
         else:
             raise ValueError(f"LIVE_GATE_UNKNOWN:{live_gate}")
 
