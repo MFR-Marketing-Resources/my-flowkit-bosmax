@@ -197,10 +197,14 @@ async def create_f2v_generation_package(
     batch_run_id: str | None = None,
     avatar_id: str | None = None,
     copy_intelligence: dict | None = None,
+    copy_set_id: str | None = None,
     scene_context_override: str | None = None,
 ) -> dict:
     """Create a durable F2V workspace generation package."""
     mode = "F2V"
+    copy_intelligence = await _resolve_bound_copy_intelligence(
+        product_id, copy_set_id, copy_intelligence
+    )
     resolved_source_lane = _normalize_f2v_source_lane(source_mode)
     product_row = await crud.get_product(product_id)
     _assert_not_reference_only(product_id, product_row)
@@ -390,10 +394,14 @@ async def create_i2v_generation_package(
     operator_notes: str | None = None,
     batch_run_id: str | None = None,
     copy_intelligence: dict | None = None,
+    copy_set_id: str | None = None,
     scene_context_override: str | None = None,
 ) -> dict:
     """Create a durable I2V workspace generation package."""
     mode = "I2V"
+    copy_intelligence = await _resolve_bound_copy_intelligence(
+        product_id, copy_set_id, copy_intelligence
+    )
     product_row = await crud.get_product(product_id)
     _assert_not_reference_only(product_id, product_row)
     approved = await get_approved_product_package(product_id, normalize_mode(mode))
@@ -649,6 +657,42 @@ def _enrich_row(row: dict) -> dict:
 # ─── T2V ─────────────────────────────────────────────────────
 
 
+async def _resolve_bound_copy_intelligence(
+    product_id: str,
+    copy_set_id: str | None,
+    copy_intelligence: dict | None,
+) -> dict | None:
+    """Bind an APPROVED Copy Set into compiler copy for durable package creation.
+
+    Closes the Stage 2B gap: ``create_workspace_execution_package`` could bind a
+    copy variant, but seeding a durable package re-compiled WITHOUT it, so the
+    per-item copy binding was lost before the package existed. Bulk fan-out needs
+    each package to carry its own approved variant, otherwise "no duplicate
+    dialogue" is unenforceable at the package level.
+
+    Reuses the existing ``resolve_compiler_copy_intelligence`` seam — only
+    ``to_compiler_copy`` fields cross into the compiler, and an invalid /
+    product-mismatched / unapproved copy_set_id raises CopyBindingError
+    (fail-closed). Never fires a provider and never approves anything.
+
+    Precedence: the resolved Copy Set is the BASE; explicitly passed
+    ``copy_intelligence`` keys win on top of it (so the batch path's
+    ``hook_override`` still applies over a bound variant).
+
+    ``copy_set_id=None`` short-circuits — no resolver call, no DB read — so every
+    pre-existing caller keeps its exact current behaviour.
+    """
+    if not copy_set_id:
+        return copy_intelligence
+    from agent.services.copy_binding_service import resolve_compiler_copy_intelligence
+
+    binding = await resolve_compiler_copy_intelligence(product_id, copy_set_id)
+    bound = binding.get("copy_intelligence")
+    if not bound:
+        return copy_intelligence
+    return {**bound, **(copy_intelligence or {})}
+
+
 async def create_t2v_generation_package(
     *,
     product_id: str,
@@ -668,10 +712,14 @@ async def create_t2v_generation_package(
     batch_run_id: str | None = None,
     avatar_id: str | None = None,
     copy_intelligence: dict | None = None,
+    copy_set_id: str | None = None,
     scene_context_override: str | None = None,
 ) -> dict:
     """Create a durable T2V workspace generation package (text-only, no frame uploads)."""
     mode = "T2V"
+    copy_intelligence = await _resolve_bound_copy_intelligence(
+        product_id, copy_set_id, copy_intelligence
+    )
     product_row = await crud.get_product(product_id)
     _assert_not_reference_only(product_id, product_row)
     approved = await get_approved_product_package(product_id, normalize_mode(mode))
