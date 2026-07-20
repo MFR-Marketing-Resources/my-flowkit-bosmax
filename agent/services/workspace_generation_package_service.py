@@ -2359,22 +2359,87 @@ async def preview_quantity_copy_plans(
     is_extend = str(generation_mode or "").strip().upper() == "EXTEND"
 
     # Resolve up to N approved copy sets (deterministic LRU) — the dialogue source.
+    # B-12: a variant's dialogue is a pure function of (product, lane, copy set) —
+    # variation_salt does NOT diverge it — so a variant whose dialogue is already
+    # in the content_combination ledger can never be prepared again on this lane.
+    # Selecting blindly by rotation order therefore produced plans the prepare
+    # gate was guaranteed to 409 (live proof 2026-07-21: plan kept proposing the
+    # burned head of the pool, a closed plan->prepare loop). Filter candidates
+    # against the SAME ledger fingerprint prepare checks, walking the rotation
+    # order past burned variants, so the plan only ever proposes dialogue that
+    # prepare will accept. Fail-closed: fewer than N fresh variants is a blocker,
+    # never a silent shrink.
     resolved_hooks: list[str] = []
     resolved_copy_set_ids: list[str] = []
     copy_rotation_warnings: list[str] = []
+    ledger_blockers: list[str] = []
+    compiled_cache: dict[str, dict] = {}
+    fresh_fp_by_copy_set: dict[str, str | None] = {}
     copy_source: str | None = None
     try:
-        selection = await _rotation.select_rotation_copy_sets(product_id, n)
-        copy_rotation_warnings = list(selection.get("warnings") or [])
+        pool = await _rotation.list_eligible_copy_sets(product_id)
+        if not pool:
+            copy_rotation_warnings.append(
+                "NO_APPROVED_COPY_AVAILABLE:generate_and_approve_scripts_first"
+            )
+        elif len(pool) < n:
+            copy_rotation_warnings.append(
+                f"POOL_SMALLER_THAN_BATCH:{len(pool)}<{n}:scripts_repeat_with_different_visuals"
+            )
         seen: set[str] = set()
-        for row in selection.get("items") or []:
+        for row in pool:
+            if len(resolved_copy_set_ids) >= n:
+                break
             cs_id = str(row.get("copy_set_id") or "")
             cs_hook = str(row.get("hook") or row.get("angle") or "").strip()
             if not cs_id or cs_id in seen:
                 continue
             seen.add(cs_id)
+            try:
+                candidate = await _wxp.compile_workspace_prompt_preview(
+                    product_id=product_id,
+                    mode=mode,
+                    duration_seconds=int(duration_seconds),
+                    generation_mode=generation_mode,
+                    target_language=target_language,
+                    source_mode=source_mode,
+                    engine_duration_target=(
+                        "GOOGLE_FLOW" if is_extend else None
+                    ),
+                    requested_total_duration_seconds=requested_total_duration_seconds,
+                    copy_set_id=cs_id,
+                )
+            except Exception:
+                # A variant that cannot compile cannot prove its dialogue is
+                # fresh. Keep it OUT of the selection (fail-closed) but surface
+                # it, so one broken variant does not block the healthy pool.
+                copy_rotation_warnings.append(f"CANDIDATE_COMPILE_FAILED:{cs_id[:8]}")
+                continue
+            cand_norm = _norm_dialogue(_preview_dialogue_text(candidate))
+            cand_fp = (
+                hashlib.sha1(cand_norm.encode("utf-8")).hexdigest() if cand_norm else None
+            )
+            if cand_fp:
+                cand_combo_fp = _rotation.plan_combination_fingerprint(
+                    product_id,
+                    _bulk_combination_plan(mode, {}),
+                    dialogue_fingerprint=cand_fp,
+                )
+                if await _rotation.combination_already_used(cand_combo_fp):
+                    copy_rotation_warnings.append(
+                        f"LEDGER_SKIP:{cs_id[:8]}:dialogue_already_produced_this_lane"
+                    )
+                    continue
+            compiled_cache[cs_id] = candidate
+            fresh_fp_by_copy_set[cs_id] = cand_fp
             resolved_copy_set_ids.append(cs_id)
             resolved_hooks.append(cs_hook)
+        if pool and len(resolved_copy_set_ids) < n:
+            ledger_blockers.append(
+                "DIALOGUE_POOL_EXHAUSTED:"
+                f"fresh={len(resolved_copy_set_ids)}<{n}:"
+                "approve_new_copy_or_lower_quantity"
+            )
         if resolved_copy_set_ids:
             copy_source = "SCRIPT_LIBRARY"
     except Exception as exc:  # rotation must never fire a provider; surface, don't crash
@@ -2404,17 +2469,22 @@ async def preview_quantity_copy_plans(
             "compile_error": None,
         }
         try:
-            compiled = await _wxp.compile_workspace_prompt_preview(
-                product_id=product_id,
-                mode=mode,
-                duration_seconds=int(duration_seconds),
-                generation_mode=generation_mode,
-                target_language=target_language,
-                source_mode=source_mode,
-                engine_duration_target=engine_duration_target,
-                requested_total_duration_seconds=requested_total_duration_seconds,
-                copy_set_id=copy_set_id,
-            )
+            # B-12: candidates were already compiled during ledger filtering —
+            # reuse that exact result so the fingerprint the operator authorizes
+            # is byte-identical to the one that was ledger-checked.
+            compiled = compiled_cache.get(str(copy_set_id) or "")
+            if compiled is None:
+                compiled = await _wxp.compile_workspace_prompt_preview(
+                    product_id=product_id,
+                    mode=mode,
+                    duration_seconds=int(duration_seconds),
+                    generation_mode=generation_mode,
+                    target_language=target_language,
+                    source_mode=source_mode,
+                    engine_duration_target=engine_duration_target,
+                    requested_total_duration_seconds=requested_total_duration_seconds,
+                    copy_set_id=copy_set_id,
+                )
         except Exception as exc:  # compile is credit-free; a failure blocks that item only
             entry["compile_error"] = f"{type(exc).__name__}:{str(exc)[:80]}"
             items.append(entry)
@@ -2431,6 +2501,9 @@ async def preview_quantity_copy_plans(
 
     verdict = _evaluate_preview_uniqueness(items)
     blockers = list(verdict["blockers"])
+    # B-12: ledger exhaustion is a hard blocker — the plan may only claim
+    # readiness for dialogue prepare will actually accept.
+    blockers.extend(ledger_blockers)
     pool_short = any("POOL_SMALLER_THAN_BATCH" in w for w in copy_rotation_warnings)
     if pool_short and verdict["status"] != "UNIQUE":
         blockers.append(f"APPROVED_COPY_POOL_SMALLER_THAN_QUANTITY:pool<{n}")
