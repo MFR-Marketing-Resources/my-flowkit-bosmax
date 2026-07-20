@@ -328,6 +328,196 @@ def test_reuse_fails_closed_on_an_incomplete_batch(monkeypatch):
         _prepare(monkeypatch, THREE, UNIQUE3, h)
 
 
+# ── B-06 · kwargs must match the REAL creator signatures ────────────────────
+# The orchestration tests mock the creators, so a kwarg the real creator does not
+# accept passes silently here and only explodes at runtime. F2V/HYBRID bulk
+# prepare was fully broken this way (TypeError: unexpected keyword argument
+# 'product_reference_asset_id'). These tests bind against inspect.signature of the
+# REAL functions so a signature drift fails in CI, not in production.
+import inspect as _inspect
+
+# Captured AT IMPORT TIME, before any monkeypatch replaces the creators — this is
+# the whole point: comparing against a patched spy would prove nothing.
+_REAL_CREATOR_PARAMS = {
+    name: set(_inspect.signature(getattr(svc, name)).parameters)
+    for name in ("create_t2v_generation_package",
+                 "create_f2v_generation_package",
+                 "create_i2v_generation_package")
+}
+
+
+def _real_params(fn_name):
+    return _REAL_CREATOR_PARAMS[fn_name]
+
+
+@pytest.mark.parametrize("mode,fn_name", [
+    ("T2V", "create_t2v_generation_package"),
+    ("F2V", "create_f2v_generation_package"),
+    ("HYBRID", "create_f2v_generation_package"),
+    ("I2V", "create_i2v_generation_package"),
+])
+def test_orchestrator_only_passes_kwargs_the_real_creator_accepts(monkeypatch, mode, fn_name):
+    seen: list[dict] = []
+
+    async def _spy(**kw):
+        seen.append(kw)
+        return {"workspace_generation_package_id": f"wgp_{len(seen)}"}
+
+    h = _Harness()
+    _install(monkeypatch, THREE, UNIQUE3, h)
+    for target in ("create_t2v_generation_package", "create_f2v_generation_package",
+                   "create_i2v_generation_package"):
+        monkeypatch.setattr(svc, target, _spy)
+
+    asyncio.run(svc.prepare_bulk_fanout_packages(
+        product_id="P", logical_mode=mode, source_mode=None, quantity=3,
+        model="Veo 3.1 - Lite", aspect="9:16",
+        start_frame_asset_id="ca_frame", product_reference_asset_id="ca_anchor",
+        character_reference_asset_id="ca_char", scene_context_reference_asset_id="ca_scene"))
+
+    accepted = _real_params(fn_name)
+    assert seen, "creator was never called"
+    for kw in seen:
+        unexpected = set(kw) - accepted
+        assert not unexpected, (
+            f"{mode} bulk passes kwargs {fn_name} does not accept: {sorted(unexpected)}")
+
+
+def test_hybrid_anchor_rides_the_start_frame_slot(monkeypatch):
+    """HYBRID's padded 9:16 PRODUCT_REFERENCE anchor must reach the F2V creator
+    through start_frame_asset_id — the same convention the batch lane uses."""
+    seen: list[dict] = []
+
+    async def _spy(**kw):
+        seen.append(kw)
+        return {"workspace_generation_package_id": f"wgp_{len(seen)}"}
+
+    h = _Harness()
+    _install(monkeypatch, THREE, UNIQUE3, h)
+    monkeypatch.setattr(svc, "create_f2v_generation_package", _spy)
+    asyncio.run(svc.prepare_bulk_fanout_packages(
+        product_id="P", logical_mode="HYBRID", quantity=3,
+        model="Veo 3.1 - Lite", aspect="9:16",
+        start_frame_asset_id="ca_frame", product_reference_asset_id="ca_anchor"))
+
+    assert seen
+    for kw in seen:
+        assert kw["start_frame_asset_id"] == "ca_anchor", "HYBRID must ride the anchor"
+        assert kw["source_mode"] == "HYBRID"
+        assert "product_reference_asset_id" not in kw
+
+
+def test_f2v_uses_the_start_frame_not_the_anchor(monkeypatch):
+    seen: list[dict] = []
+
+    async def _spy(**kw):
+        seen.append(kw)
+        return {"workspace_generation_package_id": f"wgp_{len(seen)}"}
+
+    h = _Harness()
+    _install(monkeypatch, THREE, UNIQUE3, h)
+    monkeypatch.setattr(svc, "create_f2v_generation_package", _spy)
+    asyncio.run(svc.prepare_bulk_fanout_packages(
+        product_id="P", logical_mode="F2V", quantity=3,
+        model="Veo 3.1 - Lite", aspect="9:16",
+        start_frame_asset_id="ca_frame", product_reference_asset_id="ca_anchor"))
+
+    assert seen
+    for kw in seen:
+        assert kw["start_frame_asset_id"] == "ca_frame"
+
+
+# ── B-07 / B-08 · reuse honesty + HYBRID compile mapping ───────────────────
+def test_reuse_fails_closed_on_a_blocked_prior_batch(monkeypatch):
+    """A prior attempt can leave BLOCKED packages that were never approved or
+    enqueued. Returning them as PREPARED produced a manifest with
+    production_run_id=None — a batch that claims to exist but cannot run."""
+    h = _Harness()
+    plan, _ = _prepare(monkeypatch, THREE, UNIQUE3)
+    fps = [i["dialogue_fingerprint"] for i in plan["items"]]
+    blocked = [_prev(i, fps[i]) for i in range(3)]
+    for row in blocked:
+        row["status"] = "BLOCKED"
+        row["production_run_id"] = None
+    h.existing_batch = blocked
+    with pytest.raises(ValueError, match="BULK_REUSE_BATCH_BLOCKED"):
+        _prepare(monkeypatch, THREE, UNIQUE3, h)
+
+
+def test_reuse_fails_closed_when_prior_batch_never_reached_a_run(monkeypatch):
+    h = _Harness()
+    plan, _ = _prepare(monkeypatch, THREE, UNIQUE3)
+    fps = [i["dialogue_fingerprint"] for i in plan["items"]]
+    rows = [_prev(i, fps[i]) for i in range(3)]
+    for row in rows:
+        row["production_run_id"] = None
+    h.existing_batch = rows
+    with pytest.raises(ValueError, match="BULK_REUSE_BATCH_NOT_ENQUEUED"):
+        _prepare(monkeypatch, THREE, UNIQUE3, h)
+
+
+def test_hybrid_compiles_as_f2v_with_source_mode_hybrid(monkeypatch):
+    """B-08: the compiler raises UNSUPPORTED_MODE for logical 'HYBRID'. Prepare
+    must remap the COMPILE call to F2V + source_mode=HYBRID while keeping HYBRID
+    as the logical identity for creator dispatch."""
+    seen_compile: list[dict] = []
+
+    async def _compile(**kw):
+        seen_compile.append(kw)
+        d = UNIQUE3.get(kw.get("copy_set_id"), "x")
+        return {"final_compiled_prompt_text": f"SECTION 6\n{d}\nSECTION 7",
+                "prompt_blocks": [{"exact_dialogue_slice": d, "audio_seam_contract": {}}]}
+
+    seen_creator: list[dict] = []
+
+    async def _spy(**kw):
+        seen_creator.append(kw)
+        return {"workspace_generation_package_id": f"wgp_{len(seen_creator)}"}
+
+    h = _Harness()
+    _install(monkeypatch, THREE, UNIQUE3, h)
+    monkeypatch.setattr(wxp, "compile_workspace_prompt_preview", _compile)
+    monkeypatch.setattr(svc, "create_f2v_generation_package", _spy)
+
+    asyncio.run(svc.prepare_bulk_fanout_packages(
+        product_id="P", logical_mode="HYBRID", quantity=3,
+        model="Veo 3.1 - Lite", aspect="9:16",
+        product_reference_asset_id="ca_anchor"))
+
+    assert seen_compile, "compiler never called"
+    for kw in seen_compile:
+        assert kw["mode"] == "F2V", "HYBRID must COMPILE as F2V"
+        assert kw["source_mode"] == "HYBRID", "source_mode must carry the HYBRID identity"
+    # creator dispatch still uses the HYBRID convention
+    for kw in seen_creator:
+        assert kw["source_mode"] == "HYBRID"
+        assert kw["start_frame_asset_id"] == "ca_anchor"
+
+
+def test_f2v_and_hybrid_do_not_share_a_batch(monkeypatch):
+    """B-09: HYBRID compiles as F2V, so both plans carry the SAME
+    bulk_plan_fingerprint. Keying the batch on that alone made a HYBRID request
+    reuse an F2V batch — identical dialogue, but FRAMES packages instead of the
+    product-anchor ones. The group key must separate the logical lanes."""
+    async def _spy(**kw):
+        return {"workspace_generation_package_id": "wgp_x"}
+
+    ids = {}
+    for lane, extra in (("F2V", {"start_frame_asset_id": "ca_frame"}),
+                        ("HYBRID", {"product_reference_asset_id": "ca_anchor"})):
+        h = _Harness()
+        _install(monkeypatch, THREE, UNIQUE3, h)
+        monkeypatch.setattr(svc, "create_f2v_generation_package", _spy)
+        out = asyncio.run(svc.prepare_bulk_fanout_packages(
+            product_id="P", logical_mode=lane, quantity=3,
+            model="Veo 3.1 - Lite", aspect="9:16", **extra))
+        ids[lane] = out["bulk_run_id"]
+
+    assert ids["F2V"] != ids["HYBRID"], (
+        f"F2V and HYBRID collided on bulk_run_id {ids['F2V']} — a HYBRID request "
+        "would reuse the F2V batch")
+
+
 # ── credit / provider contract ───────────────────────────────────────────────
 def test_prepare_is_credit_free_and_touches_no_provider(monkeypatch):
     out, h = _prepare(monkeypatch, THREE, UNIQUE3)

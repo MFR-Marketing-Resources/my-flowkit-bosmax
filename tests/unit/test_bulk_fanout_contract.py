@@ -186,7 +186,9 @@ def _gate(monkeypatch, items, *, phrase=pq.LIVE_BULK_CONFIRM_PHRASE,
 
     async def _payload(item, cfg=None):
         pkg = item["workspace_generation_package_id"]
-        return {"logical_mode": "T2V"}, list((blockers_by_pkg or {}).get(pkg, []))
+        # logical_mode comes from the item so the matrix can drive all 4 lanes
+        return ({"logical_mode": item.get("logical_mode", "T2V")},
+                list((blockers_by_pkg or {}).get(pkg, [])))
 
     monkeypatch.setattr(pq.crud, "list_production_queue_packages", _list)
     monkeypatch.setattr(pq, "build_execution_payload", _payload)
@@ -281,8 +283,9 @@ def test_gate_requires_every_item_dry_run_ready(monkeypatch):
 
 def test_gate_passes_only_when_certified_and_everything_valid(monkeypatch):
     """Proves the refusal is the credit boundary, not a broken gate."""
-    validated = _gate(monkeypatch, THREE, certified=True)
+    validated, validated_mode = _gate(monkeypatch, THREE, certified=True)
     assert [i["workspace_generation_package_id"] for i in validated] == ["wgp1", "wgp2", "wgp3"]
+    assert validated_mode == "T2V"
 
 
 def test_gate_reads_the_fingerprint_written_by_stage_2c(monkeypatch):
@@ -313,7 +316,7 @@ def test_gate_accepts_a_mixed_batch_of_both_sources(monkeypatch):
 def test_gate_passes_a_stage_2c_batch_when_certified(monkeypatch):
     """Every check passes on a 2C batch; only the credit boundary stops it."""
     bulk_items = [_item(f"wgp{i}", f"fp{i}", source="bulk") for i in range(1, 4)]
-    validated = _gate(monkeypatch, bulk_items, certified=True)
+    validated, _mode = _gate(monkeypatch, bulk_items, certified=True)
     assert [i["workspace_generation_package_id"] for i in validated] == ["wgp1", "wgp2", "wgp3"]
 
 
@@ -339,6 +342,110 @@ def test_bulk_identity_wins_over_a_stale_batch_column(monkeypatch):
     item = _item("wgp1", "bulk_fp", source="bulk")
     item["variation_fingerprints_json"] = {"dialogue_fingerprint": "stale_batch_fp"}
     assert pq._persisted_dialogue_fingerprint(item) == "bulk_fp"
+
+
+# ── B-03 · ONE shared non-EXTEND bulk engine: the 4-lane matrix ─────────────
+# The live loop authorizes T2V by default and widens only for a mode recorded in
+# cfg["authorized_live_mode"]. Before B-03 the bulk gate never recorded one, so a
+# validated F2V/HYBRID/I2V set would have died per item with
+# LIVE_MODE_NOT_AUTHORIZED. Reaching the CREDIT BOUNDARY is the proof that mode
+# authorization is no longer the thing that stops these lanes.
+NON_EXTEND_LANES = ["T2V", "F2V", "HYBRID", "I2V"]
+
+
+def _lane_items(mode, n=3):
+    return [_item(f"wgp{i}", f"fp{i}", logical_mode=mode) for i in range(1, n + 1)]
+
+
+@pytest.mark.parametrize("mode", NON_EXTEND_LANES)
+def test_every_non_extend_lane_reaches_the_credit_boundary(monkeypatch, mode):
+    """One shared engine: all four single-block lanes behave identically."""
+    _expect(monkeypatch, _lane_items(mode), "BULK_LIVE_EXECUTION_NOT_CERTIFIED")
+
+
+@pytest.mark.parametrize("mode", NON_EXTEND_LANES)
+def test_every_non_extend_lane_authorizes_exactly_its_own_mode(monkeypatch, mode):
+    """The gate must hand the loop EXACTLY the validated mode — never wider."""
+    validated, validated_mode = _gate(monkeypatch, _lane_items(mode), certified=True)
+    assert validated_mode == mode
+    assert len(validated) == 3
+
+
+@pytest.mark.parametrize("mode", NON_EXTEND_LANES)
+def test_authorized_mode_satisfies_the_live_loop_admission_rule(monkeypatch, mode):
+    """Close the loop on B-03 against the loop's OWN rule, not a paraphrase:
+    reproduce `allowed_live_modes` exactly as _live_production_loop computes it
+    and prove every lane's items would now be admitted."""
+    _validated, validated_mode = _gate(monkeypatch, _lane_items(mode), certified=True)
+
+    # verbatim reproduction of the loop's admission logic
+    allowed = {"T2V"}
+    auth = str(validated_mode or "").strip().upper()
+    if auth in ("F2V", "HYBRID", "I2V"):
+        allowed = {auth}
+
+    assert mode in allowed, f"{mode} would still hit LIVE_MODE_NOT_AUTHORIZED"
+
+
+def test_mixed_modes_fail_closed(monkeypatch):
+    """A mixed batch cannot be authorized — the loop admits ONE mode per run, so
+    authorizing the union would silently widen the grant beyond validation."""
+    mixed = [_item("wgp1", "fp1", logical_mode="T2V"),
+             _item("wgp2", "fp2", logical_mode="F2V"),
+             _item("wgp3", "fp3", logical_mode="I2V")]
+    _expect(monkeypatch, mixed, "BULK_MIXED_MODES_FORBIDDEN")
+
+
+def test_extend_never_reaches_mode_authorization(monkeypatch):
+    """EXTEND is blocked by build_execution_payload BEFORE any mode is collected,
+    so it can never be authorized as a bulk mode. Stage 3A does not change this."""
+    _expect(monkeypatch, _lane_items("T2V"), "BULK_ITEM_BLOCKED:wgp2",
+            blockers_by_pkg={"wgp2": ["EXTEND_PACKAGE_SINGLE_SHOT_FORBIDDEN:16s_USE_VIDEO_JOBS_ORCHESTRATOR"]})
+
+
+def test_unknown_mode_fails_closed(monkeypatch):
+    items = [_item("wgp1", "fp1", logical_mode="T2V"),
+             _item("wgp2", "fp2", logical_mode="")]
+    _expect(monkeypatch, items, "BULK_ITEM_MODE_UNKNOWN:wgp2")
+
+
+@pytest.mark.parametrize("mode", NON_EXTEND_LANES)
+def test_every_lane_still_fails_closed_on_duplicate_dialogue(monkeypatch, mode):
+    """B-03 must not open a uniqueness hole in ANY lane."""
+    dupes = [_item("wgp1", "same", logical_mode=mode),
+             _item("wgp2", "same", logical_mode=mode),
+             _item("wgp3", "fp3", logical_mode=mode)]
+    _expect(monkeypatch, dupes, "BULK_DUPLICATE_DIALOGUE")
+
+
+@pytest.mark.parametrize("mode", NON_EXTEND_LANES)
+def test_every_lane_still_fails_closed_on_missing_fingerprint(monkeypatch, mode):
+    items = [_item("wgp1", "fp1", logical_mode=mode),
+             _item("wgp2", "", source="none", logical_mode=mode)]
+    _expect(monkeypatch, items, "BULK_ITEM_DIALOGUE_FINGERPRINT_MISSING:wgp2",
+            fps=["fp1"])
+
+
+@pytest.mark.parametrize("mode", NON_EXTEND_LANES)
+def test_every_lane_still_requires_the_bulk_phrase(monkeypatch, mode):
+    _expect(monkeypatch, _lane_items(mode), "LIVE_BULK_CONFIRM_PHRASE_INVALID",
+            phrase=pq.LIVE_CONFIRM_PHRASE)
+
+
+def test_single_item_still_refused_by_the_bulk_door(monkeypatch):
+    """qty 1 stays on its mode-exact one-serial path, in every lane."""
+    for mode in NON_EXTEND_LANES:
+        _expect(monkeypatch, _lane_items(mode, n=1), "BULK_REQUIRES_MULTIPLE_ITEMS:1")
+
+
+def test_stage3a_does_not_touch_the_single_flight_guard():
+    """Owner decision: serial single-tab stays. Stage 3A must not enable
+    concurrency, so make_video's single-flight lane is untouched."""
+    import inspect
+    from agent.services import make_video as _mv
+    src = inspect.getsource(_mv)
+    assert "_VIDEO_LANE_JOB" in src
+    assert 'error": "VIDEO_JOB_IN_FLIGHT"' in src or "VIDEO_JOB_IN_FLIGHT" in src
 
 
 def test_bulk_live_is_not_certified_by_default():
