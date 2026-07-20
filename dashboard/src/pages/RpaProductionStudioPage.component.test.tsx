@@ -62,6 +62,7 @@ vi.mock("../api/productionQueue", () => ({
 // ── EXTEND (multi-block) lane fakes ──
 const createWorkspaceExecutionPackage = vi.fn();
 const previewQuantityCopyPlans = vi.fn();
+const fetchCopyPoolReadiness = vi.fn();
 const planVideoJob = vi.fn();
 const authorizeVideoJob = vi.fn();
 const startVideoJob = vi.fn();
@@ -70,6 +71,7 @@ const getVideoJobStatus = vi.fn();
 vi.mock("../api/workspacePackages", () => ({
 	createWorkspaceExecutionPackage: (...a: unknown[]) => createWorkspaceExecutionPackage(...a),
 	previewQuantityCopyPlans: (...a: unknown[]) => previewQuantityCopyPlans(...a),
+	fetchCopyPoolReadiness: (...a: unknown[]) => fetchCopyPoolReadiness(...a),
 }));
 vi.mock("../api/nativeExtend", () => ({
 	planVideoJob: (...a: unknown[]) => planVideoJob(...a),
@@ -84,7 +86,18 @@ const PRODUCT = { id: "prod-1", product_display_name: "ZZ Test Product", categor
 const REF_PRODUCT = { id: "fastmoss-ref:x", product_display_name: "Ref Only", reference_only: true };
 const GREEN = { checked: 1, ready: 1, blocked: 0, note: "dry run", items: [{ package_id: "wgp_1", ok: true }] };
 
+/** Approved copy pool that CAN supply the requested quantity. Preview only runs
+ *  after readiness returns READY, so this is the happy-path default. */
+const READY_POOL = {
+	product_id: "prod-1", quantity_requested: 3, quantity_max: 5,
+	approved_copy_count: 3, unique_dialogue_count: 3, shortage_count: 0,
+	readiness_status: "READY", duplicate_fingerprint_groups: [],
+	scanned_copy_set_count: 3, pool_scan_capped: false, compile_errors: [],
+	next_action: null, credit: "NONE", provider_calls: 0, flow_calls: 0,
+};
+
 function primeHappyPath(report: unknown = GREEN, items: unknown[] = []) {
+	fetchCopyPoolReadiness.mockResolvedValue(READY_POOL);
 	fetchProductCatalog.mockResolvedValue({ items: [PRODUCT, REF_PRODUCT] });
 	searchProducts.mockResolvedValue({ items: [PRODUCT] });
 	fetchVideoModels.mockResolvedValue({
@@ -313,6 +326,77 @@ describe("Production Studio — Stage 1 quantity preview (credit-free, live stay
 		expect(preview).toHaveAttribute("data-uniqueness", "DUPLICATE_DIALOGUE_BLOCKED");
 		expect(preview).toHaveAttribute("data-ready", "false");
 		expect(screen.getByTestId("studio-preview-blocker")).toHaveTextContent("DUPLICATE_DIALOGUE_ACROSS_ITEMS");
+		expect(createProductionRun).not.toHaveBeenCalled();
+	});
+
+	it("shows approved copy-pool readiness before previewing", async () => {
+		primeHappyPath();
+		previewQuantityCopyPlans.mockResolvedValue(UNIQUE_PREVIEW);
+		renderPage();
+		await pickProduct();
+		await setQuantity(3);
+		await click("studio-action-preview");
+		const pool = await screen.findByTestId("studio-copy-pool-readiness");
+		expect(pool).toHaveAttribute("data-readiness", "READY");
+		expect(pool).toHaveAttribute("data-unique", "3");
+		expect(pool).toHaveAttribute("data-shortage", "0");
+		// readiness is checked BEFORE the preview compile
+		expect(fetchCopyPoolReadiness).toHaveBeenCalledWith(expect.objectContaining({ quantity: 3 }));
+		expect(previewQuantityCopyPlans).toHaveBeenCalled();
+	});
+
+	it("BLOCKS preview and shows the exact shortage when the pool is too small", async () => {
+		primeHappyPath();
+		fetchCopyPoolReadiness.mockResolvedValue({
+			...READY_POOL, approved_copy_count: 3, unique_dialogue_count: 2,
+			shortage_count: 1, readiness_status: "COPY_POOL_SHORTAGE",
+			next_action: "GENERATE_AND_APPROVE_COPY",
+		});
+		renderPage();
+		await pickProduct();
+		await setQuantity(3);
+		await click("studio-action-preview");
+		const pool = await screen.findByTestId("studio-copy-pool-readiness");
+		expect(pool).toHaveAttribute("data-readiness", "COPY_POOL_SHORTAGE");
+		expect(screen.getByTestId("studio-copy-pool-shortage")).toHaveTextContent("Short by 1 unique dialogue");
+		// fail-closed: the preview compile never runs against a short pool
+		expect(previewQuantityCopyPlans).not.toHaveBeenCalled();
+		expect(screen.queryByTestId("studio-quantity-preview")).toBeNull();
+		expect(createProductionRun).not.toHaveBeenCalled();
+	});
+
+	it("offers a copy-seeding route when no approved copy exists", async () => {
+		primeHappyPath();
+		fetchCopyPoolReadiness.mockResolvedValue({
+			...READY_POOL, approved_copy_count: 0, unique_dialogue_count: 0,
+			shortage_count: 3, readiness_status: "NO_APPROVED_COPY_AVAILABLE",
+			scanned_copy_set_count: 0, next_action: "GENERATE_AND_APPROVE_COPY",
+		});
+		renderPage();
+		await pickProduct();
+		await setQuantity(3);
+		await click("studio-action-preview");
+		const pool = await screen.findByTestId("studio-copy-pool-readiness");
+		expect(pool).toHaveAttribute("data-readiness", "NO_APPROVED_COPY_AVAILABLE");
+		expect(screen.getByTestId("studio-copy-pool-shortage")).toHaveTextContent("No approved copy");
+		expect(screen.getByTestId("studio-copy-pool-seed-cta")).toHaveAttribute(
+			"href", "/creative/copy-registry?product_id=prod-1");
+		expect(previewQuantityCopyPlans).not.toHaveBeenCalled();
+	});
+
+	it("readiness never unlocks live — quantity > 1 stays preview-only", async () => {
+		primeHappyPath();
+		previewQuantityCopyPlans.mockResolvedValue(UNIQUE_PREVIEW);
+		renderPage();
+		await pickProduct();
+		await setQuantity(3);
+		await click("studio-action-preview");
+		await screen.findByTestId("studio-copy-pool-readiness");
+		// a READY pool + a UNIQUE preview must STILL leave live fully closed
+		expect(screen.getByTestId("studio-live-gate")).toHaveAttribute("data-gate-open", "false");
+		expect(screen.getByTestId("studio-action-go-live")).toBeDisabled();
+		expect(screen.getByTestId("studio-action-prepare")).toBeDisabled();
+		expect(screen.getByTestId("studio-live-bulk-blocked")).toHaveAttribute("data-blocked", "true");
 		expect(createProductionRun).not.toHaveBeenCalled();
 	});
 

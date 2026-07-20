@@ -9,6 +9,7 @@ from agent.services.prompt_compiler_runtime_config_service import (
 from agent.services.copy_binding_service import CopyBindingError
 from agent.services.workspace_generation_package_service import (
     QUANTITY_PREVIEW_MAX,
+    evaluate_copy_pool_readiness,
     preview_quantity_copy_plans,
 )
 from agent.services.workspace_execution_package_service import (
@@ -225,6 +226,31 @@ async def post_quantity_preview(request: QuantityPreviewRequest):
     BLOCKER, not a warning. Live bulk fan-out remains Stage 2 (unbuilt)."""
     try:
         return await preview_quantity_copy_plans(
+            product_id=request.product_id,
+            logical_mode=request.mode,
+            source_mode=request.source_mode,
+            generation_mode=request.generation_mode,
+            duration_seconds=request.duration_seconds,
+            requested_total_duration_seconds=request.requested_total_duration_seconds,
+            quantity=request.quantity,
+            target_language=request.target_language,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if message == "PRODUCT_NOT_FOUND" else 422
+        raise HTTPException(status_code=status_code, detail=message) from exc
+
+
+@router.post("/copy-pool-readiness")
+async def post_copy_pool_readiness(request: QuantityPreviewRequest):
+    """Can this product supply N UNIQUE approved dialogues? CREDIT-FREE.
+
+    Read-only pool report consumed BEFORE a quantity preview so the operator sees
+    the exact shortage instead of a bare DUPLICATE_DIALOGUE_BLOCKED. Compiles
+    approved copy sets to count distinct dialogue (a copy set has no dialogue
+    column). No provider call, no Flow call, no DB write, no approval, no credit."""
+    try:
+        return await evaluate_copy_pool_readiness(
             product_id=request.product_id,
             logical_mode=request.mode,
             source_mode=request.source_mode,
