@@ -1073,6 +1073,28 @@ async def run_production_queue(
         )
         return {"run_id": run_id, "dry_run": True, "report": report}
 
+    # ── Stage 2B: the ungated MULTI-ITEM bypass is closed ──
+    # The one-serial gates are opt-in, so before this check a caller could reach
+    # the fan-out loop with N items simply by OMITTING live_gate — no phrase, no
+    # readiness, no preview correlation. `allowed_live_modes` in the loop
+    # constrains MODE, never COUNT, so an ungated start with N queued items
+    # fired all N serially.
+    #
+    # Owner decision 2026-07-20 (supersedes the earlier "pre-existing bulk path
+    # is a protected system" carve-out): a run with MORE THAN ONE queued item
+    # must present an explicit bulk gate. SINGLE-item ungated behaviour is
+    # deliberately untouched, so the legacy one-item ProductionQueuePage flow
+    # keeps working exactly as before.
+    if not live_gate:
+        _queued = await crud.list_production_queue_packages(
+            production_run_id=run_id, production_status="QUEUED",
+        )
+        if len(_queued) > 1:
+            raise ValueError(
+                f"BULK_LIVE_REQUIRES_BULK_GATE:{len(_queued)}_items:"
+                f"pass_live_gate={LIVE_GATE_BULK_FANOUT}"
+            )
+
     # Loop authorization is fail-closed: clear any prior authorization on EVERY
     # live start (unconditionally, before the gate branch) so an ungated
     # ProductionQueuePage bulk run — or a run resumed-as-bulk after a pause —
