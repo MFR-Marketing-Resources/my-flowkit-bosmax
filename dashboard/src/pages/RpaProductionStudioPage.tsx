@@ -246,7 +246,11 @@ export default function RpaProductionStudioPage() {
 	// ids, pinned dialogue fingerprints, per-item re-derivation, credit boundary).
 	const [bulkLivePhrase, setBulkLivePhrase] = useState("");
 	const [bulkLiveError, setBulkLiveError] = useState<string | null>(null);
-	const [bulkLiveSubmitted, setBulkLiveSubmitted] = useState(false);
+	// B-01: the submit latch is scoped to the RUN it was armed for, never a global
+	// boolean. A global flag stayed set after a refusal, so the next prepared batch
+	// was permanently locked until a page reload. Holding the run id keeps "no retry
+	// one click away" for THIS run while a genuinely new run can be authorized.
+	const [bulkLiveSubmittedRunId, setBulkLiveSubmittedRunId] = useState<string | null>(null);
 	const [bulkLiveStatus, setBulkLiveStatus] = useState<string | null>(null);
 	const [bulkManualHandoff, setBulkManualHandoff] = useState<BulkManualFireHandoff | null>(null);
 	const [bulkManualInputs, setBulkManualInputs] = useState<Record<string, { provider_job_id: string; flow_media_id: string; result_url: string; result_file_id: string; notes: string }>>({});
@@ -438,6 +442,13 @@ export default function RpaProductionStudioPage() {
 		setBulkError(null);
 		setBulkDryRun(null);
 		setBulkManualHandoff(null);
+		// B-01: a new prepared batch must not inherit the previous run's live-fire
+		// verdict or a pre-typed phrase — each run is authorized independently. The
+		// latch itself is keyed by run id, so a REUSED batch (same production_run_id)
+		// correctly stays latched.
+		setBulkLiveError(null);
+		setBulkLiveStatus(null);
+		setBulkLivePhrase("");
 		try {
 			const prepared = await prepareBulkFanoutPackages({
 				product_id: selectedProduct.id,
@@ -802,7 +813,10 @@ export default function RpaProductionStudioPage() {
 	 *  click cannot double-submit. */
 	const handleBulkGoLive = async () => {
 		if (!bulkPrepared?.production_run_id || !bulkLiveGateOpen) return;
-		setBulkLiveSubmitted(true);
+		// Latch THIS run before the await: a double click cannot double-submit, and
+		// a refusal keeps this run latched (no one-click retry after a possible
+		// provider submission). A different prepared run is unaffected.
+		setBulkLiveSubmittedRunId(bulkPrepared.production_run_id);
 		setBulkLiveError(null);
 		setBusy("bulk-live");
 		try {
@@ -842,8 +856,11 @@ export default function RpaProductionStudioPage() {
 		&& (bulkPrepared?.expect_dialogue_fingerprints.length ?? 0) === bulkPreparedCount
 		&& (bulkPrepared?.expect_dialogue_fingerprints ?? []).every((fp) => Boolean(fp));
 	const bulkPhraseOk = bulkLivePhrase === LIVE_BULK_CONFIRM_PHRASE;
+	// Latched only for the run it was armed for (B-01) — a new prepared run starts clean.
+	const bulkLiveAlreadySubmitted = Boolean(bulkPrepared?.production_run_id)
+		&& bulkLiveSubmittedRunId === bulkPrepared?.production_run_id;
 	const bulkLiveGateOpen = Boolean(bulkPrepared?.production_run_id) && bulkDryRunGreen
-		&& bulkPinsComplete && bulkPhraseOk && !bulkLiveSubmitted && busy === null;
+		&& bulkPinsComplete && bulkPhraseOk && !bulkLiveAlreadySubmitted && busy === null;
 
 	// ── live gate conditions (identical semantics to Queue Control) ──
 	const dryRunGreen = stage !== "IDLE" && report?.checked === 1 && report?.ready === 1 && report?.blocked === 0;
@@ -1480,7 +1497,7 @@ export default function RpaProductionStudioPage() {
 										: `Fire ${bulkPreparedCount} live jobs`}
 								</button>
 							</div>
-							{!bulkLiveGateOpen && !bulkLiveSubmitted && (
+							{!bulkLiveGateOpen && !bulkLiveAlreadySubmitted && (
 								<div className="mt-1.5 text-[10px] text-amber-300" data-testid="studio-bulk-live-blockers">
 									{!bulkDryRunGreen && <div>Needs a green dry run: ready={bulkPreparedCount} blocked=0.</div>}
 									{!bulkPinsComplete && <div>Needs complete pinned package ids + dialogue fingerprints.</div>}

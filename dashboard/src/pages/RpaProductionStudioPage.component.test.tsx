@@ -1174,6 +1174,39 @@ describe("Production Studio — system-fired bulk live (app submits each item as
 		expect(screen.getByTestId("studio-action-bulk-go-live")).toBeDisabled();
 	});
 
+	it("B-01: a refused batch stays latched, but a NEW prepared run can be authorized again", async () => {
+		// Batch A: refused by the server.
+		await prepareBulkBatch();
+		await typeBulkPhrase("AUTHORIZE_BULK_FANOUT_LIVE_RUN");
+		startProductionRun.mockRejectedValueOnce(
+			new Error("BULK_LIVE_EXECUTION_NOT_CERTIFIED:validated_items=3:stage3_runtime_certification_required"));
+		await click("studio-action-bulk-go-live");
+		await screen.findByTestId("studio-bulk-live-error");
+
+		// Same run: still latched — no retry one click away.
+		expect(screen.getByTestId("studio-bulk-live-fire")).toHaveAttribute("data-run", "prun_bulk_1");
+		expect(screen.getByTestId("studio-action-bulk-go-live")).toBeDisabled();
+
+		// Batch B via the REAL path: a config change resets the pipeline (which does
+		// NOT clear the live-fire state — exactly how the global latch used to leak),
+		// then the operator previews and prepares a genuinely new run.
+		prepareBulkFanoutPackages.mockResolvedValue({ ...BULK_PREPARED, production_run_id: "prun_bulk_2" });
+		startProductionRun.mockResolvedValue({ run_id: "prun_bulk_2", dry_run: true, report: { checked: 3, ready: 3, blocked: 0, note: "bulk dry run", items: [] } });
+		await act(async () => {
+			fireEvent.change(screen.getByTestId("studio-aspect"), { target: { value: "16:9" } });
+		});
+		await click("studio-action-preview");
+		await screen.findByTestId("studio-bulk-fanout-section");
+		await click("studio-action-bulk-prepare");
+		await waitFor(() => expect(screen.getByTestId("studio-bulk-live-fire")).toHaveAttribute("data-run", "prun_bulk_2"));
+
+		// A's refusal text must not carry over to B.
+		expect(screen.queryByTestId("studio-bulk-live-error")).toBeNull();
+		await typeBulkPhrase("AUTHORIZE_BULK_FANOUT_LIVE_RUN");
+		expect(screen.getByTestId("studio-bulk-live-fire")).toHaveAttribute("data-gate-open", "true");
+		expect(screen.getByTestId("studio-action-bulk-go-live")).toBeEnabled();
+	});
+
 	it("keeps the manual handoff available as a fallback, not a replacement", async () => {
 		await prepareBulkBatch();
 		expect(screen.getByTestId("studio-bulk-manual-handoff")).toBeInTheDocument();
