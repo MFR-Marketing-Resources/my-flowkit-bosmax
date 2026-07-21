@@ -42,6 +42,39 @@ This is an **audit record**, not authorization. Governance authority lives in `d
 
 Per lane, on the extension-attached runtime, for product `6483d624`: `bulk-fanout-plan` → `bulk-fanout-prepare` (with the lane's required refs) → dry-run 2/2/0 → BULK_FANOUT gate reaching `BULK_LIVE_EXECUTION_NOT_CERTIFIED`. Proven this session for T2V (fired), F2V/I2V/HYBRID (dry-run). No further code needed to exercise the lanes up to the boundary.
 
+## Runtime validation — SHA under review (2026-07-21, added FINAL round)
+
+Runtime restarted clean onto the PR #441 head. **Loaded identity (`GET /api/local-agent/version-proof`):**
+`pid=41032`, `git_head=718491c2d2da1d211060d8788f29841f94b12999`,
+`git_branch=claude/g0-authority-recovery-all-lane-readiness`, **`source_stale_since_start=false`**,
+`dashboard_bundle=index-DgXOR9_A.js` (served bundle contains the B-16 UI guard
+`studio-bulk-i2v-refs-missing`). Extension connected + idle. Browser: `/rpa-production-studio`
+renders all five lanes on this bundle. Canonical origin `http://127.0.0.1:8100`, per G0 §4.
+
+**All probes credit-free (no fire); provider jobs created = 0 throughout.**
+
+| Check | Result | Evidence |
+|---|---|---|
+| **B-16 ref gate (live)** | ref-less I2V prepare (valid model, no refs) → `BULK_PREPARE_REFUSED:I2V_REFERENCES:MISSING_CHARACTER_REFERENCE;MISSING_SCENE_CONTEXT_REFERENCE` | `content_combination` 27→27, `workspace_generation_package` 54→54 — **zero burn, zero create** (pre-fix this stranded 2 burned packages) |
+| **B-14 model gate (live)** | ref-less prepare without model → `MODEL_REQUIRED`, ledger unchanged | front-door order confirmed: model gate → ref gate → plan |
+| **I2V boundary** | `prun_d0241297e2fb43a7` gate-probe → `BULK_LIVE_EXECUTION_NOT_CERTIFIED:validated_items=2:stage3_runtime_certification_required` | 0 provider jobs |
+| **F2V boundary** | `prun_9d4678b9b1cc4c5d` gate-probe (NOT the untouched pending run) → same refusal, validated_items=2 | 0 provider jobs |
+| **T2V plan** | `bulk-fanout-plan` → `bulk_authorizable=true`, READY/UNIQUE, credit NONE | plus a live fire earlier this session (real 8s video `bdaddfff` bound) |
+| **HYBRID plan** | `bulk_authorizable=false` → `COPY_POOL_NOT_READY:COPY_POOL_SHORTAGE:short_by_2` + `PREVIEW_NOT_UNIQUE:DUPLICATE_DIALOGUE_BLOCKED` | data gap: HYBRID dialogue pool exhausted for the only supplied product (B-12 correctly refuses to reproduce burned dialogue) |
+
+## Lane matrix — production-test vocabulary (FINAL round)
+
+| Lane | Status | Evidence |
+|---|---|---|
+| **T2V** | `READY_UP_TO_CREDIT_BOUNDARY` | plan authorizable; gate validated + **fired live** this session (1/2, engine gates all passed) |
+| **F2V** | `READY_UP_TO_CREDIT_BOUNDARY` | gate-probe reached `validated_items=2` boundary, 0 jobs |
+| **I2V** | `READY_UP_TO_CREDIT_BOUNDARY` | gate-probe reached `validated_items=2` boundary, 0 jobs; B-16 ref gate live-proven |
+| **HYBRID** | `BLOCKED_WITH_EVIDENCE` (DATA_GAP) | dialogue pool exhausted for the only supplied product; needs fresh approved copy (+ pass anchor `ca_8b573b59176e49ed` at prepare). Not a code gap — B-12 fail-closed. |
+| **IMG** | `NOT_IN_THIS_PIPELINE` | asset-prep helper; excluded from Studio VIDEO_MODES; no WGP builder |
+
+The common gate on the three READY lanes is the intentional Stage-3 credit boundary
+`BULK_LIVE_EXECUTION_CERTIFIED=False` — an owner certification decision, not a code fix.
+
 ## Next human actions
 
 1. **Owner:** decide the Stage-3 bulk-live certification for each lane (the `:103` flag) — separate per-lane, per §11/§14 of G0; live generation stays `OWNER-ONLY`.
