@@ -44,8 +44,10 @@ import {
 	createProductionRun,
 	fetchVideoModels,
 	getProductionRun,
+	LIVE_BULK_CONFIRM_PHRASE,
 	LIVE_CONFIRM_PHRASE,
 	LIVE_F2V_CONFIRM_PHRASE,
+	LIVE_GATE_BULK_FANOUT,
 	LIVE_GATE_ONE_SERIAL_F2V,
 	LIVE_GATE_ONE_SERIAL_I2V,
 	LIVE_GATE_ONE_SERIAL_T2V,
@@ -238,6 +240,14 @@ export default function RpaProductionStudioPage() {
 	// Credit-free; live still needs Stage 3 certification.
 	const [bulkPrepared, setBulkPrepared] = useState<BulkPrepareResult | null>(null);
 	const [bulkDryRun, setBulkDryRun] = useState<DryRunReport | null>(null);
+	// System-fired bulk live: the operator types the bulk phrase and the APP fires
+	// each prepared item as its own provider job through the existing BULK_FANOUT
+	// server gate. The server remains the sole authority (phrase, pinned package
+	// ids, pinned dialogue fingerprints, per-item re-derivation, credit boundary).
+	const [bulkLivePhrase, setBulkLivePhrase] = useState("");
+	const [bulkLiveError, setBulkLiveError] = useState<string | null>(null);
+	const [bulkLiveSubmitted, setBulkLiveSubmitted] = useState(false);
+	const [bulkLiveStatus, setBulkLiveStatus] = useState<string | null>(null);
 	const [bulkManualHandoff, setBulkManualHandoff] = useState<BulkManualFireHandoff | null>(null);
 	const [bulkManualInputs, setBulkManualInputs] = useState<Record<string, { provider_job_id: string; flow_media_id: string; result_url: string; result_file_id: string; notes: string }>>({});
 	const [bulkError, setBulkError] = useState<string | null>(null);
@@ -783,6 +793,57 @@ export default function RpaProductionStudioPage() {
 			setBusy(null);
 		}
 	};
+
+	/** SYSTEM-FIRED BULK LIVE. Fires the prepared batch through the existing
+	 *  BULK_FANOUT server gate: the queue loop then submits EACH item as its own
+	 *  provider job (never count:N), serially, with its own job id and evidence.
+	 *  Every safety check stays server-side — this only hands over the pins the
+	 *  server itself issued at prepare time. Latches before the await so a double
+	 *  click cannot double-submit. */
+	const handleBulkGoLive = async () => {
+		if (!bulkPrepared?.production_run_id || !bulkLiveGateOpen) return;
+		setBulkLiveSubmitted(true);
+		setBulkLiveError(null);
+		setBusy("bulk-live");
+		try {
+			const res = await startProductionRun(bulkPrepared.production_run_id, true, {
+				live_gate: LIVE_GATE_BULK_FANOUT,
+				confirm_phrase: bulkLivePhrase,
+				// Pin the EXACT itemized set the server issued at prepare time; the
+				// server re-derives and refuses on any drift.
+				expect_package_ids: bulkPrepared.package_ids,
+				expect_dialogue_fingerprints: bulkPrepared.expect_dialogue_fingerprints,
+			});
+			setBulkLiveStatus(res.status ?? "RUNNING");
+		} catch (e) {
+			// A refusal (e.g. BULK_LIVE_EXECUTION_NOT_CERTIFIED) is surfaced verbatim.
+			// Do NOT clear the submitted latch: if the server may already have
+			// submitted, a retry must never be one click away.
+			setBulkLiveError(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy(null);
+		}
+	};
+
+	// ── system-fired bulk live gate ──
+	// UI SAFETY ONLY. The server re-checks every condition in _assert_bulk_fanout_live
+	// (phrase, pinned ids, pinned fingerprints, per-item re-derived readiness, one
+	// logical mode, prior-provider-job refusal, then the credit boundary). Note the
+	// prepare snapshot carries no provider job id, so "already fired" is NOT
+	// client-detectable — the server owns that refusal; the submit latch below only
+	// stops a double click.
+	const bulkPreparedCount = bulkPrepared?.prepared_package_count ?? 0;
+	const bulkDryRunGreen = bulkPreparedCount > 0
+		&& (bulkDryRun?.checked ?? -1) === bulkPreparedCount
+		&& (bulkDryRun?.ready ?? -1) === bulkPreparedCount
+		&& (bulkDryRun?.blocked ?? -1) === 0;
+	const bulkPinsComplete = bulkPreparedCount > 0
+		&& (bulkPrepared?.package_ids.length ?? 0) === bulkPreparedCount
+		&& (bulkPrepared?.expect_dialogue_fingerprints.length ?? 0) === bulkPreparedCount
+		&& (bulkPrepared?.expect_dialogue_fingerprints ?? []).every((fp) => Boolean(fp));
+	const bulkPhraseOk = bulkLivePhrase === LIVE_BULK_CONFIRM_PHRASE;
+	const bulkLiveGateOpen = Boolean(bulkPrepared?.production_run_id) && bulkDryRunGreen
+		&& bulkPinsComplete && bulkPhraseOk && !bulkLiveSubmitted && busy === null;
 
 	// ── live gate conditions (identical semantics to Queue Control) ──
 	const dryRunGreen = stage !== "IDLE" && report?.checked === 1 && report?.ready === 1 && report?.blocked === 0;
@@ -1367,14 +1428,77 @@ export default function RpaProductionStudioPage() {
 					<div
 						className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100"
 						data-testid="studio-bulk-live-gate-state"
-						data-live-blocked="true"
+						data-live-blocked={bulkLiveGateOpen ? "false" : "true"}
+						data-dryrun-green={String(bulkDryRunGreen)}
+						data-pins-complete={String(bulkPinsComplete)}
+						data-phrase-ok={String(bulkPhraseOk)}
 					>
 						<strong>{bulkPlan.live_bulk_status} — {bulkPlan.live_bulk_stage}.</strong>{" "}
 						This plan spends no credit and does not authorize a live run. Bulk live
 						additionally requires the server <code>BULK_FANOUT</code> gate with the phrase{" "}
-						<code>{bulkPlan.required_confirm_phrase}</code>, which currently refuses at the
+						<code>{bulkPlan.required_confirm_phrase}</code>. The server refuses at the
 						credit boundary until bulk live is runtime-certified.
 					</div>
+					{/* ── System-fired bulk live: the APP submits each item as its own
+					     provider job through the BULK_FANOUT gate. Manual handoff above
+					     stays available as the fallback, not a replacement. ── */}
+					{bulkPrepared?.production_run_id && (
+						<section
+							className="mt-2 rounded-lg border border-red-500/40 bg-red-500/5 p-3"
+							data-testid="studio-bulk-live-fire"
+							data-gate-open={bulkLiveGateOpen ? "true" : "false"}
+							data-run={bulkPrepared.production_run_id}
+							data-item-count={String(bulkPreparedCount)}
+						>
+							<h3 className="text-[11px] font-semibold text-red-200">
+								Automated bulk live — system fires {bulkPreparedCount} separate provider jobs
+							</h3>
+							<p className="mt-1 text-[10px] text-red-100/90">
+								<strong>This spends real credits.</strong> Each item is submitted as its
+								own provider job (never one job with count={bulkPreparedCount}), serially,
+								with per-item identity and evidence. After submission, do not retry unless
+								the system proves no provider submission occurred.
+							</p>
+							<div className="mt-2 flex flex-wrap items-center gap-2">
+								<input
+									data-testid="studio-bulk-live-phrase"
+									value={bulkLivePhrase}
+									onChange={(e) => setBulkLivePhrase(e.target.value)}
+									placeholder={LIVE_BULK_CONFIRM_PHRASE}
+									aria-label="Bulk live confirmation phrase"
+									className="w-72 rounded border border-slate-700 bg-slate-900 px-2 py-1 font-mono text-[10px] text-slate-100"
+								/>
+								<button
+									type="button"
+									data-testid="studio-action-bulk-go-live"
+									onClick={() => void handleBulkGoLive()}
+									disabled={!bulkLiveGateOpen}
+									className="rounded-lg bg-red-600 px-3 py-1.5 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+								>
+									{busy === "bulk-live"
+										? "Firing…"
+										: `Fire ${bulkPreparedCount} live jobs`}
+								</button>
+							</div>
+							{!bulkLiveGateOpen && !bulkLiveSubmitted && (
+								<div className="mt-1.5 text-[10px] text-amber-300" data-testid="studio-bulk-live-blockers">
+									{!bulkDryRunGreen && <div>Needs a green dry run: ready={bulkPreparedCount} blocked=0.</div>}
+									{!bulkPinsComplete && <div>Needs complete pinned package ids + dialogue fingerprints.</div>}
+									{!bulkPhraseOk && <div>Type the exact phrase <code>{LIVE_BULK_CONFIRM_PHRASE}</code>.</div>}
+								</div>
+							)}
+							{bulkLiveStatus && (
+								<div className="mt-1.5 rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[10px] text-emerald-100" data-testid="studio-bulk-live-submitted" data-status={bulkLiveStatus}>
+									Bulk live submitted — run status <code>{bulkLiveStatus}</code>. Items fire serially; watch per-item evidence.
+								</div>
+							)}
+							{bulkLiveError && (
+								<div className="mt-1.5 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-[10px] text-red-200" data-testid="studio-bulk-live-error">
+									Bulk live refused by the server: {bulkLiveError}
+								</div>
+							)}
+						</section>
+					)}
 				</section>
 			)}
 			{/* ── 5 · One live T2V ── */}

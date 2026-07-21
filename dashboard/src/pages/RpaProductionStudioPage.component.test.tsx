@@ -57,6 +57,8 @@ vi.mock("../api/productionQueue", () => ({
 	LIVE_F2V_CONFIRM_PHRASE: "AUTHORIZE_ONE_F2V_LIVE_RUN",
 	LIVE_GATE_ONE_SERIAL_I2V: "ONE_SERIAL_I2V",
 	LIVE_I2V_CONFIRM_PHRASE: "AUTHORIZE_ONE_I2V_LIVE_RUN",
+	LIVE_GATE_BULK_FANOUT: "BULK_FANOUT",
+	LIVE_BULK_CONFIRM_PHRASE: "AUTHORIZE_BULK_FANOUT_LIVE_RUN",
 }));
 
 // ── EXTEND (multi-block) lane fakes ──
@@ -1080,5 +1082,101 @@ describe("Production Studio — one-click F2V / HYBRID / I2V", () => {
 			live_gate: "ONE_SERIAL_I2V",
 			confirm_phrase: "AUTHORIZE_ONE_I2V_LIVE_RUN",
 		}));
+	});
+});
+
+describe("Production Studio — system-fired bulk live (app submits each item as its own job)", () => {
+	const UNIQUE_PREVIEW = {
+		quantity_requested: 3, quantity_max: 5, planned_item_count: 3, logical_mode: "T2V",
+		generation_mode: "SINGLE", copy_source: "SCRIPT_LIBRARY", copy_rotation_warnings: [],
+		items: [
+			{ item_index: 0, variation_salt: "v1", copy_variant_id: "cs0", hook: "h0", dialogue_summary: "one", dialogue_fingerprint: "aaaa1111", seam_voice: null, compile_error: null },
+			{ item_index: 1, variation_salt: "v2", copy_variant_id: "cs1", hook: "h1", dialogue_summary: "two", dialogue_fingerprint: "bbbb2222", seam_voice: null, compile_error: null },
+			{ item_index: 2, variation_salt: "v3", copy_variant_id: "cs2", hook: "h2", dialogue_summary: "three", dialogue_fingerprint: "cccc3333", seam_voice: null, compile_error: null },
+		],
+		dialogue_uniqueness_status: "UNIQUE", duplicate_dialogue_groups: [], blockers: [],
+		preview_ready: true, live_bulk_status: "Bulk live fan-out not enabled yet",
+		live_bulk_stage: "STAGE_2_REQUIRED", credit: "NONE", provider_calls: 0, flow_calls: 0,
+	};
+
+	async function setQuantity(n: number) {
+		await act(async () => {
+			fireEvent.change(await screen.findByTestId("studio-quantity-input"), { target: { value: String(n) } });
+		});
+	}
+	async function typeBulkPhrase(value: string) {
+		await act(async () => {
+			fireEvent.change(screen.getByTestId("studio-bulk-live-phrase"), { target: { value } });
+		});
+	}
+	/** Drive the credit-free path all the way to a prepared + dry-run-green batch. */
+	async function prepareBulkBatch(report = { checked: 3, ready: 3, blocked: 0, note: "bulk dry run", items: [] }) {
+		primeHappyPath(report);
+		previewQuantityCopyPlans.mockResolvedValue(UNIQUE_PREVIEW);
+		renderPage();
+		await pickProduct();
+		await setQuantity(3);
+		await click("studio-action-preview");
+		await screen.findByTestId("studio-bulk-fanout-section");
+		await click("studio-action-bulk-prepare");
+		await screen.findByTestId("studio-bulk-prepared");
+	}
+
+	it("exposes the fire control once a batch is prepared, but keeps it CLOSED until the phrase is typed", async () => {
+		await prepareBulkBatch();
+		const fire = await screen.findByTestId("studio-bulk-live-fire");
+		expect(fire).toHaveAttribute("data-gate-open", "false");
+		expect(fire).toHaveAttribute("data-item-count", "3");
+		expect(screen.getByTestId("studio-action-bulk-go-live")).toBeDisabled();
+		expect(screen.getByTestId("studio-bulk-live-blockers")).toHaveTextContent("AUTHORIZE_BULK_FANOUT_LIVE_RUN");
+	});
+
+	it("fires the BULK_FANOUT gate with the pinned per-item set — never one job with count:N", async () => {
+		await prepareBulkBatch();
+		await typeBulkPhrase("AUTHORIZE_BULK_FANOUT_LIVE_RUN");
+		expect(screen.getByTestId("studio-bulk-live-fire")).toHaveAttribute("data-gate-open", "true");
+
+		startProductionRun.mockResolvedValue({ run_id: "prun_bulk_1", dry_run: false, status: "RUNNING" });
+		await click("studio-action-bulk-go-live");
+
+		expect(startProductionRun).toHaveBeenLastCalledWith("prun_bulk_1", true, {
+			live_gate: "BULK_FANOUT",
+			confirm_phrase: "AUTHORIZE_BULK_FANOUT_LIVE_RUN",
+			expect_package_ids: ["wgp_0", "wgp_1", "wgp_2"],
+			expect_dialogue_fingerprints: ["fp0", "fp1", "fp2"],
+		});
+		// the app never asks the provider for N copies of one job
+		const [, , gate] = startProductionRun.mock.calls.at(-1) as [string, boolean, Record<string, unknown>];
+		expect(gate).not.toHaveProperty("count");
+		expect(await screen.findByTestId("studio-bulk-live-submitted")).toHaveAttribute("data-status", "RUNNING");
+	});
+
+	it("surfaces a server refusal verbatim and does NOT leave retry one click away", async () => {
+		await prepareBulkBatch();
+		await typeBulkPhrase("AUTHORIZE_BULK_FANOUT_LIVE_RUN");
+		startProductionRun.mockRejectedValueOnce(
+			new Error("BULK_LIVE_EXECUTION_NOT_CERTIFIED:validated_items=3:stage3_runtime_certification_required"));
+		await click("studio-action-bulk-go-live");
+
+		expect(await screen.findByTestId("studio-bulk-live-error"))
+			.toHaveTextContent("BULK_LIVE_EXECUTION_NOT_CERTIFIED");
+		// latched: a possible provider submission must never be retryable by one click
+		expect(screen.getByTestId("studio-action-bulk-go-live")).toBeDisabled();
+		expect(screen.getByTestId("studio-bulk-live-fire")).toHaveAttribute("data-gate-open", "false");
+	});
+
+	it("refuses to open when the dry run is not green for every item", async () => {
+		await prepareBulkBatch({ checked: 3, ready: 2, blocked: 1, note: "bulk dry run", items: [] });
+		await typeBulkPhrase("AUTHORIZE_BULK_FANOUT_LIVE_RUN");
+		expect(screen.getByTestId("studio-bulk-live-fire")).toHaveAttribute("data-gate-open", "false");
+		expect(screen.getByTestId("studio-bulk-live-gate-state")).toHaveAttribute("data-dryrun-green", "false");
+		expect(screen.getByTestId("studio-bulk-live-gate-state")).toHaveAttribute("data-phrase-ok", "true");
+		expect(screen.getByTestId("studio-action-bulk-go-live")).toBeDisabled();
+	});
+
+	it("keeps the manual handoff available as a fallback, not a replacement", async () => {
+		await prepareBulkBatch();
+		expect(screen.getByTestId("studio-bulk-manual-handoff")).toBeInTheDocument();
+		expect(screen.getByTestId("studio-bulk-live-fire")).toBeInTheDocument();
 	});
 });
