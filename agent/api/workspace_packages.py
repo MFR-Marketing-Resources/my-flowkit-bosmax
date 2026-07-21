@@ -9,7 +9,9 @@ from agent.services.prompt_compiler_runtime_config_service import (
 from agent.services.copy_binding_service import CopyBindingError
 from agent.services.workspace_generation_package_service import (
     QUANTITY_PREVIEW_MAX,
+    bind_bulk_manual_fire_result,
     evaluate_copy_pool_readiness,
+    get_bulk_manual_fire_handoff,
     plan_bulk_fanout_intents,
     prepare_bulk_fanout_packages,
     preview_quantity_copy_plans,
@@ -25,6 +27,7 @@ from agent.services.i2v_semantic_slot_resolver_service import (
 from agent.models.i2v_semantic_slot_resolver import (
     I2VSemanticSlotResolverRequest,
 )
+from agent.models.workspace_generation_package import BulkManualFireResultRequest
 from agent.services.approved_product_package_service import (
     get_product_package_readiness,
     normalize_mode,
@@ -340,6 +343,37 @@ async def post_bulk_fanout_prepare(request: BulkFanoutPrepareRequest):
         message = str(exc)
         status_code = 404 if message == "PRODUCT_NOT_FOUND" else 409
         raise HTTPException(status_code=status_code, detail=message) from exc
+
+
+@router.get("/bulk-manual-fire-handoff/{production_run_id}")
+async def get_bulk_manual_fire_handoff_route(production_run_id: str):
+    """Read a dry-run-green bulk batch as operator-only firing instructions."""
+    try:
+        return await get_bulk_manual_fire_handoff(production_run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/bulk-manual-fire-handoff/{production_run_id}/result")
+async def post_bulk_manual_fire_result(
+    production_run_id: str,
+    request: BulkManualFireResultRequest,
+):
+    """Persist operator-reported result evidence without firing a provider."""
+    try:
+        return await bind_bulk_manual_fire_result(
+            production_run_id=production_run_id,
+            workspace_generation_package_id=request.workspace_generation_package_id,
+            copy_variant_id=request.copy_variant_id,
+            dialogue_fingerprint=request.dialogue_fingerprint,
+            provider_job_id=request.provider_job_id,
+            flow_media_id=request.flow_media_id,
+            result_url=request.result_url,
+            result_file_id=request.result_file_id,
+            notes=request.notes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/i2v/resolve-slots")

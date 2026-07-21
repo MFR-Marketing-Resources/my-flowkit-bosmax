@@ -71,11 +71,14 @@ import {
 } from "../api/nativeExtend";
 import {
 	createWorkspaceExecutionPackage,
+	bindBulkManualFireResult,
+	fetchBulkManualFireHandoff,
 	fetchBulkFanoutPlan,
 	fetchCopyPoolReadiness,
 	prepareBulkFanoutPackages,
 	previewQuantityCopyPlans,
 	type BulkFanoutPlanResult,
+	type BulkManualFireHandoff,
 	type BulkPrepareResult,
 	type CopyPoolReadinessResult,
 	type QuantityPreviewResult,
@@ -235,6 +238,8 @@ export default function RpaProductionStudioPage() {
 	// Credit-free; live still needs Stage 3 certification.
 	const [bulkPrepared, setBulkPrepared] = useState<BulkPrepareResult | null>(null);
 	const [bulkDryRun, setBulkDryRun] = useState<DryRunReport | null>(null);
+	const [bulkManualHandoff, setBulkManualHandoff] = useState<BulkManualFireHandoff | null>(null);
+	const [bulkManualInputs, setBulkManualInputs] = useState<Record<string, { provider_job_id: string; flow_media_id: string; result_url: string; result_file_id: string; notes: string }>>({});
 	const [bulkError, setBulkError] = useState<string | null>(null);
 	const [previewError, setPreviewError] = useState<string | null>(null);
 
@@ -422,6 +427,7 @@ export default function RpaProductionStudioPage() {
 		setBusy("bulk-prepare");
 		setBulkError(null);
 		setBulkDryRun(null);
+		setBulkManualHandoff(null);
 		try {
 			const prepared = await prepareBulkFanoutPackages({
 				product_id: selectedProduct.id,
@@ -446,9 +452,32 @@ export default function RpaProductionStudioPage() {
 			if (prepared.production_run_id) {
 				const res = await startProductionRun(prepared.production_run_id, false);
 				setBulkDryRun(res.report ?? null);
+				if (res.report?.blocked === 0 && res.report?.ready === prepared.prepared_package_count) {
+					setBulkManualHandoff(await fetchBulkManualFireHandoff(prepared.production_run_id));
+				}
 			}
 		} catch (e) {
 			setBulkError(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy(null);
+		}
+	};
+
+	const handleBulkManualResult = async (item: NonNullable<BulkManualFireHandoff>["items"][number]) => {
+		if (!bulkManualHandoff) return;
+		const input = bulkManualInputs[item.workspace_generation_package_id] ?? { provider_job_id: "", flow_media_id: "", result_url: "", result_file_id: "", notes: "" };
+		setBusy(`manual-result-${item.workspace_generation_package_id}`);
+		setBulkError(null);
+		try {
+			await bindBulkManualFireResult(bulkManualHandoff.production_run_id, {
+				workspace_generation_package_id: item.workspace_generation_package_id,
+				copy_variant_id: item.copy_variant_id,
+				dialogue_fingerprint: item.dialogue_fingerprint,
+				...input,
+			});
+			setBulkManualHandoff(await fetchBulkManualFireHandoff(bulkManualHandoff.production_run_id));
+		} catch (err) {
+			setBulkError(err instanceof Error ? err.message : "Manual result binding failed.");
 		} finally {
 			setBusy(null);
 		}
@@ -1310,6 +1339,30 @@ export default function RpaProductionStudioPage() {
 								</div>
 							)}
 						</div>
+					)}
+					{bulkManualHandoff && (
+						<section className="mb-2 rounded-lg border border-cyan-500/40 bg-cyan-500/5 p-3" data-testid="studio-bulk-manual-handoff" data-automation="disabled">
+							<h3 className="text-[11px] font-semibold text-cyan-100">Manual Fire Handoff — operator action outside this app</h3>
+							<p className="mt-1 text-[10px] text-cyan-100/80">Every item passed the credit-free dry run. Automated bulk live remains disabled; copy each exact package instruction into Google Flow, fire manually, then capture the returned identity here.</p>
+							<div className="mt-2 space-y-3">
+								{bulkManualHandoff.items.map((item) => {
+									const input = bulkManualInputs[item.workspace_generation_package_id] ?? { provider_job_id: "", flow_media_id: "", result_url: "", result_file_id: "", notes: "" };
+									const resultBound = Boolean(item.result);
+									return <div key={item.workspace_generation_package_id} className="rounded border border-slate-700 bg-slate-950/60 p-2" data-testid="studio-manual-handoff-item" data-package={item.workspace_generation_package_id} data-complete={String(resultBound)}>
+										<div className="text-[10px] text-slate-200">#{item.item_index + 1} · <code>{item.workspace_generation_package_id}</code> · {item.mode}/{item.source_mode ?? "—"}</div>
+										<div className="mt-0.5 text-[9px] text-slate-400">copy {item.copy_variant_id} · fp {item.dialogue_fingerprint.slice(0, 12)} · {item.expected.aspect ?? "aspect —"} · {item.expected.duration_seconds ?? "duration —"}s · {item.expected.model ?? "model —"}</div>
+										<div className="mt-1 text-[9px] text-slate-400">Upload order: {item.upload_order.join(", ") || "none"}</div>
+										<textarea readOnly value={item.prompt} data-testid="studio-manual-handoff-prompt" className="mt-1 min-h-20 w-full rounded border border-slate-700 bg-slate-900 p-1.5 font-mono text-[9px] text-slate-200" aria-label={`Manual prompt for ${item.workspace_generation_package_id}`} />
+										{resultBound ? <div className="mt-1 text-[10px] text-emerald-300" data-testid="studio-manual-result-bound">Manual result recorded: {item.result?.provider_job_id ?? item.result?.flow_media_id}</div> : <>
+											<div className="mt-2 grid grid-cols-1 gap-1 md:grid-cols-2">
+												{(["provider_job_id", "flow_media_id", "result_url", "result_file_id", "notes"] as const).map((field) => <input key={field} data-testid={`studio-manual-result-${field}`} value={input[field]} onChange={(event) => setBulkManualInputs((current) => ({ ...current, [item.workspace_generation_package_id]: { ...input, [field]: event.target.value } }))} placeholder={field.replaceAll("_", " ")} className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[10px] text-slate-100" />)}
+											</div>
+											<button type="button" data-testid="studio-action-bind-manual-result" onClick={() => void handleBulkManualResult(item)} disabled={busy !== null || (!input.provider_job_id.trim() && !input.flow_media_id.trim())} className="mt-2 rounded bg-cyan-700 px-2 py-1 text-[10px] font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-700">{busy === `manual-result-${item.workspace_generation_package_id}` ? "Binding…" : "Bind manual result"}</button>
+										</>}
+									</div>;
+								})}
+							</div>
+						</section>
 					)}
 					<div
 						className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100"
