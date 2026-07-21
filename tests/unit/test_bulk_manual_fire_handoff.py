@@ -7,12 +7,20 @@ import pytest
 from agent.services import workspace_generation_package_service as svc
 
 
-def _row(index: int, *, status: str = "QUEUED", job_id: str | None = None, result: dict | None = None):
+def _row(
+    index: int,
+    *,
+    status: str = "QUEUED",
+    job_id: str | None = None,
+    result: dict | None = None,
+    logical_mode: str = "T2V",
+    source_mode: str = "T2V",
+):
     identity = {
         "bulk_fanout_item": {
             "bulk_run_id": "bulk_1", "item_index": index,
             "copy_variant_id": f"copy_{index}", "dialogue_fingerprint": f"fp_{index}",
-            "logical_mode": "T2V", "source_mode": "T2V",
+            "logical_mode": logical_mode, "source_mode": source_mode,
         }
     }
     if result:
@@ -21,11 +29,18 @@ def _row(index: int, *, status: str = "QUEUED", job_id: str | None = None, resul
         "workspace_generation_package_id": f"wgp_{index}", "production_status": status,
         "production_job_id": job_id, "generation_identity_json": json.dumps(identity),
         "manual_handoff_json": json.dumps({"final_prompt_text": f"prompt {index}", "upload_order": []}),
-        "selected_assets_json": "{}", "mode": "T2V", "source_lane": "T2V",
+        "selected_assets_json": "{}", "mode": logical_mode, "source_lane": source_mode,
     }
 
 
-def _install(monkeypatch, rows, *, duration_in_config: int | None = 8, dry_duration: int | None = None):
+def _install(
+    monkeypatch,
+    rows,
+    *,
+    duration_in_config: int | None = 8,
+    dry_duration: int | None = None,
+    manifest_duration: int | None = None,
+):
     config = {
         "model": "Veo 3.1 - Lite", "aspect": "9:16",
         "last_dry_run_report": {"ready": len(rows), "blocked": 0, "items": [
@@ -36,6 +51,16 @@ def _install(monkeypatch, rows, *, duration_in_config: int | None = 8, dry_durat
     }
     if duration_in_config is not None:
         config["duration_seconds"] = duration_in_config
+    if manifest_duration is not None:
+        config["bulk_fanout_manifest"] = {
+            "items": [
+                {
+                    "workspace_generation_package_id": row["workspace_generation_package_id"],
+                    "duration_seconds": manifest_duration,
+                }
+                for row in rows
+            ]
+        }
     run = {
         "production_run_id": "prun_1",
         "config_json": json.dumps(config),
@@ -67,6 +92,16 @@ def test_handoff_exposes_exact_per_item_manual_instructions(monkeypatch):
 
 def test_handoff_uses_dry_run_duration_when_queue_config_omits_it(monkeypatch):
     _install(monkeypatch, [_row(0), _row(1)], duration_in_config=None, dry_duration=8)
+    out = asyncio.run(svc.get_bulk_manual_fire_handoff("prun_1"))
+    assert [item["expected"]["duration_seconds"] for item in out["items"]] == [8, 8]
+
+
+def test_i2v_handoff_uses_durable_bulk_manifest_duration_when_dry_run_omits_it(monkeypatch):
+    rows = [
+        _row(0, logical_mode="I2V", source_mode="INGREDIENTS"),
+        _row(1, logical_mode="I2V", source_mode="INGREDIENTS"),
+    ]
+    _install(monkeypatch, rows, duration_in_config=None, manifest_duration=8)
     out = asyncio.run(svc.get_bulk_manual_fire_handoff("prun_1"))
     assert [item["expected"]["duration_seconds"] for item in out["items"]] == [8, 8]
 
