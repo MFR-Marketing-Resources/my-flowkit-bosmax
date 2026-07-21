@@ -3070,6 +3070,14 @@ def _manual_result(identity: dict) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def _clean_optional_text(value: str | None) -> str | None:
+    """Preserve omitted manual evidence as null, never the string ``"None"``."""
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    return cleaned or None
+
+
 async def get_bulk_manual_fire_handoff(production_run_id: str) -> dict:
     """Read durable per-item instructions only after every dry-run item passed."""
     run = await crud.get_production_run(production_run_id)
@@ -3146,11 +3154,11 @@ async def bind_bulk_manual_fire_result(
             raise ValueError("BULK_MANUAL_RESULT_DUPLICATE_FLOW_MEDIA")
     evidence = {
         "schema_version": "operator-manual-fire-result-v1",
-        "provider_job_id": str(provider_job_id).strip() or None,
-        "flow_media_id": str(flow_media_id).strip() or None,
-        "result_url": str(result_url).strip() or None,
-        "result_file_id": str(result_file_id).strip() or None,
-        "notes": str(notes).strip() or None,
+        "provider_job_id": _clean_optional_text(provider_job_id),
+        "flow_media_id": _clean_optional_text(flow_media_id),
+        "result_url": _clean_optional_text(result_url),
+        "result_file_id": _clean_optional_text(result_file_id),
+        "notes": _clean_optional_text(notes),
         "copy_variant_id": copy_variant_id,
         "dialogue_fingerprint": dialogue_fingerprint,
         "binding_proof": "operator_input_matched_durable_bulk_identity",

@@ -72,6 +72,19 @@ def test_result_binding_requires_matching_identity_and_persists_evidence(monkeyp
     assert json.loads(writes[0][2]["generation_identity_json"])["operator_manual_fire_result"]["provider_job_id"] == "job_0"
 
 
+def test_result_binding_preserves_omitted_optional_evidence_as_null(monkeypatch):
+    writes = _install(monkeypatch, [_row(0), _row(1)])
+    asyncio.run(svc.bind_bulk_manual_fire_result(
+        production_run_id="prun_1", workspace_generation_package_id="wgp_0",
+        copy_variant_id="copy_0", dialogue_fingerprint="fp_0", provider_job_id="job_0",
+        flow_media_id=None, result_url=None, result_file_id=None, notes=None,
+    ))
+    evidence = json.loads(writes[0][2]["generation_identity_json"])["operator_manual_fire_result"]
+    assert evidence["provider_job_id"] == "job_0"
+    for field in ("flow_media_id", "result_url", "result_file_id", "notes"):
+        assert evidence[field] is None
+
+
 def test_result_binding_rejects_wrong_item_duplicate_and_missing_result(monkeypatch):
     _install(monkeypatch, [_row(0), _row(1, result={"provider_job_id": "job_taken"})])
     with pytest.raises(ValueError, match="IDENTITY_MISMATCH"):
