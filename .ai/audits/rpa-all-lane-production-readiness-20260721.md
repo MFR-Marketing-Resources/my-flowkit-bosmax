@@ -75,6 +75,50 @@ renders all five lanes on this bundle. Canonical origin `http://127.0.0.1:8100`,
 The common gate on the three READY lanes is the intentional Stage-3 credit boundary
 `BULK_LIVE_EXECUTION_CERTIFIED=False` — an owner certification decision, not a code fix.
 
+## System-fired bulk live — status and exact certification procedure (added 2026-07-21)
+
+**Root-cause finding: the system-fired bulk path was never missing.** `run_production_queue`
+(`production_queue_service.py:1112`) already loops the QUEUED items and submits **each item as its
+own provider job** via `_fire_and_wait` (`:1373`) — serially, with pacing (`:1392-1396`), per-item
+`production_status`/error persistence, and `send_to_production(..., count=1)` (never `count:N`).
+This was **live-proven for T2V** this session: distinct provider job ids per item
+(`g_7bede3371778`, `g_99daae472362`, `g_edf503991e7c`, …) and a real bound 8s artifact.
+
+What was actually missing was the **Studio UI control** to trigger it: the page offered only the
+one-serial live door (`oneItemOnly`) plus the manual copy-into-Flow handoff, and the bulk section
+rendered a static "blocked" message with hardcoded `data-live-blocked="true"`. The API client
+already supported the gate (`LiveGateOptions` BULK_FANOUT variant), and `prepare` already returns
+the exact pins (`package_ids`, `expect_dialogue_fingerprints`).
+
+**Patch (UI only, no backend change):** `studio-bulk-live-fire` section — phrase input + fire button
+that calls the existing `POST /production-queue/{run_id}/start` with
+`live_gate=BULK_FANOUT`, `confirm_phrase`, and the server-issued pins. Opens only when a batch is
+prepared, the dry run is green for **every** item (`ready=N blocked=0`), pins are complete, and the
+exact phrase is typed. The submit latch prevents a double click; **the server remains the sole
+authority** (it re-derives readiness, enforces one logical mode, refuses a prior provider job, and
+stops at the credit boundary). Manual handoff is **kept as a fallback, not replaced**.
+
+### Certification procedure (owner-only; each step is credit-free until step 5)
+
+1. Confirm runtime identity at the merge SHA: `GET /api/local-agent/version-proof` →
+   `git_head` = the SHA under test, `source_stale_since_start=false`, extension connected + idle,
+   one Flow project editor open and warm.
+2. In Studio: pick the product, set quantity 2 (never start at 5), preview → plan
+   `bulk_authorizable=true`, then **Prepare** (credit-free) → `ready=N blocked=0`.
+3. Confirm the fire control is present and **closed** until the phrase is typed
+   (`studio-bulk-live-fire[data-gate-open=false]`).
+4. With `BULK_LIVE_EXECUTION_CERTIFIED=False`, click fire once and confirm the server refuses with
+   `BULK_LIVE_EXECUTION_NOT_CERTIFIED:validated_items=N` and **0 provider jobs** — this proves the
+   whole chain reaches the boundary and stops.
+5. **Owner-authorized certification only:** record a written per-lane authorization, flip
+   `BULK_LIVE_EXECUTION_CERTIFIED = True` **locally only** at
+   `production_queue_service.py:103`, restart via `scripts\start-local-agent.ps1 -ForceRestart`,
+   fire once, monitor serially to terminal, then **revert the flag and restart**. Never commit
+   `True` (a unit test pins it False).
+6. Record per item: package id, provider job id, status, media/artifact id, local path, `ffprobe`
+   duration/resolution/codec/size, and the pre/post job-count delta. Report provider failures
+   honestly; do not retry after a submission may have occurred.
+
 ## Next human actions
 
 1. **Owner:** decide the Stage-3 bulk-live certification for each lane (the `:103` flag) — separate per-lane, per §11/§14 of G0; live generation stays `OWNER-ONLY`.
