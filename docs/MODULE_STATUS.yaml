@@ -419,6 +419,7 @@ domains:
       - tests/unit/test_generation_identity_binding.py
       - tests/api/test_batch_prompt_and_production_api.py
       - docs/bosmax-rpa-g0-governance-gate.md
+      - .ai/audits/rpa-all-lane-production-readiness-20260721.md
       - dashboard/src/pages/ProductRegistrationPage.tsx
       - dashboard/src/pages/ProductRegistrationPage.test.tsx
       - dashboard/src/components/product-registration/ProductKnowledgeIntakeForm.tsx

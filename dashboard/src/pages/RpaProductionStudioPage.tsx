@@ -327,6 +327,15 @@ export default function RpaProductionStudioPage() {
 		|| (activeProfile.referenceKind === "product_anchor" && Boolean(productRefAssetId))
 		|| (activeProfile.referenceKind === "ingredients" && Boolean(characterAssetId && sceneAssetId));
 
+	// B-16: I2V character + scene references have NO product-image auto-seed
+	// (unlike F2V frame / HYBRID anchor, which the server seeds from the product
+	// image). A ref-less I2V bulk prepare is refused server-side, but only after
+	// it has burned the copy-pool ledger for every item and stranded the batch.
+	// Block the doomed click here too — scoped to I2V so it never over-blocks the
+	// auto-seeding lanes. The server-side BULK_PREPARE_REFUSED:I2V_REFERENCES gate
+	// remains the authority; this is just an earlier, clearer stop.
+	const i2vBulkRefsMissing = studioMode === "I2V" && !(characterAssetId && sceneAssetId);
+
 	/** Reset the whole pipeline when the product or config changes — a stale run must never be firable. */
 	const resetPipeline = useCallback(() => {
 		setWgpId(null);
@@ -1242,7 +1251,7 @@ export default function RpaProductionStudioPage() {
 							type="button"
 							data-testid="studio-action-bulk-prepare"
 							onClick={() => void handleBulkPrepare()}
-							disabled={!bulkPlan.bulk_authorizable || busy !== null || Boolean(bulkPrepared)}
+							disabled={!bulkPlan.bulk_authorizable || busy !== null || Boolean(bulkPrepared) || i2vBulkRefsMissing}
 							className="rounded-lg bg-sky-600 px-3 py-1.5 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
 						>
 							{busy === "bulk-prepare"
@@ -1253,6 +1262,11 @@ export default function RpaProductionStudioPage() {
 							Creates + approves + queues {bulkPlan.planned_intent_count} separate packages, then dry-runs every item. Nothing fires.
 						</span>
 					</div>
+					{i2vBulkRefsMissing && (
+						<div className="mb-2 text-[10px] text-amber-300" data-testid="studio-bulk-i2v-refs-missing">
+							Select a character reference and a scene-context reference before bulk prepare — I2V references are not auto-seeded.
+						</div>
+					)}
 					{bulkError && (
 						<div className="mb-2 rounded-lg border border-red-500/40 bg-red-500/10 p-2 text-[11px] text-red-200" data-testid="studio-bulk-prepare-error">
 							Bulk prepare refused — nothing created, no credit: {bulkError}

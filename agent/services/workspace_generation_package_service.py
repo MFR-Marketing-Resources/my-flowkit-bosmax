@@ -1998,6 +1998,32 @@ async def prepare_bulk_fanout_packages(
     except ValueError:
         raise ValueError(f"ERR_UNKNOWN_MODEL:{model}")
 
+    # B-16: I2V references must gate the FRONT door too. Unlike F2V/HYBRID — whose
+    # start frame auto-seeds from the product image (create_f2v_generation_package:
+    # source=PRODUCT_IMAGE_AUTO_SEED), so a missing frame never blocks — I2V's
+    # character and scene-context references have NO auto-seed. A ref-less I2V bulk
+    # prepare therefore compiles each item to status=BLOCKED, but only AFTER
+    # create_i2v_generation_package has already burned its content_combination row
+    # and rotation usage in the loop below (record_combination, record_rotation_usage).
+    # approve_packages then refuses BLOCKED (NOT_APPROVABLE_STATUS) -> BULK_APPROVE_FAILED,
+    # stranding a batch whose ledger rows are already committed; every retry then
+    # dies BULK_REUSE_BATCH_BLOCKED, permanently consuming N fresh dialogues from a
+    # finite approved pool. Validate the references ONCE, via the SAME resolver the
+    # creator uses (same default recipe), BEFORE plan/create/burn. Zero credit either
+    # way (approval already stops any fire) — this protects the copy-pool ledger.
+    if mode == "I2V":
+        _ref_probe = await resolve_i2v_semantic_slots(I2VSemanticSlotResolverRequest(
+            product_id=product_id,
+            product_reference_asset_id=product_reference_asset_id,
+            character_reference_asset_id=character_reference_asset_id,
+            scene_context_reference_asset_id=scene_context_reference_asset_id,
+        ))
+        if hasattr(_ref_probe, "model_dump"):
+            _ref_probe = _ref_probe.model_dump()
+        _ref_blockers = list((_ref_probe or {}).get("blockers") or [])
+        if _ref_blockers:
+            raise ValueError("BULK_PREPARE_REFUSED:I2V_REFERENCES:" + ";".join(_ref_blockers))
+
     # B-08: HYBRID is a LOGICAL mode; the compiler only knows the engine modes and
     # raises UNSUPPORTED_MODE for "HYBRID". It compiles as F2V + source_mode=HYBRID
     # (the same mapping the Studio applies client-side). `mode` stays the logical
