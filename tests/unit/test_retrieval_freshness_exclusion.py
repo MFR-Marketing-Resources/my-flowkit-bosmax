@@ -41,6 +41,20 @@ async def test_known_media_ids_cover_artifacts_results_and_lineage():
     assert "freshly-minted-new-clip" not in known
 
 
+async def test_known_media_ids_cover_workspace_package_only_artifacts():
+    await crud.create_workspace_generation_package(
+        "wgp_durable_media", mode="T2V", product_id="p", product_name_snapshot="P",
+        source_lane="test", prompt_package_snapshot_id="pps", workspace_execution_package_id=None,
+        generation_mode="T2V", final_prompt_text="prompt", prompt_blocks_json="[]",
+        selected_assets_json="[]", resolved_engine_slots_json="{}", resolver_output_json="{}",
+        image_assets_json="[]", manual_handoff_json="{}", dom_handoff_payload_json="{}",
+        blockers_json="[]", warnings_json="[]", status="READY_MANUAL")
+    await crud.update_workspace_generation_package(
+        "wgp_durable_media",
+        artifact_media_ids_json='["wgp-only-old-media", 7, null]')
+    assert "wgp-only-old-media" in await crud.list_known_media_ids()
+
+
 async def test_durable_exclusion_helper_fail_soft(monkeypatch):
     async def boom():
         raise RuntimeError("db down")

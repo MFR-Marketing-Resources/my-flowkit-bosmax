@@ -13,8 +13,8 @@ Corrected contract, pinned here:
     ``RENDER_NOT_MATERIALIZED``, credit UNCERTAIN (never claimed spent, never
     claimed zero), hint says verify the project, not harvest a video that may
     not exist;
-  * completed candidates deterministically REJECTED (identity mismatch) ->
-    stays GENERATED_BUT_UNRETRIEVED (the fail-closed identity honesty is kept);
+  * stale/foreign candidates deterministically REJECTED (identity mismatch) ->
+    ``STALE_OR_FOREIGN_CANDIDATES_ONLY``, credit UNCERTAIN, never a generated item;
   * unverifiable completed candidates -> stays GENERATED_BUT_UNRETRIEVED;
   * stats never persisted (tab lost mid-poll) -> conservative
     GENERATED_BUT_UNRETRIEVED;
@@ -60,14 +60,15 @@ def test_timeout_with_zero_candidates_is_render_not_materialized():
 
 
 # ── completed media existed: the existing honesty is KEPT ────────────────────
-def test_deterministically_rejected_candidates_stay_generated_but_unretrieved():
+def test_stale_or_foreign_candidates_are_not_reported_as_generated():
     stats = dict(_FRESH_STATS, prompt_mismatched=9,
                  round_rejected_ids=["80afc332-6dd3-4fee-aa34-3fabfa9e567a"])
     j = _job(stats)
     mv._apply_post_approval_failure(
         j, "CURRENT_OUTPUT_IDENTITY_MISMATCH: completed candidate(s) rejected")
-    assert j["status"] == "GENERATED_BUT_UNRETRIEVED"
-    assert j["credit_spent_likely"] is True
+    assert j["status"] == "STALE_OR_FOREIGN_CANDIDATES_ONLY"
+    assert j.get("credit_spent_likely") is not True
+    assert j["credit_state"] == "UNCERTAIN"
 
 
 def test_unverifiable_candidates_stay_generated_but_unretrieved():
@@ -114,6 +115,7 @@ def test_zero_completed_candidates_semantics():
 def test_production_queue_breaks_on_render_not_materialized():
     src = inspect.getsource(pq)
     assert '"RENDER_NOT_MATERIALIZED"' in src, "poll loop would hang RUNNING to JOB_TIMEOUT"
+    assert '"STALE_OR_FOREIGN_CANDIDATES_ONLY"' in src
 
 
 def test_certification_flag_untouched():

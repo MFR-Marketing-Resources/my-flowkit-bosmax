@@ -555,6 +555,19 @@ def _apply_post_approval_failure(job: dict, msg: str) -> None:
     completed candidate existed — or no stats at all (e.g. tab lost mid-poll)
     — keeps the existing conservative classification.
     """
+    if "CURRENT_OUTPUT_IDENTITY_MISMATCH" in (msg or ""):
+        # The candidates were deterministically rejected as stale/foreign. They
+        # are not evidence that THIS run rendered, so they cannot use the
+        # GENERATED_BUT_UNRETRIEVED success-like accounting contract.
+        job.update(status="STALE_OR_FOREIGN_CANDIDATES_ONLY",
+                   stage="stale_or_foreign_candidates_only",
+                   artifact=None, media_id=None, local_path=None,
+                   credit_state="UNCERTAIN", recovery_required=True,
+                   recovery_hint=("verify the Flow project media list — only stale or "
+                                  "foreign completed candidates were observed; do not "
+                                  "assume this run produced a video"),
+                   original_error=msg, error=msg)
+        return
     if ("video not found/retrieved in time" in (msg or "")
             and _zero_completed_candidates(job.get("correlation_stats"))):
         job.update(status="RENDER_NOT_MATERIALIZED", stage="render_not_materialized",
@@ -793,6 +806,8 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         # Fast-failure trackers (Owner Phase-1): consecutive polls in which the
         # SAME completed candidates were rejected for deterministic identity reasons.
         identity_reject_sig, identity_reject_rounds = None, 0
+        identity_reject_epoch = None
+        reload_epoch = 0
         probe_turn = int(nres.get("turns_used") or 0) + 1  # next agent turn for status probes
         # False-DONE fix (live: g_745e95ede679 claimed the PREVIOUS run's mp4 at try 1):
         # snapshot every media id already visible in the project BEFORE polling, so
@@ -830,6 +845,7 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
                 try:
                     await client.reload_flow_tab()
                     await asyncio.sleep(8)
+                    reload_epoch += 1
                 except Exception:  # noqa: BLE001 — refresh is best-effort, harvest re-checks
                     pass
             h = await client.harvest_video_urls(tab_id=bound_tab)
@@ -891,8 +907,10 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             else:
                 identity_reject_sig = round_sig or None
                 identity_reject_rounds = 1 if round_sig else 0
+                identity_reject_epoch = reload_epoch if round_sig else None
             if (identity_reject_rounds >= _IDENTITY_MISMATCH_FASTFAIL_ROUNDS
-                    and i >= _IDENTITY_MISMATCH_MIN_TRIES and not collected):
+                    and i >= _IDENTITY_MISMATCH_MIN_TRIES and not collected
+                    and reload_epoch > (identity_reject_epoch or 0)):
                 job["correlation_stats"] = dict(corr_stats)
                 raise RuntimeError(
                     "CURRENT_OUTPUT_IDENTITY_MISMATCH: completed candidate(s) "
