@@ -23,6 +23,12 @@ def _fake_rotation(items, warnings=None):
     return _rotate
 
 
+def _fake_pool(items):
+    async def _list(product_id):
+        return list(items)
+    return _list
+
+
 def _fake_compile(dialogue_by_copy_set, *, extend=False, counter=None):
     async def _compile(**kw):
         if counter is not None:
@@ -112,6 +118,30 @@ def test_preview_unique_copy_passes_credit_free(monkeypatch):
     # seeded rotation may offset the order; every distinct copy set must appear once
     assert {it["copy_variant_id"] for it in out["items"]} == {"cs0", "cs1", "cs2"}
     assert out["live_bulk_status"] == "Bulk live fan-out not enabled yet"
+
+
+def test_hybrid_preview_compiles_as_f2v_with_hybrid_lineage(monkeypatch):
+    """Logical HYBRID preview must not pass an unsupported mode to the compiler."""
+    rows = [{"copy_set_id": f"cs{i}", "hook": f"hook {i}"} for i in range(3)]
+    calls: list[dict] = []
+
+    async def _unused(combo_fingerprint):
+        return False
+
+    monkeypatch.setattr(copy_rotation_service, "list_eligible_copy_sets", _fake_pool(rows))
+    monkeypatch.setattr(copy_rotation_service, "combination_already_used", _unused)
+    monkeypatch.setattr(
+        wxp,
+        "compile_workspace_prompt_preview",
+        _fake_compile({"cs0": "aaa", "cs1": "bbb", "cs2": "ccc"}, counter=calls),
+    )
+
+    out = asyncio.run(svc.preview_quantity_copy_plans(
+        product_id="P", logical_mode="HYBRID", source_mode="HYBRID", quantity=3))
+
+    assert out["preview_ready"] is True
+    assert all(call["mode"] == "F2V" for call in calls)
+    assert all(call["source_mode"] == "HYBRID" for call in calls)
 
 
 def test_preview_duplicate_dialogue_blocks(monkeypatch):

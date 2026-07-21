@@ -25,15 +25,20 @@ def _row(index: int, *, status: str = "QUEUED", job_id: str | None = None, resul
     }
 
 
-def _install(monkeypatch, rows):
+def _install(monkeypatch, rows, *, duration_in_config: int | None = 8, dry_duration: int | None = None):
+    config = {
+        "model": "Veo 3.1 - Lite", "aspect": "9:16",
+        "last_dry_run_report": {"ready": len(rows), "blocked": 0, "items": [
+            {"package_id": row["workspace_generation_package_id"], "ok": True,
+             **({"duration_s": dry_duration} if dry_duration is not None else {})}
+            for row in rows
+        ]},
+    }
+    if duration_in_config is not None:
+        config["duration_seconds"] = duration_in_config
     run = {
         "production_run_id": "prun_1",
-        "config_json": json.dumps({
-            "model": "Veo 3.1 - Lite", "aspect": "9:16", "duration_seconds": 8,
-            "last_dry_run_report": {"ready": len(rows), "blocked": 0, "items": [
-                {"package_id": row["workspace_generation_package_id"], "ok": True} for row in rows
-            ]},
-        }),
+        "config_json": json.dumps(config),
     }
     writes = []
 
@@ -57,6 +62,13 @@ def test_handoff_exposes_exact_per_item_manual_instructions(monkeypatch):
     assert out["items"][1]["workspace_generation_package_id"] == "wgp_1"
     assert out["items"][1]["copy_variant_id"] == "copy_1"
     assert out["items"][1]["prompt"] == "prompt 1"
+    assert out["items"][1]["expected"]["duration_seconds"] == 8
+
+
+def test_handoff_uses_dry_run_duration_when_queue_config_omits_it(monkeypatch):
+    _install(monkeypatch, [_row(0), _row(1)], duration_in_config=None, dry_duration=8)
+    out = asyncio.run(svc.get_bulk_manual_fire_handoff("prun_1"))
+    assert [item["expected"]["duration_seconds"] for item in out["items"]] == [8, 8]
 
 
 def test_result_binding_requires_matching_identity_and_persists_evidence(monkeypatch):

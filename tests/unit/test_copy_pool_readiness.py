@@ -116,6 +116,25 @@ def test_quantity_three_with_three_unique_dialogues_is_ready(monkeypatch):
     assert out["next_action"] is None
 
 
+def test_hybrid_readiness_compiles_as_f2v_with_hybrid_lineage(monkeypatch):
+    """HYBRID is a logical lane; prompt compilation uses its F2V transport."""
+    rows = [_approved("cs1"), _approved("cs2"), _approved("cs3")]
+    calls: list[dict] = []
+    monkeypatch.setattr(copy_rotation_service, "list_eligible_copy_sets", _fake_pool(rows))
+    monkeypatch.setattr(
+        wxp,
+        "compile_workspace_prompt_preview",
+        _fake_compile({"cs1": "aaa", "cs2": "bbb", "cs3": "ccc"}, counter=calls),
+    )
+
+    out = asyncio.run(svc.evaluate_copy_pool_readiness(
+        product_id="P", logical_mode="HYBRID", source_mode="HYBRID", quantity=3))
+
+    assert out["readiness_status"] == "READY"
+    assert all(call["mode"] == "F2V" for call in calls)
+    assert all(call["source_mode"] == "HYBRID" for call in calls)
+
+
 def test_quantity_three_with_two_unique_dialogues_reports_shortage_one(monkeypatch):
     """Three APPROVED rows, but two compile to the same dialogue → shortage 1."""
     rows = [_approved("cs1"), _approved("cs2"), _approved("cs3")]
