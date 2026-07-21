@@ -1669,6 +1669,21 @@ READINESS_SHORTAGE = "COPY_POOL_SHORTAGE"
 READINESS_NO_APPROVED = "NO_APPROVED_COPY_AVAILABLE"
 
 
+def _copy_preview_compile_identity(
+    logical_mode: str,
+    source_mode: str | None,
+) -> tuple[str, str | None]:
+    """Map the logical HYBRID lane to its F2V compiler transport identity.
+
+    The prompt compiler intentionally accepts engine modes, not the HYBRID
+    surface label.  Keep HYBRID in the returned readiness/preview identity, but
+    compile its approved copy as F2V with the HYBRID lineage preserved.
+    """
+    if logical_mode == "HYBRID":
+        return "F2V", source_mode or "HYBRID"
+    return logical_mode, source_mode
+
+
 async def evaluate_copy_pool_readiness(
     *,
     product_id: str,
@@ -1701,6 +1716,7 @@ async def evaluate_copy_pool_readiness(
     from agent.services import workspace_execution_package_service as _wxp
 
     mode = str(logical_mode or "").strip().upper()
+    compile_mode, compile_source_mode = _copy_preview_compile_identity(mode, source_mode)
     n = int(quantity)
     if n < 1 or n > QUANTITY_PREVIEW_MAX:
         raise ValueError(f"QUANTITY_OUT_OF_RANGE:1..{QUANTITY_PREVIEW_MAX}")
@@ -1741,11 +1757,11 @@ async def evaluate_copy_pool_readiness(
         try:
             compiled = await _wxp.compile_workspace_prompt_preview(
                 product_id=product_id,
-                mode=mode,
+                mode=compile_mode,
                 duration_seconds=int(duration_seconds),
                 generation_mode=generation_mode,
                 target_language=target_language,
-                source_mode=source_mode,
+                source_mode=compile_source_mode,
                 engine_duration_target=engine_duration_target,
                 requested_total_duration_seconds=requested_total_duration_seconds,
                 copy_set_id=cs_id,
@@ -2024,15 +2040,13 @@ async def prepare_bulk_fanout_packages(
         if _ref_blockers:
             raise ValueError("BULK_PREPARE_REFUSED:I2V_REFERENCES:" + ";".join(_ref_blockers))
 
-    # B-08: HYBRID is a LOGICAL mode; the compiler only knows the engine modes and
-    # raises UNSUPPORTED_MODE for "HYBRID". It compiles as F2V + source_mode=HYBRID
-    # (the same mapping the Studio applies client-side). `mode` stays the logical
-    # identity for creator dispatch; only the compile call is remapped.
-    compile_mode = "F2V" if mode == "HYBRID" else mode
+    # HYBRID stays the logical planning identity. Its copy compilation remaps to
+    # F2V inside preview_quantity_copy_plans, which preserves a client-approved
+    # HYBRID plan fingerprint through this server-side re-derivation.
     resolved_source_mode = source_mode or ("HYBRID" if mode == "HYBRID" else None)
 
     plan = await plan_bulk_fanout_intents(
-        product_id=product_id, logical_mode=compile_mode, source_mode=resolved_source_mode,
+        product_id=product_id, logical_mode=mode, source_mode=resolved_source_mode,
         generation_mode=generation_mode, duration_seconds=duration_seconds,
         requested_total_duration_seconds=requested_total_duration_seconds,
         quantity=quantity, target_language=target_language,
@@ -2393,6 +2407,7 @@ async def preview_quantity_copy_plans(
     from agent.services import workspace_execution_package_service as _wxp
 
     mode = str(logical_mode or "").strip().upper()
+    compile_mode, compile_source_mode = _copy_preview_compile_identity(mode, source_mode)
     n = int(quantity)
     if n < 1 or n > QUANTITY_PREVIEW_MAX:
         raise ValueError(f"QUANTITY_OUT_OF_RANGE:1..{QUANTITY_PREVIEW_MAX}")
@@ -2439,11 +2454,11 @@ async def preview_quantity_copy_plans(
             try:
                 candidate = await _wxp.compile_workspace_prompt_preview(
                     product_id=product_id,
-                    mode=mode,
+                    mode=compile_mode,
                     duration_seconds=int(duration_seconds),
                     generation_mode=generation_mode,
                     target_language=target_language,
-                    source_mode=source_mode,
+                    source_mode=compile_source_mode,
                     engine_duration_target=(
                         "GOOGLE_FLOW" if is_extend else None
                     ),
@@ -2517,11 +2532,11 @@ async def preview_quantity_copy_plans(
             if compiled is None:
                 compiled = await _wxp.compile_workspace_prompt_preview(
                     product_id=product_id,
-                    mode=mode,
+                    mode=compile_mode,
                     duration_seconds=int(duration_seconds),
                     generation_mode=generation_mode,
                     target_language=target_language,
-                    source_mode=source_mode,
+                    source_mode=compile_source_mode,
                     engine_duration_target=engine_duration_target,
                     requested_total_duration_seconds=requested_total_duration_seconds,
                     copy_set_id=copy_set_id,

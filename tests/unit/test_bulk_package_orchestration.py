@@ -533,6 +533,25 @@ def test_hybrid_compiles_as_f2v_with_source_mode_hybrid(monkeypatch):
         assert kw["start_frame_asset_id"] == "ca_anchor"
 
 
+def test_hybrid_prepare_rederives_the_plan_with_hybrid_identity(monkeypatch):
+    """The prepare fingerprint must match the logical HYBRID plan the UI saw."""
+    seen: dict = {}
+
+    async def _blocked_plan(**kwargs):
+        seen.update(kwargs)
+        return {"bulk_authorizable": False, "blockers": ["TEST_STOP"]}
+
+    monkeypatch.setattr(svc, "plan_bulk_fanout_intents", _blocked_plan)
+
+    with pytest.raises(ValueError, match="BULK_PREPARE_REFUSED:TEST_STOP"):
+        asyncio.run(svc.prepare_bulk_fanout_packages(
+            product_id="P", logical_mode="HYBRID", source_mode="HYBRID", quantity=2,
+            model="Veo 3.1 - Lite", aspect="9:16"))
+
+    assert seen["logical_mode"] == "HYBRID"
+    assert seen["source_mode"] == "HYBRID"
+
+
 def test_f2v_and_hybrid_do_not_share_a_batch(monkeypatch):
     """B-09: HYBRID compiles as F2V, so both plans carry the SAME
     bulk_plan_fingerprint. Keying the batch on that alone made a HYBRID request
