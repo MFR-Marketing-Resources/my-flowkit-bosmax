@@ -1512,7 +1512,7 @@ async def _fire_and_wait_inner(make_video, payload: dict, wgp_id: str) -> dict:
         job = make_video.get_job(job_id) or {}
         status = job.get("status")
         if status in ("DONE", "FAILED", "REJECTED", "GENERATED_BUT_UNRETRIEVED",
-                      "RENDER_NOT_MATERIALIZED"):
+                      "RENDER_NOT_MATERIALIZED", "STALE_OR_FOREIGN_CANDIDATES_ONLY"):
             # RENDER_NOT_MATERIALIZED (B-15) falls through to the generic
             # failure mapping below: production_status=FAILED with the full
             # classifier message as production_error — nothing was produced,

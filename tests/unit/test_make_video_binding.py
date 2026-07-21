@@ -260,6 +260,9 @@ def _setup_generate_mocks(nres):
         async def create_agent_session(self, *a):
             return {"data": {"sessionInfo": {"agentSessionId": "s1"}}}
 
+        async def reload_flow_tab(self):
+            return {"ok": True}
+
         async def harvest_video_urls(self, tab_id=None):
             return {"result": {"flow_tab_found": True, "flow_tab_id": 1,
                                "diag": {"projectId": "p1", "videoIds": ["vid-1"]}}}
@@ -637,7 +640,7 @@ if __name__ == "__main__":
     print(f"\nALL {len(fns)} TESTS PASSED")
 
 
-def test_fastfail_identity_mismatch_exits_before_blind_timeout():
+def test_fastfail_identity_mismatch_waits_for_a_reload_then_fails_non_successfully():
     """Owner Phase-1: a completed candidate rejected for the SAME deterministic
     identity reason every poll (immutable stored metadata — the incident's 31
     identical rejections) must exit early as CURRENT_OUTPUT_IDENTITY_MISMATCH,
@@ -670,9 +673,73 @@ def test_fastfail_identity_mismatch_exits_before_blind_timeout():
         restore()
         mv._JOBS.clear()
 
-    assert job["status"] == "GENERATED_BUT_UNRETRIEVED"      # credits honesty kept
+    assert job["status"] == "STALE_OR_FOREIGN_CANDIDATES_ONLY"
     assert "CURRENT_OUTPUT_IDENTITY_MISMATCH" in str(job.get("original_error"))
     assert "prompt_mismatched" in str(job.get("original_error"))
-    # exited early: well below the 36-poll blind ceiling
+    # It only exits after the completed set survived a later tab reload, still
+    # well below the 36-poll blind ceiling.
     assert calls["accept"] < 12
     assert job.get("correlation_stats", {}).get("prompt_mismatched", 0) >= 3
+
+
+def test_fastfail_waits_through_the_reload_blind_band():
+    """A stale candidate first exposed by reload one cannot stop polling before reload two."""
+    state = {"reloads": 0, "rejections": 0}
+    nres = {"ok": True, "approved": True, "generation_started": True,
+            "model_used": "veo_3_1_r2v_lite", "model_ok": True,
+            "duration_used": 8, "duration_ok": True, "turns_used": 2,
+            "gen_prompt": "tool prompt", "tool_call_id": "t", "response_id": "r"}
+
+    class _C:
+        async def create_agent_session(self, *a):
+            return {"data": {"sessionInfo": {"agentSessionId": "s1"}}}
+
+        async def reload_flow_tab(self):
+            state["reloads"] += 1
+            return {"ok": True}
+
+        async def harvest_video_urls(self, tab_id=None):
+            ids = ["foreign-completed"] if state["reloads"] else []
+            return {"result": {"flow_tab_found": True, "diag": {
+                "projectId": "p1", "videoIds": ids, "imageIds": [], "mediaIds": []}}}
+
+    async def fake_bind(client, pid=None):
+        return {"project_id": "p1", "flow_tab_id": 1, "flow_project_url": "u"}
+
+    async def fake_negotiate(*a, **k):
+        return nres
+
+    async def fake_accept(client, cands, exclude, correlation, stats):
+        if "foreign-completed" in cands:
+            state["rejections"] += 1
+            stats["round_rejected_ids"] = ["foreign-completed"]
+            stats["prompt_mismatched"] += 1
+        return (None, None, None, None)
+
+    async def fake_probe(*a, **k):
+        return {"classification": None}
+
+    orig = (mv.get_flow_client, mv._bind_editor_session,
+            mv.agent_video.negotiate_and_generate, mv._accept_correlated_output,
+            mv.agent_video.probe_render_failure, mv.asyncio)
+    mv.get_flow_client = lambda: _C()
+    mv._bind_editor_session = fake_bind
+    mv.agent_video.negotiate_and_generate = fake_negotiate
+    mv._accept_correlated_output = fake_accept
+    mv.agent_video.probe_render_failure = fake_probe
+    mv.asyncio = _ShimAsyncio(mv.asyncio)
+    mv._JOBS.clear()
+    mv._JOBS["g_blind"] = {"status": "SUBMITTED"}
+    try:
+        _run(mv._run_generate("g_blind", "T2V", "p", "p1", None, None, "9:16", None,
+                               model="veo_3_1_lite", duration_s=8))
+        job = dict(mv._JOBS["g_blind"])
+    finally:
+        (mv.get_flow_client, mv._bind_editor_session,
+         mv.agent_video.negotiate_and_generate, mv._accept_correlated_output,
+         mv.agent_video.probe_render_failure, mv.asyncio) = orig
+        mv._JOBS.clear()
+
+    assert state["rejections"] >= 3
+    assert state["reloads"] >= 2
+    assert job["status"] == "STALE_OR_FOREIGN_CANDIDATES_ONLY"

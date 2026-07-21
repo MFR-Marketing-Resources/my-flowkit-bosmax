@@ -2724,6 +2724,22 @@ async def list_known_media_ids() -> set:
             ids |= {row[0] for row in await cur.fetchall() if row[0]}
         except Exception:  # noqa: BLE001 — a missing legacy table must not empty the set
             continue
+    # Queue packages can have a recovered/downloaded media id before the artifact
+    # library or Results Hub row exists. That id is still historical project media
+    # and must never be accepted as the output of a later submission.
+    try:
+        cur = await db.execute(
+            "SELECT artifact_media_ids_json FROM workspace_generation_package "
+            "WHERE artifact_media_ids_json IS NOT NULL")
+        for (raw_ids,) in await cur.fetchall():
+            try:
+                parsed = json.loads(raw_ids) if isinstance(raw_ids, str) else raw_ids
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if isinstance(parsed, list):
+                ids |= {media_id for media_id in parsed if isinstance(media_id, str) and media_id}
+    except Exception:  # noqa: BLE001 — missing/legacy package table must not empty the set
+        pass
     return ids
 
 
