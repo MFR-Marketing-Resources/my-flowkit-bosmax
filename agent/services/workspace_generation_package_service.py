@@ -3114,6 +3114,10 @@ async def get_bulk_manual_fire_handoff(production_run_id: str) -> dict:
         if not bulk.get("bulk_run_id"):
             raise ValueError("BULK_MANUAL_HANDOFF_IDENTITY_MISSING")
         manual = _decode_json(row.get("manual_handoff_json"), {}) or {}
+        dry_item = dry_items.get(row["workspace_generation_package_id"], {}) or {}
+        duration_seconds = config.get("duration_seconds")
+        if duration_seconds is None:
+            duration_seconds = dry_item.get("duration_s")
         items.append({
             "item_index": bulk.get("item_index"),
             "workspace_generation_package_id": row["workspace_generation_package_id"],
@@ -3125,7 +3129,7 @@ async def get_bulk_manual_fire_handoff(production_run_id: str) -> dict:
             "upload_order": manual.get("upload_order") or [],
             "actions": manual.get("actions") or [],
             "expected": {
-                "aspect": config.get("aspect"), "duration_seconds": config.get("duration_seconds"),
+                "aspect": config.get("aspect"), "duration_seconds": duration_seconds,
                 "model": config.get("model"), "selected_assets": _decode_json(row.get("selected_assets_json"), {}) or {},
             },
             "result": _manual_result(identity) or None,
