@@ -1983,6 +1983,21 @@ async def prepare_bulk_fanout_packages(
     if int(quantity) < 2:
         raise ValueError(f"BULK_PREPARE_REQUIRES_MULTIPLE_ITEMS:{int(quantity)}")
 
+    # B-14: the model law must gate the FRONT door. send_to_production already
+    # fails closed on a missing/unknown model, but by the time it runs, prepare
+    # has created packages, burned content_combination rows, advanced rotation
+    # usage and APPROVED packages — so a model error stranded orphaned APPROVED
+    # batches no ledger-aware plan can ever reach again (live:
+    # bulk_b5520c714be934dd, bulk_a90dd504065ee656). Same registry, same error
+    # strings as send_to_production — validated before ANY side effect.
+    from agent.services import video_models as _vm
+    if not str(model or "").strip():
+        raise ValueError("MODEL_REQUIRED")
+    try:
+        _vm.resolve(model)
+    except ValueError:
+        raise ValueError(f"ERR_UNKNOWN_MODEL:{model}")
+
     # B-08: HYBRID is a LOGICAL mode; the compiler only knows the engine modes and
     # raises UNSUPPORTED_MODE for "HYBRID". It compiles as F2V + source_mode=HYBRID
     # (the same mapping the Studio applies client-side). `mode` stays the logical

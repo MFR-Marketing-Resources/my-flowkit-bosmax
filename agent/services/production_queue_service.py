@@ -1511,7 +1511,12 @@ async def _fire_and_wait_inner(make_video, payload: dict, wgp_id: str) -> dict:
     while waited < _JOB_TIMEOUT_SECONDS:
         job = make_video.get_job(job_id) or {}
         status = job.get("status")
-        if status in ("DONE", "FAILED", "REJECTED", "GENERATED_BUT_UNRETRIEVED"):
+        if status in ("DONE", "FAILED", "REJECTED", "GENERATED_BUT_UNRETRIEVED",
+                      "RENDER_NOT_MATERIALIZED"):
+            # RENDER_NOT_MATERIALIZED (B-15) falls through to the generic
+            # failure mapping below: production_status=FAILED with the full
+            # classifier message as production_error — nothing was produced,
+            # so it must never ride the GENERATED credit-spent contract.
             break
         await asyncio.sleep(_POLL_SECONDS)
         waited += _POLL_SECONDS
