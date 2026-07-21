@@ -525,6 +525,53 @@ def _is_retrieval_phase_error(msg) -> bool:
     return any(m in (msg or "") for m in _RETRIEVAL_PHASE_MARKERS)
 
 
+def _zero_completed_candidates(stats) -> bool:
+    """True only when the poll window PROVABLY evaluated no completed candidate.
+
+    Every completed candidate the retrieval loop examines leaves a trace in
+    corr_stats (a deterministic-mismatch counter, an unverifiable entry, or a
+    round_rejected id). All traces empty ⇒ nothing finished ever appeared.
+    Unknown/absent stats ⇒ False — the conservative caller keeps the
+    credits-likely-spent classification.
+    """
+    if not isinstance(stats, dict):
+        return False
+    if stats.get("round_rejected_ids") or stats.get("unverifiable_ids"):
+        return False
+    return not any(stats.get(k) for k in (
+        "prompt_mismatched", "model_mismatched", "seed_mismatched", "unverifiable"))
+
+
+def _apply_post_approval_failure(job: dict, msg: str) -> None:
+    """Terminal classification of a post-approval, retrieval-phase failure.
+
+    B-15: GENERATED_BUT_UNRETRIEVED exists so a paid, completed video is never
+    presented as "no video" — but it also fired when the render never
+    materialized at all (live g_99daae472362: zero completed candidates in the
+    whole window, no media with this run's dialogue 15+ min later), claiming
+    credit_spent_likely=True and promising a harvest of a video that does not
+    exist. The plain not-found timeout with a provably-empty candidate record
+    is now RENDER_NOT_MATERIALIZED with credit UNCERTAIN. Any evidence a
+    completed candidate existed — or no stats at all (e.g. tab lost mid-poll)
+    — keeps the existing conservative classification.
+    """
+    if ("video not found/retrieved in time" in (msg or "")
+            and _zero_completed_candidates(job.get("correlation_stats"))):
+        job.update(status="RENDER_NOT_MATERIALIZED", stage="render_not_materialized",
+                   artifact=None, media_id=None, local_path=None,
+                   credit_state="UNCERTAIN", recovery_required=True,
+                   recovery_hint=("verify the Flow project media list — no completed "
+                                  "candidate for this run ever appeared; do not assume "
+                                  "a video exists"),
+                   original_error=msg, error=msg)
+        return
+    job.update(status="GENERATED_BUT_UNRETRIEVED", stage="generated_but_unretrieved",
+               artifact=None, media_id=None, local_path=None,
+               credit_spent_likely=True, recovery_required=True,
+               recovery_hint="open Flow project and harvest/download existing video",
+               original_error=msg, error=msg)
+
+
 # The anchors _accept_correlated_output can actually bind an output with. Any ONE
 # of them is enough to make a candidate decidable; NONE of them means the run is
 # unverifiable no matter what is retrieved.
@@ -920,11 +967,9 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         # Report GENERATED_BUT_UNRETRIEVED (never plain FAILED) so a paid, completed video is not
         # presented as "no video". Pre-approval / pre-render errors stay FAILED.
         if job.get("approved") is True and generating and _is_retrieval_phase_error(msg):
-            job.update(status="GENERATED_BUT_UNRETRIEVED", stage="generated_but_unretrieved",
-                       artifact=None, media_id=None, local_path=None,
-                       credit_spent_likely=True, recovery_required=True,
-                       recovery_hint="open Flow project and harvest/download existing video",
-                       original_error=msg, error=msg)
+            # B-15: split "video exists but could not be bound/retrieved" from
+            # "no completed candidate ever materialized" — see the helper.
+            _apply_post_approval_failure(job, msg)
         else:
             job.update(status="FAILED", error=msg, stage="failed")
     finally:

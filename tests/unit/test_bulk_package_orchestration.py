@@ -634,6 +634,44 @@ def test_bulk_prepare_advances_rotation_usage_per_variant(monkeypatch):
     assert all(u[1] == "T2V" for u in h.usage), "usage recorded under the LOGICAL lane"
 
 
+# ── B-14 · the model law must gate the FRONT door of prepare ─────────────────
+# Live proof (2026-07-20/21): prepare called WITHOUT `model` created packages,
+# burned content_combination rows, advanced rotation usage and APPROVED the
+# packages — then send_to_production raised MODEL_REQUIRED, stranding orphaned
+# APPROVED batches (bulk_b5520c714be934dd, bulk_a90dd504065ee656) that no
+# ledger-aware plan can ever reach again. All-or-nothing means the model must
+# be validated BEFORE any side effect, with send_to_production's exact registry
+# contract — not a new one.
+
+
+def test_prepare_without_model_refuses_before_any_side_effect(monkeypatch):
+    h = _Harness()
+    with pytest.raises(ValueError, match="MODEL_REQUIRED"):
+        _prepare(monkeypatch, THREE, UNIQUE3, h, model=None)
+    assert h.created == [], "packages created despite missing model"
+    assert h.combos == [], "ledger burned despite missing model"
+    assert h.usage == [], "rotation advanced despite missing model"
+    assert h.approved == []
+    assert [r for r in h.runs if "send" in r] == []
+
+
+def test_prepare_with_unknown_model_refuses_before_any_side_effect(monkeypatch):
+    h = _Harness()
+    with pytest.raises(ValueError, match="ERR_UNKNOWN_MODEL"):
+        _prepare(monkeypatch, THREE, UNIQUE3, h, model="Nonsense 9000")
+    assert h.created == []
+    assert h.combos == []
+    assert h.usage == []
+    assert h.approved == []
+
+
+def test_prepare_with_valid_model_still_green(monkeypatch):
+    """The gate must not over-reject the registry's real models."""
+    out, h = _prepare(monkeypatch, THREE, UNIQUE3)  # harness default: Veo 3.1 - Lite
+    assert out["prepared_package_count"] == 3
+    assert len(h.combos) == 3
+
+
 def test_ledger_duplicate_fails_closed_before_any_create(monkeypatch):
     """Already-produced dialogue is refused BEFORE a single package exists.
 
