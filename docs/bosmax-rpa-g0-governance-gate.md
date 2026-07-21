@@ -15,12 +15,14 @@ This document is **governance only**. It authorizes nothing by itself.
 Round A cannot start while the **unresolved owner-only fields** stand — they cannot be invented by an
 agent:
 
-- `OWNER_DECISION_REQUIRED: BOSMAX auditor human name`
-- `OWNER_DECISION_REQUIRED: Round A PR reviewer`
-- `OWNER_DECISION_REQUIRED: rollback owner`
-- `OWNER_DECISION_REQUIRED: safe non-production product + isolated DB for Round B`
+- `OWNER_DECISION_REQUIRED: BOSMAX auditor human name` — **→ RESOLVED-ON-MERGE, see §18.1**
+- `OWNER_DECISION_REQUIRED: Round A PR reviewer` — **→ RESOLVED-ON-MERGE, see §18.2**
+- `OWNER_DECISION_REQUIRED: rollback owner` — **→ RESOLVED-ON-MERGE, see §18.2**
+- `OWNER_DECISION_REQUIRED: safe non-production product + isolated DB for Round B` —
+  **→ NARROWED, see §18.3** (mechanism recovered and recorded; one residual owner choice remains)
 
-**Rounds B-F remain BLOCKED** additionally on B6-B7 (environmental — no wording can fix them).
+**Rounds B-F remain BLOCKED** additionally on B6-B7 (environmental — no wording can fix them;
+B6's residual is narrowed in §18.3).
 
 ## Source Documents
 
@@ -817,3 +819,82 @@ Signed: Faris (owner), 2026-07-17
 **After this run, B13 reverts to BLOCKING.** A second live run — including a retry after a provider
 submission — requires a NEW owner authorization recorded here. Bulk remains unauthorized and is not
 in scope of any decision recorded in this document.
+
+---
+
+## 18. G0 Authority Field Resolution (recorded 2026-07-21)
+
+**Recorded under owner mission `RPA-G0-RECOVER-AND-ALL-LANES-PRODUCTION-READINESS-20260721`,** whose
+instruction was: *recover the existing G0 authority information if it has already been provided,
+record it in the correct repository authority surface* — and do not ask the owner to retype what is
+already recorded. This section records ONLY recovered evidence plus that owner instruction. It
+invents nothing. **Countersignature model:** this section enters force when the owner (the only
+human who can merge) merges the PR that adds it; the merge is the owner signature. Until merged,
+the §Status fields stand as before.
+
+### 18.1 BOSMAX auditor — **Faris** (owner)
+
+Recovered evidence:
+
+- §12 `CLASSIFICATION — RECORDED`: the Decision Ledger was classified (M1-M15/O1-O6/D1-D6) and the
+  classification is recorded — an act only the auditor may perform (M10: "no AI may
+  Accept/Reject/Park"), and the recording attributes it to the owner ("**The owner has classified
+  the Decision Ledger**", §Status; "B1 decision (owner)", §12).
+- Every named human decision in this gate is signed **Faris**: §17.2 Decision 2 ("owner Faris"),
+  §17.7 ("Signed: Faris (owner)").
+- Search evidence that no other auditor name exists anywhere: `docs/`, `.ai/` (incl. `.ai/audits/`),
+  `.hermes/`, PR #380-#392 titles/bodies, `git log --grep`, `.ai/status/CURRENT_STATE.md` — zero
+  hits for any other human name in the auditor role.
+
+**Recorded:** `BOSMAX auditor = Faris`.
+
+### 18.2 Round A PR reviewer + rollback owner — **Faris**
+
+Recovered evidence: §17.2 ("**Reviewer: Faris.** **Rollback owner: Faris.**"), §17.7 authorization
+block ("Owner: Faris   Reviewer: Faris   Rollback owner: Faris"), §17.8 ("B14 … **CLEARED**: Faris
+is both"). Those records were explicitly scoped per-PR/per-UAT and marked "must not be cited as
+precedent" — so this section does NOT cite them as precedent. It records that the owner's
+2026-07-21 mission instructed recovery-and-recording of these fields, and the only value the owner
+has ever supplied for both roles is **Faris**.
+
+**Recorded (standing, effective on owner merge of this section):**
+`Round A-F PR reviewer = Faris` · `Rollback owner = Faris`.
+
+**Unchanged safeguards:** no agent may merge its own PR (§5); FULL DELIVERY remains refused for
+every round (§5, §14); live generation remains `OWNER-ONLY` per-run (§11, §14.8). A reviewer named
+here reviews and merges REMOTE PRs themself — this section does not convert any round to
+FULL DELIVERY.
+
+### 18.3 Safe non-production product + isolated DB — mechanism RECORDED, one residual choice
+
+Recovered evidence — the **isolated-DB mechanism already exists and is owner-authorized**:
+
+- §4 sandbox exception (owner-authorized): `FLOW_AGENT_DIR=<sandbox>`, `API_PORT=8123`,
+  `WS_PORT=8124`; runtime storage isolated; live DB untouched; known gaps recorded (avatar CSV not
+  isolated; never select `fastmoss-ref:`).
+- Proven used: Rounds B/C fixture runs executed in exactly this sandbox with a **synthetic
+  per-run fixture product selected by immutable id** (spec Evidence Baseline: Step 4 "Reachable and
+  clicked in sandbox with an approved Copy Set fixture … minted durable packages, latest
+  `wep_c2f8a2a5d5cf4e11`"; PR #385 body: sandbox-origin-only hard stops, fixture product without a
+  claim-safe package, provider/credit requests aborted by route blocker).
+
+**Recorded:** for Rounds B-D fixture/dry-run work, the safe non-production environment is the
+**ephemeral `FLOW_AGENT_DIR` sandbox at `:8123` with a synthetic per-run fixture product** — the
+already-authorized §4 mechanism. No standing sandbox exists at rest (verified: no sandbox directory
+on disk), which is consistent with §16.5's rollback model ("the sandbox directory is deleted").
+
+**RESIDUAL — the one genuinely missing owner choice** (not recoverable; do not invent):
+
+> `OWNER_DECISION_REQUIRED (narrowed): does the ephemeral-sandbox + per-run synthetic fixture
+> pattern SATISFY M8/B6 as the standing answer, or must a STANDING named non-production product
+> (name + immutable ID) in a STANDING isolated DB path be designated?`
+
+Until the owner answers, **B6 remains BLOCKING for any live-credit round** (a live run still has no
+non-production target), while fixture/dry-run rounds continue under the recorded §4 mechanism.
+
+### 18.4 B4 residual — CLEARED
+
+§13's B4 residual (`OWNER_DECISION_REQUIRED: authorize AGENTS.md Read First insertion`) is
+**CLEARED**: PR #382 ("docs(agents): add RPA governance docs to AGENTS.md Read First (M9
+residual)") landed the insertion — verified at `AGENTS.md:17-23`, which now lists all three RPA
+governance documents in read order with the override rule.

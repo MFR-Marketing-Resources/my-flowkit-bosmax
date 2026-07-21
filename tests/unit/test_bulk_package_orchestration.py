@@ -76,12 +76,24 @@ class _Harness:
         self.ledger_fps: set[str] = set()
         self.combos: list[dict] = []
         self.usage: list[tuple] = []
+        # B-16: records every front-door I2V reference-resolver invocation, so a
+        # test can prove the gate is I2V-scoped (never fires for T2V/F2V/HYBRID).
+        self.resolver_calls: list = []
 
 
-def _install(monkeypatch, rows, dialogues, h: _Harness):
+def _install(monkeypatch, rows, dialogues, h: _Harness, i2v_blockers=None):
     monkeypatch.setattr(copy_rotation_service, "list_eligible_copy_sets", _fake_pool(rows))
     monkeypatch.setattr(copy_rotation_service, "select_rotation_copy_sets", _fake_rotation(rows))
     monkeypatch.setattr(wxp, "compile_workspace_prompt_preview", _fake_compile(dialogues))
+
+    # B-16 front-door reference gate (I2V only). Faked here so no test touches the
+    # real resolver / product lookup; default returns NO blockers so non-refusal
+    # I2V tests proceed. `i2v_blockers` drives the refusal case.
+    async def _resolve_i2v(req):
+        h.resolver_calls.append(req)
+        return {"blockers": list(i2v_blockers or []), "warnings": [],
+                "resolved_assets": [], "compiler_context_summary": ""}
+    monkeypatch.setattr(svc, "resolve_i2v_semantic_slots", _resolve_i2v)
 
     async def _creator(**kw):
         idx = len(h.created)
@@ -148,8 +160,8 @@ def _install(monkeypatch, rows, dialogues, h: _Harness):
     return h
 
 
-def _prepare(monkeypatch, rows, dialogues, h=None, **over):
-    h = _install(monkeypatch, rows, dialogues, h or _Harness())
+def _prepare(monkeypatch, rows, dialogues, h=None, i2v_blockers=None, **over):
+    h = _install(monkeypatch, rows, dialogues, h or _Harness(), i2v_blockers=i2v_blockers)
     kwargs = dict(product_id="P", logical_mode="T2V", source_mode="T2V",
                   quantity=len(rows), model="Veo 3.1 - Lite", aspect="9:16")
     kwargs.update(over)
@@ -670,6 +682,63 @@ def test_prepare_with_valid_model_still_green(monkeypatch):
     out, h = _prepare(monkeypatch, THREE, UNIQUE3)  # harness default: Veo 3.1 - Lite
     assert out["prepared_package_count"] == 3
     assert len(h.combos) == 3
+
+
+# ── B-16 · I2V references must gate the FRONT door (no ledger burn on a strand) ─
+# Live-verified defect: I2V character/scene references have NO product-image
+# auto-seed (unlike F2V/HYBRID, create_f2v_generation_package source
+# PRODUCT_IMAGE_AUTO_SEED). A ref-less I2V bulk prepare compiles each item to
+# status=BLOCKED, but only AFTER create_i2v_generation_package burns its
+# content_combination row + rotation usage in the loop; approve_packages then
+# refuses BLOCKED (NOT_APPROVABLE_STATUS) -> BULK_APPROVE_FAILED, stranding a
+# batch whose ledger rows are already committed (every retry then dies
+# BULK_REUSE_BATCH_BLOCKED, consuming N fresh dialogues from a finite pool). The
+# fix validates references ONCE via the same resolver the creator uses, before
+# plan/create/burn. Zero credit either way — it protects the copy-pool ledger.
+
+
+def test_i2v_refless_prepare_refuses_before_any_ledger_burn(monkeypatch):
+    with pytest.raises(ValueError, match="BULK_PREPARE_REFUSED:I2V_REFERENCES"):
+        _prepare(monkeypatch, [_approved("cs1"), _approved("cs2")],
+                 {"cs1": "aaa", "cs2": "bbb"}, logical_mode="I2V", source_mode=None,
+                 i2v_blockers=["MISSING_CHARACTER_REFERENCE", "MISSING_SCENE_CONTEXT_REFERENCE"])
+    # NB: the raise aborts before _prepare returns, so assert on a harness we own.
+
+
+def test_i2v_refless_prepare_burns_no_ledger_rows(monkeypatch):
+    """The whole point of the front-door gate: nothing is committed."""
+    h = _install(monkeypatch, [_approved("cs1"), _approved("cs2")],
+                 {"cs1": "aaa", "cs2": "bbb"}, _Harness(),
+                 i2v_blockers=["MISSING_CHARACTER_REFERENCE"])
+    with pytest.raises(ValueError, match="BULK_PREPARE_REFUSED:I2V_REFERENCES"):
+        asyncio.run(svc.prepare_bulk_fanout_packages(
+            product_id="P", logical_mode="I2V", source_mode=None, quantity=2,
+            model="Veo 3.1 - Lite", aspect="9:16"))
+    assert h.combos == [], "content_combination burned on a doomed I2V prepare"
+    assert h.usage == [], "rotation usage advanced on a doomed I2V prepare"
+    assert h.created == [], "package created despite missing I2V references"
+    assert h.approved == []
+    assert [r for r in h.runs if "send" in r] == []
+    assert h.resolver_calls, "the front-door resolver gate never ran for I2V"
+
+
+def test_i2v_prepare_with_valid_refs_proceeds(monkeypatch):
+    """The gate must not over-reject an I2V prepare whose references resolve."""
+    out, h = _prepare(monkeypatch, [_approved("cs1"), _approved("cs2")],
+                      {"cs1": "aaa", "cs2": "bbb"}, logical_mode="I2V", source_mode=None,
+                      i2v_blockers=[],  # resolver returns no blockers
+                      character_reference_asset_id="char_1",
+                      scene_context_reference_asset_id="scene_1")
+    assert out["prepared_package_count"] == 2
+    assert len(h.combos) == 2
+    assert h.resolver_calls, "valid I2V prepare must still run the gate"
+
+
+def test_non_i2v_prepare_never_invokes_the_i2v_ref_gate(monkeypatch):
+    """F2V/HYBRID auto-seed their frame — the I2V ref gate must not touch them."""
+    out, h = _prepare(monkeypatch, THREE, UNIQUE3)  # harness default: T2V
+    assert out["prepared_package_count"] == 3
+    assert h.resolver_calls == [], "I2V ref gate fired on a non-I2V lane"
 
 
 def test_ledger_duplicate_fails_closed_before_any_create(monkeypatch):
