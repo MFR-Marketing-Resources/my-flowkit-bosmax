@@ -3102,6 +3102,11 @@ async def get_bulk_manual_fire_handoff(production_run_id: str) -> dict:
     dry = config.get("last_dry_run_report") or {}
     rows = await crud.list_production_queue_packages(production_run_id=production_run_id, limit=200)
     dry_items = {item.get("package_id"): item for item in dry.get("items") or []}
+    bulk_manifest = config.get("bulk_fanout_manifest") or {}
+    manifest_items = {
+        item.get("workspace_generation_package_id"): item
+        for item in bulk_manifest.get("items") or []
+    }
     if len(rows) < 2:
         raise ValueError("BULK_MANUAL_HANDOFF_REQUIRES_MULTIPLE_ITEMS")
     if (dry.get("blocked", 0) != 0 or dry.get("ready") != len(rows)
@@ -3118,6 +3123,10 @@ async def get_bulk_manual_fire_handoff(production_run_id: str) -> dict:
         duration_seconds = config.get("duration_seconds")
         if duration_seconds is None:
             duration_seconds = dry_item.get("duration_s")
+        if duration_seconds is None:
+            duration_seconds = (manifest_items.get(
+                row["workspace_generation_package_id"], {}
+            ) or {}).get("duration_seconds")
         items.append({
             "item_index": bulk.get("item_index"),
             "workspace_generation_package_id": row["workspace_generation_package_id"],
