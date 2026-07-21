@@ -3043,3 +3043,137 @@ async def get_batch_generation_run_status(batch_run_id: str) -> dict | None:
     run["packages_count"] = len(packages)
     run["packages"] = [p.get("workspace_generation_package_id") for p in packages]
     return run
+
+
+# ─── Operator-assisted bulk manual firing ────────────────────────────────
+
+def _bulk_identity(row: dict) -> dict:
+    raw = row.get("generation_identity_json")
+    try:
+        value = json.loads(raw) if isinstance(raw, str) else (raw or {})
+    except json.JSONDecodeError:
+        value = {}
+    return value if isinstance(value, dict) else {}
+
+
+def _decode_json(raw: object, fallback: object) -> object:
+    if not isinstance(raw, str):
+        return raw if raw is not None else fallback
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return fallback
+
+
+def _manual_result(identity: dict) -> dict:
+    value = identity.get("operator_manual_fire_result")
+    return value if isinstance(value, dict) else {}
+
+
+async def get_bulk_manual_fire_handoff(production_run_id: str) -> dict:
+    """Read durable per-item instructions only after every dry-run item passed."""
+    run = await crud.get_production_run(production_run_id)
+    if not run:
+        raise ValueError("BULK_MANUAL_HANDOFF_RUN_NOT_FOUND")
+    config = _decode_json(run.get("config_json"), {}) or {}
+    dry = config.get("last_dry_run_report") or {}
+    rows = await crud.list_production_queue_packages(production_run_id=production_run_id, limit=200)
+    dry_items = {item.get("package_id"): item for item in dry.get("items") or []}
+    if len(rows) < 2:
+        raise ValueError("BULK_MANUAL_HANDOFF_REQUIRES_MULTIPLE_ITEMS")
+    if (dry.get("blocked", 0) != 0 or dry.get("ready") != len(rows)
+            or any(not dry_items.get(row["workspace_generation_package_id"], {}).get("ok") for row in rows)):
+        raise ValueError("BULK_MANUAL_HANDOFF_DRY_RUN_REQUIRED")
+    items = []
+    for row in rows:
+        identity = _bulk_identity(row)
+        bulk = identity.get("bulk_fanout_item") or {}
+        if not bulk.get("bulk_run_id"):
+            raise ValueError("BULK_MANUAL_HANDOFF_IDENTITY_MISSING")
+        manual = _decode_json(row.get("manual_handoff_json"), {}) or {}
+        items.append({
+            "item_index": bulk.get("item_index"),
+            "workspace_generation_package_id": row["workspace_generation_package_id"],
+            "mode": bulk.get("logical_mode") or row.get("mode"),
+            "source_mode": bulk.get("source_mode") or row.get("source_lane"),
+            "copy_variant_id": bulk.get("copy_variant_id"),
+            "dialogue_fingerprint": bulk.get("dialogue_fingerprint"),
+            "prompt": manual.get("final_prompt_text") or row.get("final_prompt_text"),
+            "upload_order": manual.get("upload_order") or [],
+            "actions": manual.get("actions") or [],
+            "expected": {
+                "aspect": config.get("aspect"), "duration_seconds": config.get("duration_seconds"),
+                "model": config.get("model"), "selected_assets": _decode_json(row.get("selected_assets_json"), {}) or {},
+            },
+            "result": _manual_result(identity) or None,
+        })
+    return {
+        "production_run_id": production_run_id,
+        "state": "MANUAL_FIRE_HANDOFF_READY",
+        "automated_bulk_live": "DISABLED",
+        "credit": "OPERATOR_ACTION_OUTSIDE_APP",
+        "provider_calls": 0,
+        "flow_calls": 0,
+        "items": sorted(items, key=lambda item: item["item_index"]),
+    }
+
+
+async def bind_bulk_manual_fire_result(
+    *, production_run_id: str, workspace_generation_package_id: str,
+    copy_variant_id: str, dialogue_fingerprint: str, provider_job_id: str | None,
+    flow_media_id: str | None, result_url: str | None, result_file_id: str | None,
+    notes: str | None,
+) -> dict:
+    """Bind manual evidence to one exact bulk identity; never retrieve or fire."""
+    if not str(provider_job_id or "").strip() and not str(flow_media_id or "").strip():
+        raise ValueError("BULK_MANUAL_RESULT_ID_REQUIRED")
+    await get_bulk_manual_fire_handoff(production_run_id)
+    rows = await crud.list_production_queue_packages(production_run_id=production_run_id, limit=200)
+    target = next((row for row in rows if row.get("workspace_generation_package_id") == workspace_generation_package_id), None)
+    if not target:
+        raise ValueError("BULK_MANUAL_RESULT_PACKAGE_NOT_IN_RUN")
+    identity = _bulk_identity(target)
+    bulk = identity.get("bulk_fanout_item") or {}
+    if bulk.get("copy_variant_id") != copy_variant_id or bulk.get("dialogue_fingerprint") != dialogue_fingerprint:
+        raise ValueError("BULK_MANUAL_RESULT_IDENTITY_MISMATCH")
+    if _manual_result(identity) or target.get("production_status") in {"MANUAL_RESULT_REPORTED", "GENERATED", "DOWNLOADED"}:
+        raise ValueError("BULK_MANUAL_RESULT_ALREADY_BOUND")
+    for row in rows:
+        prior = _manual_result(_bulk_identity(row))
+        if provider_job_id and (row.get("production_job_id") == provider_job_id or prior.get("provider_job_id") == provider_job_id):
+            raise ValueError("BULK_MANUAL_RESULT_DUPLICATE_PROVIDER_JOB")
+        if flow_media_id and prior.get("flow_media_id") == flow_media_id:
+            raise ValueError("BULK_MANUAL_RESULT_DUPLICATE_FLOW_MEDIA")
+    evidence = {
+        "schema_version": "operator-manual-fire-result-v1",
+        "provider_job_id": str(provider_job_id).strip() or None,
+        "flow_media_id": str(flow_media_id).strip() or None,
+        "result_url": str(result_url).strip() or None,
+        "result_file_id": str(result_file_id).strip() or None,
+        "notes": str(notes).strip() or None,
+        "copy_variant_id": copy_variant_id,
+        "dialogue_fingerprint": dialogue_fingerprint,
+        "binding_proof": "operator_input_matched_durable_bulk_identity",
+    }
+    identity["operator_manual_fire_result"] = evidence
+    await crud.update_workspace_generation_package(
+        workspace_generation_package_id,
+        generation_identity_json=json.dumps(identity, ensure_ascii=False),
+        production_job_id=evidence["provider_job_id"],
+        production_status="MANUAL_RESULT_REPORTED",
+        production_error=None,
+    )
+    completed = sum(
+        1 for row in rows if row.get("workspace_generation_package_id") != workspace_generation_package_id
+        and (_manual_result(_bulk_identity(row)) or row.get("production_status") in {"MANUAL_RESULT_REPORTED", "GENERATED", "DOWNLOADED"})
+    ) + 1
+    await crud.update_production_run(production_run_id, total_completed=completed)
+    return {
+        "workspace_generation_package_id": workspace_generation_package_id,
+        "production_run_id": production_run_id,
+        "status": "MANUAL_RESULT_REPORTED",
+        "result": evidence,
+        "provider_calls": 0,
+        "flow_calls": 0,
+        "credit": "NONE",
+    }

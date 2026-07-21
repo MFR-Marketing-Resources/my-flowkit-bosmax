@@ -65,6 +65,8 @@ const previewQuantityCopyPlans = vi.fn();
 const fetchCopyPoolReadiness = vi.fn();
 const fetchBulkFanoutPlan = vi.fn();
 const prepareBulkFanoutPackages = vi.fn();
+const fetchBulkManualFireHandoff = vi.fn();
+const bindBulkManualFireResult = vi.fn();
 const planVideoJob = vi.fn();
 const authorizeVideoJob = vi.fn();
 const startVideoJob = vi.fn();
@@ -76,6 +78,8 @@ vi.mock("../api/workspacePackages", () => ({
 	fetchCopyPoolReadiness: (...a: unknown[]) => fetchCopyPoolReadiness(...a),
 	fetchBulkFanoutPlan: (...a: unknown[]) => fetchBulkFanoutPlan(...a),
 	prepareBulkFanoutPackages: (...a: unknown[]) => prepareBulkFanoutPackages(...a),
+	fetchBulkManualFireHandoff: (...a: unknown[]) => fetchBulkManualFireHandoff(...a),
+	bindBulkManualFireResult: (...a: unknown[]) => bindBulkManualFireResult(...a),
 }));
 vi.mock("../api/nativeExtend", () => ({
 	planVideoJob: (...a: unknown[]) => planVideoJob(...a),
@@ -144,10 +148,20 @@ const BULK_PREPARED = {
 	credit: "NONE", provider_calls: 0, flow_calls: 0,
 };
 
+const BULK_MANUAL_HANDOFF = {
+	production_run_id: "prun_bulk_1", state: "MANUAL_FIRE_HANDOFF_READY",
+	automated_bulk_live: "DISABLED", credit: "OPERATOR_ACTION_OUTSIDE_APP", provider_calls: 0, flow_calls: 0,
+	items: [0, 1, 2].map((i) => ({ item_index: i, workspace_generation_package_id: `wgp_${i}`,
+		mode: "T2V", source_mode: "T2V", copy_variant_id: `cs${i}`, dialogue_fingerprint: `fp${i}`,
+		prompt: `prompt ${i}`, upload_order: [], expected: { aspect: "9:16", duration_seconds: 8, model: "Veo 3.1 - Lite" }, result: null })),
+};
+
 function primeHappyPath(report: unknown = GREEN, items: unknown[] = []) {
 	fetchCopyPoolReadiness.mockResolvedValue(READY_POOL);
 	fetchBulkFanoutPlan.mockResolvedValue(BULK_PLAN);
 	prepareBulkFanoutPackages.mockResolvedValue(BULK_PREPARED);
+	fetchBulkManualFireHandoff.mockResolvedValue(BULK_MANUAL_HANDOFF);
+	bindBulkManualFireResult.mockResolvedValue({ status: "MANUAL_RESULT_REPORTED" });
 	fetchProductCatalog.mockResolvedValue({ items: [PRODUCT, REF_PRODUCT] });
 	searchProducts.mockResolvedValue({ items: [PRODUCT] });
 	fetchVideoModels.mockResolvedValue({
@@ -563,6 +577,39 @@ describe("Production Studio — Stage 1 quantity preview (credit-free, live stay
 			expect.objectContaining({ quantity: 3, expect_bulk_plan_fingerprint: "bulkfp" }));
 		// dry-run only — never a live start
 		expect(startProductionRun).toHaveBeenCalledWith("prun_bulk_1", false);
+	});
+
+	it("shows dry-run-green manual handoff and binds a user-supplied result without live automation", async () => {
+		primeHappyPath({ checked: 3, ready: 3, blocked: 0, note: "bulk dry run", items: [] });
+		previewQuantityCopyPlans.mockResolvedValue(UNIQUE_PREVIEW);
+		renderPage();
+		await pickProduct();
+		await setQuantity(3);
+		await click("studio-action-preview");
+		await click("studio-action-bulk-prepare");
+		const handoff = await screen.findByTestId("studio-bulk-manual-handoff");
+		expect(handoff).toHaveAttribute("data-automation", "disabled");
+		expect(screen.getAllByTestId("studio-manual-handoff-item")).toHaveLength(3);
+		fireEvent.change(screen.getAllByTestId("studio-manual-result-provider_job_id")[0], { target: { value: "job_manual_0" } });
+		await act(async () => { fireEvent.click(screen.getAllByTestId("studio-action-bind-manual-result")[0]); });
+		await waitFor(() => expect(bindBulkManualFireResult).toHaveBeenCalledWith("prun_bulk_1", expect.objectContaining({ workspace_generation_package_id: "wgp_0", provider_job_id: "job_manual_0", dialogue_fingerprint: "fp0" })));
+		for (const call of startProductionRun.mock.calls) expect(call[1]).toBe(false);
+	});
+
+	it("surfaces a wrong-item manual bind refusal and keeps automated bulk live disabled", async () => {
+		primeHappyPath({ checked: 3, ready: 3, blocked: 0, note: "bulk dry run", items: [] });
+		previewQuantityCopyPlans.mockResolvedValue(UNIQUE_PREVIEW);
+		bindBulkManualFireResult.mockRejectedValueOnce(new Error("BULK_MANUAL_RESULT_IDENTITY_MISMATCH"));
+		renderPage();
+		await pickProduct();
+		await setQuantity(3);
+		await click("studio-action-preview");
+		await click("studio-action-bulk-prepare");
+		await screen.findByTestId("studio-bulk-manual-handoff");
+		fireEvent.change(screen.getAllByTestId("studio-manual-result-provider_job_id")[0], { target: { value: "wrong-item-job" } });
+		await act(async () => { fireEvent.click(screen.getAllByTestId("studio-action-bind-manual-result")[0]); });
+		expect(await screen.findByTestId("studio-bulk-prepare-error")).toHaveTextContent("IDENTITY_MISMATCH");
+		expect(screen.getByTestId("studio-bulk-live-gate-state")).toHaveAttribute("data-live-blocked", "true");
 	});
 
 	it("a PREPARED bulk batch still does NOT unlock live", async () => {

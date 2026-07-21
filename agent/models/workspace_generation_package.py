@@ -64,3 +64,16 @@ class WorkspaceGenerationPackageListRequest(BaseModel):
     status: str | None = None
     product_id: str | None = None
     limit: int = 50
+
+
+class BulkManualFireResultRequest(BaseModel):
+    """Operator-supplied evidence after a manual provider submission only."""
+
+    workspace_generation_package_id: str
+    copy_variant_id: str
+    dialogue_fingerprint: str
+    provider_job_id: str | None = None
+    flow_media_id: str | None = None
+    result_url: str | None = None
+    result_file_id: str | None = None
+    notes: str | None = None

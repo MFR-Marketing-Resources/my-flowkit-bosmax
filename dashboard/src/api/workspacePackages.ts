@@ -320,6 +320,46 @@ export async function prepareBulkFanoutPackages(input: {
 	return postAPI<BulkPrepareResult>("/api/workspace/bulk-fanout-prepare", input);
 }
 
+export interface BulkManualFireHandoffItem {
+	item_index: number;
+	workspace_generation_package_id: string;
+	mode: string;
+	source_mode: string | null;
+	copy_variant_id: string;
+	dialogue_fingerprint: string;
+	prompt: string;
+	upload_order: string[];
+	expected: { aspect?: string; duration_seconds?: number; model?: string; selected_assets?: Record<string, unknown> };
+	result: Record<string, string | null> | null;
+}
+
+export interface BulkManualFireHandoff {
+	production_run_id: string;
+	state: "MANUAL_FIRE_HANDOFF_READY";
+	automated_bulk_live: "DISABLED";
+	credit: string;
+	provider_calls: number;
+	flow_calls: number;
+	items: BulkManualFireHandoffItem[];
+}
+
+export async function fetchBulkManualFireHandoff(runId: string): Promise<BulkManualFireHandoff> {
+	return fetchAPI<BulkManualFireHandoff>(`/api/workspace/bulk-manual-fire-handoff/${encodeURIComponent(runId)}`);
+}
+
+export async function bindBulkManualFireResult(runId: string, input: {
+	workspace_generation_package_id: string;
+	copy_variant_id: string;
+	dialogue_fingerprint: string;
+	provider_job_id?: string | null;
+	flow_media_id?: string | null;
+	result_url?: string | null;
+	result_file_id?: string | null;
+	notes?: string | null;
+}) {
+	return postAPI(`/api/workspace/bulk-manual-fire-handoff/${encodeURIComponent(runId)}/result`, input);
+}
+
 export async function fetchWorkspaceExecutionPackageHistory(
 	productId?: string,
 	mode?: WorkspaceMode,
