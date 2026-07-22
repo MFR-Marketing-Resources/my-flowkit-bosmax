@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -490,9 +492,57 @@ def _build_dialog_copy(
     )
 
 
+_DRAFTS_CACHE: tuple[float, list, object] | None = None
+_DRAFTS_CACHE_TTL_SECONDS = 60.0
+
+
+def _cached_drafts() -> list:
+    """One drafts snapshot per minute instead of one per product.
+
+    `list_drafts()` globs and JSON-parses EVERY draft on disk. Measured on the
+    operator machine: 4,352 files, ~78s per call. `_match_bosmax_draft` called it
+    once per product, and the product catalog calls that per row — roughly 52
+    minutes of blocking disk I/O for a single 40-row page, all of it inside the
+    async event loop. The whole runtime died: every later request on every
+    endpoint hung until the process was killed, which read as "the app freezes
+    when I open the page".
+
+    The drafts directory does not change during a catalog read, so re-reading it
+    per row buys nothing. A short TTL keeps a newly saved draft visible within a
+    minute without paying for the scan again on the next row.
+
+    The cache is keyed on the PRODUCER, not just time: a monkeypatched
+    `list_drafts` is a different callable, so a cached snapshot is never served
+    across a patch. Without that, one test's fixture leaked into the next and a
+    cache built for performance would have quietly made this code untestable.
+    """
+    global _DRAFTS_CACHE
+    producer = RegistrationDraftStorageService.list_drafts
+    now = time.monotonic()
+    if (
+        _DRAFTS_CACHE is not None
+        and _DRAFTS_CACHE[2] is producer
+        and (now - _DRAFTS_CACHE[0]) < _DRAFTS_CACHE_TTL_SECONDS
+    ):
+        return _DRAFTS_CACHE[1]
+    drafts = producer()
+    _DRAFTS_CACHE = (now, drafts, producer)
+    return drafts
+
+
+async def _warm_drafts_cache() -> None:
+    """Pay for the scan on a worker thread, never on the event loop.
+
+    Caching alone is not enough: the FIRST call still costs ~78s, and on the loop
+    that is still a dead runtime. Async callers warm it here so the loop stays
+    responsive; the sync `_match_bosmax_draft` then reads an already-warm cache.
+    """
+    await asyncio.to_thread(_cached_drafts)
+
+
 def _match_bosmax_draft(product: dict[str, Any]) -> dict[str, Any] | None:
     title = _normalize(product.get("raw_product_title") or product.get("product_display_name"))
-    drafts = RegistrationDraftStorageService.list_drafts()
+    drafts = _cached_drafts()
     matches: list[dict[str, Any]] = []
     for draft in drafts:
         names = [
@@ -813,7 +863,14 @@ async def refresh_claim_safe_package_if_stale(product_id: str) -> dict[str, Any]
         return None
     if not _is_stale_claim_safe_payload(stored):
         return _hydrate_payload_status(product, stored)
-    draft = _match_bosmax_draft(product) if _should_scan_registration_draft(product) else None
+    if _should_scan_registration_draft(product):
+        # Warm off-thread BEFORE the sync match, so the drafts scan can never run
+        # on the event loop. This is the read path the product catalog hits per
+        # row — it is the one that froze the runtime.
+        await _warm_drafts_cache()
+        draft = _match_bosmax_draft(product)
+    else:
+        draft = None
     refreshed = _merge_preserved_claim_safe_metadata(
         _build_safe_package(product, draft),
         stored,
@@ -834,6 +891,7 @@ async def preview_claim_safe_rewrite(product_id: str) -> dict[str, Any]:
     product = await crud.get_product(product_id)
     if not product:
         raise ValueError("PRODUCT_NOT_FOUND")
+    await _warm_drafts_cache()
     draft = _match_bosmax_draft(product)
     package = _build_safe_package(product, draft)
     stored = _parse_payload(product)
