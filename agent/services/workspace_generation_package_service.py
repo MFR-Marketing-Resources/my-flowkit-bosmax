@@ -2636,8 +2636,14 @@ async def preview_quantity_copy_plans(
         "duplicate_dialogue_groups": verdict["duplicate_groups"],
         "blockers": blockers,
         "preview_ready": verdict["status"] == "UNIQUE" and not blockers,
-        "live_bulk_status": "Bulk live fan-out not enabled yet",
-        "live_bulk_stage": "STAGE_2_REQUIRED",
+        # Stage 2 (itemized fan-out: plan -> prepare -> dry-run -> phrased fire) IS
+        # built and reachable. What still refuses is Stage 3 runtime certification at
+        # the credit boundary (BULK_LIVE_EXECUTION_CERTIFIED). Keep this string in
+        # lockstep with the plan/prepare responses above — a preview that says
+        # "not enabled" while plan says "not certified" gives the operator two
+        # different answers about the same gate.
+        "live_bulk_status": "Bulk live fan-out not certified yet",
+        "live_bulk_stage": "STAGE_3_RUNTIME_CERTIFICATION_REQUIRED",
         "credit": "NONE",
         "provider_calls": 0,
         "flow_calls": 0,

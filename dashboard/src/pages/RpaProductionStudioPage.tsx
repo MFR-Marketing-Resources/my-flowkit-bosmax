@@ -5,13 +5,15 @@
  * but it reads like a debug panel: it starts from an execution-package handle, not a
  * product, and exposes every internal step. This page is the same PROVEN pipeline,
  * re-presented as a studio a normal user can drive: pick a product, configure the
- * selected logical mode, prepare, validate, run one live job, see the result.
+ * selected logical mode, prepare, validate, run one live job — or plan, prepare and
+ * dry-run an itemized batch — and see the result.
  *
  * It REUSES the exact backend contract and safety gates — no new server routes, no
  * weakened guards. ALL FOUR video lanes are one-click wired through their own
  * phrased one-serial gates (T2V / first-frame family F2V+HYBRID / I2V), with
  * mode-exact server authorization; O4 duplicate protection is untouched. Bulk
- * stays locked.
+ * fan-out has its own phrase gate and is refused server-side at the credit
+ * boundary until an owner certifies live bulk.
  *
  * Durations beyond the engine's single-shot max run through the PROVEN multi-block
  * EXTEND lane instead of the queue: workspace execution package (per-block canonical
@@ -89,9 +91,10 @@ import {
 import type { Product, WorkspaceMode } from "../types";
 
 const ASPECTS = ["9:16", "16:9", "1:1"];
-// Stage 1 quantity PREVIEW cap. quantity>1 is preview-only (credit-free unique-copy
-// planning); live bulk fan-out is Stage 2 and stays blocked. Keep in lockstep with
-// the backend QUANTITY_PREVIEW_MAX (workspace_generation_package_service.py).
+// Stage 1 quantity PREVIEW cap. quantity>1 plans credit-free unique-copy variants;
+// the itemized batch it produces CAN be fired live from section 4c, but the server
+// refuses at the credit boundary until bulk live is runtime-certified. Keep in
+// lockstep with the backend QUANTITY_PREVIEW_MAX (workspace_generation_package_service.py).
 const QUANTITY_MAX = 5;
 const POLL_MS = 5000;
 const TERMINAL_STATUSES = new Set(["GENERATED", "DOWNLOADED", "FAILED", "CANCELLED"]);
@@ -331,9 +334,10 @@ export default function RpaProductionStudioPage() {
 	const extendTotals = studioMode === "T2V" ? EXTEND_MULTIPLES.map((n) => n * maxSingle) : [];
 	const durationOptions = [...singleDurations, ...extendTotals];
 	const isExtend = studioMode === "T2V" && duration > maxSingle;
-	// Stage 1: quantity>1 is PREVIEW-ONLY. It never enables live submission and never
-	// touches the single-serial createProductionRun({count:1}) path — live bulk
-	// fan-out is Stage 2 (unbuilt). This flag force-closes the live gates below.
+	// Stage 1: quantity>1 never touches the single-serial createProductionRun({count:1})
+	// path — it routes to the itemized bulk fan-out instead. This flag force-closes the
+	// SINGLE-lane live gates below; the bulk lane has its own phrase gate and its own
+	// server-side credit boundary.
 	const bulkPreview = quantity > 1;
 
 	// Per-lane gate identity. F2V + HYBRID share the live-proven first-frame
@@ -970,11 +974,13 @@ export default function RpaProductionStudioPage() {
 				</p>
 			</div>
 
-			<div className="mb-6 flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3" data-testid="studio-bulk-locked" data-locked="true">
+			<div className="mb-6 flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3" data-testid="studio-bulk-certification-notice" data-live-certified="false">
 				<Lock size={16} className="text-amber-300 shrink-0" />
 				<div className="text-[11px] text-amber-100">
-					<strong>MVP scope: one serial output / one queued item only.</strong> Bulk generation is locked;
-					the selected mode can only prepare and submit one job at a time.
+					<strong>Bulk fan-out is built; live bulk is not runtime-certified.</strong> Quantity 1 runs
+					one live job from section 5. Quantity &gt; 1 plans, prepares and dry-runs an itemized batch
+					credit-free, and the Fire control is wired — but the server refuses it at the credit
+					boundary until an owner certifies the run.
 				</div>
 			</div>
 
@@ -1110,7 +1116,7 @@ export default function RpaProductionStudioPage() {
 							className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-slate-100 focus:outline-none" />
 						<div className="mt-1 text-[9px] text-slate-500" data-testid="studio-quantity-note">
 							{bulkPreview
-								? `1–${QUANTITY_MAX}. Quantity > 1 is preview-only — live bulk fan-out is Stage 2.`
+								? `1–${QUANTITY_MAX}. Quantity > 1 plans an itemized batch — firing it live needs owner certification.`
 								: "1 = single live run. Raise for a credit-free unique-copy preview."}
 						</div>
 					</div>
@@ -1348,7 +1354,7 @@ export default function RpaProductionStudioPage() {
 					</div>
 				) : (
 					<div className="text-[11px] text-slate-500" data-testid="studio-preview-empty">
-						Set a quantity and click <strong>Preview</strong> to plan N unique-copy variants credit-free. Live bulk fan-out is Stage 2 (not enabled yet).
+						Set a quantity and click <strong>Preview</strong> to plan N unique-copy variants credit-free. Firing that batch live additionally needs the server <code>BULK_FANOUT</code> gate and owner certification.
 					</div>
 				)}
 			</section>
@@ -1510,9 +1516,9 @@ export default function RpaProductionStudioPage() {
 						</div>
 					)}
 					{bulkManualHandoff && (
-						<section className="mb-2 rounded-lg border border-cyan-500/40 bg-cyan-500/5 p-3" data-testid="studio-bulk-manual-handoff" data-automation="disabled">
+						<section className="mb-2 rounded-lg border border-cyan-500/40 bg-cyan-500/5 p-3" data-testid="studio-bulk-manual-handoff" data-automation="uncertified">
 							<h3 className="text-[11px] font-semibold text-cyan-100">Manual Fire Handoff — operator action outside this app</h3>
-							<p className="mt-1 text-[10px] text-cyan-100/80">Every item passed the credit-free dry run. Automated bulk live remains disabled; copy each exact package instruction into Google Flow, fire manually, then capture the returned identity here.</p>
+							<p className="mt-1 text-[10px] text-cyan-100/80">Every item passed the credit-free dry run. Automated bulk live is wired below but not yet runtime-certified — until it is, copy each exact package instruction into Google Flow, fire manually, then capture the returned identity here.</p>
 							<div className="mt-2 space-y-3">
 								{bulkManualHandoff.items.map((item) => {
 									const input = bulkManualInputs[item.workspace_generation_package_id] ?? { provider_job_id: "", flow_media_id: "", result_url: "", result_file_id: "", notes: "" };
@@ -1614,7 +1620,7 @@ export default function RpaProductionStudioPage() {
 				<h2 className="mb-2 flex items-center gap-2 text-sm font-semibold text-red-200"><Flame size={14} /> 5 · {isExtend ? `Run one live EXTEND job (${duration}s multi-block)` : `Run one live ${studioMode}`}</h2>
 				{bulkPreview && (
 					<div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100" data-testid="studio-live-bulk-blocked" data-blocked="true">
-						<strong>Bulk live fan-out not enabled yet — Stage 2 required.</strong> Quantity {quantity} is preview-only: no live submission, no provider call, no credit. Set quantity to 1 to run one live item.
+						<strong>This single-lane section does not fire batches.</strong> Quantity {quantity} is planned as an itemized batch in section 4c — fire it from the bulk control there. No live submission, no provider call and no credit happen here. Set quantity to 1 to run one live item in this section.
 					</div>
 				)}
 				<div className="mb-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-[11px] text-red-100" data-testid="studio-live-warning">
