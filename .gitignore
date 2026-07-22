@@ -29,6 +29,12 @@ GEMINI.md
 # PR #298 hermetic A/B harness temp roots (never commit)
 docs/evidence/pr298_ab/
 
+# Generated extension build stamp (run: node scripts/stamp-extension-build.mjs).
+# NEVER commit: a committed stamp is stale the moment the next commit lands, which
+# is exactly the stale-provenance defect it was introduced to remove. Absent is
+# fine — background.js imports it in try/catch and reports stamped:false.
+extension/build-stamp.js
+
 # Dependencies and Scratch
 node_modules/
 scratch/
