@@ -1392,8 +1392,14 @@ export default function RpaProductionStudioPage() {
 						Set a quantity and click <strong>Preview</strong> to plan N unique-copy variants credit-free. Firing that batch live additionally needs the server <code>BULK_FANOUT</code> gate and owner certification.
 					</div>
 				)}
+				{!bulkPreview && (
+					<div className="mt-2 rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-[10px] text-slate-400" data-testid="studio-batch-lane-locked" data-locked="true">
+						<strong className="text-slate-300">Batch lane locked — Quantity is 1.</strong> A single
+						video runs from section 5 below. Raise Quantity above 1 to plan and fire a batch here.
+					</div>
+				)}
 			</section>
-			{bulkPlan && (
+			{bulkPreview && bulkPlan && (
 				<section
 					className="mb-6 rounded-xl border border-sky-500/30 bg-sky-500/5 p-4"
 					data-testid="studio-bulk-fanout-section"
@@ -1608,14 +1614,22 @@ export default function RpaProductionStudioPage() {
 								with per-item identity and evidence. After submission, do not retry unless
 								the system proves no provider submission occurred.
 							</p>
-							<div className="mt-2 flex flex-wrap items-center gap-2">
+							{/* The placeholder used to BE the phrase, so the field read as a
+							    label that was already filled in and operators could not find
+							    anywhere to type. Show the phrase to copy, then a field that
+							    obviously wants input. */}
+							<label className="mt-2 block text-[10px] text-red-100/90" htmlFor="bulk-live-phrase-input">
+								Step 1 — copy this phrase: <code className="select-all rounded bg-slate-900 px-1 py-0.5 font-mono text-[10px] text-amber-200">{LIVE_BULK_CONFIRM_PHRASE}</code>
+							</label>
+							<div className="mt-1.5 flex flex-wrap items-center gap-2">
 								<input
+									id="bulk-live-phrase-input"
 									data-testid="studio-bulk-live-phrase"
 									value={bulkLivePhrase}
 									onChange={(e) => setBulkLivePhrase(e.target.value)}
-									placeholder={LIVE_BULK_CONFIRM_PHRASE}
+									placeholder="Step 2 — paste the phrase here…"
 									aria-label="Bulk live confirmation phrase"
-									className="w-72 rounded border border-slate-700 bg-slate-900 px-2 py-1 font-mono text-[10px] text-slate-100"
+									className="w-72 rounded border-2 border-amber-500/70 bg-slate-900 px-2 py-1.5 font-mono text-[10px] text-slate-100 placeholder:text-slate-500 focus:border-amber-400 focus:outline-none"
 								/>
 								<button
 									type="button"
@@ -1655,9 +1669,16 @@ export default function RpaProductionStudioPage() {
 				<h2 className="mb-2 flex items-center gap-2 text-sm font-semibold text-red-200"><Flame size={14} /> 5 · {isExtend ? `Run one live EXTEND job (${duration}s multi-block)` : `Run one live ${studioMode}`}</h2>
 				{bulkPreview && (
 					<div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100" data-testid="studio-live-bulk-blocked" data-blocked="true">
-						<strong>This single-lane section does not fire batches.</strong> Quantity {quantity} is planned as an itemized batch in section 4c — fire it from the bulk control there. No live submission, no provider call and no credit happen here. Set quantity to 1 to run one live item in this section.
+						<strong>Locked — Quantity is {quantity}, so this is a BATCH.</strong> Fire it from
+						section 4c above. Nothing in this section applies to a batch, so its controls are
+						hidden rather than left dead. Set Quantity to 1 in section 3 to unlock this section.
 					</div>
 				)}
+				{/* ONE quantity, ONE lane. Rendering both the single-lane gate and the batch
+				    control at the same time forced the operator to work out which half was
+				    theirs, and the dead half read as a broken page. Quantity decides: >1 hides
+				    this section's controls, 1 hides the batch fire control. */}
+				{!bulkPreview && (<>
 				<div className="mb-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-[11px] text-red-100" data-testid="studio-live-warning">
 					<strong>This spends real credits.</strong>{" "}
 					{isExtend
@@ -1765,6 +1786,7 @@ export default function RpaProductionStudioPage() {
 						<span><strong>Live run refused — nothing fired.</strong> {explainFailure(liveError)}</span>
 					</div>
 				)}
+				</>)}
 			</section>
 
 			{/* ── 6 · Result ── */}

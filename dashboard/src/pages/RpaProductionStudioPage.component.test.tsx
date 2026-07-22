@@ -357,7 +357,10 @@ describe("Production Studio — Stage 1 quantity preview (credit-free; the SINGL
 		await pickProduct();
 		await setQuantity(3);
 		expect(screen.getByTestId("studio-live-gate")).toHaveAttribute("data-gate-open", "false");
-		expect(screen.getByTestId("studio-action-go-live")).toBeDisabled();
+		// Quantity > 1 no longer renders a DEAD single-lane button. The control is
+		// absent entirely, which is a stronger guarantee than "present but disabled"
+		// and stops the operator reading a dead button as a broken page.
+		expect(screen.queryByTestId("studio-action-go-live")).toBeNull();
 		expect(screen.getByTestId("studio-live-bulk-blocked")).toHaveAttribute("data-blocked", "true");
 		expect(screen.getByTestId("studio-action-prepare")).toBeDisabled();
 		expect(createProductionRun).not.toHaveBeenCalled();
@@ -466,7 +469,10 @@ describe("Production Studio — Stage 1 quantity preview (credit-free; the SINGL
 		await screen.findByTestId("studio-copy-pool-readiness");
 		// a READY pool + a UNIQUE preview must STILL leave live fully closed
 		expect(screen.getByTestId("studio-live-gate")).toHaveAttribute("data-gate-open", "false");
-		expect(screen.getByTestId("studio-action-go-live")).toBeDisabled();
+		// Quantity > 1 no longer renders a DEAD single-lane button. The control is
+		// absent entirely, which is a stronger guarantee than "present but disabled"
+		// and stops the operator reading a dead button as a broken page.
+		expect(screen.queryByTestId("studio-action-go-live")).toBeNull();
 		expect(screen.getByTestId("studio-action-prepare")).toBeDisabled();
 		expect(screen.getByTestId("studio-live-bulk-blocked")).toHaveAttribute("data-blocked", "true");
 		expect(createProductionRun).not.toHaveBeenCalled();
@@ -503,7 +509,10 @@ describe("Production Studio — Stage 1 quantity preview (credit-free; the SINGL
 		await screen.findByTestId("studio-bulk-fanout-section");
 		expect(screen.getByTestId("studio-bulk-live-gate-state")).toHaveAttribute("data-live-blocked", "true");
 		expect(screen.getByTestId("studio-live-gate")).toHaveAttribute("data-gate-open", "false");
-		expect(screen.getByTestId("studio-action-go-live")).toBeDisabled();
+		// Quantity > 1 no longer renders a DEAD single-lane button. The control is
+		// absent entirely, which is a stronger guarantee than "present but disabled"
+		// and stops the operator reading a dead button as a broken page.
+		expect(screen.queryByTestId("studio-action-go-live")).toBeNull();
 		expect(screen.getByTestId("studio-action-prepare")).toBeDisabled();
 		expect(screen.getByTestId("studio-live-bulk-blocked")).toHaveAttribute("data-blocked", "true");
 		expect(createProductionRun).not.toHaveBeenCalled();
@@ -636,7 +645,10 @@ describe("Production Studio — Stage 1 quantity preview (credit-free; the SINGL
 
 		expect(screen.getByTestId("studio-bulk-live-gate-state")).toHaveAttribute("data-live-blocked", "true");
 		expect(screen.getByTestId("studio-live-gate")).toHaveAttribute("data-gate-open", "false");
-		expect(screen.getByTestId("studio-action-go-live")).toBeDisabled();
+		// Quantity > 1 no longer renders a DEAD single-lane button. The control is
+		// absent entirely, which is a stronger guarantee than "present but disabled"
+		// and stops the operator reading a dead button as a broken page.
+		expect(screen.queryByTestId("studio-action-go-live")).toBeNull();
 		// no live start was ever issued
 		for (const call of startProductionRun.mock.calls) {
 			expect(call[1]).toBe(false);
