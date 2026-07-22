@@ -2169,6 +2169,29 @@ async def prepare_bulk_fanout_packages(
                 ":created_before_failure=0"
             )
 
+    # C-3: HYBRID's 9:16 product anchor must be resolved at the FRONT door, the way
+    # start_batch_prompt_run already does it (explicit asset wins, else auto-pick the
+    # padded 9:16 PRODUCT_REFERENCE). Bulk prepare skipped this, so an operator who
+    # did not hand-pick the anchor fell through to the F2V start-frame auto-seed —
+    # the RAW catalog image — and every item blocked at the queue aspect gate with
+    # SLOT_UPLOAD_FAILED:start_frame:SLOT_ASPECT_MISMATCH (live: run
+    # prun_5e147c02cd1e412c, both items, 1122x1402 vs 9:16).
+    #
+    # Unlike the batch lane this FAILS CLOSED when no anchor exists: bulk burns a
+    # content_combination row per item at create time, so letting it proceed would
+    # spend N fresh dialogues on a batch that is guaranteed to block at dry-run —
+    # exactly the pool starvation B-17 exists to stop.
+    if mode == "HYBRID" and not product_reference_asset_id:
+        product_reference_asset_id, _anchor_warnings = await _resolve_hybrid_anchor_916(
+            product_id
+        )
+        if not product_reference_asset_id:
+            raise ValueError(
+                "BULK_PREPARE_REFUSED:HYBRID_ANCHOR_916_NOT_FOUND:"
+                "no_approved_padded_9_16_PRODUCT_REFERENCE_for_this_product:"
+                "create_one_in_the_frame_factory_or_pass_product_reference_asset_id"
+            )
+
     creator_kwargs: dict = {
         "product_id": product_id,
         "generation_mode": generation_mode,

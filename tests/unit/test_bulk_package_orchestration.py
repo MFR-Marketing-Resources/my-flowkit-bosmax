@@ -79,9 +79,12 @@ class _Harness:
         # B-16: records every front-door I2V reference-resolver invocation, so a
         # test can prove the gate is I2V-scoped (never fires for T2V/F2V/HYBRID).
         self.resolver_calls: list = []
+        # C-3: front-door HYBRID 9:16 anchor auto-resolution.
+        self.anchor_calls: list = []
 
 
-def _install(monkeypatch, rows, dialogues, h: _Harness, i2v_blockers=None):
+def _install(monkeypatch, rows, dialogues, h: _Harness, i2v_blockers=None,
+             hybrid_anchor="ca_auto_916"):
     monkeypatch.setattr(copy_rotation_service, "list_eligible_copy_sets", _fake_pool(rows))
     monkeypatch.setattr(copy_rotation_service, "select_rotation_copy_sets", _fake_rotation(rows))
     monkeypatch.setattr(wxp, "compile_workspace_prompt_preview", _fake_compile(dialogues))
@@ -94,6 +97,16 @@ def _install(monkeypatch, rows, dialogues, h: _Harness, i2v_blockers=None):
         return {"blockers": list(i2v_blockers or []), "warnings": [],
                 "resolved_assets": [], "compiler_context_summary": ""}
     monkeypatch.setattr(svc, "resolve_i2v_semantic_slots", _resolve_i2v)
+
+    # C-3 front-door HYBRID anchor resolver. Faked so no test touches the real
+    # creative_asset table / image parser; `hybrid_anchor=None` simulates a product
+    # with no approved padded 9:16 PRODUCT_REFERENCE.
+    async def _resolve_anchor(product_id):
+        h.anchor_calls.append(product_id)
+        if hybrid_anchor:
+            return hybrid_anchor, []
+        return None, ["HYBRID_ANCHOR_916_NOT_FOUND:..."]
+    monkeypatch.setattr(svc, "_resolve_hybrid_anchor_916", _resolve_anchor)
 
     async def _creator(**kw):
         idx = len(h.created)
@@ -160,8 +173,10 @@ def _install(monkeypatch, rows, dialogues, h: _Harness, i2v_blockers=None):
     return h
 
 
-def _prepare(monkeypatch, rows, dialogues, h=None, i2v_blockers=None, **over):
-    h = _install(monkeypatch, rows, dialogues, h or _Harness(), i2v_blockers=i2v_blockers)
+def _prepare(monkeypatch, rows, dialogues, h=None, i2v_blockers=None,
+             hybrid_anchor="ca_auto_916", **over):
+    h = _install(monkeypatch, rows, dialogues, h or _Harness(), i2v_blockers=i2v_blockers,
+                 hybrid_anchor=hybrid_anchor)
     kwargs = dict(product_id="P", logical_mode="T2V", source_mode="T2V",
                   quantity=len(rows), model="Veo 3.1 - Lite", aspect="9:16")
     kwargs.update(over)
@@ -904,3 +919,50 @@ def test_usage_advance_rotates_the_next_selection(monkeypatch):
         "despite fresh alternatives"
     )
     assert repick == ["csC", "csD"]
+
+
+# ── C-3 · HYBRID's 9:16 anchor is resolved before any create/burn ────────────
+# start_batch_prompt_run already auto-picks the padded 9:16 PRODUCT_REFERENCE
+# (explicit asset wins, else auto). Bulk prepare skipped it, so an operator who
+# did not hand-pick the anchor fell through to the F2V start-frame auto-seed —
+# the RAW catalog image — and every item blocked at the queue aspect gate with
+# SLOT_UPLOAD_FAILED:start_frame:SLOT_ASPECT_MISMATCH (live: prun_5e147c02cd1e412c,
+# both items, 1122x1402 vs 9:16). Unlike the batch lane this FAILS CLOSED when no
+# anchor exists, because bulk burns a ledger row per item at create time.
+
+def test_hybrid_bulk_auto_resolves_the_916_anchor_when_not_supplied(monkeypatch):
+    out, h = _prepare(monkeypatch, THREE, UNIQUE3, logical_mode="HYBRID", source_mode="HYBRID")
+    assert out["prepared_package_count"] == 3
+    assert h.anchor_calls == ["P"], "the front-door anchor resolver never ran"
+    # the auto-picked anchor must ride the F2V creator's start-frame slot (B-06)
+    for kw in h.created:
+        assert kw["start_frame_asset_id"] == "ca_auto_916"
+
+
+def test_hybrid_bulk_keeps_an_explicit_anchor_and_skips_auto_resolution(monkeypatch):
+    out, h = _prepare(monkeypatch, THREE, UNIQUE3, logical_mode="HYBRID", source_mode="HYBRID",
+                      product_reference_asset_id="ca_operator_choice")
+    assert out["prepared_package_count"] == 3
+    assert h.anchor_calls == [], "explicit anchor must win — no auto-resolution"
+    for kw in h.created:
+        assert kw["start_frame_asset_id"] == "ca_operator_choice"
+
+
+def test_hybrid_bulk_fails_closed_with_no_anchor_and_burns_nothing(monkeypatch):
+    h = _install(monkeypatch, THREE, UNIQUE3, _Harness(), hybrid_anchor=None)
+    with pytest.raises(ValueError, match="BULK_PREPARE_REFUSED:HYBRID_ANCHOR_916_NOT_FOUND"):
+        asyncio.run(svc.prepare_bulk_fanout_packages(
+            product_id="P", logical_mode="HYBRID", source_mode="HYBRID", quantity=3,
+            model="Veo 3.1 - Lite", aspect="9:16"))
+    assert h.created == [], "package created despite having no 9:16 anchor"
+    assert h.combos == [], "ledger burned on a batch guaranteed to block at dry-run"
+    assert h.usage == [], "rotation advanced on a doomed batch"
+    assert h.approved == []
+
+
+def test_non_hybrid_lanes_never_touch_the_anchor_resolver(monkeypatch):
+    _, h = _prepare(monkeypatch, THREE, UNIQUE3)  # T2V default
+    assert h.anchor_calls == []
+    _, h2 = _prepare(monkeypatch, THREE, UNIQUE3, logical_mode="F2V", source_mode="FRAMES",
+                     start_frame_asset_id="ca_frame")
+    assert h2.anchor_calls == [], "F2V auto-seeds its own frame — must not use the HYBRID anchor"
