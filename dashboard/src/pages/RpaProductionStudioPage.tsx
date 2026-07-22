@@ -41,6 +41,7 @@ import { Link } from "react-router-dom";
 import { fetchProductCatalog, searchProducts } from "../api/products";
 import {
 	approvePackages,
+	cancelProductionRun,
 	createProductionRun,
 	fetchVideoModels,
 	getProductionRun,
@@ -493,6 +494,34 @@ export default function RpaProductionStudioPage() {
 					setBulkManualHandoff(await fetchBulkManualFireHandoff(prepared.production_run_id));
 				}
 			}
+		} catch (e) {
+			setBulkError(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy(null);
+		}
+	};
+
+	/** Release a prepared batch that is NOT going to be fired.
+	 *
+	 *  The uniqueness ledger is burned at prepare time, so an abandoned batch holds
+	 *  its dialogues hostage until the run is cancelled — with a finite approved-copy
+	 *  pool that silently starves bulk (B-17). Cancelling only ever touches items
+	 *  still QUEUED (`_cancel_remaining`), so anything already fired keeps its burn
+	 *  and its evidence. Credit-free; nothing is deleted. */
+	const handleBulkRelease = async () => {
+		const runId = bulkPrepared?.production_run_id;
+		if (!runId || busy !== null) return;
+		setBusy("bulk-release");
+		setBulkError(null);
+		try {
+			await cancelProductionRun(runId);
+			// Drop the local batch so the operator can re-plan against the freed pool.
+			setBulkPrepared(null);
+			setBulkDryRun(null);
+			setBulkManualHandoff(null);
+			setBulkLiveError(null);
+			setBulkLiveStatus(null);
+			setBulkLivePhrase("");
 		} catch (e) {
 			setBulkError(e instanceof Error ? e.message : String(e));
 		} finally {
@@ -1409,6 +1438,26 @@ export default function RpaProductionStudioPage() {
 								{bulkPrepared.production_run_id ? <> in run <code>{bulkPrepared.production_run_id}</code></> : null}.
 								{bulkPrepared.reused_existing_batch ? " (existing batch reused — no duplicates created)" : ""}
 							</div>
+							{/* A prepared batch holds its dialogues in the uniqueness ledger until it
+							    is fired or released. Without this, abandoning a batch silently starves
+							    the approved-copy pool (B-17). Cancel only touches still-QUEUED items,
+							    so anything already fired keeps its burn and its evidence. */}
+							{bulkPrepared.production_run_id && !bulkLiveStatus && (
+								<div className="mt-1.5 flex flex-wrap items-center gap-2">
+									<button
+										type="button"
+										data-testid="studio-action-bulk-release"
+										onClick={() => void handleBulkRelease()}
+										disabled={busy !== null}
+										className="rounded border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-100 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-500"
+									>
+										{busy === "bulk-release" ? "Releasing…" : "Release batch (free the copy back)"}
+									</button>
+									<span className="text-[10px] text-slate-400">
+										Not going to fire this? Release it so its dialogues return to the pool. No credit, nothing deleted.
+									</span>
+								</div>
+							)}
 							<div className="mt-1 space-y-0.5">
 								{bulkPrepared.items.map((it) => (
 									<div key={it.workspace_generation_package_id}
