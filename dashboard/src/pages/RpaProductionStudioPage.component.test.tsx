@@ -21,6 +21,7 @@ const createT2VGenerationPackage = vi.fn();
 const approvePackages = vi.fn();
 const createProductionRun = vi.fn();
 const startProductionRun = vi.fn();
+const cancelProductionRun = vi.fn();
 const getProductionRun = vi.fn();
 const fetchVideoModels = vi.fn();
 
@@ -50,6 +51,7 @@ vi.mock("../api/productionQueue", () => ({
 	createProductionRun: (...a: unknown[]) => createProductionRun(...a),
 	startProductionRun: (...a: unknown[]) => startProductionRun(...a),
 	getProductionRun: (...a: unknown[]) => getProductionRun(...a),
+	cancelProductionRun: (...a: unknown[]) => cancelProductionRun(...a),
 	fetchVideoModels: (...a: unknown[]) => fetchVideoModels(...a),
 	LIVE_GATE_ONE_SERIAL_T2V: "ONE_SERIAL_T2V",
 	LIVE_CONFIRM_PHRASE: "AUTHORIZE_ONE_T2V_LIVE_RUN",
@@ -1275,5 +1277,76 @@ describe("Production Studio — system-fired bulk live (app submits each item as
 		await prepareBulkBatch();
 		expect(screen.getByTestId("studio-bulk-manual-handoff")).toBeInTheDocument();
 		expect(screen.getByTestId("studio-bulk-live-fire")).toBeInTheDocument();
+	});
+});
+
+describe("Production Studio — releasing an abandoned prepared batch (B-17 hygiene)", () => {
+	const UNIQUE_PREVIEW = {
+		quantity_requested: 3, quantity_max: 5, planned_item_count: 3, logical_mode: "T2V",
+		generation_mode: "SINGLE", copy_source: "SCRIPT_LIBRARY", copy_rotation_warnings: [],
+		items: [
+			{ item_index: 0, variation_salt: "v1", copy_variant_id: "cs0", hook: "h0", dialogue_summary: "one", dialogue_fingerprint: "aaaa1111", seam_voice: null, compile_error: null },
+			{ item_index: 1, variation_salt: "v2", copy_variant_id: "cs1", hook: "h1", dialogue_summary: "two", dialogue_fingerprint: "bbbb2222", seam_voice: null, compile_error: null },
+			{ item_index: 2, variation_salt: "v3", copy_variant_id: "cs2", hook: "h2", dialogue_summary: "three", dialogue_fingerprint: "cccc3333", seam_voice: null, compile_error: null },
+		],
+		dialogue_uniqueness_status: "UNIQUE", duplicate_dialogue_groups: [], blockers: [],
+		preview_ready: true, live_bulk_status: "Bulk live fan-out not enabled yet",
+		live_bulk_stage: "STAGE_2_REQUIRED", credit: "NONE", provider_calls: 0, flow_calls: 0,
+	};
+
+	async function setQuantity(n: number) {
+		await act(async () => {
+			fireEvent.change(await screen.findByTestId("studio-quantity-input"), { target: { value: String(n) } });
+		});
+	}
+	async function prepareBatch() {
+		primeHappyPath({ checked: 3, ready: 3, blocked: 0, note: "bulk dry run", items: [] });
+		previewQuantityCopyPlans.mockResolvedValue(UNIQUE_PREVIEW);
+		renderPage();
+		await pickProduct();
+		await setQuantity(3);
+		await click("studio-action-preview");
+		await screen.findByTestId("studio-bulk-fanout-section");
+		await click("studio-action-bulk-prepare");
+		await screen.findByTestId("studio-bulk-prepared");
+	}
+
+	it("offers a release control on a prepared, not-yet-fired batch", async () => {
+		await prepareBatch();
+		expect(screen.getByTestId("studio-action-bulk-release")).toBeEnabled();
+	});
+
+	it("release cancels the run and clears the batch so the pool can be re-planned", async () => {
+		await prepareBatch();
+		cancelProductionRun.mockResolvedValue({ production_run_id: "prun_bulk_1", status: "CANCELLED" });
+		await click("studio-action-bulk-release");
+
+		expect(cancelProductionRun).toHaveBeenCalledWith("prun_bulk_1");
+		await waitFor(() => expect(screen.queryByTestId("studio-bulk-prepared")).toBeNull());
+		// no live fire panel left over either
+		expect(screen.queryByTestId("studio-bulk-live-fire")).toBeNull();
+		// releasing is credit-free — it must never start a run
+		expect(startProductionRun).not.toHaveBeenCalledWith("prun_bulk_1", true, expect.anything());
+	});
+
+	it("hides the release control once the batch has been fired", async () => {
+		await prepareBatch();
+		await act(async () => {
+			fireEvent.change(screen.getByTestId("studio-bulk-live-phrase"), { target: { value: "AUTHORIZE_BULK_FANOUT_LIVE_RUN" } });
+		});
+		startProductionRun.mockResolvedValue({ run_id: "prun_bulk_1", dry_run: false, status: "RUNNING" });
+		await click("studio-action-bulk-go-live");
+		await screen.findByTestId("studio-bulk-live-submitted");
+
+		expect(screen.queryByTestId("studio-action-bulk-release")).toBeNull();
+	});
+
+	it("a failed release surfaces the reason and keeps the batch", async () => {
+		await prepareBatch();
+		cancelProductionRun.mockRejectedValueOnce(new Error("RUN_ALREADY_RUNNING"));
+		await click("studio-action-bulk-release");
+
+		expect(await screen.findByTestId("studio-bulk-prepare-error")).toHaveTextContent("RUN_ALREADY_RUNNING");
+		expect(screen.getByTestId("studio-bulk-prepared")).toBeInTheDocument();
 	});
 });
