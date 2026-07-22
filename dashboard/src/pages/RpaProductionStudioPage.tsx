@@ -501,11 +501,14 @@ export default function RpaProductionStudioPage() {
 				const res = await startProductionRun(prepared.production_run_id, false);
 				setBulkDryRun(res.report ?? null);
 				if (res.report?.blocked === 0 && res.report?.ready === prepared.prepared_package_count) {
-					setBulkManualHandoff(await fetchBulkManualFireHandoff(prepared.production_run_id));
-					// Bulk live submits serially in the background. Unlike a one-item
-					// diagnostic, a missing editor can strand the first item after the
-					// click, so prove the transport before exposing this credit door.
-					await refreshFlowTab();
+					// The optional manual handoff and Flow probe must NEVER hold the
+					// prepared/dry-run result hostage. They can be slow on a live
+					// extension connection; the primary UI must leave "Preparing…"
+					// immediately so the operator can see the durable run and act.
+					void fetchBulkManualFireHandoff(prepared.production_run_id)
+						.then(setBulkManualHandoff)
+						.catch(() => setBulkError("Manual fallback details could not load; automated Fire remains governed by its own gate."));
+					void refreshFlowTab();
 				}
 			}
 		} catch (e) {
@@ -634,8 +637,10 @@ export default function RpaProductionStudioPage() {
 			});
 			setBulkPrepared(prepared);
 			setBulkDryRun(dryRun);
-			setBulkManualHandoff(await fetchBulkManualFireHandoff(detail.production_run_id));
-			await refreshFlowTab();
+			void fetchBulkManualFireHandoff(detail.production_run_id)
+				.then(setBulkManualHandoff)
+				.catch(() => setBulkError("Manual fallback details could not load; automated Fire remains governed by its own gate."));
+			void refreshFlowTab();
 		} catch (e) {
 			setBulkPrepared(null);
 			setBulkDryRun(null);

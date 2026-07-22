@@ -594,6 +594,20 @@ describe("Production Studio — Stage 1 quantity preview (credit-free, live stay
 		expect(startProductionRun).toHaveBeenCalledWith("prun_bulk_1", false);
 	});
 
+	it("shows the durable prepared batch immediately when optional handoff loading is slow", async () => {
+		primeHappyPath({ checked: 3, ready: 3, blocked: 0, note: "bulk dry run", items: [] });
+		previewQuantityCopyPlans.mockResolvedValue(UNIQUE_PREVIEW);
+		fetchBulkManualFireHandoff.mockImplementation(() => new Promise(() => {}));
+		renderPage();
+		await pickProduct();
+		await setQuantity(3);
+		await click("studio-action-preview");
+		await click("studio-action-bulk-prepare");
+		expect(await screen.findByTestId("studio-bulk-prepared")).toHaveAttribute("data-run", "prun_bulk_1");
+		expect(screen.getByTestId("studio-bulk-dryrun")).toHaveAttribute("data-ready", "3");
+		expect(screen.getByTestId("studio-action-bulk-prepare")).not.toHaveTextContent("Preparing…");
+	});
+
 	it("keeps manual handoff available as an optional fallback", async () => {
 		primeHappyPath({ checked: 3, ready: 3, blocked: 0, note: "bulk dry run", items: [] });
 		previewQuantityCopyPlans.mockResolvedValue(UNIQUE_PREVIEW);
