@@ -494,7 +494,19 @@ export default function RpaProductionStudioPage() {
 			if (prepared.production_run_id) {
 				const res = await startProductionRun(prepared.production_run_id, false);
 				setBulkDryRun(res.report ?? null);
-				if (res.report?.blocked === 0 && res.report?.ready === prepared.prepared_package_count) {
+				// Manual Fire Handoff is the FALLBACK for when the app cannot fire for
+				// you: it dumps every package's full prompt on screen to be pasted into
+				// Google Flow by hand. Once bulk live is runtime-certified the app fires
+				// automatically, so showing thousands of words of paste-me instructions
+				// underneath a working Fire button is pure noise — and it actively misled
+				// operators into thinking automation was still unavailable. Only fetch it
+				// when automation genuinely is not available.
+				const bulkAutomationCertified = bulkPlan?.live_bulk_stage === "STAGE_3_RUNTIME_CERTIFIED";
+				if (
+					!bulkAutomationCertified &&
+					res.report?.blocked === 0 &&
+					res.report?.ready === prepared.prepared_package_count
+				) {
 					setBulkManualHandoff(await fetchBulkManualFireHandoff(prepared.production_run_id));
 				}
 			}
@@ -1556,7 +1568,10 @@ export default function RpaProductionStudioPage() {
 							)}
 						</div>
 					)}
-					{bulkManualHandoff && (
+					{/* Belt and braces: never render the paste-into-Flow fallback while the
+					    app can fire on its own, even if a handoff was fetched before
+					    certification flipped. */}
+					{bulkManualHandoff && bulkPlan?.live_bulk_stage !== "STAGE_3_RUNTIME_CERTIFIED" && (
 						<section className="mb-2 rounded-lg border border-cyan-500/40 bg-cyan-500/5 p-3" data-testid="studio-bulk-manual-handoff" data-automation="uncertified">
 							<h3 className="text-[11px] font-semibold text-cyan-100">Manual Fire Handoff — operator action outside this app</h3>
 							<p className="mt-1 text-[10px] text-cyan-100/80">Every item passed the credit-free dry run. Automated bulk live is wired below but not yet runtime-certified — until it is, copy each exact package instruction into Google Flow, fire manually, then capture the returned identity here.</p>
