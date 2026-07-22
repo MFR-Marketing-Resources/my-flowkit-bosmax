@@ -417,7 +417,10 @@ def test_generate_keeps_failed_for_preapproval_error():
                 {"result": {"flow_tab_found": True, "flow_tab_id": 1, "diag": {"projectId": "p1"}}})
     assert job["status"] == "FAILED"
     assert job["status"] != "GENERATED_BUT_UNRETRIEVED"
-    assert job.get("credit_spent_likely") is None  # not flagged for a pre-approval failure
+    # C-4: a pre-approval failure now AFFIRMS no credit instead of leaving the
+    # field absent (absence was the ambiguity that made this unreadable).
+    assert job.get("credit_spent_likely") is False
+    assert job.get("credit_state") == "NOT_SPENT"
     assert "approve" in (job.get("error") or "").lower()
 
 

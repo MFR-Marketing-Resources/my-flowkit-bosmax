@@ -748,6 +748,13 @@ async def _persist_binding_outcome(wgp_id: str, job_id: str) -> None:
             "seed_mismatched": stats.get("seed_mismatched"),
             "unverifiable": stats.get("unverifiable"),
             "reason": job.get("error") or job.get("original_error"),
+            # C-4: persist the STRUCTURED verdict, not just the derived boolean.
+            # The bool alone was unreadable as evidence — it was written in one
+            # code path only, so a DONE job that delivered a paid video recorded
+            # credit_spent_likely=False. `credit_state` is the authority
+            # (NOT_SPENT / MAY_HAVE_SPENT / SPENT / UNKNOWN); the bool is kept for
+            # existing readers and is derived from it.
+            "credit_state": job.get("credit_state") or "UNKNOWN",
             "credit_spent_likely": bool(job.get("credit_spent_likely")),
             "recorded_at": _now(),
         }

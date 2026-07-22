@@ -10,11 +10,11 @@ promising the video could be harvested — all three misleading.
 
 Corrected contract, pinned here:
   * timeout with ZERO completed candidates ever evaluated ->
-    ``RENDER_NOT_MATERIALIZED``, credit UNCERTAIN (never claimed spent, never
+    ``RENDER_NOT_MATERIALIZED``, credit UNKNOWN (never claimed spent, never
     claimed zero), hint says verify the project, not harvest a video that may
     not exist;
   * stale/foreign candidates deterministically REJECTED (identity mismatch) ->
-    ``STALE_OR_FOREIGN_CANDIDATES_ONLY``, credit UNCERTAIN, never a generated item;
+    ``STALE_OR_FOREIGN_CANDIDATES_ONLY``, credit UNKNOWN, never a generated item;
   * unverifiable completed candidates -> stays GENERATED_BUT_UNRETRIEVED;
   * stats never persisted (tab lost mid-poll) -> conservative
     GENERATED_BUT_UNRETRIEVED;
@@ -52,7 +52,7 @@ def test_timeout_with_zero_candidates_is_render_not_materialized():
     mv._apply_post_approval_failure(j, _TIMEOUT_MSG)
     assert j["status"] == "RENDER_NOT_MATERIALIZED"
     assert j.get("credit_spent_likely") is not True, "credit overclaimed for a phantom render"
-    assert j.get("credit_state") == "UNCERTAIN", "ambiguous credit must be stated, not guessed"
+    assert j.get("credit_state") == "UNKNOWN", "ambiguous credit must be stated, not guessed"
     hint = (j.get("recovery_hint") or "").lower()
     assert "verify" in hint
     assert "harvest" not in hint, "hint promises harvesting a video that may not exist"
@@ -68,7 +68,7 @@ def test_stale_or_foreign_candidates_are_not_reported_as_generated():
         j, "CURRENT_OUTPUT_IDENTITY_MISMATCH: completed candidate(s) rejected")
     assert j["status"] == "STALE_OR_FOREIGN_CANDIDATES_ONLY"
     assert j.get("credit_spent_likely") is not True
-    assert j["credit_state"] == "UNCERTAIN"
+    assert j["credit_state"] == "UNKNOWN"
 
 
 def test_unverifiable_candidates_stay_generated_but_unretrieved():
@@ -120,3 +120,61 @@ def test_production_queue_breaks_on_render_not_materialized():
 
 def test_certification_flag_untouched():
     assert pq.BULK_LIVE_EXECUTION_CERTIFIED is False
+
+
+# ── C-4 · credit truth on EVERY terminal state ───────────────────────────────
+# `credit_spent_likely` used to be written in exactly ONE code path
+# (GENERATED_BUT_UNRETRIEVED), so every other terminal state reported it False —
+# including a DONE job that delivered a real paid video. Live proof: job
+# g_edf503991e7c bound an 8s 720x1280 mp4 and still reported
+# credit_spent_likely=False. Now every terminal outcome stamps an explicit
+# `credit_state` from ONE vocabulary shared with video_production_orchestrator,
+# and the boolean is DERIVED from it.
+
+def test_credit_vocabulary_matches_the_orchestrator_exactly():
+    """One vocabulary, not two — the lanes must never disagree on a word."""
+    from agent.services import video_production_orchestrator as orch
+    assert (mv.CREDIT_NOT_SPENT, mv.CREDIT_MAY_HAVE_SPENT,
+            mv.CREDIT_SPENT, mv.CREDIT_UNKNOWN) == (
+        orch.CR_NOT_SPENT, orch.CR_MAY_HAVE_SPENT, orch.CR_SPENT, orch.CR_UNKNOWN)
+
+
+def test_stamp_derives_the_boolean_from_the_state():
+    for state, expected in (
+        (mv.CREDIT_SPENT, True),
+        (mv.CREDIT_MAY_HAVE_SPENT, True),
+        (mv.CREDIT_NOT_SPENT, False),
+        (mv.CREDIT_UNKNOWN, False),
+    ):
+        j = {}
+        mv._stamp_credit(j, state)
+        assert j["credit_state"] == state
+        assert j["credit_spent_likely"] is expected, state
+
+
+def test_every_terminal_state_in_make_video_stamps_credit():
+    """No terminal outcome may leave the credit verdict unwritten — an absent
+    field is what made the old boolean unreadable as evidence."""
+    import inspect
+    src = inspect.getsource(mv)
+    # every place a terminal status is set must be accompanied by a stamp
+    assert src.count("_stamp_credit(") >= 7, "a terminal state is missing its credit stamp"
+    # and the boolean must never be hand-written as a kwarg again (prose in a
+    # docstring is fine — this targets `credit_spent_likely=True,` in a call)
+    import re
+    assert not re.search(r"credit_spent_likely\s*=\s*True\s*,", src), \
+        "hand-set boolean reintroduced — derive it via _stamp_credit"
+
+
+def test_a_delivered_video_is_never_reported_as_free():
+    """The exact live regression: DONE with an artifact reporting no credit."""
+    import inspect
+    src = inspect.getsource(mv)
+    done_video = src.index('status="DONE", stage="done", media_id=first["media_id"]')
+    window = src[done_video:done_video + 500]
+    assert "_stamp_credit(job, CREDIT_MAY_HAVE_SPENT)" in window
+
+
+def test_production_queue_persists_the_structured_state_not_just_the_bool():
+    src = inspect.getsource(pq)
+    assert '"credit_state": job.get("credit_state")' in src
