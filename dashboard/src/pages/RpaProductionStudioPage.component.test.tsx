@@ -1162,6 +1162,38 @@ describe("Production Studio — system-fired bulk live (app submits each item as
 		expect(screen.getByTestId("studio-bulk-live-blockers")).toHaveTextContent("AUTHORIZE_BULK_FANOUT_LIVE_RUN");
 	});
 
+	it("recovers an untouched prepared batch after a Studio refresh, re-dry-runs it, then fires through the same frontend gate", async () => {
+		primeHappyPath({ checked: 2, ready: 2, blocked: 0, note: "bulk dry run", items: [] });
+		getProductionRun.mockResolvedValueOnce({
+			production_run_id: "prun_recover_1", status: "PENDING", dry_run: true, total_expected: 2,
+			config_json: JSON.stringify({ bulk_fanout_manifest: {
+				bulk_run_id: "bulk_recover_1", bulk_plan_fingerprint: "recoverfp",
+				items: [0, 1].map((i) => ({
+					item_index: i, copy_variant_id: `cs${i}`, variation_salt: `v${i + 1}`,
+					dialogue_fingerprint: `recover-fp${i}`, logical_mode: "I2V", source_mode: null,
+					generation_mode: "SINGLE", workspace_generation_package_id: `wgp_recover_${i}`,
+				})),
+			} }),
+			items: [0, 1].map((i) => ({ package_id: `wgp_recover_${i}`, product_id: "prod-1", production_status: "QUEUED", production_job_id: null })),
+		});
+		fetchBulkManualFireHandoff.mockResolvedValueOnce({ ...BULK_MANUAL_HANDOFF, production_run_id: "prun_recover_1", items: [] });
+		renderPage();
+		await screen.findByTestId("studio-bulk-recovery");
+		fireEvent.change(screen.getByTestId("studio-bulk-recovery-run-input"), { target: { value: "prun_recover_1" } });
+		await click("studio-action-recover-bulk-run");
+		await waitFor(() => expect(startProductionRun).toHaveBeenCalledWith("prun_recover_1", false));
+		expect(await screen.findByTestId("studio-bulk-live-fire")).toHaveAttribute("data-run", "prun_recover_1");
+		await typeBulkPhrase("AUTHORIZE_BULK_FANOUT_LIVE_RUN");
+		startProductionRun.mockResolvedValueOnce({ run_id: "prun_recover_1", dry_run: false, status: "RUNNING" });
+		await click("studio-action-bulk-go-live");
+		expect(startProductionRun).toHaveBeenLastCalledWith("prun_recover_1", true, {
+			live_gate: "BULK_FANOUT",
+			confirm_phrase: "AUTHORIZE_BULK_FANOUT_LIVE_RUN",
+			expect_package_ids: ["wgp_recover_0", "wgp_recover_1"],
+			expect_dialogue_fingerprints: ["recover-fp0", "recover-fp1"],
+		});
+	});
+
 	it("fires the BULK_FANOUT gate with the pinned per-item set — never one job with count:N", async () => {
 		await prepareBulkBatch();
 		await typeBulkPhrase("AUTHORIZE_BULK_FANOUT_LIVE_RUN");

@@ -257,6 +257,13 @@ export default function RpaProductionStudioPage() {
 	const [bulkManualHandoff, setBulkManualHandoff] = useState<BulkManualFireHandoff | null>(null);
 	const [bulkManualInputs, setBulkManualInputs] = useState<Record<string, { provider_job_id: string; flow_media_id: string; result_url: string; result_file_id: string; notes: string }>>({});
 	const [bulkError, setBulkError] = useState<string | null>(null);
+	// A prepared batch is durable in the queue, whereas this page's React state is
+	// deliberately ephemeral. Let an operator resume a queued batch after a browser
+	// refresh instead of forcing them to recreate packages or fire through a back-end
+	// escape hatch. The recovery path re-derives its pins from the durable manifest
+	// and runs the normal no-credit dry-run before it exposes the live gate.
+	const [bulkRecoveryRunId, setBulkRecoveryRunId] = useState("");
+	const [bulkRecoveryError, setBulkRecoveryError] = useState<string | null>(null);
 	const [previewError, setPreviewError] = useState<string | null>(null);
 
 	// ── pipeline ──
@@ -497,6 +504,135 @@ export default function RpaProductionStudioPage() {
 			}
 		} catch (e) {
 			setBulkError(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy(null);
+		}
+	};
+
+	/** Resume an already prepared, still-queued bulk run after a Studio refresh.
+	 *
+	 * This is intentionally stricter than a UI-only reconstruction: every item must
+	 * remain QUEUED with no provider identity, and the persisted manifest must pin
+	 * exactly the package ids and dialogue fingerprints that the Fire gate will send.
+	 * The following dry-run is the same credit-free endpoint used by normal prepare.
+	 */
+	const handleRecoverBulkRun = async () => {
+		const targetRunId = bulkRecoveryRunId.trim();
+		if (!targetRunId || busy !== null) return;
+		setBusy("bulk-recover");
+		setBulkRecoveryError(null);
+		setBulkError(null);
+		setBulkLiveError(null);
+		setBulkLiveStatus(null);
+		setBulkLivePhrase("");
+		setBulkLiveSubmittedRunId(null);
+		setBulkManualHandoff(null);
+		try {
+			const detail = await getProductionRun(targetRunId);
+			let config: unknown = detail.config_json;
+			if (typeof config === "string") config = JSON.parse(config);
+			const manifest = (config as { bulk_fanout_manifest?: {
+				bulk_run_id?: string;
+				bulk_plan_fingerprint?: string;
+				items?: Array<{
+					item_index?: number;
+					copy_variant_id?: string | null;
+					variation_salt?: string | null;
+					dialogue_fingerprint?: string | null;
+					logical_mode?: string;
+					source_mode?: string | null;
+					generation_mode?: string;
+					workspace_generation_package_id?: string;
+				}>;
+			} }).bulk_fanout_manifest;
+			const manifestItems = manifest?.items ?? [];
+			const queuedPackageIds = detail.items
+				.filter((item) => item.production_status === "QUEUED" && !item.production_job_id)
+				.map((item) => item.package_id);
+			const packageIds = manifestItems.map((item) => item.workspace_generation_package_id ?? "");
+			const fingerprints = manifestItems.map((item) => item.dialogue_fingerprint ?? "");
+			const pinsMatchQueuedItems = packageIds.length > 1
+				&& packageIds.length === queuedPackageIds.length
+				&& packageIds.every((packageId) => queuedPackageIds.includes(packageId))
+				&& fingerprints.every(Boolean);
+			if (!detail.dry_run || detail.status !== "PENDING" || !manifest?.bulk_run_id
+				|| !manifest.bulk_plan_fingerprint || !pinsMatchQueuedItems) {
+				throw new Error("This is not an untouched prepared bulk batch with complete durable pins. Re-plan it; do not retry a submitted batch.");
+			}
+			const prepared: BulkPrepareResult = {
+				bulk_run_id: manifest.bulk_run_id,
+				bulk_plan_fingerprint: manifest.bulk_plan_fingerprint,
+				production_run_id: detail.production_run_id,
+				product_id: detail.items[0]?.product_id ?? "",
+				logical_mode: manifestItems[0]?.logical_mode ?? "",
+				generation_mode: manifestItems[0]?.generation_mode ?? "SINGLE",
+				quantity_requested: packageIds.length,
+				prepared_package_count: packageIds.length,
+				package_ids: packageIds,
+				expect_dialogue_fingerprints: fingerprints,
+				items: manifestItems.map((item) => ({
+					item_index: item.item_index ?? null,
+					copy_variant_id: item.copy_variant_id ?? null,
+					variation_salt: item.variation_salt ?? null,
+					dialogue_fingerprint: item.dialogue_fingerprint ?? null,
+					hook: null,
+					dialogue_summary: null,
+					logical_mode: item.logical_mode ?? "",
+					source_mode: item.source_mode ?? null,
+					generation_mode: item.generation_mode ?? "SINGLE",
+					workspace_generation_package_id: item.workspace_generation_package_id ?? "",
+					item_status: "QUEUED",
+					credit_state: "NOT_AUTHORIZED",
+				})),
+				reused_existing_batch: true,
+				stage: "PACKAGES_RECOVERED",
+				next_step: "DRY_RUN_VALIDATE_ALL_ITEMS",
+				live_bulk_status: "Bulk live fan-out is certified — authorize to fire",
+				live_bulk_stage: "STAGE_3_AUTHORIZATION_REQUIRED",
+				required_confirm_phrase: LIVE_BULK_CONFIRM_PHRASE,
+				credit: "NONE",
+				provider_calls: 0,
+				flow_calls: 0,
+			};
+			const validation = await startProductionRun(detail.production_run_id, false);
+			const dryRun = validation.report ?? null;
+			if (dryRun?.blocked !== 0 || dryRun.ready !== prepared.prepared_package_count) {
+				throw new Error("Recovered batch did not pass its fresh no-credit dry run. Fire remains closed.");
+			}
+			setBulkPlan({
+				product_id: prepared.product_id,
+				quantity_requested: prepared.quantity_requested,
+				quantity_max: QUANTITY_MAX,
+				logical_mode: prepared.logical_mode,
+				generation_mode: prepared.generation_mode,
+				planned_intent_count: prepared.prepared_package_count,
+				intents: prepared.items.map((item) => ({
+					...item,
+					seam_voice: null,
+					production_run_id: detail.production_run_id,
+					production_job_id: null,
+					compile_error: null,
+					credit_warning: "This item spends provider credit when fired.",
+				})),
+				bulk_plan_fingerprint: prepared.bulk_plan_fingerprint,
+				copy_pool_readiness_status: "RECOVERED_DURABLE_BATCH",
+				dialogue_uniqueness_status: "PINNED_FROM_MANIFEST",
+				blockers: [],
+				bulk_authorizable: true,
+				live_bulk_status: prepared.live_bulk_status,
+				live_bulk_stage: prepared.live_bulk_stage,
+				required_confirm_phrase: prepared.required_confirm_phrase,
+				credit: "NONE",
+				provider_calls: 0,
+				flow_calls: 0,
+			});
+			setBulkPrepared(prepared);
+			setBulkDryRun(dryRun);
+			setBulkManualHandoff(await fetchBulkManualFireHandoff(detail.production_run_id));
+		} catch (e) {
+			setBulkPrepared(null);
+			setBulkDryRun(null);
+			setBulkRecoveryError(e instanceof Error ? e.message : String(e));
 		} finally {
 			setBusy(null);
 		}
@@ -1261,6 +1397,31 @@ export default function RpaProductionStudioPage() {
 
 			<section className="mb-6 rounded-xl border border-violet-500/30 bg-violet-500/5 p-4" data-testid="studio-quantity-preview-section">
 				<h2 className="mb-2 flex items-center gap-2 text-sm font-semibold text-violet-200"><Sparkles size={14} /> 4b · Quantity preview (credit-free · Stage 1)</h2>
+				<div className="mb-3 rounded-lg border border-slate-700 bg-slate-950/50 p-3" data-testid="studio-bulk-recovery">
+					<div className="text-[11px] font-semibold text-slate-200">Resume a prepared bulk batch</div>
+					<p className="mt-1 text-[10px] text-slate-400">After a browser refresh, enter the production run id already prepared by this Studio. The app rechecks its durable pins and runs a fresh no-credit dry run before Fire can appear.</p>
+					<div className="mt-2 flex flex-wrap items-center gap-2">
+						<input
+							data-testid="studio-bulk-recovery-run-input"
+							value={bulkRecoveryRunId}
+							onChange={(event) => setBulkRecoveryRunId(event.target.value)}
+							placeholder="prun_…"
+							autoComplete="off"
+							spellCheck={false}
+							className="w-64 rounded border border-slate-700 bg-slate-900 px-2 py-1 font-mono text-[10px] text-slate-100 placeholder:text-slate-600"
+						/>
+						<button
+							type="button"
+							data-testid="studio-action-recover-bulk-run"
+							onClick={() => void handleRecoverBulkRun()}
+							disabled={!bulkRecoveryRunId.trim() || busy !== null}
+							className="rounded border border-sky-500/50 bg-sky-500/10 px-2 py-1 text-[10px] font-semibold text-sky-100 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-500"
+						>
+							{busy === "bulk-recover" ? "Checking…" : "Recover prepared batch"}
+						</button>
+					</div>
+					{bulkRecoveryError && <div className="mt-2 text-[10px] text-red-300" data-testid="studio-bulk-recovery-error">Recovery refused — {bulkRecoveryError}</div>}
+				</div>
 				{poolReadiness && (
 					<div
 						className={`mb-2 rounded-lg border p-3 text-[11px] ${
