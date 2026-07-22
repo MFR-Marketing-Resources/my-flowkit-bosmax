@@ -331,9 +331,13 @@ export default function RpaProductionStudioPage() {
 	// Multi-block EXTEND totals (N × the engine's single-shot max) — the proven
 	// storyboard-planner + orchestrator lane, not N independent clips. EXTEND is
 	// wired for the T2V lane only for now.
-	const extendTotals = studioMode === "T2V" ? EXTEND_MULTIPLES.map((n) => n * maxSingle) : [];
+	const extendTotals = EXTEND_MULTIPLES.map((n) => n * maxSingle);
 	const durationOptions = [...singleDurations, ...extendTotals];
-	const isExtend = studioMode === "T2V" && duration > maxSingle;
+	// EXTEND is not a T2V feature. full_storyboard_extend_planner plans ONE global
+	// storyboard then splits it into continuing blocks, and it accepts FRAMES, T2V,
+	// HYBRID and INGREDIENTS — i.e. every video lane in this Studio. The UI used to
+	// offer 16s/24s to T2V only, which hid a capability the backend already had.
+	const isExtend = duration > maxSingle;
 	// Stage 1: quantity>1 never touches the single-serial createProductionRun({count:1})
 	// path — it routes to the itemized bulk fan-out instead. This flag force-closes the
 	// SINGLE-lane live gates below; the bulk lane has its own phrase gate and its own
