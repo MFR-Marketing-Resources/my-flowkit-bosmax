@@ -291,7 +291,9 @@ export default function RpaProductionStudioPage() {
 	const [productRefAssets, setProductRefAssets] = useState<CreativeAsset[]>([]);
 	const [characterAssets, setCharacterAssets] = useState<CreativeAsset[]>([]);
 	const [sceneAssets, setSceneAssets] = useState<CreativeAsset[]>([]);
-	// Flow tab readiness (ADVISORY pre-fire drill — CAPTCHA/build-mismatch lessons).
+	// Flow tab readiness is part of every credit-spending Studio gate. A missing
+	// editor otherwise accepts a provider job and then fails NO_OPEN_EDITOR after
+	// the click, which is neither a usable button nor a safe operator experience.
 	const [flowTab, setFlowTab] = useState<{ ready: boolean; buildMatch: boolean } | null>(null);
 	// ── EXTEND (multi-block) lane state ──
 	const [wepId, setWepId] = useState<string | null>(null);
@@ -1055,13 +1057,14 @@ export default function RpaProductionStudioPage() {
 	const oneItemOnly = (report?.items?.length ?? 0) === 1;
 	const noPriorJob = !jobItem?.production_job_id;
 	const phraseOk = phrase === lanePhrase;
-	const liveGateOpen = !bulkPreview && !isExtend && Boolean(selectedProduct) && dryRunGreen && oneItemOnly && noPriorJob && phraseOk && !liveSubmitted && busy === null;
+	const liveFlowReady = Boolean(flowTab?.ready && flowTab.buildMatch);
+	const liveGateOpen = !bulkPreview && !isExtend && Boolean(selectedProduct) && dryRunGreen && oneItemOnly && noPriorJob && phraseOk && liveFlowReady && !liveSubmitted && busy === null;
 
 	// ── EXTEND gate: a reviewed orchestrator plan + the extend phrase. The server
 	//    re-gates with the fingerprint-bound authorize token — this is UI safety only.
 	const extendPlanReady = Boolean(extendPlan?.plan_fingerprint);
 	const extendPhraseOk = phrase === EXTEND_CONFIRM_PHRASE;
-	const extendGateOpen = !bulkPreview && isExtend && Boolean(selectedProduct) && extendPlanReady && extendPhraseOk && !liveSubmitted && busy === null;
+	const extendGateOpen = !bulkPreview && isExtend && Boolean(selectedProduct) && extendPlanReady && extendPhraseOk && liveFlowReady && !liveSubmitted && busy === null;
 
 	const jobTerminal = TERMINAL_STATUSES.has(jobItem?.production_status ?? "");
 	const jobArtifacts = jobItem?.artifact_media_ids ?? [];
@@ -1807,6 +1810,7 @@ export default function RpaProductionStudioPage() {
 							{ id: "dryrun", label: "Dry run ready=1 blocked=0", ok: Boolean(dryRunGreen) },
 							{ id: "one-item", label: "Exactly 1 item", ok: oneItemOnly },
 							{ id: "no-prior-job", label: "No prior provider job", ok: noPriorJob },
+							{ id: "flow-ready", label: "Flow editor + content script ready", ok: liveFlowReady },
 							{ id: "phrase", label: "Confirmation phrase", ok: phraseOk },
 							{ id: "not-submitted", label: "Not already submitted", ok: !liveSubmitted },
 						]).map((c) => (
@@ -1816,9 +1820,9 @@ export default function RpaProductionStudioPage() {
 						</div>
 					))}
 				</div>
-				{/* Flow tab readiness — ADVISORY (both failure modes are proven 0-credit +
-					    retryable): pre-flight/runtime status only. It never replaces the
-					    server's credit and phrase gates, and does not block this button. */}
+				{/* Flow readiness is a UI gate in addition to the server-side credit and
+				    phrase gates. Open/recheck it before Fire so the provider is never
+				    called against a non-editor page. */}
 				<div className="mb-3 flex flex-wrap items-center gap-2" data-testid="studio-flowtab-row">
 					<span className={`rounded border px-2 py-1 text-[10px] ${flowTab?.ready ? "border-emerald-500/40 text-emerald-200" : "border-amber-500/40 text-amber-200"}`}
 						data-testid="studio-flowtab-ready" data-ok={flowTab?.ready ? "true" : "false"}>
@@ -1839,7 +1843,7 @@ export default function RpaProductionStudioPage() {
 						className="rounded-lg border border-slate-700 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800 disabled:opacity-40">
 						Re-check
 					</button>
-					<span className="text-[9px] text-slate-500">Pre-flight/runtime status only. Fire into a fresh clean project; after opening, wait ~40s (warm-up) before firing.</span>
+					<span className="text-[9px] text-slate-500">Required before Fire. Open a fresh clean project, wait ~40s (warm-up), then Re-check until both indicators are green.</span>
 				</div>
 				<label className="mb-1 block text-[10px] uppercase tracking-wider text-slate-400" htmlFor="studio-phrase">
 					Type <code className="text-red-300">{isExtend ? EXTEND_CONFIRM_PHRASE : lanePhrase}</code> to authorize {isExtend ? "the EXTEND plan" : activeProfile.referenceKind === "product_anchor" ? "one HYBRID product-anchor run" : `one ${activeProfile.label} run`}

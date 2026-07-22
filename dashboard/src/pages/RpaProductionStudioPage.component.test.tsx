@@ -318,6 +318,16 @@ describe("Production Studio — the live gate is fail-closed", () => {
 		}
 	});
 
+	it("keeps single-lane Fire closed when Flow editor readiness is absent", async () => {
+		primeHappyPath();
+		fetchFlowPageState.mockResolvedValue({ editor_capability_ready: false, build_match: false, flow_url: null });
+		renderPage();
+		await prepareAndValidate();
+		await typePhrase("AUTHORIZE_ONE_T2V_LIVE_RUN");
+		await waitFor(() => expect(screen.getByTestId("studio-check-flow-ready")).toHaveAttribute("data-ok", "false"));
+		expect(screen.getByTestId("studio-action-go-live")).toBeDisabled();
+	});
+
 	it("requires validation before the phrase can open the gate", async () => {
 		primeHappyPath();
 		renderPage();
