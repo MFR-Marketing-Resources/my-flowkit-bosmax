@@ -1413,7 +1413,33 @@ export default function RpaProductionStudioPage() {
 									data-checked={String(bulkDryRun.checked ?? 0)}
 									data-ready={String(bulkDryRun.ready ?? 0)}
 									data-blocked={String(bulkDryRun.blocked ?? 0)}>
-									Dry run — checked {bulkDryRun.checked ?? 0} · ready {bulkDryRun.ready ?? 0} · blocked {bulkDryRun.blocked ?? 0} (no credit)
+									<div>Dry run — checked {bulkDryRun.checked ?? 0} · ready {bulkDryRun.ready ?? 0} · blocked {bulkDryRun.blocked ?? 0} (no credit)</div>
+									{/* A bare "blocked 2" is unactionable. The server already returns the
+									    exact per-item reasons in report.items[].blockers — surface them,
+									    translated to the operator's next action where we know it. */}
+									{(bulkDryRun.items ?? []).filter((it) => it.ok === false).length > 0 && (
+										<div className="mt-1 space-y-1" data-testid="studio-bulk-dryrun-blocked">
+											{(bulkDryRun.items ?? []).filter((it) => it.ok === false).map((it, i) => (
+												<div key={it.package_id ?? i}
+													className="rounded border border-red-500/40 bg-red-500/10 px-1.5 py-1"
+													data-testid="studio-bulk-dryrun-blocked-item"
+													data-package={it.package_id ?? ""}
+													data-ok="false">
+													<div className="text-[10px] text-red-200">
+														BLOCKED · <code>{it.package_id ?? "—"}</code>
+													</div>
+													<ul className="mt-0.5 pl-4">
+														{(it.blockers ?? []).map((b) => (
+															<li key={b} data-testid="studio-bulk-dryrun-blocker"
+																className="list-disc text-[10px] text-red-300">
+																{displayBlocker(b, activeProfile)}
+															</li>
+														))}
+													</ul>
+												</div>
+											))}
+										</div>
+									)}
 								</div>
 							)}
 						</div>
