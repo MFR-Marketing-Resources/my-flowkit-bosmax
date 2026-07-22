@@ -197,6 +197,24 @@ async def lifespan(app: FastAPI):
     apply_runtime_provider_environment()
     logger.info("AI provider runtime environment hydrated from registry state")
 
+    # Warm the registration-drafts snapshot in the background. Scanning them costs
+    # ~124s (4,352 files on the operator machine) and the product catalog needs it
+    # per row, so paying it on a REQUEST froze the whole event loop and killed the
+    # runtime. Paying it here, off the loop and before anyone browses, means no
+    # request ever waits on it. Fire-and-forget: a failure must never block boot,
+    # and the read path still falls back to scanning on demand.
+    try:
+        from agent.services.claim_safe_rewrite_service import _warm_drafts_cache
+
+        _drafts_warm_task = asyncio.create_task(_warm_drafts_cache())
+        _drafts_warm_task.add_done_callback(
+            lambda t: logger.warning("Drafts cache warm failed: %s", t.exception())
+            if not t.cancelled() and t.exception() else None
+        )
+        logger.info("Registration-drafts cache warming in background")
+    except Exception as _warm_e:  # pragma: no cover - never block startup
+        logger.warning("Drafts cache warm unavailable: %s", _warm_e)
+
     # Load custom materials from DB into in-memory registry
     from agent.db.crud import list_materials as db_list_materials
     from agent.materials import register_material, _BUILTIN_IDS

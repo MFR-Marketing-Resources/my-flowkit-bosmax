@@ -493,7 +493,12 @@ def _build_dialog_copy(
 
 
 _DRAFTS_CACHE: tuple[float, list, object] | None = None
-_DRAFTS_CACHE_TTL_SECONDS = 60.0
+# 15 minutes, not 60s. At 60s a page opened more than a minute after the last one
+# paid the full ~124s scan again, so the freeze came back for any normal browsing
+# pace. Drafts are edited rarely; a quarter hour of staleness is invisible next to
+# a two-minute page load. Boot also warms this (see agent/main.py), so a healthy
+# runtime never pays the scan on a request at all.
+_DRAFTS_CACHE_TTL_SECONDS = 900.0
 
 
 def _cached_drafts() -> list:
