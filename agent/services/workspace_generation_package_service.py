@@ -2026,9 +2026,25 @@ async def _create_bulk_extend_execution_package(
     # Mirror the generation-package creator call for this lane, argument for
     # argument, so the execution package carries the SAME authority the operator
     # reviewed — a divergent input here would be a silent re-plan.
+    #
+    # The prompt compiler accepts ENGINE modes, not the HYBRID surface label:
+    # get_approved_product_package(normalize_mode("HYBRID")) raises UNSUPPORTED_MODE.
+    # Remap the LOGICAL lane to its compiler transport identity via the SAME helper
+    # the proven non-extend preview/prepare path uses (HYBRID -> F2V, with the HYBRID
+    # lineage preserved in source_mode). Resolve the lineage default FIRST — exactly
+    # the value the generation-package creator uses (T2V->T2V, FRAMES->FRAMES,
+    # HYBRID->HYBRID, I2V->None) — so the remap changes ONLY the door-facing mode,
+    # never the reviewed lineage. Asset slots below stay keyed on the LOGICAL mode.
+    effective_source_mode = source_mode or {
+        "T2V": "T2V", "F2V": "FRAMES", "HYBRID": "HYBRID",
+    }.get(logical_mode)  # I2V -> None (compiler default)
+    compile_mode, compile_source_mode = _copy_preview_compile_identity(
+        logical_mode, effective_source_mode
+    )
     kwargs: dict[str, Any] = {
         "product_id": product_id,
-        "mode": logical_mode,
+        "mode": compile_mode,
+        "source_mode": compile_source_mode,
         # I2V's creator compiles at a fixed 8s block; T2V/F2V/HYBRID carry the
         # operator's per-block duration (see creator_kwargs below).
         "duration_seconds": duration_seconds if logical_mode in ("T2V", "F2V", "HYBRID") else 8,
@@ -2040,21 +2056,16 @@ async def _create_bulk_extend_execution_package(
         "requested_total_duration_seconds": requested_total_duration_seconds,
         "copy_set_id": copy_set_id,
     }
-    if logical_mode in ("F2V", "HYBRID"):
-        kwargs["source_mode"] = source_mode or (
-            "HYBRID" if logical_mode == "HYBRID" else "FRAMES"
-        )
-        # HYBRID's padded 9:16 anchor is a PRODUCT_REFERENCE; FRAMES carries the
-        # operator's start frame — exactly the split the creator loop applies.
-        if logical_mode == "HYBRID":
-            kwargs["product_reference_asset_id"] = product_reference_asset_id
-        else:
-            kwargs["start_frame_asset_id"] = start_frame_asset_id
+    # Asset-slot split stays keyed on the LOGICAL mode: HYBRID's padded 9:16 anchor
+    # is a PRODUCT_REFERENCE; FRAMES carries the operator's start frame; I2V carries
+    # character + scene references — exactly the split the creator loop applies.
+    if logical_mode == "HYBRID":
+        kwargs["product_reference_asset_id"] = product_reference_asset_id
+    elif logical_mode == "F2V":
+        kwargs["start_frame_asset_id"] = start_frame_asset_id
     elif logical_mode == "I2V":
         kwargs["character_reference_asset_id"] = character_reference_asset_id
         kwargs["scene_context_reference_asset_id"] = scene_context_reference_asset_id
-    else:  # T2V
-        kwargs["source_mode"] = source_mode or "T2V"
 
     try:
         wep = await _wxp.create_workspace_execution_package(**kwargs)

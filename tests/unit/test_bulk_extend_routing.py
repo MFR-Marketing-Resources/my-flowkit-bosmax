@@ -585,3 +585,88 @@ async def test_a_single_block_extend_never_reaches_a_run(prepare):
         await _prepare_extend()
 
     assert prepare["approved"] == [] and prepare["sent"] == []
+
+
+# ── lane remap: the WEP door accepts ENGINE modes, not surface labels ─────────
+# Live bug: bulk EXTEND HYBRID (16s) hit
+#   BULK_EXTEND_EXECUTION_PACKAGE_FAILED:item#0:ValueError:UNSUPPORTED_MODE
+# because the builder passed the RAW logical mode "HYBRID" to
+# create_workspace_execution_package -> get_approved_product_package, and
+# normalize_mode("HYBRID") is NOT in SUPPORTED_MODES {T2V,F2V,I2V,IMG}. The builder
+# must remap the logical lane to its compiler transport identity (HYBRID -> F2V,
+# lineage kept in source_mode) via the SAME helper the proven non-extend path uses,
+# BEFORE the door is called. Asset splits stay keyed on the LOGICAL mode.
+
+_ACCEPTED_WEP_MODES = {"T2V", "F2V", "I2V", "IMG"}
+
+
+@pytest.fixture
+def wep_door(monkeypatch):
+    """A fake execution-package door that enforces the REAL mode gate — it raises
+    UNSUPPORTED_MODE for a surface label exactly like get_approved_product_package —
+    and records the kwargs it was handed."""
+    calls: list = []
+
+    async def door(**kw):
+        calls.append(dict(kw))
+        if str(kw.get("mode")) not in _ACCEPTED_WEP_MODES:
+            raise ValueError("UNSUPPORTED_MODE")
+        return {
+            "workspace_execution_package_id": "wep_x",
+            "execution_allowed": True, "blockers": [],
+            "copy_binding": {"copy_set_id": kw.get("copy_set_id")},
+            "prompt_blocks": list(TWO_BLOCKS),
+        }
+    monkeypatch.setattr(wxp, "create_workspace_execution_package", door)
+    return calls
+
+
+async def _build_wep(logical_mode, **over):
+    kwargs = dict(
+        item_index=0, product_id="P", logical_mode=logical_mode, source_mode=None,
+        generation_mode="EXTEND", duration_seconds=8,
+        requested_total_duration_seconds=16, target_language="BM_MS",
+        model="Veo 3.1 - Lite", aspect="9:16", copy_set_id="cs1",
+        start_frame_asset_id="ca_frame", product_reference_asset_id="ca_anchor",
+        character_reference_asset_id="ca_char",
+        scene_context_reference_asset_id="ca_scene",
+    )
+    kwargs.update(over)
+    return await svc._create_bulk_extend_execution_package(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_hybrid_extend_builds_a_wep_remapped_to_f2v(wep_door):
+    """THE FIX: HYBRID reaches the door as F2V + HYBRID lineage — a WEP is BUILT,
+    never refused with UNSUPPORTED_MODE."""
+    wep = await _build_wep("HYBRID", source_mode="HYBRID")
+
+    assert wep["workspace_execution_package_id"] == "wep_x"   # built, not refused
+    call = wep_door[0]
+    assert call["mode"] == "F2V"            # remapped for the compiler door
+    assert call["source_mode"] == "HYBRID"  # logical lineage preserved
+    # asset split stays keyed on the LOGICAL mode: HYBRID -> product reference,
+    # never a start frame.
+    assert call["product_reference_asset_id"] == "ca_anchor"
+    assert "start_frame_asset_id" not in call
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("logical, exp_mode, exp_src, exp_dur", [
+    ("T2V", "T2V", "T2V", 8),
+    ("F2V", "F2V", "FRAMES", 8),
+    ("HYBRID", "F2V", "HYBRID", 8),
+    ("I2V", "I2V", None, 8),   # I2V compiles at a fixed 8s block
+])
+async def test_every_lane_reaches_a_mode_the_wep_door_accepts(
+    wep_door, logical, exp_mode, exp_src, exp_dur
+):
+    """All four lanes land on a mode the door accepts after the remap — no lane
+    still fails UNSUPPORTED_MODE, and each keeps its reviewed lineage + duration."""
+    await _build_wep(logical)
+
+    call = wep_door[0]
+    assert call["mode"] == exp_mode
+    assert call["mode"] in _ACCEPTED_WEP_MODES     # never a surface label
+    assert call["source_mode"] == exp_src          # lineage unchanged by the remap
+    assert call["duration_seconds"] == exp_dur     # I2V fixed-8s handling intact
