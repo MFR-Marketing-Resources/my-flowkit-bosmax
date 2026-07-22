@@ -499,7 +499,42 @@ export default function RpaProductionStudioPage() {
 				}
 			}
 		} catch (e) {
-			setBulkError(e instanceof Error ? e.message : String(e));
+			const msg = e instanceof Error ? e.message : String(e);
+			// BULK_PLAN_FINGERPRINT_STALE means the approved copy pool moved under the
+			// operator — typically because copy was approved or released while this plan
+			// sat on screen. The pin itself is correct: preparing a plan the operator
+			// never saw is exactly the defect it guards against. But leaving the stale
+			// plan on screen makes Prepare fail forever with no way out, which reads as
+			// a dead button. Re-plan so the screen shows what the server will actually
+			// accept, then ask for one deliberate click — never silently prepare (and
+			// burn ledger dialogues) for items nobody reviewed.
+			if (msg.includes("BULK_PLAN_FINGERPRINT_STALE")) {
+				try {
+					const fresh = await fetchBulkFanoutPlan({
+						product_id: selectedProduct.id,
+						mode: previewMode,
+						source_mode: activeProfile.sourceMode ?? null,
+						generation_mode: isExtend ? ("EXTEND" as const) : ("SINGLE" as const),
+						duration_seconds: isExtend ? maxSingle : duration,
+						requested_total_duration_seconds: isExtend ? duration : null,
+						quantity,
+						target_language: "BM_MS" as const,
+					});
+					setBulkPlan(fresh);
+					// Keep the raw server code in the message. The operator needs the
+					// human sentence, but hiding the machine code makes the failure
+					// unsearchable and unreportable.
+					setBulkError(
+						`${msg} — the approved copy pool changed while this plan was on screen, so it was refused and ` +
+						"NOTHING was created: no credit, no ledger burn. The plan above is now refreshed with the " +
+						"dialogues the server will accept. Review them, then click Prepare again.",
+					);
+				} catch {
+					setBulkError(`${msg} — click Preview again to rebuild the plan.`);
+				}
+			} else {
+				setBulkError(msg);
+			}
 		} finally {
 			setBusy(null);
 		}

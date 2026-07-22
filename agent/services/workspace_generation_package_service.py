@@ -31,6 +31,29 @@ from agent.services.i2v_semantic_slot_resolver_service import resolve_i2v_semant
 from agent.models.i2v_semantic_slot_resolver import I2VSemanticSlotResolverRequest
 
 
+def _live_bulk_status_fields() -> dict:
+    """Report the REAL certification state, not a baked-in refusal.
+
+    These two strings are what the Studio prints to the operator. They were
+    hardcoded to "not certified", which became wrong the moment certification
+    turned into a runtime grant: the server would accept a bulk fire while the
+    screen still told the operator it would be refused. A status line that cannot
+    change is not a status line. Imported locally — production_queue_service
+    imports back into this module.
+    """
+    from agent.services.production_queue_service import bulk_live_execution_certified
+
+    if bulk_live_execution_certified():
+        return {
+            "live_bulk_status": "Bulk live fan-out CERTIFIED for this runtime",
+            "live_bulk_stage": "STAGE_3_RUNTIME_CERTIFIED",
+        }
+    return {
+        "live_bulk_status": "Bulk live fan-out not certified yet",
+        "live_bulk_stage": "STAGE_3_RUNTIME_CERTIFICATION_REQUIRED",
+    }
+
+
 def _assert_not_reference_only(product_id: str, product_row: dict[str, Any] | None) -> None:
     """Raise ValueError(REFERENCE_ONLY_PRODUCT) if product is a FastMoss
     reference row that cannot be used for generation package creation.
@@ -1922,8 +1945,7 @@ async def plan_bulk_fanout_intents(
         # Authorizable == every prerequisite proven. It does NOT mean the run may
         # fire: the server gate still stops at the Stage 3 credit boundary.
         "bulk_authorizable": not blockers and len(intents) == n,
-        "live_bulk_status": "Bulk live fan-out not certified yet",
-        "live_bulk_stage": "STAGE_3_RUNTIME_CERTIFICATION_REQUIRED",
+        **_live_bulk_status_fields(),
         "required_confirm_phrase": "AUTHORIZE_BULK_FANOUT_LIVE_RUN",
         "credit": "NONE",
         "provider_calls": 0,
@@ -2428,8 +2450,7 @@ def _bulk_manifest(
         "reused_existing_batch": reused,
         "stage": "PACKAGES_PREPARED",
         "next_step": "DRY_RUN_VALIDATE_ALL_ITEMS",
-        "live_bulk_status": "Bulk live fan-out not certified yet",
-        "live_bulk_stage": "STAGE_3_RUNTIME_CERTIFICATION_REQUIRED",
+        **_live_bulk_status_fields(),
         "required_confirm_phrase": "AUTHORIZE_BULK_FANOUT_LIVE_RUN",
         "credit": "NONE",
         "provider_calls": 0,
@@ -2642,8 +2663,7 @@ async def preview_quantity_copy_plans(
         # lockstep with the plan/prepare responses above — a preview that says
         # "not enabled" while plan says "not certified" gives the operator two
         # different answers about the same gate.
-        "live_bulk_status": "Bulk live fan-out not certified yet",
-        "live_bulk_stage": "STAGE_3_RUNTIME_CERTIFICATION_REQUIRED",
+        **_live_bulk_status_fields(),
         "credit": "NONE",
         "provider_calls": 0,
         "flow_calls": 0,
