@@ -19,9 +19,10 @@
  * EXTEND lane instead of the queue: workspace execution package (per-block canonical
  * 9-section prompts, WPS dialogue budgets from the storyboard planner) → the durable
  * /video-jobs orchestrator (plan → authorize → advance: INITIAL → EXTEND → CONCAT →
- * final media). The queue lane refuses EXTEND packages outright
+ * final media). The SINGLE-SHOT queue door still refuses EXTEND packages outright
  * (EXTEND_PACKAGE_SINGLE_SHOT_FORBIDDEN), so a 16s request can never be silently
- * truncated to one 8s clip.
+ * truncated to one 8s clip; bulk EXTEND reaches the durable orchestrator by a
+ * separate route that never touches that door.
  */
 import {
 	AlertTriangle,
@@ -105,8 +106,9 @@ const TERMINAL_STATUSES = new Set(["GENERATED", "DOWNLOADED", "FAILED", "CANCELL
 // dialogue budgets WPS-allocated by the storyboard planner) → the durable
 // /video-jobs orchestrator (plan → authorize → advance: INITIAL → EXTEND →
 // CONCAT → final media). Nothing here re-implements planning or prompting —
-// this page only WIRES the proven lane. The single-shot queue lane refuses
-// EXTEND packages outright (EXTEND_PACKAGE_SINGLE_SHOT_FORBIDDEN).
+// this page only WIRES the proven lane. The single-shot queue DOOR still refuses
+// EXTEND packages outright (EXTEND_PACKAGE_SINGLE_SHOT_FORBIDDEN); bulk EXTEND is
+// routed to the durable orchestrator before that door is ever reached.
 const EXTEND_MULTIPLES = [2, 3]; // 16 s and 24 s on an 8 s engine
 /** UI-only latch for the extend fire button; the REAL gate is the server-side
  *  authorize step (plan-fingerprint-bound, expiring token). */

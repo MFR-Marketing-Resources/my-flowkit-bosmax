@@ -1076,10 +1076,18 @@ async def _assert_bulk_fanout_live(
         if prior_job:
             raise ValueError(f"LIVE_DUPLICATE_SUBMISSION:{package_id}:{prior_job}")
 
-        payload, blockers = await build_execution_payload(item, cfg)
+        # An EXTEND item is validated WITHOUT build_execution_payload for the same
+        # reason the live loop skips it: that builder is single-shot only and fails
+        # EXTEND closed by design, so running it here would refuse the very fan-out
+        # this gate exists to validate. The item still has to clear every check
+        # below (mode authorization, dialogue fingerprint, uniqueness) — only the
+        # single-shot payload mapping is skipped, because the durable /video-jobs
+        # lane resolves its own payload from the execution package.
+        if _is_extend_package(item):
+            payload, blockers = {"logical_mode": _package_logical_mode(item)}, []
+        else:
+            payload, blockers = await build_execution_payload(item, cfg)
         if blockers:
-            # EXTEND surfaces here as EXTEND_PACKAGE_SINGLE_SHOT_FORBIDDEN — bulk
-            # EXTEND stays blocked, exactly as the single-shot lane blocks it.
             raise ValueError(f"BULK_ITEM_BLOCKED:{package_id}:{','.join(blockers)}")
         logical_mode = (payload.get("logical_mode") or "").strip().upper()
         if not logical_mode:
@@ -1252,10 +1260,11 @@ async def run_production_queue(
             # scalar) the one-serial F2V/I2V gates already use. Without it a
             # validated F2V/HYBRID/I2V bulk set would hit the loop's T2V-only
             # default and fail per item with LIVE_MODE_NOT_AUTHORIZED. This
-            # widens nothing: the mode is derived from the validated items, the
-            # batch is mode-uniform by law, and EXTEND never reaches here
-            # (build_execution_payload blocks it as EXTEND_PACKAGE_SINGLE_SHOT_
-            # FORBIDDEN before any mode is collected).
+            # widens nothing: the mode is derived from the validated items and the
+            # batch is mode-uniform by law. An EXTEND item reaches here too and is
+            # authorized by the SAME logical mode as any other item — the extend
+            # decision is about which execution lane runs it, never about widening
+            # which modes may burn credit.
             cfg["authorized_live_mode"] = validated_mode
         else:
             raise ValueError(f"LIVE_GATE_UNKNOWN:{live_gate}")
@@ -1283,7 +1292,13 @@ async def _dry_run_report(run: dict) -> dict:
         # Flow + persist its UUID, so the pure build_execution_payload READ below can
         # resolve it. No-op for T2V/IMG. Its blockers merge into the reported ones.
         upload_blockers = await _resolve_and_upload_image_slots(item, cfg)
-        payload, blockers = await build_execution_payload(item, cfg)
+        # EXTEND is validated against the DURABLE lane's preconditions, not the
+        # single-shot payload mapping — the same authority its fire path uses, so
+        # a green extend dry run means the same thing every other green item does.
+        if _is_extend_package(item):
+            payload, blockers = extend_execution_preconditions(item, cfg)
+        else:
+            payload, blockers = await build_execution_payload(item, cfg)
         blockers = list(dict.fromkeys(upload_blockers + blockers))
         ok = not blockers
         ready += 1 if ok else 0
@@ -1358,7 +1373,18 @@ async def _live_production_loop(run_id: str) -> None:
         item = queued[0]
         wgp_id = item["workspace_generation_package_id"]
 
-        payload, blockers = await build_execution_payload(item, cfg)
+        # Bulk EXTEND is MULTI-BLOCK and belongs to the durable /video-jobs
+        # orchestrator, so it is routed BEFORE build_execution_payload runs. That
+        # builder is the SINGLE-SHOT payload mapper and fails EXTEND closed by
+        # design — asking it for an extend payload could only ever produce the
+        # 8s truncation it exists to prevent. The logical mode is read straight
+        # off the package so the live-mode chokepoint below still judges an
+        # extend item by exactly the same authority as every other item.
+        is_extend = _is_extend_package(item)
+        if is_extend:
+            payload, blockers = {"logical_mode": _package_logical_mode(item)}, []
+        else:
+            payload, blockers = await build_execution_payload(item, cfg)
         # Second, UNIVERSAL chokepoint. Every queued item converges here — both
         # the ungated ProductionQueuePage bulk path (confirm_live_credit_burn=True,
         # no live_gate) and a gated run. The default authorized set is {"T2V"}, so
@@ -1403,7 +1429,12 @@ async def _live_production_loop(run_id: str) -> None:
             wgp_id, production_status="RUNNING",
         )
         try:
-            outcome = await _fire_and_wait(make_video, payload, wgp_id)
+            # EXTEND never touches _fire_and_wait: that helper guards the
+            # single-shot provider door, which this lane does not use at all.
+            outcome = (
+                await _fire_extend_via_video_jobs(item, cfg, wgp_id) if is_extend
+                else await _fire_and_wait(make_video, payload, wgp_id)
+            )
         except Exception as exc:  # defensive: never kill the loop
             outcome = {"ok": False, "error": f"UNEXPECTED:{exc}"}
         if outcome["ok"]:
@@ -1589,6 +1620,244 @@ async def _fire_and_wait_inner(make_video, payload: dict, wgp_id: str) -> dict:
         wgp_id, production_status="FAILED", production_error=str(err),
     )
     return {"ok": False, "error": str(err)}
+
+
+def _is_extend_package(pkg: dict) -> bool:
+    """True when this package is a MULTI-BLOCK Extend request."""
+    return str(pkg.get("generation_mode") or "SINGLE").strip().upper() == "EXTEND"
+
+
+def _package_logical_mode(pkg: dict) -> str:
+    """Logical mode read straight off the package.
+
+    Deliberately mirrors build_execution_payload's derivation: an EXTEND package
+    never reaches that builder, but the loop's live-mode authorization gate must
+    still judge it by exactly the same mode identity as every other item — an
+    extend item must not become a way to sidestep the T2V-only default.
+    """
+    logical_mode = (pkg.get("logical_mode") or "").strip().upper()
+    if not logical_mode:
+        mode = (pkg.get("mode") or "").strip().upper()
+        lane = (pkg.get("source_lane") or "").strip().upper()
+        logical_mode = "HYBRID" if (mode == "F2V" and lane == "HYBRID") else mode
+    return logical_mode
+
+
+def extend_execution_preconditions(pkg: dict, cfg: dict) -> tuple[dict, list[str]]:
+    """Credit-free readiness for ONE durable EXTEND item: (resolved, blockers).
+
+    The EXTEND counterpart of build_execution_payload — which stays single-shot
+    only and is never called for an extend package. The dry run and the fire path
+    share THIS function deliberately: a green dry run that then dies at fire time
+    is the exact failure the single-shot lane already had to learn (live I2V
+    wgp_99e9961ae1ac5413 dry-ran green and died at the door).
+
+    Resolves nothing from the provider and reads no remote state — pure package +
+    run-config truth, so it is safe to run in a dry run.
+    """
+    from agent.api.flow import _VIDEO_ASPECT_TO_RATIO
+
+    blockers: list[str] = []
+
+    # The orchestrator resolves ALL production authority (product, asset, per-block
+    # prompts) from the execution package; with no linkage there is nothing to
+    # resolve and nothing to review.
+    execution_package_id = str(pkg.get("workspace_execution_package_id") or "").strip()
+    if not execution_package_id:
+        blockers.append("EXTEND_EXECUTION_PACKAGE_MISSING")
+
+    # Total duration comes from the package's OWN compiled block plan — the
+    # compiler wrote one block per Extend segment. There is no
+    # requested_total_duration_seconds column to read, and guessing a total would
+    # plan a different video than the one that was compiled and approved.
+    blocks = _loads(pkg.get("prompt_blocks_json"), [])
+    total_seconds = sum(
+        int(b.get("duration_seconds") or 0)
+        for b in blocks if isinstance(b, dict)
+    )
+    if len(blocks) < 2 or total_seconds <= 0:
+        blockers.append(
+            f"EXTEND_BLOCK_PLAN_INVALID:blocks={len(blocks)},total={total_seconds}s")
+
+    # USER SETTINGS ARE LAW: an aspect the durable lane has no enum for FAILS
+    # CLOSED rather than being silently downgraded to the portrait default.
+    aspect = str(cfg.get("aspect") or "9:16").strip()
+    aspect_ratio = next(
+        (enum for enum, ratio in _VIDEO_ASPECT_TO_RATIO.items() if ratio == aspect),
+        None,
+    )
+    if not aspect_ratio:
+        blockers.append(f"EXTEND_UNSUPPORTED_ASPECT:{aspect}")
+
+    # Same model law the single-shot lane enforces: no silent Lite default.
+    if not str(cfg.get("model") or "").strip():
+        blockers.append("MODEL_REQUIRED")
+
+    resolved = {
+        "execution_package_id": execution_package_id,
+        "total_seconds": total_seconds,
+        "aspect_ratio": aspect_ratio,
+        "logical_mode": _package_logical_mode(pkg),
+        "execution_lane": "VIDEO_JOBS_ORCHESTRATOR",
+    }
+    return resolved, blockers
+
+
+def _error_text(exc: BaseException) -> str:
+    """The REAL failure string. HTTPException carries its cause in `.detail`,
+    which str() would drop and replace with a bare status code."""
+    detail = getattr(exc, "detail", None)
+    return str(detail if detail not in (None, "") else exc)[:300]
+
+
+async def _fail_extend_item(wgp_id: str, reason: str) -> dict:
+    """Mark ONE extend item FAILED and hand the loop its outcome.
+
+    Failure isolation: only this package is touched, so the fan-out continues to
+    the next item instead of the whole run dying on one stranded video.
+    """
+    await crud.update_workspace_generation_package(
+        wgp_id, production_status="FAILED", production_error=reason,
+    )
+    return {"ok": False, "error": reason}
+
+
+async def _fire_extend_via_video_jobs(item: dict, cfg: dict, wgp_id: str) -> dict:
+    """Fire ONE multi-block EXTEND item through the durable /video-jobs orchestrator.
+
+    Returns the SAME outcome shape as _fire_and_wait so the queue loop is unchanged.
+
+    This lane submits nothing itself. It plans, authorizes and drives the
+    orchestrator, which owns the per-block submissions, the seam/concat pipeline
+    and its own credit side-effect ledger. It is deliberately NOT routed through
+    _fire_and_wait, because that helper exists to guard the single-shot door
+    (make_video.start_generate) — a door that renders exactly one 8s block and
+    would silently truncate a 16s/24s request.
+
+    Paying twice is prevented in TWO layers:
+      1. the same fail-closed prior-`production_job_id` refusal _fire_and_wait
+         applies, replicated here because this path bypasses it. The id is written
+         the moment a job exists, so a non-empty value proves this package already
+         went out; `retry_failed_items` clearing it stays the ONLY retry identity.
+      2. the orchestrator's OWN replay identity, which is stronger than a
+         synthetic key: `compute_logical_job_key` hashes execution package,
+         product, asset sha, duration, prompt fingerprint, execution_mode and
+         `client_request_nonce`. Pinning the nonce to wgp_id makes a re-plan of the
+         same package return the SAME vj_* job (`reused=True`) instead of minting a
+         second one, and the authorization token is single-use on top of that.
+    `compute_dedupe_key` is deliberately NOT reused: it is derived from
+    single-shot payload fields (engine mode, num_videos, image_media_ids) that an
+    extend item legitimately does not have, so feeding it would mean fabricating
+    them.
+    """
+    # Local imports: agent.api.flow imports this service, so importing it at
+    # module level would close an import cycle (the same cross-layer pattern
+    # workspace_generation_package_service already uses).
+    from agent.api.flow import VideoJobPlanRequest, _drive_video_job, _plan_video_job
+    from agent.services import video_production_orchestrator as _orch
+
+    fresh = await crud.get_workspace_generation_package(wgp_id) or {}
+    prior_job = str(fresh.get("production_job_id") or "").strip()
+    if prior_job:
+        logger.warning(
+            "DUPLICATE_SUBMISSION_BLOCKED wgp=%s already submitted as job=%s",
+            wgp_id, prior_job,
+        )
+        out = await _fail_extend_item(
+            wgp_id, f"DUPLICATE_SUBMISSION_BLOCKED:{prior_job}")
+        return {**out, "job_id": prior_job}
+
+    resolved, blockers = extend_execution_preconditions(fresh, cfg)
+    if blockers:
+        return await _fail_extend_item(wgp_id, ",".join(blockers))
+    execution_package_id = resolved["execution_package_id"]
+    total_seconds = resolved["total_seconds"]
+    aspect_ratio = resolved["aspect_ratio"]
+
+    # PLAN. trust_client_authority=False is the production SSOT path: product,
+    # asset and per-block prompt authority are re-resolved server-side from the
+    # execution package, so the queue cannot assert authority it does not own.
+    try:
+        plan = await _plan_video_job(
+            VideoJobPlanRequest(
+                product_id=str(fresh.get("product_id") or "") or None,
+                product_name=str(fresh.get("product_name_snapshot") or "") or None,
+                execution_package_id=execution_package_id,
+                requested_total_duration_seconds=total_seconds,
+                model=cfg.get("model"),
+                aspect_ratio=aspect_ratio,
+                client_request_nonce=wgp_id,
+            ),
+            trust_client_authority=False,
+        )
+    except Exception as exc:  # noqa: BLE001 — one item's failure, not the run's
+        return await _fail_extend_item(wgp_id, f"EXTEND_PLAN_FAILED:{_error_text(exc)}")
+
+    job_id = str((plan or {}).get("job_id") or "")
+    fingerprint = str((plan or {}).get("plan_fingerprint") or "")
+    if not job_id or not fingerprint:
+        return await _fail_extend_item(wgp_id, "EXTEND_PLAN_INCOMPLETE")
+
+    # DURABLE HANDLE, written BEFORE authorization — i.e. before any credit stage
+    # can start. From here the duplicate refusal above owns this package, so a
+    # crash mid-drive can never re-fire it. The existing production_job_id slot
+    # holds the vj_* id: no new column, no migration.
+    await crud.update_workspace_generation_package(wgp_id, production_job_id=job_id)
+
+    try:
+        auth = await _orch.authorize_job(
+            job_id, confirmed_plan_fingerprint=fingerprint)
+        token = str((auth or {}).get("authorization_token") or "")
+        if not token:
+            return await _fail_extend_item(wgp_id, "EXTEND_AUTHORIZATION_MISSING_TOKEN")
+        # The SAME driver POST /video-jobs/{id}/start schedules. It swallows its
+        # own exceptions because orchestrator state is persisted, so the status
+        # read below — never this call's return — is the source of truth.
+        await _drive_video_job(job_id, token)
+    except Exception as exc:  # noqa: BLE001 — one item's failure, not the run's
+        return await _fail_extend_item(wgp_id, f"EXTEND_DRIVE_FAILED:{_error_text(exc)}")
+
+    terminal_failures = {_orch.F_INITIAL, _orch.F_EXTEND, _orch.F_FINAL, _orch.F_AUTH}
+    # Not terminal, but the job cannot advance without a human. Fail THIS item
+    # with that exact reason instead of polling until the timeout.
+    stuck = {_orch.S_AUTH_EXPIRED, _orch.S_INITIAL_RECOVERY}
+
+    state: dict = {}
+    status = ""
+    waited = 0
+    while waited < _JOB_TIMEOUT_SECONDS:
+        try:
+            state = await _orch.get_job_status(job_id) or {}
+        except Exception as exc:  # noqa: BLE001
+            return await _fail_extend_item(
+                wgp_id, f"EXTEND_STATUS_UNAVAILABLE:{_error_text(exc)}")
+        status = str(state.get("status") or "")
+        if status == _orch.S_COMPLETE or status in terminal_failures or status in stuck:
+            break
+        await asyncio.sleep(_POLL_SECONDS)
+        waited += _POLL_SECONDS
+    else:
+        return await _fail_extend_item(
+            wgp_id, f"EXTEND_JOB_TIMEOUT:{status or 'UNKNOWN'}")
+
+    if status == _orch.S_COMPLETE:
+        media_id = state.get("final_media_id")
+        await crud.link_artifacts_to_generation_package(job_id, wgp_id)
+        # GENERATED, not DOWNLOADED: get_job_status reports the final media id but
+        # not a local path, and a download must never be claimed without evidence.
+        await crud.update_workspace_generation_package(
+            wgp_id,
+            production_status="GENERATED",
+            artifact_media_ids_json=_json([media_id] if media_id else []),
+            production_error=None,
+        )
+        return {"ok": True, "job_id": job_id}
+
+    # Real terminal reason, carrying the orchestrator's own error_code when it has
+    # one — never a generic failure string.
+    detail = str(state.get("error_code") or "").strip()
+    return await _fail_extend_item(
+        wgp_id, f"{status}:{detail}" if detail else status)
 
 
 async def _cancel_remaining(run_id: str) -> None:

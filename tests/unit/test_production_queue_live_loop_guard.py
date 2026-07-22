@@ -150,12 +150,29 @@ async def test_extend_package_is_refused_by_build_execution_payload():
 
 @pytest.mark.asyncio
 async def test_extend_item_never_fires_in_the_live_loop(loop, monkeypatch):
-    """End-to-end through the loop: an EXTEND item FAILS with the blocker, no fire."""
+    """End-to-end through the loop: an EXTEND item NEVER reaches the single-shot
+    door — it is routed to the durable /video-jobs orchestrator instead.
+
+    `loop["fired"] == []` is the LOAD-BEARING safety property of this test and must
+    never be relaxed: `fired` records _fire_and_wait, i.e. the single-shot
+    make_video.start_generate door, which renders exactly ONE 8s block. Letting an
+    EXTEND item through it would truncate a 16s/24s request and report the
+    truncation as success. Multi-block execution is a DIFFERENT lane, and this
+    asserts the item took that lane instead.
+    """
     real_bep = pq.build_execution_payload
 
     async def bep(item, cfg):
         return await real_bep(item, cfg)
     monkeypatch.setattr(pq, "build_execution_payload", bep)
+
+    routed: list[str] = []
+
+    async def _durable(item, cfg, wgp_id):
+        routed.append(wgp_id)
+        return {"ok": True, "job_id": "vj_test"}
+    monkeypatch.setattr(pq, "_fire_extend_via_video_jobs", _durable)
+
     loop["queue"] = [{
         "workspace_generation_package_id": "wgp_ext",
         "logical_mode": "T2V", "mode": "T2V",
@@ -166,9 +183,8 @@ async def test_extend_item_never_fires_in_the_live_loop(loop, monkeypatch):
 
     await pq._live_production_loop(RUN_ID)
 
-    assert loop["fired"] == []
-    failed = [u for u in loop["updates"] if u.get("production_status") == "FAILED"]
-    assert failed and "EXTEND_PACKAGE_SINGLE_SHOT_FORBIDDEN" in failed[0]["production_error"]
+    assert loop["fired"] == []  # NEVER relax: the single-shot door stays unused
+    assert routed == ["wgp_ext"]  # routed to the durable multi-block orchestrator
 
 
 @pytest.mark.asyncio

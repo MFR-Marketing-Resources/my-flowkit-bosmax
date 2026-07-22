@@ -1884,14 +1884,19 @@ async def plan_bulk_fanout_intents(
     if not preview["preview_ready"]:
         blockers.append(f"PREVIEW_NOT_UNIQUE:{preview['dialogue_uniqueness_status']}")
 
-    # Bulk EXTEND stays blocked: the single-shot production lane fails closed on
-    # EXTEND packages (multi-block belongs to the durable /video-jobs
-    # orchestrator, which is per-job, not per-run). Surfaced as an exact blocker
-    # rather than silently truncating a 16s request to one 8s block.
-    if str(generation_mode or "").strip().upper() == "EXTEND":
-        blockers.append(
-            "BULK_EXTEND_NOT_SUPPORTED:use_video_jobs_orchestrator_per_item"
-        )
+    # Bulk EXTEND is supported: the queue routes each EXTEND item to the durable
+    # /video-jobs orchestrator (plan -> authorize -> drive), one job per item, so
+    # a 16s/24s request renders every block instead of being truncated to one 8s
+    # block. The refusal that used to live here was about the SINGLE-SHOT lane
+    # having no multi-block execution — that gap is closed, so the "not
+    # supported" blocker is gone. What is NOT relaxed: a total duration must
+    # still be a real Native-Extend plan, which the orchestrator re-validates at
+    # plan time (INVALID_DURATION_PLAN), and every copy-pool/uniqueness blocker
+    # above still applies to an EXTEND fan-out exactly as it does to any other.
+    if str(generation_mode or "").strip().upper() == "EXTEND" and not requested_total_duration_seconds:
+        # Per-item precondition kept: EXTEND without a requested total has no block
+        # plan to compile, so the fan-out would silently become N single blocks.
+        blockers.append("BULK_EXTEND_REQUIRES_TOTAL_DURATION")
 
     intents: list[dict] = []
     for item in preview.get("items") or []:
