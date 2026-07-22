@@ -1629,25 +1629,57 @@ export default function RpaProductionStudioPage() {
 						? `It authorizes the reviewed plan fingerprint and runs the full durable job: 1 initial + ${extendPlan?.plan.operation_counts.extend ?? "N"} extend + final concat. The server re-gates every stage with the plan-bound token.`
 						: activeProfile.liveWarning}
 				</div>
+				{/* One line naming the SINGLE next action. Without it the operator sees a
+				    dead button and a grid of circles, and reasonably concludes the page is
+				    broken rather than gated. Ordered the way a user actually proceeds. */}
+				{!(isExtend ? extendGateOpen : liveGateOpen) && !liveSubmitted && (
+					<div className="mb-3 rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100" data-testid="studio-live-next-action">
+						<strong>This button is disabled on purpose — not broken.</strong>{" "}
+						{!selectedProduct
+							? "Next: section 1 — type a name, press Search, then click a product row."
+							: bulkPreview
+								? `Next: section 3 — set Quantity to 1 (it is ${quantity}). Quantity > 1 is a batch and fires from section 4c, not here.`
+								: isExtend
+									? (!extendPlanReady
+										? "Next: prepare the package and review the multi-block plan above."
+										: "Next: type the confirmation phrase below, exactly as shown.")
+									: !dryRunGreen
+										? "Next: section 4 — click Prepare package, then Run validation (dry run)."
+										: !noPriorJob
+											? "Next: prepare a fresh package — this one already has a provider job."
+											: !phraseOk
+												? "Next: type the confirmation phrase below, exactly as shown."
+												: "Next: wait for the current action to finish."}
+					</div>
+				)}
 				<div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-3" data-testid="studio-live-checks">
+					{/* Every unmet check carries the ACTION that clears it. Six unexplained
+					    circles is why this page reads as dead: an operator cannot tell a
+					    deliberate credit gate from a broken button, and the most common
+					    blocker (quantity > 1) is set three sections away from here. */}
 					{(isExtend
 						? [
-							{ id: "product", label: "Product selected", ok: Boolean(selectedProduct) },
-							{ id: "extend-plan", label: "Reviewed orchestrator plan", ok: extendPlanReady },
-							{ id: "phrase", label: "Confirmation phrase", ok: extendPhraseOk },
-							{ id: "not-submitted", label: "Not already submitted", ok: !liveSubmitted },
+							{ id: "product", label: "Product selected", ok: Boolean(selectedProduct), todo: "Section 1: type a name, press Search, then CLICK a product row." },
+							{ id: "extend-plan", label: "Reviewed orchestrator plan", ok: extendPlanReady, todo: "Prepare the package, then review the multi-block plan above." },
+							{ id: "phrase", label: "Confirmation phrase", ok: extendPhraseOk, todo: "Type the phrase below exactly, including underscores." },
+							{ id: "not-submitted", label: "Not already submitted", ok: !liveSubmitted, todo: "This run was already submitted — reload the page to start a new one." },
 						]
 						: [
-							{ id: "product", label: "Product selected", ok: Boolean(selectedProduct) },
-							{ id: "dryrun", label: "Dry run ready=1 blocked=0", ok: Boolean(dryRunGreen) },
-							{ id: "one-item", label: "Exactly 1 item", ok: oneItemOnly },
-							{ id: "no-prior-job", label: "No prior provider job", ok: noPriorJob },
-							{ id: "phrase", label: "Confirmation phrase", ok: phraseOk },
-							{ id: "not-submitted", label: "Not already submitted", ok: !liveSubmitted },
+							{ id: "product", label: "Product selected", ok: Boolean(selectedProduct), todo: "Section 1: type a name, press Search, then CLICK a product row." },
+							{ id: "dryrun", label: "Dry run ready=1 blocked=0", ok: Boolean(dryRunGreen), todo: "Section 4: click Prepare package, then Run validation (dry run)." },
+							{ id: "one-item", label: "Exactly 1 item", ok: oneItemOnly, todo: `Quantity is ${quantity}. Set it to 1 in section 3 — quantity > 1 fires from the batch control in 4c, never from here.` },
+							{ id: "no-prior-job", label: "No prior provider job", ok: noPriorJob, todo: "This package already has a provider job. Prepare a fresh package." },
+							{ id: "phrase", label: "Confirmation phrase", ok: phraseOk, todo: "Type the phrase below exactly, including underscores." },
+							{ id: "not-submitted", label: "Not already submitted", ok: !liveSubmitted, todo: "This run was already submitted — reload the page to start a new one." },
 						]).map((c) => (
 						<div key={c.id} data-testid={`studio-check-${c.id}`} data-ok={c.ok ? "true" : "false"}
-							className={`rounded-lg border px-2 py-1.5 text-[10px] ${c.ok ? "border-emerald-500/40 bg-emerald-500/5 text-emerald-200" : "border-slate-700 bg-slate-900/60 text-slate-500"}`}>
-							{c.ok ? "✓" : "○"} {c.label}
+							className={`rounded-lg border px-2 py-1.5 text-[10px] ${c.ok ? "border-emerald-500/40 bg-emerald-500/5 text-emerald-200" : "border-amber-600/40 bg-slate-900/60 text-slate-300"}`}>
+							<div>{c.ok ? "✓" : "○"} {c.label}</div>
+							{!c.ok && (
+								<div className="mt-0.5 text-[9px] leading-snug text-amber-300/90" data-testid={`studio-check-todo-${c.id}`}>
+									{c.todo}
+								</div>
+							)}
 						</div>
 					))}
 				</div>
