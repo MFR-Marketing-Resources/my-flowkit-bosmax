@@ -1110,7 +1110,9 @@ describe("Production Studio — system-fired bulk live (app submits each item as
 		});
 	}
 	/** Drive the credit-free path all the way to a prepared + dry-run-green batch. */
-	async function prepareBulkBatch(report = { checked: 3, ready: 3, blocked: 0, note: "bulk dry run", items: [] }) {
+	async function prepareBulkBatch(report: {
+		checked: number; ready: number; blocked: number; note: string; items: unknown[];
+	} = { checked: 3, ready: 3, blocked: 0, note: "bulk dry run", items: [] }) {
 		primeHappyPath(report);
 		previewQuantityCopyPlans.mockResolvedValue(UNIQUE_PREVIEW);
 		renderPage();
@@ -1205,6 +1207,44 @@ describe("Production Studio — system-fired bulk live (app submits each item as
 		await typeBulkPhrase("AUTHORIZE_BULK_FANOUT_LIVE_RUN");
 		expect(screen.getByTestId("studio-bulk-live-fire")).toHaveAttribute("data-gate-open", "true");
 		expect(screen.getByTestId("studio-action-bulk-go-live")).toBeEnabled();
+	});
+
+	it("a blocked bulk dry run shows the EXACT per-item reason, not just 'blocked N'", async () => {
+		// The real shape returned for HYBRID run prun_5e147c02cd1e412c: both items
+		// blocked on a non-9:16 product anchor. A bare "ready 0 blocked 2" left the
+		// operator with nothing to act on.
+		const BLOCKER = "SLOT_UPLOAD_FAILED:start_frame:SLOT_ASPECT_MISMATCH:1122x1402(0.800)_vs_9:16(0.5625)_COMPOSE_A_TARGET_ASPECT_FRAME_FIRST";
+		await prepareBulkBatch({
+			checked: 2, ready: 0, blocked: 2, note: "DRY RUN", items: [
+				{ package_id: "wgp_d40a5fd4cfc17c17", logical_mode: "HYBRID", ok: false, blockers: [BLOCKER] },
+				{ package_id: "wgp_afb5f97beccc812c", logical_mode: "HYBRID", ok: false, blockers: [BLOCKER] },
+			],
+		});
+
+		const dry = screen.getByTestId("studio-bulk-dryrun");
+		expect(dry).toHaveAttribute("data-ready", "0");
+		expect(dry).toHaveAttribute("data-blocked", "2");
+
+		// every blocked item is named, with its own reason
+		const blocked = screen.getAllByTestId("studio-bulk-dryrun-blocked-item");
+		expect(blocked).toHaveLength(2);
+		expect(blocked.map((b) => b.getAttribute("data-package")))
+			.toEqual(["wgp_d40a5fd4cfc17c17", "wgp_afb5f97beccc812c"]);
+		const reasons = screen.getAllByTestId("studio-bulk-dryrun-blocker");
+		expect(reasons).toHaveLength(2);
+		// the raw code is surfaced (T2V profile has no anchor translation)
+		expect(reasons[0]).toHaveTextContent("SLOT_ASPECT_MISMATCH");
+
+		// and the live gate stays shut even with the phrase typed
+		await typeBulkPhrase("AUTHORIZE_BULK_FANOUT_LIVE_RUN");
+		expect(screen.getByTestId("studio-bulk-live-fire")).toHaveAttribute("data-gate-open", "false");
+		expect(screen.getByTestId("studio-action-bulk-go-live")).toBeDisabled();
+	});
+
+	it("a green bulk dry run shows no blocked-item panel at all", async () => {
+		await prepareBulkBatch();
+		expect(screen.getByTestId("studio-bulk-dryrun")).toHaveAttribute("data-blocked", "0");
+		expect(screen.queryByTestId("studio-bulk-dryrun-blocked")).toBeNull();
 	});
 
 	it("keeps the manual handoff available as a fallback, not a replacement", async () => {
