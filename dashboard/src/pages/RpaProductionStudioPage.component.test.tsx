@@ -1247,6 +1247,30 @@ describe("Production Studio — system-fired bulk live (app submits each item as
 		expect(screen.queryByTestId("studio-bulk-dryrun-blocked")).toBeNull();
 	});
 
+	it("HYBRID sends the LOGICAL lane to copy-pool/preview/plan/prepare — never a client-side collapse to F2V", async () => {
+		// Live-proven defect: the page collapsed HYBRID -> F2V before calling these
+		// APIs. The server already remaps HYBRID -> F2V for the COMPILER while keeping
+		// HYBRID as the ledger lane and as the creator-dispatch key for the 9:16 product
+		// anchor. Collapsing client-side read the fully-burned F2V ledger (healthy
+		// HYBRID pool reported DIALOGUE_POOL_EXHAUSTED with copy_variant_id=null) and
+		// dropped the product anchor, so the dry run died on SLOT_ASPECT_MISMATCH.
+		primeHappyPath({ checked: 3, ready: 3, blocked: 0, note: "bulk dry run", items: [] });
+		previewQuantityCopyPlans.mockResolvedValue(UNIQUE_PREVIEW);
+		renderPage();
+		await pickProduct();
+		await click("studio-mode-hybrid");
+		await setQuantity(3);
+		await click("studio-action-preview");
+		await screen.findByTestId("studio-bulk-fanout-section");
+		await click("studio-action-bulk-prepare");
+		await screen.findByTestId("studio-bulk-prepared");
+
+		for (const fn of [fetchCopyPoolReadiness, previewQuantityCopyPlans, fetchBulkFanoutPlan, prepareBulkFanoutPackages]) {
+			expect(fn).toHaveBeenCalledWith(expect.objectContaining({ mode: "HYBRID" }));
+			expect(fn).not.toHaveBeenCalledWith(expect.objectContaining({ mode: "F2V" }));
+		}
+	});
+
 	it("keeps the manual handoff available as a fallback, not a replacement", async () => {
 		await prepareBulkBatch();
 		expect(screen.getByTestId("studio-bulk-manual-handoff")).toBeInTheDocument();

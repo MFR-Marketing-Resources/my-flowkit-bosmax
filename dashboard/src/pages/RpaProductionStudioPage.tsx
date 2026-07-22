@@ -392,7 +392,15 @@ export default function RpaProductionStudioPage() {
 	 *  calls are credit-free and read-only. */
 	const handlePreviewQuantity = async () => {
 		if (!selectedProduct) return;
-		const previewMode = (studioMode === "HYBRID" ? "F2V" : studioMode) as WorkspaceMode;
+		// Send the LOGICAL lane, never a client-side collapse to the engine mode.
+		// The server already remaps HYBRID -> F2V for the compiler (compile_mode) while
+		// keeping HYBRID as the lane identity for the rotation/uniqueness ledger AND for
+		// the creator dispatch that routes the 9:16 product anchor into the start-frame
+		// slot. Collapsing to F2V here read the wrong (fully burned) F2V ledger — so a
+		// healthy HYBRID pool reported DIALOGUE_POOL_EXHAUSTED with unbound copy — and
+		// dropped the selected product anchor, which then auto-seeded the raw catalog
+		// image and failed the dry run with SLOT_ASPECT_MISMATCH.
+		const previewMode = studioMode as WorkspaceMode;
 		const copyPoolInput = {
 			product_id: selectedProduct.id,
 			mode: previewMode,
@@ -437,7 +445,15 @@ export default function RpaProductionStudioPage() {
 	 *  opens the live gate. */
 	const handleBulkPrepare = async () => {
 		if (!selectedProduct || !bulkPlan?.bulk_authorizable) return;
-		const previewMode = (studioMode === "HYBRID" ? "F2V" : studioMode) as WorkspaceMode;
+		// Send the LOGICAL lane, never a client-side collapse to the engine mode.
+		// The server already remaps HYBRID -> F2V for the compiler (compile_mode) while
+		// keeping HYBRID as the lane identity for the rotation/uniqueness ledger AND for
+		// the creator dispatch that routes the 9:16 product anchor into the start-frame
+		// slot. Collapsing to F2V here read the wrong (fully burned) F2V ledger — so a
+		// healthy HYBRID pool reported DIALOGUE_POOL_EXHAUSTED with unbound copy — and
+		// dropped the selected product anchor, which then auto-seeded the raw catalog
+		// image and failed the dry run with SLOT_ASPECT_MISMATCH.
+		const previewMode = studioMode as WorkspaceMode;
 		setBusy("bulk-prepare");
 		setBulkError(null);
 		setBulkDryRun(null);
