@@ -81,13 +81,14 @@ class _Harness:
         self.resolver_calls: list = []
         # C-3: front-door HYBRID 9:16 anchor auto-resolution.
         self.anchor_calls: list = []
+        self.frame_calls: list = []
         # B-18: status of the prior batch's production run (reuse must refuse a
         # closed run — it can neither be dry-run nor fired).
         self.prior_run_status: str = "PENDING"
 
 
 def _install(monkeypatch, rows, dialogues, h: _Harness, i2v_blockers=None,
-             hybrid_anchor="ca_auto_916"):
+             hybrid_anchor="ca_auto_916", aspect_frame="ca_auto_frame"):
     monkeypatch.setattr(copy_rotation_service, "list_eligible_copy_sets", _fake_pool(rows))
     monkeypatch.setattr(copy_rotation_service, "select_rotation_copy_sets", _fake_rotation(rows))
     monkeypatch.setattr(wxp, "compile_workspace_prompt_preview", _fake_compile(dialogues))
@@ -110,6 +111,14 @@ def _install(monkeypatch, rows, dialogues, h: _Harness, i2v_blockers=None,
             return hybrid_anchor, []
         return None, ["HYBRID_ANCHOR_916_NOT_FOUND:..."]
     monkeypatch.setattr(svc, "_resolve_hybrid_anchor_916", _resolve_anchor)
+
+    # B-19 front-door F2V start-frame resolver, faked the same way.
+    # `aspect_frame=None` simulates a product with no approved frame at the
+    # requested aspect.
+    async def _resolve_frame(product_id, *, semantic_role, aspect):
+        h.frame_calls.append((product_id, semantic_role, aspect))
+        return aspect_frame
+    monkeypatch.setattr(svc, "_resolve_aspect_matched_asset", _resolve_frame)
 
     async def _creator(**kw):
         idx = len(h.created)
@@ -604,15 +613,22 @@ def test_prepare_is_credit_free_and_touches_no_provider(monkeypatch):
     assert out["credit"] == "NONE"
     assert out["provider_calls"] == 0
     assert out["flow_calls"] == 0
-    assert out["live_bulk_stage"] == "STAGE_3_RUNTIME_CERTIFICATION_REQUIRED"
+    assert out["live_bulk_stage"] == "STAGE_3_AUTHORIZATION_REQUIRED"
     assert out["next_step"] == "DRY_RUN_VALIDATE_ALL_ITEMS"
     # nothing in the created packages asks for live/credit
     for kw in h.created:
         assert "confirm_live_credit_burn" not in kw
 
 
-def test_prepare_never_flips_the_certification_flag():
-    assert pq.BULK_LIVE_EXECUTION_CERTIFIED is False
+def test_prepare_never_reaches_the_live_lane():
+    """Stage 3 is certified now, so the old ``is False`` pin proves nothing.
+    The real invariant: PREPARE creates + approves + queues, and must never
+    touch the live loop or the bulk credit gate on its own."""
+    import inspect
+    src = inspect.getsource(svc.prepare_bulk_fanout_packages)
+    assert "run_production_queue" not in src
+    assert "_assert_bulk_fanout_live" not in src
+    assert "confirm_live_credit_burn" not in src
 
 
 @pytest.mark.parametrize("qty", [1, 0, -1])
@@ -973,6 +989,60 @@ def test_non_hybrid_lanes_never_touch_the_anchor_resolver(monkeypatch):
     _, h2 = _prepare(monkeypatch, THREE, UNIQUE3, logical_mode="F2V", source_mode="FRAMES",
                      start_frame_asset_id="ca_frame")
     assert h2.anchor_calls == [], "F2V auto-seeds its own frame — must not use the HYBRID anchor"
+
+
+# ── B-19 · F2V auto-seed must MATCH the requested aspect ─────────────────────
+# The same defect C-3 fixed for HYBRID, on the F2V lane. With no explicit start
+# frame, create_f2v_generation_package falls through to PRODUCT_IMAGE_AUTO_SEED
+# (the RAW catalog image), which cannot satisfy the queue's slot-aspect gate.
+# Live proof (2026-07-22, run prun_4a1eba18cfbe47cc, both items):
+# SLOT_UPLOAD_FAILED:start_frame:SLOT_ASPECT_MISMATCH:1122x1402(0.800)_vs_9:16.
+# The block landed AFTER prepare burned a ledger row per item, so N fresh
+# dialogues were spent on a batch that could never fire.
+
+def test_f2v_bulk_auto_resolves_a_frame_matching_the_requested_aspect(monkeypatch):
+    out, h = _prepare(monkeypatch, THREE, UNIQUE3, logical_mode="F2V", source_mode="FRAMES")
+    assert out["prepared_package_count"] == 3
+    assert h.frame_calls == [("P", "COMPOSITE_FRAME_REFERENCE", "9:16")], \
+        "the front-door F2V frame resolver never ran"
+    for kw in h.created:
+        assert kw["start_frame_asset_id"] == "ca_auto_frame"
+
+
+def test_f2v_auto_seed_asks_for_the_aspect_actually_requested(monkeypatch):
+    """A 1:1 batch must not be handed a 9:16 frame — the gate would refuse it."""
+    _, h = _prepare(monkeypatch, THREE, UNIQUE3, logical_mode="F2V",
+                    source_mode="FRAMES", aspect="1:1")
+    assert h.frame_calls == [("P", "COMPOSITE_FRAME_REFERENCE", "1:1")]
+
+
+def test_f2v_bulk_keeps_an_explicit_frame_and_skips_auto_resolution(monkeypatch):
+    _, h = _prepare(monkeypatch, THREE, UNIQUE3, logical_mode="F2V", source_mode="FRAMES",
+                    start_frame_asset_id="ca_operator_frame")
+    assert h.frame_calls == [], "explicit start frame must win — no auto-resolution"
+    for kw in h.created:
+        assert kw["start_frame_asset_id"] == "ca_operator_frame"
+
+
+def test_f2v_bulk_fails_closed_with_no_matching_frame_and_burns_nothing(monkeypatch):
+    h = _install(monkeypatch, THREE, UNIQUE3, _Harness(), aspect_frame=None)
+    with pytest.raises(ValueError, match="BULK_PREPARE_REFUSED:F2V_START_FRAME_9_16_NOT_FOUND"):
+        asyncio.run(svc.prepare_bulk_fanout_packages(
+            product_id="P", logical_mode="F2V", source_mode="FRAMES", quantity=3,
+            model="Veo 3.1 - Lite", aspect="9:16"))
+    assert h.created == [], "package created despite having no aspect-matched frame"
+    assert h.combos == [], "ledger burned on a batch guaranteed to block at dry-run"
+    assert h.usage == [], "rotation advanced on a doomed batch"
+    assert h.approved == []
+
+
+def test_hybrid_and_i2v_never_use_the_f2v_frame_resolver(monkeypatch):
+    """HYBRID rides its own 9:16 PRODUCT_REFERENCE anchor; I2V has no frame slot."""
+    _, h = _prepare(monkeypatch, THREE, UNIQUE3, logical_mode="HYBRID", source_mode="HYBRID")
+    assert h.frame_calls == []
+    _, h2 = _prepare(monkeypatch, THREE, UNIQUE3, logical_mode="I2V",
+                     character_reference_asset_id="ca_c", scene_context_reference_asset_id="ca_s")
+    assert h2.frame_calls == []
 
 
 # ── B-18 · a retired batch must never be handed back as "prepared" ────────────

@@ -118,8 +118,12 @@ def test_production_queue_breaks_on_render_not_materialized():
     assert '"STALE_OR_FOREIGN_CANDIDATES_ONLY"' in src
 
 
-def test_certification_flag_untouched():
-    assert pq.BULK_LIVE_EXECUTION_CERTIFIED is False
+def test_classification_change_did_not_touch_the_credit_gate():
+    """This was a classification fix. Stage 3 is certified separately; what this
+    change must not have done is weaken the gate that stands in front of it."""
+    src = inspect.getsource(pq._assert_bulk_fanout_live)
+    assert "LIVE_BULK_CONFIRM_PHRASE_INVALID" in src
+    assert "BULK_REQUIRES_ALL_ITEMS_DRY_RUN_READY" in src
 
 
 # ── C-4 · credit truth on EVERY terminal state ───────────────────────────────

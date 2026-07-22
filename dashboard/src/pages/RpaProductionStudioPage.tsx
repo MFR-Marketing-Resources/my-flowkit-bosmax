@@ -89,9 +89,10 @@ import {
 import type { Product, WorkspaceMode } from "../types";
 
 const ASPECTS = ["9:16", "16:9", "1:1"];
-// Stage 1 quantity PREVIEW cap. quantity>1 is preview-only (credit-free unique-copy
-// planning); live bulk fan-out is Stage 2 and stays blocked. Keep in lockstep with
-// the backend QUANTITY_PREVIEW_MAX (workspace_generation_package_service.py).
+// Quantity cap for one batch. quantity>1 plans N unique-copy items credit-free,
+// then — since Stage 3 was certified 2026-07-22 — fires each as its OWN provider
+// job through the bulk lane. Keep in lockstep with the backend
+// QUANTITY_PREVIEW_MAX (workspace_generation_package_service.py).
 const QUANTITY_MAX = 5;
 const POLL_MS = 5000;
 const TERMINAL_STATUSES = new Set(["GENERATED", "DOWNLOADED", "FAILED", "CANCELLED"]);
@@ -970,11 +971,12 @@ export default function RpaProductionStudioPage() {
 				</p>
 			</div>
 
-			<div className="mb-6 flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3" data-testid="studio-bulk-locked" data-locked="true">
-				<Lock size={16} className="text-amber-300 shrink-0" />
-				<div className="text-[11px] text-amber-100">
-					<strong>MVP scope: one serial output / one queued item only.</strong> Bulk generation is locked;
-					the selected mode can only prepare and submit one job at a time.
+			<div className="mb-6 flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3" data-testid="studio-bulk-locked" data-locked="false">
+				<Lock size={16} className="text-emerald-300 shrink-0" />
+				<div className="text-[11px] text-emerald-100">
+					<strong>Bulk is live.</strong> Quantity 1 runs the one-serial lane. Quantity 2–{QUANTITY_MAX} plans
+					that many unique-copy items and fires each as its <em>own</em> provider job, one after another —
+					never one job with count:N. Every item still needs a green dry run and the typed authorization.
 				</div>
 			</div>
 
@@ -1110,8 +1112,8 @@ export default function RpaProductionStudioPage() {
 							className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-slate-100 focus:outline-none" />
 						<div className="mt-1 text-[9px] text-slate-500" data-testid="studio-quantity-note">
 							{bulkPreview
-								? `1–${QUANTITY_MAX}. Quantity > 1 is preview-only — live bulk fan-out is Stage 2.`
-								: "1 = single live run. Raise for a credit-free unique-copy preview."}
+								? `1–${QUANTITY_MAX}. Quantity > 1 fires each item as its own provider job, serially.`
+								: "1 = single live run. Raise it to plan and fire a bulk batch."}
 						</div>
 					</div>
 				</div>
@@ -1348,7 +1350,7 @@ export default function RpaProductionStudioPage() {
 					</div>
 				) : (
 					<div className="text-[11px] text-slate-500" data-testid="studio-preview-empty">
-						Set a quantity and click <strong>Preview</strong> to plan N unique-copy variants credit-free. Live bulk fan-out is Stage 2 (not enabled yet).
+						Set a quantity and click <strong>Preview</strong> to plan N unique-copy variants credit-free, then prepare and fire them.
 					</div>
 				)}
 			</section>
@@ -1510,9 +1512,9 @@ export default function RpaProductionStudioPage() {
 						</div>
 					)}
 					{bulkManualHandoff && (
-						<section className="mb-2 rounded-lg border border-cyan-500/40 bg-cyan-500/5 p-3" data-testid="studio-bulk-manual-handoff" data-automation="disabled">
-							<h3 className="text-[11px] font-semibold text-cyan-100">Manual Fire Handoff — operator action outside this app</h3>
-							<p className="mt-1 text-[10px] text-cyan-100/80">Every item passed the credit-free dry run. Automated bulk live remains disabled; copy each exact package instruction into Google Flow, fire manually, then capture the returned identity here.</p>
+						<section className="mb-2 rounded-lg border border-cyan-500/40 bg-cyan-500/5 p-3" data-testid="studio-bulk-manual-handoff" data-automation="enabled">
+							<h3 className="text-[11px] font-semibold text-cyan-100">Manual fire handoff — optional fallback</h3>
+							<p className="mt-1 text-[10px] text-cyan-100/80">Every item passed the credit-free dry run. Use the <strong>Fire</strong> button above to let the system submit them. This handoff is only for firing an item by hand in Google Flow instead — copy its exact instruction, fire it there, then capture the returned identity here.</p>
 							<div className="mt-2 space-y-3">
 								{bulkManualHandoff.items.map((item) => {
 									const input = bulkManualInputs[item.workspace_generation_package_id] ?? { provider_job_id: "", flow_media_id: "", result_url: "", result_file_id: "", notes: "" };
@@ -1542,10 +1544,10 @@ export default function RpaProductionStudioPage() {
 						data-phrase-ok={String(bulkPhraseOk)}
 					>
 						<strong>{bulkPlan.live_bulk_status} — {bulkPlan.live_bulk_stage}.</strong>{" "}
-						This plan spends no credit and does not authorize a live run. Bulk live
-						additionally requires the server <code>BULK_FANOUT</code> gate with the phrase{" "}
-						<code>{bulkPlan.required_confirm_phrase}</code>. The server refuses at the
-						credit boundary until bulk live is runtime-certified.
+						Planning itself spends no credit and does not authorize anything. To fire,
+						every item must be dry-run green and you must type{" "}
+						<code>{bulkPlan.required_confirm_phrase}</code> — the server re-checks that
+						phrase through the <code>BULK_FANOUT</code> gate at the credit boundary.
 					</div>
 					{/* ── System-fired bulk live: the APP submits each item as its own
 					     provider job through the BULK_FANOUT gate. Manual handoff above
@@ -1613,8 +1615,8 @@ export default function RpaProductionStudioPage() {
 			<section className="mb-6 rounded-xl border border-red-500/40 bg-red-500/5 p-4" data-testid="studio-live-gate" data-gate-open={(isExtend ? extendGateOpen : liveGateOpen) ? "true" : "false"} data-lane={isExtend ? "EXTEND" : "SINGLE"}>
 				<h2 className="mb-2 flex items-center gap-2 text-sm font-semibold text-red-200"><Flame size={14} /> 5 · {isExtend ? `Run one live EXTEND job (${duration}s multi-block)` : `Run one live ${studioMode}`}</h2>
 				{bulkPreview && (
-					<div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100" data-testid="studio-live-bulk-blocked" data-blocked="true">
-						<strong>Bulk live fan-out not enabled yet — Stage 2 required.</strong> Quantity {quantity} is preview-only: no live submission, no provider call, no credit. Set quantity to 1 to run one live item.
+					<div className="mb-3 rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-[11px] text-sky-100" data-testid="studio-live-bulk-blocked" data-blocked="false">
+						<strong>Quantity is {quantity} — use the bulk fire button above.</strong> This one-serial lane submits a single item, so it stays off while a batch is planned. Set quantity to 1 if you want to run just one.
 					</div>
 				)}
 				<div className="mb-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-[11px] text-red-100" data-testid="studio-live-warning">

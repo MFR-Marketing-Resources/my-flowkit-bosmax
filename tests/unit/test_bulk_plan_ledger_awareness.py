@@ -194,6 +194,17 @@ def test_ledger_check_uses_prepare_fingerprint_recipe(monkeypatch):
     assert seen_fps == [expected]
 
 
-def test_certification_flag_untouched():
+def test_preview_never_reaches_the_credit_boundary():
+    """Stage 3 is certified now, so pinning the flag to False no longer says
+    anything. The invariant this guard actually protected is that PREVIEW is a
+    planning surface: it must not import or call the live bulk gate at all."""
+    import inspect
+
     from agent.services import production_queue_service as pq
-    assert pq.BULK_LIVE_EXECUTION_CERTIFIED is False
+    from agent.services import workspace_generation_package_service as _svc
+
+    assert pq.BULK_LIVE_EXECUTION_CERTIFIED is True
+    src = inspect.getsource(_svc.plan_bulk_fanout_intents)
+    assert "run_production_queue" not in src
+    assert "confirm_live_credit_burn" not in src
+    assert "_assert_bulk_fanout_live" not in src

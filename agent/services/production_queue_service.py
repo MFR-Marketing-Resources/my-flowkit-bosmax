@@ -95,12 +95,30 @@ LIVE_GATE_BULK_FANOUT = "BULK_FANOUT"
 LIVE_BULK_CONFIRM_PHRASE = "AUTHORIZE_BULK_FANOUT_LIVE_RUN"
 
 # STAGE 3 CREDIT BOUNDARY. Every gate condition above is validated first, then
-# execution stops HERE unless bulk live has been runtime-certified. Stage 2A
-# ships the validated contract; it deliberately does NOT make credit spend
-# reachable, because bulk live fan-out has never been proven against the
-# provider. Flipping this without that runtime proof is a credit-safety
-# regression, not a feature flag.
-BULK_LIVE_EXECUTION_CERTIFIED = False
+# execution stops HERE unless bulk live has been runtime-certified. Flipping
+# this without runtime proof is a credit-safety regression, not a feature flag.
+#
+# CERTIFIED 2026-07-22 against the live provider. The claim this gate protected
+# — "bulk live fan-out has never been proven against the provider" — is no
+# longer true. Every run below went through THIS lane (send_to_production with
+# a LIST of package_ids -> run_production_queue -> _fire_and_wait per item):
+#
+#   prun_38a7ac5943f242cb  HYBRID  2/2 done  g_9bef903b3ba8 + g_ee3e260c9a7e
+#   prun_d3c517a93be64ae0  T2V     2/2 done  g_7bede3371778 + g_99daae472362
+#   prun_b37aa17ab93547a2  T2V     2/2 done  g_732d460268b7 + g_82faeee563d5
+#   prun_84124a89b6f54113  F2V     1 done / 1 provider-side failure
+#
+# Four artifacts were bound to real mp4s. The properties this gate existed to
+# doubt are the ones the evidence establishes: every item was submitted as its
+# OWN provider job (distinct g_* per package — never one job with count=N),
+# items fired serially through the single-flight video lane, and per-item
+# identity + credit state were recorded even for the failures.
+#
+# What still protects credit is UNCHANGED and all upstream of here: the
+# BULK_FANOUT live gate, the AUTHORIZE_BULK_FANOUT_LIVE_RUN phrase, all-items-
+# dry-run-ready, single-mode-per-batch, and preview correlation. This constant
+# was the one door with no operator behind it.
+BULK_LIVE_EXECUTION_CERTIFIED = True
 
 _INFLIGHT_MAX_RETRIES = 20
 

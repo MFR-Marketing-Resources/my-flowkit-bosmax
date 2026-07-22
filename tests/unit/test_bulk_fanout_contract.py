@@ -17,6 +17,7 @@ Nothing here fires a provider or Flow call: the compile + payload seams are
 faked, and the credit boundary is asserted to hold.
 """
 import asyncio
+import inspect
 
 import pytest
 
@@ -79,7 +80,7 @@ def test_ready_unique_pool_plans_n_itemized_intents(monkeypatch):
     assert len(out["intents"]) == 3
     assert out["copy_pool_readiness_status"] == "READY"
     assert out["dialogue_uniqueness_status"] == "UNIQUE"
-    assert out["live_bulk_stage"] == "STAGE_3_RUNTIME_CERTIFICATION_REQUIRED"
+    assert out["live_bulk_stage"] == "STAGE_3_AUTHORIZATION_REQUIRED"
 
 
 def test_every_intent_carries_stable_per_item_metadata(monkeypatch):
@@ -448,8 +449,27 @@ def test_stage3a_does_not_touch_the_single_flight_guard():
     assert 'error": "VIDEO_JOB_IN_FLIGHT"' in src or "VIDEO_JOB_IN_FLIGHT" in src
 
 
-def test_bulk_live_is_not_certified_by_default():
-    assert pq.BULK_LIVE_EXECUTION_CERTIFIED is False
+def test_bulk_live_is_certified_and_the_gate_above_it_is_intact():
+    """Stage 3 was certified 2026-07-22 on live evidence (four bulk runs, each
+    item its own provider job — see the constant's comment). So the old
+    ``is False`` pin is gone.
+
+    What must NEVER regress is everything ABOVE the boundary: the certification
+    removed the last door, it did not remove the locks. If a future change
+    deletes one of these, credit becomes reachable without an operator."""
+    assert pq.BULK_LIVE_EXECUTION_CERTIFIED is True
+    src = inspect.getsource(pq._assert_bulk_fanout_live)
+    for guard in (
+        "LIVE_BULK_CONFIRM_PHRASE_INVALID",       # the distinct bulk phrase
+        "BULK_REQUIRES_MULTIPLE_ITEMS",           # bulk lane is bulk-only
+        "BULK_REQUIRES_EXPECT_PACKAGE_IDS",       # caller must pin the set
+        "BULK_REQUIRES_EXPECT_DIALOGUE_FINGERPRINTS",
+        "BULK_ITEM_BLOCKED",                      # no blocked item may ride along
+        "BULK_REQUIRES_ALL_ITEMS_DRY_RUN_READY",  # every item dry-run green
+        "BULK_MIXED_MODES_FORBIDDEN",             # one batch = one mode
+        "LIVE_DUPLICATE_SUBMISSION",              # never re-fire a fired package
+    ):
+        assert guard in src, f"bulk credit gate lost its {guard} check"
 
 
 def test_count_is_provider_copies_not_item_fanout():

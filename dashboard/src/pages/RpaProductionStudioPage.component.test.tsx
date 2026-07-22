@@ -123,8 +123,8 @@ const BULK_PLAN = {
 	})),
 	bulk_plan_fingerprint: "bulkfp", copy_pool_readiness_status: "READY",
 	dialogue_uniqueness_status: "UNIQUE", blockers: [], bulk_authorizable: true,
-	live_bulk_status: "Bulk live fan-out not certified yet",
-	live_bulk_stage: "STAGE_3_RUNTIME_CERTIFICATION_REQUIRED",
+	live_bulk_status: "Bulk live fan-out is certified — authorize to fire",
+	live_bulk_stage: "STAGE_3_AUTHORIZATION_REQUIRED",
 	required_confirm_phrase: "AUTHORIZE_BULK_FANOUT_LIVE_RUN",
 	credit: "NONE", provider_calls: 0, flow_calls: 0,
 };
@@ -146,8 +146,8 @@ const BULK_PREPARED = {
 	})),
 	reused_existing_batch: false, stage: "PACKAGES_PREPARED",
 	next_step: "DRY_RUN_VALIDATE_ALL_ITEMS",
-	live_bulk_status: "Bulk live fan-out not certified yet",
-	live_bulk_stage: "STAGE_3_RUNTIME_CERTIFICATION_REQUIRED",
+	live_bulk_status: "Bulk live fan-out is certified — authorize to fire",
+	live_bulk_stage: "STAGE_3_AUTHORIZATION_REQUIRED",
 	required_confirm_phrase: "AUTHORIZE_BULK_FANOUT_LIVE_RUN",
 	credit: "NONE", provider_calls: 0, flow_calls: 0,
 };
@@ -227,7 +227,7 @@ describe("Production Studio — rendered contract", () => {
 		}
 	});
 
-	it("all four video lanes + IMG are enabled; T2V selected by default; bulk stays locked", async () => {
+	it("all four video lanes + IMG are enabled; T2V selected by default; bulk is available", async () => {
 		primeHappyPath();
 		renderPage();
 		await screen.findByTestId("studio-mode-t2v");
@@ -236,7 +236,7 @@ describe("Production Studio — rendered contract", () => {
 		}
 		expect(screen.getByTestId("studio-mode-t2v")).toHaveAttribute("data-selected", "true");
 		expect(screen.getByTestId("studio-mode-f2v")).toHaveAttribute("data-selected", "false");
-		expect(screen.getByTestId("studio-bulk-locked")).toHaveAttribute("data-locked", "true");
+		expect(screen.getByTestId("studio-bulk-locked")).toHaveAttribute("data-locked", "false");
 	});
 
 	it("IMG card deep-links to the Fastlane with the selected product", async () => {
@@ -354,7 +354,7 @@ describe("Production Studio — Stage 1 quantity preview (credit-free, live stay
 		await setQuantity(3);
 		expect(screen.getByTestId("studio-live-gate")).toHaveAttribute("data-gate-open", "false");
 		expect(screen.getByTestId("studio-action-go-live")).toBeDisabled();
-		expect(screen.getByTestId("studio-live-bulk-blocked")).toHaveAttribute("data-blocked", "true");
+		 expect(screen.getByTestId("studio-live-bulk-blocked")).toHaveAttribute("data-blocked", "false");
 		expect(screen.getByTestId("studio-action-prepare")).toBeDisabled();
 		expect(createProductionRun).not.toHaveBeenCalled();
 	});
@@ -452,7 +452,7 @@ describe("Production Studio — Stage 1 quantity preview (credit-free, live stay
 		expect(previewQuantityCopyPlans).not.toHaveBeenCalled();
 	});
 
-	it("readiness never unlocks live — quantity > 1 stays preview-only", async () => {
+	it("quantity > 1 keeps the single-item lane closed and routes the user to bulk fire", async () => {
 		primeHappyPath();
 		previewQuantityCopyPlans.mockResolvedValue(UNIQUE_PREVIEW);
 		renderPage();
@@ -464,7 +464,7 @@ describe("Production Studio — Stage 1 quantity preview (credit-free, live stay
 		expect(screen.getByTestId("studio-live-gate")).toHaveAttribute("data-gate-open", "false");
 		expect(screen.getByTestId("studio-action-go-live")).toBeDisabled();
 		expect(screen.getByTestId("studio-action-prepare")).toBeDisabled();
-		expect(screen.getByTestId("studio-live-bulk-blocked")).toHaveAttribute("data-blocked", "true");
+		expect(screen.getByTestId("studio-live-bulk-blocked")).toHaveAttribute("data-blocked", "false");
 		expect(createProductionRun).not.toHaveBeenCalled();
 	});
 
@@ -489,7 +489,7 @@ describe("Production Studio — Stage 1 quantity preview (credit-free, live stay
 		expect(fetchBulkFanoutPlan).toHaveBeenCalledWith(expect.objectContaining({ quantity: 3 }));
 	});
 
-	it("an authorizable bulk plan STILL does not unlock live (credit boundary holds)", async () => {
+	it("an authorizable bulk plan remains closed until its own dry-run pins and phrase are present", async () => {
 		primeHappyPath();
 		previewQuantityCopyPlans.mockResolvedValue(UNIQUE_PREVIEW);
 		renderPage();
@@ -501,7 +501,7 @@ describe("Production Studio — Stage 1 quantity preview (credit-free, live stay
 		expect(screen.getByTestId("studio-live-gate")).toHaveAttribute("data-gate-open", "false");
 		expect(screen.getByTestId("studio-action-go-live")).toBeDisabled();
 		expect(screen.getByTestId("studio-action-prepare")).toBeDisabled();
-		expect(screen.getByTestId("studio-live-bulk-blocked")).toHaveAttribute("data-blocked", "true");
+		expect(screen.getByTestId("studio-live-bulk-blocked")).toHaveAttribute("data-blocked", "false");
 		expect(createProductionRun).not.toHaveBeenCalled();
 		expect(startProductionRun).not.toHaveBeenCalled();
 	});
@@ -583,7 +583,7 @@ describe("Production Studio — Stage 1 quantity preview (credit-free, live stay
 		expect(startProductionRun).toHaveBeenCalledWith("prun_bulk_1", false);
 	});
 
-	it("shows dry-run-green manual handoff and binds a user-supplied result without live automation", async () => {
+	it("keeps manual handoff available as an optional fallback", async () => {
 		primeHappyPath({ checked: 3, ready: 3, blocked: 0, note: "bulk dry run", items: [] });
 		previewQuantityCopyPlans.mockResolvedValue(UNIQUE_PREVIEW);
 		renderPage();
@@ -592,7 +592,7 @@ describe("Production Studio — Stage 1 quantity preview (credit-free, live stay
 		await click("studio-action-preview");
 		await click("studio-action-bulk-prepare");
 		const handoff = await screen.findByTestId("studio-bulk-manual-handoff");
-		expect(handoff).toHaveAttribute("data-automation", "disabled");
+		expect(handoff).toHaveAttribute("data-automation", "enabled");
 		expect(screen.getAllByTestId("studio-manual-handoff-item")).toHaveLength(3);
 		fireEvent.change(screen.getAllByTestId("studio-manual-result-provider_job_id")[0], { target: { value: "job_manual_0" } });
 		await act(async () => { fireEvent.click(screen.getAllByTestId("studio-action-bind-manual-result")[0]); });
@@ -634,6 +634,33 @@ describe("Production Studio — Stage 1 quantity preview (credit-free, live stay
 		for (const call of startProductionRun.mock.calls) {
 			expect(call[1]).toBe(false);
 		}
+	});
+
+	it("fires the prepared bulk batch from the Studio UI with the server-issued pins", async () => {
+		primeHappyPath({ checked: 3, ready: 3, blocked: 0, note: "bulk dry run", items: [] });
+		previewQuantityCopyPlans.mockResolvedValue(UNIQUE_PREVIEW);
+		renderPage();
+		await pickProduct();
+		await setQuantity(3);
+		await click("studio-action-preview");
+		await click("studio-action-bulk-prepare");
+		await screen.findByTestId("studio-bulk-live-fire");
+		fireEvent.change(screen.getByTestId("studio-bulk-live-phrase"), {
+			target: { value: "AUTHORIZE_BULK_FANOUT_LIVE_RUN" },
+		});
+		expect(screen.getByTestId("studio-action-bulk-go-live")).toBeEnabled();
+		await click("studio-action-bulk-go-live");
+		await waitFor(() => expect(startProductionRun).toHaveBeenLastCalledWith(
+			"prun_bulk_1",
+			true,
+			{
+				live_gate: "BULK_FANOUT",
+				confirm_phrase: "AUTHORIZE_BULK_FANOUT_LIVE_RUN",
+				expect_package_ids: ["wgp_0", "wgp_1", "wgp_2"],
+				expect_dialogue_fingerprints: ["fp0", "fp1", "fp2"],
+			},
+		));
+		expect(screen.getByTestId("studio-action-bulk-go-live")).toBeDisabled();
 	});
 
 	it("surfaces a server bulk-prepare refusal without faking success", async () => {

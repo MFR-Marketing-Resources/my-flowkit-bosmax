@@ -1271,6 +1271,54 @@ async def _run_batch_generation_task(
 # ─── Batch Prompt Runner (prompt/production split) ───────────
 
 
+_ASPECT_TOLERANCE = 0.03
+
+
+def _aspect_target_ratio(aspect: str) -> float | None:
+    """"9:16" -> 0.5625. None when unparseable — callers must fail closed."""
+    try:
+        w, h = str(aspect or "").split(":")
+        w, h = int(w), int(h)
+        return (w / h) if h else None
+    except Exception:
+        return None
+
+
+async def _resolve_aspect_matched_asset(
+    product_id: str, *, semantic_role: str, aspect: str,
+) -> str | None:
+    """Deterministically pick an APPROVED asset for this product whose LOCAL
+    image matches ``aspect``.
+
+    Uses the SAME stdlib dimension parser and the SAME ±3% tolerance as the
+    production queue's slot-aspect gate, so a pick made here cannot be rejected
+    there. Ordered by asset_id, so the choice is stable across runs. Returns
+    None when nothing matches — never a near-miss.
+    """
+    import os
+    from agent.services.production_queue_service import _image_dimensions
+
+    target = _aspect_target_ratio(aspect)
+    if not target:
+        return None
+    rows = await crud.list_creative_assets(
+        semantic_role=semantic_role, product_id=product_id,
+    )
+    for row in sorted(
+        (r for r in rows if r.get("review_status") == "APPROVED"),
+        key=lambda r: str(r.get("asset_id") or ""),
+    ):
+        path = row.get("local_file_path") or ""
+        if not path or not os.path.isfile(path):
+            continue
+        dims = _image_dimensions(path)
+        if not dims or not dims[1]:
+            continue
+        if abs(dims[0] / dims[1] - target) / target <= _ASPECT_TOLERANCE:
+            return str(row["asset_id"])
+    return None
+
+
 async def _resolve_hybrid_anchor_916(product_id: str) -> tuple[str | None, list[str]]:
     """Auto-pick the product's padded 9:16 PRODUCT_REFERENCE anchor for a
     HYBRID batch.
@@ -1283,27 +1331,11 @@ async def _resolve_hybrid_anchor_916(product_id: str) -> tuple[str | None, list[
     by asset_id. No match -> (None, warning): the batch still builds against
     the raw product image and the queue gate stays the enforcement point.
     """
-    import os
-    from agent.services.production_queue_service import _image_dimensions
-
-    rows = await crud.list_creative_assets(
-        semantic_role="PRODUCT_REFERENCE", product_id=product_id,
+    hit = await _resolve_aspect_matched_asset(
+        product_id, semantic_role="PRODUCT_REFERENCE", aspect="9:16",
     )
-    candidates = sorted(
-        (r for r in rows if r.get("review_status") == "APPROVED"),
-        key=lambda r: str(r.get("asset_id") or ""),
-    )
-    target = 9 / 16
-    for row in candidates:
-        path = row.get("local_file_path") or ""
-        if not path or not os.path.isfile(path):
-            continue
-        dims = _image_dimensions(path)
-        if not dims or not dims[1]:
-            continue
-        ratio = dims[0] / dims[1]
-        if abs(ratio - target) / target <= 0.03:
-            return str(row["asset_id"]), []
+    if hit:
+        return hit, []
     return None, [
         "HYBRID_ANCHOR_916_NOT_FOUND:raw_product_image_will_block_at_queue_gate:"
         "create_a_padded_916_PRODUCT_REFERENCE_asset"
@@ -1922,8 +1954,8 @@ async def plan_bulk_fanout_intents(
         # Authorizable == every prerequisite proven. It does NOT mean the run may
         # fire: the server gate still stops at the Stage 3 credit boundary.
         "bulk_authorizable": not blockers and len(intents) == n,
-        "live_bulk_status": "Bulk live fan-out not certified yet",
-        "live_bulk_stage": "STAGE_3_RUNTIME_CERTIFICATION_REQUIRED",
+        "live_bulk_status": "Bulk live fan-out is certified — authorize to fire",
+        "live_bulk_stage": "STAGE_3_AUTHORIZATION_REQUIRED",
         "required_confirm_phrase": "AUTHORIZE_BULK_FANOUT_LIVE_RUN",
         "credit": "NONE",
         "provider_calls": 0,
@@ -2227,6 +2259,31 @@ async def prepare_bulk_fanout_packages(
                 "create_one_in_the_frame_factory_or_pass_product_reference_asset_id"
             )
 
+    # B-19: the SAME defect C-3 fixed for HYBRID, on the F2V lane. With no
+    # explicit start frame, create_f2v_generation_package falls through to
+    # PRODUCT_IMAGE_AUTO_SEED — the RAW catalog image — which cannot satisfy the
+    # queue's slot-aspect gate unless the product photo happens to be the target
+    # ratio. Live proof (2026-07-22, run prun_4a1eba18cfbe47cc, both items):
+    # SLOT_UPLOAD_FAILED:start_frame:SLOT_ASPECT_MISMATCH:1122x1402(0.800)
+    # _vs_9:16(0.5625). The block came AFTER prepare had already burned a
+    # content_combination row per item, so N fresh dialogues were spent on a
+    # batch that could never fire.
+    #
+    # Auto-seed still works — it just has to pick a frame that MATCHES the
+    # requested aspect (approved COMPOSITE_FRAME_REFERENCE, same parser and
+    # tolerance as the gate). Nothing matching => refuse here, before any write,
+    # the same fail-closed reasoning as the HYBRID anchor above.
+    if mode == "F2V" and not start_frame_asset_id:
+        start_frame_asset_id = await _resolve_aspect_matched_asset(
+            product_id, semantic_role="COMPOSITE_FRAME_REFERENCE", aspect=aspect,
+        )
+        if not start_frame_asset_id:
+            raise ValueError(
+                f"BULK_PREPARE_REFUSED:F2V_START_FRAME_{aspect.replace(':', '_')}"
+                "_NOT_FOUND:no_approved_COMPOSITE_FRAME_REFERENCE_matches_this_aspect:"
+                "compose_one_in_the_frame_factory_or_pass_start_frame_asset_id"
+            )
+
     creator_kwargs: dict = {
         "product_id": product_id,
         "generation_mode": generation_mode,
@@ -2428,8 +2485,8 @@ def _bulk_manifest(
         "reused_existing_batch": reused,
         "stage": "PACKAGES_PREPARED",
         "next_step": "DRY_RUN_VALIDATE_ALL_ITEMS",
-        "live_bulk_status": "Bulk live fan-out not certified yet",
-        "live_bulk_stage": "STAGE_3_RUNTIME_CERTIFICATION_REQUIRED",
+        "live_bulk_status": "Bulk live fan-out is certified — authorize to fire",
+        "live_bulk_stage": "STAGE_3_AUTHORIZATION_REQUIRED",
         "required_confirm_phrase": "AUTHORIZE_BULK_FANOUT_LIVE_RUN",
         "credit": "NONE",
         "provider_calls": 0,
@@ -2636,8 +2693,8 @@ async def preview_quantity_copy_plans(
         "duplicate_dialogue_groups": verdict["duplicate_groups"],
         "blockers": blockers,
         "preview_ready": verdict["status"] == "UNIQUE" and not blockers,
-        "live_bulk_status": "Bulk live fan-out not enabled yet",
-        "live_bulk_stage": "STAGE_2_REQUIRED",
+        "live_bulk_status": "Preview only — prepare the packages to fire them",
+        "live_bulk_stage": "PREPARE_REQUIRED",
         "credit": "NONE",
         "provider_calls": 0,
         "flow_calls": 0,

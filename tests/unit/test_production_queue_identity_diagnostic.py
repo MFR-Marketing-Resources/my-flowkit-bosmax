@@ -179,8 +179,13 @@ def test_diagnostic_change_did_not_touch_gen_tools():
     assert "generate_video_from_text" in _GEN_TOOLS, "already registered before this fix"
 
 
-def test_certification_flag_untouched():
-    assert pq.BULK_LIVE_EXECUTION_CERTIFIED is False
+def test_diagnostic_change_did_not_touch_the_credit_gate():
+    """Stage 3 is certified separately. A diagnostic fix must never widen the
+    gate standing in front of it."""
+    import inspect
+    src = inspect.getsource(pq._assert_bulk_fanout_live)
+    assert "LIVE_BULK_CONFIRM_PHRASE_INVALID" in src
+    assert "BULK_REQUIRES_ALL_ITEMS_DRY_RUN_READY" in src
 
 
 # ── B-11 · identity writes are MERGE-ONLY, at both ends of the lifecycle ─────
