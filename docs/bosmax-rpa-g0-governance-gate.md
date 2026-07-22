@@ -822,6 +822,48 @@ in scope of any decision recorded in this document.
 
 ---
 
+## 18. BULK LIVE UAT AUTHORIZATION — one pinned I2V batch (owner Faris, 2026-07-22)
+
+**This is the per-run written authorization required by §10 Round E and §11.3.** It records the
+owner's explicit 2026-07-22 authorization to spend real credits through the Studio's visible
+frontend Fire control. It does not authorize direct backend firing, a second click, retries after a
+provider submission, or any run other than the pinned batch below.
+
+```text
+BULK LIVE AUTHORIZATION — I2V STUDIO FRONTEND UAT
+Decision: AUTHORIZE            Date: 2026-07-22
+Owner: Faris                   Reviewer: Faris          Rollback owner: Faris
+
+AUTHORIZED — exactly this and nothing more:
+- ONE (1) bulk I2V Studio run, initiated by the visible RPA Production Studio frontend Fire control
+  against the canonical :8100 runtime rebuilt from pushed commit
+  f7410fc12ed57a7c18c01d9f1e5fbaea7838f1c3 (or its documentation-only successor).
+- The exact production_run is prun_e3fe47200cd64504. It contains exactly TWO queued packages:
+  wgp_335baab9de28ad0f and wgp_c53915f790dbaa99.
+- The live request MUST carry confirm_live_credit_burn=true, live_gate=BULK_FANOUT,
+  confirm_phrase=AUTHORIZE_BULK_FANOUT_LIVE_RUN, the exact two package IDs, and their durable
+  dialogue fingerprints. The server must re-derive both items as dry-run green before any provider
+  call.
+- This run WILL spend real credits. The owner accepts that cost.
+
+PRE-FIRE PROOF REQUIRED:
+- :8100 version proof reports git_head at the authorized commit lineage and
+  source_stale_since_start=false.
+- The UI dry-run report is checked=2, ready=2, blocked=0 for this same run.
+- Pre-run baseline records credit balance plus request, production-job, and artifact counts.
+
+STOP / NO RETRY:
+- Any provider submission, unexpected state drift, mismatched package set, stale runtime, or failed
+  pre-fire proof stops this authorization immediately.
+- No second Fire click or retry after a production_job_id is written. A retry is allowed only when
+  the system proves neither package reached a provider submission.
+
+I authorize ONLY the above. Anything not listed is NOT authorized.
+Signed: Faris (owner), 2026-07-22
+```
+
+---
+
 ## 18. G0 Authority Field Resolution (recorded 2026-07-21)
 
 **Recorded under owner mission `RPA-G0-RECOVER-AND-ALL-LANES-PRODUCTION-READINESS-20260721`,** whose
