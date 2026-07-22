@@ -500,6 +500,10 @@ export default function RpaProductionStudioPage() {
 				setBulkDryRun(res.report ?? null);
 				if (res.report?.blocked === 0 && res.report?.ready === prepared.prepared_package_count) {
 					setBulkManualHandoff(await fetchBulkManualFireHandoff(prepared.production_run_id));
+					// Bulk live submits serially in the background. Unlike a one-item
+					// diagnostic, a missing editor can strand the first item after the
+					// click, so prove the transport before exposing this credit door.
+					await refreshFlowTab();
 				}
 			}
 		} catch (e) {
@@ -629,6 +633,7 @@ export default function RpaProductionStudioPage() {
 			setBulkPrepared(prepared);
 			setBulkDryRun(dryRun);
 			setBulkManualHandoff(await fetchBulkManualFireHandoff(detail.production_run_id));
+			await refreshFlowTab();
 		} catch (e) {
 			setBulkPrepared(null);
 			setBulkDryRun(null);
@@ -1038,11 +1043,12 @@ export default function RpaProductionStudioPage() {
 		&& (bulkPrepared?.expect_dialogue_fingerprints.length ?? 0) === bulkPreparedCount
 		&& (bulkPrepared?.expect_dialogue_fingerprints ?? []).every((fp) => Boolean(fp));
 	const bulkPhraseOk = bulkLivePhrase === LIVE_BULK_CONFIRM_PHRASE;
+	const bulkFlowReady = Boolean(flowTab?.ready && flowTab.buildMatch);
 	// Latched only for the run it was armed for (B-01) — a new prepared run starts clean.
 	const bulkLiveAlreadySubmitted = Boolean(bulkPrepared?.production_run_id)
 		&& bulkLiveSubmittedRunId === bulkPrepared?.production_run_id;
 	const bulkLiveGateOpen = Boolean(bulkPrepared?.production_run_id) && bulkDryRunGreen
-		&& bulkPinsComplete && bulkPhraseOk && !bulkLiveAlreadySubmitted && busy === null;
+		&& bulkPinsComplete && bulkPhraseOk && bulkFlowReady && !bulkLiveAlreadySubmitted && busy === null;
 
 	// ── live gate conditions (identical semantics to Queue Control) ──
 	const dryRunGreen = stage !== "IDLE" && report?.checked === 1 && report?.ready === 1 && report?.blocked === 0;
@@ -1703,6 +1709,7 @@ export default function RpaProductionStudioPage() {
 						data-dryrun-green={String(bulkDryRunGreen)}
 						data-pins-complete={String(bulkPinsComplete)}
 						data-phrase-ok={String(bulkPhraseOk)}
+						data-flow-ready={String(bulkFlowReady)}
 					>
 						<strong>{bulkPlan.live_bulk_status} — {bulkPlan.live_bulk_stage}.</strong>{" "}
 						Planning itself spends no credit and does not authorize anything. To fire,
@@ -1755,6 +1762,7 @@ export default function RpaProductionStudioPage() {
 								<div className="mt-1.5 text-[10px] text-amber-300" data-testid="studio-bulk-live-blockers">
 									{!bulkDryRunGreen && <div>Needs a green dry run: ready={bulkPreparedCount} blocked=0.</div>}
 									{!bulkPinsComplete && <div>Needs complete pinned package ids + dialogue fingerprints.</div>}
+									{!bulkFlowReady && <div>Needs an open fresh Flow editor with a current content script. Use Open fresh Flow project, wait for warm-up, then Re-check.</div>}
 									{!bulkPhraseOk && <div>Type the exact phrase <code>{LIVE_BULK_CONFIRM_PHRASE}</code>.</div>}
 								</div>
 							)}

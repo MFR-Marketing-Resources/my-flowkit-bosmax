@@ -166,6 +166,7 @@ function primeHappyPath(report: unknown = GREEN, items: unknown[] = []) {
 	prepareBulkFanoutPackages.mockResolvedValue(BULK_PREPARED);
 	fetchBulkManualFireHandoff.mockResolvedValue(BULK_MANUAL_HANDOFF);
 	bindBulkManualFireResult.mockResolvedValue({ status: "MANUAL_RESULT_REPORTED" });
+	fetchFlowPageState.mockResolvedValue({ editor_capability_ready: true, build_match: true, flow_url: "https://labs.google/fx/tools/flow/project/p1" });
 	fetchProductCatalog.mockResolvedValue({ items: [PRODUCT, REF_PRODUCT] });
 	searchProducts.mockResolvedValue({ items: [PRODUCT] });
 	fetchVideoModels.mockResolvedValue({
@@ -1160,6 +1161,22 @@ describe("Production Studio — system-fired bulk live (app submits each item as
 		expect(fire).toHaveAttribute("data-item-count", "3");
 		expect(screen.getByTestId("studio-action-bulk-go-live")).toBeDisabled();
 		expect(screen.getByTestId("studio-bulk-live-blockers")).toHaveTextContent("AUTHORIZE_BULK_FANOUT_LIVE_RUN");
+	});
+
+	it("keeps bulk Fire closed when the Flow editor is not ready, even with green pins and phrase", async () => {
+		primeHappyPath({ checked: 3, ready: 3, blocked: 0, note: "bulk dry run", items: [] });
+		fetchFlowPageState.mockResolvedValue({ editor_capability_ready: false, build_match: false, flow_url: null });
+		previewQuantityCopyPlans.mockResolvedValue(UNIQUE_PREVIEW);
+		renderPage();
+		await pickProduct();
+		await setQuantity(3);
+		await click("studio-action-preview");
+		await click("studio-action-bulk-prepare");
+		await screen.findByTestId("studio-bulk-prepared");
+		await typeBulkPhrase("AUTHORIZE_BULK_FANOUT_LIVE_RUN");
+		await waitFor(() => expect(screen.getByTestId("studio-bulk-live-gate-state")).toHaveAttribute("data-flow-ready", "false"));
+		expect(screen.getByTestId("studio-action-bulk-go-live")).toBeDisabled();
+		expect(screen.getByTestId("studio-bulk-live-blockers")).toHaveTextContent("Needs an open fresh Flow editor");
 	});
 
 	it("recovers an untouched prepared batch after a Studio refresh, re-dry-runs it, then fires through the same frontend gate", async () => {
