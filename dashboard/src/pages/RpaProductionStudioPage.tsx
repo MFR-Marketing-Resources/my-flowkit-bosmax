@@ -45,6 +45,7 @@ import {
 	createProductionRun,
 	fetchVideoModels,
 	getProductionRun,
+	listProductionRuns,
 	LIVE_BULK_CONFIRM_PHRASE,
 	LIVE_CONFIRM_PHRASE,
 	LIVE_F2V_CONFIRM_PHRASE,
@@ -264,6 +265,10 @@ export default function RpaProductionStudioPage() {
 	// and runs the normal no-credit dry-run before it exposes the live gate.
 	const [bulkRecoveryRunId, setBulkRecoveryRunId] = useState("");
 	const [bulkRecoveryError, setBulkRecoveryError] = useState<string | null>(null);
+	// A duplicate preview can be caused by a previous, still-valid prepared batch
+	// holding the same copy pins. Surface that exact durable batch instead of
+	// making the operator guess and retype a prun_ id from another screen.
+	const [recoverableBulkRunId, setRecoverableBulkRunId] = useState<string | null>(null);
 	const [previewError, setPreviewError] = useState<string | null>(null);
 
 	// ── pipeline ──
@@ -390,7 +395,43 @@ export default function RpaProductionStudioPage() {
 		setBulkPrepared(null);
 		setBulkDryRun(null);
 		setBulkError(null);
+		setRecoverableBulkRunId(null);
 	}, []);
+
+	/** Find an untouched prepared batch only when the current duplicate preview is
+	 * blocked. This is read-only and requires an exact product/lane/config match;
+	 * the normal recovery path still re-validates every durable pin and dry-runs
+	 * before it can expose Fire. */
+	const findRecoverableBulkRun = async () => {
+		if (!selectedProduct || quantity <= 1) return;
+		const candidates = await listProductionRuns();
+		for (const run of candidates.runs) {
+			if (run.status !== "PENDING" || !run.dry_run || run.total_expected !== quantity) continue;
+			let listedConfig: unknown = run.config_json;
+			if (typeof listedConfig === "string") listedConfig = JSON.parse(listedConfig);
+			const listedSettings = listedConfig as { aspect?: string; model?: string | null };
+			// The list endpoint stores the selected settings inside config_json rather
+			// than flattening them onto the run, so inspect that durable source.
+			if (listedSettings.aspect !== aspect || listedSettings.model !== model) continue;
+			const detail = await getProductionRun(run.production_run_id);
+			let config: unknown = detail.config_json;
+			if (typeof config === "string") config = JSON.parse(config);
+			const manifest = (config as { bulk_fanout_manifest?: { items?: Array<{
+				logical_mode?: string; source_mode?: string | null; generation_mode?: string;
+			}> } }).bulk_fanout_manifest;
+			const manifestItems = manifest?.items ?? [];
+			const exactLane = manifestItems.length === quantity && manifestItems.every((item) =>
+				item.logical_mode === studioMode
+				&& item.source_mode === (activeProfile.sourceMode ?? null)
+				&& item.generation_mode === (isExtend ? "EXTEND" : "SINGLE"));
+			const untouchedProduct = detail.items.length === quantity && detail.items.every((item) =>
+				item.product_id === selectedProduct.id && item.production_status === "QUEUED" && !item.production_job_id);
+			if (exactLane && untouchedProduct) {
+				setRecoverableBulkRunId(run.production_run_id);
+				return;
+			}
+		}
+	};
 
 	/** Stage 1 quantity preview — credit-free plan of N unique-copy variants.
 	 *  NEVER fires, approves, enqueues, or spends credit; the single-serial live
@@ -430,6 +471,7 @@ export default function RpaProductionStudioPage() {
 		setBulkPrepared(null);
 		setBulkDryRun(null);
 		setBulkError(null);
+		setRecoverableBulkRunId(null);
 		try {
 			const readiness = await fetchCopyPoolReadiness(copyPoolInput);
 			setPoolReadiness(readiness);
@@ -442,6 +484,9 @@ export default function RpaProductionStudioPage() {
 			// credit-free, and still not a live authorization.
 			if (quantity > 1 && result.preview_ready) {
 				setBulkPlan(await fetchBulkFanoutPlan(copyPoolInput));
+			} else if (quantity > 1 && !result.preview_ready) {
+				// Do not make recovery discovery hold the preview UI hostage.
+				void findRecoverableBulkRun().catch(() => setRecoverableBulkRunId(null));
 			}
 		} catch (e) {
 			setPreviewError(e instanceof Error ? e.message : String(e));
@@ -525,8 +570,8 @@ export default function RpaProductionStudioPage() {
 	 * exactly the package ids and dialogue fingerprints that the Fire gate will send.
 	 * The following dry-run is the same credit-free endpoint used by normal prepare.
 	 */
-	const handleRecoverBulkRun = async () => {
-		const targetRunId = bulkRecoveryRunId.trim();
+	const handleRecoverBulkRun = async (requestedRunId?: string) => {
+		const targetRunId = (requestedRunId ?? bulkRecoveryRunId).trim();
 		if (!targetRunId || busy !== null) return;
 		setBusy("bulk-recover");
 		setBulkRecoveryError(null);
@@ -536,6 +581,7 @@ export default function RpaProductionStudioPage() {
 		setBulkLivePhrase("");
 		setBulkLiveSubmittedRunId(null);
 		setBulkManualHandoff(null);
+		setRecoverableBulkRunId(null);
 		try {
 			const detail = await getProductionRun(targetRunId);
 			let config: unknown = detail.config_json;
@@ -1486,6 +1532,20 @@ export default function RpaProductionStudioPage() {
 				{previewError && (
 					<div className="mb-2 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-[11px] text-red-200" data-testid="studio-quantity-preview-error">
 						Preview failed — nothing fired, no credit: {previewError}
+					</div>
+				)}
+				{recoverableBulkRunId && !bulkPrepared && (
+					<div className="mb-2 rounded-lg border border-sky-500/40 bg-sky-500/10 p-3 text-[11px] text-sky-100" data-testid="studio-recoverable-bulk-run">
+						<div><strong>A matching prepared batch is already queued and dry-run green.</strong> Its copy pins are valid, so do not create duplicate copy or re-plan this batch.</div>
+						<button
+							type="button"
+							data-testid="studio-action-resume-recoverable-bulk-run"
+							onClick={() => void handleRecoverBulkRun(recoverableBulkRunId)}
+							disabled={busy !== null}
+							className="mt-2 rounded border border-sky-400/60 bg-sky-500/20 px-2 py-1 text-[10px] font-semibold text-sky-50 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-500"
+						>
+							{busy === "bulk-recover" ? "Checking…" : "Resume matching prepared batch"}
+						</button>
 					</div>
 				)}
 				{previewResult ? (

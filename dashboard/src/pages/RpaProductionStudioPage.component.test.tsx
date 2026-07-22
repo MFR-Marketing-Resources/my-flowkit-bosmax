@@ -23,6 +23,7 @@ const createProductionRun = vi.fn();
 const startProductionRun = vi.fn();
 const cancelProductionRun = vi.fn();
 const getProductionRun = vi.fn();
+const listProductionRuns = vi.fn();
 const fetchVideoModels = vi.fn();
 
 vi.mock("../api/products", () => ({
@@ -51,6 +52,7 @@ vi.mock("../api/productionQueue", () => ({
 	createProductionRun: (...a: unknown[]) => createProductionRun(...a),
 	startProductionRun: (...a: unknown[]) => startProductionRun(...a),
 	getProductionRun: (...a: unknown[]) => getProductionRun(...a),
+	listProductionRuns: (...a: unknown[]) => listProductionRuns(...a),
 	cancelProductionRun: (...a: unknown[]) => cancelProductionRun(...a),
 	fetchVideoModels: (...a: unknown[]) => fetchVideoModels(...a),
 	LIVE_GATE_ONE_SERIAL_T2V: "ONE_SERIAL_T2V",
@@ -181,6 +183,7 @@ function primeHappyPath(report: unknown = GREEN, items: unknown[] = []) {
 		run: { production_run_id: "prun_1", dry_run: 1, status: "PENDING", config_json: JSON.stringify({ last_dry_run_report: report }) },
 		items,
 	});
+	listProductionRuns.mockResolvedValue({ runs: [], count: 0 });
 }
 
 function renderPage() {
@@ -1233,6 +1236,39 @@ describe("Production Studio — system-fired bulk live (app submits each item as
 			expect_package_ids: ["wgp_recover_0", "wgp_recover_1"],
 			expect_dialogue_fingerprints: ["recover-fp0", "recover-fp1"],
 		});
+	});
+
+	it("offers the exact queued batch from a duplicate preview instead of requiring a typed run id", async () => {
+		primeHappyPath({ checked: 2, ready: 2, blocked: 0, note: "bulk dry run", items: [] });
+		previewQuantityCopyPlans.mockResolvedValue({
+			...UNIQUE_PREVIEW,
+			quantity_requested: 2,
+			planned_item_count: 2,
+			preview_ready: false,
+			dialogue_uniqueness_status: "DUPLICATE_DIALOGUE_BLOCKED",
+			blockers: ["DUPLICATE_DIALOGUE_ACROSS_ITEMS:0,1"],
+		});
+		listProductionRuns.mockResolvedValue({
+			runs: [{ production_run_id: "prun_resume_1", status: "PENDING", dry_run: true, total_expected: 2, config_json: JSON.stringify({ aspect: "9:16", model: "Veo 3.1 - Lite" }) }], count: 1,
+		});
+		getProductionRun.mockResolvedValue({
+			production_run_id: "prun_resume_1", status: "PENDING", dry_run: true, total_expected: 2, aspect: "9:16", model: "Veo 3.1 - Lite",
+			config_json: JSON.stringify({ bulk_fanout_manifest: {
+				bulk_run_id: "bulk_resume_1", bulk_plan_fingerprint: "resumefp",
+				items: [0, 1].map((i) => ({ item_index: i, copy_variant_id: `cs${i}`, variation_salt: `v${i + 1}`,
+					dialogue_fingerprint: `resume-fp${i}`, logical_mode: "T2V", source_mode: "T2V", generation_mode: "SINGLE", workspace_generation_package_id: `wgp_resume_${i}` })),
+			} }),
+			items: [0, 1].map((i) => ({ package_id: `wgp_resume_${i}`, product_id: "prod-1", production_status: "QUEUED", production_job_id: null })),
+		});
+		renderPage();
+		await pickProduct();
+		await setQuantity(2);
+		await click("studio-action-preview");
+		const resume = await screen.findByTestId("studio-action-resume-recoverable-bulk-run");
+		expect(resume).toHaveTextContent("Resume matching prepared batch");
+		await click("studio-action-resume-recoverable-bulk-run");
+		await waitFor(() => expect(startProductionRun).toHaveBeenCalledWith("prun_resume_1", false));
+		expect(await screen.findByTestId("studio-bulk-live-fire")).toHaveAttribute("data-run", "prun_resume_1");
 	});
 
 	it("fires the BULK_FANOUT gate with the pinned per-item set — never one job with count:N", async () => {
