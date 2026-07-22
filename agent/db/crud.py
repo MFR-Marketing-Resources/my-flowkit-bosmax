@@ -783,6 +783,26 @@ async def create_content_combination(**kw) -> dict | None:
     return await _get_with_db(db, "content_combination", "combination_id", cid)
 
 
+async def reattribute_content_combination(
+    fingerprint: str, *, workspace_generation_package_id: str, batch_run_id: str | None = None
+) -> dict | None:
+    """Point an existing (reclaimable) ledger row at a NEW package.
+
+    The row is never deleted — it stays as the audit record of the combination —
+    it is simply re-attributed to the attempt that is actually going to produce
+    it. Keeps exactly one row per combination fingerprint, so the UNIQUE index
+    (the real duplicate defence) is untouched.
+    """
+    row = await get_content_combination_by_fingerprint(fingerprint)
+    if not row:
+        return None
+    return await _update(
+        "content_combination", "combination_id", row["combination_id"],
+        workspace_generation_package_id=workspace_generation_package_id,
+        batch_run_id=batch_run_id,
+    )
+
+
 async def get_content_combination_by_fingerprint(fingerprint: str) -> dict | None:
     db = await get_db()
     cur = await db.execute(

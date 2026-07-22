@@ -301,8 +301,57 @@ def plan_combination_fingerprint(
     )
 
 
+# A ledger burn is released ONLY from a package that is provably DEAD — it can
+# never fire again, so it can never produce the combination. A package that is
+# merely un-fired (APPROVED/QUEUED) stays blocking: it could still be fired, and
+# releasing it would let two prepared batches carry the same dialogue.
+_DEAD_PRODUCTION_STATES = {"CANCELLED", "FAILED"}
+_DEAD_PACKAGE_STATES = {"BLOCKED", "ARCHIVED"}
+
+
+async def _combination_is_spent(row: dict) -> bool:
+    """Does this ledger row still legitimately consume its dialogue?
+
+    The ledger exists to stop the same script x avatar x scene being *produced*
+    twice, but the row is burned at PREPARE time — before anything is approved,
+    enqueued or fired. A batch that was cancelled or blocked therefore consumed a
+    dialogue while producing nothing, permanently shrinking a finite approved-copy
+    pool (live: on product 6483d624, 14 of 17 HYBRID burns produced zero video and
+    the pool hit fresh=0, blocking every bulk plan).
+
+    Spent (keeps blocking) when ANY of:
+      * an artifact exists — it was really produced;
+      * a provider job id exists — it reached the provider, credit may be spent;
+      * the package is still alive (not dead) — it can still fire;
+      * anything cannot be proven — stay conservative.
+    Released only for a DEAD package that produced nothing.
+    """
+    wgp_id = row.get("workspace_generation_package_id")
+    if not wgp_id:
+        return True  # unattributed burn — cannot prove anything
+    pkg = await crud.get_workspace_generation_package(wgp_id)
+    if not pkg:
+        return True  # package gone — stay conservative
+    if pkg.get("production_job_id"):
+        return True  # reached the provider; credit may have been spent
+    raw = pkg.get("artifact_media_ids_json")
+    if raw:
+        try:
+            if json.loads(raw):
+                return True  # a real artifact exists
+        except (TypeError, ValueError):
+            return True  # unreadable — stay conservative
+    prod_state = str(pkg.get("production_status") or "").upper()
+    pkg_state = str(pkg.get("status") or "").upper()
+    is_dead = prod_state in _DEAD_PRODUCTION_STATES or pkg_state in _DEAD_PACKAGE_STATES
+    return not is_dead  # alive => still spent; dead + nothing produced => released
+
+
 async def combination_already_used(fingerprint: str) -> bool:
-    return await crud.get_content_combination_by_fingerprint(fingerprint) is not None
+    row = await crud.get_content_combination_by_fingerprint(fingerprint)
+    if row is None:
+        return False
+    return await _combination_is_spent(row)
 
 
 async def record_combination(
@@ -316,14 +365,42 @@ async def record_combination(
     batch_run_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Record one PRODUCED combination. Returns None when the fingerprint is
-    already in the ledger (duplicate combination — caller must not ship it)."""
-    return await crud.create_content_combination(
+    already in the ledger AND that row really was produced (duplicate
+    combination — caller must not ship it).
+
+    If the existing row is RECLAIMABLE (its package never reached the provider
+    and produced no artifact — a cancelled or never-fired prepare), the row is
+    re-attributed to this attempt instead of refusing. Nothing is deleted: the
+    ledger keeps exactly one row per combination fingerprint, so the UNIQUE
+    index remains the duplicate defence, and a dialogue is only spent by work
+    that actually produced something.
+    """
+    created = await crud.create_content_combination(
         product_id=product_id,
         logical_mode=str(logical_mode or "").upper(),
         copy_set_id=plan.get("copy_set_id"),
         script_key=script_key_for_plan(plan, dialogue_fingerprint=dialogue_fingerprint),
         visual_key_json=json.dumps(visual_key_for_plan(plan), sort_keys=True),
         combination_fingerprint=fingerprint,
+        workspace_generation_package_id=workspace_generation_package_id,
+        batch_run_id=batch_run_id,
+    )
+    if created is not None:
+        return created
+    existing = await crud.get_content_combination_by_fingerprint(fingerprint)
+    if existing is None:
+        return None
+    if await _combination_is_spent(existing):
+        return None  # genuinely produced before — refuse, exactly as before
+    if not workspace_generation_package_id:
+        return None  # nothing to re-attribute it to
+    logger.info(
+        "LEDGER_RECLAIM fingerprint=%s from wgp=%s -> wgp=%s (previous attempt "
+        "produced nothing)", fingerprint[:12],
+        existing.get("workspace_generation_package_id"), workspace_generation_package_id,
+    )
+    return await crud.reattribute_content_combination(
+        fingerprint,
         workspace_generation_package_id=workspace_generation_package_id,
         batch_run_id=batch_run_id,
     )

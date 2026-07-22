@@ -251,3 +251,83 @@ async def test_backfill_threshold_is_honored(backfill_pool):
     assert strict["flagged"] == 0
     # Status untouched in every mode — annotation only.
     assert all("status" not in u for u in backfill_pool["updates"])
+
+
+# ── B-17 · a burn only spends a dialogue if something was actually PRODUCED ──
+# The ledger is burned at PREPARE time, before approve/enqueue/fire. A batch that
+# was cancelled or blocked therefore consumed a dialogue while producing nothing,
+# permanently shrinking a finite approved-copy pool. Live proof (product
+# 6483d624, HYBRID): 14 of 17 burns produced zero video, the pool hit fresh=0 and
+# every bulk plan was refused DIALOGUE_POOL_EXHAUSTED with copy_variant_id=null.
+#
+# Released ONLY for a package that is provably DEAD and produced nothing. A
+# merely un-fired package (APPROVED/QUEUED) keeps blocking — it can still fire,
+# and releasing it would let two prepared batches carry the same dialogue.
+
+def _ledger_row(wgp="wgp_1"):
+    return {"combination_id": "cmb_1", "combination_fingerprint": "fp_1",
+            "workspace_generation_package_id": wgp}
+
+
+def _pkg(**over):
+    base = {"workspace_generation_package_id": "wgp_1", "production_status": "QUEUED",
+            "status": "READY_MANUAL", "production_job_id": None,
+            "artifact_media_ids_json": "[]"}
+    base.update(over)
+    return base
+
+
+def _wire(monkeypatch, row, pkg):
+    async def _get_combo(fp):
+        return dict(row) if row else None
+
+    async def _get_pkg(wgp_id):
+        return dict(pkg) if pkg else None
+
+    monkeypatch.setattr(rot.crud, "get_content_combination_by_fingerprint", _get_combo)
+    monkeypatch.setattr(rot.crud, "get_workspace_generation_package", _get_pkg)
+
+
+@pytest.mark.asyncio
+async def test_no_ledger_row_is_never_used(monkeypatch):
+    _wire(monkeypatch, None, None)
+    assert await rot.combination_already_used("fp_1") is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pkg,why", [
+    (_pkg(production_status="DOWNLOADED", production_job_id="g_1",
+          artifact_media_ids_json='["m1"]'), "produced a real artifact"),
+    (_pkg(production_status="FAILED", production_job_id="g_2"), "reached the provider"),
+    (_pkg(production_status="QUEUED"), "still alive — can still fire"),
+    (_pkg(production_status="APPROVED"), "still alive — can still fire"),
+    (_pkg(production_status="RUNNING"), "in flight"),
+])
+async def test_spent_burns_keep_blocking(monkeypatch, pkg, why):
+    _wire(monkeypatch, _ledger_row(), pkg)
+    assert await rot.combination_already_used("fp_1") is True, why
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pkg", [
+    _pkg(production_status="CANCELLED"),
+    _pkg(production_status="FAILED"),          # dead, and never reached provider
+    _pkg(production_status="QUEUED", status="BLOCKED"),
+])
+async def test_dead_burns_that_produced_nothing_are_released(monkeypatch, pkg):
+    _wire(monkeypatch, _ledger_row(), pkg)
+    assert await rot.combination_already_used("fp_1") is False
+
+
+@pytest.mark.asyncio
+async def test_unprovable_burns_stay_conservative(monkeypatch):
+    # no package attribution at all
+    _wire(monkeypatch, _ledger_row(wgp=None), None)
+    assert await rot.combination_already_used("fp_1") is True
+    # attributed, but the package row is gone
+    _wire(monkeypatch, _ledger_row(), None)
+    assert await rot.combination_already_used("fp_1") is True
+    # unreadable artifact json
+    _wire(monkeypatch, _ledger_row(), _pkg(production_status="CANCELLED",
+                                           artifact_media_ids_json="{not json"))
+    assert await rot.combination_already_used("fp_1") is True
