@@ -19,6 +19,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import random
 import re
 import uuid
@@ -101,6 +102,31 @@ LIVE_BULK_CONFIRM_PHRASE = "AUTHORIZE_BULK_FANOUT_LIVE_RUN"
 # provider. Flipping this without that runtime proof is a credit-safety
 # regression, not a feature flag.
 BULK_LIVE_EXECUTION_CERTIFIED = False
+
+_TRUTHY = ("1", "true", "yes", "on")
+
+
+def bulk_live_execution_certified() -> bool:
+    """Is bulk live fan-out certified for THIS runtime?
+
+    Certification used to be a source edit: flip the constant to True, restart,
+    fire, then remember to revert. That procedure is fragile — a forgotten revert
+    silently leaves the credit boundary open in every future run, and it cannot be
+    granted per-machine. The owner now grants it at runtime instead:
+
+        BULK_LIVE_EXECUTION_CERTIFIED=1   (.env, then restart the agent)
+
+    The compiled-in default stays False, so a checkout is never certified by
+    accident and the contract tests that assert the constant keep passing. The
+    constant is still honoured first, which keeps monkeypatch-based tests working.
+
+    Granting this does NOT spend a credit by itself. The operator still has to
+    type the exact BULK_FANOUT confirm phrase and press Fire; this only stops the
+    server refusing that request outright.
+    """
+    if BULK_LIVE_EXECUTION_CERTIFIED:
+        return True
+    return os.environ.get("BULK_LIVE_EXECUTION_CERTIFIED", "0").strip().lower() in _TRUTHY
 
 _INFLIGHT_MAX_RETRIES = 20
 
@@ -1108,7 +1134,7 @@ async def _assert_bulk_fanout_live(
     # never been certified against the provider, so Stage 2A refuses to spend
     # credit even with a perfect gate. This is the LAST check on purpose — the
     # operator gets the full validation verdict, not an early bail.
-    if not BULK_LIVE_EXECUTION_CERTIFIED:
+    if not bulk_live_execution_certified():
         raise ValueError(
             f"BULK_LIVE_EXECUTION_NOT_CERTIFIED:validated_items={len(validated)}:"
             "stage3_runtime_certification_required"
