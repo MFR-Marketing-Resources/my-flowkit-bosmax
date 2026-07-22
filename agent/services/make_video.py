@@ -542,6 +542,35 @@ def _zero_completed_candidates(stats) -> bool:
         "prompt_mismatched", "model_mismatched", "seed_mismatched", "unverifiable"))
 
 
+# C-4: ONE structured credit vocabulary, shared verbatim with
+# video_production_orchestrator (NOT_SPENT / MAY_HAVE_SPENT / SPENT / UNKNOWN) so
+# the two lanes can never disagree about what a word means. Mirrored rather than
+# imported to keep make_video free of orchestrator imports.
+CREDIT_NOT_SPENT, CREDIT_MAY_HAVE_SPENT, CREDIT_SPENT, CREDIT_UNKNOWN = (
+    "NOT_SPENT", "MAY_HAVE_SPENT", "SPENT", "UNKNOWN")
+
+
+def _stamp_credit(job: dict, state: str) -> None:
+    """Record the credit verdict on a TERMINAL job, truthfully.
+
+    C-4: `credit_spent_likely` used to be written in exactly ONE place — the
+    GENERATED_BUT_UNRETRIEVED recovery path — so every other terminal state
+    (including a DONE job that delivered a real paid video) reported the field
+    as False. Read as a ledger that produced a flat lie: live job
+    g_edf503991e7c bound an 8s 720x1280 mp4 and still reported
+    credit_spent_likely=False.
+
+    Every terminal outcome now carries an explicit `credit_state`, and
+    `credit_spent_likely` is DERIVED from it so existing readers (the queue's
+    binding outcome, OperatorPage) stay correct instead of silently wrong.
+    `SPENT` is still reserved for authoritative debit evidence (a real balance
+    decrease), exactly as the orchestrator defines it — a delivered artifact
+    proves the provider did the work, not what the account was charged.
+    """
+    job["credit_state"] = state
+    job["credit_spent_likely"] = state in (CREDIT_SPENT, CREDIT_MAY_HAVE_SPENT)
+
+
 def _apply_post_approval_failure(job: dict, msg: str) -> None:
     """Terminal classification of a post-approval, retrieval-phase failure.
 
@@ -562,27 +591,30 @@ def _apply_post_approval_failure(job: dict, msg: str) -> None:
         job.update(status="STALE_OR_FOREIGN_CANDIDATES_ONLY",
                    stage="stale_or_foreign_candidates_only",
                    artifact=None, media_id=None, local_path=None,
-                   credit_state="UNCERTAIN", recovery_required=True,
+                   recovery_required=True,
                    recovery_hint=("verify the Flow project media list — only stale or "
                                   "foreign completed candidates were observed; do not "
                                   "assume this run produced a video"),
                    original_error=msg, error=msg)
+        _stamp_credit(job, CREDIT_UNKNOWN)
         return
     if ("video not found/retrieved in time" in (msg or "")
             and _zero_completed_candidates(job.get("correlation_stats"))):
         job.update(status="RENDER_NOT_MATERIALIZED", stage="render_not_materialized",
                    artifact=None, media_id=None, local_path=None,
-                   credit_state="UNCERTAIN", recovery_required=True,
+                   recovery_required=True,
                    recovery_hint=("verify the Flow project media list — no completed "
                                   "candidate for this run ever appeared; do not assume "
                                   "a video exists"),
                    original_error=msg, error=msg)
+        _stamp_credit(job, CREDIT_UNKNOWN)
         return
     job.update(status="GENERATED_BUT_UNRETRIEVED", stage="generated_but_unretrieved",
                artifact=None, media_id=None, local_path=None,
-               credit_spent_likely=True, recovery_required=True,
+               recovery_required=True,
                recovery_hint="open Flow project and harvest/download existing video",
                original_error=msg, error=msg)
+    _stamp_credit(job, CREDIT_MAY_HAVE_SPENT)
 
 
 # The anchors _accept_correlated_output can actually bind an output with. Any ONE
@@ -676,6 +708,7 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             path.write_bytes(data)
             job.update(status="DONE", stage="done", media_id=mid, local_path=str(path),
                        size_mb=round(len(data) / 1024 / 1024, 2), artifact="image", url=url)
+            _stamp_credit(job, CREDIT_MAY_HAVE_SPENT)
             await _record_artifacts(job, mode, [{
                 "media_id": mid, "local_path": str(path),
                 "size_mb": job["size_mb"]}])
@@ -892,6 +925,7 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
                 job.update(status="DONE", stage="done", media_id=first["media_id"],
                            local_path=first["local_path"], size_mb=first["size_mb"],
                            artifact="video", artifacts=list(collected))
+                _stamp_credit(job, CREDIT_MAY_HAVE_SPENT)
                 await _record_artifacts(job, mode, collected)
                 return
             # FAST FAILURE (Owner Phase-1): completed candidates rejected for
@@ -951,6 +985,7 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
                        artifact="video", artifacts=list(collected),
                        partial=True,
                        partial_detail=f"retrieved {len(collected)}/{num_videos} requested videos")
+            _stamp_credit(job, CREDIT_MAY_HAVE_SPENT)
             await _record_artifacts(job, mode, collected)
             return
         # Finished video(s) exist but expose no generation prompt to bind them to
@@ -990,6 +1025,16 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             _apply_post_approval_failure(job, msg)
         else:
             job.update(status="FAILED", error=msg, stage="failed")
+            # C-4: a failure BEFORE approval never reached generation (the lane
+            # refuses locally, or Google's anti-abuse layer rejects pre-approval —
+            # e.g. RATE_LIMITED). After approval the provider may already have
+            # charged, so it must never be reported as free.
+            _stamp_credit(
+                job,
+                CREDIT_MAY_HAVE_SPENT
+                if (job.get("approved") is True and generating)
+                else CREDIT_NOT_SPENT,
+            )
     finally:
         # Release the single-flight video lane (patch H).
         if _VIDEO_LANE_JOB == job_id:
