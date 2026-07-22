@@ -7,9 +7,17 @@
 
 // Runtime proof: this unpacked folder must loudly prove whether the
 // lightweight F2V SOP runner is present at service-worker startup.
+// This folder carries NO build-time git stamp. A hand-typed branch/commit pair
+// used to sit here and had gone stale — it named a branch that was not main and
+// a commit that was not canonical, yet it was surfaced to the backend as
+// `bosmax_build_proof`, so a reader saw provenance where there was none. Until a
+// build step stamps the real SHA, this must say so out loud. The key and payload
+// shape are unchanged; only the honesty of the value is.
 const BOSMAX_BUILD_PROOF = Object.freeze({
-	branch: "fix/mv3-message-port-lifecycle",
-	commit: "47ce04229877bb7e579fb195f42c257c9dcc0f66",
+	stamped: false,
+	branch: null,
+	commit: null,
+	note: "UNSTAMPED_UNPACKED_FOLDER — no build-time git identity; BUILD_ID is the only declared build",
 });
 
 try {
@@ -33,7 +41,7 @@ const _bosmaxRunnerImported = Boolean(
 	typeof self !== "undefined" && self.__BOSMAX_F2V_FLOW_QUEUE_RUNNER__,
 );
 console.log(
-	`[BOSMAX_BUILD_PROOF] branch=${BOSMAX_BUILD_PROOF.branch} commit=${BOSMAX_BUILD_PROOF.commit} runner=${_bosmaxRunnerImported}`,
+	`[BOSMAX_BUILD_PROOF] stamped=${BOSMAX_BUILD_PROOF.stamped} runner=${_bosmaxRunnerImported}`,
 );
 if (_bosmaxRunnerImported) {
 	console.log(
