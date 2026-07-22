@@ -2089,6 +2089,30 @@ async def prepare_bulk_fanout_packages(
     existing = await _crud.list_workspace_generation_packages(
         batch_run_id=bulk_run_id, limit=200
     )
+    # B-18: a DEAD package can never fire again — its run is closed and its ledger
+    # burn has already been released (B-17). Handing it back as a "reused batch"
+    # gave the operator a batch whose dry run can never start
+    # (409 RUN_NOT_STARTABLE:CANCELLED), so the Studio's live gate could never turn
+    # green and the Fire button stayed disabled forever. Live proof: batch
+    # bulk_e24cb9e238f31b73 / run prun_420051fec73a49ca, both packages CANCELLED —
+    # the UI reported "2 packages prepared and queued" and then refused its own dry
+    # run. Ignore dead packages so a FRESH batch is prepared instead.
+    # NOTE the deliberate asymmetry: BLOCKED is NOT ignored here. A BLOCKED package
+    # means the system refused to BUILD it — a real data problem the operator must
+    # see — so the reuse branch below still fails closed on it (B-07). Only work
+    # that was deliberately retired (CANCELLED / FAILED / ARCHIVED) is skipped.
+    _dead_pkg = {"CANCELLED", "FAILED"}
+    _dead_status = {"ARCHIVED"}
+    live_existing = [
+        r for r in existing
+        if str(r.get("production_status") or "").upper() not in _dead_pkg
+        and str(r.get("status") or "").upper() not in _dead_status
+    ]
+    if live_existing and len(live_existing) != len(existing):
+        # A partially-dead batch cannot be reused either: the surviving packages no
+        # longer cover every planned item, so pairing would silently drop dialogue.
+        live_existing = []
+    existing = live_existing
     if existing:
         # B-02: the listing comes back ordered created_at DESC, so zipping it
         # against the plan's intents mis-attributed each dialogue to the wrong
@@ -2136,6 +2160,17 @@ async def prepare_bulk_fanout_packages(
             raise ValueError(
                 f"BULK_REUSE_BATCH_NOT_ENQUEUED:{bulk_run_id}"
                 ":previous_attempt_never_reached_a_production_run"
+            )
+        # B-18 (second door): the packages can still look alive while their RUN is
+        # closed. A closed run cannot be dry-run (409 RUN_NOT_STARTABLE) and cannot
+        # be fired, so reusing it strands the operator with a batch that can never
+        # go green. Refuse and name the run, so the caller can prepare a fresh one.
+        prior_run_row = await _crud.get_production_run(prior_run)
+        prior_state = str((prior_run_row or {}).get("status") or "").upper()
+        if prior_state in ("CANCELLED", "FAILED"):
+            raise ValueError(
+                f"BULK_REUSE_RUN_NOT_STARTABLE:{prior_run}:{prior_state}"
+                ":previous_run_is_closed_prepare_a_fresh_batch"
             )
 
         return _bulk_manifest(

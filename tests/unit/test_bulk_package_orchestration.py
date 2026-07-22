@@ -81,6 +81,9 @@ class _Harness:
         self.resolver_calls: list = []
         # C-3: front-door HYBRID 9:16 anchor auto-resolution.
         self.anchor_calls: list = []
+        # B-18: status of the prior batch's production run (reuse must refuse a
+        # closed run — it can neither be dry-run nor fired).
+        self.prior_run_status: str = "PENDING"
 
 
 def _install(monkeypatch, rows, dialogues, h: _Harness, i2v_blockers=None,
@@ -136,7 +139,11 @@ def _install(monkeypatch, rows, dialogues, h: _Harness, i2v_blockers=None,
     monkeypatch.setattr(svc.crud, "list_workspace_generation_packages", _list_wgp)
     monkeypatch.setattr(svc.crud, "get_workspace_generation_package", _get_wgp)
     monkeypatch.setattr(svc.crud, "update_workspace_generation_package", _update_wgp)
+    async def _get_run(run_id):
+        return {"production_run_id": run_id, "status": h.prior_run_status}
+
     monkeypatch.setattr(svc.crud, "update_production_run", _update_run)
+    monkeypatch.setattr(svc.crud, "get_production_run", _get_run)
 
     async def _approve(ids):
         h.approved.append(list(ids))
@@ -966,3 +973,67 @@ def test_non_hybrid_lanes_never_touch_the_anchor_resolver(monkeypatch):
     _, h2 = _prepare(monkeypatch, THREE, UNIQUE3, logical_mode="F2V", source_mode="FRAMES",
                      start_frame_asset_id="ca_frame")
     assert h2.anchor_calls == [], "F2V auto-seeds its own frame — must not use the HYBRID anchor"
+
+
+# ── B-18 · a retired batch must never be handed back as "prepared" ────────────
+# Live UI bug: after abandoned runs were cancelled to release their ledger burns
+# (B-17), bulk prepare still reused those dead packages. The Studio showed
+# "2 packages prepared and queued in run prun_420051fec73a49ca (existing batch
+# reused)", then its own dry run failed 409 RUN_NOT_STARTABLE:CANCELLED — so
+# bulkDryRun stayed null, the live gate never turned green, and the operator could
+# never press Fire. Retired work must be skipped so a FRESH batch is prepared.
+
+
+def test_cancelled_prior_batch_is_ignored_and_a_fresh_one_is_prepared(monkeypatch):
+    h = _Harness()
+    plan, _ = _prepare(monkeypatch, THREE, UNIQUE3)
+    fps = [i["dialogue_fingerprint"] for i in plan["items"]]
+    dead = [_prev(i, fps[i]) for i in range(3)]
+    for row in dead:
+        row["production_status"] = "CANCELLED"
+    h.existing_batch = dead
+
+    out, h2 = _prepare(monkeypatch, THREE, UNIQUE3, h)
+    assert out["reused_existing_batch"] is False, "handed back a cancelled batch"
+    assert out["prepared_package_count"] == 3
+    assert out["production_run_id"], "a fresh batch must reach a real run"
+
+
+def test_archived_prior_batch_is_ignored_too(monkeypatch):
+    h = _Harness()
+    plan, _ = _prepare(monkeypatch, THREE, UNIQUE3)
+    fps = [i["dialogue_fingerprint"] for i in plan["items"]]
+    dead = [_prev(i, fps[i]) for i in range(3)]
+    for row in dead:
+        row["status"] = "ARCHIVED"
+    h.existing_batch = dead
+
+    out, _ = _prepare(monkeypatch, THREE, UNIQUE3, h)
+    assert out["reused_existing_batch"] is False
+
+
+def test_partially_dead_batch_is_never_half_reused(monkeypatch):
+    """Surviving packages no longer cover every planned item — pairing them would
+    silently drop a dialogue, so the whole batch is rebuilt."""
+    h = _Harness()
+    plan, _ = _prepare(monkeypatch, THREE, UNIQUE3)
+    fps = [i["dialogue_fingerprint"] for i in plan["items"]]
+    rows = [_prev(i, fps[i]) for i in range(3)]
+    rows[1]["production_status"] = "CANCELLED"
+    h.existing_batch = rows
+
+    out, _ = _prepare(monkeypatch, THREE, UNIQUE3, h)
+    assert out["reused_existing_batch"] is False
+
+
+def test_reuse_refuses_when_the_prior_RUN_is_closed(monkeypatch):
+    """Second door: packages can look alive while their run is closed. A closed run
+    cannot be dry-run or fired, so it must be named, not silently returned."""
+    h = _Harness()
+    plan, _ = _prepare(monkeypatch, THREE, UNIQUE3)
+    fps = [i["dialogue_fingerprint"] for i in plan["items"]]
+    h.existing_batch = [_prev(i, fps[i]) for i in range(3)]
+    h.prior_run_status = "CANCELLED"
+
+    with pytest.raises(ValueError, match="BULK_REUSE_RUN_NOT_STARTABLE"):
+        _prepare(monkeypatch, THREE, UNIQUE3, h)
