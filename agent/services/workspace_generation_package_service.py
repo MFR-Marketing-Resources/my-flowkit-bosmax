@@ -1961,6 +1961,162 @@ async def plan_bulk_fanout_intents(
 BULK_PREPARE_SUPPORTED_MODES = ("T2V", "F2V", "HYBRID", "I2V")
 
 
+def _is_extend_item(generation_mode: str | None) -> bool:
+    """True when this bulk request is a MULTI-BLOCK Extend fan-out."""
+    return str(generation_mode or "SINGLE").strip().upper() == "EXTEND"
+
+
+def _bulk_extend_block_plan(blocks: Any) -> tuple[int, int]:
+    """(block_count, total_seconds) of ONE compiled block plan."""
+    if isinstance(blocks, str):
+        try:
+            blocks = json.loads(blocks)
+        except (TypeError, ValueError):
+            blocks = []
+    items = [b for b in (blocks or []) if isinstance(b, dict)]
+    return len(items), sum(int(b.get("duration_seconds") or 0) for b in items)
+
+
+async def _create_bulk_extend_execution_package(
+    *,
+    item_index: int,
+    product_id: str,
+    logical_mode: str,
+    source_mode: str | None,
+    generation_mode: str,
+    duration_seconds: int,
+    requested_total_duration_seconds: int | None,
+    target_language: str,
+    model: str,
+    aspect: str,
+    copy_set_id: str,
+    start_frame_asset_id: str | None,
+    product_reference_asset_id: str | None,
+    character_reference_asset_id: str | None,
+    scene_context_reference_asset_id: str | None,
+) -> dict:
+    """Create the workspace EXECUTION package ONE bulk EXTEND item needs.
+
+    The durable /video-jobs planner resolves ALL production authority — product,
+    assets, per-block prompts — from an execution package, so a bulk EXTEND
+    package created without one could never be planned
+    (EXTEND_EXECUTION_PACKAGE_MISSING: 55 NULL linkages in the live DB). This
+    closes that gap the SERVER-side way: the same
+    ``create_workspace_execution_package`` door the operator surface uses, given
+    the SAME authority the generation package is about to be compiled from —
+    same product, same lane/source mode, same durations, same target language,
+    and above all the SAME approved ``copy_set_id`` this item's dialogue was
+    planned on. The explicit-authority recovery path
+    (``trust_client_authority=True``) is deliberately NOT used: bulk resolves
+    exactly like everything else.
+
+    EXTEND ONLY. Non-extend bulk never calls this and keeps its exact prior path.
+
+    Idempotent by construction: the execution package id is a content hash of
+    (product, mode, prompt fingerprint, duration, aspect, model, settings, asset
+    fingerprints) and the write is an upsert, so re-preparing the same item
+    replaces its OWN row instead of orphaning or duplicating one. A reused batch
+    returns before this is ever reached.
+
+    FAILS CLOSED with an exact, named blocker — never a fallback, never a fire
+    without a package.
+    """
+    from agent.services import workspace_execution_package_service as _wxp
+
+    # Mirror the generation-package creator call for this lane, argument for
+    # argument, so the execution package carries the SAME authority the operator
+    # reviewed — a divergent input here would be a silent re-plan.
+    kwargs: dict[str, Any] = {
+        "product_id": product_id,
+        "mode": logical_mode,
+        # I2V's creator compiles at a fixed 8s block; T2V/F2V/HYBRID carry the
+        # operator's per-block duration (see creator_kwargs below).
+        "duration_seconds": duration_seconds if logical_mode in ("T2V", "F2V", "HYBRID") else 8,
+        "aspect_ratio": aspect,
+        "model": model,
+        "manual_override": False,
+        "generation_mode": generation_mode,
+        "target_language": target_language,
+        "requested_total_duration_seconds": requested_total_duration_seconds,
+        "copy_set_id": copy_set_id,
+    }
+    if logical_mode in ("F2V", "HYBRID"):
+        kwargs["source_mode"] = source_mode or (
+            "HYBRID" if logical_mode == "HYBRID" else "FRAMES"
+        )
+        # HYBRID's padded 9:16 anchor is a PRODUCT_REFERENCE; FRAMES carries the
+        # operator's start frame — exactly the split the creator loop applies.
+        if logical_mode == "HYBRID":
+            kwargs["product_reference_asset_id"] = product_reference_asset_id
+        else:
+            kwargs["start_frame_asset_id"] = start_frame_asset_id
+    elif logical_mode == "I2V":
+        kwargs["character_reference_asset_id"] = character_reference_asset_id
+        kwargs["scene_context_reference_asset_id"] = scene_context_reference_asset_id
+    else:  # T2V
+        kwargs["source_mode"] = source_mode or "T2V"
+
+    try:
+        wep = await _wxp.create_workspace_execution_package(**kwargs)
+    except Exception as exc:  # noqa: BLE001 — reported verbatim, never swallowed
+        raise ValueError(
+            f"BULK_EXTEND_EXECUTION_PACKAGE_FAILED:item#{item_index}"
+            f":{type(exc).__name__}"
+            f":{str(getattr(exc, 'detail', None) or exc)[:120]}"
+        ) from exc
+
+    wep = wep or {}
+    wep_id = str(wep.get("workspace_execution_package_id") or "").strip()
+    if not wep_id:
+        raise ValueError(
+            f"BULK_EXTEND_EXECUTION_PACKAGE_FAILED:item#{item_index}"
+            ":execution_package_created_without_an_id"
+        )
+    # A BLOCKED execution package can never mint a production plan (the resolver
+    # reports execution_package_execution_allowed as missing authority). Refuse
+    # HERE, before this item burns its content_combination row — the same
+    # pool-protection reasoning as the B-16 front-door reference gate.
+    if not wep.get("execution_allowed"):
+        detail = ",".join(str(b) for b in (wep.get("blockers") or [])) or "UNKNOWN"
+        raise ValueError(
+            f"BULK_EXTEND_EXECUTION_PACKAGE_BLOCKED:item#{item_index}:{wep_id}:{detail}"
+        )
+    # The bound dialogue is the whole point of a bulk item. If the execution
+    # package did not bind the SAME approved Copy Set the plan was built on, the
+    # durable job would run different words than the operator reviewed.
+    bound = str((wep.get("copy_binding") or {}).get("copy_set_id") or "")
+    if bound != str(copy_set_id):
+        raise ValueError(
+            f"BULK_EXTEND_WEP_COPY_BINDING_DRIFT:item#{item_index}"
+            f":planned={copy_set_id},execution_package={bound or 'NONE'}"
+        )
+    return wep
+
+
+def _assert_bulk_extend_authority_matches(
+    item_index: int, wep: dict, package: dict, created_count: int
+) -> None:
+    """Refuse an item whose execution package disagrees with its own package.
+
+    The queue derives the durable job's total duration from the generation
+    package's compiled ``prompt_blocks_json``; the planner derives its segment
+    plan from the execution package. If those two block plans disagree, the video
+    that fires is not the video that was reviewed — so fail closed instead of
+    firing a different plan. A single-block plan is refused for the same reason
+    ``extend_execution_preconditions`` refuses it later (EXTEND_BLOCK_PLAN_INVALID):
+    one block is not an Extend.
+    """
+    wep_blocks, wep_seconds = _bulk_extend_block_plan(wep.get("prompt_blocks"))
+    pkg_blocks, pkg_seconds = _bulk_extend_block_plan(package.get("prompt_blocks_json"))
+    if (wep_blocks, wep_seconds) != (pkg_blocks, pkg_seconds) or pkg_blocks < 2:
+        raise ValueError(
+            f"BULK_EXTEND_WEP_BLOCK_PLAN_DRIFT:item#{item_index}"
+            f":execution_package={wep_blocks}blocks/{wep_seconds}s"
+            f",package={pkg_blocks}blocks/{pkg_seconds}s"
+            f":created_before_failure={created_count}"
+        )
+
+
 async def prepare_bulk_fanout_packages(
     *,
     product_id: str,
@@ -2265,12 +2421,49 @@ async def prepare_bulk_fanout_packages(
         creator_kwargs["duration_seconds"] = duration_seconds
 
     created: list[str] = []
+    is_extend = _is_extend_item(generation_mode)
     for intent in intents:
         idx = intent["item_index"]
+        # EXTEND ONLY: give this item the workspace EXECUTION package the durable
+        # /video-jobs planner resolves its authority from, and persist the id on
+        # the generation package at INSERT time (existing column, no migration).
+        # Built BEFORE the generation package so a refusal costs this item no
+        # content_combination burn. Non-extend items skip this entirely and keep
+        # their exact prior path.
+        item_kwargs: dict[str, Any] = {}
+        item_wep: dict | None = None
+        if is_extend:
+            try:
+                item_wep = await _create_bulk_extend_execution_package(
+                    item_index=idx,
+                    product_id=product_id,
+                    logical_mode=mode,
+                    source_mode=resolved_source_mode,
+                    generation_mode=generation_mode,
+                    duration_seconds=duration_seconds,
+                    requested_total_duration_seconds=requested_total_duration_seconds,
+                    target_language=target_language,
+                    model=model,
+                    aspect=aspect,
+                    copy_set_id=intent["copy_variant_id"],
+                    start_frame_asset_id=start_frame_asset_id,
+                    product_reference_asset_id=product_reference_asset_id,
+                    character_reference_asset_id=character_reference_asset_id,
+                    scene_context_reference_asset_id=scene_context_reference_asset_id,
+                )
+            except ValueError as exc:
+                # All-or-nothing, same accounting as a failed create: the exact
+                # blocker is preserved verbatim, never generalized.
+                raise ValueError(
+                    f"{exc}:created_before_failure={len(created)}"
+                ) from exc
+            item_kwargs["workspace_execution_package_id"] = item_wep[
+                "workspace_execution_package_id"
+            ]
         try:
             if mode == "T2V":
                 pkg = await create_t2v_generation_package(
-                    copy_set_id=intent["copy_variant_id"], **creator_kwargs)
+                    copy_set_id=intent["copy_variant_id"], **item_kwargs, **creator_kwargs)
             elif mode in ("F2V", "HYBRID"):
                 # B-06: create_f2v_generation_package accepts start_frame_asset_id,
                 # NOT product_reference_asset_id (that is the I2V creator's param).
@@ -2287,13 +2480,13 @@ async def prepare_bulk_fanout_packages(
                     copy_set_id=intent["copy_variant_id"],
                     source_mode=source_mode or ("HYBRID" if mode == "HYBRID" else "FRAMES"),
                     start_frame_asset_id=frame_id,
-                    **creator_kwargs)
+                    **item_kwargs, **creator_kwargs)
             else:  # I2V
                 pkg = await create_i2v_generation_package(
                     copy_set_id=intent["copy_variant_id"],
                     character_reference_asset_id=character_reference_asset_id,
                     scene_context_reference_asset_id=scene_context_reference_asset_id,
-                    **creator_kwargs)
+                    **item_kwargs, **creator_kwargs)
         except Exception as exc:
             # All-or-nothing: report the exact failing item and stop. Nothing is
             # approved or enqueued, so a partial batch can never reach a run.
@@ -2303,6 +2496,8 @@ async def prepare_bulk_fanout_packages(
             ) from exc
         wgp_id = pkg["workspace_generation_package_id"]
         created.append(wgp_id)
+        if item_wep is not None:
+            _assert_bulk_extend_authority_matches(idx, item_wep, pkg, len(created))
         # Durable per-item identity, merge-written into generation_identity_json
         # (the column already has a read-modify-merge precedent). No migration.
         await _persist_bulk_item_identity(wgp_id, bulk_run_id, plan, intent)

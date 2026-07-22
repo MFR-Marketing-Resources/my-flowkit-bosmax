@@ -14,9 +14,12 @@ can submit work, touch Flow, or spend credit.
 import pytest
 
 from agent.api import flow as flow_api
+from agent.services import copy_rotation_service as rot
 from agent.services import make_video as mv
 from agent.services import production_queue_service as pq
 from agent.services import video_production_orchestrator as orch
+from agent.services import workspace_execution_package_service as wxp
+from agent.services import workspace_generation_package_service as svc
 
 RUN_ID = "run_extend"
 
@@ -330,3 +333,255 @@ async def test_extend_mode_gate_still_applies(lane):
     assert lane["planned"] == []
     assert lane["single_shot"] == []
     assert "LIVE_T2V_ONLY:I2V" in lane["packages"]["wgp_ext"]["production_error"]
+
+
+# ── bulk PREPARE gives every EXTEND item its execution package ───────────────
+# The precondition above (EXTEND_EXECUTION_PACKAGE_MISSING) was failing EVERY
+# real bulk item: prepare created generation packages with
+# workspace_execution_package_id = NULL, and the durable planner resolves ALL
+# authority from an execution package. These tests pin the fix at the prepare
+# door. CREDIT-FREE by construction: the compiler, both package creators, the
+# ledger, approval and enqueue are all fakes — nothing here can compile, fire,
+# or touch the DB.
+
+def _copy(cs_id: str) -> dict:
+    return {
+        "copy_set_id": cs_id, "product_id": "P", "status": "COPY_APPROVED",
+        "archived": 0, "usage_count": 0, "hook": f"hook {cs_id}",
+        "angle": f"angle {cs_id}", "created_at": f"2026-07-20T00:00:0{cs_id[-1]}Z",
+        "last_used_at": None,
+    }
+
+
+TWO_BLOCKS = [{"block_index": 1, "duration_seconds": 8},
+              {"block_index": 2, "duration_seconds": 8}]
+
+
+@pytest.fixture
+def prepare(monkeypatch):
+    """Fake every seam bulk prepare touches and record what it built."""
+    state = {
+        "created": [], "wep_calls": [], "approved": [], "sent": [],
+        # Per-item execution package the faked door returns; a test overrides
+        # these to simulate a refusal, a BLOCKED package, or a drifted plan.
+        "wep_error": None,
+        "wep_execution_allowed": True,
+        "wep_blockers": [],
+        "wep_prompt_blocks": list(TWO_BLOCKS),
+        "wep_bound_copy_set_id": None,   # None = bind what was asked for
+        "pkg_prompt_blocks": list(TWO_BLOCKS),
+    }
+    rows = [_copy("cs1"), _copy("cs2")]
+    dialogues = {"cs1": "aaa", "cs2": "bbb"}
+
+    async def list_pool(product_id):
+        return list(rows)
+
+    async def rotate(product_id, count):
+        return {"items": list(rows), "warnings": []}
+
+    async def compile_preview(**kw):
+        d = dialogues.get(kw.get("copy_set_id"), f"fallback {kw.get('copy_set_id')}")
+        return {
+            "final_compiled_prompt_text": f"SECTION 6\n{d}\nSECTION 7",
+            "prompt_blocks": [{"exact_dialogue_slice": d, "audio_seam_contract": {}}],
+        }
+
+    async def create_wep(**kw):
+        state["wep_calls"].append(dict(kw))
+        if state["wep_error"] is not None:
+            raise state["wep_error"]
+        return {
+            "workspace_execution_package_id": f"wep_{len(state['wep_calls'])}",
+            "execution_allowed": state["wep_execution_allowed"],
+            "blockers": list(state["wep_blockers"]),
+            "copy_binding": {
+                "copy_set_id": state["wep_bound_copy_set_id"] or kw.get("copy_set_id")},
+            "prompt_blocks": list(state["wep_prompt_blocks"]),
+        }
+
+    async def creator(**kw):
+        idx = len(state["created"])
+        state["created"].append(dict(kw))
+        return {
+            "workspace_generation_package_id": f"wgp_{idx}",
+            "workspace_execution_package_id": kw.get("workspace_execution_package_id"),
+            "prompt_blocks_json": list(state["pkg_prompt_blocks"]),
+        }
+
+    async def list_wgp(**kw):
+        return []
+
+    async def get_wgp(wgp_id):
+        return {"workspace_generation_package_id": wgp_id, "generation_identity_json": "{}"}
+
+    async def update_wgp(wgp_id, **kw):
+        return {}
+
+    async def update_run(run_id, **kw):
+        return {}
+
+    async def approve(ids):
+        state["approved"].append(list(ids))
+        return {"approved": len(ids),
+                "results": [{"package_id": i, "ok": True} for i in ids]}
+
+    async def send(package_ids, **kw):
+        state["sent"].append({"ids": list(package_ids), **kw})
+        return {"production_run_id": "prun_bulk_ext", "config_json": "{}"}
+
+    async def already_used(fp):
+        return False
+
+    async def record_combo(**kw):
+        return dict(kw)
+
+    async def record_usage(copy_set_id, logical_mode):
+        return {}
+
+    monkeypatch.setattr(rot, "list_eligible_copy_sets", list_pool)
+    monkeypatch.setattr(rot, "select_rotation_copy_sets", rotate)
+    monkeypatch.setattr(rot, "combination_already_used", already_used)
+    monkeypatch.setattr(rot, "record_combination", record_combo)
+    monkeypatch.setattr(rot, "record_rotation_usage", record_usage)
+    monkeypatch.setattr(wxp, "compile_workspace_prompt_preview", compile_preview)
+    monkeypatch.setattr(wxp, "create_workspace_execution_package", create_wep)
+    monkeypatch.setattr(svc, "create_t2v_generation_package", creator)
+    monkeypatch.setattr(svc.crud, "list_workspace_generation_packages", list_wgp)
+    monkeypatch.setattr(svc.crud, "get_workspace_generation_package", get_wgp)
+    monkeypatch.setattr(svc.crud, "update_workspace_generation_package", update_wgp)
+    monkeypatch.setattr(svc.crud, "update_production_run", update_run)
+    monkeypatch.setattr(pq, "approve_packages", approve)
+    monkeypatch.setattr(pq, "send_to_production", send)
+    return state
+
+
+async def _prepare_extend(**over):
+    kwargs = dict(
+        product_id="P", logical_mode="T2V", source_mode="T2V",
+        generation_mode="EXTEND", requested_total_duration_seconds=16,
+        quantity=2, model="Veo 3.1 - Lite", aspect="9:16",
+    )
+    kwargs.update(over)
+    return await svc.prepare_bulk_fanout_packages(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_extend_prepare_binds_an_execution_package_to_every_package(prepare):
+    """THE FIX: every EXTEND item is created WITH its execution package id."""
+    out = await _prepare_extend()
+
+    assert out["prepared_package_count"] == 2
+    assert len(prepare["wep_calls"]) == 2
+    bound = [c["workspace_execution_package_id"] for c in prepare["created"]]
+    assert bound == ["wep_1", "wep_2"]          # persisted at INSERT, never NULL
+    assert len(set(bound)) == 2                 # one package per item, never shared
+
+
+@pytest.mark.asyncio
+async def test_the_execution_package_carries_the_items_own_approved_copy(prepare):
+    """Same authority, not a re-compile: the WEP binds the dialogue this item was
+    planned on, and inherits the run's model/aspect/duration law."""
+    await _prepare_extend()
+
+    planned = {c["copy_set_id"] for c in prepare["created"]}
+    assert {c["copy_set_id"] for c in prepare["wep_calls"]} == planned
+    for call in prepare["wep_calls"]:
+        assert call["generation_mode"] == "EXTEND"
+        assert call["requested_total_duration_seconds"] == 16
+        assert call["model"] == "Veo 3.1 - Lite"
+        assert call["aspect_ratio"] == "9:16"
+        assert call["manual_override"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_prepared_extend_package_now_passes_the_queue_precondition(prepare):
+    """Closes the loop: the row prepare produces no longer trips the blocker that
+    failed every dry run."""
+    await _prepare_extend()
+
+    resolved, blockers = pq.extend_execution_preconditions(
+        {"generation_mode": "EXTEND", "logical_mode": "T2V",
+         "workspace_execution_package_id": prepare["created"][0][
+             "workspace_execution_package_id"],
+         "prompt_blocks_json": '[{"duration_seconds": 8}, {"duration_seconds": 8}]'},
+        {"model": "Veo 3.1 - Lite", "aspect": "9:16"},
+    )
+    assert blockers == []
+    assert resolved["execution_package_id"] == "wep_1"
+
+
+@pytest.mark.asyncio
+async def test_non_extend_prepare_creates_no_execution_package(prepare):
+    """Regression guard: the untouched path must stay untouched."""
+    out = await _prepare_extend(generation_mode="SINGLE",
+                                requested_total_duration_seconds=None)
+
+    assert out["prepared_package_count"] == 2
+    assert prepare["wep_calls"] == []
+    for call in prepare["created"]:
+        assert "workspace_execution_package_id" not in call
+
+
+# ── fail closed: no execution package means no batch, never a fallback ───────
+
+@pytest.mark.asyncio
+async def test_a_failed_execution_package_blocks_the_batch(prepare):
+    """Never fire without one: the exact reason is named and nothing is enqueued."""
+    prepare["wep_error"] = RuntimeError("PRODUCT_NOT_FOUND")
+
+    with pytest.raises(ValueError) as err:
+        await _prepare_extend()
+
+    msg = str(err.value)
+    assert "BULK_EXTEND_EXECUTION_PACKAGE_FAILED:item#0" in msg
+    assert "PRODUCT_NOT_FOUND" in msg          # the REAL cause, not a generic code
+    assert prepare["created"] == []            # refused BEFORE the ledger burn
+    assert prepare["approved"] == [] and prepare["sent"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_execution_package_blocks_the_batch(prepare):
+    """A BLOCKED package can never mint a production plan — refuse at prepare."""
+    prepare["wep_execution_allowed"] = False
+    prepare["wep_blockers"] = ["START_FRAME_REQUIRED"]
+
+    with pytest.raises(ValueError, match="BULK_EXTEND_EXECUTION_PACKAGE_BLOCKED"):
+        await _prepare_extend()
+
+    assert prepare["created"] == []
+    assert prepare["approved"] == [] and prepare["sent"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_drifted_copy_binding_blocks_the_batch(prepare):
+    """Different words than the operator reviewed is a refusal, not a warning."""
+    prepare["wep_bound_copy_set_id"] = "cs_someone_else"
+
+    with pytest.raises(ValueError, match="BULK_EXTEND_WEP_COPY_BINDING_DRIFT"):
+        await _prepare_extend()
+
+    assert prepare["approved"] == [] and prepare["sent"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_drifted_block_plan_blocks_the_batch(prepare):
+    """The planner's segment plan and the reviewed package must be the same video."""
+    prepare["wep_prompt_blocks"] = [{"block_index": 1, "duration_seconds": 8}]
+
+    with pytest.raises(ValueError, match="BULK_EXTEND_WEP_BLOCK_PLAN_DRIFT"):
+        await _prepare_extend()
+
+    assert prepare["approved"] == [] and prepare["sent"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_single_block_extend_never_reaches_a_run(prepare):
+    """One block is not an Extend — refused at prepare, before any credit gate."""
+    prepare["wep_prompt_blocks"] = [{"block_index": 1, "duration_seconds": 8}]
+    prepare["pkg_prompt_blocks"] = [{"block_index": 1, "duration_seconds": 8}]
+
+    with pytest.raises(ValueError, match="BULK_EXTEND_WEP_BLOCK_PLAN_DRIFT"):
+        await _prepare_extend()
+
+    assert prepare["approved"] == [] and prepare["sent"] == []
