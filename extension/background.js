@@ -5,12 +5,37 @@
  * Captures bearer token, solves reCAPTCHA, proxies API calls through browser.
  */
 
-// Runtime proof: this unpacked folder must loudly prove whether the
-// lightweight F2V SOP runner is present at service-worker startup.
-const BOSMAX_BUILD_PROOF = Object.freeze({
-	branch: "fix/mv3-message-port-lifecycle",
-	commit: "47ce04229877bb7e579fb195f42c257c9dcc0f66",
-});
+// Build provenance for this unpacked folder, DERIVED not declared.
+// A hand-typed branch/commit pair used to sit here and had gone stale — it named
+// a branch that was not main and a commit that was not canonical, yet it was
+// surfaced to the backend as `bosmax_build_proof`, so a reader saw provenance
+// where there was none. build-stamp.js is generated from real git state by
+// scripts/stamp-extension-build.mjs and is gitignored, so it cannot go stale in
+// the repo the way a committed constant does.
+//
+// Absence is expected and survivable: a fresh clone has no stamp until the script
+// runs. Chrome would refuse to load the extension if a MISSING file were listed in
+// the manifest, so this is imported here inside try/catch instead — an unstamped
+// folder still works and simply reports stamped:false, which is the honest answer.
+try {
+	// eslint-disable-next-line no-undef
+	importScripts("build-stamp.js");
+} catch (_err) {
+	console.warn(
+		"[BOSMAX_BUILD_PROOF] no build-stamp.js — run `node scripts/stamp-extension-build.mjs` " +
+			"to bind this folder to a commit. Reporting stamped:false.",
+	);
+}
+const BOSMAX_BUILD_PROOF = Object.freeze(
+	(typeof self !== "undefined" && self.__FLOWKIT_BUILD_STAMP__) || {
+		stamped: false,
+		sha: null,
+		short_sha: null,
+		branch: null,
+		dirty: null,
+		note: "UNSTAMPED_UNPACKED_FOLDER — run scripts/stamp-extension-build.mjs",
+	},
+);
 
 try {
 	// eslint-disable-next-line no-undef
@@ -33,7 +58,7 @@ const _bosmaxRunnerImported = Boolean(
 	typeof self !== "undefined" && self.__BOSMAX_F2V_FLOW_QUEUE_RUNNER__,
 );
 console.log(
-	`[BOSMAX_BUILD_PROOF] branch=${BOSMAX_BUILD_PROOF.branch} commit=${BOSMAX_BUILD_PROOF.commit} runner=${_bosmaxRunnerImported}`,
+	`[BOSMAX_BUILD_PROOF] stamped=${BOSMAX_BUILD_PROOF.stamped} sha=${BOSMAX_BUILD_PROOF.short_sha ?? "none"} dirty=${BOSMAX_BUILD_PROOF.dirty} runner=${_bosmaxRunnerImported}`,
 );
 if (_bosmaxRunnerImported) {
 	console.log(
@@ -5766,8 +5791,19 @@ function buildBackgroundStatusResponse() {
 		buildId,
 		build_id: buildId,
 		background_build_id: buildId,
+		// NOTE: gitSha/git_sha hold BUILD_ID, not a git SHA. The name is wrong but
+		// load-bearing — content-flow-dom.js reads them to learn the background's
+		// build id for the build_match skew check. Renaming them would break that
+		// gate, so the REAL git identity is carried alongside instead.
 		gitSha: buildId,
 		git_sha: buildId,
+		// Derived provenance from the generated build stamp (gitignored). null /
+		// false when the folder was never stamped, which is honest rather than a
+		// hand-typed constant that drifts.
+		build_sha: BOSMAX_BUILD_PROOF.sha ?? null,
+		build_stamped: Boolean(BOSMAX_BUILD_PROOF.stamped),
+		build_dirty: BOSMAX_BUILD_PROOF.dirty ?? null,
+		build_branch: BOSMAX_BUILD_PROOF.branch ?? null,
 		runtimeReady,
 		runtime_ready: runtimeReady,
 		build_match: true,

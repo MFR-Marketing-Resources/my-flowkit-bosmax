@@ -117,7 +117,7 @@ def test_preview_unique_copy_passes_credit_free(monkeypatch):
     assert len(fps) == 3
     # seeded rotation may offset the order; every distinct copy set must appear once
     assert {it["copy_variant_id"] for it in out["items"]} == {"cs0", "cs1", "cs2"}
-    assert out["live_bulk_status"] == "Bulk live fan-out not enabled yet"
+    assert out["live_bulk_status"] == "Bulk live fan-out not certified yet"
 
 
 def test_hybrid_preview_compiles_as_f2v_with_hybrid_lineage(monkeypatch):

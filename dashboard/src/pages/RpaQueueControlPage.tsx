@@ -376,9 +376,11 @@ export default function RpaQueueControlPage() {
 			>
 				<Lock size={16} className="text-amber-300 shrink-0" />
 				<div className="text-[11px] text-amber-100">
-					<strong>Bulk live generation is locked.</strong> This panel can start{" "}
+					<strong>Bulk live generation is locked in this panel.</strong> This panel can start{" "}
 					<strong>one serial T2V job only</strong>, and only through the gate below. Multi-item
-					and non-T2V live runs are refused by the server and remain future-only.
+					and non-T2V live runs are refused here — plan and prepare those in the Production
+					Studio, where bulk fan-out has its own phrase gate and its own server-side credit
+					boundary.
 				</div>
 			</div>
 

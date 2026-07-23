@@ -7,7 +7,8 @@
     "test:f2v-asset-picker-modal": "node scripts/test-f2v-asset-picker-modal.js",
     "test:f2v-cdp-file-chooser-poc": "node scripts/test-f2v-cdp-file-chooser-poc.js",
     "test:f2v-playwright-persistent-context": "node scripts/test-f2v-playwright-persistent-context.js",
-    "test:selector-registry": "node scripts/test-flow-selector-registry.js"
+    "test:selector-registry": "node scripts/test-flow-selector-registry.js",
+    "stamp:extension": "node scripts/stamp-extension-build.mjs"
   },
   "devDependencies": {
     "dependency-cruiser": "^17.4.2",

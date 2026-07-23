@@ -84,6 +84,13 @@ class _Harness:
         # B-18: status of the prior batch's production run (reuse must refuse a
         # closed run — it can neither be dry-run nor fired).
         self.prior_run_status: str = "PENDING"
+        # EXTEND items now get their own workspace EXECUTION package (the durable
+        # planner resolves all authority from one). Faked below; recorded here.
+        self.weps: list[dict] = []
+
+
+_TWO_BLOCK_PLAN = [{"block_index": 1, "duration_seconds": 8},
+                   {"block_index": 2, "duration_seconds": 8}]
 
 
 def _install(monkeypatch, rows, dialogues, h: _Harness, i2v_blockers=None,
@@ -111,12 +118,27 @@ def _install(monkeypatch, rows, dialogues, h: _Harness, i2v_blockers=None,
         return None, ["HYBRID_ANCHOR_916_NOT_FOUND:..."]
     monkeypatch.setattr(svc, "_resolve_hybrid_anchor_916", _resolve_anchor)
 
+    # EXTEND-only seam: bulk builds each extend item's workspace execution package
+    # through the real door. Faked so no test compiles, reads the DB, or drifts —
+    # it returns the same 2x8s block plan the faked creator reports.
+    async def _create_wep(**kw):
+        h.weps.append(dict(kw))
+        return {
+            "workspace_execution_package_id": f"wep_{len(h.weps)}",
+            "execution_allowed": True,
+            "blockers": [],
+            "copy_binding": {"copy_set_id": kw.get("copy_set_id")},
+            "prompt_blocks": _TWO_BLOCK_PLAN,
+        }
+    monkeypatch.setattr(wxp, "create_workspace_execution_package", _create_wep)
+
     async def _creator(**kw):
         idx = len(h.created)
         if h.fail_on_index is not None and idx == h.fail_on_index:
             raise RuntimeError("compiler exploded")
         h.created.append(kw)
-        return {"workspace_generation_package_id": f"wgp_{idx}"}
+        return {"workspace_generation_package_id": f"wgp_{idx}",
+                "prompt_blocks_json": _TWO_BLOCK_PLAN}
 
     monkeypatch.setattr(svc, "create_t2v_generation_package", _creator)
     monkeypatch.setattr(svc, "create_f2v_generation_package", _creator)
@@ -310,13 +332,28 @@ def test_unsupported_mode_is_refused(monkeypatch):
     assert h.created == []
 
 
-def test_bulk_extend_remains_blocked_with_exact_blocker(monkeypatch):
-    """EXTEND is NOT faked: multi-block belongs to the durable /video-jobs
-    orchestrator, so bulk EXTEND is refused with its exact blocker."""
+def test_bulk_extend_with_a_total_duration_now_prepares(monkeypatch):
+    """EXTEND is still NOT faked as a single shot — multi-block belongs to the
+    durable /video-jobs orchestrator. What changed is that bulk now ROUTES to
+    that orchestrator instead of refusing outright, so a prepare with a real
+    total duration succeeds and creates its packages.
+
+    The safety property this test used to protect lives on elsewhere and must
+    stay there: the single-shot provider door is never used for EXTEND
+    (`assert loop["fired"] == []` in test_production_queue_live_loop_guard.py).
+    """
     h = _Harness()
-    with pytest.raises(ValueError, match="BULK_EXTEND_NOT_SUPPORTED:use_video_jobs_orchestrator_per_item"):
-        _prepare(monkeypatch, THREE, UNIQUE3, h,
-                 generation_mode="EXTEND", requested_total_duration_seconds=16)
+    _prepare(monkeypatch, THREE, UNIQUE3, h,
+             generation_mode="EXTEND", requested_total_duration_seconds=16)
+    assert len(h.created) == 3, "EXTEND packages were not created"
+
+
+def test_bulk_extend_without_a_total_duration_is_refused(monkeypatch):
+    """The remaining fail-closed case: no total duration means no durable plan
+    can be built, so nothing is created."""
+    h = _Harness()
+    with pytest.raises(ValueError, match="BULK_EXTEND_REQUIRES_TOTAL_DURATION"):
+        _prepare(monkeypatch, THREE, UNIQUE3, h, generation_mode="EXTEND")
     assert h.created == [], "EXTEND packages created despite the blocker"
 
 

@@ -218,7 +218,7 @@ describe("Production Studio — rendered contract", () => {
 		renderPage();
 		expect(await screen.findByTestId("rpa-production-studio")).toBeInTheDocument();
 		for (const id of [
-			"studio-bulk-locked", "studio-product-search", "studio-mode-t2v",
+			"studio-bulk-certification-notice", "studio-product-search", "studio-mode-t2v",
 			"studio-model", "studio-duration", "studio-aspect", "studio-quantity-status",
 			"studio-action-prepare", "studio-action-validate", "studio-live-gate",
 			"studio-phrase-input", "studio-action-go-live", "studio-result-panel",
@@ -227,7 +227,7 @@ describe("Production Studio — rendered contract", () => {
 		}
 	});
 
-	it("all four video lanes + IMG are enabled; T2V selected by default; bulk stays locked", async () => {
+	it("all four video lanes + IMG are enabled; T2V selected by default; live bulk is uncertified", async () => {
 		primeHappyPath();
 		renderPage();
 		await screen.findByTestId("studio-mode-t2v");
@@ -236,7 +236,11 @@ describe("Production Studio — rendered contract", () => {
 		}
 		expect(screen.getByTestId("studio-mode-t2v")).toHaveAttribute("data-selected", "true");
 		expect(screen.getByTestId("studio-mode-f2v")).toHaveAttribute("data-selected", "false");
-		expect(screen.getByTestId("studio-bulk-locked")).toHaveAttribute("data-locked", "true");
+		// The page must NOT claim bulk is absent — it is built and reachable. What it
+		// must claim is that live bulk is not runtime-certified, which is the real gate
+		// (BULK_LIVE_EXECUTION_CERTIFIED=False refuses server-side at the credit boundary).
+		expect(screen.getByTestId("studio-bulk-certification-notice"))
+			.toHaveAttribute("data-live-certified", "false");
 	});
 
 	it("IMG card deep-links to the Fastlane with the selected product", async () => {
@@ -327,7 +331,7 @@ describe("Production Studio — the live gate is fail-closed", () => {
 	});
 });
 
-describe("Production Studio — Stage 1 quantity preview (credit-free, live stays blocked)", () => {
+describe("Production Studio — Stage 1 quantity preview (credit-free; the SINGLE lane stays blocked)", () => {
 	async function setQuantity(n: number) {
 		await act(async () => {
 			fireEvent.change(await screen.findByTestId("studio-quantity-input"), { target: { value: String(n) } });
@@ -343,17 +347,20 @@ describe("Production Studio — Stage 1 quantity preview (credit-free, live stay
 			{ item_index: 2, variation_salt: "v3", copy_variant_id: "cs2", hook: "h2", dialogue_summary: "three", dialogue_fingerprint: "cccc3333", seam_voice: null, compile_error: null },
 		],
 		dialogue_uniqueness_status: "UNIQUE", duplicate_dialogue_groups: [], blockers: [],
-		preview_ready: true, live_bulk_status: "Bulk live fan-out not enabled yet",
-		live_bulk_stage: "STAGE_2_REQUIRED", credit: "NONE", provider_calls: 0, flow_calls: 0,
+		preview_ready: true, live_bulk_status: "Bulk live fan-out not certified yet",
+		live_bulk_stage: "STAGE_3_RUNTIME_CERTIFICATION_REQUIRED", credit: "NONE", provider_calls: 0, flow_calls: 0,
 	};
 
-	it("quantity > 1 blocks live submit and is preview-only (Stage 2 note shown)", async () => {
+	it("quantity > 1 closes the SINGLE-lane live gate and routes the operator to the batch", async () => {
 		primeHappyPath();
 		renderPage();
 		await pickProduct();
 		await setQuantity(3);
 		expect(screen.getByTestId("studio-live-gate")).toHaveAttribute("data-gate-open", "false");
-		expect(screen.getByTestId("studio-action-go-live")).toBeDisabled();
+		// Quantity > 1 no longer renders a DEAD single-lane button. The control is
+		// absent entirely, which is a stronger guarantee than "present but disabled"
+		// and stops the operator reading a dead button as a broken page.
+		expect(screen.queryByTestId("studio-action-go-live")).toBeNull();
 		expect(screen.getByTestId("studio-live-bulk-blocked")).toHaveAttribute("data-blocked", "true");
 		expect(screen.getByTestId("studio-action-prepare")).toBeDisabled();
 		expect(createProductionRun).not.toHaveBeenCalled();
@@ -462,7 +469,10 @@ describe("Production Studio — Stage 1 quantity preview (credit-free, live stay
 		await screen.findByTestId("studio-copy-pool-readiness");
 		// a READY pool + a UNIQUE preview must STILL leave live fully closed
 		expect(screen.getByTestId("studio-live-gate")).toHaveAttribute("data-gate-open", "false");
-		expect(screen.getByTestId("studio-action-go-live")).toBeDisabled();
+		// Quantity > 1 no longer renders a DEAD single-lane button. The control is
+		// absent entirely, which is a stronger guarantee than "present but disabled"
+		// and stops the operator reading a dead button as a broken page.
+		expect(screen.queryByTestId("studio-action-go-live")).toBeNull();
 		expect(screen.getByTestId("studio-action-prepare")).toBeDisabled();
 		expect(screen.getByTestId("studio-live-bulk-blocked")).toHaveAttribute("data-blocked", "true");
 		expect(createProductionRun).not.toHaveBeenCalled();
@@ -499,7 +509,10 @@ describe("Production Studio — Stage 1 quantity preview (credit-free, live stay
 		await screen.findByTestId("studio-bulk-fanout-section");
 		expect(screen.getByTestId("studio-bulk-live-gate-state")).toHaveAttribute("data-live-blocked", "true");
 		expect(screen.getByTestId("studio-live-gate")).toHaveAttribute("data-gate-open", "false");
-		expect(screen.getByTestId("studio-action-go-live")).toBeDisabled();
+		// Quantity > 1 no longer renders a DEAD single-lane button. The control is
+		// absent entirely, which is a stronger guarantee than "present but disabled"
+		// and stops the operator reading a dead button as a broken page.
+		expect(screen.queryByTestId("studio-action-go-live")).toBeNull();
 		expect(screen.getByTestId("studio-action-prepare")).toBeDisabled();
 		expect(screen.getByTestId("studio-live-bulk-blocked")).toHaveAttribute("data-blocked", "true");
 		expect(createProductionRun).not.toHaveBeenCalled();
@@ -592,7 +605,10 @@ describe("Production Studio — Stage 1 quantity preview (credit-free, live stay
 		await click("studio-action-preview");
 		await click("studio-action-bulk-prepare");
 		const handoff = await screen.findByTestId("studio-bulk-manual-handoff");
-		expect(handoff).toHaveAttribute("data-automation", "disabled");
+		// "uncertified", not "disabled": the automated bulk-live control IS wired and
+	// rendered below this handoff. What blocks it is owner certification at the
+	// server credit boundary, not the absence of the feature.
+	expect(handoff).toHaveAttribute("data-automation", "uncertified");
 		expect(screen.getAllByTestId("studio-manual-handoff-item")).toHaveLength(3);
 		fireEvent.change(screen.getAllByTestId("studio-manual-result-provider_job_id")[0], { target: { value: "job_manual_0" } });
 		await act(async () => { fireEvent.click(screen.getAllByTestId("studio-action-bind-manual-result")[0]); });
@@ -629,7 +645,10 @@ describe("Production Studio — Stage 1 quantity preview (credit-free, live stay
 
 		expect(screen.getByTestId("studio-bulk-live-gate-state")).toHaveAttribute("data-live-blocked", "true");
 		expect(screen.getByTestId("studio-live-gate")).toHaveAttribute("data-gate-open", "false");
-		expect(screen.getByTestId("studio-action-go-live")).toBeDisabled();
+		// Quantity > 1 no longer renders a DEAD single-lane button. The control is
+		// absent entirely, which is a stronger guarantee than "present but disabled"
+		// and stops the operator reading a dead button as a broken page.
+		expect(screen.queryByTestId("studio-action-go-live")).toBeNull();
 		// no live start was ever issued
 		for (const call of startProductionRun.mock.calls) {
 			expect(call[1]).toBe(false);
@@ -1097,8 +1116,8 @@ describe("Production Studio — system-fired bulk live (app submits each item as
 			{ item_index: 2, variation_salt: "v3", copy_variant_id: "cs2", hook: "h2", dialogue_summary: "three", dialogue_fingerprint: "cccc3333", seam_voice: null, compile_error: null },
 		],
 		dialogue_uniqueness_status: "UNIQUE", duplicate_dialogue_groups: [], blockers: [],
-		preview_ready: true, live_bulk_status: "Bulk live fan-out not enabled yet",
-		live_bulk_stage: "STAGE_2_REQUIRED", credit: "NONE", provider_calls: 0, flow_calls: 0,
+		preview_ready: true, live_bulk_status: "Bulk live fan-out not certified yet",
+		live_bulk_stage: "STAGE_3_RUNTIME_CERTIFICATION_REQUIRED", credit: "NONE", provider_calls: 0, flow_calls: 0,
 	};
 
 	async function setQuantity(n: number) {
@@ -1290,8 +1309,8 @@ describe("Production Studio — releasing an abandoned prepared batch (B-17 hygi
 			{ item_index: 2, variation_salt: "v3", copy_variant_id: "cs2", hook: "h2", dialogue_summary: "three", dialogue_fingerprint: "cccc3333", seam_voice: null, compile_error: null },
 		],
 		dialogue_uniqueness_status: "UNIQUE", duplicate_dialogue_groups: [], blockers: [],
-		preview_ready: true, live_bulk_status: "Bulk live fan-out not enabled yet",
-		live_bulk_stage: "STAGE_2_REQUIRED", credit: "NONE", provider_calls: 0, flow_calls: 0,
+		preview_ready: true, live_bulk_status: "Bulk live fan-out not certified yet",
+		live_bulk_stage: "STAGE_3_RUNTIME_CERTIFICATION_REQUIRED", credit: "NONE", provider_calls: 0, flow_calls: 0,
 	};
 
 	async function setQuantity(n: number) {

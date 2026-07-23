@@ -5,21 +5,24 @@
  * but it reads like a debug panel: it starts from an execution-package handle, not a
  * product, and exposes every internal step. This page is the same PROVEN pipeline,
  * re-presented as a studio a normal user can drive: pick a product, configure the
- * selected logical mode, prepare, validate, run one live job, see the result.
+ * selected logical mode, prepare, validate, run one live job — or plan, prepare and
+ * dry-run an itemized batch — and see the result.
  *
  * It REUSES the exact backend contract and safety gates — no new server routes, no
  * weakened guards. ALL FOUR video lanes are one-click wired through their own
  * phrased one-serial gates (T2V / first-frame family F2V+HYBRID / I2V), with
  * mode-exact server authorization; O4 duplicate protection is untouched. Bulk
- * stays locked.
+ * fan-out has its own phrase gate and is refused server-side at the credit
+ * boundary until an owner certifies live bulk.
  *
  * Durations beyond the engine's single-shot max run through the PROVEN multi-block
  * EXTEND lane instead of the queue: workspace execution package (per-block canonical
  * 9-section prompts, WPS dialogue budgets from the storyboard planner) → the durable
  * /video-jobs orchestrator (plan → authorize → advance: INITIAL → EXTEND → CONCAT →
- * final media). The queue lane refuses EXTEND packages outright
+ * final media). The SINGLE-SHOT queue door still refuses EXTEND packages outright
  * (EXTEND_PACKAGE_SINGLE_SHOT_FORBIDDEN), so a 16s request can never be silently
- * truncated to one 8s clip.
+ * truncated to one 8s clip; bulk EXTEND reaches the durable orchestrator by a
+ * separate route that never touches that door.
  */
 import {
 	AlertTriangle,
@@ -89,9 +92,10 @@ import {
 import type { Product, WorkspaceMode } from "../types";
 
 const ASPECTS = ["9:16", "16:9", "1:1"];
-// Stage 1 quantity PREVIEW cap. quantity>1 is preview-only (credit-free unique-copy
-// planning); live bulk fan-out is Stage 2 and stays blocked. Keep in lockstep with
-// the backend QUANTITY_PREVIEW_MAX (workspace_generation_package_service.py).
+// Stage 1 quantity PREVIEW cap. quantity>1 plans credit-free unique-copy variants;
+// the itemized batch it produces CAN be fired live from section 4c, but the server
+// refuses at the credit boundary until bulk live is runtime-certified. Keep in
+// lockstep with the backend QUANTITY_PREVIEW_MAX (workspace_generation_package_service.py).
 const QUANTITY_MAX = 5;
 const POLL_MS = 5000;
 const TERMINAL_STATUSES = new Set(["GENERATED", "DOWNLOADED", "FAILED", "CANCELLED"]);
@@ -102,8 +106,9 @@ const TERMINAL_STATUSES = new Set(["GENERATED", "DOWNLOADED", "FAILED", "CANCELL
 // dialogue budgets WPS-allocated by the storyboard planner) → the durable
 // /video-jobs orchestrator (plan → authorize → advance: INITIAL → EXTEND →
 // CONCAT → final media). Nothing here re-implements planning or prompting —
-// this page only WIRES the proven lane. The single-shot queue lane refuses
-// EXTEND packages outright (EXTEND_PACKAGE_SINGLE_SHOT_FORBIDDEN).
+// this page only WIRES the proven lane. The single-shot queue DOOR still refuses
+// EXTEND packages outright (EXTEND_PACKAGE_SINGLE_SHOT_FORBIDDEN); bulk EXTEND is
+// routed to the durable orchestrator before that door is ever reached.
 const EXTEND_MULTIPLES = [2, 3]; // 16 s and 24 s on an 8 s engine
 /** UI-only latch for the extend fire button; the REAL gate is the server-side
  *  authorize step (plan-fingerprint-bound, expiring token). */
@@ -328,12 +333,17 @@ export default function RpaProductionStudioPage() {
 	// Multi-block EXTEND totals (N × the engine's single-shot max) — the proven
 	// storyboard-planner + orchestrator lane, not N independent clips. EXTEND is
 	// wired for the T2V lane only for now.
-	const extendTotals = studioMode === "T2V" ? EXTEND_MULTIPLES.map((n) => n * maxSingle) : [];
+	const extendTotals = EXTEND_MULTIPLES.map((n) => n * maxSingle);
 	const durationOptions = [...singleDurations, ...extendTotals];
-	const isExtend = studioMode === "T2V" && duration > maxSingle;
-	// Stage 1: quantity>1 is PREVIEW-ONLY. It never enables live submission and never
-	// touches the single-serial createProductionRun({count:1}) path — live bulk
-	// fan-out is Stage 2 (unbuilt). This flag force-closes the live gates below.
+	// EXTEND is not a T2V feature. full_storyboard_extend_planner plans ONE global
+	// storyboard then splits it into continuing blocks, and it accepts FRAMES, T2V,
+	// HYBRID and INGREDIENTS — i.e. every video lane in this Studio. The UI used to
+	// offer 16s/24s to T2V only, which hid a capability the backend already had.
+	const isExtend = duration > maxSingle;
+	// Stage 1: quantity>1 never touches the single-serial createProductionRun({count:1})
+	// path — it routes to the itemized bulk fan-out instead. This flag force-closes the
+	// SINGLE-lane live gates below; the bulk lane has its own phrase gate and its own
+	// server-side credit boundary.
 	const bulkPreview = quantity > 1;
 
 	// Per-lane gate identity. F2V + HYBRID share the live-proven first-frame
@@ -490,12 +500,59 @@ export default function RpaProductionStudioPage() {
 			if (prepared.production_run_id) {
 				const res = await startProductionRun(prepared.production_run_id, false);
 				setBulkDryRun(res.report ?? null);
-				if (res.report?.blocked === 0 && res.report?.ready === prepared.prepared_package_count) {
+				// Manual Fire Handoff is the FALLBACK for when the app cannot fire for
+				// you: it dumps every package's full prompt on screen to be pasted into
+				// Google Flow by hand. Once bulk live is runtime-certified the app fires
+				// automatically, so showing thousands of words of paste-me instructions
+				// underneath a working Fire button is pure noise — and it actively misled
+				// operators into thinking automation was still unavailable. Only fetch it
+				// when automation genuinely is not available.
+				const bulkAutomationCertified = bulkPlan?.live_bulk_stage === "STAGE_3_RUNTIME_CERTIFIED";
+				if (
+					!bulkAutomationCertified &&
+					res.report?.blocked === 0 &&
+					res.report?.ready === prepared.prepared_package_count
+				) {
 					setBulkManualHandoff(await fetchBulkManualFireHandoff(prepared.production_run_id));
 				}
 			}
 		} catch (e) {
-			setBulkError(e instanceof Error ? e.message : String(e));
+			const msg = e instanceof Error ? e.message : String(e);
+			// BULK_PLAN_FINGERPRINT_STALE means the approved copy pool moved under the
+			// operator — typically because copy was approved or released while this plan
+			// sat on screen. The pin itself is correct: preparing a plan the operator
+			// never saw is exactly the defect it guards against. But leaving the stale
+			// plan on screen makes Prepare fail forever with no way out, which reads as
+			// a dead button. Re-plan so the screen shows what the server will actually
+			// accept, then ask for one deliberate click — never silently prepare (and
+			// burn ledger dialogues) for items nobody reviewed.
+			if (msg.includes("BULK_PLAN_FINGERPRINT_STALE")) {
+				try {
+					const fresh = await fetchBulkFanoutPlan({
+						product_id: selectedProduct.id,
+						mode: previewMode,
+						source_mode: activeProfile.sourceMode ?? null,
+						generation_mode: isExtend ? ("EXTEND" as const) : ("SINGLE" as const),
+						duration_seconds: isExtend ? maxSingle : duration,
+						requested_total_duration_seconds: isExtend ? duration : null,
+						quantity,
+						target_language: "BM_MS" as const,
+					});
+					setBulkPlan(fresh);
+					// Keep the raw server code in the message. The operator needs the
+					// human sentence, but hiding the machine code makes the failure
+					// unsearchable and unreportable.
+					setBulkError(
+						`${msg} — the approved copy pool changed while this plan was on screen, so it was refused and ` +
+						"NOTHING was created: no credit, no ledger burn. The plan above is now refreshed with the " +
+						"dialogues the server will accept. Review them, then click Prepare again.",
+					);
+				} catch {
+					setBulkError(`${msg} — click Preview again to rebuild the plan.`);
+				}
+			} else {
+				setBulkError(msg);
+			}
 		} finally {
 			setBusy(null);
 		}
@@ -970,11 +1027,13 @@ export default function RpaProductionStudioPage() {
 				</p>
 			</div>
 
-			<div className="mb-6 flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3" data-testid="studio-bulk-locked" data-locked="true">
+			<div className="mb-6 flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3" data-testid="studio-bulk-certification-notice" data-live-certified="false">
 				<Lock size={16} className="text-amber-300 shrink-0" />
 				<div className="text-[11px] text-amber-100">
-					<strong>MVP scope: one serial output / one queued item only.</strong> Bulk generation is locked;
-					the selected mode can only prepare and submit one job at a time.
+					<strong>Bulk fan-out is built; live bulk is not runtime-certified.</strong> Quantity 1 runs
+					one live job from section 5. Quantity &gt; 1 plans, prepares and dry-runs an itemized batch
+					credit-free, and the Fire control is wired — but the server refuses it at the credit
+					boundary until an owner certifies the run.
 				</div>
 			</div>
 
@@ -1110,7 +1169,7 @@ export default function RpaProductionStudioPage() {
 							className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-slate-100 focus:outline-none" />
 						<div className="mt-1 text-[9px] text-slate-500" data-testid="studio-quantity-note">
 							{bulkPreview
-								? `1–${QUANTITY_MAX}. Quantity > 1 is preview-only — live bulk fan-out is Stage 2.`
+								? `1–${QUANTITY_MAX}. Quantity > 1 plans an itemized batch — firing it live needs owner certification.`
 								: "1 = single live run. Raise for a credit-free unique-copy preview."}
 						</div>
 					</div>
@@ -1348,11 +1407,17 @@ export default function RpaProductionStudioPage() {
 					</div>
 				) : (
 					<div className="text-[11px] text-slate-500" data-testid="studio-preview-empty">
-						Set a quantity and click <strong>Preview</strong> to plan N unique-copy variants credit-free. Live bulk fan-out is Stage 2 (not enabled yet).
+						Set a quantity and click <strong>Preview</strong> to plan N unique-copy variants credit-free. Firing that batch live additionally needs the server <code>BULK_FANOUT</code> gate and owner certification.
+					</div>
+				)}
+				{!bulkPreview && (
+					<div className="mt-2 rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-[10px] text-slate-400" data-testid="studio-batch-lane-locked" data-locked="true">
+						<strong className="text-slate-300">Batch lane locked — Quantity is 1.</strong> A single
+						video runs from section 5 below. Raise Quantity above 1 to plan and fire a batch here.
 					</div>
 				)}
 			</section>
-			{bulkPlan && (
+			{bulkPreview && bulkPlan && (
 				<section
 					className="mb-6 rounded-xl border border-sky-500/30 bg-sky-500/5 p-4"
 					data-testid="studio-bulk-fanout-section"
@@ -1509,10 +1574,13 @@ export default function RpaProductionStudioPage() {
 							)}
 						</div>
 					)}
-					{bulkManualHandoff && (
-						<section className="mb-2 rounded-lg border border-cyan-500/40 bg-cyan-500/5 p-3" data-testid="studio-bulk-manual-handoff" data-automation="disabled">
+					{/* Belt and braces: never render the paste-into-Flow fallback while the
+					    app can fire on its own, even if a handoff was fetched before
+					    certification flipped. */}
+					{bulkManualHandoff && bulkPlan?.live_bulk_stage !== "STAGE_3_RUNTIME_CERTIFIED" && (
+						<section className="mb-2 rounded-lg border border-cyan-500/40 bg-cyan-500/5 p-3" data-testid="studio-bulk-manual-handoff" data-automation="uncertified">
 							<h3 className="text-[11px] font-semibold text-cyan-100">Manual Fire Handoff — operator action outside this app</h3>
-							<p className="mt-1 text-[10px] text-cyan-100/80">Every item passed the credit-free dry run. Automated bulk live remains disabled; copy each exact package instruction into Google Flow, fire manually, then capture the returned identity here.</p>
+							<p className="mt-1 text-[10px] text-cyan-100/80">Every item passed the credit-free dry run. Automated bulk live is wired below but not yet runtime-certified — until it is, copy each exact package instruction into Google Flow, fire manually, then capture the returned identity here.</p>
 							<div className="mt-2 space-y-3">
 								{bulkManualHandoff.items.map((item) => {
 									const input = bulkManualInputs[item.workspace_generation_package_id] ?? { provider_job_id: "", flow_media_id: "", result_url: "", result_file_id: "", notes: "" };
@@ -1567,14 +1635,22 @@ export default function RpaProductionStudioPage() {
 								with per-item identity and evidence. After submission, do not retry unless
 								the system proves no provider submission occurred.
 							</p>
-							<div className="mt-2 flex flex-wrap items-center gap-2">
+							{/* The placeholder used to BE the phrase, so the field read as a
+							    label that was already filled in and operators could not find
+							    anywhere to type. Show the phrase to copy, then a field that
+							    obviously wants input. */}
+							<label className="mt-2 block text-[10px] text-red-100/90" htmlFor="bulk-live-phrase-input">
+								Step 1 — copy this phrase: <code className="select-all rounded bg-slate-900 px-1 py-0.5 font-mono text-[10px] text-amber-200">{LIVE_BULK_CONFIRM_PHRASE}</code>
+							</label>
+							<div className="mt-1.5 flex flex-wrap items-center gap-2">
 								<input
+									id="bulk-live-phrase-input"
 									data-testid="studio-bulk-live-phrase"
 									value={bulkLivePhrase}
 									onChange={(e) => setBulkLivePhrase(e.target.value)}
-									placeholder={LIVE_BULK_CONFIRM_PHRASE}
+									placeholder="Step 2 — paste the phrase here…"
 									aria-label="Bulk live confirmation phrase"
-									className="w-72 rounded border border-slate-700 bg-slate-900 px-2 py-1 font-mono text-[10px] text-slate-100"
+									className="w-72 rounded border-2 border-amber-500/70 bg-slate-900 px-2 py-1.5 font-mono text-[10px] text-slate-100 placeholder:text-slate-500 focus:border-amber-400 focus:outline-none"
 								/>
 								<button
 									type="button"
@@ -1614,34 +1690,73 @@ export default function RpaProductionStudioPage() {
 				<h2 className="mb-2 flex items-center gap-2 text-sm font-semibold text-red-200"><Flame size={14} /> 5 · {isExtend ? `Run one live EXTEND job (${duration}s multi-block)` : `Run one live ${studioMode}`}</h2>
 				{bulkPreview && (
 					<div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100" data-testid="studio-live-bulk-blocked" data-blocked="true">
-						<strong>Bulk live fan-out not enabled yet — Stage 2 required.</strong> Quantity {quantity} is preview-only: no live submission, no provider call, no credit. Set quantity to 1 to run one live item.
+						<strong>Locked — Quantity is {quantity}, so this is a BATCH.</strong> Fire it from
+						section 4c above. Nothing in this section applies to a batch, so its controls are
+						hidden rather than left dead. Set Quantity to 1 in section 3 to unlock this section.
 					</div>
 				)}
+				{/* ONE quantity, ONE lane. Rendering both the single-lane gate and the batch
+				    control at the same time forced the operator to work out which half was
+				    theirs, and the dead half read as a broken page. Quantity decides: >1 hides
+				    this section's controls, 1 hides the batch fire control. */}
+				{!bulkPreview && (<>
 				<div className="mb-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-[11px] text-red-100" data-testid="studio-live-warning">
 					<strong>This spends real credits.</strong>{" "}
 					{isExtend
 						? `It authorizes the reviewed plan fingerprint and runs the full durable job: 1 initial + ${extendPlan?.plan.operation_counts.extend ?? "N"} extend + final concat. The server re-gates every stage with the plan-bound token.`
 						: activeProfile.liveWarning}
 				</div>
+				{/* One line naming the SINGLE next action. Without it the operator sees a
+				    dead button and a grid of circles, and reasonably concludes the page is
+				    broken rather than gated. Ordered the way a user actually proceeds. */}
+				{!(isExtend ? extendGateOpen : liveGateOpen) && !liveSubmitted && (
+					<div className="mb-3 rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100" data-testid="studio-live-next-action">
+						<strong>This button is disabled on purpose — not broken.</strong>{" "}
+						{!selectedProduct
+							? "Next: section 1 — type a name, press Search, then click a product row."
+							: bulkPreview
+								? `Next: section 3 — set Quantity to 1 (it is ${quantity}). Quantity > 1 is a batch and fires from section 4c, not here.`
+								: isExtend
+									? (!extendPlanReady
+										? "Next: prepare the package and review the multi-block plan above."
+										: "Next: type the confirmation phrase below, exactly as shown.")
+									: !dryRunGreen
+										? "Next: section 4 — click Prepare package, then Run validation (dry run)."
+										: !noPriorJob
+											? "Next: prepare a fresh package — this one already has a provider job."
+											: !phraseOk
+												? "Next: type the confirmation phrase below, exactly as shown."
+												: "Next: wait for the current action to finish."}
+					</div>
+				)}
 				<div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-3" data-testid="studio-live-checks">
+					{/* Every unmet check carries the ACTION that clears it. Six unexplained
+					    circles is why this page reads as dead: an operator cannot tell a
+					    deliberate credit gate from a broken button, and the most common
+					    blocker (quantity > 1) is set three sections away from here. */}
 					{(isExtend
 						? [
-							{ id: "product", label: "Product selected", ok: Boolean(selectedProduct) },
-							{ id: "extend-plan", label: "Reviewed orchestrator plan", ok: extendPlanReady },
-							{ id: "phrase", label: "Confirmation phrase", ok: extendPhraseOk },
-							{ id: "not-submitted", label: "Not already submitted", ok: !liveSubmitted },
+							{ id: "product", label: "Product selected", ok: Boolean(selectedProduct), todo: "Section 1: type a name, press Search, then CLICK a product row." },
+							{ id: "extend-plan", label: "Reviewed orchestrator plan", ok: extendPlanReady, todo: "Prepare the package, then review the multi-block plan above." },
+							{ id: "phrase", label: "Confirmation phrase", ok: extendPhraseOk, todo: "Type the phrase below exactly, including underscores." },
+							{ id: "not-submitted", label: "Not already submitted", ok: !liveSubmitted, todo: "This run was already submitted — reload the page to start a new one." },
 						]
 						: [
-							{ id: "product", label: "Product selected", ok: Boolean(selectedProduct) },
-							{ id: "dryrun", label: "Dry run ready=1 blocked=0", ok: Boolean(dryRunGreen) },
-							{ id: "one-item", label: "Exactly 1 item", ok: oneItemOnly },
-							{ id: "no-prior-job", label: "No prior provider job", ok: noPriorJob },
-							{ id: "phrase", label: "Confirmation phrase", ok: phraseOk },
-							{ id: "not-submitted", label: "Not already submitted", ok: !liveSubmitted },
+							{ id: "product", label: "Product selected", ok: Boolean(selectedProduct), todo: "Section 1: type a name, press Search, then CLICK a product row." },
+							{ id: "dryrun", label: "Dry run ready=1 blocked=0", ok: Boolean(dryRunGreen), todo: "Section 4: click Prepare package, then Run validation (dry run)." },
+							{ id: "one-item", label: "Exactly 1 item", ok: oneItemOnly, todo: `Quantity is ${quantity}. Set it to 1 in section 3 — quantity > 1 fires from the batch control in 4c, never from here.` },
+							{ id: "no-prior-job", label: "No prior provider job", ok: noPriorJob, todo: "This package already has a provider job. Prepare a fresh package." },
+							{ id: "phrase", label: "Confirmation phrase", ok: phraseOk, todo: "Type the phrase below exactly, including underscores." },
+							{ id: "not-submitted", label: "Not already submitted", ok: !liveSubmitted, todo: "This run was already submitted — reload the page to start a new one." },
 						]).map((c) => (
 						<div key={c.id} data-testid={`studio-check-${c.id}`} data-ok={c.ok ? "true" : "false"}
-							className={`rounded-lg border px-2 py-1.5 text-[10px] ${c.ok ? "border-emerald-500/40 bg-emerald-500/5 text-emerald-200" : "border-slate-700 bg-slate-900/60 text-slate-500"}`}>
-							{c.ok ? "✓" : "○"} {c.label}
+							className={`rounded-lg border px-2 py-1.5 text-[10px] ${c.ok ? "border-emerald-500/40 bg-emerald-500/5 text-emerald-200" : "border-amber-600/40 bg-slate-900/60 text-slate-300"}`}>
+							<div>{c.ok ? "✓" : "○"} {c.label}</div>
+							{!c.ok && (
+								<div className="mt-0.5 text-[9px] leading-snug text-amber-300/90" data-testid={`studio-check-todo-${c.id}`}>
+									{c.todo}
+								</div>
+							)}
 						</div>
 					))}
 				</div>
@@ -1692,6 +1807,7 @@ export default function RpaProductionStudioPage() {
 						<span><strong>Live run refused — nothing fired.</strong> {explainFailure(liveError)}</span>
 					</div>
 				)}
+				</>)}
 			</section>
 
 			{/* ── 6 · Result ── */}

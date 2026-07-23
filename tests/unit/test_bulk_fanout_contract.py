@@ -127,12 +127,17 @@ def test_duplicate_dialogue_cannot_pass_into_fanout(monkeypatch):
     assert out["dialogue_uniqueness_status"] == "DUPLICATE_DIALOGUE_BLOCKED"
 
 
-def test_bulk_extend_stays_blocked_with_exact_blocker(monkeypatch):
+def test_bulk_extend_without_a_total_duration_stays_blocked(monkeypatch):
+    """Bulk EXTEND is no longer refused outright — it routes to the durable
+    /video-jobs orchestrator. What is still refused is an EXTEND plan with no
+    total duration, because the durable plan cannot be built without one. The
+    refusal is what matters here, not the wording: fail-closed is preserved.
+    """
     rows = [_approved("cs1"), _approved("cs2")]
     out = _plan(monkeypatch, rows, {"cs1": "aaa", "cs2": "bbb"},
                 quantity=2, generation_mode="EXTEND")
     assert out["bulk_authorizable"] is False
-    assert any(b.startswith("BULK_EXTEND_NOT_SUPPORTED") for b in out["blockers"])
+    assert any(b.startswith("BULK_EXTEND_REQUIRES_TOTAL_DURATION") for b in out["blockers"])
 
 
 def test_planning_is_credit_free_and_calls_no_provider(monkeypatch):

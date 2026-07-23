@@ -195,6 +195,11 @@ async def resolve_production_authority(
         if not _clean(out.get("initial_source_mode")):
             from agent.services import flow_mode_reference_contract as _refc_sm
             out["initial_source_mode"] = _refc_sm.derive_package_source_mode(pkg)
+        # Reviewed per-block prompts already compiled ONTO this execution package,
+        # WITH its bound copy set. Captured here and reused verbatim below so the
+        # durable EXTEND job renders the operator-approved copy — never a
+        # copy-blind recompile (which silently emits landbank fallback dialogue).
+        out["_execution_package_block_prompts"] = _execution_package_block_prompts(pkg)
 
     # T2V asset-authority relaxation applies only to an EXPLICIT text-only mode
     # (package/intent declared) — never to the incomplete-plan fallback below,
@@ -223,11 +228,31 @@ async def resolve_production_authority(
         out["initial_asset_media_id"] = refs[0]
 
     # ── per-block reviewed prompts (initial + continuations) ─────────────────
+    wep_block_prompts = out.pop("_execution_package_block_prompts", None)
     supplied_conts = out.get("continuation_prompts") if trust_client_authority else None
     out["continuation_prompts"] = (
         _normalize_continuations(supplied_conts) if supplied_conts else None)
-    if (not _clean(out.get("initial_prompt_text")) or not out.get("continuation_prompts")) \
+    if not trust_client_authority and exec_pkg_id:
+        # PRODUCTION SSOT + COPY BINDING: when the plan is resolved from an
+        # execution package, its persisted, copy-bound per-block prompts are the
+        # ONLY per-block authority — reused verbatim (the same blocks the Manual
+        # Fire Handoff renders). This is server-side PACKAGE authority, NOT client
+        # trust: the text is read from the persisted package, never from the
+        # request. A fresh recompile here would re-resolve copy WITHOUT the binding
+        # and silently emit landbank fallback dialogue — the ghost-copy bug. If the
+        # package carries no reusable per-block authority the fields stay unset and
+        # land in `missing` (INCOMPLETE_PRODUCTION_PLAN → 422); we NEVER fall back
+        # to the copy-blind recompile.
+        if not _clean(out.get("initial_prompt_text")) and wep_block_prompts:
+            out["initial_prompt_text"] = wep_block_prompts["initial"]
+        if not out.get("continuation_prompts") and wep_block_prompts and wep_block_prompts["continuations"]:
+            out["continuation_prompts"] = wep_block_prompts["continuations"]
+    elif (not _clean(out.get("initial_prompt_text")) or not out.get("continuation_prompts")) \
             and _clean(out.get("product_id")):
+        # No execution package (recovery / legacy intents): the reviewed authority
+        # is not persisted anywhere, so the one compile door resolves the per-block
+        # prompts. The explicit recovery path (trust_client_authority=True) also
+        # keeps this door, which honours its supplied reviewed authority.
         await _compile_block_prompts(out, segment_count)
 
     # ── fingerprints ALWAYS recomputed server-side; supplied only compared ───
@@ -310,6 +335,53 @@ async def _compile_block_prompts(out: dict[str, Any], segment_count: int) -> Non
                 "is_final": bool(block.get("is_final")),
             })
         out["continuation_prompts"] = conts or None
+
+
+def _execution_package_block_prompts(pkg: dict[str, Any]) -> dict[str, Any]:
+    """Reviewed per-block prompts already compiled ONTO the execution package.
+
+    The execution package was compiled through the one compile door WITH its bound
+    copy set, and the resulting blocks were persisted verbatim on
+    ``request_lineage_payload.compiler.prompt_blocks`` — the SAME blocks the Manual
+    Fire Handoff renders. Reusing them means the durable EXTEND job renders the copy
+    the operator approved; a fresh recompile here would re-resolve copy WITHOUT the
+    binding and silently emit landbank fallback dialogue (the ghost-copy defect).
+
+    Extraction mirrors ``_compile_block_prompts`` field-for-field (block 1 =
+    ``initial_generation_prompt_text`` else ``engine_prompt_text``; block N>=2 =
+    ``flow_extend_prompt_text``), so the reused text is identical to what a compile
+    would have produced — only the copy binding is guaranteed intact.
+
+    Returns ``{"initial": <str>, "continuations": [<normalized cont>, ...]}``; the
+    initial is "" and continuations [] when the package carries no reusable
+    per-block authority — the caller then FAILS CLOSED (never a copy-blind recompile).
+    """
+    try:
+        lineage = json.loads(pkg.get("request_lineage_payload") or "{}")
+    except (TypeError, ValueError):
+        lineage = {}
+    blocks = [
+        b for b in ((lineage.get("compiler") or {}).get("prompt_blocks") or [])
+        if isinstance(b, dict)
+    ]
+    initial = ""
+    continuations: list[dict[str, Any]] = []
+    if blocks:
+        first = blocks[0]
+        initial = (_clean(first.get("initial_generation_prompt_text"))
+                   or _clean(first.get("engine_prompt_text")))
+        for block in blocks[1:]:
+            text = _clean(block.get("flow_extend_prompt_text"))
+            if not text:
+                continue
+            continuations.append({
+                "position": int(block.get("block_index") or 0) - 1,
+                "block_index": int(block.get("block_index") or 0),
+                "prompt": text,
+                "fingerprint": _fp(text),
+                "is_final": bool(block.get("is_final")),
+            })
+    return {"initial": initial, "continuations": continuations}
 
 
 def _missing_fields(out: dict[str, Any], extend_ops: int) -> list[str]:
