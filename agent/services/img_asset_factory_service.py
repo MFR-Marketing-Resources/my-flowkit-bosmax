@@ -471,16 +471,23 @@ def _product_lock_lines(product: dict[str, object] | None, *, is_video: bool) ->
         ),
     )
     return [
-        lock["identity_lock"],
-        lock["geometry_lock"],
-        lock["scale_lock"],
-        lock["reference_lock"],
-        lock["frame_persistence"],
-        lock["negative_morph"],
-        # All-out product-truth hardening (owner-directed): absolute
-        # no-modification clause + scale anchor / legibility decoupling.
-        lock["no_modification_lock"],
-        lock["scale_anchor_lock"],
+        line
+        for line in (
+            lock["identity_lock"],
+            lock["geometry_lock"],
+            lock["scale_lock"],
+            lock["reference_lock"],
+            lock["frame_persistence"],
+            lock["negative_morph"],
+            # All-out product-truth hardening (owner-directed): absolute
+            # no-modification clause + scale anchor / legibility decoupling +
+            # object-in-hand authority + category grip/handling.
+            lock["no_modification_lock"],
+            lock["scale_anchor_lock"],
+            lock["object_authority_lock"],
+            lock["handling_lock"],
+        )
+        if line
     ]
 
 

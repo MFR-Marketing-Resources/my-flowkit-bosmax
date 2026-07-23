@@ -881,6 +881,16 @@ async def test_generic_frames_engine_prompt_carries_all_locks_and_no_platform_wo
     ep = preview.engine_prompt_text
     assert "PRODUCT NO-MODIFICATION LOCK:" in ep
     assert "PRODUCT SCALE ANCHOR:" in ep
+    assert "OBJECT-IN-HAND AUTHORITY:" in ep
+    assert "product reference outranks the avatar reference" in ep
+    assert "PRODUCT HANDLING LOCK:" in ep
+    assert "two-finger side pinch" in ep or "palm-cupped hold" in ep
+    assert "PRODUCT IDENTITY LOCK:" in ep
+    assert "LABEL TEXT LOCK:" in ep
+    assert "PRODUCT GEOMETRY LOCK:" in ep
+    assert "PRODUCT SCALE LOCK:" in ep
+    assert "PRODUCT REFERENCE LOCK:" in ep
+    assert "PRODUCT NEGATIVE MORPH RULES:" in ep
     assert "like/comment/share icons" in ep
     assert "tiktok" not in ep.lower()
     assert "GENERIC_FRAMES_AVATAR_PRODUCT" not in ep   # routing metadata never leaks

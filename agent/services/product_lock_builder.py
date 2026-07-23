@@ -248,6 +248,63 @@ def _fallback_identity_line(product: dict[str, Any]) -> str:
     )
 
 
+def _is_compact_herbal_oil(product: dict[str, Any], *, matched_id: Any) -> bool:
+    """True for Cap Burung / traditional herbal-oil pocket bottles."""
+    if str(matched_id or "").upper() == "MWTCB_25ML_CAP_BURUNG":
+        return True
+    name = _product_name_text(product)
+    hay = " ".join(
+        [
+            name,
+            _lower(product.get("type")),
+            _lower(product.get("category")),
+            _lower(product.get("product_type")),
+        ]
+    )
+    markers = (
+        "minyak warisan",
+        "cap burung",
+        "minyak angin",
+        "minyak urut",
+        "minyak sapuan",
+        "herbal oil",
+        "medicated oil",
+        "traditional oil",
+        "traditional herbal oil",
+    )
+    return any(m in hay for m in markers)
+
+
+def _category_handling_lock(
+    product: dict[str, Any],
+    *,
+    matched_id: Any = None,
+) -> str:
+    """Category-specific grip/scale handling that always reaches engine prompts.
+
+    Compact herbal-oil bottles (esp. Minyak Warisan Tok Cap Burung) get explicit
+    two-finger / palm-cupped grip and anti-overscale rules. Other handheld products
+    get a generic natural-grip lock so product holding never falls back to vague
+    'holding product' language alone.
+    """
+    anti_overscale = (
+        "Improve label readability by angle, lighting, focus, and grip — never by "
+        "enlarging or reshaping the product."
+    )
+    if _is_compact_herbal_oil(product, matched_id=matched_id):
+        return (
+            "PRODUCT HANDLING LOCK: Compact herbal-oil bottle — use a two-finger side pinch "
+            "or palm-cupped hold with the label facing camera, fingers clear of the label face, "
+            "and the product small relative to an adult hand, fingers, and face. "
+            f"{anti_overscale}"
+        )
+    return (
+        "PRODUCT HANDLING LOCK: Use a natural category-true grip that keeps the real product "
+        "at true scale with the label facing camera and fingers clear of critical label text. "
+        f"{anti_overscale}"
+    )
+
+
 # ── public lock builder ────────────────────────────────────────────────────────
 
 def build_product_lock(
@@ -346,14 +403,27 @@ def build_product_lock(
     # Scale anchor + legibility decoupling (same source): oversize happens when the
     # engine 'helps' readability by enlarging or pushing the product at the lens.
     # Anchor the product to the presenter's natural grip and state explicitly that
-    # legibility comes from facing/focus/lighting — never from size.
+    # legibility comes from angle/focus/lighting/grip — never from size or reshape.
     scale_anchor_lock = (
         "PRODUCT SCALE ANCHOR: When a presenter holds the product, keep it in a natural "
         "grip at chest level or lower, at its true real-world size relative to the hand, "
         "fingers, and face. The product must never drift toward the camera, float, or fill "
-        "the frame. Keep it clearly legible by FACING it to the camera with sharp focus and "
-        "good lighting — NEVER by enlarging it."
+        "the frame. Improve label readability by angle, lighting, focus, and grip with the "
+        "label facing the camera — NEVER by enlarging or reshaping the product."
     )
+
+    # Avatar reference may show empty hands or an old prop; product truth must win
+    # for anything in-hand so F2V/I2V/IMG composites do not inherit avatar props or
+    # invent oversized/relabeled products from face-identity pressure.
+    object_authority_lock = (
+        "OBJECT-IN-HAND AUTHORITY: When a presenter holds a product, the product reference "
+        "outranks the avatar reference for object-in-hand identity, product scale, label "
+        "text, geometry, and packaging truth. Avatar reference controls face, hair, wardrobe, "
+        "and body identity only — never the held object's appearance, size, label, grip "
+        "props, or shape."
+    )
+
+    handling_lock = _category_handling_lock(product or {}, matched_id=matched_id)
 
     # VIDEO-lane hand negative. The anti-finger keyword set existed ONLY in the
     # IMAGE-lane authority (creative_scene_prompt_library.json), so every compiled
@@ -381,6 +451,8 @@ def build_product_lock(
         "hand_anatomy_lock": hand_anatomy_lock,
         "no_modification_lock": no_modification_lock,
         "scale_anchor_lock": scale_anchor_lock,
+        "object_authority_lock": object_authority_lock,
+        "handling_lock": handling_lock,
         "matched_product_id": matched_id,
     }
 
@@ -404,11 +476,13 @@ def section_2_lock_lines(
         # no-modification clause + the scale anchor / legibility decoupling.
         lock["no_modification_lock"],
         lock["scale_anchor_lock"],
+        lock["object_authority_lock"],
+        lock["handling_lock"],
     ]
     # Video-only (the image lane keeps its own library hand negatives).
     if lock["hand_anatomy_lock"]:
         lines.append(lock["hand_anatomy_lock"])
-    return lines
+    return [line for line in lines if line]
 
 
 def section_3_lock_lines(
