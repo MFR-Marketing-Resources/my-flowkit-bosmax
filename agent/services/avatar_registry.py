@@ -48,6 +48,31 @@ _PERSONA_RE = re.compile(r"^BOS_[FM]_([A-Z0-9]+)_[0-9]{2,}$")
 # per-gender persona lists from the pool AvatarCode prefix).
 _PERSONA_GENDER_RE = re.compile(r"^BOS_([FM])_([A-Z0-9]+)_[0-9]{2,}$")
 
+_AVATAR_REFERENCE_FREE_HAND_LAW = (
+    "Avatar reference pose law: both hands must be empty and visible where framed. "
+    "The avatar must not hold, touch, present, carry, sip from, or interact with any object. "
+    "No cup, bottle, phone, book, food, bag, product, prop, tool, package, label, or container in the hands. "
+    "Use a neutral reusable commercial identity pose: relaxed open hands, hands by sides, "
+    "or hands resting naturally, leaving the hand area clean for future product-composite generation."
+)
+
+
+def avatar_reference_free_hand_law() -> str:
+    """Public test/readback hook for the reusable avatar-reference pose law."""
+    return _AVATAR_REFERENCE_FREE_HAND_LAW
+
+
+def _harden_avatar_generation_prompt(prompt: str) -> str:
+    """Append the avatar free-hand law to legacy PromptV1 rows at read time.
+
+    The live bridge can contain older CSV rows. Hardening at the getter protects
+    bulk/regeneration without forcing a risky registry rewrite.
+    """
+    clean = str(prompt or "").strip()
+    if not clean or "Avatar reference pose law:" in clean:
+        return clean
+    return f"{clean} {_AVATAR_REFERENCE_FREE_HAND_LAW}"
+
 
 @lru_cache(maxsize=1)
 def _vocab_doc() -> dict:
@@ -353,7 +378,7 @@ def get_generation_prompt(avatar_code: str) -> dict:
             return {
                 "avatar_code": str(row.get("AvatarCode")).strip(),
                 "character_name": str(row.get("CharacterName") or "").strip(),
-                "prompt": prompt,
+                "prompt": _harden_avatar_generation_prompt(prompt),
             }
     raise ValueError(f"AVATAR_NOT_FOUND:{avatar_code}")
 
@@ -563,13 +588,14 @@ def build_avatar_prompt_v1(profile: dict) -> str:
     if hijab:
         styling = f"{styling}, wearing a hijab/tudung" if styling else "wearing a hijab/tudung"
 
-    return (
+    prompt = (
         "Create a photorealistic avatar reference image. "
         f"Identity: {name}, Code: {code}. "
         f"Demographic: {demographic}, Young Adult, Malay/SEA market fit. "
         f"Skin tone: {skin or 'Light-medium'}. Hair: {hair or 'Medium tidy'}. "
         f"Styling: {styling or 'Smart casual wear'}. "
-        f"Expression: {expression or 'Calm neutral'}. Pose: Relaxed, natural. "
+        f"Expression: {expression or 'Calm neutral'}. "
+        "Pose: relaxed neutral reusable avatar reference pose, with empty hands and no object held. "
         f"Environment: {environment or 'clean commercial'}, "
         f"{lighting or 'balanced commercial'} lighting. "
         f"Camera framing: {camera or 'Waist-up'}, clear face. "
@@ -578,3 +604,4 @@ def build_avatar_prompt_v1(profile: dict) -> str:
         "character fully clothed, respectful, and suitable for general audience "
         "and commercial use."
     )
+    return _harden_avatar_generation_prompt(prompt)
