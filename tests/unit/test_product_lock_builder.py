@@ -82,18 +82,24 @@ def test_minyak_warisan_scale_lock_is_flow_safe_qualitative():
     """
     lock = plb.build_product_lock(MW25, is_video=True, has_product_reference=True)
     scale = lock["scale_lock"].lower()
-    # required qualitative size-class + hand-fit + perspective/depth anchors
+    # required qualitative size-class + hand-fit + perspective/depth anchors.
+    # Corrected: the old "slightly larger than a chapstick-size roll-on" /
+    # "compact palm-size" wording underscaled MWTCB into the BOSMAX roll-on size
+    # family (owner scale-comparison photos prove it is ~2x taller and much wider
+    # than the roll-on). Anchored now as compact POCKET-size, human-relative.
     for phrase in [
-        "compact palm-size",
-        "fits naturally in one hand",
-        "fingers wrapping comfortably",
+        "compact pocket-size",
+        "shorter than an adult palm",
+        "two fingers wide",
         "small handheld household herbal-oil bottle",
-        "slightly larger than a chapstick-size roll-on",
-        "compact handheld size family",
         "natural handheld depth plane",
         "closer to the camera lens",
     ]:
         assert phrase in scale, f"missing Flow-safe scale anchor: {phrase}"
+    # anti-UNDERSCALE guard (the fix): MWTCB must never be shrunk to a roll-on /
+    # lip-balm, which is what cross-contaminated it with the BOSMAX variants.
+    for undersize in ["never shrink", "roll-on", "lip-balm"]:
+        assert undersize in scale, f"missing anti-underscale guard: {undersize}"
     # anti-drift + anti-upscale guards
     for forbidden in [
         "perfume", "supplement", "syrup", "spray", "cosmetic",
@@ -111,9 +117,16 @@ def test_minyak_warisan_flow_safe_scale_reaches_section2(mode):
     engine-facing SECTION 2 for every mode (T2V, HYBRID, FRAMES/F2V,
     INGREDIENTS/I2V, IMAGES/IMG)."""
     s2 = _s2(MW25, mode)
+    # Corrected scale anchor. The old wording "slightly larger than a chapstick-size
+    # roll-on" put MWTCB in the same size family as the BOSMAX roll-ons and made the
+    # engine render it as a tiny roll-on — proven by the owner's scale-comparison
+    # photos (MWTCB is ~2x the BOSMAX roll-on height and much wider). The 25ml bottle
+    # is now anchored as compact POCKET-size: clearly larger than a lip-balm/chapstick
+    # roll-on, still shorter than an adult palm and about two fingers wide.
     for phrase in [
-        "compact palm-size",
-        "slightly larger than a chapstick-size roll-on",
+        "compact pocket-size",
+        "shorter than an adult palm",
+        "two fingers wide",
         "natural handheld depth plane",
         "closer to the camera lens",
     ]:
