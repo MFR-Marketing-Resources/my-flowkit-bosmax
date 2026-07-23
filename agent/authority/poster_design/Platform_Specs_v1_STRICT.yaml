@@ -1,0 +1,239 @@
+%YAML 1.2
+---
+id: KB-PLATFORM-SEA-001
+title: Platform Specifications Sovereign Core (Malaysia + SEA)
+version: "1.0.0"
+type: sovereign
+
+document_control:
+  enforcement_level: strict
+  region_scope: malaysia_sea
+  owner: BINA_POSTER_PROJECT
+  last_updated: "2026-03-02"
+
+description:
+  bm: Fail konfigurasi utama untuk menguatkuasakan piawaian visual AI bagi platform sosial dan e-dagang di Malaysia dan Asia Tenggara.
+  en: Master configuration file enforcing AI visual standards for social media and e-commerce platforms across Malaysia and SEA.
+
+governance:
+  mobile_first_priority: true
+  default_color_profile: sRGB
+  default_unit_system: metric_px_mb
+
+metadata_usage_policy:
+  platform_constraints_are_metadata_only: true
+  safe_zone_values_are_layout_only: true
+  safe_zone_values_must_not_enter_image_prompt: true
+  platform_pixel_values_must_not_render_as_visual_guides: true
+  metadata_reference_targets_are_audit_only: true
+  image_prompt_allowed_platform_terms:
+    - "9:16"
+    - "1:1"
+    - "4:5"
+    - "16:9"
+    - "1080x1920px"
+    - "1080x1350px"
+    - "2000x2000px"
+    - "5000x5000px"
+    - "sRGB"
+  prohibited_in_image_prompt:
+    - safe_zone
+    - side_margin_px
+    - bottom_exclusion_px
+    - top_px
+    - bottom_px
+    - left_px
+    - right_px
+    - product_padding_px
+    - centered_focus_required
+    - product_minimum_fill_percentage
+    - file_size_check
+    - aspect_ratio_check
+    - color_profile_check
+    - safe_zone_text_check
+  natural_language_translation_required: true
+  safe_zone_translation_examples:
+    - source: "bottom_exclusion_px"
+      prompt_safe_replacement: "clean lower foreground for later interface overlay"
+    - source: "side_margin_px"
+      prompt_safe_replacement: "subject kept clear of screen edges"
+    - source: "safe_zone"
+      prompt_safe_replacement: "composition leaves uncluttered negative space"
+  if_layout_metadata_detected_in_image_prompt: reject_and_rewrite
+
+platform_registry:
+
+  - platform_id: meta
+    channels: [facebook, instagram]
+    constraints:
+      formats:
+        allowed: [jpg, png, gif]
+        preferred: jpg
+      aspect_ratios:
+        - name: square
+          ratio: "1:1"
+          width_px: 1080
+          height_px: 1080
+        - name: vertical_feed
+          ratio: "4:5"
+          width_px: 1080
+          height_px: 1350
+        - name: stories_reels
+          ratio: "9:16"
+          width_px: 1080
+          height_px: 1920
+      file_size:
+        max:
+          value: 30
+          unit: MB
+      color_profile:
+        required: sRGB
+    safe_zone:
+      vertical:
+        top_px: 270
+        bottom_px: 380
+      horizontal:
+        left_px: 64
+        right_px: 64
+    safe_zone_usage: metadata_only_never_render
+    visual_policy:
+      text_overlay_max_percentage: 20
+      unreadable_font: prohibited
+      excessive_text: prohibited
+
+  - platform_id: tiktok
+    channels: [tiktok_ads]
+    constraints:
+      formats:
+        allowed: [jpg, png]
+        preferred: jpg
+      aspect_ratios:
+        - name: vertical_primary
+          ratio: "9:16"
+          width_px: 1080
+          height_px: 1920
+      file_size:
+        max:
+          value: 100
+          unit: MB
+      color_profile:
+        required: sRGB
+    safe_zone:
+      vertical:
+        bottom_exclusion_px: 384
+      horizontal:
+        side_margin_px: 44
+    safe_zone_usage: metadata_only_never_render
+    visual_policy:
+      obscured_ui_elements: prohibited
+      static_without_motion_intent: prohibited
+
+  - platform_id: shopee
+    channels: [my, sg, id]
+    constraints:
+      formats:
+        allowed: [jpg, png]
+        preferred: jpg
+      aspect_ratios:
+        - name: product_square
+          ratio: "1:1"
+          width_px: 2000
+          height_px: 2000
+      file_size:
+        max:
+          value: 2
+          unit: MB
+      color_profile:
+        required: sRGB
+    safe_zone:
+      product_padding_px: 200
+      centered_focus_required: true
+    safe_zone_usage: metadata_only_never_render
+    visual_policy:
+      hero_text_overlay: prohibited
+      watermarks: prohibited
+      non_white_background_hero: prohibited
+
+  - platform_id: lazada
+    channels: [my, th, vn]
+    constraints:
+      formats:
+        allowed: [jpg, png]
+        preferred: jpg
+      aspect_ratios:
+        - name: product_square
+          ratio: "1:1"
+          width_px: 5000
+          height_px: 5000
+      file_size:
+        max:
+          value: 2
+          unit: MB
+      color_profile:
+        required: sRGB
+    safe_zone:
+      product_minimum_fill_percentage: 80
+      white_background_mandatory: true
+    safe_zone_usage: metadata_only_never_render
+    visual_policy:
+      overlay_on_hero: prohibited
+      border_frames: prohibited
+      cluttered_background: prohibited
+
+export_pipeline:
+  compression_strategy: intelligent_perceptual_quantization
+  anti_blur_scaling: bicubic_sharper_resampling
+  retina_handling: export_2x_density
+  thumbnail_fallback: center_crop_square
+
+model_routing:
+  static_product:
+    engine_class: high_fidelity_image
+    distortion_prevention: true
+    text_rendering: disabled
+  lifestyle_scene:
+    engine_class: cinematic_image
+    distortion_prevention: moderate
+    text_rendering: minimal
+  human_avatar_livestream_creator:
+    engine_class: cinematic_image
+    distortion_prevention: moderate
+    text_rendering: disabled
+    product_scale_classification: prohibited
+    safe_zone_metadata_handling: metadata_only
+    prompt_safe_layout_behavior: "translate safe-zone requirements into natural composition language only"
+  non_product_human_scene:
+    engine_class: cinematic_image
+    distortion_prevention: moderate
+    text_rendering: disabled
+    product_scale_classification: prohibited
+    safe_zone_metadata_handling: metadata_only
+  real_estate_listing:
+    engine_class: architectural_image
+    distortion_prevention: perspective_correction_enabled
+    text_rendering: clean_sans_serif
+
+metadata_reference_targets:
+  - rule_id: file_size_check
+    action: enforce_in_metadata_handoff
+  - rule_id: aspect_ratio_check
+    action: enforce_in_metadata_handoff
+  - rule_id: color_profile_check
+    action: enforce_in_metadata_handoff
+  - rule_id: safe_zone_text_check
+    action: enforce_in_metadata_handoff
+
+canonical_prompts:
+  - "Generate Shopee 1:1 hero product image, 2000x2000px, white background, no text."
+  - "Create TikTok 9:16 vertical lifestyle scene optimized for mobile feed."
+  - "Design Meta 4:5 Instagram feed visual with safe zone compliance."
+
+examples:
+  - prompt: "Premium batik shirt for Shopee listing."
+    expected_output_spec: "2000x2000px, JPG, max 2MB, sRGB"
+  - prompt: "Urban lifestyle hijab ad for TikTok 9:16."
+    expected_output_spec: "1080x1920px, JPG, max 100MB, sRGB"
+  - prompt: "Skincare product for Instagram 4:5 feed."
+    expected_output_spec: "1080x1350px, JPG, max 30MB, sRGB"
+
+...

@@ -1,0 +1,138 @@
+%YAML 1.2
+---
+id: KB-COLOR-TESTING-SEA-008
+title: Color Psychology & Testing System (Malaysia + SEA)
+version: "1.0.0"
+type: satellite
+
+document_control:
+  enforcement_level: aligned_with_sovereign
+  region_scope: malaysia_sea
+  owner: BINA_POSTER_PROJECT
+  last_updated: "2026-03-02"
+
+description:
+  en: Color psychology configuration and A/B testing framework defining emotional color triggers, cultural alignment, contrast control, and conversion-oriented palette validation for Malaysia and Southeast Asia markets.
+
+governance:
+  mobile_screen_dominance: true
+  contrast_priority: high
+  cultural_sensitivity_required: true
+  color_profile_enforced: sRGB_only
+  sovereign_override_protocol: "must_yield_to_sovereign_conflict"
+
+core_color_psychology:
+
+  emotional_mapping:
+
+    red:
+      triggers: [urgency, promotion, attention]
+      suitable_for: [fmcg, flash_sale, clearance]
+      saturation_limit_percentage: 85
+
+    blue:
+      triggers: [trust, reliability, technology]
+      suitable_for: [fintech, telco, healthcare]
+      saturation_limit_percentage: 75
+
+    green:
+      triggers: [health, nature, safety]
+      suitable_for: [skincare, supplements, eco_products]
+      saturation_limit_percentage: 80
+
+    gold:
+      triggers: [luxury, exclusivity, premium_status]
+      suitable_for: [real_estate, luxury_goods]
+      metallic_effect_allowed: true
+
+    black:
+      triggers: [authority, sophistication]
+      suitable_for: [luxury, automotive, fashion]
+      background_usage_allowed: true
+
+  prohibit_color_conflict_between_predator_and_empathy_categories: true
+
+contrast_management:
+
+  minimum_wcag_ratio: 4.5
+  high_visibility_cta_required: true
+  prohibit_low_contrast_text: true
+  white_background_hex_required_for_ecommerce: "#FFFFFF"
+
+sea_market_bias:
+
+  malaysia_preferences:
+    festive_color_variation_allowed: true
+    ramadan_palette_bias: [deep_green, gold]
+    cny_palette_bias: [red, gold]
+    deepavali_palette_bias: [purple, gold]
+
+  general_sea_behavior:
+    vibrant_colors_allowed_in_fmcg: true
+    neutral_palette_preferred_in_luxury: true
+
+ab_testing_framework:
+
+  test_structure:
+    variable_isolation_required: true
+    single_primary_color_variation_only: true
+    max_variants_per_test: 3
+
+  measurable_metrics:
+    - click_through_rate
+    - conversion_rate
+    - scroll_depth
+    - add_to_cart_rate
+
+  prohibit_multiple_variable_changes: true
+
+cta_color_rules:
+
+  preferred_cta_colors:
+    - red_high_contrast
+    - green_high_contrast
+    - blue_high_contrast
+
+  prohibit_cta_color_same_as_background: true
+  require_visual_separation_from_body_text: true
+
+render_integrity:
+
+  prohibit_color_bandings: true
+  prohibit_over_saturation_beyond_limit: true
+  prohibit_skin_tone_shift: true
+  maintain_natural_white_balance: true
+
+metadata_reference_targets:
+  - rule_id: contrast_ratio_check
+    action: enforce_in_metadata_handoff
+  - rule_id: saturation_limit_check
+    action: enforce_in_metadata_handoff
+  - rule_id: background_color_check_ecommerce
+    action: enforce_in_metadata_handoff
+  - rule_id: ab_test_variable_check
+    action: enforce_in_metadata_handoff
+
+canonical_color_templates:
+
+  - template_id: ecommerce_clean_white
+    structure: "Pure white background (#FFFFFF), high contrast CTA color, neutral product tones, no gradient interference."
+
+  - template_id: flash_sale_attention
+    structure: "High contrast red CTA, neutral supporting background, controlled saturation under 85%."
+
+  - template_id: luxury_minimal_palette
+    structure: "Black or deep navy base, gold accent, low saturation control, high contrast typography."
+
+examples:
+
+  - scenario: shopee_flash_sale_banner
+    expected_behavior: "High contrast red CTA, white background, saturation under limit, readable text."
+
+  - scenario: luxury_condo_ad
+    expected_behavior: "Neutral dark palette, gold accent, no oversaturation, high contrast readability."
+
+  - scenario: skincare_listing
+    expected_behavior: "Soft green or pastel tone, natural skin color preserved, white background compliance."
+
+...
