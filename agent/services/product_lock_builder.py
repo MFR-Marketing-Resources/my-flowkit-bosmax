@@ -290,9 +290,20 @@ def build_product_lock(
     # SEV-1 label-truth (live drift evidence: the engine re-typeset the real
     # "Minyak Warisan Tok Cap Burung 25ml" label to shorthand and invented dosage
     # text): the printed label is part of product identity, for every mode.
+    #
+    # The truth SOURCE differs by lane. Image lanes (F2V/HYBRID/I2V/FRAMES/IMG)
+    # carry an attached product reference, so "match the attached reference image"
+    # is correct. T2V is text-only — there IS no attached image — so pointing the
+    # engine at a non-existent image is a contradiction that invites it to invent
+    # the label. Point T2V at the printed-label description in this lock instead.
+    _label_truth_src = (
+        "the attached reference image"
+        if has_product_reference
+        else "the real printed product label described in this product truth lock"
+    )
     identity_lock += (
-        " LABEL TEXT LOCK: The printed label text, typography, and layout must match the "
-        "attached reference image exactly — never re-typeset, shorten, translate, or restyle "
+        f" LABEL TEXT LOCK: The printed label text, typography, and layout must match "
+        f"{_label_truth_src} exactly — never re-typeset, shorten, translate, or restyle "
         "the printed product name, and never add dosage, usage, or instruction text that is "
         "not physically printed on the real label."
     )
@@ -340,7 +351,11 @@ def build_product_lock(
         "PRODUCT NO-MODIFICATION LOCK: Do NOT modify, change, restyle, redesign, or "
         "reinterpret the product in ANY way. The product must retain ALL of its original "
         "details, design, colors, label text, typography, materials, finish, and packaging "
-        "EXACTLY as shown in the product reference image."
+        "EXACTLY as " + (
+            "shown in the product reference image."
+            if has_product_reference
+            else "described in this product truth lock."
+        )
     )
 
     # Scale anchor + legibility decoupling (same source): oversize happens when the
