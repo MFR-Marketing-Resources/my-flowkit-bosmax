@@ -101,6 +101,31 @@ def test_missing_or_malformed_product_is_safe_to_pass():
 _ALL_GATES = {"CLAIM_SAFE", "CLAIM_REVIEW_REQUIRED", "CLAIM_BLOCKED"}
 
 
+def test_every_validation_call_site_passes_the_product():
+    """Structural guard for the class of bug, not just one instance.
+
+    The floor only works if EVERY entry point hands the product in. The first
+    fix threaded it through create + update but missed validate_review_draft —
+    which is exactly the endpoint the UI calls to decide whether a draft is
+    approvable, so /validate still reported a safe-looking posture that
+    create/update would have refused. A single-argument call is that bug.
+    """
+    import inspect
+    import re
+
+    source = inspect.getsource(svc)
+    calls = re.findall(
+        r"_evaluate_validation_payload\((.*?)\n\s*\)", source, flags=re.DOTALL
+    )
+    # Exclude the definition itself.
+    calls = [c for c in calls if "payload: dict" not in c]
+    assert calls, "expected to find validation call sites"
+    for call in calls:
+        assert call.count(",") >= 1 or "product" in call, (
+            f"_evaluate_validation_payload called without a product: {call.strip()[:120]}"
+        )
+
+
 def test_floor_helper_is_ordered_correctly():
     assert svc._claim_floor(HIGH_RISK_PRODUCT) == ("CLAIM_REVIEW_REQUIRED", "HIGH")
     assert svc._claim_floor(None) == ("CLAIM_SAFE", "LOW")
