@@ -109,6 +109,43 @@ async def capacity(product_id: str, formula_count: int = 1):
     }
 
 
+@router.get("/coverage/{product_id}")
+async def coverage(product_id: str):
+    """Phase C2 — angle spread of this product's APPROVED component pool.
+
+    Every other gate in the lane measures sameness (dedupe, near-dup, the
+    combination ledger). This is the only one that measures spread, which is why
+    a 57-of-58 single-theme batch passed everything. Read-only, no tokens."""
+    from agent.services import copy_coverage_service as cov
+
+    product = await crud.get_product(product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail={"error": "PRODUCT_NOT_FOUND"})
+
+    snap = await crud.get_latest_approved_product_intelligence_snapshot(product_id)
+    persona = (snap or {}).get("buyer_persona_snapshot_json")
+    if isinstance(persona, str):
+        try:
+            persona = json.loads(persona or "{}")
+        except Exception:  # noqa: BLE001
+            persona = {}
+    angles = copy_angle_derivation.derive_angles(persona).get("angles") or []
+
+    components = await crud.list_copy_components_for_product(product_id)
+    approved = [c for c in components if c.get("status") == pool_svc.STATUS_APPROVED]
+    report = cov.evaluate_coverage(
+        approved,
+        [a["angle_key"] for a in angles],
+        labels={a["angle_key"]: a["label"] for a in angles},
+    )
+    return {
+        "product_id": product_id,
+        "pool_total": len(components),
+        "pool_approved": len(approved),
+        **report,
+    }
+
+
 @router.post("/{component_id}/approve")
 async def approve(component_id: str, request: ApproveRequest):
     """Operator approval. Only APPROVED components can ever be composed, so this
