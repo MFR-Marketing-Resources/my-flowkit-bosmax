@@ -221,11 +221,28 @@ def compose(
     if blocked:
         warnings.append(f"BLOCKED_ANGLE_COUNT:{len(blocked)}")
 
+    # Phase C2 — every composition reports its own angle spread. Round-robin
+    # makes a skew unlikely, but a pool that is deep on one angle and shallow on
+    # another still produces one, and the whole point of the coverage gate is
+    # that nothing else in the lane measures this.
+    from agent.services.copy_coverage_service import evaluate_coverage
+
+    coverage = evaluate_coverage(
+        items,
+        [str(a["angle_key"]) for a in angles],
+        labels={
+            str(a["angle_key"]): str(a.get("label") or a.get("angle_label") or "")
+            for a in angles
+        },
+    )
+    warnings.extend(coverage["warnings"])
+
     return {
         "items": items,
         "requested": want,
         "produced": len(items),
         "shortfall": max(0, want - len(items)),
         "blocked_angles": blocked,
+        "coverage": coverage,
         "warnings": warnings,
     }

@@ -1,7 +1,9 @@
 # Copy Angle + Component Architecture
 
-Status: **Phase A + B1 BUILT** (PRs #457, #458 — awaiting owner merge).
-Phase B2 / C / D still proposed. Author: Claude Code. Date: 2026-07-24.
+Status: **Phases A, B1, B2, C1, C2 BUILT AND MERGED** (PRs #457, #458, #459,
+#460, #461). Phase D (mass generation) deliberately NOT started — the component
+pool is still empty, so there is nothing to compose from yet.
+Author: Claude Code. Date: 2026-07-24.
 
 **Build order deviates from §6 on purpose: C1 (composer) comes BEFORE B2
 (component authoring).** The composer is the CONSUMER that defines the contract
@@ -178,7 +180,21 @@ So `copy_component` is a new concept, not a duplicate, and the law is honoured.
 | Round | Work |
 |---|---|
 | **C1** | Deterministic composer assembling `copy_set` rows from components, reusing the `copy_rotation_service` LRU pattern. Output still flows through the existing dedupe / near-dup / `content_combination` gates unchanged. |
-| **C2** | **Coverage gate** — per-angle quota; warn when any single angle exceeds ~35% of the pool. This is the control that would have caught the current monoculture and today does not exist. |
+| **C2** | ✅ **BUILT** — `copy_coverage_service`, wired into every composition and exposed at `GET /api/copy-components/coverage/{id}`. |
+
+**C2 threshold design (changed during build).** The plan said "warn above ~35%".
+An ABSOLUTE bar turned out to be wrong for small angle counts: with 2 angles the
+dominant share can never drop below 0.50, so a fixed 0.35 bar would flag every
+2-angle product forever — a permanent false alarm. Bars are therefore RELATIVE
+to the even split (1/n), capped so a large angle count cannot make them
+meaningless: skew above `even × 1.4` (cap 0.60), monoculture above `even × 2.4`
+(cap 0.90). For MWTCB's 4 angles that reproduces the intended 0.35 / 0.60
+exactly. The two bars can never invert.
+
+Coverage judges TWO axes, because either alone can be gamed: **concentration**
+(the largest angle's share) and **breadth** (how many AVAILABLE angles appear at
+all — a perfect 50/50 across 2 of 4 angles still ignores two real use-cases).
+Advisory by default; `blocking=True` turns it into a hard gate.
 
 ### Phase D — Mass generation
 

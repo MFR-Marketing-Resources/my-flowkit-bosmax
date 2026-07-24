@@ -157,6 +157,28 @@ def test_fingerprint_is_order_insensitive():
     assert a != svc.combination_fingerprint(["h1", "s1", "u1", "c1"], "AIDA")
 
 
+def test_composition_reports_its_own_angle_coverage():
+    """Phase C2 wired in: round-robin makes skew unlikely, but the composer must
+    still MEASURE it — nothing else in the lane does."""
+    out = svc.compose(FULL, ANGLES, 8)
+    cov = out["coverage"]
+    assert cov["status"] == "COVERAGE_OK"
+    assert cov["angles_covered"] == 2
+    assert cov["missing_angles"] == []
+    assert cov["per_angle"][0]["angle_label"]  # pain text, not a hash
+
+
+def test_coverage_flags_a_pool_that_is_deep_on_one_angle_only():
+    """A2 has 4 combinations, A1 has 16. Asking for 20 drains A2 and the batch
+    tilts to A1 — exactly the skew the gate exists to surface."""
+    thin = _pool(A1, "colic") + _pool(A2, "aches", hooks=1, subs=1, usps=1, ctas=1)
+    out = svc.compose(thin, ANGLES, 20)
+    keys = [i["angle_key"] for i in out["items"]]
+    assert keys.count(A1) > keys.count(A2)
+    assert out["coverage"]["dominant_angle"] == A1
+    assert out["coverage"]["status"] != "COVERAGE_OK"
+
+
 def test_empty_inputs_are_safe():
     assert svc.compose([], ANGLES, 5)["produced"] == 0
     assert svc.compose(FULL, [], 5)["produced"] == 0
