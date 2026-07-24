@@ -24,9 +24,11 @@ vi.mock("../api/copyComponents", () => ({
 	composeCopyFromComponents: vi.fn(),
 	authorCopyComponents: vi.fn(),
 	approveCopyComponent: vi.fn(),
+	addAngles: vi.fn(),
 }));
 
 import {
+	addAngles,
 	authorCopyComponents,
 	composeCopyFromComponents,
 	fetchCopyCapacity,
@@ -37,6 +39,7 @@ const mockedCap = vi.mocked(fetchCopyCapacity);
 const mockedList = vi.mocked(listCopyComponents);
 const mockedCompose = vi.mocked(composeCopyFromComponents);
 const mockedAuthor = vi.mocked(authorCopyComponents);
+const mockedAddAngles = vi.mocked(addAngles);
 
 const CAPACITY = {
 	product_id: "p1",
@@ -87,6 +90,46 @@ describe("CopyComponentsPanel", () => {
 		);
 		await waitFor(() => expect(onComposed).toHaveBeenCalled());
 		expect(await screen.findByTestId("cc-success")).toHaveTextContent(/PERCUMA/i);
+	});
+
+	it("renders the current angles and the angle counter", async () => {
+		primeLoad();
+		render(<CopyComponentsPanel productId="p1" onComposed={vi.fn()} />);
+		expect(await screen.findByTestId("cc-angle-list")).toHaveTextContent(
+			"Anak menangis malam",
+		);
+		expect(screen.getByTestId("cc-angle-cap")).toHaveTextContent("2/12");
+	});
+
+	it("add-angle is free: sends the typed use-cases and shows the new count", async () => {
+		primeLoad();
+		mockedAddAngles.mockResolvedValue({ ok: true, angle_count: 4, added: 2 });
+		render(<CopyComponentsPanel productId="p1" onComposed={vi.fn()} />);
+		const box = await screen.findByTestId("cc-pains");
+		fireEvent.change(box, { target: { value: "masuk angin\nsakit belakang" } });
+		fireEvent.click(screen.getByTestId("cc-add-angles"));
+		await waitFor(() =>
+			expect(mockedAddAngles).toHaveBeenCalledWith({
+				product_id: "p1",
+				pains: ["masuk angin", "sakit belakang"],
+			}),
+		);
+		expect(await screen.findByTestId("cc-success")).toHaveTextContent(/2 angle ditambah/i);
+	});
+
+	it("add-angle surfaces a CLAIM_BLOCKED refusal without throwing", async () => {
+		primeLoad();
+		mockedAddAngles.mockResolvedValue({
+			ok: false,
+			error: "CLAIM_BLOCKED",
+			claim_tokens: ["cure"],
+		});
+		render(<CopyComponentsPanel productId="p1" onComposed={vi.fn()} />);
+		fireEvent.change(await screen.findByTestId("cc-pains"), {
+			target: { value: "guaranteed cure" },
+		});
+		fireEvent.click(screen.getByTestId("cc-add-angles"));
+		expect(await screen.findByTestId("cc-error")).toHaveTextContent(/terlarang/i);
 	});
 
 	it("author requires confirmation before spending tokens", async () => {

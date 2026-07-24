@@ -61,6 +61,25 @@ export interface AuthorResult {
 	warnings?: string[];
 }
 
+export interface AddAnglesResult {
+	ok: boolean;
+	angle_count?: number;
+	added?: number;
+	capped?: boolean;
+	claim_gate?: string;
+	snapshot_version?: number;
+	error?: string;
+	claim_tokens?: string[];
+}
+
+// FREE — appends persona pains (angles) and re-approves; spends no AI tokens.
+export async function addAngles(input: {
+	product_id: string;
+	pains: string[];
+}): Promise<AddAnglesResult> {
+	return postAPI<AddAnglesResult>("/api/copy-components/add-angles", input);
+}
+
 export async function fetchCopyCapacity(
 	productId: string,
 ): Promise<CopyComponentsCapacity> {

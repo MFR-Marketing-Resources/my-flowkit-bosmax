@@ -1,6 +1,7 @@
 import { Boxes } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import {
+	addAngles,
 	approveCopyComponent,
 	authorCopyComponents,
 	COMPONENT_STATUS_REVIEW,
@@ -15,6 +16,7 @@ import { Badge, ConfirmActionModal, HelperText, Section } from "./ui";
 
 const DEFAULT_COMPOSE = 50;
 const DEFAULT_PER_SLOT = 4; // components authored per (angle × type) call
+const MAX_ANGLES = 12; // mirrors agent copy_angle_derivation.MAX_ANGLES
 
 function isNotConfigured(message: string): boolean {
 	return /409|NOT_CONFIGURED|NOT_CONFIG/i.test(message);
@@ -38,7 +40,10 @@ export default function CopyComponentsPanel({
 	const [reviewCount, setReviewCount] = useState(0);
 	const [composeCount, setComposeCount] = useState(DEFAULT_COMPOSE);
 	const [perSlot, setPerSlot] = useState(DEFAULT_PER_SLOT);
-	const [busy, setBusy] = useState<"compose" | "author" | "approve" | null>(null);
+	const [painsText, setPainsText] = useState("");
+	const [busy, setBusy] = useState<
+		"compose" | "author" | "approve" | "angle" | null
+	>(null);
 	const [progress, setProgress] = useState("");
 	const [error, setError] = useState("");
 	const [success, setSuccess] = useState("");
@@ -71,6 +76,50 @@ export default function CopyComponentsPanel({
 	const totalSlots = angles.length * COMPONENT_TYPES.length;
 	const capacity = cap?.total_combinations ?? 0;
 	const componentCount = cap?.component_count ?? 0;
+
+	const handleAddAngles = async () => {
+		if (busy) return;
+		const pains = painsText
+			.split(/[\r\n]+/)
+			.map((s) => s.trim())
+			.filter(Boolean);
+		if (!pains.length) {
+			setError("Tulis sekurang-kurangnya satu use-case (satu baris satu angle).");
+			return;
+		}
+		setBusy("angle");
+		setError("");
+		setSuccess("");
+		try {
+			const res = await addAngles({ product_id: productId, pains });
+			if (!res.ok) {
+				setError(
+					res.error === "CLAIM_BLOCKED"
+						? `Angle ditolak — mengandungi perkataan claim terlarang: ${(res.claim_tokens ?? []).join(", ") || "—"}.`
+						: res.error || "Gagal tambah angle.",
+				);
+			} else {
+				setPainsText("");
+				setSuccess(
+					`+${res.added} angle ditambah → jumlah ${res.angle_count}${
+						res.capped ? ` (had maksimum ${MAX_ANGLES})` : ""
+					}. Percuma. Seterusnya: Author komponen untuk angle baharu.`,
+				);
+			}
+			await load();
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : "Gagal tambah angle.";
+			setError(
+				/ANGLES_FULL/.test(msg)
+					? `Angle sudah penuh (${MAX_ANGLES}).`
+					: /NO_APPROVED_SNAPSHOT/.test(msg)
+						? "Produk ini belum ada Product Intelligence diluluskan — sediakan di Products → Intelligence dahulu."
+						: msg,
+			);
+		} finally {
+			setBusy(null);
+		}
+	};
 
 	const handleCompose = async () => {
 		if (busy || capacity === 0) return;
@@ -239,6 +288,61 @@ export default function CopyComponentsPanel({
 						Product Intelligence dahulu sebelum author komponen.
 					</HelperText>
 				) : null}
+
+				<HelperText>
+					Turutan: 1) Tambah angle → 2) Author komponen (token) → 3) Approve
+					komponen → 4) Compose skrip. Cuma langkah Author guna token.
+				</HelperText>
+
+				{/* Angle — FREE */}
+				<div className="space-y-2 rounded-xl border border-blue-500/20 bg-blue-500/5 p-3">
+					<div className="flex items-center justify-between">
+						<span className="text-xs font-bold uppercase text-blue-200">
+							1. Angle / use-case (percuma)
+						</span>
+						<span className="text-[11px] text-slate-400" data-testid="cc-angle-cap">
+							{angles.length}/{MAX_ANGLES}
+						</span>
+					</div>
+					{angles.length ? (
+						<div className="flex flex-wrap gap-1" data-testid="cc-angle-list">
+							{angles.map((a) => (
+								<span
+									key={a.angle_key}
+									className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-300"
+								>
+									{a.angle_label || a.angle_key}
+								</span>
+							))}
+						</div>
+					) : null}
+					{angles.length < MAX_ANGLES ? (
+						<div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+							<textarea
+								value={painsText}
+								onChange={(e) => setPainsText(e.target.value)}
+								placeholder="Tambah use-case baharu — satu baris satu angle…"
+								rows={2}
+								data-testid="cc-pains"
+								aria-label="Use-case angle baharu"
+								className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200"
+							/>
+							<button
+								type="button"
+								data-testid="cc-add-angles"
+								disabled={busy !== null}
+								onClick={() => void handleAddAngles()}
+								className="shrink-0 rounded-lg border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40"
+							>
+								{busy === "angle" ? "Menambah…" : "Tambah angle"}
+							</button>
+						</div>
+					) : (
+						<p className="text-[11px] text-slate-400">
+							Angle sudah penuh ({MAX_ANGLES}).
+						</p>
+					)}
+				</div>
 
 				{/* Compose — FREE */}
 				<div className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3">
