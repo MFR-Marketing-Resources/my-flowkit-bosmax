@@ -33,9 +33,13 @@ def test_capacity_is_multiplicative_not_additive():
     assert cap["total_combinations"] == 2 * 2 * 2 * 2
 
 
-def test_formulas_multiply_capacity():
+def test_formula_count_does_not_multiply_capacity():
+    """Formula is a downstream tag, not a text dimension: the same components
+    under a different formula are the same copy and dedupe collapses them, so
+    formula_count must NOT inflate capacity."""
     cap = svc.pool_capacity(_full_angle(A1), [A1], formula_count=6)
-    assert cap["total_combinations"] == 16 * 6
+    assert cap["total_combinations"] == 16          # not 16 x 6
+    assert cap["formula_count"] == 6                # echoed back, informational
 
 
 def test_angles_sum_not_multiply():
@@ -131,13 +135,17 @@ def test_unknown_component_types_are_ignored():
     assert "BODY" not in svc.COMPONENT_TYPES
 
 
-def test_worked_example_from_the_architecture_doc():
-    """The doc promises ~19,200 from 73 authored pieces: per angle
-    8 hooks x 5 subhooks x 4 usp_sets x 5 ctas = 800, x4 angles x6 formulas."""
+def test_worked_example_component_bound_capacity():
+    """Honest capacity from 73 authored pieces: per angle
+    8 hooks x 5 subhooks x 4 usp_sets x 5 ctas = 800, x4 angles = 3,200 DISTINCT
+    copies. Formula is a tag, not a x6 multiplier (an earlier claim of 19,200
+    counted formulas that add no text and would dedupe away)."""
     angles = [f"ang_{i:012d}" for i in range(4)]
     pool = []
     for a in angles:
         pool += _c(svc.HOOK, a, "h", n=8) + _c(svc.SUBHOOK, a, "b", n=5)
         pool += _c(svc.USP_SET, a, "u", n=4) + _c(svc.CTA, a, "c", n=5)
     cap = svc.pool_capacity(pool, angles, formula_count=6)
-    assert cap["total_combinations"] == 800 * 4 * 6 == 19200
+    assert cap["total_combinations"] == 800 * 4 == 3200
+    # even with 6 formula tags offered, unique capacity is unchanged
+    assert svc.pool_capacity(pool, angles, formula_count=1)["total_combinations"] == 3200
