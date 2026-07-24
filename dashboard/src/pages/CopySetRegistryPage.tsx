@@ -925,7 +925,7 @@ export default function CopySetRegistryPage() {
 							</div>
 						}
 					>
-						{loading ? (
+						{loading && sets.length === 0 ? (
 							<p className="text-sm text-slate-400">Memuatkan…</p>
 						) : (
 							<DataTable<CopySet>
