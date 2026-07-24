@@ -51,6 +51,7 @@ _COLUMNS = {
     "product_intelligence_field_provenance": {"snapshot_id", "product_id", "field_name", "declared_value", "normalized_value", "source_type", "source_url", "source_lane", "evidence_kind", "extraction_method", "confidence_score", "verification_status", "claim_risk_flag", "reviewer_decision", "reviewer_note", "updated_at"},
     "product_intelligence_review_draft": {"product_id", "review_status", "product_description", "benefits_json", "usp_json", "usage_text", "ingredients_text", "warnings_text", "target_customer_text", "paste_anything_summary", "source_urls_json", "image_evidence_json", "package_notes", "size_or_volume", "product_form_factor", "packaging_description", "product_truth_lock", "claim_gate", "claim_risk_level", "claim_tokens_json", "allowed_claims_json", "blocked_claims_json", "buyer_persona_snapshot_json", "copy_strategy_summary_json", "confidence_score", "completeness_score", "readiness_status", "reviewer_note", "created_by", "reviewed_by", "approved_by", "approved_at", "rejected_by", "rejected_at", "updated_at"},
     "copy_generation_batch": {"product_id", "requested_count", "created_count", "deduped_count", "rejected_count", "source", "provider_lane", "provider_model", "updated_at"},
+    "copy_component": {"product_id", "angle_key", "angle_label", "component_type", "content", "formula_affinity", "status", "claim_review_json", "dedupe_key", "usage_count", "last_used_at", "source", "provenance_json", "reviewer_note", "approved_at", "approved_by", "archived", "updated_at"},
     "content_combination": {"product_id", "logical_mode", "copy_set_id", "script_key", "visual_key_json", "combination_fingerprint", "workspace_generation_package_id", "batch_run_id"},
     "avatar_product_fit": {"avatar_code", "product_category", "fit_score", "suitability_notes", "updated_at"},
     "creative_scene_prompt": {"template_id", "cluster", "source_category", "cluster_source", "main_action", "setting", "full_prompt_template", "base_prompt", "combined_prompt_suggestion", "negative_prompt", "variant", "notes", "provenance", "updated_at"},
@@ -1078,6 +1079,69 @@ async def find_copy_set_by_dedupe_key(dedupe_key: str) -> Optional[dict]:
     cur = await db.execute(
         "SELECT * FROM copy_set WHERE dedupe_key=? ORDER BY created_at ASC LIMIT 1",
         (dedupe_key,),
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+# --- Phase B1/B2 atomic copy components ---
+
+async def create_copy_component(product_id: str, **kw) -> dict:
+    """Insert one atomic component. product_id is immutable and set here; every
+    other column goes through the whitelist so unknown keys are ignored.
+
+    The UNIQUE(product_id, component_type, dedupe_key) index is the real guard
+    against the same hook re-entering a pool under different casing — callers
+    should pre-check with find_copy_component_by_dedupe_key for a friendly
+    result, but the constraint is what makes it impossible."""
+    db = await get_db()
+    cid, now = _uuid(), _now()
+    cols = ["component_id", "product_id", "created_at", "updated_at"]
+    vals = [cid, product_id, now, now]
+    allowed = _COLUMNS["copy_component"]
+    for k, v in kw.items():
+        if k in allowed and k not in cols:
+            cols.append(k)
+            vals.append(v)
+    col_str = ",".join(cols)
+    placeholders = ",".join(["?"] * len(cols))
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO copy_component ({col_str}) VALUES ({placeholders})", vals
+        )
+        await db.commit()
+    return await _get_with_db(db, "copy_component", "component_id", cid)
+
+
+async def get_copy_component(component_id: str):
+    return await _get("copy_component", "component_id", component_id)
+
+
+async def update_copy_component(component_id: str, **kw):
+    return await _update("copy_component", "component_id", component_id, **kw)
+
+
+async def list_copy_components_for_product(product_id: str) -> list:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM copy_component WHERE product_id=? AND COALESCE(archived,0)=0 "
+        "ORDER BY component_type, usage_count, created_at",
+        (product_id,),
+    )
+    rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def find_copy_component_by_dedupe_key(
+    product_id: str, component_type: str, dedupe_key: str
+):
+    if not dedupe_key:
+        return None
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM copy_component WHERE product_id=? AND component_type=? "
+        "AND dedupe_key=? LIMIT 1",
+        (product_id, component_type, dedupe_key),
     )
     row = await cur.fetchone()
     return dict(row) if row else None
