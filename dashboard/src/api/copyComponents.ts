@@ -1,0 +1,111 @@
+import { getAPI, postAPI } from "./client";
+
+// Copy Components lane (Phase B/C): reusable per-product building blocks
+// (HOOK/SUBHOOK/USP_SET/CTA) that COMPOSE into copy sets. Authoring spends AI
+// tokens; composing is free (deterministic assembly of approved components).
+
+export const COMPONENT_TYPES = ["HOOK", "SUBHOOK", "USP_SET", "CTA"] as const;
+export type ComponentType = (typeof COMPONENT_TYPES)[number];
+
+export const COMPONENT_TYPE_LABEL: Record<ComponentType, string> = {
+	HOOK: "Hook",
+	SUBHOOK: "Subhook",
+	USP_SET: "USP set",
+	CTA: "CTA",
+};
+
+export const COMPONENT_STATUS_APPROVED = "COMPONENT_APPROVED";
+export const COMPONENT_STATUS_REVIEW = "COMPONENT_REVIEW_REQUIRED";
+
+export interface CapacityPerAngle {
+	angle_key: string;
+	angle_label: string;
+	combinations?: number;
+	[key: string]: unknown;
+}
+
+export interface CopyComponentsCapacity {
+	product_id: string;
+	angles_derived: boolean;
+	angle_warnings: string[];
+	component_count: number;
+	angle_count?: number;
+	total_combinations: number;
+	per_angle: CapacityPerAngle[];
+	next_best?: {
+		component_type: string;
+		angle_key: string;
+		angle_label?: string;
+	} | null;
+}
+
+export interface CopyComponentRow {
+	component_id: string;
+	product_id: string;
+	angle_key: string;
+	angle_label?: string;
+	component_type: string;
+	content: string;
+	status: string;
+}
+
+export interface ComposeResult {
+	created: number;
+	deduped: number;
+	coverage?: { status?: string; dominant_share?: number } | null;
+	warnings?: string[];
+}
+
+export interface AuthorResult {
+	created_count: number;
+	warnings?: string[];
+}
+
+export async function fetchCopyCapacity(
+	productId: string,
+): Promise<CopyComponentsCapacity> {
+	return getAPI<CopyComponentsCapacity>(
+		`/api/copy-components/capacity/${encodeURIComponent(productId)}`,
+	);
+}
+
+export async function listCopyComponents(productId: string): Promise<{
+	product_id: string;
+	items: CopyComponentRow[];
+	count: number;
+}> {
+	return getAPI(
+		`/api/copy-components/product/${encodeURIComponent(productId)}`,
+	);
+}
+
+// FREE — deterministic assembly, spends no AI tokens.
+export async function composeCopyFromComponents(input: {
+	product_id: string;
+	count: number;
+	formula_families?: string[];
+	dry_run?: boolean;
+}): Promise<ComposeResult> {
+	return postAPI<ComposeResult>("/api/copy-components/compose", input);
+}
+
+// SPENDS AI TOKENS (unless dry_run). Authors ONE angle + ONE component type.
+export async function authorCopyComponents(input: {
+	product_id: string;
+	angle_key: string;
+	component_type: string;
+	count: number;
+	dry_run?: boolean;
+}): Promise<AuthorResult> {
+	return postAPI<AuthorResult>("/api/copy-components/author", input);
+}
+
+export async function approveCopyComponent(
+	componentId: string,
+	approvedBy = "operator",
+): Promise<CopyComponentRow> {
+	return postAPI<CopyComponentRow>(
+		`/api/copy-components/${encodeURIComponent(componentId)}/approve`,
+		{ approved_by: approvedBy },
+	);
+}

@@ -14,6 +14,12 @@ vi.mock("../components/workspace/SearchableProductSelect", () => ({
 	default: () => <div data-testid="product-picker">Product picker</div>,
 }));
 
+// The Copy Components panel is exercised by its own test; stub it here so the
+// page test does not fire its capacity/component API calls.
+vi.mock("../components/CopyComponentsPanel", () => ({
+	default: () => <div data-testid="copy-components-panel-mock" />,
+}));
+
 vi.mock("../api/products", () => ({
 	fetchProductCatalog: vi.fn().mockResolvedValue({
 		items: [

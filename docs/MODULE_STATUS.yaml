@@ -685,6 +685,10 @@ domains:
       # COPYWRITING_SET_REGISTRY: product-scoped AI copy-set registry + CRUD
       - dashboard/src/pages/CopySetRegistryPage.tsx
       - dashboard/src/pages/CopySetRegistryPage.test.tsx
+      # Copy Components self-serve panel (author=tokens, compose=free)
+      - dashboard/src/api/copyComponents.ts
+      - dashboard/src/components/CopyComponentsPanel.tsx
+      - dashboard/src/components/CopyComponentsPanel.test.tsx
       - dashboard/src/api/copyIntelligence.ts
       - dashboard/src/pages/CopyIntelligencePage.tsx
       - dashboard/src/pages/CopyIntelligencePage.test.tsx
