@@ -8,6 +8,8 @@ reviewed /fastmoss-bulk gates.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -247,3 +249,32 @@ class CopyIntelligenceDryRunReport(BaseModel):
     suspicious_cross_product_copy: int = 0
     examples: dict[str, list[dict[str, str | int]]] = Field(default_factory=dict)
     records: list[CopyIntelligenceSourceRow] = Field(default_factory=list)
+
+
+class CopyIntelligenceBulkImportRequest(BaseModel):
+    """Bulk HUB -> review-DRAFT import input.
+
+    Provide EITHER `source_id` (a validated uploaded workbook — preferred, keeps
+    runtime paths out of the API) OR `source_path` (Owner-machine override).
+    `dry_run` defaults to True: match + assemble but write nothing. `limit`
+    caps how many NEW drafts are created in one call (idempotent skips do not
+    count against it)."""
+
+    source_id: str | None = None
+    source_path: str | None = None
+    dry_run: bool = True
+    limit: int | None = None
+
+
+class CopyIntelligenceBulkImportReport(BaseModel):
+    """Bulk HUB import outcome. Never approves; every created row is a DRAFT."""
+
+    source: str
+    hub_rows: int = 0
+    matched: int = 0
+    created: int = 0
+    skipped_existing: int = 0
+    unmatched: int = 0
+    rows_without_angles: int = 0
+    dry_run: bool = True
+    samples: list[dict[str, Any]] = Field(default_factory=list)
