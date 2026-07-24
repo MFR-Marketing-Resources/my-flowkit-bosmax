@@ -118,6 +118,73 @@ def _reviewer_note(record: dict[str, Any]) -> str:
     )
 
 
+_TRUNCATION_MIN_KEY_LEN = 30
+
+
+def _catalog_name(product: dict[str, Any]) -> str:
+    return str(product.get("product_display_name") or product.get("raw_product_title") or "")
+
+
+def resolve_matches(
+    records: list[dict[str, Any]],
+    products: list[dict[str, Any]],
+    *,
+    allow_truncation_prefix: bool = False,
+) -> dict[int, str]:
+    """Map HUB record index -> catalog product id.
+
+    EXACT tier (always): normalized-name equality, first product wins.
+
+    TRUNCATION tier (opt-in): the catalog `product_display_name` is stored
+    truncated (~50 chars) while the HUB carries the full title, so the catalog
+    key is an exact PREFIX of the HUB key. Accept such a pair ONLY when it is
+    unambiguously 1:1 — exactly one still-unmatched HUB row has this catalog key
+    as a prefix, AND that HUB row has exactly one catalog prefix-candidate. This
+    guard makes wrong-product attribution and size-variant collapse (a bare
+    "Product" prefixing both "Product 5ml" and "Product 10ml") resolve to a SKIP,
+    never a wrong match. A too-short catalog key (< _TRUNCATION_MIN_KEY_LEN) is
+    never used as a prefix.
+    """
+    cat_norms: list[tuple[str, str]] = []
+    exact_by_name: dict[str, str] = {}
+    for p in products:
+        nm = _normalize_name(_catalog_name(p))
+        if not nm:
+            continue
+        cat_norms.append((nm, p["id"]))
+        exact_by_name.setdefault(nm, p["id"])
+
+    hub_norms = [_normalize_name(str(r.get("source_product_name") or "")) for r in records]
+    result: dict[int, str] = {}
+    for i, hn in enumerate(hub_norms):
+        if hn and hn in exact_by_name:
+            result[i] = exact_by_name[hn]
+
+    if not allow_truncation_prefix:
+        return result
+
+    used_pids = set(result.values())
+    cat_hits: dict[str, set[int]] = {}
+    rec_hits: dict[int, set[str]] = {}
+    for i, hn in enumerate(hub_norms):
+        if i in result or not hn:
+            continue
+        for cn, pid in cat_norms:
+            if pid in used_pids or len(cn) < _TRUNCATION_MIN_KEY_LEN:
+                continue
+            if hn.startswith(cn):
+                cat_hits.setdefault(pid, set()).add(i)
+                rec_hits.setdefault(i, set()).add(pid)
+    for i, pids in rec_hits.items():
+        if len(pids) != 1:
+            continue  # HUB row matches >1 catalog product -> ambiguous, skip
+        pid = next(iter(pids))
+        if len(cat_hits.get(pid, ())) != 1:
+            continue  # catalog product claimed by >1 HUB row -> ambiguous, skip
+        result[i] = pid
+    return result
+
+
 async def _already_has_intelligence(product_id: str) -> bool:
     """Approved snapshot OR a live (non-rejected) draft -> skip, idempotent.
 
@@ -138,11 +205,14 @@ async def import_hub_to_drafts(
     *,
     dry_run: bool = False,
     limit: int | None = None,
+    match_mode: str = "exact",
 ) -> dict[str, Any]:
     """Create review drafts for every HUB row that matches a catalog product.
 
     Returns a report: matched / created / skipped_existing / unmatched, plus a
     small sample. `dry_run` matches + assembles but writes nothing.
+    `match_mode`: "exact" (normalized-name equality) or "exact+truncation"
+    (also accept the unambiguous truncated-catalog-name prefix matches).
     """
     from agent.db import crud
     from agent.models.product_intelligence_review_draft import (
@@ -153,20 +223,19 @@ async def import_hub_to_drafts(
     records = parse_copy_intelligence_hub(Path(path))
 
     products = await crud.list_products(limit=10000, include_archived=False)
-    by_name: dict[str, str] = {}
-    for p in products:
-        nm = _normalize_name(str(p.get("product_display_name") or p.get("raw_product_title") or ""))
-        if nm and nm not in by_name:
-            by_name[nm] = p["id"]
+    matches = resolve_matches(
+        records, products,
+        allow_truncation_prefix=(match_mode == "exact+truncation"),
+    )
 
     matched = created = skipped = unmatched = 0
     no_angles = 0
     samples: list[dict[str, Any]] = []
 
-    for rec in records:
+    for idx, rec in enumerate(records):
         if limit is not None and created >= limit and not dry_run:
             break
-        pid = by_name.get(_normalize_name(str(rec.get("source_product_name") or "")))
+        pid = matches.get(idx)
         if not pid:
             unmatched += 1
             continue

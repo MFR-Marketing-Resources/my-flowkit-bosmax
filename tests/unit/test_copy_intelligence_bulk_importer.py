@@ -221,3 +221,73 @@ def test_one_bad_row_does_not_abort_the_batch(monkeypatch):
 
     rep = asyncio.run(bulk.import_hub_to_drafts("x.xlsx", dry_run=False))
     assert rep["created"] == 2 and rep["skipped_existing"] == 1   # bad row -> skipped
+
+
+# ----------------------------------------- resolve_matches (exact + truncation)
+
+def _prod(pid, name):
+    return {"id": pid, "product_display_name": name}
+
+
+def _rec(name):
+    return {"source_product_name": name}
+
+
+def test_resolve_exact_only():
+    prods = [_prod("p1", "Alpha Product Full Canonical Name Here")]
+    recs = [_rec("Alpha Product Full Canonical Name Here")]
+    assert bulk.resolve_matches(recs, prods) == {0: "p1"}
+
+
+def test_resolve_truncation_prefix_unambiguous():
+    # catalog display name is truncated; HUB carries the full title
+    prods = [_prod("p1", "OHSOLAH AIR BOMB Pewangi Kereta Meletop Viral Car")]
+    recs = [_rec("OHSOLAH AIR BOMB Pewangi Kereta Meletop Viral Car Air Freshener Wangi")]
+    assert bulk.resolve_matches(recs, prods) == {}                       # exact: no match
+    assert bulk.resolve_matches(recs, prods, allow_truncation_prefix=True) == {0: "p1"}
+
+
+def test_resolve_truncation_two_hub_rows_one_product_skips():
+    prods = [_prod("p1", "OHSOLAH AIR BOMB Pewangi Kereta Meletop Viral Car")]
+    recs = [
+        _rec("OHSOLAH AIR BOMB Pewangi Kereta Meletop Viral Car Air Freshener Wangi"),
+        _rec("OHSOLAH AIR BOMB Pewangi Kereta Meletop Viral Car Penyegar Udara Harum"),
+    ]
+    # both prefix-match p1 -> catalog claimed by 2 HUB rows -> skip both
+    assert bulk.resolve_matches(recs, prods, allow_truncation_prefix=True) == {}
+
+
+def test_resolve_truncation_size_variants_skip():
+    # catalog truncated BEFORE the size token; two size variants -> ambiguous
+    prods = [_prod("p1", "Bosmax Herba Minyak Panas Botol Kaca Premium")]
+    recs = [
+        _rec("Bosmax Herba Minyak Panas Botol Kaca Premium 5ml Lip Balm Size"),
+        _rec("Bosmax Herba Minyak Panas Botol Kaca Premium 10ml Chap Stick Size"),
+    ]
+    assert bulk.resolve_matches(recs, prods, allow_truncation_prefix=True) == {}
+
+
+def test_resolve_truncation_two_catalog_prefixes_one_hub_skips():
+    prods = [
+        _prod("p1", "Baby Diaper Pants Disposable Extra Absorbent Soft"),
+        _prod("p2", "Baby Diaper Pants Disposable Extra Absorbent Soft Large Pack XL"),
+    ]
+    recs = [_rec("Baby Diaper Pants Disposable Extra Absorbent Soft Large Pack XL 50pcs")]
+    # HUB row has two catalog products as prefixes -> ambiguous -> skip
+    assert 0 not in bulk.resolve_matches(recs, prods, allow_truncation_prefix=True)
+
+
+def test_resolve_short_catalog_key_never_prefix_matches():
+    prods = [_prod("p1", "Sambal Mak")]  # normalized < 30 chars
+    recs = [_rec("Sambal Mak Pedas Berapi Special Edition Extra Large Bottle 500g")]
+    assert bulk.resolve_matches(recs, prods, allow_truncation_prefix=True) == {}
+
+
+def test_resolve_exact_wins_and_pid_not_reused_by_prefix():
+    prods = [_prod("p1", "Alpha Product Complete Canonical Title Xyz")]
+    recs = [
+        _rec("Alpha Product Complete Canonical Title Xyz"),            # exact
+        _rec("Alpha Product Complete Canonical Title Xyz Extended Variant"),  # prefix of same
+    ]
+    m = bulk.resolve_matches(recs, prods, allow_truncation_prefix=True)
+    assert m[0] == "p1" and 1 not in m   # p1 already used exactly -> not reused
