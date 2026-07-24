@@ -193,7 +193,7 @@ def test_preview_quantity_one_is_trivially_unique(monkeypatch):
     assert out["preview_ready"] is True
 
 
-@pytest.mark.parametrize("bad", [0, -1, 6, 99])
+@pytest.mark.parametrize("bad", [0, -1, 201, 999])
 def test_preview_quantity_out_of_range_fails_closed(bad):
     with pytest.raises(ValueError) as ei:
         asyncio.run(svc.preview_quantity_copy_plans(

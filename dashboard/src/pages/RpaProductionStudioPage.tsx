@@ -92,11 +92,13 @@ import {
 import type { Product, WorkspaceMode } from "../types";
 
 const ASPECTS = ["9:16", "16:9", "1:1"];
-// Stage 1 quantity PREVIEW cap. quantity>1 plans credit-free unique-copy variants;
-// the itemized batch it produces CAN be fired live from section 4c, but the server
-// refuses at the credit boundary until bulk live is runtime-certified. Keep in
-// lockstep with the backend QUANTITY_PREVIEW_MAX (workspace_generation_package_service.py).
-const QUANTITY_MAX = 5;
+// Quantity cap for the credit-free plan/prepare flow. quantity>1 plans unique-copy
+// variants + can prepare an itemized batch; the batch CAN be fired live from
+// section 4c, but the server refuses at the credit boundary until bulk live is
+// runtime-certified. Raised 5 -> 200 so an operator can set a full session-size
+// batch and press to fire when ready (credits per video). Keep in lockstep with
+// the backend QUANTITY_PREVIEW_MAX (workspace_generation_package_service.py).
+const QUANTITY_MAX = 200;
 const POLL_MS = 5000;
 const TERMINAL_STATUSES = new Set(["GENERATED", "DOWNLOADED", "FAILED", "CANCELLED"]);
 
@@ -1169,8 +1171,8 @@ export default function RpaProductionStudioPage() {
 							className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-slate-100 focus:outline-none" />
 						<div className="mt-1 text-[9px] text-slate-500" data-testid="studio-quantity-note">
 							{bulkPreview
-								? `1–${QUANTITY_MAX}. Quantity > 1 plans an itemized batch — firing it live needs owner certification.`
-								: "1 = single live run. Raise for a credit-free unique-copy preview."}
+								? `1–${QUANTITY_MAX}. Plan + prepare this batch is credit-free. Firing it live spends 1 credit per video and needs owner certification.`
+								: "1 = single live run. Raise for a credit-free unique-copy preview (up to " + QUANTITY_MAX + ")."}
 						</div>
 					</div>
 				</div>
