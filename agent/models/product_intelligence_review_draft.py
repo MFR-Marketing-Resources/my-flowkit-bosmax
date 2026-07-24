@@ -201,6 +201,13 @@ class ProductIntelligenceReviewDraftApproveRequest(BaseModel):
 
     approved_by: str | None = None
     approval_note: str | None = None
+    # CLAIM_REVIEW_REQUIRED means "a human must look at the claims", not "this
+    # can never be approved". Without an explicit acknowledgement every
+    # high-claim-risk product would be permanently unapprovable — a deadlock,
+    # not a safeguard. Setting this records that the approver read the claim
+    # set and accepts it. CLAIM_BLOCKED is NOT satisfiable this way and still
+    # blocks absolutely.
+    claim_review_acknowledged: bool = False
 
 
 class ProductIntelligenceReviewDraftRejectRequest(BaseModel):

@@ -803,8 +803,20 @@ async def approve_review_draft(
     if draft.review_status == "REJECTED":
         raise ValueError("DRAFT_ALREADY_REJECTED")
     validation = await validate_review_draft(draft_id)
-    if validation.approval_blockers:
-        raise ValueError(f"DRAFT_NOT_APPROVABLE:{'|'.join(validation.approval_blockers)}")
+    blockers = list(validation.approval_blockers or [])
+    # CLAIM_REVIEW_REQUIRED asks for human eyes on the claim set; it is
+    # SATISFIABLE by an explicit acknowledgement. Treating it as an absolute
+    # block made every high-claim-risk product permanently unapprovable — a
+    # deadlock rather than a safeguard, and the exact wall a real approval
+    # attempt hit on BOSMAX HERBS. CLAIM_BLOCKED and MISSING_REQUIRED_FIELDS
+    # are NOT satisfiable this way and still stop approval dead.
+    if request.claim_review_acknowledged:
+        blockers = [b for b in blockers if not b.startswith("CLAIM_REVIEW_REQUIRED")]
+    if blockers:
+        hint = ""
+        if any(b.startswith("CLAIM_REVIEW_REQUIRED") for b in blockers):
+            hint = " (set claim_review_acknowledged=true to record the review)"
+        raise ValueError(f"DRAFT_NOT_APPROVABLE:{'|'.join(blockers)}{hint}")
 
     await _get_product_or_raise(draft.product_id)
     approved_by = (request.approved_by or draft.reviewed_by or draft.created_by or "operator").strip()
