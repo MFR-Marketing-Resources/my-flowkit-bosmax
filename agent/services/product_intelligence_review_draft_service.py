@@ -21,6 +21,7 @@ from agent.models.product_intelligence_review_draft import (
     ReviewDraftStatus,
 )
 from agent.models.product_intelligence_snapshot import ProductIntelligenceSnapshot
+from agent.services import copy_angle_derivation
 from agent.services.product_intelligence_claim_safety_service import (
     evaluate_claim_safety,
 )
@@ -323,6 +324,60 @@ def _normalize_mutation_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _apply_derived_angles(payload: dict[str, Any]) -> dict[str, Any]:
+    """Phase A2 — fill `copy_strategy_summary_json.angles` from THIS product's
+    approved persona instead of leaving it for the framework family default.
+
+    Background: the field is a pass-through, and nothing ever derived its
+    angles, so every product inherited a generic family template (measured
+    2026-07-24: 30/30 approved snapshots, 7 templates, 0 product-specific).
+    The copy generator rotates whatever is here, so a wrong axis yields a
+    correct-looking rotation over irrelevant labels.
+
+    Two invariants:
+
+    * NON-DESTRUCTIVE — an explicitly supplied `angles` list is never
+      overwritten. Operator/caller intent wins.
+    * FAIL-CLOSED — an underivable persona leaves the field untouched, so the
+      reader keeps today's framework-family fallback. Never invents an angle.
+
+    `angles` holds the human-readable pain text because it is injected into the
+    LLM brief verbatim as `target_angle_strategy`; a hash there would be worse
+    than the generic label it replaces. The structured records (stable
+    `angle_key`, audience, conflict flag) go alongside in `angle_registry`,
+    which Phase B keys its component pool on.
+    """
+    strategy = payload.get("copy_strategy_summary_json")
+    strategy = dict(strategy) if isinstance(strategy, dict) else {}
+    if strategy.get("angles"):
+        return payload
+
+    derivation = copy_angle_derivation.derive_angles(
+        payload.get("buyer_persona_snapshot_json")
+    )
+    if not derivation.get("derived"):
+        return payload
+
+    angles = derivation["angles"]
+    strategy["angles"] = [a["label"] for a in angles]
+    strategy["angle_registry"] = [
+        {
+            "angle_key": a["angle_key"],
+            "label": a["label"],
+            "audience": a["audience"],
+            "audience_conflict": a["audience_conflict"],
+        }
+        for a in angles
+    ]
+    strategy["angle_source"] = "DERIVED_FROM_APPROVED_PERSONA"
+    if derivation.get("warnings"):
+        strategy["angle_warnings"] = list(derivation["warnings"])
+
+    updated = dict(payload)
+    updated["copy_strategy_summary_json"] = strategy
+    return updated
+
+
 def _build_auto_provenance_items(
     *,
     draft_id: str,
@@ -464,6 +519,7 @@ async def create_review_draft(
     payload = _seed_payload_from_product(product)
     payload.update(request.model_dump(exclude_unset=True))
     payload = _normalize_mutation_payload(payload)
+    payload = _apply_derived_angles(payload)
     validation = _evaluate_validation_payload(payload)
     review_status = _derive_review_status(payload, current_status=None)
     row = await crud.create_product_intelligence_review_draft(
@@ -547,6 +603,7 @@ async def update_review_draft(
     payload = existing.model_dump(exclude={"draft_id", "product_id", "created_at", "updated_at", "provenance_items"})
     payload.update(request.model_dump(exclude_unset=True))
     payload = _normalize_mutation_payload(payload)
+    payload = _apply_derived_angles(payload)
     validation = _evaluate_validation_payload(payload)
     review_status = _derive_review_status(payload, current_status=existing.review_status)
     await crud.update_product_intelligence_review_draft(

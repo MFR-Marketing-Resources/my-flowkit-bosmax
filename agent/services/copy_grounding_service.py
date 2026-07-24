@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent.authority import claim_boundary
+from agent.services import copy_angle_derivation
 from agent.authority.copy_family_grounding import (
     grounding_for_family,
 )
@@ -160,12 +161,67 @@ def _angles_from_strategy(strategy_json: Any) -> list[str]:
     return []
 
 
+def _family_angle_templates() -> list[frozenset[str]]:
+    """Every angle list the framework families hand out, as comparable sets."""
+    from agent.authority.copy_family_grounding import COPY_FAMILY_GROUNDING
+
+    out: list[frozenset[str]] = []
+    for entry in (COPY_FAMILY_GROUNDING or {}).values():
+        angles = (entry or {}).get("angle_strategies") or []
+        if angles:
+            out.append(frozenset(str(a).strip().casefold() for a in angles if str(a).strip()))
+    return out
+
+
+def _is_family_template(angles: list[str]) -> bool:
+    """True when a snapshot's stored angles are verbatim a FAMILY template.
+
+    Legacy contamination marker. Nothing in the current codebase writes angles,
+    yet all 30 approved snapshots carried one of 7 family templates (measured
+    2026-07-24) — a herbal colic oil sharing its angle list with a hair clipper.
+    Matching exactly (not fuzzily) keeps this conservative: a deliberately
+    authored angle list is never mistaken for contamination.
+    """
+    if not angles:
+        return False
+    got = frozenset(a.strip().casefold() for a in angles if a.strip())
+    return any(got == template for template in _family_angle_templates())
+
+
+def _resolve_snapshot_angles(snap: Any, persona: Any) -> list[str]:
+    """Angle axis for an approved snapshot, most-trusted source first.
+
+    1. Angles written by the A2 derivation (`angle_source` stamped) — trusted.
+    2. Stored angles that are NOT a family template — a deliberate choice.
+    3. Live derivation from this snapshot's OWN approved persona. This repairs
+       legacy snapshots without mutating them: approved rows are immutable, and
+       the persona it derives from is itself already approved, so no unreviewed
+       data enters the pipeline.
+    4. Stored angles / caller's framework fallback (today's behaviour).
+    """
+    strategy = getattr(snap, "copy_strategy_summary_json", {})
+    strategy = strategy if isinstance(strategy, dict) else {}
+    stored = _angles_from_strategy(strategy)
+
+    if strategy.get("angle_source") == "DERIVED_FROM_APPROVED_PERSONA" and stored:
+        return stored
+    if stored and not _is_family_template(stored):
+        return stored
+
+    derivation = copy_angle_derivation.derive_angles(
+        getattr(snap, "buyer_persona_snapshot_json", {}) or persona
+    )
+    if derivation.get("derived"):
+        return [a["label"] for a in derivation["angles"]]
+    return stored
+
+
 def _grounding_from_snapshot(product: dict[str, Any], snap: Any) -> CopyGrounding:
     """APPROVED_SNAPSHOT tier — real product knowledge + persona + claims, with
     the framework tier filling avatar / angle / silo / route gaps."""
     fw = build_framework_grounding(product)
     persona = _merge_persona(getattr(snap, "buyer_persona_snapshot_json", {}), fw.buyer_persona)
-    angles = _angles_from_strategy(getattr(snap, "copy_strategy_summary_json", {})) or fw.angle_strategies
+    angles = _resolve_snapshot_angles(snap, persona) or fw.angle_strategies
 
     knowledge = ProductKnowledge(
         description=_clean(getattr(snap, "product_description", "")),
