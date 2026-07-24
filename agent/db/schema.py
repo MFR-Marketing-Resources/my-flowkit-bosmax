@@ -2124,6 +2124,59 @@ CREATE TABLE IF NOT EXISTS avatar_product_fit (
 """)
         await db.commit()
 
+        # Phase B1 — the ATOMIC component pool.
+        #
+        # `copy_set` stores a FROZEN bundle (angle+hook+subhook+usp+cta in one
+        # row), so N variations cost N LLM calls and diversity collapses as N
+        # grows (measured: 58 sets, subhook 58/58 distinct = zero reuse, ~90%
+        # one theme). `copy_intelligence_seed` is NOT an alternative home: each
+        # of its rows also bundles hook+body+cta together, and it holds imported
+        # competitor ads (research), not authored building blocks.
+        #
+        # This table stores ONE part, reusable across many composed copy sets,
+        # so capacity becomes MULTIPLICATIVE: per angle,
+        # hooks x subhooks x usp_sets x ctas, summed over angles, times formulas.
+        #
+        # component_type MIRRORS the consumer's slots exactly. A composed copy
+        # must satisfy CopySetResponse (angle, hook, subhook, usp_set, cta) —
+        # there is NO `body` field there, so HOOK/SUBHOOK/USP_SET/CTA are the
+        # only valid types. `angle` is not a component; it is the Phase A key
+        # components are grouped BY.
+        #
+        # angle_key ties a component to a Phase A derived angle. It is NULLABLE
+        # by design: '' means "applies to every angle of this product", which is
+        # how CTAs normally behave. Composition is otherwise angle-COHERENT — a
+        # colic hook must never pair with a body about post-work body aches.
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS copy_component (
+    component_id      TEXT PRIMARY KEY,
+    product_id        TEXT NOT NULL,
+    angle_key         TEXT NOT NULL DEFAULT '',
+    angle_label       TEXT NOT NULL DEFAULT '',
+    component_type    TEXT NOT NULL,
+    content           TEXT NOT NULL,
+    formula_affinity  TEXT NOT NULL DEFAULT '',
+    status            TEXT NOT NULL DEFAULT 'COMPONENT_REVIEW_REQUIRED',
+    claim_review_json TEXT NOT NULL DEFAULT '{}',
+    dedupe_key        TEXT NOT NULL,
+    usage_count       INTEGER NOT NULL DEFAULT 0,
+    last_used_at      TEXT,
+    source            TEXT NOT NULL DEFAULT '',
+    provenance_json   TEXT NOT NULL DEFAULT '{}',
+    reviewer_note     TEXT,
+    approved_at       TEXT,
+    approved_by       TEXT,
+    archived          INTEGER NOT NULL DEFAULT 0,
+    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_copy_component_dedupe
+    ON copy_component(product_id, component_type, dedupe_key);
+CREATE INDEX IF NOT EXISTS idx_copy_component_pool
+    ON copy_component(product_id, angle_key, component_type, status, archived);
+""")
+        await db.commit()
+
         # Migrate: ensure updated_at exists on new tables (Phase 1 additive).
         for tbl in ("copy_generation_batch", "avatar_product_fit"):
             cursor = await db.execute(f"PRAGMA table_info({tbl})")

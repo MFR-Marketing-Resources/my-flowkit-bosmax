@@ -1,7 +1,17 @@
 # Copy Angle + Component Architecture
 
-Status: **PROPOSED — awaiting owner approval.** No code written yet.
-Author: Claude Code (review/architecture role). Date: 2026-07-24.
+Status: **Phase A + B1 BUILT** (PRs #457, #458 — awaiting owner merge).
+Phase B2 / C / D still proposed. Author: Claude Code. Date: 2026-07-24.
+
+**Build order deviates from §6 on purpose: C1 (composer) comes BEFORE B2
+(component authoring).** The composer is the CONSUMER that defines the contract
+components must satisfy, and it costs zero tokens to build and test against
+synthetic components. Authoring first would spend tokens against a guessed
+spec. This was not theoretical — designing C1 immediately exposed that B1's
+first draft used a `BODY` component type while `CopySetResponse` has no `body`
+slot at all (its slots are angle/hook/subhook/usp_set/cta). Every authored BODY
+component, and the tokens spent on it, would have been waste. Fixed before any
+authoring ran.
 Scope: the copywriting generation lane only. Does not touch the ADR-007
 generation door, the negotiation brain, or any locked video path.
 
@@ -90,7 +100,7 @@ Compose **within an angle** (a hook about infant colic must never pair with a
 body about post-work body aches):
 
 ```
-total = formulas × Σ_angle ( hooks_a × bodies_a × usp_sets_a × ctas_a )
+total = formulas × Σ_angle ( hooks_a × subhooks_a × usp_sets_a × ctas_a )
 ```
 
 Worked example for MWTCB's four real use-cases (colic / body aches / numbness /
@@ -99,7 +109,7 @@ insect bites):
 | Authored components | Count |
 |---|---|
 | 4 angles × 8 hooks | 32 |
-| 4 angles × 5 bodies | 20 |
+| 4 angles × 5 subhooks | 20 |
 | 4 angles × 4 usp_sets | 16 |
 | CTAs | 5 |
 | **Total authored** | **73** |
@@ -144,7 +154,23 @@ so the video compiler stops inheriting it.
 
 | Round | Work |
 |---|---|
-| **B1** | Component storage keyed by `(product_or_family, angle_key, type[HOOK\|BODY\|USP_SET\|CTA])` with `status`, `usage_count`, `claim_tokens`. **Decide first:** extend `copy_intelligence_seed` (its typed axes `copy_angle`/`hook_type`/`cta_type`/`body_script` exist but are 100% NULL) vs a new table. Extending avoids a parallel store. |
+| **B1** | ✅ **BUILT** — new `copy_component` table keyed by `(product_id, angle_key, component_type)` + `pool_capacity()` math. See the storage decision below. |
+
+**B1 storage decision (this doc's earlier recommendation was WRONG).** Section 9
+originally recommended extending `copy_intelligence_seed` to honour law #257.
+On inspecting its actual shape that is a category error:
+
+* every seed row bundles `hook_script` + `body_script` + `cta_script` **together**
+  — the exact monolithic shape that makes `copy_set` unable to scale;
+* it carries Kalodata import provenance (`source_workbook`/`source_sheet`/`source_row`)
+  meaningless for authored components;
+* it holds 420 imported **competitor ads** (research), and mixing authored
+  building blocks into that corpus pollutes both.
+
+Law #257 forbids a *parallel store of an existing concept*. An atomic component
+— ONE hook, or ONE body — is a concept **no existing table holds**: `copy_set`
+stores assembled copies, `copy_intelligence_seed` stores whole competitor ads.
+So `copy_component` is a new concept, not a duplicate, and the law is honoured.
 | **B2** | LLM component authoring: N components for ONE angle per call, claim-scanned individually, landing `REVIEW_REQUIRED` (never auto-approved — existing law). |
 
 ### Phase C — Composer + coverage
@@ -183,8 +209,10 @@ Only after A–C. Not before.
    *pain × audience* pair (`perut kembung × ibu bapa` vs `sengal × pekerja`)?
    Recommendation: pain × audience, because the persona already differs per
    use-case and it doubles usable angles.
-2. **B1 storage** — extend `copy_intelligence_seed` or new `copy_component`
-   table? Recommendation: extend, to honour law #257.
+2. ~~**B1 storage** — extend `copy_intelligence_seed` or new `copy_component`
+   table?~~ **RESOLVED: new `copy_component` table.** The extend recommendation
+   was withdrawn after inspecting the seed table's real shape — see the B1
+   storage decision in §6.
 3. **A3 approval batching** — approve 30 regenerated snapshots one-by-one, or
    as one reviewed batch?
 4. Do the 420 imported Kalodata seeds (all `NEEDS_REVIEW`, `body_script` 100%
