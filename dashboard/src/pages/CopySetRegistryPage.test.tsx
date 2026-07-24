@@ -269,6 +269,44 @@ describe("CopySetRegistryPage", () => {
 		await waitFor(() => expect(mockedApprove).toHaveBeenCalledWith("cs1", { approved_by: "operator" }));
 	});
 
+	it("stays on the current page after Approve (no jump back to page 1)", async () => {
+		// 30 review sets → 2 pages at pageSize 25; page 2 holds cs26…cs30.
+		const many = Array.from({ length: 30 }, (_, i) => ({
+			...sampleSet,
+			copy_set_id: `cs${i + 1}`,
+			hook: `Hook ${i + 1}`,
+		}));
+		// A REAL async gap is required: the defect is that `loading` unmounts the
+		// table mid-refetch, and that intermediate state only commits when the
+		// fetch actually suspends. An instantly-resolved mock hides the bug.
+		mockedList.mockImplementation(
+			() =>
+				new Promise((resolve) =>
+					setTimeout(() => resolve({ product_id: "p1", items: many }), 25),
+				),
+		);
+		mockedApprove.mockResolvedValue({ ...sampleSet, status: "COPY_APPROVED" });
+		renderPage();
+
+		await screen.findByTestId("approve-cs1");
+		fireEvent.click(screen.getByRole("button", { name: "Next" }));
+		expect(await screen.findByTestId("approve-cs26")).toBeInTheDocument();
+
+		fireEvent.click(screen.getByTestId("approve-cs26"));
+		await waitFor(() =>
+			expect(mockedApprove).toHaveBeenCalledWith("cs26", {
+				approved_by: "operator",
+			}),
+		);
+		// The post-action refetch must NOT unmount DataTable — doing so resets its
+		// internal page (and search/filter/sort) back to the first page.
+		await waitFor(() => expect(mockedList).toHaveBeenCalledTimes(2));
+		// Let the refetch fully resolve and commit before judging the page.
+		await new Promise((r) => setTimeout(r, 60));
+		expect(screen.getByTestId("approve-cs26")).toBeInTheDocument();
+		expect(screen.queryByTestId("approve-cs1")).not.toBeInTheDocument();
+	});
+
 	it("Reject prompts for a note and calls rejectCopySet", async () => {
 		vi.spyOn(window, "prompt").mockReturnValue("not suitable");
 		mockedReject.mockResolvedValue({ ...sampleSet, status: "COPY_REJECTED" });
