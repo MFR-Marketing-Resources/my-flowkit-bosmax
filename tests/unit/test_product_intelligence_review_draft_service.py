@@ -268,6 +268,129 @@ async def test_claim_review_required_draft_cannot_be_approved_without_override()
         )
 
 
+# ── allow_incomplete_product_knowledge: approve for COPY grounding ────────────
+def _copy_ready_request(**kw) -> ProductIntelligenceReviewDraftCreateRequest:
+    """Every COPY-critical field present (persona/angles/benefits/usp/desc/audience)
+    but NO product-knowledge fields (usage/ingredients/warnings/allowed_claims) —
+    exactly the shape the COPYWRITING HUB bulk importer produces."""
+    base = {
+        "product_description": "Pocket perfume with a long-lasting floral scent.",
+        "benefits_json": ["tahan lama sepanjang hari", "wangian floral"],
+        "usp_json": ["floral amber notes", "gift box"],
+        "target_customer_text": "Wanita 18-40 yang mahu wangian tahan lama.",
+        "buyer_persona_snapshot_json": {
+            "audience": "wanita 18-40",
+            "pains": ["wangi cepat hilang", "susah cari hadiah"],
+        },
+        "copy_strategy_summary_json": {"angles": ["tahan lama", "sesuai hadiah"]},
+        "created_by": "COPYWRITING_HUB_BULK_IMPORT",
+    }
+    base.update(kw)
+    return ProductIntelligenceReviewDraftCreateRequest(**base)
+
+
+@pytest.mark.asyncio
+async def test_allow_incomplete_product_knowledge_approves_copy_ready_draft():
+    product = await crud.create_product(
+        raw_product_title="Copy Ready Perfume",
+        source="MANUAL",
+        product_display_name="Copy Ready Perfume",
+    )
+    draft = await svc.create_review_draft(product["id"], _copy_ready_request())
+    # Missing usage/ingredients/warnings/allowed_claims -> strict approve blocks.
+    with pytest.raises(ValueError, match="MISSING_REQUIRED_FIELDS"):
+        await svc.approve_review_draft(
+            draft.draft_id,
+            ProductIntelligenceReviewDraftApproveRequest(approved_by="op"),
+        )
+    # But every COPY-critical field is present -> the opt-in flag approves.
+    approved = await svc.approve_review_draft(
+        draft.draft_id,
+        ProductIntelligenceReviewDraftApproveRequest(
+            approved_by="op", allow_incomplete_product_knowledge=True,
+        ),
+    )
+    assert approved.status == "APPROVED"
+    assert approved.created_from_review_draft_id == draft.draft_id
+
+
+@pytest.mark.asyncio
+async def test_allow_incomplete_still_blocks_when_copy_critical_field_missing():
+    product = await crud.create_product(
+        raw_product_title="Copy Missing Desc",
+        source="MANUAL",
+        product_display_name="Copy Missing Desc",
+    )
+    # product_description is COPY-critical; empty -> flag must NOT approve.
+    draft = await svc.create_review_draft(
+        product["id"], _copy_ready_request(product_description=""),
+    )
+    with pytest.raises(ValueError, match="MISSING_COPY_CRITICAL_FIELDS:.*product_description"):
+        await svc.approve_review_draft(
+            draft.draft_id,
+            ProductIntelligenceReviewDraftApproveRequest(
+                approved_by="op", allow_incomplete_product_knowledge=True,
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_allow_incomplete_does_not_bypass_claim_blocked():
+    product = await crud.create_product(
+        raw_product_title="Copy Ready Blocked",
+        source="MANUAL",
+        product_display_name="Copy Ready Blocked",
+    )
+    draft = await svc.create_review_draft(
+        product["id"],
+        _copy_ready_request(
+            product_description="Guaranteed relief untuk penyakit dan sembuh cepat.",
+        ),
+    )
+    # Flag relaxes product-knowledge only; a CLAIM_BLOCKED gate still stops it dead.
+    with pytest.raises(ValueError, match="CLAIM_BLOCKED"):
+        await svc.approve_review_draft(
+            draft.draft_id,
+            ProductIntelligenceReviewDraftApproveRequest(
+                approved_by="op", allow_incomplete_product_knowledge=True,
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_allow_incomplete_does_not_auto_acknowledge_claim_review():
+    product = await crud.create_product(
+        raw_product_title="Copy Ready Review",
+        source="MANUAL",
+        product_display_name="Copy Ready Review",
+    )
+    draft = await svc.create_review_draft(
+        product["id"],
+        _copy_ready_request(
+            product_description="Anti-inflammatory comfort positioning for review.",
+        ),
+    )
+    assert draft.claim_gate == "CLAIM_REVIEW_REQUIRED"
+    # allow_incomplete does NOT acknowledge claims -> still blocked...
+    with pytest.raises(ValueError, match="CLAIM_REVIEW_REQUIRED"):
+        await svc.approve_review_draft(
+            draft.draft_id,
+            ProductIntelligenceReviewDraftApproveRequest(
+                approved_by="op", allow_incomplete_product_knowledge=True,
+            ),
+        )
+    # ...only the explicit acknowledgement (plus the flag) approves it.
+    approved = await svc.approve_review_draft(
+        draft.draft_id,
+        ProductIntelligenceReviewDraftApproveRequest(
+            approved_by="op",
+            allow_incomplete_product_knowledge=True,
+            claim_review_acknowledged=True,
+        ),
+    )
+    assert approved.status == "APPROVED"
+
+
 # ── AI Fill Missing (DeepSeek-backed) — provider mocked, never spends credits ──
 def _fake_fields_payload():
     return {"fields": {
