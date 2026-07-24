@@ -412,11 +412,55 @@ def _build_auto_provenance_items(
     return items
 
 
+# Claim posture is ORDERED. A computed verdict may raise the floor, never sink
+# below it.
+_GATE_ORDER = {"CLAIM_SAFE": 0, "CLAIM_REVIEW_REQUIRED": 1, "CLAIM_BLOCKED": 2}
+_RISK_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
+
+
+def _claim_floor(product: dict[str, Any] | None) -> tuple[str, str]:
+    """The lowest claim posture a draft for THIS product may ever record.
+
+    `evaluate_claim_safety` scans the draft TEXT for banned tokens. That is a
+    content check, and content checks miss category risk: a male-vitality
+    topical whose draft says "melancarkan peredaran darah" contains no banned
+    token, so the scan returns CLAIM_SAFE/LOW even though the catalog marks the
+    product claim_risk_level=HIGH and its framework family demands
+    CLAIM_REVIEW_REQUIRED. That combination produced a READY_FOR_APPROVAL draft
+    with a falsely-safe posture on the most sensitive product in the catalog.
+
+    The floor closes that hole. It can only ever RAISE the posture, so it cannot
+    make any existing draft less safe — at worst it forces a review that was
+    already warranted.
+
+    Driven by the product's OWN `claim_risk_level` only. A first version also
+    pulled the framework family's gate, which swept in every unclassified
+    product and would have forced claim review on ordinary household items — a
+    broad block for no safety gain. Narrowed deliberately: only a product the
+    catalog already marks HIGH raises the gate.
+    """
+    if not isinstance(product, dict) or not product:
+        return "CLAIM_SAFE", "LOW"
+
+    risk = str(product.get("claim_risk_level") or "").strip().upper()
+    if risk not in _RISK_ORDER:
+        return "CLAIM_SAFE", "LOW"
+    gate = "CLAIM_REVIEW_REQUIRED" if risk == "HIGH" else "CLAIM_SAFE"
+    return gate, risk
+
+
 def _evaluate_validation_payload(
     payload: dict[str, Any],
+    product: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     claim = evaluate_claim_safety(payload)
     payload.update(claim)
+
+    floor_gate, floor_risk = _claim_floor(product)
+    if _GATE_ORDER.get(str(payload.get("claim_gate") or "CLAIM_SAFE"), 0) < _GATE_ORDER[floor_gate]:
+        payload["claim_gate"] = floor_gate
+    if _RISK_ORDER.get(str(payload.get("claim_risk_level") or "LOW"), 0) < _RISK_ORDER[floor_risk]:
+        payload["claim_risk_level"] = floor_risk
     missing_required_fields = [
         field_name for field_name in REQUIRED_FIELDS if not _has_value(payload.get(field_name))
     ]
@@ -520,7 +564,7 @@ async def create_review_draft(
     payload.update(request.model_dump(exclude_unset=True))
     payload = _normalize_mutation_payload(payload)
     payload = _apply_derived_angles(payload)
-    validation = _evaluate_validation_payload(payload)
+    validation = _evaluate_validation_payload(payload, product)
     review_status = _derive_review_status(payload, current_status=None)
     row = await crud.create_product_intelligence_review_draft(
         product_id=product_id,
@@ -604,7 +648,8 @@ async def update_review_draft(
     payload.update(request.model_dump(exclude_unset=True))
     payload = _normalize_mutation_payload(payload)
     payload = _apply_derived_angles(payload)
-    validation = _evaluate_validation_payload(payload)
+    product = await crud.get_product(existing.product_id)
+    validation = _evaluate_validation_payload(payload, product)
     review_status = _derive_review_status(payload, current_status=existing.review_status)
     await crud.update_product_intelligence_review_draft(
         draft_id,
