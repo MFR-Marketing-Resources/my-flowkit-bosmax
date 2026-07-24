@@ -1605,7 +1605,13 @@ def allowed_batch_durations(engine: str = "GOOGLE_FLOW") -> list[int]:
 
 # ── Stage 1 quantity PREVIEW (credit-free; never fires, approves, or enqueues) ──
 
-QUANTITY_PREVIEW_MAX = 5
+# Caps the credit-free plan/prepare quantity only (preview N unique-copy variants,
+# enqueue N dry-run packages). It does NOT authorize any live fire: bulk live is
+# still refused at the credit boundary until BULK_LIVE_EXECUTION_CERTIFIED. Raised
+# 5 -> 200 (owner, 2026-07-24) so an operator can plan/prepare a full session-size
+# batch up front; the owner presses to fire (spending credits per video) when
+# ready. Keep in lockstep with the frontend QUANTITY_MAX (RpaProductionStudioPage).
+QUANTITY_PREVIEW_MAX = 200
 
 
 def _norm_dialogue(text: str) -> str:

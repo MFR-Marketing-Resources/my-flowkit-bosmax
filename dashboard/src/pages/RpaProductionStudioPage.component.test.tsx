@@ -267,7 +267,7 @@ describe("Production Studio — rendered contract", () => {
 		const input = await screen.findByTestId("studio-quantity-input");
 		expect(input).toHaveAttribute("type", "number");
 		expect(input).toHaveAttribute("min", "1");
-		expect(input).toHaveAttribute("max", "5");
+		expect(input).toHaveAttribute("max", "200");
 		expect(input).toHaveValue(1);
 	});
 
