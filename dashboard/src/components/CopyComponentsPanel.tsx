@@ -23,11 +23,12 @@ function isNotConfigured(message: string): boolean {
 }
 
 /**
- * Copy Components control panel — the free-compose engine, self-serve.
+ * Copy Components control panel — the full self-serve pipeline in one place.
  *
- * Author components (⚠ spends AI tokens, once per product) → Approve them →
- * Compose unlimited copy sets (free, deterministic). Composed sets land in the
- * Copy Set Registry as Review required, exactly like AI-assist copy.
+ * 1) Add angle (FREE) → 2) Author components (spends AI tokens, once per product)
+ * → 3) Approve components → 4) Compose unlimited scripts (FREE, deterministic).
+ * Composed scripts land in the Copy Set Registry as Review required, exactly like
+ * AI-assist copy.
  */
 export default function CopyComponentsPanel({
 	productId,
@@ -61,7 +62,7 @@ export default function CopyComponentsPanel({
 			);
 		} catch (e) {
 			setCap(null);
-			setError(e instanceof Error ? e.message : "Gagal muat kapasiti komponen.");
+			setError(e instanceof Error ? e.message : "Failed to load component capacity.");
 		}
 	}, [productId]);
 
@@ -84,7 +85,7 @@ export default function CopyComponentsPanel({
 			.map((s) => s.trim())
 			.filter(Boolean);
 		if (!pains.length) {
-			setError("Tulis sekurang-kurangnya satu use-case (satu baris satu angle).");
+			setError("Write at least one use-case (one angle per line).");
 			return;
 		}
 		setBusy("angle");
@@ -95,25 +96,25 @@ export default function CopyComponentsPanel({
 			if (!res.ok) {
 				setError(
 					res.error === "CLAIM_BLOCKED"
-						? `Angle ditolak — mengandungi perkataan claim terlarang: ${(res.claim_tokens ?? []).join(", ") || "—"}.`
-						: res.error || "Gagal tambah angle.",
+						? `Angle rejected — it contains banned claim terms: ${(res.claim_tokens ?? []).join(", ") || "—"}.`
+						: res.error || "Failed to add angle.",
 				);
 			} else {
 				setPainsText("");
 				setSuccess(
-					`+${res.added} angle ditambah → jumlah ${res.angle_count}${
-						res.capped ? ` (had maksimum ${MAX_ANGLES})` : ""
-					}. Percuma. Seterusnya: Author komponen untuk angle baharu.`,
+					`${res.added} angle(s) added → ${res.angle_count} total${
+						res.capped ? ` (max ${MAX_ANGLES})` : ""
+					}. Free. Next: Author components for the new angles.`,
 				);
 			}
 			await load();
 		} catch (e) {
-			const msg = e instanceof Error ? e.message : "Gagal tambah angle.";
+			const msg = e instanceof Error ? e.message : "Failed to add angle.";
 			setError(
 				/ANGLES_FULL/.test(msg)
-					? `Angle sudah penuh (${MAX_ANGLES}).`
+					? `Angles are already full (${MAX_ANGLES}).`
 					: /NO_APPROVED_SNAPSHOT/.test(msg)
-						? "Produk ini belum ada Product Intelligence diluluskan — sediakan di Products → Intelligence dahulu."
+						? "This product has no approved Product Intelligence yet — set it up in Products → Intelligence first."
 						: msg,
 			);
 		} finally {
@@ -130,14 +131,14 @@ export default function CopyComponentsPanel({
 			const n = Math.max(1, Math.min(500, Math.floor(composeCount) || 1));
 			const res = await composeCopyFromComponents({ product_id: productId, count: n });
 			setSuccess(
-				`${res.created} skrip unik dijana (PERCUMA, tiada token)${
-					res.deduped ? ` · ${res.deduped} duplikat ditapis` : ""
-				}. Masuk Copy Set Registry sebagai "Review required".`,
+				`${res.created} unique scripts generated (FREE, no tokens)${
+					res.deduped ? ` · ${res.deduped} duplicates filtered` : ""
+				}. Added to the Copy Set Registry as "Review required".`,
 			);
 			onComposed?.();
 			await load();
 		} catch (e) {
-			setError(e instanceof Error ? e.message : "Gagal compose.");
+			setError(e instanceof Error ? e.message : "Compose failed.");
 		} finally {
 			setBusy(null);
 		}
@@ -169,14 +170,14 @@ export default function CopyComponentsPanel({
 				}
 			}
 			setSuccess(
-				`${authored} komponen dijana merentas ${angles.length} angle. Approve komponen di bawah, kemudian Compose (percuma).`,
+				`${authored} components generated across ${angles.length} angles. Approve the components below, then Compose (free).`,
 			);
 		} catch (e) {
-			const msg = e instanceof Error ? e.message : "Gagal author komponen.";
+			const msg = e instanceof Error ? e.message : "Failed to author components.";
 			setError(
 				isNotConfigured(msg)
-					? "Lane AI (DeepSeek) belum dikonfigur. Set di Cockpit Settings / AI Providers dahulu."
-					: `Author terhenti (${authored} sudah dijana): ${msg}`,
+					? "The AI lane (DeepSeek) is not configured. Set it up in Cockpit Settings / AI Providers first."
+					: `Authoring stopped (${authored} already generated): ${msg}`,
 			);
 		} finally {
 			setProgress("");
@@ -197,7 +198,7 @@ export default function CopyComponentsPanel({
 			);
 			let ok = 0;
 			for (let i = 0; i < pending.length; i += 1) {
-				setProgress(`Approving komponen ${i + 1}/${pending.length}…`);
+				setProgress(`Approving component ${i + 1}/${pending.length}…`);
 				try {
 					await approveCopyComponent(pending[i].component_id);
 					ok += 1;
@@ -205,9 +206,9 @@ export default function CopyComponentsPanel({
 					/* leave un-approved; reported via reload count */
 				}
 			}
-			setSuccess(`${ok} komponen diluluskan. Kapasiti compose dikemas kini.`);
+			setSuccess(`${ok} components approved. Compose capacity updated.`);
 		} catch (e) {
-			setError(e instanceof Error ? e.message : "Gagal approve komponen.");
+			setError(e instanceof Error ? e.message : "Failed to approve components.");
 		} finally {
 			setProgress("");
 			setBusy(null);
@@ -220,13 +221,13 @@ export default function CopyComponentsPanel({
 
 	return (
 		<Section
-			title="Copy Components — enjin compose (percuma)"
-			helper="Author komponen sekali (guna token) → Compose skrip tanpa had (percuma). Skrip masuk Copy Set Registry di bawah sebagai Review required."
+			title="Copy Components — compose engine (free)"
+			helper="Author components once (spends tokens) → Compose unlimited scripts (free). Scripts land in the Copy Set Registry below as Review required."
 			action={
 				<div className="flex items-center gap-2 text-blue-300">
 					<Boxes size={18} />
 					<Badge tone={capacity > 0 ? "success" : "neutral"}>
-						{capacity.toLocaleString()} boleh dijana
+						{capacity.toLocaleString()} composable
 					</Badge>
 				</div>
 			}
@@ -260,22 +261,22 @@ export default function CopyComponentsPanel({
 				{/* Status */}
 				<div className="grid gap-2 rounded-xl border border-slate-800 bg-slate-900/40 p-3 text-xs text-slate-300 sm:grid-cols-3">
 					<div>
-						<span className="text-slate-500">Angle: </span>
+						<span className="text-slate-500">Angles: </span>
 						<span data-testid="cc-angle-count" className="font-semibold text-slate-100">
 							{angles.length}
 						</span>
 					</div>
 					<div>
-						<span className="text-slate-500">Komponen: </span>
+						<span className="text-slate-500">Components: </span>
 						<span data-testid="cc-component-count" className="font-semibold text-slate-100">
 							{componentCount}
 						</span>
 						{reviewCount > 0 ? (
-							<span className="ml-1 text-amber-300">({reviewCount} belum approve)</span>
+							<span className="ml-1 text-amber-300">({reviewCount} pending approval)</span>
 						) : null}
 					</div>
 					<div>
-						<span className="text-slate-500">Boleh compose: </span>
+						<span className="text-slate-500">Composable: </span>
 						<span data-testid="cc-capacity" className="font-semibold text-slate-100">
 							{capacity.toLocaleString()}
 						</span>
@@ -284,21 +285,21 @@ export default function CopyComponentsPanel({
 
 				{cap && !cap.angles_derived ? (
 					<HelperText tone="warn">
-						Produk ini belum ada angle diluluskan (approved snapshot). Approve
-						Product Intelligence dahulu sebelum author komponen.
+						This product has no approved angles (approved snapshot) yet. Approve
+						its Product Intelligence first before authoring components.
 					</HelperText>
 				) : null}
 
 				<HelperText>
-					Turutan: 1) Tambah angle → 2) Author komponen (token) → 3) Approve
-					komponen → 4) Compose skrip. Cuma langkah Author guna token.
+					Order: 1) Add angle → 2) Author components (tokens) → 3) Approve
+					components → 4) Compose scripts. Only the Author step spends tokens.
 				</HelperText>
 
 				{/* Angle — FREE */}
 				<div className="space-y-2 rounded-xl border border-blue-500/20 bg-blue-500/5 p-3">
 					<div className="flex items-center justify-between">
 						<span className="text-xs font-bold uppercase text-blue-200">
-							1. Angle / use-case (percuma)
+							1. Angle / use-case (free)
 						</span>
 						<span className="text-[11px] text-slate-400" data-testid="cc-angle-cap">
 							{angles.length}/{MAX_ANGLES}
@@ -321,10 +322,10 @@ export default function CopyComponentsPanel({
 							<textarea
 								value={painsText}
 								onChange={(e) => setPainsText(e.target.value)}
-								placeholder="Tambah use-case baharu — satu baris satu angle…"
+								placeholder="Add a new use-case — one angle per line…"
 								rows={2}
 								data-testid="cc-pains"
-								aria-label="Use-case angle baharu"
+								aria-label="New angle use-case"
 								className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200"
 							/>
 							<button
@@ -334,12 +335,12 @@ export default function CopyComponentsPanel({
 								onClick={() => void handleAddAngles()}
 								className="shrink-0 rounded-lg border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40"
 							>
-								{busy === "angle" ? "Menambah…" : "Tambah angle"}
+								{busy === "angle" ? "Adding…" : "Add angle"}
 							</button>
 						</div>
 					) : (
 						<p className="text-[11px] text-slate-400">
-							Angle sudah penuh ({MAX_ANGLES}).
+							Angles are full ({MAX_ANGLES}).
 						</p>
 					)}
 				</div>
@@ -347,7 +348,7 @@ export default function CopyComponentsPanel({
 				{/* Compose — FREE */}
 				<div className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3">
 					<span className="text-xs font-bold uppercase text-emerald-200">
-						Compose (percuma)
+						Compose (free)
 					</span>
 					<input
 						type="number"
@@ -357,7 +358,7 @@ export default function CopyComponentsPanel({
 						onChange={(e) => setComposeCount(Number(e.target.value))}
 						className={inputCls}
 						data-testid="cc-compose-count"
-						aria-label="Bilangan skrip untuk compose"
+						aria-label="Number of scripts to compose"
 					/>
 					<button
 						type="button"
@@ -366,20 +367,20 @@ export default function CopyComponentsPanel({
 						onClick={() => void handleCompose()}
 						className="rounded-lg border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40"
 					>
-						{busy === "compose" ? "Composing…" : "Compose skrip"}
+						{busy === "compose" ? "Composing…" : "Compose scripts"}
 					</button>
 					<span className="text-[11px] text-slate-500">
-						Tiada token — cuma menyusun komponen sedia ada.
+						No tokens — just assembles existing components.
 					</span>
 				</div>
 
 				{/* Author — TOKENS */}
 				<div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3">
 					<span className="text-xs font-bold uppercase text-amber-200">
-						Author komponen ⚠ (guna token)
+						Author components ⚠ (spends tokens)
 					</span>
 					<label className="text-[11px] text-slate-400">
-						Setiap slot:{" "}
+						Per slot:{" "}
 						<input
 							type="number"
 							min={2}
@@ -388,7 +389,7 @@ export default function CopyComponentsPanel({
 							onChange={(e) => setPerSlot(Number(e.target.value))}
 							className="w-16 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-sm text-slate-200"
 							data-testid="cc-per-slot"
-							aria-label="Komponen setiap slot"
+							aria-label="Components per slot"
 						/>
 					</label>
 					<button
@@ -398,7 +399,7 @@ export default function CopyComponentsPanel({
 						onClick={() => setConfirmAuthorOpen(true)}
 						className="rounded-lg border border-amber-500/40 bg-amber-600/20 px-4 py-2 text-xs font-bold uppercase text-amber-100 disabled:opacity-40"
 					>
-						{busy === "author" ? "Authoring…" : "Author komponen"}
+						{busy === "author" ? "Authoring…" : "Author components"}
 					</button>
 					{reviewCount > 0 ? (
 						<button
@@ -408,7 +409,7 @@ export default function CopyComponentsPanel({
 							onClick={() => void handleApproveComponents()}
 							className="rounded-lg border border-emerald-500/40 px-4 py-2 text-xs font-bold uppercase text-emerald-200 disabled:opacity-40"
 						>
-							{busy === "approve" ? "Approving…" : `Approve ${reviewCount} komponen`}
+							{busy === "approve" ? "Approving…" : `Approve ${reviewCount} components`}
 						</button>
 					) : null}
 				</div>
@@ -417,9 +418,9 @@ export default function CopyComponentsPanel({
 			<ConfirmActionModal
 				open={confirmAuthorOpen}
 				tone="danger"
-				title="Author komponen — guna token DeepSeek?"
-				body={`Ini akan buat ~${totalSlots} panggilan AI (${angles.length} angle × ${COMPONENT_TYPES.length} jenis, ${perSlot} setiap slot) dan MAKAN TOKEN. Ia langkah sekali per produk; lepas ni Compose percuma tanpa had. Komponen baru bertaraf Review required — approve sebelum compose.`}
-				confirmLabel="Ya, author (guna token)"
+				title="Author components — spend DeepSeek tokens?"
+				body={`This will make ~${totalSlots} AI calls (${angles.length} angles × ${COMPONENT_TYPES.length} types, ${perSlot} per slot) and SPENDS TOKENS. It is a one-time step per product; after this, Compose is free and unlimited. New components are Review required — approve them before composing.`}
+				confirmLabel="Yes, author (spend tokens)"
 				busy={busy === "author"}
 				onConfirm={() => void handleAuthor()}
 				onCancel={() => setConfirmAuthorOpen(false)}
