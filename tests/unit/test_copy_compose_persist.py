@@ -174,6 +174,37 @@ def test_rerun_with_different_formula_still_walks_new_ground(monkeypatch):
     assert second["deduped"] == 0
 
 
+def test_exclude_is_robust_to_stale_fingerprint_format(monkeypatch):
+    """A row composed before the fingerprint format changed carries a stale hash
+    but valid component_ids. The exclude must recompute from component_ids, so
+    the re-run still skips it — otherwise it re-treads and deludes into
+    dedupe=all. This is the exact live failure on the pre-fix Bosmax rows."""
+    fake = FakeCrud(FULL)
+    import agent.db.crud as real_crud
+    import agent.services.copy_grounding_service as cgs
+
+    async def _grounding(_p):
+        return _Grounding()
+
+    for name in ("get_product", "list_copy_components_for_product",
+                 "list_copy_sets_for_product", "find_copy_set_by_dedupe_key",
+                 "create_copy_set"):
+        monkeypatch.setattr(real_crud, name, getattr(fake, name))
+    monkeypatch.setattr(cgs, "resolve_copy_grounding", _grounding)
+
+    first = asyncio.run(svc.compose_and_persist("p1", 8))
+    assert first["created"] == 8
+    # Corrupt every stored fingerprint to a stale format, keep component_ids.
+    for r in fake.created:
+        prov = json.loads(r["provenance_json"])
+        prov["combination_fingerprint"] = "cc_STALEFORMAT000"
+        r["provenance_json"] = json.dumps(prov)
+
+    second = asyncio.run(svc.compose_and_persist("p1", 8))
+    assert second["created"] > 0        # recomputed exclude found the old rows
+    assert second["deduped"] == 0
+
+
 def test_coverage_report_is_returned(monkeypatch):
     out, _ = _run(FULL, 8, monkeypatch)
     assert out["coverage"]["status"] == "COVERAGE_OK"

@@ -347,9 +347,19 @@ async def compose_and_persist(
                 prov = json.loads(prov)
             except Exception:  # noqa: BLE001
                 prov = {}
-        fp = (prov or {}).get("combination_fingerprint")
-        if fp:
-            already.add(str(fp))
+        prov = prov or {}
+        # RECOMPUTE the fingerprint from the durable component_ids with the
+        # CURRENT function, rather than trusting the stored fingerprint string.
+        # A stored fingerprint is only as current as the code that wrote it — a
+        # row composed before the fingerprint became formula-independent carries
+        # a stale-format hash that would never match, so the exclude would miss
+        # it and the re-run would re-tread already-composed ground. Recomputing
+        # from component_ids is drift-proof.
+        cids = prov.get("component_ids")
+        if cids:
+            already.add(combination_fingerprint(cids))
+        elif prov.get("combination_fingerprint"):
+            already.add(str(prov["combination_fingerprint"]))
 
     result = compose(
         approved, angles, int(count or 0),
