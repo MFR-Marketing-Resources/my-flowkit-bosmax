@@ -57,6 +57,7 @@ from agent.api.creative_assets import (
 from agent.api.img_factory import router as img_factory_router
 from agent.api.bosmax_authority import router as bosmax_authority_router
 from agent.api.copy_signals import router as copy_signals_router
+from agent.api.copy_components import router as copy_components_router
 from agent.api.copy_sets import router as copy_sets_router
 from agent.api.copywriting import router as copywriting_router
 from agent.api.product_asset_generator import router as product_asset_generator_router
@@ -310,6 +311,7 @@ app.include_router(img_factory_router, prefix="/api")
 app.include_router(bosmax_authority_router, prefix="/api")
 app.include_router(copy_signals_router, prefix="/api")
 app.include_router(copy_sets_router, prefix="/api")
+app.include_router(copy_components_router, prefix="/api")
 app.include_router(product_asset_generator_router, prefix="/api")
 app.include_router(product_image_analysis_router, prefix="/api")
 app.include_router(product_intelligence_router, prefix="/api")
