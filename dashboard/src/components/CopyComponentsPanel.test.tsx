@@ -89,7 +89,7 @@ describe("CopyComponentsPanel", () => {
 			),
 		);
 		await waitFor(() => expect(onComposed).toHaveBeenCalled());
-		expect(await screen.findByTestId("cc-success")).toHaveTextContent(/PERCUMA/i);
+		expect(await screen.findByTestId("cc-success")).toHaveTextContent(/FREE/i);
 	});
 
 	it("renders the current angles and the angle counter", async () => {
@@ -114,7 +114,7 @@ describe("CopyComponentsPanel", () => {
 				pains: ["masuk angin", "sakit belakang"],
 			}),
 		);
-		expect(await screen.findByTestId("cc-success")).toHaveTextContent(/2 angle ditambah/i);
+		expect(await screen.findByTestId("cc-success")).toHaveTextContent(/2 angle\(s\) added/i);
 	});
 
 	it("add-angle surfaces a CLAIM_BLOCKED refusal without throwing", async () => {
@@ -129,7 +129,7 @@ describe("CopyComponentsPanel", () => {
 			target: { value: "guaranteed cure" },
 		});
 		fireEvent.click(screen.getByTestId("cc-add-angles"));
-		expect(await screen.findByTestId("cc-error")).toHaveTextContent(/terlarang/i);
+		expect(await screen.findByTestId("cc-error")).toHaveTextContent(/banned/i);
 	});
 
 	it("author requires confirmation before spending tokens", async () => {
@@ -137,7 +137,7 @@ describe("CopyComponentsPanel", () => {
 		render(<CopyComponentsPanel productId="p1" onComposed={vi.fn()} />);
 		fireEvent.click(await screen.findByTestId("cc-author"));
 		// Confirm modal appears with an explicit token warning; author NOT fired yet.
-		expect(await screen.findByText(/guna token DeepSeek/i)).toBeInTheDocument();
+		expect(await screen.findByText(/spend DeepSeek tokens/i)).toBeInTheDocument();
 		expect(mockedAuthor).not.toHaveBeenCalled();
 	});
 
