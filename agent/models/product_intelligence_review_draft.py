@@ -208,6 +208,13 @@ class ProductIntelligenceReviewDraftApproveRequest(BaseModel):
     # set and accepts it. CLAIM_BLOCKED is NOT satisfiable this way and still
     # blocks absolutely.
     claim_review_acknowledged: bool = False
+    # Product-KNOWLEDGE fields (ingredients/usage/warnings/provenance) are not
+    # copy inputs — copy is grounded on persona, angles, benefits and the claim
+    # gate. Setting this approves a draft for COPY GROUNDING once every
+    # copy-critical field is present, without blocking on missing product
+    # knowledge. Copy-critical fields still block, and the claim gate
+    # (CLAIM_BLOCKED / CLAIM_REVIEW_REQUIRED) is NEVER bypassed by this.
+    allow_incomplete_product_knowledge: bool = False
 
 
 class ProductIntelligenceReviewDraftRejectRequest(BaseModel):

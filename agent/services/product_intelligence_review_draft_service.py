@@ -44,6 +44,26 @@ REQUIRED_FIELDS = (
     "claim_risk_level",
 )
 
+# The subset of REQUIRED_FIELDS that copy generation actually consumes: the
+# persona, the angle strategy, positioning (benefits/usp/description/audience)
+# and the claim gate. The remaining REQUIRED_FIELDS are product KNOWLEDGE
+# (ingredients/usage/warnings) or provenance — they enrich the record but are
+# NOT copy inputs. approve_review_draft(allow_incomplete_product_knowledge=True)
+# gates only on this subset so a draft with a complete persona/angle set can be
+# approved for copy grounding while product knowledge stays open. Claim safety
+# is enforced separately (CLAIM_BLOCKED / CLAIM_REVIEW_REQUIRED) and is never
+# bypassed by this.
+COPY_GROUNDING_REQUIRED_FIELDS = (
+    "product_description",
+    "benefits_json",
+    "usp_json",
+    "target_customer_text",
+    "buyer_persona_snapshot_json",
+    "copy_strategy_summary_json",
+    "claim_gate",
+    "claim_risk_level",
+)
+
 JSON_LIST_FIELDS = (
     "benefits_json",
     "usp_json",
@@ -810,6 +830,41 @@ async def approve_review_draft(
     # deadlock rather than a safeguard, and the exact wall a real approval
     # attempt hit on BOSMAX HERBS. CLAIM_BLOCKED and MISSING_REQUIRED_FIELDS
     # are NOT satisfiable this way and still stop approval dead.
+    # 1) Relax product-knowledge FIRST (opt-in), then RE-ASSERT the claim gate.
+    #    _evaluate_validation_payload only surfaces the CLAIM_REVIEW_REQUIRED
+    #    blocker while readiness is READY_FOR_APPROVAL — so when fields are
+    #    missing it is SUPPRESSED. Dropping the missing-fields block would then
+    #    silently let a review-required/blocked claim through. Re-assert it here.
+    if request.allow_incomplete_product_knowledge:
+        missing_copy_critical = [
+            f for f in (validation.missing_required_fields or [])
+            if f in COPY_GROUNDING_REQUIRED_FIELDS
+        ]
+        if not missing_copy_critical:
+            blockers = [b for b in blockers if not b.startswith("MISSING_REQUIRED_FIELDS")]
+            tokens = ",".join(validation.claim_tokens_json or []) or "UNSPECIFIED"
+            if validation.claim_gate == "CLAIM_BLOCKED" and not any(
+                b.startswith("CLAIM_BLOCKED") for b in blockers
+            ):
+                blockers.append(f"CLAIM_BLOCKED:{tokens}")
+            elif validation.claim_gate == "CLAIM_REVIEW_REQUIRED" and not any(
+                b.startswith("CLAIM_REVIEW_REQUIRED") for b in blockers
+            ):
+                blockers.append(f"CLAIM_REVIEW_REQUIRED:{tokens}")
+        else:
+            # A copy-critical field is itself missing -> never approvable; keep
+            # the block (re-labelled so the reason is unambiguous).
+            blockers = [
+                (f"MISSING_COPY_CRITICAL_FIELDS:{','.join(missing_copy_critical)}"
+                 if b.startswith("MISSING_REQUIRED_FIELDS") else b)
+                for b in blockers
+            ]
+    # 2) CLAIM_REVIEW_REQUIRED asks for human eyes on the claim set; it is
+    #    SATISFIABLE by an explicit acknowledgement (records that the approver
+    #    read the claims). Applied AFTER the re-assertion above so an
+    #    acknowledged review clears whether the blocker came from validation or
+    #    the re-assertion. CLAIM_BLOCKED and MISSING_* are NOT satisfiable this
+    #    way and still stop approval dead.
     if request.claim_review_acknowledged:
         blockers = [b for b in blockers if not b.startswith("CLAIM_REVIEW_REQUIRED")]
     if blockers:
