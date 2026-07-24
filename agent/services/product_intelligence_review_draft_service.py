@@ -708,9 +708,15 @@ async def validate_review_draft(
     draft = await get_review_draft_by_id(draft_id)
     if not draft:
         raise ValueError("DRAFT_NOT_FOUND")
+    # The claim FLOOR needs the product. Omitting it here would let /validate
+    # report a safe-looking posture that create/update would refuse — the UI
+    # calls this endpoint to decide whether a draft is approvable, so it must
+    # apply the same floor.
+    product = await crud.get_product(draft.product_id)
     if draft.review_status in TERMINAL_STATUSES:
         validation = _evaluate_validation_payload(
             draft.model_dump(exclude={"draft_id", "product_id", "created_at", "updated_at", "provenance_items"}),
+            product,
         )
         return ProductIntelligenceReviewDraftValidationResponse(
             draft=draft,
@@ -732,6 +738,7 @@ async def validate_review_draft(
     )
     validation = _evaluate_validation_payload(
         updated.model_dump(exclude={"draft_id", "product_id", "created_at", "updated_at", "provenance_items"}),
+        product,
     )
     return ProductIntelligenceReviewDraftValidationResponse(draft=updated, **validation)
 
