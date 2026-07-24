@@ -28,6 +28,7 @@ import {
 	Section,
 } from "../components/ui";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
+import CopyComponentsPanel from "../components/CopyComponentsPanel";
 import type { CopySet, CopySetStatus, Product } from "../types";
 
 const GENERATE_COUNT = 5;
@@ -838,6 +839,11 @@ export default function CopySetRegistryPage() {
 							</div>
 						</Section>
 					) : null}
+
+					<CopyComponentsPanel
+						productId={selectedProduct.id}
+						onComposed={() => void loadSets(selectedProduct.id)}
+					/>
 
 					<Section
 						title="Generate copywriting sets"
