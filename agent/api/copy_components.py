@@ -32,6 +32,13 @@ class AuthorRequest(BaseModel):
     dry_run: bool = False
 
 
+class ComposeRequest(BaseModel):
+    product_id: str
+    count: int = Field(default=10, ge=1, le=500)
+    formula_families: list[str] | None = None
+    dry_run: bool = False
+
+
 class ApproveRequest(BaseModel):
     approved_by: str = "operator"
 
@@ -58,6 +65,28 @@ async def author(request: AuthorRequest):
         raise HTTPException(
             status_code=502, detail={"error": error.code, "detail": error.detail}
         ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail={"error": str(error)}) from error
+
+
+@router.post("/compose")
+async def compose(request: ComposeRequest):
+    """Compose up to `count` copy sets from the product's APPROVED component pool
+    and persist each as a COPY_REVIEW_REQUIRED copy_set (never approved).
+
+    This is the capstone that turns the multiplicative pool into usable copy: the
+    output lands in the Copy Set Registry and flows through the SAME dedupe /
+    claim / near-dup / approval gates as AI-assist copy. `dry_run` previews with
+    zero writes. No AI tokens are spent — composition is deterministic."""
+    from agent.services import copy_composer_service as composer_svc
+
+    try:
+        return await composer_svc.compose_and_persist(
+            request.product_id,
+            request.count,
+            formula_families=request.formula_families,
+            dry_run=request.dry_run,
+        )
     except ValueError as error:
         raise HTTPException(status_code=422, detail={"error": str(error)}) from error
 
