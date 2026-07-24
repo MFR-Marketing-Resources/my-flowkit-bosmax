@@ -93,10 +93,18 @@ def test_capacity_is_respected_and_shortfall_reported():
     assert len({i["combination_fingerprint"] for i in out["items"]}) == 32
 
 
-def test_formulas_multiply_capacity():
+def test_formula_is_a_rotating_tag_not_a_capacity_multiplier():
+    """Formulas do NOT multiply distinct copy — the components determine the
+    text, so capacity is component-bound (2x2x2x2 x 2 angles = 32). Formula is a
+    rotating tag applied across those distinct combinations."""
     out = svc.compose(FULL, ANGLES, 64, formula_families=["PAS", "AIDA"])
-    assert out["produced"] == 64
+    assert out["produced"] == 32                      # not 64 — formula adds no text
+    assert out["shortfall"] == 32
+    # both tags appear, spread across distinct combinations
     assert {i["formula_family"] for i in out["items"]} == {"PAS", "AIDA"}
+    # every emitted combination is text-distinct
+    fps = [i["combination_fingerprint"] for i in out["items"]]
+    assert len(fps) == len(set(fps))
 
 
 def test_excluded_fingerprints_are_never_re_emitted():
@@ -154,7 +162,19 @@ def test_fingerprint_is_order_insensitive():
     a = svc.combination_fingerprint(["h1", "s1", "u1", "c1"], "PAS")
     b = svc.combination_fingerprint(["c1", "u1", "s1", "h1"], "PAS")
     assert a == b
-    assert a != svc.combination_fingerprint(["h1", "s1", "u1", "c1"], "AIDA")
+
+
+def test_fingerprint_is_formula_independent():
+    """Formula is only a tag — same components are the SAME copy whatever formula
+    is attached, and the text-based persist dedupe collapses them. A
+    formula-dependent fingerprint would let the composer waste slots on
+    same-text 'new' combinations that then dedupe away."""
+    same = svc.combination_fingerprint(["h1", "s1", "u1", "c1"], "PAS")
+    other_formula = svc.combination_fingerprint(["h1", "s1", "u1", "c1"], "AIDA")
+    no_formula = svc.combination_fingerprint(["h1", "s1", "u1", "c1"])
+    assert same == other_formula == no_formula
+    # a genuinely different component set is still distinct
+    assert same != svc.combination_fingerprint(["h2", "s1", "u1", "c1"], "PAS")
 
 
 def test_composition_reports_its_own_angle_coverage():

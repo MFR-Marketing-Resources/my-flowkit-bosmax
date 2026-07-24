@@ -132,6 +132,14 @@ def pool_capacity(
     Only APPROVED, non-archived components count — an unreviewed component can
     never reach a composed copy, so counting it would overstate capacity.
 
+    Capacity is COMPONENT-BOUND: per angle, hooks x subhooks x usp_sets x ctas,
+    summed over angles. Formula is deliberately NOT a multiplier. The composer
+    does not use the formula to change any text (hook/subhook/usp/cta all come
+    from components), so the same components under a different formula are the
+    SAME copy and the text-based dedupe collapses them; counting `formula_count`
+    here would overstate real unique capacity by that factor. The parameter is
+    retained for call-site compatibility and echoed back, but never multiplies.
+
     Returns per-angle capacity, the total, the empty slots blocking each angle,
     and `next_best` — the single component type whose next addition unlocks the
     most new combinations. That last field is the actionable one: it tells the
@@ -147,7 +155,6 @@ def pool_capacity(
         c = counts[angle]
         missing = [t for t in REQUIRED_TYPES if c[t] == 0]
         combos = 0 if missing else c[HOOK] * c[SUBHOOK] * c[USP_SET] * c[CTA]
-        combos *= formula_count
         total += combos
 
         # Marginal gain of one more component of each type, for THIS angle.
@@ -160,7 +167,6 @@ def pool_capacity(
             else:
                 gains[t] = (
                     bumped[HOOK] * bumped[SUBHOOK] * bumped[USP_SET] * bumped[CTA]
-                    * formula_count
                 ) - combos
 
         per_angle.append({

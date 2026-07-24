@@ -149,6 +149,31 @@ def test_reruns_do_not_re_emit_prior_compositions(monkeypatch):
     assert fp2 and not (fp1 & fp2)
 
 
+def test_rerun_with_different_formula_still_walks_new_ground(monkeypatch):
+    """The exact live failure: run 1 with ['PAS','PESTA'], re-run with a
+    different formula param. Because the fingerprint is formula-independent, the
+    re-run must EXCLUDE the already-used component combinations and create NEW
+    text — not re-tread and dedupe them all away."""
+    fake = FakeCrud(FULL)
+    import agent.db.crud as real_crud
+    import agent.services.copy_grounding_service as cgs
+
+    async def _grounding(_p):
+        return _Grounding()
+
+    for name in ("get_product", "list_copy_components_for_product",
+                 "list_copy_sets_for_product", "find_copy_set_by_dedupe_key",
+                 "create_copy_set"):
+        monkeypatch.setattr(real_crud, name, getattr(fake, name))
+    monkeypatch.setattr(cgs, "resolve_copy_grounding", _grounding)
+
+    first = asyncio.run(svc.compose_and_persist("p1", 8, formula_families=["PAS", "PESTA"]))
+    second = asyncio.run(svc.compose_and_persist("p1", 8, formula_families=["AIDA"]))
+    assert first["created"] == 8
+    assert second["created"] > 0        # would be 0 (all deduped) before the fix
+    assert second["deduped"] == 0
+
+
 def test_coverage_report_is_returned(monkeypatch):
     out, _ = _run(FULL, 8, monkeypatch)
     assert out["coverage"]["status"] == "COVERAGE_OK"

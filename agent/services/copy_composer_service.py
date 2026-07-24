@@ -57,13 +57,24 @@ _GLOBAL_ANGLE = ""
 _SLOT_ORDER = (HOOK, SUBHOOK, USP_SET, CTA)
 
 
-def combination_fingerprint(component_ids: Iterable[str], formula: str) -> str:
+def combination_fingerprint(component_ids: Iterable[str], formula: str = "") -> str:
     """Stable identity of one composed copy.
 
     Order-insensitive over components so the same four parts cannot be
     re-emitted as a 'new' combination by shuffling them.
+
+    FORMULA-INDEPENDENT by design. The composer does not use the formula to
+    change any text — hook/subhook/usp/cta all come from components; the formula
+    is only a downstream TAG. So the copy TEXT of a combination is identical
+    whatever formula is attached, and the persist dedupe_key (which is text-based
+    and formula-blind) treats them as one. If the fingerprint counted formula,
+    the same components under a different formula would look like a 'new'
+    combination, get composed, then collapse on dedupe — wasting the slot and
+    making re-runs with different formula params re-tread old ground. The
+    `formula` argument is accepted for call-site compatibility and ignored.
     """
-    basis = "|".join(sorted(str(c) for c in component_ids)) + "#" + str(formula or "")
+    _ = formula
+    basis = "|".join(sorted(str(c) for c in component_ids))
     return "cc_" + hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]
 
 
@@ -181,10 +192,12 @@ def compose(
             state = per_angle[akey]
             pools = state["pools"]
             sizes = [len(pools[t]) for t in _SLOT_ORDER]
+            # The odometer walks COMPONENT combinations only. Formula is NOT a
+            # dimension of it — it does not change any text, so counting it here
+            # would only manufacture same-text duplicates that dedupe kills.
             total = 1
             for s in sizes:
                 total *= s
-            total *= len(formulas)
 
             picked = None
             while state["cursor"] < total:
@@ -195,20 +208,23 @@ def compose(
                 for slot, size in zip(_SLOT_ORDER, sizes):
                     chosen[slot] = pools[slot][rem % size]
                     rem //= size
-                formula = formulas[rem % len(formulas)]
                 ids = [str(chosen[s].get("component_id") or "") for s in _SLOT_ORDER]
-                fp = combination_fingerprint(ids, formula)
+                fp = combination_fingerprint(ids)
                 if fp in seen:
                     continue
                 seen.add(fp)
-                picked = (chosen, formula, ids, fp)
+                picked = (chosen, ids, fp)
                 break
 
             if picked is None:
                 exhausted.add(akey)
                 continue
 
-            chosen, formula, ids, fp = picked
+            chosen, ids, fp = picked
+            # Formula is a rotating TAG assigned per emitted item, so a batch
+            # carries varied formula labels across DISTINCT combinations instead
+            # of stamping every combination with the first formula.
+            formula = formulas[len(items) % len(formulas)]
             items.append({
                 "angle_key": akey,
                 "angle": str(angle.get("label") or angle.get("angle_label") or ""),
