@@ -284,6 +284,9 @@ domains:
       - agent/services/workspace_generation_package_service.py
       - agent/services/batch_prompt_planner.py
       - agent/services/production_queue_service.py
+      # RPA throughput measurement (Phase 1: read-only telemetry + runbook)
+      - scripts/rpa_throughput_telemetry.py
+      - docs/rpa-throughput-measurement-runbook.md
       - agent/services/bulk_generation_service.py
       - agent/api/bulk_generation.py
       - tests/unit/test_bulk_generation_service.py
