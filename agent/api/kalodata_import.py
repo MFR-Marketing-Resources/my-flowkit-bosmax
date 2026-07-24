@@ -18,6 +18,8 @@ from agent.models.kalodata_import import (
     KalodataCacheImagesRequest,
     KalodataImportReport,
     KalodataImportRequest,
+    CopyIntelligenceBulkImportReport,
+    CopyIntelligenceBulkImportRequest,
     CopyIntelligenceUploadedSourceRequest,
     CopyIntelligenceApprovedContextResponse,
     CopyIntelligencePromoteResult,
@@ -180,6 +182,46 @@ async def reject_copy_intelligence_seed(seed_id: str, body: CopyIntelligenceSeed
     """Reject ONE persisted ledger row (NEEDS_REVIEW -> REJECTED). Requires the
     exact reject phrase, a non-empty note, and reviewer identity."""
     return await _review_copy_intelligence_seed(seed_id, "REJECT", body)
+
+
+@router.post(
+    "/copy-intelligence/bulk-import-drafts",
+    response_model=CopyIntelligenceBulkImportReport,
+)
+async def bulk_import_copy_intelligence_drafts(body: CopyIntelligenceBulkImportRequest):
+    """Bulk-assemble MULTI-ANGLE review DRAFTS from the COPYWRITING HUB.
+
+    For every HUB row that matches a catalog product (by normalized name) and
+    does NOT already have an approved snapshot or a live draft, build a
+    multi-angle persona (Pain Point + each Dream Outcome line) plus light
+    product knowledge, and create a review DRAFT via the existing validated
+    path. NEVER auto-approves; idempotent (re-running skips products already
+    covered). `dry_run` (default True) matches + assembles but writes nothing.
+
+    Provide `source_id` (validated upload — preferred) or `source_path`
+    (Owner-machine override). Fails closed if neither is given: this workbook
+    differs from the staging default, so there is no implicit source.
+    """
+    from agent.services import copy_intelligence_bulk_importer as _bulk
+
+    source_id = (body.source_id or "").strip()
+    source_path = (body.source_path or "").strip()
+    try:
+        if source_id:
+            source_path = _svc.resolve_copy_intelligence_workbook_source(source_id)
+        if not source_path:
+            raise HTTPException(422, "SOURCE_REQUIRED:source_id_or_source_path")
+        return await _bulk.import_hub_to_drafts(
+            source_path, dry_run=body.dry_run, limit=body.limit,
+        )
+    except HTTPException:
+        raise
+    except FileNotFoundError as exc:
+        raise HTTPException(404, f"WORKBOOK_NOT_FOUND:{exc}") from exc
+    except ValueError as exc:
+        raise HTTPException(422, f"COPY_INTELLIGENCE_SOURCE_INVALID:{exc}") from exc
+    except Exception as exc:  # noqa: BLE001 — fail closed; never partial-commit silently
+        raise HTTPException(422, f"BULK_IMPORT_FAILED:{exc}") from exc
 
 
 @router.post(

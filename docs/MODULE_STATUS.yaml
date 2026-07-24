@@ -95,6 +95,9 @@ domains:
       - agent/services/kalodata_import_service.py
       - tests/unit/test_kalodata_import_service.py
       - tests/api/test_kalodata_import_api.py
+      # COPYWRITING HUB -> multi-angle review-draft bulk importer (additive, never auto-approves)
+      - agent/services/copy_intelligence_bulk_importer.py
+      - tests/unit/test_copy_intelligence_bulk_importer.py
 
       # Creative Intelligence Round 1 — avatar recommendation (read-only, non-generative)
       - agent/authority/creative_category_cluster_map.json
