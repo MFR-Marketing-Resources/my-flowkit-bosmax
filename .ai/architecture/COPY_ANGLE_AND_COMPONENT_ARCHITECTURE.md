@@ -1,7 +1,17 @@
 # Copy Angle + Component Architecture
 
-Status: **PROPOSED — awaiting owner approval.** No code written yet.
-Author: Claude Code (review/architecture role). Date: 2026-07-24.
+Status: **Phase A + B1 BUILT** (PRs #457, #458 — awaiting owner merge).
+Phase B2 / C / D still proposed. Author: Claude Code. Date: 2026-07-24.
+
+**Build order deviates from §6 on purpose: C1 (composer) comes BEFORE B2
+(component authoring).** The composer is the CONSUMER that defines the contract
+components must satisfy, and it costs zero tokens to build and test against
+synthetic components. Authoring first would spend tokens against a guessed
+spec. This was not theoretical — designing C1 immediately exposed that B1's
+first draft used a `BODY` component type while `CopySetResponse` has no `body`
+slot at all (its slots are angle/hook/subhook/usp_set/cta). Every authored BODY
+component, and the tokens spent on it, would have been waste. Fixed before any
+authoring ran.
 Scope: the copywriting generation lane only. Does not touch the ADR-007
 generation door, the negotiation brain, or any locked video path.
 
@@ -90,7 +100,7 @@ Compose **within an angle** (a hook about infant colic must never pair with a
 body about post-work body aches):
 
 ```
-total = formulas × Σ_angle ( hooks_a × bodies_a × usp_sets_a × ctas_a )
+total = formulas × Σ_angle ( hooks_a × subhooks_a × usp_sets_a × ctas_a )
 ```
 
 Worked example for MWTCB's four real use-cases (colic / body aches / numbness /
@@ -99,7 +109,7 @@ insect bites):
 | Authored components | Count |
 |---|---|
 | 4 angles × 8 hooks | 32 |
-| 4 angles × 5 bodies | 20 |
+| 4 angles × 5 subhooks | 20 |
 | 4 angles × 4 usp_sets | 16 |
 | CTAs | 5 |
 | **Total authored** | **73** |

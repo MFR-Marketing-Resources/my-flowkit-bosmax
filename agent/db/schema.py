@@ -2135,7 +2135,13 @@ CREATE TABLE IF NOT EXISTS avatar_product_fit (
         #
         # This table stores ONE part, reusable across many composed copy sets,
         # so capacity becomes MULTIPLICATIVE: per angle,
-        # hooks x bodies x usp_sets x ctas, summed over angles, times formulas.
+        # hooks x subhooks x usp_sets x ctas, summed over angles, times formulas.
+        #
+        # component_type MIRRORS the consumer's slots exactly. A composed copy
+        # must satisfy CopySetResponse (angle, hook, subhook, usp_set, cta) —
+        # there is NO `body` field there, so HOOK/SUBHOOK/USP_SET/CTA are the
+        # only valid types. `angle` is not a component; it is the Phase A key
+        # components are grouped BY.
         #
         # angle_key ties a component to a Phase A derived angle. It is NULLABLE
         # by design: '' means "applies to every angle of this product", which is

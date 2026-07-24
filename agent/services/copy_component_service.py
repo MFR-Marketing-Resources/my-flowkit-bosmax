@@ -9,7 +9,7 @@ and diversity collapses as N grows (measured on MWTCB: 58 sets, subhook 58/58
 distinct = zero component reuse, ~90% of sets on a single theme). Components
 make capacity MULTIPLICATIVE instead of linear:
 
-    total = formulas x SUM over angles of ( hooks x bodies x usp_sets x ctas )
+    total = formulas x SUM over angles of ( hooks x subhooks x usp_sets x ctas )
 
 so ~73 authored pieces yield ~19,200 valid combinations rather than 19,200
 provider calls.
@@ -34,7 +34,7 @@ from typing import Any, Iterable
 
 __all__ = [
     "HOOK",
-    "BODY",
+    "SUBHOOK",
     "USP_SET",
     "CTA",
     "COMPONENT_TYPES",
@@ -44,12 +44,18 @@ __all__ = [
     "pool_capacity",
 ]
 
+# The component vocabulary MIRRORS the consumer's slots exactly. A composed
+# copy has to satisfy CopySetResponse (angle, hook, subhook, usp_set, cta), and
+# there is NO `body` field there — an earlier draft of this module used BODY,
+# which mapped to nothing and would have made every authored BODY component
+# (and the tokens spent on it) useless. `angle` is deliberately absent here: it
+# is not a component, it is the Phase A key components are grouped BY.
 HOOK = "HOOK"
-BODY = "BODY"
+SUBHOOK = "SUBHOOK"
 USP_SET = "USP_SET"
 CTA = "CTA"
 
-COMPONENT_TYPES = (HOOK, BODY, USP_SET, CTA)
+COMPONENT_TYPES = (HOOK, SUBHOOK, USP_SET, CTA)
 # Every one of these must be non-empty for an angle to produce anything at all;
 # a single missing type zeroes that angle's whole product.
 REQUIRED_TYPES = COMPONENT_TYPES
@@ -140,7 +146,7 @@ def pool_capacity(
     for angle in angle_keys:
         c = counts[angle]
         missing = [t for t in REQUIRED_TYPES if c[t] == 0]
-        combos = 0 if missing else c[HOOK] * c[BODY] * c[USP_SET] * c[CTA]
+        combos = 0 if missing else c[HOOK] * c[SUBHOOK] * c[USP_SET] * c[CTA]
         combos *= formula_count
         total += combos
 
@@ -153,7 +159,7 @@ def pool_capacity(
                 gains[t] = 0
             else:
                 gains[t] = (
-                    bumped[HOOK] * bumped[BODY] * bumped[USP_SET] * bumped[CTA]
+                    bumped[HOOK] * bumped[SUBHOOK] * bumped[USP_SET] * bumped[CTA]
                     * formula_count
                 ) - combos
 
