@@ -33,6 +33,7 @@ dedupe / near-dup / claim gates unchanged — this module only assembles.
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Any, Iterable
 
 from agent.services.copy_component_service import (
@@ -44,7 +45,12 @@ from agent.services.copy_component_service import (
     USP_SET,
 )
 
-__all__ = ["compose", "combination_fingerprint"]
+__all__ = ["compose", "combination_fingerprint", "compose_and_persist"]
+
+# Composed copy is NEVER approved copy: it lands COPY_REVIEW_REQUIRED and flows
+# through the SAME dedupe / claim / near-dup gates as AI-assist copy, so the
+# Copy Set Registry treats a composed row identically to a generated one.
+SOURCE_COMPONENT_COMPOSER = "COMPONENT_COMPOSER"
 
 _GLOBAL_ANGLE = ""
 # Odometer digit order: leftmost varies FASTEST.
@@ -245,4 +251,157 @@ def compose(
         "blocked_angles": blocked,
         "coverage": coverage,
         "warnings": warnings,
+    }
+
+
+# ── persist: pool → copy_set rows (the operator-facing capstone) ───────────────
+
+
+def _angles_from_pool(components: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Reconstruct the angle list (key + label) from the components themselves.
+
+    Preserves first-seen order so composition is deterministic without a second
+    trip to the persona derivation.
+    """
+    seen: dict[str, str] = {}
+    for c in components:
+        if str(c.get("status") or "") != STATUS_APPROVED or int(c.get("archived") or 0):
+            continue
+        key = str(c.get("angle_key") or "").strip()
+        if key and key not in seen:
+            seen[key] = str(c.get("angle_label") or "")
+    return [{"angle_key": k, "label": v} for k, v in seen.items()]
+
+
+async def compose_and_persist(
+    product_id: str,
+    count: int,
+    *,
+    formula_families: list[str] | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Compose up to `count` copy sets from a product's APPROVED component pool
+    and persist each as a COPY_REVIEW_REQUIRED copy_set.
+
+    Every persisted row goes through the SAME primitives AI-assist copy uses —
+    normalise → dedupe_key → existing-check → claim scan — so a composed row is
+    indistinguishable from a generated one to the Copy Set Registry, the near-dup
+    scanner, and the approval gate. Composed copy is NEVER auto-approved.
+
+    Re-runs never re-emit a prior composition: the combination fingerprints of
+    already-composed rows are excluded, so calling this repeatedly walks new
+    ground until the pool is exhausted.
+
+    dry_run=True composes and returns a preview WITHOUT writing anything.
+    """
+    from agent.db import crud
+    from agent.services.copy_grounding_service import resolve_copy_grounding
+    from agent.services.copy_set_service import (
+        STATUS_COPY_REVIEW_REQUIRED,
+        _dedupe_key_for,
+        _normalize_fields,
+        scan_copy_safety,
+    )
+
+    product = await crud.get_product(product_id)
+    if not product:
+        raise ValueError("PRODUCT_NOT_FOUND")
+
+    pool = await crud.list_copy_components_for_product(product_id)
+    approved = [c for c in pool if str(c.get("status")) == STATUS_APPROVED]
+    angles = _angles_from_pool(approved)
+    if not angles:
+        return {"product_id": product_id, "requested": int(count or 0), "produced": 0,
+                "created": 0, "deduped": 0, "dry_run": bool(dry_run), "items": [],
+                "coverage": None, "warnings": ["NO_APPROVED_COMPONENTS_OR_ANGLES"]}
+
+    grounding = await resolve_copy_grounding(product)
+    route_type = str(getattr(grounding, "effective_route", "") or "DIRECT")
+
+    # Exclude fingerprints of copy sets already composed from this pool, so a
+    # repeat call produces fresh combinations rather than colliding on dedupe.
+    existing_rows = await crud.list_copy_sets_for_product(product_id)
+    already: set[str] = set()
+    for r in existing_rows:
+        if str(r.get("source") or "") != SOURCE_COMPONENT_COMPOSER:
+            continue
+        prov = r.get("provenance_json")
+        if isinstance(prov, str):
+            try:
+                prov = json.loads(prov)
+            except Exception:  # noqa: BLE001
+                prov = {}
+        fp = (prov or {}).get("combination_fingerprint")
+        if fp:
+            already.add(str(fp))
+
+    result = compose(
+        approved, angles, int(count or 0),
+        formula_families=formula_families, exclude_fingerprints=already,
+    )
+
+    created: list[dict[str, Any]] = []
+    deduped = 0
+    for item in result["items"]:
+        fields = _normalize_fields({
+            "angle": item["angle"],
+            "hook": item["hook"],
+            "subhook": item["subhook"],
+            "usp_set": item["usp_set"],
+            "cta": item["cta"],
+            "platform": "TIKTOK",
+            "language": "BM_MS",
+            "route_type": route_type,
+            "formula_family": item["formula_family"] or "PAS",
+        })
+        safety = scan_copy_safety(fields, product_id=product_id)
+        dedupe_key = _dedupe_key_for(product_id, fields)
+        preview = {
+            "angle": fields["angle"], "hook": fields["hook"], "subhook": fields["subhook"],
+            "usp_set": fields["usp_set"], "cta": fields["cta"],
+            "formula_family": fields["formula_family"],
+            "combination_fingerprint": item["combination_fingerprint"],
+            "component_ids": item["component_ids"],
+            "safe": safety["safe"], "violations": safety["violations"],
+        }
+        if dry_run:
+            created.append(preview)
+            continue
+
+        if await crud.find_copy_set_by_dedupe_key(dedupe_key):
+            deduped += 1
+            continue
+        row = await crud.create_copy_set(
+            product_id,
+            angle=fields["angle"], hook=fields["hook"], subhook=fields["subhook"],
+            usp_set_json=json.dumps(fields["usp_set"], ensure_ascii=False),
+            cta=fields["cta"], platform=fields["platform"], language=fields["language"],
+            route_type=fields["route_type"], formula_family=fields["formula_family"],
+            status=STATUS_COPY_REVIEW_REQUIRED,
+            dedupe_key=dedupe_key,
+            source=SOURCE_COMPONENT_COMPOSER,
+            provenance_json=json.dumps({
+                "composed": True,
+                "angle_key": item["angle_key"],
+                "component_ids": item["component_ids"],
+                "combination_fingerprint": item["combination_fingerprint"],
+            }, ensure_ascii=False),
+            claim_review_json=json.dumps({
+                "composed": True, "safety": safety, "route_type": route_type,
+            }, ensure_ascii=False),
+        )
+        created.append({"copy_set_id": row.get("copy_set_id"), **preview})
+
+    return {
+        "product_id": product_id,
+        "requested": result["requested"],
+        "produced": len(created) if dry_run else len(created),
+        "created": 0 if dry_run else len(created),
+        "deduped": deduped,
+        "shortfall": result["shortfall"],
+        "dry_run": bool(dry_run),
+        "coverage": result["coverage"],
+        "blocked_angles": result["blocked_angles"],
+        "items": created,
+        "warnings": result["warnings"],
     }
