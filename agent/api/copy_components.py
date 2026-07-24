@@ -39,6 +39,11 @@ class ComposeRequest(BaseModel):
     dry_run: bool = False
 
 
+class AddAnglesRequest(BaseModel):
+    product_id: str
+    pains: list[str] = Field(default_factory=list)
+
+
 class ApproveRequest(BaseModel):
     approved_by: str = "operator"
 
@@ -87,6 +92,21 @@ async def compose(request: ComposeRequest):
             formula_families=request.formula_families,
             dry_run=request.dry_run,
         )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail={"error": str(error)}) from error
+
+
+@router.post("/add-angles")
+async def add_angles(request: AddAnglesRequest):
+    """Append persona pains (angles) to a product and re-approve a snapshot,
+    preserving all product truth. FREE — no AI tokens. Angles are derived
+    one-per-pain (cap enforced). A CLAIM_BLOCKED addition is refused (returned
+    with ok=false); everything else is approved with the panel action standing
+    as the claim-review acknowledgement."""
+    from agent.services import copy_angle_expansion_service as angle_svc
+
+    try:
+        return await angle_svc.expand_product_angles(request.product_id, request.pains)
     except ValueError as error:
         raise HTTPException(status_code=422, detail={"error": str(error)}) from error
 
