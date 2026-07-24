@@ -35,32 +35,37 @@ until Phase 2.
 ### Production reality (owner, 2026-07-24)
 - Only **T2V** and **Hybrid** are practical at 200/day. **F2V/I2V are out** — they
   need many pre-built images (F2V: avatar+product; I2V: avatar+product+scene).
-- Target durations include **16 s / 24 s**, which use the **EXTEND** lane
-  (multi-op, ~13 min/item observed) — **far slower** than an 8 s single (1 op,
-  ~1–3 min). **This duration choice, not the mode, is the dominant throughput
-  driver.**
+- Durations are a **FLEXIBLE MIX** — **8 s, 10 s (Omni Flash), 16 s, 24 s**.
+  **Nothing is hardcoded.** Single-shot durations (8 s, 10 s) are fast (~1 op);
+  **16 s / 24 s use the EXTEND lane** (~13 min/item observed) — the durations, not
+  the mode, are the dominant throughput driver.
+- **16 s is used here only as a TIMING SAMPLE** for the slow (EXTEND) lane, per the
+  owner. It is *not* a mandatory production duration.
 
 ### Throughput-by-lane ceiling (single account, before any rate-limit)
 | Lane | ~time/item | 24 h ceiling / account |
 |---|---|---|
-| 8 s single (T2V or Hybrid) | ~1–3 min | ~300–500 |
+| 8 s single (T2V / Hybrid) | ~1–3 min | ~300–500 |
+| 10 s (Omni Flash, single) | ~1–3 min | ~300–500 |
 | **16 s EXTEND (Hybrid)** | **~13 min** | **~110** |
 | 24 s EXTEND | ~longer | ~70–90 |
 
-**Consequence:** 200/day of **16 s Hybrid** is **impossible on one account by time
-alone** (~110/day ceiling). It needs **≥ 2–3 accounts in parallel** → Phase 2 is
-required. The measurement below confirms the exact per-account 16 s rate.
+**Consequence:** 200/day feasibility depends on the **duration MIX**. A mix
+dominated by 8 s / 10 s singles → reachable on ~1 account; a mix heavy on 16 s /
+24 s EXTEND drops the ceiling sharply (16 s alone ~110/day) → 2–3 accounts
+(Phase 2). So measure **per-duration timing**, not one fixed duration.
 
 ### 1. Prepare the measurement batch (credit-free)
-- Product + mode + duration = **MWTCB, Hybrid, 16 s, 9:16** (the real production
-  lane). Hybrid needs a **product reference anchor (9:16)** — MWTCB auto-anchors
-  from its product image; confirm the anchor resolves in the dry run.
-- Queue **~15–20 EXTEND items** into a single production run (fewer than the T2V
-  count because each ~13 min item already gives a clear rate; `QUANTITY (PREVIEW)`
-  caps at 5, so queue in several passes or ask Claude for a credit-free dry-run
+- **Measure per lane.** Start with the owner-chosen **EXTEND timing sample**:
+  **MWTCB, Hybrid, 16 s, 9:16** (Hybrid needs a 9:16 product anchor — MWTCB
+  auto-anchors; confirm it resolves in the dry run). Then repeat with a
+  **single-shot sample** (8 s or 10 s Omni Flash) so the plan covers the real
+  8/10/16/24 mix — 16 s alone would only tell us the *slow* lane.
+- Queue **~15–20 items per sample** into a production run (`QUANTITY (PREVIEW)`
+  caps at 5, so queue in passes — or ask Claude for a credit-free dry-run
   batch-prep helper).
 - **Dry run** (no `confirm_live_credit_burn`). Every item must report `ok: true`
-  **and** a resolved anchor/media. Zero credits.
+  **and** a resolved anchor/media (for Hybrid). Zero credits.
 
 ### 2. Certify (owner) — the credit gate
 - Set in `.env` at repo root, then restart the agent:
