@@ -397,8 +397,8 @@ def build_product_lock(
     )
     hand_anatomy_lock = (
         "HAND ANATOMY LOCK: Any hand that holds or touches the product must be anatomically correct — exactly five "
-        "fingers per hand with natural length, joints, and spacing. Forbidden — extra, duplicated, fused, or missing "
-        "fingers, double thumbs, warped knuckles, elongated or distorted hands, especially around the product grip."
+        "fingers per hand with natural length, joints, and spacing. Forbidden — extra fingers, duplicated, fused, or "
+        "missing fingers, double thumbs, warped knuckles, elongated or distorted hands, especially around the product grip."
         if is_video
         else ""
     )
