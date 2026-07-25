@@ -98,6 +98,9 @@ def resolve_schema_entry(product: dict[str, Any]) -> dict | None:
         candidate = _clean(product.get(key)).upper()
         if candidate and candidate in products:
             return products[candidate]
+        for entry in products.values():
+            if candidate and candidate in {_clean(alias).upper() for alias in entry.get("legacy_aliases") or []}:
+                return entry
 
     name = _product_name_text(product)
     if not name:
@@ -111,8 +114,8 @@ def resolve_schema_entry(product: dict[str, Any]) -> dict | None:
             return products["BOSMAX_HERBS_10ML"]
         return None
 
-    if ("minyak warisan" in name or "cap burung" in name) and "MWTCB_25ML_CAP_BURUNG" in products:
-        return products["MWTCB_25ML_CAP_BURUNG"]
+    if ("minyak warisan" in name or "cap burung" in name) and "MWCB_25ML_CAP_BURUNG" in products:
+        return products["MWCB_25ML_CAP_BURUNG"]
 
     for entry in products.values():
         product_name = _lower(entry.get("product_name"))

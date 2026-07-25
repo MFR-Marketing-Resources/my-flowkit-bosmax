@@ -1,4 +1,4 @@
-"""Offline 9:16 MWTCB exact-product compositing proof; no provider calls."""
+"""Offline 9:16 MWCB exact-product compositing proof; no provider calls."""
 from __future__ import annotations
 
 import json
@@ -13,7 +13,7 @@ from agent.services.exact_product_compositor_service import composite, prepare_l
 
 
 def main() -> int:
-    product = {"product_display_name": "Minyak Warisan Tok Cap Burung 25ml"}
+    product = {"product_display_name": "Minyak Warisan Cap Burung 25ml"}
     out_dir = ROOT / "outputs" / "exact-product-proof"
     out_dir.mkdir(parents=True, exist_ok=True)
     output = out_dir / "mwtcb_exact_9x16.png"

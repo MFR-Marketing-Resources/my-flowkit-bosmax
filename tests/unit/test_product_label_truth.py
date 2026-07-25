@@ -1,6 +1,6 @@
 """Product label truth — SEV-1 regression for MWTCB package drift.
 
-The catalog/display name is ``Minyak Warisan Tok Cap Burung 25ml`` but the
+The catalog/display name is ``Minyak Warisan Cap Burung 25ml`` and the
 owner-supplied physical product photographs prove that ``TOK`` is not printed on
 the bottle. They also prove a compact, moderately tall, rectangular flat-front
 bottle rather than the stale tall/narrow AI photoshoot previously attached to
@@ -20,13 +20,13 @@ from agent.services.product_lock_builder import build_product_lock, resolve_sche
 
 MWTCB = {
     "id": "6483d624-a03d-4933-9bba-6ca2e5f7b6fd",
-    "product_display_name": "Minyak Warisan Tok Cap Burung 25ml",
-    "raw_product_title": "Minyak Warisan Tok Cap Burung 25ml",
+    "product_display_name": "Minyak Warisan Cap Burung 25ml",
+    "raw_product_title": "Minyak Warisan Cap Burung 25ml",
     "product_short_name": "Minyak Cap Burung",
     "category": "herbal oil",
 }
 
-CATALOG_NAME = "Minyak Warisan Tok Cap Burung 25ml"
+CATALOG_NAME = "Minyak Warisan Cap Burung 25ml"
 SHORTHAND = "Minyak Cap Burung"
 PRINTED_LABEL_LINES = [
     "MINYAK WARISAN",
@@ -62,7 +62,7 @@ def test_catalog_name_remains_metadata_identity_not_label_copy():
 def test_schema_separates_catalog_name_from_exact_physical_label():
     entry = resolve_schema_entry(MWTCB)
     assert entry is not None
-    assert entry["product_id"] == "MWTCB_25ML_CAP_BURUNG"
+    assert entry["product_id"] == "MWCB_25ML_CAP_BURUNG"
     assert entry["product_name"] == CATALOG_NAME
     assert entry["printed_label_lines"] == PRINTED_LABEL_LINES
     assert "TOK" in entry["forbidden_printed_label_tokens"]
@@ -107,7 +107,7 @@ def test_product_lock_emits_physical_label_and_compact_rectangular_geometry_for_
             is_video=is_video,
             has_product_reference=True,
         )
-        assert lock["matched_product_id"] == "MWTCB_25ML_CAP_BURUNG"
+        assert lock["matched_product_id"] == "MWCB_25ML_CAP_BURUNG"
         identity = lock["identity_lock"]
         blob = " ".join(v for v in lock.values() if isinstance(v, str))
 
@@ -163,7 +163,7 @@ def test_text_only_lane_still_receives_exact_physical_label_authority():
     for printed_line in PRINTED_LABEL_LINES:
         assert printed_line in identity
     assert "FORBIDDEN PRINTED LABEL TOKENS" in identity
-    assert "MINYAK WARISAN TOK" in identity
+    assert "MINYAK WARISAN TOK" not in identity
     assert "attached reference image" not in lock["reference_lock"]
     assert lock["reference_lock"] == ""
 
