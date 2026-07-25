@@ -2,12 +2,13 @@
 
 The catalog/display name is ``Minyak Warisan Tok Cap Burung 25ml`` but the
 owner-supplied physical product photographs prove that ``TOK`` is not printed on
-the bottle.  They also prove a short, wide, squat flat-front bottle rather than
+the bottle. They also prove a short, wide, squat flat-front bottle rather than
 the stale tall/narrow AI photoshoot previously attached to the product row.
 
 These tests pin the separation between catalog identity and physical package
-truth, the exact printed label lines, the real teal/cream/gold label layout, and
-the verified short-wide geometry across image and video product locks.
+truth, the exact printed label lines, the real teal/cream/gold label layout, the
+verified short-wide geometry, and the rule that structured truth outranks a
+conflicting visual reference.
 """
 import inspect
 
@@ -84,7 +85,7 @@ def test_schema_separates_catalog_name_from_exact_physical_label():
     assert "25ml" in layout
 
     for geometry in (
-        "short, wide, squat",
+        "short, wide",
         "flat front",
         "nearly vertical sides",
         "low rounded shoulders",
@@ -118,12 +119,69 @@ def test_product_lock_emits_physical_label_and_short_wide_geometry_for_all_lanes
         assert "plain cream sticker" in identity
 
         for geometry in (
-            "short, wide, squat",
+            "short, wide",
             "low rounded shoulders",
             "very short neck",
             "thick clear glass base",
         ):
             assert geometry in blob
+
+
+def test_structured_truth_outranks_a_conflicting_attached_reference():
+    lock = build_product_lock(
+        MWTCB,
+        is_video=False,
+        has_product_reference=True,
+    )
+    reference = lock["reference_lock"]
+    no_modification = lock["no_modification_lock"]
+
+    assert "supporting evidence" in reference
+    assert "structured bottle geometry" in reference
+    assert "final authority" in reference
+    assert "tall or narrow body" in reference
+    assert "different teal coverage" in reference
+    assert "ignore that conflicting feature" in reference
+    assert "hard visual" not in reference
+
+    assert "structured product truth" in no_modification
+    assert "only where it agrees" in no_modification
+
+
+def test_text_only_lane_still_receives_exact_physical_label_authority():
+    lock = build_product_lock(
+        MWTCB,
+        is_video=True,
+        has_product_reference=False,
+    )
+    identity = lock["identity_lock"]
+
+    for printed_line in PRINTED_LABEL_LINES:
+        assert printed_line in identity
+    assert "FORBIDDEN PRINTED LABEL TOKENS" in identity
+    assert "MINYAK WARISAN TOK" in identity
+    assert "attached reference image" not in lock["reference_lock"]
+    assert lock["reference_lock"] == ""
+
+
+def test_passing_scale_contract_is_not_rewritten_by_label_fix():
+    lock = build_product_lock(
+        MWTCB,
+        is_video=False,
+        has_product_reference=True,
+    )
+    scale = lock["scale_lock"]
+    for phrase in (
+        "compact pocket-size",
+        "shorter than an adult palm",
+        "two fingers wide",
+        "small handheld household herbal-oil bottle",
+        "oversized medicine bottle",
+        "dominate the hand",
+        "natural handheld depth plane",
+        "closer to the camera lens",
+    ):
+        assert phrase in scale
 
 
 def test_catalog_short_name_never_becomes_the_visual_alias():
