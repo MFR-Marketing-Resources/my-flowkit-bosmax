@@ -362,19 +362,32 @@ def build_product_lock(
         else ""
     )
 
-    if structured_authority:
-        modification_source = (
-            "the structured product truth in this lock; use an attached reference only where it agrees with that truth"
+    if structured_authority and has_product_reference:
+        no_modification_lock = (
+            "PRODUCT NO-MODIFICATION LOCK: Do NOT modify, change, restyle, redesign, or reinterpret the product in ANY "
+            "way. The product must retain ALL original details, design, colors, label text, typography, materials, finish, "
+            "and packaging EXACTLY as shown in the product reference image only where it agrees with the structured "
+            "product truth in this lock; conflicting reference details must be ignored and the structured product truth "
+            "is final."
+        )
+    elif structured_authority:
+        no_modification_lock = (
+            "PRODUCT NO-MODIFICATION LOCK: Do NOT modify, change, restyle, redesign, or reinterpret the product in ANY "
+            "way. The product must retain ALL original details, design, colors, label text, typography, materials, finish, "
+            "and packaging EXACTLY as defined by the structured product truth in this lock."
         )
     elif has_product_reference:
-        modification_source = "the product reference image"
+        no_modification_lock = (
+            "PRODUCT NO-MODIFICATION LOCK: Do NOT modify, change, restyle, redesign, or reinterpret the product in ANY "
+            "way. The product must retain ALL of its original details, design, colors, label text, typography, materials, "
+            "finish, and packaging EXACTLY as shown in the product reference image."
+        )
     else:
-        modification_source = "this product truth lock"
-    no_modification_lock = (
-        "PRODUCT NO-MODIFICATION LOCK: Do NOT modify, change, restyle, redesign, or reinterpret the product in ANY "
-        "way. The product must retain ALL original details, design, colors, label text, typography, materials, finish, "
-        f"and packaging EXACTLY as defined by {modification_source}."
-    )
+        no_modification_lock = (
+            "PRODUCT NO-MODIFICATION LOCK: Do NOT modify, change, restyle, redesign, or reinterpret the product in ANY "
+            "way. The product must retain ALL original details, design, colors, label text, typography, materials, finish, "
+            "and packaging EXACTLY as described in this product truth lock."
+        )
 
     scale_anchor_lock = (
         "PRODUCT SCALE ANCHOR: When a presenter holds the product, keep it in a natural grip at chest level or lower, "
