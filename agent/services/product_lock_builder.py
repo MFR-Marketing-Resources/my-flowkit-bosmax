@@ -1,26 +1,10 @@
-"""Shared engine-visible PRODUCT LOCK builder (product-truth scale/geometry hardener).
+"""Shared engine-visible PRODUCT LOCK builder.
 
-Root problem this module fixes: the authored product-truth lock authority
-(``agent/authority/UNIVERSAL_PRODUCT_SCHEMA.json`` — ``product_truth_ref`` /
-``scale_lock`` / ``label_lock`` / ``pack_size_ml``) was ORPHANED — no runtime code
-loaded it — and the canonical prompt compiler emitted only a single generic
-"preserve appearance" sentence for SECTION 2. The generation engine therefore never
-received a hard identity + geometry + physical-scale + negative-morph + frame
-persistence lock, letting bottles enlarge, round out, and drift 5ml↔10ml.
-
-This builder is the single source that turns product truth into engine-visible lock
-prose. Priority order for truth:
-
-1. UNIVERSAL_PRODUCT_SCHEMA.json entry resolved from the product row (authored
-   literal truth — used verbatim). This is where palm-scale/silhouette evidence is
-   represented as first-class ``scale_lock`` semantics.
-2. A deterministic data-driven fallback derived from the product row (pack size,
-   family/packaging descriptors) so the lock is NEVER silently dropped for products
-   that are not (yet) in the schema.
-
-The emitted lock text is deterministic and scrub-safe: it contains no source-mode
-taxonomy tokens (see canonical_prompt_compiler._LEAK_PATTERNS), so it can be
-inserted directly into the final compiled prompt.
+The authored product authority in ``UNIVERSAL_PRODUCT_SCHEMA.json`` is the
+primary product-truth source.  A product reference image is supporting visual
+evidence only where it agrees with that structured authority.  This distinction
+matters for catalog/display names that differ from the text physically printed
+on a package and for stale generated references with incorrect geometry.
 """
 from __future__ import annotations
 
@@ -60,7 +44,14 @@ def _parse_pack_ml(product: dict[str, Any]) -> int | None:
                 pass
     haystack = " ".join(
         _lower(product.get(k))
-        for k in ("name", "product_name", "product_display_name", "product_short_name", "raw_product_title", "type")
+        for k in (
+            "name",
+            "product_name",
+            "product_display_name",
+            "product_short_name",
+            "raw_product_title",
+            "type",
+        )
     )
     match = re.search(r"(\d+(?:\.\d+)?)\s*ml\b", haystack)
     if match:
@@ -82,7 +73,6 @@ def _product_name_text(product: dict[str, Any]) -> str:
 
 
 def _resolved_ml(name: str, pack_ml: int | None) -> int | None:
-    """Explicit size evidence from the row (token or pack size). None = ambiguous."""
     if pack_ml in (5, 10, 25):
         return pack_ml
     if "10ml" in name or "10 ml" in name:
@@ -95,20 +85,15 @@ def _resolved_ml(name: str, pack_ml: int | None) -> int | None:
 
 
 def resolve_schema_entry(product: dict[str, Any]) -> dict | None:
-    """Resolve a product row to its authored UNIVERSAL_PRODUCT_SCHEMA entry.
+    """Resolve a runtime product row to one authored schema entry.
 
-    Match order: explicit ref/id keys → size-gated brand signature → exact
-    product_name. Fail-closed against 5ml↔10ml contamination: a BOSMAX row is
-    matched to a size variant ONLY with explicit size evidence; a bare, size-less
-    "BOSMAX HERBS" row resolves to NOTHING (deterministic fallback) rather than
-    guessing a size. Real runtime rows always carry the size (verified in
-    flow_agent.db: "Bosmax Herbs 5 ML" / "Bosmax Oil 10 ML").
+    Explicit identifiers win.  BOSMAX variants are size-gated so a size-less
+    family row cannot inherit the wrong 5ml/10ml lock.
     """
     products = _schema().get("products") or {}
     if not products:
         return None
 
-    # 1. Explicit operator intent — a ref/id key wins outright (never ambiguous).
     for key in ("product_truth_ref", "product_id", "schema_ref", "id"):
         candidate = _clean(product.get(key)).upper()
         if candidate and candidate in products:
@@ -117,97 +102,106 @@ def resolve_schema_entry(product: dict[str, Any]) -> dict | None:
     name = _product_name_text(product)
     if not name:
         return None
-    pack_ml = _parse_pack_ml(product)
-    size_ml = _resolved_ml(name, pack_ml)
+    size_ml = _resolved_ml(name, _parse_pack_ml(product))
 
-    # 2. BOSMAX family — size-gated, fail-closed on ambiguity.
     if "bosmax" in name:
         if size_ml == 5 and "BOSMAX_SERUM_5ML" in products:
             return products["BOSMAX_SERUM_5ML"]
         if size_ml == 10 and "BOSMAX_HERBS_10ML" in products:
             return products["BOSMAX_HERBS_10ML"]
-        return None  # ambiguous bare BOSMAX → generic fallback, never a wrong size
+        return None
 
-    # 3. Minyak Warisan Cap Burung signature (single authored size).
     if ("minyak warisan" in name or "cap burung" in name) and "MWTCB_25ML_CAP_BURUNG" in products:
         return products["MWTCB_25ML_CAP_BURUNG"]
 
-    # 4. Exact product_name substring for any other authored (non-BOSMAX) product.
     for entry in products.values():
-        pn = _lower(entry.get("product_name"))
-        if not pn or "bosmax" in pn:  # BOSMAX handled above (size-gated)
+        product_name = _lower(entry.get("product_name"))
+        if not product_name or "bosmax" in product_name:
             continue
-        if pn in name:
+        if product_name in name:
             return entry
-        if name in pn and len(name) >= 8 and " " in name:
+        if name in product_name and len(name) >= 8 and " " in name:
             return entry
     return None
 
 
-# ── data-driven fallback (no schema entry) ─────────────────────────────────────
-
-# Non-bottle / worn / large-format product families. For these the "palm-sized
-# bottle, small relative to an adult hand" assumption is WRONG (a carpet, a jersey,
-# or a mattress is not a handheld bottle), so they get a neutral real-world-scale
-# lock instead. Tokens MUST be low-ambiguity substrings: e.g. "rug" is deliberately
-# excluded because it matches "drugstore"/"drug"; carpets are covered by
-# "karpet"/"carpet"/"permaidani" and furniture by "perabot"/"furniture"/"almari".
 _NON_BOTTLE_TOKENS: tuple[str, ...] = (
-    "karpet", "carpet", "permaidani",
-    "jersi", "jersey", "seluar", "tudung", "hijab", "kasut", "selipar", "sandal",
-    "cadar", "bedsheet", "tilam", "mattress", "langsir", "curtain",
-    "perabot", "furniture", "almari",
+    "karpet",
+    "carpet",
+    "permaidani",
+    "jersi",
+    "jersey",
+    "seluar",
+    "tudung",
+    "hijab",
+    "kasut",
+    "selipar",
+    "sandal",
+    "cadar",
+    "bedsheet",
+    "tilam",
+    "mattress",
+    "langsir",
+    "curtain",
+    "perabot",
+    "furniture",
+    "almari",
 )
 
 
 def _fallback_scale_line(product: dict[str, Any]) -> str:
-    """Deterministic scale lock for products with no authored schema entry.
-
-    Two hard rules, both required for Google-Flow safety and portability:
-      * NEVER print a numeric pack size (e.g. "300ml") into the scale sentence — the
-        engine can render a literal measurement as a ruler/label/caption artifact.
-        The pack size only *selects* a qualitative size class.
-      * Do NOT force palm-sized-bottle / hand-relative framing onto products that are
-        not handheld bottles (apparel, textiles, furniture, large-format).
-    """
     pack_ml = _parse_pack_ml(product)
     haystack = " ".join(
         _lower(product.get(k))
         for k in (
-            "type", "product_type", "product_scale", "physics_class", "category",
-            "subcategory", "name", "product_name", "product_display_name", "raw_product_title",
+            "type",
+            "product_type",
+            "product_scale",
+            "physics_class",
+            "category",
+            "subcategory",
+            "name",
+            "product_name",
+            "product_display_name",
+            "raw_product_title",
         )
     )
 
-    # Item 3 — non-bottle / large-format: neutral real-world scale, no hand/bottle framing.
-    if any(tok in haystack for tok in _NON_BOTTLE_TOKENS):
+    if any(token in haystack for token in _NON_BOTTLE_TOKENS):
         return (
             "Keep the product at its true real-world size and correct proportion relative to a person "
             "and the surrounding environment. Preserve its natural full-size scale; do not shrink it to "
             "a small palm object, do not enlarge the product for camera visibility, and do not distort it."
         )
 
-    # Item 2 — qualitative size CLASS from pack size, never the numeric value.
     handheld: bool | None = None
     if pack_ml is not None:
         if pack_ml <= 6:
-            size_phrase = "a tiny lip-balm / chapstick handheld size class"; handheld = True
+            size_phrase = "a tiny lip-balm / chapstick handheld size class"
+            handheld = True
         elif pack_ml <= 20:
-            size_phrase = "a compact pocket roll-on handheld size class"; handheld = True
+            size_phrase = "a compact pocket roll-on handheld size class"
+            handheld = True
         elif pack_ml <= 60:
-            size_phrase = "a small one-hand-grip bottle size class"; handheld = True
+            size_phrase = "a small one-hand-grip bottle size class"
+            handheld = True
         elif pack_ml <= 150:
-            size_phrase = "a medium one-hand bottle size class"; handheld = True
+            size_phrase = "a medium one-hand bottle size class"
+            handheld = True
         elif pack_ml <= 500:
-            size_phrase = "a large bottle or jar size class held with one or two hands"; handheld = False
+            size_phrase = "a large bottle or jar size class held with one or two hands"
+            handheld = False
         else:
-            size_phrase = "a bulk container size class handled with two hands"; handheld = False
-    elif any(tok in haystack for tok in ("roll on", "roll-on", "lip balm", "balm", "dropper", "serum")):
-        size_phrase = "a compact roll-on / lip-balm handheld size class"; handheld = True
-    elif any(tok in haystack for tok in ("bottle", "jar", "tube", "mist", "perfume", "supplement", "oil")):
-        size_phrase = "a palm-sized bottle size class unless verified dimensions say otherwise"; handheld = True
+            size_phrase = "a bulk container size class handled with two hands"
+            handheld = False
+    elif any(token in haystack for token in ("roll on", "roll-on", "lip balm", "balm", "dropper", "serum")):
+        size_phrase = "a compact roll-on / lip-balm handheld size class"
+        handheld = True
+    elif any(token in haystack for token in ("bottle", "jar", "tube", "mist", "perfume", "supplement", "oil")):
+        size_phrase = "a palm-sized bottle size class unless verified dimensions say otherwise"
+        handheld = True
     else:
-        size_phrase = "its true-to-life real-world size, handled naturally without enlargement"; handheld = None
+        size_phrase = "its true-to-life real-world size, handled naturally without enlargement"
 
     if handheld is True:
         tail = " It stays small relative to an adult hand, fingers, and face."
@@ -222,8 +216,6 @@ def _fallback_scale_line(product: dict[str, Any]) -> str:
 
 
 def _clean_display_name(raw: str) -> str:
-    """Strip bracket/parenthesis variant tags and SKU tails (mirrors the compiler's
-    _product_name) so fallback identity locks never leak "(Mix Berry)"-style tags."""
     cleaned = re.sub(r"\s*\[[^\]]*\]\s*", " ", raw)
     cleaned = re.sub(r"\s*\([^)]*\)\s*", " ", cleaned)
     cleaned = re.sub(r"\bsku\s*:\s*.*$", "", cleaned, flags=re.IGNORECASE)
@@ -248,7 +240,30 @@ def _fallback_identity_line(product: dict[str, Any]) -> str:
     )
 
 
-# ── public lock builder ────────────────────────────────────────────────────────
+def _structured_label_authority(entry: dict[str, Any]) -> str:
+    lines = [_clean(value) for value in (entry.get("printed_label_lines") or []) if _clean(value)]
+    layout = _clean(entry.get("label_layout_lock"))
+    forbidden = [_clean(value) for value in (entry.get("forbidden_printed_label_tokens") or []) if _clean(value)]
+    conflict = _clean(entry.get("reference_conflict_policy"))
+    parts: list[str] = []
+    if lines:
+        parts.append(
+            "PHYSICAL PRINTED LABEL AUTHORITY: The only visible printed label lines, in reading order, are: "
+            + " | ".join(lines)
+            + "."
+        )
+    if layout:
+        parts.append(f"LABEL LAYOUT AUTHORITY: {layout}")
+    if forbidden:
+        parts.append(
+            "FORBIDDEN PRINTED LABEL TOKENS: Never print, infer, insert, regroup, or copy these tokens onto the package: "
+            + " | ".join(forbidden)
+            + "."
+        )
+    if conflict:
+        parts.append(f"REFERENCE CONFLICT POLICY: {conflict}")
+    return " ".join(parts)
+
 
 def build_product_lock(
     product: dict[str, Any],
@@ -256,20 +271,18 @@ def build_product_lock(
     is_video: bool,
     has_product_reference: bool,
 ) -> dict[str, Any]:
-    """Return engine-visible product lock components.
-
-    Keys: identity_lock, geometry_lock, scale_lock, reference_lock,
-    negative_morph, frame_persistence (empty strings where not applicable),
-    plus matched_product_id (schema id or None) for telemetry/tests.
-    """
+    """Return engine-visible identity, geometry, scale and reference locks."""
     entry = resolve_schema_entry(product or {})
+    structured_authority = ""
 
     if entry:
         truth_ref = _clean(entry.get("product_truth_ref"))
         label_lock = _clean(entry.get("label_lock"))
+        structured_authority = _structured_label_authority(entry)
         identity_lock = (
             f"PRODUCT IDENTITY LOCK: Preserve the exact product identity — {truth_ref} "
-            f"{label_lock} Do not relabel, redesign, recolour, replace, or simplify the product."
+            f"{label_lock} {structured_authority} "
+            "Do not relabel, redesign, recolour, replace, or simplify the product."
         )
         authored_scale = _clean(entry.get("scale_lock"))
         scale_lock = (
@@ -283,105 +296,88 @@ def build_product_lock(
         )
         matched_id = entry.get("product_id")
     else:
+        truth_ref = ""
         identity_lock = f"PRODUCT IDENTITY LOCK: {_fallback_identity_line(product or {})}"
         scale_lock = f"PRODUCT SCALE LOCK: {_fallback_scale_line(product or {})}"
         matched_id = None
 
-    # SEV-1 label-truth (live drift evidence: the engine re-typeset the real
-    # "Minyak Warisan Tok Cap Burung 25ml" label to shorthand and invented dosage
-    # text): the printed label is part of product identity, for every mode.
-    #
-    # The truth SOURCE differs by lane. Image lanes (F2V/HYBRID/I2V/FRAMES/IMG)
-    # carry an attached product reference, so "match the attached reference image"
-    # is correct. T2V is text-only — there IS no attached image — so pointing the
-    # engine at a non-existent image is a contradiction that invites it to invent
-    # the label. Point T2V at the printed-label description in this lock instead.
-    _label_truth_src = (
-        "the attached reference image"
-        if has_product_reference
-        else "the real printed product label described in this product truth lock"
-    )
+    if structured_authority:
+        label_truth_source = "the structured physical-package and printed-label authority in this lock"
+    elif has_product_reference:
+        label_truth_source = "the attached reference image"
+    else:
+        label_truth_source = "the real printed product label described in this product truth lock"
     identity_lock += (
-        f" LABEL TEXT LOCK: The printed label text, typography, and layout must match "
-        f"{_label_truth_src} exactly — never re-typeset, shorten, translate, or restyle "
-        "the printed product name, and never add dosage, usage, or instruction text that is "
-        "not physically printed on the real label."
+        f" LABEL TEXT LOCK: The printed label text, typography, and layout must match {label_truth_source} exactly — "
+        "never re-typeset, shorten, translate, or restyle the printed product name, and never add dosage, usage, "
+        "or instruction text that is not physically printed on the real label."
     )
 
+    geometry_detail = f" Structured geometry authority: {truth_ref}" if entry and truth_ref else ""
     geometry_lock = (
-        "PRODUCT GEOMETRY LOCK: Preserve the exact silhouette, body shape, cap-to-body ratio, "
-        "neck and shoulder proportion, and front/back flatness of the real product. Never let it "
-        "become rounder, bulkier, taller, swollen, bulbous, or a generic container, and never turn "
-        "it into a perfume, syrup, skincare, supplement, spray, pump, or cosmetic bottle."
+        "PRODUCT GEOMETRY LOCK: Preserve the exact silhouette, body shape, cap-to-body ratio, neck and shoulder "
+        "proportion, and front/back flatness of the real product. Never let it become rounder, bulkier, taller, "
+        "swollen, bulbous, or a generic container, and never turn it into a perfume, syrup, skincare, supplement, "
+        f"spray, pump, or cosmetic bottle.{geometry_detail}"
     )
     negative_morph = (
-        "PRODUCT NEGATIVE MORPH RULES: Forbidden — enlarging the product, rounding or bulking its "
-        "silhouette, swapping it for a bigger or generic bottle, changing the cap, body, or label "
-        "proportion, drifting the label, or resizing it for the camera. The product's real size and "
-        "shape outrank hero framing and any instruction to show the product clearly."
+        "PRODUCT NEGATIVE MORPH RULES: Forbidden — enlarging the product, rounding or bulking its silhouette, "
+        "swapping it for a bigger or generic bottle, changing the cap, body, or label proportion, drifting the "
+        "label, or resizing it for the camera. The product's real size and shape outrank hero framing and any "
+        "instruction to show the product clearly."
     )
-    reference_lock = (
-        (
-            "PRODUCT REFERENCE LOCK: Treat the attached product reference image as the hard visual, "
-            "geometry, and physical-scale truth source, not mood or style inspiration. Reproduce the "
-            "product's real proportions, cap-to-body ratio, and label placement exactly, and match the "
-            "same product-to-hand and product-to-finger relationship shown in the reference so the product "
-            "reads at its true small real-world size in the hand. Do not enlarge the product for label "
-            "readability, hero framing, or camera visibility, do not create forced-perspective overscale, "
-            "and do not push the product much closer to the camera lens than the presenter's hand or face."
+
+    if has_product_reference and structured_authority:
+        reference_lock = (
+            "PRODUCT REFERENCE LOCK: Use the attached product image only as supporting evidence for details that "
+            "agree with the structured product truth in this lock. The structured bottle geometry, physical printed "
+            "label lines, label layout, forbidden printed tokens, and reference-conflict policy are the final authority. "
+            "If the attached image conflicts by showing different text, a stale label, a tall or narrow body, a longer "
+            "neck, different shoulders, different teal coverage, or any other rejected trait, ignore that conflicting "
+            "feature and follow the structured authority. Preserve the true product-to-hand scale without forced perspective."
         )
-        if has_product_reference
-        else ""
-    )
+    elif has_product_reference:
+        reference_lock = (
+            "PRODUCT REFERENCE LOCK: Treat the attached product reference image as the hard visual, geometry, and "
+            "physical-scale truth source, not mood or style inspiration. Reproduce the real proportions, cap-to-body "
+            "ratio, label placement, and product-to-hand relationship. Do not enlarge the product for readability, hero "
+            "framing, or camera visibility and do not create forced-perspective overscale."
+        )
+    else:
+        reference_lock = ""
+
     frame_persistence = (
-        (
-            "FRAME PERSISTENCE LOCK: Across every frame keep the identical product identity, silhouette, "
-            "cap-to-body ratio, label placement, and small real-world scale — no growth, no rounding, no "
-            "morphing, no cap, body, or label mutation, and no progressive enlargement as the camera moves."
-        )
+        "FRAME PERSISTENCE LOCK: Across every frame keep the identical product identity, silhouette, cap-to-body "
+        "ratio, label placement, and small real-world scale — no growth, no rounding, no morphing, no cap, body, or "
+        "label mutation, and no progressive enlargement as the camera moves."
         if is_video
         else ""
     )
 
-    # Absolute no-modification clause (owner-directed, reverse-engineered from a
-    # working external prompt whose product NEVER drifted): the engine obeys a
-    # blunt, total prohibition better than enumerated morph rules alone. Emitted
-    # for BOTH image and video lanes.
+    if structured_authority:
+        modification_source = (
+            "the structured product truth in this lock; use an attached reference only where it agrees with that truth"
+        )
+    elif has_product_reference:
+        modification_source = "the product reference image"
+    else:
+        modification_source = "this product truth lock"
     no_modification_lock = (
-        "PRODUCT NO-MODIFICATION LOCK: Do NOT modify, change, restyle, redesign, or "
-        "reinterpret the product in ANY way. The product must retain ALL of its original "
-        "details, design, colors, label text, typography, materials, finish, and packaging "
-        "EXACTLY as " + (
-            "shown in the product reference image."
-            if has_product_reference
-            else "described in this product truth lock."
-        )
+        "PRODUCT NO-MODIFICATION LOCK: Do NOT modify, change, restyle, redesign, or reinterpret the product in ANY "
+        "way. The product must retain ALL original details, design, colors, label text, typography, materials, finish, "
+        f"and packaging EXACTLY as defined by {modification_source}."
     )
 
-    # Scale anchor + legibility decoupling (same source): oversize happens when the
-    # engine 'helps' readability by enlarging or pushing the product at the lens.
-    # Anchor the product to the presenter's natural grip and state explicitly that
-    # legibility comes from facing/focus/lighting — never from size.
     scale_anchor_lock = (
-        "PRODUCT SCALE ANCHOR: When a presenter holds the product, keep it in a natural "
-        "grip at chest level or lower, at its true real-world size relative to the hand, "
-        "fingers, and face. The product must never drift toward the camera, float, or fill "
-        "the frame. Keep it clearly legible by FACING it to the camera with sharp focus and "
-        "good lighting — NEVER by enlarging it."
+        "PRODUCT SCALE ANCHOR: When a presenter holds the product, keep it in a natural grip at chest level or lower, "
+        "at its true real-world size relative to the hand, fingers, and face. The product must never drift toward the "
+        "camera, float, or fill the frame. Keep it clearly legible by FACING it to the camera with sharp focus and good "
+        "lighting — NEVER by enlarging it."
     )
-
-    # VIDEO-lane hand negative. The anti-finger keyword set existed ONLY in the
-    # IMAGE-lane authority (creative_scene_prompt_library.json), so every compiled
-    # VIDEO prompt shipped with no hand-anatomy negative at all — live F2V
-    # g_7b29b837c259 rendered a presenter hand with extra fingers around the
-    # product. Video-only so the proven IMG-lane prompt stays byte-identical.
     hand_anatomy_lock = (
-        (
-            "HAND ANATOMY LOCK: Any hand that holds or touches the product must be anatomically "
-            "correct — exactly five fingers per hand with natural length, joints, and spacing. "
-            "Forbidden — extra fingers, duplicated, fused, or missing fingers, double thumbs, "
-            "warped knuckles, elongated or distorted hands, especially in the grip around the product."
-        )
+        "HAND ANATOMY LOCK: Any hand that holds or touches the product must be anatomically correct — exactly five "
+        "fingers per hand with natural length, joints, and spacing. Forbidden — extra, duplicated, fused, or missing "
+        "fingers, double thumbs, warped knuckles, elongated or distorted hands, especially around the product grip."
         if is_video
         else ""
     )
@@ -406,21 +402,19 @@ def section_2_lock_lines(
     is_video: bool,
     has_product_reference: bool,
 ) -> list[str]:
-    """Identity + geometry + scale + negative-morph lines for SECTION 2 (all modes)."""
     lock = build_product_lock(
-        product, is_video=is_video, has_product_reference=has_product_reference,
+        product,
+        is_video=is_video,
+        has_product_reference=has_product_reference,
     )
     lines = [
         lock["identity_lock"],
         lock["geometry_lock"],
         lock["scale_lock"],
         lock["negative_morph"],
-        # Both lanes (owner-directed all-out hardening): the absolute
-        # no-modification clause + the scale anchor / legibility decoupling.
         lock["no_modification_lock"],
         lock["scale_anchor_lock"],
     ]
-    # Video-only (the image lane keeps its own library hand negatives).
     if lock["hand_anatomy_lock"]:
         lines.append(lock["hand_anatomy_lock"])
     return lines
@@ -432,8 +426,9 @@ def section_3_lock_lines(
     is_video: bool,
     has_product_reference: bool,
 ) -> list[str]:
-    """Reference lock (when a product reference exists) + frame persistence (video)."""
     lock = build_product_lock(
-        product, is_video=is_video, has_product_reference=has_product_reference,
+        product,
+        is_video=is_video,
+        has_product_reference=has_product_reference,
     )
     return [line for line in (lock["reference_lock"], lock["frame_persistence"]) if line]
