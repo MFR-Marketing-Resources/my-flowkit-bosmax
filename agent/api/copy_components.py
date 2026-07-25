@@ -44,6 +44,11 @@ class AddAnglesRequest(BaseModel):
     pains: list[str] = Field(default_factory=list)
 
 
+class SuggestAnglesRequest(BaseModel):
+    product_id: str
+    count: int = Field(default=8, ge=1, le=copy_angle_derivation.MAX_ANGLES)
+
+
 class ApproveRequest(BaseModel):
     approved_by: str = "operator"
 
@@ -107,6 +112,26 @@ async def add_angles(request: AddAnglesRequest):
 
     try:
         return await angle_svc.expand_product_angles(request.product_id, request.pains)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail={"error": str(error)}) from error
+
+
+@router.post("/suggest-angles")
+async def suggest_angles(request: SuggestAnglesRequest):
+    """Propose NEW candidate angles (buyer pains) for a product via the DeepSeek
+    text lane, grounded in its APPROVED knowledge + avatar. SPENDS one small
+    text-token call. Returns suggestions for review — writes NOTHING and does NOT
+    approve. The operator edits them and commits via the free /add-angles path."""
+    from agent.services import copy_angle_suggestion_service as suggest_svc
+
+    try:
+        return await suggest_svc.suggest_product_angles(request.product_id, request.count)
+    except ai_provider.AICopyProviderNotConfigured as error:
+        raise HTTPException(status_code=409, detail={"error": error.code}) from error
+    except ai_provider.AICopyProviderError as error:
+        raise HTTPException(
+            status_code=502, detail={"error": error.code, "detail": error.detail}
+        ) from error
     except ValueError as error:
         raise HTTPException(status_code=422, detail={"error": str(error)}) from error
 

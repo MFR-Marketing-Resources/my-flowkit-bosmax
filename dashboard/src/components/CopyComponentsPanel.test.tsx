@@ -25,6 +25,7 @@ vi.mock("../api/copyComponents", () => ({
 	authorCopyComponents: vi.fn(),
 	approveCopyComponent: vi.fn(),
 	addAngles: vi.fn(),
+	suggestAngles: vi.fn(),
 }));
 
 import {
@@ -33,6 +34,7 @@ import {
 	composeCopyFromComponents,
 	fetchCopyCapacity,
 	listCopyComponents,
+	suggestAngles,
 } from "../api/copyComponents";
 
 const mockedCap = vi.mocked(fetchCopyCapacity);
@@ -40,6 +42,7 @@ const mockedList = vi.mocked(listCopyComponents);
 const mockedCompose = vi.mocked(composeCopyFromComponents);
 const mockedAuthor = vi.mocked(authorCopyComponents);
 const mockedAddAngles = vi.mocked(addAngles);
+const mockedSuggest = vi.mocked(suggestAngles);
 
 const CAPACITY = {
 	product_id: "p1",
@@ -170,5 +173,56 @@ describe("CopyComponentsPanel", () => {
 			expect(mockedAuthor.mock.calls.length).toBeGreaterThanOrEqual(8),
 		);
 		expect(await screen.findByTestId("cc-error")).toHaveTextContent(/slot\(s\) failed/i);
+	});
+
+	it("suggest opens a confirm modal and spends nothing until confirmed", async () => {
+		primeLoad();
+		mockedSuggest.mockResolvedValue({
+			ok: true,
+			suggestions: ["lampin bocor waktu malam", "kembung perut bayi"],
+		});
+		render(<CopyComponentsPanel productId="p1" onComposed={vi.fn()} />);
+		fireEvent.click(await screen.findByTestId("cc-suggest-angles"));
+		expect(await screen.findByText(/Suggest angles with AI/i)).toBeInTheDocument();
+		expect(mockedSuggest).not.toHaveBeenCalled();
+	});
+
+	it("suggest fills the textarea with AI angles after confirming", async () => {
+		primeLoad();
+		mockedSuggest.mockResolvedValue({
+			ok: true,
+			suggestions: ["lampin bocor waktu malam", "kembung perut bayi"],
+		});
+		render(<CopyComponentsPanel productId="p1" onComposed={vi.fn()} />);
+		fireEvent.click(await screen.findByTestId("cc-suggest-angles"));
+		fireEvent.click(
+			screen.getByRole("button", { name: "Yes, suggest (spend a little)" }),
+		);
+		await waitFor(() =>
+			expect(mockedSuggest).toHaveBeenCalledWith(
+				expect.objectContaining({ product_id: "p1" }),
+			),
+		);
+		expect(screen.getByTestId("cc-pains")).toHaveValue(
+			"lampin bocor waktu malam\nkembung perut bayi",
+		);
+		expect(await screen.findByTestId("cc-success")).toHaveTextContent(
+			/suggested by AI/i,
+		);
+	});
+
+	it("suggest surfaces a not-configured provider without throwing", async () => {
+		primeLoad();
+		mockedSuggest.mockRejectedValue(
+			new Error("409 AI_COPY_ASSIST_PROVIDER_NOT_CONFIGURED"),
+		);
+		render(<CopyComponentsPanel productId="p1" onComposed={vi.fn()} />);
+		fireEvent.click(await screen.findByTestId("cc-suggest-angles"));
+		fireEvent.click(
+			screen.getByRole("button", { name: "Yes, suggest (spend a little)" }),
+		);
+		expect(await screen.findByTestId("cc-error")).toHaveTextContent(
+			/not configured/i,
+		);
 	});
 });

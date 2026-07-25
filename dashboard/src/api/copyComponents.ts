@@ -80,6 +80,28 @@ export async function addAngles(input: {
 	return postAPI<AddAnglesResult>("/api/copy-components/add-angles", input);
 }
 
+export interface SuggestAnglesResult {
+	ok: boolean;
+	suggestions: string[];
+	existing_count?: number;
+	remaining_slots?: number;
+	warnings?: string[];
+}
+
+// SPENDS a small amount of AI tokens (one call). Proposes NEW candidate angles
+// (buyer pains) grounded in the product's APPROVED knowledge + avatar. Returns
+// suggestions for review — commits NOTHING; the operator edits then Adds them via
+// addAngles (free, claim-gated).
+export async function suggestAngles(input: {
+	product_id: string;
+	count?: number;
+}): Promise<SuggestAnglesResult> {
+	return postAPI<SuggestAnglesResult>(
+		"/api/copy-components/suggest-angles",
+		input,
+	);
+}
+
 export async function fetchCopyCapacity(
 	productId: string,
 ): Promise<CopyComponentsCapacity> {

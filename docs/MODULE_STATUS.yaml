@@ -722,6 +722,9 @@ domains:
       - agent/api/copy_components.py
       - agent/services/copy_angle_expansion_service.py
       - tests/unit/test_copy_angle_expansion_service.py
+      # AI angle suggestion lane (suggest=tokens; commit stays on add-angles=free)
+      - agent/services/copy_angle_suggestion_service.py
+      - tests/unit/test_copy_angle_suggestion_service.py
       - dashboard/src/api/copyIntelligence.ts
       - dashboard/src/pages/CopyIntelligencePage.tsx
       - dashboard/src/pages/CopyIntelligencePage.test.tsx

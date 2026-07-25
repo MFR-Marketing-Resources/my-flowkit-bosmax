@@ -11,6 +11,7 @@ import {
 	type CopyComponentsCapacity,
 	fetchCopyCapacity,
 	listCopyComponents,
+	suggestAngles,
 } from "../api/copyComponents";
 import { Badge, ConfirmActionModal, HelperText, Section } from "./ui";
 
@@ -43,7 +44,7 @@ export default function CopyComponentsPanel({
 	const [perSlot, setPerSlot] = useState(DEFAULT_PER_SLOT);
 	const [painsText, setPainsText] = useState("");
 	const [busy, setBusy] = useState<
-		"compose" | "author" | "approve" | "angle" | null
+		"compose" | "author" | "approve" | "angle" | "suggest" | null
 	>(null);
 	const [progress, setProgress] = useState("");
 	const [error, setError] = useState("");
@@ -51,6 +52,7 @@ export default function CopyComponentsPanel({
 	const [confirmAuthorOpen, setConfirmAuthorOpen] = useState(false);
 	// Once the operator types a compose count we stop auto-syncing it to capacity.
 	const composeTouched = useRef(false);
+	const [confirmSuggestOpen, setConfirmSuggestOpen] = useState(false);
 
 	const load = useCallback(async () => {
 		try {
@@ -122,6 +124,46 @@ export default function CopyComponentsPanel({
 			setError(
 				/ANGLES_FULL/.test(msg)
 					? `Angles are already full (${MAX_ANGLES}).`
+					: /NO_APPROVED_SNAPSHOT/.test(msg)
+						? "This product has no approved Product Intelligence yet — set it up in Products → Intelligence first."
+						: msg,
+			);
+		} finally {
+			setBusy(null);
+		}
+	};
+
+	const handleSuggestAngles = async () => {
+		setConfirmSuggestOpen(false);
+		if (busy) return;
+		setBusy("suggest");
+		setError("");
+		setSuccess("");
+		try {
+			const remaining = Math.max(0, MAX_ANGLES - angles.length);
+			const res = await suggestAngles({
+				product_id: productId,
+				count: Math.min(8, remaining) || 8,
+			});
+			const fresh = (res.suggestions ?? []).filter(Boolean);
+			if (!fresh.length) {
+				setError(
+					"AI found no new angles for this product — add more product knowledge first, or type your own.",
+				);
+			} else {
+				setPainsText((prev) => {
+					const base = prev.trim();
+					return (base ? `${base}\n` : "") + fresh.join("\n");
+				});
+				setSuccess(
+					`${fresh.length} angle(s) suggested by AI — review, edit, then click "Add angle" to save (free).`,
+				);
+			}
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : "Failed to suggest angles.";
+			setError(
+				isNotConfigured(msg)
+					? "The AI lane (DeepSeek) is not configured. Set it up in Cockpit Settings / AI Providers first."
 					: /NO_APPROVED_SNAPSHOT/.test(msg)
 						? "This product has no approved Product Intelligence yet — set it up in Products → Intelligence first."
 						: msg,
@@ -355,26 +397,44 @@ export default function CopyComponentsPanel({
 						</div>
 					) : null}
 					{angles.length < MAX_ANGLES ? (
-						<div className="flex flex-col gap-2 sm:flex-row sm:items-start">
-							<textarea
-								value={painsText}
-								onChange={(e) => setPainsText(e.target.value)}
-								placeholder="Add a new use-case — one angle per line…"
-								rows={2}
-								data-testid="cc-pains"
-								aria-label="New angle use-case"
-								className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200"
-							/>
-							<button
-								type="button"
-								data-testid="cc-add-angles"
-								disabled={busy !== null}
-								onClick={() => void handleAddAngles()}
-								className="shrink-0 rounded-lg border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40"
-							>
-								{busy === "angle" ? "Adding…" : "Add angle"}
-							</button>
-						</div>
+						<>
+							<div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+								<textarea
+									value={painsText}
+									onChange={(e) => setPainsText(e.target.value)}
+									placeholder="Add a new use-case — one angle per line…"
+									rows={2}
+									data-testid="cc-pains"
+									aria-label="New angle use-case"
+									className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200"
+								/>
+								<div className="flex shrink-0 gap-2">
+									<button
+										type="button"
+										data-testid="cc-suggest-angles"
+										disabled={busy !== null}
+										onClick={() => setConfirmSuggestOpen(true)}
+										title="Let AI propose angles from this product's knowledge + avatar (spends a little token)"
+										className="shrink-0 rounded-lg border border-fuchsia-500/40 bg-fuchsia-600/20 px-4 py-2 text-xs font-bold uppercase text-fuchsia-100 disabled:opacity-40"
+									>
+										{busy === "suggest" ? "Suggesting…" : "✨ Suggest (AI)"}
+									</button>
+									<button
+										type="button"
+										data-testid="cc-add-angles"
+										disabled={busy !== null}
+										onClick={() => void handleAddAngles()}
+										className="shrink-0 rounded-lg border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40"
+									>
+										{busy === "angle" ? "Adding…" : "Add angle"}
+									</button>
+								</div>
+							</div>
+							<p className="text-[11px] text-slate-500">
+								✨ Suggest uses a little AI token to draft angles; Add angle
+								stays free.
+							</p>
+						</>
 					) : (
 						<p className="text-[11px] text-slate-400">
 							Angles are full ({MAX_ANGLES}).
@@ -464,6 +524,16 @@ export default function CopyComponentsPanel({
 				busy={busy === "author"}
 				onConfirm={() => void handleAuthor()}
 				onCancel={() => setConfirmAuthorOpen(false)}
+			/>
+
+			<ConfirmActionModal
+				open={confirmSuggestOpen}
+				title="Suggest angles with AI (DeepSeek)?"
+				body="AI reads this product's knowledge + customer avatar and drafts a few NEW angles (one small AI call — spends a little token). The suggestions only fill the box for you to review and edit; nothing is saved until you click Add angle (free)."
+				confirmLabel="Yes, suggest (spend a little)"
+				busy={busy === "suggest"}
+				onConfirm={() => void handleSuggestAngles()}
+				onCancel={() => setConfirmSuggestOpen(false)}
 			/>
 		</Section>
 	);
