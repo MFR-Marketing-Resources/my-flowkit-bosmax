@@ -35,6 +35,7 @@ from agent.services.poster_template_service import (
     PosterTemplateError,
     template_contract,
 )
+from agent.services.product_lock_builder import build_product_lock
 from agent.services.product_truth_service import ProductTruthService
 from agent.services.creative_direction_service import (
     resolve_creative_direction,
@@ -196,6 +197,38 @@ def _product_truth_lock(product: dict[str, Any], profile: Any) -> str:
         "Do not swap SKU, volume, brand, or product form factor.",
         "Render only this product identity; no generic substitute packaging.",
     ]
+    # SEV-1 poster scale bypass fix: the poster lane previously emitted only this
+    # name/category identity block and NO physical-scale, geometry, or anti-oversize
+    # governance, so a "hero product placement" poster rendered the bottle oversized
+    # (e.g. MWTCB 25ml enlarged to fill an adult hand). Wire the poster into the SAME
+    # shared product-truth authority every other lane uses (product_lock_builder ->
+    # UNIVERSAL_PRODUCT_SCHEMA scale_lock) so posters inherit the identical
+    # pocket-size / anti-forced-perspective / scale-anchor locks. Posters are single
+    # images (is_video=False). The reference flag mirrors the IMG lane heuristic so
+    # we never point the engine at a non-existent attached image (the phantom-
+    # reference contradiction fixed for T2V in product_lock_builder).
+    lock = build_product_lock(
+        dict(product),
+        is_video=False,
+        has_product_reference=bool(
+            product.get("image_url")
+            or product.get("media_id")
+            or product.get("local_image_path")
+        ),
+    )
+    lines.extend(
+        line
+        for line in (
+            lock["identity_lock"],
+            lock["geometry_lock"],
+            lock["scale_lock"],
+            lock["reference_lock"],
+            lock["negative_morph"],
+            lock["no_modification_lock"],
+            lock["scale_anchor_lock"],
+        )
+        if line
+    )
     return "\n".join(lines)
 
 
