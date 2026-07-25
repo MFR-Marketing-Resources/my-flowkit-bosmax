@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "fields": [
     "product_id",
     "product_name",
@@ -8,6 +8,10 @@
     "images",
     "scale_lock",
     "label_lock",
+    "printed_label_lines",
+    "label_layout_lock",
+    "forbidden_printed_label_tokens",
+    "reference_conflict_policy",
     "allowed_variants",
     "safety_notes",
     "pack_size_ml",
@@ -18,6 +22,10 @@
     "images": "Array of {url, role}.",
     "scale_lock": "Literal product scale and silhouette lock for prompt/runtime enforcement.",
     "label_lock": "Literal label and readable identity preservation rule.",
+    "printed_label_lines": "Exact visible text physically printed on the package, in reading order. This is distinct from the catalog/display name.",
+    "label_layout_lock": "Exact visible label geometry, colour blocks, hierarchy, artwork placement, spacing, and coverage.",
+    "forbidden_printed_label_tokens": "Catalog words or stale-reference text that must never appear on the physical package.",
+    "reference_conflict_policy": "Authority rule when a visual reference conflicts with verified structured product truth.",
     "on_the_fly_flags": "Operator-controlled runtime overrides that cannot violate product truth."
   },
   "products": {
@@ -77,7 +85,7 @@
         "No cure claims.",
         "No guarantee claims.",
         "No unsafe content.",
-        "No perfume, spray, supplement, or skincare bottle drift.",
+        "No perfume, spray, supplement, skincare, or oversized bottle drift.",
         "Do not present as the smaller BOSMAX variant."
       ],
       "pack_size_ml": 10,
@@ -91,10 +99,23 @@
       "product_id": "MWTCB_25ML_CAP_BURUNG",
       "product_name": "Minyak Warisan Tok Cap Burung 25ml",
       "product_lane": "PRODUCT_ONLY",
-      "product_truth_ref": "Short compact transparent green glass bottle of the small flat traditional medicated-oil class — a flat-front glass herbal-oil bottle in the traditional pocket-size minyak-angin bottle family, never a cylindrical, round-bodied, tall, perfume, syrup, supplement, or cosmetic bottle — with a flat-front, rectangular compact impression, short neck and compact shoulders, green herbal oil inside, short red ribbed screw cap, cream label panel, teal to deep green border, gold ornamental border, bird illustration, and traditional heritage label identity with readable Cap Burung text preserved where visible.",
+      "product_truth_ref": "Verified physical package truth: a short, wide, squat transparent green glass herbal-oil bottle with a flat front, nearly vertical sides, softly rounded corners, low rounded shoulders, a very short neck, a thick clear glass base, green oil inside, and a short red ribbed screw cap. The bottle must read as compact and rectangular, never tall, narrow, cylindrical, long-necked, perfume-like, syrup-like, supplement-like, or cosmetic. The catalog/display name contains the word Tok, but the physical bottle label does not print TOK anywhere. This structured package truth outranks any stale AI-generated photoshoot or historical reference that shows a taller bottle, a narrower body, different shoulders, a longer neck, or TOK on the label.",
       "images": [],
-      "scale_lock": "Bottle stays at exact compact pocket-size traditional herbal-oil scale — a short, flat-bodied glass bottle that is clearly larger and wider than a lip-balm or chapstick roll-on, yet still shorter than an adult palm and about two fingers wide. It fits naturally in a relaxed palm or a secure two-to-three-finger side grip and reads as a small handheld household herbal-oil bottle. Never shrink it toward roll-on, lip-balm, chapstick, or vial proportions, and never enlarge it into a tall perfume, supplement, syrup, spray, cosmetic, or oversized medicine bottle. Never upscale it to dominate the hand, the face, or the frame. Keep the bottle at a natural handheld depth plane and do not place it much closer to the camera lens than the presenter's face or hand.",
-      "label_lock": "Preserve Minyak Warisan Tok Cap Burung and Cap Burung heritage label identity, bird illustration, cream label panel, teal to deep green border, gold ornamental border, traditional typography, and all readable label text.",
+      "scale_lock": "Bottle stays at exact compact pocket-size traditional herbal-oil scale — short, wide and flat-bodied; clearly larger and wider than a lip-balm or chapstick roll-on, yet still shorter than an adult palm and about two fingers wide. It fits naturally in one relaxed hand or a secure two-to-three-finger side grip. Never shrink it into a vial or roll-on and never enlarge or stretch it into a tall bottle. Keep the verified short-and-wide body ratio, low shoulders, short neck, thick base and natural handheld depth plane.",
+      "label_lock": "CATALOG NAME AND PHYSICAL LABEL ARE DIFFERENT AUTHORITIES. Keep the registered catalog/display name as Minyak Warisan Tok Cap Burung 25ml in metadata only. On the physical bottle, render only the exact printed label lines defined below. The word TOK is not printed on the real bottle and must never be inserted, inferred, regrouped, copied from metadata, or copied from any stale reference image. Preserve the teal rectangular label field, cream ornamental centre panel, fine gold border details, bird-on-leafy-branch artwork, original line grouping and original hierarchy. Never simplify the label into a plain cream sticker and never reduce the teal field to a thin edge.",
+      "printed_label_lines": [
+        "MINYAK WARISAN",
+        "CAP BURUNG",
+        "Sejak 1958",
+        "Petua Turun Temurun",
+        "25ml"
+      ],
+      "label_layout_lock": "A teal rectangular label field covers most of the flat bottle face and is framed by fine gold ornamental lines. A centered cream ornamental cartouche sits inside the teal field. MINYAK WARISAN appears at the top of the cream panel in two black serif lines. The bird-on-leafy-branch illustration is centered beneath it. CAP BURUNG appears beneath the bird in two black serif lines. Sejak 1958 appears below in red. Petua Turun Temurun appears below in small black text. 25ml appears at the bottom. Preserve this exact order, hierarchy, spacing, proportions, teal coverage, cream cartouche shape, gold ornament, artwork placement and label-to-bottle coverage.",
+      "forbidden_printed_label_tokens": [
+        "TOK",
+        "MINYAK WARISAN TOK"
+      ],
+      "reference_conflict_policy": "The verified structured bottle geometry, printed_label_lines and label_layout_lock are final authority. If an attached or stored reference shows TOK, weakens or removes the teal rectangular field, changes the bird artwork or line grouping, or shows a tall/narrow/long-neck bottle, treat that reference as stale and invalid for product truth. Do not reproduce the conflicting feature.",
       "allowed_variants": [
         "product_only",
         "ugc_handheld",
