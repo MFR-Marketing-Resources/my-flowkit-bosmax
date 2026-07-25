@@ -96,7 +96,10 @@ SEED_CATALOG: dict[str, dict[str, Any]] = {
         "label": "DeepSeek",
         "transport": TRANSPORT_OPENAI_COMPATIBLE,
         "models": [
-            {"model_id": "deepseek-chat", "label": "DeepSeek Chat", "lanes": ["text_assist"]},
+            # DeepSeek retired `deepseek-chat` (the API now 400s it: "supported API
+            # model names are deepseek-v4-pro or deepseek-v4-flash"). Seed the current V4 line.
+            {"model_id": "deepseek-v4-pro", "label": "DeepSeek V4 Pro", "lanes": ["text_assist"]},
+            {"model_id": "deepseek-v4-flash", "label": "DeepSeek V4 Flash", "lanes": ["text_assist"]},
         ],
     },
 }

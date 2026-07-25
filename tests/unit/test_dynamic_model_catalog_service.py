@@ -111,7 +111,7 @@ def test_custom_edit_survives_reload_non_destructive_merge(catalog):
     reloaded = cat.get_model_catalog()
     ids = {m["model_id"] for m in reloaded["providers"]["deepseek"]["models"]}
     assert "deepseek-reasoner" in ids
-    assert "deepseek-chat" in ids
+    assert "deepseek-v4-pro" in ids
 
 
 def test_transport_declared_per_provider(catalog):

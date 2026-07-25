@@ -50,7 +50,7 @@ def test_get_model_catalog_endpoint(monkeypatch, tmp_path):
     body = client.get("/api/ai-providers/model-catalog").json()
     assert body["version"] >= 1
     assert "deepseek" in body["providers"]
-    assert any(m["model_id"] == "deepseek-chat" for m in body["providers"]["deepseek"]["models"])
+    assert any(m["model_id"] == "deepseek-v4-pro" for m in body["providers"]["deepseek"]["models"])
 
 
 def test_add_custom_deepseek_model_and_select_for_lane(monkeypatch, tmp_path):
