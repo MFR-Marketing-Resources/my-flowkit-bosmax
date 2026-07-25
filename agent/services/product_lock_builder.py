@@ -1,8 +1,8 @@
 """Shared engine-visible PRODUCT LOCK builder.
 
 The authored product authority in ``UNIVERSAL_PRODUCT_SCHEMA.json`` is the
-primary product-truth source.  A product reference image is supporting visual
-evidence only where it agrees with that structured authority.  This distinction
+primary product-truth source. A product reference image is supporting visual
+evidence only where it agrees with that structured authority. This distinction
 matters for catalog/display names that differ from the text physically printed
 on a package and for stale generated references with incorrect geometry.
 """
@@ -87,7 +87,7 @@ def _resolved_ml(name: str, pack_ml: int | None) -> int | None:
 def resolve_schema_entry(product: dict[str, Any]) -> dict | None:
     """Resolve a runtime product row to one authored schema entry.
 
-    Explicit identifiers win.  BOSMAX variants are size-gated so a size-less
+    Explicit identifiers win. BOSMAX variants are size-gated so a size-less
     family row cannot inherit the wrong 5ml/10ml lock.
     """
     products = _schema().get("products") or {}
@@ -329,19 +329,27 @@ def build_product_lock(
 
     if has_product_reference and structured_authority:
         reference_lock = (
-            "PRODUCT REFERENCE LOCK: Use the attached product image only as supporting evidence for details that "
-            "agree with the structured product truth in this lock. The structured bottle geometry, physical printed "
-            "label lines, label layout, forbidden printed tokens, and reference-conflict policy are the final authority. "
-            "If the attached image conflicts by showing different text, a stale label, a tall or narrow body, a longer "
-            "neck, different shoulders, different teal coverage, or any other rejected trait, ignore that conflicting "
-            "feature and follow the structured authority. Preserve the true product-to-hand scale without forced perspective."
+            "PRODUCT REFERENCE LOCK: Treat the attached product reference image as supporting evidence and as hard "
+            "visual and physical-scale truth only for details that agree with the structured product truth in this "
+            "lock, not mood or style inspiration. Reproduce the real proportions, cap-to-body ratio, and label placement "
+            "exactly where they agree, and match the same product-to-hand and product-to-finger relationship shown in "
+            "the reference so the product reads at its true small real-world size in the hand. Do not enlarge the product "
+            "for label readability, hero framing, or camera visibility, do not create forced-perspective overscale, and "
+            "do not push the product much closer to the camera lens than the presenter's hand or face. The structured "
+            "bottle geometry, physical printed label lines, label layout, forbidden printed tokens, and reference-conflict "
+            "policy are the final authority. If the attached image conflicts by showing different text, a stale label, a "
+            "tall or narrow body, a longer neck, different shoulders, different teal coverage, or any other rejected trait, "
+            "ignore that conflicting feature and follow the structured authority."
         )
     elif has_product_reference:
         reference_lock = (
             "PRODUCT REFERENCE LOCK: Treat the attached product reference image as the hard visual, geometry, and "
-            "physical-scale truth source, not mood or style inspiration. Reproduce the real proportions, cap-to-body "
-            "ratio, label placement, and product-to-hand relationship. Do not enlarge the product for readability, hero "
-            "framing, or camera visibility and do not create forced-perspective overscale."
+            "physical-scale truth source, not mood or style inspiration. Reproduce the product's real proportions, "
+            "cap-to-body ratio, and label placement exactly, and match the same product-to-hand and product-to-finger "
+            "relationship shown in the reference so the product reads at its true small real-world size in the hand. "
+            "Do not enlarge the product for label readability, hero framing, or camera visibility, do not create "
+            "forced-perspective overscale, and do not push the product much closer to the camera lens than the "
+            "presenter's hand or face."
         )
     else:
         reference_lock = ""
