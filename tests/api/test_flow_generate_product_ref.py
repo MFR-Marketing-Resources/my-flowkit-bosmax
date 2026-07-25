@@ -111,3 +111,82 @@ def test_subject_resolver_failure_prevents_start_generate(monkeypatch):
 
     # Generation must NEVER start when the product reference could not be resolved.
     assert calls["start_generate"] is None
+
+
+def test_product_subject_bare_media_id_passes_into_image_media_ids(monkeypatch):
+    """SCALE-07 case A: a product with a live Flow media_id (sent as
+    refs.subjectAsset.mediaId) passes through to the generator's image_media_ids."""
+    calls = {"start_generate": None}
+    uuid = "12345678-1234-1234-1234-123456789abc"
+
+    class _C:
+        connected = True
+
+        async def get_media(self, media_id):
+            return {"status": 200, "data": {"name": media_id}}
+
+    async def fake_start_generate(mode, prompt, project_id=None, image_media_ids=None, **kw):
+        calls["start_generate"] = {"mode": mode, "image_media_ids": image_media_ids}
+        return {"job_id": "g", "status": "SUBMITTED", "mode": mode}
+
+    monkeypatch.setattr(flow, "get_flow_client", lambda: _C())
+    from agent.services import make_video as mv
+
+    monkeypatch.setattr(mv, "start_generate", fake_start_generate)
+
+    body = flow.GenerateRequest(
+        mode="IMG",
+        prompt="Poster prompt text",
+        refs={"subjectAsset": {"mediaId": uuid, "assetSource": "PRODUCT_IMAGE_URL"}},
+    )
+    result = _run(flow.generate(body))
+
+    assert result["status"] == "SUBMITTED"
+    assert uuid in calls["start_generate"]["image_media_ids"]
+
+
+def test_product_subject_local_file_uploads_into_image_media_ids(monkeypatch):
+    """SCALE-07 case C: a product with only a local cached file (sent as
+    refs.subjectAsset.localFilePath) is uploaded and reaches image_media_ids."""
+    import pathlib
+    import tempfile
+
+    calls = {"start_generate": None, "uploaded": []}
+    local = pathlib.Path(tempfile.gettempdir()) / "bosmax_test_local_product_ref.png"
+    local.write_bytes(b"\x89PNG_local_fake")
+
+    class _C:
+        connected = True
+
+        async def get_media(self, media_id):
+            return {"status": 200, "data": {"name": media_id}}
+
+        async def upload_image(self, b64, mime_type="image/png", project_id="", file_name=""):
+            calls["uploaded"].append(file_name)
+            return {"_mediaId": "fresh-local-1", "data": {}}
+
+    async def fake_start_generate(mode, prompt, project_id=None, image_media_ids=None, **kw):
+        calls["start_generate"] = {"mode": mode, "image_media_ids": image_media_ids}
+        return {"job_id": "g", "status": "SUBMITTED", "mode": mode}
+
+    monkeypatch.setattr(flow, "get_flow_client", lambda: _C())
+    from agent.services import make_video as mv
+
+    monkeypatch.setattr(mv, "start_generate", fake_start_generate)
+
+    body = flow.GenerateRequest(
+        mode="IMG",
+        prompt="Poster prompt text",
+        refs={
+            "subjectAsset": {
+                "mediaId": None,
+                "localFilePath": str(local),
+                "assetSource": "PRODUCT_IMAGE_URL",
+            }
+        },
+    )
+    result = _run(flow.generate(body))
+
+    assert result["status"] == "SUBMITTED"
+    assert calls["uploaded"], "the local product file must be uploaded before generation"
+    assert "fresh-local-1" in calls["start_generate"]["image_media_ids"]

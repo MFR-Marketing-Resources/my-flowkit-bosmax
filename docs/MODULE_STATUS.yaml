@@ -157,6 +157,7 @@ domains:
       - dashboard/src/components/creative-library/ApproveAssetModal.test.tsx
       - dashboard/src/pages/ImgCockpitPage.tsx
       - dashboard/src/pages/imgCockpitLogic.ts
+      - dashboard/src/pages/imgCockpitLogic.test.ts
       - agent/services/prompt_compiler_runtime_config_service.py
       - agent/services/canonical_prompt_compiler.py
       - agent/services/extend_route_planner.py
