@@ -158,3 +158,40 @@ async def recommend_avatars_for_product(product_id: str) -> dict[str, Any]:
         product.get("product_display_name") or product.get("raw_product_title")
     )
     return result
+
+
+async def audit_product_cluster_coverage() -> dict[str, Any]:
+    """Read-only inventory of the registered product catalogue by creative cluster.
+
+    Blank categories are deliberately reported as ``UNKNOWN_REVIEW_REQUIRED``;
+    they must never silently inherit the legacy Home & Living fallback and then
+    receive an unsuitable avatar plan.
+    """
+    from agent.db import crud
+
+    products = await crud.list_products(limit=5000)
+    cluster_counts: dict[str, int] = {cluster: 0 for cluster in canonical_clusters()}
+    unknown_samples: list[dict[str, str]] = []
+    raw_categories: dict[str, int] = {}
+    for product in products:
+        raw_category = str(product.get("category") or "").strip()
+        if raw_category:
+            resolved = resolve_cluster(raw_category)
+            cluster_counts[resolved["cluster"]] = cluster_counts.get(resolved["cluster"], 0) + 1
+            raw_categories[raw_category] = raw_categories.get(raw_category, 0) + 1
+            continue
+        if len(unknown_samples) < 25:
+            unknown_samples.append({
+                "product_id": str(product.get("id") or ""),
+                "product_name": str(product.get("product_display_name") or product.get("raw_product_title") or ""),
+            })
+    unknown_count = sum(1 for product in products if not str(product.get("category") or "").strip())
+    return {
+        "product_total": len(products),
+        "canonical_clusters": canonical_clusters(),
+        "cluster_counts": cluster_counts,
+        "unknown_review_required": unknown_count,
+        "unknown_samples": unknown_samples,
+        "raw_category_counts": raw_categories,
+        "note": "Read-only audit. Products with blank category are not auto-planned.",
+    }

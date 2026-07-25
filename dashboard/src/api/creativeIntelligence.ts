@@ -26,6 +26,26 @@ export function getAvatarRecommendationForProduct(productId: string) {
 	);
 }
 
+export function getAvatarRecommendationForCategory(category: string) {
+	return getAPI<AvatarRecommendation>(
+		`/api/creative-intelligence/avatar-recommendation?category=${encodeURIComponent(category)}`,
+	);
+}
+
+export interface ProductClusterAudit {
+	product_total: number;
+	canonical_clusters: string[];
+	cluster_counts: Record<string, number>;
+	unknown_review_required: number;
+	unknown_samples: Array<{ product_id: string; product_name: string }>;
+	raw_category_counts: Record<string, number>;
+	note: string;
+}
+
+export function getProductClusterAudit() {
+	return getAPI<ProductClusterAudit>("/api/creative-intelligence/product-cluster-audit");
+}
+
 // --- Registry coverage lens (read-only; powers Avatar/Scene Registry cards) ---
 
 export interface RegistryClusterCoverage {

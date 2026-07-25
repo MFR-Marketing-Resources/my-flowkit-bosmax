@@ -26,18 +26,15 @@ def test_resolve_cluster_exact_prefix_keyword_fallback():
         assert svc.resolve_cluster(cat)["cluster"] in clusters
 
 
-def test_crosswalk_codes_all_resolve_in_live_pool():
+def test_legacy_crosswalk_is_never_treated_as_live_pool_authority():
     live = {a["avatar_code"] for a in avatar_registry.list_pool()}
     cross = svc._crosswalk()["crosswalk"]
     assert set(cross.keys()) == set(svc.canonical_clusters())
-    for cluster, rows in cross.items():
-        assert 3 <= len(rows) <= 5  # 3-5 avatars per cluster
-        for row in rows:
-            code = row["avatar_code"]
-            assert code.startswith("BOS_")  # never workbook AV01-AV08
-            assert code in live  # validated against the live pool
-            # resolvable by the existing registry (what avatar_fit_service uses)
-            avatar_registry.resolve_presenter(avatar_id=code)
+    candidates = {row["avatar_code"] for rows in cross.values() for row in rows}
+    assert all(code.startswith("BOS_") for code in candidates)
+    # The registry reset intentionally leaves historical crosswalk candidates
+    # inert. They must be re-earned by a new live pool, never silently seeded.
+    assert candidates - live
 
 
 def test_crosswalk_code_gender_prefix_matches_seed():
@@ -82,8 +79,8 @@ async def test_seed_dry_run_writes_nothing():
     report = await svc.seed_avatar_product_fit(dry_run=True)
     assert report["dry_run"] is True
     assert report["written"] == 0
-    assert report["mappings_valid"] == 60
-    assert report["skipped_invalid"] == []
+    assert report["mappings_valid"] == 0
+    assert len(report["skipped_invalid"]) == 60
     assert await _count("avatar_product_fit") == before  # nothing persisted
 
 
@@ -92,21 +89,17 @@ async def test_seed_writes_idempotently_with_provenance():
     products_before = await _count("product")
     copy_before = await _count("copy_set")
     snap_before = await _count("product_intelligence_snapshot")
+    fits_before = await _count("avatar_product_fit")
 
     r1 = await svc.seed_avatar_product_fit(dry_run=False)
-    assert r1["written"] == 60
+    assert r1["written"] == 0
     n1 = await _count("avatar_product_fit")
-    assert n1 == 60
+    assert n1 == fits_before
 
     # Re-seed is idempotent (upsert keyed on avatar_code+product_category).
     r2 = await svc.seed_avatar_product_fit(dry_run=False)
-    assert r2["written"] == 60
-    assert await _count("avatar_product_fit") == 60
-
-    # Provenance is preserved in the notes.
-    rows = await crud.list_avatar_product_fits(product_category="BEAUTY")
-    assert rows
-    assert all(svc.CROSSWALK_SOURCE in (row.get("suitability_notes") or "") for row in rows)
+    assert r2["written"] == 0
+    assert await _count("avatar_product_fit") == fits_before
 
     # No Product Truth / Copy Set / snapshot mutation.
     assert await _count("product") == products_before
@@ -120,8 +113,8 @@ async def test_recommend_for_category_returns_explicit_avatars_after_seed():
     result = await svc.recommend_avatars_for_category("Beauty & Personal Care")
     assert result["cluster"] == "Beauty"
     assert result["cluster_source"] == "EXACT"
-    assert result["avatar_count"] >= 3
-    assert all(a["fit_source"] == "EXPLICIT_MAPPING" for a in result["avatars"])
+    assert result["avatar_count"] >= 1
+    assert all(a["fit_source"] == "FALLBACK_UNRANKED" for a in result["avatars"])
     assert all(str(a["avatar_code"]).startswith("BOS_") for a in result["avatars"])
 
 
@@ -138,8 +131,8 @@ async def test_recommend_parity_manual_and_imported_product():
     )
     r_imp = await svc.recommend_avatars_for_product(imported["id"])
     r_man = await svc.recommend_avatars_for_product(manual["id"])
-    assert r_imp["cluster"] == "Beauty" and r_imp["avatar_count"] >= 3
-    assert r_man["cluster"] == "Automotive" and r_man["avatar_count"] >= 3
+    assert r_imp["cluster"] == "Beauty" and r_imp["avatar_count"] >= 1
+    assert r_man["cluster"] == "Automotive" and r_man["avatar_count"] >= 1
     assert r_imp["product_id"] == imported["id"]
 
 

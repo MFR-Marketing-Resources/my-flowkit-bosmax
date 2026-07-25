@@ -84,7 +84,16 @@ async def registry_coverage() -> dict:
     # Avatar authority pool (CSV bridge) + product-fit coverage (R1).
     avatar_pool = avatar_registry.list_pool()
     fits = await crud.list_avatar_product_fits(limit=2000)
-    fit_categories = {str(f.get("product_category") or "") for f in fits}
+    live_avatar_codes = {
+        str(avatar.get("avatar_code") or "").strip()
+        for avatar in avatar_pool
+        if avatar.get("avatar_code")
+    }
+    valid_fits = [
+        fit for fit in fits
+        if str(fit.get("avatar_code") or "").strip() in live_avatar_codes
+    ]
+    fit_categories = {str(f.get("product_category") or "") for f in valid_fits}
     avatar_covered = [
         c for c in canonical
         if avatar_fit_service.normalise_category(c) in fit_categories
@@ -110,9 +119,9 @@ async def registry_coverage() -> dict:
         "avatar": {
             "pool_total": len(avatar_pool),
             "bridge_active": avatar_registry._BRIDGE_FILE.exists(),
-            "fit_total": len(fits),
+            "fit_total": len(valid_fits),
             "distinct_avatars_in_fit": len(
-                {str(f.get("avatar_code") or "") for f in fits}
+                {str(f.get("avatar_code") or "") for f in valid_fits}
             ),
             "clusters_covered": avatar_covered,
             "clusters_missing": avatar_missing,
@@ -404,6 +413,17 @@ async def avatar_recommendation(
     if category is not None:
         return await _svc.recommend_avatars_for_category(category)
     raise HTTPException(status_code=422, detail="product_id or category is required")
+
+
+@router.get("/product-cluster-audit")
+async def product_cluster_audit() -> dict:
+    """Read-only product inventory grouped by avatar-planning cluster.
+
+    Blank product categories remain review-required instead of falling back to a
+    visual cluster. This endpoint never mutates product, avatar, or generation
+    state and is intended to drive pool planning before avatar creation.
+    """
+    return await _svc.audit_product_cluster_coverage()
 
 
 @router.post("/avatar-fit/seed")

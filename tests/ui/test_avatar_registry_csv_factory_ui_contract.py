@@ -110,6 +110,18 @@ def test_avatar_registry_coverage_lens_present():
     assert "(R5)" in src
 
 
+def test_avatar_registry_is_product_first_and_does_not_auto_generate_images():
+    src = _read("dashboard/src/pages/AvatarRegistryPage.tsx")
+    assert "Product-first avatar planning" in src
+    assert "SearchableProductSelect" in src
+    assert "getCreativeSetupForProduct" in src
+    assert "saveProductAvatarSelection" in src
+    assert "review before generation" in src
+    # Avatar profile creation deliberately stops before the image provider lane.
+    manual_handler = src.split("const handleAddManualAvatar", 1)[1].split("const handleAutoGenerateAvatar", 1)[0]
+    assert "handleGenerateImage(" not in manual_handler
+
+
 def test_avatar_registry_reconciliation_panel_present():
     """Phase C: read-only reconciliation panel with non-destructive labels."""
     src = _read("dashboard/src/pages/AvatarRegistryPage.tsx")
