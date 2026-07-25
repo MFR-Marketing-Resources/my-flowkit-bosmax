@@ -20,6 +20,7 @@ import CopyBindingGate from "../components/copywriting/CopyBindingGate";
 import { useCopywritingReadiness } from "../api/copywritingReadiness";
 import type { CreativeAsset, Product } from "../types";
 import {
+	buildImgGenerationRequest,
 	canApprove,
 	isReusableAsset,
 	resolveGenerationInputs,
@@ -361,13 +362,19 @@ export default function ImgCockpitPage() {
 		setGenerating(true);
 		setError(null);
 		try {
-			const { job_id } = await startImgGeneration({
-				prompt,
-				image_media_ids: genResolution.mediaIds,
-				aspect,
-				count,
-				image_model: imageModel,
-			});
+			// SCALE-07: deliver the product's REAL visual reference (via
+			// refs.subjectAsset) — not just media-id refs — so a catalog product
+			// (media_id=null, image_url present) reaches the generator as an image,
+			// not only as compiled text. buildImgGenerationRequest is the payload seam.
+			const { job_id } = await startImgGeneration(
+				buildImgGenerationRequest({
+					prompt,
+					resolution: genResolution,
+					aspect,
+					count,
+					imageModel,
+				}),
+			);
 			const job = await pollImgGenerationJob(job_id);
 			setGenJob(job);
 			if (job.status === "DONE" && job.media_id) {

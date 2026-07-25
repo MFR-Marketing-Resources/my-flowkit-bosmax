@@ -317,14 +317,14 @@ async def test_save_stamps_reference_conditioned_unverified(tmp_path, monkeypatc
     pcs = await _seed_copy_set(pid)
     monkeypatch.setattr(compositor, "compose", _fake_compose(tmp_path))
     result = await _compose(pid, pcs, tmp_path)
-    assert result["deliverable"]["composition_strategy"] == "REFERENCE_CONDITIONED"
+    assert result["deliverable"]["composition_strategy"] == "DETERMINISTIC_COMPOSITE"
     captured = {}
     _mock_asset(monkeypatch, captured)
     await PosterDeliverableService.save_to_library(
         result["deliverable"]["poster_deliverable_id"]
     )
     req = captured["request"]
-    assert req.product_truth_status == "REFERENCE_CONDITIONED_UNVERIFIED"
+    assert req.product_truth_status == "DETERMINISTIC_COMPOSITE_UNVERIFIED"
     assert req.product_truth_status != "PRESERVED"
     # The library description carries the honest human-review note.
     assert "human review" in req.description

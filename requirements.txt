@@ -13,3 +13,4 @@ python-dotenv>=1.0.0  # loads repo-root .env at agent startup (agent/config.py)
 
 # Test harness (mocker fixture for tests/unit/test_result_handler.py)
 pytest-mock>=3.14
+Pillow>=10.0.0

@@ -5,6 +5,7 @@ from agent.models.poster_readiness import PosterReadinessStatus
 from agent.services.poster_prompt_draft_service import (
     PosterPromptDraftService,
     PosterPromptDraftValidationError,
+    _product_truth_lock,
 )
 from tests.unit.test_poster_readiness_service import _ready_base
 
@@ -312,3 +313,92 @@ async def test_explicit_creative_modes_enrich_poster_and_preserve_legacy(monkeyp
         await PosterPromptDraftService.build_draft(
             _full_request(creative_mode="UNSAFE_MODE"),
         )
+
+
+# ── Product SCALE authority wiring (SEV-1 poster oversize fix) ──────────────────
+# Regression guard: the poster PRODUCT TRUTH LOCK must carry the SAME shared
+# product-scale authority (product_lock_builder / UNIVERSAL_PRODUCT_SCHEMA) as the
+# video and IMG lanes, so a "hero product placement" poster can no longer render
+# the bottle oversized. Before the fix, _product_truth_lock emitted only a name /
+# category identity block with NO scale, geometry, or anti-oversize governance.
+
+_MWTCB_ROW = {
+    "product_display_name": "Minyak Warisan Tok Cap Burung 25ml",
+    "raw_product_title": "Minyak Warisan Tok Cap Burung 25ml Traditional Herbal Oil",
+    "category": "Traditional Herbal Oil",
+    "type": "Herbal Oil",
+    "image_url": "https://example.invalid/mwtcb-front.png",
+}
+_BOSMAX_5ML_ROW = {
+    "product_display_name": "Bosmax Herbs 5 ML",
+    "raw_product_title": "BOSMAX HERBS Herbal Oil Roll On 5ml",
+    "category": "Herbal Oil",
+    "type": "Roll On",
+    "image_url": "https://example.invalid/bosmax-front.png",
+}
+
+
+def test_product_truth_lock_mwtcb_carries_pocket_scale_authority():
+    lock = _product_truth_lock(_MWTCB_ROW, None)
+    low = lock.lower()
+    # The shared scale authority is now present in the poster payload.
+    assert "PRODUCT SCALE LOCK" in lock
+    assert "PRODUCT SCALE ANCHOR" in lock
+    assert "PRODUCT GEOMETRY LOCK" in lock
+    # MWTCB anchors to its correct pocket-size, human-relative scale.
+    assert "pocket-size" in low
+    assert "two fingers wide" in low
+    # Anti-oversize + anti-forced-perspective governance reaches the poster.
+    assert "never upscale it to dominate" in low
+    assert "much closer to the camera lens" in low
+
+
+def test_product_truth_lock_mwtcb_not_contaminated_by_bosmax_lip_balm():
+    low = _product_truth_lock(_MWTCB_ROW, None).lower()
+    # MWTCB must NOT be sized as a lip balm (that is the BOSMAX 5ml scale). The only
+    # allowed mention is the "clearly larger and wider than a lip-balm" contrast.
+    assert "lip balm size" not in low
+    assert "lip-balm size" not in low
+
+
+def test_product_truth_lock_bosmax_keeps_lip_balm_and_stays_out_of_mwtcb_anchor():
+    low = _product_truth_lock(_BOSMAX_5ML_ROW, None).lower()
+    # BOSMAX 5ml keeps its own lip-balm scale...
+    assert "lip balm size" in low
+    # ...and never inherits MWTCB's pocket-size / two-fingers-wide anchor.
+    assert "two fingers wide" not in low
+    assert "pocket-size" not in low
+
+
+def test_product_truth_lock_unlisted_product_still_gets_scale_lock():
+    # Fail-safe: a product with no schema entry must NEVER fall back to the old
+    # name-only lock — it still gets a deterministic PRODUCT SCALE LOCK + ANCHOR.
+    lock = _product_truth_lock(
+        {
+            "product_display_name": "Generic Foot Cream 100ml",
+            "category": "Skincare",
+            "type": "Cream",
+        },
+        None,
+    )
+    assert "PRODUCT SCALE LOCK" in lock
+    assert "PRODUCT SCALE ANCHOR" in lock
+
+
+@pytest.mark.asyncio
+async def test_ready_poster_prompt_includes_scale_authority(monkeypatch):
+    # Full-flow proof: the assembled poster_prompt (not just the helper) carries the
+    # scale authority for the MWTCB product row (_ready_base is MWTCB 25ml).
+    product = _ready_base()
+
+    async def fake_get(_pid):
+        return product
+
+    monkeypatch.setattr(
+        "agent.services.poster_prompt_draft_service.crud.get_product",
+        fake_get,
+    )
+    result = await PosterPromptDraftService.build_draft(_full_request())
+    assert "PRODUCT SCALE LOCK" in result.poster_prompt
+    assert "PRODUCT SCALE ANCHOR" in result.poster_prompt
+    assert "two fingers wide" in result.poster_prompt.lower()

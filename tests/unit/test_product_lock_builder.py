@@ -11,10 +11,10 @@ from agent.services import canonical_prompt_compiler as cpc
 from agent.services import product_lock_builder as plb
 
 MW25 = {
-    "id": "MWTCB_25ML_CAP_BURUNG",
-    "name": "Minyak Warisan Tok Cap Burung 25ml",
+    "id": "MWCB_25ML_CAP_BURUNG",
+    "name": "Minyak Warisan Cap Burung 25ml",
     "category": "Wellness",
-    "product_truth_ref": "MWTCB_25ML_CAP_BURUNG",
+    "product_truth_ref": "MWCB_25ML_CAP_BURUNG",
 }
 BOS5 = {
     "id": "BOSMAX_SERUM_5ML",
@@ -31,7 +31,7 @@ BOS10 = {
 # there is NO product_truth_ref / pack_size_ml column).
 REAL_BOS5 = {"id": "90349f8c", "product_display_name": "Bosmax Herbs 5 ML", "product_short_name": "Bosmax Herbs 5 ML", "type": "Male Health", "category": "Health"}
 REAL_BOS10 = {"id": "b460ffbd", "product_display_name": "Bosmax Oil 10 ML", "product_short_name": "Bosmax Oil 10 ML", "type": "Male Health", "category": "Health"}
-REAL_MW = {"id": "6483d624", "product_display_name": "Minyak Warisan Tok Cap Burung 25ml", "product_short_name": "Minyak Cap Burung", "brand": "Cap Burung", "type": "Minyak Angin", "category": "Health & Personal Care"}
+REAL_MW = {"id": "6483d624", "product_display_name": "Minyak Warisan Cap Burung 25ml", "product_short_name": "Minyak Cap Burung", "brand": "Cap Burung", "type": "Minyak Angin", "category": "Health & Personal Care"}
 COPY = {"angle": "routine", "hook": "Cuba tengok ni", "cta": "Tap beg kuning", "formula_family": "HSO"}
 
 ALL_MODES = ["T2V", "HYBRID", "FRAMES", "INGREDIENTS", "IMAGES"]
@@ -58,7 +58,7 @@ def _s3(product, mode):
 
 def test_minyak_warisan_lock_geometry_and_scale():
     lock = plb.build_product_lock(MW25, is_video=True, has_product_reference=True)
-    assert lock["matched_product_id"] == "MWTCB_25ML_CAP_BURUNG"
+    assert lock["matched_product_id"] == "MWCB_25ML_CAP_BURUNG"
     blob = " ".join(lock.values()).lower()
     # Identity tokens come from product_truth_ref; scale/palm tokens from scale_lock.
     # NOTE: the pack-size token ("25ml") is deliberately NOT required here — it must
@@ -206,7 +206,7 @@ def test_ambiguous_bare_bosmax_fails_closed_to_fallback():
 def test_real_runtime_rows_resolve_correctly():
     assert plb.resolve_schema_entry(REAL_BOS5)["product_id"] == "BOSMAX_SERUM_5ML"
     assert plb.resolve_schema_entry(REAL_BOS10)["product_id"] == "BOSMAX_HERBS_10ML"
-    assert plb.resolve_schema_entry(REAL_MW)["product_id"] == "MWTCB_25ML_CAP_BURUNG"
+    assert plb.resolve_schema_entry(REAL_MW)["product_id"] == "MWCB_25ML_CAP_BURUNG"
 
 
 def test_real_10ml_row_never_maps_to_5ml():
@@ -411,8 +411,8 @@ def test_thin_name_with_size_resolves_and_without_size_fails_closed():
     assert (plb.resolve_schema_entry({"id": "p1", "name": "Bosmax Herbs 5 ML"}) or {}).get("product_id") == "BOSMAX_SERUM_5ML"
     assert plb.resolve_schema_entry({"id": "p1b", "name": "BOSMAX HERBS"}) is None
     # Minyak has a single authored size → its brand signature is unambiguous.
-    thin_mw = {"id": "p2", "name": "Minyak Warisan Tok Cap Burung", "category": "Wellness"}
-    assert (plb.resolve_schema_entry(thin_mw) or {}).get("product_id") == "MWTCB_25ML_CAP_BURUNG"
+    thin_mw = {"id": "p2", "name": "Minyak Warisan Cap Burung", "category": "Wellness"}
+    assert (plb.resolve_schema_entry(thin_mw) or {}).get("product_id") == "MWCB_25ML_CAP_BURUNG"
 
 
 def test_explicit_ref_key_overrides_ambiguity():

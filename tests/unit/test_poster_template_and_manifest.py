@@ -104,6 +104,16 @@ def test_manifest_drops_empty_zones_and_requires_copy():
     assert exc.value.code == "POSTER_MANIFEST_NO_COPY"
 
 
+def test_manifest_declares_exact_product_composite_when_cutout_is_supplied():
+    manifest = build_render_manifest(
+        recipe_id="product_hero_night_routine", copy_set=_COPY,
+        exact_product_layer={"asset_ref": "C:/cutout.png", "source_sha256": "a" * 64,
+                             "transform": {"x": 1, "y": 2, "w": 3, "h": 4, "perspective_skew_x": 0.0}},
+    )
+    assert manifest.product_layer.strategy == "DETERMINISTIC_COMPOSITE"
+    assert manifest.product_layer.asset_ref.endswith("cutout.png")
+
+
 def _zone(zone_id, *, fitted=True, overlaps=False, scale=1.0):
     return ZoneRenderResult(
         zone_id=zone_id, fitted=fitted, overflowed=not fitted,

@@ -121,7 +121,7 @@ def test_real_product_proof_targets_required_serum_and_warisan_assets():
     assert "scratch / \"scripts\" / \"poster-compositor-render.js\"" in src
     # The proof command must return zero on a Windows legacy console.
     assert "real-product runs →" not in src
-    assert "Minyak Warisan Tok Cap Burung 25ml" in src
+    assert "Minyak Warisan Cap Burung 25ml" in src
     assert "BOSMAX Serum 5 ML" in src
     assert "90349f8c-9e14-4efe-988e-76ec60ea31f4.png" in src
     assert "Bosmax Oil 10 ML" not in src

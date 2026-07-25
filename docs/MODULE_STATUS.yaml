@@ -157,6 +157,7 @@ domains:
       - dashboard/src/components/creative-library/ApproveAssetModal.test.tsx
       - dashboard/src/pages/ImgCockpitPage.tsx
       - dashboard/src/pages/imgCockpitLogic.ts
+      - dashboard/src/pages/imgCockpitLogic.test.ts
       - agent/services/prompt_compiler_runtime_config_service.py
       - agent/services/canonical_prompt_compiler.py
       - agent/services/extend_route_planner.py
@@ -737,6 +738,7 @@ domains:
       - agent/services/poster_copy_ai_service.py
       - agent/services/poster_template_service.py
       - agent/services/poster_compositor_service.py
+      - agent/services/exact_product_compositor_service.py
       - agent/services/poster_deliverable_service.py
       - agent/api/poster_copy_sets.py
       - agent/api/poster_compose.py
@@ -744,6 +746,7 @@ domains:
       - scripts/poster-compositor-render.js
       - scripts/generate_poster_fixtures.py
       - scripts/generate_real_product_poster_proof.py
+      - scripts/generate_mwtcb_exact_composite_proof.py
       - scripts/fixtures/poster-compositor/real-products/**
       - scripts/fixtures/poster-compositor/real-products/bosmax_serum_5ml.evidence.json
       - scripts/fixtures/poster-compositor/real-products/bosmax_serum_5ml.manifest.json
@@ -763,6 +766,7 @@ domains:
       - tests/unit/test_poster_copy_set_service.py
       - tests/unit/test_poster_copy_ai_service.py
       - tests/unit/test_poster_template_and_manifest.py
+      - tests/unit/test_exact_product_compositor_service.py
       - tests/unit/test_poster_deliverable_service.py
       - tests/unit/test_poster_clean_scene_prompt.py
       - tests/api/test_poster_copy_sets_api.py

@@ -46,7 +46,11 @@ class ManifestZone(BaseModel):
 class ProductLayer(BaseModel):
     strategy: str = COMPOSITION_REFERENCE_CONDITIONED
     safe_region: ManifestRect
-    asset_ref: str = ""  # reserved for DETERMINISTIC_COMPOSITE (cutout asset)
+    asset_ref: str = ""
+    source_sha256: str = ""
+    cutout_sha256: str = ""
+    transform: dict[str, float] = Field(default_factory=dict)
+    integrity: dict[str, Any] = Field(default_factory=dict)
 
 
 class ManifestProvenance(BaseModel):

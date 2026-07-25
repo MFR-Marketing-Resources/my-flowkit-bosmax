@@ -3,7 +3,7 @@
 Runs the ACTUAL V2 service path (poster copy set → compose → QA → save-to-library
 → reopen-by-asset) for two required REAL BOSMAX products using repository assets:
 
-  1. Minyak Warisan Tok Cap Burung 25ml — background = an APPROVED
+  1. Minyak Warisan Cap Burung 25ml — background = an APPROVED
      reference-conditioned generated scene that already exists in the repo
      (real product held by an avatar; generated in a prior credit-approved run).
   2. BOSMAX Serum 5 ML (registered product title: Bosmax Herbs 5 ML) —
@@ -66,7 +66,7 @@ _MAIN_TREE = Path(os.environ.get("FLOWKIT_MAIN_TREE", r"C:\Users\USER\Desktop\_r
 RUNS = [
     {
         "run_id": "minyak_warisan_tok_25ml",
-        "display": "Minyak Warisan Tok Cap Burung 25ml",
+        "display": "Minyak Warisan Cap Burung 25ml",
         "category": "Traditional",
         "recipe_id": "heritage_infographic",
         "background_src": _MAIN_TREE / ".local-agent" / "creative-assets" / "ca_0d56e05025f94eae.jpg",
@@ -75,7 +75,7 @@ RUNS = [
             "objective": "Heritage and trust",
             "archetype": "HERITAGE_TRUST",
             "angle": "Warisan keluarga",
-            "primary_message": "Minyak Warisan Tok — Cap Burung",
+            "primary_message": "Minyak Warisan Cap Burung",
             "support_message": "Sedia di rumah anda, bila-bila masa.",
             "proof_points": ["Minyak tradisional", "Botol 25ml"],
             "cta": "Dapatkan sekarang",
