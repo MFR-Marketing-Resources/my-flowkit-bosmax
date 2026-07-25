@@ -90,7 +90,7 @@ def test_anthropic_lane_skips_and_never_posts(lane_state, monkeypatch):
     [
         ("openai", "gpt-4o-mini"),
         ("gemini", "gemini-2.0-flash"),
-        ("deepseek", "deepseek-chat"),
+        ("deepseek", "deepseek-v4-pro"),
     ],
 )
 def test_other_non_qwen_lanes_skip_and_never_post(lane_state, monkeypatch, provider, model):

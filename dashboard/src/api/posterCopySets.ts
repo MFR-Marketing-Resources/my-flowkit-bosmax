@@ -18,7 +18,7 @@ export async function recommendPosterObjectives(payload: {
 	recommendations: PosterObjectiveRecommendation[];
 	warnings: string[];
 }> {
-	return postAPI("/poster/copy-sets/recommend-objectives", payload);
+	return postAPI("/api/poster/copy-sets/recommend-objectives", payload);
 }
 
 export async function recommendPosterAngles(payload: {
@@ -26,7 +26,7 @@ export async function recommendPosterAngles(payload: {
 	archetype: string;
 	refresh_ai?: boolean;
 }): Promise<{ angles: PosterAngleRecommendation[]; warnings: string[] }> {
-	return postAPI("/poster/copy-sets/recommend-angles", payload);
+	return postAPI("/api/poster/copy-sets/recommend-angles", payload);
 }
 
 export async function generatePosterDirections(payload: {
@@ -42,7 +42,7 @@ export async function generatePosterDirections(payload: {
 	prompt_version: string;
 	warnings: string[];
 }> {
-	return postAPI("/poster/copy-sets/directions", payload);
+	return postAPI("/api/poster/copy-sets/directions", payload);
 }
 
 export async function regeneratePosterField(payload: {
@@ -53,20 +53,20 @@ export async function regeneratePosterField(payload: {
 	language?: string;
 	fields: Record<string, unknown>;
 }): Promise<{ field: string; value: string | string[]; provenance: string }> {
-	return postAPI("/poster/copy-sets/regenerate-field", payload);
+	return postAPI("/api/poster/copy-sets/regenerate-field", payload);
 }
 
 export async function createPosterCopySet(
 	payload: Record<string, unknown>,
 ): Promise<PosterCopySet> {
-	return postAPI("/poster/copy-sets", payload);
+	return postAPI("/api/poster/copy-sets", payload);
 }
 
 export async function approvePosterCopySet(
 	posterCopySetId: string,
 	approvalPhrase: string,
 ): Promise<PosterCopySet> {
-	return postAPI(`/poster/copy-sets/${posterCopySetId}/approve`, {
+	return postAPI(`/api/poster/copy-sets/${posterCopySetId}/approve`, {
 		approval_phrase: approvalPhrase,
 		approved_by: "operator",
 	});
@@ -75,7 +75,7 @@ export async function approvePosterCopySet(
 export async function listPosterCopySets(
 	productId: string,
 ): Promise<{ poster_copy_sets: PosterCopySet[] }> {
-	return getAPI(`/poster/copy-sets?product_id=${encodeURIComponent(productId)}`);
+	return getAPI(`/api/poster/copy-sets?product_id=${encodeURIComponent(productId)}`);
 }
 
 // ── Deterministic compositor (credit-free) ──────────────────────────────────
@@ -88,7 +88,7 @@ export async function composePoster(payload: {
 	creative_mode?: string;
 	settings?: Record<string, unknown>;
 }): Promise<PosterComposeResponse> {
-	return postAPI("/poster/compose", payload);
+	return postAPI("/api/poster/compose", payload);
 }
 
 // Backend-resolved canonical composition plan (read-only preview): the SAME
@@ -102,13 +102,13 @@ export async function fetchCompositionPlan(payload: {
 	human_presence_mode?: string;
 	frame_ratio?: string;
 }): Promise<{ composition_plan: CompositionPlan }> {
-	return postAPI("/poster/composition-plan", payload);
+	return postAPI("/api/poster/composition-plan", payload);
 }
 
 export async function savePosterToLibrary(
 	posterDeliverableId: string,
 ): Promise<{ creative_asset_id: string; already_saved: boolean }> {
-	return postAPI(`/poster/deliverables/${posterDeliverableId}/save-to-library`, {});
+	return postAPI(`/api/poster/deliverables/${posterDeliverableId}/save-to-library`, {});
 }
 
 export function posterDeliverableOutputUrl(posterDeliverableId: string): string {
@@ -120,7 +120,7 @@ export async function fetchPosterDeliverableByAsset(
 	creativeAssetId: string,
 ): Promise<PosterDeliverableReconstruction> {
 	return getAPI(
-		`/poster/deliverables/by-asset/${encodeURIComponent(creativeAssetId)}`,
+		`/api/poster/deliverables/by-asset/${encodeURIComponent(creativeAssetId)}`,
 	);
 }
 
@@ -129,7 +129,7 @@ export async function newPosterCopySetVersion(
 	posterCopySetId: string,
 	patch: Record<string, unknown>,
 ): Promise<PosterCopySet> {
-	return postAPI(`/poster/copy-sets/${posterCopySetId}/new-version`, patch);
+	return postAPI(`/api/poster/copy-sets/${posterCopySetId}/new-version`, patch);
 }
 
 // Reopen a saved poster whose copy set is now SUPERSEDED: clone the exact
@@ -138,12 +138,12 @@ export async function forkPosterCopySetFromHistorical(
 	posterCopySetId: string,
 	patch: Record<string, unknown> = {},
 ): Promise<PosterCopySet> {
-	return postAPI(`/poster/copy-sets/${posterCopySetId}/fork-historical`, patch);
+	return postAPI(`/api/poster/copy-sets/${posterCopySetId}/fork-historical`, patch);
 }
 
 export async function patchPosterCopySet(
 	posterCopySetId: string,
 	patch: Record<string, unknown>,
 ): Promise<PosterCopySet> {
-	return patchAPI(`/poster/copy-sets/${posterCopySetId}`, patch);
+	return patchAPI(`/api/poster/copy-sets/${posterCopySetId}`, patch);
 }
