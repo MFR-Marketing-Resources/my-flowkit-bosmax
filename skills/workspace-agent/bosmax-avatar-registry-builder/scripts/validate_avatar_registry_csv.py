@@ -27,7 +27,17 @@ SEED_SCHEMA = [
     "PromptV1",
     "approved_flag",
     "usage_tags",
+    "AgeBand",
 ]
+
+AGE_BANDS = {
+    "Child (6-12)",
+    "Teen (13-17)",
+    "Young adult (18-29)",
+    "Adult (30-54)",
+    "Older adult (55-69)",
+    "Senior (70+)",
+}
 
 BRIDGE_HELPER_COLUMNS = {
     "Name",
@@ -76,6 +86,7 @@ def _base_report(input_file: str, mode: str) -> dict[str, Any]:
             "approved_flag_invalid_rows": 0,
             "bridge_helper_column_rows": 0,
             "usage_tags_normalized_rows": 0,
+            "age_band_invalid_rows": 0,
         },
     }
 
@@ -171,6 +182,10 @@ def validate_csv(path: Path, mode: str) -> tuple[dict[str, Any], list[dict[str, 
         if approved not in {"TRUE", "FALSE"}:
             report["summary"]["approved_flag_invalid_rows"] += 1
             _error(report, "APPROVED_FLAG_INVALID", "approved_flag must be exactly TRUE or FALSE", idx)
+
+        if cleaned["AgeBand"] not in AGE_BANDS:
+            report["summary"]["age_band_invalid_rows"] += 1
+            _error(report, "AGE_BAND_INVALID", "AgeBand must be a controlled vocabulary value", idx)
 
         prompt = cleaned["PromptV1"]
         leak_found = False

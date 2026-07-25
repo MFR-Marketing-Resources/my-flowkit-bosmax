@@ -29,6 +29,7 @@ def _row(**overrides) -> dict[str, str]:
         "PromptV1": "A warm office presenter at a bright desk, natural smile.",
         "approved_flag": "TRUE",
         "usage_tags": "UGC|desk|office",
+        "AgeBand": "Young adult (18-29)",
     }
     base.update(overrides)
     return base
@@ -73,6 +74,18 @@ def test_valid_csv_passes_and_normalizes_tags(factory_env):
     assert rows[0]["valid"] is True
     assert rows[0]["data"]["usage_tags"] == "UGC|desk|Office"
     assert report["summary"]["usage_tags_normalized_rows"] == 1
+
+
+def test_age_band_is_required_and_canonicalized(factory_env):
+    report, rows = factory.validate_seed_csv(
+        _csv_bytes([_row(AgeBand="senior (70+)")]))
+    assert report["status"] == "PASS"
+    assert rows[0]["data"]["AgeBand"] == "Senior (70+)"
+
+    report, rows = factory.validate_seed_csv(
+        _csv_bytes([_row(AgeBand="ageless")]))
+    assert report["status"] == "FAIL"
+    assert "AGE_BAND_INVALID" in rows[0]["errors"]
 
 
 def test_header_order_mismatch_fails_and_stages_nothing(factory_env):

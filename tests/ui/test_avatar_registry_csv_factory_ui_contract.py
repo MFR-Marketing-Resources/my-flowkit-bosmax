@@ -155,9 +155,12 @@ def test_create_avatar_uses_controlled_dropdowns():
     # Usage tags + constraint fields exist.
     assert "Usage tags" in src
     assert "usage_tags" in src
+    assert "age_band" in src
+    assert "Age band" in src
     # Dependent constraint: gender = M disables hijab (manual + auto forms).
     assert 'manualForm.gender === "M"' in src
     assert 'autoGender === "M"' in src
+    assert "autoAgeBand" in src
 
 
 def test_create_avatar_dropdowns_are_gender_filtered():

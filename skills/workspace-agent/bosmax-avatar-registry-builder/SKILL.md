@@ -47,7 +47,7 @@ Ask for missing essentials only when required: target group/category, target cou
 
 Create rows with the exact seed header order:
 
-`CharacterName,Variant,AvatarCode,SkinTone,HairStyle,Wardrobe,Environment,Lighting,Camera,Expression,SafetyBlock,PromptV1,approved_flag,usage_tags`
+`CharacterName,Variant,AvatarCode,SkinTone,HairStyle,Wardrobe,Environment,Lighting,Camera,Expression,SafetyBlock,PromptV1,approved_flag,usage_tags,AgeBand`
 
 When planning from a product group, use explicit `female_count` and `male_count` quotas. Do not create a neutral or mixed AvatarCode lane. Use `BOS_F_...` for female-coded avatars and `BOS_M_...` for male-coded avatars.
 

@@ -5,7 +5,7 @@ Use this schema for BOSMAX Avatar Registry Builder V1. It targets the repo seed 
 ## Exact header order
 
 ```csv
-CharacterName,Variant,AvatarCode,SkinTone,HairStyle,Wardrobe,Environment,Lighting,Camera,Expression,SafetyBlock,PromptV1,approved_flag,usage_tags
+CharacterName,Variant,AvatarCode,SkinTone,HairStyle,Wardrobe,Environment,Lighting,Camera,Expression,SafetyBlock,PromptV1,approved_flag,usage_tags,AgeBand
 ```
 
 The header order is mandatory. Do not add or remove columns.
@@ -28,6 +28,7 @@ The header order is mandatory. Do not add or remove columns.
 | `PromptV1` | yes | Image-factory prompt. Must not contain `Code:`, `BOS_F_`, or `BOS_M_`. |
 | `approved_flag` | yes | Explicit `TRUE` or `FALSE`. Blank is forbidden. |
 | `usage_tags` | yes | Pipe-delimited tags, for example `UGC|desk|office`. |
+| `AgeBand` | yes | One controlled value: `Child (6-12)`, `Teen (13-17)`, `Young adult (18-29)`, `Adult (30-54)`, `Older adult (55-69)`, or `Senior (70+)`. Child and teen rows require family-safe, non-sexualized prompting and explicit operator selection. |
 
 ## Forbidden columns in V1
 

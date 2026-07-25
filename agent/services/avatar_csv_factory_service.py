@@ -7,7 +7,7 @@ CSV candidates through: validate -> stage -> operator review (approve/reject
 per row) -> export -> safe sync into the runtime bridge.
 
 Law:
-- The seed schema (14 exact columns, exact order) is mandatory on intake.
+- The seed schema (15 exact columns, exact order) is mandatory on intake.
 - PromptV1 must never leak internal metadata (`Code:`, `BOS_F_`, `BOS_M_`).
 - approved_flag must be an explicit TRUE or FALSE (blank is NOT approved).
 - usage_tags intake accepts comma or pipe; final output is pipe-delimited,
@@ -49,6 +49,7 @@ SEED_SCHEMA = [
     "PromptV1",
     "approved_flag",
     "usage_tags",
+    "AgeBand",
 ]
 
 BRIDGE_HELPER_COLUMNS = {
@@ -259,6 +260,12 @@ def validate_seed_csv(csv_bytes: bytes) -> tuple[dict[str, Any], list[dict[str, 
         elif normalized_tags != data["usage_tags"]:
             report["summary"]["usage_tags_normalized_rows"] += 1
             data["usage_tags"] = normalized_tags
+
+        age_band = avatar_registry.snap_to_vocab("age_band", data["AgeBand"])
+        if age_band is None:
+            _err("AGE_BAND_INVALID", "AgeBand must be a controlled vocabulary value")
+        else:
+            data["AgeBand"] = age_band
 
         rows.append({
             "row_index": idx,

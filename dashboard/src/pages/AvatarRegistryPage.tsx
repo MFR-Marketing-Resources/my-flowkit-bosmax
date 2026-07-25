@@ -32,6 +32,7 @@ interface AvatarProfile {
 	avatar_code: string;
 	character_name: string;
 	variant: string;
+	age_band: string;
 	skin_tone: string;
 	hair_style: string;
 	wardrobe: string;
@@ -161,6 +162,7 @@ export default function AvatarRegistryPage() {
 	const [manualForm, setManualForm] = useState({
 		character_name: "",
 		gender: "F",
+		age_band: "",
 		skin_tone: "",
 		hair_style: "",
 		wardrobe: "",
@@ -174,6 +176,7 @@ export default function AvatarRegistryPage() {
 	const [isAddingManual, setIsAddingManual] = useState(false);
 	const [autoBrief, setAutoBrief] = useState("");
 	const [autoGender, setAutoGender] = useState("");
+	const [autoAgeBand, setAutoAgeBand] = useState("");
 	const [autoHijab, setAutoHijab] = useState(false);
 	const [isAutoGenerating, setIsAutoGenerating] = useState(false);
 	const [deletingCode, setDeletingCode] = useState<string | null>(null);
@@ -206,6 +209,7 @@ export default function AvatarRegistryPage() {
 				// add is always vocab-valid.
 				setManualForm((f) => ({
 					...f,
+					age_band: f.age_band || d.vocab.age_band?.[3] || d.vocab.age_band?.[0] || "",
 					skin_tone: f.skin_tone || d.vocab.skin_tone?.[0] || "",
 					hair_style: f.hair_style || d.vocab.hair_style?.[0] || "",
 					wardrobe: f.wardrobe || d.vocab.wardrobe?.[0] || "",
@@ -328,6 +332,7 @@ export default function AvatarRegistryPage() {
 					body: JSON.stringify({
 						character_name: manualForm.character_name.trim(),
 						gender: manualForm.gender,
+						age_band: manualForm.age_band,
 						skin_tone: manualForm.skin_tone,
 						hair_style: manualForm.hair_style,
 						wardrobe: manualForm.wardrobe,
@@ -383,6 +388,7 @@ export default function AvatarRegistryPage() {
 			const body: Record<string, unknown> = {};
 			if (autoBrief.trim()) body.brief = autoBrief.trim();
 			if (autoGender) body.gender = autoGender;
+			if (autoAgeBand) body.age_band = autoAgeBand;
 			if (autoHijab && autoGender !== "M") body.hijab = true;
 			if (autoEnvironment) body.environment = autoEnvironment;
 			if (autoWardrobe) body.wardrobe = autoWardrobe;
@@ -1292,6 +1298,24 @@ export default function AvatarRegistryPage() {
 							</label>
 							<label className="text-[10px] text-slate-400">
 								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+									Age band
+								</span>
+								<select
+									value={manualForm.age_band}
+									onChange={(e) =>
+										setManualForm((f) => ({ ...f, age_band: e.target.value }))
+									}
+									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+								>
+									{(vocab?.age_band ?? []).map((o) => (
+										<option key={o} value={o}>
+											{o}
+										</option>
+									))}
+								</select>
+							</label>
+							<label className="text-[10px] text-slate-400">
+								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
 									Skin tone
 								</span>
 								<select
@@ -1482,6 +1506,23 @@ export default function AvatarRegistryPage() {
 								<span className="font-semibold uppercase tracking-[0.12em] text-slate-500">
 									Hijab{autoGender === "M" ? " (F only)" : ""}
 								</span>
+							</label>
+							<label className="text-[10px] text-slate-400">
+								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+									Age band
+								</span>
+								<select
+									value={autoAgeBand}
+									onChange={(e) => setAutoAgeBand(e.target.value)}
+									className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+								>
+					<option value="">Adult (default)</option>
+									{(vocab?.age_band ?? []).map((o) => (
+										<option key={o} value={o}>
+											{o}
+										</option>
+									))}
+								</select>
 							</label>
 							<label className="text-[10px] text-slate-400">
 								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
