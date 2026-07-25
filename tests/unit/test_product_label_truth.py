@@ -137,12 +137,13 @@ def test_structured_truth_outranks_a_conflicting_attached_reference():
     no_modification = lock["no_modification_lock"]
 
     assert "supporting evidence" in reference
+    assert "hard visual and physical-scale truth only for details that agree" in reference
+    assert "not mood or style inspiration" in reference
     assert "structured bottle geometry" in reference
     assert "final authority" in reference
     assert "tall or narrow body" in reference
     assert "different teal coverage" in reference
     assert "ignore that conflicting feature" in reference
-    assert "hard visual" not in reference
 
     assert "structured product truth" in no_modification
     assert "only where it agrees" in no_modification
