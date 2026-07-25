@@ -2,12 +2,13 @@
 
 The catalog/display name is ``Minyak Warisan Tok Cap Burung 25ml`` but the
 owner-supplied physical product photographs prove that ``TOK`` is not printed on
-the bottle. They also prove a short, wide, squat flat-front bottle rather than
-the stale tall/narrow AI photoshoot previously attached to the product row.
+the bottle. They also prove a compact, moderately tall, rectangular flat-front
+bottle rather than the stale tall/narrow AI photoshoot previously attached to
+the product row.
 
 These tests pin the separation between catalog identity and physical package
 truth, the exact printed label lines, the real teal/cream/gold label layout, the
-verified short-wide geometry, and the rule that structured truth outranks a
+verified compact-rectangular geometry, and the rule that structured truth outranks a
 conflicting visual reference.
 """
 import inspect
@@ -85,20 +86,21 @@ def test_schema_separates_catalog_name_from_exact_physical_label():
     assert "25ml" in layout
 
     for geometry in (
-        "short, wide",
+        "compact rectangular",
+        "moderately tall",
         "flat front",
         "nearly vertical sides",
         "low rounded shoulders",
-        "very short neck",
+        "short clear-glass neck",
         "thick clear glass base",
     ):
         assert geometry in truth
 
-    for stale_trait in ("TOK", "tall/narrow/long-neck", "stale"):
+    for stale_trait in ("TOK", "extremely squat", "tall/narrow/long-neck", "stale"):
         assert stale_trait in conflict
 
 
-def test_product_lock_emits_physical_label_and_short_wide_geometry_for_all_lanes():
+def test_product_lock_emits_physical_label_and_compact_rectangular_geometry_for_all_lanes():
     for is_video in (True, False):
         lock = build_product_lock(
             MWTCB,
@@ -119,9 +121,10 @@ def test_product_lock_emits_physical_label_and_short_wide_geometry_for_all_lanes
         assert "plain cream sticker" in identity
 
         for geometry in (
-            "short, wide",
+            "compact rectangular",
+            "moderately tall",
             "low rounded shoulders",
-            "very short neck",
+            "short clear-glass neck",
             "thick clear glass base",
         ):
             assert geometry in blob
@@ -174,6 +177,8 @@ def test_passing_scale_contract_is_not_rewritten_by_label_fix():
     scale = lock["scale_lock"]
     for phrase in (
         "compact pocket-size",
+        "moderately tall glass bottle",
+        "never rewrite it as extremely squat",
         "shorter than an adult palm",
         "two fingers wide",
         "small handheld household herbal-oil bottle",
