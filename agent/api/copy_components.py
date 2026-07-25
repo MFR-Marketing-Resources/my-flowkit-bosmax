@@ -49,6 +49,10 @@ class SuggestAnglesRequest(BaseModel):
     count: int = Field(default=8, ge=1, le=copy_angle_derivation.MAX_ANGLES)
 
 
+class BulkSuggestAnglesRequest(BaseModel):
+    product_ids: list[str] = Field(default_factory=list)
+
+
 class ApproveRequest(BaseModel):
     approved_by: str = "operator"
 
@@ -126,6 +130,35 @@ async def suggest_angles(request: SuggestAnglesRequest):
 
     try:
         return await suggest_svc.suggest_product_angles(request.product_id, request.count)
+    except ai_provider.AICopyProviderNotConfigured as error:
+        raise HTTPException(status_code=409, detail={"error": error.code}) from error
+    except ai_provider.AICopyProviderError as error:
+        raise HTTPException(
+            status_code=502, detail={"error": error.code, "detail": error.detail}
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail={"error": str(error)}) from error
+
+
+@router.get("/eligible-products")
+async def eligible_products():
+    """Active products with an APPROVED snapshot that still have room for angles —
+    the roster the bulk-suggest UI runs over. Read-only, no tokens."""
+    from agent.services import copy_angle_bulk_suggestion_service as bulk_svc
+
+    return await bulk_svc.list_eligible_products()
+
+
+@router.post("/bulk-suggest")
+async def bulk_suggest(request: BulkSuggestAnglesRequest):
+    """Run the per-product AI angle suggester across a batch (paced). SPENDS one
+    small text-token call per product. Returns candidates per product for review —
+    writes NOTHING and does NOT approve. The client sends eligible ids in chunks; the
+    operator reviews then commits chosen angles via the free /add-angles path."""
+    from agent.services import copy_angle_bulk_suggestion_service as bulk_svc
+
+    try:
+        return await bulk_svc.bulk_suggest(request.product_ids)
     except ai_provider.AICopyProviderNotConfigured as error:
         raise HTTPException(status_code=409, detail={"error": error.code}) from error
     except ai_provider.AICopyProviderError as error:

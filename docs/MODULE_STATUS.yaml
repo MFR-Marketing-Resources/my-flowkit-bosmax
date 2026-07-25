@@ -725,6 +725,11 @@ domains:
       # AI angle suggestion lane (suggest=tokens; commit stays on add-angles=free)
       - agent/services/copy_angle_suggestion_service.py
       - tests/unit/test_copy_angle_suggestion_service.py
+      # Bulk angle suggestion (Phase 2): cross-product suggest + review + accept
+      - agent/services/copy_angle_bulk_suggestion_service.py
+      - tests/unit/test_copy_angle_bulk_suggestion_service.py
+      - dashboard/src/components/BulkAngleSuggestionsPanel.tsx
+      - dashboard/src/components/BulkAngleSuggestionsPanel.test.tsx
       - dashboard/src/api/copyIntelligence.ts
       - dashboard/src/pages/CopyIntelligencePage.tsx
       - dashboard/src/pages/CopyIntelligencePage.test.tsx
