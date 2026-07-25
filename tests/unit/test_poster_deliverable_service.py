@@ -324,7 +324,7 @@ async def test_save_stamps_reference_conditioned_unverified(tmp_path, monkeypatc
         result["deliverable"]["poster_deliverable_id"]
     )
     req = captured["request"]
-    assert req.product_truth_status == "REFERENCE_CONDITIONED_UNVERIFIED"
+    assert req.product_truth_status == "DETERMINISTIC_COMPOSITE_UNVERIFIED"
     assert req.product_truth_status != "PRESERVED"
     # The library description carries the honest human-review note.
     assert "human review" in req.description
