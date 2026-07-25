@@ -35,6 +35,7 @@ from agent.models.poster_render_manifest import (
     build_qa_report,
 )
 from agent.services import poster_compositor_service as compositor
+from agent.services.exact_product_compositor_service import prepare_layer
 from agent.services import poster_recipe_service
 from agent.services.poster_composition_service import (
     build_composition_constraints,
@@ -387,6 +388,7 @@ class PosterDeliverableService:
                 image_model=_norm(image_model),
                 creative_direction=({"mode": direction.mode.value, "authority_version": direction.authority_version, "representation_policy_version": direction.representation_policy_version} if direction else None),
                 composition_plan=composition_plan,
+                exact_product_layer=prepare_layer(dict(product), template_contract(_norm(recipe_id))["product_safe_region"], {"w": 1080, "h": 1920}),
             )
         except PosterTemplateError as exc:
             raise PosterDeliverableError(exc.code, str(exc), status_code=exc.status_code)

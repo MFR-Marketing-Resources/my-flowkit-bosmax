@@ -317,7 +317,7 @@ async def test_save_stamps_reference_conditioned_unverified(tmp_path, monkeypatc
     pcs = await _seed_copy_set(pid)
     monkeypatch.setattr(compositor, "compose", _fake_compose(tmp_path))
     result = await _compose(pid, pcs, tmp_path)
-    assert result["deliverable"]["composition_strategy"] == "REFERENCE_CONDITIONED"
+    assert result["deliverable"]["composition_strategy"] == "DETERMINISTIC_COMPOSITE"
     captured = {}
     _mock_asset(monkeypatch, captured)
     await PosterDeliverableService.save_to_library(

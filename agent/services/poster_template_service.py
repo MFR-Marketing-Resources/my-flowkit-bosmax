@@ -17,6 +17,7 @@ import yaml
 
 from agent.models.poster_copy_set import poster_fields_to_zone_fields
 from agent.models.poster_render_manifest import (
+    COMPOSITION_DETERMINISTIC_COMPOSITE,
     COMPONENT_CHIP,
     COMPONENT_CTA_BUTTON,
     COMPONENT_TEXT,
@@ -138,6 +139,7 @@ def build_render_manifest(
     background_prompt_fingerprint: str = "",
     creative_direction: dict[str, str] | None = None,
     composition_plan: dict[str, Any] | None = None,
+    exact_product_layer: dict[str, Any] | None = None,
 ) -> PosterRenderManifest:
     """Approved poster copy + template contract → versioned render manifest.
 
@@ -197,10 +199,12 @@ def build_render_manifest(
         background_media_id=background_media_id,
         background_local_path=background_local_path,
         product_layer=ProductLayer(
+            strategy=(COMPOSITION_DETERMINISTIC_COMPOSITE if exact_product_layer else "REFERENCE_CONDITIONED"),
             safe_region=ManifestRect(
                 x=float(safe["x"]), y=float(safe["y"]),
                 w=float(safe["w"]), h=float(safe["h"]),
             )
+            , **(exact_product_layer or {})
         ),
         zones=zones,
         font_tokens=contract["font_tokens"],

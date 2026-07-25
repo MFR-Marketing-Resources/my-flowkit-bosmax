@@ -145,7 +145,8 @@
       "cta_text_default": "Tap beg kuning sekarang",
       "on_the_fly_flags": {
         "allow_overlay": false,
-        "allow_fast_vo_override": false
+        "allow_fast_vo_override": false,
+        "exact_product_composite_required": true
       }
     }
   }

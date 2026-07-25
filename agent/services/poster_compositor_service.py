@@ -18,9 +18,11 @@ from typing import Any
 
 from agent.config import BASE_DIR, OUTPUT_DIR
 from agent.models.poster_render_manifest import (
+    COMPOSITION_DETERMINISTIC_COMPOSITE,
     PosterRenderManifest,
     PosterRenderReport,
 )
+from agent.services.exact_product_compositor_service import composite as composite_exact_product
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +144,10 @@ async def compose(
         raise PosterCompositorError("COMPOSITOR_OUTPUT_MISSING", str(out_path))
     if report is None:
         raise PosterCompositorError("COMPOSITOR_REPORT_MISSING", str(report_path))
+    if manifest.product_layer.strategy == COMPOSITION_DETERMINISTIC_COMPOSITE:
+        integrity = composite_exact_product(out_path, manifest.product_layer.model_dump())
+        manifest.product_layer.integrity = integrity
+        manifest_path.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
     return out_path, report
 
 

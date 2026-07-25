@@ -38,6 +38,7 @@ from agent.services.img_asset_lane_config import (
     validate_img_lane_inputs,
 )
 from agent.services.product_lock_builder import build_product_lock
+from agent.services.exact_product_compositor_service import exact_product_policy
 from agent.services.creative_direction_service import (
     resolve_creative_direction,
     select_creative_direction_directives,
@@ -660,6 +661,14 @@ async def compile_img_fastlane_prompt_preview(
         is_video=request.route == "FRAMES"
         or request.preset_id == "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS",
     )
+    if (
+        product
+        and request.preset_id == "MWCB_WG40_PRODUCT_ONLY_POSTER_LOCK"
+        and exact_product_policy(dict(product))
+    ):
+        product_lock_lines = [
+            "EXACT_PRODUCT_COMPOSITE_REQUIRED: Generate a clean scene-only plate. Reserve a clear product-safe region; do not render, redraw, type, stylize, or include the product. Final delivery inserts the canonical product cutout deterministically.",
+        ]
     if product_lock_lines:
         prompt_lines.extend(f"- {line}" for line in product_lock_lines if line)
     else:
