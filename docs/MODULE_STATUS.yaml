@@ -380,6 +380,7 @@ domains:
       - dashboard/src/pages/ApprovedPackagesPage.tsx
       - dashboard/src/pages/AssetRegistryPage.tsx
       - dashboard/src/pages/AvatarRegistryPage.tsx
+      - dashboard/src/pages/AvatarRegistryPage.test.tsx
       - dashboard/src/components/workspace/SearchableProductSelect.tsx
       - dashboard/src/components/workspace/SearchableProductSelect.test.tsx
       - dashboard/src/pages/CreativeLibraryPage.tsx
