@@ -694,23 +694,34 @@ def _build_canonical_cutout(source: Path) -> Image.Image:
     def is_protected(r: int, g: int, b: int) -> bool:
         if _is_red_cap_rgb(r, g, b) or is_teal(r, g, b) or is_green_liq(r, g, b):
             return True
-        # cream / ivory cartouche — warm yellow, not gray wall/floor
+        # cream / ivory cartouche — measured from MWTCB.jpg centre panel
+        # (mean ~205,197,173 → r-g≈8). Prior r-g>=12 treated cream as wall
+        # and flood+median fill mosaiced bird artwork + brand text.
         lum = 0.299 * r + 0.587 * g + 0.114 * b
         ch = max(r, g, b) - min(r, g, b)
         if (
-            lum >= 160
-            and r >= 170
-            and (r - b) >= 35
-            and (r - g) >= 12
-            and ch <= 110
+            lum >= 145
+            and r >= 150
+            and g >= 140
+            and b >= 100
+            and (r - b) >= 15
+            and (r - g) >= -5
+            and ch <= 95
         ):
             return True
-        # gold border
-        if r >= 160 and g >= 110 and b <= 120 and r > b + 35 and g > b + 20:
+        # gold / bronze ornamental border
+        if r >= 150 and g >= 100 and b <= 130 and r > b + 30 and g > b + 15:
             return True
-        # dark ink
-        if lum <= 70 and ch <= 50:
+        # dark ink / bird body (blue-grey feathers are not bg neutrals)
+        if lum <= 90 and ch <= 70:
             return True
+        # mid-tone bird plumage / branch (keep source RGB — never median-fill)
+        if 40 <= lum <= 160 and ch >= 18 and not (
+            _is_soft_bg_rgb(r, g, b) and ch < 22 and abs(r - g) < 12 and abs(g - b) < 12
+        ):
+            # saturated-ish midtones inside label (feathers, leaves, branch)
+            if max(r, g, b) - min(r, g, b) >= 20:
+                return True
         return False
 
     def is_bg_neutral(r: int, g: int, b: int) -> bool:
@@ -840,54 +851,69 @@ def _build_canonical_cutout(source: Path) -> Image.Image:
                     mpxn[x, y] = 255
             mask = _fill_mask_holes(mask)
 
-    image.putalpha(mask)
-    ipx = image.load()
+    # SOURCE-RGB LOCK: silhouette from mask; RGB from canonical photo only.
+    # Hole/median/inpaint previously rebuilt cream from teal buckets → mosaic.
+    src_rgba = Image.open(source).convert("RGBA")
+    src_px = src_rgba.load()
+    final = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    fpx = final.load()
+    mpx_final = mask.load()
     bpx = before.load()
-    mpx2 = mask.load()
 
-    cells: dict[tuple[int, int], list[tuple[int, int, int]]] = {}
-    for y in range(y0, y1 + 1):
-        for x in range(x0, x1 + 1):
-            if bpx[x, y] < 200:
+    def nearest_product_rgb(x: int, y: int) -> tuple[int, int, int]:
+        best = None
+        best_d = 10**18
+        for rad in (4, 8, 16, 32, 64, 128, 256):
+            for yy in range(max(0, y - rad), min(h, y + rad + 1), 2):
+                for xx in range(max(0, x - rad), min(w, x + rad + 1), 2):
+                    if bpx[xx, yy] < 200:
+                        continue
+                    r, g, b = px[xx, yy]
+                    if is_protected(r, g, b) or not (
+                        _is_soft_bg_rgb(r, g, b) or _is_strict_bg_rgb(r, g, b)
+                    ):
+                        d = (xx - x) * (xx - x) + (yy - y) * (yy - y)
+                        if d < best_d:
+                            best_d = d
+                            best = (r, g, b)
+            if best is not None:
+                return best
+        return (200, 200, 195)
+
+    for y in range(h):
+        for x in range(w):
+            if mpx_final[x, y] < 200:
                 continue
-            r, g, b = px[x, y]
-            if is_protected(r, g, b) or not (
-                _is_soft_bg_rgb(r, g, b) or _is_strict_bg_rgb(r, g, b)
+            # Prefer canonical RGB whenever the source pixel is product-like.
+            # Do not depend on pre-hole mask alone (cream was soft-bg and
+            # flooded, then median-filled into mosaic).
+            sr, sg, sb = src_px[x, y][:3]
+            if is_protected(sr, sg, sb) or not (
+                _is_soft_bg_rgb(sr, sg, sb) or _is_strict_bg_rgb(sr, sg, sb)
             ):
-                cells.setdefault((x // 10, y // 10), []).append((r, g, b))
+                fpx[x, y] = (sr, sg, sb, 255)
+            elif bpx[x, y] >= 200:
+                fpx[x, y] = (sr, sg, sb, 255)
+            else:
+                r, g, b = nearest_product_rgb(x, y)
+                fpx[x, y] = (r, g, b, 255)
 
-    for y in range(y0, y1 + 1):
-        for x in range(x0, x1 + 1):
-            if mpx2[x, y] < 200:
-                continue
-            r0, g0, b0, a0 = ipx[x, y]
-            was_hole = bpx[x, y] < 200
-            if not was_hole and not (
-                (_is_strict_bg_rgb(r0, g0, b0) or _is_soft_bg_rgb(r0, g0, b0))
-                and not is_protected(r0, g0, b0)
-            ):
-                continue
-            if is_protected(r0, g0, b0) and not was_hole:
-                continue
-            cx, cy = x // 10, y // 10
-            found = None
-            for rad in range(0, 14):
-                bucket: list[tuple[int, int, int]] = []
-                for dy in range(-rad, rad + 1):
-                    for dx in range(-rad, rad + 1):
-                        bucket.extend(cells.get((cx + dx, cy + dy), []))
-                if bucket:
-                    bucket.sort(
-                        key=lambda c: 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
-                    )
-                    found = bucket[len(bucket) // 2]
-                    break
-            if found:
-                ipx[x, y] = (found[0], found[1], found[2], 255)
-
-    image = _despeckle_alpha(image, min_comp=400)
+    image = _despeckle_alpha(final, min_comp=400)
+    # Edge-only wall bleed cleanup (skips non-bg interior by design)
     image = _inpaint_background_bleed(image)
-    image = _recolor_neck_band(image)
+    # Neck alpha bridge — then re-lock RGB from source for original footprint
+    image = _solidify_neck_band(image)
+    ipx2 = image.load()
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = ipx2[x, y]
+            if a < 200:
+                continue
+            sr, sg, sb = src_px[x, y][:3]
+            if is_protected(sr, sg, sb) or not (
+                _is_soft_bg_rgb(sr, sg, sb) or _is_strict_bg_rgb(sr, sg, sb)
+            ) or bpx[x, y] >= 200:
+                ipx2[x, y] = (sr, sg, sb, a)
 
     bbox = image.getbbox()
     if bbox:
@@ -916,9 +942,9 @@ def _build_canonical_cutout(source: Path) -> Image.Image:
             if aa >= 200 and _is_red_cap_rgb(r, g, b):
                 cap_px += 1
     if cap_px < 80:
-        src = Image.open(source).convert("RGB")
-        sp = src.load()
-        sw, sh = src.size
+        src_chk = Image.open(source).convert("RGB")
+        sp = src_chk.load()
+        sw, sh = src_chk.size
         src_red = sum(
             1
             for yy in range(int(sh * 0.35))
@@ -932,7 +958,6 @@ def _build_canonical_cutout(source: Path) -> Image.Image:
                 status_code=422,
             )
     return image
-
 
 
 def prepare_layer(
@@ -957,7 +982,8 @@ def prepare_layer(
     # Also mirror under OUTPUT_DIR for compositor path compatibility.
     out_cutout_dir = OUTPUT_DIR / "exact-product-cutouts"
     out_cutout_dir.mkdir(parents=True, exist_ok=True)
-    cutout = cutout_dir / f"{expected}.png"
+    # v2: cream-safe protect + hole-only fill (no label median mosaic)
+    cutout = cutout_dir / f"{expected}_cutout_v3.png"
     if not cutout.exists():
         image = _build_canonical_cutout(source)
         image.save(cutout)
