@@ -28,7 +28,7 @@ LANE_SAFE_REGIONS: dict[str, dict[str, float]] = {
 }
 
 # Fit product inside safe region (leave margin); never stretch to fill.
-SAFE_REGION_FILL = 0.88
+SAFE_REGION_FILL = 0.72
 
 SCENE_ONLY_PROMPT_LINES = (
     "EXACT_PRODUCT_COMPOSITE_REQUIRED: Generate a clean scene-only plate.",
@@ -231,6 +231,35 @@ def _is_red_cap_rgb(r: int, g: int, b: int) -> bool:
     return r >= 130 and g <= 90 and b <= 90 and r > g + 50 and r > b + 50
 
 
+def _is_product_color(r: int, g: int, b: int) -> bool:
+    """True for packaging / liquid / cap pixels (NOT wall or floor)."""
+    if _is_red_cap_rgb(r, g, b):
+        return True
+    mx, mn = max(r, g, b), min(r, g, b)
+    chroma = mx - mn
+    lum = 0.299 * r + 0.587 * g + 0.114 * b
+    # green oil liquid
+    if g >= 70 and g >= r + 12 and g >= b + 8:
+        return True
+    # teal / cyan label field
+    if g >= 70 and b >= 70 and (g + b) / 2.0 >= r + 18 and chroma >= 18:
+        return True
+    # cream / ivory cartouche (warm, high lum) — MUST not be treated as wall
+    if lum >= 145 and r >= 140 and r >= b and (r - b) >= 8 and chroma <= 95:
+        return True
+    # gold filigree / border
+    if r >= 140 and g >= 90 and b <= 120 and r > b + 25 and g > b + 10 and chroma >= 30:
+        return True
+    # dark ink / illustration
+    if lum <= 85 and chroma <= 55:
+        return True
+    # mid brown/branch illustration tones
+    if 40 <= lum <= 140 and r > g >= b and (r - b) >= 15 and chroma >= 15:
+        return True
+    return False
+
+
+
 def _keep_product_components(
     mask: Image.Image,
     *,
@@ -283,255 +312,620 @@ def _keep_product_components(
     comps.sort(key=lambda c: c["n"], reverse=True)
     body = comps[0]
     keep = list(body["pts"])
-    # Merge red-cap component(s) sitting above the body.
-    for c in comps[1:]:
-        if c["red"] >= 200 and c["ymax"] <= body["ymin"] + 30:
-            keep.extend(c["pts"])
-            # paint a short vertical bridge between cap and body
-            xs = [p[0] for p in c["pts"]]
-            cx0, cx1 = min(xs), max(xs)
-            for y in range(c["ymax"], min(h, body["ymin"] + 1)):
-                for x in range(cx0, cx1 + 1):
-                    keep.append((x, y))
+    caps = [
+        c
+        for c in comps[1:]
+        if c["red"] >= 150 and c["ymax"] <= body["ymin"] + 40
+    ]
+    for c in caps:
+        keep.extend(c["pts"])
     out = Image.new("L", (w, h), 0)
     opx = out.load()
     for x, y in keep:
         if 0 <= x < w and 0 <= y < h:
             opx[x, y] = 255
-    # close residual neck gaps
-    out = out.filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.MinFilter(3))
+    # Solid rectangular neck bridge: cap bottom → body top, full cap width.
+    if caps:
+        cap = max(caps, key=lambda c: c["red"])
+        cxs = [p[0] for p in cap["pts"]]
+        bxs = [p[0] for p in body["pts"] if body["ymin"] <= p[1] <= body["ymin"] + 40]
+        if not bxs:
+            bxs = [p[0] for p in body["pts"]]
+        cx0 = max(0, min(min(cxs), min(bxs)) - 2)
+        cx1 = min(w - 1, max(max(cxs), max(bxs)) + 2)
+        # slightly taper bridge toward body center
+        mid = (cx0 + cx1) // 2
+        half0 = (cx1 - cx0) // 2
+        y_start = cap["ymax"]
+        y_end = min(h - 1, body["ymin"] + 8)
+        span = max(1, y_end - y_start)
+        for yi, y in enumerate(range(y_start, y_end + 1)):
+            t = yi / span
+            half = int(half0 * (1.0 - 0.15 * t))
+            for x in range(max(0, mid - half), min(w, mid + half + 1)):
+                opx[x, y] = 255
+    # close residual neck gaps / thin glass
+    out = out.filter(ImageFilter.MaxFilter(7)).filter(ImageFilter.MinFilter(3))
+    out = out.filter(ImageFilter.MaxFilter(3))
     return out
 
 
-def _build_canonical_cutout(source: Path) -> Image.Image:
-    """Isolate product while preserving RGB and the red cap.
 
-    Strategy (fail-closed, deterministic, no ML):
-    1. Strict border flood removes pure wall/floor only (not clear glass).
-    2. Grow product from image center through non-soft-bg + red-cap pixels.
-    3. Reattach any nearby red-cap blob above the body.
-    4. Largest-component cleanup, light edge soften; interior RGB untouched.
+
+def _inpaint_background_bleed(image: Image.Image) -> Image.Image:
+    """Replace wall-bleed only near the silhouette edge (not interior label).
+
+    Cream cartouche / gold ornaments are high-luminance low-chroma and must NOT
+    be treated as background. Only edge-adjacent bg-looking pixels are fixed.
+    """
+    img = image.convert("RGBA")
+    w, h = img.size
+    px = img.load()
+    alpha = img.getchannel("A")
+    # edge = product pixels with a transparent neighbor
+    edge = Image.new("L", (w, h), 0)
+    epx = edge.load()
+    apx = alpha.load()
+    for y in range(h):
+        for x in range(w):
+            if apx[x, y] < 200:
+                continue
+            border = False
+            for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                if nx < 0 or ny < 0 or nx >= w or ny >= h or apx[nx, ny] < 128:
+                    border = True
+                    break
+            if border:
+                epx[x, y] = 255
+    # dilate edge band ~6px
+    edge = edge.filter(ImageFilter.MaxFilter(7))
+    epx = edge.load()
+    # solid samples: non-bg product interior
+    cells: dict[tuple[int, int], list[tuple[int, int, int]]] = {}
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            if a < 200:
+                continue
+            if _is_red_cap_rgb(r, g, b):
+                cells.setdefault((x // 12, y // 12), []).append((r, g, b))
+                continue
+            if _is_soft_bg_rgb(r, g, b) or _is_strict_bg_rgb(r, g, b):
+                continue
+            cells.setdefault((x // 12, y // 12), []).append((r, g, b))
+    for y in range(h):
+        for x in range(w):
+            if epx[x, y] < 200:
+                continue
+            r, g, b, a = px[x, y]
+            if a < 200:
+                continue
+            if _is_red_cap_rgb(r, g, b):
+                continue
+            if not (_is_soft_bg_rgb(r, g, b) or _is_strict_bg_rgb(r, g, b)):
+                continue
+            cx, cy = x // 12, y // 12
+            found = None
+            for rad in range(0, 10):
+                bucket: list[tuple[int, int, int]] = []
+                for dy in range(-rad, rad + 1):
+                    for dx in range(-rad, rad + 1):
+                        bucket.extend(cells.get((cx + dx, cy + dy), []))
+                if bucket:
+                    bucket.sort(
+                        key=lambda c: 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
+                    )
+                    found = bucket[len(bucket) // 2]
+                    break
+            if found:
+                px[x, y] = (found[0], found[1], found[2], a)
+    return img
+
+
+
+
+def _despeckle_alpha(image: Image.Image, min_comp: int = 120) -> Image.Image:
+    """Drop tiny opaque islands outside the main product silhouette."""
+    img = image.convert("RGBA")
+    w, h = img.size
+    px = img.load()
+    visited = bytearray(w * h)
+    comps: list[list[tuple[int, int]]] = []
+    for y0 in range(h):
+        for x0 in range(w):
+            i0 = y0 * w + x0
+            if visited[i0] or px[x0, y0][3] < 200:
+                continue
+            q: deque[tuple[int, int]] = deque([(x0, y0)])
+            visited[i0] = 1
+            pts: list[tuple[int, int]] = []
+            while q:
+                x, y = q.popleft()
+                pts.append((x, y))
+                for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                    if nx < 0 or ny < 0 or nx >= w or ny >= h:
+                        continue
+                    i = ny * w + nx
+                    if visited[i] or px[nx, ny][3] < 200:
+                        continue
+                    visited[i] = 1
+                    q.append((nx, ny))
+            comps.append(pts)
+    if not comps:
+        return img
+    comps.sort(key=len, reverse=True)
+    keep = set(comps[0])
+    # keep any secondary component with enough red (cap fragment)
+    for pts in comps[1:]:
+        if len(pts) < min_comp:
+            continue
+        red = 0
+        for x, y in pts:
+            r, g, b, a = px[x, y]
+            if _is_red_cap_rgb(r, g, b):
+                red += 1
+        if red >= 80:
+            keep.update(pts)
+    for pts in comps:
+        if pts and pts[0] in keep or (pts and any(p in keep for p in pts[:1])):
+            # already kept via set membership of points — handle properly:
+            pass
+    # rebuild keep properly
+    keep = set(comps[0])
+    for pts in comps[1:]:
+        red = sum(1 for x, y in pts if _is_red_cap_rgb(*px[x, y][:3]))
+        if red >= 80 or len(pts) >= max(min_comp, int(0.05 * len(comps[0]))):
+            # only if vertically near main body
+            ys = [p[1] for p in pts]
+            bys = [p[1] for p in comps[0]]
+            if min(ys) <= max(bys) and max(ys) >= min(bys) - 40:
+                keep.update(pts)
+            elif red >= 80:
+                keep.update(pts)
+    for y in range(h):
+        for x in range(w):
+            if (x, y) not in keep and px[x, y][3] >= 200:
+                r, g, b, a = px[x, y]
+                px[x, y] = (r, g, b, 0)
+    return img
+
+
+def _solidify_neck_band(image: Image.Image) -> Image.Image:
+    """Fill residual neck holes between red cap and label; edge-inpaint white glass."""
+    img = image.convert("RGBA")
+    w, h = img.size
+    px = img.load()
+    # locate red cap band
+    cap_ys: list[int] = []
+    cap_xs: list[int] = []
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            if a >= 200 and _is_red_cap_rgb(r, g, b):
+                cap_ys.append(y)
+                cap_xs.append(x)
+    if len(cap_ys) < 80:
+        return img
+    cap_ymin, cap_ymax = min(cap_ys), max(cap_ys)
+    cap_xmin, cap_xmax = min(cap_xs), max(cap_xs)
+    # neck band: just below cap to ~18% of height
+    y0 = cap_ymax
+    y1 = min(h - 1, cap_ymax + max(24, int(h * 0.14)))
+    x0 = max(0, cap_xmin - 4)
+    x1 = min(w - 1, cap_xmax + 4)
+    # sample glass/label color below neck
+    samples: list[tuple[int, int, int]] = []
+    for y in range(min(h - 1, y1 + 4), min(h, y1 + 40)):
+        for x in range(x0, x1 + 1):
+            r, g, b, a = px[x, y]
+            if a < 200:
+                continue
+            if _is_red_cap_rgb(r, g, b):
+                continue
+            if _is_soft_bg_rgb(r, g, b) or _is_strict_bg_rgb(r, g, b):
+                continue
+            samples.append((r, g, b))
+    if not samples:
+        samples = [(40, 90, 70)]
+    samples.sort(key=lambda c: 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2])
+    fill = samples[len(samples) // 2]
+    mid = (x0 + x1) // 2
+    half = max(4, (x1 - x0) // 2)
+    for y in range(y0, y1 + 1):
+        # slight taper
+        t = (y - y0) / max(1, y1 - y0)
+        hh = int(half * (1.0 - 0.1 * t))
+        for x in range(max(0, mid - hh), min(w, mid + hh + 1)):
+            r, g, b, a = px[x, y]
+            if a < 200:
+                px[x, y] = (fill[0], fill[1], fill[2], 255)
+            elif _is_soft_bg_rgb(r, g, b) or _is_strict_bg_rgb(r, g, b):
+                # wall showing through glass → replace with glass-ish fill
+                px[x, y] = (fill[0], fill[1], fill[2], 255)
+    return img
+
+
+def _fill_mask_holes(mask: Image.Image) -> Image.Image:
+    """Fill interior holes (clear glass / label windows) so product is solid."""
+    w, h = mask.size
+    mpx = mask.load()
+    # exterior = background connected to image border
+    exterior = bytearray(w * h)
+    q: deque[tuple[int, int]] = deque()
+    def seed(x: int, y: int) -> None:
+        i = y * w + x
+        if exterior[i] or mpx[x, y] >= 200:
+            return
+        exterior[i] = 1
+        q.append((x, y))
+    for x in range(w):
+        seed(x, 0)
+        seed(x, h - 1)
+    for y in range(h):
+        seed(0, y)
+        seed(w - 1, y)
+    while q:
+        x, y = q.popleft()
+        for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if nx < 0 or ny < 0 or nx >= w or ny >= h:
+                continue
+            i = ny * w + nx
+            if exterior[i] or mpx[nx, ny] >= 200:
+                continue
+            exterior[i] = 1
+            q.append((nx, ny))
+    out = mask.copy()
+    opx = out.load()
+    for y in range(h):
+        for x in range(w):
+            if not exterior[y * w + x] and opx[x, y] < 200:
+                opx[x, y] = 255
+    return out
+
+
+
+def _recolor_neck_band(image: Image.Image) -> Image.Image:
+    """Replace wall-like forced-neck pixels with vertical blend cap→shoulder."""
+    img = image.convert("RGBA")
+    w, h = img.size
+    px = img.load()
+    y_lim = max(20, int(h * 0.32))
+    cap_ys: list[int] = []
+    for y in range(y_lim):
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            if a >= 200 and _is_red_cap_rgb(r, g, b):
+                cap_ys.append(y)
+    if len(cap_ys) < 40:
+        return img
+    cap_ymax = max(cap_ys)
+    body_y = None
+    for y in range(cap_ymax + 1, min(h, cap_ymax + int(h * 0.4))):
+        n = 0
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            if a < 200 or _is_red_cap_rgb(r, g, b):
+                continue
+            if not (_is_soft_bg_rgb(r, g, b) or _is_strict_bg_rgb(r, g, b)):
+                n += 1
+        if n >= 12:
+            body_y = y
+            break
+    if body_y is None or body_y <= cap_ymax + 2:
+        return img
+    cap_cols: list[tuple[int, int, int]] = []
+    body_cols: list[tuple[int, int, int]] = []
+    for x in range(w):
+        r, g, b, a = px[x, cap_ymax]
+        if a >= 200:
+            cap_cols.append((r, g, b))
+        r, g, b, a = px[x, body_y]
+        if a >= 200 and not _is_red_cap_rgb(r, g, b):
+            body_cols.append((r, g, b))
+    if not cap_cols or not body_cols:
+        return img
+    cap_cols.sort(key=lambda c: c[0] + c[1] + c[2])
+    body_cols.sort(key=lambda c: c[0] + c[1] + c[2])
+    ccol = cap_cols[len(cap_cols) // 2]
+    bcol = body_cols[len(body_cols) // 2]
+    for y in range(cap_ymax, body_y + 1):
+        tt = (y - cap_ymax) / max(1, body_y - cap_ymax)
+        fr = int(ccol[0] * (1 - tt) + bcol[0] * tt)
+        fg = int(ccol[1] * (1 - tt) + bcol[1] * tt)
+        fb = int(ccol[2] * (1 - tt) + bcol[2] * tt)
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            if a < 200 or _is_red_cap_rgb(r, g, b):
+                continue
+            lum = 0.299 * r + 0.587 * g + 0.114 * b
+            ch = max(r, g, b) - min(r, g, b)
+            if _is_soft_bg_rgb(r, g, b) or _is_strict_bg_rgb(r, g, b) or (ch < 28 and lum > 145):
+                px[x, y] = (fr, fg, fb, 255)
+    return img
+
+
+def _build_canonical_cutout(source: Path) -> Image.Image:
+    """Isolate product: ROI from red-cap + teal-label anchors, then BG flood.
+
+    Cream cartouche stays as source RGB (never classified as wall).
+    Clear glass holes filled; edge freckles removed.
     """
     image = Image.open(source).convert("RGBA")
     w, h = image.size
     rgb = image.convert("RGB")
     px = rgb.load()
 
-    # --- 1) strict border flood → definite background ---
-    visited = bytearray(w * h)
-    strict_bg = bytearray(w * h)
+    def is_teal(r: int, g: int, b: int) -> bool:
+        return g >= 70 and b >= 70 and (g + b) / 2.0 >= r + 18 and (max(r, g, b) - min(r, g, b)) >= 18
+
+    def is_green_liq(r: int, g: int, b: int) -> bool:
+        # saturated green oil — require strong G dominance
+        return g >= 90 and g >= r + 25 and g >= b + 20 and g - min(r, b) >= 25
+
+    anchors: list[tuple[int, int]] = []
+    for y in range(h):
+        for x in range(w):
+            r, g, b = px[x, y]
+            if _is_red_cap_rgb(r, g, b) or is_teal(r, g, b) or is_green_liq(r, g, b):
+                anchors.append((x, y))
+    if len(anchors) < 500:
+        raise ExactProductCompositeError(
+            "CANONICAL_CUTOUT_EMPTY",
+            "Too few product anchor pixels in canonical source.",
+            status_code=422,
+        )
+    xs = [p[0] for p in anchors]
+    ys = [p[1] for p in anchors]
+    # ROI padded around anchors — bottle only
+    pad_x, pad_y = 18, 22
+    x0 = max(0, min(xs) - pad_x)
+    x1 = min(w - 1, max(xs) + pad_x)
+    y0 = max(0, min(ys) - pad_y)
+    y1 = min(h - 1, max(ys) + pad_y)
+
+    # Within ROI: flood background from ROI border through soft/strict neutrals,
+    # never through red/teal/green/cream-gold product colors.
+    roi_w = x1 - x0 + 1
+    roi_h = y1 - y0 + 1
+    visited = bytearray(roi_w * roi_h)
+    bg = bytearray(roi_w * roi_h)
     q: deque[tuple[int, int]] = deque()
 
-    def seed_strict(x: int, y: int) -> None:
-        i = y * w + x
+    def is_protected(r: int, g: int, b: int) -> bool:
+        if _is_red_cap_rgb(r, g, b) or is_teal(r, g, b) or is_green_liq(r, g, b):
+            return True
+        # cream / ivory cartouche — warm yellow, not gray wall/floor
+        lum = 0.299 * r + 0.587 * g + 0.114 * b
+        ch = max(r, g, b) - min(r, g, b)
+        if (
+            lum >= 160
+            and r >= 170
+            and (r - b) >= 35
+            and (r - g) >= 12
+            and ch <= 110
+        ):
+            return True
+        # gold border
+        if r >= 160 and g >= 110 and b <= 120 and r > b + 35 and g > b + 20:
+            return True
+        # dark ink
+        if lum <= 70 and ch <= 50:
+            return True
+        return False
+
+    def is_bg_neutral(r: int, g: int, b: int) -> bool:
+        if is_protected(r, g, b):
+            return False
+        return _is_soft_bg_rgb(r, g, b) or _is_strict_bg_rgb(r, g, b)
+
+    def seed(rx: int, ry: int) -> None:
+        i = ry * roi_w + rx
         if visited[i]:
             return
-        r, g, b = px[x, y]
-        if _is_strict_bg_rgb(r, g, b):
+        r, g, b = px[x0 + rx, y0 + ry]
+        if is_bg_neutral(r, g, b):
             visited[i] = 1
-            q.append((x, y))
+            q.append((rx, ry))
 
-    for x in range(w):
-        seed_strict(x, 0)
-        seed_strict(x, h - 1)
-    for y in range(h):
-        seed_strict(0, y)
-        seed_strict(w - 1, y)
+    for rx in range(roi_w):
+        seed(rx, 0)
+        seed(rx, roi_h - 1)
+    for ry in range(roi_h):
+        seed(0, ry)
+        seed(roi_w - 1, ry)
     while q:
-        x, y = q.popleft()
-        strict_bg[y * w + x] = 1
-        for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
-            if nx < 0 or ny < 0 or nx >= w or ny >= h:
+        rx, ry = q.popleft()
+        bg[ry * roi_w + rx] = 1
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nx, ny = rx + dx, ry + dy
+            if nx < 0 or ny < 0 or nx >= roi_w or ny >= roi_h:
                 continue
-            i = ny * w + nx
+            i = ny * roi_w + nx
             if visited[i]:
                 continue
-            r, g, b = px[nx, ny]
-            if _is_strict_bg_rgb(r, g, b):
+            r, g, b = px[x0 + nx, y0 + ny]
+            if is_bg_neutral(r, g, b):
                 visited[i] = 1
                 q.append((nx, ny))
 
-    # --- 2) product grow from center ---
-    product = bytearray(w * h)
-    pq: deque[tuple[int, int]] = deque()
-    cx0, cx1 = int(w * 0.30), int(w * 0.70)
-    cy0, cy1 = int(h * 0.20), int(h * 0.80)
-    for y in range(cy0, cy1):
-        for x in range(cx0, cx1):
-            i = y * w + x
-            if strict_bg[i]:
-                continue
-            r, g, b = px[x, y]
-            if _is_soft_bg_rgb(r, g, b) and not _is_red_cap_rgb(r, g, b):
-                continue
-            product[i] = 1
-            pq.append((x, y))
+    mask = Image.new("L", (w, h), 0)
+    mpx = mask.load()
+    for ry in range(roi_h):
+        for rx in range(roi_w):
+            if not bg[ry * roi_w + rx]:
+                mpx[x0 + rx, y0 + ry] = 255
+    # force anchors
+    for x, y in anchors:
+        mpx[x, y] = 255
 
-    while pq:
-        x, y = pq.popleft()
-        for nx, ny in (
-            (x + 1, y),
-            (x - 1, y),
-            (x, y + 1),
-            (x, y - 1),
-            (x + 1, y + 1),
-            (x - 1, y - 1),
-            (x + 1, y - 1),
-            (x - 1, y + 1),
-        ):
-            if nx < 0 or ny < 0 or nx >= w or ny >= h:
-                continue
-            i = ny * w + nx
-            if product[i] or strict_bg[i]:
-                continue
-            r, g, b = px[nx, ny]
-            if _is_red_cap_rgb(r, g, b):
-                product[i] = 1
-                pq.append((nx, ny))
-                continue
-            if _is_soft_bg_rgb(r, g, b):
-                continue
-            product[i] = 1
-            pq.append((nx, ny))
-
-    # Force-include every true-red pixel (cap) then bridge neck vertically.
+    mask = _keep_product_components(mask, rgb=rgb)
+    # Constrain to dilated high-confidence core (cap/teal/liquid) to drop wall chunks
+    hc = Image.new("L", (w, h), 0)
+    hpx = hc.load()
     for y in range(h):
-        row = y * w
         for x in range(w):
-            i = row + x
-            if product[i] or strict_bg[i]:
+            r, g, b = px[x, y]
+            if _is_red_cap_rgb(r, g, b) or is_teal(r, g, b) or is_green_liq(r, g, b):
+                hpx[x, y] = 255
+    for _ in range(12):
+        hc = hc.filter(ImageFilter.MaxFilter(5))
+    hpx = hc.load()
+    mpx = mask.load()
+    for y in range(h):
+        for x in range(w):
+            if mpx[x, y] >= 200 and hpx[x, y] < 128:
+                mpx[x, y] = 0
+    before = mask.copy()
+    mask = _fill_mask_holes(mask)
+    # light open/close only — stronger open severs thin neck under red cap
+    mask = mask.filter(ImageFilter.MinFilter(3)).filter(ImageFilter.MaxFilter(3))
+    mask = _fill_mask_holes(mask)
+
+    # FORCE solid neck column between red-cap band and body (clear glass is bg-like)
+    mpxn = mask.load()
+    cap_pts: list[tuple[int, int]] = []
+    # Only true plastic cap: red pixels in the TOP of the frame (not label ink)
+    y_cap_limit = max(20, int(h * 0.28))
+    for y in range(0, y_cap_limit):
+        for x in range(w):
+            if mpxn[x, y] < 200:
                 continue
             r, g, b = px[x, y]
             if _is_red_cap_rgb(r, g, b):
-                product[i] = 1
-    # Vertical bridge from red clusters downward into product body (neck glass).
-    red_cols: dict[int, list[int]] = {}
-    for y in range(h):
-        for x in range(w):
-            if product[y * w + x] and _is_red_cap_rgb(*px[x, y]):
-                red_cols.setdefault(x, []).append(y)
-    for x, ys in red_cols.items():
-        y_bottom = max(ys)
-        # paint a thin column down up to 80px to reconnect neck
-        for y in range(y_bottom, min(h, y_bottom + 80)):
-            for xx in (x - 2, x - 1, x, x + 1, x + 2):
-                if 0 <= xx < w and not strict_bg[y * w + xx]:
-                    # only bridge non-strict-bg (glass/label) pixels
-                    r, g, b = px[xx, y]
-                    if not _is_strict_bg_rgb(r, g, b):
-                        product[y * w + xx] = 1
-
-    # --- 3) reattach red-cap components near top of product ---
-    # find product bbox
-    min_x, min_y, max_x, max_y = w, h, 0, 0
-    any_p = False
-    for y in range(h):
-        row = y * w
-        for x in range(w):
-            if product[row + x]:
-                any_p = True
-                if x < min_x:
-                    min_x = x
-                if x > max_x:
-                    max_x = x
-                if y < min_y:
-                    min_y = y
-                if y > max_y:
-                    max_y = y
-    if any_p:
-        cap_y0 = max(0, min_y - int(h * 0.12))
-        cap_y1 = min(h, min_y + int(h * 0.08))
-        cap_x0 = max(0, min_x - 8)
-        cap_x1 = min(w, max_x + 8)
-        for y in range(cap_y0, cap_y1):
-            for x in range(cap_x0, cap_x1):
-                i = y * w + x
-                if product[i] or strict_bg[i]:
+                cap_pts.append((x, y))
+    if cap_pts:
+        cap_ymax = max(y for _, y in cap_pts)
+        cap_xmin = min(x for x, _ in cap_pts)
+        cap_xmax = max(x for x, _ in cap_pts)
+        # Find MAIN body (teal/green liquid), not sparse neck fragments
+        body_y = None
+        body_top_xs = []
+        search_to = min(h, cap_ymax + int(h * 0.45))
+        for y in range(cap_ymax + 1, search_to):
+            row_xs = []
+            strong = 0
+            for x in range(w):
+                if mpxn[x, y] < 200:
                     continue
                 r, g, b = px[x, y]
                 if _is_red_cap_rgb(r, g, b):
-                    # flood red blob into product
-                    rq: deque[tuple[int, int]] = deque([(x, y)])
-                    product[i] = 1
-                    while rq:
-                        cx, cy = rq.popleft()
-                        for nx, ny in (
-                            (cx + 1, cy),
-                            (cx - 1, cy),
-                            (cx, cy + 1),
-                            (cx, cy - 1),
-                        ):
-                            if nx < 0 or ny < 0 or nx >= w or ny >= h:
-                                continue
-                            j = ny * w + nx
-                            if product[j]:
-                                continue
-                            rr, gg, bb = px[nx, ny]
-                            if _is_red_cap_rgb(rr, gg, bb) or (
-                                rr > 100 and gg < 90 and bb < 90
-                            ):
-                                product[j] = 1
-                                rq.append((nx, ny))
+                    continue
+                row_xs.append(x)
+                if is_teal(r, g, b) or is_green_liq(r, g, b):
+                    strong += 1
+            if strong >= 10 and len(row_xs) >= 12:
+                body_y = y
+                body_top_xs = row_xs
+                break
+        if body_y is None:
+            # fallback: widest non-red opaque row in search window
+            best = (0, None, [])
+            for y in range(cap_ymax + 8, search_to):
+                row_xs = [x for x in range(w) if mpxn[x, y] >= 200 and not _is_red_cap_rgb(*px[x, y])]
+                if len(row_xs) > best[0]:
+                    best = (len(row_xs), y, row_xs)
+            if best[1] is not None and best[0] >= 12:
+                body_y, body_top_xs = best[1], best[2]
+        if body_y is not None and body_y > cap_ymax + 1:
+            bx0, bx1 = min(body_top_xs), max(body_top_xs)
+            x_left = min(cap_xmin, bx0)
+            x_right = max(cap_xmax, bx1)
+            mid = (x_left + x_right) // 2
+            half = max(10, (x_right - x_left) // 2)
+            # solid paint + sample glass fill color from body
+            for y in range(cap_ymax, body_y + 1):
+                tt = (y - cap_ymax) / max(1, body_y - cap_ymax)
+                hh = int(half * (0.75 + 0.25 * tt))
+                for x in range(max(0, mid - hh), min(w, mid + hh + 1)):
+                    mpxn[x, y] = 255
+            mask = _fill_mask_holes(mask)
 
-    mask = Image.new("L", (w, h), 0)
-    mpx = mask.load()
-    for y in range(h):
-        row = y * w
-        for x in range(w):
-            if product[row + x]:
-                mpx[x, y] = 255
-    mask = mask.filter(ImageFilter.MaxFilter(3))  # bridge thin neck
-    mask = _keep_product_components(mask, rgb=rgb)
-    # light edge soften; solid interior stays fully opaque
-    soft = mask.filter(ImageFilter.GaussianBlur(radius=0.5))
+    image.putalpha(mask)
+    ipx = image.load()
+    bpx = before.load()
     mpx2 = mask.load()
-    spx = soft.load()
-    for y in range(h):
-        for x in range(w):
-            if mpx2[x, y] >= 250:
-                spx[x, y] = 255
-    image.putalpha(soft)
+
+    cells: dict[tuple[int, int], list[tuple[int, int, int]]] = {}
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            if bpx[x, y] < 200:
+                continue
+            r, g, b = px[x, y]
+            if is_protected(r, g, b) or not (
+                _is_soft_bg_rgb(r, g, b) or _is_strict_bg_rgb(r, g, b)
+            ):
+                cells.setdefault((x // 10, y // 10), []).append((r, g, b))
+
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            if mpx2[x, y] < 200:
+                continue
+            r0, g0, b0, a0 = ipx[x, y]
+            was_hole = bpx[x, y] < 200
+            if not was_hole and not (
+                (_is_strict_bg_rgb(r0, g0, b0) or _is_soft_bg_rgb(r0, g0, b0))
+                and not is_protected(r0, g0, b0)
+            ):
+                continue
+            if is_protected(r0, g0, b0) and not was_hole:
+                continue
+            cx, cy = x // 10, y // 10
+            found = None
+            for rad in range(0, 14):
+                bucket: list[tuple[int, int, int]] = []
+                for dy in range(-rad, rad + 1):
+                    for dx in range(-rad, rad + 1):
+                        bucket.extend(cells.get((cx + dx, cy + dy), []))
+                if bucket:
+                    bucket.sort(
+                        key=lambda c: 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
+                    )
+                    found = bucket[len(bucket) // 2]
+                    break
+            if found:
+                ipx[x, y] = (found[0], found[1], found[2], 255)
+
+    image = _despeckle_alpha(image, min_comp=400)
+    image = _inpaint_background_bleed(image)
+    image = _recolor_neck_band(image)
+
     bbox = image.getbbox()
     if bbox:
-        pad = 4
-        x0, y0, x1, y1 = bbox
+        pad = 2
+        bx0, by0, bx1, by1 = bbox
         image = image.crop(
             (
-                max(0, x0 - pad),
-                max(0, y0 - pad),
-                min(w, x1 + pad),
-                min(h, y1 + pad),
+                max(0, bx0 - pad),
+                max(0, by0 - pad),
+                min(w, bx1 + pad),
+                min(h, by1 + pad),
             )
         )
-    a = image.getchannel("A")
-    opaque = sum(a.histogram()[200:])
+    opaque = sum(image.getchannel("A").histogram()[200:])
     if opaque < 500:
         raise ExactProductCompositeError(
             "CANONICAL_CUTOUT_EMPTY",
             "Cutout produced too few opaque product pixels.",
             status_code=422,
         )
-    # Cap presence check for bottle products (soft warn via fail if zero red)
     cap_px = 0
     cpx = image.load()
-    for y in range(min(image.height, max(1, int(image.height * 0.25)))):
+    for y in range(min(image.height, max(1, int(image.height * 0.35)))):
         for x in range(image.width):
             r, g, b, aa = cpx[x, y]
             if aa >= 200 and _is_red_cap_rgb(r, g, b):
                 cap_px += 1
     if cap_px < 80:
-        # still allow synthetic white-bg unit bottles without red caps
-        # only enforce when source itself has abundant red near top
         src = Image.open(source).convert("RGB")
         sp = src.load()
         sw, sh = src.size
-        src_red = 0
-        for y in range(int(sh * 0.25)):
-            for x in range(sw):
-                r, g, b = sp[x, y]
-                if _is_red_cap_rgb(r, g, b):
-                    src_red += 1
-        if src_red >= 200 and cap_px < 80:
+        src_red = sum(
+            1
+            for yy in range(int(sh * 0.35))
+            for xx in range(sw)
+            if _is_red_cap_rgb(*sp[xx, yy])
+        )
+        if src_red >= 200:
             raise ExactProductCompositeError(
                 "CANONICAL_CUTOUT_CAP_MISSING",
                 "Cutout lost red cap — refusing to emit incomplete product layer.",
