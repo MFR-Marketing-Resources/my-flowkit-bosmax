@@ -191,3 +191,150 @@ def test_invariant_generation_services_do_not_reference_creative_setup():
         text = (repo_root / rel).read_text(encoding="utf-8")
         assert "creative_setup_service" not in text
         assert "creative_product_selection" not in text
+
+
+@pytest.mark.asyncio
+async def test_resolve_setup_review_required_blank_and_unknown_category():
+    blank = await _mk_product(category="")
+    unknown = await _mk_product(category="Totally Unknown Category XYZ")
+    for product in (blank, unknown):
+        r = await svc.resolve_creative_setup(product["id"])
+        assert r["review_required"] is True
+        assert r["cluster"] is None
+        assert r["recommended_avatars"] == []
+        assert r["recommended_scene_templates"] == []
+        assert r["camera_block_recommendations"] == []
+        assert r["camera_library"]["named_presets"] == []
+
+
+@pytest.mark.asyncio
+async def test_save_selection_fail_closed_on_review_required_category():
+    product = await _mk_product(category="")
+    avatar, _, _ = _valid_ids()
+    with pytest.raises(ValueError, match="PRODUCT_CATEGORY_REVIEW_REQUIRED"):
+        await svc.save_creative_selection(product["id"], selected_avatar_code=avatar)
+    assert await _selection_rows_for(product["id"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_avatar_patch_preserves_scene_camera_block_notes_and_resets_status():
+    product = await _mk_product()
+    avatar_a, scene, camera = _valid_ids()
+    pool = avatar_registry.list_pool()
+    avatar_b = next(
+        a["avatar_code"] for a in pool if a["avatar_code"] != avatar_a
+    )
+
+    await svc.save_creative_selection(
+        product["id"],
+        selected_avatar_code=avatar_a,
+        selected_scene_template_id=scene,
+        selected_camera_preset_code=camera,
+        selected_block_purpose="HOOK",
+        selected_content_type="UGC",
+        notes="keep-me-note",
+    )
+    await svc.review_creative_selection(product["id"], "APPROVE", "ship it")
+
+    patched = await svc.update_creative_selection_avatar(
+        product["id"],
+        selected_avatar_code=avatar_b,
+        notes_append="avatar-patch-append",
+    )
+    assert patched["status"] == "DRAFT"
+    assert patched["selected_avatar_code"] == avatar_b
+    assert patched["selected_scene_template_id"] == scene
+    assert patched["selected_camera_preset_code"] == camera
+    assert patched["selected_block_purpose"] == "HOOK"
+    assert patched["selected_content_type"] == "UGC"
+    assert "keep-me-note" in (patched.get("notes") or "")
+    assert "avatar-patch-append" in (patched.get("notes") or "")
+    assert patched["preview"]["avatar"]["avatar_code"] == avatar_b
+    assert patched["preview"]["scene_template"]["template_id"] == scene
+    assert patched["preview"]["camera_preset"]["preset_code"] == camera
+    assert patched["preview"]["not_for_generation"] is True
+    assert patched["provenance"]["source"] == svc.AVATAR_PATCH_SOURCE
+    assert patched["provenance"]["update_kind"] == "AVATAR_ONLY"
+    assert patched["provenance"]["previous_avatar_code"] == avatar_a
+
+
+@pytest.mark.asyncio
+async def test_avatar_patch_rejected_also_returns_to_draft():
+    product = await _mk_product()
+    avatar_a, scene, camera = _valid_ids()
+    pool = avatar_registry.list_pool()
+    avatar_b = next(a["avatar_code"] for a in pool if a["avatar_code"] != avatar_a)
+    await svc.save_creative_selection(
+        product["id"],
+        selected_avatar_code=avatar_a,
+        selected_scene_template_id=scene,
+        selected_camera_preset_code=camera,
+    )
+    await svc.review_creative_selection(product["id"], "REJECT", "nope")
+    patched = await svc.update_creative_selection_avatar(
+        product["id"], selected_avatar_code=avatar_b
+    )
+    assert patched["status"] == "DRAFT"
+    assert patched["selected_scene_template_id"] == scene
+    assert patched["selected_camera_preset_code"] == camera
+
+
+@pytest.mark.asyncio
+async def test_avatar_patch_invalid_avatar_no_mutation():
+    product = await _mk_product()
+    avatar, scene, camera = _valid_ids()
+    await svc.save_creative_selection(
+        product["id"],
+        selected_avatar_code=avatar,
+        selected_scene_template_id=scene,
+        selected_camera_preset_code=camera,
+        notes="stable",
+    )
+    before = await crud.get_creative_product_selection(product["id"])
+    with pytest.raises(ValueError, match="INVALID_AVATAR_CODE"):
+        await svc.update_creative_selection_avatar(
+            product["id"], selected_avatar_code="NOPE_XX"
+        )
+    after = await crud.get_creative_product_selection(product["id"])
+    assert after == before
+
+
+@pytest.mark.asyncio
+async def test_avatar_patch_does_not_mutate_product_or_generation_tables():
+    product = await _mk_product()
+    avatar_a, scene, camera = _valid_ids()
+    avatar_b = next(
+        a["avatar_code"]
+        for a in avatar_registry.list_pool()
+        if a["avatar_code"] != avatar_a
+    )
+    await svc.save_creative_selection(
+        product["id"],
+        selected_avatar_code=avatar_a,
+        selected_scene_template_id=scene,
+        selected_camera_preset_code=camera,
+    )
+    before_product = await crud.get_product(product["id"])
+    prod_n = await _count("product")
+    art_n = await _count("generated_artifact")
+    copy_n = await _count("copy_set")
+
+    await svc.update_creative_selection_avatar(
+        product["id"], selected_avatar_code=avatar_b
+    )
+
+    assert await crud.get_product(product["id"]) == before_product
+    assert await _count("product") == prod_n
+    assert await _count("generated_artifact") == art_n
+    assert await _count("copy_set") == copy_n
+
+
+@pytest.mark.asyncio
+async def test_avatar_patch_review_required_product_no_write():
+    product = await _mk_product(category="")
+    avatar, _, _ = _valid_ids()
+    with pytest.raises(ValueError, match="PRODUCT_CATEGORY_REVIEW_REQUIRED"):
+        await svc.update_creative_selection_avatar(
+            product["id"], selected_avatar_code=avatar
+        )
+    assert await _selection_rows_for(product["id"]) == 0

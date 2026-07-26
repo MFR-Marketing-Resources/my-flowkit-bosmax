@@ -125,11 +125,25 @@ async def recommend_scene_prompts_for_category(
     """
     resolved = _avatar.resolve_cluster(category)
     cluster = resolved["cluster"]
+    if cluster is None:
+        # Fail-closed: no scene plan for a review-required (un-categorised /
+        # unresolved) product.
+        return {
+            "category": category,
+            "cluster": None,
+            "cluster_source": resolved["cluster_source"],
+            "review_required": True,
+            "template_count": 0,
+            "templates": [],
+            "global_config": global_config(),
+            "cluster_has_templates": False,
+        }
     templates = templates_for_cluster(cluster, limit=limit)
     return {
         "category": category,
         "cluster": cluster,
         "cluster_source": resolved["cluster_source"],
+        "review_required": False,
         "template_count": len(templates),
         "templates": templates,
         "global_config": global_config(),

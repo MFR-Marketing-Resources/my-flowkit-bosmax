@@ -56,7 +56,12 @@ def resolve_creative_direction(
     if not isinstance(entry, dict):
         raise CreativeDirectionError("CREATIVE_DIRECTION_AUTHORITY_INVALID")
     category = resolve_category_adapt(product)
-    cluster = creative_avatar.resolve_cluster((product or {}).get("category"))
+    # Legacy generation lane: intentionally keeps the deterministic Home & Living
+    # fallback for a blank/unknown category (opt-in). The product-first Avatar
+    # Registry flow uses the fail-closed default instead.
+    cluster = creative_avatar.resolve_cluster(
+        (product or {}).get("category"), allow_fallback=True
+    )
     scene_templates = creative_scene.templates_for_cluster(cluster["cluster"], limit=3)
     truth = ProductTruthService.build_computed_profile(product or {})
     try:

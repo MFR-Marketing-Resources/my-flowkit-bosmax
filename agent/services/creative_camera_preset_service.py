@@ -163,6 +163,24 @@ async def recommend_camera_presets_for_category(
     mutates; never writes product camera columns; never calls generation.
     """
     resolved = _avatar.resolve_cluster(category)
+    if resolved["cluster"] is None:
+        # Fail-closed: no camera plan for a review-required (un-categorised /
+        # unresolved) product.
+        return {
+            "category": category,
+            "cluster": None,
+            "cluster_source": resolved["cluster_source"],
+            "review_required": True,
+            "block_groups": [],
+            "block_recommendation_count": 0,
+            "block_recommendations": [],
+            "library": {
+                "shot_distances": [], "camera_angles": [], "camera_movements": [],
+                "ecomm_shot_types": [], "named_presets": [],
+            },
+            "filtered_by": {"block": block, "content_type": content_type},
+            "has_recommendations": False,
+        }
     result = _build_recommendation(
         cluster=resolved["cluster"], cluster_source=resolved["cluster_source"],
         block=block, content_type=content_type,

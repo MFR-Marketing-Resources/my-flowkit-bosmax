@@ -49,17 +49,40 @@ def fallback_cluster() -> str:
     return str(_category_map().get("fallback_cluster") or "Home & Living")
 
 
-def resolve_cluster(category: str | None) -> dict[str, str]:
+REVIEW_REQUIRED_SOURCES = (
+    "REVIEW_REQUIRED_NO_CATEGORY",
+    "REVIEW_REQUIRED_UNKNOWN_CATEGORY",
+)
+
+
+def is_review_required(resolved: dict[str, Any]) -> bool:
+    """True when a resolved cluster is review-required (no proven mapping)."""
+    return resolved.get("cluster") is None
+
+
+def resolve_cluster(
+    category: str | None, *, allow_fallback: bool = False
+) -> dict[str, str | None]:
     """Resolve a raw product category into a canonical cluster.
 
     Deterministic order: exact CATEGORY_MAP match -> first-segment match ->
-    keyword rule -> fallback cluster. Returns ``{"cluster", "cluster_source"}``.
+    keyword rule. Returns ``{"cluster", "cluster_source"}``.
+
+    FAIL-CLOSED by default: an empty or unresolved category returns
+    ``cluster=None`` with a ``REVIEW_REQUIRED_*`` source, so the product-first
+    creative flow never silently inherits the Home & Living fallback and then
+    auto-plans an unsuitable avatar. A proven, explicit mapping
+    (EXACT / PREFIX / KEYWORD) is always honoured. Legacy callers that
+    intentionally want the deterministic Home & Living fallback for an
+    unknown/blank category must opt in explicitly with ``allow_fallback=True``.
     """
     cfg = _category_map()
     table: dict[str, str] = cfg.get("category_to_cluster", {})
     raw = str(category or "").strip()
     if not raw:
-        return {"cluster": fallback_cluster(), "cluster_source": "FALLBACK_EMPTY"}
+        if allow_fallback:
+            return {"cluster": fallback_cluster(), "cluster_source": "FALLBACK_EMPTY"}
+        return {"cluster": None, "cluster_source": "REVIEW_REQUIRED_NO_CATEGORY"}
 
     key = avatar_fit_service.normalise_category(raw)
     if key in table:
@@ -75,7 +98,9 @@ def resolve_cluster(category: str | None) -> dict[str, str]:
         if cluster and any(tok in key for tok in tokens):
             return {"cluster": cluster, "cluster_source": "KEYWORD"}
 
-    return {"cluster": fallback_cluster(), "cluster_source": "FALLBACK"}
+    if allow_fallback:
+        return {"cluster": fallback_cluster(), "cluster_source": "FALLBACK"}
+    return {"cluster": None, "cluster_source": "REVIEW_REQUIRED_UNKNOWN_CATEGORY"}
 
 
 def _live_avatar_codes() -> set[str]:
@@ -129,10 +154,148 @@ async def seed_avatar_product_fit(*, dry_run: bool = True) -> dict[str, Any]:
     }
 
 
+async def reconcile_avatar_product_fit(*, dry_run: bool = True) -> dict[str, Any]:
+    """Deterministic reconciliation of ``avatar_product_fit`` to committed crosswalk.
+
+    - upserts every expected (live-pool) crosswalk row
+    - removes only rows that carry the managed crosswalk provenance marker and
+      are no longer expected (stale managed mappings)
+    - preserves unrelated manually managed mappings (notes without the marker)
+
+    Affects only ``avatar_product_fit``. Transactional per row via CRUD. Dry-run
+    reports the diff without writing.
+    """
+    from agent.db import crud
+
+    live = _live_avatar_codes()
+    crosswalk = _crosswalk().get("crosswalk", {})
+    expected: dict[tuple[str, str], dict[str, Any]] = {}
+    orphan_codes: list[str] = []
+    for cluster, rows in crosswalk.items():
+        product_category = avatar_fit_service.normalise_category(cluster)
+        for row in rows:
+            code = str(row.get("avatar_code") or "")
+            if code not in live:
+                orphan_codes.append(code)
+                continue
+            expected[(code, product_category)] = {
+                "avatar_code": code,
+                "product_category": product_category,
+                "fit_score": row.get("fit_score", 0.8),
+                "suitability_notes": row.get("suitability_notes")
+                or f"{cluster} [src:{CROSSWALK_SOURCE}]",
+                "cluster": cluster,
+            }
+
+    current_rows = await crud.list_avatar_product_fits(limit=10_000)
+    current_keys = {
+        (str(r.get("avatar_code") or ""), str(r.get("product_category") or "")): r
+        for r in current_rows
+    }
+
+    missing = [v for k, v in expected.items() if k not in current_keys]
+    changed: list[dict[str, Any]] = []
+    for key, exp in expected.items():
+        cur = current_keys.get(key)
+        if not cur:
+            continue
+        cur_score = float(cur.get("fit_score") or 0)
+        exp_score = float(exp.get("fit_score") or 0)
+        cur_notes = str(cur.get("suitability_notes") or "")
+        exp_notes = str(exp.get("suitability_notes") or "")
+        if abs(cur_score - exp_score) > 1e-9 or cur_notes != exp_notes:
+            changed.append({"key": {"avatar_code": key[0], "product_category": key[1]},
+                            "from": {"fit_score": cur_score, "suitability_notes": cur_notes},
+                            "to": {"fit_score": exp_score, "suitability_notes": exp_notes}})
+
+    marker = f"[src:{CROSSWALK_SOURCE}]"
+    stale_managed: list[dict[str, str]] = []
+    preserved_manual = 0
+    for key, row in current_keys.items():
+        if key in expected:
+            continue
+        notes = str(row.get("suitability_notes") or "")
+        if marker in notes or CROSSWALK_SOURCE in notes:
+            stale_managed.append({
+                "avatar_code": key[0],
+                "product_category": key[1],
+            })
+        else:
+            preserved_manual += 1
+
+    written = 0
+    removed = 0
+    if not dry_run:
+        try:
+            for exp in expected.values():
+                await crud.upsert_avatar_product_fit(
+                    avatar_code=exp["avatar_code"],
+                    product_category=exp["product_category"],
+                    fit_score=exp["fit_score"],
+                    suitability_notes=exp["suitability_notes"],
+                )
+                written += 1
+            for stale in stale_managed:
+                if await crud.delete_avatar_product_fit(
+                    stale["avatar_code"], stale["product_category"]
+                ):
+                    removed += 1
+        except Exception:
+            # Best-effort: individual CRUD calls commit; report failure to caller.
+            raise
+
+    # Fresh read-back for parity proof.
+    after = await crud.list_avatar_product_fits(limit=10_000)
+    after_managed = [
+        r for r in after
+        if marker in str(r.get("suitability_notes") or "")
+        or CROSSWALK_SOURCE in str(r.get("suitability_notes") or "")
+    ]
+    after_keys = {
+        (str(r.get("avatar_code") or ""), str(r.get("product_category") or ""))
+        for r in after_managed
+    }
+    expected_keys = set(expected.keys())
+    parity = after_keys == expected_keys if not dry_run else None
+
+    return {
+        "dry_run": dry_run,
+        "source": CROSSWALK_SOURCE,
+        "expected_count": len(expected),
+        "current_count": len(current_rows),
+        "missing": [
+            {"avatar_code": m["avatar_code"], "product_category": m["product_category"]}
+            for m in missing
+        ],
+        "changed": changed,
+        "stale_managed": stale_managed,
+        "orphan_avatar_codes": sorted(set(orphan_codes)),
+        "preserved_manual_count": preserved_manual,
+        "written": 0 if dry_run else written,
+        "removed": 0 if dry_run else removed,
+        "parity_ok": parity,
+        "clusters": sorted(crosswalk.keys()),
+    }
+
+
 async def recommend_avatars_for_category(category: str | None) -> dict[str, Any]:
-    """Read-only avatar recommendation for a raw category. Never mutates."""
+    """Read-only avatar recommendation for a raw category. Never mutates.
+
+    Fail-closed: a blank or unresolved category returns no recommendation and
+    ``review_required=True`` with ``cluster=None``, so the product-first flow
+    never auto-plans or auto-links an avatar for an un-categorised product.
+    """
     resolved = resolve_cluster(category)
     cluster = resolved["cluster"]
+    if cluster is None:
+        return {
+            "category": category,
+            "cluster": None,
+            "cluster_source": resolved["cluster_source"],
+            "review_required": True,
+            "avatar_count": 0,
+            "avatars": [],
+        }
     avatars = await avatar_fit_service.get_suitable_avatars(
         cluster, include_all_fallback=True
     )
@@ -140,6 +303,7 @@ async def recommend_avatars_for_category(category: str | None) -> dict[str, Any]
         "category": category,
         "cluster": cluster,
         "cluster_source": resolved["cluster_source"],
+        "review_required": False,
         "avatar_count": len(avatars),
         "avatars": avatars,
     }
@@ -173,19 +337,23 @@ async def audit_product_cluster_coverage() -> dict[str, Any]:
     cluster_counts: dict[str, int] = {cluster: 0 for cluster in canonical_clusters()}
     unknown_samples: list[dict[str, str]] = []
     raw_categories: dict[str, int] = {}
+    unknown_count = 0
     for product in products:
         raw_category = str(product.get("category") or "").strip()
-        if raw_category:
-            resolved = resolve_cluster(raw_category)
-            cluster_counts[resolved["cluster"]] = cluster_counts.get(resolved["cluster"], 0) + 1
+        resolved_cluster = (
+            resolve_cluster(raw_category)["cluster"] if raw_category else None
+        )
+        if raw_category and resolved_cluster is not None:
+            cluster_counts[resolved_cluster] = cluster_counts.get(resolved_cluster, 0) + 1
             raw_categories[raw_category] = raw_categories.get(raw_category, 0) + 1
             continue
+        # blank OR non-blank-but-unresolved -> review required, never auto-planned
+        unknown_count += 1
         if len(unknown_samples) < 25:
             unknown_samples.append({
                 "product_id": str(product.get("id") or ""),
                 "product_name": str(product.get("product_display_name") or product.get("raw_product_title") or ""),
             })
-    unknown_count = sum(1 for product in products if not str(product.get("category") or "").strip())
     return {
         "product_total": len(products),
         "canonical_clusters": canonical_clusters(),

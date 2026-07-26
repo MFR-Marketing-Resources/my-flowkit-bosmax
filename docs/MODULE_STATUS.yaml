@@ -103,10 +103,14 @@ domains:
       - agent/authority/creative_category_cluster_map.json
       - agent/authority/creative_avatar_cluster_crosswalk.json
       - agent/services/creative_avatar_recommendation_service.py
+      - agent/services/avatar_fit_service.py
       - agent/api/creative_intelligence.py
       - tests/unit/test_creative_avatar_recommendation_service.py
+      - tests/unit/test_avatar_fit_service.py
+      - tests/unit/test_avatar_pool_age_band_csv_contract.py
       - tests/api/test_creative_intelligence_api.py
       - dashboard/src/api/creativeIntelligence.ts
+      - dashboard/src/api/creativeIntelligence.avatarPatch.test.ts
       - dashboard/src/components/product-intelligence/RecommendedAvatarsCard.tsx
       - dashboard/src/components/product-intelligence/RecommendedAvatarsCard.test.tsx
 
@@ -376,6 +380,8 @@ domains:
       - dashboard/src/pages/ApprovedPackagesPage.tsx
       - dashboard/src/pages/AssetRegistryPage.tsx
       - dashboard/src/pages/AvatarRegistryPage.tsx
+      - dashboard/src/components/workspace/SearchableProductSelect.tsx
+      - dashboard/src/components/workspace/SearchableProductSelect.test.tsx
       - dashboard/src/pages/CreativeLibraryPage.tsx
       - dashboard/src/pages/CreativeLibraryPage.test.tsx
       - dashboard/src/pages/CreativeLibraryWorkspacePage.tsx

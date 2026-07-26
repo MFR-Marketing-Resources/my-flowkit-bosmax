@@ -863,6 +863,18 @@ async def upsert_avatar_product_fit(**kw) -> dict:
     return dict(row) if row else {}
 
 
+async def delete_avatar_product_fit(avatar_code: str, product_category: str) -> bool:
+    """Delete one avatar_product_fit row. Returns True when a row was removed."""
+    db = await get_db()
+    async with _db_lock:
+        cur = await db.execute(
+            "DELETE FROM avatar_product_fit WHERE avatar_code=? AND product_category=?",
+            (avatar_code, product_category),
+        )
+        await db.commit()
+    return (cur.rowcount or 0) > 0
+
+
 async def list_avatar_product_fits(
     avatar_code: str | None = None,
     product_category: str | None = None,

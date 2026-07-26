@@ -8,7 +8,7 @@ import {
 	getRegistryCleanupPlan,
 	getRegistryCoverage,
 	getRegistryReconciliation,
-	saveCreativeSelection,
+	patchCreativeSelectionAvatar,
 	type AvatarRecommendation,
 	type CreativeSetup,
 	type ProductClusterAudit,
@@ -175,6 +175,11 @@ export default function AvatarRegistryPage() {
 	const [isLoadingProductContext, setIsLoadingProductContext] = useState(false);
 	const [productClusterAudit, setProductClusterAudit] = useState<ProductClusterAudit | null>(null);
 	const [clusterAvatarSets, setClusterAvatarSets] = useState<Record<string, AvatarRecommendation> | null>(null);
+	// Partial-success create+link: keep created AvatarCode when product link fails.
+	const [pendingLinkAvatarCode, setPendingLinkAvatarCode] = useState<string | null>(null);
+	const [pendingLinkError, setPendingLinkError] = useState<string | null>(null);
+	const [isRetryingLink, setIsRetryingLink] = useState(false);
+	const creativeSetupRequestRef = useRef(0);
 
 	// Create Avatar — manual add + AI auto-generate (wired to add-manual /
 	// auto-generate). Both add through the fail-closed pool door; redundancy
@@ -286,32 +291,84 @@ export default function AvatarRegistryPage() {
 	useEffect(() => {
 		if (!selectedProduct) {
 			setCreativeSetup(null);
+			setPendingLinkAvatarCode(null);
+			setPendingLinkError(null);
 			return;
 		}
-		let active = true;
+		const requestId = ++creativeSetupRequestRef.current;
 		setIsLoadingProductContext(true);
+		setCreativeSetup(null); // clear stale setup from previous product immediately
 		void getCreativeSetupForProduct(selectedProduct.id)
 			.then((setup) => {
-				if (active) setCreativeSetup(setup);
+				if (creativeSetupRequestRef.current === requestId) setCreativeSetup(setup);
 			})
 			.catch(() => {
-				if (active) setCreativeSetup(null);
+				if (creativeSetupRequestRef.current === requestId) setCreativeSetup(null);
 			})
 			.finally(() => {
-				if (active) setIsLoadingProductContext(false);
+				if (creativeSetupRequestRef.current === requestId) setIsLoadingProductContext(false);
 			});
 		return () => {
-			active = false;
+			// invalidate in-flight response without bumping the counter (avoids races)
 		};
 	}, [selectedProduct]);
 
+	const linkAvatarToSelectedProduct = async (avatarCode: string) => {
+		if (!selectedProduct) {
+			return { ok: true as const, skipped: true as const };
+		}
+		if (creativeSetup?.review_required) {
+			return {
+				ok: false as const,
+				error: "PRODUCT CATEGORY REVIEW REQUIRED — set a real category before linking an avatar.",
+				blockedReview: true as const,
+			};
+		}
+		try {
+			await patchCreativeSelectionAvatar({
+				product_id: selectedProduct.id,
+				selected_avatar_code: avatarCode,
+				notes_append:
+					"Created from Avatar Registry product-first flow; review before generation.",
+			});
+			// Refresh setup so saved_selection reflects DRAFT.
+			const setup = await getCreativeSetupForProduct(selectedProduct.id);
+			setCreativeSetup(setup);
+			return { ok: true as const, skipped: false as const };
+		} catch (err) {
+			return {
+				ok: false as const,
+				error: err instanceof Error ? err.message : "Failed to link avatar to product.",
+			};
+		}
+	};
+
 	const saveProductAvatarSelection = async (avatarCode: string) => {
-		if (!selectedProduct) return;
-		await saveCreativeSelection({
-			product_id: selectedProduct.id,
-			selected_avatar_code: avatarCode,
-			notes: "Created from Avatar Registry product-first flow; review before generation.",
-		});
+		const result = await linkAvatarToSelectedProduct(avatarCode);
+		if (!result.ok) {
+			throw new Error(result.error);
+		}
+	};
+
+	const retryPendingProductLink = async () => {
+		if (!pendingLinkAvatarCode) return;
+		setIsRetryingLink(true);
+		setError(null);
+		try {
+			const result = await linkAvatarToSelectedProduct(pendingLinkAvatarCode);
+			if (!result.ok) {
+				setPendingLinkError(result.error);
+				setError(result.error);
+				return;
+			}
+			setSuccessMsg(
+				`Avatar ${pendingLinkAvatarCode} dipautkan kepada produk terpilih sebagai DRAFT.`,
+			);
+			setPendingLinkAvatarCode(null);
+			setPendingLinkError(null);
+		} finally {
+			setIsRetryingLink(false);
+		}
 	};
 
 	// Gender-filtered option helpers: a gender_specific field (e.g. wardrobe)
@@ -444,15 +501,31 @@ export default function AvatarRegistryPage() {
 				throw new Error(detail);
 			}
 			setSuccessMsg(`Avatar ${data.avatar_code} ditambah`);
-			await saveProductAvatarSelection(data.avatar_code);
+			setPendingLinkAvatarCode(null);
+			setPendingLinkError(null);
+			await refresh();
+			// Phase: link separately so creation success is never reported as failure.
 			if (selectedProduct) {
-				setSuccessMsg(`Avatar ${data.avatar_code} ditambah dan dipautkan kepada produk terpilih sebagai DRAFT.`);
+				const linkResult = await linkAvatarToSelectedProduct(data.avatar_code);
+				if (linkResult.ok) {
+					if (!linkResult.skipped) {
+						setSuccessMsg(
+							`Avatar ${data.avatar_code} ditambah dan dipautkan kepada produk terpilih sebagai DRAFT.`,
+						);
+					}
+				} else {
+					setPendingLinkAvatarCode(data.avatar_code);
+					setPendingLinkError(linkResult.error);
+					setSuccessMsg(
+						`AVATAR_CREATED_PRODUCT_LINK_FAILED: Avatar ${data.avatar_code} berjaya dicipta, tetapi pautan produk gagal.`,
+					);
+					setError(linkResult.error);
+				}
 			}
 			// Keep the descriptor dropdown selections (still vocab-valid) so adding a
 			// sibling variant is quick; just clear the persona + hijab.
 			setManualForm((f) => ({ ...f, character_name: "", hijab: false }));
 			setManualPersonaNew(false);
-			await refresh();
 			// Creating a profile never starts image generation. The operator may
 			// explicitly generate its reference later from the registry table.
 		} catch (err) {
@@ -502,12 +575,28 @@ export default function AvatarRegistryPage() {
 				throw new Error(detail);
 			}
 			setSuccessMsg(`Avatar ${data.avatar_code} dijana`);
-			await saveProductAvatarSelection(data.avatar_code);
-			if (selectedProduct) {
-				setSuccessMsg(`Avatar ${data.avatar_code} dijana dan dipautkan kepada produk terpilih sebagai DRAFT.`);
-			}
+			setPendingLinkAvatarCode(null);
+			setPendingLinkError(null);
 			setAutoBrief("");
 			await refresh();
+			// Phase: link separately so creation success is never reported as failure.
+			if (selectedProduct) {
+				const linkResult = await linkAvatarToSelectedProduct(data.avatar_code);
+				if (linkResult.ok) {
+					if (!linkResult.skipped) {
+						setSuccessMsg(
+							`Avatar ${data.avatar_code} dijana dan dipautkan kepada produk terpilih sebagai DRAFT.`,
+						);
+					}
+				} else {
+					setPendingLinkAvatarCode(data.avatar_code);
+					setPendingLinkError(linkResult.error);
+					setSuccessMsg(
+						`AVATAR_CREATED_PRODUCT_LINK_FAILED: Avatar ${data.avatar_code} berjaya dijana, tetapi pautan produk gagal.`,
+					);
+					setError(linkResult.error);
+				}
+			}
 			// Creating a profile never starts image generation. The operator may
 			// explicitly generate its reference later from the registry table.
 		} catch (err) {
@@ -1113,35 +1202,82 @@ export default function AvatarRegistryPage() {
 						</div>
 					) : null}
 					{selectedProduct ? (
-						<div className="mt-3 rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-xs">
-							<div className="flex flex-wrap items-center gap-2">
-								<span className="font-semibold text-slate-100">{selectedProduct.product_display_name || selectedProduct.raw_product_title}</span>
-								<span className="rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold text-violet-200">
-									{isLoadingProductContext ? "Resolving cluster…" : creativeSetup?.cluster || "Cluster needs review"}
-								</span>
-							</div>
-							<div className="mt-2 text-[11px] text-slate-400">
-								{creativeSetup?.recommended_avatars.some((avatar) => avatar.fit_source === "EXPLICIT_MAPPING")
-									? `${creativeSetup.recommended_avatars.filter((avatar) => avatar.fit_source === "EXPLICIT_MAPPING").length} ranked avatar recommendation(s) available for this cluster.`
-									: "No ranked avatar exists yet. Use the create form below to add a candidate; it will be linked to this product as DRAFT."}
-							</div>
-							{creativeSetup?.recommended_avatars.some((avatar) => avatar.fit_source === "EXPLICIT_MAPPING") ? (
-								<div className="mt-2 flex flex-wrap gap-2" data-testid="product-avatar-recommendations">
-									{creativeSetup.recommended_avatars.filter((avatar) => avatar.fit_source === "EXPLICIT_MAPPING").slice(0, 10).map((avatar) => (
-										<button
-											key={avatar.avatar_code}
-											type="button"
-											onClick={() => void saveProductAvatarSelection(avatar.avatar_code).then(() => setSuccessMsg(`${avatar.avatar_code} dipautkan kepada produk sebagai DRAFT.`)).catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to save avatar selection."))}
-											className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-semibold text-slate-200 hover:border-violet-400 hover:text-violet-200"
-										>
-											Use {avatar.avatar_code} · {Math.round(avatar.fit_score * 100)}%
-										</button>
-									))}
+							<div className="mt-3 rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-xs">
+								<div className="flex flex-wrap items-center gap-2">
+									<span className="font-semibold text-slate-100">{selectedProduct.product_display_name || selectedProduct.raw_product_title}</span>
+									<span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+										creativeSetup?.review_required
+											? "border-amber-500/40 bg-amber-500/10 text-amber-100"
+											: "border-violet-500/30 bg-violet-500/10 text-violet-200"
+									}`}>
+										{isLoadingProductContext
+											? "Resolving cluster…"
+											: creativeSetup?.review_required
+												? "PRODUCT CATEGORY REVIEW REQUIRED"
+												: creativeSetup?.cluster || "Cluster needs review"}
+									</span>
+									{creativeSetup?.saved_selection?.status ? (
+										<span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] font-semibold text-slate-300">
+											Selection: {creativeSetup.saved_selection.status}
+										</span>
+									) : null}
 								</div>
-							) : null}
-						</div>
-					) : null}
-				</section>
+								{creativeSetup?.review_required ? (
+									<div
+										className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-[11px] text-amber-100"
+										data-testid="product-category-review-required"
+									>
+										<div className="font-bold tracking-wide">PRODUCT CATEGORY REVIEW REQUIRED</div>
+										<div className="mt-1 text-amber-100/80">
+											Blank or unknown category — no avatar recommendation or product link until a real category is set. Standalone avatar creation remains available.
+										</div>
+									</div>
+								) : (
+									<div className="mt-2 text-[11px] text-slate-400">
+										{creativeSetup?.recommended_avatars.some((avatar) => avatar.fit_source === "EXPLICIT_MAPPING")
+											? `${creativeSetup.recommended_avatars.filter((avatar) => avatar.fit_source === "EXPLICIT_MAPPING").length} ranked avatar recommendation(s) available for this cluster.`
+											: "No ranked avatar exists yet. Use the create form below to add a candidate; it will be linked to this product as DRAFT."}
+									</div>
+								)}
+								{!creativeSetup?.review_required &&
+								creativeSetup?.recommended_avatars.some((avatar) => avatar.fit_source === "EXPLICIT_MAPPING") ? (
+									<div className="mt-2 flex flex-wrap gap-2" data-testid="product-avatar-recommendations">
+										{creativeSetup.recommended_avatars.filter((avatar) => avatar.fit_source === "EXPLICIT_MAPPING").slice(0, 10).map((avatar) => (
+											<button
+												key={avatar.avatar_code}
+												type="button"
+												onClick={() => void saveProductAvatarSelection(avatar.avatar_code).then(() => setSuccessMsg(`${avatar.avatar_code} dipautkan kepada produk sebagai DRAFT.`)).catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to save avatar selection."))}
+												className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-semibold text-slate-200 hover:border-violet-400 hover:text-violet-200"
+											>
+												Use {avatar.avatar_code} · {Math.round(avatar.fit_score * 100)}%
+											</button>
+										))}
+									</div>
+								) : null}
+								{pendingLinkAvatarCode ? (
+									<div
+										className="mt-3 rounded-lg border border-rose-500/40 bg-rose-500/10 p-2 text-[11px] text-rose-100"
+										data-testid="avatar-created-product-link-failed"
+									>
+										<div className="font-bold">AVATAR_CREATED_PRODUCT_LINK_FAILED</div>
+										<div className="mt-1">
+											Avatar <span className="font-mono font-semibold">{pendingLinkAvatarCode}</span> wujud dalam registry.
+											Pautan produk gagal{pendingLinkError ? `: ${pendingLinkError}` : "."}
+										</div>
+										<button
+											type="button"
+											data-testid="retry-product-link"
+											disabled={isRetryingLink || Boolean(creativeSetup?.review_required)}
+											onClick={() => void retryPendingProductLink()}
+											className="mt-2 rounded-lg border border-rose-400/50 bg-rose-500/20 px-2.5 py-1 text-[11px] font-semibold text-rose-50 hover:bg-rose-500/30 disabled:opacity-50"
+										>
+											{isRetryingLink ? "Retrying…" : `Retry product link · ${pendingLinkAvatarCode}`}
+										</button>
+									</div>
+								) : null}
+							</div>
+						) : null}
+					</section>
 				{coverage && (
 						<div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
 							<div className="grid grid-cols-1 gap-3 sm:grid-cols-3">

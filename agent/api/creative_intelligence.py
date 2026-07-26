@@ -39,6 +39,13 @@ class CreativeSelectionSaveRequest(BaseModel):
     notes: str | None = None
 
 
+class CreativeSelectionAvatarPatchRequest(BaseModel):
+    """Avatar-only partial update. Other selection fields are preserved server-side."""
+    product_id: str
+    selected_avatar_code: str
+    notes_append: str | None = None
+
+
 class CreativeSelectionReviewRequest(BaseModel):
     product_id: str
     action: str  # APPROVE | REJECT
@@ -55,6 +62,7 @@ _SETUP_ERROR_STATUS = {
     "INVALID_ACTION": 422,
     "NOT_IN_DRAFT": 409,
     "SELECTION_NOT_APPROVED": 409,  # Round 5: DRAFT/REJECTED cannot hand off
+    "PRODUCT_CATEGORY_REVIEW_REQUIRED": 409,  # D1: fail-closed, no auto-plan/save
 }
 
 
@@ -545,6 +553,21 @@ async def creative_selection_save(req: CreativeSelectionSaveRequest) -> dict:
             selected_block_purpose=req.selected_block_purpose,
             selected_content_type=req.selected_content_type,
             notes=req.notes,
+        )
+    except ValueError as exc:
+        _raise_setup_error(exc)
+
+
+@router.patch("/creative-selection/avatar")
+async def creative_selection_avatar_patch(req: CreativeSelectionAvatarPatchRequest) -> dict:
+    """Avatar-only partial update: preserves scene/camera/block/content/notes,
+    rebuilds preview from the merged selection, and returns status to DRAFT.
+    Only writes creative_product_selection — no product-row / generation effect."""
+    try:
+        return await _setup.update_creative_selection_avatar(
+            req.product_id,
+            selected_avatar_code=req.selected_avatar_code,
+            notes_append=req.notes_append,
         )
     except ValueError as exc:
         _raise_setup_error(exc)

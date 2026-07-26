@@ -118,3 +118,87 @@ def test_review_selection_transitions_and_guards(monkeypatch):
     conflict = client.post("/api/creative-intelligence/creative-selection/review",
                            json={"product_id": "p1", "action": "REJECT"})
     assert conflict.status_code == 409
+
+
+def test_avatar_patch_selection(monkeypatch):
+    captured = {}
+
+    async def fake_patch(product_id, **kw):
+        captured["product_id"] = product_id
+        captured.update(kw)
+        return {
+            "product_id": product_id,
+            "status": "DRAFT",
+            "selected_avatar_code": kw.get("selected_avatar_code"),
+            "selected_scene_template_id": "SCN-0015",
+            "selected_camera_preset_code": "HOOK_A",
+        }
+
+    monkeypatch.setattr(
+        "agent.services.creative_setup_service.update_creative_selection_avatar",
+        fake_patch,
+    )
+    client = TestClient(_build_app())
+    r = client.patch(
+        "/api/creative-intelligence/creative-selection/avatar",
+        json={
+            "product_id": "p1",
+            "selected_avatar_code": "BOS_F_ALYA_08",
+            "notes_append": "from registry",
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "DRAFT"
+    assert body["selected_scene_template_id"] == "SCN-0015"
+    assert body["selected_camera_preset_code"] == "HOOK_A"
+    assert captured["selected_avatar_code"] == "BOS_F_ALYA_08"
+    assert captured["notes_append"] == "from registry"
+
+
+def test_avatar_patch_invalid_returns_422(monkeypatch):
+    async def fake_patch(product_id, **kw):
+        raise ValueError("INVALID_AVATAR_CODE")
+
+    monkeypatch.setattr(
+        "agent.services.creative_setup_service.update_creative_selection_avatar",
+        fake_patch,
+    )
+    client = TestClient(_build_app())
+    r = client.patch(
+        "/api/creative-intelligence/creative-selection/avatar",
+        json={"product_id": "p1", "selected_avatar_code": "NOPE"},
+    )
+    assert r.status_code == 422
+
+
+def test_avatar_patch_review_required_returns_409(monkeypatch):
+    async def fake_patch(product_id, **kw):
+        raise ValueError("PRODUCT_CATEGORY_REVIEW_REQUIRED")
+
+    monkeypatch.setattr(
+        "agent.services.creative_setup_service.update_creative_selection_avatar",
+        fake_patch,
+    )
+    client = TestClient(_build_app())
+    r = client.patch(
+        "/api/creative-intelligence/creative-selection/avatar",
+        json={"product_id": "p1", "selected_avatar_code": "BOS_F_ALYA_08"},
+    )
+    assert r.status_code == 409
+    assert r.json()["detail"] == "PRODUCT_CATEGORY_REVIEW_REQUIRED"
+
+
+def test_save_selection_review_required_returns_409(monkeypatch):
+    async def fake_save(product_id, **kw):
+        raise ValueError("PRODUCT_CATEGORY_REVIEW_REQUIRED")
+
+    monkeypatch.setattr(
+        "agent.services.creative_setup_service.save_creative_selection", fake_save
+    )
+    client = TestClient(_build_app())
+    r = client.post(
+        "/api/creative-intelligence/creative-selection",
+        json={"product_id": "p1", "selected_avatar_code": "BOS_F_ALYA_08"},
+    )
+    assert r.status_code == 409
