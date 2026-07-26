@@ -381,6 +381,7 @@ domains:
       - dashboard/src/pages/AssetRegistryPage.tsx
       - dashboard/src/pages/AvatarRegistryPage.tsx
       - dashboard/src/pages/AvatarRegistryPage.test.tsx
+      - tests/api/test_avatar_registry_active_product_fit_api.py
       - dashboard/src/components/workspace/SearchableProductSelect.tsx
       - dashboard/src/components/workspace/SearchableProductSelect.test.tsx
       - dashboard/src/pages/CreativeLibraryPage.tsx

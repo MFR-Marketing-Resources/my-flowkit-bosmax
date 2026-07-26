@@ -456,19 +456,81 @@ async def _generated_avatar_asset_ids() -> dict[str, str]:
 @router.get("/avatar-registry/pool")
 async def avatar_registry_pool():
     from agent.services import avatar_registry
+    from agent.db import crud
     profiles = avatar_registry.list_pool()
     generated = await _generated_avatar_asset_ids()
+    fits = await crud.list_avatar_product_fits(limit=10_000)
+    fit_codes = {str(row.get("avatar_code") or "").upper() for row in fits}
+    db = await crud.get_db()
+    selection_rows = await (await db.execute(
+        "SELECT selected_avatar_code FROM creative_product_selection "
+        "WHERE selected_avatar_code IS NOT NULL"
+    )).fetchall()
+    selected_codes = {str(row[0] or "").upper() for row in selection_rows}
     for profile in profiles:
         asset_id = generated.get(str(profile.get("avatar_code", "")).upper())
         profile["generated_asset_id"] = asset_id
         profile["image_generated"] = bool(asset_id)
+        code = str(profile.get("avatar_code", "")).upper()
+        profile["cleanup_classification"] = (
+            "ACTIVE_PRODUCT_FIT" if code in fit_codes else
+            "REFERENCED_BY_SAVED_SELECTION" if code in selected_codes else
+            "GENERATED_ASSET_EXISTS" if code in generated else
+            "SAFE_ARCHIVE_CANDIDATE"
+        )
     return {
         "avatars": profiles,
         "count": len(profiles),
         "generated_count": sum(1 for p in profiles if p["image_generated"]),
         "source": str(avatar_registry._active_pool_file()),
         "bridge_active": avatar_registry._BRIDGE_FILE.exists(),
+        "product_fit_mapped_count": len(fit_codes),
+        "saved_selection_referenced_count": len(selected_codes),
+        "unmapped_review_candidate_count": sum(
+            1 for p in profiles
+            if str(p.get("avatar_code", "")).upper() not in fit_codes | selected_codes | set(generated)
+        ),
     }
+
+
+@router.get("/avatar-registry/active-product-fit")
+async def avatar_registry_active_product_fit():
+    """Read-only active product-fit projection; legacy pool rows stay separate."""
+    from agent.db import crud
+    from agent.services import avatar_registry
+
+    profiles = {str(p.get("avatar_code") or "").upper(): p for p in avatar_registry.list_pool()}
+    fits = await crud.list_avatar_product_fits(limit=10_000)
+    generated = await _generated_avatar_asset_ids()
+    db = await crud.get_db()
+    selection_rows = await (await db.execute(
+        "SELECT selected_avatar_code FROM creative_product_selection "
+        "WHERE selected_avatar_code IS NOT NULL"
+    )).fetchall()
+    selection_counts: dict[str, int] = {}
+    for row in selection_rows:
+        code = str(row[0] or "").upper()
+        selection_counts[code] = selection_counts.get(code, 0) + 1
+    grouped: dict[str, list[dict]] = {}
+    for fit in fits:
+        grouped.setdefault(str(fit.get("avatar_code") or "").upper(), []).append(fit)
+    active: list[dict] = []
+    for code, mappings in grouped.items():
+        profile = profiles.get(code)
+        age_band = str((profile or {}).get("age_band") or "")
+        if not profile or "child" in age_band.lower() or "teen" in age_band.lower():
+            continue
+        clusters = sorted({str(m.get("product_category") or "") for m in mappings if m.get("product_category")})
+        active.append({
+            **profile,
+            "product_clusters": clusters,
+            "best_fit_score": max(float(m.get("fit_score") or 0) for m in mappings),
+            "generated_asset_id": generated.get(code),
+            "image_generated": code in generated,
+            "saved_selection_reference_count": selection_counts.get(code, 0),
+        })
+    active.sort(key=lambda row: (-row["best_fit_score"], row["avatar_code"]))
+    return {"avatars": active, "count": len(active), "source": str(avatar_registry._active_pool_file()), "bridge_active": avatar_registry._BRIDGE_FILE.exists()}
 
 
 class AvatarGenerateImageRequest(BaseModel):
