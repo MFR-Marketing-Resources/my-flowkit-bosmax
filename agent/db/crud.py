@@ -1,7 +1,8 @@
 """Async CRUD operations with column whitelisting."""
 import json
+import asyncio
 import logging
-import aiosqlite
+import sqlite3
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -922,13 +923,23 @@ async def list_avatar_product_fits_fresh(limit: int = 10_000) -> list[dict]:
     """Read fit mappings through a distinct connection after a reconciliation commit."""
     if str(DB_PATH) == ":memory:":
         return await list_avatar_product_fits(limit=limit)
-    async with aiosqlite.connect(str(DB_PATH)) as db:
-        db.row_factory = aiosqlite.Row
-        cursor = await db.execute(
-            "SELECT * FROM avatar_product_fit ORDER BY fit_score DESC, avatar_code ASC LIMIT ?",
-            (limit,),
-        )
-        return [dict(row) for row in await cursor.fetchall()]
+
+    def _read() -> list[dict]:
+        connection = sqlite3.connect(str(DB_PATH), timeout=5)
+        connection.row_factory = sqlite3.Row
+        try:
+            return [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT * FROM avatar_product_fit "
+                    "ORDER BY fit_score DESC, avatar_code ASC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            ]
+        finally:
+            connection.close()
+
+    return await asyncio.to_thread(_read)
 
 
 async def list_avatar_product_fits(
