@@ -18,7 +18,7 @@ import {
 import {
 	buildExactSceneOnlyPrompt,
 	composeExactFromPlate,
-	fetchExactProductPolicy,
+	resolveExactGenerationGate,
 } from "../api/exactProductOutput";
 import { useImageGenSettings } from "../api/imageGenSettings";
 import { fetchProductCatalog } from "../api/products";
@@ -565,25 +565,15 @@ export default function ImgFastlanePage() {
 		setError(null);
 		try {
 			const productId = selectedProduct?.id ?? "";
-			let exact = false;
+			const gate = await resolveExactGenerationGate(productId);
+			if (gate.mode === "blocked") {
+				throw new Error(gate.message);
+			}
+			const exact = gate.mode === "exact";
 			let scenePrompt = prompt;
-			if (productId) {
-				try {
-					const pol = await fetchExactProductPolicy(productId);
-					exact = Boolean(pol.exact_product_composite_required);
-					if (exact) {
-						if (pol.canonical_valid === false) {
-							throw new Error(
-								pol.error?.message ||
-									"Canonical product source invalid — blocked before credit spend.",
-							);
-						}
-						const scene = await buildExactSceneOnlyPrompt(productId, prompt);
-						scenePrompt = scene.prompt;
-					}
-				} catch (e) {
-					if (exact) throw e;
-				}
+			if (exact && productId) {
+				const scene = await buildExactSceneOnlyPrompt(productId, prompt);
+				scenePrompt = scene.prompt;
 			}
 			// Exact-policy: do not send product/subject refs — scene plate only.
 			const refs = exact ? {} : resolvedRefsPayload;

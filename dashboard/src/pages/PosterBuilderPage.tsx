@@ -7,6 +7,7 @@ import {
 	buildExactSceneOnlyPrompt,
 	composeExactFromPlate,
 	fetchExactProductPolicy,
+	resolveExactGenerationGate,
 	type ExactProductPolicy,
 } from "../api/exactProductOutput";
 import {
@@ -130,6 +131,9 @@ export function PosterBuilderLegacyPanel() {
 	const [posterGenLoading, setPosterGenLoading] = useState(false);
 	const [posterGenStage, setPosterGenStage] = useState<string>("");
 	const [exactPolicy, setExactPolicy] = useState<ExactProductPolicy | null>(null);
+	const exactPolicyActive = Boolean(
+		exactPolicy?.exact_product_composite_required,
+	);
 	const [posterGenError, setPosterGenError] = useState("");
 	const [posterGenResult, setPosterGenResult] = useState<{
 		url: string;
@@ -713,28 +717,21 @@ export function PosterBuilderLegacyPanel() {
 		if (!pkg?.poster_prompt) return;
 		const subjectAsset = productSubjectAsset(selectedProduct);
 		const productId = selectedProduct?.id ?? "";
-		let policy = exactPolicy;
-		if (productId) {
-			try {
-				policy = await fetchExactProductPolicy(productId);
-				setExactPolicy(policy);
-			} catch {
-				/* keep cached */
-			}
+		// Fail-closed: never assume non-exact when policy cannot be resolved.
+		const gate = await resolveExactGenerationGate(productId);
+		if (gate.mode === "blocked") {
+			setPosterGenConfirm(false);
+			setPosterGenError(gate.message);
+			return;
 		}
-		const exact = Boolean(policy?.exact_product_composite_required);
+		if (gate.mode === "exact" || gate.mode === "standard") {
+			setExactPolicy(gate.policy);
+		}
+		const exact = gate.mode === "exact";
 		if (!exact && !subjectAsset) {
 			setPosterGenConfirm(false);
 			setPosterGenError(
 				`${PRODUCT_REFERENCE_IMAGE_REQUIRED} — produk ini tiada gambar rujukan yang boleh diguna. Poster produk mesti berlabuh pada gambar produk sebenar; penjanaan dihalang.`,
-			);
-			return;
-		}
-		if (exact && policy && policy.canonical_valid === false) {
-			setPosterGenConfirm(false);
-			setPosterGenError(
-				policy.error?.message ||
-					"Canonical product source invalid — exact composite blocked before credit spend.",
 			);
 			return;
 		}
@@ -745,6 +742,7 @@ export function PosterBuilderLegacyPanel() {
 		setPosterGenStage(exact ? "validating_canonical" : "generating");
 		try {
 			let prompt = pkg.poster_prompt;
+			// Exact: never send product refs. Standard: keep product subjectAsset.
 			const refs = exact || !subjectAsset ? undefined : { subjectAsset };
 			if (exact && productId) {
 				setPosterGenStage("generating_scene");
@@ -813,7 +811,9 @@ export function PosterBuilderLegacyPanel() {
 					</div>
 					<h1 className="mt-1 text-2xl font-bold text-slate-100">Poster Builder</h1>
 					<p className="mt-2 max-w-2xl text-sm text-slate-400">
-						Recipe-first: pick a poster archetype, confirm the product image, set controlled
+						{exactPolicyActive
+						? "Exact-product mode: scene plate + canonical cutout composite. "
+						: ""}Recipe-first: pick a poster archetype, confirm the product image, set controlled
 						options, then fill the recipe's copy slots. Manual Expert stays available as an advanced/legacy mode.
 					</p>
 				</div>

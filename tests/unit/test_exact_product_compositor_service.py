@@ -130,9 +130,17 @@ def test_compose_final_from_plate_lineage(tmp_path, monkeypatch):
     assert result["canonical_source_sha256"] == digest
     assert Path(result["output_path"]).exists()
     assert result["qa"]["product_region_match"] is True
-    # aspect preserved: w/h ratio matches source bottle ~40/60
+    # aspect preserved: placed box matches cutout intrinsic ratio
     tr = result["transform"]
-    assert abs((tr["w"] / tr["h"]) - (40 / 60)) < 0.05
+    from agent.services import exact_product_compositor_service as epc
+    layer = epc.prepare_layer(
+        {"id": "p1", "product_display_name": "Minyak Warisan Cap Burung 25ml"},
+        epc.LANE_SAFE_REGIONS["studio"],
+        {"w": 540, "h": 960},
+    )
+    cut_im = Image.open(layer["asset_ref"])
+    expected = cut_im.width / max(1, cut_im.height)
+    assert abs((tr["w"] / tr["h"]) - expected) < 0.02
 
 
 def test_non_exact_requires_false(monkeypatch):

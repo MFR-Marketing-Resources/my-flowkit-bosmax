@@ -2,11 +2,18 @@
  * Exact-product final-output client.
  *
  * For products with exact_product_composite_required the operator path is:
- *   1. GET policy / validate (fail closed before credits)
+ *   1. resolveExactGenerationGate (fail closed before credits)
  *   2. Generate scene-only plate (NO product reference to Flow)
  *   3. POST compose-from-plate → final composite media only
+ *
+ * Policy resolution is FAIL-CLOSED when a product is selected:
+ * only an explicit successful response with
+ * exact_product_composite_required === false may use the standard
+ * reference-conditioned route. Network/parse failures block generation.
  */
 import { getAPI, postAPI } from "./client";
+
+export const EXACT_PRODUCT_POLICY_UNAVAILABLE = "EXACT_PRODUCT_POLICY_UNAVAILABLE";
 
 export interface ExactProductPolicy {
 	product_id: string;
@@ -47,6 +54,66 @@ export interface ExactComposeResult {
 		qa?: Record<string, unknown>;
 	};
 	stages_completed?: string[];
+}
+
+export type ExactGenerationGate =
+	| { mode: "no_product" }
+	| { mode: "standard"; policy: ExactProductPolicy }
+	| { mode: "exact"; policy: ExactProductPolicy }
+	| { mode: "blocked"; code: string; message: string };
+
+/**
+ * Fail-closed exact-policy gate before any provider credit spend.
+ * - no product selected → no_product (caller decides lane rules)
+ * - explicit exact_product_composite_required === false → standard
+ * - explicit true (+ canonical valid) → exact
+ * - fetch failure / inconclusive → blocked (never assume non-exact)
+ */
+export async function resolveExactGenerationGate(
+	productId: string | null | undefined,
+	fetchPolicy: (
+		id: string,
+	) => Promise<ExactProductPolicy> = fetchExactProductPolicy,
+): Promise<ExactGenerationGate> {
+	const id = (productId ?? "").trim();
+	if (!id) {
+		return { mode: "no_product" };
+	}
+	try {
+		const policy = await fetchPolicy(id);
+		if (policy.exact_product_composite_required === true) {
+			if (policy.canonical_valid === false) {
+				return {
+					mode: "blocked",
+					code:
+						policy.error?.code || "CANONICAL_PRODUCT_SOURCE_INVALID",
+					message:
+						policy.error?.message ||
+						"Canonical product source invalid — exact composite blocked before credit spend.",
+				};
+			}
+			return { mode: "exact", policy };
+		}
+		if (policy.exact_product_composite_required === false) {
+			return { mode: "standard", policy };
+		}
+		return {
+			mode: "blocked",
+			code: EXACT_PRODUCT_POLICY_UNAVAILABLE,
+			message:
+				"Exact-product policy response inconclusive — generation blocked. Retry policy lookup before spending credits.",
+		};
+	} catch (err) {
+		const detail =
+			err instanceof Error && err.message
+				? err.message
+				: "exact product policy endpoint unavailable";
+		return {
+			mode: "blocked",
+			code: EXACT_PRODUCT_POLICY_UNAVAILABLE,
+			message: `${EXACT_PRODUCT_POLICY_UNAVAILABLE}: ${detail}`,
+		};
+	}
 }
 
 export async function fetchExactProductPolicy(

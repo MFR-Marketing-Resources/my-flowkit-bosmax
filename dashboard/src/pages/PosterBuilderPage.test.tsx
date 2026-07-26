@@ -71,6 +71,24 @@ vi.mock("../api/posterCopyRecommendations", () => ({
 	fetchPosterCopyRecommendations: vi.fn(),
 }));
 
+vi.mock("../api/exactProductOutput", () => ({
+	fetchExactProductPolicy: vi.fn(async () => ({
+		product_id: "p1",
+		exact_product_composite_required: false,
+		canonical_valid: true,
+	})),
+	resolveExactGenerationGate: vi.fn(async () => ({
+		mode: "standard",
+		policy: {
+			product_id: "p1",
+			exact_product_composite_required: false,
+			canonical_valid: true,
+		},
+	})),
+	buildExactSceneOnlyPrompt: vi.fn(),
+	composeExactFromPlate: vi.fn(),
+}));
+
 vi.mock("../api/imgFactory", () => ({
 	startImgGeneration: vi.fn(),
 	pollImgGenerationJob: vi.fn(),

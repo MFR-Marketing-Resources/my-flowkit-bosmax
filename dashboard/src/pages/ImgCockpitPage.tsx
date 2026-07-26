@@ -13,7 +13,7 @@ import {
 import {
 	buildExactSceneOnlyPrompt,
 	composeExactFromPlate,
-	fetchExactProductPolicy,
+	resolveExactGenerationGate,
 } from "../api/exactProductOutput";
 import { useImageGenSettings } from "../api/imageGenSettings";
 import { fetchProductCatalog } from "../api/products";
@@ -368,21 +368,15 @@ export default function ImgCockpitPage() {
 		setError(null);
 		try {
 			const productId = selectedProduct?.id ?? "";
-			let exact = false;
+			const gate = await resolveExactGenerationGate(productId);
+			if (gate.mode === "blocked") {
+				throw new Error(gate.message);
+			}
+			const exact = gate.mode === "exact";
 			let scenePrompt = prompt;
-			if (productId) {
-				const pol = await fetchExactProductPolicy(productId);
-				exact = Boolean(pol.exact_product_composite_required);
-				if (exact) {
-					if (pol.canonical_valid === false) {
-						throw new Error(
-							pol.error?.message ||
-								"Canonical product source invalid — blocked before credit spend.",
-						);
-					}
-					const scene = await buildExactSceneOnlyPrompt(productId, prompt);
-					scenePrompt = scene.prompt;
-				}
+			if (exact && productId) {
+				const scene = await buildExactSceneOnlyPrompt(productId, prompt);
+				scenePrompt = scene.prompt;
 			}
 			// Exact-policy: scene-only plate (no product subjectAsset). Else SCALE-07 path.
 			const payload = exact
