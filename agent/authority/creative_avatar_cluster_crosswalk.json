@@ -17,14 +17,14 @@
     "suitability_notes": "Beauty: female presenter 'Farah' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_AMINAH_01",
+    "avatar_code": "BOS_F_AINA_01",
     "fit_score": 0.82,
-    "suitability_notes": "Beauty: female presenter 'Aminah' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+    "suitability_notes": "Beauty: female presenter 'Aina' from the live age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_SALMAH_01",
+    "avatar_code": "BOS_F_SARA_01",
     "fit_score": 0.78,
-    "suitability_notes": "Beauty: female presenter 'Salmah' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+    "suitability_notes": "Beauty: female presenter 'Sara' from the live age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    }
   ],
   "Baby & Kids": [
@@ -78,14 +78,14 @@
     "suitability_notes": "Home & Living: female presenter 'Nadia' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_AMINAH_01",
+    "avatar_code": "BOS_F_AINA_01",
     "fit_score": 0.82,
-    "suitability_notes": "Home & Living: female presenter 'Aminah' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+    "suitability_notes": "Home & Living: female presenter 'Aina' from the live age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_M_RAHMAN_01",
+    "avatar_code": "BOS_M_HARIS_01",
     "fit_score": 0.78,
-    "suitability_notes": "Home & Living: male presenter 'Rahman' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+    "suitability_notes": "Home & Living: male presenter 'Haris' from the live age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    }
   ],
   "Food & Beverage": [
@@ -100,26 +100,26 @@
     "suitability_notes": "Food & Beverage: female presenter 'Nadia' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_AMINAH_01",
+    "avatar_code": "BOS_F_AINA_01",
     "fit_score": 0.82,
-    "suitability_notes": "Food & Beverage: female presenter 'Aminah' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+    "suitability_notes": "Food & Beverage: female presenter 'Aina' from the live age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_SALMAH_01",
+    "avatar_code": "BOS_F_SARA_01",
     "fit_score": 0.78,
-    "suitability_notes": "Food & Beverage: female presenter 'Salmah' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+    "suitability_notes": "Food & Beverage: female presenter 'Sara' from the live age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    }
   ],
   "Islamic & Books": [
    {
-    "avatar_code": "BOS_F_SALMAH_01",
+    "avatar_code": "BOS_F_SARA_01",
     "fit_score": 0.9,
-    "suitability_notes": "Islamic & Books: female presenter 'Salmah' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+    "suitability_notes": "Islamic & Books: female presenter 'Sara' from the live age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_AMINAH_01",
+    "avatar_code": "BOS_F_AINA_01",
     "fit_score": 0.86,
-    "suitability_notes": "Islamic & Books: female presenter 'Aminah' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+    "suitability_notes": "Islamic & Books: female presenter 'Aina' from the live age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
     "avatar_code": "BOS_M_AMIR_01",
@@ -127,9 +127,9 @@
     "suitability_notes": "Islamic & Books: male presenter 'Amir' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_M_RAHMAN_01",
+    "avatar_code": "BOS_M_HARIS_01",
     "fit_score": 0.78,
-    "suitability_notes": "Islamic & Books: male presenter 'Rahman' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+    "suitability_notes": "Islamic & Books: male presenter 'Haris' from the live age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    }
   ],
   "Office & Stationery": [
@@ -183,14 +183,14 @@
     "suitability_notes": "Automotive: male presenter 'Rafi' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_M_RAHMAN_01",
+    "avatar_code": "BOS_M_HARIS_01",
     "fit_score": 0.82,
-    "suitability_notes": "Automotive: male presenter 'Rahman' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+    "suitability_notes": "Automotive: male presenter 'Haris' from the live age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_M_YUSOF_01",
+    "avatar_code": "BOS_M_FAIZ_01",
     "fit_score": 0.78,
-    "suitability_notes": "Automotive: male presenter 'Yusof' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+    "suitability_notes": "Automotive: male presenter 'Faiz' from the live age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    }
   ],
   "Sports & Outdoors": [
@@ -205,16 +205,16 @@
     "suitability_notes": "Sports & Outdoors: male presenter 'Amir' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_M_RAHMAN_01",
+    "avatar_code": "BOS_M_HARIS_01",
     "fit_score": 0.82,
-    "suitability_notes": "Sports & Outdoors: male presenter 'Rahman' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+    "suitability_notes": "Sports & Outdoors: male presenter 'Haris' from the live age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    }
   ],
   "Tools & Home Improvement": [
    {
-    "avatar_code": "BOS_M_RAHMAN_01",
+    "avatar_code": "BOS_M_HARIS_01",
     "fit_score": 0.9,
-    "suitability_notes": "Tools & Home Improvement: male presenter 'Rahman' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+    "suitability_notes": "Tools & Home Improvement: male presenter 'Haris' from the live age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
     "avatar_code": "BOS_M_AMIR_01",
@@ -227,9 +227,9 @@
     "suitability_notes": "Tools & Home Improvement: male presenter 'Rafi' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_M_YUSOF_01",
+    "avatar_code": "BOS_M_FAIZ_01",
     "fit_score": 0.78,
-    "suitability_notes": "Tools & Home Improvement: male presenter 'Yusof' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+    "suitability_notes": "Tools & Home Improvement: male presenter 'Faiz' from the live age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    }
   ],
   "Pet Care": [
@@ -244,14 +244,14 @@
     "suitability_notes": "Pet Care: female presenter 'Farah' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_SALMAH_01",
+    "avatar_code": "BOS_F_SARA_01",
     "fit_score": 0.82,
-    "suitability_notes": "Pet Care: female presenter 'Salmah' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+    "suitability_notes": "Pet Care: female presenter 'Sara' from the live age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    },
    {
-    "avatar_code": "BOS_F_AMINAH_01",
+    "avatar_code": "BOS_F_AINA_01",
     "fit_score": 0.78,
-    "suitability_notes": "Pet Care: female presenter 'Aminah' from the refreshed age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
+    "suitability_notes": "Pet Care: female presenter 'Aina' from the live age-diverse BOS_ roster (minors excluded from auto-recommend). [src:CREATIVE_AVATAR_CROSSWALK_v1]"
    }
   ]
  }

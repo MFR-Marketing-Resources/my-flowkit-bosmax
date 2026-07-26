@@ -39,15 +39,18 @@ def test_resolve_cluster_exact_prefix_keyword_fallback():
     }
 
 
-def test_legacy_crosswalk_is_never_treated_as_live_pool_authority():
+def test_crosswalk_is_live_pool_authority_and_deterministically_ranked():
     live = {a["avatar_code"] for a in avatar_registry.list_pool()}
     cross = svc._crosswalk()["crosswalk"]
     assert set(cross.keys()) == set(svc.canonical_clusters())
     candidates = {row["avatar_code"] for rows in cross.values() for row in rows}
-    assert all(code.startswith("BOS_") for code in candidates)
-    # The registry reset intentionally leaves historical crosswalk candidates
-    # inert. They must be re-earned by a new live pool, never silently seeded.
-    assert candidates - live
+    assert candidates <= live
+    for cluster, rows in cross.items():
+        codes = [row["avatar_code"] for row in rows]
+        scores = [float(row["fit_score"]) for row in rows]
+        assert len(codes) == len(set(codes)), cluster
+        assert scores == sorted(scores, reverse=True), cluster
+        assert all(0 <= score <= 1 for score in scores), cluster
 
 
 def test_crosswalk_code_gender_prefix_matches_seed():
