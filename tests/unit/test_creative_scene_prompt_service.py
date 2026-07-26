@@ -158,12 +158,15 @@ def test_templates_for_unknown_cluster_returns_empty_without_crashing():
 
 
 @pytest.mark.asyncio
-async def test_unknown_category_falls_back_safely():
+async def test_unknown_category_fails_closed_safely():
     result = await svc.recommend_scene_prompts_for_category("Totally Unknown Thing")
-    # Deterministic fallback cluster (Home & Living) is a covered cluster.
-    assert result["cluster"] == "Home & Living"
-    assert result["cluster_source"] == "FALLBACK"
-    assert result["template_count"] >= 1  # never crashes
+    # The canonical resolver is now fail-closed: an unreviewed category must
+    # never inherit a visual cluster and receive a potentially unsuitable plan.
+    assert result["cluster"] is None
+    assert result["cluster_source"] == "REVIEW_REQUIRED_UNKNOWN_CATEGORY"
+    assert result["review_required"] is True
+    assert result["template_count"] == 0
+    assert result["templates"] == []
 
 
 @pytest.mark.asyncio

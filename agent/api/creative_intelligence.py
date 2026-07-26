@@ -1,11 +1,13 @@
-"""Creative Intelligence API — Round 1 (avatar) + Round 2 (scene/image prompts)
-+ Round 3 (camera/video presets).
+"""Creative Intelligence API — avatar, scene-prompt, scene-suitability, and camera
+recommendation layers.
 
 Read-first, non-generative. Exposes:
   * GET  /api/creative-intelligence/avatar-recommendation       (by product_id OR category)
   * POST /api/creative-intelligence/avatar-fit/seed             (idempotent; dry-run default)
   * GET  /api/creative-intelligence/scene-prompt-recommendation (by product_id OR category)
   * POST /api/creative-intelligence/scene-prompt/seed           (idempotent; dry-run default)
+  * GET  /api/creative-intelligence/scene-suitability/category  (by category)
+  * GET  /api/creative-intelligence/scene-suitability/product/{product_id}
   * GET  /api/creative-intelligence/camera-preset-recommendation (by product_id/category/cluster)
   * POST /api/creative-intelligence/camera-preset/seed          (idempotent; dry-run default)
 
@@ -22,6 +24,7 @@ from pydantic import BaseModel
 
 from agent.services import creative_avatar_recommendation_service as _svc
 from agent.services import creative_scene_prompt_service as _scene
+from agent.services import product_scene_suitability_service as _scene_suitability
 from agent.services import creative_camera_preset_service as _camera
 from agent.services import creative_setup_service as _setup
 from agent.services import creative_handoff_service as _handoff
@@ -470,6 +473,30 @@ async def scene_prompt_seed(dry_run: bool = True) -> dict:
     creative_scene_prompt config table — no Product Truth / Copy / generation
     effect. Templates are stored with placeholders unresolved."""
     return await _scene.seed_scene_prompts(dry_run=dry_run)
+
+
+@router.get("/scene-suitability/category")
+async def scene_suitability_by_category(category: str | None = None) -> dict:
+    """Read-only suitability recommendations for a raw product category.
+
+    The returned workbook templates remain preview-only with ``[AVATAR]`` and
+    ``[PRODUCT]`` unresolved; this route never promotes a template to the
+    background scene registry or invokes generation.
+    """
+    if category is None:
+        raise HTTPException(status_code=422, detail="category is required")
+    return await _scene_suitability.recommend_scene_suitability_for_category(category)
+
+
+@router.get("/scene-suitability/product/{product_id}")
+async def scene_suitability_by_product(product_id: str) -> dict:
+    """Read-only suitability recommendations for a registered product."""
+    try:
+        return await _scene_suitability.recommend_scene_suitability_for_product(product_id)
+    except ValueError as exc:
+        if str(exc) == "PRODUCT_NOT_FOUND":
+            raise HTTPException(status_code=404, detail="PRODUCT_NOT_FOUND") from exc
+        raise
 
 
 @router.get("/camera-preset-recommendation")
