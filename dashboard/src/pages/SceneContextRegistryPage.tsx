@@ -4,6 +4,14 @@ import {
 	getRegistryCoverage,
 	getRegistryReconciliation,
 	getScenePromotionProductReview,
+	getScenePromotionActivationEligibility,
+	activateScenePromotion,
+	activateScenePromotionBulk,
+	getSceneContextClusterCoverage,
+	getScenePromotionActivationHistory,
+	type ClusterCoverageResponse,
+	type ActivationHistoryResponse,
+	type ActivationEligibilityResponse,
 	type RegistryCleanupPlan,
 	type RegistryCoverage,
 	type RegistryReconciliation,
@@ -50,6 +58,14 @@ export default function SceneContextRegistryPage() {
 	const [selectedCandidateIds, setSelectedCandidateIds] = useState<Set<string>>(new Set());
 	const [reviewerNote, setReviewerNote] = useState("");
 	const [reviewSubmitting, setReviewSubmitting] = useState(false);
+	const [activationEligibility, setActivationEligibility] = useState<ActivationEligibilityResponse | null>(null);
+	const [activationCandidate, setActivationCandidate] = useState<ScenePromotionCandidate | null>(null);
+	const [activationNote, setActivationNote] = useState("");
+	const [activatedBy, setActivatedBy] = useState("");
+	const [activationSubmitting, setActivationSubmitting] = useState(false);
+	const [bulkActivationOpen, setBulkActivationOpen] = useState(false);
+	const [clusterCoverage, setClusterCoverage] = useState<ClusterCoverageResponse | null>(null);
+	const [activationHistory, setActivationHistory] = useState<ActivationHistoryResponse | null>(null);
 	const productReviewRequestId = useRef(0);
 	const [pool, setPool] = useState<ScenePoolResponse | null>(null);
 	const [loading, setLoading] = useState(true);
@@ -83,6 +99,8 @@ export default function SceneContextRegistryPage() {
 			const data = await response.json();
 			if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`);
 			setPool(data);
+			void getSceneContextClusterCoverage().then(setClusterCoverage).catch(() => {});
+			void getScenePromotionActivationHistory().then(setActivationHistory).catch(() => {});
 			getRegistryCoverage()
 				.then(setCoverage)
 				.catch(() => {});
@@ -116,13 +134,15 @@ export default function SceneContextRegistryPage() {
 		setReviewLoading(true);
 		setReviewError(null);
 		try {
-			const review = await getScenePromotionProductReview(product.id);
+			const [review, eligibility] = await Promise.all([getScenePromotionProductReview(product.id), getScenePromotionActivationEligibility(product.id)]);
 			if (requestId !== productReviewRequestId.current) return;
 			setProductReview(review);
+			setActivationEligibility(eligibility);
 			setSelectedCandidateIds(new Set());
 		} catch (err) {
 			if (requestId !== productReviewRequestId.current) return;
 			setProductReview(null);
+			setActivationEligibility(null);
 			setReviewError(err instanceof Error ? err.message : "Failed to load product scene review.");
 		} finally {
 			if (requestId === productReviewRequestId.current) setReviewLoading(false);
@@ -134,10 +154,42 @@ export default function SceneContextRegistryPage() {
 		productReviewRequestId.current += 1;
 		setSelectedReviewProduct(product);
 		setProductReview(null);
+		setActivationEligibility(null);
 		setSelectedCandidateIds(new Set());
 		setReviewError(null);
+		setActivationCandidate(null);
+		setBulkActivationOpen(false);
+		setActivationNote("");
 		if (productChanged || product === null) setReviewerNote("");
 		if (product) void loadProductReview(product);
+	};
+
+	const eligibleCandidates = productReview?.candidates.filter((candidate) => {
+		const eligibility = activationEligibility?.candidates.find((item) => item.source_template_id === candidate.source_template_id && item.candidate_fingerprint === candidate.candidate_fingerprint);
+		return eligibility?.activation_eligible && eligibility.activation_status === "ELIGIBLE_FOR_CONTROLLED_PROMOTION";
+	}) ?? [];
+	const submitBulkActivation = async () => {
+		if (!selectedReviewProduct || !activatedBy.trim() || activationSubmitting) return;
+		const selected = eligibleCandidates.filter((candidate) => selectedCandidateIds.has(candidate.source_template_id));
+		if (!selected.length) return;
+		setActivationSubmitting(true); setReviewError(null);
+		try {
+			const result = await activateScenePromotionBulk({ reviewed_via_product_id: selectedReviewProduct.id, items: selected.map(({ source_template_id, candidate_fingerprint }) => ({ source_template_id, candidate_fingerprint })), confirmation: "PROMOTE_TO_ACTIVE_REGISTRY", activated_by: activatedBy.trim(), activation_note: activationNote.trim() || null });
+			setSuccessMsg(`${result.registry_mutations} registry mutation(s): ${result.items.map((item) => item.scene_code).join(", ")}`);
+			setSelectedCandidateIds(new Set()); setBulkActivationOpen(false); setActivationNote(""); await refreshSelectedProductReview(); if (activeView === "admin") await refresh();
+		} catch (err) { setReviewError(err instanceof Error ? err.message : "Bulk activation failed."); }
+		finally { setActivationSubmitting(false); }
+	};
+
+	const submitActivation = async () => {
+		if (!selectedReviewProduct || !activationCandidate || !activatedBy.trim() || activationSubmitting) return;
+		setActivationSubmitting(true); setReviewError(null);
+		try {
+			const result = await activateScenePromotion({ reviewed_via_product_id: selectedReviewProduct.id, source_template_id: activationCandidate.source_template_id, candidate_fingerprint: activationCandidate.candidate_fingerprint, confirmation: "PROMOTE_TO_ACTIVE_REGISTRY", activated_by: activatedBy.trim(), activation_note: activationNote.trim() || null });
+			setSuccessMsg(`${result.scene_code}: ACTIVE IN REGISTRY · NOT GENERATED${result.idempotent ? " (idempotent)" : ""}`);
+			setActivationCandidate(null); setActivationNote(""); await refreshSelectedProductReview(); if (activeView === "admin") await refresh();
+		} catch (err) { setReviewError(err instanceof Error ? err.message : "Activation failed."); }
+		finally { setActivationSubmitting(false); }
 	};
 
 	const refreshSelectedProductReview = async () => {
@@ -196,11 +248,11 @@ export default function SceneContextRegistryPage() {
 	};
 
 	const toggleCandidateSelection = (candidate: ScenePromotionCandidate) => {
-		if (candidate.stale_review_required || productReview?.review_required) return;
+		if (candidate.stale_review_required || productReview?.review_required || !eligibleCandidates.some((item) => item.source_template_id === candidate.source_template_id)) return;
 		setSelectedCandidateIds((current) => {
 			const next = new Set(current);
 			if (next.has(candidate.source_template_id)) next.delete(candidate.source_template_id);
-			else next.add(candidate.source_template_id);
+			else if (next.size < 25) next.add(candidate.source_template_id);
 			return next;
 		});
 	};
@@ -535,17 +587,19 @@ export default function SceneContextRegistryPage() {
 								<div className="space-y-4" data-testid="product-scene-review-candidates">
 									<div className="flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-900/40 p-3 sm:flex-row sm:items-end">
 										<label className="min-w-0 flex-1 text-xs text-slate-300">Reviewer note (optional, max 2000 characters)<textarea value={reviewerNote} maxLength={2000} onChange={(event) => setReviewerNote(event.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-slate-100" /></label>
-										<div className="flex gap-2"><button type="button" disabled={!selectedCandidateIds.size || reviewSubmitting} onClick={() => void submitSelectedReviews("APPROVED_FOR_FUTURE_PROMOTION")} className="rounded-lg border border-emerald-500/40 px-3 py-2 text-xs text-emerald-100 disabled:opacity-40">Approve selected</button><button type="button" disabled={!selectedCandidateIds.size || reviewSubmitting} onClick={() => void submitSelectedReviews("REJECTED")} className="rounded-lg border border-red-500/40 px-3 py-2 text-xs text-red-100 disabled:opacity-40">Reject selected</button></div>
+										<div className="flex gap-2"><button type="button" disabled={!selectedCandidateIds.size || reviewSubmitting} onClick={() => void submitSelectedReviews("APPROVED_FOR_FUTURE_PROMOTION")} className="rounded-lg border border-emerald-500/40 px-3 py-2 text-xs text-emerald-100 disabled:opacity-40">Approve selected</button><button type="button" disabled={!selectedCandidateIds.size || reviewSubmitting} onClick={() => void submitSelectedReviews("REJECTED")} className="rounded-lg border border-red-500/40 px-3 py-2 text-xs text-red-100 disabled:opacity-40">Reject selected</button><button type="button" disabled={!selectedCandidateIds.size || activationSubmitting} onClick={() => setBulkActivationOpen(true)} className="rounded-lg border border-cyan-500/40 px-3 py-2 text-xs text-cyan-100 disabled:opacity-40">Promote Selected ({selectedCandidateIds.size})</button></div>
 									</div>
 									{productReview.candidates.map((candidate) => {
 										const actionsDisabled = candidate.stale_review_required || reviewSubmitting;
+										const activation = activationEligibility?.candidates.find((item) => item.source_template_id === candidate.source_template_id && item.candidate_fingerprint === candidate.candidate_fingerprint);
 										return <article key={candidate.source_template_id} className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900/50 p-4">
 											<div className="flex items-start justify-between gap-3"><label className="flex items-start gap-2 text-sm font-semibold text-slate-100"><input aria-label={`Select ${candidate.source_template_id}`} type="checkbox" checked={selectedCandidateIds.has(candidate.source_template_id)} disabled={actionsDisabled} onChange={() => toggleCandidateSelection(candidate)} /> <span>{candidate.proposed_scene_name}<span className="mt-1 block font-mono text-[10px] font-normal text-slate-500">{candidate.source_template_id} → {candidate.proposed_scene_code}</span></span></label><span className="rounded-md border border-slate-700 px-2 py-1 text-[10px] text-slate-300">{candidate.decision}</span></div>
 											<div className="grid gap-2 text-xs text-slate-300 sm:grid-cols-2"><div><strong>Source category:</strong> {candidate.source_category || "Unknown"}</div><div><strong>Setting:</strong> {candidate.setting || "—"}</div><div><strong>Background:</strong> {candidate.background_prompt}</div><div><strong>Safety:</strong> {candidate.safety_block}</div><div><strong>Usage tags:</strong> {candidate.usage_tags}</div><div><strong>Reviewed:</strong> {candidate.reviewed_at || "Not yet reviewed"}</div></div>
 											<div className="text-xs text-slate-400"><strong>PromptV1:</strong><p className="mt-1 whitespace-pre-wrap">{candidate.prompt_v1}</p><p className="mt-2"><strong>Reviewer note:</strong> {candidate.reviewer_note || "—"}</p></div>
 											{candidate.stale_review_required ? <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-100"><span>Candidate content changed after the prior decision. Refresh before taking a new action; the older fingerprint is not reused.</span><button type="button" onClick={() => void refreshSelectedProductReview()} className="rounded border border-amber-400/50 px-2 py-1">Refresh candidate</button></div> : <div className="flex flex-wrap gap-2"><button type="button" disabled={actionsDisabled} onClick={() => void submitReview(candidate, "APPROVED_FOR_FUTURE_PROMOTION")} className="rounded-lg border border-emerald-500/40 px-3 py-1.5 text-xs text-emerald-100 disabled:opacity-40">Approve for future promotion</button><button type="button" disabled={actionsDisabled} onClick={() => void submitReview(candidate, "REJECTED")} className="rounded-lg border border-red-500/40 px-3 py-1.5 text-xs text-red-100 disabled:opacity-40">Reject</button><button type="button" disabled={actionsDisabled} onClick={() => void submitReview(candidate, "PENDING")} className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs text-slate-200 disabled:opacity-40">Reset to pending</button></div>}
 											{candidate.decision === "APPROVED_FOR_FUTURE_PROMOTION" && <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs font-semibold text-emerald-100">APPROVED FOR FUTURE PROMOTION · NOT ACTIVE IN REGISTRY</div>}
-											<div className="text-[10px] text-slate-500">Activation status: {candidate.activation_status}</div>
+											<div className="text-[10px] text-slate-500">Activation status: {activation?.activation_status || "NOT_APPROVED"}{activation?.existing_scene_code ? ` · SceneCode: ${activation.existing_scene_code}` : ""}{activation?.activation_blocker ? ` · ${activation.activation_blocker}` : ""}</div>
+											{activation?.activation_eligible && activation.activation_status === "ELIGIBLE_FOR_CONTROLLED_PROMOTION" && <button type="button" onClick={() => setActivationCandidate(candidate)} className="rounded-lg border border-cyan-500/40 px-3 py-1.5 text-xs text-cyan-100">Promote to Active Registry</button>}
 										</article>;
 									})}
 								</div>
@@ -988,6 +1042,17 @@ export default function SceneContextRegistryPage() {
 				</div>
 			)}
 			</>}
+			{activeView === "admin" && clusterCoverage && <section aria-label="Cluster coverage" className="mb-4 rounded-xl border border-slate-800 p-4"><div className="text-sm font-semibold">Cluster coverage · {clusterCoverage.active_scene_total} active · {clusterCoverage.classified_scene_total} classified · {clusterCoverage.review_required_scene_total} review required · {clusterCoverage.shared_scene_total} shared</div><div className="mt-2 grid gap-2 sm:grid-cols-2">{clusterCoverage.per_cluster.map((row) => <div key={row.cluster} className="text-xs">{row.cluster}: {row.eligible_active_scene_count} active · {row.gap_to_target ? `GAP ${row.gap_to_target}` : "TARGET MET"}</div>)}</div>{activationHistory && <div className="mt-3 text-xs"><strong>Activation History</strong>{activationHistory.events.map((event) => <div key={event.activation_id}>{event.activated_at} · {event.scene_code} · {event.activated_by} · {event.activation_note || "—"}</div>)}</div>}</section>}
+			{bulkActivationOpen && <div role="dialog" aria-modal="true" aria-label="Confirm selected promotion" className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4"><div className="w-full max-w-lg rounded-2xl border border-cyan-500/30 bg-slate-900 p-5 text-sm text-slate-100"><h2 className="text-lg font-semibold">Promote Selected ({selectedCandidateIds.size})</h2><p className="mt-2 text-xs text-amber-100">This atomic action adds registry rows. No media is generated.</p><label className="mt-3 block text-xs">Activated by<input aria-label="Activated by" value={activatedBy} onChange={(event) => setActivatedBy(event.target.value)} className="mt-1 w-full rounded border border-slate-700 bg-slate-950 p-2" /></label><div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => setBulkActivationOpen(false)}>Cancel</button><button type="button" disabled={!activatedBy.trim() || activationSubmitting} onClick={() => void submitBulkActivation()}>Confirm selected promotion</button></div></div></div>}
+			{activationCandidate && <div role="dialog" aria-modal="true" aria-label="Confirm controlled promotion" className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4">
+				<div className="w-full max-w-lg rounded-2xl border border-cyan-500/30 bg-slate-900 p-5 text-sm text-slate-100 shadow-2xl">
+					<h2 className="text-lg font-semibold">Promote to Active Registry</h2><p className="mt-2 text-slate-300">{selectedReviewProduct?.product_display_name} · {activationCandidate.source_template_id} · {productReview?.cluster || "REVIEW REQUIRED"}</p>
+					<p className="mt-2 text-xs text-amber-100">This adds an active registry row. It does not generate an image or video.</p>
+					<label className="mt-3 block text-xs">Activated by<input aria-label="Activated by" value={activatedBy} onChange={(event) => setActivatedBy(event.target.value)} className="mt-1 w-full rounded border border-slate-700 bg-slate-950 p-2" /></label>
+					<label className="mt-3 block text-xs">Activation note (optional)<textarea aria-label="Activation note" value={activationNote} onChange={(event) => setActivationNote(event.target.value)} className="mt-1 w-full rounded border border-slate-700 bg-slate-950 p-2" /></label>
+					<div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => setActivationCandidate(null)} className="rounded border border-slate-600 px-3 py-2">Cancel</button><button type="button" disabled={!activatedBy.trim() || activationSubmitting} onClick={() => void submitActivation()} className="rounded border border-cyan-500/50 bg-cyan-500/10 px-3 py-2 disabled:opacity-40">{activationSubmitting ? "Promoting…" : "Confirm promotion"}</button></div>
+				</div>
+			</div>}
 		</div>
 	);
 }

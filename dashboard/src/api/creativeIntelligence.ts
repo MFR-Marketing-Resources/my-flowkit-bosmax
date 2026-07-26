@@ -245,6 +245,27 @@ export function submitScenePromotionBulkReview(
 	);
 }
 
+export type ActivationStatus = "NOT_APPROVED" | "STALE_REVIEW_REQUIRED" | "BLOCKED" | "ELIGIBLE_FOR_CONTROLLED_PROMOTION" | "ACTIVE_IN_REGISTRY";
+export interface ActivationEligibilityCandidate { source_template_id: string; candidate_fingerprint: string; cluster: string; current_review_decision: ScenePromotionDecision; stale_review_required: boolean; activation_eligible: boolean; activation_blocker: string | null; activation_status: ActivationStatus; existing_scene_code: string | null; proposed_scene_code: string | null; generation_status: "NOT_GENERATED"; }
+export interface ActivationEligibilityResponse { product_id: string; cluster: string | null; candidate_count: number; registry_mutations: 0; candidates: ActivationEligibilityCandidate[]; }
+export interface ActivationResult { activation_id: string; source_template_id: string; candidate_fingerprint: string; product_id: string; cluster: string; scene_code: string; scene_name: string; activation_status: "ACTIVE_IN_REGISTRY"; generation_status: "NOT_GENERATED"; idempotent: boolean; registry_scene_count: number; registry_mutations: number; provider_calls: 0; generation_jobs: 0; credits_used: 0; }
+export interface BulkActivationResult { requested_count: number; activated_count: number; idempotent_count: number; registry_scene_count: number; items: ActivationResult[]; registry_mutations: number; provider_calls: 0; generation_jobs: 0; credits_used: 0; }
+export interface ActivationHistoryEvent { activation_id: string; source_template_id: string; reviewed_via_product_id: string | null; cluster: string; scene_code: string; scene_name: string; activated_by: string; activation_note: string | null; activated_at: string; }
+export interface ActivationHistoryResponse { count: number; events: ActivationHistoryEvent[]; registry_mutations: 0; provider_calls: 0; generation_jobs: 0; credits_used: 0; }
+export interface ActivationRequest { reviewed_via_product_id: string; source_template_id: string; candidate_fingerprint: string; confirmation: "PROMOTE_TO_ACTIVE_REGISTRY"; activated_by: string; activation_note?: string | null; }
+export interface BulkActivationRequest { reviewed_via_product_id: string; items: Pick<ActivationRequest, "source_template_id" | "candidate_fingerprint">[]; confirmation: "PROMOTE_TO_ACTIVE_REGISTRY"; activated_by: string; activation_note?: string | null; }
+export function getScenePromotionActivationEligibility(productId: string) { return getAPI<ActivationEligibilityResponse>(`/api/creative-intelligence/scene-context-promotion/activation/product/${encodeURIComponent(productId)}`); }
+export function activateScenePromotion(payload: ActivationRequest) { return postAPI<ActivationResult>("/api/creative-intelligence/scene-context-promotion/activation", payload); }
+export function activateScenePromotionBulk(payload: BulkActivationRequest) { return postAPI<BulkActivationResult>("/api/creative-intelligence/scene-context-promotion/activation/bulk", payload); }
+export function getScenePromotionActivationHistory(productId?: string, sourceTemplateId?: string, limit = 100) { const query = new URLSearchParams({ limit: String(limit) }); if (productId) query.set("product_id", productId); if (sourceTemplateId) query.set("source_template_id", sourceTemplateId); return getAPI<ActivationHistoryResponse>(`/api/creative-intelligence/scene-context-promotion/activation/history?${query}`); }
+
+export interface ClusterCoverageRow { cluster: string; eligible_active_scene_count: number; primary_scene_count: number; shared_compatible_scene_count: number; gap_to_target: number; eligible_scene_codes: string[]; }
+export interface ClusterCoverageResponse { canonical_clusters: string[]; target_per_cluster: number; active_scene_total: number; classified_scene_total: number; review_required_scene_total: number; shared_scene_total: number; per_cluster: ClusterCoverageRow[]; milestone_complete: boolean; registry_mutations: 0; }
+export interface ClusterAwareSceneProfile { scene_code: string; scene_name: string; primary_cluster: string | null; compatible_clusters: string[]; cluster_classification_status: "CLASSIFIED" | "REVIEW_REQUIRED"; }
+export interface SceneClassificationResponse { active_scene_total: number; registry_mutations: 0; scenes: ClusterAwareSceneProfile[]; }
+export function getSceneContextClusterCoverage() { return getAPI<ClusterCoverageResponse>("/api/workspace/scene-context-registry/cluster-coverage"); }
+export function getSceneContextClassification() { return getAPI<SceneClassificationResponse>("/api/workspace/scene-context-registry/classification"); }
+
 // --- Round 2: Scene / Image Prompt templates (read-only) ---
 
 export interface ScenePromptTemplate {

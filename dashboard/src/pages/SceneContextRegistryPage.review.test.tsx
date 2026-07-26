@@ -6,6 +6,8 @@ import SceneContextRegistryPage from "./SceneContextRegistryPage";
 const mocks = vi.hoisted(() => ({
 	fetchProductCatalog: vi.fn(),
 	getScenePromotionProductReview: vi.fn(),
+	getScenePromotionActivationEligibility: vi.fn(),
+	activateScenePromotion: vi.fn(),
 	submitScenePromotionReview: vi.fn(),
 	submitScenePromotionBulkReview: vi.fn(),
 	getRegistryCoverage: vi.fn(),
@@ -19,6 +21,8 @@ vi.mock("../api/imageGenSettings", () => ({
 vi.mock("../api/products", () => ({ fetchProductCatalog: mocks.fetchProductCatalog }));
 vi.mock("../api/creativeIntelligence", () => ({
 	getScenePromotionProductReview: mocks.getScenePromotionProductReview,
+	getScenePromotionActivationEligibility: mocks.getScenePromotionActivationEligibility,
+	activateScenePromotion: mocks.activateScenePromotion,
 	submitScenePromotionReview: mocks.submitScenePromotionReview,
 	submitScenePromotionBulkReview: mocks.submitScenePromotionBulkReview,
 	getRegistryCoverage: mocks.getRegistryCoverage,
@@ -70,6 +74,7 @@ describe("SceneContextRegistryPage product-first owner review", () => {
 		vi.clearAllMocks();
 		mocks.fetchProductCatalog.mockResolvedValue({ items: [product, secondProduct] });
 		mocks.getScenePromotionProductReview.mockResolvedValue(review());
+		mocks.getScenePromotionActivationEligibility.mockResolvedValue({ product_id: "p1", cluster: "Beauty", candidate_count: 1, registry_mutations: 0, candidates: [] });
 		mocks.submitScenePromotionReview.mockResolvedValue(review());
 		mocks.submitScenePromotionBulkReview.mockResolvedValue(review());
 		mocks.getRegistryCoverage.mockResolvedValue(null);
