@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	getRegistryCleanupPlan,
 	getRegistryCoverage,
@@ -50,6 +50,7 @@ export default function SceneContextRegistryPage() {
 	const [selectedCandidateIds, setSelectedCandidateIds] = useState<Set<string>>(new Set());
 	const [reviewerNote, setReviewerNote] = useState("");
 	const [reviewSubmitting, setReviewSubmitting] = useState(false);
+	const productReviewRequestId = useRef(0);
 	const [pool, setPool] = useState<ScenePoolResponse | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
@@ -111,24 +112,31 @@ export default function SceneContextRegistryPage() {
 	}, [activeView, refresh]);
 
 	const loadProductReview = useCallback(async (product: Product) => {
+		const requestId = ++productReviewRequestId.current;
 		setReviewLoading(true);
 		setReviewError(null);
 		try {
-			setProductReview(await getScenePromotionProductReview(product.id));
+			const review = await getScenePromotionProductReview(product.id);
+			if (requestId !== productReviewRequestId.current) return;
+			setProductReview(review);
 			setSelectedCandidateIds(new Set());
 		} catch (err) {
+			if (requestId !== productReviewRequestId.current) return;
 			setProductReview(null);
 			setReviewError(err instanceof Error ? err.message : "Failed to load product scene review.");
 		} finally {
-			setReviewLoading(false);
+			if (requestId === productReviewRequestId.current) setReviewLoading(false);
 		}
 	}, []);
 
 	const selectReviewProduct = (product: Product | null) => {
+		const productChanged = selectedReviewProduct?.id !== product?.id;
+		productReviewRequestId.current += 1;
 		setSelectedReviewProduct(product);
 		setProductReview(null);
 		setSelectedCandidateIds(new Set());
 		setReviewError(null);
+		if (productChanged || product === null) setReviewerNote("");
 		if (product) void loadProductReview(product);
 	};
 

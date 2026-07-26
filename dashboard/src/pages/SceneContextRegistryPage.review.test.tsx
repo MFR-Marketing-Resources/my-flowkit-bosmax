@@ -29,12 +29,14 @@ vi.mock("../components/workspace/SearchableProductSelect", () => ({
 	default: ({ selectedProduct, onSelect }: { selectedProduct: { id: string; product_display_name: string } | null; onSelect: (product: { id: string; product_display_name: string; raw_product_title: string }) => void }) => (
 		<div data-testid="product-selector">
 			<button type="button" onClick={() => onSelect({ id: "p1", product_display_name: "Serum", raw_product_title: "Serum" })}>Select Serum</button>
+			<button type="button" onClick={() => onSelect({ id: "p2", product_display_name: "Lotion", raw_product_title: "Lotion" })}>Select Lotion</button>
 			<span>{selectedProduct?.product_display_name || "No product selected"}</span>
 		</div>
 	),
 }));
 
 const product = { id: "p1", source: "MANUAL", raw_product_title: "Serum", product_display_name: "Serum", product_short_name: "Serum" };
+const secondProduct = { id: "p2", source: "MANUAL", raw_product_title: "Lotion", product_display_name: "Lotion", product_short_name: "Lotion" };
 const candidate = {
 	source_template_id: "SCN-BEAUTY-01", source_category: "Beauty", setting: "Vanity alcove", candidate_fingerprint: "fingerprint-current",
 	proposed_scene_code: "SCN_BEAUTY_01", proposed_scene_name: "Beauty vanity alcove", background_prompt: "Background: vanity alcove",
@@ -50,6 +52,14 @@ function review(overrides: Record<string, unknown> = {}) {
 	};
 }
 
+function deferred<T>() {
+	let resolve: (value: T) => void = () => {};
+	const promise = new Promise<T>((resolvePromise) => {
+		resolve = resolvePromise;
+	});
+	return { promise, resolve };
+}
+
 describe("SceneContextRegistryPage product-first owner review", () => {
 	afterEach(() => {
 		cleanup();
@@ -58,7 +68,7 @@ describe("SceneContextRegistryPage product-first owner review", () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
-		mocks.fetchProductCatalog.mockResolvedValue({ items: [product] });
+		mocks.fetchProductCatalog.mockResolvedValue({ items: [product, secondProduct] });
 		mocks.getScenePromotionProductReview.mockResolvedValue(review());
 		mocks.submitScenePromotionReview.mockResolvedValue(review());
 		mocks.submitScenePromotionBulkReview.mockResolvedValue(review());
@@ -150,5 +160,32 @@ describe("SceneContextRegistryPage product-first owner review", () => {
 		await screen.findByRole("alert");
 		expect(screen.getAllByText("Serum").length).toBeGreaterThan(0);
 		expect(globalThis.fetch).not.toHaveBeenCalled();
+	});
+
+	it("keeps the latest product review when an older request resolves after it", async () => {
+		const firstReview = deferred<ReturnType<typeof review>>();
+		const secondReview = deferred<ReturnType<typeof review>>();
+		mocks.getScenePromotionProductReview
+			.mockReturnValueOnce(firstReview.promise)
+			.mockReturnValueOnce(secondReview.promise);
+		render(<SceneContextRegistryPage />);
+		fireEvent.click(screen.getByRole("button", { name: "Select Serum" }));
+		fireEvent.click(screen.getByRole("button", { name: "Select Lotion" }));
+		secondReview.resolve(review({ product_id: "p2", product_name: "Lotion", candidates: [{ ...candidate, proposed_scene_name: "Lotion shelf" }] }));
+		await screen.findByText("Lotion shelf");
+		firstReview.resolve(review({ candidates: [{ ...candidate, proposed_scene_name: "Serum shelf" }] }));
+		await waitFor(() => expect(screen.queryByText("Serum shelf")).toBeNull());
+		expect(screen.getByText("Lotion shelf")).toBeTruthy();
+	});
+
+	it("clears the reviewer note and selected candidates when the product changes", async () => {
+		render(<SceneContextRegistryPage />);
+		fireEvent.click(screen.getByRole("button", { name: "Select Serum" }));
+		await screen.findByText("Beauty vanity alcove");
+		fireEvent.click(screen.getByRole("checkbox", { name: "Select SCN-BEAUTY-01" }));
+		fireEvent.change(screen.getByRole("textbox", { name: /Reviewer note/ }), { target: { value: "Keep this note only for Serum" } });
+		fireEvent.click(screen.getByRole("button", { name: "Select Lotion" }));
+		await waitFor(() => expect((screen.getByRole("textbox", { name: /Reviewer note/ }) as HTMLTextAreaElement).value).toBe(""));
+		expect((screen.getByRole("checkbox", { name: "Select SCN-BEAUTY-01" }) as HTMLInputElement).checked).toBe(false);
 	});
 });
