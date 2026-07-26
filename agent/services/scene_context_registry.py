@@ -22,6 +22,7 @@ import csv
 import hashlib
 import io
 import re
+import json
 from functools import lru_cache
 from pathlib import Path
 
@@ -38,6 +39,61 @@ _BRIDGE_FILE = (
 # PromptV1 is required so a synced CSV can always drive generate-image; without it
 # get_generation_prompt would fail closed only later, at generation time.
 REQUIRED_COLUMNS = {"SceneName", "SceneCode", "BackgroundPrompt", "PromptV1"}
+_CLUSTER_MAP_FILE = _AUTHORITY_DIR / "creative_category_cluster_map.json"
+_CLASSIFICATION_FILE = _AUTHORITY_DIR / "scene_context_cluster_classification.json"
+
+
+@lru_cache(maxsize=1)
+def canonical_clusters() -> tuple[str, ...]:
+    """The existing Creative Intelligence cluster authority; never infer a new taxonomy."""
+    data = json.loads(_CLUSTER_MAP_FILE.read_text(encoding="utf-8"))
+    return tuple(str(value) for value in data["clusters"])
+
+
+def _normalise_cluster(value: str) -> str | None:
+    wanted = " ".join(str(value or "").split()).casefold()
+    return next((cluster for cluster in canonical_clusters() if cluster.casefold() == wanted), None)
+
+
+def _parse_clusters(raw: str) -> list[str]:
+    seen: set[str] = set()
+    parsed: list[str] = []
+    for value in str(raw or "").split("|"):
+        cluster = _normalise_cluster(value)
+        if cluster and cluster.casefold() not in seen:
+            seen.add(cluster.casefold())
+            parsed.append(cluster)
+    return parsed
+
+
+@lru_cache(maxsize=1)
+def _classification_by_code() -> dict[str, dict]:
+    payload = json.loads(_CLASSIFICATION_FILE.read_text(encoding="utf-8"))
+    result: dict[str, dict] = {}
+    for entry in payload["scenes"]:
+        code = str(entry["scene_code"]).strip().upper()
+        primary = entry.get("primary_cluster")
+        compatible = list(entry.get("compatible_clusters") or [])
+        status = entry.get("classification_status")
+        if status not in {"CLASSIFIED", "REVIEW_REQUIRED"} or any(_normalise_cluster(x) != x for x in compatible):
+            raise ValueError(f"SCENE_CLASSIFICATION_INVALID:{code}")
+        if primary is not None and (primary not in compatible or _normalise_cluster(primary) != primary):
+            raise ValueError(f"SCENE_CLASSIFICATION_INVALID_PRIMARY:{code}")
+        result[code] = entry
+    return result
+
+
+def _explicit_clusters(row: dict) -> tuple[str | None, list[str]] | None:
+    raw_primary, raw_compatible = str(row.get("PrimaryCluster") or "").strip(), str(row.get("CompatibleClusters") or "").strip()
+    if not raw_primary and not raw_compatible:
+        return None
+    compatible = _parse_clusters(raw_compatible)
+    if not raw_primary or len(compatible) != len([x for x in raw_compatible.split("|") if x.strip()]):
+        raise ValueError("SCENE_REGISTRY_INVALID_CLUSTER_METADATA")
+    primary = _normalise_cluster(raw_primary)
+    if not primary or primary not in compatible or len({x.casefold() for x in compatible}) != len(compatible):
+        raise ValueError("SCENE_REGISTRY_INVALID_CLUSTER_METADATA")
+    return primary, compatible
 
 
 def _active_pool_file() -> Path:
@@ -105,13 +161,38 @@ def _parse_route_fit(raw: str) -> list[str]:
 
 
 def _normalize_profile(row: dict) -> dict:
+    code = str(row.get("SceneCode") or "").strip().upper()
+    explicit = _explicit_clusters(row)
+    authority = _classification_by_code().get(code, {})
+    primary_cluster, compatible_clusters = explicit or (authority.get("primary_cluster"), list(authority.get("compatible_clusters") or []))
+    status = "CLASSIFIED" if explicit else authority.get("classification_status", "REVIEW_REQUIRED")
     return {
         "scene_code": str(row.get("SceneCode") or "").strip(),
         "scene_name": str(row.get("SceneName") or "").strip(),
         "background_prompt": str(row.get("BackgroundPrompt") or "").strip(),
         "route_fit": _parse_route_fit(row.get("RouteFit")),
         "usage_tags": _parse_usage_tags(row.get("usage_tags")),
+        "primary_cluster": primary_cluster if status == "CLASSIFIED" else None,
+        "compatible_clusters": compatible_clusters,
+        "cluster_classification_status": status,
+        "cluster_classification_basis": "bridge_csv" if explicit else authority.get("classification_basis", "No classification authority entry."),
     }
+
+
+def cluster_coverage() -> dict:
+    """Read-only coverage matrix. Legacy rows without classification remain explicit review-required."""
+    profiles = list_pool()
+    rows: list[dict] = []
+    for cluster in canonical_clusters():
+        eligible = [p for p in profiles if p["cluster_classification_status"] == "CLASSIFIED" and cluster in p["compatible_clusters"]]
+        primary = [p for p in eligible if p["primary_cluster"] == cluster]
+        rows.append({"cluster": cluster, "eligible_active_scene_count": len(eligible), "primary_scene_count": len(primary), "shared_compatible_scene_count": len(eligible)-len(primary), "gap_to_target": max(0, 3-len(eligible)), "eligible_scene_codes": [p["scene_code"] for p in eligible]})
+    review_required = [p for p in profiles if p["cluster_classification_status"] == "REVIEW_REQUIRED"]
+    return {"canonical_clusters": list(canonical_clusters()), "target_per_cluster": 3, "active_scene_total": len(profiles), "classified_scene_total": len(profiles)-len(review_required), "review_required_scene_total": len(review_required), "shared_scene_total": sum(1 for p in profiles if len(p["compatible_clusters"]) > 1), "per_cluster": rows, "milestone_complete": all(not r["gap_to_target"] for r in rows), "registry_mutations": 0}
+
+
+def classification() -> dict:
+    return {"active_scene_total": len(list_pool()), "registry_mutations": 0, "scenes": list_pool()}
 
 
 def scene_background_prose(profile: dict) -> str:

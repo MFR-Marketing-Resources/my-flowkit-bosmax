@@ -67,6 +67,19 @@ async def scene_context_registry_status():
     }
 
 
+@router.get("/scene-context-registry/cluster-coverage")
+async def scene_context_registry_coverage():
+    """Cluster-aware active-pool coverage; reads the existing CSV authority only."""
+    from agent.services import scene_context_registry
+    return scene_context_registry.cluster_coverage()
+
+
+@router.get("/scene-context-registry/classification")
+async def scene_context_registry_classification():
+    from agent.services import scene_context_registry
+    return scene_context_registry.classification()
+
+
 @router.post("/scene-context-registry/sync")
 async def sync_scene_context_registry(request: Request):
     csv_bytes = await request.body()
