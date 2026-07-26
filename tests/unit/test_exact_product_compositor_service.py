@@ -263,3 +263,97 @@ def test_api_scene_only_prompt(monkeypatch):
     assert r.status_code == 200
     assert "EXACT_PRODUCT_COMPOSITE_REQUIRED" in r.json()["prompt"]
     assert r.json()["send_product_reference_to_flow"] is False
+
+def test_cutout_preserves_cream_cartouche_label(tmp_path, monkeypatch):
+    """Regression: cream bird panel must not become 10px median mosaic."""
+    from PIL import Image, ImageDraw
+    from agent.services import exact_product_compositor_service as mod
+
+    # Synthetic label: teal frame + cream cartouche with sharp black "bird" mark
+    im = Image.new("RGB", (240, 480), (240, 238, 232))
+    d = ImageDraw.Draw(im)
+    # red cap
+    d.rectangle((90, 20, 150, 70), fill=(200, 30, 30))
+    # teal body
+    d.rectangle((70, 90, 170, 400), fill=(40, 130, 140))
+    # cream cartouche
+    d.rectangle((95, 140, 145, 280), fill=(205, 197, 173))
+    # sharp bird-like dark mark (must survive cutout)
+    d.polygon([(120, 160), (105, 200), (120, 190), (135, 200)], fill=(20, 25, 30))
+    d.text((100, 220), "CAP", fill=(10, 10, 10))
+    d.text((102, 250), "25ml", fill=(10, 10, 10))
+    # green liquid tint under label
+    d.rectangle((80, 300, 160, 390), fill=(30, 140, 70))
+    src = tmp_path / "canon.jpg"
+    im.save(src, quality=95)
+
+    cut = mod._build_canonical_cutout(src)
+    assert cut.mode == "RGBA"
+    px = cut.load()
+    w, h = cut.size
+    opaque = cream = dark = 0
+    cream_xy = []
+    colors = set()
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            if a < 200:
+                continue
+            opaque += 1
+            colors.add((r, g, b))
+            if r >= 150 and g >= 140 and (r - b) >= 12:
+                cream += 1
+                cream_xy.append((x, y))
+            if (r + g + b) / 3.0 < 50:
+                dark += 1
+    assert opaque > 500
+    assert cream > 80, f"cream cartouche lost: {cream}"
+    assert dark > 20, f"dark label mark lost: {dark}"
+    # cream panel should retain source cream tone (not replaced by teal median)
+    assert any(abs(c[0] - 205) < 25 and abs(c[1] - 197) < 25 for c in colors), colors
+    assert len(colors) >= 8, f"label collapsed to mosaic blocks uniq={len(colors)}"
+
+
+def test_prepare_layer_uses_cutout_v3_cache_key(tmp_path, monkeypatch):
+    from agent.services import exact_product_compositor_service as mod
+    from PIL import Image, ImageDraw
+
+    im = Image.new("RGB", (200, 400), (245, 245, 240))
+    d = ImageDraw.Draw(im)
+    d.rectangle((70, 15, 130, 55), fill=(210, 25, 25))
+    d.rectangle((60, 70, 140, 340), fill=(35, 125, 135))
+    d.rectangle((80, 110, 120, 220), fill=(205, 197, 173))
+    d.rectangle((70, 250, 130, 320), fill=(25, 130, 60))
+    src = tmp_path / "c.jpg"
+    im.save(src, quality=95)
+    import hashlib
+    sha = hashlib.sha256(src.read_bytes()).hexdigest()
+
+    monkeypatch.setattr(mod, "BASE_DIR", tmp_path)
+    monkeypatch.setattr(mod, "OUTPUT_DIR", tmp_path / "out")
+    (tmp_path / "data" / "exact-product-cutouts").mkdir(parents=True)
+    (tmp_path / "out").mkdir(parents=True)
+
+    product = {
+        "id": "p1",
+        "on_the_fly_flags": {"exact_product_composite_required": True},
+        "canonical_product_photo": {
+            "sha256": sha,
+            "local_path": str(src),
+            "schema_key": "MWCB_25ML_CAP_BURUNG",
+        },
+        "product_schema_key": "MWCB_25ML_CAP_BURUNG",
+    }
+    # stub resolve paths used by prepare_layer
+    monkeypatch.setattr(mod, "exact_product_policy", lambda p: product["canonical_product_photo"])
+    monkeypatch.setattr(mod, "resolve_schema_entry", lambda p: {"schema_key": "MWCB_25ML_CAP_BURUNG"})
+    monkeypatch.setattr(mod, "resolve_canonical_source", lambda photo, schema_key="": src)
+    monkeypatch.setattr(mod, "_sha", lambda path: sha if str(path) == str(src) else hashlib.sha256(Path(path).read_bytes()).hexdigest())
+    from pathlib import Path
+    layer = mod.prepare_layer(
+        product,
+        {"x": 10, "y": 10, "w": 80, "h": 80},
+        {"w": 400, "h": 800},
+    )
+    assert layer
+    assert "_cutout_v3.png" in layer["asset_ref"]
