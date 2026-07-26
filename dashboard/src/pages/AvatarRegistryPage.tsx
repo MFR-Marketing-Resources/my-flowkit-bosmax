@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useImageGenSettings } from "../api/imageGenSettings";
 import {
@@ -65,6 +65,15 @@ interface AvatarPoolResponse {
 	count: number;
 	source: string;
 	bridge_active: boolean;
+	product_fit_mapped_count?: number;
+	saved_selection_referenced_count?: number;
+	unmapped_review_candidate_count?: number;
+}
+
+interface ActiveProductFitAvatar extends AvatarProfile {
+	product_clusters: string[];
+	best_fit_score: number;
+	saved_selection_reference_count: number;
 }
 
 // Controlled vocabulary endpoint payload, incl. the gender-aware layer: personas
@@ -141,6 +150,8 @@ export default function AvatarRegistryPage() {
 	const [count, setCount] = useState<number>(1);
 	const [imageModel, setImageModel] = useState<string>("Nano Banana 2");
 	const [avatars, setAvatars] = useState<AvatarProfile[]>([]);
+	const [activeProductFitAvatars, setActiveProductFitAvatars] = useState<ActiveProductFitAvatar[]>([]);
+	const [registryView, setRegistryView] = useState<"planning" | "active" | "all">("planning");
 	const [bridgeActive, setBridgeActive] = useState(false);
 	const [coverage, setCoverage] = useState<RegistryCoverage | null>(null);
 	const [recon, setRecon] = useState<RegistryReconciliation | null>(null);
@@ -437,6 +448,10 @@ export default function AvatarRegistryPage() {
 			const data = (await response.json()) as AvatarPoolResponse;
 			setAvatars(data.avatars || []);
 			setBridgeActive(Boolean(data.bridge_active));
+			const activeResponse = await fetch("/api/workspace/avatar-registry/active-product-fit");
+			if (!activeResponse.ok) throw new Error(`HTTP ${activeResponse.status}`);
+			const activeData = (await activeResponse.json()) as { avatars?: ActiveProductFitAvatar[] };
+			setActiveProductFitAvatars(activeData.avatars || []);
 			getRegistryCoverage()
 				.then(setCoverage)
 				.catch(() => {});
@@ -458,6 +473,10 @@ export default function AvatarRegistryPage() {
 	useEffect(() => {
 		void refresh();
 	}, [refresh]);
+
+	useLayoutEffect(() => {
+		window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+	}, []);
 
 	const handleAddManualAvatar = async () => {
 		if (!manualForm.character_name.trim()) {
@@ -1105,7 +1124,7 @@ export default function AvatarRegistryPage() {
 				>
 					{backLabel}
 				</a>
-				<div className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+				{registryView === "all" && <div className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
 					<label className="text-[10px] text-slate-400">
 						<span className="mb-1 block font-semibold uppercase tracking-[0.14em] text-slate-500">Aspect</span>
 						<select value={aspect} onChange={(e) => setAspect(e.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200">
@@ -1123,9 +1142,9 @@ export default function AvatarRegistryPage() {
 						</select>
 					</label>
 					<span className="text-[10px] text-slate-500">Shared image-gen settings — applied to every avatar generate below.</span>
-				</div>
+				</div>}
 				<div className="mb-4 flex items-center justify-between gap-3">
-					<div>
+					{registryView === "all" && <><div>
 						<div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-400/80">
 							Live Avatar Authority Pool
 						</div>
@@ -1160,8 +1179,23 @@ export default function AvatarRegistryPage() {
 						>
 							{isSyncing ? "Syncing..." : "⚠ Legacy Direct Sync"}
 						</button>
-					</div>
+					</div></>}
 				</div>
+				<div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-3" role="tablist" aria-label="Avatar Registry views">
+					{([
+						["planning", "PRODUCT PLANNING"],
+						["active", "ACTIVE PRODUCT-FIT AVATARS"],
+						["all", "ALL REGISTRY / LEGACY POOL"],
+					] as const).map(([view, label]) => <button key={view} type="button" role="tab" aria-selected={registryView === view} onClick={() => setRegistryView(view)} className={`rounded-xl border px-3 py-2 text-[11px] font-bold tracking-wide ${registryView === view ? "border-violet-400 bg-violet-500/15 text-violet-100" : "border-slate-700 bg-slate-900 text-slate-400"}`}>{label}</button>)}
+				</div>
+				{registryView === "active" && (
+					<section className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4" data-testid="active-product-fit-avatars">
+						<div className="mb-1 text-sm font-semibold text-slate-100">Active Product-Fit Avatars</div>
+						<p className="mb-3 text-[11px] text-slate-400">Only authority-pool AvatarCodes with a live product-fit mapping. Child and Teen profiles are excluded from automatic use.</p>
+						<div className="overflow-x-auto"><table className="min-w-full text-left text-xs"><thead className="text-[10px] uppercase text-slate-500"><tr><th className="p-2">AvatarCode</th><th className="p-2">Character</th><th className="p-2">AgeBand</th><th className="p-2">Gender</th><th className="p-2">Product clusters</th><th className="p-2">Best fit</th><th className="p-2">Reference</th><th className="p-2">Selections</th></tr></thead><tbody>{activeProductFitAvatars.map((avatar) => <tr key={avatar.avatar_code} className="border-t border-slate-800"><td className="p-2 font-mono">{avatar.avatar_code}</td><td className="p-2">{avatar.character_name}</td><td className="p-2">{avatar.age_band}</td><td className="p-2">{avatar.avatar_code.includes("BOS_M_") ? "M" : "F"}</td><td className="p-2">{avatar.product_clusters.join(", ")}</td><td className="p-2">{Math.round(avatar.best_fit_score * 100)}%</td><td className="p-2">{avatar.image_generated ? "GENERATED" : "NOT GENERATED"}</td><td className="p-2">{avatar.saved_selection_reference_count}</td></tr>)}</tbody></table></div>
+					</section>
+				)}
+				{registryView === "planning" && <>
 				<section className="mb-4 rounded-2xl border border-violet-500/30 bg-violet-500/5 p-4" data-testid="product-first-avatar-flow">
 					<div className="mb-3">
 						<div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-violet-300">
@@ -1278,6 +1312,7 @@ export default function AvatarRegistryPage() {
 							</div>
 						) : null}
 					</section>
+				</>}
 				{coverage && (
 						<div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
 							<div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -1560,7 +1595,7 @@ export default function AvatarRegistryPage() {
 				)}
 			</section>
 
-			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
+			<section className={registryView === "planning" ? "rounded-3xl border border-slate-800 bg-slate-950/80 p-5" : "hidden"}>
 				<div className="mb-4">
 					<div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-100">
 						Create Avatar
@@ -1970,7 +2005,7 @@ export default function AvatarRegistryPage() {
 				</div>
 			</section>
 
-			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
+			<section className={registryView === "all" ? "rounded-3xl border border-slate-800 bg-slate-950/80 p-5" : "hidden"}>
 				<div className="mb-4 flex items-center justify-between gap-3">
 					<div>
 						<div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-100">
@@ -2181,7 +2216,7 @@ export default function AvatarRegistryPage() {
 				)}
 			</section>
 
-			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
+			<section className={registryView === "all" ? "rounded-3xl border border-slate-800 bg-slate-950/80 p-5" : "hidden"} data-testid="all-registry-legacy-pool">
 				<div className="mb-4 flex flex-wrap items-end gap-3 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
 					<div>
 						<div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
