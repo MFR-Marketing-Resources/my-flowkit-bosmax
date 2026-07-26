@@ -18,7 +18,9 @@ def test_pool_loads_20_seeded_scenes():
     # public view exposes only normalized fields — never PromptV1 / raw row
     for p in pool:
         assert set(p.keys()) == {
-            "scene_code", "scene_name", "background_prompt", "route_fit", "usage_tags"
+            "scene_code", "scene_name", "background_prompt", "route_fit", "usage_tags",
+            "primary_cluster", "compatible_clusters", "cluster_classification_status",
+            "cluster_classification_basis",
         }
         assert p["scene_code"] and p["scene_name"] and p["background_prompt"]
 

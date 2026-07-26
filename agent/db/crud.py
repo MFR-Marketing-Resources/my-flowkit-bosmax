@@ -1058,6 +1058,83 @@ async def record_scene_context_promotion_reviews(items: list[dict]) -> list[dict
     return await get_scene_context_promotion_reviews([item["source_template_id"] for item in items])
 
 
+# --- Scene Context Promotion Round 4 activation ledger (append-only audit) ---
+
+async def get_scene_context_promotion_review_exact(source_template_id: str, candidate_fingerprint: str) -> dict | None:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM scene_context_promotion_review_event WHERE source_template_id=? "
+        "AND candidate_fingerprint=? ORDER BY reviewed_at DESC, rowid DESC LIMIT 1",
+        (source_template_id, candidate_fingerprint),
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def get_scene_context_promotion_activation_exact(
+    source_template_id: str, candidate_fingerprint: str, product_id: str | None = None,
+) -> dict | None:
+    db = await get_db()
+    query = (
+        "SELECT * FROM scene_context_promotion_activation_event WHERE source_template_id=? "
+        "AND candidate_fingerprint=?"
+    )
+    params: list[object] = [source_template_id, candidate_fingerprint]
+    if product_id is not None:
+        query += " AND reviewed_via_product_id=?"
+        params.append(product_id)
+    query += " ORDER BY activated_at DESC, rowid DESC LIMIT 1"
+    cur = await db.execute(query, params)
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def append_scene_context_promotion_activation_events(items: list[dict]) -> list[dict]:
+    """Append activation audit rows in one transaction; never touches registry files."""
+    if not items:
+        return []
+    db = await get_db()
+    async with _db_lock:
+        try:
+            await db.execute("BEGIN")
+            for item in items:
+                await db.execute(
+                    "INSERT INTO scene_context_promotion_activation_event "
+                    "(activation_id,source_template_id,candidate_fingerprint,review_id,reviewed_via_product_id,cluster,scene_code,scene_name,activated_by,activation_note,bridge_digest_before,bridge_digest_after,activated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        item["activation_id"], item["source_template_id"], item["candidate_fingerprint"],
+                        item["review_id"], item["reviewed_via_product_id"], item["cluster"],
+                        item["scene_code"], item["scene_name"], item["activated_by"],
+                        item.get("activation_note"), item.get("bridge_digest_before"),
+                        item["bridge_digest_after"], item["activated_at"],
+                    ),
+                )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    return items
+
+
+async def list_scene_context_promotion_activation_history(
+    product_id: str | None = None, source_template_id: str | None = None, limit: int = 100,
+) -> list[dict]:
+    db = await get_db()
+    query = "SELECT * FROM scene_context_promotion_activation_event WHERE 1=1"
+    params: list[object] = []
+    if product_id:
+        query += " AND reviewed_via_product_id=?"
+        params.append(product_id)
+    if source_template_id:
+        query += " AND source_template_id=?"
+        params.append(source_template_id)
+    query += " ORDER BY activated_at DESC, rowid DESC LIMIT ?"
+    params.append(max(1, min(int(limit), 200)))
+    cur = await db.execute(query, params)
+    return [dict(row) for row in await cur.fetchall()]
+
+
 # --- creative_camera_preset (Creative Intelligence Round 3) ---
 
 async def upsert_creative_camera_preset(**kw) -> dict:
