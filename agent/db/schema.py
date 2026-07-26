@@ -1324,6 +1324,43 @@ CREATE INDEX IF NOT EXISTS idx_bulk_draft_risk ON fastmoss_bulk_draft_status(cla
             logger.info("Migrated: created batch production tables")
         await db.commit()
 
+        # Scene Context Promotion Round 3 — auditable review events only.
+        # This ledger is deliberately separate from the active scene registry.
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS scene_context_promotion_review_event (
+    review_id TEXT PRIMARY KEY,
+    source_template_id TEXT NOT NULL,
+    candidate_fingerprint TEXT NOT NULL,
+    cluster TEXT NOT NULL,
+    decision TEXT NOT NULL CHECK(decision IN ('PENDING','APPROVED_FOR_FUTURE_PROMOTION','REJECTED')),
+    reviewer_note TEXT,
+    reviewed_via_product_id TEXT REFERENCES product(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    reviewed_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_scene_context_promotion_review_event_current
+    ON scene_context_promotion_review_event(source_template_id, candidate_fingerprint, reviewed_at DESC);
+""")
+        cursor = await db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='scene_context_promotion_review'"
+        )
+        if await cursor.fetchone():
+            await db.execute("""
+                INSERT OR IGNORE INTO scene_context_promotion_review_event (
+                    review_id, source_template_id, candidate_fingerprint, cluster,
+                    decision, reviewer_note, reviewed_via_product_id, created_at,
+                    reviewed_at
+                )
+                SELECT review_id, source_template_id, candidate_fingerprint, cluster,
+                       decision, reviewer_note, reviewed_via_product_id, created_at,
+                       reviewed_at
+                FROM scene_context_promotion_review
+            """)
+            await db.execute("DROP TABLE scene_context_promotion_review")
+            logger.info("Migrated: scene context promotion reviews to append-only events")
+        await db.commit()
+
         # Migration: rebuild batch_variant CHECK constraint to include DRY_RUN_VALIDATED
         # SQLite cannot ALTER CHECK constraints, so we detect the old constraint and rebuild.
         cursor = await db.execute(

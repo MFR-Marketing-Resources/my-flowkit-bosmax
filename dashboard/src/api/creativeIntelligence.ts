@@ -146,6 +146,105 @@ export function getRegistryCleanupPlan() {
 	);
 }
 
+// --- Round 3: Product-first scene context promotion owner review ---
+
+export type ScenePromotionDecision =
+	| "PENDING"
+	| "APPROVED_FOR_FUTURE_PROMOTION"
+	| "REJECTED"
+	| "STALE_REVIEW_REQUIRED";
+
+export interface ScenePromotionCandidate {
+	source_template_id: string;
+	source_category: string | null;
+	setting: string | null;
+	candidate_fingerprint: string;
+	proposed_scene_code: string;
+	proposed_scene_name: string;
+	background_prompt: string;
+	prompt_v1: string;
+	safety_block: string;
+	usage_tags: string;
+	decision: ScenePromotionDecision;
+	reviewer_note: string | null;
+	reviewed_at: string | null;
+	stale_review_required: boolean;
+	activation_status: "NOT_ACTIVATED";
+}
+
+export interface ScenePromotionQuarantineItem {
+	source_template_id: string;
+	source_category?: string | null;
+	setting?: string | null;
+	reason: string;
+	duplicate_scene_code?: string;
+}
+
+export interface ScenePromotionDecisionCounts {
+	PENDING: number;
+	APPROVED_FOR_FUTURE_PROMOTION: number;
+	REJECTED: number;
+	STALE_REVIEW_REQUIRED: number;
+}
+
+export interface ScenePromotionProductReview {
+	dry_run: true;
+	activation_allowed: false;
+	registry_mutations: 0;
+	product_id: string;
+	product_name: string | null;
+	category: string | null;
+	cluster: string | null;
+	cluster_source: string;
+	review_required: boolean;
+	product_suitability_template_count: number;
+	candidate_count: number;
+	quarantine_count: number;
+	decision_counts: ScenePromotionDecisionCounts;
+	candidates: ScenePromotionCandidate[];
+	quarantine: ScenePromotionQuarantineItem[];
+	message?: string;
+	source?: string;
+}
+
+export interface ScenePromotionReviewItem {
+	source_template_id: string;
+	candidate_fingerprint: string;
+	decision: Exclude<ScenePromotionDecision, "STALE_REVIEW_REQUIRED">;
+	reviewer_note?: string | null;
+}
+
+export interface ScenePromotionReviewRequest extends ScenePromotionReviewItem {
+	reviewed_via_product_id: string;
+}
+
+export interface ScenePromotionBulkReviewRequest {
+	reviewed_via_product_id: string;
+	items: ScenePromotionReviewItem[];
+}
+
+export function getScenePromotionProductReview(productId: string) {
+	return getAPI<ScenePromotionProductReview>(
+		`/api/creative-intelligence/scene-context-promotion/review/product/${encodeURIComponent(productId)}`,
+	);
+}
+
+export function submitScenePromotionReview(payload: ScenePromotionReviewRequest) {
+	return postAPI<ScenePromotionProductReview>(
+		"/api/creative-intelligence/scene-context-promotion/review",
+		payload,
+	);
+}
+
+export function submitScenePromotionBulkReview(
+	payload: ScenePromotionBulkReviewRequest,
+) {
+	return postAPI<ScenePromotionProductReview>(
+		"/api/creative-intelligence/scene-context-promotion/review/bulk",
+		payload,
+	);
+}
+
 // --- Round 2: Scene / Image Prompt templates (read-only) ---
 
 export interface ScenePromptTemplate {
