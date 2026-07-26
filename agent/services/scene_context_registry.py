@@ -56,22 +56,31 @@ def _normalise_cluster(value: str) -> str | None:
 
 
 def _parse_clusters(raw: str) -> list[str]:
-    seen: set[str] = set()
     parsed: list[str] = []
     for value in str(raw or "").split("|"):
         cluster = _normalise_cluster(value)
-        if cluster and cluster.casefold() not in seen:
-            seen.add(cluster.casefold())
+        if cluster:
             parsed.append(cluster)
     return parsed
+
+
+def _seed_scene_codes() -> set[str]:
+    with _POOL_FILE.open(encoding="utf-8-sig", newline="") as source:
+        return {
+            str(row.get("SceneCode") or "").strip().upper()
+            for row in csv.DictReader(source)
+            if str(row.get("SceneCode") or "").strip()
+        }
 
 
 @lru_cache(maxsize=1)
 def _classification_by_code() -> dict[str, dict]:
     payload = json.loads(_CLASSIFICATION_FILE.read_text(encoding="utf-8"))
+    classification_version = str(payload.get("classification_version") or "").strip()
+    if not classification_version:
+        raise ValueError("SCENE_CLASSIFICATION_BLANK_VERSION")
     result: dict[str, dict] = {}
-    versions: set[str] = set()
-    for entry in payload["scenes"]:
+    for entry in payload.get("scenes") or []:
         code = str(entry["scene_code"]).strip().upper()
         if code in result:
             raise ValueError(f"SCENE_CLASSIFICATION_DUPLICATE_SCENE_CODE:{code}")
@@ -80,16 +89,27 @@ def _classification_by_code() -> dict[str, dict]:
         status = entry.get("classification_status")
         basis = str(entry.get("classification_basis") or "").strip()
         version = str(entry.get("classification_version") or "").strip()
-        versions.add(version)
-        if not basis or not version or status not in {"CLASSIFIED", "REVIEW_REQUIRED"} or any(_normalise_cluster(x) != x for x in compatible) or len(set(compatible)) != len(compatible):
+        if version != classification_version:
+            raise ValueError(f"SCENE_CLASSIFICATION_INCONSISTENT_VERSION:{code}")
+        if (
+            not basis
+            or status not in {"CLASSIFIED", "REVIEW_REQUIRED"}
+            or any(_normalise_cluster(x) != x for x in compatible)
+            or len({str(cluster).casefold() for cluster in compatible}) != len(compatible)
+        ):
             raise ValueError(f"SCENE_CLASSIFICATION_INVALID:{code}")
         if status == "CLASSIFIED" and (primary is None or not compatible or compatible.count(primary) != 1 or _normalise_cluster(primary) != primary):
             raise ValueError(f"SCENE_CLASSIFICATION_INVALID_PRIMARY:{code}")
         if status == "REVIEW_REQUIRED" and (primary is not None or compatible):
             raise ValueError(f"SCENE_CLASSIFICATION_INVALID_REVIEW_REQUIRED:{code}")
         result[code] = entry
-    if len(versions) != 1:
-        raise ValueError("SCENE_CLASSIFICATION_INCONSISTENT_VERSION")
+    seed_codes = _seed_scene_codes()
+    unknown = sorted(set(result) - seed_codes)
+    missing = sorted(seed_codes - set(result))
+    if unknown:
+        raise ValueError(f"SCENE_CLASSIFICATION_UNKNOWN_SCENE_CODE:{','.join(unknown)}")
+    if missing:
+        raise ValueError(f"SCENE_CLASSIFICATION_MISSING_SEED_SCENE_CODE:{','.join(missing)}")
     return result
 
 
@@ -198,7 +218,7 @@ def cluster_coverage() -> dict:
     for cluster in canonical_clusters():
         eligible = [p for p in profiles if p["cluster_classification_status"] == "CLASSIFIED" and cluster in p["compatible_clusters"]]
         primary = [p for p in eligible if p["primary_cluster"] == cluster]
-        rows.append({"cluster": cluster, "eligible_active_scene_count": len(eligible), "primary_scene_count": len(primary), "shared_compatible_scene_count": len(eligible)-len(primary), "gap_to_target": max(0, 3-len(eligible)), "eligible_scene_codes": [p["scene_code"] for p in eligible]})
+        rows.append({"cluster": cluster, "eligible_active_scene_count": len(eligible), "primary_scene_count": len(primary), "shared_compatible_scene_count": len(eligible)-len(primary), "gap_to_target": max(0, 3-len(eligible)), "eligible_scene_codes": sorted(p["scene_code"] for p in eligible)})
     review_required = [p for p in profiles if p["cluster_classification_status"] == "REVIEW_REQUIRED"]
     return {"canonical_clusters": list(canonical_clusters()), "target_per_cluster": 3, "active_scene_total": len(profiles), "classified_scene_total": len(profiles)-len(review_required), "review_required_scene_total": len(review_required), "shared_scene_total": sum(1 for p in profiles if p["cluster_classification_status"] == "CLASSIFIED" and len(p["compatible_clusters"]) > 1), "per_cluster": rows, "milestone_complete": all(not r["gap_to_target"] for r in rows), "registry_mutations": 0}
 
