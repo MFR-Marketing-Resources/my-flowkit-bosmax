@@ -10,6 +10,11 @@ import {
 	saveImgOutputToLibrary,
 	startImgGeneration,
 } from "../api/imgFactory";
+import {
+	buildExactSceneOnlyPrompt,
+	composeExactFromPlate,
+	fetchExactProductPolicy,
+} from "../api/exactProductOutput";
 import { useImageGenSettings } from "../api/imageGenSettings";
 import { fetchProductCatalog } from "../api/products";
 import { compileWorkspacePromptPreview } from "../api/workspacePackages";
@@ -362,25 +367,63 @@ export default function ImgCockpitPage() {
 		setGenerating(true);
 		setError(null);
 		try {
-			// SCALE-07: deliver the product's REAL visual reference (via
-			// refs.subjectAsset) — not just media-id refs — so a catalog product
-			// (media_id=null, image_url present) reaches the generator as an image,
-			// not only as compiled text. buildImgGenerationRequest is the payload seam.
-			const { job_id } = await startImgGeneration(
-				buildImgGenerationRequest({
-					prompt,
-					resolution: genResolution,
-					aspect,
-					count,
-					imageModel,
-				}),
-			);
+			const productId = selectedProduct?.id ?? "";
+			let exact = false;
+			let scenePrompt = prompt;
+			if (productId) {
+				const pol = await fetchExactProductPolicy(productId);
+				exact = Boolean(pol.exact_product_composite_required);
+				if (exact) {
+					if (pol.canonical_valid === false) {
+						throw new Error(
+							pol.error?.message ||
+								"Canonical product source invalid — blocked before credit spend.",
+						);
+					}
+					const scene = await buildExactSceneOnlyPrompt(productId, prompt);
+					scenePrompt = scene.prompt;
+				}
+			}
+			// Exact-policy: scene-only plate (no product subjectAsset). Else SCALE-07 path.
+			const payload = exact
+				? {
+						prompt: scenePrompt,
+						aspect,
+						count,
+						image_model: imageModel,
+						image_media_ids: [] as string[],
+				  }
+				: buildImgGenerationRequest({
+						prompt: scenePrompt,
+						resolution: genResolution,
+						aspect,
+						count,
+						imageModel,
+				  });
+			const { job_id } = await startImgGeneration(payload);
 			const job = await pollImgGenerationJob(job_id);
 			setGenJob(job);
 			if (job.status === "DONE" && job.media_id) {
-				const mediaId = job.media_id;
-				const sizeMb =
+				let mediaId = job.media_id;
+				let sizeMb =
 					typeof job.size_mb === "number" ? job.size_mb : null;
+				if (exact && productId) {
+					const finalOut = await composeExactFromPlate({
+						product_id: productId,
+						background_media_id: mediaId,
+						lane: lane?.lane_id === "PRODUCT_ONLY_HERO" ? "product_only_hero" : "studio",
+						job_id,
+					});
+					mediaId = finalOut.media_id;
+					sizeMb =
+						typeof finalOut.size_mb === "number" ? finalOut.size_mb : sizeMb;
+					setGenJob({
+						...job,
+						media_id: mediaId,
+						url: finalOut.url,
+						size_mb: sizeMb,
+					});
+				}
 				setOutputMode("artifact");
 				setArtifactMediaId(mediaId);
 				setArtifacts((prev) =>

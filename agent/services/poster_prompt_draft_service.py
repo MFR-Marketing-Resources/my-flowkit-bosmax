@@ -25,6 +25,10 @@ from agent.services.poster_composition_service import (
     render_composition_instruction,
     resolve_poster_composition,
 )
+from agent.services.exact_product_compositor_service import (
+    exact_product_policy,
+    scene_only_prompt_block,
+)
 from agent.services.poster_readiness_service import PosterReadinessService
 from agent.models.poster_copy_set import (
     STATUS_POSTER_COPY_APPROVED,
@@ -297,7 +301,27 @@ CLEAN_SCENE_NEGATIVE = (
 )
 
 
-def _build_clean_scene_instruction(safe_region: dict, background_constraints: str) -> str:
+def _build_clean_scene_instruction(
+    safe_region: dict,
+    background_constraints: str,
+    *,
+    exact_composite: bool = False,
+) -> str:
+    if exact_composite:
+        return (
+            "CLEAN SCENE MODE + EXACT_PRODUCT_COMPOSITE_REQUIRED. "
+            "The deterministic compositor inserts the canonical product cutout "
+            "and renders ALL marketing text after generation. "
+            "Do NOT draw any product, bottle, packaging, label, cap, logo, or "
+            "marketing text. Reserve an empty product-safe region (approx "
+            f"x {safe_region['x']}% y {safe_region['y']}% w {safe_region['w']}% "
+            f"h {safe_region['h']}% of the frame) with a realistic surface/"
+            "contact-shadow receiver. Leave clean uncluttered negative space "
+            "elsewhere for copy zones. "
+            + (f"Background constraints: {background_constraints}" if background_constraints else "")
+            + "\n"
+            + scene_only_prompt_block()
+        )
     return (
         "CLEAN SCENE MODE - the deterministic compositor renders ALL marketing "
         "text after generation. Do NOT draw any marketing text: no headline, "
@@ -527,7 +551,11 @@ class PosterPromptDraftService:
             _recipe_obj = recipe
             _template_contract = _contract
             _safe = _contract["product_safe_region"]
-            overlay = _build_clean_scene_instruction(_safe, _contract["background_constraints"])
+            overlay = _build_clean_scene_instruction(
+                _safe,
+                _contract["background_constraints"],
+                exact_composite=bool(exact_product_policy(dict(product))),
+            )
             poster_prompt, poster_spec, overlay_spec = compose_recipe_poster(
                 fields=fields,
                 recipe=recipe,

@@ -15,6 +15,11 @@ import {
 	saveImgOutputToLibrary,
 	startImgGeneration,
 } from "../api/imgFactory";
+import {
+	buildExactSceneOnlyPrompt,
+	composeExactFromPlate,
+	fetchExactProductPolicy,
+} from "../api/exactProductOutput";
 import { useImageGenSettings } from "../api/imageGenSettings";
 import { fetchProductCatalog } from "../api/products";
 import ApproveAssetModal from "../components/creative-library/ApproveAssetModal";
@@ -559,12 +564,38 @@ export default function ImgFastlanePage() {
 		setGenerating(true);
 		setError(null);
 		try {
+			const productId = selectedProduct?.id ?? "";
+			let exact = false;
+			let scenePrompt = prompt;
+			if (productId) {
+				try {
+					const pol = await fetchExactProductPolicy(productId);
+					exact = Boolean(pol.exact_product_composite_required);
+					if (exact) {
+						if (pol.canonical_valid === false) {
+							throw new Error(
+								pol.error?.message ||
+									"Canonical product source invalid — blocked before credit spend.",
+							);
+						}
+						const scene = await buildExactSceneOnlyPrompt(productId, prompt);
+						scenePrompt = scene.prompt;
+					}
+				} catch (e) {
+					if (exact) throw e;
+				}
+			}
+			// Exact-policy: do not send product/subject refs — scene plate only.
+			const refs = exact ? {} : resolvedRefsPayload;
+			const mediaIds = exact
+				? []
+				: Object.values(resolvedRefsPayload)
+						.map((asset) => asset.mediaId)
+						.filter((id): id is string => Boolean(id));
 			const { job_id } = await startImgGeneration({
-				prompt,
-				image_media_ids: Object.values(resolvedRefsPayload)
-					.map((asset) => asset.mediaId)
-					.filter((id): id is string => Boolean(id)),
-				refs: resolvedRefsPayload,
+				prompt: scenePrompt,
+				image_media_ids: mediaIds,
+				refs,
 				aspect,
 				count: quantity,
 				image_model: imageModel,
@@ -572,9 +603,29 @@ export default function ImgFastlanePage() {
 			const job = await pollImgGenerationJob(job_id);
 			setGenJob(job);
 			if (job.status === "DONE" && job.media_id) {
-				const mediaId = job.media_id;
-				const sizeMb =
+				let mediaId = job.media_id;
+				let sizeMb =
 					typeof job.size_mb === "number" ? job.size_mb : null;
+				if (exact && productId) {
+					const finalOut = await composeExactFromPlate({
+						product_id: productId,
+						background_media_id: mediaId,
+						lane:
+							framePresetId?.includes("POSTER") || framePresetId?.includes("HERO")
+								? "product_only_hero"
+								: "studio",
+						job_id,
+					});
+					mediaId = finalOut.media_id;
+					sizeMb =
+						typeof finalOut.size_mb === "number" ? finalOut.size_mb : sizeMb;
+					setGenJob({
+						...job,
+						media_id: mediaId,
+						url: finalOut.url,
+						size_mb: sizeMb,
+					});
+				}
 				setOutputMode("artifact");
 				setArtifactMediaId(mediaId);
 				setArtifacts((prev) =>

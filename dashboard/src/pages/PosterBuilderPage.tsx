@@ -4,6 +4,12 @@ import { useSearchParams } from "react-router-dom";
 import PosterGuidedShell from "../components/poster/guided/PosterGuidedShell";
 import { pollImgGenerationJob, startImgGeneration } from "../api/imgFactory";
 import {
+	buildExactSceneOnlyPrompt,
+	composeExactFromPlate,
+	fetchExactProductPolicy,
+	type ExactProductPolicy,
+} from "../api/exactProductOutput";
+import {
 	PRODUCT_REFERENCE_IMAGE_REQUIRED,
 	productSubjectAsset,
 } from "../utils/productSubjectAsset";
@@ -122,6 +128,8 @@ export function PosterBuilderLegacyPanel() {
 	// Poster image generation (gated, credit-spending — reuses the one-door IMG lane).
 	const [posterGenConfirm, setPosterGenConfirm] = useState(false);
 	const [posterGenLoading, setPosterGenLoading] = useState(false);
+	const [posterGenStage, setPosterGenStage] = useState<string>("");
+	const [exactPolicy, setExactPolicy] = useState<ExactProductPolicy | null>(null);
 	const [posterGenError, setPosterGenError] = useState("");
 	const [posterGenResult, setPosterGenResult] = useState<{
 		url: string;
@@ -274,6 +282,24 @@ export function PosterBuilderLegacyPanel() {
 	// generation, never fall back to prompt-only which hallucinates the product).
 	const posterProductSubject = productSubjectAsset(selectedProduct);
 	const productReferenceReady = posterProductSubject !== null;
+
+	useEffect(() => {
+		if (!selectedProduct?.id) {
+			setExactPolicy(null);
+			return;
+		}
+		let cancelled = false;
+		void fetchExactProductPolicy(selectedProduct.id)
+			.then((pol) => {
+				if (!cancelled) setExactPolicy(pol);
+			})
+			.catch(() => {
+				if (!cancelled) setExactPolicy(null);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [selectedProduct?.id]);
 
 	// Recipe-first: the operator picks a poster archetype BEFORE copy. The selected
 	// recipe drives controlled settings, slot editing, and the composer path.
@@ -679,20 +705,36 @@ export function PosterBuilderLegacyPanel() {
 		}
 	};
 
-	// GATED, credit-spending: only ever runs after the explicit confirm modal. Sends
-	// the generated poster prompt package through the PROVEN one-door IMG lane
-	// (POST /api/flow/generate mode:IMG) + poll, then shows the finished poster image.
+	// GATED, credit-spending: only after explicit confirm.
+	// Exact-policy products: scene-only Flow plate + deterministic cutout composite.
+	// Non-exact: reference-conditioned one-door IMG path (unchanged).
 	const handleConfirmedGeneratePoster = async () => {
 		const pkg = promptPackage;
 		if (!pkg?.poster_prompt) return;
-		// Fail closed BEFORE any credit spend: a product poster must anchor on the
-		// real product image. If the selected product has no usable reference image,
-		// block — never fall back to prompt-only generation.
 		const subjectAsset = productSubjectAsset(selectedProduct);
-		if (!subjectAsset) {
+		const productId = selectedProduct?.id ?? "";
+		let policy = exactPolicy;
+		if (productId) {
+			try {
+				policy = await fetchExactProductPolicy(productId);
+				setExactPolicy(policy);
+			} catch {
+				/* keep cached */
+			}
+		}
+		const exact = Boolean(policy?.exact_product_composite_required);
+		if (!exact && !subjectAsset) {
 			setPosterGenConfirm(false);
 			setPosterGenError(
 				`${PRODUCT_REFERENCE_IMAGE_REQUIRED} — produk ini tiada gambar rujukan yang boleh diguna. Poster produk mesti berlabuh pada gambar produk sebenar; penjanaan dihalang.`,
+			);
+			return;
+		}
+		if (exact && policy && policy.canonical_valid === false) {
+			setPosterGenConfirm(false);
+			setPosterGenError(
+				policy.error?.message ||
+					"Canonical product source invalid — exact composite blocked before credit spend.",
 			);
 			return;
 		}
@@ -700,29 +742,54 @@ export function PosterBuilderLegacyPanel() {
 		setPosterGenLoading(true);
 		setPosterGenError("");
 		setPosterGenResult(null);
+		setPosterGenStage(exact ? "validating_canonical" : "generating");
 		try {
+			let prompt = pkg.poster_prompt;
+			const refs = exact || !subjectAsset ? undefined : { subjectAsset };
+			if (exact && productId) {
+				setPosterGenStage("generating_scene");
+				const scene = await buildExactSceneOnlyPrompt(productId, prompt);
+				prompt = scene.prompt;
+			}
 			const { job_id } = await startImgGeneration({
-				prompt: pkg.poster_prompt,
+				prompt,
 				aspect: flowMirror.aspect_ratio,
 				count: flowMirror.count,
 				image_model: flowMirror.image_model,
-				// Anchor the poster on the real BOSMAX product image (resolved to a Flow
-				// reference asset server-side → IMAGE_INPUT_TYPE_REFERENCE).
-				refs: { subjectAsset },
+				...(refs ? { refs } : {}),
 			});
 			const job = await pollImgGenerationJob(job_id);
-			const mediaId = job.media_id ?? "";
-			const url = job.url ?? (mediaId ? `/api/flow/retrieved/${mediaId}` : "");
-			if ((job.status === "DONE" || job.status === "COMPLETED") && url) {
-				setPosterGenResult({
-					url,
-					mediaId,
-					sizeMb: typeof job.size_mb === "number" ? job.size_mb : null,
-				});
-			} else {
+			const plateMediaId = job.media_id ?? "";
+			if (
+				!(job.status === "DONE" || job.status === "COMPLETED") ||
+				!plateMediaId
+			) {
 				setPosterGenError(
 					job.error || `Penjanaan tamat sebagai ${job.status} tanpa imej.`,
 				);
+				return;
+			}
+			if (exact && productId) {
+				setPosterGenStage("inserting_canonical_product");
+				const finalOut = await composeExactFromPlate({
+					product_id: productId,
+					background_media_id: plateMediaId,
+					lane: "poster",
+					job_id,
+				});
+				setPosterGenStage("final_ready");
+				setPosterGenResult({
+					url: finalOut.url,
+					mediaId: finalOut.media_id,
+					sizeMb: typeof finalOut.size_mb === "number" ? finalOut.size_mb : null,
+				});
+			} else {
+				const url = job.url ?? `/api/flow/retrieved/${plateMediaId}`;
+				setPosterGenResult({
+					url,
+					mediaId: plateMediaId,
+					sizeMb: typeof job.size_mb === "number" ? job.size_mb : null,
+				});
 			}
 		} catch (e) {
 			setPosterGenError(
@@ -730,6 +797,7 @@ export function PosterBuilderLegacyPanel() {
 			);
 		} finally {
 			setPosterGenLoading(false);
+			setPosterGenStage("");
 		}
 	};
 
@@ -1301,8 +1369,12 @@ export function PosterBuilderLegacyPanel() {
 									className="mt-3 rounded-xl border border-rose-500/40 bg-rose-600/20 px-4 py-2 text-xs font-bold uppercase text-rose-100 disabled:opacity-40"
 								>
 									{posterGenLoading
-										? "Menjana poster (live)…"
-										: "Jana poster image (live · guna kredit)"}
+										? posterGenStage === "inserting_canonical_product"
+											? "Inserting canonical product…"
+											: posterGenStage === "generating_scene"
+												? "Generating scene…"
+												: "Generating poster…"
+										: "Generate poster image"}
 								</button>
 								{posterGenError ? (
 									<p
