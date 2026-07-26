@@ -75,6 +75,18 @@ def test_avatar_pool_age_band_valid_and_mostly_adult_backfill():
     assert ages.count("Adult (30-54)") >= 1
 
 
+def test_authority_pool_promptv1_has_no_internal_avatar_metadata():
+    """Committed seed rows must satisfy the same PromptV1 leak gate as imports."""
+    header, body = _rows()
+    prompt_i = header.index("PromptV1")
+    leaks = [
+        row[header.index("AvatarCode")]
+        for row in body
+        if re.search(r"\bCode\s*:|\bBOS_[FM]_[A-Z0-9_]+\b", row[prompt_i], re.I)
+    ]
+    assert leaks == [], f"PromptV1 internal metadata leaks: {leaks[:5]}"
+
+
 def test_crosswalk_excludes_child_teen_codes_when_resolvable():
     """Automatic crosswalk must not map Child/Teen codes (by pool AgeBand)."""
     import json
