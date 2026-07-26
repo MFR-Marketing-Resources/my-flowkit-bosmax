@@ -122,6 +122,11 @@ domains:
       - dashboard/src/components/product-intelligence/RecommendedScenePromptsCard.tsx
       - dashboard/src/components/product-intelligence/RecommendedScenePromptsCard.test.tsx
 
+      # Product Scene Suitability Registry Round 1 — read-only preview mapping
+      - agent/services/product_scene_suitability_service.py
+      - tests/unit/test_product_scene_suitability_service.py
+      - tests/api/test_product_scene_suitability_api.py
+
       # Creative Intelligence Round 3 — camera / video preset library (read-only, non-generative)
       - agent/authority/creative_camera_preset_library.json
       - agent/services/creative_camera_preset_service.py
