@@ -1,13 +1,22 @@
 import { useCallback, useEffect, useState } from "react";
-import { useImageGenSettings } from "../api/imageGenSettings";
 import {
 	getRegistryCleanupPlan,
 	getRegistryCoverage,
 	getRegistryReconciliation,
+	getScenePromotionProductReview,
 	type RegistryCleanupPlan,
 	type RegistryCoverage,
 	type RegistryReconciliation,
+	type ScenePromotionCandidate,
+	type ScenePromotionDecision,
+	type ScenePromotionProductReview,
+	submitScenePromotionBulkReview,
+	submitScenePromotionReview,
 } from "../api/creativeIntelligence";
+import { useImageGenSettings } from "../api/imageGenSettings";
+import { fetchProductCatalog } from "../api/products";
+import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
+import type { Product } from "../types";
 
 interface SceneProfile {
 	scene_code: string;
@@ -28,9 +37,19 @@ interface ScenePoolResponse {
 }
 
 type GenStage = { jobId: string; stage: string };
+type SceneRegistryView = "review" | "quarantine" | "admin";
 
 export default function SceneContextRegistryPage() {
 	const imgGen = useImageGenSettings();
+	const [activeView, setActiveView] = useState<SceneRegistryView>("review");
+	const [reviewProducts, setReviewProducts] = useState<Product[]>([]);
+	const [selectedReviewProduct, setSelectedReviewProduct] = useState<Product | null>(null);
+	const [productReview, setProductReview] = useState<ScenePromotionProductReview | null>(null);
+	const [reviewLoading, setReviewLoading] = useState(false);
+	const [reviewError, setReviewError] = useState<string | null>(null);
+	const [selectedCandidateIds, setSelectedCandidateIds] = useState<Set<string>>(new Set());
+	const [reviewerNote, setReviewerNote] = useState("");
+	const [reviewSubmitting, setReviewSubmitting] = useState(false);
 	const [pool, setPool] = useState<ScenePoolResponse | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
@@ -80,8 +99,103 @@ export default function SceneContextRegistryPage() {
 	}, []);
 
 	useEffect(() => {
-		void refresh();
-	}, [refresh]);
+		void fetchProductCatalog(250, "GENERATION")
+			.then((response) => setReviewProducts(response.items ?? []))
+			.catch((err: unknown) =>
+				setReviewError(err instanceof Error ? err.message : "Failed to load products."),
+			);
+	}, []);
+
+	useEffect(() => {
+		if (activeView === "admin") void refresh();
+	}, [activeView, refresh]);
+
+	const loadProductReview = useCallback(async (product: Product) => {
+		setReviewLoading(true);
+		setReviewError(null);
+		try {
+			setProductReview(await getScenePromotionProductReview(product.id));
+			setSelectedCandidateIds(new Set());
+		} catch (err) {
+			setProductReview(null);
+			setReviewError(err instanceof Error ? err.message : "Failed to load product scene review.");
+		} finally {
+			setReviewLoading(false);
+		}
+	}, []);
+
+	const selectReviewProduct = (product: Product | null) => {
+		setSelectedReviewProduct(product);
+		setProductReview(null);
+		setSelectedCandidateIds(new Set());
+		setReviewError(null);
+		if (product) void loadProductReview(product);
+	};
+
+	const refreshSelectedProductReview = async () => {
+		if (selectedReviewProduct) await loadProductReview(selectedReviewProduct);
+	};
+
+	const submitReview = async (
+		candidate: ScenePromotionCandidate,
+		decision: Exclude<ScenePromotionDecision, "STALE_REVIEW_REQUIRED">,
+	) => {
+		if (!selectedReviewProduct || !productReview || productReview.review_required || candidate.stale_review_required) return;
+		setReviewSubmitting(true);
+		setReviewError(null);
+		try {
+			await submitScenePromotionReview({
+				reviewed_via_product_id: selectedReviewProduct.id,
+				source_template_id: candidate.source_template_id,
+				candidate_fingerprint: candidate.candidate_fingerprint,
+				decision,
+				reviewer_note: reviewerNote.trim() || null,
+			});
+			await refreshSelectedProductReview();
+		} catch (err) {
+			setReviewError(err instanceof Error ? err.message : "Review submission failed.");
+		} finally {
+			setReviewSubmitting(false);
+		}
+	};
+
+	const submitSelectedReviews = async (
+		decision: Exclude<ScenePromotionDecision, "STALE_REVIEW_REQUIRED">,
+	) => {
+		if (!selectedReviewProduct || !productReview || productReview.review_required) return;
+		const selected = productReview.candidates.filter((candidate) =>
+			selectedCandidateIds.has(candidate.source_template_id),
+		);
+		if (!selected.length || selected.some((candidate) => candidate.stale_review_required)) return;
+		setReviewSubmitting(true);
+		setReviewError(null);
+		try {
+			await submitScenePromotionBulkReview({
+				reviewed_via_product_id: selectedReviewProduct.id,
+				items: selected.map((candidate) => ({
+					source_template_id: candidate.source_template_id,
+					candidate_fingerprint: candidate.candidate_fingerprint,
+					decision,
+					reviewer_note: reviewerNote.trim() || null,
+				})),
+			});
+			await refreshSelectedProductReview();
+		} catch (err) {
+			setReviewError(err instanceof Error ? err.message : "Bulk review submission failed.");
+		} finally {
+			setReviewSubmitting(false);
+		}
+	};
+
+	const toggleCandidateSelection = (candidate: ScenePromotionCandidate) => {
+		if (candidate.stale_review_required || productReview?.review_required) return;
+		setSelectedCandidateIds((current) => {
+			const next = new Set(current);
+			if (next.has(candidate.source_template_id)) next.delete(candidate.source_template_id);
+			else next.add(candidate.source_template_id);
+			return next;
+		});
+	};
 
 	const pollGenerationJob = async (sceneCode: string, jobId: string) => {
 		for (let attempt = 0; attempt < 150; attempt++) {
@@ -325,21 +439,118 @@ export default function SceneContextRegistryPage() {
 					</a>
 				</div>
 				<div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-400/80">
-					Live Scene / Context Authority Pool
+					Product-first scene context governance
 				</div>
 				<h1 className="text-2xl font-bold text-slate-100">Scene Context Registry</h1>
 				<p className="text-sm text-slate-400">
-					Bank scene/background yang boleh guna semula. Jana imej scene (credit-free)
-					→ ia terus boleh dipilih sebagai reference di IMG Fastlane (scene) dan
-					video I2V (scene/style) — ganti upload manual.
+					Review product-scoped scene promotion candidates before any future registry work.
+					Approval is review-only and never activates, syncs, or generates a scene.
 				</p>
-				{pool && (
+				{activeView === "admin" && pool && (
 					<p className="text-xs text-slate-500">
 						{pool.count} scene · {pool.generated_count} sudah ada imej ·
 						{pool.bridge_active ? " bridge aktif" : " seed repo"}
 					</p>
 				)}
 			</header>
+
+			<div role="tablist" aria-label="Scene context views" className="flex flex-wrap gap-2 border-b border-slate-800 pb-3">
+				{([
+					["review", "PRODUCT SCENE REVIEW"],
+					["quarantine", "PROMOTION QUARANTINE"],
+					["admin", "ACTIVE REGISTRY / ADMIN"],
+				] as const).map(([view, label]) => (
+					<button
+						key={view}
+						type="button"
+						role="tab"
+						aria-selected={activeView === view}
+						onClick={() => setActiveView(view)}
+						className={`rounded-lg border px-3 py-2 text-xs font-semibold ${activeView === view ? "border-emerald-400/50 bg-emerald-500/10 text-emerald-100" : "border-slate-700 bg-slate-900 text-slate-400 hover:text-slate-100"}`}
+					>
+						{label}
+					</button>
+				))}
+			</div>
+
+			{(activeView === "review" || activeView === "quarantine") && (
+				<section className="space-y-4" data-testid="scene-promotion-owner-review">
+					<div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-4">
+						<div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+							Registered generation-capable product
+						</div>
+						<SearchableProductSelect
+							products={reviewProducts}
+							selectedProduct={selectedReviewProduct}
+							onSelect={selectReviewProduct}
+						/>
+					</div>
+
+					{reviewError && (
+						<div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
+							{reviewError}
+						</div>
+					)}
+					{reviewLoading && <div className="text-sm text-slate-400">Loading product scene review…</div>}
+					{!selectedReviewProduct && !reviewLoading && (
+						<div className="rounded-xl border border-slate-800 bg-slate-900/40 p-5 text-sm text-slate-400">
+							Select a registered product to load its read-only suitability and promotion review.
+						</div>
+					)}
+					{productReview && (
+						<>
+							<div className="grid gap-3 rounded-2xl border border-slate-800 bg-slate-900/50 p-4 sm:grid-cols-2 lg:grid-cols-4">
+								<div><div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Product</div><div className="text-sm font-semibold text-slate-100">{productReview.product_name || selectedReviewProduct?.product_display_name}</div></div>
+								<div><div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Category</div><div className="text-sm text-slate-200">{productReview.category || "Uncategorised"}</div></div>
+								<div><div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Canonical cluster</div><div className="text-sm text-slate-200">{productReview.cluster || "REVIEW REQUIRED"}</div><div className="text-[10px] text-slate-500">{productReview.cluster_source}</div></div>
+								<div><div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Review inventory</div><div className="text-sm text-slate-200">{productReview.candidate_count} candidates · {productReview.quarantine_count} quarantined</div></div>
+							</div>
+							<div className="flex flex-wrap gap-2 text-[11px] text-slate-300">
+								{Object.entries(productReview.decision_counts).map(([decision, count]) => <span key={decision} className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1">{decision}: {count}</span>)}
+							</div>
+							{productReview.review_required ? (
+								<div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-100">
+									<strong>PRODUCT CATEGORY REVIEW REQUIRED.</strong> {productReview.message || "Correct the product category before reviewing promotion candidates."} Review actions are fail-closed.
+								</div>
+							) : activeView === "quarantine" ? (
+								<div data-testid="promotion-quarantine" className="space-y-3">
+									<h2 className="text-sm font-semibold text-slate-100">Promotion Quarantine</h2>
+									{productReview.quarantine.length === 0 ? <p className="text-sm text-slate-400">No quarantined templates for this product cluster.</p> : productReview.quarantine.map((item) => (
+										<div key={item.source_template_id} className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-slate-300">
+											<div className="font-mono text-xs text-amber-200">{item.source_template_id}</div>
+											<div className="mt-1"><strong>Quarantine reason:</strong> {item.reason}</div>
+											<div className="mt-1 text-xs text-slate-400">{item.source_category || "Unknown source category"} · {item.setting || "No setting"}</div>
+										</div>
+									))}
+								</div>
+							) : (
+								<div className="space-y-4" data-testid="product-scene-review-candidates">
+									<div className="flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-900/40 p-3 sm:flex-row sm:items-end">
+										<label className="min-w-0 flex-1 text-xs text-slate-300">Reviewer note (optional, max 2000 characters)<textarea value={reviewerNote} maxLength={2000} onChange={(event) => setReviewerNote(event.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-slate-100" /></label>
+										<div className="flex gap-2"><button type="button" disabled={!selectedCandidateIds.size || reviewSubmitting} onClick={() => void submitSelectedReviews("APPROVED_FOR_FUTURE_PROMOTION")} className="rounded-lg border border-emerald-500/40 px-3 py-2 text-xs text-emerald-100 disabled:opacity-40">Approve selected</button><button type="button" disabled={!selectedCandidateIds.size || reviewSubmitting} onClick={() => void submitSelectedReviews("REJECTED")} className="rounded-lg border border-red-500/40 px-3 py-2 text-xs text-red-100 disabled:opacity-40">Reject selected</button></div>
+									</div>
+									{productReview.candidates.map((candidate) => {
+										const actionsDisabled = candidate.stale_review_required || reviewSubmitting;
+										return <article key={candidate.source_template_id} className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900/50 p-4">
+											<div className="flex items-start justify-between gap-3"><label className="flex items-start gap-2 text-sm font-semibold text-slate-100"><input aria-label={`Select ${candidate.source_template_id}`} type="checkbox" checked={selectedCandidateIds.has(candidate.source_template_id)} disabled={actionsDisabled} onChange={() => toggleCandidateSelection(candidate)} /> <span>{candidate.proposed_scene_name}<span className="mt-1 block font-mono text-[10px] font-normal text-slate-500">{candidate.source_template_id} → {candidate.proposed_scene_code}</span></span></label><span className="rounded-md border border-slate-700 px-2 py-1 text-[10px] text-slate-300">{candidate.decision}</span></div>
+											<div className="grid gap-2 text-xs text-slate-300 sm:grid-cols-2"><div><strong>Source category:</strong> {candidate.source_category || "Unknown"}</div><div><strong>Setting:</strong> {candidate.setting || "—"}</div><div><strong>Background:</strong> {candidate.background_prompt}</div><div><strong>Safety:</strong> {candidate.safety_block}</div><div><strong>Usage tags:</strong> {candidate.usage_tags}</div><div><strong>Reviewed:</strong> {candidate.reviewed_at || "Not yet reviewed"}</div></div>
+											<div className="text-xs text-slate-400"><strong>PromptV1:</strong><p className="mt-1 whitespace-pre-wrap">{candidate.prompt_v1}</p><p className="mt-2"><strong>Reviewer note:</strong> {candidate.reviewer_note || "—"}</p></div>
+											{candidate.stale_review_required ? <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-100"><span>Candidate content changed after the prior decision. Refresh before taking a new action; the older fingerprint is not reused.</span><button type="button" onClick={() => void refreshSelectedProductReview()} className="rounded border border-amber-400/50 px-2 py-1">Refresh candidate</button></div> : <div className="flex flex-wrap gap-2"><button type="button" disabled={actionsDisabled} onClick={() => void submitReview(candidate, "APPROVED_FOR_FUTURE_PROMOTION")} className="rounded-lg border border-emerald-500/40 px-3 py-1.5 text-xs text-emerald-100 disabled:opacity-40">Approve for future promotion</button><button type="button" disabled={actionsDisabled} onClick={() => void submitReview(candidate, "REJECTED")} className="rounded-lg border border-red-500/40 px-3 py-1.5 text-xs text-red-100 disabled:opacity-40">Reject</button><button type="button" disabled={actionsDisabled} onClick={() => void submitReview(candidate, "PENDING")} className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs text-slate-200 disabled:opacity-40">Reset to pending</button></div>}
+											{candidate.decision === "APPROVED_FOR_FUTURE_PROMOTION" && <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs font-semibold text-emerald-100">APPROVED FOR FUTURE PROMOTION · NOT ACTIVE IN REGISTRY</div>}
+											<div className="text-[10px] text-slate-500">Activation status: {candidate.activation_status}</div>
+										</article>;
+									})}
+								</div>
+							)}
+						</>
+					)}
+				</section>
+			)}
+
+			{activeView === "admin" && <>
+				<div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-400/80">
+					Live Scene / Context Authority Pool
+				</div>
 
 			{coverage && (
 				<div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
@@ -768,6 +979,7 @@ export default function SceneContextRegistryPage() {
 					})}
 				</div>
 			)}
+			</>}
 		</div>
 	);
 }
