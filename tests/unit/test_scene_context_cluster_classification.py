@@ -48,7 +48,7 @@ def _use_temp_bridge(monkeypatch, tmp_path):
 
 def test_seed_classification_is_complete_and_fail_closed():
     profiles = registry.list_pool()
-    assert len(profiles) == 20
+    assert len(profiles) == 43
     assert {p["scene_code"] for p in profiles} == set(registry._classification_by_code())
     for profile in profiles:
         assert profile["cluster_classification_status"] in {"CLASSIFIED", "REVIEW_REQUIRED"}
@@ -64,12 +64,12 @@ def test_coverage_is_read_only_and_has_exact_authority_totals():
     coverage = registry.cluster_coverage()
     assert coverage["registry_mutations"] == 0
     assert coverage["canonical_clusters"] == list(registry.canonical_clusters())
-    assert (coverage["active_scene_total"], coverage["classified_scene_total"], coverage["review_required_scene_total"], coverage["shared_scene_total"]) == (20, 13, 7, 2)
+    assert (coverage["active_scene_total"], coverage["classified_scene_total"], coverage["review_required_scene_total"], coverage["shared_scene_total"]) == (43, 36, 7, 25)
     assert [(row["cluster"], row["eligible_active_scene_count"], row["gap_to_target"]) for row in coverage["per_cluster"]] == [
-        ("Automotive", 0, 3), ("Baby & Kids", 0, 3), ("Beauty", 0, 3),
-        ("Electronics & Gadgets", 0, 3), ("Fashion", 0, 3), ("Food & Beverage", 7, 0),
-        ("Home & Living", 4, 0), ("Islamic & Books", 1, 2), ("Office & Stationery", 0, 3),
-        ("Pet Care", 0, 3), ("Sports & Outdoors", 3, 0), ("Tools & Home Improvement", 0, 3),
+        ("Automotive", 4, 0), ("Baby & Kids", 3, 0), ("Beauty", 6, 0),
+        ("Electronics & Gadgets", 5, 0), ("Fashion", 3, 0), ("Food & Beverage", 9, 0),
+        ("Home & Living", 10, 0), ("Islamic & Books", 3, 0), ("Office & Stationery", 7, 0),
+        ("Pet Care", 3, 0), ("Sports & Outdoors", 5, 0), ("Tools & Home Improvement", 3, 0),
     ]
     assert hashlib.sha256(registry._POOL_FILE.read_bytes()).hexdigest() == before
 
@@ -77,7 +77,7 @@ def test_coverage_is_read_only_and_has_exact_authority_totals():
 def test_sync_without_optional_cluster_columns_is_backward_compatible(monkeypatch, tmp_path):
     bridge = _use_temp_bridge(monkeypatch, tmp_path)
     result = registry.sync_pool_csv(_seed_csv())
-    assert result["rows"] == 20 and bridge.exists()
+    assert result["rows"] == 43 and bridge.exists()
     assert registry.resolve_scene_context("SCN_RAYA_KAMPUNG")["primary_cluster"] == "Islamic & Books"
 
 

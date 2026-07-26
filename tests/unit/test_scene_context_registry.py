@@ -1,6 +1,6 @@
 """Scene-context registry service proofs (mirror of the avatar registry contract).
 
-Guards: the 20 seeded scene contexts load, resolve deterministically, expose only
+Guards: the 43 seeded scene contexts load, resolve deterministically, expose only
 sanitized public fields, keep PromptV1 server-side, and stay CLEAN (no baked text)
 so a generated scene image is a usable background plate.
 """
@@ -9,12 +9,14 @@ import pytest
 from agent.services import scene_context_registry as scr
 
 
-def test_pool_loads_20_seeded_scenes():
+def test_pool_loads_43_seeded_scenes():
     pool = scr.list_pool()
-    assert len(pool) == 20
+    assert len(pool) == 43
     codes = {p["scene_code"] for p in pool}
     assert "SCN_RAYA_KAMPUNG" in codes
     assert "SCN_WHITE_STUDIO_BERSIH" in codes
+    assert "SCN_MODERN_OPEN_PLAN_OFFICE" in codes
+    assert "SCN_PET_FRIENDLY_PARK" in codes
     # public view exposes only normalized fields — never PromptV1 / raw row
     for p in pool:
         assert set(p.keys()) == {
