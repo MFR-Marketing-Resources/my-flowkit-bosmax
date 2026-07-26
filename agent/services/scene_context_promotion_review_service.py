@@ -7,7 +7,6 @@ from collections import Counter
 from typing import Any
 
 from agent.db import crud
-from agent.services import creative_avatar_recommendation_service as _clusters
 from agent.services import product_scene_suitability_service as _suitability
 from agent.services import scene_context_promotion_service as _promotion
 
@@ -42,7 +41,7 @@ async def product_review(product_id: str) -> dict[str, Any]:
             "review_required": suitability.get("review_required", False),
             "product_suitability_template_count": suitability["template_count"]}
     if cluster is None:
-        return {**base, "candidate_count": 0, "quarantine_count": 0, "decision_counts": {}, "candidates": [], "quarantine": [],
+        return {**base, "registry_mutations": 0, "candidate_count": 0, "quarantine_count": 0, "decision_counts": {key: 0 for key in ("PENDING", "APPROVED_FOR_FUTURE_PROMOTION", "REJECTED", "STALE_REVIEW_REQUIRED")}, "candidates": [], "quarantine": [],
                 "message": "PRODUCT CATEGORY REVIEW REQUIRED: correct the product category before reviewing promotion candidates."}
     preview = _promotion.preview_scene_context_promotion(cluster)
     allowed = {item["template_id"] for item in suitability["recommendations"]}
@@ -82,12 +81,20 @@ async def record_reviews(product_id: str, items: list[dict]) -> dict:
     if review["review_required"]:
         raise ReviewError("PRODUCT_CLUSTER_REVIEW_REQUIRED")
     current = {c["source_template_id"]: c for c in review["candidates"]}
+    preview = _promotion.preview_scene_context_promotion(review["cluster"])
+    quarantined = {q["source_template_id"] for q in preview["quarantine"]}
+    suitable = {item["template_id"] for item in (await _suitability.recommend_scene_suitability_for_product(product_id))["recommendations"]}
+    library = {item["template_id"] for item in _suitability._scene_prompts.library_templates()}
     prepared = []
     for item in items:
         template_id = str(item.get("source_template_id") or "")
+        if template_id not in library:
+            raise ReviewError("UNKNOWN_SOURCE_TEMPLATE")
+        if template_id in quarantined:
+            raise ReviewError("CANDIDATE_QUARANTINED")
         candidate = current.get(template_id)
         if not candidate:
-            raise ReviewError("CANDIDATE_NOT_REVIEWABLE")
+            raise ReviewError("PRODUCT_TEMPLATE_MISMATCH" if template_id in suitable else "CANDIDATE_NOT_CURRENTLY_PROMOTABLE")
         if item.get("candidate_fingerprint") != candidate["candidate_fingerprint"]:
             raise ReviewError("STALE_CANDIDATE_FINGERPRINT")
         decision = item.get("decision")

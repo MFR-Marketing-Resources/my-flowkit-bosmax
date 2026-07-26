@@ -521,12 +521,17 @@ class ScenePromotionReviewRequest(BaseModel):
     reviewed_via_product_id: str
 
 
+def _scene_review_error(exc: _scene_review.ReviewError) -> HTTPException:
+    code = str(exc)
+    return HTTPException(404 if code == "PRODUCT_NOT_FOUND" else 409 if code == "STALE_CANDIDATE_FINGERPRINT" else 422, code)
+
+
 @router.get("/scene-context-promotion/review/product/{product_id}")
 async def scene_context_promotion_product_review(product_id: str) -> dict:
     try:
         return await _scene_review.product_review(product_id)
     except _scene_review.ReviewError as exc:
-        raise HTTPException(404 if str(exc) == "PRODUCT_NOT_FOUND" else 422, str(exc)) from exc
+        raise _scene_review_error(exc) from exc
 
 
 @router.post("/scene-context-promotion/review")
@@ -534,20 +539,27 @@ async def scene_context_promotion_review(request: ScenePromotionReviewRequest) -
     try:
         return await _scene_review.record_reviews(request.reviewed_via_product_id, [request.model_dump()])
     except _scene_review.ReviewError as exc:
-        raise HTTPException(409 if str(exc) == "STALE_CANDIDATE_FINGERPRINT" else 422, str(exc)) from exc
+        raise _scene_review_error(exc) from exc
 
 
 class ScenePromotionBulkReviewRequest(BaseModel):
     reviewed_via_product_id: str
-    items: list[dict]
+    items: list["ScenePromotionReviewItem"]
+
+
+class ScenePromotionReviewItem(BaseModel):
+    source_template_id: str
+    candidate_fingerprint: str
+    decision: str
+    reviewer_note: str | None = None
 
 
 @router.post("/scene-context-promotion/review/bulk")
 async def scene_context_promotion_bulk_review(request: ScenePromotionBulkReviewRequest) -> dict:
     try:
-        return await _scene_review.record_reviews(request.reviewed_via_product_id, request.items)
+        return await _scene_review.record_reviews(request.reviewed_via_product_id, [item.model_dump() for item in request.items])
     except _scene_review.ReviewError as exc:
-        raise HTTPException(409 if str(exc) == "STALE_CANDIDATE_FINGERPRINT" else 422, str(exc)) from exc
+        raise _scene_review_error(exc) from exc
 
 
 @router.get("/camera-preset-recommendation")
