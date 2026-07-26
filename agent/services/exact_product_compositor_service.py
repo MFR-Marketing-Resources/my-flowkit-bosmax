@@ -424,6 +424,364 @@ def _inpaint_background_bleed(image: Image.Image) -> Image.Image:
 
 
 
+
+
+def _trim_background_edge_fringe(image: Image.Image, passes: int = 4) -> Image.Image:
+    """Remove wall/floor halo on silhouette WITHOUT eroding product core.
+
+    Warm wall tones near the rim often look cream-like; at the exterior they
+    must be dropped. Interior cream cartouche stays (not exterior-reachable
+    once teal rim seals it, or fails is_drop when keep rules apply only off-edge).
+    """
+    from collections import deque
+
+    img = image.convert("RGBA")
+    w, h = img.size
+    px = img.load()
+
+    def is_core(r: int, g: int, b: int) -> bool:
+        """True product colors that must survive edge peel."""
+        if _is_red_cap_rgb(r, g, b):
+            return True
+        # teal glass / label frame
+        if g >= 70 and b >= 70 and (g + b) / 2.0 >= r + 12 and (
+            max(r, g, b) - min(r, g, b)
+        ) >= 12:
+            return True
+        # green liquid
+        if g >= 85 and g >= r + 18 and g >= b + 15:
+            return True
+        # dark ink / glass shade
+        if (0.299 * r + 0.587 * g + 0.114 * b) <= 95:
+            return True
+        # cream cartouche: warmer yellow bias, enough r-b
+        mx, mn = max(r, g, b), min(r, g, b)
+        lum = 0.299 * r + 0.587 * g + 0.114 * b
+        chroma = mx - mn
+        if (
+            r >= 170
+            and g >= 155
+            and b <= 200
+            and (r - b) >= 28
+            and (r - g) >= 2
+            and 28 <= chroma <= 90
+            and lum >= 160
+        ):
+            return True
+        # gold border
+        if r >= 150 and g >= 100 and b <= 130 and r > b + 30 and g > b + 15:
+            return True
+        # Do NOT keep generic mid-chroma neutrals — wall plaster is ~chroma 25-40
+        # and was surviving as false "plumage". Bird interior is sealed by teal frame.
+        return False
+
+    def is_drop(r: int, g: int, b: int) -> bool:
+        if is_core(r, g, b):
+            return False
+        if _is_soft_bg_rgb(r, g, b) or _is_strict_bg_rgb(r, g, b):
+            return True
+        mx, mn = max(r, g, b), min(r, g, b)
+        lum = 0.299 * r + 0.587 * g + 0.114 * b
+        chroma = mx - mn
+        # wall / floor neutrals and warm plaster (incl. pinkish MWTCB wall)
+        if lum >= 125 and chroma <= 55:
+            return True
+        if lum >= 135 and abs(r - g) <= 35 and chroma <= 65:
+            return True
+        if lum >= 150 and chroma <= 70:
+            return True
+        return False
+
+    # exterior flood into droppable pixels
+    seen = [[False] * w for _ in range(h)]
+    q: deque[tuple[int, int]] = deque()
+    for y in range(h):
+        for x in range(w):
+            if px[x, y][3] < 128:
+                seen[y][x] = True
+                q.append((x, y))
+    while q:
+        x, y = q.popleft()
+        for nx, ny in (
+            (x + 1, y),
+            (x - 1, y),
+            (x, y + 1),
+            (x, y - 1),
+            (x + 1, y + 1),
+            (x - 1, y - 1),
+            (x + 1, y - 1),
+            (x - 1, y + 1),
+        ):
+            if nx < 0 or ny < 0 or nx >= w or ny >= h or seen[ny][nx]:
+                continue
+            r, g, b, a = px[nx, ny]
+            if a < 128:
+                seen[ny][nx] = True
+                q.append((nx, ny))
+                continue
+            if a >= 180 and is_drop(r, g, b):
+                px[nx, ny] = (0, 0, 0, 0)
+                seen[ny][nx] = True
+                q.append((nx, ny))
+            else:
+                seen[ny][nx] = True
+
+    # shell peel: droppable pixels with a transparent neighbor
+    for _ in range(max(1, int(passes))):
+        doomed: list[tuple[int, int]] = []
+        for y in range(h):
+            for x in range(w):
+                r, g, b, a = px[x, y]
+                if a < 180 or not is_drop(r, g, b):
+                    continue
+                for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                    if nx < 0 or ny < 0 or nx >= w or ny >= h or px[nx, ny][3] < 128:
+                        doomed.append((x, y))
+                        break
+        if not doomed:
+            break
+        for x, y in doomed:
+            px[x, y] = (0, 0, 0, 0)
+    return img
+
+
+
+def _strip_synthetic_base_tab(image: Image.Image) -> Image.Image:
+    """Remove solid-fill green rectangle stubs under the bottle foot."""
+    img = image.convert("RGBA")
+    w, h = img.size
+    px = img.load()
+    # find bottom-most opaque row
+    bottom = None
+    for y in range(h - 1, -1, -1):
+        if any(px[x, y][3] >= 200 for x in range(w)):
+            bottom = y
+            break
+    if bottom is None:
+        return img
+    # scan upward while rows are highly uniform / synthetic
+    y = bottom
+    stripped = 0
+    while y >= int(h * 0.55) and stripped < int(h * 0.25):
+        cols = [px[x, y][:3] for x in range(w) if px[x, y][3] >= 200]
+        if len(cols) < 30:
+            break
+        # uniformity: median vs mean chroma low and many identical-ish
+        uniq = len(set(cols))
+        ratio = uniq / max(1, len(cols))
+        # solid fill tabs are nearly one color
+        from collections import Counter
+        top_n = Counter(cols).most_common(1)[0][1]
+        if top_n / len(cols) >= 0.55 or ratio <= 0.08:
+            for x in range(w):
+                if px[x, y][3] >= 200:
+                    px[x, y] = (0, 0, 0, 0)
+            stripped += 1
+            y -= 1
+            continue
+        break
+    return img
+
+
+def _keep_main_product_silhouette(image: Image.Image) -> Image.Image:
+    """Drop disconnected debris; keep largest blob + top red-cap blob."""
+    from collections import deque
+
+    img = image.convert("RGBA")
+    w, h = img.size
+    px = img.load()
+    seen = [[False] * w for _ in range(h)]
+    comps: list[tuple[int, list[tuple[int, int]], int, float]] = []
+    # (size, cells, red_count, med_y)
+    for y in range(h):
+        for x in range(w):
+            if seen[y][x] or px[x, y][3] < 180:
+                seen[y][x] = True if px[x, y][3] < 180 else seen[y][x]
+                if px[x, y][3] < 180:
+                    seen[y][x] = True
+                continue
+            if seen[y][x]:
+                continue
+            q = deque([(x, y)])
+            seen[y][x] = True
+            cells: list[tuple[int, int]] = []
+            red = 0
+            while q:
+                cx, cy = q.popleft()
+                cells.append((cx, cy))
+                r, g, b, a = px[cx, cy]
+                if _is_red_cap_rgb(r, g, b):
+                    red += 1
+                for nx, ny in ((cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)):
+                    if 0 <= nx < w and 0 <= ny < h and not seen[ny][nx] and px[nx, ny][3] >= 180:
+                        seen[ny][nx] = True
+                        q.append((nx, ny))
+            ys = sorted(yy for _, yy in cells)
+            comps.append((len(cells), cells, red, ys[len(ys) // 2]))
+    if not comps:
+        return img
+    comps.sort(key=lambda t: t[0], reverse=True)
+    keep_cells: set[tuple[int, int]] = set(comps[0][1])
+    # top red-dominant component in upper 40% if not already kept
+    red_caps = [
+        c
+        for c in comps
+        if c[2] >= 40 and c[3] <= h * 0.4 and c[2] / max(1, c[0]) >= 0.35
+    ]
+    if red_caps:
+        red_caps.sort(key=lambda t: t[3])
+        for cell in red_caps[0][1]:
+            keep_cells.add(cell)
+    for y in range(h):
+        for x in range(w):
+            if px[x, y][3] >= 180 and (x, y) not in keep_cells:
+                px[x, y] = (0, 0, 0, 0)
+    return img
+
+
+def _bridge_cap_to_body(image: Image.Image) -> Image.Image:
+    """Reconnect TOP red-cap cluster to teal body after edge trim.
+
+    Important: label text may contain red ink (e.g. Sejak 1958). Cap geometry
+    must use only the uppermost red component, not all red pixels.
+    """
+    from collections import deque
+
+    img = image.convert("RGBA")
+    w, h = img.size
+    px = img.load()
+
+    # Find connected red components
+    seen = [[False] * w for _ in range(h)]
+    red_comps: list[list[tuple[int, int]]] = []
+    for y in range(h):
+        for x in range(w):
+            if seen[y][x]:
+                continue
+            r, g, b, a = px[x, y]
+            if a < 200 or not _is_red_cap_rgb(r, g, b):
+                seen[y][x] = True
+                continue
+            q = deque([(x, y)])
+            seen[y][x] = True
+            cells: list[tuple[int, int]] = []
+            while q:
+                cx, cy = q.popleft()
+                cells.append((cx, cy))
+                for nx, ny in ((cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)):
+                    if nx < 0 or ny < 0 or nx >= w or ny >= h or seen[ny][nx]:
+                        continue
+                    rr, gg, bb, aa = px[nx, ny]
+                    if aa >= 200 and _is_red_cap_rgb(rr, gg, bb):
+                        seen[ny][nx] = True
+                        q.append((nx, ny))
+                    else:
+                        seen[ny][nx] = True if aa < 200 else seen[ny][nx]
+                        if aa < 200:
+                            seen[ny][nx] = True
+            if len(cells) >= 40:
+                red_comps.append(cells)
+
+    if not red_comps:
+        return img
+    # Cap = red component with smallest median y (topmost)
+    def med_y(cells: list[tuple[int, int]]) -> float:
+        ys = sorted(y for _, y in cells)
+        return ys[len(ys) // 2]
+
+    red_comps.sort(key=med_y)
+    cap_cells = red_comps[0]
+    # Ignore red components far below top third (label text)
+    if med_y(cap_cells) > h * 0.35:
+        return img
+
+    teal_xy: list[tuple[int, int]] = []
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            if a < 200:
+                continue
+            if g >= 70 and b >= 70 and (g + b) / 2.0 >= r + 12:
+                teal_xy.append((x, y))
+    if not teal_xy:
+        return img
+
+    cap_bottom = max(y for _, y in cap_cells)
+    body_top = min(y for _, y in teal_xy)
+    if body_top <= cap_bottom + 2:
+        return img
+
+    cap_xs = [x for x, _ in cap_cells]
+    body_xs = [x for x, y in teal_xy if y <= body_top + 15]
+    if not body_xs:
+        body_xs = [x for x, _ in teal_xy]
+    mid = int((sum(cap_xs) / len(cap_xs) + sum(body_xs) / len(body_xs)) / 2)
+    half = max(6, int(0.42 * (max(cap_xs) - min(cap_xs) + 1) / 2))
+
+    samples: list[tuple[int, int, int]] = []
+    for y in range(body_top, min(h, body_top + 12)):
+        for x in range(max(0, mid - half), min(w, mid + half + 1)):
+            r, g, b, a = px[x, y]
+            if a >= 200:
+                samples.append((r, g, b))
+    glass = (90, 120, 100)
+    if samples:
+        samples.sort(key=lambda c: 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2])
+        glass = samples[len(samples) // 2]
+
+    for y in range(cap_bottom, body_top + 1):
+        t = (y - cap_bottom) / max(1, body_top - cap_bottom)
+        hh = max(5, int(half * (0.5 + 0.5 * t)))
+        for x in range(max(0, mid - hh), min(w, mid + hh + 1)):
+            if px[x, y][3] >= 200:
+                continue
+            px[x, y] = (glass[0], glass[1], glass[2], 255)
+    return img
+
+
+def _resize_rgba_premultiplied(image: Image.Image, size: tuple[int, int]) -> Image.Image:
+    """LANCZOS resize with premultiplied alpha to avoid dark/light edge smear."""
+    img = image.convert("RGBA")
+    r, g, b, a = img.split()
+    zero = Image.new("L", img.size, 0)
+    r = Image.composite(r, zero, a)
+    g = Image.composite(g, zero, a)
+    b = Image.composite(b, zero, a)
+    pm = Image.merge("RGBA", (r, g, b, a)).resize(size, Image.Resampling.LANCZOS)
+    pr, pg, pb, pa = pm.split()
+    prx, pgx, pbx, pax = pr.load(), pg.load(), pb.load(), pa.load()
+    out = Image.new("RGBA", size, (0, 0, 0, 0))
+    ox = out.load()
+    tw, th = size
+    for y in range(th):
+        for x in range(tw):
+            aa = pax[x, y]
+            if aa <= 0:
+                continue
+            if aa >= 250:
+                ox[x, y] = (prx[x, y], pgx[x, y], pbx[x, y], 255)
+            else:
+                inv = 255.0 / aa
+                ox[x, y] = (
+                    min(255, int(prx[x, y] * inv + 0.5)),
+                    min(255, int(pgx[x, y] * inv + 0.5)),
+                    min(255, int(pbx[x, y] * inv + 0.5)),
+                    aa,
+                )
+    return out
+
+
+def _harden_cutout_alpha_after_resize(product: Image.Image) -> Image.Image:
+    """Kill translucent LANCZOS halo; keep hard product matte."""
+    img = product.convert("RGBA")
+    r, g, b, a = img.split()
+    a = a.point(lambda v: 255 if v >= 180 else 0)
+    img = Image.merge("RGBA", (r, g, b, a))
+    img = _trim_background_edge_fringe(img, passes=2)
+    img = _bridge_cap_to_body(img)
+    return img
+
+
 def _despeckle_alpha(image: Image.Image, min_comp: int = 120) -> Image.Image:
     """Drop tiny opaque islands outside the main product silhouette."""
     img = image.convert("RGBA")
@@ -491,56 +849,82 @@ def _despeckle_alpha(image: Image.Image, min_comp: int = 120) -> Image.Image:
 
 
 def _solidify_neck_band(image: Image.Image) -> Image.Image:
-    """Fill residual neck holes between red cap and label; edge-inpaint white glass."""
+    """Fill residual neck holes between TOP red-cap cluster and body.
+
+    Must ignore red label ink (e.g. Sejak 1958) or the neck band expands into
+    the full body and floods a solid green rectangle tab under the bottle.
+    """
+    from collections import deque
+
     img = image.convert("RGBA")
     w, h = img.size
     px = img.load()
-    # locate red cap band
-    cap_ys: list[int] = []
-    cap_xs: list[int] = []
+
+    seen = [[False] * w for _ in range(h)]
+    red_comps: list[list[tuple[int, int]]] = []
     for y in range(h):
         for x in range(w):
+            if seen[y][x]:
+                continue
             r, g, b, a = px[x, y]
-            if a >= 200 and _is_red_cap_rgb(r, g, b):
-                cap_ys.append(y)
-                cap_xs.append(x)
-    if len(cap_ys) < 80:
+            if a < 200 or not _is_red_cap_rgb(r, g, b):
+                seen[y][x] = True
+                continue
+            q = deque([(x, y)])
+            seen[y][x] = True
+            cells: list[tuple[int, int]] = []
+            while q:
+                cx, cy = q.popleft()
+                cells.append((cx, cy))
+                for nx, ny in ((cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)):
+                    if nx < 0 or ny < 0 or nx >= w or ny >= h or seen[ny][nx]:
+                        continue
+                    rr, gg, bb, aa = px[nx, ny]
+                    if aa >= 200 and _is_red_cap_rgb(rr, gg, bb):
+                        seen[ny][nx] = True
+                        q.append((nx, ny))
+                    elif aa < 200:
+                        seen[ny][nx] = True
+            if len(cells) >= 80:
+                red_comps.append(cells)
+    if not red_comps:
+        return img
+    red_comps.sort(key=lambda cells: sorted(y for _, y in cells)[len(cells) // 2])
+    cap_cells = red_comps[0]
+    cap_ys = [y for _, y in cap_cells]
+    cap_xs = [x for x, _ in cap_cells]
+    if sorted(cap_ys)[len(cap_ys) // 2] > h * 0.35:
         return img
     cap_ymin, cap_ymax = min(cap_ys), max(cap_ys)
     cap_xmin, cap_xmax = min(cap_xs), max(cap_xs)
-    # neck band: just below cap to ~18% of height
+    # neck band only: just below top cap, short span
     y0 = cap_ymax
-    y1 = min(h - 1, cap_ymax + max(24, int(h * 0.14)))
-    x0 = max(0, cap_xmin - 4)
-    x1 = min(w - 1, cap_xmax + 4)
-    # sample glass/label color below neck
+    y1 = min(h - 1, cap_ymax + max(20, int(h * 0.12)))
+    x0 = max(0, cap_xmin - 2)
+    x1 = min(w - 1, cap_xmax + 2)
     samples: list[tuple[int, int, int]] = []
-    for y in range(min(h - 1, y1 + 4), min(h, y1 + 40)):
+    for y in range(min(h - 1, y1 + 2), min(h, y1 + 30)):
         for x in range(x0, x1 + 1):
             r, g, b, a = px[x, y]
-            if a < 200:
-                continue
-            if _is_red_cap_rgb(r, g, b):
+            if a < 200 or _is_red_cap_rgb(r, g, b):
                 continue
             if _is_soft_bg_rgb(r, g, b) or _is_strict_bg_rgb(r, g, b):
                 continue
             samples.append((r, g, b))
     if not samples:
-        samples = [(40, 90, 70)]
+        samples = [(90, 120, 100)]
     samples.sort(key=lambda c: 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2])
     fill = samples[len(samples) // 2]
     mid = (x0 + x1) // 2
     half = max(4, (x1 - x0) // 2)
     for y in range(y0, y1 + 1):
-        # slight taper
         t = (y - y0) / max(1, y1 - y0)
-        hh = int(half * (1.0 - 0.1 * t))
+        hh = int(half * (0.85 + 0.15 * t))
         for x in range(max(0, mid - hh), min(w, mid + hh + 1)):
             r, g, b, a = px[x, y]
             if a < 200:
                 px[x, y] = (fill[0], fill[1], fill[2], 255)
             elif _is_soft_bg_rgb(r, g, b) or _is_strict_bg_rgb(r, g, b):
-                # wall showing through glass → replace with glass-ish fill
                 px[x, y] = (fill[0], fill[1], fill[2], 255)
     return img
 
@@ -899,9 +1283,7 @@ def _build_canonical_cutout(source: Path) -> Image.Image:
                 fpx[x, y] = (r, g, b, 255)
 
     image = _despeckle_alpha(final, min_comp=400)
-    # Edge-only wall bleed cleanup (skips non-bg interior by design)
-    image = _inpaint_background_bleed(image)
-    # Neck alpha bridge — then re-lock RGB from source for original footprint
+    # Neck alpha bridge first (geometry), then RGB lock for product-like only
     image = _solidify_neck_band(image)
     ipx2 = image.load()
     for y in range(h):
@@ -910,14 +1292,26 @@ def _build_canonical_cutout(source: Path) -> Image.Image:
             if a < 200:
                 continue
             sr, sg, sb = src_px[x, y][:3]
+            # Never re-lock wall/floor RGB onto the matte — that recreates halo.
             if is_protected(sr, sg, sb) or not (
                 _is_soft_bg_rgb(sr, sg, sb) or _is_strict_bg_rgb(sr, sg, sb)
-            ) or bpx[x, y] >= 200:
+            ):
                 ipx2[x, y] = (sr, sg, sb, a)
+    # Drop residual wall fringe after RGB lock (right-edge dirty crop)
+    image = _trim_background_edge_fringe(image, passes=4)
+    image = _inpaint_background_bleed(image)
+    image = _trim_background_edge_fringe(image, passes=2)
+    image = _keep_main_product_silhouette(image)
+    image = _solidify_neck_band(image)
+    image = _bridge_cap_to_body(image)
+    image = _trim_background_edge_fringe(image, passes=1)
+    image = _keep_main_product_silhouette(image)
+    image = _bridge_cap_to_body(image)
+    image = _strip_synthetic_base_tab(image)
 
     bbox = image.getbbox()
     if bbox:
-        pad = 2
+        pad = 1
         bx0, by0, bx1, by1 = bbox
         image = image.crop(
             (
@@ -983,7 +1377,7 @@ def prepare_layer(
     out_cutout_dir = OUTPUT_DIR / "exact-product-cutouts"
     out_cutout_dir.mkdir(parents=True, exist_ok=True)
     # v2: cream-safe protect + hole-only fill (no label median mosaic)
-    cutout = cutout_dir / f"{expected}_cutout_v3.png"
+    cutout = cutout_dir / f"{expected}_cutout_v11.png"
     if not cutout.exists():
         image = _build_canonical_cutout(source)
         image.save(cutout)
@@ -1060,9 +1454,11 @@ def _product_region_match(
 def composite(output_path: Path, layer: dict[str, Any]) -> dict[str, Any]:
     asset, t = Path(str(layer["asset_ref"])), layer["transform"]
     base = Image.open(output_path).convert("RGBA")
-    product = Image.open(asset).convert("RGBA").resize(
-        (int(t["w"]), int(t["h"])), Image.Resampling.LANCZOS
+    product = _resize_rgba_premultiplied(
+        Image.open(asset).convert("RGBA"),
+        (int(t["w"]), int(t["h"])),
     )
+    product = _harden_cutout_alpha_after_resize(product)
     shadow = Image.new("RGBA", base.size)
     alpha = product.getchannel("A").filter(
         ImageFilter.GaussianBlur(float(t["shadow_blur_px"]))
