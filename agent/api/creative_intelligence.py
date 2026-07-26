@@ -39,6 +39,13 @@ class CreativeSelectionSaveRequest(BaseModel):
     notes: str | None = None
 
 
+class CreativeSelectionAvatarPatchRequest(BaseModel):
+    """Avatar-only partial update. Other selection fields are preserved server-side."""
+    product_id: str
+    selected_avatar_code: str
+    notes_append: str | None = None
+
+
 class CreativeSelectionReviewRequest(BaseModel):
     product_id: str
     action: str  # APPROVE | REJECT
@@ -55,6 +62,7 @@ _SETUP_ERROR_STATUS = {
     "INVALID_ACTION": 422,
     "NOT_IN_DRAFT": 409,
     "SELECTION_NOT_APPROVED": 409,  # Round 5: DRAFT/REJECTED cannot hand off
+    "PRODUCT_CATEGORY_REVIEW_REQUIRED": 409,  # D1: fail-closed, no auto-plan/save
 }
 
 
@@ -84,7 +92,16 @@ async def registry_coverage() -> dict:
     # Avatar authority pool (CSV bridge) + product-fit coverage (R1).
     avatar_pool = avatar_registry.list_pool()
     fits = await crud.list_avatar_product_fits(limit=2000)
-    fit_categories = {str(f.get("product_category") or "") for f in fits}
+    live_avatar_codes = {
+        str(avatar.get("avatar_code") or "").strip()
+        for avatar in avatar_pool
+        if avatar.get("avatar_code")
+    }
+    valid_fits = [
+        fit for fit in fits
+        if str(fit.get("avatar_code") or "").strip() in live_avatar_codes
+    ]
+    fit_categories = {str(f.get("product_category") or "") for f in valid_fits}
     avatar_covered = [
         c for c in canonical
         if avatar_fit_service.normalise_category(c) in fit_categories
@@ -110,9 +127,9 @@ async def registry_coverage() -> dict:
         "avatar": {
             "pool_total": len(avatar_pool),
             "bridge_active": avatar_registry._BRIDGE_FILE.exists(),
-            "fit_total": len(fits),
+            "fit_total": len(valid_fits),
             "distinct_avatars_in_fit": len(
-                {str(f.get("avatar_code") or "") for f in fits}
+                {str(f.get("avatar_code") or "") for f in valid_fits}
             ),
             "clusters_covered": avatar_covered,
             "clusters_missing": avatar_missing,
@@ -406,6 +423,17 @@ async def avatar_recommendation(
     raise HTTPException(status_code=422, detail="product_id or category is required")
 
 
+@router.get("/product-cluster-audit")
+async def product_cluster_audit() -> dict:
+    """Read-only product inventory grouped by avatar-planning cluster.
+
+    Blank product categories remain review-required instead of falling back to a
+    visual cluster. This endpoint never mutates product, avatar, or generation
+    state and is intended to drive pool planning before avatar creation.
+    """
+    return await _svc.audit_product_cluster_coverage()
+
+
 @router.post("/avatar-fit/seed")
 async def avatar_fit_seed(dry_run: bool = True) -> dict:
     """Seed avatar_product_fit from the pool-validated crosswalk. Idempotent;
@@ -525,6 +553,21 @@ async def creative_selection_save(req: CreativeSelectionSaveRequest) -> dict:
             selected_block_purpose=req.selected_block_purpose,
             selected_content_type=req.selected_content_type,
             notes=req.notes,
+        )
+    except ValueError as exc:
+        _raise_setup_error(exc)
+
+
+@router.patch("/creative-selection/avatar")
+async def creative_selection_avatar_patch(req: CreativeSelectionAvatarPatchRequest) -> dict:
+    """Avatar-only partial update: preserves scene/camera/block/content/notes,
+    rebuilds preview from the merged selection, and returns status to DRAFT.
+    Only writes creative_product_selection — no product-row / generation effect."""
+    try:
+        return await _setup.update_creative_selection_avatar(
+            req.product_id,
+            selected_avatar_code=req.selected_avatar_code,
+            notes_append=req.notes_append,
         )
     except ValueError as exc:
         _raise_setup_error(exc)

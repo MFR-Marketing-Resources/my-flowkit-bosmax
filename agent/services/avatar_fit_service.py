@@ -56,6 +56,12 @@ async def get_suitable_avatars(
     """
     norm = normalise_category(product_category)
     fits = await crud.list_avatar_product_fits(product_category=norm)
+    def _is_auto_eligible(profile: dict[str, Any]) -> bool:
+        # Automatic recommendations never surface Child/Teen; explicit AvatarCode
+        # selection elsewhere remains valid for operator-chosen minors.
+        age = str(profile.get("age_band") or "").strip().casefold()
+        return age not in {"child (6-12)", "teen (13-17)"}
+
     if fits:
         # Enrich with avatar pool profiles
         enriched: list[dict[str, Any]] = []
@@ -66,6 +72,8 @@ async def get_suitable_avatars(
                 )
             except ValueError:
                 continue
+            if not _is_auto_eligible(profile):
+                continue
             enriched.append({
                 **profile,
                 "fit_score": fit.get("fit_score", 1.0),
@@ -73,17 +81,21 @@ async def get_suitable_avatars(
                 "suitability_notes": fit.get("suitability_notes"),
             })
         enriched.sort(key=lambda x: -x["fit_score"])
-        return enriched
+        if enriched:
+            return enriched
+        # Explicit rows existed but none resolved / none auto-eligible —
+        # fall through to safe adult fallback when allowed.
 
     if not include_all_fallback:
         return []
 
-    # Safe fallback: all registered avatars
+    # Safe fallback: adult registered avatars only (minors excluded from auto).
     all_avatars = avatar_registry.list_pool()
     return [
         {**a, "fit_score": 0.5, "fit_source": "FALLBACK_UNRANKED",
          "suitability_notes": "fallback only — no explicit category mapping"}
         for a in all_avatars
+        if _is_auto_eligible(a)
     ]
 
 

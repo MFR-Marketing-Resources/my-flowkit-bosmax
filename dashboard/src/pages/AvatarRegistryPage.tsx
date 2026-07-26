@@ -2,14 +2,23 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useImageGenSettings } from "../api/imageGenSettings";
 import {
+	getAvatarRecommendationForCategory,
+	getCreativeSetupForProduct,
+	getProductClusterAudit,
 	getRegistryCleanupPlan,
 	getRegistryCoverage,
 	getRegistryReconciliation,
+	patchCreativeSelectionAvatar,
+	type AvatarRecommendation,
+	type CreativeSetup,
+	type ProductClusterAudit,
 	type RegistryCleanupPlan,
 	type RegistryCoverage,
 	type RegistryReconciliation,
 } from "../api/creativeIntelligence";
+import { fetchProductCatalog } from "../api/products";
 import { DataTable } from "../components/ui";
+import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import {
 	createAvatarImageBulk,
 	cancelBulkRun,
@@ -21,6 +30,7 @@ import {
 	type BulkRunListEntry,
 	type BulkRunSummary,
 } from "../api/bulkGeneration";
+import type { Product } from "../types";
 
 // AVATAR REGISTRY — read-only view of the approved presenter pool (ADR-008
 // avatar law). The pool is TEXT authority: the canonical prompt compiler reads
@@ -32,6 +42,7 @@ interface AvatarProfile {
 	avatar_code: string;
 	character_name: string;
 	variant: string;
+	age_band: string;
 	skin_tone: string;
 	hair_style: string;
 	wardrobe: string;
@@ -154,6 +165,21 @@ export default function AvatarRegistryPage() {
 	);
 	const [isImporting, setIsImporting] = useState(false);
 	const [isFactoryBusy, setIsFactoryBusy] = useState(false);
+	// Product-first registry authority. An avatar is created for a selected
+	// product, then saved as that product's review-gated creative selection.
+	// Cluster recommendations remain reusable across products; this exact
+	// selection is the auditable proof of why an avatar was created.
+	const [products, setProducts] = useState<Product[]>([]);
+	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+	const [creativeSetup, setCreativeSetup] = useState<CreativeSetup | null>(null);
+	const [isLoadingProductContext, setIsLoadingProductContext] = useState(false);
+	const [productClusterAudit, setProductClusterAudit] = useState<ProductClusterAudit | null>(null);
+	const [clusterAvatarSets, setClusterAvatarSets] = useState<Record<string, AvatarRecommendation> | null>(null);
+	// Partial-success create+link: keep created AvatarCode when product link fails.
+	const [pendingLinkAvatarCode, setPendingLinkAvatarCode] = useState<string | null>(null);
+	const [pendingLinkError, setPendingLinkError] = useState<string | null>(null);
+	const [isRetryingLink, setIsRetryingLink] = useState(false);
+	const creativeSetupRequestRef = useRef(0);
 
 	// Create Avatar — manual add + AI auto-generate (wired to add-manual /
 	// auto-generate). Both add through the fail-closed pool door; redundancy
@@ -161,6 +187,7 @@ export default function AvatarRegistryPage() {
 	const [manualForm, setManualForm] = useState({
 		character_name: "",
 		gender: "F",
+		age_band: "",
 		skin_tone: "",
 		hair_style: "",
 		wardrobe: "",
@@ -174,6 +201,7 @@ export default function AvatarRegistryPage() {
 	const [isAddingManual, setIsAddingManual] = useState(false);
 	const [autoBrief, setAutoBrief] = useState("");
 	const [autoGender, setAutoGender] = useState("");
+	const [autoAgeBand, setAutoAgeBand] = useState("");
 	const [autoHijab, setAutoHijab] = useState(false);
 	const [isAutoGenerating, setIsAutoGenerating] = useState(false);
 	const [deletingCode, setDeletingCode] = useState<string | null>(null);
@@ -206,6 +234,7 @@ export default function AvatarRegistryPage() {
 				// add is always vocab-valid.
 				setManualForm((f) => ({
 					...f,
+					age_band: f.age_band || d.vocab.age_band?.[3] || d.vocab.age_band?.[0] || "",
 					skin_tone: f.skin_tone || d.vocab.skin_tone?.[0] || "",
 					hair_style: f.hair_style || d.vocab.hair_style?.[0] || "",
 					wardrobe: f.wardrobe || d.vocab.wardrobe?.[0] || "",
@@ -222,6 +251,125 @@ export default function AvatarRegistryPage() {
 			})
 			.catch(() => {});
 	}, []);
+
+	useEffect(() => {
+		void fetchProductCatalog(250)
+			.then((response) => setProducts(response.items || []))
+			.catch(() => setProducts([]));
+	}, []);
+
+	useEffect(() => {
+		void getProductClusterAudit().then(setProductClusterAudit).catch(() => {});
+	}, []);
+
+	// Cluster -> avatar-set mapping for the read-only "Avatar x Product Cluster"
+	// panel. Reuses the per-category recommendation endpoint (backed by the seeded
+	// avatar_product_fit); minors are excluded upstream by the crosswalk.
+	useEffect(() => {
+		if (!productClusterAudit) return;
+		let active = true;
+		const clusters = productClusterAudit.canonical_clusters;
+		void Promise.all(
+			clusters.map((cluster) =>
+				getAvatarRecommendationForCategory(cluster)
+					.then((rec) => [cluster, rec] as const)
+					.catch(() => [cluster, null] as const),
+			),
+		).then((entries) => {
+			if (!active) return;
+			const map: Record<string, AvatarRecommendation> = {};
+			for (const [cluster, rec] of entries) {
+				if (rec) map[cluster] = rec;
+			}
+			setClusterAvatarSets(map);
+		});
+		return () => {
+			active = false;
+		};
+	}, [productClusterAudit]);
+
+	useEffect(() => {
+		if (!selectedProduct) {
+			setCreativeSetup(null);
+			setPendingLinkAvatarCode(null);
+			setPendingLinkError(null);
+			return;
+		}
+		const requestId = ++creativeSetupRequestRef.current;
+		setIsLoadingProductContext(true);
+		setCreativeSetup(null); // clear stale setup from previous product immediately
+		void getCreativeSetupForProduct(selectedProduct.id)
+			.then((setup) => {
+				if (creativeSetupRequestRef.current === requestId) setCreativeSetup(setup);
+			})
+			.catch(() => {
+				if (creativeSetupRequestRef.current === requestId) setCreativeSetup(null);
+			})
+			.finally(() => {
+				if (creativeSetupRequestRef.current === requestId) setIsLoadingProductContext(false);
+			});
+		return () => {
+			// invalidate in-flight response without bumping the counter (avoids races)
+		};
+	}, [selectedProduct]);
+
+	const linkAvatarToSelectedProduct = async (avatarCode: string) => {
+		if (!selectedProduct) {
+			return { ok: true as const, skipped: true as const };
+		}
+		if (creativeSetup?.review_required) {
+			return {
+				ok: false as const,
+				error: "PRODUCT CATEGORY REVIEW REQUIRED — set a real category before linking an avatar.",
+				blockedReview: true as const,
+			};
+		}
+		try {
+			await patchCreativeSelectionAvatar({
+				product_id: selectedProduct.id,
+				selected_avatar_code: avatarCode,
+				notes_append:
+					"Created from Avatar Registry product-first flow; review before generation.",
+			});
+			// Refresh setup so saved_selection reflects DRAFT.
+			const setup = await getCreativeSetupForProduct(selectedProduct.id);
+			setCreativeSetup(setup);
+			return { ok: true as const, skipped: false as const };
+		} catch (err) {
+			return {
+				ok: false as const,
+				error: err instanceof Error ? err.message : "Failed to link avatar to product.",
+			};
+		}
+	};
+
+	const saveProductAvatarSelection = async (avatarCode: string) => {
+		const result = await linkAvatarToSelectedProduct(avatarCode);
+		if (!result.ok) {
+			throw new Error(result.error);
+		}
+	};
+
+	const retryPendingProductLink = async () => {
+		if (!pendingLinkAvatarCode) return;
+		setIsRetryingLink(true);
+		setError(null);
+		try {
+			const result = await linkAvatarToSelectedProduct(pendingLinkAvatarCode);
+			if (!result.ok) {
+				setPendingLinkError(result.error);
+				setError(result.error);
+				return;
+			}
+			setSuccessMsg(
+				`Avatar ${pendingLinkAvatarCode} dipautkan kepada produk terpilih sebagai DRAFT.`,
+			);
+			setPendingLinkAvatarCode(null);
+			setPendingLinkError(null);
+		} finally {
+			setIsRetryingLink(false);
+		}
+	};
 
 	// Gender-filtered option helpers: a gender_specific field (e.g. wardrobe)
 	// shows only the values allowed for the chosen gender; shared fields and an
@@ -328,6 +476,7 @@ export default function AvatarRegistryPage() {
 					body: JSON.stringify({
 						character_name: manualForm.character_name.trim(),
 						gender: manualForm.gender,
+						age_band: manualForm.age_band,
 						skin_tone: manualForm.skin_tone,
 						hair_style: manualForm.hair_style,
 						wardrobe: manualForm.wardrobe,
@@ -352,22 +501,33 @@ export default function AvatarRegistryPage() {
 				throw new Error(detail);
 			}
 			setSuccessMsg(`Avatar ${data.avatar_code} ditambah`);
+			setPendingLinkAvatarCode(null);
+			setPendingLinkError(null);
+			await refresh();
+			// Phase: link separately so creation success is never reported as failure.
+			if (selectedProduct) {
+				const linkResult = await linkAvatarToSelectedProduct(data.avatar_code);
+				if (linkResult.ok) {
+					if (!linkResult.skipped) {
+						setSuccessMsg(
+							`Avatar ${data.avatar_code} ditambah dan dipautkan kepada produk terpilih sebagai DRAFT.`,
+						);
+					}
+				} else {
+					setPendingLinkAvatarCode(data.avatar_code);
+					setPendingLinkError(linkResult.error);
+					setSuccessMsg(
+						`AVATAR_CREATED_PRODUCT_LINK_FAILED: Avatar ${data.avatar_code} berjaya dicipta, tetapi pautan produk gagal.`,
+					);
+					setError(linkResult.error);
+				}
+			}
 			// Keep the descriptor dropdown selections (still vocab-valid) so adding a
 			// sibling variant is quick; just clear the persona + hijab.
 			setManualForm((f) => ({ ...f, character_name: "", hijab: false }));
 			setManualPersonaNew(false);
-			await refresh();
-			// One press = profile + a generated reference image in the Library, not
-			// just a text row. Image gen is FREE (only video burns credit), so chain
-			// straight into the IMG lane; failures degrade gracefully (profile stays,
-			// image can be retried from the card).
-			await handleGenerateImage(
-				{
-					avatar_code: data.avatar_code,
-					character_name: data.character_name,
-				} as AvatarProfile,
-				true,
-			);
+			// Creating a profile never starts image generation. The operator may
+			// explicitly generate its reference later from the registry table.
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Manual avatar add failed.");
 		} finally {
@@ -383,6 +543,7 @@ export default function AvatarRegistryPage() {
 			const body: Record<string, unknown> = {};
 			if (autoBrief.trim()) body.brief = autoBrief.trim();
 			if (autoGender) body.gender = autoGender;
+			if (autoAgeBand) body.age_band = autoAgeBand;
 			if (autoHijab && autoGender !== "M") body.hijab = true;
 			if (autoEnvironment) body.environment = autoEnvironment;
 			if (autoWardrobe) body.wardrobe = autoWardrobe;
@@ -414,17 +575,30 @@ export default function AvatarRegistryPage() {
 				throw new Error(detail);
 			}
 			setSuccessMsg(`Avatar ${data.avatar_code} dijana`);
+			setPendingLinkAvatarCode(null);
+			setPendingLinkError(null);
 			setAutoBrief("");
 			await refresh();
-			// Auto-chain into the free IMG lane so the new avatar arrives with a
-			// generated reference image in the Library, not just a text row.
-			await handleGenerateImage(
-				{
-					avatar_code: data.avatar_code,
-					character_name: data.character_name,
-				} as AvatarProfile,
-				true,
-			);
+			// Phase: link separately so creation success is never reported as failure.
+			if (selectedProduct) {
+				const linkResult = await linkAvatarToSelectedProduct(data.avatar_code);
+				if (linkResult.ok) {
+					if (!linkResult.skipped) {
+						setSuccessMsg(
+							`Avatar ${data.avatar_code} dijana dan dipautkan kepada produk terpilih sebagai DRAFT.`,
+						);
+					}
+				} else {
+					setPendingLinkAvatarCode(data.avatar_code);
+					setPendingLinkError(linkResult.error);
+					setSuccessMsg(
+						`AVATAR_CREATED_PRODUCT_LINK_FAILED: Avatar ${data.avatar_code} berjaya dijana, tetapi pautan produk gagal.`,
+					);
+					setError(linkResult.error);
+				}
+			}
+			// Creating a profile never starts image generation. The operator may
+			// explicitly generate its reference later from the registry table.
 		} catch (err) {
 			setError(
 				err instanceof Error ? err.message : "AI avatar auto-generate failed.",
@@ -988,6 +1162,122 @@ export default function AvatarRegistryPage() {
 						</button>
 					</div>
 				</div>
+				<section className="mb-4 rounded-2xl border border-violet-500/30 bg-violet-500/5 p-4" data-testid="product-first-avatar-flow">
+					<div className="mb-3">
+						<div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-violet-300">
+							Step 1 — Product-first avatar planning
+						</div>
+						<div className="mt-1 text-sm font-semibold text-slate-100">
+							Pilih produk dahulu, kemudian cipta atau pilih avatar yang boleh diaudit.
+						</div>
+						<div className="mt-1 text-[11px] text-slate-400">
+							Registry menyimpan pilihan sebagai DRAFT untuk produk ini. Ia tidak menjalankan image atau video generation secara automatik.
+						</div>
+					</div>
+					<SearchableProductSelect
+						products={products}
+						selectedProduct={selectedProduct}
+						onSelect={setSelectedProduct}
+					/>
+					{productClusterAudit ? (
+						<div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4" data-testid="product-cluster-audit">
+							<div className="rounded-lg border border-slate-800 bg-slate-950/70 p-2">
+								<div className="text-[9px] uppercase tracking-wide text-slate-500">Catalogued</div>
+								<div className="text-base font-bold text-slate-100">{productClusterAudit.product_total}</div>
+							</div>
+							<div className="rounded-lg border border-slate-800 bg-slate-950/70 p-2">
+								<div className="text-[9px] uppercase tracking-wide text-slate-500">Clusters</div>
+								<div className="text-base font-bold text-slate-100">{productClusterAudit.canonical_clusters.length}</div>
+							</div>
+							<div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2">
+								<div className="text-[9px] uppercase tracking-wide text-amber-300/70">Need review</div>
+								<div className="text-base font-bold text-amber-200">{productClusterAudit.unknown_review_required}</div>
+							</div>
+							<div className="rounded-lg border border-slate-800 bg-slate-950/70 p-2">
+								<div className="text-[9px] uppercase tracking-wide text-slate-500">Top cluster</div>
+								<div className="truncate text-xs font-semibold text-slate-200">
+									{Object.entries(productClusterAudit.cluster_counts).sort((a, b) => b[1] - a[1])[0]?.[0] || "—"}
+								</div>
+							</div>
+						</div>
+					) : null}
+					{selectedProduct ? (
+							<div className="mt-3 rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-xs">
+								<div className="flex flex-wrap items-center gap-2">
+									<span className="font-semibold text-slate-100">{selectedProduct.product_display_name || selectedProduct.raw_product_title}</span>
+									<span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+										creativeSetup?.review_required
+											? "border-amber-500/40 bg-amber-500/10 text-amber-100"
+											: "border-violet-500/30 bg-violet-500/10 text-violet-200"
+									}`}>
+										{isLoadingProductContext
+											? "Resolving cluster…"
+											: creativeSetup?.review_required
+												? "PRODUCT CATEGORY REVIEW REQUIRED"
+												: creativeSetup?.cluster || "Cluster needs review"}
+									</span>
+									{creativeSetup?.saved_selection?.status ? (
+										<span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] font-semibold text-slate-300">
+											Selection: {creativeSetup.saved_selection.status}
+										</span>
+									) : null}
+								</div>
+								{creativeSetup?.review_required ? (
+									<div
+										className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-[11px] text-amber-100"
+										data-testid="product-category-review-required"
+									>
+										<div className="font-bold tracking-wide">PRODUCT CATEGORY REVIEW REQUIRED</div>
+										<div className="mt-1 text-amber-100/80">
+											Blank or unknown category — no avatar recommendation or product link until a real category is set. Standalone avatar creation remains available.
+										</div>
+									</div>
+								) : (
+									<div className="mt-2 text-[11px] text-slate-400">
+										{creativeSetup?.recommended_avatars.some((avatar) => avatar.fit_source === "EXPLICIT_MAPPING")
+											? `${creativeSetup.recommended_avatars.filter((avatar) => avatar.fit_source === "EXPLICIT_MAPPING").length} ranked avatar recommendation(s) available for this cluster.`
+											: "No ranked avatar exists yet. Use the create form below to add a candidate; it will be linked to this product as DRAFT."}
+									</div>
+								)}
+								{!creativeSetup?.review_required &&
+								creativeSetup?.recommended_avatars.some((avatar) => avatar.fit_source === "EXPLICIT_MAPPING") ? (
+									<div className="mt-2 flex flex-wrap gap-2" data-testid="product-avatar-recommendations">
+										{creativeSetup.recommended_avatars.filter((avatar) => avatar.fit_source === "EXPLICIT_MAPPING").slice(0, 10).map((avatar) => (
+											<button
+												key={avatar.avatar_code}
+												type="button"
+												onClick={() => void saveProductAvatarSelection(avatar.avatar_code).then(() => setSuccessMsg(`${avatar.avatar_code} dipautkan kepada produk sebagai DRAFT.`)).catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to save avatar selection."))}
+												className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-semibold text-slate-200 hover:border-violet-400 hover:text-violet-200"
+											>
+												Use {avatar.avatar_code} · {Math.round(avatar.fit_score * 100)}%
+											</button>
+										))}
+									</div>
+								) : null}
+								{pendingLinkAvatarCode ? (
+									<div
+										className="mt-3 rounded-lg border border-rose-500/40 bg-rose-500/10 p-2 text-[11px] text-rose-100"
+										data-testid="avatar-created-product-link-failed"
+									>
+										<div className="font-bold">AVATAR_CREATED_PRODUCT_LINK_FAILED</div>
+										<div className="mt-1">
+											Avatar <span className="font-mono font-semibold">{pendingLinkAvatarCode}</span> wujud dalam registry.
+											Pautan produk gagal{pendingLinkError ? `: ${pendingLinkError}` : "."}
+										</div>
+										<button
+											type="button"
+											data-testid="retry-product-link"
+											disabled={isRetryingLink || Boolean(creativeSetup?.review_required)}
+											onClick={() => void retryPendingProductLink()}
+											className="mt-2 rounded-lg border border-rose-400/50 bg-rose-500/20 px-2.5 py-1 text-[11px] font-semibold text-rose-50 hover:bg-rose-500/30 disabled:opacity-50"
+										>
+											{isRetryingLink ? "Retrying…" : `Retry product link · ${pendingLinkAvatarCode}`}
+										</button>
+									</div>
+								) : null}
+							</div>
+						) : null}
+					</section>
 				{coverage && (
 						<div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
 							<div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -1035,6 +1325,95 @@ export default function AvatarRegistryPage() {
 								Used by Avatar Recommendation (R1), Creative Setup (R4), Creative
 								Handoff (R5), and the prompt compiler. Read-only — editing here
 								changes the live pool those modules resolve against.
+							</div>
+						</div>
+					)}
+					{productClusterAudit && (
+						<div
+							className="mb-4 rounded-2xl border border-sky-500/20 bg-sky-500/5 p-4"
+							data-testid="avatar-cluster-mapping"
+						>
+							<div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+								<div>
+									<div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sky-200">
+										Pemetaan Avatar × Cluster Produk
+									</div>
+									<p className="mt-1 max-w-2xl text-[11px] text-slate-400">
+										Setiap produk (ikut kategori) diselesaikan ke satu cluster kreatif; cluster
+										itu dipetakan ke satu set avatar dewasa. Read-only — sumber
+										avatar_product_fit yang di-seed. Kanak-kanak dan remaja sengaja
+										dikecualikan daripada auto-cadangan.
+									</p>
+								</div>
+								{coverage && (
+									<div className="shrink-0 text-right text-[10px] text-slate-500">
+										<div>{coverage.avatar.fit_total} padanan</div>
+										<div>{coverage.avatar.distinct_avatars_in_fit} avatar aktif</div>
+									</div>
+								)}
+							</div>
+							<div className="overflow-x-auto">
+								<table className="w-full text-left text-sm">
+									<thead>
+										<tr className="border-b border-slate-800 text-[10px] uppercase tracking-wide text-slate-500">
+											<th className="py-2 pr-3 font-medium">Cluster</th>
+											<th className="py-2 pr-3 font-medium">Produk</th>
+											<th className="py-2 font-medium">Set Avatar</th>
+										</tr>
+									</thead>
+									<tbody data-testid="avatar-cluster-mapping-rows">
+										{Object.entries(productClusterAudit.cluster_counts)
+											.sort((a, b) => b[1] - a[1])
+											.map(([cluster, count]) => {
+												const avatars = clusterAvatarSets?.[cluster]?.avatars ?? [];
+												return (
+													<tr
+														key={cluster}
+														className="border-b border-slate-900 align-top"
+													>
+														<td className="py-2 pr-3 font-medium text-slate-200">
+															{cluster}
+														</td>
+														<td className="py-2 pr-3 tabular-nums text-slate-300">
+															{count}
+														</td>
+														<td className="py-2">
+															{!clusterAvatarSets ? (
+																<span className="text-[11px] text-slate-500">
+																	Memuatkan…
+																</span>
+															) : avatars.length === 0 ? (
+																<span className="text-[11px] text-slate-500">
+																	— tiada —
+																</span>
+															) : (
+																<div className="flex flex-wrap gap-1.5">
+																	{avatars.map((avatar) => (
+																		<span
+																			key={avatar.avatar_code}
+																			className="inline-flex items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[11px]"
+																		>
+																			<span className="font-mono text-sky-200">
+																				{avatar.avatar_code}
+																			</span>
+																			{avatar.character_name && (
+																				<span className="text-slate-300">
+																					{avatar.character_name}
+																				</span>
+																			)}
+																			<span className="text-slate-500">
+																				fit {avatar.fit_score}
+																			</span>
+																		</span>
+																	))}
+																</div>
+															)}
+														</td>
+													</tr>
+												);
+											})}
+									</tbody>
+								</table>
 							</div>
 						</div>
 					)}
@@ -1292,6 +1671,24 @@ export default function AvatarRegistryPage() {
 							</label>
 							<label className="text-[10px] text-slate-400">
 								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+									Age band
+								</span>
+								<select
+									value={manualForm.age_band}
+									onChange={(e) =>
+										setManualForm((f) => ({ ...f, age_band: e.target.value }))
+									}
+									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+								>
+									{(vocab?.age_band ?? []).map((o) => (
+										<option key={o} value={o}>
+											{o}
+										</option>
+									))}
+								</select>
+							</label>
+							<label className="text-[10px] text-slate-400">
+								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
 									Skin tone
 								</span>
 								<select
@@ -1482,6 +1879,23 @@ export default function AvatarRegistryPage() {
 								<span className="font-semibold uppercase tracking-[0.12em] text-slate-500">
 									Hijab{autoGender === "M" ? " (F only)" : ""}
 								</span>
+							</label>
+							<label className="text-[10px] text-slate-400">
+								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">
+									Age band
+								</span>
+								<select
+									value={autoAgeBand}
+									onChange={(e) => setAutoAgeBand(e.target.value)}
+									className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
+								>
+					<option value="">Adult (default)</option>
+									{(vocab?.age_band ?? []).map((o) => (
+										<option key={o} value={o}>
+											{o}
+										</option>
+									))}
+								</select>
 							</label>
 							<label className="text-[10px] text-slate-400">
 								<span className="mb-1 block font-semibold uppercase tracking-[0.12em] text-slate-500">

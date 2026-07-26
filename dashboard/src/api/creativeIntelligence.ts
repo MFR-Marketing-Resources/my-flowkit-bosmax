@@ -1,4 +1,4 @@
-import { getAPI, postAPI } from "./client";
+import { getAPI, patchAPI, postAPI } from "./client";
 
 export interface RecommendedAvatar {
 	avatar_code: string;
@@ -14,8 +14,10 @@ export interface AvatarRecommendation {
 	product_id?: string;
 	product_name?: string | null;
 	category?: string | null;
-	cluster: string;
+	// null when the product category is review-required (fail-closed, no plan).
+	cluster: string | null;
 	cluster_source: string;
+	review_required?: boolean;
 	avatar_count: number;
 	avatars: RecommendedAvatar[];
 }
@@ -24,6 +26,26 @@ export function getAvatarRecommendationForProduct(productId: string) {
 	return getAPI<AvatarRecommendation>(
 		`/api/creative-intelligence/avatar-recommendation?product_id=${encodeURIComponent(productId)}`,
 	);
+}
+
+export function getAvatarRecommendationForCategory(category: string) {
+	return getAPI<AvatarRecommendation>(
+		`/api/creative-intelligence/avatar-recommendation?category=${encodeURIComponent(category)}`,
+	);
+}
+
+export interface ProductClusterAudit {
+	product_total: number;
+	canonical_clusters: string[];
+	cluster_counts: Record<string, number>;
+	unknown_review_required: number;
+	unknown_samples: Array<{ product_id: string; product_name: string }>;
+	raw_category_counts: Record<string, number>;
+	note: string;
+}
+
+export function getProductClusterAudit() {
+	return getAPI<ProductClusterAudit>("/api/creative-intelligence/product-cluster-audit");
 }
 
 // --- Registry coverage lens (read-only; powers Avatar/Scene Registry cards) ---
@@ -152,8 +174,9 @@ export interface ScenePromptRecommendation {
 	product_id?: string;
 	product_name?: string | null;
 	category?: string | null;
-	cluster: string;
+	cluster: string | null;
 	cluster_source: string;
+	review_required?: boolean;
 	template_count: number;
 	templates: ScenePromptTemplate[];
 	global_config: SceneGlobalConfig;
@@ -199,8 +222,9 @@ export interface CameraPresetRecommendation {
 	product_id?: string;
 	product_name?: string | null;
 	category?: string | null;
-	cluster: string;
+	cluster: string | null;
 	cluster_source: string;
+	review_required?: boolean;
 	block_groups: string[];
 	block_recommendation_count: number;
 	block_recommendations: CameraBlockRecommendation[];
@@ -254,8 +278,9 @@ export interface CreativeSetup {
 	product_id: string;
 	product_name?: string | null;
 	category?: string | null;
-	cluster: string;
+	cluster: string | null;
 	cluster_source: string;
+	review_required?: boolean;
 	recommended_avatars: RecommendedAvatar[];
 	recommended_scene_templates: ScenePromptTemplate[];
 	camera_block_recommendations: CameraBlockRecommendation[];
@@ -281,6 +306,18 @@ export function getCreativeSetupForProduct(productId: string) {
 
 export function saveCreativeSelection(payload: SaveCreativeSelectionPayload) {
 	return postAPI<SavedCreativeSelection>("/api/creative-intelligence/creative-selection", payload);
+}
+
+/** Avatar-only partial update — preserves scene/camera/block/content/notes server-side. */
+export function patchCreativeSelectionAvatar(payload: {
+	product_id: string;
+	selected_avatar_code: string;
+	notes_append?: string | null;
+}) {
+	return patchAPI<SavedCreativeSelection>(
+		"/api/creative-intelligence/creative-selection/avatar",
+		payload,
+	);
 }
 
 export function reviewCreativeSelection(productId: string, action: "APPROVE" | "REJECT", reviewerNote?: string) {

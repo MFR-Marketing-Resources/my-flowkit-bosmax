@@ -88,9 +88,32 @@ async def resolve_creative_setup(product_id: str) -> dict[str, Any]:
     category = product.get("category")
 
     avatars = await _avatar.recommend_avatars_for_category(category)
+    saved = _hydrate_selection(await crud.get_creative_product_selection(product_id))
+
+    # Fail-closed: an un-categorised / unresolved product is REVIEW_REQUIRED. No
+    # avatar/scene/camera plan is offered and nothing may be auto-linked or saved
+    # until a real category exists (mirrors the product-cluster audit; never a
+    # silent Home & Living fallback).
+    if avatars.get("review_required"):
+        return {
+            "product_id": product_id,
+            "product_name": product.get("product_display_name") or product.get("raw_product_title"),
+            "category": category,
+            "cluster": None,
+            "cluster_source": avatars["cluster_source"],
+            "review_required": True,
+            "recommended_avatars": [],
+            "recommended_scene_templates": [],
+            "camera_block_recommendations": [],
+            "camera_library": {
+                "shot_distances": [], "camera_angles": [], "camera_movements": [],
+                "ecomm_shot_types": [], "named_presets": [],
+            },
+            "saved_selection": saved,
+        }
+
     scenes = await _scene.recommend_scene_prompts_for_category(category)
     cameras = await _camera.recommend_camera_presets_for_category(category)
-    saved = _hydrate_selection(await crud.get_creative_product_selection(product_id))
 
     return {
         "product_id": product_id,
@@ -98,6 +121,7 @@ async def resolve_creative_setup(product_id: str) -> dict[str, Any]:
         "category": category,
         "cluster": avatars["cluster"],
         "cluster_source": avatars["cluster_source"],
+        "review_required": False,
         "recommended_avatars": avatars["avatars"],
         "recommended_scene_templates": scenes["templates"],
         "camera_block_recommendations": cameras["block_recommendations"],
@@ -136,6 +160,11 @@ async def save_creative_selection(
         raise ValueError("INVALID_CAMERA_PRESET_CODE")
 
     resolved = _avatar.resolve_cluster(product.get("category"))
+    if resolved["cluster"] is None:
+        # Fail-closed: never persist a creative selection for a review-required
+        # (un-categorised / unresolved) product. A real category must be set
+        # first — no silent Home & Living plan.
+        raise ValueError("PRODUCT_CATEGORY_REVIEW_REQUIRED")
     row_for_preview = {
         "cluster": resolved["cluster"], "cluster_source": resolved["cluster_source"],
         "selected_avatar_code": selected_avatar_code,
@@ -170,6 +199,103 @@ async def get_creative_selection(product_id: str) -> dict[str, Any] | None:
     from agent.db import crud
 
     return _hydrate_selection(await crud.get_creative_product_selection(product_id))
+
+
+AVATAR_PATCH_SOURCE = "AVATAR_REGISTRY_AVATAR_PATCH_v1"
+
+
+async def update_creative_selection_avatar(
+    product_id: str,
+    *,
+    selected_avatar_code: str,
+    notes_append: str | None = None,
+) -> dict[str, Any]:
+    """Avatar-only partial update for a product creative selection.
+
+    Reads the existing selection (if any), validates the new avatar against the
+    live pool, preserves scene/camera/block/content_type/unrelated notes, then
+    writes only selected_avatar_code + avatar-related provenance and rebuilds
+    preview/provenance from the merged row. Always returns the selection to
+    DRAFT (including when prior status was APPROVED or REJECTED).
+
+    Raises:
+      PRODUCT_NOT_FOUND, INVALID_AVATAR_CODE, PRODUCT_CATEGORY_REVIEW_REQUIRED
+    Never mutates product rows or generation tables.
+    """
+    from agent.db import crud
+
+    product = await crud.get_product(product_id)
+    if not product:
+        raise ValueError("PRODUCT_NOT_FOUND")
+
+    code = str(selected_avatar_code or "").strip()
+    if not code or code not in _avatar_index():
+        raise ValueError("INVALID_AVATAR_CODE")
+
+    resolved = _avatar.resolve_cluster(product.get("category"))
+    if resolved["cluster"] is None:
+        raise ValueError("PRODUCT_CATEGORY_REVIEW_REQUIRED")
+
+    existing = await crud.get_creative_product_selection(product_id) or {}
+    scene_id = existing.get("selected_scene_template_id")
+    camera_code = existing.get("selected_camera_preset_code")
+    block = existing.get("selected_block_purpose")
+    content_type = existing.get("selected_content_type")
+    prior_notes = existing.get("notes")
+
+    notes = prior_notes
+    append = str(notes_append or "").strip()
+    if append:
+        if prior_notes and append not in str(prior_notes):
+            notes = f"{prior_notes}\n{append}" if str(prior_notes).strip() else append
+        elif not prior_notes:
+            notes = append
+
+    prior_prov: dict[str, Any] = {}
+    raw_prov = existing.get("provenance_json")
+    if isinstance(raw_prov, str) and raw_prov:
+        try:
+            loaded = json.loads(raw_prov)
+            if isinstance(loaded, dict):
+                prior_prov = loaded
+        except (ValueError, TypeError):
+            prior_prov = {}
+    elif isinstance(raw_prov, dict):
+        prior_prov = dict(raw_prov)
+
+    row_for_preview = {
+        "cluster": resolved["cluster"],
+        "cluster_source": resolved["cluster_source"],
+        "selected_avatar_code": code,
+        "selected_scene_template_id": scene_id,
+        "selected_camera_preset_code": camera_code,
+    }
+    preview = _build_preview(row_for_preview)
+    provenance = {
+        **prior_prov,
+        "source": AVATAR_PATCH_SOURCE,
+        "resolved_cluster": resolved["cluster"],
+        "cluster_source": resolved["cluster_source"],
+        "update_kind": "AVATAR_ONLY",
+        "previous_avatar_code": existing.get("selected_avatar_code"),
+        "selected_avatar_code": code,
+    }
+
+    saved = await crud.upsert_creative_product_selection(
+        product_id=product_id,
+        cluster=resolved["cluster"],
+        cluster_source=resolved["cluster_source"],
+        selected_avatar_code=code,
+        selected_scene_template_id=scene_id,
+        selected_camera_preset_code=camera_code,
+        selected_block_purpose=block,
+        selected_content_type=content_type,
+        notes=notes,
+        preview_json=json.dumps(preview, ensure_ascii=False),
+        provenance_json=json.dumps(provenance, ensure_ascii=False),
+        status="DRAFT",
+    )
+    return _hydrate_selection(saved)
 
 
 async def review_creative_selection(

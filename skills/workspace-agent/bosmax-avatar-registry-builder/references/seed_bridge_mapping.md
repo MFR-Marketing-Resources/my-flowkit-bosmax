@@ -9,7 +9,7 @@ BOSMAX Avatar Registry Builder V1 emits seed-schema CSV only. Bridge export mode
 The seed schema is the repo-safe CSV contract:
 
 ```csv
-CharacterName,Variant,AvatarCode,SkinTone,HairStyle,Wardrobe,Environment,Lighting,Camera,Expression,SafetyBlock,PromptV1,approved_flag,usage_tags
+CharacterName,Variant,AvatarCode,SkinTone,HairStyle,Wardrobe,Environment,Lighting,Camera,Expression,SafetyBlock,PromptV1,approved_flag,usage_tags,AgeBand
 ```
 
 ## Runtime bridge warning

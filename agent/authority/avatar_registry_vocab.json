@@ -2,10 +2,18 @@
   "_meta": {
     "purpose": "Controlled vocabulary for the Create Avatar form (manual + AI auto-generate). Single source of truth: drives the dashboard dropdowns, the AI allowed-values prompt, and fail-closed backend validation. Add an allowed value by editing the arrays below.",
     "sourced_from": "Distinct values in the live avatar authority pool (data/avatar_registry/AVATAR_POOL_NORMALIZED.csv), cleaned of the two legacy free-text rows.",
-    "version": "AVATAR_REGISTRY_VOCAB_v2",
+    "version": "AVATAR_REGISTRY_VOCAB_v3",
     "gender_rules": "`fields` is the full superset (canonical casing + membership for snap/validation). `gender_specific_fields` lists the fields whose allowed values depend on gender; `by_gender.{F,M}.<field>` narrows those fields. A field NOT listed under a gender is shared (full `fields` list applies). Persona gender is NOT curated here — it is derived from the pool AvatarCode prefix (BOS_F_/BOS_M_)."
   },
   "fields": {
+    "age_band": [
+      "Child (6-12)",
+      "Teen (13-17)",
+      "Young adult (18-29)",
+      "Adult (30-54)",
+      "Older adult (55-69)",
+      "Senior (70+)"
+    ],
     "skin_tone": [
       "Tan SEA",
       "Light-medium",

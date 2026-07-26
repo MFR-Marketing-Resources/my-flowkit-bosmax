@@ -1124,12 +1124,12 @@ def test_fashion_family_cta_lands_cleanly_without_awkward_fragment():
 
 
 def test_avatar_registry_explicit_id_and_prose():
-    profile = avatar_registry.resolve_presenter("BOS_F_ALYA_01")
-    assert profile["character_name"] == "Alya"
+    profile = avatar_registry.resolve_presenter("BOS_F_NADIA_01")
+    assert profile["character_name"] == "Nadia"
     prose = avatar_registry.presenter_prose(profile)
     assert "Malaysian adult woman" in prose
     assert "office" in prose.lower()
-    assert "BOS_F_ALYA_01" not in prose, "registry codes must never leak into prose"
+    assert "BOS_F_NADIA_01" not in prose, "registry codes must never leak into prose"
 
 
 def test_legacy_entrypoint_delegates_and_uncaps_blocks():

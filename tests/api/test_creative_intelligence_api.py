@@ -54,6 +54,31 @@ def test_avatar_recommendation_requires_a_selector():
     assert r.status_code == 422
 
 
+def test_product_cluster_audit_is_read_only(monkeypatch):
+    async def fake_audit():
+        return {
+            "product_total": 659,
+            "canonical_clusters": ["Beauty", "Home & Living"],
+            "cluster_counts": {"Beauty": 123, "Home & Living": 36},
+            "unknown_review_required": 102,
+            "unknown_samples": [{"product_id": "p-blank", "product_name": "Unclassified"}],
+            "raw_category_counts": {"Beauty & Personal Care": 123},
+            "note": "Read-only audit. Products with blank category are not auto-planned.",
+        }
+
+    monkeypatch.setattr(
+        "agent.services.creative_avatar_recommendation_service.audit_product_cluster_coverage",
+        fake_audit,
+    )
+    client = TestClient(_build_app())
+    response = client.get("/api/creative-intelligence/product-cluster-audit")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["product_total"] == 659
+    assert body["unknown_review_required"] == 102
+    assert body["cluster_counts"]["Beauty"] == 123
+
+
 def test_registry_coverage_aggregates_and_computes_gaps(monkeypatch):
     """Read-only coverage lens: aggregates pools + config tables and computes
     covered vs missing clusters against the canonical list. Hermetic (no DB)."""
@@ -87,7 +112,11 @@ def test_registry_coverage_aggregates_and_computes_gaps(monkeypatch):
     monkeypatch.setattr("agent.db.crud.count_products", fake_count)
     monkeypatch.setattr(
         "agent.services.avatar_registry.list_pool",
-        lambda: [{"avatar_code": f"A{i}"} for i in range(251)],
+        lambda: [
+            {"avatar_code": "BOS_F_ALYA_01"},
+            {"avatar_code": "BOS_F_ALYA_02"},
+            *[{"avatar_code": f"A{i}"} for i in range(249)],
+        ],
     )
     monkeypatch.setattr(
         "agent.services.scene_context_registry.list_pool",

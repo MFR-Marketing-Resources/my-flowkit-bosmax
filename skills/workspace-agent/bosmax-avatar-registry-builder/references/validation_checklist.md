@@ -26,6 +26,7 @@ Use this checklist before returning final CSV.
 
 - `approved_flag` is exactly `TRUE` or `FALSE`.
 - `usage_tags` is non-empty.
+- `AgeBand` is one of the controlled values; child and teen rows are family-safe and non-sexualized.
 - Final output uses pipe-delimited tags.
 
 ## Category planning

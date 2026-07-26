@@ -240,9 +240,32 @@ def test_avatar_registry_vocab_endpoint():
     body = r.json()
     assert "Tan SEA" in body["vocab"]["skin_tone"]
     assert "Waist-up" in body["vocab"]["camera"]
+    assert "Senior (70+)" in body["vocab"]["age_band"]
     assert isinstance(body["personas"], list)
     # Personas are clean single tokens — no descriptor-slug leaks.
     assert all("_" not in p for p in body["personas"])
+
+
+def test_add_manual_persists_requested_age_band(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.avatar_registry.find_duplicate_avatar", lambda *args: None)
+    captured: dict = {}
+    monkeypatch.setattr(
+        "agent.services.avatar_registry.add_avatar",
+        lambda row: captured.__setitem__("row", row) or {"rows": 1})
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/workspace/avatar-registry/add-manual",
+        json={
+            "character_name": "Salmah", "gender": "F",
+            "age_band": "Senior (70+)", "skin_tone": "Tan SEA",
+            "hair_style": "Medium tidy", "wardrobe": "Home casual wear",
+            "expression": "Calm neutral",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert captured["row"]["AgeBand"] == "Senior (70+)"
+    assert "senior adult" in captured["row"]["PromptV1"]
 
 
 def test_add_manual_rejects_off_vocab_422(monkeypatch):

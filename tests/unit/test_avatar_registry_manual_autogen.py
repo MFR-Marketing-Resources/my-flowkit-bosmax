@@ -50,6 +50,7 @@ def _sample_row(code: str) -> dict:
                     f"Testina, Code: {code}. Demographic: Female.",
         "approved_flag": "TRUE",
         "usage_tags": "test|ugc",
+        "AgeBand": "Adult (30-54)",
     }
 
 
@@ -93,6 +94,26 @@ def test_find_duplicate_avatar_detects_same_descriptor(tmp_pool):
     # a genuinely distinct descriptor is NOT a duplicate
     assert ar.find_duplicate_avatar(
         "Fair", "Short bob", "Formal suit", "Serious", "M") is None
+
+
+def test_age_band_changes_prompt_and_keeps_minors_explicit_only(tmp_pool):
+    prompt = ar.build_avatar_prompt_v1({
+        "CharacterName": "Aina", "AvatarCode": "BOS_F_AINA_01",
+        "AgeBand": "Child (6-12)", "SkinTone": "Tan SEA",
+        "HairStyle": "Medium tidy", "Wardrobe": "Home casual wear",
+        "Expression": "Calm neutral",
+    })
+    assert "Demographic: Female, child" in prompt
+    assert "family-safe, non-sexualized" in prompt
+
+    child = _sample_row("BOS_F_CHILD_01")
+    child["AgeBand"] = "Child (6-12)"
+    ar.add_avatar(child)
+    assert ar.resolve_presenter("BOS_F_CHILD_01")["age_band"] == "Child (6-12)"
+    assert all(
+        ar.resolve_presenter(seed=f"product-{index}")["age_band"] != "Child (6-12)"
+        for index in range(20)
+    )
 
 
 def test_build_avatar_prompt_v1_mirrors_seed_and_flags_hijab():

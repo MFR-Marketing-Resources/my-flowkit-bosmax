@@ -593,6 +593,7 @@ async def avatar_registry_vocab():
 class AvatarManualAddRequest(BaseModel):
     character_name: str = Field(pattern=r"^[A-Za-z][A-Za-z ]{0,15}$")
     gender: str = Field(pattern="^[FM]$")
+    age_band: str = "Adult (30-54)"
     skin_tone: str
     hair_style: str
     wardrobe: str
@@ -613,6 +614,7 @@ def _build_avatar_pool_row(avatar_registry, payload: dict) -> tuple[str, dict]:
     prompt_profile = {
         "CharacterName": payload["character_name"],
         "AvatarCode": avatar_code,
+        "AgeBand": payload["age_band"],
         "SkinTone": payload["skin_tone"],
         "HairStyle": payload["hair_style"],
         "Wardrobe": payload["wardrobe"],
@@ -638,6 +640,7 @@ def _build_avatar_pool_row(avatar_registry, payload: dict) -> tuple[str, dict]:
         "PromptV1": prompt_v1,
         "approved_flag": "TRUE",
         "usage_tags": str(payload.get("usage_tags") or "").strip(),
+        "AgeBand": payload["age_band"],
     }
     return avatar_code, row
 
@@ -656,7 +659,7 @@ async def avatar_registry_add_manual(request: AvatarManualAddRequest):
         raise HTTPException(422, str(exc)) from exc
     existing = avatar_registry.find_duplicate_avatar(
         request.skin_tone, request.hair_style, request.wardrobe,
-        request.expression, request.gender)
+        request.expression, request.gender, request.age_band)
     if existing is not None:
         raise HTTPException(409, f"AVATAR_REDUNDANT:{existing['avatar_code']}")
     avatar_code, row = _build_avatar_pool_row(avatar_registry, request.model_dump())
@@ -671,6 +674,7 @@ async def avatar_registry_add_manual(request: AvatarManualAddRequest):
 class AvatarAutoGenRequest(BaseModel):
     brief: str | None = None
     gender: str | None = None
+    age_band: str = "Adult (30-54)"
     hijab: bool | None = None
     environment: str | None = None
     wardrobe: str | None = None
@@ -683,7 +687,7 @@ _AVATAR_AI_REQUIRED_KEYS = (
 )
 
 
-def _coerce_ai_avatar_profile(data: dict) -> dict | None:
+def _coerce_ai_avatar_profile(data: dict, age_band: str) -> dict | None:
     """Validate + coerce the AI-returned dict into a manual-add payload, or None if
     required keys are missing or a required descriptor is off-vocab. Required
     descriptors are SNAPPED case-insensitively to the controlled vocabulary;
@@ -696,6 +700,9 @@ def _coerce_ai_avatar_profile(data: dict) -> dict | None:
         return None
     gender = str(data.get("gender") or "").strip().upper()
     if gender not in ("F", "M"):
+        return None
+    canonical_age_band = avatar_registry.snap_to_vocab("age_band", age_band)
+    if canonical_age_band is None:
         return None
     # Reject an AI name that collides with an existing OTHER-gender persona, so the
     # AI lane can never mint a cross-gender persona code (e.g. male "Alya").
@@ -726,6 +733,7 @@ def _coerce_ai_avatar_profile(data: dict) -> dict | None:
     return {
         "character_name": str(data["character_name"]).strip()[:16],
         "gender": gender,
+        "age_band": canonical_age_band,
         "skin_tone": snapped["skin_tone"],
         "hair_style": snapped["hair_style"],
         "wardrobe": snapped["wardrobe"],
@@ -777,11 +785,13 @@ async def avatar_registry_auto_generate(request: AvatarAutoGenRequest):
         f"wardrobe: [{_allowed('wardrobe')}]; expression: [{_allowed('expression')}]; "
         f"environment: [{_allowed('environment')}]; lighting: [{_allowed('lighting')}]; "
         f"camera: [{_allowed('camera')}]; usage_tags from [{_allowed('usage_tags')}]. "
+        f"Age band is fixed to '{request.age_band}'. If it is a child or teen, keep the profile family-safe and non-sexualized. "
         "If gender is 'M', hijab MUST be false."
     )
     constraints = []
     if request.gender:
         constraints.append(f"gender must be '{str(request.gender).strip().upper()}'")
+    constraints.append(f"age_band is '{request.age_band}'")
     if request.hijab is not None:
         constraints.append(f"hijab must be {bool(request.hijab)}")
     if request.environment:
@@ -801,13 +811,13 @@ async def avatar_registry_auto_generate(request: AvatarAutoGenRequest):
     except ai_copy_provider_adapter.AICopyProviderError as exc:
         raise HTTPException(502, "AI_AVATAR_GENERATION_FAILED") from exc
 
-    payload = _coerce_ai_avatar_profile(raw)
+    payload = _coerce_ai_avatar_profile(raw, request.age_band)
     if payload is None:
         raise HTTPException(502, "AI_AVATAR_INVALID")
 
     duplicate = avatar_registry.find_duplicate_avatar(
         payload["skin_tone"], payload["hair_style"], payload["wardrobe"],
-        payload["expression"], payload["gender"])
+        payload["expression"], payload["gender"], payload["age_band"])
     if duplicate is not None:
         retry_user = user + (
             "\nThe previous result duplicated an existing avatar. You MUST return a "
@@ -816,12 +826,12 @@ async def avatar_registry_auto_generate(request: AvatarAutoGenRequest):
             raw = ai_copy_provider_adapter.complete_json(system, retry_user)
         except ai_copy_provider_adapter.AICopyProviderError as exc:
             raise HTTPException(502, "AI_AVATAR_GENERATION_FAILED") from exc
-        payload = _coerce_ai_avatar_profile(raw)
+        payload = _coerce_ai_avatar_profile(raw, request.age_band)
         if payload is None:
             raise HTTPException(502, "AI_AVATAR_INVALID")
         duplicate = avatar_registry.find_duplicate_avatar(
             payload["skin_tone"], payload["hair_style"], payload["wardrobe"],
-            payload["expression"], payload["gender"])
+            payload["expression"], payload["gender"], payload["age_band"])
         if duplicate is not None:
             raise HTTPException(409, "AVATAR_REDUNDANT_AI")
 

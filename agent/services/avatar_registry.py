@@ -32,6 +32,9 @@ _BRIDGE_FILE = (
 
 REQUIRED_COLUMNS = {"CharacterName", "AvatarCode", "SkinTone", "HairStyle",
                     "Wardrobe", "Expression"}
+AGE_BAND_COLUMN = "AgeBand"
+LEGACY_AGE_BAND = "Adult (30-54)"
+_MINOR_AGE_BANDS = {"child (6-12)", "teen (13-17)"}
 
 
 def _active_pool_file() -> Path:
@@ -41,7 +44,7 @@ def _active_pool_file() -> Path:
 # ── Controlled descriptor vocabulary (single source of truth for the Create
 # Avatar dropdowns, the AI allowed-values prompt, and fail-closed validation).
 _VOCAB_FILE = _AUTHORITY_DIR / "avatar_registry_vocab.json"
-_VOCAB_REQUIRED_FIELDS = ("skin_tone", "hair_style", "wardrobe", "expression")
+_VOCAB_REQUIRED_FIELDS = ("age_band", "skin_tone", "hair_style", "wardrobe", "expression")
 _VOCAB_OPTIONAL_FIELDS = ("environment", "lighting", "camera")
 _PERSONA_RE = re.compile(r"^BOS_[FM]_([A-Z0-9]+)_[0-9]{2,}$")
 # Same shape as _PERSONA_RE but also captures the gender letter (used to derive
@@ -155,7 +158,10 @@ def validate_descriptors(payload: dict) -> None:
     Required descriptors must be present + in-vocab; optional ones (environment/
     lighting/camera) are checked only when provided; usage_tags each in-vocab."""
     for field in _VOCAB_REQUIRED_FIELDS:
-        if str(payload.get(field) or "").strip().casefold() not in _vocab_set(field):
+        value = payload.get(field)
+        if field == "age_band" and not value:
+            value = LEGACY_AGE_BAND
+        if str(value or "").strip().casefold() not in _vocab_set(field):
             raise ValueError(f"AVATAR_VALUE_NOT_IN_VOCAB:{field}")
     for field in _VOCAB_OPTIONAL_FIELDS:
         value = str(payload.get(field) or "").strip()
@@ -256,6 +262,29 @@ def sync_pool_csv(csv_bytes: bytes) -> dict:
         raise ValueError("AVATAR_REGISTRY_BLANK_AVATAR_CODE")
     if len(set(codes)) != len(codes):
         raise ValueError("AVATAR_REGISTRY_DUPLICATE_AVATAR_CODE")
+    header = list(rows[0].keys())
+    normalized_age_band = False
+    if AGE_BAND_COLUMN not in header:
+        # Legacy pools are adult/young-adult only. Upgrade them deterministically
+        # instead of permitting an unclassified record to enter the new resolver.
+        header.append(AGE_BAND_COLUMN)
+        for row in rows:
+            row[AGE_BAND_COLUMN] = LEGACY_AGE_BAND
+        normalized_age_band = True
+    else:
+        for row in rows:
+            age_band = str(row.get(AGE_BAND_COLUMN) or "").strip()
+            if not age_band:
+                row[AGE_BAND_COLUMN] = LEGACY_AGE_BAND
+                normalized_age_band = True
+            elif age_band.casefold() not in _vocab_set("age_band"):
+                raise ValueError("AVATAR_VALUE_NOT_IN_VOCAB:age_band")
+    if normalized_age_band:
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=header)
+        writer.writeheader()
+        writer.writerows(rows)
+        text = output.getvalue()
     _BRIDGE_FILE.parent.mkdir(parents=True, exist_ok=True)
     _BRIDGE_FILE.write_text(text, encoding="utf-8")
     count = reload_pool()
@@ -306,6 +335,7 @@ def _normalize_profile(row: dict) -> dict:
         "avatar_code": str(row.get("AvatarCode") or "").strip(),
         "character_name": str(row.get("CharacterName") or "").strip(),
         "variant": str(row.get("Variant") or "").strip(),
+        "age_band": str(row.get(AGE_BAND_COLUMN) or LEGACY_AGE_BAND).strip(),
         "skin_tone": str(row.get("SkinTone") or "").strip(),
         "hair_style": str(row.get("HairStyle") or "").strip(),
         "wardrobe": str(row.get("Wardrobe") or "").strip(),
@@ -324,6 +354,23 @@ def _gender_word(avatar_code: str) -> str:
     if "_M_" in code or code.startswith("BOS_M"):
         return "man"
     return "adult"
+
+
+def _age_band_prose(age_band: str) -> str:
+    """Render controlled age-band data without exposing registry metadata."""
+    labels = {
+        "child (6-12)": "child",
+        "teen (13-17)": "teenager",
+        "young adult (18-29)": "young adult",
+        "adult (30-54)": "adult",
+        "older adult (55-69)": "older adult",
+        "senior (70+)": "senior adult",
+    }
+    return labels.get(str(age_band or "").strip().casefold(), "young adult")
+
+
+def _is_minor(row: dict) -> bool:
+    return str(row.get(AGE_BAND_COLUMN) or LEGACY_AGE_BAND).strip().casefold() in _MINOR_AGE_BANDS
 
 
 def presenter_prose(profile: dict) -> str:
@@ -348,7 +395,7 @@ def presenter_prose(profile: dict) -> str:
     hair = profile.get("hair_style")
     wardrobe = profile.get("wardrobe")
     expression = profile.get("expression")
-    lead = f"a Malaysian adult {gender}"
+    lead = f"a Malaysian {_age_band_prose(profile.get('age_band'))} {gender}"
     if skin:
         lead += f" with {skin.lower()} skin"
     if hair:
@@ -411,7 +458,11 @@ def resolve_presenter(
             if str(row.get("AvatarCode", "")).strip().upper() == wanted:
                 return _normalize_profile(row)
         raise ValueError(f"AVATAR_NOT_FOUND:{avatar_id}")
-    candidates = pool
+    # Child/teen profiles require an explicit AvatarCode. Product-seeded and
+    # context-driven resolution may never pick a minor incidentally.
+    candidates = tuple(row for row in pool if not _is_minor(row))
+    if not candidates:
+        raise RuntimeError("AVATAR_POOL_NO_ADULT_CANDIDATES")
     if usage_context:
         ctx = usage_context.strip().lower()
         tagged = [
@@ -421,7 +472,9 @@ def resolve_presenter(
             or ctx in str(row.get("Environment", "")).lower()
         ]
         if tagged:
-            candidates = tuple(tagged)
+            adult_tagged = tuple(row for row in tagged if not _is_minor(row))
+            if adult_tagged:
+                candidates = adult_tagged
     digest = hashlib.sha256(str(seed or "bosmax-default").encode("utf-8")).hexdigest()
     index = int(digest[:8], 16) % len(candidates)
     return _normalize_profile(candidates[index])
@@ -504,7 +557,7 @@ def delete_avatar(avatar_code: str) -> dict:
 
 def descriptor_key(profile: dict, gender: str | None = None) -> tuple[str, ...]:
     """Lowercased descriptor tuple (skin_tone, hair_style, wardrobe, expression,
-    gender_word) used to detect duplicate avatars. gender_word derives from the
+    gender_word, age_band) used to detect duplicate avatars. gender_word derives from the
     avatar_code, or falls back to a passed gender ('F'/'M' or a plain word)."""
     gender_word = _gender_word(str(profile.get("avatar_code") or ""))
     if gender_word == "adult" and gender:
@@ -516,11 +569,13 @@ def descriptor_key(profile: dict, gender: str | None = None) -> tuple[str, ...]:
         str(profile.get("wardrobe") or "").strip().lower(),
         str(profile.get("expression") or "").strip().lower(),
         gender_word,
+        str(profile.get("age_band") or LEGACY_AGE_BAND).strip().lower(),
     )
 
 
 def find_duplicate_avatar(
-    skin_tone: str, hair_style: str, wardrobe: str, expression: str, gender: str
+    skin_tone: str, hair_style: str, wardrobe: str, expression: str, gender: str,
+    age_band: str = LEGACY_AGE_BAND,
 ) -> dict | None:
     """Return the first pool profile whose descriptor_key equals the given one
     (case-insensitive), else None."""
@@ -532,6 +587,7 @@ def find_duplicate_avatar(
         str(wardrobe or "").strip().lower(),
         str(expression or "").strip().lower(),
         gender_word,
+        str(age_band or LEGACY_AGE_BAND).strip().lower(),
     )
     for profile in list_pool():
         if descriptor_key(profile, gender=gender) == wanted:
@@ -575,6 +631,8 @@ def build_avatar_prompt_v1(profile: dict) -> str:
     code = str(profile.get("AvatarCode") or profile.get("avatar_code") or "").strip()
     gender_word = _gender_word(code)
     demographic = "Female" if gender_word == "woman" else "Male" if gender_word == "man" else "Adult"
+    age_band = str(profile.get("AgeBand") or profile.get("age_band") or LEGACY_AGE_BAND).strip()
+    age_phrase = _age_band_prose(age_band)
     skin = str(profile.get("SkinTone") or profile.get("skin_tone") or "").strip()
     hair = str(profile.get("HairStyle") or profile.get("hair_style") or "").strip()
     wardrobe = str(profile.get("Wardrobe") or profile.get("wardrobe") or "").strip()
@@ -591,7 +649,7 @@ def build_avatar_prompt_v1(profile: dict) -> str:
     prompt = (
         "Create a photorealistic avatar reference image. "
         f"Identity: {name}, Code: {code}. "
-        f"Demographic: {demographic}, Young Adult, Malay/SEA market fit. "
+        f"Demographic: {demographic}, {age_phrase}, Malay/SEA market fit. "
         f"Skin tone: {skin or 'Light-medium'}. Hair: {hair or 'Medium tidy'}. "
         f"Styling: {styling or 'Smart casual wear'}. "
         f"Expression: {expression or 'Calm neutral'}. "
@@ -604,4 +662,6 @@ def build_avatar_prompt_v1(profile: dict) -> str:
         "character fully clothed, respectful, and suitable for general audience "
         "and commercial use."
     )
+    if age_band.casefold() in _MINOR_AGE_BANDS:
+        prompt += " Depict this minor only in a family-safe, non-sexualized commercial context."
     return _harden_avatar_generation_prompt(prompt)
