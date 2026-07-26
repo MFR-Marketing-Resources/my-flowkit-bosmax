@@ -183,7 +183,7 @@ async def compose_final_for_product(
     )
     result = compose_final_from_plate(product, plate_path, lane=lane)
 
-    final_media_id = f"exact-final-{uuid.uuid4().hex}"
+    final_media_id = str(uuid.uuid4())  # bare UUID — required by /api/flow/retrieved
     out_path = Path(result["output_path"])
     size_mb = round(out_path.stat().st_size / (1024 * 1024), 4)
     await crud.insert_generated_artifact(

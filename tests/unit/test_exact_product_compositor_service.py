@@ -196,7 +196,7 @@ async def test_final_output_service_registers_artifact(tmp_path, monkeypatch):
         lane="poster",
     )
     assert result["ok"] is True
-    assert result["media_id"].startswith("exact-final-")
+    assert len(result["media_id"]) == 36 and result["media_id"].count("-") == 4
     assert result["lineage"]["raw_plate_approvable"] is False
     assert result["lineage"]["canonical_source_sha256"] == digest
     assert inserted["artifact_kind"] == "image"
