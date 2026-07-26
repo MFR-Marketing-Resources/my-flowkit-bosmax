@@ -70,16 +70,26 @@ def _parse_clusters(raw: str) -> list[str]:
 def _classification_by_code() -> dict[str, dict]:
     payload = json.loads(_CLASSIFICATION_FILE.read_text(encoding="utf-8"))
     result: dict[str, dict] = {}
+    versions: set[str] = set()
     for entry in payload["scenes"]:
         code = str(entry["scene_code"]).strip().upper()
+        if code in result:
+            raise ValueError(f"SCENE_CLASSIFICATION_DUPLICATE_SCENE_CODE:{code}")
         primary = entry.get("primary_cluster")
         compatible = list(entry.get("compatible_clusters") or [])
         status = entry.get("classification_status")
-        if status not in {"CLASSIFIED", "REVIEW_REQUIRED"} or any(_normalise_cluster(x) != x for x in compatible):
+        basis = str(entry.get("classification_basis") or "").strip()
+        version = str(entry.get("classification_version") or "").strip()
+        versions.add(version)
+        if not basis or not version or status not in {"CLASSIFIED", "REVIEW_REQUIRED"} or any(_normalise_cluster(x) != x for x in compatible) or len(set(compatible)) != len(compatible):
             raise ValueError(f"SCENE_CLASSIFICATION_INVALID:{code}")
-        if primary is not None and (primary not in compatible or _normalise_cluster(primary) != primary):
+        if status == "CLASSIFIED" and (primary is None or not compatible or compatible.count(primary) != 1 or _normalise_cluster(primary) != primary):
             raise ValueError(f"SCENE_CLASSIFICATION_INVALID_PRIMARY:{code}")
+        if status == "REVIEW_REQUIRED" and (primary is not None or compatible):
+            raise ValueError(f"SCENE_CLASSIFICATION_INVALID_REVIEW_REQUIRED:{code}")
         result[code] = entry
+    if len(versions) != 1:
+        raise ValueError("SCENE_CLASSIFICATION_INCONSISTENT_VERSION")
     return result
 
 
@@ -91,7 +101,7 @@ def _explicit_clusters(row: dict) -> tuple[str | None, list[str]] | None:
     if not raw_primary or len(compatible) != len([x for x in raw_compatible.split("|") if x.strip()]):
         raise ValueError("SCENE_REGISTRY_INVALID_CLUSTER_METADATA")
     primary = _normalise_cluster(raw_primary)
-    if not primary or primary not in compatible or len({x.casefold() for x in compatible}) != len(compatible):
+    if not primary or compatible.count(primary) != 1 or len({x.casefold() for x in compatible}) != len(compatible):
         raise ValueError("SCENE_REGISTRY_INVALID_CLUSTER_METADATA")
     return primary, compatible
 
@@ -117,6 +127,8 @@ def sync_pool_csv(csv_bytes: bytes) -> dict:
         raise ValueError("SCENE_REGISTRY_DUPLICATE_SCENE_CODE")
     if not all(str(r.get("BackgroundPrompt") or "").strip() for r in rows):
         raise ValueError("SCENE_REGISTRY_BLANK_BACKGROUND_PROMPT")
+    for row in rows:
+        _explicit_clusters(row)
     _BRIDGE_FILE.parent.mkdir(parents=True, exist_ok=True)
     _BRIDGE_FILE.write_text(text, encoding="utf-8")
     count = reload_pool()
@@ -188,7 +200,7 @@ def cluster_coverage() -> dict:
         primary = [p for p in eligible if p["primary_cluster"] == cluster]
         rows.append({"cluster": cluster, "eligible_active_scene_count": len(eligible), "primary_scene_count": len(primary), "shared_compatible_scene_count": len(eligible)-len(primary), "gap_to_target": max(0, 3-len(eligible)), "eligible_scene_codes": [p["scene_code"] for p in eligible]})
     review_required = [p for p in profiles if p["cluster_classification_status"] == "REVIEW_REQUIRED"]
-    return {"canonical_clusters": list(canonical_clusters()), "target_per_cluster": 3, "active_scene_total": len(profiles), "classified_scene_total": len(profiles)-len(review_required), "review_required_scene_total": len(review_required), "shared_scene_total": sum(1 for p in profiles if len(p["compatible_clusters"]) > 1), "per_cluster": rows, "milestone_complete": all(not r["gap_to_target"] for r in rows), "registry_mutations": 0}
+    return {"canonical_clusters": list(canonical_clusters()), "target_per_cluster": 3, "active_scene_total": len(profiles), "classified_scene_total": len(profiles)-len(review_required), "review_required_scene_total": len(review_required), "shared_scene_total": sum(1 for p in profiles if p["cluster_classification_status"] == "CLASSIFIED" and len(p["compatible_clusters"]) > 1), "per_cluster": rows, "milestone_complete": all(not r["gap_to_target"] for r in rows), "registry_mutations": 0}
 
 
 def classification() -> dict:
