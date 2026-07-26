@@ -765,6 +765,13 @@ domains:
       - agent/services/poster_template_service.py
       - agent/services/poster_compositor_service.py
       - agent/services/exact_product_compositor_service.py
+      - agent/services/exact_product_final_output_service.py
+      - agent/api/exact_product_output.py
+      - dashboard/src/api/exactProductOutput.ts
+      - dashboard/src/api/exactProductOutput.failClosed.test.ts
+      - dashboard/src/pages/PosterBuilderPage.exactOutput.test.tsx
+      - data/exact-product/**
+      - tests/unit/test_exact_product_final_output_service.py
       - agent/services/poster_deliverable_service.py
       - agent/api/poster_copy_sets.py
       - agent/api/poster_compose.py

@@ -661,14 +661,11 @@ async def compile_img_fastlane_prompt_preview(
         is_video=request.route == "FRAMES"
         or request.preset_id == "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS",
     )
-    if (
-        product
-        and request.preset_id == "MWCB_WG40_PRODUCT_ONLY_POSTER_LOCK"
-        and exact_product_policy(dict(product))
-    ):
-        product_lock_lines = [
-            "EXACT_PRODUCT_COMPOSITE_REQUIRED: Generate a clean scene-only plate. Reserve a clear product-safe region; do not render, redraw, type, stylize, or include the product. Final delivery inserts the canonical product cutout deterministically.",
-        ]
+    if product and exact_product_policy(dict(product)):
+        # Exact-policy products: Flow draws scene only. Final pixels come from
+        # exact_product_final_output_service.compose_final_for_product.
+        from agent.services.exact_product_compositor_service import SCENE_ONLY_PROMPT_LINES
+        product_lock_lines = list(SCENE_ONLY_PROMPT_LINES)
     if product_lock_lines:
         prompt_lines.extend(f"- {line}" for line in product_lock_lines if line)
     else:

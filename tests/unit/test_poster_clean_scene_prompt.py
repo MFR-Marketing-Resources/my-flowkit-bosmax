@@ -61,14 +61,18 @@ async def test_recipe_path_emits_clean_scene_prompt(monkeypatch):
     )
     # Clean-scene contract: compositor owns marketing text.
     assert "CLEAN SCENE MODE" in result.poster_prompt
-    assert "PRESERVE the real product label" in result.poster_prompt
+    if "EXACT_PRODUCT_COMPOSITE_REQUIRED" in result.poster_prompt:
+        assert "Do NOT draw any product" in result.poster_prompt or "do not draw" in result.poster_prompt.lower()
+        assert "PRESERVE the real product label" not in result.poster_prompt
+    else:
+        assert "PRESERVE the real product label" in result.poster_prompt
     # The old diffusion text-hierarchy instruction must be GONE on this path.
     assert "hook largest" not in result.poster_prompt
     # Negative prompt suppresses marketing typography, not the product label.
     assert "marketing headline text" in result.negative_prompt
     assert "poster typography overlay" in result.negative_prompt
     # Product region from the template contract appears in the instruction.
-    assert "product region" in result.poster_prompt
+    assert "product region" in result.poster_prompt or "product-safe region" in result.poster_prompt
 
 
 @pytest.mark.asyncio

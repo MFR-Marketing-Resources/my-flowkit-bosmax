@@ -958,9 +958,14 @@ async def list_artifacts(limit: int = 50, mode: str = None, kind: str = None):
 @router.get("/retrieved/{media_id}")
 async def get_retrieved_artifact(media_id: str):
     """Serve a retrieved artifact (mp4/jpg/png) so the dashboard can preview the
-    result inline the moment a job completes — no back-button/reload hunting."""
+    result inline the moment a job completes — no back-button/reload hunting.
+
+    Also serves registered exact-composite finals whose files live outside
+    output/retrieved/ (e.g. output/exact-product-finals/) via generated_artifact.
+    """
     from fastapi.responses import FileResponse
     from agent.config import OUTPUT_DIR
+    from agent.db import crud as _crud
     mid = str(media_id or "")
     if not (_FLOW_MEDIA_UUID_RE.match(mid) or _FINAL_MEDIA_ID_RE.match(mid)):
         raise HTTPException(422, "media_id must be a bare UUID or final_<job_id>")
@@ -969,6 +974,27 @@ async def get_retrieved_artifact(media_id: str):
         candidate = base / f"{media_id}{ext}"
         if candidate.exists():
             return FileResponse(candidate, media_type=mime)
+    # Fallback: durable registered artifacts (exact composite finals, etc.)
+    art = await _crud.get_generated_artifact(mid)
+    if art:
+        local = str(art.get("local_path") or "").strip()
+        if local:
+            path = Path(local)
+            if path.exists() and path.is_file():
+                # path must remain under OUTPUT_DIR
+                try:
+                    path.resolve().relative_to(OUTPUT_DIR.resolve())
+                except ValueError as exc:
+                    raise HTTPException(403, "artifact path outside output root") from exc
+                suffix = path.suffix.lower()
+                mime = {
+                    ".mp4": "video/mp4",
+                    ".jpg": "image/jpeg",
+                    ".jpeg": "image/jpeg",
+                    ".png": "image/png",
+                    ".webp": "image/webp",
+                }.get(suffix, "application/octet-stream")
+                return FileResponse(path, media_type=mime)
     raise HTTPException(404, "artifact not found")
 
 
