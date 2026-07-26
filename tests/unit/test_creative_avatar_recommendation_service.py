@@ -300,3 +300,24 @@ async def test_reconcile_avatar_product_fit_dry_run_and_apply(monkeypatch):
     assert ("BOS_M_TEST_02", "HOME_LIVING") in keys
     assert ("BOS_STALE_01", "Beauty") not in keys
     assert ("BOS_MANUAL_01", "Beauty") in keys  # preserved
+
+
+@pytest.mark.asyncio
+async def test_reconcile_avatar_product_fits_rolls_back_all_writes_on_failure():
+    """A later malformed mapping cannot leave an earlier mapping committed."""
+    before = await crud.list_avatar_product_fits(limit=10_000)
+    with pytest.raises(KeyError):
+        await crud.reconcile_avatar_product_fits(
+            [
+                {
+                    "avatar_code": "BOS_TXN_TEST_01",
+                    "product_category": "BEAUTY",
+                    "fit_score": 0.9,
+                    "suitability_notes": "transaction proof",
+                },
+                {"avatar_code": "BOS_TXN_FAIL_02"},
+            ],
+            [],
+        )
+    after = await crud.list_avatar_product_fits(limit=10_000)
+    assert after == before

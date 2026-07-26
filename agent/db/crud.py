@@ -1,9 +1,11 @@
 """Async CRUD operations with column whitelisting."""
 import json
 import logging
+import aiosqlite
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
+from agent.config import DB_PATH
 from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
@@ -873,6 +875,60 @@ async def delete_avatar_product_fit(avatar_code: str, product_category: str) -> 
         )
         await db.commit()
     return (cur.rowcount or 0) > 0
+
+
+async def reconcile_avatar_product_fits(
+    expected: list[dict], stale_managed: list[dict[str, str]]
+) -> dict[str, int]:
+    """Atomically reconcile crosswalk-owned avatar-product fit mappings only."""
+    db = await get_db()
+    written = 0
+    removed = 0
+    async with _db_lock:
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            for row in expected:
+                await db.execute(
+                    "INSERT INTO avatar_product_fit "
+                    "(avatar_code, product_category, fit_score, suitability_notes, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?) "
+                    "ON CONFLICT(avatar_code, product_category) DO UPDATE SET "
+                    "fit_score=excluded.fit_score, "
+                    "suitability_notes=excluded.suitability_notes, "
+                    "updated_at=excluded.updated_at",
+                    (
+                        row["avatar_code"],
+                        row["product_category"],
+                        row["fit_score"],
+                        row["suitability_notes"],
+                        _now(),
+                    ),
+                )
+                written += 1
+            for row in stale_managed:
+                cursor = await db.execute(
+                    "DELETE FROM avatar_product_fit WHERE avatar_code=? AND product_category=?",
+                    (row["avatar_code"], row["product_category"]),
+                )
+                removed += max(cursor.rowcount or 0, 0)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    return {"written": written, "removed": removed}
+
+
+async def list_avatar_product_fits_fresh(limit: int = 10_000) -> list[dict]:
+    """Read fit mappings through a distinct connection after a reconciliation commit."""
+    if str(DB_PATH) == ":memory:":
+        return await list_avatar_product_fits(limit=limit)
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM avatar_product_fit ORDER BY fit_score DESC, avatar_code ASC LIMIT ?",
+            (limit,),
+        )
+        return [dict(row) for row in await cursor.fetchall()]
 
 
 async def list_avatar_product_fits(

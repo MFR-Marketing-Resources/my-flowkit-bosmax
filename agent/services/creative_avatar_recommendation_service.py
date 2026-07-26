@@ -162,8 +162,8 @@ async def reconcile_avatar_product_fit(*, dry_run: bool = True) -> dict[str, Any
       are no longer expected (stale managed mappings)
     - preserves unrelated manually managed mappings (notes without the marker)
 
-    Affects only ``avatar_product_fit``. Transactional per row via CRUD. Dry-run
-    reports the diff without writing.
+    Affects only ``avatar_product_fit`` in one transaction. Dry-run reports the
+    diff without writing; an applied run uses a separate connection for read-back.
     """
     from agent.db import crud
 
@@ -226,26 +226,18 @@ async def reconcile_avatar_product_fit(*, dry_run: bool = True) -> dict[str, Any
     written = 0
     removed = 0
     if not dry_run:
-        try:
-            for exp in expected.values():
-                await crud.upsert_avatar_product_fit(
-                    avatar_code=exp["avatar_code"],
-                    product_category=exp["product_category"],
-                    fit_score=exp["fit_score"],
-                    suitability_notes=exp["suitability_notes"],
-                )
-                written += 1
-            for stale in stale_managed:
-                if await crud.delete_avatar_product_fit(
-                    stale["avatar_code"], stale["product_category"]
-                ):
-                    removed += 1
-        except Exception:
-            # Best-effort: individual CRUD calls commit; report failure to caller.
-            raise
+        result = await crud.reconcile_avatar_product_fits(
+            list(expected.values()), stale_managed
+        )
+        written = result["written"]
+        removed = result["removed"]
 
     # Fresh read-back for parity proof.
-    after = await crud.list_avatar_product_fits(limit=10_000)
+    after = (
+        await crud.list_avatar_product_fits(limit=10_000)
+        if dry_run
+        else await crud.list_avatar_product_fits_fresh(limit=10_000)
+    )
     after_managed = [
         r for r in after
         if marker in str(r.get("suitability_notes") or "")
