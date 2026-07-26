@@ -539,13 +539,13 @@ async def scene_context_promotion_review(request: ScenePromotionReviewRequest) -
 
 class ScenePromotionBulkReviewRequest(BaseModel):
     reviewed_via_product_id: str
-    items: list[ScenePromotionReviewRequest]
+    items: list[dict]
 
 
 @router.post("/scene-context-promotion/review/bulk")
 async def scene_context_promotion_bulk_review(request: ScenePromotionBulkReviewRequest) -> dict:
     try:
-        return await _scene_review.record_reviews(request.reviewed_via_product_id, [item.model_dump() for item in request.items])
+        return await _scene_review.record_reviews(request.reviewed_via_product_id, request.items)
     except _scene_review.ReviewError as exc:
         raise HTTPException(409 if str(exc) == "STALE_CANDIDATE_FINGERPRINT" else 422, str(exc)) from exc
 

@@ -1020,7 +1020,7 @@ async def get_scene_context_promotion_reviews(source_template_ids: list[str]) ->
     db = await get_db()
     placeholders = ",".join("?" for _ in source_template_ids)
     cur = await db.execute(
-        "SELECT * FROM scene_context_promotion_review "
+        "SELECT * FROM scene_context_promotion_review_event "
         f"WHERE source_template_id IN ({placeholders}) ORDER BY reviewed_at DESC",
         source_template_ids,
     )
@@ -1034,27 +1034,26 @@ async def record_scene_context_promotion_reviews(items: list[dict]) -> list[dict
     db = await get_db()
     now = _now()
     async with _db_lock:
-        for item in items:
-            existing = await db.execute(
-                "SELECT review_id FROM scene_context_promotion_review "
-                "WHERE source_template_id=? AND candidate_fingerprint=?",
-                (item["source_template_id"], item["candidate_fingerprint"]),
-            )
-            row = await existing.fetchone()
-            if row:
-                await db.execute(
-                    "UPDATE scene_context_promotion_review SET decision=?, reviewer_note=?, "
-                    "reviewed_via_product_id=?, updated_at=?, reviewed_at=? WHERE review_id=?",
-                    (item["decision"], item.get("reviewer_note"), item["reviewed_via_product_id"], now, now, row[0]),
+        try:
+            await db.execute("BEGIN")
+            for item in items:
+                cur = await db.execute(
+                    "SELECT decision, reviewer_note FROM scene_context_promotion_review_event "
+                    "WHERE source_template_id=? AND candidate_fingerprint=? ORDER BY reviewed_at DESC LIMIT 1",
+                    (item["source_template_id"], item["candidate_fingerprint"]),
                 )
-            else:
+                existing = await cur.fetchone()
+                if existing and existing[0] == item["decision"] and (existing[1] or None) == (item.get("reviewer_note") or None):
+                    continue
                 await db.execute(
-                    "INSERT INTO scene_context_promotion_review "
-                    "(review_id,source_template_id,candidate_fingerprint,cluster,decision,reviewer_note,reviewed_via_product_id,created_at,updated_at,reviewed_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
-                    (_uuid(), item["source_template_id"], item["candidate_fingerprint"], item["cluster"], item["decision"], item.get("reviewer_note"), item["reviewed_via_product_id"], now, now, now),
+                    "INSERT INTO scene_context_promotion_review_event "
+                    "(review_id,source_template_id,candidate_fingerprint,cluster,decision,reviewer_note,reviewed_via_product_id,created_at,reviewed_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                    (_uuid(), item["source_template_id"], item["candidate_fingerprint"], item["cluster"], item["decision"], item.get("reviewer_note"), item["reviewed_via_product_id"], now, now),
                 )
-        await db.commit()
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
     return await get_scene_context_promotion_reviews([item["source_template_id"] for item in items])
 
 

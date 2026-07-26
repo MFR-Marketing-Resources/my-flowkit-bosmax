@@ -49,27 +49,35 @@ async def product_review(product_id: str) -> dict[str, Any]:
     candidates = [c for c in preview["candidates"] if c["source_template_id"] in allowed]
     quarantine = [q for q in preview["quarantine"] if q["source_template_id"] in allowed]
     history = await crud.get_scene_context_promotion_reviews([c["source_template_id"] for c in candidates])
-    latest: dict[str, dict] = {}
+    by_template: dict[str, list[dict]] = {}
     for record in history:
-        latest.setdefault(record["source_template_id"], record)
+        by_template.setdefault(record["source_template_id"], []).append(record)
     rendered = []
     for candidate in candidates:
         fingerprint = candidate_fingerprint(candidate)
-        record = latest.get(candidate["source_template_id"])
-        stale = bool(record and record["candidate_fingerprint"] != fingerprint)
+        records = by_template.get(candidate["source_template_id"], [])
+        record = next((r for r in records if r["candidate_fingerprint"] == fingerprint), None)
+        stale = record is None and bool(records)
         decision = "STALE_REVIEW_REQUIRED" if stale else (record["decision"] if record else "PENDING")
-        rendered.append({**candidate, "candidate_fingerprint": fingerprint, "decision": decision,
+        row = candidate["row"]
+        rendered.append({"source_template_id": candidate["source_template_id"], "source_category": candidate.get("source_category"), "setting": candidate.get("setting"),
+                         "candidate_fingerprint": fingerprint, "proposed_scene_code": row["SceneCode"], "proposed_scene_name": row["SceneName"],
+                         "background_prompt": row["BackgroundPrompt"], "prompt_v1": row["PromptV1"], "safety_block": row["SafetyBlock"], "usage_tags": row["usage_tags"], "decision": decision,
                          "reviewer_note": record.get("reviewer_note") if record and not stale else None,
                          "reviewed_at": record.get("reviewed_at") if record else None,
                          "stale_review_required": stale, "activation_status": "NOT_ACTIVATED"})
     counts = Counter(c["decision"] for c in rendered)
-    return {**base, "candidate_count": len(rendered), "quarantine_count": len(quarantine), "decision_counts": dict(counts),
+    decision_counts = {key: counts.get(key, 0) for key in ("PENDING", "APPROVED_FOR_FUTURE_PROMOTION", "REJECTED", "STALE_REVIEW_REQUIRED")}
+    return {**base, "registry_mutations": 0, "candidate_count": len(rendered), "quarantine_count": len(quarantine), "decision_counts": decision_counts,
             "candidates": rendered, "quarantine": quarantine, "source": preview["source"]}
 
 
 async def record_reviews(product_id: str, items: list[dict]) -> dict:
     if not items or len(items) > MAX_BULK:
         raise ReviewError("INVALID_REVIEW_BATCH")
+    template_ids = [str(item.get("source_template_id") or "") for item in items]
+    if len(template_ids) != len(set(template_ids)):
+        raise ReviewError("DUPLICATE_REVIEW_BATCH_ITEM")
     review = await product_review(product_id)
     if review["review_required"]:
         raise ReviewError("PRODUCT_CLUSTER_REVIEW_REQUIRED")
