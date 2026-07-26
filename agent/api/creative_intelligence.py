@@ -542,16 +542,16 @@ async def scene_context_promotion_review(request: ScenePromotionReviewRequest) -
         raise _scene_review_error(exc) from exc
 
 
-class ScenePromotionBulkReviewRequest(BaseModel):
-    reviewed_via_product_id: str
-    items: list["ScenePromotionReviewItem"]
-
-
 class ScenePromotionReviewItem(BaseModel):
     source_template_id: str
     candidate_fingerprint: str
     decision: str
     reviewer_note: str | None = None
+
+
+class ScenePromotionBulkReviewRequest(BaseModel):
+    reviewed_via_product_id: str
+    items: list[ScenePromotionReviewItem]
 
 
 @router.post("/scene-context-promotion/review/bulk")

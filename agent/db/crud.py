@@ -1021,7 +1021,7 @@ async def get_scene_context_promotion_reviews(source_template_ids: list[str]) ->
     placeholders = ",".join("?" for _ in source_template_ids)
     cur = await db.execute(
         "SELECT * FROM scene_context_promotion_review_event "
-        f"WHERE source_template_id IN ({placeholders}) ORDER BY reviewed_at DESC",
+        f"WHERE source_template_id IN ({placeholders}) ORDER BY reviewed_at DESC, rowid DESC",
         source_template_ids,
     )
     return [dict(row) for row in await cur.fetchall()]
@@ -1039,7 +1039,8 @@ async def record_scene_context_promotion_reviews(items: list[dict]) -> list[dict
             for item in items:
                 cur = await db.execute(
                     "SELECT decision, reviewer_note FROM scene_context_promotion_review_event "
-                    "WHERE source_template_id=? AND candidate_fingerprint=? ORDER BY reviewed_at DESC LIMIT 1",
+                    "WHERE source_template_id=? AND candidate_fingerprint=? "
+                    "ORDER BY reviewed_at DESC, rowid DESC LIMIT 1",
                     (item["source_template_id"], item["candidate_fingerprint"]),
                 )
                 existing = await cur.fetchone()
