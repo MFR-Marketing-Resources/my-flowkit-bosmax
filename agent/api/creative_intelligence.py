@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from agent.services import creative_avatar_recommendation_service as _svc
 from agent.services import creative_scene_prompt_service as _scene
 from agent.services import product_scene_suitability_service as _scene_suitability
+from agent.services import scene_context_promotion_service as _scene_promotion
 from agent.services import creative_camera_preset_service as _camera
 from agent.services import creative_setup_service as _setup
 from agent.services import creative_handoff_service as _handoff
@@ -497,6 +498,18 @@ async def scene_suitability_by_product(product_id: str) -> dict:
         if str(exc) == "PRODUCT_NOT_FOUND":
             raise HTTPException(status_code=404, detail="PRODUCT_NOT_FOUND") from exc
         raise
+
+
+@router.get("/scene-context-promotion/preview")
+async def scene_context_promotion_preview(cluster: str | None = None) -> dict:
+    """Read-only Round 2 candidate preview; never syncs the scene registry."""
+    return _scene_promotion.preview_scene_context_promotion(cluster)
+
+
+@router.get("/scene-context-promotion/quarantine")
+async def scene_context_promotion_quarantine(cluster: str | None = None) -> dict:
+    """Read-only fail-closed ledger for unsuitable source templates."""
+    return _scene_promotion.preview_quarantine(cluster)
 
 
 @router.get("/camera-preset-recommendation")
