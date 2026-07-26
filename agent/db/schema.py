@@ -1324,6 +1324,28 @@ CREATE INDEX IF NOT EXISTS idx_bulk_draft_risk ON fastmoss_bulk_draft_status(cla
             logger.info("Migrated: created batch production tables")
         await db.commit()
 
+        # Scene Context Promotion Round 3 — auditable review decisions only.
+        # This table is deliberately separate from the active scene registry.
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS scene_context_promotion_review (
+    review_id TEXT PRIMARY KEY,
+    source_template_id TEXT NOT NULL,
+    candidate_fingerprint TEXT NOT NULL,
+    cluster TEXT NOT NULL,
+    decision TEXT NOT NULL CHECK(decision IN ('PENDING','APPROVED_FOR_FUTURE_PROMOTION','REJECTED')),
+    reviewer_note TEXT,
+    reviewed_via_product_id TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    reviewed_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_scene_context_promotion_review_version
+    ON scene_context_promotion_review(source_template_id, candidate_fingerprint);
+CREATE INDEX IF NOT EXISTS idx_scene_context_promotion_review_template
+    ON scene_context_promotion_review(source_template_id, reviewed_at DESC);
+""")
+        await db.commit()
+
         # Migration: rebuild batch_variant CHECK constraint to include DRY_RUN_VALIDATED
         # SQLite cannot ALTER CHECK constraints, so we detect the old constraint and rebuild.
         cursor = await db.execute(

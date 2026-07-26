@@ -26,6 +26,7 @@ from agent.services import creative_avatar_recommendation_service as _svc
 from agent.services import creative_scene_prompt_service as _scene
 from agent.services import product_scene_suitability_service as _scene_suitability
 from agent.services import scene_context_promotion_service as _scene_promotion
+from agent.services import scene_context_promotion_review_service as _scene_review
 from agent.services import creative_camera_preset_service as _camera
 from agent.services import creative_setup_service as _setup
 from agent.services import creative_handoff_service as _handoff
@@ -510,6 +511,43 @@ async def scene_context_promotion_preview(cluster: str | None = None) -> dict:
 async def scene_context_promotion_quarantine(cluster: str | None = None) -> dict:
     """Read-only fail-closed ledger for unsuitable source templates."""
     return _scene_promotion.preview_quarantine(cluster)
+
+
+class ScenePromotionReviewRequest(BaseModel):
+    source_template_id: str
+    candidate_fingerprint: str
+    decision: str
+    reviewer_note: str | None = None
+    reviewed_via_product_id: str
+
+
+@router.get("/scene-context-promotion/review/product/{product_id}")
+async def scene_context_promotion_product_review(product_id: str) -> dict:
+    try:
+        return await _scene_review.product_review(product_id)
+    except _scene_review.ReviewError as exc:
+        raise HTTPException(404 if str(exc) == "PRODUCT_NOT_FOUND" else 422, str(exc)) from exc
+
+
+@router.post("/scene-context-promotion/review")
+async def scene_context_promotion_review(request: ScenePromotionReviewRequest) -> dict:
+    try:
+        return await _scene_review.record_reviews(request.reviewed_via_product_id, [request.model_dump()])
+    except _scene_review.ReviewError as exc:
+        raise HTTPException(409 if str(exc) == "STALE_CANDIDATE_FINGERPRINT" else 422, str(exc)) from exc
+
+
+class ScenePromotionBulkReviewRequest(BaseModel):
+    reviewed_via_product_id: str
+    items: list[ScenePromotionReviewRequest]
+
+
+@router.post("/scene-context-promotion/review/bulk")
+async def scene_context_promotion_bulk_review(request: ScenePromotionBulkReviewRequest) -> dict:
+    try:
+        return await _scene_review.record_reviews(request.reviewed_via_product_id, [item.model_dump() for item in request.items])
+    except _scene_review.ReviewError as exc:
+        raise HTTPException(409 if str(exc) == "STALE_CANDIDATE_FINGERPRINT" else 422, str(exc)) from exc
 
 
 @router.get("/camera-preset-recommendation")

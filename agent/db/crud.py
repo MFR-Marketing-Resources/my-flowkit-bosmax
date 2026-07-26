@@ -1012,6 +1012,52 @@ async def list_creative_scene_prompts(
     return [dict(r) for r in await cur.fetchall()]
 
 
+# --- Scene Context Promotion Round 3 review ledger (never activates a scene) ---
+
+async def get_scene_context_promotion_reviews(source_template_ids: list[str]) -> list[dict]:
+    if not source_template_ids:
+        return []
+    db = await get_db()
+    placeholders = ",".join("?" for _ in source_template_ids)
+    cur = await db.execute(
+        "SELECT * FROM scene_context_promotion_review "
+        f"WHERE source_template_id IN ({placeholders}) ORDER BY reviewed_at DESC",
+        source_template_ids,
+    )
+    return [dict(row) for row in await cur.fetchall()]
+
+
+async def record_scene_context_promotion_reviews(items: list[dict]) -> list[dict]:
+    """Atomically append current candidate decisions; idempotent per fingerprint."""
+    if not items:
+        return []
+    db = await get_db()
+    now = _now()
+    async with _db_lock:
+        for item in items:
+            existing = await db.execute(
+                "SELECT review_id FROM scene_context_promotion_review "
+                "WHERE source_template_id=? AND candidate_fingerprint=?",
+                (item["source_template_id"], item["candidate_fingerprint"]),
+            )
+            row = await existing.fetchone()
+            if row:
+                await db.execute(
+                    "UPDATE scene_context_promotion_review SET decision=?, reviewer_note=?, "
+                    "reviewed_via_product_id=?, updated_at=?, reviewed_at=? WHERE review_id=?",
+                    (item["decision"], item.get("reviewer_note"), item["reviewed_via_product_id"], now, now, row[0]),
+                )
+            else:
+                await db.execute(
+                    "INSERT INTO scene_context_promotion_review "
+                    "(review_id,source_template_id,candidate_fingerprint,cluster,decision,reviewer_note,reviewed_via_product_id,created_at,updated_at,reviewed_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (_uuid(), item["source_template_id"], item["candidate_fingerprint"], item["cluster"], item["decision"], item.get("reviewer_note"), item["reviewed_via_product_id"], now, now, now),
+                )
+        await db.commit()
+    return await get_scene_context_promotion_reviews([item["source_template_id"] for item in items])
+
+
 # --- creative_camera_preset (Creative Intelligence Round 3) ---
 
 async def upsert_creative_camera_preset(**kw) -> dict:
