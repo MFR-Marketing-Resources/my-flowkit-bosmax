@@ -263,6 +263,7 @@ domains:
       - tests/ui/test_avatar_registry_csv_factory_ui_contract.py
       - agent/services/scene_context_registry.py
       - agent/api/scene_context_registry.py
+      - agent/services/scene_context_promotion_activation_service.py
       - agent/authority/SCENE_CONTEXT_POOL.csv
       - agent/authority/scene_context_cluster_classification.json
       - dashboard/src/pages/SceneContextRegistryPage.tsx
@@ -272,6 +273,9 @@ domains:
       - tests/unit/test_scene_context_registry_manual_autogen.py
       - tests/api/test_scene_context_registry_api.py
       - tests/api/test_scene_context_cluster_classification_api.py
+      - tests/unit/test_scene_context_promotion_activation_service.py
+      - tests/unit/test_scene_context_promotion_activation_crud.py
+      - tests/api/test_scene_context_promotion_activation_api.py
       - tests/ui/test_scene_context_registry_create_ui_contract.py
       - agent/services/copy_landbank_service.py
       - agent/services/prompt_compiler_9_section.py

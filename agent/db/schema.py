@@ -1340,6 +1340,30 @@ CREATE TABLE IF NOT EXISTS scene_context_promotion_review_event (
 );
 CREATE INDEX IF NOT EXISTS idx_scene_context_promotion_review_event_current
     ON scene_context_promotion_review_event(source_template_id, candidate_fingerprint, reviewed_at DESC);
+
+CREATE TABLE IF NOT EXISTS scene_context_promotion_activation_event (
+    activation_id TEXT PRIMARY KEY,
+    source_template_id TEXT NOT NULL,
+    candidate_fingerprint TEXT NOT NULL,
+    review_id TEXT NOT NULL,
+    reviewed_via_product_id TEXT REFERENCES product(id) ON DELETE SET NULL,
+    cluster TEXT NOT NULL,
+    scene_code TEXT NOT NULL,
+    scene_name TEXT NOT NULL,
+    activated_by TEXT NOT NULL,
+    activation_note TEXT,
+    bridge_digest_before TEXT,
+    bridge_digest_after TEXT NOT NULL,
+    activated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_scene_context_promotion_activation_exact
+    ON scene_context_promotion_activation_event(source_template_id, candidate_fingerprint, activated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_scene_context_promotion_activation_product
+    ON scene_context_promotion_activation_event(reviewed_via_product_id, activated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_scene_context_promotion_activation_scene_code
+    ON scene_context_promotion_activation_event(scene_code, activated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_scene_context_promotion_activation_at
+    ON scene_context_promotion_activation_event(activated_at DESC);
 """)
         cursor = await db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' "

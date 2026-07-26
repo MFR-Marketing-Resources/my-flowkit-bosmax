@@ -27,6 +27,7 @@ from agent.services import creative_scene_prompt_service as _scene
 from agent.services import product_scene_suitability_service as _scene_suitability
 from agent.services import scene_context_promotion_service as _scene_promotion
 from agent.services import scene_context_promotion_review_service as _scene_review
+from agent.services import scene_context_promotion_activation_service as _scene_activation
 from agent.services import creative_camera_preset_service as _camera
 from agent.services import creative_setup_service as _setup
 from agent.services import creative_handoff_service as _handoff
@@ -560,6 +561,74 @@ async def scene_context_promotion_bulk_review(request: ScenePromotionBulkReviewR
         return await _scene_review.record_reviews(request.reviewed_via_product_id, [item.model_dump() for item in request.items])
     except _scene_review.ReviewError as exc:
         raise _scene_review_error(exc) from exc
+
+
+class ScenePromotionActivationItem(BaseModel):
+    source_template_id: str
+    candidate_fingerprint: str
+
+
+class ScenePromotionActivationRequest(ScenePromotionActivationItem):
+    reviewed_via_product_id: str
+    confirmation: str
+    activated_by: str
+    activation_note: str | None = None
+
+
+class ScenePromotionBulkActivationRequest(BaseModel):
+    reviewed_via_product_id: str
+    items: list[ScenePromotionActivationItem]
+    confirmation: str
+    activated_by: str
+    activation_note: str | None = None
+
+
+def _scene_activation_error(exc: _scene_activation.ActivationError) -> HTTPException:
+    code = str(exc)
+    if code in {"PRODUCT_NOT_FOUND", "UNKNOWN_SOURCE_TEMPLATE"}:
+        return HTTPException(404, code)
+    if code in {"STALE_CANDIDATE_FINGERPRINT", "SCENE_ALREADY_ACTIVE", "SCENE_DUPLICATE"}:
+        return HTTPException(409, code)
+    return HTTPException(422, code)
+
+
+@router.get("/scene-context-promotion/activation/product/{product_id}")
+async def scene_context_promotion_activation_eligibility(product_id: str) -> dict:
+    try:
+        return await _scene_activation.activation_eligibility(product_id)
+    except _scene_activation.ActivationError as exc:
+        raise _scene_activation_error(exc) from exc
+
+
+@router.post("/scene-context-promotion/activation")
+async def scene_context_promotion_activation(request: ScenePromotionActivationRequest) -> dict:
+    try:
+        result = await _scene_activation.activate(
+            request.reviewed_via_product_id,
+            [{"source_template_id": request.source_template_id, "candidate_fingerprint": request.candidate_fingerprint}],
+            request.confirmation, request.activated_by, request.activation_note,
+        )
+        return result["items"][0]
+    except _scene_activation.ActivationError as exc:
+        raise _scene_activation_error(exc) from exc
+
+
+@router.post("/scene-context-promotion/activation/bulk")
+async def scene_context_promotion_bulk_activation(request: ScenePromotionBulkActivationRequest) -> dict:
+    try:
+        return await _scene_activation.activate(
+            request.reviewed_via_product_id, [item.model_dump() for item in request.items],
+            request.confirmation, request.activated_by, request.activation_note,
+        )
+    except _scene_activation.ActivationError as exc:
+        raise _scene_activation_error(exc) from exc
+
+
+@router.get("/scene-context-promotion/activation/history")
+async def scene_context_promotion_activation_history(
+    product_id: str | None = None, source_template_id: str | None = None, limit: int = 100,
+) -> dict:
+    return await _scene_activation.activation_history(product_id, source_template_id, limit)
 
 
 @router.get("/camera-preset-recommendation")

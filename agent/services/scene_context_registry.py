@@ -23,6 +23,8 @@ import hashlib
 import io
 import re
 import json
+import os
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 
@@ -149,10 +151,33 @@ def sync_pool_csv(csv_bytes: bytes) -> dict:
         raise ValueError("SCENE_REGISTRY_BLANK_BACKGROUND_PROMPT")
     for row in rows:
         _explicit_clusters(row)
-    _BRIDGE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _BRIDGE_FILE.write_text(text, encoding="utf-8")
+    _atomic_write_bridge(csv_bytes)
     count = reload_pool()
     return {"rows": len(rows), "approved_loaded": count, "bridge_path": str(_BRIDGE_FILE)}
+
+
+def _atomic_write_bridge(csv_bytes: bytes) -> None:
+    """Install a fully validated bridge as one filesystem replacement."""
+    _BRIDGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary = tempfile.mkstemp(prefix="scene-context-", suffix=".csv", dir=_BRIDGE_FILE.parent)
+    try:
+        with os.fdopen(handle, "wb") as target:
+            target.write(csv_bytes)
+            target.flush()
+            os.fsync(target.fileno())
+        os.replace(temporary, _BRIDGE_FILE)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def restore_bridge_snapshot(existed: bool, previous_bytes: bytes | None) -> None:
+    """Restore an exact pre-activation bridge snapshot and refresh the pool cache."""
+    if existed:
+        _atomic_write_bridge(previous_bytes or b"")
+    elif _BRIDGE_FILE.exists():
+        _BRIDGE_FILE.unlink()
+    reload_pool()
 
 
 @lru_cache(maxsize=1)
