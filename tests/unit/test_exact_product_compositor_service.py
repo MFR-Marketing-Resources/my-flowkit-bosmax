@@ -314,7 +314,7 @@ def test_cutout_preserves_cream_cartouche_label(tmp_path, monkeypatch):
     assert len(colors) >= 8, f"label collapsed to mosaic blocks uniq={len(colors)}"
 
 
-def test_prepare_layer_uses_cutout_v3_cache_key(tmp_path, monkeypatch):
+def test_prepare_layer_uses_cutout_v11_cache_key(tmp_path, monkeypatch):
     from agent.services import exact_product_compositor_service as mod
     from PIL import Image, ImageDraw
 
@@ -356,4 +356,131 @@ def test_prepare_layer_uses_cutout_v3_cache_key(tmp_path, monkeypatch):
         {"w": 400, "h": 800},
     )
     assert layer
-    assert "_cutout_v3.png" in layer["asset_ref"]
+    assert "_cutout_v11.png" in layer["asset_ref"]
+
+
+def test_trim_background_edge_fringe_removes_wall_halo():
+    """Right-edge wall pixels on hard alpha must be trimmed, not left as halo."""
+    from PIL import Image, ImageDraw
+    from agent.services.exact_product_compositor_service import (
+        _trim_background_edge_fringe,
+        _harden_cutout_alpha_after_resize,
+    )
+
+    im = Image.new("RGBA", (80, 160), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    # product core teal
+    d.rectangle((20, 20, 55, 140), fill=(40, 130, 140, 255))
+    # dirty right-edge wall fringe (opaque bg)
+    d.rectangle((56, 25, 62, 135), fill=(210, 205, 198, 255))
+    cleaned = _trim_background_edge_fringe(im, passes=4)
+    px = cleaned.load()
+    # fringe column should be mostly gone
+    fringe_left = sum(1 for y in range(25, 135) if px[58, y][3] >= 200)
+    core_left = sum(1 for y in range(25, 135) if px[40, y][3] >= 200)
+    assert core_left > 80, core_left
+    assert fringe_left < 15, fringe_left
+
+    # LANCZOS soft halo hardened
+    soft = Image.new("RGBA", (40, 80), (0, 0, 0, 0))
+    d2 = ImageDraw.Draw(soft)
+    d2.rectangle((8, 8, 30, 70), fill=(40, 130, 140, 255))
+    # synthetic translucent halo column
+    for y in range(10, 68):
+        soft.putpixel((31, y), (200, 195, 190, 90))
+        soft.putpixel((32, y), (200, 195, 190, 40))
+    hard = _harden_cutout_alpha_after_resize(soft.resize((80, 160), Image.Resampling.LANCZOS))
+    hp = hard.load()
+    soft_count = sum(
+        1
+        for y in range(hard.height)
+        for x in range(hard.width)
+        if 1 <= hp[x, y][3] < 200
+    )
+    assert soft_count == 0, soft_count
+
+
+def test_cutout_right_edge_not_wall_dominated(tmp_path):
+    """Canonical-like cutout must not keep a thick opaque wall fringe on the right."""
+    from PIL import Image, ImageDraw
+    from agent.services.exact_product_compositor_service import _build_canonical_cutout
+
+    im = Image.new("RGB", (240, 480), (235, 232, 226))  # wall
+    d = ImageDraw.Draw(im)
+    d.rectangle((95, 25, 145, 70), fill=(200, 30, 30))  # cap
+    d.rectangle((80, 85, 160, 400), fill=(40, 130, 140))  # teal
+    d.rectangle((100, 130, 140, 260), fill=(205, 197, 173))  # cream
+    d.rectangle((90, 290, 150, 380), fill=(30, 140, 70))  # liquid
+    src = tmp_path / "c.jpg"
+    im.save(src, quality=95)
+    cut = _build_canonical_cutout(src)
+    px = cut.load()
+    w, h = cut.size
+    # measure rightmost opaque x per row; band of wall color just inside edge
+    wallish = 0
+    rows = 0
+    for y in range(int(h * 0.25), int(h * 0.85)):
+        right = None
+        for x in range(w - 1, -1, -1):
+            if px[x, y][3] >= 200:
+                right = x
+                break
+        if right is None:
+            continue
+        rows += 1
+        for k in range(0, 3):
+            x = right - k
+            if x < 0:
+                continue
+            r, g, b, a = px[x, y]
+            if a < 200:
+                continue
+            mx, mn = max(r, g, b), min(r, g, b)
+            lum = 0.299 * r + 0.587 * g + 0.114 * b
+            # wall-like AND not teal/red/green/cream product
+            if lum >= 160 and (mx - mn) <= 40 and not (g >= 70 and b >= 70 and (g + b) / 2 >= r + 12):
+                wallish += 1
+    assert rows > 20
+    # allow tiny AA residue but not thick dirty fringe
+    assert wallish < max(12, rows // 3), f"wallish={wallish} rows={rows}"
+
+def test_bridge_cap_to_body_reconnects_floating_cap():
+    from PIL import Image, ImageDraw
+    from agent.services.exact_product_compositor_service import _bridge_cap_to_body
+    im = Image.new("RGBA", (60, 160), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rectangle((20, 5, 40, 25), fill=(200, 30, 30, 255))  # top cap
+    d.rectangle((15, 70, 45, 150), fill=(40, 130, 140, 255))  # body with gap
+    d.rectangle((22, 100, 38, 108), fill=(200, 40, 40, 255))  # red label text trap
+    out = _bridge_cap_to_body(im)
+    assert out.getpixel((30, 45))[3] >= 200
+    # still one main vertical span from cap into body
+    assert out.getpixel((30, 60))[3] >= 200
+
+def test_trim_clears_warm_wall_fringe_on_right():
+    from PIL import Image, ImageDraw
+    from agent.services.exact_product_compositor_service import (
+        _trim_background_edge_fringe,
+        _keep_main_product_silhouette,
+    )
+    im = Image.new("RGBA", (80, 160), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rectangle((20, 20, 55, 140), fill=(40, 130, 140, 255))  # bottle
+    d.rectangle((55, 40, 70, 100), fill=(200, 195, 175, 255))  # warm wall fringe right
+    out = _keep_main_product_silhouette(_trim_background_edge_fringe(im, passes=4))
+    # wall fringe gone
+    assert out.getpixel((62, 70))[3] < 128
+    # bottle remains
+    assert out.getpixel((35, 80))[3] >= 200
+
+def test_solidify_neck_ignores_lower_red_label_ink():
+    from PIL import Image, ImageDraw
+    from agent.services.exact_product_compositor_service import _solidify_neck_band
+    im = Image.new("RGBA", (80, 200), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rectangle((25, 5, 55, 30), fill=(200, 30, 30, 255))  # cap
+    d.rectangle((20, 80, 60, 180), fill=(40, 130, 140, 255))  # body
+    d.rectangle((30, 120, 50, 130), fill=(200, 40, 40, 255))  # red label text
+    out = _solidify_neck_band(im)
+    # base of body must stay teal, not flooded with synthetic green fill
+    assert out.getpixel((40, 170))[:3] == (40, 130, 140)
