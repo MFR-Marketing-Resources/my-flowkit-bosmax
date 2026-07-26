@@ -6,6 +6,7 @@ import csv
 import hashlib
 import io
 import re
+import sqlite3
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -36,6 +37,18 @@ def _digest(value: bytes | None) -> str | None:
 
 def _slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_").upper()
+
+
+def _content_key(value: str) -> str:
+    return " ".join(str(value or "").strip().casefold().split())
+
+
+def _normalise_item(item: dict[str, Any]) -> dict[str, Any]:
+    template_id = str(item.get("source_template_id") or "").strip()
+    fingerprint = str(item.get("candidate_fingerprint") or "").strip()
+    if not template_id or not fingerprint:
+        raise ActivationError("INVALID_ACTIVATION_BATCH")
+    return {"source_template_id": template_id, "candidate_fingerprint": fingerprint}
 
 
 def _allocate_scene_code(scene_name: str, used_codes: set[str]) -> str:
@@ -135,7 +148,7 @@ async def activation_eligibility(product_id: str) -> dict[str, Any]:
     rendered = []
     for candidate in review.get("candidates", []):
         fingerprint, template_id = candidate["candidate_fingerprint"], candidate["source_template_id"]
-        event = await crud.get_scene_context_promotion_activation_exact(template_id, fingerprint, product_id)
+        event = await crud.get_scene_context_promotion_activation_exact(template_id, fingerprint)
         if event:
             status, blocker, code = "ACTIVE_IN_REGISTRY", None, event["scene_code"]
         elif candidate["stale_review_required"]:
@@ -143,7 +156,11 @@ async def activation_eligibility(product_id: str) -> dict[str, Any]:
         elif candidate["decision"] != "APPROVED_FOR_FUTURE_PROMOTION":
             status, blocker, code = "NOT_APPROVED", "CANDIDATE_NOT_APPROVED", None
         else:
-            status, blocker, code = "ELIGIBLE_FOR_CONTROLLED_PROMOTION", None, None
+            duplicate = _registry.find_duplicate_scene(candidate["proposed_scene_name"], candidate["background_prompt"])
+            if duplicate:
+                status, blocker, code = "BLOCKED", "SCENE_DUPLICATE", duplicate["scene_code"]
+            else:
+                status, blocker, code = "ELIGIBLE_FOR_CONTROLLED_PROMOTION", None, None
         rendered.append({
             "source_template_id": template_id, "candidate_fingerprint": fingerprint, "cluster": review["cluster"],
             "current_review_decision": candidate["decision"], "stale_review_required": candidate["stale_review_required"],
@@ -160,16 +177,27 @@ async def activate(product_id: str, items: list[dict[str, Any]], confirmation: s
         raise ActivationError("ACTIVATION_CONFIRMATION_REQUIRED")
     if not items or len(items) > MAX_BULK:
         raise ActivationError("INVALID_ACTIVATION_BATCH")
-    template_ids = [str(item.get("source_template_id") or "") for item in items]
-    if not all(template_ids) or len(template_ids) != len(set(template_ids)):
+    normalized_items = [_normalise_item(item) for item in items]
+    template_ids = [item["source_template_id"] for item in normalized_items]
+    if len(template_ids) != len(set(template_ids)):
         raise ActivationError("DUPLICATE_ACTIVATION_BATCH_ITEM")
     if not str(activated_by or "").strip():
         raise ActivationError("ACTIVATED_BY_REQUIRED")
     async with _activation_lock:
-        resolved = [await _resolve_candidate(product_id, item) for item in items]
+        idempotent = []
+        new_items = []
+        for item in normalized_items:
+            existing = await crud.get_scene_context_promotion_activation_exact(item["source_template_id"], item["candidate_fingerprint"])
+            if existing:
+                idempotent.append(existing)
+            else:
+                new_items.append(item)
+        if not new_items:
+            count = len(_registry.list_pool())
+            return _bulk_result([_result(event, count, idempotent=True, mutations=0) for event in idempotent], 0)
+        resolved = [await _resolve_candidate(product_id, item) for item in new_items]
         headers, current_rows = _active_raw_rows()
         existing_codes = {str(row.get("SceneCode") or "").casefold() for row in current_rows}
-        idempotent: list[dict[str, Any]] = []
         new: list[dict[str, Any]] = []
         for item in resolved:
             previous = await crud.get_scene_context_promotion_activation_exact(item["candidate"]["source_template_id"], item["fingerprint"], product_id)
@@ -180,6 +208,15 @@ async def activate(product_id: str, items: list[dict[str, Any]], confirmation: s
             if any_previous:
                 raise ActivationError("SCENE_ALREADY_ACTIVE")
             new.append(item)
+        names: set[str] = set()
+        backgrounds: set[str] = set()
+        for item in new:
+            row = item["candidate"]["row"]
+            name, background = _content_key(row["SceneName"]), _content_key(row["BackgroundPrompt"])
+            if name in names or background in backgrounds:
+                raise ActivationError("SCENE_DUPLICATE")
+            names.add(name)
+            backgrounds.add(background)
         for item in new:
             duplicate = _registry.find_duplicate_scene(item["candidate"]["row"]["SceneName"], item["candidate"]["row"]["BackgroundPrompt"])
             if duplicate:
@@ -213,6 +250,13 @@ async def activate(product_id: str, items: list[dict[str, Any]], confirmation: s
             for event in events:
                 event["bridge_digest_after"] = after_digest
             await crud.append_scene_context_promotion_activation_events(events)
+        except sqlite3.IntegrityError:
+            _registry.restore_bridge_snapshot(previous_exists, previous_bytes)
+            raced = [await crud.get_scene_context_promotion_activation_exact(event["source_template_id"], event["candidate_fingerprint"]) for event in events]
+            if all(raced):
+                count = len(_registry.list_pool())
+                return _bulk_result([_result(event, count, idempotent=True, mutations=0) for event in raced], 0)
+            raise
         except Exception:
             _registry.restore_bridge_snapshot(previous_exists, previous_bytes)
             raise

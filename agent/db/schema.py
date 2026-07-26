@@ -1358,6 +1358,8 @@ CREATE TABLE IF NOT EXISTS scene_context_promotion_activation_event (
 );
 CREATE INDEX IF NOT EXISTS idx_scene_context_promotion_activation_exact
     ON scene_context_promotion_activation_event(source_template_id, candidate_fingerprint, activated_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_scene_context_promotion_activation_exact
+    ON scene_context_promotion_activation_event(source_template_id, candidate_fingerprint);
 CREATE INDEX IF NOT EXISTS idx_scene_context_promotion_activation_product
     ON scene_context_promotion_activation_event(reviewed_via_product_id, activated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_scene_context_promotion_activation_scene_code

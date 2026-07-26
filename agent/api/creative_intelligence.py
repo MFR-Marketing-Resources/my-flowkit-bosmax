@@ -20,7 +20,7 @@ and are never written to product camera columns or sent to generation.
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from agent.services import creative_avatar_recommendation_service as _svc
 from agent.services import creative_scene_prompt_service as _scene
@@ -564,11 +564,13 @@ async def scene_context_promotion_bulk_review(request: ScenePromotionBulkReviewR
 
 
 class ScenePromotionActivationItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     source_template_id: str
     candidate_fingerprint: str
 
 
 class ScenePromotionActivationRequest(ScenePromotionActivationItem):
+    model_config = ConfigDict(extra="forbid")
     reviewed_via_product_id: str
     confirmation: str
     activated_by: str
@@ -576,6 +578,7 @@ class ScenePromotionActivationRequest(ScenePromotionActivationItem):
 
 
 class ScenePromotionBulkActivationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     reviewed_via_product_id: str
     items: list[ScenePromotionActivationItem]
     confirmation: str

@@ -66,3 +66,16 @@ def test_eligibility_and_history_contracts(monkeypatch):
     client = _client()
     assert client.get("/api/creative-intelligence/scene-context-promotion/activation/product/p1").status_code == 200
     assert client.get("/api/creative-intelligence/scene-context-promotion/activation/history?product_id=p1").json()["events"] == []
+
+
+def test_activation_models_reject_client_authority_fields():
+    response = _client().post("/api/creative-intelligence/scene-context-promotion/activation", json={
+        "reviewed_via_product_id": "p1", "source_template_id": "template", "candidate_fingerprint": "fp",
+        "confirmation": "PROMOTE_TO_ACTIVE_REGISTRY", "activated_by": "owner", "SceneCode": "CLIENT_CODE",
+    })
+    assert response.status_code == 422
+    response = _client().post("/api/creative-intelligence/scene-context-promotion/activation/bulk", json={
+        "reviewed_via_product_id": "p1", "confirmation": "PROMOTE_TO_ACTIVE_REGISTRY", "activated_by": "owner",
+        "items": [{"source_template_id": "template", "candidate_fingerprint": "fp", "PromptV1": "client prompt"}],
+    })
+    assert response.status_code == 422

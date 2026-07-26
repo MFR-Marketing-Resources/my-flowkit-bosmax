@@ -1,3 +1,5 @@
+import sqlite3
+
 import pytest
 
 from agent.db import crud
@@ -14,13 +16,14 @@ def _event(activation_id: str, fingerprint: str = "fp", product_id: str | None =
 
 
 @pytest.mark.asyncio
-async def test_activation_ledger_is_append_only_and_exact_lookup_is_deterministic():
+async def test_activation_ledger_has_one_global_exact_success_and_deterministic_lookup():
     await crud.append_scene_context_promotion_activation_events([_event("activation-first")])
-    await crud.append_scene_context_promotion_activation_events([_event("activation-second")])
+    with pytest.raises(sqlite3.IntegrityError):
+        await crud.append_scene_context_promotion_activation_events([_event("activation-second")])
     latest = await crud.get_scene_context_promotion_activation_exact("SCN-BEAUTY-01", "fp")
-    assert latest["activation_id"] == "activation-second"
+    assert latest["activation_id"] == "activation-first"
     history = await crud.list_scene_context_promotion_activation_history(source_template_id="SCN-BEAUTY-01")
-    assert [event["activation_id"] for event in history[:2]] == ["activation-second", "activation-first"]
+    assert [event["activation_id"] for event in history] == ["activation-first"]
 
 
 @pytest.mark.asyncio
