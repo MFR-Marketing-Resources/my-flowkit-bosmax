@@ -435,6 +435,7 @@ async def sync_avatar_registry(request: Request):
 
 
 _AVATAR_ASSET_MARKER = "AVATAR_CODE:"
+_AVATAR_LANE_ID = "AVATAR_REFERENCE"
 
 
 async def _generated_avatar_asset_ids() -> dict[str, str]:
@@ -574,12 +575,14 @@ class AvatarRegisterGeneratedRequest(BaseModel):
 @router.post("/avatar-registry/register-generated")
 async def avatar_registry_register_generated(request: AvatarRegisterGeneratedRequest):
     """Register a finished IMG-lane artifact as the avatar's CHARACTER_REFERENCE
-    asset in the Creative Library, tagged with the AVATAR_CODE marker so the
-    registry shows it as generated and Frames/Ingredients can pick it up."""
+    asset in the Creative Library, stamped with AVATAR_REFERENCE lane governance
+    (allowed_modes=[I2V,IMG], engine_slots=[subject,scene]) and APPROVED so
+    Ingredients can select it. Mirrors scene-context-registry/register-generated."""
     from agent.db import crud
     from agent.models.creative_asset import CreativeAssetCreateRequest
     from agent.services import avatar_registry
     from agent.services.creative_asset_service import create_creative_asset
+    from agent.services.img_asset_lane_config import derive_asset_governance
     try:
         identity = avatar_registry.get_generation_prompt(request.avatar_code)
     except ValueError as exc:
@@ -600,17 +603,31 @@ async def avatar_registry_register_generated(request: AvatarRegisterGeneratedReq
     if not artifact_path.is_file():
         raise HTTPException(404, "GENERATED_ARTIFACT_FILE_MISSING")
     image_base64 = base64.b64encode(artifact_path.read_bytes()).decode("ascii")
+    gov = derive_asset_governance(_AVATAR_LANE_ID)
     record = await create_creative_asset(CreativeAssetCreateRequest(
         semantic_role="CHARACTER_REFERENCE",
         display_name=f"{identity['character_name']} — {identity['avatar_code']}",
         description=(
             f"{_AVATAR_ASSET_MARKER}{identity['avatar_code']} — generated from "
-            "avatar registry PromptV1 via IMG lane"),
+            "avatar registry PromptV1 via IMG AVATAR_REFERENCE lane"),
         source_type="GENERATED_IMAGE",
         storage_kind="LOCAL_FILE",
         media_id=request.media_id,
         image_base64=image_base64,
         file_name=artifact_path.name,
+        # Authoritative lane governance so the asset is correctly selectable
+        # across I2V recipes (character_reference maps to subject OR scene).
+        generation_recipe_id=gov["generation_recipe_id"],
+        asset_subtype=gov["asset_subtype"],
+        allowed_modes=gov["allowed_modes"],
+        engine_slot_eligibility=gov["engine_slot_eligibility"],
+        contains_rendered_text=gov["contains_rendered_text"],
+        approved_for_video_support=gov["approved_for_video_support"],
+        approved_for_poster=gov["approved_for_poster"],
+        # Canonical seeded avatar → immediately selectable. The I2V resolver
+        # gates on APPROVED (require_approved=True); pending registry avatars
+        # never appear as silent empty options.
+        review_status="APPROVED",
     ))
     return {"asset_id": record.asset_id, "avatar_code": identity["avatar_code"]}
 

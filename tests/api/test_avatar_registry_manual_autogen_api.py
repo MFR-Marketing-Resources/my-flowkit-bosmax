@@ -482,3 +482,49 @@ def test_auto_generate_rejects_cross_gender_persona_502(monkeypatch):
     )
     assert r.status_code == 502
     assert "AI_AVATAR_INVALID" in r.text
+
+
+def test_register_generated_stamps_avatar_lane_governance(tmp_path, monkeypatch):
+    """register-generated must stamp AVATAR_REFERENCE lane governance + APPROVED
+    so the character is selectable across I2V recipes (subject OR scene engine slot).
+    Mirrors scene-context-registry register-generated contract."""
+    from types import SimpleNamespace
+
+    artifact_file = tmp_path / "avatar_plate.jpg"
+    artifact_file.write_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF-fake-jpeg-bytes")
+
+    async def fake_artifacts(*_a, **_k):
+        return [{"media_id": "m-avatar-1", "local_path": str(artifact_file)}]
+
+    async def fake_list_assets(*_a, **_k):
+        return []  # no existing avatar asset → no 409
+
+    captured: dict = {}
+
+    async def fake_create(req):
+        captured["req"] = req
+        return SimpleNamespace(asset_id="ca_avatar_test")
+
+    monkeypatch.setattr("agent.db.crud.list_generated_artifacts", fake_artifacts)
+    monkeypatch.setattr(
+        "agent.services.creative_asset_service.list_creative_assets", fake_list_assets)
+    monkeypatch.setattr(
+        "agent.services.creative_asset_service.create_creative_asset", fake_create)
+
+    client = TestClient(_build_app())
+    response = client.post(
+        "/api/workspace/avatar-registry/register-generated",
+        json={"avatar_code": "BOS_F_NADIA_01", "media_id": "m-avatar-1"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["asset_id"] == "ca_avatar_test"
+    assert response.json()["avatar_code"] == "BOS_F_NADIA_01"
+
+    req = captured["req"]
+    assert req.semantic_role == "CHARACTER_REFERENCE"
+    assert req.allowed_modes == ["I2V", "IMG"]
+    assert req.engine_slot_eligibility == ["subject", "scene"]
+    assert req.review_status == "APPROVED"
+    assert req.contains_rendered_text is False
+    assert "AVATAR_CODE:BOS_F_NADIA_01" in req.description
+    assert req.generation_recipe_id == "AVATAR_REFERENCE"

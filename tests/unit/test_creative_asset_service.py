@@ -486,3 +486,143 @@ async def test_update_approval_allowed_when_unverified_gate_attested(monkeypatch
     assert captured["identity_lock_status"] == "PASS"
     assert captured["scale_truth_status"] == "PASS"
     assert captured["claim_safety_status"] == "PASS"
+
+
+@pytest.mark.asyncio
+async def test_i2v_character_subject_only_is_eligible_for_default_recipe_scene_slot(
+    monkeypatch,
+):
+    """Legacy CHARACTER_REFERENCE assets stamped engine_slot=[subject] must still
+    bind when the default PRODUCT_HELD recipe maps character_reference → scene.
+    Mirrors IMG AVATAR_REFERENCE lane union [subject, scene]."""
+
+    def build_asset(
+        asset_id: str,
+        *,
+        engine_slots: list[str] | None = None,
+        semantic_role: str = "CHARACTER_REFERENCE",
+        review_status: str = "APPROVED",
+        status: str = "ACTIVE",
+        allowed_modes: list[str] | None = None,
+        preview_url: str | None = "https://example.com/preview.png",
+    ):
+        return creative_asset_service.CreativeAssetRecord(
+            asset_id=asset_id,
+            semantic_role=semantic_role,  # type: ignore[arg-type]
+            display_name=asset_id,
+            description=None,
+            source_type="UPLOAD",
+            storage_kind="LOCAL_FILE",
+            preview_url=preview_url,
+            download_url=preview_url,
+            media_id="media-x",
+            local_file_path=None,
+            remote_source_url=None,
+            product_id=None,
+            category=None,
+            silo=None,
+            product_type=None,
+            allowed_modes=allowed_modes or ["I2V", "IMG"],  # type: ignore[arg-type]
+            engine_slot_eligibility=engine_slots or ["subject"],  # type: ignore[arg-type]
+            mode_a_metadata_handoff=None,
+            visual_dna_summary=None,
+            character_dna=None,
+            scene_context_dna=None,
+            style_mood_dna=None,
+            source_prompt_fingerprint=None,
+            source_workspace_execution_package_id=None,
+            source_prompt_package_snapshot_id=None,
+            contains_rendered_text=False,
+            approved_for_video_support=True,
+            approved_for_poster=False,
+            review_status=review_status,
+            status=status,  # type: ignore[arg-type]
+            created_at="2026-05-18T00:00:00Z",
+            updated_at="2026-05-18T00:00:00Z",
+        )
+
+    async def fake_list(*, limit: int = 1000, **kwargs):
+        return [
+            build_asset("char_subject_only", engine_slots=["subject"]),
+            build_asset("char_union", engine_slots=["subject", "scene"]),
+            build_asset(
+                "char_pending",
+                engine_slots=["subject"],
+                review_status="PENDING_REVIEW",
+            ),
+            build_asset(
+                "composite_noise",
+                semantic_role="COMPOSITE_FRAME_REFERENCE",
+                engine_slots=["start_frame"],
+                allowed_modes=["F2V"],
+            ),
+        ]
+
+    monkeypatch.setattr(creative_asset_service, "list_creative_assets", fake_list)
+
+    audit = await creative_asset_service.get_creative_asset_eligibility_audit(
+        surface="I2V_CHARACTER_PICKER",
+        recipe_id="PRODUCT_HELD_BY_CHARACTER_IN_SCENE",
+    )
+
+    eligible_ids = [asset.asset_id for asset in audit.eligible_assets]
+    assert "char_subject_only" in eligible_ids
+    assert "char_union" in eligible_ids
+    assert "char_pending" not in eligible_ids
+    assert "composite_noise" not in eligible_ids
+    assert audit.eligible_count == 2
+    assert audit.excluded_by_reason.get("NOT_APPROVED_FOR_REUSE") == 1
+
+
+@pytest.mark.asyncio
+async def test_composite_end_only_still_excluded_from_start_frame(monkeypatch):
+    """COMPOSITE start/end remain exclusive — dual-slot expand must not bleed."""
+
+    def build_asset(asset_id: str, *, engine_slots: list[str]):
+        return creative_asset_service.CreativeAssetRecord(
+            asset_id=asset_id,
+            semantic_role="COMPOSITE_FRAME_REFERENCE",  # type: ignore[arg-type]
+            display_name=asset_id,
+            description=None,
+            source_type="UPLOAD",
+            storage_kind="LOCAL_FILE",
+            preview_url="https://example.com/preview.png",
+            download_url="https://example.com/preview.png",
+            media_id="media-x",
+            local_file_path=None,
+            remote_source_url=None,
+            product_id=None,
+            category=None,
+            silo=None,
+            product_type=None,
+            allowed_modes=["F2V"],  # type: ignore[arg-type]
+            engine_slot_eligibility=engine_slots,  # type: ignore[arg-type]
+            mode_a_metadata_handoff=None,
+            visual_dna_summary=None,
+            character_dna=None,
+            scene_context_dna=None,
+            style_mood_dna=None,
+            source_prompt_fingerprint=None,
+            source_workspace_execution_package_id=None,
+            source_prompt_package_snapshot_id=None,
+            contains_rendered_text=False,
+            approved_for_video_support=True,
+            approved_for_poster=False,
+            review_status="APPROVED",
+            status="ACTIVE",  # type: ignore[arg-type]
+            created_at="2026-05-18T00:00:00Z",
+            updated_at="2026-05-18T00:00:00Z",
+        )
+
+    async def fake_list(*, limit: int = 1000, **kwargs):
+        return [
+            build_asset("start_ok", engine_slots=["start_frame"]),
+            build_asset("end_only", engine_slots=["end_frame"]),
+        ]
+
+    monkeypatch.setattr(creative_asset_service, "list_creative_assets", fake_list)
+    audit = await creative_asset_service.get_creative_asset_eligibility_audit(
+        surface="F2V_START_FRAME_PICKER",
+    )
+    assert [a.asset_id for a in audit.eligible_assets] == ["start_ok"]
+    assert audit.excluded_by_reason["ENGINE_SLOT_NOT_ALLOWED"] == 1

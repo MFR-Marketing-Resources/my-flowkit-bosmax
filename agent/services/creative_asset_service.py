@@ -126,6 +126,46 @@ def _asset_has_resolvable_source(asset: CreativeAssetRecord) -> bool:
     )
 
 
+# Role → engine-slot UNION across I2V recipes (i2v_slot_recipe_config).
+# CHARACTER_REFERENCE maps to subject OR scene depending on recipe; a legacy
+# asset stamped with only one of those must still bind for the other without
+# weakening role/mode/approval/rendered-text gates.
+# COMPOSITE start/end is intentionally exclusive — do NOT expand that pair.
+_ROLE_ENGINE_SLOT_UNION: dict[str, frozenset[str]] = {
+    "CHARACTER_REFERENCE": frozenset({"subject", "scene"}),
+    "SCENE_CONTEXT_REFERENCE": frozenset({"scene", "style"}),
+    "STYLE_REFERENCE": frozenset({"style"}),
+    "PRODUCT_REFERENCE": frozenset({"subject", "start_frame"}),
+}
+
+
+def _effective_engine_slot_eligibility(
+    asset: CreativeAssetRecord,
+    *,
+    semantic_role: str,
+) -> list[str]:
+    """Expand legacy role-compatible slot stamps to the documented role union.
+
+    Empty eligibility already means \"all slots\". Non-empty stamps that are a
+    subset of the role's known union are expanded to the full union so a
+    CHARACTER stamped [\"subject\"] remains selectable when a recipe maps
+    character_reference → scene (PRODUCT_HELD default). Assets stamped with
+    slots outside the role union keep their exact list (no silent broaden).
+    """
+    declared = list(asset.engine_slot_eligibility or [])
+    if not declared:
+        return declared
+    role_union = _ROLE_ENGINE_SLOT_UNION.get(semantic_role)
+    if role_union is None:
+        return declared
+    declared_set = set(declared)
+    if not declared_set.issubset(role_union):
+        return declared
+    if declared_set == role_union:
+        return declared
+    return sorted(role_union)
+
+
 def _collect_selectable_asset_blockers(
     asset: CreativeAssetRecord,
     *,
@@ -142,7 +182,10 @@ def _collect_selectable_asset_blockers(
         blockers.append("SEMANTIC_ROLE_MISMATCH")
     if asset.allowed_modes and allowed_mode not in asset.allowed_modes:
         blockers.append("MODE_NOT_ALLOWED")
-    if asset.engine_slot_eligibility and engine_slot not in asset.engine_slot_eligibility:
+    effective_slots = _effective_engine_slot_eligibility(
+        asset, semantic_role=semantic_role
+    )
+    if effective_slots and engine_slot not in effective_slots:
         blockers.append("ENGINE_SLOT_NOT_ALLOWED")
     if require_approved and asset.review_status != APPROVED_REVIEW_STATUS:
         blockers.append("NOT_APPROVED_FOR_REUSE")
