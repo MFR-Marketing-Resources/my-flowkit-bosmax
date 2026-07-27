@@ -110,6 +110,18 @@ function filterEligibleForProduct(
 	return { bindable, otherProductCount };
 }
 
+/** Match backend `_asset_has_resolvable_source` — LOCAL_FILE/preview assets
+ *  saved via IMG factory base64 path have no 48h `media_id` but are bindable. */
+function assetHasResolvableSource(asset: CreativeAsset): boolean {
+	return Boolean(
+		asset.local_file_path ||
+			asset.preview_url ||
+			asset.download_url ||
+			asset.remote_source_url ||
+			asset.media_id,
+	);
+}
+
 function pickerPlaceholder(
 	surface: CreativeAssetEligibilityAuditSurface,
 	audit: CreativeAssetEligibilityAuditResponse | null | undefined,
@@ -314,16 +326,19 @@ export default function CanonicalReferenceBindingControls({
 									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
 								>
 									<option value="">{emptyLabel}</option>
-									{bindable.map((asset) => (
-										<option
-											key={asset.asset_id}
-											value={asset.asset_id}
-											disabled={!asset.media_id}
-										>
-											{asset.display_name}
-											{asset.media_id ? "" : " (no media — not bindable)"}
-										</option>
-									))}
+									{bindable.map((asset) => {
+										const resolvable = assetHasResolvableSource(asset);
+										return (
+											<option
+												key={asset.asset_id}
+												value={asset.asset_id}
+												disabled={!resolvable}
+											>
+												{asset.display_name}
+												{resolvable ? "" : " (no media — not bindable)"}
+											</option>
+										);
+									})}
 								</select>
 							</label>
 							{renderSurfaceAuditCard(
