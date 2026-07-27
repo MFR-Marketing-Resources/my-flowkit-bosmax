@@ -901,7 +901,7 @@ async def generate(body: GenerateRequest):
     client = get_flow_client()
     if not client.connected:
         import os
-        if os.environ.get("ENABLE_MOCK_FLOW") == "1" or os.environ.get("UAT_TEST_MODE") == "1" or True:
+        if os.environ.get("ENABLE_MOCK_FLOW") == "1" or os.environ.get("UAT_TEST_MODE") == "1":
             client._mock_connected = True
         else:
             raise HTTPException(503, "Extension not connected")

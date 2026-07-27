@@ -381,7 +381,7 @@ export default function ImgFastlanePage() {
 			refs.styleAsset = buildAssetPayload(approvedStyle);
 		}
 		if (selectedProduct) {
-			refs.imageAsset = buildProductAssetPayload(selectedProduct);
+			refs.productAsset = buildProductAssetPayload(selectedProduct);
 		}
 		return refs;
 	}, [

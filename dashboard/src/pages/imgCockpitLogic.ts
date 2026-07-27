@@ -200,7 +200,7 @@ export function buildImgGenerationRequest(input: {
 	const { prompt, resolution, aspect, count, imageModel } = input;
 	const refs: Record<string, unknown> = {};
 	if (resolution.productAsset) {
-		refs.subjectAsset = resolution.productAsset;
+		refs.productAsset = resolution.productAsset;
 	}
 	return {
 		prompt,

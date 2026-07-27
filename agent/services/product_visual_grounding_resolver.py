@@ -28,7 +28,11 @@ from typing import Any
 from PIL import Image
 
 from agent.config import BASE_DIR, DB_PATH
-from agent.services.product_lock_builder import build_product_lock, resolve_schema_entry
+from agent.services.product_lock_builder import (
+    build_concise_engine_product_contract,
+    build_product_lock,
+    resolve_schema_entry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -438,7 +442,7 @@ def get_grounded_generation_payload(
     is_product_only: bool = False,
     is_poster: bool = False,
 ) -> dict[str, Any]:
-    """Unified Grounding Contract: Resolves bundle, strategy, product reference, and full prompt with 6 locks."""
+    """Unified Grounding Contract: Resolves bundle, strategy, product reference, and concise reference-first prompt."""
     bundle = resolve_product_visual_grounding(product_id)
     strategy = resolve_generation_strategy(
         lane_id=lane_id,
@@ -448,17 +452,10 @@ def get_grounded_generation_payload(
         is_poster=is_poster,
     )
 
-    locks_text = (
-        f"\n\n[PRODUCT VISUAL GROUNDING LOCKS]\n"
-        f"{bundle.identity_lock}\n"
-        f"{bundle.geometry_lock}\n"
-        f"{bundle.scale_lock}\n"
-        f"LABEL LOCK: {bundle.label_lock}\n"
-        f"{bundle.handling_lock}\n"
-        f"NEGATIVE RULES: {bundle.negative_rules}"
-    )
+    product_row = get_product_by_id(product_id) or {"id": product_id, "name": bundle.product_display_name}
+    concise_contract = build_concise_engine_product_contract(product_row, is_clean_frame=not is_poster)
 
-    full_prompt = base_prompt.strip() + locks_text if base_prompt else locks_text.strip()
+    full_prompt = f"{base_prompt.strip()}\n\n[PRODUCT CONTRACT]\n{concise_contract}" if base_prompt else concise_contract
 
     ref = bundle.product_reference or {}
     product_reference_asset = {
@@ -483,6 +480,7 @@ def get_grounded_generation_payload(
             "handling_lock": bundle.handling_lock,
             "negative_rules": bundle.negative_rules,
         },
+        "concise_product_contract": concise_contract,
         "full_prompt": full_prompt,
         "field_provenance": bundle.field_provenance,
     }

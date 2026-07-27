@@ -78,13 +78,19 @@ def test_get_grounded_generation_payload_binds_6_locks():
     assert payload["selected_strategy"] == STRATEGY_REFERENCE_CONDITIONED_HUMAN_INTERACTION
     assert payload["product_reference"]["validation_status"] == "VALIDATED"
 
+    # Full structured locks remain available for backend QA / lineage
+    locks = payload["grounding_locks"]
+    assert "PRODUCT IDENTITY LOCK:" in locks["identity_lock"]
+    assert "PRODUCT GEOMETRY LOCK:" in locks["geometry_lock"]
+    assert "PRODUCT SCALE LOCK:" in locks["scale_lock"]
+    assert locks["label_lock"] != ""
+    assert "HANDLING LOCK:" in locks["handling_lock"]
+    assert "PRODUCT NEGATIVE MORPH RULES:" in locks["negative_rules"]
+
+    # Model-facing full_prompt carries concise reference-first contract
     full_prompt = payload["full_prompt"]
-    assert "IDENTITY LOCK:" in full_prompt
-    assert "GEOMETRY LOCK:" in full_prompt
-    assert "SCALE LOCK:" in full_prompt
-    assert "LABEL LOCK:" in full_prompt
-    assert "HANDLING LOCK:" in full_prompt
-    assert "NEGATIVE RULES:" in full_prompt
+    assert "[PRODUCT CONTRACT]" in full_prompt
+    assert "Use the attached image as the sole product identity and packaging reference" in full_prompt
 
 
 def test_missing_product_image_fails_closed():
