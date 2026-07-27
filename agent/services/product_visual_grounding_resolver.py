@@ -19,6 +19,7 @@ import hashlib
 import json
 import logging
 import os
+import sqlite3
 import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -82,11 +83,14 @@ def get_product_by_id(product_id: str) -> dict[str, Any] | None:
     if not product_id:
         return None
     try:
-        with get_db() as db:
-            cursor = db.cursor()
-            cursor.execute("SELECT * FROM product WHERE id = ? OR trigger_id = ?", (product_id, product_id))
-            row = cursor.fetchone()
-            return dict(row) if row else None
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM product WHERE id = ? OR trigger_id = ?", (product_id, product_id))
+        row = cursor.fetchone()
+        res = dict(row) if row else None
+        conn.close()
+        return res
     except Exception:
         return None
 
@@ -148,26 +152,29 @@ def _materialize_image_url(image_url: str, product_id: str) -> tuple[Path, int, 
 def _find_linked_approved_creative_asset(product_id: str) -> dict[str, Any] | None:
     """Find approved, active PRODUCT_REFERENCE creative asset linked to product_id."""
     try:
-        with get_db() as db:
-            cursor = db.cursor()
-            cursor.execute(
-                """
-                SELECT * FROM creative_asset
-                WHERE product_id = ?
-                  AND (semantic_role = 'PRODUCT_REFERENCE' OR asset_type = 'PRODUCT_REFERENCE')
-                  AND status = 'ACTIVE'
-                  AND review_status = 'APPROVED'
-                ORDER BY updated_at DESC
-                """,
-                (product_id,),
-            )
-            rows = cursor.fetchall()
-            for r in rows:
-                d = dict(r)
-                lp = d.get("local_file_path") or d.get("local_path")
-                if lp and Path(lp).exists() and Path(lp).stat().st_size > 0:
-                    return d
-            return None
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM creative_asset
+            WHERE product_id = ?
+              AND (semantic_role = 'PRODUCT_REFERENCE' OR asset_type = 'PRODUCT_REFERENCE')
+              AND status = 'ACTIVE'
+              AND review_status = 'APPROVED'
+            ORDER BY updated_at DESC
+            """,
+            (product_id,),
+        )
+        rows = cursor.fetchall()
+        for r in rows:
+            d = dict(r)
+            lp = d.get("local_file_path") or d.get("local_path")
+            if lp and Path(lp).exists() and Path(lp).stat().st_size > 0:
+                conn.close()
+                return d
+        conn.close()
+        return None
     except Exception:
         return None
 
