@@ -13,6 +13,8 @@ from agent.services.product_visual_grounding_resolver import (
     STRATEGY_REFERENCE_CONDITIONED_HUMAN_INTERACTION,
     ProductVisualReferenceRequiredError,
     _inspect_image_file,
+    _materialize_image_url,
+    get_grounded_generation_payload,
     resolve_generation_strategy,
     resolve_product_reference_image,
     resolve_product_visual_grounding,
@@ -35,7 +37,6 @@ def test_resolve_mwcb_product_visual_grounding():
 
 
 def test_resolve_generic_db_product_with_image_url(tmp_path, monkeypatch):
-    # Create dummy local cached image
     test_img = tmp_path / "generic.jpg"
     im = Image.new("RGB", (600, 600), color="blue")
     im.save(test_img, format="JPEG")
@@ -66,6 +67,26 @@ def test_resolve_generic_db_product_with_image_url(tmp_path, monkeypatch):
     assert "Sambal Nyet Berapi" in bundle.identity_lock
 
 
+def test_get_grounded_generation_payload_binds_6_locks():
+    mwcb_id = "6483d624-a03d-4933-9bba-6ca2e5f7b6fd"
+    payload = get_grounded_generation_payload(
+        mwcb_id,
+        "A presenter holding product in hand.",
+        has_avatar=True,
+    )
+    assert payload["product_id"] == mwcb_id
+    assert payload["selected_strategy"] == STRATEGY_REFERENCE_CONDITIONED_HUMAN_INTERACTION
+    assert payload["product_reference"]["validation_status"] == "VALIDATED"
+
+    full_prompt = payload["full_prompt"]
+    assert "IDENTITY LOCK:" in full_prompt
+    assert "GEOMETRY LOCK:" in full_prompt
+    assert "SCALE LOCK:" in full_prompt
+    assert "LABEL LOCK:" in full_prompt
+    assert "HANDLING LOCK:" in full_prompt
+    assert "NEGATIVE RULES:" in full_prompt
+
+
 def test_missing_product_image_fails_closed():
     product = {
         "id": "empty-product-99999",
@@ -92,7 +113,6 @@ def test_inspect_image_file_returns_real_bytes_and_sha(tmp_path):
 
 
 def test_resolve_generation_strategy():
-    # Strategy A: Avatar / Human / UGC
     strat_a = resolve_generation_strategy(
         lane_id="AVATAR_PRODUCT_STUDIO",
         product_id="prod1",
@@ -101,7 +121,6 @@ def test_resolve_generation_strategy():
     )
     assert strat_a == STRATEGY_REFERENCE_CONDITIONED_HUMAN_INTERACTION
 
-    # Strategy B: Product-only hero
     strat_b = resolve_generation_strategy(
         lane_id="PRODUCT_ONLY_HERO",
         product_id="prod1",
@@ -110,7 +129,6 @@ def test_resolve_generation_strategy():
     )
     assert strat_b == STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE
 
-    # Strategy C: Fixed Hero Poster
     strat_c = resolve_generation_strategy(
         lane_id="POSTER_BUILDER",
         product_id="prod1",
