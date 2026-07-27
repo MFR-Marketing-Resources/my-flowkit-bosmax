@@ -149,9 +149,19 @@ async def test_binding_rejects_cross_product_reference(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_binding_rejects_reference_without_media_identity(monkeypatch):
+async def test_binding_rejects_reference_without_resolvable_source(monkeypatch):
+    """MEDIA_IDENTITY_MISSING = no media_id AND no local/preview/download/remote."""
     async def fake_validate(asset_id: str, **kwargs):
-        return _fake_validation(asset=_fake_asset(product_id="prod-001", media_id=None))
+        return _fake_validation(
+            asset=_fake_asset(
+                product_id="prod-001",
+                media_id=None,
+                local_file_path=None,
+                preview_url=None,
+                download_url=None,
+                remote_source_url=None,
+            )
+        )
 
     monkeypatch.setattr(
         "agent.services.workspace_execution_package_service.validate_selectable_asset",
@@ -166,6 +176,39 @@ async def test_binding_rejects_reference_without_media_identity(monkeypatch):
             start_frame_asset_id=None,
             end_frame_asset_id=None,
         )
+
+
+@pytest.mark.asyncio
+async def test_binding_accepts_local_file_without_media_id(monkeypatch):
+    """IMG factory LOCAL_FILE composites bind via resolvable source (parity with #500 UI)."""
+    async def fake_validate(asset_id: str, **kwargs):
+        return _fake_validation(
+            asset=_fake_asset(
+                asset_id=asset_id,
+                product_id="prod-001",
+                media_id=None,
+                local_file_path="C:/tmp/clean_composite.png",
+                preview_url="/api/creative-assets/ca_local/preview",
+                download_url="/api/creative-assets/ca_local/download",
+            )
+        )
+
+    monkeypatch.setattr(
+        "agent.services.workspace_execution_package_service.validate_selectable_asset",
+        fake_validate,
+    )
+    merged = await _bind_f2v_reference_assets(
+        copy.deepcopy(_ANCHOR_SLOTS),
+        product_id="prod-001",
+        source_mode="FRAMES",
+        product_reference_asset_id=None,
+        start_frame_asset_id="ca_local",
+        end_frame_asset_id=None,
+    )
+    start = next(s for s in merged if s["slot_key"] == "start_frame")
+    assert start["resolved_asset"]["asset_id"] == "ca_local"
+    assert start["resolved_asset"]["local_file_path"] == "C:/tmp/clean_composite.png"
+    assert start["resolved_asset"]["media_id"] is None
 
 
 @pytest.mark.asyncio

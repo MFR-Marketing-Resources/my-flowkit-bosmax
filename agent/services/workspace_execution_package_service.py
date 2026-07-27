@@ -28,6 +28,7 @@ from agent.services.i2v_semantic_slot_resolver_service import (
     resolve_i2v_semantic_slots,
 )
 from agent.services.creative_asset_service import (
+    _asset_has_resolvable_source,
     build_resolved_workspace_asset,
     validate_selectable_asset,
 )
@@ -133,7 +134,8 @@ async def _bind_f2v_reference_assets(
     optional) — the raw product image is never a silent stand-in for a finished
     composite frame. Every explicit selection is validated server-side: role,
     mode, slot, approval, rendered-text ban, product ownership, and
-    provider-usable media identity (the durable plan submits media ids only).
+    resolvable media source (media_id OR local/preview/download/remote URL —
+    same contract as _asset_has_resolvable_source / eligibility audit).
     """
     normalized_source_mode = str(source_mode or "").upper()
     selected_slots: list[tuple[str, str, str]] = []
@@ -166,7 +168,7 @@ async def _bind_f2v_reference_assets(
         if asset is not None:
             if asset.product_id and asset.product_id != product_id:
                 blockers.append("WRONG_PRODUCT")
-            if not str(asset.media_id or "").strip():
+            if not _asset_has_resolvable_source(asset):
                 blockers.append("MEDIA_IDENTITY_MISSING")
         if asset is None or blockers:
             raise ValueError(
