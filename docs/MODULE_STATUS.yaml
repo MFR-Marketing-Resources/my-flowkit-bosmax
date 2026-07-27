@@ -24,6 +24,13 @@ domains:
       - agent/api/ai_provider_settings.py
       - agent/api/local_agent.py
       - agent/api/flow.py
+      - agent/services/product_lock_builder.py
+      - agent/services/product_visual_grounding_resolver.py
+      - dashboard/src/pages/ImgFastlanePage.tsx
+      - dashboard/src/pages/imgCockpitLogic.ts
+      - dashboard/src/pages/imgCockpitLogic.test.ts
+      - tests/unit/test_product_visual_grounding_resolver.py
+      - tests/unit/test_reference_first_img_simplification.py
       - agent/api/creative_assets.py
       - agent/api/products.py
       - agent/services/product_catalog_read_model.py

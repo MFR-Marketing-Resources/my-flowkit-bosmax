@@ -45,10 +45,10 @@ function req(res: ReturnType<typeof resolveGenerationInputs>) {
 // resolvable gate but contributed NOTHING to the outbound payload — the generator
 // received the compiled text prompt with NO product image, so the bottle/scale was
 // hallucinated. These tests pin that the REAL product visual reference now reaches
-// the outbound /api/flow/generate body via refs.subjectAsset.
+// the outbound /api/flow/generate body via refs.productAsset.
 describe("SCALE-07: IMG Cockpit delivers the product visual reference", () => {
 	// A. media_id present -> not blocked; media id reaches the ref contract.
-	it("A: product with a bare media_id is delivered via refs.subjectAsset", () => {
+	it("A: product with a bare media_id is delivered via refs.productAsset", () => {
 		const res = resolveGenerationInputs(lane(), {
 			product: product({ media_id: "media-123" }),
 			...noRefs,
@@ -56,7 +56,7 @@ describe("SCALE-07: IMG Cockpit delivers the product visual reference", () => {
 		expect(res.blocked).toBe(false);
 		expect(res.productAsset?.mediaId).toBe("media-123");
 		const body = req(res);
-		expect((body.refs as Record<string, { mediaId?: string }>).subjectAsset.mediaId).toBe(
+		expect((body.refs as Record<string, { mediaId?: string }>).productAsset.mediaId).toBe(
 			"media-123",
 		);
 	});
@@ -75,7 +75,7 @@ describe("SCALE-07: IMG Cockpit delivers the product visual reference", () => {
 		const body = req(res);
 		expect(body.image_media_ids).toEqual([]);
 		expect(
-			(body.refs as Record<string, { downloadUrl?: string }>).subjectAsset.downloadUrl,
+			(body.refs as Record<string, { downloadUrl?: string }>).productAsset.downloadUrl,
 		).toBe("https://cdn/minyak.jpg");
 	});
 
@@ -89,7 +89,7 @@ describe("SCALE-07: IMG Cockpit delivers the product visual reference", () => {
 		expect(res.productAsset?.localFilePath).toBe("/cache/minyak.png");
 		const body = req(res);
 		expect(
-			(body.refs as Record<string, { localFilePath?: string }>).subjectAsset.localFilePath,
+			(body.refs as Record<string, { localFilePath?: string }>).productAsset.localFilePath,
 		).toBe("/cache/minyak.png");
 	});
 
@@ -102,7 +102,7 @@ describe("SCALE-07: IMG Cockpit delivers the product visual reference", () => {
 		expect(res.productAsset).toBeNull();
 		expect(res.blocked).toBe(true);
 		expect(res.blockReason).toContain("image reference");
-		// No product image => no subjectAsset ref in the outbound body.
+		// No product image => no productAsset ref in the outbound body.
 		expect(req(res).refs).toBeUndefined();
 	});
 

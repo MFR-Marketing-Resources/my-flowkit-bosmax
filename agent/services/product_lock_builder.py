@@ -456,3 +456,51 @@ def section_3_lock_lines(
         has_product_reference=has_product_reference,
     )
     return [line for line in (lock["reference_lock"], lock["frame_persistence"]) if line]
+
+
+def build_concise_engine_product_contract(
+    product: dict[str, Any],
+    *,
+    is_clean_frame: bool = True,
+) -> str:
+    """Compile ONE concise model-facing product contract paragraph.
+
+    Communicates minimum required truths without repeating structured lock families:
+    1. Use attached image as sole product identity & packaging reference.
+    2. Preserve packaging family, silhouette, cap, colour, and physical label.
+    3. State short real-world scale anchor.
+    4. Short no-redesign / no-duplicate rule.
+    5. Short no-added-text rule for clean-frame lanes.
+    """
+    entry = resolve_schema_entry(product or {})
+    raw_name = (
+        (entry.get("product_display_name") if entry else None)
+        or product.get("name")
+        or product.get("product_name")
+        or product.get("product_display_name")
+        or product.get("raw_product_title")
+        or "the product"
+    )
+    name_clean = _clean_display_name(_clean(raw_name))
+
+    if entry:
+        truth_ref = _clean(entry.get("product_truth_ref"))
+        scale = _clean(entry.get("scale_lock")) or "compact palm-sized"
+        contract = (
+            f"Use the attached image as the sole product identity and packaging reference for {name_clean} ({truth_ref}). "
+            f"Preserve the exact packaging family, bottle silhouette, cap style, colors, and physical printed label. "
+            f"{scale}. Keep it naturally proportioned when held by a hand or set on a surface. "
+            f"Do not enlarge, redesign, recolour, duplicate, or relabel it."
+        )
+    else:
+        scale_line = _fallback_scale_line(product or {})
+        contract = (
+            f"Use the attached image as the sole product reference for {name_clean}. "
+            f"Preserve its exact packaging identity, shape, cap, color, and physical printed label. "
+            f"{scale_line} Do not enlarge, redesign, duplicate, or relabel it."
+        )
+
+    if is_clean_frame:
+        contract += " Do not render added captions, headlines, CTAs, buttons, or UI overlay; only text physically printed on the product may appear."
+
+    return contract
