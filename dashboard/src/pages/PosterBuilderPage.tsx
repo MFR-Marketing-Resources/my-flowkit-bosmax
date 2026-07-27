@@ -30,6 +30,7 @@ import PosterAngleCopyStep from "../components/poster/PosterAngleCopyStep";
 import PosterComposePanel from "../components/poster/PosterComposePanel";
 import {
 	approvePosterCopySet,
+	composePoster,
 	fetchPosterDeliverableByAsset,
 	forkPosterCopySetFromHistorical,
 	newPosterCopySetVersion,
@@ -742,15 +743,46 @@ export function PosterBuilderLegacyPanel() {
 		setPosterGenStage(exact ? "validating_canonical" : "generating");
 		try {
 			let prompt = pkg.poster_prompt;
-			// Strategy C: FIXED_HERO_POSTER (Hero visual stays fixed and unchanged when subjectAsset is present)
 			const refs = subjectAsset ? { subjectAsset } : undefined;
-			const useExactComposite = gate.mode === "exact" && Boolean(productId) && !subjectAsset;
+			const isFixedHero = Boolean(
+				(subjectAsset as { isFixedHero?: boolean })?.isFixedHero ||
+				(subjectAsset as { semanticRole?: string })?.semanticRole === "FIXED_HERO"
+			);
+
+			// Strategy C: FIXED_HERO_POSTER (Hero visual stays 100% fixed and unchanged when a complete hero visual is provided)
+			if (isFixedHero && productId && subjectAsset) {
+				setPosterGenStage("composing_fixed_hero");
+				try {
+					const result = await composePoster({
+						product_id: productId,
+						poster_copy_set_id: approvedCopySet?.poster_copy_set_id || "",
+						recipe_id: draft.poster_recipe_id || "",
+						background_media_id: subjectAsset.mediaId || "",
+					});
+					setPosterGenStage("final_ready");
+					const deliv = result.deliverable;
+					setPosterGenResult({
+						url: `/api/poster/deliverable/${deliv?.poster_deliverable_id || subjectAsset.mediaId || ""}`,
+						mediaId: deliv?.poster_deliverable_id || subjectAsset.mediaId || "",
+						sizeMb: null,
+					});
+					return;
+				} catch (err) {
+					setPosterGenError(
+						`FIXED_HERO_POSTER_RENDERER_UNAVAILABLE: ${err instanceof Error ? err.message : String(err)}`
+					);
+					return;
+				}
+			}
+
+			const useExactComposite = gate.mode === "exact" && Boolean(productId);
 
 			if (useExactComposite && productId) {
 				setPosterGenStage("generating_scene");
 				const scene = await buildExactSceneOnlyPrompt(productId, prompt);
 				prompt = scene.prompt;
 			}
+
 			const { job_id } = await startImgGeneration({
 				prompt,
 				aspect: flowMirror.aspect_ratio,
