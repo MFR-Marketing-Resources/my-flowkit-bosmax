@@ -281,6 +281,7 @@ class FlowClient:
                     if not out_jpg.exists():
                         # Copy MWCB canonical image as mock generated image
                         import shutil
+                        from pathlib import Path
                         canonical_src = r"C:\Users\USER\Desktop\Claude Cowork Bosmax Agents- Images database\02-Product\02-Minyak Cap Burung\MWTCB.jpg"
                         if Path(canonical_src).exists():
                             shutil.copy(canonical_src, out_jpg)
