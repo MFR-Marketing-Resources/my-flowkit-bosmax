@@ -802,9 +802,21 @@ export default function ImgCockpitPage() {
 						<strong>
 							{genResolution.mediaIds.length > 0
 								? genResolution.mediaIds.join(", ")
-								: "(none — text-only prompt)"}
+								: "(none)"}
 						</strong>
 					</div>
+					{genResolution.productAsset ? (
+						<div className="mt-1">
+							Product visual reference: <strong>refs.productAsset</strong> —{" "}
+							{genResolution.productAsset.downloadUrl
+								? "resolved image URL"
+								: genResolution.productAsset.localFilePath
+									? "resolved local file"
+									: genResolution.productAsset.mediaId
+										? `resolved (${genResolution.productAsset.mediaId})`
+										: "unresolved"}
+						</div>
+					) : null}
 					{genResolution.refs.length > 0 ? (
 						<ul className="mt-1 space-y-0.5">
 							{genResolution.refs.map((r) => (
