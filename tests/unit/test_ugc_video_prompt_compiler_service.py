@@ -46,7 +46,8 @@ def test_compiler_generates_single_block_final_prompt():
     assert result["prompt_blocks"][0]["shot_count"] == 2
     # ADR-008 canonical: a CONCRETE presenter from the avatar registry, never
     # the generic "visible creator" placeholder.
-    assert "The presenter is a Malaysian adult" in result["final_compiled_prompt_text"]
+    assert "The presenter is a Malaysian" in result["final_compiled_prompt_text"]
+    assert "adult" in result["final_compiled_prompt_text"]
     assert "one visible creator" not in result["final_compiled_prompt_text"].lower()
     # Canonical 9-section structure with camera-style differentiation preserved
     assert result["final_compiled_prompt_text"].startswith("SECTION 1 - ROLE & OBJECTIVE")

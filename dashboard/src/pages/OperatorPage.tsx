@@ -675,6 +675,31 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const [characterPresence, setCharacterPresence] =
 		useState<PromptCharacterPresence>("VISIBLE_CREATOR");
 	const [creatorPersona, setCreatorPersona] = useState("DEFAULT_CREATOR");
+	// T2V/Hybrid authoritative registries (avatar pool + scene pool).
+	// Persona composer remains optional UX text only when no avatar_id is set.
+	const [registryAvatarId, setRegistryAvatarId] = useState("");
+	const [registrySceneCode, setRegistrySceneCode] = useState("");
+	const [avatarRegistryPool, setAvatarRegistryPool] = useState<
+		Array<{
+			avatar_code?: string;
+			AvatarCode?: string;
+			display_name?: string;
+			Name?: string;
+			name?: string;
+			Variant?: string;
+			age_band?: string;
+		}>
+	>([]);
+	const [sceneRegistryPool, setSceneRegistryPool] = useState<
+		Array<{
+			scene_code: string;
+			scene_name?: string;
+			background_prompt?: string;
+			image_generated?: boolean;
+			generated_asset_id?: string | null;
+		}>
+	>([]);
+	const [registryPoolsLoading, setRegistryPoolsLoading] = useState(false);
 	// Avatar Persona composer (Phase A): a complete valid selection resolves to
 	// a composed persona id; the server's normalize_creator_persona remains the
 	// only validity gate (unknown ids fail closed at compile time).
@@ -706,6 +731,33 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		);
 		if (composedId) setCreatorPersona(composedId);
 	}, [composedAvatarPreview, avatarGender, avatarEthnicity, avatarAge, avatarBundle]);
+	useEffect(() => {
+		let cancelled = false;
+		setRegistryPoolsLoading(true);
+		Promise.all([
+			fetchAPI<{ avatars?: typeof avatarRegistryPool }>(
+				"/api/workspace/avatar-registry/pool",
+			).catch(() => ({ avatars: [] })),
+			fetchAPI<{
+				scenes?: typeof sceneRegistryPool;
+				count?: number;
+			}>("/api/workspace/scene-context-registry/pool").catch(() => ({ scenes: [] })),
+		])
+			.then(([avatarResp, sceneResp]) => {
+				if (cancelled) return;
+				setAvatarRegistryPool(avatarResp.avatars ?? []);
+				setSceneRegistryPool(sceneResp.scenes ?? []);
+			})
+			.finally(() => {
+				if (!cancelled) setRegistryPoolsLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+	const selectedSceneBackground =
+		sceneRegistryPool.find((s) => s.scene_code === registrySceneCode)?.background_prompt?.trim() ||
+		"";
 	const [videoDurationSeconds, setVideoDurationSeconds] = useState(8);
 	// Canonical source-mode (ADR-008) — delegates to the hoisted pure export
 	// resolveOperatorSourceMode; identity is stable across renders.
@@ -1560,6 +1612,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				camera_style: cameraStyle,
 				character_presence: characterPresence,
 				creator_persona: creatorPersona,
+				avatar_id: registryAvatarId || null,
+				scene_context_override: selectedSceneBackground || null,
 			});
 			setPreviewPackage(preview);
 			setNotice({
@@ -1632,6 +1686,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				camera_style: cameraStyle,
 				character_presence: characterPresence,
 				creator_persona: creatorPersona,
+				avatar_id: registryAvatarId || null,
+				scene_context_override: selectedSceneBackground || null,
+				scene_context_code: registrySceneCode || null,
 				// Per-mode reference payload hygiene: only the selected mode's
 				// binding fields are ever sent — a stale pick from another mode
 				// must never reach the server-side binding contract.
@@ -2190,6 +2247,94 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									<div className="mt-1 text-[11px] leading-relaxed text-slate-300">
 										{composedAvatarPreview}
 									</div>
+								</div>
+							) : null}
+						</div>
+					) : null}
+					{mode === "T2V" || mode === "HYBRID" ? (
+						<div
+							data-testid="operator-registry-authority"
+							className="mt-4 rounded-lg border border-cyan-500/25 bg-cyan-500/5 p-3"
+						>
+							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-200">
+								Registry Authority (Avatar + Scene)
+							</div>
+							<div className="mt-1 text-[11px] text-slate-300">
+								T2V/Hybrid presenter identity and scene background resolve from the
+								live avatar registry and scene registry. Persona text below is optional
+								and does not override a selected avatar code.
+							</div>
+							{registryPoolsLoading ? (
+								<div className="mt-2 text-[11px] text-slate-400">Loading registries…</div>
+							) : null}
+							<div className="mt-3 grid gap-3 md:grid-cols-2">
+								<label className="space-y-1 text-xs text-slate-200">
+									<span>Avatar registry</span>
+									<select
+										id="operator-avatar-registry"
+										data-testid="operator-avatar-registry"
+										value={registryAvatarId}
+										onChange={(e) => setRegistryAvatarId(e.target.value)}
+										className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+									>
+										<option value="">
+											{avatarRegistryPool.length
+												? "— product-seeded registry pick —"
+												: "No avatar registry rows"}
+										</option>
+										{avatarRegistryPool.map((row) => {
+											const code = String(row.avatar_code || row.AvatarCode || "").trim();
+											if (!code) return null;
+											const label =
+												row.display_name ||
+												row.Name ||
+												row.name ||
+												row.Variant ||
+												code;
+											return (
+												<option key={code} value={code}>
+													{label} — {code}
+												</option>
+											);
+										})}
+									</select>
+								</label>
+								<label className="space-y-1 text-xs text-slate-200">
+									<span>Scene registry</span>
+									<select
+										id="operator-scene-registry"
+										data-testid="operator-scene-registry"
+										value={registrySceneCode}
+										onChange={(e) => setRegistrySceneCode(e.target.value)}
+										className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
+									>
+										<option value="">
+											{sceneRegistryPool.length
+												? "— product package scene (no override) —"
+												: "No scene registry rows"}
+										</option>
+										{sceneRegistryPool.map((row) => (
+											<option key={row.scene_code} value={row.scene_code}>
+												{row.scene_name || row.scene_code}
+												{row.image_generated ? " · img" : ""}
+											</option>
+										))}
+									</select>
+								</label>
+							</div>
+							{registryAvatarId ? (
+								<div className="mt-2 text-[11px] text-cyan-100">
+									Avatar lock: {registryAvatarId}
+								</div>
+							) : (
+								<div className="mt-2 text-[11px] text-slate-400">
+									No avatar selected — compiler uses product-seeded registry pick
+									(or optional persona text if set).
+								</div>
+							)}
+							{registrySceneCode ? (
+								<div className="mt-1 text-[11px] text-cyan-100">
+									Scene lock: {registrySceneCode}
 								</div>
 							) : null}
 						</div>

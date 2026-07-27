@@ -769,6 +769,7 @@ def compile_ugc_video_prompt(
     safe_cta_angles: list[str] | None = None,
     source_mode: str | None = None,
     avatar_id: str | None = None,
+    scene_context_override: str | None = None,
     copy_intelligence: dict[str, Any] | None = None,
     wps_mode: str = "SWEET",
     engine_duration_target: str | None = None,
@@ -865,22 +866,36 @@ def compile_ugc_video_prompt(
         import re as _re
         sentences = [x.strip() for x in _re.split(r"(?<=[.!?])\s+", resolved_claim_safe_rewrite) if x.strip()]
         resolved_copy["usps"] = sentences[:3]
+    # Optional operator scene-registry Background text overrides product-package scene.
+    _scene_override = _clean(scene_context_override)
+    if _scene_override:
+        approved_package = {**approved_package, "scene_context": _scene_override}
+
     resolved_presenter = None
     if resolved_source_mode in ("HYBRID", "T2V"):
-        # Avatar Persona variant override (Phase A): an operator-selected
-        # persona variant (seed or composed AVX id) IS the presenter identity;
-        # otherwise the proven seeded avatar-pool pick applies unchanged.
+        # Registry authority first: explicit avatar_id (AvatarCode) is SoT for
+        # presenter identity. Persona variants remain optional UX text only when
+        # no registry selection is provided — they must not mask the pool.
+        from agent.services import avatar_registry as _avatars
         from agent.services import persona_variant_service as _persona_variants
-        resolved_presenter = _persona_variants.presenter_profile_for_persona(
-            resolved_creator_persona
-        )
-        if resolved_presenter is None:
-            from agent.services import avatar_registry as _avatars
+
+        registry_avatar_id = str(avatar_id or "").strip() or None
+        if registry_avatar_id:
             resolved_presenter = _avatars.resolve_presenter(
-                avatar_id,
+                registry_avatar_id,
                 usage_context=_clean(product.get("category")),
                 seed=_clean(product.get("id") or product.get("name") or "bosmax"),
             )
+        else:
+            resolved_presenter = _persona_variants.presenter_profile_for_persona(
+                resolved_creator_persona
+            )
+            if resolved_presenter is None:
+                resolved_presenter = _avatars.resolve_presenter(
+                    None,
+                    usage_context=_clean(product.get("category")),
+                    seed=_clean(product.get("id") or product.get("name") or "bosmax"),
+                )
     _ingredient_roles = (
         {"PRODUCT_REFERENCE": True, "AVATAR_REFERENCE": True}
         if resolved_source_mode == "INGREDIENTS" else None
@@ -1031,6 +1046,8 @@ def compile_ugc_video_prompt(
         "camera_style": resolved_camera_style,
         "character_presence": resolved_character_presence,
         "creator_persona": resolved_creator_persona,
+        "avatar_id": str(avatar_id or "").strip() or None,
+        "scene_context_override_applied": bool(_clean(scene_context_override)),
         "target_language": resolved_target_language,
         "shot_plan": [
             {

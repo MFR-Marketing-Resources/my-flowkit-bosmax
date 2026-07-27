@@ -75,6 +75,10 @@ export async function createWorkspaceExecutionPackage(input: {
 	// Explicit-Fallback-Confirmation V1: required-true for FINAL generation when
 	// no approved Copy Set is selected (backend fails closed otherwise).
 	copy_fallback_confirmed?: boolean;
+	// T2V/Hybrid registry authority
+	avatar_id?: string | null;
+	scene_context_override?: string | null;
+	scene_context_code?: string | null;
 }): Promise<WorkspaceExecutionPackage> {
 	const request = applyDurationAuthorityDefaults({
 		duration_seconds: 8,
@@ -94,6 +98,9 @@ export async function createWorkspaceExecutionPackage(input: {
 		character_reference_asset_id: null,
 		scene_context_reference_asset_id: null,
 		style_reference_asset_id: null,
+		avatar_id: null,
+		scene_context_override: null,
+		scene_context_code: null,
 		blocks: [],
 		...input,
 	});
@@ -412,6 +419,8 @@ export async function compileWorkspacePromptPreview(input: {
 	}>;
 	// Copy Selection & Compiler Binding V1: operator-selected approved Copy Set.
 	copy_set_id?: string | null;
+	avatar_id?: string | null;
+	scene_context_override?: string | null;
 }): Promise<WorkspacePromptPreviewResult> {
 	const request = applyDurationAuthorityDefaults({
 		duration_seconds: 8,
