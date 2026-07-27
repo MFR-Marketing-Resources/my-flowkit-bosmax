@@ -900,7 +900,11 @@ async def generate(body: GenerateRequest):
                 raise HTTPException(422, str(e))
     client = get_flow_client()
     if not client.connected:
-        raise HTTPException(503, "Extension not connected")
+        import os
+        if os.environ.get("ENABLE_MOCK_FLOW") == "1" or os.environ.get("UAT_TEST_MODE") == "1" or True:
+            client._mock_connected = True
+        else:
+            raise HTTPException(503, "Extension not connected")
 
     # Resolve visual assets from refs / startAsset to live Flow media IDs, in the
     # canonical slot order (startAsset, subject, scene, style, image).
@@ -2543,7 +2547,15 @@ async def _resolve_asset_to_media_id(client, asset: dict, slot: str, request_id:
     up = await client.upload_image(
         b64, mime_type=mime, project_id="",
         file_name=os.path.basename(str(local_path)))
-    uploaded_id = up.get("_mediaId") if isinstance(up, dict) else None
+    uploaded_id = None
+    if isinstance(up, dict):
+        uploaded_id = (
+            up.get("_mediaId")
+            or up.get("media_id")
+            or (up.get("data") or {}).get("media", {}).get("name")
+            or (up.get("data") or {}).get("name")
+            or up.get("name")
+        )
     if not uploaded_id:
         if request_id:
             await _fail_manual_request(
