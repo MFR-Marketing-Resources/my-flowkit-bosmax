@@ -672,19 +672,30 @@ describe("PosterGuidedShell closure", () => {
 
 	it("direction warnings are shown in human-readable form", async () => {
 		vi.mocked(generatePosterDirections).mockResolvedValueOnce({
-			directions: [],
+			directions: [
+				{
+					primary_message: "Tajuk fallback",
+					support_message: "Sokongan fallback",
+					proof_points: [],
+					cta: "Lihat produk",
+					disclaimer: "",
+					tone: "neutral",
+					language: "ms",
+					field_provenance: {},
+				},
+			],
 			ai_model: "test",
 			prompt_version: "v1",
-			warnings: [
-				"AI provider not configured — deterministic fallback directions.",
-			],
+			warnings: ["AI directions unavailable: AI_COPY_ASSIST_CALL_FAILED"],
 		} as never);
 		renderShell();
 		fireEvent.click(screen.getByTestId("pick-product"));
 		fireEvent.click(await screen.findByTestId("poster-goal-card-PRODUCT_HERO"));
 		fireEvent.click(await screen.findByTestId("poster-angle-card-0"));
 		const warn = await screen.findByTestId("poster-direction-warnings");
-		expect(warn.textContent).toContain("Nota semasa menjana teks");
+		expect(warn.textContent).toContain("cadangan selamat masih tersedia");
+		expect(warn.textContent).not.toContain("AI_COPY_ASSIST_CALL_FAILED");
+		expect(await screen.findByTestId("poster-copy-direction-0")).toBeInTheDocument();
 	});
 
 	it("visual cards show diagram + placement + density and hide internal recipe ids", async () => {

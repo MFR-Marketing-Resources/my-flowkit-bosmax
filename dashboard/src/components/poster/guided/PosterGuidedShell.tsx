@@ -655,6 +655,19 @@ function CopyStep({ wf }: { wf: WF }) {
 			</div>
 		);
 	}
+	const hasFallbackDirections =
+		wf.directions.length > 0 &&
+		wf.directionWarnings.some(
+			(w) =>
+				w.startsWith("AI directions unavailable:") ||
+				w.startsWith("AI provider not configured"),
+		);
+	const visibleDirectionWarnings = wf.directionWarnings.filter(
+		(w) =>
+			!hasFallbackDirections ||
+			(!w.startsWith("AI directions unavailable:") &&
+				!w.startsWith("AI provider not configured")),
+	);
 
 	return (
 		<div className="space-y-4">
@@ -688,12 +701,22 @@ function CopyStep({ wf }: { wf: WF }) {
 					className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100"
 					data-testid="poster-direction-warnings"
 				>
-					<p className="font-semibold">Nota semasa menjana teks:</p>
-					<ul className="mt-1 space-y-0.5">
-						{wf.directionWarnings.map((w) => (
+					{hasFallbackDirections ? (
+						<p className="font-semibold" data-testid="poster-direction-fallback-note">
+							AI tidak tersedia buat masa ini — cadangan selamat masih tersedia.
+							Pilih satu untuk teruskan.
+						</p>
+					) : null}
+					{visibleDirectionWarnings.length ? (
+						<>
+							<p className="mt-1 font-semibold">Nota semasa menjana teks:</p>
+							<ul className="mt-1 space-y-0.5">
+								{visibleDirectionWarnings.map((w) => (
 							<li key={w}>• {w}</li>
-						))}
-					</ul>
+									))}
+							</ul>
+						</>
+					) : null}
 				</div>
 			) : null}
 			<div className="grid gap-3 md:grid-cols-3">
