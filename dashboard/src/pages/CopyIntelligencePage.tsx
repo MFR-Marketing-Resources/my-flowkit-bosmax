@@ -13,6 +13,7 @@ import {
 	type CopyIntelligenceWorkbookUploadReport,
 } from "../api/copyIntelligence";
 import { Badge, HelperText, Section } from "../components/ui";
+import BulkAngleSuggestionsPanel from "../components/BulkAngleSuggestionsPanel";
 
 const APPROVE_PHRASE = "APPROVE COPY INTELLIGENCE";
 const APPROVE_MEDIUM_PHRASE = "APPROVE MEDIUM CONFIDENCE COPY INTELLIGENCE";
@@ -215,9 +216,11 @@ export default function CopyIntelligencePage() {
 			<div className="space-y-2">
 				<h2 className="text-xl font-bold tracking-tight text-slate-100">Copy Intelligence / Customer Avatar</h2>
 				<p className="max-w-3xl text-sm text-slate-400">
-					Audit COPYWRITING HUB before any owner-authorized seed. This screen is review-only: it cannot approve copy, change Product Truth, or send material to generation.
+					Cross-product copy tools. The AI angle tool below proposes angles for your review and commits only what you accept (free, claim-gated). The COPYWRITING HUB audit is review-only — it cannot approve copy, change Product Truth, or send material to generation.
 				</p>
 			</div>
+
+			<BulkAngleSuggestionsPanel />
 
 			<Section step="1" title="Full workbook upload" helper="Upload then dry-run is explicit and review-only.">
 				<p className="text-sm font-medium text-slate-200">Upload the full Kalodata & Fastmoss workbook</p>

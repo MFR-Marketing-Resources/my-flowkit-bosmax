@@ -80,6 +80,72 @@ export async function addAngles(input: {
 	return postAPI<AddAnglesResult>("/api/copy-components/add-angles", input);
 }
 
+export interface SuggestAnglesResult {
+	ok: boolean;
+	suggestions: string[];
+	existing_count?: number;
+	remaining_slots?: number;
+	warnings?: string[];
+}
+
+// SPENDS a small amount of AI tokens (one call). Proposes NEW candidate angles
+// (buyer pains) grounded in the product's APPROVED knowledge + avatar. Returns
+// suggestions for review — commits NOTHING; the operator edits then Adds them via
+// addAngles (free, claim-gated).
+export async function suggestAngles(input: {
+	product_id: string;
+	count?: number;
+}): Promise<SuggestAnglesResult> {
+	return postAPI<SuggestAnglesResult>(
+		"/api/copy-components/suggest-angles",
+		input,
+	);
+}
+
+// ── Bulk angle suggestions (Phase 2) ────────────────────────────────────────
+
+export interface EligibleProduct {
+	product_id: string;
+	name: string;
+	angle_count: number;
+	room: number;
+}
+
+export interface BulkSuggestProductResult {
+	product_id: string;
+	ok: boolean;
+	suggestions?: string[];
+	existing_count?: number;
+	remaining_slots?: number;
+	warnings?: string[];
+	error?: string;
+}
+
+export interface BulkSuggestResult {
+	results: BulkSuggestProductResult[];
+	products: number;
+	ok_products: number;
+	total_suggestions: number;
+}
+
+// Read-only — the cross-product roster the bulk tool runs over (approved snapshot
+// + room for more angles). No tokens.
+export async function fetchEligibleProducts(): Promise<{
+	items: EligibleProduct[];
+	count: number;
+}> {
+	return getAPI("/api/copy-components/eligible-products");
+}
+
+// SPENDS AI tokens — one small text call per product (paced, server-side). Returns
+// candidates per product for review; commits NOTHING (accept via addAngles). Send
+// ids in chunks (~10-15) — the client drives the batching.
+export async function bulkSuggestAngles(input: {
+	product_ids: string[];
+}): Promise<BulkSuggestResult> {
+	return postAPI<BulkSuggestResult>("/api/copy-components/bulk-suggest", input);
+}
+
 export async function fetchCopyCapacity(
 	productId: string,
 ): Promise<CopyComponentsCapacity> {
