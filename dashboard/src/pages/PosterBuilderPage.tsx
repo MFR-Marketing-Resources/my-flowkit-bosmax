@@ -742,9 +742,11 @@ export function PosterBuilderLegacyPanel() {
 		setPosterGenStage(exact ? "validating_canonical" : "generating");
 		try {
 			let prompt = pkg.poster_prompt;
-			// Universal product grounding: ALWAYS send product subjectAsset reference when available
+			// Strategy C: FIXED_HERO_POSTER (Hero visual stays fixed and unchanged when subjectAsset is present)
 			const refs = subjectAsset ? { subjectAsset } : undefined;
-			if (exact && productId) {
+			const useExactComposite = gate.mode === "exact" && Boolean(productId) && !subjectAsset;
+
+			if (useExactComposite && productId) {
 				setPosterGenStage("generating_scene");
 				const scene = await buildExactSceneOnlyPrompt(productId, prompt);
 				prompt = scene.prompt;
@@ -754,7 +756,7 @@ export function PosterBuilderLegacyPanel() {
 				aspect: flowMirror.aspect_ratio,
 				count: flowMirror.count,
 				image_model: flowMirror.image_model,
-				...(refs ? { refs } : {}),
+				...(refs && !useExactComposite ? { refs } : {}),
 			});
 			const job = await pollImgGenerationJob(job_id);
 			const plateMediaId = job.media_id ?? "";
@@ -767,7 +769,7 @@ export function PosterBuilderLegacyPanel() {
 				);
 				return;
 			}
-			if (exact && productId) {
+			if (useExactComposite && productId) {
 				setPosterGenStage("inserting_canonical_product");
 				const finalOut = await composeExactFromPlate({
 					product_id: productId,

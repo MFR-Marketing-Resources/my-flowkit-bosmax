@@ -569,17 +569,25 @@ export default function ImgFastlanePage() {
 			if (gate.mode === "blocked") {
 				throw new Error(gate.message);
 			}
-			const exact = gate.mode === "exact";
+
+			const hasAvatar = Boolean(characterAssetId || sceneAssetId);
+			const isProductOnly = !hasAvatar && Boolean(framePresetId?.includes("PRODUCT_ONLY") || framePresetId?.includes("HERO"));
+			const useExactComposite = gate.mode === "exact" && isProductOnly && Boolean(productId);
+
 			let scenePrompt = prompt;
-			if (exact && productId) {
-				const scene = await buildExactSceneOnlyPrompt(productId, prompt);
-				scenePrompt = scene.prompt;
-			}
-			// Universal product grounding: ALWAYS send resolved product and avatar refs to Flow engine
-			const refs = resolvedRefsPayload;
-			const mediaIds = Object.values(resolvedRefsPayload)
+			let refs = resolvedRefsPayload;
+			let mediaIds = Object.values(resolvedRefsPayload)
 				.map((asset) => asset.mediaId)
 				.filter((id): id is string => Boolean(id));
+
+			if (useExactComposite) {
+				// Strategy B: PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE
+				const scene = await buildExactSceneOnlyPrompt(productId, prompt);
+				scenePrompt = scene.prompt;
+				refs = {};
+				mediaIds = [];
+			}
+
 			const { job_id } = await startImgGeneration({
 				prompt: scenePrompt,
 				image_media_ids: mediaIds,
@@ -594,12 +602,12 @@ export default function ImgFastlanePage() {
 				let mediaId = job.media_id;
 				let sizeMb =
 					typeof job.size_mb === "number" ? job.size_mb : null;
-				if (exact && productId) {
+				if (useExactComposite && productId) {
 					const finalOut = await composeExactFromPlate({
 						product_id: productId,
 						background_media_id: mediaId,
 						lane:
-							framePresetId?.includes("POSTER") || framePresetId?.includes("HERO")
+							framePresetId?.includes("HERO")
 								? "product_only_hero"
 								: "studio",
 						job_id,

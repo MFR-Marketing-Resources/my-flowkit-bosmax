@@ -372,20 +372,32 @@ export default function ImgCockpitPage() {
 			if (gate.mode === "blocked") {
 				throw new Error(gate.message);
 			}
-			const exact = gate.mode === "exact";
+
+			const isProductOnlyLane = lane?.lane_id === "PRODUCT_ONLY_HERO" || lane?.lane_id === "PRODUCT_ONLY";
+			const useExactComposite = gate.mode === "exact" && isProductOnlyLane && Boolean(productId);
+
 			let scenePrompt = prompt;
-			if (exact && productId) {
+			if (useExactComposite && productId) {
 				const scene = await buildExactSceneOnlyPrompt(productId, prompt);
 				scenePrompt = scene.prompt;
 			}
-			// Universal product grounding: ALWAYS send resolved product and avatar refs to Flow engine
-			const payload = buildImgGenerationRequest({
-				prompt: scenePrompt,
-				resolution: genResolution,
-				aspect,
-				count,
-				imageModel,
-			});
+
+			const payload = useExactComposite
+				? {
+						prompt: scenePrompt,
+						aspect,
+						count,
+						image_model: imageModel,
+						image_media_ids: [] as string[],
+				  }
+				: buildImgGenerationRequest({
+						prompt: scenePrompt,
+						resolution: genResolution,
+						aspect,
+						count,
+						imageModel,
+				  });
+
 			const { job_id } = await startImgGeneration(payload);
 			const job = await pollImgGenerationJob(job_id);
 			setGenJob(job);
@@ -393,7 +405,7 @@ export default function ImgCockpitPage() {
 				let mediaId = job.media_id;
 				let sizeMb =
 					typeof job.size_mb === "number" ? job.size_mb : null;
-				if (exact && productId) {
+				if (useExactComposite && productId) {
 					const finalOut = await composeExactFromPlate({
 						product_id: productId,
 						background_media_id: mediaId,
