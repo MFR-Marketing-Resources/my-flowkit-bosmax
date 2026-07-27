@@ -74,7 +74,10 @@ class WorkspaceExecutionPackageRequest(BaseModel):
     # Set requires the operator to intentionally confirm fallback usage. Preview
     # never needs this (see WorkspacePromptCompileRequest — deliberately absent).
     copy_fallback_confirmed: bool = False
-
+    # T2V/Hybrid registry authority: optional AvatarCode + scene Background override
+    avatar_id: str | None = None
+    scene_context_override: str | None = None
+    scene_context_code: str | None = None
 
 class WorkspacePromptCompileRequest(BaseModel):
     product_id: str
@@ -93,7 +96,8 @@ class WorkspacePromptCompileRequest(BaseModel):
     blocks: list[WorkspacePromptBlockRequest] = Field(default_factory=list)
     # Copy Selection & Compiler Binding V1: operator-selected approved Copy Set.
     copy_set_id: str | None = None
-
+    avatar_id: str | None = None
+    scene_context_override: str | None = None
 
 class WorkspacePackageReadinessRequest(BaseModel):
     mode: str
@@ -144,6 +148,9 @@ async def post_workspace_execution_package(request: WorkspaceExecutionPackageReq
             requested_total_duration_seconds=request.requested_total_duration_seconds,
             copy_set_id=request.copy_set_id,
             copy_fallback_confirmed=request.copy_fallback_confirmed,
+            avatar_id=request.avatar_id,
+            scene_context_override=request.scene_context_override,
+            scene_context_code=request.scene_context_code,
         )
     except CopyBindingError as exc:
         raise HTTPException(
@@ -210,6 +217,8 @@ async def post_workspace_prompt_compile(request: WorkspacePromptCompileRequest):
             engine_duration_target=request.engine_duration_target,
             requested_total_duration_seconds=request.requested_total_duration_seconds,
             copy_set_id=request.copy_set_id,
+            avatar_id=request.avatar_id,
+            scene_context_override=request.scene_context_override,
         )
     except CopyBindingError as exc:
         raise HTTPException(

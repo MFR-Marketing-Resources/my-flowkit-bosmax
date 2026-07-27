@@ -137,7 +137,7 @@ def test_presenter_profile_override_reaches_canonical_prose():
         "expression": "Calm neutral",
     }
     assert presenter_prose(pool_profile) == (
-        "The presenter is a Malaysian adult woman with light-medium skin and "
+        "The presenter is a Malaysian young adult woman with light-medium skin and "
         "medium tidy hair, wearing smart office wear, with a calm neutral "
         "expression. Keep this exact presenter identity — face, hair, wardrobe, "
         "and body language — consistent in every shot."

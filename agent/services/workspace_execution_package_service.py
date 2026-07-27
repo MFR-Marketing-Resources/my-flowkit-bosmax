@@ -287,6 +287,9 @@ async def create_workspace_execution_package(
     requested_total_duration_seconds: int | None = None,
     copy_set_id: str | None = None,
     copy_fallback_confirmed: bool = False,
+    avatar_id: str | None = None,
+    scene_context_override: str | None = None,
+    scene_context_code: str | None = None,
 ) -> dict[str, Any]:
     # Explicit-Fallback-Confirmation V1 (FINAL generation only — preview stays
     # warning-only): producing a saved execution package with NO approved Copy
@@ -328,6 +331,8 @@ async def create_workspace_execution_package(
         source_mode=resolved_source_mode,
         engine_duration_target=engine_duration_target,
         requested_total_duration_seconds=requested_total_duration_seconds,
+        avatar_id=avatar_id,
+        scene_context_override=scene_context_override,
         copy_set_id=copy_set_id,
     )
     copy_binding_lineage = compiler_result.get("copy_binding")
@@ -410,6 +415,9 @@ async def create_workspace_execution_package(
             "camera_style": compiler_result["camera_style"],
             "character_presence": compiler_result["character_presence"],
             "creator_persona": compiler_result["creator_persona"],
+        "avatar_id": (str(avatar_id).strip() if avatar_id else None),
+        "scene_context_code": (str(scene_context_code).strip() if scene_context_code else None),
+        "scene_context_override_applied": bool(str(scene_context_override or "").strip()),
             "target_language": compiler_result["target_language"],
             "dialogue_word_budget_per_block": compiler_result["dialogue_word_budget_per_block"],
             "prompt_blocks": compiler_result["prompt_blocks"],
@@ -618,6 +626,8 @@ async def compile_workspace_prompt_preview(
     engine_duration_target: str | None = None,
     requested_total_duration_seconds: int | None = None,
     copy_set_id: str | None = None,
+    avatar_id: str | None = None,
+    scene_context_override: str | None = None,
 ) -> dict[str, Any]:
     normalized_mode = normalize_mode(mode)
     # Source-lineage law (2026-07-09 corrective audit): a caller that names a
@@ -670,6 +680,8 @@ async def compile_workspace_prompt_preview(
             source_mode=source_mode,
             engine_duration_target=engine_duration_target,
             requested_total_duration_seconds=requested_total_duration_seconds,
+            avatar_id=avatar_id,
+            scene_context_override=scene_context_override,
             copy_intelligence=copy_binding["copy_intelligence"],
         )
     prompt_scan = scan_prompt_text(
