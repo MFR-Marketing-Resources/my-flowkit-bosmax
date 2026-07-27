@@ -434,14 +434,15 @@ def resolve_product_visual_grounding(
     )
 
 
-def clean_provider_prompt_text(raw_prompt: str) -> str:
+def clean_provider_prompt_text(raw_prompt: str, *, is_clean_frame: bool = True) -> str:
     """Sanitize base prompt to remove metadata labels, category titles, and legacy lock headers."""
     if not raw_prompt:
         return ""
 
     lines = raw_prompt.splitlines()
     cleaned_lines: list[str] = []
-    strip_prefix_patterns = (
+
+    clean_frame_metadata_prefixes = (
         "category title:",
         "category:",
         "workflow title:",
@@ -456,6 +457,9 @@ def clean_provider_prompt_text(raw_prompt: str) -> str:
         "spec:",
         "target ingredient role:",
         "reference map:",
+    )
+
+    lock_prefixes = (
         "product truth lock:",
         "product identity lock:",
         "product geometry lock:",
@@ -477,7 +481,9 @@ def clean_provider_prompt_text(raw_prompt: str) -> str:
     for line in lines:
         stripped = line.strip()
         lower = stripped.lower()
-        if any(lower.startswith(prefix) for prefix in strip_prefix_patterns):
+        if is_clean_frame and any(lower.startswith(prefix) for prefix in clean_frame_metadata_prefixes):
+            continue
+        if any(lower.startswith(prefix) for prefix in lock_prefixes):
             continue
         if lower.startswith("- product identity lock:") or lower.startswith("- product geometry lock:"):
             continue
@@ -510,7 +516,7 @@ def get_grounded_generation_payload(
     product_row = get_product_by_id(product_id) or {"id": product_id, "name": bundle.product_display_name}
     concise_contract = build_concise_engine_product_contract(product_row, is_clean_frame=not is_poster)
 
-    cleaned_base = clean_provider_prompt_text(base_prompt)
+    cleaned_base = clean_provider_prompt_text(base_prompt, is_clean_frame=not is_poster)
     full_prompt = f"{cleaned_base}\n\n[PRODUCT CONTRACT]\n{concise_contract}" if cleaned_base else concise_contract
 
     ref = bundle.product_reference or {}

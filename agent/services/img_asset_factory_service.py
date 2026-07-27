@@ -228,7 +228,10 @@ def _product_display_name(product: dict[str, object] | None) -> str:
 def _asset_label(asset: object | None) -> str | None:
     if asset is None:
         return None
-    display_name = getattr(asset, "display_name", None)
+    if isinstance(asset, dict):
+        display_name = asset.get("display_name") or asset.get("file_name") or asset.get("name")
+    else:
+        display_name = getattr(asset, "display_name", None) or getattr(asset, "file_name", None)
     return _clean_text(display_name) or None
 
 
