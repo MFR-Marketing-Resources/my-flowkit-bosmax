@@ -5,6 +5,11 @@ Product Database (659+ products) into an authoritative visual reference image,
 validated image metadata, and engine-visible product locks (identity, geometry,
 scale, label, handling, and negative rules).
 
+Supports three distinct, non-overlapping generation strategies:
+- Strategy A: REFERENCE_CONDITIONED_HUMAN_INTERACTION (avatar + product, UGC, Model)
+- Strategy B: PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE (product-only hero lanes)
+- Strategy C: FIXED_HERO_POSTER (Poster Builder with fixed hero visual)
+
 Fail-closed security: If no valid product image reference exists, generation
 is blocked with ``PRODUCT_VISUAL_REFERENCE_REQUIRED``.
 """
@@ -12,21 +17,30 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
-import re
 import sqlite3
+import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 from PIL import Image
 
+from agent.config import BASE_DIR, DB_PATH
 from agent.services.product_lock_builder import build_product_lock, resolve_schema_entry
+
+logger = logging.getLogger(__name__)
 
 
 class ProductVisualReferenceRequiredError(ValueError):
     """Raised when a selected product has no valid, readable visual image reference."""
     pass
+
+
+STRATEGY_REFERENCE_CONDITIONED_HUMAN_INTERACTION = "REFERENCE_CONDITIONED_HUMAN_INTERACTION"
+STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE = "PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE"
+STRATEGY_FIXED_HERO_POSTER = "FIXED_HERO_POSTER"
 
 
 @dataclass
@@ -65,35 +79,17 @@ class ProductVisualGroundingBundle:
         return asdict(self)
 
 
-def _get_db_path() -> Path:
-    env_dir = os.environ.get("FLOW_AGENT_DIR")
-    if env_dir:
-        candidate = Path(env_dir) / "flow_agent.db"
-        if candidate.exists():
-            return candidate
-    base_dir = Path(__file__).resolve().parent.parent.parent
-    for p in (
-        base_dir / "flow_agent.db",
-        base_dir.parent / "_ref_flowkit" / "flow_agent.db",
-        Path("C:/Users/USER/Desktop/_ref_flowkit/flow_agent.db"),
-    ):
-        if p.exists():
-            return p
-    return Path("flow_agent.db")
-
-
-def _get_db_connection(db_path: Path | str | None = None) -> sqlite3.Connection:
-    target = Path(db_path) if db_path else _get_db_path()
-    conn = sqlite3.connect(target)
+def _get_db_connection() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
 
-def get_product_by_id(product_id: str, db_path: Path | str | None = None) -> dict[str, Any] | None:
+def get_product_by_id(product_id: str) -> dict[str, Any] | None:
     if not product_id:
         return None
     try:
-        conn = _get_db_connection(db_path)
+        conn = _get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM product WHERE id = ? OR trigger_id = ?", (product_id, product_id))
         row = cursor.fetchone()
@@ -108,48 +104,81 @@ def _inspect_image_file(file_path: Path | str) -> tuple[int, int, str, str] | No
     if not path.exists() or not path.is_file() or path.stat().st_size == 0:
         return None
     try:
+        raw_bytes = path.read_bytes()
         with Image.open(path) as im:
             w, h = im.size
             fmt = im.format.lower() if im.format else "jpeg"
             mime = f"image/{'jpeg' if fmt in ('jpg', 'jpeg') else fmt}"
-        sha = hashlib.sha256(path.read_bytes()).hexdigest()
+        sha = hashlib.sha256(raw_bytes).hexdigest()
         return w, h, mime, sha
     except Exception:
         return None
 
 
-def _find_linked_creative_asset(product_id: str, db_path: Path | str | None = None) -> dict[str, Any] | None:
+def _materialize_image_url(image_url: str, product_id: str) -> tuple[Path, int, int, str, str] | None:
+    """Materialize remote image_url to local storage and inspect real bytes."""
+    if not image_url or not isinstance(image_url, str) or not image_url.startswith("http"):
+        return None
+
+    cache_dir = BASE_DIR / "data" / "products" / "images"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    
+    target_path = cache_dir / f"{product_id}.jpeg"
+    if target_path.exists() and target_path.stat().st_size > 0:
+        meta = _inspect_image_file(target_path)
+        if meta:
+            w, h, mime, sha = meta
+            return target_path, w, h, mime, sha
+
     try:
-        conn = _get_db_connection(db_path)
+        req = urllib.request.Request(
+            image_url,
+            headers={"User-Agent": "BOSMAX-FlowKit-Resolver/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = resp.read()
+        if not data or len(data) == 0:
+            return None
+        target_path.write_bytes(data)
+        meta = _inspect_image_file(target_path)
+        if meta:
+            w, h, mime, sha = meta
+            return target_path, w, h, mime, sha
+        return None
+    except Exception as err:
+        logger.warning("Failed to materialize product image_url %s: %s", image_url, err)
+        return None
+
+
+def _find_linked_approved_creative_asset(product_id: str) -> dict[str, Any] | None:
+    """Find approved, active PRODUCT_REFERENCE creative asset linked to product_id."""
+    try:
+        conn = _get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
             """
             SELECT * FROM creative_asset 
-            WHERE (product_id = ? OR asset_id LIKE ?)
+            WHERE product_id = ?
               AND (semantic_role = 'PRODUCT_REFERENCE' OR asset_type = 'PRODUCT_REFERENCE')
-              AND status != 'ARCHIVED'
-            ORDER BY created_at DESC
+              AND status = 'ACTIVE'
+              AND review_status = 'APPROVED'
+            ORDER BY updated_at DESC
             """,
-            (product_id, f"%{product_id}%"),
+            (product_id,),
         )
         rows = cursor.fetchall()
         conn.close()
         for r in rows:
             d = dict(r)
             lp = d.get("local_file_path") or d.get("local_path")
-            if lp and Path(lp).exists():
-                return d
-            if d.get("remote_source_url") or d.get("preview_url") or d.get("download_url"):
+            if lp and Path(lp).exists() and Path(lp).stat().st_size > 0:
                 return d
         return None
     except Exception:
         return None
 
 
-def resolve_product_reference_image(
-    product: dict[str, Any],
-    db_path: Path | str | None = None,
-) -> ProductReferenceInfo:
+def resolve_product_reference_image(product: dict[str, Any]) -> ProductReferenceInfo:
     """Resolve the authoritative product reference image in priority order."""
     product_id = str(product.get("id") or product.get("product_id") or "")
     
@@ -199,9 +228,59 @@ def resolve_product_reference_image(
                     validation_status="VALIDATED",
                 )
 
-    # Priority 2: Linked Creative Asset
+    # Priority 2: Product row media_id (resolves through DB artifact / storage)
+    media_id = product.get("media_id")
+    if media_id:
+        try:
+            conn = _get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM request WHERE media_id = ? OR request_id = ?", (media_id, media_id))
+            row = cursor.fetchone()
+            conn.close()
+            if row:
+                d = dict(row)
+                out_path = d.get("output_url") or d.get("local_path")
+                if out_path and Path(out_path).exists():
+                    meta = _inspect_image_file(out_path)
+                    if meta:
+                        w, h, mime, sha = meta
+                        return ProductReferenceInfo(
+                            source_type="PRODUCT_ROW_MEDIA_ID",
+                            media_id=str(media_id),
+                            local_path=str(out_path),
+                            image_url=product.get("image_url"),
+                            mime_type=mime,
+                            sha256=sha,
+                            width=w,
+                            height=h,
+                            provenance="GENERATED_ARTIFACT_REGISTRY",
+                            validation_status="VALIDATED",
+                        )
+        except Exception:
+            pass
+        
+        # Check standard retrieved storage fallback
+        retrieved_path = BASE_DIR / "output" / "retrieved" / f"{media_id}.jpg"
+        if retrieved_path.exists():
+            meta = _inspect_image_file(retrieved_path)
+            if meta:
+                w, h, mime, sha = meta
+                return ProductReferenceInfo(
+                    source_type="PRODUCT_ROW_MEDIA_ID",
+                    media_id=str(media_id),
+                    local_path=str(retrieved_path),
+                    image_url=product.get("image_url"),
+                    mime_type=mime,
+                    sha256=sha,
+                    width=w,
+                    height=h,
+                    provenance="LOCAL_STORAGE_RETRIEVED",
+                    validation_status="VALIDATED",
+                )
+
+    # Priority 3: Approved & Active Linked Creative Asset
     if product_id:
-        asset = _find_linked_creative_asset(product_id, db_path=db_path)
+        asset = _find_linked_approved_creative_asset(product_id)
         if asset:
             alp = asset.get("local_file_path") or asset.get("local_path")
             if alp and Path(alp).exists():
@@ -221,39 +300,24 @@ def resolve_product_reference_image(
                         validation_status="VALIDATED",
                     )
 
-    # Priority 3: Product row image_url (remote reference URL)
+    # Priority 4: Product row image_url (materialized & byte-validated)
     image_url = product.get("image_url") or product.get("source_url")
     if image_url and isinstance(image_url, str) and image_url.startswith("http"):
-        sha = hashlib.sha256(image_url.encode("utf-8")).hexdigest()
-        return ProductReferenceInfo(
-            source_type="PRODUCT_ROW_IMAGE_URL",
-            media_id=product.get("media_id"),
-            local_path=None,
-            image_url=image_url,
-            mime_type="image/jpeg",
-            sha256=sha,
-            width=800,
-            height=800,
-            provenance="PRODUCT_DATABASE_RECORD",
-            validation_status="VALIDATED",
-        )
-
-    # Priority 4: Product row media_id
-    media_id = product.get("media_id")
-    if media_id:
-        sha = hashlib.sha256(str(media_id).encode("utf-8")).hexdigest()
-        return ProductReferenceInfo(
-            source_type="PRODUCT_ROW_MEDIA_ID",
-            media_id=str(media_id),
-            local_path=None,
-            image_url=None,
-            mime_type="image/jpeg",
-            sha256=sha,
-            width=800,
-            height=800,
-            provenance="PRODUCT_DATABASE_RECORD",
-            validation_status="VALIDATED",
-        )
+        mat = _materialize_image_url(image_url, product_id)
+        if mat:
+            mat_path, w, h, mime, sha = mat
+            return ProductReferenceInfo(
+                source_type="PRODUCT_ROW_IMAGE_URL",
+                media_id=product.get("media_id"),
+                local_path=str(mat_path),
+                image_url=image_url,
+                mime_type=mime,
+                sha256=sha,
+                width=w,
+                height=h,
+                provenance="PRODUCT_DATABASE_RECORD",
+                validation_status="VALIDATED",
+            )
 
     raise ProductVisualReferenceRequiredError(
         f"PRODUCT_VISUAL_REFERENCE_REQUIRED: Selected product '{product.get('product_display_name') or product.get('name') or product_id}' "
@@ -261,15 +325,32 @@ def resolve_product_reference_image(
     )
 
 
+def resolve_generation_strategy(
+    lane_id: str | None = None,
+    product_id: str | None = None,
+    *,
+    has_avatar: bool = False,
+    is_product_only: bool = False,
+    is_poster: bool = False,
+) -> str:
+    """Resolve the non-overlapping generation strategy for a route."""
+    if is_poster:
+        return STRATEGY_FIXED_HERO_POSTER
+    if has_avatar or (lane_id and ("AVATAR" in lane_id or "UGC" in lane_id or "MODEL" in lane_id or "HYBRID" in lane_id)):
+        return STRATEGY_REFERENCE_CONDITIONED_HUMAN_INTERACTION
+    if is_product_only or (lane_id and "PRODUCT_ONLY" in lane_id):
+        return STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE
+    return STRATEGY_REFERENCE_CONDITIONED_HUMAN_INTERACTION
+
+
 def resolve_product_visual_grounding(
     product_id_or_row: str | dict[str, Any],
     *,
-    db_path: Path | str | None = None,
     is_video: bool = False,
 ) -> ProductVisualGroundingBundle:
     """Resolve a selected product into one universal ProductVisualGroundingBundle."""
     if isinstance(product_id_or_row, str):
-        row = get_product_by_id(product_id_or_row, db_path=db_path)
+        row = get_product_by_id(product_id_or_row)
         if not row:
             raise ProductVisualReferenceRequiredError(
                 f"PRODUCT_VISUAL_REFERENCE_REQUIRED: Product ID '{product_id_or_row}' not found in Product Database."
@@ -280,7 +361,7 @@ def resolve_product_visual_grounding(
         p_id = str(product.get("id") or product.get("product_id") or "")
         # Enrich missing image fields from DB if available
         if p_id and not (product.get("local_image_path") or product.get("image_url") or product.get("media_id")):
-            db_row = get_product_by_id(p_id, db_path=db_path)
+            db_row = get_product_by_id(p_id)
             if db_row:
                 for k, v in db_row.items():
                     if v and not product.get(k):
@@ -298,7 +379,7 @@ def resolve_product_visual_grounding(
     ).strip()
 
     # Resolve image reference info (fails closed if missing)
-    ref_info = resolve_product_reference_image(product, db_path=db_path)
+    ref_info = resolve_product_reference_image(product)
 
     # Build universal product locks
     locks = build_product_lock(product, is_video=is_video, has_product_reference=True)
