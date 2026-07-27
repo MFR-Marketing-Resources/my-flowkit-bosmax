@@ -742,8 +742,8 @@ export function PosterBuilderLegacyPanel() {
 		setPosterGenStage(exact ? "validating_canonical" : "generating");
 		try {
 			let prompt = pkg.poster_prompt;
-			// Exact: never send product refs. Standard: keep product subjectAsset.
-			const refs = exact || !subjectAsset ? undefined : { subjectAsset };
+			// Universal product grounding: ALWAYS send product subjectAsset reference when available
+			const refs = subjectAsset ? { subjectAsset } : undefined;
 			if (exact && productId) {
 				setPosterGenStage("generating_scene");
 				const scene = await buildExactSceneOnlyPrompt(productId, prompt);
