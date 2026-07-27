@@ -314,7 +314,7 @@ def test_cutout_preserves_cream_cartouche_label(tmp_path, monkeypatch):
     assert len(colors) >= 8, f"label collapsed to mosaic blocks uniq={len(colors)}"
 
 
-def test_prepare_layer_uses_cutout_v11_cache_key(tmp_path, monkeypatch):
+def test_prepare_layer_uses_cutout_v13_cache_key(tmp_path, monkeypatch):
     from agent.services import exact_product_compositor_service as mod
     from PIL import Image, ImageDraw
 
@@ -356,7 +356,7 @@ def test_prepare_layer_uses_cutout_v11_cache_key(tmp_path, monkeypatch):
         {"w": 400, "h": 800},
     )
     assert layer
-    assert "_cutout_v11.png" in layer["asset_ref"]
+    assert "_cutout_v13.png" in layer["asset_ref"]
 
 
 def test_trim_background_edge_fringe_removes_wall_halo():
@@ -484,3 +484,48 @@ def test_solidify_neck_ignores_lower_red_label_ink():
     out = _solidify_neck_band(im)
     # base of body must stay teal, not flooded with synthetic green fill
     assert out.getpixel((40, 170))[:3] == (40, 130, 140)
+
+
+def test_mwcb_cutout_neck_and_right_edge_free_of_pink_wall_fringe():
+    """MWCB canonical cutout must not contain pink studio wall pixels in neck or right edge."""
+    from pathlib import Path
+    from PIL import Image
+    import numpy as np
+    from agent.services.exact_product_compositor_service import prepare_layer
+
+    canonical_src = Path(
+        r"C:\Users\USER\Desktop\Claude Cowork Bosmax Agents- Images database\02-Product\02-Minyak Cap Burung\MWTCB.jpg"
+    )
+    if not canonical_src.exists():
+        return
+    product = {
+        "product_display_name": "Minyak Warisan Cap Burung 25ml",
+        "product_schema_key": "MWCB_25ML_CAP_BURUNG",
+    }
+    layer = prepare_layer(
+        product,
+        {"x": 28.0, "y": 22.0, "w": 44.0, "h": 52.0},
+        {"w": 1080, "h": 1920},
+    )
+    cutout_path = Path(layer["asset_ref"])
+    assert cutout_path.exists()
+    cut = Image.open(cutout_path)
+    c_arr = np.array(cut)
+    w, h = cut.size
+    alpha = c_arr[:, :, 3]
+
+    # Check for pink studio wall edge fringe (R >= 215, G >= 110, B >= 110, R - G >= 45 on silhouette boundary)
+    pink_edge_wall_count = 0
+    for y in range(h):
+        xs = np.where(alpha[y, :] >= 200)[0]
+        if len(xs) == 0:
+            continue
+        for x in xs:
+            dist = min(x - xs[0], xs[-1] - x)
+            if dist > 2:
+                continue
+            r, g, b = c_arr[y, x][:3]
+            if r >= 215 and g >= 110 and b >= 110 and (int(r) - int(g)) >= 45:
+                pink_edge_wall_count += 1
+
+    assert pink_edge_wall_count <= 5, f"Found {pink_edge_wall_count} pink wall fringe pixels on cutout edge"

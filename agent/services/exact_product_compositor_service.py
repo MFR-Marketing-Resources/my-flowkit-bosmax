@@ -223,6 +223,12 @@ def _is_soft_bg_rgb(r: int, g: int, b: int) -> bool:
         return True
     if lum >= 170 and chroma <= 55:
         return True
+    # Warm/red-lit studio wall plaster (MWTCB studio wall lighting behind glass, right edge, & above cap)
+    if lum >= 130 and chroma <= 95 and r >= 130 and g >= 100 and b >= 100:
+        if abs(r - g) <= 95 and abs(r - b) <= 95:
+            # Exclude plastic red cap (g <= 90 or b <= 90)
+            if g >= 100 and b >= 100:
+                return True
     return False
 
 
@@ -486,9 +492,10 @@ def _trim_background_edge_fringe(image: Image.Image, passes: int = 4) -> Image.I
         # wall / floor neutrals and warm plaster (incl. pinkish MWTCB wall)
         if lum >= 125 and chroma <= 55:
             return True
-        if lum >= 135 and abs(r - g) <= 35 and chroma <= 65:
-            return True
-        if lum >= 150 and chroma <= 70:
+        if lum >= 130 and abs(r - g) <= 95 and chroma <= 95:
+            if g >= 100 and b >= 100:
+                return True
+        if lum >= 150 and chroma <= 80:
             return True
         return False
 
@@ -1089,7 +1096,7 @@ def _build_canonical_cutout(source: Path) -> Image.Image:
             and g >= 140
             and b >= 100
             and (r - b) >= 15
-            and (r - g) >= -5
+            and -5 <= (r - g) <= 35
             and ch <= 95
         ):
             return True
@@ -1377,7 +1384,7 @@ def prepare_layer(
     out_cutout_dir = OUTPUT_DIR / "exact-product-cutouts"
     out_cutout_dir.mkdir(parents=True, exist_ok=True)
     # v2: cream-safe protect + hole-only fill (no label median mosaic)
-    cutout = cutout_dir / f"{expected}_cutout_v11.png"
+    cutout = cutout_dir / f"{expected}_cutout_v13.png"
     if not cutout.exists():
         image = _build_canonical_cutout(source)
         image.save(cutout)
