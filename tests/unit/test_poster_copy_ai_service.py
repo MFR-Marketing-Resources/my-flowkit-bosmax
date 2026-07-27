@@ -64,6 +64,34 @@ async def test_directions_fallback_is_safe_and_poster_native(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_provider_failure_uses_neutral_fallback_without_optional_grounding(monkeypatch):
+    """An unavailable AI provider cannot strand the browser copy step."""
+    pid = await _seed_product()
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: True)
+
+    def failed_provider(*_args, **_kwargs):
+        raise svc.ai_provider.AICopyProviderError("AI_COPY_ASSIST_CALL_FAILED")
+
+    original_grounding = svc.resolve_copy_grounding
+    grounding_calls = 0
+
+    async def counted_grounding(product):
+        nonlocal grounding_calls
+        grounding_calls += 1
+        return await original_grounding(product)
+
+    monkeypatch.setattr(svc.ai_provider, "complete_json", failed_provider)
+    monkeypatch.setattr(svc, "resolve_copy_grounding", counted_grounding)
+
+    out = await svc.generate_directions(pid, "PRODUCT_HERO", "Product quality")
+
+    assert len(out["directions"]) == 3
+    assert "AI directions unavailable: AI_COPY_ASSIST_CALL_FAILED" in out["warnings"]
+    assert all(d["field_provenance"]["cta"] == "FALLBACK_TEMPLATE" for d in out["directions"])
+    assert grounding_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_ai_directions_are_parsed_gated_and_stamped(monkeypatch):
     pid = await _seed_product()
     monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: True)
