@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ImgAssetLane } from "../api/imgFactory";
 import type { Product } from "../types";
 import {
+	buildFastlaneGenerationRequest,
 	buildImgGenerationRequest,
 	resolveGenerationInputs,
 	resolveProductReferenceAsset,
@@ -119,5 +120,24 @@ describe("SCALE-07: IMG Cockpit delivers the product visual reference", () => {
 		expect(asset?.localFilePath).toBe("/cache/a.png");
 		expect(resolveProductReferenceAsset(null)).toBeNull();
 		expect(resolveProductReferenceAsset(product({}))).toBeNull();
+	});
+
+	it("buildFastlaneGenerationRequest excludes product mediaId from image_media_ids while preserving avatar/scene/style", () => {
+		const req = buildFastlaneGenerationRequest({
+			prompt: "bedroom vanity prompt",
+			resolvedRefsPayload: {
+				productAsset: { mediaId: "media-prod-111" },
+				characterAsset: { mediaId: "media-char-222" },
+				sceneAsset: { mediaId: "media-scene-333" },
+			},
+			groundedProdAsset: { mediaId: "media-prod-111", localFilePath: "/path/mwcb.jpg" },
+			aspect: "9:16",
+			quantity: 1,
+			imageModel: "nano",
+		});
+
+		expect(req.image_media_ids).toEqual(["media-char-222", "media-scene-333"]);
+		expect(req.image_media_ids).not.toContain("media-prod-111");
+		expect((req.refs as Record<string, { mediaId?: string }>).productAsset.mediaId).toBe("media-prod-111");
 	});
 });

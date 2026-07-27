@@ -204,3 +204,36 @@ export function buildImgGenerationRequest(input: {
 		refs: Object.keys(refs).length > 0 ? refs : undefined,
 	};
 }
+
+/**
+ * Assemble the EXACT request body ImgFastlanePage sends to POST /api/flow/generate.
+ * Enforces single product reference authority via refs.productAsset; product media ID is excluded
+ * from image_media_ids.
+ */
+export function buildFastlaneGenerationRequest(input: {
+	prompt: string;
+	resolvedRefsPayload: Record<string, { mediaId?: string | null; downloadUrl?: string | null; localFilePath?: string | null }>;
+	groundedProdAsset?: { mediaId?: string | null; downloadUrl?: string | null; localFilePath?: string | null } | null;
+	aspect: string;
+	quantity: number;
+	imageModel?: string;
+}): StartImgGenerationInput {
+	const { prompt, resolvedRefsPayload, groundedProdAsset, aspect, quantity, imageModel } = input;
+	const refs: Record<string, unknown> = { ...resolvedRefsPayload };
+	if (groundedProdAsset) {
+		refs.productAsset = groundedProdAsset;
+	}
+	const mediaIds = Object.entries(resolvedRefsPayload)
+		.filter(([key]) => key !== "productAsset")
+		.map(([, asset]) => asset.mediaId)
+		.filter((id): id is string => Boolean(id));
+
+	return {
+		prompt,
+		image_media_ids: mediaIds,
+		aspect,
+		count: quantity,
+		image_model: imageModel,
+		refs: Object.keys(refs).length > 0 ? refs : undefined,
+	};
+}

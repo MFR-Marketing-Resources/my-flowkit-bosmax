@@ -31,6 +31,7 @@ import ApproveAssetModal from "../components/creative-library/ApproveAssetModal"
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { CreativeAsset, Product } from "../types";
 import {
+	buildFastlaneGenerationRequest,
 	canApprove,
 	isReusableAsset,
 	resolveGenerationInputs,
@@ -579,10 +580,7 @@ export default function ImgFastlanePage() {
 			const isProductOnly = !hasAvatar && Boolean(framePresetId?.includes("PRODUCT_ONLY") || framePresetId?.includes("HERO"));
 
 			let scenePrompt = prompt;
-			let refs = { ...resolvedRefsPayload };
-			let mediaIds = Object.values(resolvedRefsPayload)
-				.map((asset) => asset.mediaId)
-				.filter((id): id is string => Boolean(id));
+			let groundedProdAsset: ReturnType<typeof buildProviderProductReferenceAsset> = null;
 			let useExactComposite = false;
 
 			if (productId) {
@@ -597,25 +595,22 @@ export default function ImgFastlanePage() {
 					useExactComposite = true;
 					const scene = await buildExactSceneOnlyPrompt(productId, prompt);
 					scenePrompt = scene.prompt;
-					refs = {};
-					mediaIds = [];
 				} else {
 					scenePrompt = grounded.full_prompt;
-					const prodAsset = buildProviderProductReferenceAsset(grounded);
-					if (prodAsset) {
-						refs.productAsset = prodAsset;
-					}
+					groundedProdAsset = buildProviderProductReferenceAsset(grounded);
 				}
 			}
 
-			const { job_id } = await startImgGeneration({
+			const genInput = buildFastlaneGenerationRequest({
 				prompt: scenePrompt,
-				image_media_ids: mediaIds,
-				refs,
+				resolvedRefsPayload: useExactComposite ? {} : resolvedRefsPayload,
+				groundedProdAsset: useExactComposite ? null : groundedProdAsset,
 				aspect,
-				count: quantity,
-				image_model: imageModel,
+				quantity,
+				imageModel,
 			});
+
+			const { job_id } = await startImgGeneration(genInput);
 			const job = await pollImgGenerationJob(job_id);
 			setGenJob(job);
 			if (job.status === "DONE" && job.media_id) {

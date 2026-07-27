@@ -33,6 +33,8 @@
       "product_id": "BOSMAX_SERUM_5ML",
       "product_name": "BOSMAX Serum 5ML / BOSMAX HERBS Herbal Oil Roll On",
       "product_lane": "PRODUCT_ONLY",
+      "engine_identity_anchor": "Preserve the exact 5ml matte-black glass bottle, black cap, and white typography label.",
+      "engine_scale_anchor": "Keep it naturally compact at pocket lip-balm scale.",
       "product_truth_ref": "Tiny slim matte-black cylindrical roll-on bottle, glossy black cap, white BOSMAX HERBS wordmark, leaf icon, and Herbal Oil Roll On label.",
       "images": [
         {
@@ -100,6 +102,8 @@
       "legacy_aliases": ["MWTCB_25ML_CAP_BURUNG"],
       "product_name": "Minyak Warisan Cap Burung 25ml",
       "product_lane": "PRODUCT_ONLY",
+      "engine_identity_anchor": "Preserve the exact compact 25ml green-glass bottle, red ribbed cap, and physical printed label.",
+      "engine_scale_anchor": "Keep it naturally small in an adult hand at palm scale.",
       "product_truth_ref": "Verified physical package truth: a small 25ml transparent green-glass herbal-oil bottle in the pocket-size minyak-angin family, a flat traditional medicated-oil bottle with a compact rectangular flat-front glass herbal-oil body and broad flat front; moderately tall relative to its width while still pocket-sized; nearly vertical sides; softly rounded lower corners; low rounded shoulders; a short clear-glass neck; a thick clear glass base; green oil inside; and a short red ribbed screw cap. The bottle must read as compact and rectangular, never extremely squat, tall and narrow, cylindrical, round-bodied, long-necked, perfume-like, syrup-like, supplement-like, roll-on-like, or cosmetic. The physical bottle label does not print TOK anywhere; TOK must never be inserted. This structured package truth is derived from the canonical physical photograph and outranks any stale AI-generated photoshoot or historical reference that shows a different geometry, a flying bird, weak teal coverage, garbled text, or TOK on the label.",
       "canonical_product_photo": {
         "source_path": "C:\\Users\\USER\\Desktop\\Claude Cowork Bosmax Agents- Images database\\02-Product\\02-Minyak Cap Burung\\MWTCB.jpg",

@@ -483,19 +483,16 @@ def build_concise_engine_product_contract(
     )
     name_clean = _clean_display_name(_clean(raw_name))
 
-    matched_id = entry.get("product_id") if entry else None
-    if matched_id == "MWCB_25ML_CAP_BURUNG":
-        contract = (
-            f"Use the attached image as the sole product reference for {name_clean}. "
-            "Preserve the exact compact 25ml green-glass bottle, red ribbed cap, and physical printed label. "
-            "Keep it naturally small in an adult hand at palm scale. "
-            "Do not enlarge, redesign, duplicate, or relabel it."
+    if entry:
+        identity_anchor = _clean(entry.get("engine_identity_anchor")) or (
+            "Preserve the exact packaging family, silhouette, cap style, colors, and physical printed label."
         )
-    elif entry:
+        scale_anchor = _clean(entry.get("engine_scale_anchor")) or (
+            "Keep it naturally proportioned at true real-world scale relative to hands and surroundings."
+        )
         contract = (
             f"Use the attached image as the sole product reference for {name_clean}. "
-            "Preserve the exact packaging family, silhouette, cap style, colors, and physical printed label. "
-            "Keep it naturally proportioned at true real-world scale relative to hands and surroundings. "
+            f"{identity_anchor} {scale_anchor} "
             "Do not enlarge, redesign, duplicate, or relabel it."
         )
     else:
