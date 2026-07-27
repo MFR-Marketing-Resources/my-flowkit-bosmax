@@ -345,7 +345,10 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			const res = await recommendPosterAngles({
 				product_id: product.id,
 				archetype: goalArchetype,
-				refresh_ai: true,
+				// The guided path must remain immediately usable with the curated,
+				// deterministic recipe angles. AI enrichment is optional and can
+				// otherwise hold this zero-spend step open on provider latency.
+				refresh_ai: false,
 			});
 			setAngles(res.angles ?? []);
 		} catch (e) {
