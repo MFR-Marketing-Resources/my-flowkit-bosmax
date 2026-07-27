@@ -85,7 +85,7 @@ describe("CopyComponentsPanel", () => {
 		fireEvent.click(await screen.findByTestId("cc-compose"));
 		await waitFor(() =>
 			expect(mockedCompose).toHaveBeenCalledWith(
-				expect.objectContaining({ product_id: "p1", count: 50 }),
+				expect.objectContaining({ product_id: "p1", count: 500 }),
 			),
 		);
 		await waitFor(() => expect(onComposed).toHaveBeenCalled());
@@ -145,5 +145,30 @@ describe("CopyComponentsPanel", () => {
 		primeLoad({ total_combinations: 0, component_count: 0, per_angle: [] });
 		render(<CopyComponentsPanel productId="p1" onComposed={vi.fn()} />);
 		expect(await screen.findByTestId("cc-compose")).toBeDisabled();
+	});
+
+	it("compose count auto-defaults to the composable capacity (not hardcoded)", async () => {
+		primeLoad(); // total_combinations 2304 -> min(500, 2304) = 500
+		render(<CopyComponentsPanel productId="p1" onComposed={vi.fn()} />);
+		expect(await screen.findByTestId("cc-compose-count")).toHaveValue(500);
+	});
+
+	it("author continues past a failed slot instead of aborting the batch", async () => {
+		primeLoad();
+		// The first slot fails on BOTH its initial call and its retry; every other
+		// slot succeeds. 2 angles x 4 types = 8 slots must ALL still be attempted.
+		let calls = 0;
+		mockedAuthor.mockImplementation(async () => {
+			calls += 1;
+			if (calls <= 2) throw new Error("502 provider hiccup");
+			return { created_count: 4 };
+		});
+		render(<CopyComponentsPanel productId="p1" onComposed={vi.fn()} />);
+		fireEvent.click(await screen.findByTestId("cc-author"));
+		fireEvent.click(await screen.findByRole("button", { name: /Yes, author/i }));
+		await waitFor(() =>
+			expect(mockedAuthor.mock.calls.length).toBeGreaterThanOrEqual(8),
+		);
+		expect(await screen.findByTestId("cc-error")).toHaveTextContent(/slot\(s\) failed/i);
 	});
 });

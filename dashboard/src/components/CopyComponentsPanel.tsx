@@ -1,5 +1,5 @@
 import { Boxes } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	addAngles,
 	approveCopyComponent,
@@ -49,6 +49,8 @@ export default function CopyComponentsPanel({
 	const [error, setError] = useState("");
 	const [success, setSuccess] = useState("");
 	const [confirmAuthorOpen, setConfirmAuthorOpen] = useState(false);
+	// Once the operator types a compose count we stop auto-syncing it to capacity.
+	const composeTouched = useRef(false);
 
 	const load = useCallback(async () => {
 		try {
@@ -57,6 +59,13 @@ export default function CopyComponentsPanel({
 				listCopyComponents(productId).catch(() => ({ items: [] as { status: string }[] })),
 			]);
 			setCap(c);
+			// Default the compose count to the FULL composable capacity (auto — not a
+			// hardcoded number) unless the operator has typed their own value.
+			if (!composeTouched.current) {
+				setComposeCount(
+					Math.max(1, Math.min(500, c.total_combinations || DEFAULT_COMPOSE)),
+				);
+			}
 			setReviewCount(
 				(pool.items ?? []).filter((i) => i.status === COMPONENT_STATUS_REVIEW).length,
 			);
@@ -153,13 +162,18 @@ export default function CopyComponentsPanel({
 		const per = Math.max(2, Math.min(12, Math.floor(perSlot) || DEFAULT_PER_SLOT));
 		let authored = 0;
 		let done = 0;
-		try {
-			for (const angle of angles) {
-				for (const type of COMPONENT_TYPES) {
-					done += 1;
-					setProgress(
-						`Authoring ${done}/${totalSlots} — ${COMPONENT_TYPE_LABEL[type]} · ${angle.angle_label || "angle"}`,
-					);
+		let failedSlots = 0;
+		let notConfigured = false;
+		// Resilient loop: one failed slot must NOT strand the other angles. Each
+		// (angle × type) slot is isolated — retried once on a transient error, then
+		// skipped so every registered angle still gets its components.
+		for (const angle of angles) {
+			for (const type of COMPONENT_TYPES) {
+				done += 1;
+				setProgress(
+					`Authoring ${done}/${totalSlots} — ${COMPONENT_TYPE_LABEL[type]} · ${angle.angle_label || "angle"}`,
+				);
+				try {
 					const r = await authorCopyComponents({
 						product_id: productId,
 						angle_key: angle.angle_key,
@@ -167,22 +181,45 @@ export default function CopyComponentsPanel({
 						count: per,
 					});
 					authored += r.created_count ?? 0;
+				} catch (e) {
+					const msg = e instanceof Error ? e.message : "";
+					if (isNotConfigured(msg)) {
+						notConfigured = true;
+						break; // provider config won't self-heal mid-run
+					}
+					try {
+						const retry = await authorCopyComponents({
+							product_id: productId,
+							angle_key: angle.angle_key,
+							component_type: type,
+							count: per,
+						});
+						authored += retry.created_count ?? 0;
+					} catch {
+						failedSlots += 1; // record + continue to the next slot
+					}
 				}
 			}
+			if (notConfigured) break;
+		}
+		setProgress("");
+		setBusy(null);
+		await load();
+		if (notConfigured) {
+			setError(
+				"The AI lane (DeepSeek) is not configured. Set it up in Cockpit Settings / AI Providers first.",
+			);
+		} else if (failedSlots > 0) {
+			setError(
+				`${failedSlots} slot(s) failed (likely a transient AI hiccup) and were skipped — re-run Author to fill the gaps.`,
+			);
+			setSuccess(
+				`${authored} components generated across ${angles.length} angles (partial). Approve below, then re-run Author to complete the rest.`,
+			);
+		} else {
 			setSuccess(
 				`${authored} components generated across ${angles.length} angles. Approve the components below, then Compose (free).`,
 			);
-		} catch (e) {
-			const msg = e instanceof Error ? e.message : "Failed to author components.";
-			setError(
-				isNotConfigured(msg)
-					? "The AI lane (DeepSeek) is not configured. Set it up in Cockpit Settings / AI Providers first."
-					: `Authoring stopped (${authored} already generated): ${msg}`,
-			);
-		} finally {
-			setProgress("");
-			setBusy(null);
-			await load();
 		}
 	};
 
@@ -355,7 +392,10 @@ export default function CopyComponentsPanel({
 						min={1}
 						max={500}
 						value={composeCount}
-						onChange={(e) => setComposeCount(Number(e.target.value))}
+						onChange={(e) => {
+								composeTouched.current = true;
+								setComposeCount(Number(e.target.value));
+							}}
 						className={inputCls}
 						data-testid="cc-compose-count"
 						aria-label="Number of scripts to compose"
