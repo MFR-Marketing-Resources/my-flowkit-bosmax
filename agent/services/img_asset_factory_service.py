@@ -63,7 +63,7 @@ IMG_FASTLANE_PRESETS: list[dict[str, object]] = [
         "route": "FRAMES",
         "lane_id": "AVATAR_PRODUCT_COMPOSITE",
         "description": "Database-driven composite frame using product truth plus avatar identity.",
-        "required_inputs": ["Database product", "Avatar reference", "Style reference"],
+        "required_inputs": ["Database product"],
         "output_spec": _FASTLANE_OUTPUT_SPEC,
         "tags": ["generic", "frames"],
         "negative_rules": [
@@ -78,12 +78,7 @@ IMG_FASTLANE_PRESETS: list[dict[str, object]] = [
         "route": "FRAMES",
         "lane_id": "AVATAR_PRODUCT_SCENE_COMPOSITE",
         "description": "Database-driven frame route with avatar, product truth, and scene context.",
-        "required_inputs": [
-            "Database product",
-            "Avatar reference",
-            "Style reference",
-            "Scene reference",
-        ],
+        "required_inputs": ["Database product"],
         "output_spec": _FASTLANE_OUTPUT_SPEC,
         "tags": ["generic", "frames", "scene"],
         "negative_rules": [
@@ -354,11 +349,6 @@ def _build_engine_prompt(
     refs = [r for r in reference_map if r]
     if refs:
         blocks.append("REFERENCES:\n" + "\n".join(f"- {r}" for r in refs))
-    # product lock lines are self-labeled ("PRODUCT IDENTITY LOCK: ...") full
-    # sentences, so they stand as their own paragraph without an extra header.
-    lock_lines = [line for line in product_lock_lines if line]
-    if lock_lines:
-        blocks.append("\n".join(lock_lines))
     # Drop operator-facing workflow meta ("System composes the prompt ...") — it is
     # not visual direction and only clutters a portable cross-engine brief.
     comp = [d for d in directives if d and "system composes the prompt" not in d.lower()]

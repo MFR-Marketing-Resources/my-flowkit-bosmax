@@ -19,6 +19,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sqlite3
 import urllib.request
 from dataclasses import asdict, dataclass
@@ -433,6 +434,60 @@ def resolve_product_visual_grounding(
     )
 
 
+def clean_provider_prompt_text(raw_prompt: str) -> str:
+    """Sanitize base prompt to remove metadata labels, category titles, and legacy lock headers."""
+    if not raw_prompt:
+        return ""
+
+    lines = raw_prompt.splitlines()
+    cleaned_lines: list[str] = []
+    strip_prefix_patterns = (
+        "category title:",
+        "category:",
+        "workflow title:",
+        "workflow:",
+        "template preset:",
+        "preset:",
+        "fastlane route:",
+        "route:",
+        "target lane:",
+        "lane:",
+        "output spec:",
+        "spec:",
+        "target ingredient role:",
+        "reference map:",
+        "product truth lock:",
+        "product identity lock:",
+        "product geometry lock:",
+        "product scale lock:",
+        "label lock:",
+        "handling lock:",
+        "product negative morph rules:",
+        "product negative rules:",
+        "product locks:",
+        "composition directives:",
+        "governed creative direction:",
+        "negative rules:",
+        "avoid:",
+        "references:",
+        "[product visual grounding locks]",
+        "[product contract]",
+    )
+
+    for line in lines:
+        stripped = line.strip()
+        lower = stripped.lower()
+        if any(lower.startswith(prefix) for prefix in strip_prefix_patterns):
+            continue
+        if lower.startswith("- product identity lock:") or lower.startswith("- product geometry lock:"):
+            continue
+        cleaned_lines.append(line)
+
+    result = "\n".join(cleaned_lines).strip()
+    result = re.sub(r"\n{3,}", "\n\n", result)
+    return result
+
+
 def get_grounded_generation_payload(
     product_id: str,
     base_prompt: str,
@@ -455,7 +510,8 @@ def get_grounded_generation_payload(
     product_row = get_product_by_id(product_id) or {"id": product_id, "name": bundle.product_display_name}
     concise_contract = build_concise_engine_product_contract(product_row, is_clean_frame=not is_poster)
 
-    full_prompt = f"{base_prompt.strip()}\n\n[PRODUCT CONTRACT]\n{concise_contract}" if base_prompt else concise_contract
+    cleaned_base = clean_provider_prompt_text(base_prompt)
+    full_prompt = f"{cleaned_base}\n\n[PRODUCT CONTRACT]\n{concise_contract}" if cleaned_base else concise_contract
 
     ref = bundle.product_reference or {}
     product_reference_asset = {

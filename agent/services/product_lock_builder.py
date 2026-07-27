@@ -463,14 +463,14 @@ def build_concise_engine_product_contract(
     *,
     is_clean_frame: bool = True,
 ) -> str:
-    """Compile ONE concise model-facing product contract paragraph.
+    """Compile ONE concise model-facing product contract paragraph (60-110 words).
 
-    Communicates minimum required truths without repeating structured lock families:
-    1. Use attached image as sole product identity & packaging reference.
-    2. Preserve packaging family, silhouette, cap, colour, and physical label.
-    3. State short real-world scale anchor.
-    4. Short no-redesign / no-duplicate rule.
-    5. Short no-added-text rule for clean-frame lanes.
+    Communicates minimum required truths without schema audit prose or stale narratives:
+    1. Use attached image as sole product reference for identity.
+    2. Short packaging identity sentence.
+    3. Short scale anchor sentence.
+    4. Short no-redesign / no-duplicate sentence.
+    5. Short clean-frame sentence.
     """
     entry = resolve_schema_entry(product or {})
     raw_name = (
@@ -483,21 +483,27 @@ def build_concise_engine_product_contract(
     )
     name_clean = _clean_display_name(_clean(raw_name))
 
-    if entry:
-        truth_ref = _clean(entry.get("product_truth_ref"))
-        scale = _clean(entry.get("scale_lock")) or "compact palm-sized"
-        contract = (
-            f"Use the attached image as the sole product identity and packaging reference for {name_clean} ({truth_ref}). "
-            f"Preserve the exact packaging family, bottle silhouette, cap style, colors, and physical printed label. "
-            f"{scale}. Keep it naturally proportioned when held by a hand or set on a surface. "
-            f"Do not enlarge, redesign, recolour, duplicate, or relabel it."
-        )
-    else:
-        scale_line = _fallback_scale_line(product or {})
+    matched_id = entry.get("product_id") if entry else None
+    if matched_id == "MWCB_25ML_CAP_BURUNG":
         contract = (
             f"Use the attached image as the sole product reference for {name_clean}. "
-            f"Preserve its exact packaging identity, shape, cap, color, and physical printed label. "
-            f"{scale_line} Do not enlarge, redesign, duplicate, or relabel it."
+            "Preserve the exact compact 25ml green-glass bottle, red ribbed cap, and physical printed label. "
+            "Keep it naturally small in an adult hand at palm scale. "
+            "Do not enlarge, redesign, duplicate, or relabel it."
+        )
+    elif entry:
+        contract = (
+            f"Use the attached image as the sole product reference for {name_clean}. "
+            "Preserve the exact packaging family, silhouette, cap style, colors, and physical printed label. "
+            "Keep it naturally proportioned at true real-world scale relative to hands and surroundings. "
+            "Do not enlarge, redesign, duplicate, or relabel it."
+        )
+    else:
+        contract = (
+            f"Use the attached image as the sole product reference for {name_clean}. "
+            "Preserve its exact packaging identity, shape, cap, color, and physical printed label. "
+            "Keep it naturally proportioned at true real-world scale without enlargement. "
+            "Do not enlarge, redesign, duplicate, or relabel it."
         )
 
     if is_clean_frame:

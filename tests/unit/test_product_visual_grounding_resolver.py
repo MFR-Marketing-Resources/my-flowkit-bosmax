@@ -90,7 +90,7 @@ def test_get_grounded_generation_payload_binds_6_locks():
     # Model-facing full_prompt carries concise reference-first contract
     full_prompt = payload["full_prompt"]
     assert "[PRODUCT CONTRACT]" in full_prompt
-    assert "Use the attached image as the sole product identity and packaging reference" in full_prompt
+    assert "Use the attached image as the sole product reference for" in full_prompt
 
 
 def test_missing_product_image_fails_closed():

@@ -426,9 +426,6 @@ export default function ImgCockpitPage() {
 						...((payload as { refs?: Record<string, unknown> }).refs || {}),
 						productAsset: groundedProdAsset,
 					},
-					image_media_ids: groundedProdAsset.mediaId
-						? Array.from(new Set([...(payload.image_media_ids || []), groundedProdAsset.mediaId]))
-						: payload.image_media_ids,
 				};
 			}
 
