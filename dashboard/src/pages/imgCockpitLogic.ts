@@ -112,13 +112,6 @@ export function resolveGenerationInputs(
 	},
 ): ResolvedGeneration {
 	const all: GenerationRef[] = [];
-	if (refs.product) {
-		all.push({
-			label: refs.product.product_display_name || refs.product.id,
-			role: "PRODUCT",
-			mediaId: refs.product.media_id ?? null,
-		});
-	}
 	if (refs.character) {
 		all.push({
 			label: refs.character.display_name,

@@ -604,9 +604,6 @@ export default function ImgFastlanePage() {
 					const prodAsset = buildProviderProductReferenceAsset(grounded);
 					if (prodAsset) {
 						refs.productAsset = prodAsset;
-						if (prodAsset.mediaId && !mediaIds.includes(prodAsset.mediaId)) {
-							mediaIds.push(prodAsset.mediaId);
-						}
 					}
 				}
 			}
