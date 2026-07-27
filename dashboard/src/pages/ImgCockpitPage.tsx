@@ -21,7 +21,7 @@ import {
 	fetchGroundedPayload,
 	STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE,
 } from "../api/productVisualGrounding";
-import { fetchProductCatalog } from "../api/products";
+import { fetchProductCatalog, fetchProductDetail } from "../api/products";
 import { compileWorkspacePromptPreview } from "../api/workspacePackages";
 import ApproveAssetModal from "../components/creative-library/ApproveAssetModal";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
@@ -239,6 +239,21 @@ export default function ImgCockpitPage() {
 		window.addEventListener("focus", onFocus);
 		return () => window.removeEventListener("focus", onFocus);
 	}, [loadReferences]);
+
+	const handleSelectProduct = useCallback((product: Product | null) => {
+		if (!product) {
+			setSelectedProduct(null);
+			return;
+		}
+		// The picker is a catalog projection. Hydrate the selected row from the
+		// authority endpoint before the IMG resolver evaluates visual grounding.
+		setSelectedProduct(product);
+		void fetchProductDetail(product.id)
+			.then(setSelectedProduct)
+			.catch(() =>
+				setError("Failed to hydrate the selected product reference."),
+			);
+	}, []);
 
 	const lane = useMemo(
 		() => lanes.find((l) => l.lane_id === laneId) ?? null,
@@ -639,7 +654,7 @@ export default function ImgCockpitPage() {
 				<SearchableProductSelect
 					products={products}
 					selectedProduct={selectedProduct}
-					onSelect={setSelectedProduct}
+					onSelect={handleSelectProduct}
 				/>
 				{productMissing ? (
 					<p className="text-[10px] text-amber-300/80">
