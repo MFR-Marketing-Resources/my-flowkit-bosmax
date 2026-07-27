@@ -162,10 +162,12 @@ function renderSurfaceAuditCard(
 			</div>
 		);
 	}
-	const pendingCount = audit.review_status_counts.PENDING_REVIEW ?? 0;
+	const reviewStatusCounts = audit.review_status_counts ?? {};
+	const excludedByReason = audit.excluded_by_reason ?? {};
+	const pendingCount = reviewStatusCounts.PENDING_REVIEW ?? 0;
 	const chips = BINDING_AUDIT_REASON_LABELS.filter((reason) => {
 		if (reason.key === "WRONG_PRODUCT_SCOPED") return otherProductCount > 0;
-		return (audit.excluded_by_reason[reason.key] ?? 0) > 0;
+		return (excludedByReason[reason.key] ?? 0) > 0;
 	});
 	const summary =
 		audit.library_total_count === 0
