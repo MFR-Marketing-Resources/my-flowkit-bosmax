@@ -265,6 +265,7 @@ import {
 	generatePosterDirections,
 	newPosterCopySetVersion,
 	patchPosterCopySet,
+	recommendPosterAngles,
 	recommendPosterObjectives,
 	regeneratePosterField,
 	savePosterToLibrary,
@@ -412,6 +413,18 @@ describe("PosterGuidedShell", () => {
 		fireEvent.click(await screen.findByTestId("poster-save"));
 		await waitFor(() => expect(savePosterToLibrary).toHaveBeenCalled());
 		expect(await screen.findByTestId("poster-saved")).toBeInTheDocument();
+	});
+
+	it("loads deterministic curated angles without optional AI enrichment", async () => {
+		renderShell();
+		fireEvent.click(screen.getByTestId("pick-product"));
+		fireEvent.click(await screen.findByTestId("poster-goal-card-PRODUCT_HERO"));
+		await screen.findByTestId("poster-angle-card-0");
+		expect(recommendPosterAngles).toHaveBeenCalledWith({
+			product_id: "prod-1",
+			archetype: "PRODUCT_HERO",
+			refresh_ai: false,
+		});
 	});
 
 	it("editing approved copy creates a new version", async () => {
