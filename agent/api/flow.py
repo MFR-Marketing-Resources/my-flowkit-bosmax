@@ -943,6 +943,36 @@ async def get_product_visual_grounding_endpoint(product_id: str):
         raise HTTPException(500, f"Error resolving visual grounding: {str(e)}")
 
 
+class GroundedPayloadRequest(BaseModel):
+    prompt: str = ""
+    lane_id: str | None = None
+    has_avatar: bool = False
+    is_product_only: bool = False
+    is_poster: bool = False
+
+
+@router.post("/product/{product_id}/grounded-payload")
+async def get_grounded_payload_endpoint(product_id: str, body: GroundedPayloadRequest):
+    from agent.services.product_visual_grounding_resolver import (
+        get_grounded_generation_payload,
+        ProductVisualReferenceRequiredError,
+    )
+    try:
+        payload = get_grounded_generation_payload(
+            product_id,
+            body.prompt,
+            lane_id=body.lane_id,
+            has_avatar=body.has_avatar,
+            is_product_only=body.is_product_only,
+            is_poster=body.is_poster,
+        )
+        return payload
+    except ProductVisualReferenceRequiredError as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Error building grounded payload: {str(e)}")
+
+
 
 ARTIFACT_RETENTION_HOURS = 48  # retention law: results auto-delete after 48h
 

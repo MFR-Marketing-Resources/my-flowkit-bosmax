@@ -21,6 +21,10 @@ import {
 	resolveExactGenerationGate,
 } from "../api/exactProductOutput";
 import { useImageGenSettings } from "../api/imageGenSettings";
+import {
+	fetchGroundedPayload,
+	STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE,
+} from "../api/productVisualGrounding";
 import { fetchProductCatalog } from "../api/products";
 import ApproveAssetModal from "../components/creative-library/ApproveAssetModal";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
@@ -572,20 +576,41 @@ export default function ImgFastlanePage() {
 
 			const hasAvatar = Boolean(characterAssetId || sceneAssetId);
 			const isProductOnly = !hasAvatar && Boolean(framePresetId?.includes("PRODUCT_ONLY") || framePresetId?.includes("HERO"));
-			const useExactComposite = gate.mode === "exact" && isProductOnly && Boolean(productId);
 
 			let scenePrompt = prompt;
-			let refs = resolvedRefsPayload;
+			let refs = { ...resolvedRefsPayload };
 			let mediaIds = Object.values(resolvedRefsPayload)
 				.map((asset) => asset.mediaId)
 				.filter((id): id is string => Boolean(id));
+			let useExactComposite = false;
 
-			if (useExactComposite) {
-				// Strategy B: PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE
-				const scene = await buildExactSceneOnlyPrompt(productId, prompt);
-				scenePrompt = scene.prompt;
-				refs = {};
-				mediaIds = [];
+			if (productId) {
+				const grounded = await fetchGroundedPayload(productId, {
+					prompt,
+					lane_id: framePresetId,
+					has_avatar: hasAvatar,
+					is_product_only: isProductOnly,
+				});
+
+				if (grounded.selected_strategy === STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE && gate.mode === "exact") {
+					useExactComposite = true;
+					const scene = await buildExactSceneOnlyPrompt(productId, prompt);
+					scenePrompt = scene.prompt;
+					refs = {};
+					mediaIds = [];
+				} else {
+					scenePrompt = grounded.full_prompt;
+					if (grounded.product_reference) {
+						refs.productAsset = {
+							mediaId: grounded.product_reference.media_id ?? undefined,
+							localPath: grounded.product_reference.local_path ?? undefined,
+							url: grounded.product_reference.image_url ?? undefined,
+						};
+						if (grounded.product_reference.media_id && !mediaIds.includes(grounded.product_reference.media_id)) {
+							mediaIds.push(grounded.product_reference.media_id);
+						}
+					}
+				}
 			}
 
 			const { job_id } = await startImgGeneration({

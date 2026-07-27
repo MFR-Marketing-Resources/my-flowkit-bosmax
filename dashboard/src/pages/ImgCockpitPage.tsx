@@ -16,6 +16,10 @@ import {
 	resolveExactGenerationGate,
 } from "../api/exactProductOutput";
 import { useImageGenSettings } from "../api/imageGenSettings";
+import {
+	fetchGroundedPayload,
+	STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE,
+} from "../api/productVisualGrounding";
 import { fetchProductCatalog } from "../api/products";
 import { compileWorkspacePromptPreview } from "../api/workspacePackages";
 import ApproveAssetModal from "../components/creative-library/ApproveAssetModal";
@@ -374,15 +378,31 @@ export default function ImgCockpitPage() {
 			}
 
 			const isProductOnlyLane = lane?.lane_id === "PRODUCT_ONLY_HERO" || lane?.lane_id === "PRODUCT_ONLY";
-			const useExactComposite = gate.mode === "exact" && isProductOnlyLane && Boolean(productId);
+			const hasAvatar = Boolean(characterAssetId || sceneAssetId);
 
 			let scenePrompt = prompt;
-			if (useExactComposite && productId) {
-				const scene = await buildExactSceneOnlyPrompt(productId, prompt);
-				scenePrompt = scene.prompt;
+			let useExactComposite = false;
+			let groundedRefMediaId: string | null = null;
+
+			if (productId) {
+				const grounded = await fetchGroundedPayload(productId, {
+					prompt,
+					lane_id: lane?.lane_id,
+					has_avatar: hasAvatar,
+					is_product_only: isProductOnlyLane,
+				});
+
+				if (grounded.selected_strategy === STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE && gate.mode === "exact") {
+					useExactComposite = true;
+					const scene = await buildExactSceneOnlyPrompt(productId, prompt);
+					scenePrompt = scene.prompt;
+				} else {
+					scenePrompt = grounded.full_prompt;
+					groundedRefMediaId = grounded.product_reference?.media_id ?? null;
+				}
 			}
 
-			const payload = useExactComposite
+			let payload = useExactComposite
 				? {
 						prompt: scenePrompt,
 						aspect,
@@ -397,6 +417,13 @@ export default function ImgCockpitPage() {
 						count,
 						imageModel,
 				  });
+
+			if (!useExactComposite && groundedRefMediaId && !payload.image_media_ids?.includes(groundedRefMediaId)) {
+				payload = {
+					...payload,
+					image_media_ids: [...(payload.image_media_ids || []), groundedRefMediaId],
+				};
+			}
 
 			const { job_id } = await startImgGeneration(payload);
 			const job = await pollImgGenerationJob(job_id);
