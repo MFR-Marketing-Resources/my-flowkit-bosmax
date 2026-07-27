@@ -445,6 +445,7 @@ async def generate_directions(
     count = max(1, min(int(count or 3), 5))
     warnings: list[str] = []
     directions: list[dict[str, Any]] = []
+    ai_directions_unavailable = False
 
     if ai_provider.is_configured():
         try:
@@ -501,15 +502,19 @@ async def generate_directions(
                     break
         except ai_provider.AICopyProviderError as exc:
             warnings.append(f"AI directions unavailable: {exc.code or exc}")
+            ai_directions_unavailable = True
     else:
         warnings.append("AI provider not configured — deterministic fallback directions.")
 
     if len(directions) < count:
         fb_grounding = None
-        try:
-            fb_grounding = await resolve_copy_grounding(dict(product))
-        except Exception:
-            fb_grounding = None  # no approved intelligence → neutral, chipless fallback
+        # Provider failure must never block the zero-spend deterministic path.
+        # The fallback is deliberately neutral without optional grounding.
+        if not ai_directions_unavailable:
+            try:
+                fb_grounding = await resolve_copy_grounding(dict(product))
+            except Exception:
+                fb_grounding = None  # no approved intelligence → neutral, chipless fallback
         for fb in _fallback_directions(
             dict(product), contract, angle, language, fb_grounding
         ):
