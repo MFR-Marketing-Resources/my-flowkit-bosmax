@@ -106,3 +106,31 @@ export async function fetchGroundedPayload(
 		}
 	);
 }
+
+export interface CanonicalRefAsset {
+	mediaId?: string;
+	localFilePath?: string;
+	downloadUrl?: string;
+	fileName?: string;
+	semanticRole?: string;
+}
+
+export function buildProviderProductReferenceAsset(grounded: GroundedPayloadResponse): CanonicalRefAsset | null {
+	const ref = grounded.product_reference;
+	if (!ref) return null;
+	const mediaId = ref.media_id || undefined;
+	const localFilePath = ref.local_path || undefined;
+	const downloadUrl = ref.image_url || undefined;
+
+	if (!mediaId && !localFilePath && !downloadUrl) {
+		return null;
+	}
+
+	return {
+		mediaId,
+		localFilePath,
+		downloadUrl,
+		fileName: `${grounded.product_id}_reference.jpeg`,
+		semanticRole: "PRODUCT_REFERENCE",
+	};
+}

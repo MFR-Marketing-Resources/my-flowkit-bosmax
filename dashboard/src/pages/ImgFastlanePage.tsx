@@ -22,6 +22,7 @@ import {
 } from "../api/exactProductOutput";
 import { useImageGenSettings } from "../api/imageGenSettings";
 import {
+	buildProviderProductReferenceAsset,
 	fetchGroundedPayload,
 	STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE,
 } from "../api/productVisualGrounding";
@@ -600,14 +601,11 @@ export default function ImgFastlanePage() {
 					mediaIds = [];
 				} else {
 					scenePrompt = grounded.full_prompt;
-					if (grounded.product_reference) {
-						refs.productAsset = {
-							mediaId: grounded.product_reference.media_id ?? undefined,
-							localPath: grounded.product_reference.local_path ?? undefined,
-							url: grounded.product_reference.image_url ?? undefined,
-						};
-						if (grounded.product_reference.media_id && !mediaIds.includes(grounded.product_reference.media_id)) {
-							mediaIds.push(grounded.product_reference.media_id);
+					const prodAsset = buildProviderProductReferenceAsset(grounded);
+					if (prodAsset) {
+						refs.productAsset = prodAsset;
+						if (prodAsset.mediaId && !mediaIds.includes(prodAsset.mediaId)) {
+							mediaIds.push(prodAsset.mediaId);
 						}
 					}
 				}

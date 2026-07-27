@@ -19,7 +19,6 @@ import hashlib
 import json
 import logging
 import os
-import sqlite3
 import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -79,22 +78,15 @@ class ProductVisualGroundingBundle:
         return asdict(self)
 
 
-def _get_db_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
 def get_product_by_id(product_id: str) -> dict[str, Any] | None:
     if not product_id:
         return None
     try:
-        conn = _get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM product WHERE id = ? OR trigger_id = ?", (product_id, product_id))
-        row = cursor.fetchone()
-        conn.close()
-        return dict(row) if row else None
+        with get_db() as db:
+            cursor = db.cursor()
+            cursor.execute("SELECT * FROM product WHERE id = ? OR trigger_id = ?", (product_id, product_id))
+            row = cursor.fetchone()
+            return dict(row) if row else None
     except Exception:
         return None
 
@@ -156,27 +148,26 @@ def _materialize_image_url(image_url: str, product_id: str) -> tuple[Path, int, 
 def _find_linked_approved_creative_asset(product_id: str) -> dict[str, Any] | None:
     """Find approved, active PRODUCT_REFERENCE creative asset linked to product_id."""
     try:
-        conn = _get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT * FROM creative_asset 
-            WHERE product_id = ?
-              AND (semantic_role = 'PRODUCT_REFERENCE' OR asset_type = 'PRODUCT_REFERENCE')
-              AND status = 'ACTIVE'
-              AND review_status = 'APPROVED'
-            ORDER BY updated_at DESC
-            """,
-            (product_id,),
-        )
-        rows = cursor.fetchall()
-        conn.close()
-        for r in rows:
-            d = dict(r)
-            lp = d.get("local_file_path") or d.get("local_path")
-            if lp and Path(lp).exists() and Path(lp).stat().st_size > 0:
-                return d
-        return None
+        with get_db() as db:
+            cursor = db.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM creative_asset
+                WHERE product_id = ?
+                  AND (semantic_role = 'PRODUCT_REFERENCE' OR asset_type = 'PRODUCT_REFERENCE')
+                  AND status = 'ACTIVE'
+                  AND review_status = 'APPROVED'
+                ORDER BY updated_at DESC
+                """,
+                (product_id,),
+            )
+            rows = cursor.fetchall()
+            for r in rows:
+                d = dict(r)
+                lp = d.get("local_file_path") or d.get("local_path")
+                if lp and Path(lp).exists() and Path(lp).stat().st_size > 0:
+                    return d
+            return None
     except Exception:
         return None
 
@@ -235,13 +226,12 @@ def resolve_product_reference_image(product: dict[str, Any]) -> ProductReference
     media_id = product.get("media_id")
     if media_id:
         try:
-            conn = _get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM request WHERE media_id = ? OR request_id = ?", (media_id, media_id))
-            row = cursor.fetchone()
-            conn.close()
-            if row:
-                d = dict(row)
+            with get_db() as db:
+                cursor = db.cursor()
+                cursor.execute("SELECT * FROM request WHERE media_id = ? OR request_id = ?", (media_id, media_id))
+                row = cursor.fetchone()
+                if row:
+                    d = dict(row)
                 out_path = d.get("output_url") or d.get("local_path")
                 if out_path and Path(out_path).exists():
                     meta = _inspect_image_file(out_path)
@@ -463,11 +453,21 @@ def get_grounded_generation_payload(
 
     full_prompt = base_prompt.strip() + locks_text if base_prompt else locks_text.strip()
 
+    ref = bundle.product_reference or {}
+    product_reference_asset = {
+        "mediaId": ref.get("media_id"),
+        "localFilePath": ref.get("local_path"),
+        "downloadUrl": ref.get("image_url"),
+        "fileName": f"{bundle.product_id}_reference.jpeg",
+        "semanticRole": "PRODUCT_REFERENCE",
+    }
+
     return {
         "product_id": bundle.product_id,
         "product_display_name": bundle.product_display_name,
         "selected_strategy": strategy,
         "product_reference": bundle.product_reference,
+        "product_reference_asset": product_reference_asset,
         "grounding_locks": {
             "identity_lock": bundle.identity_lock,
             "geometry_lock": bundle.geometry_lock,

@@ -248,7 +248,12 @@ def _build_materialized_stage_message(
 def _asset_payload_has_local_file(asset: object) -> bool:
     return bool(
         isinstance(asset, dict)
-        and (asset.get("localFilePath") or asset.get("local_file_path"))
+        and (
+            asset.get("localFilePath")
+            or asset.get("local_file_path")
+            or asset.get("localPath")
+            or asset.get("local_path")
+        )
     )
 
 
@@ -283,6 +288,8 @@ def _asset_payload_remote_url(asset: object) -> str | None:
         or asset.get("download_url")
         or asset.get("previewUrl")
         or asset.get("preview_url")
+        or asset.get("url")
+        or asset.get("image_url")
     )
 
 
@@ -802,9 +809,10 @@ async def video_capability_matrix():
 
 # Canonical reference-slot ORDER for the execution lane. The engine receives
 # refs positionally, so this tuple IS the ordering contract: startAsset first,
-# then subject, scene, style, image. Single source of truth for both the
+# then product, subject, scene, style, image. Single source of truth for both the
 # one-door /generate lane and the manual lane (was duplicated inline in each).
 REF_SLOT_ORDER: tuple[tuple[str, str], ...] = (
+    ("productAsset", "Product"),
     ("subjectAsset", "Subject"),
     ("sceneAsset", "Scene"),
     ("styleAsset", "Style"),
@@ -2987,12 +2995,7 @@ async def execute_flow_job(body: dict):
 
     _refs = body.get("refs")
     if isinstance(_refs, dict):
-        for ref_key, slot_label in (
-            ("subjectAsset", "Subject"),
-            ("sceneAsset", "Scene"),
-            ("styleAsset", "Style"),
-            ("imageAsset", "Image"),
-        ):
+        for ref_key, slot_label in REF_SLOT_ORDER:
             ref_asset = _refs.get(ref_key)
             if not isinstance(ref_asset, dict):
                 continue

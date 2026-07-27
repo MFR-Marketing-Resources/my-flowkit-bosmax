@@ -17,6 +17,7 @@ import {
 } from "../api/exactProductOutput";
 import { useImageGenSettings } from "../api/imageGenSettings";
 import {
+	buildProviderProductReferenceAsset,
 	fetchGroundedPayload,
 	STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE,
 } from "../api/productVisualGrounding";
@@ -382,7 +383,7 @@ export default function ImgCockpitPage() {
 
 			let scenePrompt = prompt;
 			let useExactComposite = false;
-			let groundedRefMediaId: string | null = null;
+			let groundedProdAsset = null;
 
 			if (productId) {
 				const grounded = await fetchGroundedPayload(productId, {
@@ -398,7 +399,7 @@ export default function ImgCockpitPage() {
 					scenePrompt = scene.prompt;
 				} else {
 					scenePrompt = grounded.full_prompt;
-					groundedRefMediaId = grounded.product_reference?.media_id ?? null;
+					groundedProdAsset = buildProviderProductReferenceAsset(grounded);
 				}
 			}
 
@@ -418,10 +419,16 @@ export default function ImgCockpitPage() {
 						imageModel,
 				  });
 
-			if (!useExactComposite && groundedRefMediaId && !payload.image_media_ids?.includes(groundedRefMediaId)) {
+			if (!useExactComposite && groundedProdAsset) {
 				payload = {
 					...payload,
-					image_media_ids: [...(payload.image_media_ids || []), groundedRefMediaId],
+					refs: {
+						...((payload as { refs?: Record<string, unknown> }).refs || {}),
+						productAsset: groundedProdAsset,
+					},
+					image_media_ids: groundedProdAsset.mediaId
+						? Array.from(new Set([...(payload.image_media_ids || []), groundedProdAsset.mediaId]))
+						: payload.image_media_ids,
 				};
 			}
 
