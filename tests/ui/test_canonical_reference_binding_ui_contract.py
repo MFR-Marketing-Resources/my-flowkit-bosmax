@@ -49,3 +49,22 @@ def test_operator_page_wires_canonical_binding_into_package_payload():
     assert "character_reference_asset_id" in src
     assert "scene_context_reference_asset_id" in src
     assert "referenceBindingBlocker" in src
+
+
+def test_canonical_binding_resolvable_source_not_media_id_only():
+    """IMG factory LOCAL_FILE saves often have preview_url but no 48h media_id.
+
+    Picker bindability must match backend `_asset_has_resolvable_source` so
+    clean COMPOSITE_FRAME assets remain selectable without loosening gates.
+    """
+    src = _read(
+        "dashboard/src/components/workspace/CanonicalReferenceBindingControls.tsx"
+    )
+    assert "function assetHasResolvableSource" in src
+    assert "asset.preview_url" in src
+    assert "asset.local_file_path" in src
+    assert "asset.download_url" in src
+    assert "disabled={!resolvable}" in src
+    # Must not hard-gate solely on media_id (legacy bug that blocked base64 saves).
+    assert "disabled={!asset.media_id}" not in src
+    assert 'asset.media_id ? "" : " (no media — not bindable)"' not in src
