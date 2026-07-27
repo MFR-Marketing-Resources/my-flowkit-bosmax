@@ -1,4 +1,4 @@
-import { getAPI, postAPI } from "./apiClient";
+import { getAPI, postAPI } from "./client";
 
 export interface ProductReferenceInfo {
 	source_type: string;

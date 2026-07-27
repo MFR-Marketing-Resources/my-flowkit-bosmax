@@ -750,7 +750,7 @@ export function PosterBuilderLegacyPanel() {
 			);
 
 			// Strategy C: FIXED_HERO_POSTER (Hero visual stays 100% fixed and unchanged when a complete hero visual is provided)
-			if (isFixedHero && productId) {
+			if (isFixedHero && productId && subjectAsset) {
 				setPosterGenStage("composing_fixed_hero");
 				try {
 					const result = await composePoster({
@@ -760,9 +760,10 @@ export function PosterBuilderLegacyPanel() {
 						background_media_id: subjectAsset.mediaId || "",
 					});
 					setPosterGenStage("final_ready");
+					const deliv = result.deliverable;
 					setPosterGenResult({
-						url: result.output_url || `/api/poster/deliverable/${result.poster_deliverable_id}`,
-						mediaId: result.poster_deliverable_id || subjectAsset.mediaId || "",
+						url: `/api/poster/deliverable/${deliv?.poster_deliverable_id || subjectAsset.mediaId || ""}`,
+						mediaId: deliv?.poster_deliverable_id || subjectAsset.mediaId || "",
 						sizeMb: null,
 					});
 					return;
