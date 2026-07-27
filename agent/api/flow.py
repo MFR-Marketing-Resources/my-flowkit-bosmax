@@ -928,6 +928,22 @@ async def generate_job(job_id: str):
     return j
 
 
+@router.get("/product/{product_id}/visual-grounding")
+async def get_product_visual_grounding_endpoint(product_id: str):
+    from agent.services.product_visual_grounding_resolver import (
+        resolve_product_visual_grounding,
+        ProductVisualReferenceRequiredError,
+    )
+    try:
+        bundle = resolve_product_visual_grounding(product_id)
+        return bundle.to_dict()
+    except ProductVisualReferenceRequiredError as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Error resolving visual grounding: {str(e)}")
+
+
+
 ARTIFACT_RETENTION_HOURS = 48  # retention law: results auto-delete after 48h
 
 

@@ -575,13 +575,11 @@ export default function ImgFastlanePage() {
 				const scene = await buildExactSceneOnlyPrompt(productId, prompt);
 				scenePrompt = scene.prompt;
 			}
-			// Exact-policy: do not send product/subject refs — scene plate only.
-			const refs = exact ? {} : resolvedRefsPayload;
-			const mediaIds = exact
-				? []
-				: Object.values(resolvedRefsPayload)
-						.map((asset) => asset.mediaId)
-						.filter((id): id is string => Boolean(id));
+			// Universal product grounding: ALWAYS send resolved product and avatar refs to Flow engine
+			const refs = resolvedRefsPayload;
+			const mediaIds = Object.values(resolvedRefsPayload)
+				.map((asset) => asset.mediaId)
+				.filter((id): id is string => Boolean(id));
 			const { job_id } = await startImgGeneration({
 				prompt: scenePrompt,
 				image_media_ids: mediaIds,

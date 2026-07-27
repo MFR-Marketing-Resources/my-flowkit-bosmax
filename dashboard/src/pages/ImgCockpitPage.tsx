@@ -378,22 +378,14 @@ export default function ImgCockpitPage() {
 				const scene = await buildExactSceneOnlyPrompt(productId, prompt);
 				scenePrompt = scene.prompt;
 			}
-			// Exact-policy: scene-only plate (no product subjectAsset). Else SCALE-07 path.
-			const payload = exact
-				? {
-						prompt: scenePrompt,
-						aspect,
-						count,
-						image_model: imageModel,
-						image_media_ids: [] as string[],
-				  }
-				: buildImgGenerationRequest({
-						prompt: scenePrompt,
-						resolution: genResolution,
-						aspect,
-						count,
-						imageModel,
-				  });
+			// Universal product grounding: ALWAYS send resolved product and avatar refs to Flow engine
+			const payload = buildImgGenerationRequest({
+				prompt: scenePrompt,
+				resolution: genResolution,
+				aspect,
+				count,
+				imageModel,
+			});
 			const { job_id } = await startImgGeneration(payload);
 			const job = await pollImgGenerationJob(job_id);
 			setGenJob(job);
