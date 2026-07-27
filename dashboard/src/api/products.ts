@@ -1,4 +1,5 @@
 import type {
+	Product,
 	ProductCatalogResponse,
 	ProductIntelligenceFieldProvenanceListResponse,
 	ProductIntelligenceLatestSnapshotResponse,
@@ -19,6 +20,16 @@ export async function fetchProductCatalog(
 	return fetchAPI<ProductCatalogResponse>(
 		`/api/products?limit=${encodeURIComponent(String(limit))}&offset=0&purpose=${encodeURIComponent(purpose)}`,
 	);
+}
+
+/**
+ * Load one authoritative product row after an operator selects it from the
+ * catalog.  The Cockpit grounding gate consumes image_url/local_image_path,
+ * so it must not rely on a picker projection when binding the generation
+ * product.
+ */
+export async function fetchProductDetail(productId: string): Promise<Product> {
+	return fetchAPI<Product>(`/api/products/${encodeURIComponent(productId)}`);
 }
 
 /**
@@ -145,7 +156,9 @@ export async function aiFillMissingProductIntelligenceReviewDraft(
 		{
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(selectedFields ? { selected_fields: selectedFields } : {}),
+			body: JSON.stringify(
+				selectedFields ? { selected_fields: selectedFields } : {},
+			),
 		},
 	);
 }
