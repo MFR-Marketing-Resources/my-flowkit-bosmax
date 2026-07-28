@@ -544,6 +544,20 @@ describe('NativeExtendPanel', () => {
     expect(screen.queryByTestId('full-video-error')).toBeNull();
   });
 
+  it('locks video planning and generation while the backend runtime is stale', async () => {
+    resolveMock.mockResolvedValue(READY);
+    lineageMock.mockResolvedValue({ lineage: [], count: 0 });
+    renderPanel({ backendRuntimeStale: true });
+
+    expect(await screen.findByTestId('native-extend-backend-stale')).toHaveTextContent(
+      /Backend needs restart/,
+    );
+    const generate = screen.getByTestId('generate-full-video-btn');
+    expect(generate).toBeDisabled();
+    fireEvent.click(generate);
+    expect(planMock).not.toHaveBeenCalled();
+  });
+
     it('human failure copy + no-credit claim come from STRUCTURED backend state', async () => {
     resolveMock.mockResolvedValue(READY);
     lineageMock.mockResolvedValue({ lineage: [], count: 0 });

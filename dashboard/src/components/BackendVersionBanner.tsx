@@ -13,6 +13,10 @@ interface VersionProof {
 	stale_source_sample: string[];
 }
 
+export interface BackendVersionBannerProps {
+	onRuntimeStaleChange?: (isStale: boolean) => void;
+}
+
 /**
  * Operator-facing frontend/backend version-skew guard (incident 2026-07-09):
  * a stale backend process served a newer dashboard and mis-routed the
@@ -20,32 +24,61 @@ interface VersionProof {
  * surfaces the backend identity and warns loudly when the running process is
  * stale relative to the source tree or is missing a critical route.
  */
-export default function BackendVersionBanner() {
+export default function BackendVersionBanner({
+	onRuntimeStaleChange,
+}: BackendVersionBannerProps) {
 	const [proof, setProof] = useState<VersionProof | null>(null);
 	const [fetchError, setFetchError] = useState<string | null>(null);
+	const [isRefreshing, setIsRefreshing] = useState(false);
+	const [refreshNonce, setRefreshNonce] = useState(0);
 
 	useEffect(() => {
 		let cancelled = false;
-		fetchAPI<VersionProof>("/api/local-agent/version-proof")
+		const loadProof = () => {
+			setIsRefreshing(true);
+			fetchAPI<VersionProof>("/api/local-agent/version-proof")
 			.then((data) => {
-				if (!cancelled) setProof(data);
+				if (cancelled) return;
+				setProof(data);
+				setFetchError(null);
+				const missingRoutes = Object.values(data.critical_routes).some(
+					(present) => !present,
+				);
+				onRuntimeStaleChange?.(data.source_stale_since_start || missingRoutes);
 			})
 			.catch((err) => {
 				// An old backend without this endpoint is itself a staleness signal.
-				if (!cancelled)
+				if (!cancelled) {
 					setFetchError(err instanceof Error ? err.message : String(err));
+					onRuntimeStaleChange?.(true);
+				}
+			})
+			.finally(() => {
+				if (!cancelled) setIsRefreshing(false);
 			});
+		};
+		loadProof();
 		return () => {
 			cancelled = true;
 		};
-	}, []);
+	}, [onRuntimeStaleChange, refreshNonce]);
+
+	const refreshLabel = isRefreshing ? "Checking backend…" : "Refresh version check";
 
 	if (fetchError) {
 		return (
 			<div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-				Backend version-proof unavailable ({fetchError}) — the running backend
-				may predate this dashboard build. Restart the local agent before
-				trusting eligibility or generation surfaces.
+				<strong>Backend needs restart.</strong> The version check is unavailable
+				({fetchError}), so eligibility audits and production actions are locked.
+				Stop and restart the local agent, then refresh this check.{" "}
+				<button
+					type="button"
+					onClick={() => setRefreshNonce((current) => current + 1)}
+					disabled={isRefreshing}
+					className="ml-2 rounded border border-amber-300/40 px-2 py-1 font-semibold hover:bg-amber-500/10 disabled:opacity-50"
+				>
+					{refreshLabel}
+				</button>
 			</div>
 		);
 	}
@@ -68,7 +101,8 @@ export default function BackendVersionBanner() {
 
 	return (
 		<div className="rounded-lg border border-red-500/50 bg-red-500/10 px-3 py-2 text-xs text-red-200">
-			<strong>Backend version mismatch.</strong>{" "}
+			<strong>Backend needs restart.</strong> Eligibility audits and production
+			actions are locked. {" "}
 			{proof.source_stale_since_start && (
 				<span>
 					Source files changed after the backend started (
@@ -80,7 +114,15 @@ export default function BackendVersionBanner() {
 			{missingRoutes.length > 0 && (
 				<span>Missing critical routes: {missingRoutes.join(", ")}. </span>
 			)}
-			Restart the local agent before using eligibility audits or generating.
+			Stop and restart the local agent, then refresh this check.{" "}
+			<button
+				type="button"
+				onClick={() => setRefreshNonce((current) => current + 1)}
+				disabled={isRefreshing}
+				className="ml-2 rounded border border-red-300/40 px-2 py-1 font-semibold hover:bg-red-500/10 disabled:opacity-50"
+			>
+				{refreshLabel}
+			</button>
 		</div>
 	);
 }

@@ -700,6 +700,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		}>
 	>([]);
 	const [registryPoolsLoading, setRegistryPoolsLoading] = useState(false);
+	const [backendRuntimeStale, setBackendRuntimeStale] = useState(false);
 	// Avatar Persona composer (Phase A): a complete valid selection resolves to
 	// a composed persona id; the server's normalize_creator_persona remains the
 	// only validity gate (unknown ids fail closed at compile time).
@@ -1082,6 +1083,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// video lanes — it saves to disk and returns a job (the legacy /generate-image-oneshot
 	// endpoint is kept server-side but no longer called from the dashboard).
 	const handleExecute = async (data: WorkspaceExecutePayload) => {
+		if (backendRuntimeStale) {
+			setNotice({
+				tone: "warning",
+				title: "Backend needs restart",
+				detail:
+					"Production is locked because the local backend is stale. Restart the local agent, then refresh the version check above.",
+				requestId: null,
+			});
+			return;
+		}
 		if (executionInFlightRef.current) {
 			console.log("[BOSMAX_DEBUG] DUPLICATE_EXECUTION_BLOCKED");
 			return;
@@ -1497,6 +1508,10 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	};
 
 	const handleSaveGenerationPackage = useCallback(async () => {
+		if (backendRuntimeStale) {
+			setSavePackageError("BACKEND_RESTART_REQUIRED");
+			return;
+		}
 		if (!selectedProduct || !workspacePackage) return;
 		if (!durationAuthority) {
 			setSavePackageError("EXTEND_TOTAL_DURATION_REQUIRED");
@@ -1558,10 +1573,21 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		cameraStyle,
 		characterPresence,
 		creatorPersona,
+		backendRuntimeStale,
 	]);
 
 	// Step 3 — Load Package Preview (compile only, no DB save)
 	const handleLoadPreview = async () => {
+		if (backendRuntimeStale) {
+			setNotice({
+				tone: "warning",
+				title: "Backend needs restart",
+				detail:
+					"Package loading is locked because the local backend is stale. Restart the local agent, then refresh the version check above.",
+				requestId: null,
+			});
+			return;
+		}
 		if (!durationAuthority) {
 			setNotice({
 				tone: "warning",
@@ -1645,6 +1671,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// the backend which fails closed when no Copy Set is selected and fallback is
 	// not explicitly confirmed (Explicit-Fallback-Confirmation V1).
 	const runGeneratePackage = async (fallbackConfirmed: boolean) => {
+		if (backendRuntimeStale) {
+			setNotice({
+				tone: "warning",
+				title: "Backend needs restart",
+				detail:
+					"Final prompt generation is locked because the local backend is stale. Restart the local agent, then refresh the version check above.",
+				requestId: null,
+			});
+			return;
+		}
 		if (!selectedProduct || !previewPackage) return;
 		if (!durationAuthority) {
 			setNotice({
@@ -1894,7 +1930,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			</div>
 
 			<div className="mb-4">
-				<BackendVersionBanner />
+				<BackendVersionBanner onRuntimeStaleChange={setBackendRuntimeStale} />
 			</div>
 
 			{isPortalMode && (
@@ -2740,7 +2776,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							isLoadingPreview ||
 							selectedReadinessLoading ||
 							selectedReadiness?.readiness_status !== "READY" ||
-							extendTotalRequired
+							extendTotalRequired ||
+							backendRuntimeStale
 						}
 						className="w-full rounded-xl border border-slate-600/40 bg-slate-700/30 px-4 py-3 text-sm font-bold text-slate-100 hover:bg-slate-700/50 disabled:opacity-50 disabled:grayscale transition-all"
 					>
@@ -2916,7 +2953,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							!previewPackage ||
 							isLoadingPackage ||
 							showFallbackConfirm ||
-							extendTotalRequired
+							extendTotalRequired ||
+							backendRuntimeStale
 						}
 						className="w-full rounded-xl border border-blue-500/40 bg-blue-500/15 px-4 py-3 text-sm font-bold text-blue-100 hover:bg-blue-500/25 disabled:opacity-50 disabled:grayscale transition-all"
 					>
@@ -2951,7 +2989,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								<button
 									type="button"
 									onClick={() => void runGeneratePackage(true)}
-									disabled={isLoadingPackage}
+									disabled={isLoadingPackage || backendRuntimeStale}
 									className="rounded-lg border border-amber-500/50 bg-amber-500/20 px-3 py-2 text-[11px] font-semibold text-amber-100 hover:bg-amber-500/30 disabled:opacity-50 transition-colors"
 								>
 									{isLoadingPackage
@@ -3049,7 +3087,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								<button
 									type="button"
 									onClick={() => void handleSaveGenerationPackage()}
-									disabled={isSavingPackage}
+									disabled={isSavingPackage || backendRuntimeStale}
 									className="rounded-xl border border-indigo-500/40 bg-indigo-500/15 px-4 py-2.5 text-sm font-semibold text-indigo-100 hover:bg-indigo-500/25 disabled:opacity-50 transition-colors"
 								>
 									{isSavingPackage
@@ -3114,6 +3152,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					</div>
 					{extendAuthority ? (
 						<NativeExtendPanel
+							backendRuntimeStale={backendRuntimeStale}
 							totalDurationSeconds={requestedTotalDuration}
 							productId={selectedProduct?.id ?? null}
 							productName={selectedProduct?.product_display_name ?? null}

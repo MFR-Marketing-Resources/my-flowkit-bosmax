@@ -48,6 +48,7 @@ export interface NativeExtendPanelProps {
   productName?: string | null;
   executionPackageId?: string | null;
   approvedAssetSha256?: string | null;
+  backendRuntimeStale?: boolean;
 }
 
 export default function NativeExtendPanel({
@@ -61,6 +62,7 @@ export default function NativeExtendPanel({
   productName,
   executionPackageId,
   approvedAssetSha256,
+  backendRuntimeStale = false,
 }: NativeExtendPanelProps) {
   // Flow runtime ids the operator supplies (seeded from props when available).
   const [projectId, setProjectId] = useState(projectIdProp ?? '');
@@ -315,6 +317,7 @@ export default function NativeExtendPanel({
   };
 
   const openGenerateConfirm = async () => {
+	if (backendRuntimeStale) return;
     // THE one deliberate plan action: exactly one POST per click, never retried.
     // A structured 422 (missing/invalid authority) is shown verbatim — the
     // operator fixes the input; the request is not replayed automatically.
@@ -332,6 +335,7 @@ export default function NativeExtendPanel({
   };
 
   const confirmAndGenerate = async () => {
+	if (backendRuntimeStale) return;
     if (!durablePlan) return;
     setBusy(true);
     try {
@@ -370,6 +374,15 @@ export default function NativeExtendPanel({
       {/* ── NORMAL MODE: one job, one action, one result ─────────────────── */}
       {!durableStatus?.complete && (
         <>
+          {backendRuntimeStale && (
+            <div
+              data-testid="native-extend-backend-stale"
+              className="rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-xs text-rose-100"
+            >
+              Backend needs restart. Video planning and generation are locked until the
+              local agent is restarted and the version check succeeds.
+            </div>
+          )}
           {!intentReady && (
             <div
               data-testid="native-extend-waiting-source"
@@ -389,7 +402,7 @@ export default function NativeExtendPanel({
                 type="button"
                 data-testid="generate-full-video-btn"
                 className="w-fit rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
-                disabled={busy}
+                disabled={busy || backendRuntimeStale}
                 onClick={openGenerateConfirm}
               >
                 Generate Video
@@ -434,7 +447,7 @@ export default function NativeExtendPanel({
                   type="button"
                   data-testid="full-video-confirm-btn"
                   className="rounded bg-indigo-600 px-3 py-1.5 font-medium text-white disabled:opacity-40"
-                  disabled={busy}
+                  disabled={busy || backendRuntimeStale}
                   onClick={confirmAndGenerate}
                 >
                   Confirm &amp; generate
@@ -472,7 +485,7 @@ export default function NativeExtendPanel({
                 type="button"
                 data-testid="generate-full-video-btn"
                 className="w-fit rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
-                disabled={busy}
+                disabled={busy || backendRuntimeStale}
                 onClick={openGenerateConfirm}
               >
                 Generate Video
