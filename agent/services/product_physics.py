@@ -556,9 +556,11 @@ def _resolve_intelligence_physics_rule(product: dict[str, Any] | None) -> dict[s
         return dict(PHYSICS_FAMILY_RULES["stationery_pack"])
     if family == "ACCESSORY_SMALL_ITEM":
         return dict(PHYSICS_FAMILY_RULES["fashion_accessory_small_object"])
-    if family == "HEALTH_SUPPLEMENT":
-        return dict(PHYSICS_FAMILY_RULES["supplement_bottle"])
-    if family == "MALE_HEALTH_SENSITIVE":
+    if family in {
+        "HEALTH_SUPPLEMENT",
+        "MALE_HEALTH_SENSITIVE",
+        "FEMALE_HEALTH_SENSITIVE",
+    }:
         return dict(PHYSICS_FAMILY_RULES["supplement_bottle"])
     if family == "HOUSEHOLD_STORAGE_ORGANIZER":
         return dict(PHYSICS_FAMILY_RULES["household_packaged_goods"])

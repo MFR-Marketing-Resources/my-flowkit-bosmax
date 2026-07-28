@@ -36,6 +36,39 @@ interface EvidenceEditorState {
 	cta_angles: string;
 }
 
+type EvidenceGuidanceStatus =
+	| "Missing"
+	| "Placeholder"
+	| "Weak evidence"
+	| "Needs human review";
+
+interface EvidenceFieldGuidance {
+	field: keyof EvidenceEditorState;
+	label: string;
+	focusId: string;
+	status: EvidenceGuidanceStatus;
+	detail: string;
+}
+
+const EVIDENCE_FIELD_IDS = {
+	product_knowledge_text: "registration-product-knowledge-evidence",
+	benefits_text: "registration-benefits-evidence",
+	ingredients_text: "registration-ingredients-evidence",
+	warnings_text: "registration-warnings-evidence",
+	size_or_volume: "registration-size-or-volume-evidence",
+	package_notes: "registration-package-notes-evidence",
+} as const;
+
+const FIELD_LABELS: Record<string, string> = {
+	normalized_name: "Normalized name",
+	category: "Category",
+	subcategory: "Subcategory",
+	type: "Type",
+	bosmax_product_family: "BOSMAX product family",
+	claims: "Sensitive claims",
+	physics_profile: "Physics profile",
+};
+
 function toText(value: unknown): string {
 	if (Array.isArray(value)) {
 		return value
@@ -63,6 +96,241 @@ function splitLines(value: string): string[] {
 		.map((entry) => entry.trim())
 		.filter(Boolean);
 }
+
+function normalizeEvidenceText(value: string): string {
+	return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function wordCount(value: string): number {
+	return value
+		.trim()
+		.split(/\s+/)
+		.filter(Boolean).length;
+}
+
+function isPlaceholderEvidence(value: string): boolean {
+	const normalized = normalizeEvidenceText(value);
+	if (!normalized) return false;
+	if (
+		/\b(?:placeholder|tbd|unknown|n\/a|grab now|natural beauty)\b/i.test(
+			normalized,
+		)
+	) {
+		return true;
+	}
+	const hashtagCount = (value.match(/#[\p{L}\p{N}_]+/gu) || []).length;
+	const productionCueCount = [
+		/\b\d+\s*-\s*\d+\s*s\b/i,
+		/\b(?:music|muzik|audio|soundtrack)\b/i,
+	].filter((pattern) => pattern.test(value)).length;
+	return hashtagCount >= 2 || productionCueCount >= 2;
+}
+
+function extractVariantCandidates(sourceText: string): string[] {
+	const candidates: string[] = [];
+	const seen = new Set<string>();
+	const addCandidate = (amount: string, unit: string) => {
+		const singularUnit = unit.toLowerCase().replace(/\s+/g, " ").trim();
+		const candidate = `${amount.trim()} ${singularUnit}`.trim();
+		const key = normalizeEvidenceText(candidate);
+		if (!seen.has(key)) {
+			seen.add(key);
+			candidates.push(candidate);
+		}
+	};
+	const multiVariantPattern =
+		/(\d+(?:\.\d+)?(?:\s*\/\s*\d+(?:\.\d+)?)+)\s*(softgels?|soft gels?|capsules?|kapsul|biji|ml|millilit(?:er|re)s?|g|gram|kg|kilogram)\b/gi;
+	for (const match of sourceText.matchAll(multiVariantPattern)) {
+		for (const amount of match[1].split("/")) {
+			addCandidate(amount, match[2]);
+		}
+	}
+	const singleVariantPattern =
+		/\b(\d+(?:\.\d+)?)\s*(softgels?|soft gels?|capsules?|kapsul|biji|ml|millilit(?:er|re)s?|g|gram|kg|kilogram)\b/gi;
+	for (const match of sourceText.matchAll(singleVariantPattern)) {
+		addCandidate(match[1], match[2]);
+	}
+	return candidates;
+}
+
+function candidateMatchesCurrentValue(candidate: string, currentValue: string): boolean {
+	const candidateAmount = candidate.match(/\d+(?:\.\d+)?/)?.[0];
+	const currentAmount = currentValue.match(/\d+(?:\.\d+)?/)?.[0];
+	if (!candidateAmount || !currentAmount || candidateAmount !== currentAmount) {
+		return false;
+	}
+	const normalizedCurrent = normalizeEvidenceText(currentValue);
+	return (
+		normalizedCurrent === currentAmount ||
+		normalizeEvidenceText(candidate) === normalizedCurrent
+	);
+}
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractExplicitEvidence(
+	sourceText: string,
+	labels: string[],
+): string | undefined {
+	for (const label of labels) {
+		const pattern = new RegExp(
+			`(?:^|[\\n|])\\s*${escapeRegExp(label)}\\s*[:=-]\\s*([^|\\n]+)`,
+			"i",
+		);
+		const match = sourceText.match(pattern);
+		const value = match?.[1]?.trim();
+		if (value) return value;
+	}
+	return undefined;
+}
+
+function buildEvidenceAssessments(
+	form: EvidenceEditorState,
+	variantCandidates: string[],
+): EvidenceFieldGuidance[] {
+	const assessments: EvidenceFieldGuidance[] = [];
+	const addTextAssessment = (
+		field: "product_knowledge_text" | "benefits_text" | "ingredients_text" | "warnings_text",
+		label: string,
+		minimumWords: number,
+	) => {
+		const value = form[field].trim();
+		if (!value) {
+			assessments.push({
+				field,
+				label,
+				focusId: EVIDENCE_FIELD_IDS[field],
+				status: "Missing",
+				detail: "No evidence is currently stored in this draft field.",
+			});
+			return;
+		}
+		if (isPlaceholderEvidence(value)) {
+			assessments.push({
+				field,
+				label,
+				focusId: EVIDENCE_FIELD_IDS[field],
+				status: "Placeholder",
+				detail:
+					"This value looks like marketing or production filler, not product evidence.",
+			});
+			return;
+		}
+		if (wordCount(value) < minimumWords) {
+			assessments.push({
+				field,
+				label,
+				focusId: EVIDENCE_FIELD_IDS[field],
+				status: "Weak evidence",
+				detail: "Add a specific evidence-backed statement before final review.",
+			});
+		}
+	};
+
+	addTextAssessment("product_knowledge_text", "Product Knowledge", 8);
+	addTextAssessment("benefits_text", "Benefits", 5);
+	addTextAssessment("ingredients_text", "Ingredients", 2);
+	addTextAssessment("warnings_text", "Warnings", 3);
+
+	if (!form.size_or_volume.trim()) {
+		assessments.push({
+			field: "size_or_volume",
+			label: "Size / Volume",
+			focusId: EVIDENCE_FIELD_IDS.size_or_volume,
+			status: "Missing",
+			detail: "Select or enter the exact registered pack variant.",
+		});
+	} else if (
+		variantCandidates.length > 1 &&
+		variantCandidates.some((candidate) =>
+			candidateMatchesCurrentValue(candidate, form.size_or_volume),
+		)
+	) {
+		assessments.push({
+			field: "size_or_volume",
+			label: "Size / Volume",
+			focusId: EVIDENCE_FIELD_IDS.size_or_volume,
+			status: "Needs human review",
+			detail:
+				"The source title contains multiple pack variants. Confirm the exact variant and unit.",
+		});
+	}
+
+	if (!form.package_notes.trim()) {
+		assessments.push({
+			field: "package_notes",
+			label: "Package Notes",
+			focusId: EVIDENCE_FIELD_IDS.package_notes,
+			status: "Missing",
+			detail: "Describe the verified bottle, blister, pouch, box, or other pack.",
+		});
+	}
+
+	return assessments;
+}
+
+function buildReviewReasons(
+	draft: RegistrationReviewDraft,
+	form: EvidenceEditorState,
+	approvals: Record<string, boolean>,
+): string[] {
+	const sourceText = [
+		form.product_name,
+		form.product_knowledge_text,
+		form.paste_anything_about_product,
+	].join("\n");
+	const assessments = buildEvidenceAssessments(
+		form,
+		extractVariantCandidates(sourceText),
+	);
+	const reasons: string[] = [];
+	if (draft.missing_required_evidence.length > 0) {
+		reasons.push(
+			`Missing required evidence: ${draft.missing_required_evidence.join(", ")}.`,
+		);
+	}
+	if (assessments.length > 0) {
+		reasons.push(
+			`Weak or unresolved draft fields: ${assessments
+				.map((assessment) => `${assessment.label} (${assessment.status})`)
+				.join(", ")}.`,
+		);
+	}
+	if (!approvals.normalized_name) {
+		reasons.push("The normalized product name still requires explicit approval.");
+	}
+	const unresolvedCandidates = draft.human_review_fields.filter(
+		(field) =>
+			field in draft.canonical_candidate_fields && !approvals[field],
+	);
+	if (unresolvedCandidates.length > 0) {
+		reasons.push(
+			`Review and approve candidate fields: ${unresolvedCandidates
+				.map((field) => FIELD_LABELS[field] || field.replace(/_/g, " "))
+				.join(", ")}.`,
+		);
+	}
+	if (
+		draft.claim_gate === "CLAIM_REVIEW_REQUIRED" ||
+		draft.human_review_fields.includes("claims")
+	) {
+		const tokenDetail =
+			draft.claim_tokens.length > 0
+				? ` Detected tokens: ${draft.claim_tokens.join(", ")}.`
+				: "";
+		reasons.push(`Sensitive claims require human verification.${tokenDetail}`);
+	}
+	if (draft.claim_gate === "CLAIM_BLOCKED") {
+		reasons.push("Claim safety is blocked; unsafe claims must be removed or rejected.");
+	}
+	if (draft.blocked_fields.length > 0) {
+		reasons.push(`Blocked fields: ${draft.blocked_fields.join(", ")}.`);
+	}
+	return reasons;
+}
+
 
 function readFileAsDataUrl(file: File): Promise<string> {
 	return new Promise((resolve, reject) => {
@@ -115,6 +383,7 @@ function EvidenceInput({
 	onChange,
 	placeholder,
 	type = "text",
+	guidance,
 }: {
 	id?: string;
 	label: string;
@@ -122,49 +391,97 @@ function EvidenceInput({
 	onChange: (value: string) => void;
 	placeholder?: string;
 	type?: "text" | "number" | "url";
+	guidance?: EvidenceFieldGuidance;
 }) {
+	const descriptionId = id && guidance ? `${id}-guidance` : undefined;
 	return (
 		<div className="space-y-2">
-			<p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
-				{label}
-			</p>
+			<div className="flex flex-wrap items-center justify-between gap-2">
+				<label
+					htmlFor={id}
+					className="text-[10px] font-bold uppercase tracking-widest text-slate-500"
+				>
+					{label}
+				</label>
+				{guidance ? (
+					<span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-300">
+						{guidance.status}
+					</span>
+				) : null}
+			</div>
 			<input
 				id={id}
 				type={type}
 				value={value}
 				onChange={(event) => onChange(event.target.value)}
 				placeholder={placeholder}
-				className="w-full rounded-xl border border-slate-700 bg-slate-950/80 px-3 py-2 text-xs text-slate-100 outline-none transition-all focus:border-indigo-500/50"
+				aria-describedby={descriptionId}
+				className={`w-full rounded-xl border bg-slate-950/80 px-3 py-2 text-xs text-slate-100 outline-none transition-all focus:border-indigo-500/50 ${
+					guidance
+						? "border-amber-500/50 ring-1 ring-amber-500/10"
+						: "border-slate-700"
+				}`}
 			/>
+			{guidance ? (
+				<p id={descriptionId} className="text-[11px] leading-relaxed text-amber-200">
+					{guidance.detail}
+				</p>
+			) : null}
 		</div>
 	);
 }
 
 function EvidenceTextarea({
+	id,
 	label,
 	value,
 	onChange,
 	placeholder,
 	rows = 4,
+	guidance,
 }: {
+	id?: string;
 	label: string;
 	value: string;
 	onChange: (value: string) => void;
 	placeholder?: string;
 	rows?: number;
+	guidance?: EvidenceFieldGuidance;
 }) {
+	const descriptionId = id && guidance ? `${id}-guidance` : undefined;
 	return (
 		<div className="space-y-2">
-			<p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
-				{label}
-			</p>
+			<div className="flex flex-wrap items-center justify-between gap-2">
+				<label
+					htmlFor={id}
+					className="text-[10px] font-bold uppercase tracking-widest text-slate-500"
+				>
+					{label}
+				</label>
+				{guidance ? (
+					<span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-300">
+						{guidance.status}
+					</span>
+				) : null}
+			</div>
 			<textarea
+				id={id}
 				value={value}
 				onChange={(event) => onChange(event.target.value)}
 				placeholder={placeholder}
 				rows={rows}
-				className="w-full rounded-xl border border-slate-700 bg-slate-950/80 px-3 py-2 text-xs text-slate-100 outline-none transition-all focus:border-indigo-500/50"
+				aria-describedby={descriptionId}
+				className={`w-full rounded-xl border bg-slate-950/80 px-3 py-2 text-xs text-slate-100 outline-none transition-all focus:border-indigo-500/50 ${
+					guidance
+						? "border-amber-500/50 ring-1 ring-amber-500/10"
+						: "border-slate-700"
+				}`}
 			/>
+			{guidance ? (
+				<p id={descriptionId} className="text-[11px] leading-relaxed text-amber-200">
+					{guidance.detail}
+				</p>
+			) : null}
 		</div>
 	);
 }
@@ -218,13 +535,141 @@ export default function RegistrationReviewDraftPanel({
 	const imageAnalysisStatus = String(
 		draft.system_inferred_fields.image_analysis_status || "UNKNOWN",
 	);
-
-	const focusSizeOrVolumeEvidence = () => {
-		const field = document.getElementById(
-			"registration-size-or-volume-evidence",
+	const variantCandidates = useMemo(
+		() =>
+			extractVariantCandidates(
+				[
+					evidenceForm.product_name,
+					evidenceForm.product_knowledge_text,
+					evidenceForm.paste_anything_about_product,
+				].join("\n"),
+			),
+		[
+			evidenceForm.paste_anything_about_product,
+			evidenceForm.product_knowledge_text,
+			evidenceForm.product_name,
+		],
+	);
+	const evidenceAssessments = useMemo(
+		() => buildEvidenceAssessments(evidenceForm, variantCandidates),
+		[evidenceForm, variantCandidates],
+	);
+	const guidanceByField = useMemo(
+		() =>
+			new Map(
+				evidenceAssessments.map((assessment) => [
+					assessment.field,
+					assessment,
+				]),
+			),
+		[evidenceAssessments],
+	);
+	const reviewReasons = useMemo(
+		() => buildReviewReasons(draft, evidenceForm, approvals),
+		[approvals, draft, evidenceForm],
+	);
+	const shouldShowNextAction =
+		draft.review_status !== "COMMITTED" && reviewReasons.length > 0;
+	const hasUnresolvedCandidateReview =
+		!approvals.normalized_name ||
+		draft.human_review_fields.some(
+			(field) =>
+				field in draft.canonical_candidate_fields && !approvals[field],
 		);
+	const hasClaimReview =
+		draft.claim_gate !== "CLAIM_SAFE" ||
+		draft.human_review_fields.includes("claims");
+
+	const focusEvidenceField = (fieldId: string) => {
+		const field = document.getElementById(fieldId);
 		field?.focus();
 		field?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+	};
+
+	const handleExtractExistingEvidence = () => {
+		const sourceText = evidenceForm.paste_anything_about_product.trim();
+		const next = { ...evidenceForm };
+		const applied: string[] = [];
+		const applyTextProposal = (
+			field:
+				| "benefits_text"
+				| "usage_text"
+				| "ingredients_text"
+				| "warnings_text"
+				| "package_notes",
+			label: string,
+			value: string | undefined,
+		) => {
+			if (!value || next[field].trim()) return;
+			next[field] = value;
+			applied.push(label);
+		};
+
+		if (
+			!next.product_knowledge_text.trim() &&
+			wordCount(sourceText) >= 8
+		) {
+			next.product_knowledge_text = sourceText;
+			applied.push("Product Knowledge");
+		}
+		applyTextProposal(
+			"benefits_text",
+			"Benefits",
+			extractExplicitEvidence(sourceText, ["benefits", "benefit", "usp"]),
+		);
+		applyTextProposal(
+			"usage_text",
+			"Usage",
+			extractExplicitEvidence(sourceText, [
+				"usage",
+				"cara guna",
+				"how to use",
+			]),
+		);
+		applyTextProposal(
+			"ingredients_text",
+			"Ingredients",
+			extractExplicitEvidence(sourceText, [
+				"ingredients",
+				"ingredient",
+				"bahan",
+			]),
+		);
+		applyTextProposal(
+			"warnings_text",
+			"Warnings",
+			extractExplicitEvidence(sourceText, [
+				"warnings",
+				"warning",
+				"amaran",
+				"pantang",
+			]),
+		);
+		applyTextProposal(
+			"package_notes",
+			"Package Notes",
+			extractExplicitEvidence(sourceText, [
+				"package notes",
+				"package",
+				"packaging",
+				"pembungkusan",
+			]),
+		);
+		if (!next.size_or_volume.trim() && variantCandidates.length === 1) {
+			next.size_or_volume = variantCandidates[0];
+			applied.push("Size / Volume");
+		}
+
+		setEvidenceForm(next);
+		const ambiguityNote =
+			variantCandidates.length > 1
+				? " Multiple pack variants were found; choose one explicitly below."
+				: "";
+		setSaveMessage(
+			applied.length > 0
+				? `Review-only proposals applied from stored evidence: ${applied.join(", ")}. No field was approved.${ambiguityNote} Save & Recompute to validate.`
+				: `No additional evidence-backed values could be proposed.${ambiguityNote} Missing ingredients or warnings were not invented.`,
+		);
 	};
 
 	const toggleApproval = async (field: string) => {
@@ -309,11 +754,19 @@ export default function RegistrationReviewDraftPanel({
 				payload,
 			);
 			onUpdate(updated);
+			const updatedReasons = buildReviewReasons(
+				updated,
+				buildEvidenceEditorState(updated),
+				updated.approval_checklist,
+			);
 			setSaveMessage(
 				recompute
 					? updated.missing_required_evidence.length > 0
 						? `Recompute validated current evidence; it will not fill missing evidence. Still missing: ${updated.missing_required_evidence.join(", ")}.`
-						: `Draft evidence saved and recomputed. Missing evidence resolved; review status: ${updated.review_status}.`
+						: updated.review_status === "NEEDS_HUMAN_REVIEW" ||
+								updated.review_status === "BLOCKED"
+							? `Evidence saved. Still requires human review because: ${updatedReasons.join(" ")}`
+							: "Evidence saved and recomputed. The draft is ready for explicit candidate review; nothing was auto-approved."
 					: "Draft evidence saved. Recompute is still required before commit.",
 			);
 			setPendingImageBase64("");
@@ -534,7 +987,7 @@ export default function RegistrationReviewDraftPanel({
 					</div>
 				</div>
 
-				{draft.missing_required_evidence.length > 0 ? (
+				{shouldShowNextAction ? (
 					<div
 						data-testid="registration-next-action"
 						className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4"
@@ -542,57 +995,190 @@ export default function RegistrationReviewDraftPanel({
 						<div className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-400">
 							Next Action
 						</div>
-						{hasSizeOrVolumeEvidenceGap ? (
-							<div className="mt-2 space-y-3">
-								<div>
-									<div className="text-sm font-semibold text-amber-100">
-										Fill size or volume evidence
-									</div>
-									<p className="mt-1 text-xs leading-relaxed text-slate-300">
-										Enter the exact pack quantity or volume shown on the
-										packaging or an authoritative product source, such as 30
-										softgels, 250 ml, or 500 g. If the listing contains several
-										pack variants, record the exact variant being registered.
-									</p>
+						<div className="mt-2 space-y-4">
+							<div>
+								<div className="text-sm font-semibold text-amber-100">
+									{hasSizeOrVolumeEvidenceGap
+										? "Fill size or volume evidence"
+										: draft.review_status === "NEEDS_HUMAN_REVIEW"
+											? "Review weak evidence and gated candidates"
+											: "Complete the explicit review gate"}
 								</div>
+								<p className="mt-1 text-xs leading-relaxed text-slate-300">
+									{hasSizeOrVolumeEvidenceGap
+										? "Enter the exact pack quantity or volume shown on the packaging or an authoritative product source. If the listing contains several pack variants, choose the exact variant being registered."
+										: "Required evidence is present, but the draft is not approved. Resolve the highlighted quality issues, review sensitive claims, then approve the gated canonical candidates."}
+								</p>
+							</div>
+							<div className="flex flex-wrap gap-2">
 								<button
 									type="button"
-									onClick={focusSizeOrVolumeEvidence}
-									className="rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-xs font-bold text-amber-100 transition-colors hover:bg-amber-400/20"
+									onClick={handleExtractExistingEvidence}
+									className="rounded-lg border border-indigo-400/40 bg-indigo-400/10 px-3 py-2 text-xs font-bold text-indigo-100 transition-colors hover:bg-indigo-400/20"
 								>
-									Edit size or volume evidence
+									Extract from existing evidence
 								</button>
-								<p className="text-xs leading-relaxed text-slate-400">
-									Recompute validates current evidence; it will not fill missing
-									evidence. AI Fill Missing does not propose size or volume
-									facts, so this value requires operator-supplied evidence.
-								</p>
-								{imageAnalysisStatus === "ANALYSIS_SKIPPED" ? (
-									<p className="text-xs leading-relaxed text-sky-200">
-										An image reference is attached, but semantic vision analysis
-										was skipped because provider execution is disabled. Verify
-										the exact size from the packaging or source before saving.
-									</p>
+								{hasSizeOrVolumeEvidenceGap ? (
+									<button
+										type="button"
+										onClick={() =>
+											focusEvidenceField(
+												EVIDENCE_FIELD_IDS.size_or_volume,
+											)
+										}
+										className="rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-xs font-bold text-amber-100 transition-colors hover:bg-amber-400/20"
+									>
+										Edit size or volume evidence
+									</button>
+								) : null}
+								{hasUnresolvedCandidateReview ? (
+									<button
+										type="button"
+										onClick={() =>
+											focusEvidenceField(
+												"registration-canonical-candidates",
+											)
+										}
+										className="rounded-lg border border-slate-600 bg-slate-900/70 px-3 py-2 text-xs font-bold text-slate-100 transition-colors hover:border-amber-400/50"
+									>
+										Jump to candidate approvals
+									</button>
+								) : null}
+								{hasClaimReview ? (
+									<button
+										type="button"
+										onClick={() =>
+											focusEvidenceField("registration-claim-safety-review")
+										}
+										className="rounded-lg border border-slate-600 bg-slate-900/70 px-3 py-2 text-xs font-bold text-slate-100 transition-colors hover:border-amber-400/50"
+									>
+										Jump to claim safety
+									</button>
 								) : null}
 							</div>
-						) : (
-							<p className="mt-2 text-xs leading-relaxed text-slate-300">
-								Complete the listed evidence fields, then use Save &amp;
-								Recompute to refresh the review status.
+							<p className="text-xs leading-relaxed text-slate-400">
+								Extraction is deterministic and credit-free. It only copies
+								values that are already present in this draft&apos;s title or
+								pasted evidence. It never approves a field and never invents
+								ingredients, warnings, or claims.
 							</p>
-						)}
-						<div className="mt-3 text-[10px] font-bold uppercase tracking-[0.2em] text-amber-400">
-							Missing Evidence
-						</div>
-						<div className="mt-2 flex flex-wrap gap-2">
-							{draft.missing_required_evidence.map((field) => (
-								<span
-									key={field}
-									className="rounded-full border border-amber-500/20 bg-slate-900 px-2 py-1 text-[10px] font-bold uppercase text-amber-300"
+							{variantCandidates.length > 1 ? (
+								<div
+									data-testid="registration-variant-candidates"
+									className="rounded-lg border border-amber-500/20 bg-slate-950/40 p-3"
 								>
-									{field}
-								</span>
-							))}
+									<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-300">
+										Ambiguous pack variants found
+									</div>
+									<p className="mt-1 text-xs text-slate-400">
+										Choose the exact registered variant. The current draft value
+										is marked but still requires explicit review.
+									</p>
+									<div className="mt-3 flex flex-wrap gap-2">
+										{variantCandidates.map((candidate) => {
+											const isCurrent = candidateMatchesCurrentValue(
+												candidate,
+												evidenceForm.size_or_volume,
+											);
+											return (
+												<button
+													key={candidate}
+													type="button"
+													aria-pressed={isCurrent}
+													onClick={() => {
+														setEvidenceForm((current) => ({
+															...current,
+															size_or_volume: candidate,
+														}));
+														setSaveMessage(
+															`Review-only size proposal selected: ${candidate}. Save & Recompute to validate; no approval was changed.`,
+														);
+														focusEvidenceField(
+															EVIDENCE_FIELD_IDS.size_or_volume,
+														);
+													}}
+													className={`rounded-lg border px-3 py-2 text-xs font-bold transition-colors ${
+														isCurrent
+															? "border-emerald-400/50 bg-emerald-400/10 text-emerald-200"
+															: "border-slate-700 bg-slate-900 text-slate-200 hover:border-amber-400/50"
+													}`}
+												>
+													Use {candidate}
+													{isCurrent ? " · Current draft value" : ""}
+												</button>
+											);
+										})}
+									</div>
+								</div>
+							) : null}
+							<div>
+								<div className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-400">
+									Why review is still required
+								</div>
+								<ul className="mt-2 space-y-1 text-xs leading-relaxed text-slate-300">
+									{reviewReasons.map((reason) => (
+										<li key={reason}>• {reason}</li>
+									))}
+								</ul>
+							</div>
+							{evidenceAssessments.length > 0 ? (
+								<div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+									{evidenceAssessments.map((assessment) => (
+										<div
+											key={assessment.field}
+											className="flex items-center justify-between gap-3 rounded-lg border border-amber-500/20 bg-slate-950/40 p-3"
+										>
+											<div className="min-w-0">
+												<div className="text-xs font-semibold text-slate-100">
+													{assessment.label}
+												</div>
+												<div className="text-[10px] font-bold uppercase tracking-wider text-amber-300">
+													{assessment.status}
+												</div>
+											</div>
+											<button
+												type="button"
+												onClick={() =>
+													focusEvidenceField(assessment.focusId)
+												}
+												className="shrink-0 rounded-lg border border-slate-700 px-2 py-1 text-[10px] font-bold text-slate-200 hover:border-amber-400/50"
+											>
+												Jump to {assessment.label}
+											</button>
+										</div>
+									))}
+								</div>
+							) : null}
+							<p className="text-xs leading-relaxed text-slate-400">
+								Recompute validates current evidence; it will not fill missing
+								evidence. It will not approve review fields. Product Intelligence
+								AI Fill remains a separate review-only provider action; this
+								draft extractor does not consume AI tokens.
+							</p>
+							{imageAnalysisStatus === "ANALYSIS_SKIPPED" ? (
+								<p className="text-xs leading-relaxed text-sky-200">
+									An image reference is attached, but semantic vision analysis
+									was skipped because provider execution is disabled. Verify
+									visual facts from the packaging or source before saving.
+								</p>
+							) : null}
+							{draft.missing_required_evidence.length > 0 ? (
+								<div>
+									<div className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-400">
+										Missing Evidence
+									</div>
+									<div className="mt-2 flex flex-wrap gap-2">
+										{draft.missing_required_evidence.map((field) => (
+											<span
+												key={field}
+												className="rounded-full border border-amber-500/20 bg-slate-900 px-2 py-1 text-[10px] font-bold uppercase text-amber-300"
+											>
+												{field}
+											</span>
+										))}
+									</div>
+								</div>
+							) : null}
 						</div>
 					</div>
 				) : null}
@@ -611,6 +1197,7 @@ export default function RegistrationReviewDraftPanel({
 							placeholder="Bosmax Herbs"
 						/>
 						<EvidenceTextarea
+							id={EVIDENCE_FIELD_IDS.product_knowledge_text}
 							label="Product Knowledge Text"
 							value={evidenceForm.product_knowledge_text}
 							onChange={(value) =>
@@ -620,8 +1207,10 @@ export default function RegistrationReviewDraftPanel({
 								}))
 							}
 							placeholder="Core product description, source facts, and owned narrative."
+							guidance={guidanceByField.get("product_knowledge_text")}
 						/>
 						<EvidenceTextarea
+							id={EVIDENCE_FIELD_IDS.benefits_text}
 							label="Benefits Text"
 							value={evidenceForm.benefits_text}
 							onChange={(value) =>
@@ -631,6 +1220,7 @@ export default function RegistrationReviewDraftPanel({
 								}))
 							}
 							placeholder="Benefits and USP from the seller or product owner."
+							guidance={guidanceByField.get("benefits_text")}
 						/>
 						<EvidenceTextarea
 							label="Usage Text"
@@ -656,6 +1246,7 @@ export default function RegistrationReviewDraftPanel({
 							rows={3}
 						/>
 						<EvidenceTextarea
+							id={EVIDENCE_FIELD_IDS.ingredients_text}
 							label="Ingredients Text"
 							value={evidenceForm.ingredients_text}
 							onChange={(value) =>
@@ -666,8 +1257,10 @@ export default function RegistrationReviewDraftPanel({
 							}
 							placeholder="Ingredients, materials, or formulation notes."
 							rows={3}
+							guidance={guidanceByField.get("ingredients_text")}
 						/>
 						<EvidenceTextarea
+							id={EVIDENCE_FIELD_IDS.warnings_text}
 							label="Warnings Text"
 							value={evidenceForm.warnings_text}
 							onChange={(value) =>
@@ -678,6 +1271,7 @@ export default function RegistrationReviewDraftPanel({
 							}
 							placeholder="Warnings, pantang, or restrictions."
 							rows={3}
+							guidance={guidanceByField.get("warnings_text")}
 						/>
 						<EvidenceTextarea
 							label="Paste Anything About Product"
@@ -739,7 +1333,7 @@ export default function RegistrationReviewDraftPanel({
 								placeholder="15%"
 							/>
 							<EvidenceInput
-								id="registration-size-or-volume-evidence"
+								id={EVIDENCE_FIELD_IDS.size_or_volume}
 								label="Size / Volume"
 								value={evidenceForm.size_or_volume}
 								onChange={(value) =>
@@ -749,8 +1343,10 @@ export default function RegistrationReviewDraftPanel({
 									}))
 								}
 								placeholder="5 ML"
+								guidance={guidanceByField.get("size_or_volume")}
 							/>
 							<EvidenceInput
+								id={EVIDENCE_FIELD_IDS.package_notes}
 								label="Package Notes"
 								value={evidenceForm.package_notes}
 								onChange={(value) =>
@@ -760,6 +1356,7 @@ export default function RegistrationReviewDraftPanel({
 									}))
 								}
 								placeholder="Dropper bottle, trial size, etc."
+								guidance={guidanceByField.get("package_notes")}
 							/>
 						</div>
 
@@ -1027,7 +1624,11 @@ export default function RegistrationReviewDraftPanel({
 						</div>
 					</section>
 
-					<section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+					<section
+						id="registration-canonical-candidates"
+						tabIndex={-1}
+						className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6"
+					>
 						<h4 className="mb-4 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-white">
 							<span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
 							Canonical Candidates
@@ -1131,6 +1732,8 @@ export default function RegistrationReviewDraftPanel({
 
 				<div className="space-y-8">
 					<section
+						id="registration-claim-safety-review"
+						tabIndex={-1}
 						className={`rounded-2xl border p-6 ${
 							draft.claim_gate === "CLAIM_SAFE"
 								? "border-emerald-500/20 bg-emerald-500/5"

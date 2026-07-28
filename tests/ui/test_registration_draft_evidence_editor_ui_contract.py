@@ -18,3 +18,11 @@ def test_registration_review_draft_panel_exposes_completion_editor_contract():
     assert "DRAFT_RECOMPUTE_REQUIRED" in content
     assert "image_asset_status" in content
     assert "image_analysis_status" in content
+    assert "Extract from existing evidence" in content
+    assert "Why review is still required" in content
+    assert "registration-variant-candidates" in content
+    assert "registration-product-knowledge-evidence" in content
+    assert "registration-benefits-evidence" in content
+    assert "registration-ingredients-evidence" in content
+    assert "registration-warnings-evidence" in content
+    assert "no approval was changed" in content
