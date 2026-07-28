@@ -9,6 +9,8 @@ import ProductIntelligenceReviewDraftPanel, {
 import type { ProductIntelligenceReviewDraft, ProductIntelligenceReviewDraftValidationResponse } from "../../types";
 import {
 	aiFillMissingProductIntelligenceReviewDraft,
+	approveClaimSafeRewrite,
+	fetchClaimSafeRewritePreview,
 	fetchProductIntelligenceReviewDraft,
 	fetchProductIntelligenceReviewDrafts,
 } from "../../api/products";
@@ -21,6 +23,8 @@ vi.mock("../../api/products", () => ({
 	createProductIntelligenceReviewDraft: vi.fn(),
 	prepareProductForCopywriting: vi.fn(),
 	aiFillMissingProductIntelligenceReviewDraft: vi.fn(),
+	fetchClaimSafeRewritePreview: vi.fn(),
+	approveClaimSafeRewrite: vi.fn(),
 	updateProductIntelligenceReviewDraft: vi.fn(),
 	validateProductIntelligenceReviewDraft: vi.fn(),
 	approveProductIntelligenceReviewDraft: vi.fn(),
@@ -46,7 +50,14 @@ function makeDraft(overrides: Partial<ProductIntelligenceReviewDraft> = {}): Pro
 }
 
 describe("ProductIntelligenceReviewDraftPanel", () => {
-	afterEach(() => cleanup());
+	afterEach(() => {
+		cleanup();
+		vi.clearAllMocks();
+		vi.mocked(fetchProductIntelligenceReviewDrafts).mockResolvedValue({
+			product_id: "p1",
+			items: [],
+		});
+	});
 
 	it("[UI smoke] renders the Prepare with AI (DeepSeek) button next to Create", async () => {
 		render(
@@ -98,6 +109,114 @@ describe("ProductIntelligenceReviewDraftPanel", () => {
 		expect(result).toHaveTextContent("product_description");
 		expect(result).toHaveTextContent("deepseek");
 		expect(result).toHaveTextContent(/insufficient evidence/i);
+	});
+
+	it("guides a blocked product through preview and explicit phrase-gated claim-safe approval", async () => {
+		const draft = makeDraft({
+			product_description: "Biskut susu.",
+			benefits_json: ["Melt-in-mouth texture"],
+			usp_json: ["330g pack"],
+			target_customer_text: "Peminat biskut",
+			buyer_persona_snapshot_json: { audience: "Peminat biskut" },
+			copy_strategy_summary_json: { angles: ["taste"] },
+			source_urls_json: { source_url: "https://example.com/product" },
+			image_evidence_json: { image_url: "https://example.com/product.jpg" },
+		});
+		vi.mocked(fetchProductIntelligenceReviewDrafts).mockResolvedValue({
+			product_id: "p1",
+			items: [draft],
+		});
+		vi.mocked(fetchProductIntelligenceReviewDraft).mockResolvedValue(draft);
+		vi.mocked(fetchClaimSafeRewritePreview).mockResolvedValue({
+			product_id: "p1",
+			product_name: "Biskut Makmur Susu",
+			safe_claim_rewrite: "Biskut susu dengan fokus pada rasa dan format produk.",
+			safe_hook_angles: ["Fokus rasa"],
+			safe_usp_list: ["Pek 330g"],
+			safe_cta_angles: ["Semak butiran produk."],
+			claim_safe_copy_status: "CLAIM_SAFE_COPY_PREVIEW_ONLY",
+			approval_required: true,
+			approval_after_operator_review: true,
+			approval_phrase: "APPROVE_CLAIM_SAFE_COPY_REVIEW",
+			claim_gate: "CLAIM_REVIEW_REQUIRED",
+			review_decision: "APPROVE_CANDIDATE",
+			audit_notes: [],
+			provenance: ["claim_safe_rewrite_service:v3", "draft_source:NOT_FOUND"],
+			stored_status: null,
+			stored_payload_available: false,
+		});
+		vi.mocked(approveClaimSafeRewrite).mockResolvedValue({
+			product_id: "p1",
+			product_name: "Biskut Makmur Susu",
+			safe_claim_rewrite: "Biskut susu dengan fokus pada rasa dan format produk.",
+			safe_hook_angles: ["Fokus rasa"],
+			safe_usp_list: ["Pek 330g"],
+			safe_cta_angles: ["Semak butiran produk."],
+			claim_safe_copy_status: "CLAIM_SAFE_COPY_REVIEW_READY",
+			approval_required: true,
+			approval_after_operator_review: true,
+			approval_phrase: "APPROVE_CLAIM_SAFE_COPY_REVIEW",
+			claim_gate: "CLAIM_REVIEW_REQUIRED",
+			review_decision: "APPROVE_CANDIDATE",
+			audit_notes: [],
+			provenance: ["claim_safe_rewrite_service:v3", "draft_source:NOT_FOUND"],
+			approved_at: "2026-07-28T00:00:00Z",
+		});
+		const onClaimSafeApproved = vi.fn();
+
+		render(
+			<ProductIntelligenceReviewDraftPanel
+				productId="p1"
+				onApproved={async () => {}}
+				guidedClaimSafe
+				onClaimSafeApproved={onClaimSafeApproved}
+			/>,
+		);
+
+		expect(await screen.findByTestId("guided-claim-safe-panel")).toHaveTextContent(
+			"Biskut susu dengan fokus pada rasa",
+		);
+		await waitFor(() =>
+			expect(
+				screen.getByTestId("guided-claim-safe-missing-fields"),
+			).toHaveTextContent("allowed_claims_json"),
+		);
+		expect(screen.getByTestId("approve-claim-safe-package")).toBeDisabled();
+		expect(approveClaimSafeRewrite).not.toHaveBeenCalled();
+
+		fireEvent.change(screen.getByTestId("claim-safe-approval-phrase"), {
+			target: { value: "APPROVE_CLAIM_SAFE_COPY_REVIEW" },
+		});
+		fireEvent.click(screen.getByTestId("approve-claim-safe-package"));
+
+		await waitFor(() =>
+			expect(approveClaimSafeRewrite).toHaveBeenCalledWith("p1", {
+				confirmation_phrase: "APPROVE_CLAIM_SAFE_COPY_REVIEW",
+				approval_note: null,
+			}),
+		);
+		expect(onClaimSafeApproved).toHaveBeenCalledWith(
+			"CLAIM_SAFE_COPY_REVIEW_READY",
+		);
+	});
+
+	it("surfaces a fail-closed claim-safe preview error without approving", async () => {
+		vi.mocked(fetchClaimSafeRewritePreview).mockRejectedValue(
+			new Error("API 409: CLAIM_SAFE_REVIEW_BLOCKED"),
+		);
+
+		render(
+			<ProductIntelligenceReviewDraftPanel
+				productId="p1"
+				onApproved={async () => {}}
+				guidedClaimSafe
+			/>,
+		);
+
+		expect(await screen.findByTestId("guided-claim-safe-error")).toHaveTextContent(
+			"CLAIM_SAFE_REVIEW_BLOCKED",
+		);
+		expect(approveClaimSafeRewrite).not.toHaveBeenCalled();
 	});
 
 	it("formatReviewDraftError turns a raw 409 into a human, actionable message", () => {

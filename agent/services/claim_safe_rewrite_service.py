@@ -558,7 +558,7 @@ def _match_bosmax_draft(product: dict[str, Any]) -> dict[str, Any] | None:
         haystack = " ".join(_normalize(name) for name in names if _normalize(name))
         if not haystack:
             continue
-        if title.casefold() in haystack.casefold() or "bosmax herbs" in haystack.casefold():
+        if title.casefold() in haystack.casefold():
             matches.append(draft.model_dump())
     matches.sort(key=lambda item: item.get("updated_at") or "", reverse=True)
     return matches[0] if matches else None

@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { Product } from "../types";
 import {
+	resolveClaimSafeReturnPath,
+	resolveGuidedClaimSafeProducts,
 	resolveInitialSourceFilter,
 	resolveProductsPageImageSource,
 } from "./ProductsSalesAnalyzerPage";
@@ -141,5 +143,51 @@ describe("resolveProductsPageImageSource", () => {
 				}),
 			),
 		).toBe("https://cdn.example.com/fastmoss-product.jpg");
+	});
+});
+
+describe("resolveClaimSafeReturnPath", () => {
+	it("allows only canonical operator routes", () => {
+		expect(resolveClaimSafeReturnPath("/operator/t2v")).toBe("/operator/t2v");
+		expect(resolveClaimSafeReturnPath("/operator/hybrid")).toBe(
+			"/operator/hybrid",
+		);
+		expect(resolveClaimSafeReturnPath("/operator/img")).toBe("/operator/img");
+	});
+
+	it("rejects external and unrelated return paths", () => {
+		expect(resolveClaimSafeReturnPath("https://example.com")).toBeNull();
+		expect(resolveClaimSafeReturnPath("/settings")).toBeNull();
+		expect(resolveClaimSafeReturnPath(null)).toBeNull();
+	});
+});
+
+describe("resolveGuidedClaimSafeProducts", () => {
+	it("loads and pins a guided product beyond the bounded catalog page", async () => {
+		const firstPage = Array.from({ length: 500 }, (_, index) =>
+			product({ id: `catalog-${index}` }),
+		);
+		const guidedProduct = product({ id: "guided-product" });
+		const fetchProduct = vi.fn().mockResolvedValue(guidedProduct);
+
+		const rows = await resolveGuidedClaimSafeProducts(
+			firstPage,
+			guidedProduct.id,
+			fetchProduct,
+		);
+
+		expect(fetchProduct).toHaveBeenCalledWith("guided-product");
+		expect(rows[0]).toBe(guidedProduct);
+		expect(rows).toHaveLength(501);
+	});
+
+	it("fails closed when the exact lookup returns a different product", async () => {
+		await expect(
+			resolveGuidedClaimSafeProducts(
+				[product({ id: "catalog-1" })],
+				"guided-product",
+				async () => product({ id: "wrong-product" }),
+			),
+		).rejects.toThrow("CLAIM_SAFE_DEEP_LINK_PRODUCT_MISMATCH");
 	});
 });

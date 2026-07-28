@@ -124,6 +124,55 @@ async def test_preview_claim_safe_rewrite_strips_metadata_and_first_person_frami
 
 
 @pytest.mark.asyncio
+async def test_preview_claim_safe_rewrite_does_not_bind_unrelated_bosmax_draft(monkeypatch):
+    async def fake_get_product(product_id: str):
+        return {
+            "id": product_id,
+            "raw_product_title": "Biskut Makmur Susu",
+            "product_display_name": "Biskut Makmur Susu",
+            "copywriting_angle": "Taste-led packaged-food convenience.",
+            "claim_gate": "CLAIM_SAFE",
+            "claim_tokens": [],
+        }
+
+    class FakeDraft:
+        def model_dump(self):
+            return {
+                "review_draft_id": "draft-bosmax",
+                "updated_at": "2026-07-28T00:00:00Z",
+                "declared_evidence_fields": {
+                    "product_name": "Bosmax Herbs 5 ML",
+                    "product_description": "Unrelated herbal product evidence.",
+                },
+                "canonical_candidate_fields": {
+                    "normalized_name": "Bosmax Herbs 5 ML",
+                },
+            }
+
+        @property
+        def declared_evidence_fields(self):
+            return self.model_dump()["declared_evidence_fields"]
+
+        @property
+        def canonical_candidate_fields(self):
+            return self.model_dump()["canonical_candidate_fields"]
+
+    monkeypatch.setattr(
+        "agent.services.claim_safe_rewrite_service.crud.get_product",
+        fake_get_product,
+    )
+    monkeypatch.setattr(
+        "agent.services.claim_safe_rewrite_service.RegistrationDraftStorageService.list_drafts",
+        lambda: [FakeDraft()],
+    )
+
+    preview = await preview_claim_safe_rewrite("prod-biskut")
+
+    assert "draft_source:NOT_FOUND" in preview["provenance"]
+    assert "Unrelated herbal product evidence" not in preview["safe_claim_rewrite"]
+
+
+@pytest.mark.asyncio
 async def test_approve_claim_safe_rewrite_persists_review_ready_package_for_low_risk_preview(monkeypatch):
     stored_updates = {}
 
