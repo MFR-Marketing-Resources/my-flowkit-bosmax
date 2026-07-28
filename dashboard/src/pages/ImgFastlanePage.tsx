@@ -29,6 +29,7 @@ import {
 import { fetchProductCatalog } from "../api/products";
 import ApproveAssetModal from "../components/creative-library/ApproveAssetModal";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
+import VisualAssetPicker from "../components/workspace/VisualAssetPicker";
 import type { CreativeAsset, Product } from "../types";
 import {
 	buildFastlaneGenerationRequest,
@@ -148,6 +149,23 @@ function ReferenceField({
 					))}
 				</select>
 			</label>
+			<VisualAssetPicker
+				emptyMessage={emptyHint}
+				items={assets.map((asset) => ({
+					value: asset.asset_id,
+					title: asset.display_name,
+					subtitle: asset.asset_id,
+					previewUrl:
+						asset.preview_url ??
+						asset.download_url ??
+						asset.remote_source_url,
+					status: asset.review_status,
+				}))}
+				label={label}
+				onChange={onChange}
+				placeholder={assets.length === 0 ? emptyHint : "Select visual reference"}
+				value={value}
+			/>
 			{selected && !selectedApproved ? (
 				<div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[10px] text-amber-100 space-y-1.5">
 					<div>
@@ -841,6 +859,30 @@ export default function ImgFastlanePage() {
 											))}
 										</select>
 									</label>
+									<VisualAssetPicker
+										items={sceneRegistry.map((scene) => {
+											const asset = sceneAssets.find(
+												(candidate) =>
+													candidate.asset_id === scene.generated_asset_id,
+											);
+											return {
+												value: scene.scene_code,
+												title: scene.scene_name,
+												subtitle: scene.scene_code,
+												previewUrl:
+													asset?.preview_url ??
+													asset?.download_url ??
+													asset?.remote_source_url,
+												status: scene.image_generated
+													? "IMAGE READY"
+													: "TEXT ONLY",
+											};
+										})}
+										label="Scene Context Library"
+										onChange={handlePickSceneContext}
+										placeholder="Select scene context"
+										value={sceneContextCode}
+									/>
 									<p className="text-[10px] text-slate-500">
 										Pick any scene — its background is injected into the prompt
 										immediately (no image needed). Scenes with a generated image
@@ -1110,9 +1152,27 @@ export default function ImgFastlanePage() {
 										<option key={a.media_id} value={a.media_id}>
 											{a.media_id} {a.size_mb ? `(${a.size_mb}MB)` : ""}
 										</option>
-									))}
-								</select>
-								<p className="text-[10px] text-slate-500">
+										))}
+									</select>
+									<VisualAssetPicker
+										emptyMessage="No finished image artifacts found."
+										items={artifacts.map((artifact) => ({
+											value: artifact.media_id,
+											title: artifact.mode || "Generated image",
+											subtitle: artifact.media_id,
+											previewUrl: `/api/flow/retrieved/${encodeURIComponent(
+												artifact.media_id,
+											)}`,
+											status: artifact.size_mb
+												? `${artifact.size_mb}MB`
+												: "FINISHED",
+										}))}
+										label="Finished Artifact"
+										onChange={setArtifactMediaId}
+										placeholder="Select a finished image artifact"
+										value={artifactMediaId}
+									/>
+									<p className="text-[10px] text-slate-500">
 									Finished Artifact reads from the real generated artifact records returned by <code>/api/flow/artifacts</code>.
 								</p>
 							</div>

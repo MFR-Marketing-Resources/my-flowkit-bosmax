@@ -94,7 +94,7 @@ vi.mock("../api/nativeExtend", () => ({
 
 import RpaProductionStudioPage from "./RpaProductionStudioPage";
 
-const PRODUCT = { id: "prod-1", product_display_name: "ZZ Test Product", category: "Beauty", reference_only: false };
+const PRODUCT = { id: "prod-1", product_display_name: "ZZ Test Product", category: "Beauty", reference_only: false, image_url: "https://example.test/product.jpg" };
 const REF_PRODUCT = { id: "fastmoss-ref:x", product_display_name: "Ref Only", reference_only: true };
 const GREEN = { checked: 1, ready: 1, blocked: 0, note: "dry run", items: [{ package_id: "wgp_1", ok: true }] };
 
@@ -278,6 +278,21 @@ describe("Production Studio — rendered contract", () => {
 		const ids = screen.getAllByTestId("studio-product-option").map((b) => b.getAttribute("data-product-id"));
 		expect(ids).toContain("prod-1");
 		expect(ids).not.toContain("fastmoss-ref:x");
+	});
+
+	it("shows a compact selected product preview without changing the product", async () => {
+		primeHappyPath();
+		renderPage();
+		await pickProduct();
+		expect(screen.getByTestId("studio-selected-product-visual")).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Preview ZZ Test Product" }));
+		expect(screen.getByRole("dialog", { name: "Image preview" })).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Close preview" }));
+		expect(screen.queryByRole("dialog", { name: "Image preview" })).toBeNull();
+		expect(screen.getByTestId("studio-product-option")).toHaveAttribute(
+			"data-selected",
+			"true",
+		);
 	});
 });
 

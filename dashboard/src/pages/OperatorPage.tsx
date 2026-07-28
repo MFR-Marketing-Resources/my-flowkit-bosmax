@@ -2153,7 +2153,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										})}
 									</select>
 								</label>
-								<VisualAssetPicker label="Avatar registry visual picker" value={registryAvatarId} onChange={setRegistryAvatarId} items={avatarRegistryPool.map((row) => ({ value: String(row.avatar_code || row.AvatarCode || ""), title: String(row.character_name || row.display_name || row.Name || row.name || row.avatar_code || "Avatar"), subtitle: String(row.avatar_code || row.AvatarCode || ""), previewUrl: registryPreviewUrls[String(row.generated_asset_id || "")] || null })).filter((row) => Boolean(row.value))} />
+								<VisualAssetPicker label="Avatar registry visual picker" value={registryAvatarId} onChange={setRegistryAvatarId} items={avatarRegistryPool.map((row) => ({ value: String(row.avatar_code || row.AvatarCode || ""), title: String(row.character_name || row.display_name || row.Name || row.name || row.avatar_code || "Avatar"), subtitle: String(row.avatar_code || row.AvatarCode || ""), previewUrl: registryPreviewUrls[String(row.generated_asset_id || "")] || null, status: "APPROVED" })).filter((row) => Boolean(row.value))} />
 								<label className="space-y-1 text-xs text-slate-200">
 									<span>Scene registry</span>
 									<select
@@ -2176,7 +2176,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										))}
 									</select>
 								</label>
-								<VisualAssetPicker label="Scene registry visual picker" value={registrySceneCode} onChange={setRegistrySceneCode} items={sceneRegistryPool.map((row) => ({ value: row.scene_code, title: row.scene_name || row.scene_code, subtitle: row.scene_code, previewUrl: registryPreviewUrls[String(row.generated_asset_id || "")] || null }))} />
+								<VisualAssetPicker label="Scene registry visual picker" value={registrySceneCode} onChange={setRegistrySceneCode} items={sceneRegistryPool.map((row) => ({ value: row.scene_code, title: row.scene_name || row.scene_code, subtitle: row.scene_code, previewUrl: registryPreviewUrls[String(row.generated_asset_id || "")] || null, status: "APPROVED" }))} />
 							</div>
 							{registryAvatarId ? (
 								<div className="mt-2 text-[11px] text-cyan-100">

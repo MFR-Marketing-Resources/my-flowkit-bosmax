@@ -25,6 +25,7 @@ import { fetchProductCatalog, fetchProductDetail } from "../api/products";
 import { compileWorkspacePromptPreview } from "../api/workspacePackages";
 import ApproveAssetModal from "../components/creative-library/ApproveAssetModal";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
+import VisualAssetPicker from "../components/workspace/VisualAssetPicker";
 import CopywritingReadinessCard from "../components/copywriting/CopywritingReadinessCard";
 import CopyBindingGate from "../components/copywriting/CopyBindingGate";
 import { useCopywritingReadiness } from "../api/copywritingReadiness";
@@ -130,6 +131,23 @@ function ReferenceField({
 					))}
 				</select>
 			</label>
+			<VisualAssetPicker
+				emptyMessage={emptyHint}
+				items={assets.map((asset) => ({
+					value: asset.asset_id,
+					title: asset.display_name,
+					subtitle: asset.asset_id,
+					previewUrl:
+						asset.preview_url ??
+						asset.download_url ??
+						asset.remote_source_url,
+					status: asset.review_status,
+				}))}
+				label={label}
+				onChange={onChange}
+				placeholder={assets.length === 0 ? emptyHint : "Select visual reference"}
+				value={value}
+			/>
 			{selected && !selectedApproved ? (
 				<div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[10px] text-amber-100 space-y-1.5">
 					<div>
@@ -912,23 +930,43 @@ export default function ImgCockpitPage() {
 					</button>
 				</div>
 				{outputMode === "artifact" ? (
-					<select
-						value={artifactMediaId}
-						onChange={(e) => setArtifactMediaId(e.target.value)}
-						className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
-					>
-						<option value="">
-							{artifacts.length === 0
-								? "No finished image artifacts yet"
-								: "Select a finished image artifact…"}
-						</option>
-						{artifacts.map((a) => (
-							<option key={a.media_id} value={a.media_id}>
-								{a.media_id}
-								{a.size_mb ? ` · ${a.size_mb}MB` : ""}
+					<div className="space-y-2">
+						<select
+							value={artifactMediaId}
+							onChange={(e) => setArtifactMediaId(e.target.value)}
+							className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"
+						>
+							<option value="">
+								{artifacts.length === 0
+									? "No finished image artifacts yet"
+									: "Select a finished image artifact…"}
 							</option>
-						))}
-					</select>
+							{artifacts.map((a) => (
+								<option key={a.media_id} value={a.media_id}>
+									{a.media_id}
+									{a.size_mb ? ` · ${a.size_mb}MB` : ""}
+								</option>
+							))}
+						</select>
+						<VisualAssetPicker
+							emptyMessage="No finished image artifacts yet."
+							items={artifacts.map((artifact) => ({
+								value: artifact.media_id,
+								title: artifact.mode || "Generated image",
+								subtitle: artifact.media_id,
+								previewUrl: `/api/flow/retrieved/${encodeURIComponent(
+									artifact.media_id,
+								)}`,
+								status: artifact.size_mb
+									? `${artifact.size_mb}MB`
+									: "FINISHED",
+							}))}
+							label="Finished Artifact"
+							onChange={setArtifactMediaId}
+							placeholder="Select a finished image artifact"
+							value={artifactMediaId}
+						/>
+					</div>
 				) : (
 					<input
 						type="file"

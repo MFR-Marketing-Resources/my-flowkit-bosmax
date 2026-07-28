@@ -90,6 +90,7 @@ import {
 	type QuantityPreviewResult,
 } from "../api/workspacePackages";
 import type { Product, WorkspaceMode } from "../types";
+import { VisualAssetPreview } from "../components/workspace/VisualAssetPicker";
 
 const ASPECTS = ["9:16", "16:9", "1:1"];
 // Quantity cap for the credit-free plan/prepare flow. quantity>1 plans unique-copy
@@ -1055,6 +1056,43 @@ export default function RpaProductionStudioPage() {
 					<button type="button" data-testid="studio-product-search-btn" onClick={() => void loadProducts(query)} disabled={loadingProducts}
 						className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800 disabled:opacity-40">Search</button>
 				</div>
+				{selectedProduct ? (
+					<div
+						className="mb-3 flex items-center gap-3 rounded-lg border border-cyan-500/30 bg-cyan-500/5 p-2"
+						data-testid="studio-selected-product-visual"
+					>
+						<div className="w-20 shrink-0">
+							<VisualAssetPreview
+								previewUrl={
+									selectedProduct.image_url ||
+									selectedProduct.local_image_path ||
+									selectedProduct.media_id
+										? `/api/products/${encodeURIComponent(selectedProduct.id)}/image`
+										: null
+								}
+								subtitle={selectedProduct.id}
+								title={
+									selectedProduct.product_display_name ||
+									selectedProduct.product_short_name ||
+									selectedProduct.id
+								}
+							/>
+						</div>
+						<div className="min-w-0">
+							<div className="truncate text-xs font-semibold text-slate-100">
+								{selectedProduct.product_display_name ||
+									selectedProduct.product_short_name ||
+									selectedProduct.id}
+							</div>
+							<div className="truncate font-mono text-[10px] text-slate-400">
+								{selectedProduct.id}
+							</div>
+							<div className="mt-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">
+								Selected source
+							</div>
+						</div>
+					</div>
+				) : null}
 
 				{productsError && <div className="text-[11px] text-red-300" data-testid="studio-products-error">Could not load products.</div>}
 				{loadingProducts && <div className="text-[11px] text-slate-500" data-testid="studio-products-loading">Loading products…</div>}
