@@ -17,3 +17,6 @@ def test_operator_page_has_registry_authority_controls():
     assert "avatar_id: registryAvatarId" in text
     assert "scene_context_override: selectedSceneBackground" in text
     assert "scene_context_code: registrySceneCode" in text
+    assert "avatar-persona-composer" not in text
+    assert "operator-creator-persona" not in text
+    assert "creatorPersona" not in text

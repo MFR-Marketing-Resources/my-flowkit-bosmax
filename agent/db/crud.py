@@ -1976,6 +1976,19 @@ async def get_creative_asset(asset_id: str):
     return await _get("creative_asset", "asset_id", asset_id)
 
 
+async def get_creative_asset_by_media_id(media_id: str):
+    """Exact Creative Library artifact lookup; never use a bounded list scan."""
+    if not media_id:
+        return None
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM creative_asset WHERE media_id=? ORDER BY updated_at DESC LIMIT 1",
+        (media_id,),
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
 async def update_creative_asset(asset_id: str, **kw):
     return await _update("creative_asset", "asset_id", asset_id, **kw)
 

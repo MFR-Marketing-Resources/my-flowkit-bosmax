@@ -916,6 +916,13 @@ async def save_img_output_to_library(request: SaveImgOutputRequest) -> CreativeA
         raise ValueError(",".join(lineage_blockers))
 
     image_base64, file_name, source_type = await _resolve_real_output(request)
+    artifact_id = request.generated_artifact_media_id
+    if artifact_id:
+        existing = await crud.get_creative_asset_by_media_id(artifact_id)
+        if existing is not None:
+            reused = await get_creative_asset(str(existing["asset_id"]))
+            if reused is not None:
+                return reused
 
     # Product truth is derived, not operator-set: PRESERVED only when a product
     # is actually bound to the asset; otherwise NOT_APPLICABLE.
@@ -944,6 +951,7 @@ async def save_img_output_to_library(request: SaveImgOutputRequest) -> CreativeA
         description=request.description,
         source_type=source_type,  # type: ignore[arg-type]
         storage_kind="LOCAL_FILE",
+        media_id=artifact_id,
         product_id=request.product_id,
         category=request.category,
         silo=request.silo,
@@ -968,14 +976,16 @@ async def save_img_output_to_library(request: SaveImgOutputRequest) -> CreativeA
         review_status=request.review_status,
         mode_a_metadata_handoff=(
             {
-                "creative_direction": {
-                    "mode": direction.mode.value,
-                    "authority_version": direction.authority_version,
-                    "representation_policy_version": direction.representation_policy_version,
-                }
+                "generated_artifact": {"media_id": artifact_id},
+                **(
+                    {"creative_direction": {
+                        "mode": direction.mode.value,
+                        "authority_version": direction.authority_version,
+                        "representation_policy_version": direction.representation_policy_version,
+                    }}
+                    if direction is not None else {}
+                ),
             }
-            if direction is not None
-            else None
         ),
         image_base64=image_base64,
         file_name=file_name,

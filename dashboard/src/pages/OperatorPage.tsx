@@ -19,8 +19,8 @@ import NativeExtendPanel from "../components/NativeExtendPanel";
 import RequestReportPanel from "../components/reporting/RequestReportPanel";
 import SocialCopyPackagePanel from "../components/SocialCopyPackagePanel";
 import CanonicalReferenceBindingControls, {
-	EMPTY_BINDING,
 	type CanonicalReferenceBinding,
+	EMPTY_BINDING,
 } from "../components/workspace/CanonicalReferenceBindingControls";
 import CopySelectionPanel from "../components/workspace/CopySelectionPanel";
 import IMGModule from "../components/workspace/IMGModule";
@@ -422,51 +422,6 @@ export function referenceBindingBlocker(
 	return null;
 }
 
-// Avatar Persona composer (Phase A) — pure + hoisted for unit tests. The id
-// pattern MUST mirror agent/services/persona_variant_service.compose_persona_id;
-// the server's normalize_creator_persona stays the only validity gate.
-export type AvatarComposerVocab = NonNullable<
-	PromptCompilerRuntimeConfig["persona_composer"]
->;
-
-export function composeAvatarPersonaId(
-	gender: string,
-	ethnicity: string,
-	age: string,
-	bundle: string,
-): string | null {
-	if (!(gender && ethnicity && age && bundle)) return null;
-	return `AVX_${gender}_${ethnicity}_${age}_${bundle}`.toUpperCase();
-}
-
-export function composeAvatarPersonaPreview(
-	composer: AvatarComposerVocab,
-	genderId: string,
-	ethnicityId: string,
-	ageId: string,
-	bundleId: string,
-): string | null {
-	const gender = composer.genders.find((g) => g.id === genderId);
-	const ethnicity = composer.ethnicities.find((e) => e.id === ethnicityId);
-	const age = composer.age_ranges.find((a) => a.id === ageId);
-	const bundle = composer.bundles.find((b) => b.id === bundleId);
-	if (!(gender && ethnicity && age && bundle)) return null;
-	if (!bundle.allowed_genders.includes(gender.id)) return null;
-	const wardrobe =
-		gender.id === "F"
-			? bundle.wardrobe_f_en
-			: gender.id === "F_HIJAB"
-				? bundle.wardrobe_f_hijab_en
-				: bundle.wardrobe_m_en;
-	return composer.visual_template_en
-		.replace("{ethnicity}", ethnicity.descriptor_en)
-		.replace("{gender}", gender.descriptor_en)
-		.replace("{age}", age.descriptor_en)
-		.replace("{wardrobe}", wardrobe)
-		.replace("{environment}", bundle.environment_en)
-		.replace("{expression}", bundle.expression_en);
-}
-
 // Owner Phase-1 (SEV-0 manual_faf40cf6): a HYBRID failure must never surface as a
 // bare "F2V failed" — the SOURCE mode is the user-facing identity; the shared
 // transport mode is a diagnostic detail. Pure + hoisted so the mapping is
@@ -674,9 +629,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		useState<PromptCameraStyle>("UGC_IPHONE_RAW");
 	const [characterPresence, setCharacterPresence] =
 		useState<PromptCharacterPresence>("VISIBLE_CREATOR");
-	const [creatorPersona, setCreatorPersona] = useState("DEFAULT_CREATOR");
-	// T2V/Hybrid authoritative registries (avatar pool + scene pool).
-	// Persona composer remains optional UX text only when no avatar_id is set.
+	// T2V/Hybrid presenter identity is always resolved from the approved Avatar
+	// Registry; no persona-composer or legacy persona fallback reaches production.
 	const [registryAvatarId, setRegistryAvatarId] = useState("");
 	const [registrySceneCode, setRegistrySceneCode] = useState("");
 	const [avatarRegistryPool, setAvatarRegistryPool] = useState<
@@ -701,37 +655,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	>([]);
 	const [registryPoolsLoading, setRegistryPoolsLoading] = useState(false);
 	const [backendRuntimeStale, setBackendRuntimeStale] = useState(false);
-	// Avatar Persona composer (Phase A): a complete valid selection resolves to
-	// a composed persona id; the server's normalize_creator_persona remains the
-	// only validity gate (unknown ids fail closed at compile time).
-	const [avatarGender, setAvatarGender] = useState("");
-	const [avatarEthnicity, setAvatarEthnicity] = useState("");
-	const [avatarAge, setAvatarAge] = useState("");
-	const [avatarBundle, setAvatarBundle] = useState("");
-	const composedAvatarPreview =
-		promptConfig?.persona_composer &&
-		avatarGender &&
-		avatarEthnicity &&
-		avatarAge &&
-		avatarBundle
-			? composeAvatarPersonaPreview(
-					promptConfig.persona_composer,
-					avatarGender,
-					avatarEthnicity,
-					avatarAge,
-					avatarBundle,
-				)
-			: null;
-	useEffect(() => {
-		if (!composedAvatarPreview) return;
-		const composedId = composeAvatarPersonaId(
-			avatarGender,
-			avatarEthnicity,
-			avatarAge,
-			avatarBundle,
-		);
-		if (composedId) setCreatorPersona(composedId);
-	}, [composedAvatarPreview, avatarGender, avatarEthnicity, avatarAge, avatarBundle]);
 	useEffect(() => {
 		let cancelled = false;
 		setRegistryPoolsLoading(true);
@@ -868,7 +791,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				setTargetLanguage(config.defaults.target_language);
 				setCameraStyle(config.defaults.camera_style);
 				setCharacterPresence(config.defaults.character_presence);
-				setCreatorPersona(config.defaults.creator_persona);
 				setVideoDurationSeconds(config.defaults.block_duration_seconds);
 			})
 			.catch(() => {});
@@ -958,9 +880,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		}
 		if (workspacePackage.character_presence) {
 			setCharacterPresence(workspacePackage.character_presence);
-		}
-		if (workspacePackage.creator_persona) {
-			setCreatorPersona(workspacePackage.creator_persona);
 		}
 		if (workspacePackage.generation_mode === "EXTEND") {
 			const total = workspacePackage.total_duration_seconds;
@@ -1538,7 +1457,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					target_language: targetLanguage,
 					camera_style: cameraStyle,
 					character_presence: characterPresence,
-					creator_persona: creatorPersona,
 					overlay_enabled: false, // NO_OVERLAY law (ADR-008): default off
 					dialogue_enabled: true,
 				});
@@ -1551,7 +1469,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					target_language: targetLanguage,
 					camera_style: cameraStyle,
 					character_presence: characterPresence,
-					creator_persona: creatorPersona,
 				});
 			} else {
 				throw new Error(
@@ -1572,7 +1489,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		targetLanguage,
 		cameraStyle,
 		characterPresence,
-		creatorPersona,
 		backendRuntimeStale,
 	]);
 
@@ -1637,7 +1553,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				target_language: targetLanguage,
 				camera_style: cameraStyle,
 				character_presence: characterPresence,
-				creator_persona: registryAvatarId ? registryAvatarId : creatorPersona,
 				avatar_id: registryAvatarId || null,
 				scene_context_override: selectedSceneBackground || null,
 			});
@@ -1721,7 +1636,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				target_language: targetLanguage,
 				camera_style: cameraStyle,
 				character_presence: characterPresence,
-				creator_persona: registryAvatarId ? registryAvatarId : creatorPersona,
 				avatar_id: registryAvatarId || null,
 				scene_context_override: selectedSceneBackground || null,
 				scene_context_code: registrySceneCode || null,
@@ -2185,107 +2099,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								</div>
 							) : null}
 						</div>
-						<div className="space-y-2">
-							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-								Creator Persona
-							</div>
-							<select
-								id="operator-creator-persona"
-								name="operator_creator_persona"
-								title="Creator persona"
-								value={creatorPersona}
-								onChange={(e) => setCreatorPersona(e.target.value)}
-								className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
-							>
-								{(promptConfig?.persona_registry ?? []).map((persona) => (
-									<option key={persona.id} value={persona.id}>
-										{persona.label}
-									</option>
-								))}
-								{creatorPersona.startsWith("AVX_") ? (
-									<option value={creatorPersona}>
-										Composed: {creatorPersona}
-									</option>
-								) : null}
-							</select>
-						</div>
 					</div>
-					{promptConfig?.persona_composer?.bundles?.length ? (
-						<div
-							data-testid="avatar-persona-composer"
-							className="mt-4 rounded-lg border border-fuchsia-500/25 bg-fuchsia-500/5 p-3"
-						>
-							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-fuchsia-200">
-								Avatar Persona Composer (Drafting / Staging Helper Only)
-							</div>
-							<div className="mt-1 text-[11px] text-slate-300">
-								Pembantu draf untuk persona yang belum didaftarkan. Untuk kompilasi prompt produksi,
-								Avatar Registry di bawah ialah punca kebenaran (source of truth).
-							</div>
-							{characterPresence === "FACELESS" ? (
-								<div className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-200">
-									Mod FACELESS aktif — persona avatar tidak digunakan.
-								</div>
-							) : null}
-							<div className="mt-3 grid gap-3 md:grid-cols-4">
-								{(
-									[
-										["Jantina", avatarGender, setAvatarGender,
-											promptConfig.persona_composer.genders.map((g) => ({
-												id: g.id, label: g.label_ms,
-											}))],
-										["Bangsa", avatarEthnicity, setAvatarEthnicity,
-											promptConfig.persona_composer.ethnicities.map((e) => ({
-												id: e.id, label: e.label,
-											}))],
-										["Umur", avatarAge, setAvatarAge,
-											promptConfig.persona_composer.age_ranges.map((a) => ({
-												id: a.id, label: a.label,
-											}))],
-										["Wardrobe + Suasana", avatarBundle, setAvatarBundle,
-											promptConfig.persona_composer.bundles
-												.filter(
-													(b) =>
-														!avatarGender ||
-														b.allowed_genders.includes(avatarGender),
-												)
-												.map((b) => ({ id: b.id, label: b.label }))],
-									] as Array<[
-										string,
-										string,
-										(v: string) => void,
-										Array<{ id: string; label: string }>,
-									]>
-								).map(([label, value, setter, options]) => (
-									<label key={label} className="space-y-1 text-xs text-slate-200">
-										<span>{label}</span>
-										<select
-											value={value}
-											onChange={(event) => setter(event.target.value)}
-											className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
-										>
-											<option value="">— pilih —</option>
-											{options.map((option) => (
-												<option key={option.id} value={option.id}>
-													{option.label}
-												</option>
-											))}
-										</select>
-									</label>
-								))}
-							</div>
-							{composedAvatarPreview ? (
-								<div className="mt-3 rounded border border-fuchsia-500/20 bg-slate-950/60 px-3 py-2">
-									<div className="text-[10px] uppercase tracking-[0.18em] text-fuchsia-300">
-										Persona digunakan: {creatorPersona}
-									</div>
-									<div className="mt-1 text-[11px] leading-relaxed text-slate-300">
-										{composedAvatarPreview}
-									</div>
-								</div>
-							) : null}
-						</div>
-					) : null}
 					{mode === "T2V" || mode === "HYBRID" ? (
 						<div
 							data-testid="operator-registry-authority"
@@ -2296,8 +2110,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							</div>
 							<div className="mt-1 text-[11px] text-slate-300">
 								T2V/Hybrid presenter identity and scene background resolve from the
-								live avatar registry and scene registry. Persona text below is optional
-								and does not override a selected avatar code.
+								live approved Avatar Registry and Scene Registry.
 							</div>
 							{registryPoolsLoading ? (
 								<div className="mt-2 text-[11px] text-slate-400">Loading registries…</div>
@@ -2363,8 +2176,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								</div>
 							) : (
 								<div className="mt-2 text-[11px] text-slate-400">
-									No avatar selected — compiler uses product-seeded registry pick
-									(or optional persona text if set).
+									No avatar selected — compiler uses a deterministic approved
+									Avatar Registry pick for this product.
 								</div>
 							)}
 							{registrySceneCode ? (

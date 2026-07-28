@@ -872,32 +872,26 @@ def compile_ugc_video_prompt(
         approved_package = {**approved_package, "scene_context": _scene_override}
 
     resolved_presenter = None
-    if resolved_source_mode in ("HYBRID", "T2V"):
-        # Registry authority first: explicit avatar_id (AvatarCode) is SoT for
-        # presenter identity. Persona variants remain optional UX text only when
-        # no registry selection is provided — they must not mask the pool.
+    if resolved_source_mode in ("HYBRID", "T2V") and resolved_character_presence != "FACELESS":
+        # Production presenter identity is always resolved from Avatar Registry.
+        # Visible production presenter identity requires explicit operator choice.
+        # Legacy creator-persona/composer and deterministic pool selection are not authority.
         from agent.services import avatar_registry as _avatars
-        from agent.services import persona_variant_service as _persona_variants
 
-        registry_avatar_id = str(avatar_id or "").strip() or None
-        if registry_avatar_id:
-            resolved_presenter = _avatars.resolve_presenter(
-                registry_avatar_id,
-                usage_context=_clean(product.get("category")),
-                seed=_clean(product.get("id") or product.get("name") or "bosmax"),
-            )
-            if resolved_presenter and resolved_presenter.get("avatar_code"):
-                resolved_creator_persona = str(resolved_presenter["avatar_code"]).strip()
-        else:
-            resolved_presenter = _persona_variants.presenter_profile_for_persona(
-                resolved_creator_persona
-            )
-            if resolved_presenter is None:
-                resolved_presenter = _avatars.resolve_presenter(
-                    None,
-                    usage_context=_clean(product.get("category")),
-                    seed=_clean(product.get("id") or product.get("name") or "bosmax"),
-                )
+        registry_avatar_id = str(avatar_id or "").strip()
+        if not registry_avatar_id:
+            raise ValueError("AVATAR_REGISTRY_SELECTION_REQUIRED")
+        resolved_presenter = _avatars.resolve_presenter(
+            registry_avatar_id,
+            usage_context=_clean(product.get("category")),
+            seed=_clean(product.get("id") or product.get("name") or "bosmax"),
+        )
+        if not resolved_presenter or not resolved_presenter.get("avatar_code"):
+            raise ValueError("AVATAR_REGISTRY_AVATAR_INVALID")
+        if resolved_presenter.get("avatar_code"):
+            resolved_creator_persona = str(resolved_presenter["avatar_code"]).strip()
+            registry_avatar_id = resolved_creator_persona
+        avatar_id = registry_avatar_id
     _ingredient_roles = (
         {"PRODUCT_REFERENCE": True, "AVATAR_REFERENCE": True}
         if resolved_source_mode == "INGREDIENTS" else None

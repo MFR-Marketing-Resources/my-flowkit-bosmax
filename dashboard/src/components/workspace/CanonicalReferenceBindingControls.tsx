@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { fetchAPI } from "../../api/client";
 import { fetchCreativeAssetEligibilityAudit } from "../../api/creativeAssets";
 import type {
 	CreativeAsset,
@@ -24,6 +25,20 @@ export const EMPTY_BINDING: CanonicalReferenceBinding = {
 	sceneContextReferenceAssetId: null,
 	styleReferenceAssetId: null,
 };
+
+export interface RegistryAssetRow {
+	code: string;
+	label: string;
+	assetId: string | null;
+}
+
+export function registryRowsForEligibleAssets(
+	rows: RegistryAssetRow[],
+	assets: CreativeAsset[],
+): RegistryAssetRow[] {
+	const eligibleIds = new Set(assets.map((asset) => asset.asset_id));
+	return rows.filter((row) => row.assetId && eligibleIds.has(row.assetId));
+}
 
 const BINDING_AUDIT_REASON_LABELS: Array<{
 	key: string;
@@ -237,6 +252,8 @@ export default function CanonicalReferenceBindingControls({
 		Record<string, CreativeAssetEligibilityAuditResponse | null>
 	>({});
 	const [otherProductCounts, setOtherProductCounts] = useState<Record<string, number>>({});
+	const [avatarRegistryRows, setAvatarRegistryRows] = useState<RegistryAssetRow[]>([]);
+	const [sceneRegistryRows, setSceneRegistryRows] = useState<RegistryAssetRow[]>([]);
 	const [error, setError] = useState<string | null>(null);
 	const surfaces = bindingSurface(mode);
 
@@ -278,6 +295,48 @@ export default function CanonicalReferenceBindingControls({
 		};
 	}, [mode, productId]);
 
+	useEffect(() => {
+		if (mode !== "I2V") {
+			setAvatarRegistryRows([]);
+			setSceneRegistryRows([]);
+			return;
+		}
+		let active = true;
+		void Promise.all([
+			fetchAPI<{ avatars?: Array<{ avatar_code?: string; character_name?: string; generated_asset_id?: string | null }> }>(
+				"/api/workspace/avatar-registry/pool",
+			),
+			fetchAPI<{ scenes?: Array<{ scene_code?: string; scene_name?: string; generated_asset_id?: string | null }> }>(
+				"/api/workspace/scene-context-registry/pool",
+			),
+		])
+			.then(([avatarResponse, sceneResponse]) => {
+			if (!active) return;
+			setAvatarRegistryRows(
+				(avatarResponse.avatars ?? []).map((avatar) => ({
+					code: String(avatar.avatar_code ?? "").trim(),
+					label: String(avatar.character_name ?? avatar.avatar_code ?? "Avatar").trim(),
+					assetId: avatar.generated_asset_id ?? null,
+				})),
+			);
+			setSceneRegistryRows(
+				(sceneResponse.scenes ?? []).map((scene) => ({
+					code: String(scene.scene_code ?? "").trim(),
+					label: String(scene.scene_name ?? scene.scene_code ?? "Scene").trim(),
+					assetId: scene.generated_asset_id ?? null,
+				})),
+			);
+			})
+			.catch(() => {
+				if (!active) return;
+				setAvatarRegistryRows([]);
+				setSceneRegistryRows([]);
+			});
+		return () => {
+			active = false;
+		};
+	}, [mode]);
+
 	if (surfaces.length === 0) return null;
 	return (
 		<div
@@ -302,6 +361,18 @@ export default function CanonicalReferenceBindingControls({
 						surface !== "HYBRID_START_FRAME_PICKER" &&
 						surface !== "I2V_STYLE_PICKER";
 					const bindable = assets[surface] ?? [];
+					const registryRows =
+						surface === "I2V_CHARACTER_PICKER"
+							? registryRowsForEligibleAssets(avatarRegistryRows, bindable)
+							: surface === "I2V_SCENE_PICKER"
+								? registryRowsForEligibleAssets(sceneRegistryRows, bindable)
+								: null;
+					const pickerLabel =
+						surface === "I2V_CHARACTER_PICKER"
+							? "Avatar Registry (approved I2V image)"
+							: surface === "I2V_SCENE_PICKER"
+								? "Scene Registry (approved I2V image)"
+								: surface.replace(/_/g, " ");
 					const audit = audits[surface];
 					const otherProductCount = otherProductCounts[surface] ?? 0;
 					const emptyLabel = pickerPlaceholder(
@@ -314,9 +385,22 @@ export default function CanonicalReferenceBindingControls({
 						<div key={surface} className="space-y-2">
 							<label className="space-y-1 text-xs text-slate-200">
 								<span>
-									{surface.replace(/_/g, " ")}
+									{pickerLabel}
 									{required ? " *" : " (optional)"}
 								</span>
+								{registryRows ? (
+									<span
+										data-testid={`registry-binding-count-${surface}`}
+										className="block text-[10px] text-cyan-200/80"
+									>
+										{surface === "I2V_CHARACTER_PICKER" ? "Avatar" : "Scene"} Registry:
+										 {surface === "I2V_CHARACTER_PICKER"
+											? avatarRegistryRows.length
+											: sceneRegistryRows.length}{" "}
+										rows; {registryRows.length} approved I2V image
+										{registryRows.length === 1 ? "" : "s"} available.
+									</span>
+								) : null}
 								<select
 									data-testid={`binding-picker-${surface}`}
 									value={binding[field] ?? ""}
@@ -326,7 +410,13 @@ export default function CanonicalReferenceBindingControls({
 									className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
 								>
 									<option value="">{emptyLabel}</option>
-									{bindable.map((asset) => {
+									{registryRows
+										? registryRows.map((row) => (
+											<option key={row.code} value={row.assetId ?? ""}>
+												{row.label} — {row.code}
+											</option>
+										))
+										: bindable.map((asset) => {
 										const resolvable = assetHasResolvableSource(asset);
 										return (
 											<option
@@ -338,7 +428,7 @@ export default function CanonicalReferenceBindingControls({
 												{resolvable ? "" : " (no media — not bindable)"}
 											</option>
 										);
-									})}
+										})}
 								</select>
 							</label>
 							{renderSurfaceAuditCard(
