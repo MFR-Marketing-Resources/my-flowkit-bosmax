@@ -40,6 +40,7 @@ import type { Product } from "../../../types";
 import type { PosterDeliverableReconstruction } from "../../../types/posterCopySet";
 import type { PosterRecipe } from "../../../types/posterRecipe";
 import SearchableProductSelect from "../../workspace/SearchableProductSelect";
+import VisualAssetPicker from "../../workspace/VisualAssetPicker";
 
 function productThumb(p: Product | null): string | null {
 	return p?.image_analysis?.image_url ?? null;
@@ -1052,51 +1053,31 @@ function SceneStep({ wf }: { wf: WF }) {
 			) : null}
 
 			{artifacts && artifacts.length > 0 ? (
-				<div
-					className="grid grid-cols-2 gap-3 sm:grid-cols-3"
-					data-testid="poster-scene-grid"
-				>
-					{artifacts.map((a) => {
-						const selected = wf.backgroundMediaId === a.media_id;
-						const expiring =
-							typeof (a as { expires_in_hours?: number | null })
-								.expires_in_hours === "number" &&
-							((a as { expires_in_hours?: number | null }).expires_in_hours ??
-								99) < 6;
-						return (
-							<SelectCard
-								key={a.media_id}
-								testid={`poster-scene-card-${a.media_id}`}
-								selected={selected}
-								onClick={() =>
-									wf.setBackgroundMediaId(selected ? "" : a.media_id)
-								}
-								badge={
-									<span
-										className={[
-											"absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-bold",
-											expiring
-												? "bg-amber-500/30 text-amber-100"
-												: "bg-emerald-500/20 text-emerald-200",
-										].join(" ")}
-									>
-										{expiring ? "Hampir luput" : "Sedia digunakan"}
-									</span>
-								}
-							>
-								<img
-									src={`/api/flow/retrieved/${a.media_id}`}
-									alt={a.mode ? `Scene ${a.mode}` : "Scene"}
-									loading="lazy"
-									className="h-32 w-full rounded-lg object-cover"
-								/>
-								<p className="mt-2 truncate text-[11px] text-slate-300">
-									{(a.mode || "Scene").toUpperCase()}
-									{a.created_at ? ` · ${a.created_at.slice(0, 10)}` : ""}
-								</p>
-							</SelectCard>
-						);
-					})}
+				<div data-testid="poster-scene-grid">
+					<VisualAssetPicker
+						items={artifacts.map((artifact) => {
+							const expiring =
+								typeof (artifact as { expires_in_hours?: number | null })
+									.expires_in_hours === "number" &&
+								((artifact as { expires_in_hours?: number | null })
+									.expires_in_hours ?? 99) < 6;
+							return {
+								value: artifact.media_id,
+								title: (artifact.mode || "Scene").toUpperCase(),
+								subtitle: artifact.created_at
+									? `${artifact.media_id} · ${artifact.created_at.slice(0, 10)}`
+									: artifact.media_id,
+								previewUrl: `/api/flow/retrieved/${encodeURIComponent(
+									artifact.media_id,
+								)}`,
+								status: expiring ? "Hampir luput" : "Sedia digunakan",
+							};
+						})}
+						label="Poster scene"
+						onChange={wf.setBackgroundMediaId}
+						placeholder="Pilih scene visual"
+						value={wf.backgroundMediaId}
+					/>
 				</div>
 			) : null}
 

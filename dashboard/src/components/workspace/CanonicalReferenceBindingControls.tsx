@@ -431,7 +431,43 @@ export default function CanonicalReferenceBindingControls({
 										);
 										})}
 								</select>
-								{registryRows ? <VisualAssetPicker label={pickerLabel} value={binding[field] ?? ""} onChange={(value) => onChange({ ...binding, [field]: value || null })} items={registryRows.map((row) => { const asset = bindable.find((candidate) => candidate.asset_id === row.assetId); return { value: row.assetId ?? "", title: row.label, subtitle: row.code, previewUrl: asset?.preview_url ?? asset?.download_url }; })} /> : null}
+								<VisualAssetPicker
+									emptyMessage={emptyLabel}
+									items={
+										registryRows
+											? registryRows.map((row) => {
+													const asset = bindable.find(
+														(candidate) => candidate.asset_id === row.assetId,
+													);
+													return {
+														value: row.assetId ?? "",
+														title: row.label,
+														subtitle: row.code,
+														previewUrl:
+															asset?.preview_url ?? asset?.download_url,
+														status: asset?.review_status ?? "APPROVED",
+													};
+												})
+											: bindable
+													.filter(assetHasResolvableSource)
+													.map((asset) => ({
+														value: asset.asset_id,
+														title: asset.display_name,
+														subtitle: asset.asset_id,
+														previewUrl:
+															asset.preview_url ??
+															asset.download_url ??
+															asset.remote_source_url,
+														status: asset.review_status,
+													}))
+									}
+									label={pickerLabel}
+									onChange={(value) =>
+										onChange({ ...binding, [field]: value || null })
+									}
+									placeholder={emptyLabel}
+									value={binding[field] ?? ""}
+								/>
 							</label>
 							{renderSurfaceAuditCard(
 								surface,

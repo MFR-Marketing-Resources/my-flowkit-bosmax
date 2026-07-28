@@ -333,6 +333,15 @@ async function driveToApproved() {
 	await screen.findByTestId("poster-copy-approved");
 }
 
+async function selectPosterScene() {
+	fireEvent.click(
+		await screen.findByRole("button", {
+			name: "Poster scene visual combobox",
+		}),
+	);
+	fireEvent.click(await screen.findByRole("button", { name: "Select IMG" }));
+}
+
 describe("PosterGuidedShell", () => {
 	beforeEach(() => vi.clearAllMocks());
 	afterEach(() => cleanup());
@@ -397,9 +406,7 @@ describe("PosterGuidedShell", () => {
 				"poster-visual-card-product_hero_night_routine",
 			),
 		);
-		fireEvent.click(
-			await screen.findByTestId("poster-scene-card-scene-media-1"),
-		);
+		await selectPosterScene();
 		fireEvent.click(await screen.findByTestId("poster-guided-continue")); // scene → compose
 		fireEvent.click(await screen.findByTestId("poster-compose"));
 		await waitFor(() => expect(composePoster).toHaveBeenCalled());
@@ -601,16 +608,19 @@ describe("PosterGuidedShell closure", () => {
 				"poster-visual-card-product_hero_night_routine",
 			),
 		);
-		// Picker card with thumbnail + readiness badge.
-		const card = await screen.findByTestId("poster-scene-card-scene-media-1");
-		expect(card.textContent).toContain("Sedia digunakan");
+		// Compact picker keeps its thumbnail rows bounded until the field opens.
+		const picker = await screen.findByRole("button", {
+			name: "Poster scene visual combobox",
+		});
 		expect(fetchImageArtifacts).toHaveBeenCalled();
 		// Continue is blocked until a scene is picked.
 		expect(
 			(screen.getByTestId("poster-guided-continue") as HTMLButtonElement)
 				.disabled,
 		).toBe(true);
-		fireEvent.click(card);
+		fireEvent.click(picker);
+		expect(screen.getByText("Sedia digunakan")).toBeInTheDocument();
+		fireEvent.click(await screen.findByRole("button", { name: "Select IMG" }));
 		expect(
 			(screen.getByTestId("poster-guided-continue") as HTMLButtonElement)
 				.disabled,
@@ -638,7 +648,9 @@ describe("PosterGuidedShell closure", () => {
 		);
 		expect(await screen.findByTestId("poster-scene-error")).toBeInTheDocument();
 		fireEvent.click(screen.getByTestId("poster-scene-retry"));
-		await screen.findByTestId("poster-scene-card-scene-media-1");
+		await screen.findByRole("button", {
+			name: "Poster scene visual combobox",
+		});
 	});
 
 	it("readiness failure is visible and friendly", async () => {
@@ -881,7 +893,7 @@ describe("PosterGuidedShell composition plan (B-04)", () => {
 		fireEvent.click(
 			await screen.findByTestId("poster-visual-card-product_hero_night_routine"),
 		);
-		fireEvent.click(await screen.findByTestId("poster-scene-card-scene-media-1"));
+		await selectPosterScene();
 		fireEvent.click(await screen.findByTestId("poster-guided-continue")); // → compose
 		fireEvent.click(await screen.findByTestId("poster-compose"));
 		await waitFor(() => expect(composePoster).toHaveBeenCalled());

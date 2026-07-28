@@ -19,6 +19,7 @@ const baseProduct = (over: Partial<Product> = {}): Product =>
 		product_display_name: "Local Catalog Product",
 		source: "MANUAL",
 		reference_only: false,
+		image_url: "https://example.test/product.jpg",
 		...over,
 	}) as Product;
 
@@ -89,5 +90,31 @@ describe("SearchableProductSelect — server product search", () => {
 		const option = screen.getByText(/Reference Only Item/i);
 		fireEvent.click(option);
 		expect(onSelect).not.toHaveBeenCalled();
+	});
+
+	it("previews a product without selecting and selects only through the explicit option", () => {
+		const product = baseProduct();
+		const onSelect = vi.fn();
+		render(
+			<SearchableProductSelect
+				products={[product]}
+				selectedProduct={product}
+				onSelect={onSelect}
+			/>,
+		);
+
+		fireEvent.click(
+			screen.getByRole("button", { name: "Preview Local Catalog Product" }),
+		);
+		expect(screen.getByRole("dialog", { name: "Image preview" })).toBeInTheDocument();
+		expect(onSelect).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByRole("button", { name: "Close preview" }));
+		expect(screen.queryByRole("dialog", { name: "Image preview" })).toBeNull();
+
+		fireEvent.click(
+			screen.getByRole("button", { name: /Local Catalog Product MANUAL/i }),
+		);
+		fireEvent.click(screen.getByTestId("product-option"));
+		expect(onSelect).toHaveBeenCalledWith(product);
 	});
 });

@@ -27,3 +27,53 @@ def test_workspace_image_preview_slots_fail_closed():
     assert "WorkspaceImageAssetSlot" in f2v_source
     assert "WorkspaceImageAssetSlot" in i2v_source
     assert "WorkspaceImageAssetSlot" in img_source
+
+
+def test_compact_visual_combobox_is_shared_across_production_pickers():
+    picker_source = _read("dashboard/src/components/workspace/VisualAssetPicker.tsx")
+    operator_source = _read("dashboard/src/pages/OperatorPage.tsx")
+    binding_source = _read(
+        "dashboard/src/components/workspace/CanonicalReferenceBindingControls.tsx"
+    )
+    fastlane_source = _read("dashboard/src/pages/ImgFastlanePage.tsx")
+    cockpit_source = _read("dashboard/src/pages/ImgCockpitPage.tsx")
+    poster_source = _read(
+        "dashboard/src/components/poster/guided/PosterGuidedShell.tsx"
+    )
+
+    for token in [
+        'aria-haspopup="listbox"',
+        'role="listbox"',
+        "max-h-72",
+        "VisualAssetPreview",
+        "Close preview",
+        "onChange(item.value)",
+    ]:
+        assert token in picker_source
+
+    assert "VisualAssetPicker" in binding_source
+    assert "[field]: value || null" in binding_source
+    assert operator_source.count('status: "APPROVED"') >= 2
+    assert "VisualAssetPicker" in fastlane_source
+    assert "handlePickSceneContext" in fastlane_source
+    assert "/api/flow/retrieved/" in fastlane_source
+    assert "VisualAssetPicker" in cockpit_source
+    assert "/api/flow/retrieved/" in cockpit_source
+    assert "VisualAssetPicker" in poster_source
+    assert "onChange={wf.setBackgroundMediaId}" in poster_source
+
+
+def test_product_and_rpa_visual_summary_use_browser_safe_product_image_route():
+    product_picker_source = _read(
+        "dashboard/src/components/workspace/SearchableProductSelect.tsx"
+    )
+    rpa_source = _read("dashboard/src/pages/RpaProductionStudioPage.tsx")
+
+    assert "VisualAssetPreview" in product_picker_source
+    assert "/api/products/${encodeURIComponent(product.id)}/image" in product_picker_source
+    assert 'data-testid="product-option"' in product_picker_source
+    assert "onSelect(product)" in product_picker_source
+
+    assert 'data-testid="studio-selected-product-visual"' in rpa_source
+    assert "VisualAssetPreview" in rpa_source
+    assert "/api/products/${encodeURIComponent(selectedProduct.id)}/image" in rpa_source

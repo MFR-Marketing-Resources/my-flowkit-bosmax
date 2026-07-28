@@ -2,6 +2,7 @@ import { Check, ChevronDown, Search } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { searchProducts } from "../../api/products";
 import type { Product, WorkspacePackageReadinessItem } from "../../types";
+import { VisualAssetPreview } from "./VisualAssetPicker";
 
 interface SearchableProductSelectProps {
 	products: Product[];
@@ -33,6 +34,18 @@ function readinessToneClass(status: string): string {
 	if (status.startsWith("CHECKING"))
 		return "border-slate-600/40 bg-slate-800/60 text-slate-400";
 	return "border-rose-500/30 bg-rose-500/10 text-rose-200";
+}
+
+function productPreviewUrl(product: Product): string | null {
+	const hasImage = Boolean(
+		product.image_url ||
+			product.local_image_path ||
+			product.media_id ||
+			product.image_analysis?.image_url,
+	);
+	return hasImage
+		? `/api/products/${encodeURIComponent(product.id)}/image`
+		: null;
 }
 
 export default function SearchableProductSelect({
@@ -120,72 +133,83 @@ export default function SearchableProductSelect({
 
 	return (
 		<div className="relative min-w-0" ref={containerRef}>
-			<button
-				type="button"
-				onClick={() => setIsOpen(!isOpen)}
-				className="flex w-full min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950 px-4 py-3 transition-all group hover:border-blue-500/50 cursor-pointer"
-			>
-				<div className="min-w-0 flex-1">
-					{selectedProduct ? (
-						<>
-							<span className="bosmax-wrap-safe block text-sm font-bold text-slate-200">
-								{selectedProduct.raw_product_title}
-							</span>
-							<div className="mt-2 flex flex-wrap items-center gap-2">
-								<span className="inline-flex rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-blue-200">
-									{sourceLaneLabel(selectedProduct)}
+			<div className="flex min-h-16 items-center gap-2 rounded-xl border border-slate-800 bg-slate-950 p-2 transition-all hover:border-blue-500/50">
+				{selectedProduct ? (
+					<div className="w-16 shrink-0">
+						<VisualAssetPreview
+							previewUrl={productPreviewUrl(selectedProduct)}
+							subtitle={selectedProduct.id}
+							title={selectedProduct.raw_product_title}
+						/>
+					</div>
+				) : null}
+				<button
+					type="button"
+					onClick={() => setIsOpen(!isOpen)}
+					className="group flex min-w-0 flex-1 cursor-pointer items-start justify-between gap-3 rounded-lg px-2 py-1 text-left"
+				>
+					<div className="min-w-0 flex-1">
+						{selectedProduct ? (
+							<>
+								<span className="bosmax-wrap-safe block text-sm font-bold text-slate-200">
+									{selectedProduct.raw_product_title}
 								</span>
-								{isReferenceOnly(selectedProduct) ? (
-									<span className="inline-flex rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-amber-100">
-										Reference only
+								<div className="mt-2 flex flex-wrap items-center gap-2">
+									<span className="inline-flex rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-blue-200">
+										{sourceLaneLabel(selectedProduct)}
 									</span>
-								) : null}
-								{(() => {
-									const status = resolveReadinessStatus(
-										selectedProduct,
-										readinessByProductId[selectedProduct.id],
-										isLoadingReadiness,
-									);
-									return (
-										<span
-											className={`inline-flex rounded-full border px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] ${readinessToneClass(status)}`}
-										>
-											{status}
+									{isReferenceOnly(selectedProduct) ? (
+										<span className="inline-flex rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-amber-100">
+											Reference only
 										</span>
-									);
-								})()}
-							</div>
-							{/* Reference-only: show reason + Bulk FastMoss Convert CTA */}
-							{isReferenceOnly(selectedProduct) ? (
-								<div className="bosmax-wrap-safe mt-2 text-[10px] text-amber-200/80 flex items-start justify-between gap-2">
-									<span>
-										{selectedProduct.catalog_visibility_reason ||
-											"FastMoss reference is review-only. Convert eligible references through Bulk FastMoss Convert before workspace generation."}
-									</span>
-									<a
-										href="/product-registration?tab=bulk"
-										className="shrink-0 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold text-amber-300 hover:bg-amber-500/20 transition-colors whitespace-nowrap"
-									>
-										Open Bulk FastMoss Convert
-									</a>
+									) : null}
+									{(() => {
+										const status = resolveReadinessStatus(
+											selectedProduct,
+											readinessByProductId[selectedProduct.id],
+											isLoadingReadiness,
+										);
+										return (
+											<span
+												className={`inline-flex rounded-full border px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] ${readinessToneClass(status)}`}
+											>
+												{status}
+											</span>
+										);
+									})()}
 								</div>
-							) : readinessByProductId[selectedProduct.id]?.detail ? (
-								<div className="bosmax-wrap-safe mt-2 text-[10px] text-slate-400">
-									{readinessByProductId[selectedProduct.id]?.detail}
-								</div>
-							) : null}
-						</>
-					) : (
-						<span className="bosmax-wrap-safe block text-sm text-slate-500">
-							Search and select product...
-						</span>
-					)}
+								{readinessByProductId[selectedProduct.id]?.detail ? (
+									<div className="bosmax-wrap-safe mt-2 text-[10px] text-slate-400">
+										{readinessByProductId[selectedProduct.id]?.detail}
+									</div>
+								) : null}
+							</>
+						) : (
+							<span className="bosmax-wrap-safe block text-sm text-slate-500">
+								Search and select product...
+							</span>
+						)}
+					</div>
+					<ChevronDown
+						size={18}
+						className={`text-slate-500 transition-transform group-hover:text-blue-400 ${isOpen ? "rotate-180" : ""}`}
+					/>
+				</button>
+			</div>
+			{selectedProduct && isReferenceOnly(selectedProduct) ? (
+				<div className="bosmax-wrap-safe mt-2 flex items-start justify-between gap-2 text-[10px] text-amber-200/80">
+					<span>
+						{selectedProduct.catalog_visibility_reason ||
+							"FastMoss reference is review-only. Convert eligible references through Bulk FastMoss Convert before workspace generation."}
+					</span>
+					<a
+						href="/product-registration?tab=bulk"
+						className="shrink-0 whitespace-nowrap rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold text-amber-300 transition-colors hover:bg-amber-500/20"
+					>
+						Open Bulk FastMoss Convert
+					</a>
 				</div>
-				<ChevronDown
-					size={18}
-					className={`text-slate-500 group-hover:text-blue-400 transition-transform ${isOpen ? "rotate-180" : ""}`}
-				/>
-			</button>
+			) : null}
 
 			{isOpen && (
 				<div className="absolute z-50 mt-2 w-full min-w-0 overflow-hidden rounded-xl border border-slate-800 bg-slate-900 shadow-2xl shadow-black/50 backdrop-blur-xl">
@@ -213,62 +237,85 @@ export default function SearchableProductSelect({
 								const toneClass = readinessToneClass(status);
 								const referenceOnly = isReferenceOnly(product);
 								return (
-									<button
-										type="button"
+									<div
 										key={product.id}
-										// RPA Round A: option keyed by the IMMUTABLE product id so a
-										// UI-click operator selects by id, never by mutable title text.
-										data-testid="product-option"
-										data-product-id={product.id}
-										data-readiness={status}
-										data-reference-only={referenceOnly ? "true" : "false"}
-										data-selected={
-											selectedProduct?.id === product.id ? "true" : "false"
-										}
-										disabled={referenceOnly}
-										onClick={() => {
-											if (referenceOnly) return;
-											onSelect(product);
-											setIsOpen(false);
-											setSearch("");
-										}}
-										className={`flex items-start justify-between gap-3 px-4 py-3 text-[11px] transition-colors w-full text-left ${referenceOnly ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${selectedProduct?.id === product.id ? "bg-blue-600/20 text-blue-400" : referenceOnly ? "text-slate-500" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"}`}
+										className={`flex items-center gap-2 border-b border-slate-800 px-3 py-2 text-[11px] ${referenceOnly ? "opacity-60" : ""} ${
+											selectedProduct?.id === product.id
+												? "bg-blue-600/20 text-blue-300"
+												: "text-slate-400"
+										}`}
 									>
-										<div className="min-w-0 flex-1 pr-2">
-											<span className="bosmax-wrap-safe block">
-												{product.raw_product_title}
-											</span>
-											<div className="mt-2 flex flex-wrap items-center gap-2">
-												<span className="inline-flex rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-blue-200">
-													{sourceLaneLabel(product)}
+										<div className="w-16 shrink-0">
+											<VisualAssetPreview
+												previewUrl={productPreviewUrl(product)}
+												subtitle={product.id}
+												title={product.raw_product_title}
+											/>
+										</div>
+										<button
+											type="button"
+											// RPA Round A: option keyed by the IMMUTABLE product id so a
+											// UI-click operator selects by id, never by mutable title text.
+											data-testid="product-option"
+											data-product-id={product.id}
+											data-readiness={status}
+											data-reference-only={referenceOnly ? "true" : "false"}
+											data-selected={
+												selectedProduct?.id === product.id ? "true" : "false"
+											}
+											disabled={referenceOnly}
+											onClick={() => {
+												if (referenceOnly) return;
+												onSelect(product);
+												setIsOpen(false);
+												setSearch("");
+											}}
+											className={`flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left ${
+												referenceOnly
+													? "cursor-not-allowed"
+													: "hover:bg-slate-800 hover:text-slate-200"
+											}`}
+										>
+											<span className="min-w-0 flex-1">
+												<span className="bosmax-wrap-safe block">
+													{product.raw_product_title}
+												</span>
+												<span className="mt-1 flex flex-wrap items-center gap-1.5">
+													<span className="inline-flex rounded-full border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.14em] text-blue-200">
+														{sourceLaneLabel(product)}
+													</span>
+													{referenceOnly ? (
+														<span className="inline-flex rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.14em] text-amber-100">
+															Reference only
+														</span>
+													) : null}
+													<span
+														className={`inline-flex rounded-full border px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.14em] ${toneClass}`}
+													>
+														{status}
+													</span>
 												</span>
 												{referenceOnly ? (
-													<span className="inline-flex rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-amber-100">
-														Reference only
+													<span className="bosmax-wrap-safe mt-1 block text-[9px] text-amber-300/70">
+														REFERENCE_ONLY_PRODUCT — Convert/Register before
+														generation.
+													</span>
+												) : readiness?.detail ? (
+													<span className="bosmax-wrap-safe mt-1 block text-[9px] text-slate-500">
+														{readiness.detail}
 													</span>
 												) : null}
-												<span
-													className={`inline-flex rounded-full border px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] ${toneClass}`}
-												>
-													{status}
-												</span>
-											</div>
-											{/* Reference-only: explicit REFERENCE_ONLY_PRODUCT reason */}
-											{referenceOnly ? (
-												<div className="bosmax-wrap-safe mt-1 text-[9px] text-amber-300/70">
-													REFERENCE_ONLY_PRODUCT — Convert/Register this product
-													before package load or generation.
-												</div>
-											) : readiness?.detail ? (
-												<div className="bosmax-wrap-safe mt-2 text-[10px] text-slate-500">
-													{readiness.detail}
-												</div>
-											) : null}
-										</div>
-										{selectedProduct?.id === product.id ? (
-											<Check size={14} />
-										) : null}
-									</button>
+											</span>
+											<Check
+												className={
+													selectedProduct?.id === product.id
+														? "text-blue-300"
+														: "text-slate-500"
+												}
+												size={14}
+											/>
+										</button>
+									</div>
 								);
 							})
 						) : isSearching ? (
