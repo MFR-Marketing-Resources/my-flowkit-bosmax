@@ -109,12 +109,14 @@ function buildEvidenceEditorState(
 }
 
 function EvidenceInput({
+	id,
 	label,
 	value,
 	onChange,
 	placeholder,
 	type = "text",
 }: {
+	id?: string;
 	label: string;
 	value: string;
 	onChange: (value: string) => void;
@@ -127,6 +129,7 @@ function EvidenceInput({
 				{label}
 			</p>
 			<input
+				id={id}
 				type={type}
 				value={value}
 				onChange={(event) => onChange(event.target.value)}
@@ -209,6 +212,20 @@ export default function RegistrationReviewDraftPanel({
 		}
 		return "";
 	}, [draft, evidenceForm.image_url, pendingImagePreview]);
+	const hasSizeOrVolumeEvidenceGap = draft.missing_required_evidence.includes(
+		"SIZE_OR_VOLUME_EVIDENCE",
+	);
+	const imageAnalysisStatus = String(
+		draft.system_inferred_fields.image_analysis_status || "UNKNOWN",
+	);
+
+	const focusSizeOrVolumeEvidence = () => {
+		const field = document.getElementById(
+			"registration-size-or-volume-evidence",
+		);
+		field?.focus();
+		field?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+	};
 
 	const toggleApproval = async (field: string) => {
 		if (isUpdating || draft.review_status === "COMMITTED") return;
@@ -294,7 +311,9 @@ export default function RegistrationReviewDraftPanel({
 			onUpdate(updated);
 			setSaveMessage(
 				recompute
-					? "Draft evidence saved and recomputed."
+					? updated.missing_required_evidence.length > 0
+						? `Recompute validated current evidence; it will not fill missing evidence. Still missing: ${updated.missing_required_evidence.join(", ")}.`
+						: `Draft evidence saved and recomputed. Missing evidence resolved; review status: ${updated.review_status}.`
 					: "Draft evidence saved. Recompute is still required before commit.",
 			);
 			setPendingImageBase64("");
@@ -516,8 +535,53 @@ export default function RegistrationReviewDraftPanel({
 				</div>
 
 				{draft.missing_required_evidence.length > 0 ? (
-					<div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/10 p-4">
+					<div
+						data-testid="registration-next-action"
+						className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4"
+					>
 						<div className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-400">
+							Next Action
+						</div>
+						{hasSizeOrVolumeEvidenceGap ? (
+							<div className="mt-2 space-y-3">
+								<div>
+									<div className="text-sm font-semibold text-amber-100">
+										Fill size or volume evidence
+									</div>
+									<p className="mt-1 text-xs leading-relaxed text-slate-300">
+										Enter the exact pack quantity or volume shown on the
+										packaging or an authoritative product source, such as 30
+										softgels, 250 ml, or 500 g. If the listing contains several
+										pack variants, record the exact variant being registered.
+									</p>
+								</div>
+								<button
+									type="button"
+									onClick={focusSizeOrVolumeEvidence}
+									className="rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-xs font-bold text-amber-100 transition-colors hover:bg-amber-400/20"
+								>
+									Edit size or volume evidence
+								</button>
+								<p className="text-xs leading-relaxed text-slate-400">
+									Recompute validates current evidence; it will not fill missing
+									evidence. AI Fill Missing does not propose size or volume
+									facts, so this value requires operator-supplied evidence.
+								</p>
+								{imageAnalysisStatus === "ANALYSIS_SKIPPED" ? (
+									<p className="text-xs leading-relaxed text-sky-200">
+										An image reference is attached, but semantic vision analysis
+										was skipped because provider execution is disabled. Verify
+										the exact size from the packaging or source before saving.
+									</p>
+								) : null}
+							</div>
+						) : (
+							<p className="mt-2 text-xs leading-relaxed text-slate-300">
+								Complete the listed evidence fields, then use Save &amp;
+								Recompute to refresh the review status.
+							</p>
+						)}
+						<div className="mt-3 text-[10px] font-bold uppercase tracking-[0.2em] text-amber-400">
 							Missing Evidence
 						</div>
 						<div className="mt-2 flex flex-wrap gap-2">
@@ -675,6 +739,7 @@ export default function RegistrationReviewDraftPanel({
 								placeholder="15%"
 							/>
 							<EvidenceInput
+								id="registration-size-or-volume-evidence"
 								label="Size / Volume"
 								value={evidenceForm.size_or_volume}
 								onChange={(value) =>

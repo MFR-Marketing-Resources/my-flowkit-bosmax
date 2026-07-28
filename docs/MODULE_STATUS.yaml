@@ -466,6 +466,7 @@ domains:
       - dashboard/src/pages/ProductRegistrationPage.test.tsx
       - dashboard/src/components/product-registration/ProductKnowledgeIntakeForm.tsx
       - dashboard/src/components/product-registration/RegistrationReviewDraftPanel.tsx
+      - dashboard/src/components/product-registration/RegistrationReviewDraftPanel.test.tsx
       - dashboard/src/components/product-registration/BulkFastMossConvertTab.tsx
       - dashboard/src/components/workspace/SearchableProductSelect.tsx
       - dashboard/src/components/workspace/T2VModule.tsx
