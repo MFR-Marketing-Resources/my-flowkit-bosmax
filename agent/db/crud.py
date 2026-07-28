@@ -1271,6 +1271,23 @@ async def get_product_strategy_taxonomy(product_id: str) -> Optional[dict]:
     return await _get("product_strategy_taxonomy", "product_id", product_id)
 
 
+async def list_product_rows_for_strategy_taxonomy(
+    product_ids: list[str],
+) -> list[dict]:
+    """Load persisted Product Truth rows for taxonomy fingerprint checks."""
+
+    resolved_ids = [str(value) for value in product_ids if str(value).strip()]
+    if not resolved_ids:
+        return []
+    db = await get_db()
+    placeholders = ",".join("?" for _ in resolved_ids)
+    cur = await db.execute(
+        f"SELECT * FROM product WHERE id IN ({placeholders})",
+        resolved_ids,
+    )
+    return [dict(row) for row in await cur.fetchall()]
+
+
 async def list_product_strategy_taxonomies(
     product_ids: list[str] | None = None,
 ) -> list[dict]:

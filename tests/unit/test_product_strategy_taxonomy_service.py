@@ -279,3 +279,38 @@ async def test_stale_product_fingerprint_fails_closed():
         match="TAXONOMY_NOT_VERIFIED",
     ):
         await service.require_verified_product_strategy_taxonomy(product["id"])
+
+
+@pytest.mark.asyncio
+async def test_catalog_attachment_checks_persisted_product_not_transient_enrichment():
+    product = await crud.create_product(
+        "Velvet Lipstick",
+        source="MANUAL",
+        product_display_name="Velvet Lipstick",
+        product_short_name="Velvet Lipstick",
+        category="Beauty & Personal Care",
+        type="Lipstick",
+        product_type="Lipstick",
+    )
+    await service.run_product_strategy_taxonomy_backfill(
+        ProductStrategyTaxonomyBackfillRequest(
+            dry_run=False,
+            confirm_apply=service.BACKFILL_CONFIRMATION,
+        )
+    )
+
+    attached = await service.attach_product_strategy_taxonomies(
+        [
+            {
+                **product,
+                "product_type": "TRANSIENT_ENRICHED_VALUE",
+                "product_type_id": "TRANSIENT_ENRICHED_VALUE",
+            }
+        ]
+    )
+
+    assert attached[0]["strategy_taxonomy"]["is_stale"] is False
+    assert (
+        "STALE_PRODUCT_FINGERPRINT"
+        not in attached[0]["strategy_taxonomy"]["review_reasons"]
+    )

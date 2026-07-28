@@ -293,12 +293,22 @@ async def attach_product_strategy_taxonomies(
         for product in products
     ]
     rows = await crud.list_product_strategy_taxonomies(product_ids)
+    stored_products = await crud.list_product_rows_for_strategy_taxonomy(
+        product_ids
+    )
     by_product_id = {str(row["product_id"]): row for row in rows}
+    stored_by_product_id = {
+        str(product["id"]): product for product in stored_products
+    }
     attached: list[dict[str, object]] = []
     for product in products:
         item = dict(product)
         product_id = str(item.get("id") or item.get("product_id") or "")
-        taxonomy = _read_model_from_row(item, by_product_id.get(product_id))
+        fingerprint_product = stored_by_product_id.get(product_id, item)
+        taxonomy = _read_model_from_row(
+            fingerprint_product,
+            by_product_id.get(product_id),
+        )
         item["strategy_taxonomy"] = taxonomy.model_dump(mode="json")
         attached.append(item)
     return attached
