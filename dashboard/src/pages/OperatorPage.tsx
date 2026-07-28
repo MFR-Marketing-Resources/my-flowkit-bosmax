@@ -1611,7 +1611,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				target_language: targetLanguage,
 				camera_style: cameraStyle,
 				character_presence: characterPresence,
-				creator_persona: creatorPersona,
+				creator_persona: registryAvatarId ? registryAvatarId : creatorPersona,
 				avatar_id: registryAvatarId || null,
 				scene_context_override: selectedSceneBackground || null,
 			});
@@ -1685,7 +1685,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				target_language: targetLanguage,
 				camera_style: cameraStyle,
 				character_presence: characterPresence,
-				creator_persona: creatorPersona,
+				creator_persona: registryAvatarId ? registryAvatarId : creatorPersona,
 				avatar_id: registryAvatarId || null,
 				scene_context_override: selectedSceneBackground || null,
 				scene_context_code: registrySceneCode || null,
