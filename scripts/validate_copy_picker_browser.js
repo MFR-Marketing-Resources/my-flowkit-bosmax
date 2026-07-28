@@ -2,6 +2,7 @@ import { chromium } from "playwright";
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { execSync } from "node:child_process";
 
 const PORT = 4173;
 const DIST_DIR = path.resolve("dashboard/dist");
@@ -9,6 +10,31 @@ const EVIDENCE_DIR = path.resolve("scripts/browser_evidence");
 
 if (!fs.existsSync(EVIDENCE_DIR)) {
 	fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
+}
+
+function getGitCommitSha() {
+	try {
+		return execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
+	} catch (err) {
+		console.error("Error deriving Git commit SHA:", err);
+		return "UNKNOWN_COMMIT_SHA";
+	}
+}
+
+function getBuiltAssetFile() {
+	try {
+		const htmlPath = path.join(DIST_DIR, "index.html");
+		if (fs.existsSync(htmlPath)) {
+			const html = fs.readFileSync(htmlPath, "utf8");
+			const match = html.match(/src=["']\/?(assets\/index-[A-Za-z0-9_-]+\.js)["']/);
+			if (match) {
+				return `dist/${match[1]}`;
+			}
+		}
+	} catch (err) {
+		console.error("Error detecting compiled asset file:", err);
+	}
+	return "dist/assets/index.js";
 }
 
 function createServer() {
@@ -109,12 +135,50 @@ async function runBrowserValidation() {
 	console.log(`Local test server running at http://localhost:${PORT}`);
 
 	const browser = await chromium.launch({ headless: true });
-	const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+	const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 	const page = await context.newPage();
+
+	const capturedCompilePayloads = [];
 
 	// Intercept API routes wildcard
 	await page.route("**/*", (route) => {
 		const url = route.request().url();
+		const method = route.request().method();
+
+		if (
+			method === "POST" &&
+			(url.includes("/api/workspace/ugc-video-prompt-compile") ||
+				url.includes("/api/workspace/execution-package"))
+		) {
+			try {
+				const postData = route.request().postData();
+				if (postData) {
+					capturedCompilePayloads.push(JSON.parse(postData));
+				}
+			} catch (err) {}
+			return route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({
+					final_compiled_prompt_text: "SECTION 1 - ROLE & OBJECTIVE...",
+					prompt_blocks: [
+						{
+							block_index: 1,
+							duration_seconds: 8,
+							engine_prompt_text:
+								"SECTION 3 - CONTINUITY & STATE LOCK\nThe presenter is a Malaysian young adult woman with light-medium skin...",
+						},
+					],
+					compiler_version: "v1",
+					total_duration_seconds: 8,
+					camera_style: "UGC_IPHONE_RAW",
+					character_presence: "VISIBLE_CREATOR",
+					creator_persona: "BOS_F_ALYA_01",
+					avatar_id: "BOS_F_ALYA_01",
+				}),
+			});
+		}
+
 		if (url.includes("/api/workspace/prompt-compiler-config")) {
 			return route.fulfill({
 				status: 200,
@@ -150,15 +214,29 @@ async function runBrowserValidation() {
 				body: JSON.stringify({ scenes: [] }),
 			});
 		}
-		if (url.includes("/api/workspace/packages/readiness") || url.includes("/api/copywriting-readiness")) {
+		if (url.includes("/api/workspace/package-readiness") || url.includes("/api/workspace/packages/readiness") || url.includes("/api/copywriting-readiness")) {
 			return route.fulfill({
 				status: 200,
 				contentType: "application/json",
 				body: JSON.stringify({
 					ready_for_generation: true,
-					readiness: {
-						"prod-mwcb": { readiness_status: "READY", ready_for_generation: true, product_id: "prod-mwcb" },
-					},
+					items: [
+						{
+							product_id: "prod-mwcb",
+							readiness_status: "READY",
+							detail: "Product is ready for video generation.",
+							blocker: null,
+							checklist: [
+								{ key: "product", label: "Product Info", ready: true, detail: "Product exists" },
+								{ key: "copy", label: "Copywriting", ready: true, detail: "Approved copy exists" },
+							],
+							quick_actions: {
+								smart_registration_path: "",
+								approved_packages_path: "",
+								products_path: "",
+							},
+						},
+					],
 				}),
 			});
 		}
@@ -168,8 +246,8 @@ async function runBrowserValidation() {
 	const results = [];
 
 	try {
-		console.log("Navigating to Operator Page (?mode=T2V)...");
-		await page.goto(`http://localhost:${PORT}/operator?mode=T2V`, { waitUntil: "networkidle" });
+		console.log("Navigating to Operator Page (/operator/t2v)...");
+		await page.goto(`http://localhost:${PORT}/operator/t2v`, { waitUntil: "networkidle" });
 		await page.waitForTimeout(1000);
 
 		// Click product selector dropdown trigger if product is not selected
@@ -196,7 +274,7 @@ async function runBrowserValidation() {
 
 		results.push({
 			surface: "Operator Workspace — Copy Selection",
-			route: "/operator?mode=T2V",
+			route: "/operator/t2v",
 			check: "10-item pagination on load",
 			expected: 10,
 			actual: rowsPage1.length,
@@ -213,7 +291,7 @@ async function runBrowserValidation() {
 
 		results.push({
 			surface: "Operator Workspace — Copy Selection",
-			route: "/operator?mode=T2V",
+			route: "/operator/t2v",
 			check: "Angle Narrowing Filter (Empathy)",
 			expected: empathyCount,
 			actual: filteredRows.length,
@@ -231,7 +309,7 @@ async function runBrowserValidation() {
 
 		results.push({
 			surface: "Operator Workspace — Copy Selection",
-			route: "/operator?mode=T2V",
+			route: "/operator/t2v",
 			check: "Pagination Next Page (Page 2)",
 			expected: 10,
 			actual: rowsPage2.length,
@@ -248,39 +326,24 @@ async function runBrowserValidation() {
 
 		results.push({
 			surface: "Operator Workspace — Copy Selection",
-			route: "/operator?mode=T2V",
+			route: "/operator/t2v",
 			check: "Compact Details Toggle (Expand/Collapse)",
 			expected: true,
 			actual: detailsTextCount > 0,
 			passed: detailsTextCount > 0,
 		});
 
-		// Check 5: Approved-Only Copy Set Selection
-		const firstSelectBtn = (await page.$$("button:has-text('Select for Final Prompt')"))[0];
-		await firstSelectBtn.click();
-		await page.waitForTimeout(200);
-		const boundNotice = await page.locator("text=Copy Set bound to final prompt generation").count();
-
-		results.push({
-			surface: "Operator Workspace — Copy Selection",
-			route: "/operator?mode=T2V",
-			check: "Approved Copy Set Selection Binding",
-			expected: true,
-			actual: boundNotice > 0,
-			passed: boundNotice > 0,
-		});
-
-		await page.screenshot({ path: path.join(EVIDENCE_DIR, "04_copy_set_selected_bound.png") });
-
-		// Check 6 & 7: Avatar Persona Composer & Avatar Registry Authority in T2V mode
+		// Check 6 & 7: Avatar Persona Composer & Avatar Registry Authority UI elements in T2V mode
 		console.log("Verifying Avatar Persona Composer notice & Avatar Registry dropdown in T2V mode...");
 
 		const composerHeader = await page.locator("text=Avatar Persona Composer (Drafting / Staging Helper Only)").count();
-		const avatarRegistrySelect = await page.locator('[data-testid="operator-avatar-registry"]').or(page.locator("text=Avatar registry")).count();
+		const avatarRegistrySelect = page.locator("#operator-avatar-registry");
+		const hasAvatarSelect = (await avatarRegistrySelect.count()) > 0;
+		console.log(`Avatar registry select count: ${await avatarRegistrySelect.count()}`);
 
 		results.push({
 			surface: "Operator Workspace — Avatar Authority",
-			route: "/operator?mode=T2V",
+			route: "/operator/t2v",
 			check: "Avatar Persona Composer Staging Notice",
 			expected: true,
 			actual: composerHeader > 0,
@@ -289,11 +352,64 @@ async function runBrowserValidation() {
 
 		results.push({
 			surface: "Operator Workspace — Avatar Authority",
-			route: "/operator?mode=T2V",
+			route: "/operator/t2v",
 			check: "Avatar Registry Authority Dropdown Present",
 			expected: true,
-			actual: avatarRegistrySelect > 0,
-			passed: avatarRegistrySelect > 0,
+			actual: hasAvatarSelect,
+			passed: hasAvatarSelect,
+		});
+
+		// Check 8: Select Avatar Registry option FIRST, then trigger prompt compilation
+		console.log("Verifying Avatar Registry payload precedence over composer persona...");
+		if (hasAvatarSelect) {
+			await avatarRegistrySelect.selectOption("BOS_F_ALYA_01");
+			await page.waitForTimeout(300);
+		}
+
+		// Bind copy set first
+		const firstSelectBtn = (await page.$$("button:has-text('Select for Final Prompt')"))[0];
+		if (firstSelectBtn) {
+			await firstSelectBtn.click();
+			await page.waitForTimeout(300);
+		}
+		const boundNotice = await page.locator("text=Copy Set bound to final prompt generation").count();
+
+		results.push({
+			surface: "Operator Workspace — Copy Selection",
+			route: "/operator/t2v",
+			check: "Approved Copy Set Selection Binding",
+			expected: true,
+			actual: boundNotice > 0,
+			passed: boundNotice > 0,
+		});
+
+		await page.screenshot({ path: path.join(EVIDENCE_DIR, "04_copy_set_selected_bound.png") });
+
+		// Trigger prompt preview load via Step 3 Load Package button
+		const loadBtn = page.locator('[data-testid="action-load-hybrid-package"]').or(page.locator("button:has-text('Load T2V Package')")).or(page.locator("button:has-text('Load Package')"));
+		if ((await loadBtn.count()) > 0) {
+			console.log("Clicking Load T2V Package button to trigger compile request...");
+			await loadBtn.first().click();
+			await page.waitForTimeout(500);
+		}
+
+		const lastPayload = capturedCompilePayloads[capturedCompilePayloads.length - 1];
+		const payloadAvatarId = lastPayload?.avatar_id;
+		const payloadCreatorPersona = lastPayload?.creator_persona;
+		console.log("Captured Compile Payload:", JSON.stringify(lastPayload));
+
+		const authorityPassed =
+			payloadAvatarId === "BOS_F_ALYA_01" &&
+			payloadCreatorPersona === "BOS_F_ALYA_01" &&
+			!String(payloadCreatorPersona).startsWith("AVX_");
+
+		results.push({
+			surface: "Operator Workspace — Avatar Authority",
+			route: "/operator/t2v",
+			check: "Avatar Registry Payload Precedence (API Payload Level)",
+			expected: "BOS_F_ALYA_01",
+			actual: payloadCreatorPersona || "none",
+			passed: authorityPassed,
 		});
 
 		await page.screenshot({ path: path.join(EVIDENCE_DIR, "05_avatar_registry_authority.png") });
@@ -308,8 +424,8 @@ async function runBrowserValidation() {
 	const allPassed = results.every((r) => r.passed);
 	const summary = {
 		timestamp: new Date().toISOString(),
-		loaded_commit_sha: "13a4c9ddda4df7bf6a7a13cd2e2790c36f368b29",
-		compiled_bundle_asset: "dist/assets/index-ByOSmCPh.js",
+		loaded_commit_sha: getGitCommitSha(),
+		compiled_bundle_asset: getBuiltAssetFile(),
 		all_passed: allPassed,
 		results,
 	};
