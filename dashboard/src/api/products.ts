@@ -99,6 +99,51 @@ export async function fetchProductIntelligenceReviewDraft(
 	);
 }
 
+export interface ClaimSafeRewritePreview {
+	product_id: string;
+	product_name: string;
+	safe_claim_rewrite: string;
+	safe_hook_angles: string[];
+	safe_usp_list: string[];
+	safe_cta_angles: string[];
+	claim_safe_copy_status: string;
+	approval_required: boolean;
+	approval_after_operator_review: boolean;
+	approval_phrase: string;
+	claim_gate: string;
+	review_decision: string;
+	audit_notes: string[];
+	provenance: string[];
+	stored_status?: string | null;
+	stored_payload_available?: boolean;
+	approved_at?: string | null;
+}
+
+export async function fetchClaimSafeRewritePreview(
+	productId: string,
+): Promise<ClaimSafeRewritePreview> {
+	return fetchAPI<ClaimSafeRewritePreview>(
+		`/api/products/${encodeURIComponent(productId)}/claim-safe-rewrite-preview`,
+	);
+}
+
+export async function approveClaimSafeRewrite(
+	productId: string,
+	input: {
+		confirmation_phrase: string;
+		approval_note?: string | null;
+	},
+): Promise<ClaimSafeRewritePreview> {
+	return fetchAPI<ClaimSafeRewritePreview>(
+		`/api/products/${encodeURIComponent(productId)}/claim-safe-rewrite-approval`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(input),
+		},
+	);
+}
+
 // Prepare Product for Copywriting — the text_assist (DeepSeek) lane that drafts
 // Product Knowledge + Customer Avatar + Recommended Formula into a review draft
 // (NEVER approved). Operator-initiated; spends AI tokens on an explicit click.

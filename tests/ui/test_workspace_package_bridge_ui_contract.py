@@ -12,6 +12,7 @@ def test_workspace_package_bridge_surfaces_approved_package_history_and_manual_f
     app_source = _read("dashboard/src/App.tsx")
     page_source = _read("dashboard/src/pages/ApprovedPackagesPage.tsx")
     operator_source = _read("dashboard/src/pages/OperatorPage.tsx")
+    products_source = _read("dashboard/src/pages/ProductsSalesAnalyzerPage.tsx")
     select_source = _read("dashboard/src/components/workspace/SearchableProductSelect.tsx")
 
     assert "/approved-packages" in app_source
@@ -30,6 +31,8 @@ def test_workspace_package_bridge_surfaces_approved_package_history_and_manual_f
         "Package Eligibility",
         "Open Smart Registration / Complete Evidence",
         "Open Approved Packages",
+        "Fix Claim-Safe Package",
+        "buildClaimSafeFixPath",
         "Only READY products",
     ]:
         assert token in operator_source
@@ -50,6 +53,8 @@ def test_workspace_package_bridge_surfaces_approved_package_history_and_manual_f
 
     assert "CLAIM_SAFE_PACKAGE_NOT_READY" in operator_source
     assert "UGC Prompt Compiler Controls" in operator_source
+    assert "stateClaimSafeProduct" in operator_source
+    assert "claimSafeProduct: selectedProduct" in products_source
 
 
 def test_workspace_modules_prefill_from_approved_package_payload():

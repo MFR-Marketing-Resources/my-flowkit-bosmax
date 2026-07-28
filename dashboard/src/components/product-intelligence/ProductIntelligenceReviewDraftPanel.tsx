@@ -2,14 +2,17 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
 	aiFillMissingProductIntelligenceReviewDraft,
+	approveClaimSafeRewrite,
 	approveProductIntelligenceReviewDraft,
 	createProductIntelligenceReviewDraft,
-	prepareProductForCopywriting,
+	fetchClaimSafeRewritePreview,
 	fetchProductIntelligenceReviewDraft,
 	fetchProductIntelligenceReviewDrafts,
+	prepareProductForCopywriting,
 	rejectProductIntelligenceReviewDraft,
 	updateProductIntelligenceReviewDraft,
 	validateProductIntelligenceReviewDraft,
+	type ClaimSafeRewritePreview,
 	type ProductIntelligenceAIFillResult,
 } from "../../api/products";
 import type {
@@ -517,9 +520,13 @@ export function describeApprovalBlockers(
 export default function ProductIntelligenceReviewDraftPanel({
 	productId,
 	onApproved,
+	guidedClaimSafe = false,
+	onClaimSafeApproved,
 }: {
 	productId: string;
 	onApproved: (snapshotId: string) => Promise<void> | void;
+	guidedClaimSafe?: boolean;
+	onClaimSafeApproved?: (status: string) => Promise<void> | void;
 }) {
 	const [drafts, setDrafts] = useState<ProductIntelligenceReviewDraft[]>([]);
 	const [draftsLoading, setDraftsLoading] = useState(false);
@@ -542,11 +549,49 @@ export default function ProductIntelligenceReviewDraftPanel({
 	// Amber "action needed" notice for a draft that fails the fail-closed approval
 	// gate (missing required fields / blocked claims) — distinct from a red system error.
 	const [blockerNotice, setBlockerNotice] = useState<string | null>(null);
+	const [claimSafePreview, setClaimSafePreview] =
+		useState<ClaimSafeRewritePreview | null>(null);
+	const [claimSafeLoading, setClaimSafeLoading] = useState(false);
+	const [claimSafeApproving, setClaimSafeApproving] = useState(false);
+	const [claimSafeError, setClaimSafeError] = useState<string | null>(null);
+	const [claimSafeApprovalPhrase, setClaimSafeApprovalPhrase] = useState("");
+	const [claimSafeApprovalNote, setClaimSafeApprovalNote] = useState("");
 
 	const missingRequiredFields = useMemo(() => {
 		if (!activeDraft) return [...REQUIRED_FIELDS];
 		return REQUIRED_FIELDS.filter((fieldName) => !hasValue(activeDraft[fieldName]));
 	}, [activeDraft]);
+
+	useEffect(() => {
+		if (!guidedClaimSafe) {
+			setClaimSafePreview(null);
+			setClaimSafeError(null);
+			setClaimSafeApprovalPhrase("");
+			setClaimSafeApprovalNote("");
+			return;
+		}
+		let cancelled = false;
+		setClaimSafeLoading(true);
+		setClaimSafeError(null);
+		void fetchClaimSafeRewritePreview(productId)
+			.then((preview) => {
+				if (!cancelled) setClaimSafePreview(preview);
+			})
+			.catch((err) => {
+				if (cancelled) return;
+				setClaimSafeError(
+					err instanceof Error
+						? err.message
+						: "Failed to load claim-safe package preview",
+				);
+			})
+			.finally(() => {
+				if (!cancelled) setClaimSafeLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [guidedClaimSafe, productId]);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -717,6 +762,30 @@ export default function ProductIntelligenceReviewDraftPanel({
 			);
 		} finally {
 			setBusyAction(null);
+		}
+	};
+
+	const handleApproveClaimSafePackage = async () => {
+		if (!claimSafePreview) return;
+		setClaimSafeApproving(true);
+		setClaimSafeError(null);
+		try {
+			const approved = await approveClaimSafeRewrite(productId, {
+				confirmation_phrase: claimSafeApprovalPhrase,
+				approval_note: claimSafeApprovalNote.trim() || null,
+			});
+			setClaimSafePreview(approved);
+			setClaimSafeApprovalPhrase("");
+			setMessage(
+				"Claim-safe package approved for workspace review. No production claim or review draft was auto-approved.",
+			);
+			await onClaimSafeApproved?.(approved.claim_safe_copy_status);
+		} catch (err) {
+			setClaimSafeError(
+				formatReviewDraftError(err, "Failed to approve claim-safe package"),
+			);
+		} finally {
+			setClaimSafeApproving(false);
 		}
 	};
 
@@ -894,6 +963,148 @@ export default function ProductIntelligenceReviewDraftPanel({
 						: "Prepare with AI (DeepSeek)"}
 				</button>
 			</div>
+
+			{guidedClaimSafe ? (
+				<div
+					data-testid="guided-claim-safe-panel"
+					className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4"
+				>
+					<div className="flex flex-wrap items-start justify-between gap-3">
+						<div>
+							<div className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-300">
+								Fix Claim-Safe Package
+							</div>
+							<p className="mt-1 max-w-3xl text-[11px] leading-relaxed text-slate-300">
+								This guided path came from a blocked production workspace. Review
+								missing Product Intelligence fields, then explicitly approve the
+								deterministic claim-safe preview. Prepare with AI and AI Fill Missing
+								run only when you click them and may spend configured text-assist
+								tokens; neither action approves anything.
+							</p>
+						</div>
+						<span className="rounded-full border border-amber-500/30 bg-slate-950/70 px-3 py-1 text-[10px] font-semibold text-amber-100">
+							{claimSafePreview?.stored_status ||
+								claimSafePreview?.claim_safe_copy_status ||
+								"LOADING"}
+						</span>
+					</div>
+
+					<div className="mt-3 rounded border border-slate-800 bg-slate-950/70 p-3">
+						<div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+							Missing required review fields
+						</div>
+						<div
+							data-testid="guided-claim-safe-missing-fields"
+							className="mt-2 text-[11px] text-slate-200"
+						>
+							{activeDraft
+								? missingRequiredFields.length > 0
+									? missingRequiredFields.join(", ")
+									: "None — the selected review draft is complete."
+								: "No selected review draft. Create one or use Prepare with AI explicitly."}
+						</div>
+					</div>
+
+					{claimSafeLoading ? (
+						<div className="mt-3 text-[11px] text-slate-400">
+							Loading deterministic claim-safe preview…
+						</div>
+					) : claimSafeError ? (
+						<div
+							data-testid="guided-claim-safe-error"
+							className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-200"
+						>
+							{claimSafeError}
+						</div>
+					) : claimSafePreview ? (
+						<div className="mt-3 space-y-3">
+							<div className="grid gap-3 lg:grid-cols-2">
+								<div className="rounded border border-slate-800 bg-slate-950/70 p-3">
+									<div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+										Safe rewrite preview
+									</div>
+									<p className="mt-2 text-[11px] leading-relaxed text-slate-200">
+										{claimSafePreview.safe_claim_rewrite}
+									</p>
+								</div>
+								<div className="rounded border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
+									<div>
+										<span className="text-slate-500">Decision:</span>{" "}
+										{claimSafePreview.review_decision}
+									</div>
+									<div className="mt-1">
+										<span className="text-slate-500">Claim gate:</span>{" "}
+										{claimSafePreview.claim_gate}
+									</div>
+									<div className="mt-1">
+										<span className="text-slate-500">Provenance:</span>{" "}
+										{claimSafePreview.provenance.join(" · ")}
+									</div>
+								</div>
+							</div>
+
+							{claimSafePreview.approval_after_operator_review ? (
+								<div className="rounded border border-emerald-500/30 bg-emerald-500/5 p-3">
+									<label
+										htmlFor="claim-safe-approval-phrase"
+										className="block text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-200"
+									>
+										Type the approval phrase exactly
+									</label>
+									<code className="mt-2 block text-[11px] text-emerald-100">
+										{claimSafePreview.approval_phrase}
+									</code>
+									<input
+										id="claim-safe-approval-phrase"
+										data-testid="claim-safe-approval-phrase"
+										type="text"
+										value={claimSafeApprovalPhrase}
+										onChange={(event) =>
+											setClaimSafeApprovalPhrase(event.target.value)
+										}
+										className="mt-2 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-[11px] text-slate-100"
+									/>
+									<label
+										htmlFor="claim-safe-approval-note"
+										className="mt-3 block text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400"
+									>
+										Approval note (optional)
+									</label>
+									<input
+										id="claim-safe-approval-note"
+										type="text"
+										value={claimSafeApprovalNote}
+										onChange={(event) =>
+											setClaimSafeApprovalNote(event.target.value)
+										}
+										className="mt-2 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-[11px] text-slate-100"
+									/>
+									<button
+										type="button"
+										data-testid="approve-claim-safe-package"
+										onClick={handleApproveClaimSafePackage}
+										disabled={
+											claimSafeApproving ||
+											claimSafeApprovalPhrase !==
+												claimSafePreview.approval_phrase
+										}
+										className="mt-3 rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-[11px] font-semibold text-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+									>
+										{claimSafeApproving
+											? "Approving claim-safe package…"
+											: "Approve Claim-Safe Package"}
+									</button>
+								</div>
+							) : (
+								<div className="rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">
+									Fail closed: this preview requires a separate claim-safety
+									review and cannot be approved from this guided path.
+								</div>
+							)}
+						</div>
+					) : null}
+				</div>
+			) : null}
 
 			<div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
 				<div className="rounded border border-slate-800 bg-slate-900/50 p-3">

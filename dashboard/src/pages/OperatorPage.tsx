@@ -554,7 +554,7 @@ function blockerMessage(blocker: string | null, mode: WorkspaceMode) {
 		case "REFERENCE_ONLY_PRODUCT":
 			return "FastMoss reference products stay visible for review, but Smart Registration must convert them into product truth before package load.";
 		case "CLAIM_SAFE_PACKAGE_NOT_READY":
-			return "This product has no approved claim-safe package yet. Complete claim-safe review before loading a generation package.";
+			return "This product has no approved claim-safe package yet. Open the guided claim-safe review to see missing fields, prepare or fill a review draft explicitly, and approve the deterministic package.";
 		case "PRODUCTION_APPROVAL_REQUIRED":
 			return "This product is not production-approved for this mode yet.";
 		case "START_FRAME_REQUIRED":
@@ -570,6 +570,19 @@ function blockerMessage(blocker: string | null, mode: WorkspaceMode) {
 	}
 }
 
+export function buildClaimSafeFixPath(
+	productId: string,
+	returnPath: string,
+): string {
+	const params = new URLSearchParams({
+		tab: "INTELLIGENCE",
+		product: productId,
+		claimSafeFix: "1",
+		returnTo: returnPath,
+	});
+	return `/products?${params.toString()}`;
+}
+
 interface OperatorPageProps {
 	mode?: "T2V" | "HYBRID" | "F2V" | "I2V" | "IMG";
 }
@@ -580,8 +593,14 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const statePackage = (
 		location.state as {
 			workspaceExecutionPackage?: WorkspaceExecutionPackage;
+			claimSafeProduct?: Product;
 		} | null
 	)?.workspaceExecutionPackage;
+	const stateClaimSafeProduct = (
+		location.state as {
+			claimSafeProduct?: Product;
+		} | null
+	)?.claimSafeProduct;
 	const isPortalMode =
 		new URLSearchParams(location.search).get("portal") === "side";
 	const [isExecuting, setIsExecuting] = useState(false);
@@ -596,7 +615,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const [products, setProducts] = useState<Product[]>([]);
 	const [productsError, setProductsError] = useState<string | null>(null);
 	const [isLoadingProducts, setIsLoadingProducts] = useState(false);
-	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+	const [selectedProduct, setSelectedProduct] = useState<Product | null>(
+		stateClaimSafeProduct ?? null,
+	);
 	const [referenceBinding, setReferenceBinding] =
 		useState<CanonicalReferenceBinding>(EMPTY_BINDING);
 	const [packageReadiness, setPackageReadiness] = useState<
@@ -2451,6 +2472,24 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								>
 									Open Approved Packages
 								</button>
+								{selectedReadiness.readiness_status ===
+								"CLAIM_SAFE_PACKAGE_NOT_READY" ? (
+									<button
+										type="button"
+										data-testid="fix-claim-safe-package"
+										onClick={() =>
+											navigate(
+												buildClaimSafeFixPath(
+													selectedReadiness.product_id,
+													location.pathname,
+												),
+											)
+										}
+										className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-100"
+									>
+										Fix Claim-Safe Package
+									</button>
+								) : null}
 								{selectedReadiness.readiness_status ===
 									"START_FRAME_REQUIRED" ||
 								selectedReadiness.readiness_status === "SUBJECT_REQUIRED" ? (

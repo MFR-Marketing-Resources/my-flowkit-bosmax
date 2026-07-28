@@ -1,6 +1,6 @@
 import type { ChangeEvent, FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { fetchAPI, patchAPI, postAPI, postMultipartAPI } from "../api/client";
 import {
@@ -593,9 +593,45 @@ export function resolveInitialSourceFilter(params: URLSearchParams): string {
 	return "FASTMOSS";
 }
 
+export function resolveClaimSafeReturnPath(value: string | null): string | null {
+	if (
+		value === "/operator/t2v" ||
+		value === "/operator/hybrid" ||
+		value === "/operator/f2v" ||
+		value === "/operator/i2v" ||
+		value === "/operator/img"
+	) {
+		return value;
+	}
+	return null;
+}
+
+export async function resolveGuidedClaimSafeProducts(
+	rows: Product[],
+	guidedProductId: string | null,
+	fetchProduct: (productId: string) => Promise<Product>,
+): Promise<Product[]> {
+	if (!guidedProductId || rows.some((product) => product.id === guidedProductId)) {
+		return rows;
+	}
+	const product = await fetchProduct(guidedProductId);
+	if (product.id !== guidedProductId) {
+		throw new Error("CLAIM_SAFE_DEEP_LINK_PRODUCT_MISMATCH");
+	}
+	return [product, ...rows];
+}
+
 export default function ProductsSalesAnalyzerPage() {
+	const navigate = useNavigate();
 	const [products, setProducts] = useState<Product[]>([]);
 	const [searchParams] = useSearchParams();
+	const guidedClaimSafe = searchParams.get("claimSafeFix") === "1";
+	const guidedProductId = guidedClaimSafe
+		? searchParams.get("product")?.trim() || null
+		: null;
+	const claimSafeReturnPath = resolveClaimSafeReturnPath(
+		searchParams.get("returnTo"),
+	);
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const [search, setSearch] = useState("");
 	const [sourceFilter, setSourceFilter] = useState(() =>
@@ -885,12 +921,19 @@ export default function ProductsSalesAnalyzerPage() {
 
 	useEffect(() => {
 		if (
+			guidedProductId &&
+			!filteredProducts.some((product) => product.id === guidedProductId)
+		) {
+			setSelectedId(null);
+			return;
+		}
+		if (
 			selectedId &&
 			filteredProducts.some((product) => product.id === selectedId)
 		)
 			return;
 		setSelectedId(filteredProducts[0]?.id || null);
-	}, [filteredProducts, selectedId]);
+	}, [filteredProducts, guidedProductId, selectedId]);
 
 	// Deep-link bridge (from Smart Registration): ?tab=INTELLIGENCE opens the
 	// Product Intelligence / AI Fill Missing tab; ?product=<id> preselects it.
@@ -1055,10 +1098,20 @@ export default function ProductsSalesAnalyzerPage() {
 			);
 			if (requestSeq !== loadSequenceRef.current) return; // stale response — discard
 			// No more slice logic, it natively returns exactly what matches.
-			const rows = res.items || [];
+			const rows = await resolveGuidedClaimSafeProducts(
+				res.items || [],
+				guidedProductId,
+				(productId) =>
+					fetchAPI<Product>(
+						`/api/products/${encodeURIComponent(productId)}`,
+					),
+			);
+			if (requestSeq !== loadSequenceRef.current) return;
 			setProducts(rows);
 			setSelectedId((current) =>
-				current && rows.some((row) => row.id === current)
+				guidedProductId && rows.some((row) => row.id === guidedProductId)
+					? guidedProductId
+					: current && rows.some((row) => row.id === current)
 					? current
 					: rows[0]?.id || null,
 			);
@@ -1068,7 +1121,13 @@ export default function ProductsSalesAnalyzerPage() {
 		} finally {
 			if (requestSeq === loadSequenceRef.current) setLoading(false);
 		}
-	}, [lifecycleFilter, readinessFilter, search, sourceFilter]);
+	}, [
+		guidedProductId,
+		lifecycleFilter,
+		readinessFilter,
+		search,
+		sourceFilter,
+	]);
 
 	useEffect(() => {
 		// Debounce: wait for typing to settle before fetching (search changes),
@@ -2667,6 +2726,16 @@ export default function ProductsSalesAnalyzerPage() {
 												productId={selectedProduct.id}
 												onApproved={async (snapshotId) => {
 													await reloadProductIntelligence(snapshotId);
+												}}
+												guidedClaimSafe={guidedClaimSafe}
+												onClaimSafeApproved={async () => {
+													await reloadProductIntelligence();
+													if (claimSafeReturnPath) {
+														navigate(claimSafeReturnPath, {
+															replace: true,
+															state: { claimSafeProduct: selectedProduct },
+														});
+													}
 												}}
 											/>
 										) : null}
