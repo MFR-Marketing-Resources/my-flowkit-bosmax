@@ -150,6 +150,8 @@ export default function CopySelectionPanel({
 			);
 			setAiNotes("");
 		} catch (e) {
+			// Fail-closed provider states surface here (e.g.
+			// AI_COPY_ASSIST_PROVIDER_NOT_CONFIGURED).
 			setError(
 				e instanceof Error ? e.message : "AI Copy Assist failed.",
 			);
@@ -249,7 +251,8 @@ export default function CopySelectionPanel({
 				</div>
 			</div>
 
-			{/* AI Copy Assist V1 */}
+			{/* AI Copy Assist V1 — optional brief note; output is a review-required
+			    candidate, never auto-approved and never bound until approved. */}
 			<div className="mb-3 flex items-center gap-2">
 				<input
 					type="text"
@@ -266,6 +269,7 @@ export default function CopySelectionPanel({
 				</div>
 			) : null}
 
+			{/* Deterministic-compiler note (mission H5) */}
 			<div className="mb-3 rounded-lg border border-slate-700/40 bg-slate-950/50 px-3 py-2 text-[10px] leading-relaxed text-slate-400">
 				Final 9-section prompt uses the deterministic BOSMAX compiler. AI copy
 				assist is not used in this step — only the fields of an approved Copy
@@ -278,6 +282,7 @@ export default function CopySelectionPanel({
 				</div>
 			) : null}
 
+			{/* Operator UX states (mission H) */}
 			{isLoading ? (
 				<div className="text-[11px] text-slate-400">Loading Copy Sets…</div>
 			) : copySets.length === 0 ? (
@@ -398,6 +403,10 @@ export default function CopySelectionPanel({
 							return (
 								<div
 									key={cs.copy_set_id}
+									// RPA Round A: row keyed by the immutable copy_set_id, exposing
+									// status + approval metadata + selected marker so a UI-click
+									// operator can VERIFY it selected an approved set (read-only —
+									// the RPA must never approve a Copy Set; see G0 amendment M7).
 									data-testid="copy-set-row"
 									data-copy-set-id={cs.copy_set_id}
 									data-status={cs.status}
