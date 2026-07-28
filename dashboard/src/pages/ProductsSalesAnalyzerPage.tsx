@@ -2131,6 +2131,17 @@ export default function ProductsSalesAnalyzerPage() {
 														{selectedProduct.is_test_product ? (
 															<StatBadge label="TEST" tone="risk" />
 														) : null}
+														{selectedProduct.strategy_taxonomy ? (
+															<StatBadge
+																label={`TAXONOMY: ${selectedProduct.strategy_taxonomy.review_status}`}
+																tone={
+																	selectedProduct.strategy_taxonomy
+																		.review_status === "VERIFIED"
+																		? "ready"
+																		: "warn"
+																}
+															/>
+														) : null}
 														{!isReferenceOnlyProduct(selectedProduct) ? (
 															<button
 																type="button"
@@ -2233,6 +2244,55 @@ export default function ProductsSalesAnalyzerPage() {
 														selectedProduct.subcategory,
 														selectedProduct.type,
 													)}
+												/>
+												<KV
+													label="Strategy Cluster"
+													value={selectedProduct.strategy_taxonomy?.cluster}
+												/>
+												<KV
+													label="Strategy Product Type Group"
+													value={
+														selectedProduct.strategy_taxonomy
+															?.product_type_group
+													}
+												/>
+												<KV
+													label="Matched Scene Strategy"
+													value={
+														selectedProduct.strategy_taxonomy
+															?.matched_scene_strategy_id
+													}
+												/>
+												<KV
+													label="Scene Strategy Coverage"
+													value={
+														selectedProduct.strategy_taxonomy
+															?.scene_coverage_status
+													}
+												/>
+												<KV
+													label="Taxonomy Review Status"
+													value={
+														selectedProduct.strategy_taxonomy?.review_status
+													}
+												/>
+												<KV
+													label="Taxonomy Consumer Gate"
+													value={
+														selectedProduct.strategy_taxonomy?.consumer_status
+													}
+												/>
+												<KV
+													label="Taxonomy Authority"
+													value={`${selectedProduct.strategy_taxonomy?.authority_source || "—"} / ${selectedProduct.strategy_taxonomy?.materialization_status || "—"}`}
+												/>
+												<KV
+													label="Taxonomy Review Reasons"
+													value={
+														selectedProduct.strategy_taxonomy?.review_reasons?.join(
+															", ",
+														) || "—"
+													}
 												/>
 												<KV
 													label="Price & Currency"

@@ -142,6 +142,13 @@ domains:
       # Scene Strategy Cluster Scouting P2 — read-only cluster/type coverage queue
       - agent/services/product_strategy_scouting_service.py
       - tests/unit/test_product_strategy_scouting_service.py
+      # Product Strategy Taxonomy — durable, review-gated P2 materialization
+      - agent/models/product_strategy_taxonomy.py
+      - agent/services/product_strategy_taxonomy_service.py
+      - tests/unit/test_product_strategy_taxonomy_service.py
+      - tests/api/test_product_strategy_taxonomy_api.py
+      - tests/api/test_product_registration_review_api.py
+      - tests/ui/test_product_strategy_taxonomy_ui_contract.py
 
       # Scene Context Registry Round 2 — preview-only background plate promotion
       - agent/services/scene_context_promotion_service.py

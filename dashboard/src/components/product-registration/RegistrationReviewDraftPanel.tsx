@@ -945,6 +945,79 @@ export default function RegistrationReviewDraftPanel({
 				</p>
 			</div>
 
+			{draft.strategy_taxonomy ? (
+				<section
+					data-testid="registration-strategy-taxonomy"
+					className="rounded-2xl border border-cyan-500/20 bg-slate-900/60 p-6"
+				>
+					<div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+						<div>
+							<h4 className="text-sm font-bold uppercase tracking-wider text-white">
+								Product Strategy Taxonomy
+							</h4>
+							<p className="mt-1 text-xs text-slate-400">
+								Deterministic registration preview. Copy consumers remain
+								blocked until a materialized taxonomy is verified.
+							</p>
+						</div>
+						<span
+							className={`rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-wider ${
+								draft.strategy_taxonomy.review_status === "VERIFIED"
+									? "bg-emerald-500/10 text-emerald-300"
+									: "bg-amber-500/10 text-amber-300"
+							}`}
+						>
+							{draft.strategy_taxonomy.review_status}
+						</span>
+					</div>
+					<div className="mt-4 grid grid-cols-1 gap-3 text-xs md:grid-cols-2 xl:grid-cols-4">
+						<div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+							<div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+								Cluster
+							</div>
+							<div className="mt-1 text-slate-100">
+								{draft.strategy_taxonomy.cluster}
+							</div>
+						</div>
+						<div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+							<div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+								Product Type Group
+							</div>
+							<div className="mt-1 text-slate-100">
+								{draft.strategy_taxonomy.product_type_group}
+							</div>
+						</div>
+						<div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+							<div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+								Scene Strategy
+							</div>
+							<div className="mt-1 text-slate-100">
+								{draft.strategy_taxonomy.matched_scene_strategy_id}
+							</div>
+						</div>
+						<div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+							<div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+								Coverage / Consumer Gate
+							</div>
+							<div className="mt-1 text-slate-100">
+								{draft.strategy_taxonomy.scene_coverage_status} /{" "}
+								{draft.strategy_taxonomy.consumer_status}
+							</div>
+						</div>
+					</div>
+					{draft.strategy_taxonomy.review_reasons.length > 0 ? (
+						<div className="mt-4 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
+							<div className="text-[10px] font-bold uppercase tracking-wider text-amber-300">
+								Review Required Because
+							</div>
+							<div className="mt-1 text-xs text-slate-300">
+								{draft.strategy_taxonomy.review_reasons.join(", ")}
+							</div>
+						</div>
+					) : null}
+				</section>
+			) : null}
+
 			<section className="rounded-2xl border border-indigo-500/20 bg-slate-900/60 p-6">
 				<div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
 					<div>

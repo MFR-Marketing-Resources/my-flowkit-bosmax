@@ -1063,6 +1063,31 @@ export interface WorkspacePackageReadinessResponse {
 	items: WorkspacePackageReadinessItem[];
 }
 
+export interface ProductStrategyTaxonomy {
+	product_id: string;
+	taxonomy_version: string;
+	product_fingerprint: string;
+	cluster: string;
+	product_type_group: string;
+	matched_scene_strategy_id: string;
+	scene_coverage_status: "COVERED" | "PARTIAL" | "FALLBACK_ONLY";
+	fallback_used: boolean;
+	specific_strategy: boolean;
+	classification_confidence: "HIGH" | "MEDIUM" | "LOW";
+	review_status: "VERIFIED" | "REVIEW_REQUIRED";
+	consumer_status: "READY" | "BLOCKED_REVIEW_REQUIRED";
+	authority_source: "AUTO_DERIVED" | "MANUAL_OVERRIDE";
+	materialization_status: "PREVIEW" | "PLACEHOLDER" | "MATERIALIZED";
+	review_reasons: string[];
+	reviewer_id?: string | null;
+	reviewer_note?: string | null;
+	derived_at?: string | null;
+	reviewed_at?: string | null;
+	created_at?: string | null;
+	updated_at?: string | null;
+	is_stale: boolean;
+}
+
 export interface Product {
 	id: string;
 	product_id?: string;
@@ -1127,6 +1152,7 @@ export interface Product {
 	intelligence_provenance?: string[];
 	taxonomy_conflict?: boolean;
 	taxonomy_conflict_reason?: string | null;
+	strategy_taxonomy?: ProductStrategyTaxonomy | null;
 	sales_metrics?: {
 		sold_count: number | null;
 		product_sold_count?: number | null;
@@ -2385,6 +2411,7 @@ export interface RegistrationReviewDraft {
 	taxonomy_status: string;
 	taxonomy_conflict: boolean;
 	taxonomy_conflict_reason: string | null;
+	strategy_taxonomy?: ProductStrategyTaxonomy | null;
 	product_family_status: string;
 	physics_status: string;
 	scale_truth_status: string;

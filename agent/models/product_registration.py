@@ -4,6 +4,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent.models.product_strategy_taxonomy import ProductStrategyTaxonomy
+
 
 class ProductRegistrationEvaluateRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -75,6 +77,7 @@ class RegistrationReviewDraft(BaseModel):
     taxonomy_status: str = "NEEDS_REVIEW"
     taxonomy_conflict: bool = False
     taxonomy_conflict_reason: str | None = None
+    strategy_taxonomy: ProductStrategyTaxonomy | None = None
     
     product_family_status: str = "NEEDS_REVIEW"
     physics_status: str = "NEEDS_REVIEW"

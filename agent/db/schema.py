@@ -2324,6 +2324,99 @@ CREATE TABLE IF NOT EXISTS creative_product_selection (
 );
 CREATE INDEX IF NOT EXISTS idx_creative_product_selection_status
     ON creative_product_selection(status);
+
+-- Official product-strategy taxonomy sidecar. This keeps Product Truth rows
+-- unchanged while giving downstream consumers one durable, review-gated
+-- contract. Manual overrides are protected by the materialization service.
+CREATE TABLE IF NOT EXISTS product_strategy_taxonomy (
+    product_id                 TEXT PRIMARY KEY REFERENCES product(id) ON DELETE CASCADE,
+    taxonomy_version           TEXT NOT NULL,
+    product_fingerprint        TEXT NOT NULL,
+    cluster                    TEXT NOT NULL,
+    product_type_group         TEXT NOT NULL,
+    matched_scene_strategy_id  TEXT NOT NULL,
+    scene_coverage_status      TEXT NOT NULL
+        CHECK(scene_coverage_status IN ('COVERED','PARTIAL','FALLBACK_ONLY')),
+    fallback_used              INTEGER NOT NULL CHECK(fallback_used IN (0,1)),
+    specific_strategy          INTEGER NOT NULL CHECK(specific_strategy IN (0,1)),
+    classification_confidence  TEXT NOT NULL
+        CHECK(classification_confidence IN ('HIGH','MEDIUM','LOW')),
+    review_status              TEXT NOT NULL
+        CHECK(review_status IN ('VERIFIED','REVIEW_REQUIRED')),
+    consumer_status            TEXT NOT NULL
+        CHECK(consumer_status IN ('READY','BLOCKED_REVIEW_REQUIRED')),
+    authority_source           TEXT NOT NULL
+        CHECK(authority_source IN ('AUTO_DERIVED','MANUAL_OVERRIDE')),
+    materialization_status     TEXT NOT NULL
+        CHECK(materialization_status IN ('PLACEHOLDER','MATERIALIZED')),
+    review_reasons_json        TEXT NOT NULL DEFAULT '[]',
+    reviewer_id                TEXT,
+    reviewer_note              TEXT,
+    derived_at                 TEXT,
+    reviewed_at                TEXT,
+    created_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    CHECK(scene_coverage_status <> 'FALLBACK_ONLY' OR fallback_used = 1),
+    CHECK(
+        (
+            review_status = 'VERIFIED'
+            AND consumer_status = 'READY'
+            AND authority_source = 'MANUAL_OVERRIDE'
+            AND materialization_status = 'MATERIALIZED'
+        )
+        OR (
+            review_status = 'REVIEW_REQUIRED'
+            AND consumer_status = 'BLOCKED_REVIEW_REQUIRED'
+        )
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_product_strategy_taxonomy_review
+    ON product_strategy_taxonomy(review_status, scene_coverage_status);
+CREATE INDEX IF NOT EXISTS idx_product_strategy_taxonomy_cluster
+    ON product_strategy_taxonomy(cluster, product_type_group);
+
+-- New products cannot exist without an explicit taxonomy state. The trigger is
+-- deliberately fail-closed: it inserts a REVIEW_REQUIRED placeholder which a
+-- reviewed materialization pass later replaces.
+CREATE TRIGGER IF NOT EXISTS trg_product_strategy_taxonomy_after_product_insert
+AFTER INSERT ON product
+BEGIN
+    INSERT OR IGNORE INTO product_strategy_taxonomy (
+        product_id,
+        taxonomy_version,
+        product_fingerprint,
+        cluster,
+        product_type_group,
+        matched_scene_strategy_id,
+        scene_coverage_status,
+        fallback_used,
+        specific_strategy,
+        classification_confidence,
+        review_status,
+        consumer_status,
+        authority_source,
+        materialization_status,
+        review_reasons_json,
+        derived_at
+    ) VALUES (
+        NEW.id,
+        'product_strategy_taxonomy_v1',
+        'PENDING_MATERIALIZATION',
+        'generic_unclassified',
+        'unknown_product_type',
+        'GENERIC_FALLBACK',
+        'FALLBACK_ONLY',
+        1,
+        0,
+        'LOW',
+        'REVIEW_REQUIRED',
+        'BLOCKED_REVIEW_REQUIRED',
+        'AUTO_DERIVED',
+        'PLACEHOLDER',
+        '["NOT_MATERIALIZED"]',
+        strftime('%Y-%m-%dT%H:%M:%SZ','now')
+    );
+END;
 """)
         await db.commit()
 

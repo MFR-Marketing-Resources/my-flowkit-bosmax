@@ -15,6 +15,9 @@ from agent.services.product_intelligence_service import (
 )
 from agent.services.product_mapping import normalize_mapping_text
 from agent.services.product_physics import resolve_product_physics
+from agent.services.product_strategy_taxonomy_service import (
+    build_product_strategy_taxonomy_candidate,
+)
 from agent.services.product_truth_service import ProductTruthService
 import uuid
 from datetime import datetime, timezone
@@ -525,6 +528,33 @@ def create_registration_review_draft(
     system_inferred["image_asset_status"] = image_asset_status
     system_inferred["image_asset_detail"] = image_asset_detail
     now = _now()
+    strategy_product_name = str(
+        candidates.get("normalized_name")
+        or declared_evidence.get("product_name")
+        or ""
+    )
+    strategy_payload = {
+        **declared_evidence,
+        **candidates,
+        "id": draft_id,
+        "raw_product_title": strategy_product_name,
+        "product_display_name": strategy_product_name,
+        "product_short_name": strategy_product_name,
+        "product_type": (
+            candidates.get("type_of_product")
+            or candidates.get("product_type")
+            or candidates.get("type")
+        ),
+        "product_type_id": (
+            candidates.get("type_of_product")
+            or candidates.get("product_type")
+            or candidates.get("type")
+        ),
+    }
+    strategy_taxonomy = build_product_strategy_taxonomy_candidate(
+        strategy_payload,
+        materialization_status="PREVIEW",
+    )
 
     return RegistrationReviewDraft(
         review_draft_id=draft_id,
@@ -541,7 +571,8 @@ def create_registration_review_draft(
         claim_risk_level=completion.claim_risk_level,
         copy_safety_notes=completion.copy_safety_notes,
         # Placeholder for deeper gate logic
-        taxonomy_status="READY" if "category" not in completion.human_review_fields else "NEEDS_REVIEW",
+        taxonomy_status=strategy_taxonomy.review_status,
+        strategy_taxonomy=strategy_taxonomy,
         product_family_status="READY" if "bosmax_product_family" not in completion.human_review_fields else "NEEDS_REVIEW",
         physics_status="READY" if "physics_profile" not in completion.human_review_fields else "NEEDS_REVIEW",
         scale_truth_status="READY" if "SIZE_OR_VOLUME_EVIDENCE" not in completion.missing_required_evidence else "NEEDS_REVIEW",

@@ -61,6 +61,24 @@ const reviewDraft: RegistrationReviewDraft = {
 	taxonomy_status: "NEEDS_REVIEW",
 	taxonomy_conflict: false,
 	taxonomy_conflict_reason: null,
+	strategy_taxonomy: {
+		product_id: "draft-9cb8ab2d",
+		taxonomy_version: "product_strategy_taxonomy_v1",
+		product_fingerprint: "fingerprint",
+		cluster: "sensitive_wellness",
+		product_type_group: "female_wellness",
+		matched_scene_strategy_id: "SENSITIVE_WELLNESS",
+		scene_coverage_status: "COVERED",
+		fallback_used: false,
+		specific_strategy: true,
+		classification_confidence: "LOW",
+		review_status: "REVIEW_REQUIRED",
+		consumer_status: "BLOCKED_REVIEW_REQUIRED",
+		authority_source: "AUTO_DERIVED",
+		materialization_status: "PREVIEW",
+		review_reasons: ["INTELLIGENCE_LOW"],
+		is_stale: false,
+	},
 	product_family_status: "NEEDS_REVIEW",
 	physics_status: "READY",
 	scale_truth_status: "NEEDS_REVIEW",
@@ -134,6 +152,20 @@ describe("RegistrationReviewDraftPanel next-action guidance", () => {
 			}),
 		);
 		expect(sizeField).toHaveFocus();
+	});
+
+	it("renders the deterministic product strategy taxonomy gate", () => {
+		renderPanel();
+
+		const taxonomy = screen.getByTestId("registration-strategy-taxonomy");
+		expect(taxonomy).toHaveTextContent("Product Strategy Taxonomy");
+		expect(taxonomy).toHaveTextContent("sensitive_wellness");
+		expect(taxonomy).toHaveTextContent("female_wellness");
+		expect(taxonomy).toHaveTextContent("SENSITIVE_WELLNESS");
+		expect(taxonomy).toHaveTextContent(
+			"COVERED / BLOCKED_REVIEW_REQUIRED",
+		);
+		expect(taxonomy).toHaveTextContent("INTELLIGENCE_LOW");
 	});
 
 	it("keeps next action visible after required evidence resolves and focuses weak fields", () => {

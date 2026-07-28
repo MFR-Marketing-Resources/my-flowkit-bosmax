@@ -23,6 +23,10 @@ from agent.models.product_intelligence_review_draft import (
     ProductIntelligenceReviewDraftCreateRequest,
     ProductIntelligenceReviewDraftListResponse,
 )
+from agent.models.product_strategy_taxonomy import (
+    ProductStrategyTaxonomy,
+    ProductStrategyTaxonomyReviewRequest,
+)
 from agent.services.product_intelligence import (
     enrich_product, resolve_product_assets, upload_product_to_flow,
     normalize_source as _normalize_source,
@@ -72,6 +76,13 @@ from agent.services.product_intelligence_snapshot_service import (
 from agent.services.product_intelligence_review_draft_service import (
     create_review_draft,
     list_review_drafts,
+)
+from agent.services.product_strategy_taxonomy_service import (
+    ProductStrategyTaxonomyError,
+    attach_product_strategy_taxonomies,
+    get_product_strategy_taxonomy_read_model,
+    require_verified_product_strategy_taxonomy,
+    review_product_strategy_taxonomy,
 )
 from agent.utils.paths import product_image_path
 
@@ -619,6 +630,8 @@ async def _list_products_response(
 
     for item in enriched:
         item["catalog_state"] = derive_catalog_state(item)
+
+    enriched = await attach_product_strategy_taxonomies(enriched)
 
     return {
         "total_count": total,
@@ -1194,7 +1207,46 @@ async def get_product(product_id: str):
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     product = await _refresh_claim_safe_product_row_if_needed(product)
-    return await _enrich_product(product, persist=True)
+    enriched = await _enrich_product(product, persist=True)
+    return (await attach_product_strategy_taxonomies([enriched]))[0]
+
+
+@router.get(
+    "/strategy-taxonomy/{product_id}",
+    response_model=ProductStrategyTaxonomy,
+)
+async def get_product_strategy_taxonomy(
+    product_id: str,
+    require_verified: bool = False,
+) -> ProductStrategyTaxonomy:
+    """Read the official taxonomy, optionally enforcing the future P3 gate."""
+
+    try:
+        if require_verified:
+            return await require_verified_product_strategy_taxonomy(product_id)
+        return await get_product_strategy_taxonomy_read_model(product_id)
+    except ProductStrategyTaxonomyError as exc:
+        code = str(exc)
+        status = 404 if code == "PRODUCT_NOT_FOUND" else 409
+        raise HTTPException(status_code=status, detail=code) from exc
+
+
+@router.post(
+    "/strategy-taxonomy/{product_id}/review",
+    response_model=ProductStrategyTaxonomy,
+)
+async def post_product_strategy_taxonomy_review(
+    product_id: str,
+    request: ProductStrategyTaxonomyReviewRequest,
+) -> ProductStrategyTaxonomy:
+    """Persist an explicit admin review/manual override for one product."""
+
+    try:
+        return await review_product_strategy_taxonomy(product_id, request)
+    except ProductStrategyTaxonomyError as exc:
+        code = str(exc)
+        status = 404 if code == "PRODUCT_NOT_FOUND" else 409
+        raise HTTPException(status_code=status, detail=code) from exc
 
 
 @router.get("/{product_id}/lifecycle")
