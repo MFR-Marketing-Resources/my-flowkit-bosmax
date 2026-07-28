@@ -1576,11 +1576,7 @@ export default function RegistrationReviewDraftPanel({
 
 			<div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
 				<div className="space-y-8">
-					<section
-						id="registration-canonical-candidates"
-						tabIndex={-1}
-						className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6"
-					>
+					<section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
 						<h4 className="mb-4 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-white">
 							<span className="h-1.5 w-1.5 rounded-full bg-slate-500" />
 							Declared Evidence
@@ -1628,7 +1624,11 @@ export default function RegistrationReviewDraftPanel({
 						</div>
 					</section>
 
-					<section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+					<section
+						id="registration-canonical-candidates"
+						tabIndex={-1}
+						className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6"
+					>
 						<h4 className="mb-4 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-white">
 							<span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
 							Canonical Candidates

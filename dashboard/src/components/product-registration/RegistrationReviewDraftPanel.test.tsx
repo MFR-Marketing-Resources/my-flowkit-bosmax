@@ -171,6 +171,15 @@ describe("RegistrationReviewDraftPanel next-action guidance", () => {
 			screen.getByRole("button", { name: "Jump to Benefits" }),
 		);
 		expect(benefitsField).toHaveFocus();
+
+		const candidatesHeading = screen.getByRole("heading", {
+			name: "Canonical Candidates",
+		});
+		const candidatesSection = candidatesHeading.closest("section");
+		fireEvent.click(
+			screen.getByRole("button", { name: "Jump to candidate approvals" }),
+		);
+		expect(candidatesSection).toHaveFocus();
 	});
 
 	it("extracts only stored evidence into reviewable fields and exposes explicit variant choices", () => {
