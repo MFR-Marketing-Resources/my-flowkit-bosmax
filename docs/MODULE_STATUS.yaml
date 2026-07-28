@@ -514,6 +514,10 @@ domains:
       - tests/unit/test_product_intelligence_snapshot_service.py
       - tests/unit/test_video_reviewer.py
       - tests/unit/test_ugc_video_prompt_compiler_service.py
+
+      # Production avatar authority: registry must supersede legacy composer input.
+      - tests/unit/test_t2v_hybrid_registry_authority.py
+      - tests/ui/test_operator_registry_authority_ui_contract.py
       - tests/unit/test_full_storyboard_extend_planner.py
       - tests/unit/test_google_flow_extend_prompt_renderer.py
       - tests/unit/test_extend_prompt_sqlite_persistence.py

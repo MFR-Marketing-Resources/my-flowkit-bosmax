@@ -26,11 +26,7 @@ def _approved():
     }
 
 
-def test_t2v_avatar_id_wins_over_persona_variant():
-    persona_profile = {
-        "avatar_id": "PERSONA_MASK",
-        "prose_override": "persona mask office woman in a navy blouse",
-    }
+def test_t2v_avatar_id_is_the_only_presenter_authority():
     registry_profile = {
         "avatar_code": "BOS_F_TEST_99",
         "skin_tone": "Light-medium",
@@ -40,16 +36,10 @@ def test_t2v_avatar_id_wins_over_persona_variant():
         "age_band": "Adult (25-34)",
     }
 
-    with (
-        patch(
-            "agent.services.persona_variant_service.presenter_profile_for_persona",
-            return_value=persona_profile,
-        ) as persona_mock,
-        patch(
-            "agent.services.avatar_registry.resolve_presenter",
-            return_value=registry_profile,
-        ) as avatar_mock,
-    ):
+    with patch(
+        "agent.services.avatar_registry.resolve_presenter",
+        return_value=registry_profile,
+    ) as avatar_mock:
         result = compile_ugc_video_prompt(
             product=_product(),
             approved_package=_approved(),
@@ -61,7 +51,6 @@ def test_t2v_avatar_id_wins_over_persona_variant():
         )
 
     avatar_mock.assert_called()
-    persona_mock.assert_not_called()
     assert result.get("avatar_id") == "BOS_F_TEST_99"
     text = result["final_compiled_prompt_text"]
     assert "home casual knit" in text
@@ -87,6 +76,7 @@ def test_hybrid_scene_context_override_from_registry():
             mode="F2V",
             source_mode="HYBRID",
             creator_persona="DEFAULT_CREATOR",
+            avatar_id="BOS_F_SEED_01",
             scene_context_override="Background: Raya kampung courtyard with pelita lamps",
             duration_seconds=8,
         )
@@ -97,19 +87,18 @@ def test_hybrid_scene_context_override_from_registry():
     assert "Raya kampung" in text or "pelita" in text
 
 
-def test_t2v_without_avatar_id_still_allows_persona_optional_path():
-    persona_profile = {
-        "avatar_id": "AVATAR_ALYA_OFFICE",
-        "prose_override": "alya office persona in smart navy wear at a desk",
+def test_t2v_without_avatar_id_fails_closed():
+    registry_profile = {
+        "avatar_code": "BOS_F_SEED_01",
+        "skin_tone": "Light-medium",
+        "hair_style": "Short neat",
+        "wardrobe": "registry office wear",
+        "expression": "Calm friendly",
+        "age_band": "Adult (25-34)",
     }
-    with (
-        patch(
-            "agent.services.persona_variant_service.presenter_profile_for_persona",
-            return_value=persona_profile,
-        ),
-        patch("agent.services.avatar_registry.resolve_presenter") as avatar_mock,
-    ):
-        result = compile_ugc_video_prompt(
+    import pytest
+    with pytest.raises(ValueError, match="AVATAR_REGISTRY_SELECTION_REQUIRED"):
+        compile_ugc_video_prompt(
             product=_product(),
             approved_package=_approved(),
             mode="T2V",
@@ -118,7 +107,3 @@ def test_t2v_without_avatar_id_still_allows_persona_optional_path():
             avatar_id=None,
             duration_seconds=8,
         )
-    avatar_mock.assert_not_called()
-    text = result["final_compiled_prompt_text"]
-    assert "alya office persona" in text
-    assert result.get("avatar_id") is None

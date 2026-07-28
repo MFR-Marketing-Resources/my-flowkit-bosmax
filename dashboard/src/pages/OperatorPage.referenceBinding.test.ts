@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_BINDING } from "../components/workspace/CanonicalReferenceBindingControls";
+import {
+	registryRowsForEligibleAssets,
+	type RegistryAssetRow,
+} from "../components/workspace/CanonicalReferenceBindingControls";
 import { referenceBindingBlocker } from "./OperatorPage";
 
 // Canonical per-mode reference-binding gate (PR#337/#338 regression repair).
@@ -67,5 +71,18 @@ describe("referenceBindingBlocker (canonical reference contract)", () => {
 	it("T2V and IMG never require reference bindings", () => {
 		expect(referenceBindingBlocker("T2V", EMPTY_BINDING)).toBeNull();
 		expect(referenceBindingBlocker("IMG", EMPTY_BINDING)).toBeNull();
+	});
+});
+
+describe("I2V registry asset bridge", () => {
+	it("exposes only registry rows whose generated asset is already eligible", () => {
+		const rows: RegistryAssetRow[] = [
+			{ code: "BOS_F_AINA_01", label: "Aina", assetId: "ca-eligible" },
+			{ code: "BOS_F_NADIA_01", label: "Nadia", assetId: "ca-not-eligible" },
+		];
+		const result = registryRowsForEligibleAssets(rows, [
+			{ asset_id: "ca-eligible" } as never,
+		]);
+		expect(result).toEqual([rows[0]]);
 	});
 });

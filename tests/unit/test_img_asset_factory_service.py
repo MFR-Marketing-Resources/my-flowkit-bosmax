@@ -99,6 +99,35 @@ def test_save_from_generated_artifact_image(tmp_path, monkeypatch):
     _run_db(scenario)
 
 
+def test_save_generated_artifact_is_idempotent_and_retains_lineage(tmp_path, monkeypatch):
+    monkeypatch.setattr(creative_asset_service, "CREATIVE_ASSET_UPLOAD_DIR", tmp_path)
+
+    async def scenario():
+        image = tmp_path / "same-output.png"
+        image.write_bytes(b"\x89PNG\r\n\x1a\n-same-output")
+        await _insert_artifact("media-img-idempotent", "image", image)
+        request = SaveImgOutputRequest(
+            lane_id="PRODUCT_ONLY_HERO",
+            display_name="Idempotent Hero",
+            generated_artifact_media_id="media-img-idempotent",
+            product_id="prod-1",
+        )
+        first = await save_img_output_to_library(request)
+        second = await save_img_output_to_library(request)
+        direct = await crud.get_creative_asset_by_media_id("media-img-idempotent")
+        matches = [
+            asset for asset in await list_creative_assets(limit=1000)
+            if asset.media_id == "media-img-idempotent"
+        ]
+        assert second.asset_id == first.asset_id
+        assert direct["asset_id"] == first.asset_id
+        assert len(matches) == 1
+        assert first.media_id == "media-img-idempotent"
+        assert first.mode_a_metadata_handoff["generated_artifact"]["media_id"] == "media-img-idempotent"
+
+    _run_db(scenario)
+
+
 def test_save_and_read_preserves_server_resolved_creative_direction(tmp_path, monkeypatch):
     monkeypatch.setattr(creative_asset_service, "CREATIVE_ASSET_UPLOAD_DIR", tmp_path)
 
