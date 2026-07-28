@@ -120,6 +120,8 @@ domains:
       - dashboard/src/api/creativeIntelligence.avatarPatch.test.ts
       - dashboard/src/components/product-intelligence/RecommendedAvatarsCard.tsx
       - dashboard/src/components/product-intelligence/RecommendedAvatarsCard.test.tsx
+      - scripts/validate_copy_picker_browser.js
+      - tests/unit/test_avatar_registry_authority_enforcement.py
 
       # Creative Intelligence Round 2 — scene / image prompt library (read-only, non-generative)
       - agent/authority/creative_scene_prompt_library.json

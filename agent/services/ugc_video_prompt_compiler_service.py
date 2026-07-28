@@ -886,6 +886,8 @@ def compile_ugc_video_prompt(
                 usage_context=_clean(product.get("category")),
                 seed=_clean(product.get("id") or product.get("name") or "bosmax"),
             )
+            if resolved_presenter and resolved_presenter.get("avatar_code"):
+                resolved_creator_persona = str(resolved_presenter["avatar_code"]).strip()
         else:
             resolved_presenter = _persona_variants.presenter_profile_for_persona(
                 resolved_creator_persona
