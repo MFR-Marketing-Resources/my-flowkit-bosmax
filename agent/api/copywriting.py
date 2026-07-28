@@ -5,13 +5,43 @@ grounding + copy sets + formula into one payload.
 """
 from fastapi import APIRouter, HTTPException
 
+from agent.models.lip_color_copy_strategy import (
+    LipColorCopyStrategyResponse,
+    LipColorDurationSeconds,
+)
 from agent.services.copy_set_service import CopySetError
 from agent.services.copywriting_readiness_service import get_copywriting_readiness
 from agent.services.fastmoss_product_reference_service import (
     is_fastmoss_reference_product_id,
 )
+from agent.services.lip_color_copy_strategy_service import (
+    LipColorCopyStrategyError,
+    build_lip_color_copy_strategy,
+)
 
 router = APIRouter(prefix="/copywriting", tags=["copywriting"])
+
+
+@router.get(
+    "/p3a/lip-color/{product_id}",
+    response_model=LipColorCopyStrategyResponse,
+)
+async def p3a_lip_color_copy_strategy(
+    product_id: str,
+    duration_seconds: LipColorDurationSeconds = LipColorDurationSeconds.SECONDS_8,
+):
+    """Preview direct-BM P3A copy without provider calls or persistence."""
+    try:
+        return await build_lip_color_copy_strategy(product_id, duration_seconds)
+    except LipColorCopyStrategyError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={
+                "error": exc.code,
+                "product_id": exc.product_id,
+                "blocked_reasons": exc.blocked_reasons,
+            },
+        ) from exc
 
 
 @router.get("/readiness/{product_id}")
