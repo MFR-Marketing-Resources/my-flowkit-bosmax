@@ -126,6 +126,43 @@ async def test_new_product_gets_fail_closed_placeholder_then_backfill_readback()
 
 
 @pytest.mark.asyncio
+async def test_backfill_materializes_archived_products(monkeypatch):
+    product = await crud.create_product(
+        source="MANUAL",
+        raw_product_title="Archived Mystery Item",
+        product_display_name="Archived Mystery Item",
+        product_short_name="Archived Mystery Item",
+        category="Miscellaneous",
+        type="Unknown",
+        product_type="Unknown",
+    )
+    await crud.update_product(product["id"], lifecycle_status="ARCHIVED")
+    archived_product = await crud.get_product(product["id"])
+
+    async def fake_list_products(**kwargs):
+        assert kwargs["include_archived"] is True
+        return [archived_product]
+
+    monkeypatch.setattr(crud, "list_products", fake_list_products)
+
+    dry_run = await service.run_product_strategy_taxonomy_backfill(
+        ProductStrategyTaxonomyBackfillRequest()
+    )
+    assert dry_run.product_count == 1
+    assert dry_run.planned_update_count == 1
+
+    await service.run_product_strategy_taxonomy_backfill(
+        ProductStrategyTaxonomyBackfillRequest(
+            dry_run=False,
+            confirm_apply=service.BACKFILL_CONFIRMATION,
+        )
+    )
+    readback = await service.get_product_strategy_taxonomy_read_model(product["id"])
+    assert readback.materialization_status == "MATERIALIZED"
+    assert readback.review_status == "REVIEW_REQUIRED"
+
+
+@pytest.mark.asyncio
 async def test_manual_verified_override_is_copy_ready_and_backfill_preserves_it():
     product = await crud.create_product(
         source="MANUAL",

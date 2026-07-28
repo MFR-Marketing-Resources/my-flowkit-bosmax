@@ -310,7 +310,7 @@ async def _build_backfill_plan(
 ) -> tuple[ProductStrategyTaxonomyBackfillResponse, list[dict[str, object]]]:
     products = await crud.list_products(
         limit=limit,
-        include_archived=False,
+        include_archived=True,
     )
     product_ids = [str(product.get("id") or "") for product in products]
     existing_rows = await crud.list_product_strategy_taxonomies(product_ids)
