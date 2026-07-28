@@ -36,6 +36,9 @@ def test_api_review_draft_create():
     assert data["declared_evidence_fields"]["image_url"] == "https://example.com/api.jpg"
     assert data["system_inferred_fields"]["image_analysis_status"] == "VISION_PROVIDER_NOT_CONFIGURED"
     assert data["write_back_allowed"] is False
+    assert data["strategy_taxonomy"]["materialization_status"] == "PREVIEW"
+    assert data["strategy_taxonomy"]["review_status"] == "REVIEW_REQUIRED"
+    assert data["strategy_taxonomy"]["consumer_status"] == "BLOCKED_REVIEW_REQUIRED"
 
 def test_api_review_draft_malformed():
     # Empty payload or missing required fields should fail validation

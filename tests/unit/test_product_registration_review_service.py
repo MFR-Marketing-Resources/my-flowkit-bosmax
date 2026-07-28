@@ -60,6 +60,9 @@ def test_create_review_draft_basic():
     assert draft.write_back_status == "READ_ONLY_REVIEW_PREVIEW"
     assert draft.draft_freshness_status == "FRESH"
     assert draft.last_recomputed_at is not None
+    assert draft.strategy_taxonomy is not None
+    assert draft.strategy_taxonomy.materialization_status == "PREVIEW"
+    assert draft.strategy_taxonomy.consumer_status == "BLOCKED_REVIEW_REQUIRED"
 
 def test_create_review_draft_risky_claim():
     completion = ProductKnowledgeCompleteResponse(

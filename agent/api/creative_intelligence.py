@@ -9,12 +9,14 @@ Read-first, non-generative. Exposes:
   * GET  /api/creative-intelligence/scene-suitability/category  (by category)
   * GET  /api/creative-intelligence/scene-suitability/product/{product_id}
   * GET  /api/creative-intelligence/scene-strategy-scouting
+  * POST /api/creative-intelligence/product-strategy-taxonomy/backfill
   * GET  /api/creative-intelligence/camera-preset-recommendation (by product_id/category/cluster)
   * POST /api/creative-intelligence/camera-preset/seed          (idempotent; dry-run default)
 
 No generation, no Product Truth / product-row / Copy Set / Copy Registry / Copy
 Intelligence mutation. The seeds only write the config tables ``avatar_product_fit`` /
-``creative_scene_prompt`` / ``creative_camera_preset``. Scene templates keep
+``creative_scene_prompt`` / ``creative_camera_preset``; the explicitly confirmed
+taxonomy backfill writes only ``product_strategy_taxonomy``. Scene templates keep
 ``[AVATAR]``/``[PRODUCT]`` placeholders unresolved; camera presets are reference-only
 and are never written to product camera columns or sent to generation.
 """
@@ -23,6 +25,10 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict
 
+from agent.models.product_strategy_taxonomy import (
+    ProductStrategyTaxonomyBackfillRequest,
+    ProductStrategyTaxonomyBackfillResponse,
+)
 from agent.services import creative_avatar_recommendation_service as _svc
 from agent.services import creative_scene_prompt_service as _scene
 from agent.services import product_strategy_scouting_service as _strategy_scouting
@@ -33,6 +39,7 @@ from agent.services import scene_context_promotion_activation_service as _scene_
 from agent.services import creative_camera_preset_service as _camera
 from agent.services import creative_setup_service as _setup
 from agent.services import creative_handoff_service as _handoff
+from agent.services import product_strategy_taxonomy_service as _strategy_taxonomy
 
 router = APIRouter(prefix="/creative-intelligence", tags=["creative-intelligence"])
 
@@ -447,6 +454,23 @@ async def scene_strategy_scouting() -> dict:
     """Return a read-only cluster/type coverage queue for Scene Strategy work."""
 
     return await _strategy_scouting.get_product_strategy_scouting_report()
+
+
+@router.post(
+    "/product-strategy-taxonomy/backfill",
+    response_model=ProductStrategyTaxonomyBackfillResponse,
+)
+async def product_strategy_taxonomy_backfill(
+    request: ProductStrategyTaxonomyBackfillRequest,
+) -> ProductStrategyTaxonomyBackfillResponse:
+    """Preview by default; apply only with the exact confirmation token."""
+
+    try:
+        return await _strategy_taxonomy.run_product_strategy_taxonomy_backfill(
+            request
+        )
+    except _strategy_taxonomy.ProductStrategyTaxonomyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/avatar-fit/seed")

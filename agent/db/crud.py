@@ -11,7 +11,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_component", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "content_combination", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "creative_product_selection", "poster_copy_set", "poster_deliverable", "extend_lineage"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_component", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "content_combination", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "creative_product_selection", "product_strategy_taxonomy", "poster_copy_set", "poster_deliverable", "extend_lineage"})
 
 
 def _validate_table(table: str) -> None:
@@ -60,6 +60,7 @@ _COLUMNS = {
     "creative_scene_prompt": {"template_id", "cluster", "source_category", "cluster_source", "main_action", "setting", "full_prompt_template", "base_prompt", "combined_prompt_suggestion", "negative_prompt", "variant", "notes", "provenance", "updated_at"},
     "creative_camera_preset": {"preset_code", "preset_name", "shot_type", "distance_angle", "movement", "block_group", "provenance", "updated_at"},
     "creative_product_selection": {"product_id", "selection_id", "cluster", "cluster_source", "selected_avatar_code", "selected_scene_template_id", "selected_camera_preset_code", "selected_block_purpose", "selected_content_type", "notes", "preview_json", "provenance_json", "status", "reviewer_note", "created_at", "updated_at", "reviewed_at"},
+    "product_strategy_taxonomy": {"taxonomy_version", "product_fingerprint", "cluster", "product_type_group", "matched_scene_strategy_id", "scene_coverage_status", "fallback_used", "specific_strategy", "classification_confidence", "review_status", "consumer_status", "authority_source", "materialization_status", "review_reasons_json", "reviewer_id", "reviewer_note", "derived_at", "reviewed_at", "created_at", "updated_at"},
     "product_intelligence_review_field_provenance": {"draft_id", "product_id", "field_name", "declared_value", "normalized_value", "source_type", "source_url", "source_lane", "evidence_kind", "extraction_method", "confidence_score", "verification_status", "claim_risk_flag", "reviewer_decision", "reviewer_note", "updated_at"},
     "extend_lineage": {"workspace_generation_package_id", "project_id", "scene_id", "block_index", "block_position", "parent_operation_id", "parent_primary_media_id", "child_operation_id", "child_primary_media_id", "child_workflow_id", "batch_id", "model_key", "aspect_ratio", "start_frame_index", "end_frame_index", "continuation_prompt_hash", "idempotency_key", "polling_state", "retry_attempt", "output_url", "error_code", "error_message", "updated_at", "completed_at"},
 }
@@ -1239,6 +1240,124 @@ async def set_creative_product_selection_status(
         )
         await db.commit()
     return await _get("creative_product_selection", "product_id", product_id)
+
+
+# ─── Product Strategy Taxonomy ─────────────────────────────
+
+_PRODUCT_STRATEGY_TAXONOMY_WRITE_COLUMNS = (
+    "taxonomy_version",
+    "product_fingerprint",
+    "cluster",
+    "product_type_group",
+    "matched_scene_strategy_id",
+    "scene_coverage_status",
+    "fallback_used",
+    "specific_strategy",
+    "classification_confidence",
+    "review_status",
+    "consumer_status",
+    "authority_source",
+    "materialization_status",
+    "review_reasons_json",
+    "reviewer_id",
+    "reviewer_note",
+    "derived_at",
+    "reviewed_at",
+    "updated_at",
+)
+
+
+async def get_product_strategy_taxonomy(product_id: str) -> Optional[dict]:
+    return await _get("product_strategy_taxonomy", "product_id", product_id)
+
+
+async def list_product_strategy_taxonomies(
+    product_ids: list[str] | None = None,
+) -> list[dict]:
+    db = await get_db()
+    if product_ids is not None:
+        resolved_ids = [str(value) for value in product_ids if str(value).strip()]
+        if not resolved_ids:
+            return []
+        placeholders = ",".join("?" for _ in resolved_ids)
+        cur = await db.execute(
+            f"SELECT * FROM product_strategy_taxonomy "
+            f"WHERE product_id IN ({placeholders})",
+            resolved_ids,
+        )
+    else:
+        cur = await db.execute(
+            "SELECT * FROM product_strategy_taxonomy ORDER BY product_id"
+        )
+    return [dict(row) for row in await cur.fetchall()]
+
+
+async def materialize_product_strategy_taxonomies(records: list[dict]) -> int:
+    """Atomically materialize automatic taxonomy rows.
+
+    Manual overrides are immutable to this path. Any failed row rolls the whole
+    batch back, which keeps live backfill recovery deterministic.
+    """
+
+    if not records:
+        return 0
+    db = await get_db()
+    columns = ("product_id",) + _PRODUCT_STRATEGY_TAXONOMY_WRITE_COLUMNS
+    update_columns = tuple(
+        column
+        for column in _PRODUCT_STRATEGY_TAXONOMY_WRITE_COLUMNS
+        if column != "authority_source"
+    )
+    update_clause = ", ".join(
+        f"{column}=excluded.{column}" for column in update_columns
+    )
+    sql = (
+        f"INSERT INTO product_strategy_taxonomy ({', '.join(columns)}) "
+        f"VALUES ({', '.join('?' for _ in columns)}) "
+        f"ON CONFLICT(product_id) DO UPDATE SET {update_clause} "
+        "WHERE product_strategy_taxonomy.authority_source <> 'MANUAL_OVERRIDE'"
+    )
+    changed = 0
+    async with _db_lock:
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            for record in records:
+                values = [record.get(column) for column in columns]
+                cur = await db.execute(sql, values)
+                changed += max(cur.rowcount, 0)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    return changed
+
+
+async def upsert_manual_product_strategy_taxonomy(record: dict) -> dict:
+    """Persist one explicit admin override after service-level validation."""
+
+    db = await get_db()
+    columns = ("product_id",) + _PRODUCT_STRATEGY_TAXONOMY_WRITE_COLUMNS
+    update_clause = ", ".join(
+        f"{column}=excluded.{column}"
+        for column in _PRODUCT_STRATEGY_TAXONOMY_WRITE_COLUMNS
+    )
+    sql = (
+        f"INSERT INTO product_strategy_taxonomy ({', '.join(columns)}) "
+        f"VALUES ({', '.join('?' for _ in columns)}) "
+        f"ON CONFLICT(product_id) DO UPDATE SET {update_clause}"
+    )
+    async with _db_lock:
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            await db.execute(sql, [record.get(column) for column in columns])
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    result = await get_product_strategy_taxonomy(str(record["product_id"]))
+    if result is None:
+        raise RuntimeError("PRODUCT_STRATEGY_TAXONOMY_WRITE_FAILED")
+    return result
 
 
 # --- Copy Set (Copy Strategy Studio Phase 1) ---
