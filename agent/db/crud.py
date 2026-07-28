@@ -1242,6 +1242,109 @@ async def set_creative_product_selection_status(
     return await _get("creative_product_selection", "product_id", product_id)
 
 
+# ─── Product Strategy Type Registry ────────────────────────
+
+_PRODUCT_STRATEGY_TYPE_REGISTRY_COLUMNS = (
+    "cluster",
+    "product_type_group",
+    "display_name",
+    "matched_scene_strategy_id",
+    "scene_coverage_status",
+    "registry_status",
+    "auto_classification_enabled",
+    "authority_source",
+    "reviewer_id",
+    "reviewer_note",
+    "reviewed_at",
+    "updated_at",
+)
+
+
+async def list_product_strategy_type_registry(
+    cluster: str | None = None,
+) -> list[dict]:
+    db = await get_db()
+    if cluster:
+        cur = await db.execute(
+            "SELECT * FROM product_strategy_type_registry "
+            "WHERE cluster=? ORDER BY product_type_group",
+            (cluster,),
+        )
+    else:
+        cur = await db.execute(
+            "SELECT * FROM product_strategy_type_registry "
+            "ORDER BY cluster, product_type_group"
+        )
+    return [dict(row) for row in await cur.fetchall()]
+
+
+async def get_product_strategy_type_registry_entry(
+    cluster: str,
+    product_type_group: str,
+) -> Optional[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM product_strategy_type_registry "
+        "WHERE cluster=? AND product_type_group=?",
+        (cluster, product_type_group),
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def create_product_strategy_type_registry_entry(record: dict) -> dict:
+    db = await get_db()
+    columns = _PRODUCT_STRATEGY_TYPE_REGISTRY_COLUMNS
+    sql = (
+        f"INSERT INTO product_strategy_type_registry ({', '.join(columns)}) "
+        f"VALUES ({', '.join('?' for _ in columns)})"
+    )
+    async with _db_lock:
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            await db.execute(sql, [record.get(column) for column in columns])
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    result = await get_product_strategy_type_registry_entry(
+        str(record["cluster"]),
+        str(record["product_type_group"]),
+    )
+    if result is None:
+        raise RuntimeError("PRODUCT_STRATEGY_TYPE_REGISTRY_WRITE_FAILED")
+    return result
+
+
+async def seed_product_strategy_type_registry(records: list[dict]) -> int:
+    """Insert missing system entries atomically without overwriting any pair."""
+
+    if not records:
+        return 0
+    db = await get_db()
+    columns = _PRODUCT_STRATEGY_TYPE_REGISTRY_COLUMNS
+    sql = (
+        f"INSERT INTO product_strategy_type_registry ({', '.join(columns)}) "
+        f"VALUES ({', '.join('?' for _ in columns)}) "
+        "ON CONFLICT(cluster, product_type_group) DO NOTHING"
+    )
+    changed = 0
+    async with _db_lock:
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            for record in records:
+                cur = await db.execute(
+                    sql,
+                    [record.get(column) for column in columns],
+                )
+                changed += max(cur.rowcount, 0)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    return changed
+
+
 # ─── Product Strategy Taxonomy ─────────────────────────────
 
 _PRODUCT_STRATEGY_TAXONOMY_WRITE_COLUMNS = (

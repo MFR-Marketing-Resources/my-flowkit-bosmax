@@ -22,6 +22,7 @@ from agent.services.registration_commit_service import RegistrationCommitService
 from agent.services.registration_draft_evidence_editor_service import (
     patch_registration_draft_evidence,
 )
+from agent.services import product_strategy_taxonomy_service as _strategy_taxonomy
 
 
 router = APIRouter(prefix="/product-registration", tags=["product-registration"])
@@ -48,6 +49,25 @@ async def list_review_drafts() -> List[RegistrationReviewDraft]:
 
 @router.post("/review-drafts", response_model=RegistrationReviewDraft)
 async def save_review_draft(draft: RegistrationReviewDraft) -> RegistrationReviewDraft:
+    taxonomy = draft.strategy_taxonomy
+    if taxonomy and taxonomy.authority_source == "MANUAL_OVERRIDE":
+        if not (taxonomy.reviewer_id or "").strip() or not (
+            taxonomy.reviewer_note or ""
+        ).strip():
+            raise HTTPException(
+                status_code=409,
+                detail="TAXONOMY_REVIEWER_EVIDENCE_REQUIRED",
+            )
+        try:
+            await _strategy_taxonomy.validate_product_strategy_assignment(
+                cluster=taxonomy.cluster,
+                product_type_group=taxonomy.product_type_group,
+                matched_scene_strategy_id=taxonomy.matched_scene_strategy_id,
+                scene_coverage_status=taxonomy.scene_coverage_status,
+                review_status=taxonomy.review_status,
+            )
+        except _strategy_taxonomy.ProductStrategyTaxonomyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     return RegistrationDraftStorageService.save_draft(draft)
 
 

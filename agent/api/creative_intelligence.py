@@ -9,6 +9,8 @@ Read-first, non-generative. Exposes:
   * GET  /api/creative-intelligence/scene-suitability/category  (by category)
   * GET  /api/creative-intelligence/scene-suitability/product/{product_id}
   * GET  /api/creative-intelligence/scene-strategy-scouting
+  * GET/POST /api/creative-intelligence/product-strategy-type-registry
+  * POST /api/creative-intelligence/product-strategy-type-registry/seed
   * POST /api/creative-intelligence/product-strategy-taxonomy/backfill
   * GET  /api/creative-intelligence/camera-preset-recommendation (by product_id/category/cluster)
   * POST /api/creative-intelligence/camera-preset/seed          (idempotent; dry-run default)
@@ -28,6 +30,11 @@ from pydantic import BaseModel, ConfigDict
 from agent.models.product_strategy_taxonomy import (
     ProductStrategyTaxonomyBackfillRequest,
     ProductStrategyTaxonomyBackfillResponse,
+    ProductStrategyTypeRegistrationRequest,
+    ProductStrategyTypeRegistryEntry,
+    ProductStrategyTypeRegistryListResponse,
+    ProductStrategyTypeRegistrySeedRequest,
+    ProductStrategyTypeRegistrySeedResponse,
 )
 from agent.services import creative_avatar_recommendation_service as _svc
 from agent.services import creative_scene_prompt_service as _scene
@@ -454,6 +461,50 @@ async def scene_strategy_scouting() -> dict:
     """Return a read-only cluster/type coverage queue for Scene Strategy work."""
 
     return await _strategy_scouting.get_product_strategy_scouting_report()
+
+
+@router.get(
+    "/product-strategy-type-registry",
+    response_model=ProductStrategyTypeRegistryListResponse,
+)
+async def product_strategy_type_registry(
+    cluster: str | None = None,
+) -> ProductStrategyTypeRegistryListResponse:
+    """Read the official cluster -> product-type registration layer."""
+
+    return await _strategy_taxonomy.list_product_strategy_type_registry(cluster)
+
+
+@router.post(
+    "/product-strategy-type-registry",
+    response_model=ProductStrategyTypeRegistryEntry,
+)
+async def product_strategy_type_register(
+    request: ProductStrategyTypeRegistrationRequest,
+) -> ProductStrategyTypeRegistryEntry:
+    """Register one reviewed type under an existing strategy cluster."""
+
+    try:
+        return await _strategy_taxonomy.register_product_strategy_type(request)
+    except _strategy_taxonomy.ProductStrategyTaxonomyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    "/product-strategy-type-registry/seed",
+    response_model=ProductStrategyTypeRegistrySeedResponse,
+)
+async def product_strategy_type_registry_seed(
+    request: ProductStrategyTypeRegistrySeedRequest,
+) -> ProductStrategyTypeRegistrySeedResponse:
+    """Preview by default; seed config only with the exact confirmation token."""
+
+    try:
+        return await _strategy_taxonomy.seed_product_strategy_type_registry(
+            request
+        )
+    except _strategy_taxonomy.ProductStrategyTaxonomyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post(

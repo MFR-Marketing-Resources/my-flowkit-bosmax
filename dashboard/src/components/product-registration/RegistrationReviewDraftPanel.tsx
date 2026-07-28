@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { patchAPI, postAPI } from "../../api/client";
+import {
+	fetchProductStrategyTypeRegistry,
+	registerProductStrategyType,
+} from "../../api/products";
 import type {
 	RegistrationCommitResponse,
 	RegistrationReviewDraft,
 	RegistrationReviewDraftEvidencePatchRequest,
+	ProductStrategyTypeRegistryResponse,
 } from "../../types";
 
 interface Props {
@@ -508,6 +513,36 @@ export default function RegistrationReviewDraftPanel({
 	const [pendingImageFilename, setPendingImageFilename] = useState<string>("");
 	const [pendingImagePreview, setPendingImagePreview] = useState<string>("");
 	const [saveMessage, setSaveMessage] = useState<string>("");
+	const [taxonomyRegistry, setTaxonomyRegistry] =
+		useState<ProductStrategyTypeRegistryResponse>({
+			items: [],
+			clusters: [],
+			scene_strategy_ids: [],
+		});
+	const [taxonomyCluster, setTaxonomyCluster] = useState(
+		draft.strategy_taxonomy?.cluster || "",
+	);
+	const [taxonomyGroup, setTaxonomyGroup] = useState(
+		draft.strategy_taxonomy?.product_type_group || "",
+	);
+	const [taxonomyReviewerId, setTaxonomyReviewerId] = useState(
+		draft.strategy_taxonomy?.reviewer_id || "",
+	);
+	const [taxonomyReviewerNote, setTaxonomyReviewerNote] = useState(
+		draft.strategy_taxonomy?.reviewer_note || "",
+	);
+	const [taxonomySaving, setTaxonomySaving] = useState(false);
+	const [taxonomyMessage, setTaxonomyMessage] = useState("");
+	const [newTaxonomyGroup, setNewTaxonomyGroup] = useState("");
+	const [newTaxonomyDisplayName, setNewTaxonomyDisplayName] = useState("");
+	const [newTaxonomySceneId, setNewTaxonomySceneId] =
+		useState("GENERIC_FALLBACK");
+	const [newTaxonomyCoverage, setNewTaxonomyCoverage] = useState<
+		"COVERED" | "PARTIAL" | "FALLBACK_ONLY"
+	>("FALLBACK_ONLY");
+	const [newTaxonomyRegistryStatus, setNewTaxonomyRegistryStatus] = useState<
+		"ACTIVE" | "REVIEW_REQUIRED"
+	>("REVIEW_REQUIRED");
 
 	useEffect(() => {
 		setApprovals(draft.approval_checklist);
@@ -515,7 +550,48 @@ export default function RegistrationReviewDraftPanel({
 		setPendingImageBase64("");
 		setPendingImageFilename("");
 		setPendingImagePreview("");
+		setTaxonomyCluster(draft.strategy_taxonomy?.cluster || "");
+		setTaxonomyGroup(draft.strategy_taxonomy?.product_type_group || "");
+		setTaxonomyReviewerId(draft.strategy_taxonomy?.reviewer_id || "");
+		setTaxonomyReviewerNote(draft.strategy_taxonomy?.reviewer_note || "");
 	}, [draft]);
+
+	useEffect(() => {
+		let cancelled = false;
+		async function loadTaxonomyRegistry() {
+			try {
+				const response = await fetchProductStrategyTypeRegistry();
+				if (!cancelled) setTaxonomyRegistry(response);
+			} catch (err) {
+				if (!cancelled) {
+					setTaxonomyMessage(
+						err instanceof Error
+							? err.message
+							: "Failed to load product strategy registry",
+					);
+				}
+			}
+		}
+		void loadTaxonomyRegistry();
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	const taxonomyGroupOptions = useMemo(
+		() =>
+			taxonomyRegistry.items.filter(
+				(item) => item.cluster === taxonomyCluster,
+			),
+		[taxonomyCluster, taxonomyRegistry.items],
+	);
+	const selectedTaxonomyEntry = useMemo(
+		() =>
+			taxonomyGroupOptions.find(
+				(item) => item.product_type_group === taxonomyGroup,
+			) || null,
+		[taxonomyGroup, taxonomyGroupOptions],
+	);
 
 	const imagePreviewUrl = useMemo(() => {
 		if (pendingImagePreview) return pendingImagePreview;
@@ -782,6 +858,115 @@ export default function RegistrationReviewDraftPanel({
 		}
 	};
 
+	const handleTaxonomySave = async (
+		reviewStatus: "VERIFIED" | "REVIEW_REQUIRED",
+	) => {
+		if (!draft.strategy_taxonomy || !selectedTaxonomyEntry) {
+			setTaxonomyMessage("Select a registered product type first.");
+			return;
+		}
+		if (!taxonomyReviewerId.trim() || !taxonomyReviewerNote.trim()) {
+			setTaxonomyMessage("Reviewer ID and reviewer note are required.");
+			return;
+		}
+		setTaxonomySaving(true);
+		setTaxonomyMessage("");
+		try {
+			const updatedDraft: RegistrationReviewDraft = {
+				...draft,
+				strategy_taxonomy: {
+					...draft.strategy_taxonomy,
+					cluster: selectedTaxonomyEntry.cluster,
+					product_type_group: selectedTaxonomyEntry.product_type_group,
+					matched_scene_strategy_id:
+						selectedTaxonomyEntry.matched_scene_strategy_id,
+					scene_coverage_status: selectedTaxonomyEntry.scene_coverage_status,
+					fallback_used:
+						selectedTaxonomyEntry.scene_coverage_status === "FALLBACK_ONLY",
+					specific_strategy:
+						selectedTaxonomyEntry.scene_coverage_status === "COVERED",
+					review_status: reviewStatus,
+					consumer_status: "BLOCKED_REVIEW_REQUIRED",
+					authority_source: "MANUAL_OVERRIDE",
+					materialization_status: "PREVIEW",
+					review_reasons:
+						reviewStatus === "VERIFIED"
+							? []
+							: ["MANUAL_REVIEW_REQUIRED"],
+					reviewer_id: taxonomyReviewerId.trim(),
+					reviewer_note: taxonomyReviewerNote.trim(),
+					reviewed_at: new Date().toISOString(),
+					is_stale: false,
+				},
+			};
+			const saved = await postAPI<RegistrationReviewDraft>(
+				"/api/product-registration/review-drafts",
+				updatedDraft,
+			);
+			onUpdate(saved);
+			setTaxonomyMessage(
+				`Draft taxonomy saved as ${saved.strategy_taxonomy?.review_status}. It will materialize during registration commit.`,
+			);
+		} catch (err) {
+			setTaxonomyMessage(
+				err instanceof Error ? err.message : "Failed to save draft taxonomy",
+			);
+		} finally {
+			setTaxonomySaving(false);
+		}
+	};
+
+	const handleTaxonomyTypeRegistration = async (
+		event: React.FormEvent<HTMLFormElement>,
+	) => {
+		event.preventDefault();
+		if (!taxonomyCluster) {
+			setTaxonomyMessage("Select a concrete cluster first.");
+			return;
+		}
+		if (!taxonomyReviewerId.trim() || !taxonomyReviewerNote.trim()) {
+			setTaxonomyMessage("Reviewer ID and reviewer note are required.");
+			return;
+		}
+		setTaxonomySaving(true);
+		setTaxonomyMessage("");
+		try {
+			const created = await registerProductStrategyType({
+				cluster: taxonomyCluster,
+				product_type_group: newTaxonomyGroup.trim(),
+				display_name: newTaxonomyDisplayName.trim(),
+				matched_scene_strategy_id: newTaxonomySceneId,
+				scene_coverage_status: newTaxonomyCoverage,
+				registry_status: newTaxonomyRegistryStatus,
+				auto_classification_enabled: false,
+				reviewer_id: taxonomyReviewerId.trim(),
+				reviewer_note: taxonomyReviewerNote.trim(),
+			});
+			setTaxonomyRegistry((current) => ({
+				...current,
+				items: [...current.items, created].sort((left, right) =>
+					`${left.cluster}:${left.product_type_group}`.localeCompare(
+						`${right.cluster}:${right.product_type_group}`,
+					),
+				),
+			}));
+			setTaxonomyGroup(created.product_type_group);
+			setNewTaxonomyGroup("");
+			setNewTaxonomyDisplayName("");
+			setTaxonomyMessage(
+				`Registered ${created.cluster} / ${created.product_type_group} as ${created.registry_status}.`,
+			);
+		} catch (err) {
+			setTaxonomyMessage(
+				err instanceof Error
+					? err.message
+					: "Failed to register product strategy type",
+			);
+		} finally {
+			setTaxonomySaving(false);
+		}
+	};
+
 	const handleCommit = async () => {
 		if (confirmPhrase !== "REGISTER_OWNED_PRODUCT") return;
 
@@ -1015,6 +1200,207 @@ export default function RegistrationReviewDraftPanel({
 							</div>
 						</div>
 					) : null}
+					<div
+						data-testid="registration-strategy-taxonomy-editor"
+						className="mt-4 space-y-4 border-t border-slate-800 pt-4"
+					>
+						<div className="grid gap-3 md:grid-cols-2">
+							<label className="text-[11px] text-slate-400">
+								Cluster
+								<select
+									data-testid="registration-taxonomy-cluster-select"
+									value={taxonomyCluster}
+									onChange={(event) => {
+										const cluster = event.target.value;
+										const firstGroup = taxonomyRegistry.items.find(
+											(item) => item.cluster === cluster,
+										);
+										setTaxonomyCluster(cluster);
+										setTaxonomyGroup(firstGroup?.product_type_group || "");
+									}}
+									className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+								>
+									<option value="">Select cluster</option>
+									{taxonomyRegistry.clusters
+										.filter(
+											(cluster) => cluster !== "generic_unclassified",
+										)
+										.map((cluster) => (
+											<option key={cluster} value={cluster}>
+												{cluster}
+											</option>
+										))}
+								</select>
+							</label>
+							<label className="text-[11px] text-slate-400">
+								Product Type Group
+								<select
+									data-testid="registration-taxonomy-group-select"
+									value={taxonomyGroup}
+									onChange={(event) => setTaxonomyGroup(event.target.value)}
+									className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+								>
+									<option value="">Select registered type</option>
+									{taxonomyGroupOptions.map((item) => (
+										<option
+											key={item.product_type_group}
+											value={item.product_type_group}
+										>
+											{item.display_name} · {item.registry_status}
+										</option>
+									))}
+								</select>
+							</label>
+							<label className="text-[11px] text-slate-400">
+								Reviewer ID
+								<input
+									value={taxonomyReviewerId}
+									onChange={(event) =>
+										setTaxonomyReviewerId(event.target.value)
+									}
+									className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+								/>
+							</label>
+							<label className="text-[11px] text-slate-400">
+								Reviewer Note
+								<input
+									value={taxonomyReviewerNote}
+									onChange={(event) =>
+										setTaxonomyReviewerNote(event.target.value)
+									}
+									className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+								/>
+							</label>
+						</div>
+						{selectedTaxonomyEntry ? (
+							<div className="rounded border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-300">
+								Scene: {selectedTaxonomyEntry.matched_scene_strategy_id} ·
+								Coverage: {selectedTaxonomyEntry.scene_coverage_status} ·
+								Registry: {selectedTaxonomyEntry.registry_status}
+							</div>
+						) : null}
+						<div className="flex flex-wrap gap-2">
+							<button
+								type="button"
+								disabled={taxonomySaving || !selectedTaxonomyEntry}
+								onClick={() => void handleTaxonomySave("REVIEW_REQUIRED")}
+								className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-bold text-amber-300 disabled:opacity-40"
+							>
+								Save Review Required
+							</button>
+							<button
+								type="button"
+								disabled={
+									taxonomySaving ||
+									selectedTaxonomyEntry?.registry_status !== "ACTIVE"
+								}
+								onClick={() => void handleTaxonomySave("VERIFIED")}
+								className="rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] font-bold text-emerald-300 disabled:opacity-40"
+							>
+								Verify Draft Assignment
+							</button>
+						</div>
+						<form
+							data-testid="registration-product-strategy-type-registration"
+							onSubmit={handleTaxonomyTypeRegistration}
+							className="space-y-3 border-t border-slate-800 pt-4"
+						>
+							<div className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
+								Register New Type Under Selected Cluster
+							</div>
+							<div className="grid gap-3 md:grid-cols-2">
+								<input
+									aria-label="Registration product type group code"
+									placeholder="product_type_group"
+									value={newTaxonomyGroup}
+									onChange={(event) =>
+										setNewTaxonomyGroup(event.target.value)
+									}
+									className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+								/>
+								<input
+									aria-label="Registration product type display name"
+									placeholder="Display name"
+									value={newTaxonomyDisplayName}
+									onChange={(event) =>
+										setNewTaxonomyDisplayName(event.target.value)
+									}
+									className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+								/>
+								<select
+									aria-label="Registration scene strategy"
+									value={newTaxonomySceneId}
+									onChange={(event) => {
+										const sceneId = event.target.value;
+										setNewTaxonomySceneId(sceneId);
+										if (sceneId === "GENERIC_FALLBACK") {
+											setNewTaxonomyCoverage("FALLBACK_ONLY");
+											setNewTaxonomyRegistryStatus("REVIEW_REQUIRED");
+										}
+									}}
+									className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+								>
+									{taxonomyRegistry.scene_strategy_ids.map((sceneId) => (
+										<option key={sceneId} value={sceneId}>
+											{sceneId}
+										</option>
+									))}
+								</select>
+								<select
+									aria-label="Registration scene coverage"
+									value={newTaxonomyCoverage}
+									onChange={(event) =>
+										setNewTaxonomyCoverage(
+											event.target.value as
+												| "COVERED"
+												| "PARTIAL"
+												| "FALLBACK_ONLY",
+										)
+									}
+									className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+								>
+									<option value="COVERED">COVERED</option>
+									<option value="PARTIAL">PARTIAL</option>
+									<option value="FALLBACK_ONLY">FALLBACK_ONLY</option>
+								</select>
+								<select
+									aria-label="Registration product type registry status"
+									value={newTaxonomyRegistryStatus}
+									onChange={(event) =>
+										setNewTaxonomyRegistryStatus(
+											event.target.value as
+												| "ACTIVE"
+												| "REVIEW_REQUIRED",
+										)
+									}
+									className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+								>
+									<option value="REVIEW_REQUIRED">REVIEW_REQUIRED</option>
+									<option value="ACTIVE">ACTIVE</option>
+								</select>
+								<button
+									type="submit"
+									disabled={
+										taxonomySaving ||
+										!taxonomyCluster ||
+										!newTaxonomyGroup.trim() ||
+										!newTaxonomyDisplayName.trim()
+									}
+									className="rounded border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-[11px] font-bold text-cyan-300 disabled:opacity-40"
+								>
+									Register Product Type
+								</button>
+							</div>
+						</form>
+						{taxonomyMessage ? (
+							<div
+								data-testid="registration-taxonomy-message"
+								className="text-[11px] text-slate-300"
+							>
+								{taxonomyMessage}
+							</div>
+						) : null}
+					</div>
 				</section>
 			) : null}
 

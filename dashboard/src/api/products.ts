@@ -10,6 +10,10 @@ import type {
 	ProductIntelligenceSnapshot,
 	ProductIntelligenceSnapshotListResponse,
 	ProductIntelligenceSnapshotStatus,
+	ProductStrategyTaxonomy,
+	ProductStrategyTypeRegistrationRequest,
+	ProductStrategyTypeRegistryEntry,
+	ProductStrategyTypeRegistryResponse,
 } from "../types";
 import { fetchAPI } from "./client";
 
@@ -30,6 +34,48 @@ export async function fetchProductCatalog(
  */
 export async function fetchProductDetail(productId: string): Promise<Product> {
 	return fetchAPI<Product>(`/api/products/${encodeURIComponent(productId)}`);
+}
+
+export async function fetchProductStrategyTypeRegistry(): Promise<ProductStrategyTypeRegistryResponse> {
+	return fetchAPI<ProductStrategyTypeRegistryResponse>(
+		"/api/creative-intelligence/product-strategy-type-registry",
+	);
+}
+
+export async function registerProductStrategyType(
+	input: ProductStrategyTypeRegistrationRequest,
+): Promise<ProductStrategyTypeRegistryEntry> {
+	return fetchAPI<ProductStrategyTypeRegistryEntry>(
+		"/api/creative-intelligence/product-strategy-type-registry",
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(input),
+		},
+	);
+}
+
+export async function reviewProductStrategyTaxonomy(
+	productId: string,
+	input: {
+		expected_product_fingerprint: string;
+		cluster: string;
+		product_type_group: string;
+		matched_scene_strategy_id: string;
+		scene_coverage_status: "COVERED" | "PARTIAL" | "FALLBACK_ONLY";
+		review_status: "VERIFIED" | "REVIEW_REQUIRED";
+		reviewer_id: string;
+		reviewer_note: string;
+	},
+): Promise<ProductStrategyTaxonomy> {
+	return fetchAPI<ProductStrategyTaxonomy>(
+		`/api/products/strategy-taxonomy/${encodeURIComponent(productId)}/review`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(input),
+		},
+	);
 }
 
 /**

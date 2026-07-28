@@ -399,6 +399,52 @@ _SCOUTING_RULES = (
 )
 
 
+def product_strategy_type_registry_seed_entries() -> list[dict[str, object]]:
+    """Expose the existing P2 rule pairs as an explicit, reviewable seed plan."""
+
+    entries: list[dict[str, object]] = []
+    seen: set[tuple[str, str]] = set()
+    for rule in _SCOUTING_RULES:
+        key = (rule.cluster, rule.product_type_group)
+        if key in seen:
+            continue
+        seen.add(key)
+        has_specific_strategy = bool(rule.specific_strategy_ids)
+        entries.append(
+            {
+                "cluster": rule.cluster,
+                "product_type_group": rule.product_type_group,
+                "display_name": rule.product_type_group.replace("_", " ").title(),
+                "matched_scene_strategy_id": (
+                    rule.specific_strategy_ids[0]
+                    if has_specific_strategy
+                    else "GENERIC_FALLBACK"
+                ),
+                "scene_coverage_status": (
+                    "COVERED" if has_specific_strategy else "FALLBACK_ONLY"
+                ),
+                "registry_status": (
+                    "ACTIVE" if has_specific_strategy else "REVIEW_REQUIRED"
+                ),
+                "auto_classification_enabled": True,
+                "authority_source": "SYSTEM_SEED",
+            }
+        )
+    entries.append(
+        {
+            "cluster": "generic_unclassified",
+            "product_type_group": "unknown_product_type",
+            "display_name": "Unknown Product Type",
+            "matched_scene_strategy_id": "GENERIC_FALLBACK",
+            "scene_coverage_status": "FALLBACK_ONLY",
+            "registry_status": "REVIEW_REQUIRED",
+            "auto_classification_enabled": False,
+            "authority_source": "SYSTEM_SEED",
+        }
+    )
+    return entries
+
+
 _STRATEGY_FALLBACK_TAGS = {
     "LIP_COLOR": ("beauty_makeup", "lipstick_lip_tint", ("LIP_COLOR",)),
     "BEAUTY_PERSONAL_CARE": (

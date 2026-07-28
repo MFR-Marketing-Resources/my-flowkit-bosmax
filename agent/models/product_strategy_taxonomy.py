@@ -20,6 +20,11 @@ ProductStrategyMaterializationStatus = Literal[
     "PLACEHOLDER",
     "MATERIALIZED",
 ]
+ProductStrategyRegistryStatus = Literal["ACTIVE", "REVIEW_REQUIRED"]
+ProductStrategyRegistryAuthoritySource = Literal[
+    "SYSTEM_SEED",
+    "MANUAL_REGISTRATION",
+]
 
 
 class ProductStrategyTaxonomy(BaseModel):
@@ -51,12 +56,16 @@ class ProductStrategyTaxonomy(BaseModel):
     @model_validator(mode="after")
     def validate_consumer_gate(self) -> "ProductStrategyTaxonomy":
         if self.review_status == "VERIFIED":
-            if self.consumer_status != "READY":
-                raise ValueError("VERIFIED_TAXONOMY_MUST_BE_READY")
             if self.authority_source != "MANUAL_OVERRIDE":
                 raise ValueError("VERIFIED_TAXONOMY_REQUIRES_MANUAL_OVERRIDE")
-            if self.materialization_status != "MATERIALIZED":
-                raise ValueError("VERIFIED_TAXONOMY_MUST_BE_MATERIALIZED")
+            if self.materialization_status == "MATERIALIZED":
+                if self.consumer_status != "READY":
+                    raise ValueError("VERIFIED_TAXONOMY_MUST_BE_READY")
+            elif self.materialization_status == "PREVIEW":
+                if self.consumer_status != "BLOCKED_REVIEW_REQUIRED":
+                    raise ValueError("PREVIEW_TAXONOMY_MUST_BE_BLOCKED")
+            else:
+                raise ValueError("VERIFIED_TAXONOMY_MUST_BE_REVIEWED_PREVIEW")
         elif self.consumer_status != "BLOCKED_REVIEW_REQUIRED":
             raise ValueError("UNVERIFIED_TAXONOMY_MUST_BE_BLOCKED")
         if self.materialization_status != "MATERIALIZED" and (
@@ -109,3 +118,68 @@ class ProductStrategyTaxonomyReviewRequest(BaseModel):
     review_status: ProductStrategyReviewStatus
     reviewer_id: str = Field(min_length=1)
     reviewer_note: str = Field(min_length=1)
+
+
+class ProductStrategyTypeRegistryEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    cluster: str
+    product_type_group: str
+    display_name: str
+    matched_scene_strategy_id: str
+    scene_coverage_status: ProductStrategyCoverageStatus
+    registry_status: ProductStrategyRegistryStatus
+    auto_classification_enabled: bool
+    authority_source: ProductStrategyRegistryAuthoritySource
+    reviewer_id: str | None = None
+    reviewer_note: str | None = None
+    reviewed_at: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class ProductStrategyTypeRegistryListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[ProductStrategyTypeRegistryEntry]
+    clusters: list[str]
+    scene_strategy_ids: list[str]
+
+
+class ProductStrategyTypeRegistrationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    cluster: str
+    product_type_group: str = Field(
+        min_length=2,
+        max_length=64,
+        pattern=r"^[a-z][a-z0-9_]*$",
+    )
+    display_name: str = Field(min_length=2, max_length=120)
+    matched_scene_strategy_id: str
+    scene_coverage_status: ProductStrategyCoverageStatus
+    registry_status: ProductStrategyRegistryStatus = "REVIEW_REQUIRED"
+    auto_classification_enabled: bool = False
+    reviewer_id: str = Field(min_length=1)
+    reviewer_note: str = Field(min_length=1)
+
+
+class ProductStrategyTypeRegistrySeedRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dry_run: bool = True
+    confirm_apply: str | None = None
+
+
+class ProductStrategyTypeRegistrySeedResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dry_run: bool
+    mutation_performed: bool
+    seed_count: int
+    planned_insert_count: int
+    unchanged_count: int
+    preserved_manual_registration_count: int
+    active_count: int
+    review_required_count: int
+    confirmation_required: str | None = None

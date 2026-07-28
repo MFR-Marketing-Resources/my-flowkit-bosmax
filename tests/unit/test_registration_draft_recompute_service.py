@@ -1,4 +1,5 @@
 from agent.models.product_registration import RegistrationReviewDraft
+from agent.models.product_strategy_taxonomy import ProductStrategyTaxonomy
 from agent.services.registration_draft_recompute_service import recompute_review_draft
 
 
@@ -60,3 +61,41 @@ def test_recompute_preserves_reference_lane_labels_for_manual_completion():
 
     assert refreshed.source_lane == "TIKTOKSHOP_DRAFT"
     assert refreshed.system_inferred_fields["extraction_status"] == "NOT_IMPLEMENTED"
+
+
+def test_recompute_preserves_manual_strategy_taxonomy_override():
+    strategy_taxonomy = ProductStrategyTaxonomy(
+        product_id="draft-taxonomy",
+        taxonomy_version="product_strategy_taxonomy_v1",
+        product_fingerprint="draft-fingerprint",
+        cluster="beauty_makeup",
+        product_type_group="lipstick_lip_tint",
+        matched_scene_strategy_id="LIP_COLOR",
+        scene_coverage_status="COVERED",
+        fallback_used=False,
+        specific_strategy=True,
+        classification_confidence="HIGH",
+        review_status="VERIFIED",
+        consumer_status="BLOCKED_REVIEW_REQUIRED",
+        authority_source="MANUAL_OVERRIDE",
+        materialization_status="PREVIEW",
+        review_reasons=[],
+        reviewer_id="admin-1",
+        reviewer_note="Reviewed registry binding.",
+        is_stale=False,
+    )
+    draft = RegistrationReviewDraft(
+        review_draft_id="draft-taxonomy",
+        review_status="NEEDS_HUMAN_REVIEW",
+        source_lane="OWNED",
+        declared_evidence_fields={
+            "source_lane": "OWNED",
+            "product_name": "Velvet Lipstick",
+        },
+        strategy_taxonomy=strategy_taxonomy,
+        draft_freshness_status="STALE",
+    )
+
+    refreshed = recompute_review_draft(draft)
+
+    assert refreshed.strategy_taxonomy == strategy_taxonomy
