@@ -21,7 +21,7 @@ from agent.services.prompt_compiler_runtime_config_service import (
 )
 
 
-COMPILER_VERSION = "ugc_video_prompt_compiler_v2_extend_representations"
+COMPILER_VERSION = "ugc_video_prompt_compiler_v3_scene_strategy"
 SUPPORTED_MODES = {"T2V", "F2V", "I2V", "IMG"}
 
 
@@ -30,6 +30,7 @@ from agent.services import copy_landbank_service as _landbank
 from agent.services import extend_route_planner as _extend_route_planner
 from agent.services import full_storyboard_extend_planner as _storyboard
 from agent.services import google_flow_extend_prompt_renderer as _extend_renderer
+from agent.services import scene_strategy_library as _scene_strategies
 
 
 # mode → canonical source mode (ADR-008). F2V's live intake is product-only
@@ -866,9 +867,31 @@ def compile_ugc_video_prompt(
         import re as _re
         sentences = [x.strip() for x in _re.split(r"(?<=[.!?])\s+", resolved_claim_safe_rewrite) if x.strip()]
         resolved_copy["usps"] = sentences[:3]
-    # Optional operator scene-registry Background text overrides product-package scene.
+    resolved_scene_strategy = _scene_strategies.resolve_scene_strategy(product)
+    if resolved_source_mode != "IMAGES":
+        direct_slots = resolved_scene_strategy["direct_script_slots"]
+        if not resolved_copy.get("hook"):
+            resolved_copy["hook"] = direct_slots["hook"][0]
+        if not resolved_copy.get("usps"):
+            resolved_copy["usps"] = [direct_slots["benefit"][0]]
+        if not resolved_copy.get("cta"):
+            resolved_copy["cta"] = direct_slots["cta"][0]
+
+    # Optional operator scene-registry Background text remains the base context.
+    # Product-type action grammar and safety constraints are additive so explicit
+    # creative direction cannot accidentally authorize an impossible or sensitive
+    # demonstration.
     _scene_override = _clean(scene_context_override)
-    if _scene_override:
+    _base_scene_context = _scene_override or _clean(approved_package.get("scene_context"))
+    if resolved_source_mode != "IMAGES":
+        approved_package = {
+            **approved_package,
+            "scene_context": _scene_strategies.build_scene_strategy_context(
+                resolved_scene_strategy,
+                base_scene_context=_base_scene_context,
+            ),
+        }
+    elif _scene_override:
         approved_package = {**approved_package, "scene_context": _scene_override}
 
     resolved_presenter = None
@@ -1044,6 +1067,7 @@ def compile_ugc_video_prompt(
         "creator_persona": resolved_creator_persona,
         "avatar_id": str(avatar_id or "").strip() or None,
         "scene_context_override_applied": bool(_clean(scene_context_override)),
+        "scene_strategy": resolved_scene_strategy,
         "target_language": resolved_target_language,
         "shot_plan": [
             {
@@ -1066,6 +1090,7 @@ def compile_ugc_video_prompt(
         "blockers": [],
         "source_of_truth_notes": [
             "Compiler v1 uses internal product intelligence + claim-safe package + central compiler config.",
+            "Scene Strategy Library fills missing copy slots and adds product-use constraints to the selected scene.",
             "Sovereign/Satellite pack ingestion is future work.",
         ],
         "continuation_lineage": continuation_lineage,

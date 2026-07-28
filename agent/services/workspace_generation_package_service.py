@@ -68,6 +68,37 @@ def _assert_not_reference_only(product_id: str, product_row: dict[str, Any] | No
 # ─── Helpers ────────────────────────────────────────────────
 
 
+def _compiler_product_context(
+    product_id: str,
+    product_name_snapshot: str,
+    product_row: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Preserve stored product taxonomy at the prompt-planning boundary."""
+
+    row = product_row or {}
+    return {
+        "id": product_id,
+        "name": (
+            product_name_snapshot
+            or row.get("product_display_name")
+            or row.get("raw_product_title")
+            or row.get("product_short_name")
+            or row.get("name")
+            or ""
+        ),
+        "raw_product_title": row.get("raw_product_title"),
+        "product_display_name": row.get("product_display_name"),
+        "product_short_name": row.get("product_short_name"),
+        "category": row.get("category", ""),
+        "subcategory": row.get("subcategory", ""),
+        "type": row.get("type", ""),
+        "product_type": row.get("product_type", ""),
+        "product_type_id": row.get("product_type_id", ""),
+        "silo": row.get("silo", ""),
+        "bosmax_product_family": row.get("bosmax_product_family", ""),
+    }
+
+
 def _fingerprint(*parts: str) -> str:
     return hashlib.sha1("||".join(parts).encode("utf-8")).hexdigest()
 
@@ -240,11 +271,11 @@ async def create_f2v_generation_package(
 
     # Compile final prompt via existing UGC compiler (reused — not rewritten)
     compiler_result = compile_ugc_video_prompt(
-        product={
-            "id": product_id,
-            "name": product_name_snapshot or (product_row or {}).get("name", ""),
-            "category": (product_row or {}).get("category", ""),
-        },
+        product=_compiler_product_context(
+            product_id,
+            product_name_snapshot,
+            product_row,
+        ),
         approved_package=approved,
         mode=mode,
         duration_seconds=duration_seconds,
@@ -464,11 +495,11 @@ async def create_i2v_generation_package(
         approved = {**approved, "scene_context": " ".join(
             x for x in (str(approved.get("scene_context", "") or ""), _i2v_context) if x)}
     compiler_result = compile_ugc_video_prompt(
-        product={
-            "id": product_id,
-            "name": product_name_snapshot or (product_row or {}).get("name", ""),
-            "category": (product_row or {}).get("category", ""),
-        },
+        product=_compiler_product_context(
+            product_id,
+            product_name_snapshot,
+            product_row,
+        ),
         approved_package=approved,
         mode=mode,
         duration_seconds=8,
@@ -753,11 +784,11 @@ async def create_t2v_generation_package(
     prompt_package_snapshot_id = approved.get("prompt_package_snapshot_id", "")
 
     compiler_result = compile_ugc_video_prompt(
-        product={
-            "id": product_id,
-            "name": product_name_snapshot or (product_row or {}).get("name", ""),
-            "category": (product_row or {}).get("category", ""),
-        },
+        product=_compiler_product_context(
+            product_id,
+            product_name_snapshot,
+            product_row,
+        ),
         approved_package=approved,
         mode=mode,
         duration_seconds=duration_seconds,
@@ -908,11 +939,11 @@ async def create_img_generation_package(
     prompt_package_snapshot_id = approved.get("prompt_package_snapshot_id", "")
 
     compiler_result = compile_ugc_video_prompt(
-        product={
-            "id": product_id,
-            "name": product_name_snapshot or (product_row or {}).get("name", ""),
-            "category": (product_row or {}).get("category", ""),
-        },
+        product=_compiler_product_context(
+            product_id,
+            product_name_snapshot,
+            product_row,
+        ),
         approved_package=approved,
         mode=mode,
         duration_seconds=8,
