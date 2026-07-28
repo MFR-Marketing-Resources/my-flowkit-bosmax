@@ -149,6 +149,12 @@ domains:
       - tests/api/test_product_strategy_taxonomy_api.py
       - tests/api/test_product_registration_review_api.py
       - tests/ui/test_product_strategy_taxonomy_ui_contract.py
+      # P3A Lip-Color Copy Registry — verified-taxonomy-gated, preview-only
+      - agent/authority/lip_color_copy_registry.py
+      - agent/models/lip_color_copy_strategy.py
+      - agent/services/lip_color_copy_strategy_service.py
+      - tests/unit/test_lip_color_copy_strategy_service.py
+      - tests/api/test_lip_color_copy_strategy_api.py
 
       # Scene Context Registry Round 2 — preview-only background plate promotion
       - agent/services/scene_context_promotion_service.py
