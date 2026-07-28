@@ -475,6 +475,8 @@ domains:
 
       # Canonical API-first reference binding surface (no DOM generation lane).
       - dashboard/src/components/workspace/CanonicalReferenceBindingControls.tsx
+      - dashboard/src/components/workspace/VisualAssetPicker.tsx
+      - dashboard/src/components/workspace/VisualAssetPicker.test.tsx
       - dashboard/src/components/workspace/I2VModule.tsx
       - dashboard/src/components/workspace/I2VModule.test.tsx
       - dashboard/src/components/workspace/IMGModule.tsx

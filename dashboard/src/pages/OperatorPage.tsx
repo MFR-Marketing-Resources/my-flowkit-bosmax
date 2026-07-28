@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { fetchAPI } from "../api/client";
 import { useCopywritingReadiness } from "../api/copywritingReadiness";
+import { fetchCreativeAssetEligibilityAudit } from "../api/creativeAssets";
 import { fetchProductCatalog } from "../api/products";
 import {
 	createF2VGenerationPackage,
@@ -25,6 +26,7 @@ import CanonicalReferenceBindingControls, {
 import CopySelectionPanel from "../components/workspace/CopySelectionPanel";
 import IMGModule from "../components/workspace/IMGModule";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
+import VisualAssetPicker from "../components/workspace/VisualAssetPicker";
 import type {
 	Product,
 	PromptCameraStyle,
@@ -642,18 +644,21 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			name?: string;
 			Variant?: string;
 			age_band?: string;
+			character_name?: string;
+			generated_asset_id?: string | null;
 		}>
 	>([]);
 	const [sceneRegistryPool, setSceneRegistryPool] = useState<
 		Array<{
 			scene_code: string;
 			scene_name?: string;
+			generated_asset_id?: string | null;
 			background_prompt?: string;
 			image_generated?: boolean;
-			generated_asset_id?: string | null;
 		}>
 	>([]);
 	const [registryPoolsLoading, setRegistryPoolsLoading] = useState(false);
+	const [registryPreviewUrls, setRegistryPreviewUrls] = useState<Record<string, string>>({});
 	const [backendRuntimeStale, setBackendRuntimeStale] = useState(false);
 	useEffect(() => {
 		let cancelled = false;
@@ -679,6 +684,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			cancelled = true;
 		};
 	}, []);
+	useEffect(() => { void Promise.all([fetchCreativeAssetEligibilityAudit({ surface: "I2V_CHARACTER_PICKER" }), fetchCreativeAssetEligibilityAudit({ surface: "I2V_SCENE_PICKER" })]).then((results) => setRegistryPreviewUrls(Object.fromEntries(results.flatMap((result) => result.eligible_assets.map((asset) => [asset.asset_id, asset.preview_url || asset.download_url || ""]))))).catch(() => setRegistryPreviewUrls({})); }, []);
 	const selectedSceneBackground =
 		sceneRegistryPool.find((s) => s.scene_code === registrySceneCode)?.background_prompt?.trim() ||
 		"";
@@ -2115,7 +2121,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							{registryPoolsLoading ? (
 								<div className="mt-2 text-[11px] text-slate-400">Loading registries…</div>
 							) : null}
-							<div className="mt-3 grid gap-3 md:grid-cols-2">
+							<div className="mt-3 space-y-4">
 								<label className="space-y-1 text-xs text-slate-200">
 									<span>Avatar registry</span>
 									<select
@@ -2147,6 +2153,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										})}
 									</select>
 								</label>
+								<VisualAssetPicker label="Avatar registry visual picker" value={registryAvatarId} onChange={setRegistryAvatarId} items={avatarRegistryPool.map((row) => ({ value: String(row.avatar_code || row.AvatarCode || ""), title: String(row.character_name || row.display_name || row.Name || row.name || row.avatar_code || "Avatar"), subtitle: String(row.avatar_code || row.AvatarCode || ""), previewUrl: registryPreviewUrls[String(row.generated_asset_id || "")] || null })).filter((row) => Boolean(row.value))} />
 								<label className="space-y-1 text-xs text-slate-200">
 									<span>Scene registry</span>
 									<select
@@ -2169,6 +2176,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										))}
 									</select>
 								</label>
+								<VisualAssetPicker label="Scene registry visual picker" value={registrySceneCode} onChange={setRegistrySceneCode} items={sceneRegistryPool.map((row) => ({ value: row.scene_code, title: row.scene_name || row.scene_code, subtitle: row.scene_code, previewUrl: registryPreviewUrls[String(row.generated_asset_id || "")] || null }))} />
 							</div>
 							{registryAvatarId ? (
 								<div className="mt-2 text-[11px] text-cyan-100">
@@ -2176,8 +2184,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								</div>
 							) : (
 								<div className="mt-2 text-[11px] text-slate-400">
-									No avatar selected — compiler uses a deterministic approved
-									Avatar Registry pick for this product.
+									Select an approved Avatar Registry avatar before generating.
 								</div>
 							)}
 							{registrySceneCode ? (
