@@ -2180,12 +2180,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							className="mt-4 rounded-lg border border-fuchsia-500/25 bg-fuchsia-500/5 p-3"
 						>
 							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-fuchsia-200">
-								Avatar Persona Composer
+								Avatar Persona Composer (Drafting / Staging Helper Only)
 							</div>
 							<div className="mt-1 text-[11px] text-slate-300">
-								Pilih jantina · bangsa · umur · wardrobe+suasana (bundle
-								tervalidasi) — deskripsi presenter dimasukkan ke prompt sebagai
-								teks. Tiada gambar reference terlibat.
+								Pembantu draf untuk persona yang belum didaftarkan. Untuk kompilasi prompt produksi,
+								Avatar Registry di bawah ialah punca kebenaran (source of truth).
 							</div>
 							{characterPresence === "FACELESS" ? (
 								<div className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-200">
@@ -2679,16 +2678,14 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					/>
 				</div>
 			)}
-			{/* ── Copy Selection & Compiler Binding (video modes only) ─── */}
-			{mode !== "IMG" && (
-				<CopySelectionPanel
-					productId={selectedProduct?.id ?? null}
-					productName={selectedProduct?.product_display_name ?? null}
-					selectedCopySetId={selectedCopySetId}
-					onSelect={setSelectedCopySetId}
-					disabled={isLoadingPreview || isLoadingPackage}
-				/>
-			)}
+			{/* ── Copy Selection & Compiler Binding ─── */}
+			<CopySelectionPanel
+				productId={selectedProduct?.id ?? null}
+				productName={selectedProduct?.product_display_name ?? null}
+				selectedCopySetId={selectedCopySetId}
+				onSelect={setSelectedCopySetId}
+				disabled={isLoadingPreview || isLoadingPackage}
+			/>
 
 			{/* ── STEP 3: Load Package (video modes only) ──────────────── */}
 			{mode !== "IMG" && (
