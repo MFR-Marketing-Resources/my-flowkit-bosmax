@@ -135,6 +135,10 @@ domains:
       - agent/services/product_scene_suitability_service.py
       - tests/unit/test_product_scene_suitability_service.py
       - tests/api/test_product_scene_suitability_api.py
+      # Scene Strategy Library P1 — product-type use grammar for variation/compiler
+      - agent/services/scene_strategy_library.py
+      - agent/services/variation_matrix.py
+      - tests/unit/test_scene_strategy_library.py
 
       # Scene Context Registry Round 2 — preview-only background plate promotion
       - agent/services/scene_context_promotion_service.py
