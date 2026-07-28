@@ -36,16 +36,22 @@ function readinessToneClass(status: string): string {
 	return "border-rose-500/30 bg-rose-500/10 text-rose-200";
 }
 
+function browserSafeRemoteImageUrl(product: Product): string | null {
+	for (const candidate of [
+		product.image_url,
+		product.image_analysis?.image_url,
+	]) {
+		const value = String(candidate ?? "").trim();
+		if (/^https?:\/\//i.test(value)) return value;
+	}
+	return null;
+}
+
 function productPreviewUrl(product: Product): string | null {
-	const hasImage = Boolean(
-		product.image_url ||
-			product.local_image_path ||
-			product.media_id ||
-			product.image_analysis?.image_url,
-	);
-	return hasImage
-		? `/api/products/${encodeURIComponent(product.id)}/image`
-		: null;
+	if (product.image_readiness_status === "IMAGE_CACHE_READY") {
+		return `/api/products/${encodeURIComponent(product.id)}/image`;
+	}
+	return browserSafeRemoteImageUrl(product);
 }
 
 export default function SearchableProductSelect({

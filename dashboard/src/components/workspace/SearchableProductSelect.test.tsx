@@ -117,4 +117,86 @@ describe("SearchableProductSelect — server product search", () => {
 		fireEvent.click(screen.getByTestId("product-option"));
 		expect(onSelect).toHaveBeenCalledWith(product);
 	});
+
+	it("uses a browser-safe remote image when no verified local cache exists", () => {
+		const product = baseProduct({
+			image_readiness_status: "LOCAL_CACHE_MISSING",
+			local_image_path: "data/products/images/missing.jpg",
+		});
+		render(
+			<SearchableProductSelect
+				products={[product]}
+				selectedProduct={product}
+				onSelect={vi.fn()}
+			/>,
+		);
+
+		expect(
+			screen.getByRole("img", { name: "Preview of Local Catalog Product" }),
+		).toHaveAttribute("src", "https://example.test/product.jpg");
+	});
+
+	it("uses the local product-image route only for a verified cache", () => {
+		const product = baseProduct({
+			image_readiness_status: "IMAGE_CACHE_READY",
+			local_image_path: "data/products/images/p-local-1.jpg",
+		});
+		render(
+			<SearchableProductSelect
+				products={[product]}
+				selectedProduct={product}
+				onSelect={vi.fn()}
+			/>,
+		);
+
+		expect(
+			screen.getByRole("img", { name: "Preview of Local Catalog Product" }),
+		).toHaveAttribute("src", "/api/products/p-local-1/image");
+	});
+
+	it("uses image analysis only when it provides a browser-safe URL", () => {
+		const product = baseProduct({
+			image_url: "UNKNOWN",
+			image_analysis: {
+				status: "READY",
+				image_url: "https://example.test/analysis-product.jpg",
+				local_image_path: null,
+				detected_package: null,
+				detected_text: [],
+				visual_confidence: "HIGH",
+				provider: "TEST",
+			},
+		});
+		render(
+			<SearchableProductSelect
+				products={[product]}
+				selectedProduct={product}
+				onSelect={vi.fn()}
+			/>,
+		);
+
+		expect(
+			screen.getByRole("img", { name: "Preview of Local Catalog Product" }),
+		).toHaveAttribute("src", "https://example.test/analysis-product.jpg");
+	});
+
+	it("keeps the fallback when no browser-safe or cached image exists", () => {
+		const product = baseProduct({
+			image_url: "UNKNOWN",
+			image_analysis: undefined,
+			image_readiness_status: "IMAGE_NOT_AVAILABLE",
+			local_image_path: null,
+		});
+		render(
+			<SearchableProductSelect
+				products={[product]}
+				selectedProduct={product}
+				onSelect={vi.fn()}
+			/>,
+		);
+
+		expect(screen.getByTestId("visual-asset-fallback")).toHaveTextContent(
+			"Preview unavailable",
+		);
+	});
 });
