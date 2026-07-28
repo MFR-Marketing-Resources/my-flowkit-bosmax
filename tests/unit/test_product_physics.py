@@ -222,6 +222,26 @@ def test_supplement_uses_bottle_family():
     assert "bottle" in result["handling_notes"]
 
 
+def test_female_health_capsule_family_beats_short_mat_keyword_collision():
+    result = resolve_product_physics(
+        product={
+            "raw_product_title": (
+                "Kapsul Pueraria Mirifica, Selamat dan 100% Alamiah, "
+                "Makanan Tambahan, 120 Softgels"
+            ),
+            "category": "Health",
+            "subcategory": "Supplements",
+            "type": "Female Health",
+            "bosmax_product_family": "FEMALE_HEALTH_SENSITIVE",
+        },
+    )
+
+    assert result["physics_class"] == "SUPPLEMENT_BOTTLE"
+    assert result["product_scale"] == "SMALL_OBJECT"
+    assert "textile" not in result["section_5_product_physics_prompt"].lower()
+    assert "bottle" in result["section_5_product_physics_prompt"].lower()
+
+
 def test_wall_sticker_uses_small_rigid_decor_family():
     result = resolve_product_physics(
         product_name="Stiker Dinding PVC Mewah",
