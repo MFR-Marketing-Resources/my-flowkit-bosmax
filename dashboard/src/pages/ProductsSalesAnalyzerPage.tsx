@@ -520,6 +520,26 @@ function imageErrorLabel(product: Product | null) {
 	return "IMAGE_LOAD_FAILED";
 }
 
+function browserSafeRemoteImageUrl(product: Product): string | null {
+	for (const candidate of [
+		product.image_url,
+		product.image_analysis?.image_url,
+	]) {
+		const value = String(candidate ?? "").trim();
+		if (/^https?:\/\//i.test(value)) return value;
+	}
+	return null;
+}
+
+export function resolveProductsPageImageSource(
+	product: Product,
+): string | null {
+	if (product.image_readiness_status === "IMAGE_CACHE_READY") {
+		return `/api/products/${encodeURIComponent(product.id)}/image`;
+	}
+	return browserSafeRemoteImageUrl(product);
+}
+
 function ImageFallback({
 	src,
 	alt,
@@ -1748,7 +1768,7 @@ export default function ProductsSalesAnalyzerPage() {
 							>
 								<div className="flex-shrink-0 w-16 h-16 rounded overflow-hidden bg-slate-800">
 									<ImageFallback
-										src={product.rendered_img_src}
+										src={resolveProductsPageImageSource(product)}
 										alt={product.product_short_name}
 										className="w-full h-full object-cover"
 										emptyLabel={imageStatusLabel(product)}
@@ -1992,7 +2012,7 @@ export default function ProductsSalesAnalyzerPage() {
 											<div className="mb-4 flex flex-col gap-4 sm:flex-row">
 												<div className="w-24 h-24 rounded border border-slate-700 overflow-hidden flex-shrink-0">
 													<ImageFallback
-														src={selectedProduct.rendered_img_src}
+														src={resolveProductsPageImageSource(selectedProduct)}
 														alt="Product Thumbnail"
 														className="w-full h-full object-cover"
 														emptyLabel={imageStatusLabel(selectedProduct)}
