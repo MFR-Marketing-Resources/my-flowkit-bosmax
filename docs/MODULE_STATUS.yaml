@@ -139,6 +139,9 @@ domains:
       - agent/services/scene_strategy_library.py
       - agent/services/variation_matrix.py
       - tests/unit/test_scene_strategy_library.py
+      # Scene Strategy Cluster Scouting P2 — read-only cluster/type coverage queue
+      - agent/services/product_strategy_scouting_service.py
+      - tests/unit/test_product_strategy_scouting_service.py
 
       # Scene Context Registry Round 2 — preview-only background plate promotion
       - agent/services/scene_context_promotion_service.py

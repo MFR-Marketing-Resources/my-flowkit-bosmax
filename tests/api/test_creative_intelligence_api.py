@@ -79,6 +79,58 @@ def test_product_cluster_audit_is_read_only(monkeypatch):
     assert body["cluster_counts"]["Beauty"] == 123
 
 
+def test_scene_strategy_scouting_is_read_only_and_cluster_first(monkeypatch):
+    async def fake_report():
+        return {
+            "report_version": "product_strategy_scouting_v1",
+            "product_total": 4,
+            "clusters": [
+                {
+                    "cluster": "beauty_makeup",
+                    "product_count": 2,
+                    "product_type_groups": [],
+                    "next_product_type_group": "mascara",
+                }
+            ],
+            "ranked_work_queue": [
+                {
+                    "cluster": "beauty_makeup",
+                    "product_type_group": "mascara",
+                    "coverage_status": "PARTIAL",
+                    "recommended_next_action": (
+                        "Expand beauty_makeup -> mascara as one scoped strategy."
+                    ),
+                }
+            ],
+            "recommended_next_work": {
+                "cluster": "beauty_makeup",
+                "product_type_group": "mascara",
+                "coverage_status": "PARTIAL",
+                "recommended_next_action": (
+                    "Expand beauty_makeup -> mascara as one scoped strategy."
+                ),
+            },
+            "note": "Read-only cluster-first scouting.",
+        }
+
+    monkeypatch.setattr(
+        "agent.services.product_strategy_scouting_service.get_product_strategy_scouting_report",
+        fake_report,
+    )
+    response = TestClient(_build_app()).get(
+        "/api/creative-intelligence/scene-strategy-scouting"
+    )
+    assert response.status_code == 200
+    assert response.json()["recommended_next_work"] == {
+        "cluster": "beauty_makeup",
+        "product_type_group": "mascara",
+        "coverage_status": "PARTIAL",
+        "recommended_next_action": (
+            "Expand beauty_makeup -> mascara as one scoped strategy."
+        ),
+    }
+
+
 def test_registry_coverage_aggregates_and_computes_gaps(monkeypatch):
     """Read-only coverage lens: aggregates pools + config tables and computes
     covered vs missing clusters against the canonical list. Hermetic (no DB)."""

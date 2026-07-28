@@ -8,6 +8,7 @@ Read-first, non-generative. Exposes:
   * POST /api/creative-intelligence/scene-prompt/seed           (idempotent; dry-run default)
   * GET  /api/creative-intelligence/scene-suitability/category  (by category)
   * GET  /api/creative-intelligence/scene-suitability/product/{product_id}
+  * GET  /api/creative-intelligence/scene-strategy-scouting
   * GET  /api/creative-intelligence/camera-preset-recommendation (by product_id/category/cluster)
   * POST /api/creative-intelligence/camera-preset/seed          (idempotent; dry-run default)
 
@@ -24,6 +25,7 @@ from pydantic import BaseModel, ConfigDict
 
 from agent.services import creative_avatar_recommendation_service as _svc
 from agent.services import creative_scene_prompt_service as _scene
+from agent.services import product_strategy_scouting_service as _strategy_scouting
 from agent.services import product_scene_suitability_service as _scene_suitability
 from agent.services import scene_context_promotion_service as _scene_promotion
 from agent.services import scene_context_promotion_review_service as _scene_review
@@ -438,6 +440,13 @@ async def product_cluster_audit() -> dict:
     state and is intended to drive pool planning before avatar creation.
     """
     return await _svc.audit_product_cluster_coverage()
+
+
+@router.get("/scene-strategy-scouting")
+async def scene_strategy_scouting() -> dict:
+    """Return a read-only cluster/type coverage queue for Scene Strategy work."""
+
+    return await _strategy_scouting.get_product_strategy_scouting_report()
 
 
 @router.post("/avatar-fit/seed")
