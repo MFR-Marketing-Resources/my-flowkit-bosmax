@@ -9,7 +9,16 @@ from agent.models.product_registration import (
     RegistrationReviewDraft,
     RegistrationCommitRequest
 )
+from agent.models.product_strategy_taxonomy import (
+    ProductStrategyTaxonomyReviewRequest,
+)
 from agent.services.registration_draft_storage_service import RegistrationDraftStorageService
+from agent.services.product_strategy_taxonomy_service import (
+    ProductStrategyTaxonomyError,
+    product_strategy_fingerprint,
+    review_product_strategy_taxonomy,
+    validate_product_strategy_assignment,
+)
 from agent.utils.paths import product_image_path
 
 logger = logging.getLogger(__name__)
@@ -98,6 +107,53 @@ async def _find_fastmoss_promoted_duplicate(draft) -> dict | None:
                 return row
     return None
 
+
+async def _manual_taxonomy_validation_error(
+    draft: RegistrationReviewDraft,
+) -> str | None:
+    taxonomy = draft.strategy_taxonomy
+    if not taxonomy or taxonomy.authority_source != "MANUAL_OVERRIDE":
+        return None
+    if not (taxonomy.reviewer_id or "").strip() or not (
+        taxonomy.reviewer_note or ""
+    ).strip():
+        return "TAXONOMY_REVIEWER_EVIDENCE_REQUIRED"
+    try:
+        await validate_product_strategy_assignment(
+            cluster=taxonomy.cluster,
+            product_type_group=taxonomy.product_type_group,
+            matched_scene_strategy_id=taxonomy.matched_scene_strategy_id,
+            scene_coverage_status=taxonomy.scene_coverage_status,
+            review_status=taxonomy.review_status,
+        )
+    except ProductStrategyTaxonomyError as exc:
+        return str(exc)
+    return None
+
+
+async def _materialize_manual_taxonomy(
+    product: dict[str, Any],
+    draft: RegistrationReviewDraft,
+) -> dict[str, Any] | None:
+    taxonomy = draft.strategy_taxonomy
+    if not taxonomy or taxonomy.authority_source != "MANUAL_OVERRIDE":
+        return None
+    reviewed = await review_product_strategy_taxonomy(
+        str(product["id"]),
+        ProductStrategyTaxonomyReviewRequest(
+            expected_product_fingerprint=product_strategy_fingerprint(product),
+            cluster=taxonomy.cluster,
+            product_type_group=taxonomy.product_type_group,
+            matched_scene_strategy_id=taxonomy.matched_scene_strategy_id,
+            scene_coverage_status=taxonomy.scene_coverage_status,
+            review_status=taxonomy.review_status,
+            reviewer_id=str(taxonomy.reviewer_id or ""),
+            reviewer_note=str(taxonomy.reviewer_note or ""),
+        ),
+    )
+    return reviewed.model_dump(mode="json")
+
+
 class RegistrationCommitService:
     @staticmethod
     async def commit_fastmoss_promoted_draft(request) -> dict:
@@ -125,6 +181,11 @@ class RegistrationCommitService:
             blocked_reasons.append("PRODUCT_NAME_REQUIRED")
         if draft.missing_required_evidence:
             blocked_reasons.append(f"MISSING_REQUIRED_EVIDENCE:{','.join(draft.missing_required_evidence)}")
+        taxonomy_error = await _manual_taxonomy_validation_error(draft)
+        if taxonomy_error:
+            blocked_reasons.append(
+                f"INVALID_PRODUCT_STRATEGY_TAXONOMY:{taxonomy_error}"
+            )
         if blocked_reasons:
             return {
                 "commit_status": "BLOCKED",
@@ -184,6 +245,10 @@ class RegistrationCommitService:
                     _shutil.copyfile(src, dest)
                     await crud.update_product(product["id"], local_image_path=str(dest),
                                               asset_status="DOWNLOADED", image_asset_status="DOWNLOADED")
+            materialized_taxonomy = await _materialize_manual_taxonomy(
+                product,
+                draft,
+            )
             draft.write_back_performed = True
             draft.write_back_status = "COMMITTED"
             draft.review_status = "COMMITTED"
@@ -193,6 +258,7 @@ class RegistrationCommitService:
                 "write_back_performed": True,
                 "committed_product_id": product["id"],
                 "committed_fields": list(payload.keys()),
+                "strategy_taxonomy": materialized_taxonomy,
                 "provenance": ["registration_commit_service:fastmoss_promoted:v1"],
             }
         except Exception as e:
@@ -276,6 +342,11 @@ class RegistrationCommitService:
         if draft.missing_required_evidence:
             blocked_reasons.append(
                 f"MISSING_REQUIRED_EVIDENCE: {', '.join(draft.missing_required_evidence)}"
+            )
+        taxonomy_error = await _manual_taxonomy_validation_error(draft)
+        if taxonomy_error:
+            blocked_reasons.append(
+                f"INVALID_PRODUCT_STRATEGY_TAXONOMY:{taxonomy_error}"
             )
 
         if blocked_reasons:
@@ -369,6 +440,10 @@ class RegistrationCommitService:
                         asset_status="DOWNLOADED",
                         image_asset_status="DOWNLOADED",
                     )
+            materialized_taxonomy = await _materialize_manual_taxonomy(
+                product,
+                draft,
+            )
             
             # Update Draft Status
             draft.write_back_performed = True
@@ -382,6 +457,7 @@ class RegistrationCommitService:
                 "committed_product_id": product["id"],
                 "committed_fields": list(final_fields.keys()),
                 "excluded_fields": [f for f in draft.canonical_candidate_fields.keys() if not draft.approval_checklist.get(f)],
+                "strategy_taxonomy": materialized_taxonomy,
                 "provenance": ["registration_commit_service:v1"]
             }
         except Exception as e:

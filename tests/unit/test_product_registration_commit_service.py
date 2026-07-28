@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from agent.models.product_registration import RegistrationReviewDraft, RegistrationCommitRequest
+from agent.models.product_strategy_taxonomy import ProductStrategyTaxonomy
 from agent.services.registration_commit_service import RegistrationCommitService
 
 @pytest.fixture
@@ -101,6 +102,76 @@ async def test_successful_commit(mock_storage, mock_crud, tmp_path):
     assert mock_crud.create_product.await_args.kwargs["image_url"] == "https://example.com/product.jpg"
     assert mock_crud.create_product.await_args.kwargs["price"] == 15.0
     assert mock_crud.update_product.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_successful_commit_materializes_verified_manual_taxonomy(
+    mock_storage,
+    mock_crud,
+):
+    preview = ProductStrategyTaxonomy(
+        product_id="draft-taxonomy",
+        taxonomy_version="product_strategy_taxonomy_v1",
+        product_fingerprint="draft-fingerprint",
+        cluster="beauty_makeup",
+        product_type_group="lipstick_lip_tint",
+        matched_scene_strategy_id="LIP_COLOR",
+        scene_coverage_status="COVERED",
+        fallback_used=False,
+        specific_strategy=True,
+        classification_confidence="HIGH",
+        review_status="VERIFIED",
+        consumer_status="BLOCKED_REVIEW_REQUIRED",
+        authority_source="MANUAL_OVERRIDE",
+        materialization_status="PREVIEW",
+        review_reasons=[],
+        reviewer_id="admin-1",
+        reviewer_note="Reviewed registry binding.",
+        is_stale=False,
+    )
+    materialized = ProductStrategyTaxonomy.model_validate(
+        {
+            **preview.model_dump(),
+            "product_id": "prod-123",
+            "product_fingerprint": "product-fingerprint",
+            "consumer_status": "READY",
+            "materialization_status": "MATERIALIZED",
+        }
+    )
+    mock_storage.get_draft.return_value = RegistrationReviewDraft(
+        review_draft_id="draft-taxonomy",
+        review_status="REVIEW_READY",
+        source_lane="MANUAL",
+        approval_checklist={"normalized_name": True},
+        declared_evidence_fields={"product_name": "Velvet Lipstick"},
+        canonical_candidate_fields={"normalized_name": "Velvet Lipstick"},
+        strategy_taxonomy=preview,
+        draft_freshness_status="FRESH",
+        last_evidence_edit_at="2026-05-17T10:00:00Z",
+        last_recomputed_at="2026-05-17T10:00:00Z",
+    )
+    request = RegistrationCommitRequest(
+        draft_id="draft-taxonomy",
+        write_back_confirmed=True,
+        user_confirmation_phrase="REGISTER_OWNED_PRODUCT",
+    )
+
+    with (
+        patch(
+            "agent.services.registration_commit_service.validate_product_strategy_assignment",
+            new=AsyncMock(),
+        ) as validate,
+        patch(
+            "agent.services.registration_commit_service.review_product_strategy_taxonomy",
+            new=AsyncMock(return_value=materialized),
+        ) as review,
+    ):
+        result = await RegistrationCommitService.commit_draft(request)
+
+    assert result["commit_status"] == "COMMITTED"
+    assert result["strategy_taxonomy"]["consumer_status"] == "READY"
+    validate.assert_awaited_once()
+    review.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_commit_blocked_duplicate_owned_product(mock_storage, mock_crud):

@@ -6,13 +6,14 @@ import {
 	screen,
 	waitFor,
 } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { patchAPI } from "../../api/client";
+import { fetchAPI, patchAPI, postAPI } from "../../api/client";
 import type { RegistrationReviewDraft } from "../../types";
 import RegistrationReviewDraftPanel from "./RegistrationReviewDraftPanel";
 
 vi.mock("../../api/client", () => ({
+	fetchAPI: vi.fn(),
 	patchAPI: vi.fn(),
 	postAPI: vi.fn(),
 }));
@@ -125,6 +126,25 @@ function renderPanel(draft: RegistrationReviewDraft = reviewDraft) {
 }
 
 describe("RegistrationReviewDraftPanel next-action guidance", () => {
+	beforeEach(() => {
+		vi.mocked(fetchAPI).mockResolvedValue({
+			items: [
+				{
+					cluster: "sensitive_wellness",
+					product_type_group: "female_wellness",
+					display_name: "Female Wellness",
+					matched_scene_strategy_id: "SENSITIVE_WELLNESS",
+					scene_coverage_status: "COVERED",
+					registry_status: "ACTIVE",
+					auto_classification_enabled: true,
+					authority_source: "SYSTEM_SEED",
+				},
+			],
+			clusters: ["sensitive_wellness", "generic_unclassified"],
+			scene_strategy_ids: ["GENERIC_FALLBACK", "SENSITIVE_WELLNESS"],
+		});
+	});
+
 	afterEach(() => {
 		cleanup();
 		vi.clearAllMocks();
@@ -166,6 +186,49 @@ describe("RegistrationReviewDraftPanel next-action guidance", () => {
 			"COVERED / BLOCKED_REVIEW_REQUIRED",
 		);
 		expect(taxonomy).toHaveTextContent("INTELLIGENCE_LOW");
+	});
+
+	it("saves a registry-backed manual taxonomy preview for commit", async () => {
+		const savedDraft: RegistrationReviewDraft = {
+			...reviewDraft,
+			strategy_taxonomy: {
+				...reviewDraft.strategy_taxonomy!,
+				review_status: "VERIFIED",
+				consumer_status: "BLOCKED_REVIEW_REQUIRED",
+				authority_source: "MANUAL_OVERRIDE",
+				reviewer_id: "admin-1",
+				reviewer_note: "Reviewed registry binding.",
+				review_reasons: [],
+			},
+		};
+		vi.mocked(postAPI).mockResolvedValue(savedDraft);
+		const { onUpdate } = renderPanel();
+
+		await screen.findByRole("option", { name: "Female Wellness · ACTIVE" });
+		fireEvent.change(screen.getByLabelText("Reviewer ID"), {
+			target: { value: "admin-1" },
+		});
+		fireEvent.change(screen.getByLabelText("Reviewer Note"), {
+			target: { value: "Reviewed registry binding." },
+		});
+		fireEvent.click(
+			screen.getByRole("button", { name: "Verify Draft Assignment" }),
+		);
+
+		await waitFor(() =>
+			expect(postAPI).toHaveBeenCalledWith(
+				"/api/product-registration/review-drafts",
+				expect.objectContaining({
+					strategy_taxonomy: expect.objectContaining({
+						product_type_group: "female_wellness",
+						review_status: "VERIFIED",
+						consumer_status: "BLOCKED_REVIEW_REQUIRED",
+						authority_source: "MANUAL_OVERRIDE",
+					}),
+				}),
+			),
+		);
+		expect(onUpdate).toHaveBeenCalledWith(savedDraft);
 	});
 
 	it("keeps next action visible after required evidence resolves and focuses weak fields", () => {

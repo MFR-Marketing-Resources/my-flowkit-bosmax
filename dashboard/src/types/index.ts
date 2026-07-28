@@ -1088,6 +1088,40 @@ export interface ProductStrategyTaxonomy {
 	is_stale: boolean;
 }
 
+export interface ProductStrategyTypeRegistryEntry {
+	cluster: string;
+	product_type_group: string;
+	display_name: string;
+	matched_scene_strategy_id: string;
+	scene_coverage_status: "COVERED" | "PARTIAL" | "FALLBACK_ONLY";
+	registry_status: "ACTIVE" | "REVIEW_REQUIRED";
+	auto_classification_enabled: boolean;
+	authority_source: "SYSTEM_SEED" | "MANUAL_REGISTRATION";
+	reviewer_id?: string | null;
+	reviewer_note?: string | null;
+	reviewed_at?: string | null;
+	created_at?: string | null;
+	updated_at?: string | null;
+}
+
+export interface ProductStrategyTypeRegistryResponse {
+	items: ProductStrategyTypeRegistryEntry[];
+	clusters: string[];
+	scene_strategy_ids: string[];
+}
+
+export interface ProductStrategyTypeRegistrationRequest {
+	cluster: string;
+	product_type_group: string;
+	display_name: string;
+	matched_scene_strategy_id: string;
+	scene_coverage_status: "COVERED" | "PARTIAL" | "FALLBACK_ONLY";
+	registry_status: "ACTIVE" | "REVIEW_REQUIRED";
+	auto_classification_enabled: false;
+	reviewer_id: string;
+	reviewer_note: string;
+}
+
 export interface Product {
 	id: string;
 	product_id?: string;
@@ -2487,6 +2521,7 @@ export interface RegistrationCommitResponse {
 	blocked_reasons?: string[];
 	errors?: string[];
 	provenance?: string[];
+	strategy_taxonomy?: ProductStrategyTaxonomy | null;
 }
 
 // ─── Workspace Generation Package (Prompt Handoff Bank) ─────

@@ -7,13 +7,16 @@ import {
 	fetchProductIntelligence,
 	fetchProductIntelligenceProvenance,
 	fetchProductIntelligenceSnapshots,
+	fetchProductStrategyTypeRegistry,
+	registerProductStrategyType,
+	reviewProductStrategyTaxonomy,
 } from "../api/products";
+import CreativeHandoffPreview from "../components/product-intelligence/CreativeHandoffPreview";
+import CreativeSetupPanel from "../components/product-intelligence/CreativeSetupPanel";
 import ProductIntelligenceReviewDraftPanel from "../components/product-intelligence/ProductIntelligenceReviewDraftPanel";
 import RecommendedAvatarsCard from "../components/product-intelligence/RecommendedAvatarsCard";
-import RecommendedScenePromptsCard from "../components/product-intelligence/RecommendedScenePromptsCard";
 import RecommendedCameraPresetsCard from "../components/product-intelligence/RecommendedCameraPresetsCard";
-import CreativeSetupPanel from "../components/product-intelligence/CreativeSetupPanel";
-import CreativeHandoffPreview from "../components/product-intelligence/CreativeHandoffPreview";
+import RecommendedScenePromptsCard from "../components/product-intelligence/RecommendedScenePromptsCard";
 import { HelperText } from "../components/ui";
 import type {
 	FastMossImportBatchReport,
@@ -22,6 +25,7 @@ import type {
 	ProductIntelligenceFieldProvenance,
 	ProductIntelligenceLatestSnapshotResponse,
 	ProductIntelligenceSnapshot,
+	ProductStrategyTypeRegistryResponse,
 	VariationPlan,
 } from "../types";
 import {
@@ -589,11 +593,14 @@ const PAGE_SIZE_PRODUCTS = 20;
 export function resolveInitialSourceFilter(params: URLSearchParams): string {
 	const explicit = params.get("source");
 	if (explicit) return explicit;
-	if (params.get("tab") === "INTELLIGENCE" || params.get("product")) return "ALL";
+	if (params.get("tab") === "INTELLIGENCE" || params.get("product"))
+		return "ALL";
 	return "FASTMOSS";
 }
 
-export function resolveClaimSafeReturnPath(value: string | null): string | null {
+export function resolveClaimSafeReturnPath(
+	value: string | null,
+): string | null {
 	if (
 		value === "/operator/t2v" ||
 		value === "/operator/hybrid" ||
@@ -611,7 +618,10 @@ export async function resolveGuidedClaimSafeProducts(
 	guidedProductId: string | null,
 	fetchProduct: (productId: string) => Promise<Product>,
 ): Promise<Product[]> {
-	if (!guidedProductId || rows.some((product) => product.id === guidedProductId)) {
+	if (
+		!guidedProductId ||
+		rows.some((product) => product.id === guidedProductId)
+	) {
 		return rows;
 	}
 	const product = await fetchProduct(guidedProductId);
@@ -701,6 +711,28 @@ export default function ProductsSalesAnalyzerPage() {
 		errorMessage?: string;
 	} | null>(null);
 	const [currentPageProducts, setCurrentPageProducts] = useState(1);
+	const [taxonomyRegistry, setTaxonomyRegistry] =
+		useState<ProductStrategyTypeRegistryResponse>({
+			items: [],
+			clusters: [],
+			scene_strategy_ids: [],
+		});
+	const [taxonomyCluster, setTaxonomyCluster] = useState("");
+	const [taxonomyProductTypeGroup, setTaxonomyProductTypeGroup] = useState("");
+	const [taxonomyReviewerId, setTaxonomyReviewerId] = useState("");
+	const [taxonomyReviewerNote, setTaxonomyReviewerNote] = useState("");
+	const [taxonomyBusy, setTaxonomyBusy] = useState(false);
+	const [taxonomyMessage, setTaxonomyMessage] = useState<string | null>(null);
+	const [newTaxonomyGroup, setNewTaxonomyGroup] = useState("");
+	const [newTaxonomyDisplayName, setNewTaxonomyDisplayName] = useState("");
+	const [newTaxonomySceneId, setNewTaxonomySceneId] =
+		useState("GENERIC_FALLBACK");
+	const [newTaxonomyCoverage, setNewTaxonomyCoverage] = useState<
+		"COVERED" | "PARTIAL" | "FALLBACK_ONLY"
+	>("FALLBACK_ONLY");
+	const [newTaxonomyRegistryStatus, setNewTaxonomyRegistryStatus] = useState<
+		"ACTIVE" | "REVIEW_REQUIRED"
+	>("REVIEW_REQUIRED");
 
 	const filterOptions = useMemo(() => {
 		const values = {
@@ -816,6 +848,18 @@ export default function ProductsSalesAnalyzerPage() {
 	const selectedProduct = useMemo(
 		() => filteredProducts.find((product) => product.id === selectedId) || null,
 		[filteredProducts, selectedId],
+	);
+	const taxonomyGroupOptions = useMemo(
+		() =>
+			taxonomyRegistry.items.filter((item) => item.cluster === taxonomyCluster),
+		[taxonomyCluster, taxonomyRegistry.items],
+	);
+	const selectedTaxonomyRegistryEntry = useMemo(
+		() =>
+			taxonomyGroupOptions.find(
+				(item) => item.product_type_group === taxonomyProductTypeGroup,
+			) || null,
+		[taxonomyGroupOptions, taxonomyProductTypeGroup],
 	);
 	const selectedSnapshot = useMemo(() => {
 		if (selectedSnapshotId) {
@@ -943,7 +987,10 @@ export default function ProductsSalesAnalyzerPage() {
 		if (deepLinkApplied.current || products.length === 0) return;
 		const tabParam = searchParams.get("tab");
 		const productParam = searchParams.get("product");
-		if (productParam && products.some((product) => product.id === productParam)) {
+		if (
+			productParam &&
+			products.some((product) => product.id === productParam)
+		) {
 			setSelectedId(productParam);
 		}
 		if (tabParam === "INTELLIGENCE") {
@@ -951,6 +998,28 @@ export default function ProductsSalesAnalyzerPage() {
 		}
 		deepLinkApplied.current = true;
 	}, [products, searchParams]);
+
+	useEffect(() => {
+		let cancelled = false;
+		async function loadTaxonomyRegistry() {
+			try {
+				const response = await fetchProductStrategyTypeRegistry();
+				if (!cancelled) setTaxonomyRegistry(response);
+			} catch (err) {
+				if (!cancelled) {
+					setTaxonomyMessage(
+						err instanceof Error
+							? err.message
+							: "Failed to load product strategy registry",
+					);
+				}
+			}
+		}
+		void loadTaxonomyRegistry();
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 
 	useEffect(() => {
 		setSelectedImageUrl(selectedProduct?.image_url || "");
@@ -965,6 +1034,11 @@ export default function ProductsSalesAnalyzerPage() {
 		setProvenanceError(null);
 		setEditSuccess(null);
 		setEditError(null);
+		setTaxonomyMessage(null);
+		setTaxonomyCluster(selectedProduct?.strategy_taxonomy?.cluster || "");
+		setTaxonomyProductTypeGroup(
+			selectedProduct?.strategy_taxonomy?.product_type_group || "",
+		);
 		if (selectedProduct) {
 			setEditForm({
 				product_short_name: selectedProduct.product_short_name || "",
@@ -1102,9 +1176,7 @@ export default function ProductsSalesAnalyzerPage() {
 				res.items || [],
 				guidedProductId,
 				(productId) =>
-					fetchAPI<Product>(
-						`/api/products/${encodeURIComponent(productId)}`,
-					),
+					fetchAPI<Product>(`/api/products/${encodeURIComponent(productId)}`),
 			);
 			if (requestSeq !== loadSequenceRef.current) return;
 			setProducts(rows);
@@ -1112,8 +1184,8 @@ export default function ProductsSalesAnalyzerPage() {
 				guidedProductId && rows.some((row) => row.id === guidedProductId)
 					? guidedProductId
 					: current && rows.some((row) => row.id === current)
-					? current
-					: rows[0]?.id || null,
+						? current
+						: rows[0]?.id || null,
 			);
 		} catch (err) {
 			if (requestSeq !== loadSequenceRef.current) return;
@@ -1121,13 +1193,7 @@ export default function ProductsSalesAnalyzerPage() {
 		} finally {
 			if (requestSeq === loadSequenceRef.current) setLoading(false);
 		}
-	}, [
-		guidedProductId,
-		lifecycleFilter,
-		readinessFilter,
-		search,
-		sourceFilter,
-	]);
+	}, [guidedProductId, lifecycleFilter, readinessFilter, search, sourceFilter]);
 
 	useEffect(() => {
 		// Debounce: wait for typing to settle before fetching (search changes),
@@ -1151,6 +1217,103 @@ export default function ProductsSalesAnalyzerPage() {
 		}
 		loadLatestFastMossImportReport();
 	}, []);
+
+	async function handleProductTaxonomyReview(
+		reviewStatus: "VERIFIED" | "REVIEW_REQUIRED",
+	) {
+		if (!selectedProduct || !selectedTaxonomyRegistryEntry) {
+			setTaxonomyMessage("Select a registered product type first.");
+			return;
+		}
+		if (!taxonomyReviewerId.trim() || !taxonomyReviewerNote.trim()) {
+			setTaxonomyMessage("Reviewer ID and reviewer note are required.");
+			return;
+		}
+		setTaxonomyBusy(true);
+		setTaxonomyMessage(null);
+		try {
+			const taxonomy = await reviewProductStrategyTaxonomy(selectedProduct.id, {
+				expected_product_fingerprint:
+					selectedProduct.strategy_taxonomy?.product_fingerprint || "",
+				cluster: selectedTaxonomyRegistryEntry.cluster,
+				product_type_group: selectedTaxonomyRegistryEntry.product_type_group,
+				matched_scene_strategy_id:
+					selectedTaxonomyRegistryEntry.matched_scene_strategy_id,
+				scene_coverage_status:
+					selectedTaxonomyRegistryEntry.scene_coverage_status,
+				review_status: reviewStatus,
+				reviewer_id: taxonomyReviewerId.trim(),
+				reviewer_note: taxonomyReviewerNote.trim(),
+			});
+			setProducts((current) =>
+				current.map((product) =>
+					product.id === selectedProduct.id
+						? { ...product, strategy_taxonomy: taxonomy }
+						: product,
+				),
+			);
+			setTaxonomyMessage(
+				`Taxonomy saved as ${taxonomy.review_status} (${taxonomy.authority_source}).`,
+			);
+		} catch (err) {
+			setTaxonomyMessage(
+				err instanceof Error ? err.message : "Failed to save taxonomy",
+			);
+		} finally {
+			setTaxonomyBusy(false);
+		}
+	}
+
+	async function handleProductTypeRegistration(
+		event: FormEvent<HTMLFormElement>,
+	) {
+		event.preventDefault();
+		if (!taxonomyCluster) {
+			setTaxonomyMessage("Select a concrete cluster first.");
+			return;
+		}
+		if (!taxonomyReviewerId.trim() || !taxonomyReviewerNote.trim()) {
+			setTaxonomyMessage("Reviewer ID and reviewer note are required.");
+			return;
+		}
+		setTaxonomyBusy(true);
+		setTaxonomyMessage(null);
+		try {
+			const created = await registerProductStrategyType({
+				cluster: taxonomyCluster,
+				product_type_group: newTaxonomyGroup.trim(),
+				display_name: newTaxonomyDisplayName.trim(),
+				matched_scene_strategy_id: newTaxonomySceneId,
+				scene_coverage_status: newTaxonomyCoverage,
+				registry_status: newTaxonomyRegistryStatus,
+				auto_classification_enabled: false,
+				reviewer_id: taxonomyReviewerId.trim(),
+				reviewer_note: taxonomyReviewerNote.trim(),
+			});
+			setTaxonomyRegistry((current) => ({
+				...current,
+				items: [...current.items, created].sort((left, right) =>
+					`${left.cluster}:${left.product_type_group}`.localeCompare(
+						`${right.cluster}:${right.product_type_group}`,
+					),
+				),
+			}));
+			setTaxonomyProductTypeGroup(created.product_type_group);
+			setNewTaxonomyGroup("");
+			setNewTaxonomyDisplayName("");
+			setTaxonomyMessage(
+				`Registered ${created.cluster} / ${created.product_type_group} as ${created.registry_status}.`,
+			);
+		} catch (err) {
+			setTaxonomyMessage(
+				err instanceof Error
+					? err.message
+					: "Failed to register product strategy type",
+			);
+		} finally {
+			setTaxonomyBusy(false);
+		}
+	}
 
 	async function handleManualSubmit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
@@ -2071,7 +2234,9 @@ export default function ProductsSalesAnalyzerPage() {
 											<div className="mb-4 flex flex-col gap-4 sm:flex-row">
 												<div className="w-24 h-24 rounded border border-slate-700 overflow-hidden flex-shrink-0">
 													<ImageFallback
-														src={resolveProductsPageImageSource(selectedProduct)}
+														src={resolveProductsPageImageSource(
+															selectedProduct,
+														)}
 														alt="Product Thumbnail"
 														className="w-full h-full object-cover"
 														emptyLabel={imageStatusLabel(selectedProduct)}
@@ -2294,6 +2459,255 @@ export default function ProductsSalesAnalyzerPage() {
 														) || "—"
 													}
 												/>
+												{!isReferenceOnlyProduct(selectedProduct) ? (
+													<div
+														data-testid="product-strategy-taxonomy-editor"
+														className="mt-4 space-y-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4"
+													>
+														<div>
+															<div className="text-xs font-bold uppercase tracking-wider text-cyan-300">
+																Official Product Strategy Assignment
+															</div>
+															<p className="mt-1 text-[11px] text-slate-400">
+																Manual assignment overrides scouting and is
+																protected from automatic backfill.
+															</p>
+														</div>
+														<div className="grid gap-3 md:grid-cols-2">
+															<label className="text-[11px] text-slate-400">
+																Cluster
+																<select
+																	data-testid="product-taxonomy-cluster-select"
+																	value={taxonomyCluster}
+																	onChange={(event) => {
+																		const cluster = event.target.value;
+																		const firstGroup =
+																			taxonomyRegistry.items.find(
+																				(item) => item.cluster === cluster,
+																			);
+																		setTaxonomyCluster(cluster);
+																		setTaxonomyProductTypeGroup(
+																			firstGroup?.product_type_group || "",
+																		);
+																	}}
+																	className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+																>
+																	<option value="">Select cluster</option>
+																	{taxonomyRegistry.clusters
+																		.filter(
+																			(cluster) =>
+																				cluster !== "generic_unclassified",
+																		)
+																		.map((cluster) => (
+																			<option key={cluster} value={cluster}>
+																				{cluster}
+																			</option>
+																		))}
+																</select>
+															</label>
+															<label className="text-[11px] text-slate-400">
+																Product Type Group
+																<select
+																	data-testid="product-taxonomy-group-select"
+																	value={taxonomyProductTypeGroup}
+																	onChange={(event) =>
+																		setTaxonomyProductTypeGroup(
+																			event.target.value,
+																		)
+																	}
+																	className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+																>
+																	<option value="">
+																		Select registered type
+																	</option>
+																	{taxonomyGroupOptions.map((item) => (
+																		<option
+																			key={item.product_type_group}
+																			value={item.product_type_group}
+																		>
+																			{item.display_name} ·{" "}
+																			{item.registry_status}
+																		</option>
+																	))}
+																</select>
+															</label>
+															<label className="text-[11px] text-slate-400">
+																Reviewer ID
+																<input
+																	value={taxonomyReviewerId}
+																	onChange={(event) =>
+																		setTaxonomyReviewerId(event.target.value)
+																	}
+																	className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+																/>
+															</label>
+															<label className="text-[11px] text-slate-400">
+																Reviewer Note
+																<input
+																	value={taxonomyReviewerNote}
+																	onChange={(event) =>
+																		setTaxonomyReviewerNote(event.target.value)
+																	}
+																	className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+																/>
+															</label>
+														</div>
+														{selectedTaxonomyRegistryEntry ? (
+															<div className="rounded border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-300">
+																Scene:{" "}
+																{
+																	selectedTaxonomyRegistryEntry.matched_scene_strategy_id
+																}{" "}
+																· Coverage:{" "}
+																{
+																	selectedTaxonomyRegistryEntry.scene_coverage_status
+																}{" "}
+																· Registry:{" "}
+																{selectedTaxonomyRegistryEntry.registry_status}
+															</div>
+														) : null}
+														<div className="flex flex-wrap gap-2">
+															<button
+																type="button"
+																disabled={
+																	taxonomyBusy || !selectedTaxonomyRegistryEntry
+																}
+																onClick={() =>
+																	void handleProductTaxonomyReview(
+																		"REVIEW_REQUIRED",
+																	)
+																}
+																className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-bold text-amber-300 disabled:opacity-40"
+															>
+																Save Review Required
+															</button>
+															<button
+																type="button"
+																disabled={
+																	taxonomyBusy ||
+																	selectedTaxonomyRegistryEntry?.registry_status !==
+																		"ACTIVE"
+																}
+																onClick={() =>
+																	void handleProductTaxonomyReview("VERIFIED")
+																}
+																className="rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] font-bold text-emerald-300 disabled:opacity-40"
+															>
+																Verify Assignment
+															</button>
+														</div>
+														<form
+															data-testid="product-strategy-type-registration"
+															onSubmit={handleProductTypeRegistration}
+															className="space-y-3 border-t border-slate-800 pt-4"
+														>
+															<div className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
+																Register New Type Under Selected Cluster
+															</div>
+															<div className="grid gap-3 md:grid-cols-2">
+																<input
+																	aria-label="New product type group code"
+																	placeholder="product_type_group"
+																	value={newTaxonomyGroup}
+																	onChange={(event) =>
+																		setNewTaxonomyGroup(event.target.value)
+																	}
+																	className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+																/>
+																<input
+																	aria-label="New product type display name"
+																	placeholder="Display name"
+																	value={newTaxonomyDisplayName}
+																	onChange={(event) =>
+																		setNewTaxonomyDisplayName(
+																			event.target.value,
+																		)
+																	}
+																	className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+																/>
+																<select
+																	aria-label="Registered scene strategy"
+																	value={newTaxonomySceneId}
+																	onChange={(event) => {
+																		const sceneId = event.target.value;
+																		setNewTaxonomySceneId(sceneId);
+																		if (sceneId === "GENERIC_FALLBACK") {
+																			setNewTaxonomyCoverage("FALLBACK_ONLY");
+																			setNewTaxonomyRegistryStatus(
+																				"REVIEW_REQUIRED",
+																			);
+																		}
+																	}}
+																	className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+																>
+																	{taxonomyRegistry.scene_strategy_ids.map(
+																		(sceneId) => (
+																			<option key={sceneId} value={sceneId}>
+																				{sceneId}
+																			</option>
+																		),
+																	)}
+																</select>
+																<select
+																	aria-label="Registered scene coverage"
+																	value={newTaxonomyCoverage}
+																	onChange={(event) =>
+																		setNewTaxonomyCoverage(
+																			event.target.value as
+																				| "COVERED"
+																				| "PARTIAL"
+																				| "FALLBACK_ONLY",
+																		)
+																	}
+																	className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+																>
+																	<option value="COVERED">COVERED</option>
+																	<option value="PARTIAL">PARTIAL</option>
+																	<option value="FALLBACK_ONLY">
+																		FALLBACK_ONLY
+																	</option>
+																</select>
+																<select
+																	aria-label="Product type registry status"
+																	value={newTaxonomyRegistryStatus}
+																	onChange={(event) =>
+																		setNewTaxonomyRegistryStatus(
+																			event.target.value as
+																				| "ACTIVE"
+																				| "REVIEW_REQUIRED",
+																		)
+																	}
+																	className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+																>
+																	<option value="REVIEW_REQUIRED">
+																		REVIEW_REQUIRED
+																	</option>
+																	<option value="ACTIVE">ACTIVE</option>
+																</select>
+																<button
+																	type="submit"
+																	disabled={
+																		taxonomyBusy ||
+																		!taxonomyCluster ||
+																		!newTaxonomyGroup.trim() ||
+																		!newTaxonomyDisplayName.trim()
+																	}
+																	className="rounded border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-[11px] font-bold text-cyan-300 disabled:opacity-40"
+																>
+																	Register Product Type
+																</button>
+															</div>
+														</form>
+														{taxonomyMessage ? (
+															<div
+																data-testid="product-taxonomy-message"
+																className="text-[11px] text-slate-300"
+															>
+																{taxonomyMessage}
+															</div>
+														) : null}
+													</div>
+												) : null}
 												<KV
 													label="Price & Currency"
 													value={formatCurrencyDisplay(
@@ -2770,10 +3184,14 @@ export default function ProductsSalesAnalyzerPage() {
 											<RecommendedAvatarsCard productId={selectedProduct.id} />
 										) : null}
 										{selectedProduct ? (
-											<RecommendedScenePromptsCard productId={selectedProduct.id} />
+											<RecommendedScenePromptsCard
+												productId={selectedProduct.id}
+											/>
 										) : null}
 										{selectedProduct ? (
-											<RecommendedCameraPresetsCard productId={selectedProduct.id} />
+											<RecommendedCameraPresetsCard
+												productId={selectedProduct.id}
+											/>
 										) : null}
 										{selectedProduct ? (
 											<CreativeSetupPanel productId={selectedProduct.id} />

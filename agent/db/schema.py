@@ -2325,6 +2325,41 @@ CREATE TABLE IF NOT EXISTS creative_product_selection (
 CREATE INDEX IF NOT EXISTS idx_creative_product_selection_status
     ON creative_product_selection(status);
 
+-- Official cluster -> product-type registry. This is configuration authority,
+-- not Product Truth: assignments may only become VERIFIED when their exact
+-- pair is ACTIVE here and uses the registered scene/coverage binding.
+CREATE TABLE IF NOT EXISTS product_strategy_type_registry (
+    cluster                    TEXT NOT NULL,
+    product_type_group         TEXT NOT NULL,
+    display_name               TEXT NOT NULL,
+    matched_scene_strategy_id  TEXT NOT NULL,
+    scene_coverage_status      TEXT NOT NULL
+        CHECK(scene_coverage_status IN ('COVERED','PARTIAL','FALLBACK_ONLY')),
+    registry_status            TEXT NOT NULL
+        CHECK(registry_status IN ('ACTIVE','REVIEW_REQUIRED')),
+    auto_classification_enabled INTEGER NOT NULL DEFAULT 0
+        CHECK(auto_classification_enabled IN (0,1)),
+    authority_source           TEXT NOT NULL
+        CHECK(authority_source IN ('SYSTEM_SEED','MANUAL_REGISTRATION')),
+    reviewer_id                TEXT,
+    reviewer_note              TEXT,
+    reviewed_at                TEXT,
+    created_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    PRIMARY KEY (cluster, product_type_group),
+    CHECK(
+        registry_status <> 'ACTIVE'
+        OR (
+            cluster <> 'generic_unclassified'
+            AND product_type_group <> 'unknown_product_type'
+            AND matched_scene_strategy_id <> 'GENERIC_FALLBACK'
+            AND scene_coverage_status <> 'FALLBACK_ONLY'
+        )
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_product_strategy_type_registry_status
+    ON product_strategy_type_registry(registry_status, cluster);
+
 -- Official product-strategy taxonomy sidecar. This keeps Product Truth rows
 -- unchanged while giving downstream consumers one durable, review-gated
 -- contract. Manual overrides are protected by the materialization service.

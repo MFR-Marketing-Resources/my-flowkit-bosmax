@@ -10,6 +10,8 @@ from agent.models.product_strategy_taxonomy import (
     ProductStrategyTaxonomy,
     ProductStrategyTaxonomyBackfillRequest,
     ProductStrategyTaxonomyReviewRequest,
+    ProductStrategyTypeRegistrationRequest,
+    ProductStrategyTypeRegistrySeedRequest,
 )
 from agent.services import product_strategy_taxonomy_service as service
 
@@ -27,6 +29,113 @@ def _product_payload(product_id: str, title: str, product_type: str) -> dict:
         "product_type": product_type,
         "product_type_id": product_type.upper(),
     }
+
+
+async def _seed_registry() -> None:
+    await service.seed_product_strategy_type_registry(
+        ProductStrategyTypeRegistrySeedRequest(
+            dry_run=False,
+            confirm_apply=service.REGISTRY_SEED_CONFIRMATION,
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_registry_seed_is_dry_run_safe_and_preserves_manual_pairs():
+    preview = await service.seed_product_strategy_type_registry(
+        ProductStrategyTypeRegistrySeedRequest()
+    )
+    assert preview.dry_run is True
+    assert preview.mutation_performed is False
+    assert preview.planned_insert_count == preview.seed_count
+    assert await crud.list_product_strategy_type_registry() == []
+
+    manual = await service.register_product_strategy_type(
+        ProductStrategyTypeRegistrationRequest(
+            cluster="beauty_makeup",
+            product_type_group="custom_palette",
+            display_name="Custom Palette",
+            matched_scene_strategy_id="LIP_COLOR",
+            scene_coverage_status="COVERED",
+            registry_status="ACTIVE",
+            reviewer_id="admin-1",
+            reviewer_note="Reviewed scene binding.",
+        )
+    )
+    assert manual.authority_source == "MANUAL_REGISTRATION"
+
+    applied = await service.seed_product_strategy_type_registry(
+        ProductStrategyTypeRegistrySeedRequest(
+            dry_run=False,
+            confirm_apply=service.REGISTRY_SEED_CONFIRMATION,
+        )
+    )
+    assert applied.mutation_performed is True
+    readback = await service.list_product_strategy_type_registry()
+    assert len(readback.items) == applied.seed_count + 1
+    assert next(
+        item
+        for item in readback.items
+        if item.product_type_group == "custom_palette"
+    ).authority_source == "MANUAL_REGISTRATION"
+
+
+@pytest.mark.asyncio
+async def test_registry_blocks_active_fallback_and_unregistered_assignment():
+    with pytest.raises(
+        service.ProductStrategyTaxonomyError,
+        match="GENERIC_OR_FALLBACK_REGISTRY_PAIR_CANNOT_BE_ACTIVE",
+    ):
+        await service.register_product_strategy_type(
+            ProductStrategyTypeRegistrationRequest(
+                cluster="beauty_makeup",
+                product_type_group="uncovered_makeup",
+                display_name="Uncovered Makeup",
+                matched_scene_strategy_id="GENERIC_FALLBACK",
+                scene_coverage_status="FALLBACK_ONLY",
+                registry_status="ACTIVE",
+                reviewer_id="admin-1",
+                reviewer_note="Invalid active fallback.",
+            )
+        )
+
+    with pytest.raises(
+        service.ProductStrategyTaxonomyError,
+        match="UNREGISTERED_PRODUCT_STRATEGY_TYPE",
+    ):
+        await service.validate_product_strategy_assignment(
+            cluster="beauty_makeup",
+            product_type_group="not_registered",
+            matched_scene_strategy_id="LIP_COLOR",
+            scene_coverage_status="COVERED",
+            review_status="VERIFIED",
+        )
+
+
+@pytest.mark.asyncio
+async def test_review_required_registry_pair_cannot_be_verified():
+    await _seed_registry()
+
+    entry = await service.validate_product_strategy_assignment(
+        cluster="beauty_makeup",
+        product_type_group="mascara",
+        matched_scene_strategy_id="GENERIC_FALLBACK",
+        scene_coverage_status="FALLBACK_ONLY",
+        review_status="REVIEW_REQUIRED",
+    )
+    assert entry.registry_status == "REVIEW_REQUIRED"
+
+    with pytest.raises(
+        service.ProductStrategyTaxonomyError,
+        match="PRODUCT_STRATEGY_TYPE_NOT_ACTIVE",
+    ):
+        await service.validate_product_strategy_assignment(
+            cluster="beauty_makeup",
+            product_type_group="mascara",
+            matched_scene_strategy_id="GENERIC_FALLBACK",
+            scene_coverage_status="FALLBACK_ONLY",
+            review_status="VERIFIED",
+        )
 
 
 def test_classification_separates_covered_partial_and_fallback(monkeypatch):
@@ -83,6 +192,26 @@ def test_model_rejects_auto_derived_verified_taxonomy():
                 "consumer_status": "READY",
             }
         )
+
+
+def test_model_allows_verified_manual_preview_but_keeps_consumer_blocked():
+    candidate = service.build_product_strategy_taxonomy_candidate(
+        _product_payload("lip", "Velvet Lipstick", "Lipstick"),
+    )
+
+    preview = ProductStrategyTaxonomy.model_validate(
+        {
+            **candidate.model_dump(),
+            "review_status": "VERIFIED",
+            "consumer_status": "BLOCKED_REVIEW_REQUIRED",
+            "authority_source": "MANUAL_OVERRIDE",
+            "reviewer_id": "admin-1",
+            "reviewer_note": "Reviewed registry binding.",
+        }
+    )
+
+    assert preview.materialization_status == "PREVIEW"
+    assert preview.consumer_status == "BLOCKED_REVIEW_REQUIRED"
 
 
 @pytest.mark.asyncio
@@ -164,6 +293,7 @@ async def test_backfill_materializes_archived_products(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_manual_verified_override_is_copy_ready_and_backfill_preserves_it():
+    await _seed_registry()
     product = await crud.create_product(
         source="MANUAL",
         raw_product_title="Velvet Lipstick",
@@ -250,6 +380,7 @@ async def test_atomic_bulk_write_rolls_back_every_row_on_constraint_failure():
 
 @pytest.mark.asyncio
 async def test_stale_product_fingerprint_fails_closed():
+    await _seed_registry()
     product = await crud.create_product(
         "Velvet Lipstick",
         source="MANUAL",

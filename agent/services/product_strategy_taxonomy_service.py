@@ -20,6 +20,11 @@ from agent.models.product_strategy_taxonomy import (
     ProductStrategyTaxonomyBackfillRequest,
     ProductStrategyTaxonomyBackfillResponse,
     ProductStrategyTaxonomyReviewRequest,
+    ProductStrategyTypeRegistrationRequest,
+    ProductStrategyTypeRegistryEntry,
+    ProductStrategyTypeRegistryListResponse,
+    ProductStrategyTypeRegistrySeedRequest,
+    ProductStrategyTypeRegistrySeedResponse,
 )
 from agent.services.product_intelligence_service import (
     resolve_product_intelligence_profile,
@@ -27,12 +32,14 @@ from agent.services.product_intelligence_service import (
 from agent.services.product_strategy_scouting_service import (
     SCOUTING_CLUSTER_ORDER,
     classify_product_strategy_tag,
+    product_strategy_type_registry_seed_entries,
 )
 from agent.services.scene_strategy_library import SCENE_STRATEGIES
 
 
 TAXONOMY_VERSION = "product_strategy_taxonomy_v1"
 BACKFILL_CONFIRMATION = "MATERIALIZE_PRODUCT_STRATEGY_TAXONOMY"
+REGISTRY_SEED_CONFIRMATION = "SEED_PRODUCT_STRATEGY_TYPE_REGISTRY"
 _FINGERPRINT_FIELDS = (
     "id",
     "product_id",
@@ -226,6 +233,225 @@ def _taxonomy_to_record(taxonomy: ProductStrategyTaxonomy) -> dict[str, object]:
     }
 
 
+def _row_to_registry_entry(
+    row: Mapping[str, object],
+) -> ProductStrategyTypeRegistryEntry:
+    return ProductStrategyTypeRegistryEntry(
+        cluster=str(row.get("cluster") or ""),
+        product_type_group=str(row.get("product_type_group") or ""),
+        display_name=str(row.get("display_name") or ""),
+        matched_scene_strategy_id=str(
+            row.get("matched_scene_strategy_id") or "GENERIC_FALLBACK"
+        ),
+        scene_coverage_status=str(
+            row.get("scene_coverage_status") or "FALLBACK_ONLY"
+        ),
+        registry_status=str(row.get("registry_status") or "REVIEW_REQUIRED"),
+        auto_classification_enabled=bool(
+            row.get("auto_classification_enabled")
+        ),
+        authority_source=str(row.get("authority_source") or "SYSTEM_SEED"),
+        reviewer_id=(
+            str(row["reviewer_id"])
+            if row.get("reviewer_id") is not None
+            else None
+        ),
+        reviewer_note=(
+            str(row["reviewer_note"])
+            if row.get("reviewer_note") is not None
+            else None
+        ),
+        reviewed_at=(
+            str(row["reviewed_at"])
+            if row.get("reviewed_at") is not None
+            else None
+        ),
+        created_at=(
+            str(row["created_at"])
+            if row.get("created_at") is not None
+            else None
+        ),
+        updated_at=(
+            str(row["updated_at"])
+            if row.get("updated_at") is not None
+            else None
+        ),
+    )
+
+
+async def list_product_strategy_type_registry(
+    cluster: str | None = None,
+) -> ProductStrategyTypeRegistryListResponse:
+    rows = await crud.list_product_strategy_type_registry(cluster)
+    return ProductStrategyTypeRegistryListResponse(
+        items=[_row_to_registry_entry(row) for row in rows],
+        clusters=list(SCOUTING_CLUSTER_ORDER),
+        scene_strategy_ids=sorted(SCENE_STRATEGIES),
+    )
+
+
+def _validate_registry_binding(
+    *,
+    cluster: str,
+    product_type_group: str,
+    matched_scene_strategy_id: str,
+    scene_coverage_status: str,
+    registry_status: str,
+) -> None:
+    if cluster not in SCOUTING_CLUSTER_ORDER:
+        raise ProductStrategyTaxonomyError("INVALID_STRATEGY_CLUSTER")
+    if matched_scene_strategy_id not in SCENE_STRATEGIES:
+        raise ProductStrategyTaxonomyError("INVALID_SCENE_STRATEGY_ID")
+    if (
+        matched_scene_strategy_id == "GENERIC_FALLBACK"
+    ) != (scene_coverage_status == "FALLBACK_ONLY"):
+        raise ProductStrategyTaxonomyError("INVALID_FALLBACK_SCENE_COVERAGE_BINDING")
+    if registry_status == "ACTIVE" and (
+        cluster == "generic_unclassified"
+        or product_type_group == "unknown_product_type"
+        or matched_scene_strategy_id == "GENERIC_FALLBACK"
+        or scene_coverage_status == "FALLBACK_ONLY"
+    ):
+        raise ProductStrategyTaxonomyError(
+            "GENERIC_OR_FALLBACK_REGISTRY_PAIR_CANNOT_BE_ACTIVE"
+        )
+
+
+async def register_product_strategy_type(
+    request: ProductStrategyTypeRegistrationRequest,
+) -> ProductStrategyTypeRegistryEntry:
+    """Register one exact pair without changing classifier rules or product rows."""
+
+    if request.cluster == "generic_unclassified":
+        raise ProductStrategyTaxonomyError(
+            "NEW_PRODUCT_TYPE_REQUIRES_CONCRETE_CLUSTER"
+        )
+    if request.auto_classification_enabled:
+        raise ProductStrategyTaxonomyError(
+            "AUTO_CLASSIFICATION_RULE_REQUIRED"
+        )
+    _validate_registry_binding(
+        cluster=request.cluster,
+        product_type_group=request.product_type_group,
+        matched_scene_strategy_id=request.matched_scene_strategy_id,
+        scene_coverage_status=request.scene_coverage_status,
+        registry_status=request.registry_status,
+    )
+    existing = await crud.get_product_strategy_type_registry_entry(
+        request.cluster,
+        request.product_type_group,
+    )
+    if existing:
+        raise ProductStrategyTaxonomyError(
+            "PRODUCT_STRATEGY_TYPE_ALREADY_REGISTERED"
+        )
+    now = _now()
+    row = await crud.create_product_strategy_type_registry_entry(
+        {
+            **request.model_dump(mode="json"),
+            "auto_classification_enabled": int(
+                request.auto_classification_enabled
+            ),
+            "authority_source": "MANUAL_REGISTRATION",
+            "reviewed_at": now,
+            "updated_at": now,
+        }
+    )
+    return _row_to_registry_entry(row)
+
+
+async def seed_product_strategy_type_registry(
+    request: ProductStrategyTypeRegistrySeedRequest,
+) -> ProductStrategyTypeRegistrySeedResponse:
+    """Preview by default; apply only behind an exact confirmation token."""
+
+    seed_records = product_strategy_type_registry_seed_entries()
+    existing_rows = await crud.list_product_strategy_type_registry()
+    existing_by_key = {
+        (str(row["cluster"]), str(row["product_type_group"])): row
+        for row in existing_rows
+    }
+    now = _now()
+    records_to_write: list[dict[str, object]] = []
+    preserved_manual_registration_count = 0
+    for record in seed_records:
+        key = (str(record["cluster"]), str(record["product_type_group"]))
+        existing = existing_by_key.get(key)
+        if existing:
+            if existing.get("authority_source") == "MANUAL_REGISTRATION":
+                preserved_manual_registration_count += 1
+            continue
+        records_to_write.append(
+            {
+                **record,
+                "auto_classification_enabled": int(
+                    bool(record["auto_classification_enabled"])
+                ),
+                "reviewer_id": None,
+                "reviewer_note": None,
+                "reviewed_at": None,
+                "updated_at": now,
+            }
+        )
+    response = ProductStrategyTypeRegistrySeedResponse(
+        dry_run=True,
+        mutation_performed=False,
+        seed_count=len(seed_records),
+        planned_insert_count=len(records_to_write),
+        unchanged_count=len(seed_records) - len(records_to_write),
+        preserved_manual_registration_count=preserved_manual_registration_count,
+        active_count=sum(
+            record["registry_status"] == "ACTIVE" for record in seed_records
+        ),
+        review_required_count=sum(
+            record["registry_status"] == "REVIEW_REQUIRED"
+            for record in seed_records
+        ),
+        confirmation_required=REGISTRY_SEED_CONFIRMATION,
+    )
+    if request.dry_run:
+        return response
+    if request.confirm_apply != REGISTRY_SEED_CONFIRMATION:
+        raise ProductStrategyTaxonomyError("REGISTRY_SEED_CONFIRMATION_REQUIRED")
+    changed = await crud.seed_product_strategy_type_registry(records_to_write)
+    response.dry_run = False
+    response.mutation_performed = changed > 0
+    response.confirmation_required = None
+    return response
+
+
+async def validate_product_strategy_assignment(
+    *,
+    cluster: str,
+    product_type_group: str,
+    matched_scene_strategy_id: str,
+    scene_coverage_status: str,
+    review_status: str,
+) -> ProductStrategyTypeRegistryEntry:
+    row = await crud.get_product_strategy_type_registry_entry(
+        cluster,
+        product_type_group,
+    )
+    if row is None:
+        raise ProductStrategyTaxonomyError(
+            "UNREGISTERED_PRODUCT_STRATEGY_TYPE"
+        )
+    entry = _row_to_registry_entry(row)
+    if entry.matched_scene_strategy_id != matched_scene_strategy_id:
+        raise ProductStrategyTaxonomyError(
+            "SCENE_STRATEGY_DOES_NOT_MATCH_REGISTRY"
+        )
+    if entry.scene_coverage_status != scene_coverage_status:
+        raise ProductStrategyTaxonomyError(
+            "SCENE_COVERAGE_DOES_NOT_MATCH_REGISTRY"
+        )
+    if review_status == "VERIFIED" and entry.registry_status != "ACTIVE":
+        raise ProductStrategyTaxonomyError(
+            "PRODUCT_STRATEGY_TYPE_NOT_ACTIVE"
+        )
+    return entry
+
+
 def _read_model_from_row(
     product: Mapping[str, object],
     row: Mapping[str, object] | None,
@@ -241,18 +467,25 @@ def _read_model_from_row(
 
     taxonomy = _row_to_taxonomy(row)
     current_fingerprint = product_strategy_fingerprint(product)
-    if taxonomy.product_fingerprint != current_fingerprint:
+    if taxonomy.materialization_status == "PLACEHOLDER":
+        taxonomy.product_fingerprint = current_fingerprint
+        taxonomy.is_stale = False
+        taxonomy.review_status = "REVIEW_REQUIRED"
+        taxonomy.consumer_status = "BLOCKED_REVIEW_REQUIRED"
+        taxonomy.review_reasons = _unique(
+            [
+                reason
+                for reason in taxonomy.review_reasons
+                if reason != "STALE_PRODUCT_FINGERPRINT"
+            ]
+            + ["NOT_MATERIALIZED"]
+        )
+    elif taxonomy.product_fingerprint != current_fingerprint:
         taxonomy.is_stale = True
         taxonomy.review_status = "REVIEW_REQUIRED"
         taxonomy.consumer_status = "BLOCKED_REVIEW_REQUIRED"
         taxonomy.review_reasons = _unique(
             [*taxonomy.review_reasons, "STALE_PRODUCT_FINGERPRINT"]
-        )
-    if taxonomy.materialization_status == "PLACEHOLDER":
-        taxonomy.review_status = "REVIEW_REQUIRED"
-        taxonomy.consumer_status = "BLOCKED_REVIEW_REQUIRED"
-        taxonomy.review_reasons = _unique(
-            [*taxonomy.review_reasons, "NOT_MATERIALIZED"]
         )
     return taxonomy
 
@@ -280,6 +513,13 @@ async def require_verified_product_strategy_taxonomy(
         or taxonomy.is_stale
     ):
         raise ProductStrategyTaxonomyError("TAXONOMY_NOT_VERIFIED")
+    await validate_product_strategy_assignment(
+        cluster=taxonomy.cluster,
+        product_type_group=taxonomy.product_type_group,
+        matched_scene_strategy_id=taxonomy.matched_scene_strategy_id,
+        scene_coverage_status=taxonomy.scene_coverage_status,
+        review_status=taxonomy.review_status,
+    )
     return taxonomy
 
 
@@ -431,12 +671,13 @@ async def review_product_strategy_taxonomy(
     current_fingerprint = product_strategy_fingerprint(product)
     if request.expected_product_fingerprint != current_fingerprint:
         raise ProductStrategyTaxonomyError("STALE_PRODUCT_FINGERPRINT")
-    if request.cluster not in SCOUTING_CLUSTER_ORDER:
-        raise ProductStrategyTaxonomyError("INVALID_STRATEGY_CLUSTER")
-    if request.matched_scene_strategy_id not in SCENE_STRATEGIES:
-        raise ProductStrategyTaxonomyError("INVALID_SCENE_STRATEGY_ID")
-    if not request.product_type_group.strip():
-        raise ProductStrategyTaxonomyError("PRODUCT_TYPE_GROUP_REQUIRED")
+    await validate_product_strategy_assignment(
+        cluster=request.cluster,
+        product_type_group=request.product_type_group,
+        matched_scene_strategy_id=request.matched_scene_strategy_id,
+        scene_coverage_status=request.scene_coverage_status,
+        review_status=request.review_status,
+    )
     if request.review_status == "VERIFIED" and (
         request.cluster == "generic_unclassified"
         or request.product_type_group == "unknown_product_type"

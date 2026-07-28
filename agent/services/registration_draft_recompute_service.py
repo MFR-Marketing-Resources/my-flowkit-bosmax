@@ -94,6 +94,11 @@ def recompute_review_draft(draft: RegistrationReviewDraft) -> RegistrationReview
     refreshed.rejection_checklist = {
         field: False for field in refreshed.canonical_candidate_fields.keys()
     }
+    if (
+        draft.strategy_taxonomy is not None
+        and draft.strategy_taxonomy.authority_source == "MANUAL_OVERRIDE"
+    ):
+        refreshed.strategy_taxonomy = draft.strategy_taxonomy
 
     hook_override = _clean_list(refreshed.declared_evidence_fields.get("hook_angles"))
     if hook_override:
