@@ -5,16 +5,20 @@ from agent.services.product_knowledge_service import complete_product_knowledge
 
 @pytest.fixture(autouse=True)
 def _disable_live_providers(monkeypatch):
-    """Isolate all unit tests from live API keys stored on the machine.
-    Patches both the old get_provider_api_key (legacy callers) and the new
-    lane-based get_lane_api_key in both consuming services."""
+    """No unit test may cross the configured text_assist provider boundary."""
     monkeypatch.setattr(
-        "agent.services.product_knowledge_service.get_provider_api_key",
-        lambda provider_id: "",
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.provider_status",
+        lambda: {
+            "lane": "text_assist",
+            "configured": False,
+            "provider_id": "deepseek",
+            "model_id": "deepseek-v4-pro",
+            "execution_enabled": False,
+        },
     )
     monkeypatch.setattr(
-        "agent.services.product_knowledge_service.get_lane_api_key",
-        lambda lane: None,
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.complete_json",
+        lambda *args, **kwargs: pytest.fail("unexpected real text_assist call"),
     )
     monkeypatch.setattr(
         "agent.services.product_image_analysis_service.get_lane_api_key",
@@ -230,263 +234,254 @@ def test_complete_product_knowledge_low_confidence_image_ocr_does_not_clear_size
 
     response = complete_product_knowledge(request)
 
-    assert response.suggested_size_or_volume is None
+    assert response.suggested_size_or_volume == "N/A"
+    assert response.evidence_field_status["size_or_volume"].status == "NOT_AVAILABLE"
     assert "SIZE_OR_VOLUME_EVIDENCE" in response.missing_required_evidence
     assert "SIZE_OR_VOLUME_FROM_IMAGE_OCR_HIGH_CONFIDENCE" not in response.warnings
 
 
-def test_complete_product_knowledge_qwen_enriches_usp_list_for_manual_lane(monkeypatch):
-    class _MockResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "choices": [
-                    {
-                        "message": {
-                            "content": '{"usp_list":["Haruman segar tahan lama","Lembut pada fabrik"]}',
-                        }
-                    }
-                ]
-            }
-
-    monkeypatch.setattr(
-        "agent.services.product_knowledge_service.get_lane_api_key",
-        lambda lane: "sk-qwen" if lane == "text_assist" else None,
-    )
-    monkeypatch.setattr(
-        "agent.services.product_knowledge_service.httpx.post",
-        lambda *args, **kwargs: _MockResponse(),
-    )
-
-    request = ProductKnowledgeCompleteRequest(
-        product_name="Bosmax Liquid Detergent",
-        product_knowledge_text="Sabun dobi cuci bersih dengan haruman segar tahan lama dan formula lembut pada fabrik.",
-        paste_anything_about_product="Sabun dobi cuci bersih dengan haruman segar tahan lama dan formula lembut pada fabrik.",
-        source_lane="MANUAL",
-    )
-
-    response = complete_product_knowledge(request)
-
-    assert response.extracted_product_facts["usp_list"] == [
-        "Haruman segar tahan lama",
-        "Lembut pada fabrik",
-    ]
-    assert response.suggested_usp_list == [
-        "Haruman segar tahan lama",
-        "Lembut pada fabrik",
-    ]
-    assert "QWEN_USP_SUGGESTION_APPLIED" in response.warnings
-    assert "qwen_usp_suggest_only:v1" in response.provenance
-
-
-def test_complete_product_knowledge_qwen_falls_back_to_next_region(monkeypatch):
-    class _MockResponse:
-        def __init__(self, status_code, payload):
-            self.status_code = status_code
-            self._payload = payload
-            self.request = None
-
-        def raise_for_status(self):
-            if self.status_code >= 400:
-                import httpx
-
-                raise httpx.HTTPStatusError(
-                    "status error",
-                    request=httpx.Request("POST", "https://example.com"),
-                    response=httpx.Response(self.status_code, request=httpx.Request("POST", "https://example.com")),
-                )
-            return None
-
-        def json(self):
-            return self._payload
-
+def test_complete_product_knowledge_uses_configured_deepseek_text_assist(monkeypatch):
     calls = []
-
-    def _mock_post(url, *args, **kwargs):
-        calls.append(url)
-        if len(calls) == 1:
-            return _MockResponse(401, {})
-        return _MockResponse(
-            200,
-            {
-                "choices": [
-                    {
-                        "message": {
-                            "content": '{"usp_list":["Haruman segar tahan lama"]}',
-                        }
-                    }
-                ]
-            },
-        )
-
     monkeypatch.setattr(
-        "agent.services.product_knowledge_service.get_lane_api_key",
-        lambda lane: "sk-qwen" if lane == "text_assist" else None,
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.provider_status",
+        lambda: {
+            "lane": "text_assist",
+            "configured": True,
+            "provider_id": "deepseek",
+            "model_id": "deepseek-v4-pro",
+            "execution_enabled": True,
+        },
     )
     monkeypatch.setattr(
-        "agent.services.product_knowledge_service.httpx.post",
-        _mock_post,
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.complete_json",
+        lambda system, user: calls.append((system, user))
+        or {
+            "product_knowledge_summary": "Serbuk perasa untuk masakan harian.",
+            "benefits": ["Membantu melengkapkan rasa masakan"],
+            "usage_summary": "Tabur secukup rasa ketika memasak.",
+            "target_customer": "Pengguna yang memasak di rumah",
+            "usp_list": ["Mudah digunakan untuk masakan harian"],
+            "size_or_volume": None,
+            "package_notes": "Dibungkus dalam pek serbuk.",
+            "warnings_or_limitations": [],
+            "confidence": "MEDIUM",
+            "provenance": ["SOURCE_TEXT_REVIEW_ONLY"],
+            "needs_review": True,
+        },
     )
 
-    request = ProductKnowledgeCompleteRequest(
-        product_name="Bosmax Liquid Detergent",
-        paste_anything_about_product="Sabun dobi dengan haruman segar tahan lama.",
-        source_lane="MANUAL",
+    response = complete_product_knowledge(
+        ProductKnowledgeCompleteRequest(
+            product_name="Serbuk Perasa Warisan",
+            paste_anything_about_product=(
+                "Serbuk perasa untuk masakan harian. Tabur secukup rasa ketika memasak."
+            ),
+            source_lane="MANUAL",
+        ),
+        enable_text_assist=True,
     )
 
-    response = complete_product_knowledge(request)
+    assert len(calls) == 1
+    assert response.suggested_product_knowledge_summary == (
+        "Serbuk perasa untuk masakan harian."
+    )
+    assert response.suggested_benefits == ["Membantu melengkapkan rasa masakan"]
+    assert response.suggested_usage_summary == "Tabur secukup rasa ketika memasak."
+    assert response.suggested_target_customer == "Pengguna yang memasak di rumah"
+    assert response.suggested_usp_list == ["Mudah digunakan untuk masakan harian"]
+    assert response.suggested_size_or_volume == "N/A"
+    assert response.evidence_field_status["benefits"].status == "AI_SUGGESTED"
+    assert response.evidence_field_status["benefits"].needs_review is True
+    assert "benefits" in response.human_review_fields
+    assert "text_assist:deepseek:deepseek-v4-pro:review_only" in response.provenance
+    assert response.extracted_product_facts["usp_list"] == []
 
-    assert response.suggested_usp_list == ["Haruman segar tahan lama"]
-    assert len(calls) == 2
 
-
-def test_complete_product_knowledge_qwen_retries_next_region_after_request_error(monkeypatch):
-    import httpx
-
-    class _MockResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "choices": [
-                    {
-                        "message": {
-                            "content": '{"usp_list":["Lembut pada fabrik"]}',
-                        }
-                    }
-                ]
-            }
-
-    calls = []
-
-    def _mock_post(url, *args, **kwargs):
-        calls.append(url)
-        if len(calls) == 1:
-            raise httpx.RequestError("dns failed", request=httpx.Request("POST", url))
-        return _MockResponse()
-
+def test_complete_product_knowledge_disabled_text_assist_uses_safe_fallback(monkeypatch):
     monkeypatch.setattr(
-        "agent.services.product_knowledge_service.get_lane_api_key",
-        lambda lane: "sk-qwen" if lane == "text_assist" else None,
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.complete_json",
+        lambda *args, **kwargs: pytest.fail("disabled provider must not be called"),
+    )
+
+    response = complete_product_knowledge(
+        ProductKnowledgeCompleteRequest(
+            product_name="Serbuk Perasa Warisan",
+            paste_anything_about_product="Serbuk perasa untuk masakan harian.",
+            source_lane="MANUAL",
+        ),
+        enable_text_assist=True,
+    )
+
+    assert "TEXT_ASSIST_NOT_CONFIGURED" in response.warnings
+    assert response.suggested_size_or_volume == "N/A"
+    assert response.suggested_package_notes == "NOT_AVAILABLE"
+    assert response.suggested_warnings_or_limitations == ["NOT_AVAILABLE"]
+    assert "SIZE_OR_VOLUME_EVIDENCE" in response.missing_required_evidence
+    assert response.evidence_field_status["size_or_volume"].needs_review is True
+
+
+def test_complete_product_knowledge_invalid_text_assist_json_fails_closed(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.provider_status",
+        lambda: {
+            "lane": "text_assist",
+            "configured": True,
+            "provider_id": "deepseek",
+            "model_id": "deepseek-v4-pro",
+            "execution_enabled": True,
+        },
     )
     monkeypatch.setattr(
-        "agent.services.product_knowledge_service.httpx.post",
-        _mock_post,
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.complete_json",
+        lambda *args, **kwargs: {"unexpected": "shape"},
+    )
+
+    response = complete_product_knowledge(
+        ProductKnowledgeCompleteRequest(
+            product_name="Serbuk Perasa Warisan",
+            paste_anything_about_product="Serbuk perasa untuk masakan harian.",
+            source_lane="MANUAL",
+        ),
+        enable_text_assist=True,
+    )
+
+    assert "TEXT_ASSIST_INVALID_RESPONSE" in response.warnings
+    assert response.suggested_size_or_volume == "N/A"
+    assert response.suggested_package_notes == "NOT_AVAILABLE"
+
+
+def test_complete_product_knowledge_provider_failure_fails_closed(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.provider_status",
+        lambda: {
+            "lane": "text_assist",
+            "configured": True,
+            "provider_id": "deepseek",
+            "model_id": "deepseek-v4-pro",
+            "execution_enabled": True,
+        },
+    )
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.complete_json",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("network down")),
     )
 
     response = complete_product_knowledge(
         ProductKnowledgeCompleteRequest(
             product_name="Bosmax Liquid Detergent",
-            paste_anything_about_product="Formula lembut pada fabrik.",
+            paste_anything_about_product="Sabun dobi untuk rutin cucian harian.",
             source_lane="MANUAL",
-        )
+        ),
+        enable_text_assist=True,
     )
 
-    assert response.suggested_usp_list == ["Lembut pada fabrik"]
-    assert len(calls) == 2
-
-
-def test_complete_product_knowledge_qwen_fails_closed(monkeypatch):
-    monkeypatch.setattr(
-        "agent.services.product_knowledge_service.get_provider_api_key",
-        lambda provider_id: "sk-qwen" if provider_id == "qwen" else "",
-    )
-
-    def _raise_http_error(*args, **kwargs):
-        raise RuntimeError("network down")
-
-    monkeypatch.setattr(
-        "agent.services.product_knowledge_service.httpx.post",
-        _raise_http_error,
-    )
-
-    request = ProductKnowledgeCompleteRequest(
-        product_name="Bosmax Liquid Detergent",
-        product_knowledge_text="Sabun dobi cuci bersih dengan haruman segar tahan lama.",
-        paste_anything_about_product="Sabun dobi cuci bersih dengan haruman segar tahan lama.",
-        source_lane="MANUAL",
-    )
-
-    response = complete_product_knowledge(request)
-
-    assert response.extracted_product_facts["usp_list"] == []
+    assert "TEXT_ASSIST_CALL_FAILED" in response.warnings
     assert response.suggested_usp_list == []
-    assert "QWEN_USP_SUGGESTION_APPLIED" not in response.warnings
+    assert response.suggested_size_or_volume == "N/A"
 
 
-def test_complete_product_knowledge_qwen_skips_affiliate_lane(monkeypatch):
-    def _unexpected_http_call(*args, **kwargs):
-        raise AssertionError("Qwen should not be called for FASTMOSS lane")
-
+def test_complete_product_knowledge_discards_unsafe_ai_claims(monkeypatch):
     monkeypatch.setattr(
-        "agent.services.product_knowledge_service.get_provider_api_key",
-        lambda provider_id: "sk-qwen" if provider_id == "qwen" else "",
-    )
-    monkeypatch.setattr(
-        "agent.services.product_knowledge_service.httpx.post",
-        _unexpected_http_call,
-    )
-
-    request = ProductKnowledgeCompleteRequest(
-        product_name="FastMoss Product",
-        product_knowledge_text="Produk affiliate dengan title panjang dan positioning tak stabil.",
-        paste_anything_about_product="Produk affiliate dengan title panjang dan positioning tak stabil.",
-        source_lane="FASTMOSS",
-    )
-
-    response = complete_product_knowledge(request)
-
-    assert response.extracted_product_facts["usp_list"] == []
-    assert "QWEN_USP_SUGGESTION_APPLIED" not in response.warnings
-    assert "AFFILIATE_LANE_CONTAMINATION_RISK" in response.warnings
-
-
-def test_complete_product_knowledge_qwen_does_not_override_declared_benefits(monkeypatch):
-    def _unexpected_http_call(*args, **kwargs):
-        raise AssertionError("Qwen should not be called when benefits_text already exists")
-
-    monkeypatch.setattr(
-        "agent.services.product_knowledge_service.get_provider_api_key",
-        lambda provider_id: "sk-qwen" if provider_id == "qwen" else "",
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.provider_status",
+        lambda: {
+            "lane": "text_assist",
+            "configured": True,
+            "provider_id": "deepseek",
+            "model_id": "deepseek-v4-pro",
+            "execution_enabled": True,
+        },
     )
     monkeypatch.setattr(
-        "agent.services.product_knowledge_service.httpx.post",
-        _unexpected_http_call,
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.complete_json",
+        lambda *args, **kwargs: {
+            "product_knowledge_summary": "Produk herba untuk rutin harian.",
+            "benefits": ["Menyembuhkan semua sakit dengan segera"],
+            "usage_summary": None,
+            "target_customer": None,
+            "usp_list": ["Jaminan sembuh"],
+            "size_or_volume": None,
+            "package_notes": None,
+            "warnings_or_limitations": [],
+            "confidence": "MEDIUM",
+            "provenance": ["SOURCE_TEXT_REVIEW_ONLY"],
+            "needs_review": True,
+        },
     )
 
-    request = ProductKnowledgeCompleteRequest(
-        product_name="Bosmax Liquid Detergent",
-        product_knowledge_text="Sabun dobi harian.",
-        paste_anything_about_product="Sabun dobi harian.",
-        benefits_text="- Cuci bersih\n- Haruman segar",
-        source_lane="MANUAL",
+    response = complete_product_knowledge(
+        ProductKnowledgeCompleteRequest(
+            product_name="Minyak Herba Harian",
+            paste_anything_about_product="Minyak herba untuk rutin sapuan luaran harian.",
+            source_lane="MANUAL",
+        ),
+        enable_text_assist=True,
     )
 
-    response = complete_product_knowledge(request)
+    assert "TEXT_ASSIST_UNSAFE_SUGGESTION_DISCARDED" in response.warnings
+    assert response.suggested_benefits == []
+    assert response.suggested_usp_list == []
+    assert response.claim_gate == "CLAIM_SAFE"
 
-    assert response.extracted_product_facts["usp_list"] == []
+
+def test_complete_product_knowledge_does_not_override_declared_evidence(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.provider_status",
+        lambda: {
+            "lane": "text_assist",
+            "configured": True,
+            "provider_id": "deepseek",
+            "model_id": "deepseek-v4-pro",
+            "execution_enabled": True,
+        },
+    )
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.complete_json",
+        lambda *args, **kwargs: {
+            "product_knowledge_summary": "Conflicting AI summary",
+            "benefits": ["Conflicting AI benefit"],
+            "usage_summary": "Conflicting AI usage",
+            "target_customer": "Pengguna rumah",
+            "usp_list": ["Conflicting AI USP"],
+            "size_or_volume": None,
+            "package_notes": None,
+            "warnings_or_limitations": [],
+            "confidence": "MEDIUM",
+            "provenance": ["SOURCE_TEXT_REVIEW_ONLY"],
+            "needs_review": True,
+        },
+    )
+
+    response = complete_product_knowledge(
+        ProductKnowledgeCompleteRequest(
+            product_name="Bosmax Liquid Detergent",
+            product_knowledge_text="Sabun dobi harian.",
+            benefits_text="- Cuci bersih\n- Haruman segar",
+            usage_text="Tuang mengikut sukatan cucian.",
+            paste_anything_about_product="Sabun dobi harian untuk kegunaan rumah.",
+            source_lane="MANUAL",
+        ),
+        enable_text_assist=True,
+    )
+
+    assert response.suggested_product_knowledge_summary == "Sabun dobi harian."
+    assert response.suggested_benefits == ["Cuci bersih", "Haruman segar"]
+    assert response.suggested_usage_summary == "Tuang mengikut sukatan cucian."
     assert response.suggested_usp_list == ["Cuci bersih", "Haruman segar"]
-    assert "QWEN_USP_SUGGESTION_APPLIED" not in response.warnings
-
-
-def test_complete_product_knowledge_qwen_skips_when_text_assist_lane_disabled(monkeypatch):
-    def _unexpected_http_call(*args, **kwargs):
-        raise AssertionError("Qwen should not be called when text_assist lane is disabled")
-
-    monkeypatch.setattr(
-        "agent.services.product_knowledge_service.get_lane_api_key",
-        lambda lane: "sk-qwen" if lane == "text_assist" else None,
+    assert response.evidence_field_status["benefits"].status == (
+        "EXACT_SOURCE_EVIDENCE"
     )
+
+
+def test_direct_completion_is_credit_free_without_explicit_text_assist(monkeypatch):
     monkeypatch.setattr(
-        "agent.services.product_knowledge_service.is_lane_execution_enabled",
-        lambda lane: False if lane == "text_assist" else True,
-    )
-    monkeypatch.setattr(
-        "agent.services.product_knowledge_service.httpx.post",
-        _unexpected_http_call,
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.provider_status",
+        lambda: {
+            "lane": "text_assist",
+            "configured": True,
+            "provider_id": "deepseek",
+            "model_id": "deepseek-v4-pro",
+            "execution_enabled": True,
+        },
     )
 
     response = complete_product_knowledge(
@@ -497,6 +492,6 @@ def test_complete_product_knowledge_qwen_skips_when_text_assist_lane_disabled(mo
         )
     )
 
-    assert response.extracted_product_facts["usp_list"] == []
     assert response.suggested_usp_list == []
-    assert "QWEN_USP_SUGGESTION_APPLIED" not in response.warnings
+    assert "TEXT_ASSIST_SUGGESTIONS_REQUIRE_REVIEW" not in response.warnings
+    assert response.suggested_size_or_volume == "N/A"

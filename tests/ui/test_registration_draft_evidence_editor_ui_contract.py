@@ -26,3 +26,8 @@ def test_registration_review_draft_panel_exposes_completion_editor_contract():
     assert "registration-ingredients-evidence" in content
     assert "registration-warnings-evidence" in content
     assert "no approval was changed" in content
+    assert "configured text_assist lane" in content
+    assert "AI_SUGGESTED" in content
+    assert "evidence_field_status" in content
+    assert "Recompute Warnings" in content
+    assert "Completion Provenance" in content

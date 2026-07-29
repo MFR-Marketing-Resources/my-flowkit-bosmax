@@ -156,10 +156,10 @@ describe("RegistrationReviewDraftPanel next-action guidance", () => {
 		const nextAction = screen.getByTestId("registration-next-action");
 		expect(nextAction).toHaveTextContent("Fill size or volume evidence");
 		expect(nextAction).toHaveTextContent(
-			"Recompute validates current evidence; it will not fill missing evidence.",
+			"Save & Recompute may use the configured text_assist lane to propose missing evidence.",
 		);
 		expect(nextAction).toHaveTextContent(
-			"Product Intelligence AI Fill remains a separate review-only provider action",
+			"AI suggestions remain review-only, never replace declared evidence, and never approve a field.",
 		);
 		expect(nextAction).toHaveTextContent(
 			"semantic vision analysis was skipped because provider execution is disabled",
@@ -186,6 +186,62 @@ describe("RegistrationReviewDraftPanel next-action guidance", () => {
 			"COVERED / BLOCKED_REVIEW_REQUIRED",
 		);
 		expect(taxonomy).toHaveTextContent("INTELLIGENCE_LOW");
+	});
+
+	it("labels AI suggestions, unavailable fallbacks, warnings, and provenance", () => {
+		const evidenceDraft = {
+			...reviewDraft,
+			canonical_candidate_fields: {
+				...reviewDraft.canonical_candidate_fields,
+				benefits: ["Melengkapkan rasa masakan"],
+				size_or_volume: "N/A",
+			},
+			human_review_fields: [
+				...reviewDraft.human_review_fields,
+				"benefits",
+				"size_or_volume",
+			],
+			evidence_field_status: {
+				benefits: {
+					status: "AI_SUGGESTED",
+					confidence: "MEDIUM",
+					provenance: [
+						"text_assist:deepseek:deepseek-v4-pro:review_only",
+					],
+					needs_review: true,
+				},
+				size_or_volume: {
+					status: "NOT_AVAILABLE",
+					confidence: "NOT_APPLICABLE",
+					provenance: [
+						"product_knowledge_completion_service:deterministic_fallback",
+					],
+					needs_review: true,
+				},
+			},
+			warnings: ["TEXT_ASSIST_SUGGESTIONS_REQUIRE_REVIEW"],
+			provenance: [
+				"product_knowledge_completion_service:v2",
+				"text_assist:deepseek:deepseek-v4-pro:review_only",
+			],
+		} as RegistrationReviewDraft & {
+			evidence_field_status: Record<string, unknown>;
+		};
+		renderPanel(evidenceDraft);
+
+		expect(screen.getByText("AI SUGGESTED")).toBeInTheDocument();
+		expect(screen.getByText("NOT AVAILABLE")).toBeInTheDocument();
+		expect(screen.getByText(/Confidence: MEDIUM/)).toHaveTextContent(
+			"text_assist:deepseek:deepseek-v4-pro:review_only",
+		);
+		expect(
+			screen.getByText("TEXT_ASSIST_SUGGESTIONS_REQUIRE_REVIEW"),
+		).toBeInTheDocument();
+		expect(
+			screen.getAllByText(
+				"text_assist:deepseek:deepseek-v4-pro:review_only",
+			).length,
+		).toBeGreaterThan(0);
 	});
 
 	it("saves a registry-backed manual taxonomy preview for commit", async () => {

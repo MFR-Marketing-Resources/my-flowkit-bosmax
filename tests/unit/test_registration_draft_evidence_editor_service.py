@@ -1,6 +1,8 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from agent.models.product_registration import (
     RegistrationReviewDraft,
     RegistrationReviewDraftEvidencePatchRequest,
@@ -9,6 +11,24 @@ from agent.services.registration_draft_evidence_editor_service import (
     patch_registration_draft_evidence,
 )
 from agent.services.registration_draft_storage_service import RegistrationDraftStorageService
+
+
+@pytest.fixture(autouse=True)
+def _disable_live_text_assist(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.provider_status",
+        lambda: {
+            "lane": "text_assist",
+            "configured": False,
+            "provider_id": "deepseek",
+            "model_id": "deepseek-v4-pro",
+            "execution_enabled": False,
+        },
+    )
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.complete_json",
+        lambda *args, **kwargs: pytest.fail("unexpected real text_assist call"),
+    )
 
 
 def test_patch_registration_draft_evidence_marks_draft_stale_without_recompute(tmp_path):

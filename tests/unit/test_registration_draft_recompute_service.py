@@ -1,6 +1,26 @@
+import pytest
+
 from agent.models.product_registration import RegistrationReviewDraft
 from agent.models.product_strategy_taxonomy import ProductStrategyTaxonomy
 from agent.services.registration_draft_recompute_service import recompute_review_draft
+
+
+@pytest.fixture(autouse=True)
+def _disable_live_text_assist(monkeypatch):
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.provider_status",
+        lambda: {
+            "lane": "text_assist",
+            "configured": False,
+            "provider_id": "deepseek",
+            "model_id": "deepseek-v4-pro",
+            "execution_enabled": False,
+        },
+    )
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.complete_json",
+        lambda *args, **kwargs: pytest.fail("unexpected real text_assist call"),
+    )
 
 
 def test_recompute_refreshes_candidates_readiness_and_freshness():
@@ -99,3 +119,62 @@ def test_recompute_preserves_manual_strategy_taxonomy_override():
     refreshed = recompute_review_draft(draft)
 
     assert refreshed.strategy_taxonomy == strategy_taxonomy
+
+
+def test_recompute_exposes_deepseek_suggestions_as_review_only_candidates(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.provider_status",
+        lambda: {
+            "lane": "text_assist",
+            "configured": True,
+            "provider_id": "deepseek",
+            "model_id": "deepseek-v4-pro",
+            "execution_enabled": True,
+        },
+    )
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.complete_json",
+        lambda *args, **kwargs: {
+            "product_knowledge_summary": "Serbuk perasa untuk masakan harian.",
+            "benefits": ["Melengkapkan rasa masakan"],
+            "usage_summary": "Tabur secukup rasa ketika memasak.",
+            "target_customer": "Pengguna yang memasak di rumah",
+            "usp_list": ["Mudah digunakan"],
+            "size_or_volume": None,
+            "package_notes": "Pek serbuk.",
+            "warnings_or_limitations": [],
+            "confidence": "MEDIUM",
+            "provenance": ["SOURCE_TEXT_REVIEW_ONLY"],
+            "needs_review": True,
+        },
+    )
+    draft = RegistrationReviewDraft(
+        review_draft_id="draft-deepseek-recompute",
+        review_status="NEEDS_HUMAN_REVIEW",
+        source_lane="OWNED",
+        declared_evidence_fields={
+            "source_lane": "OWNED",
+            "product_name": "Serbuk Perasa Warisan",
+            "paste_anything_about_product": (
+                "Serbuk perasa untuk masakan harian. Tabur secukup rasa ketika memasak."
+            ),
+        },
+        approval_checklist={"benefits": True},
+    )
+
+    refreshed = recompute_review_draft(draft)
+
+    assert refreshed.review_status == "NEEDS_HUMAN_REVIEW"
+    assert refreshed.canonical_candidate_fields["benefits"] == [
+        "Melengkapkan rasa masakan"
+    ]
+    assert refreshed.evidence_field_status["benefits"].status == "AI_SUGGESTED"
+    assert refreshed.evidence_field_status["benefits"].needs_review is True
+    assert refreshed.approval_checklist["benefits"] is False
+    assert "benefits" in refreshed.human_review_fields
+    assert (
+        "text_assist:deepseek:deepseek-v4-pro:review_only"
+        in refreshed.provenance
+    )

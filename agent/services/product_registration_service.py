@@ -472,6 +472,10 @@ def create_registration_review_draft(
     """
     draft_id = f"draft-{uuid.uuid4().hex[:8]}"
     
+    evidence_field_status = dict(
+        getattr(completion, "evidence_field_status", {}) or {}
+    )
+
     # 1. Map Declared Evidence
     declared_evidence = dict(completion.declared_input_fields or completion.extracted_product_facts)
     # Ensure source lane is captured
@@ -494,6 +498,11 @@ def create_registration_review_draft(
     if completion.completion_status == "BLOCKED" or completion.claim_gate == "CLAIM_BLOCKED":
         review_status = "BLOCKED"
     elif completion.completion_status == "NEEDS_REVIEW" or completion.claim_gate == "CLAIM_REVIEW_REQUIRED":
+        review_status = "NEEDS_HUMAN_REVIEW"
+    elif any(
+        metadata.needs_review
+        for metadata in evidence_field_status.values()
+    ):
         review_status = "NEEDS_HUMAN_REVIEW"
     
     # 4. Filter Candidates based on Risks
@@ -551,6 +560,10 @@ def create_registration_review_draft(
             or candidates.get("type")
         ),
     }
+    if isinstance(strategy_payload.get("benefits"), list):
+        strategy_payload["benefits"] = "\n".join(
+            str(item) for item in strategy_payload["benefits"] if str(item).strip()
+        )
     strategy_taxonomy = build_product_strategy_taxonomy_candidate(
         strategy_payload,
         materialization_status="PREVIEW",
@@ -563,6 +576,7 @@ def create_registration_review_draft(
         declared_evidence_fields=declared_evidence,
         system_inferred_fields=system_inferred,
         canonical_candidate_fields=candidates,
+        evidence_field_status=evidence_field_status,
         human_review_fields=completion.human_review_fields,
         blocked_fields=completion.blocked_fields,
         missing_required_evidence=completion.missing_required_evidence,

@@ -3,14 +3,13 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import os
 import uuid
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-import httpx
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agent.models.product_knowledge import (
     ModeReadiness,
@@ -18,6 +17,7 @@ from agent.models.product_knowledge import (
     ProductKnowledgeCompleteResponse,
     AIFormImportResponse,
 )
+from agent.models.product_registration import EvidenceCompletionFieldMetadata
 from agent.services.bosmax_product_family import derive_bosmax_product_family
 from agent.services.product_intelligence_service import (
     BLOCKED_CLAIM_TOKENS,
@@ -30,39 +30,40 @@ from agent.config import BASE_DIR
 from agent.services.registration_hook_cta_generation_service import (
     generate_registration_hook_cta,
 )
-from agent.services.ai_provider_settings_service import (
-    get_lane_api_key,
-    get_lane_model,
-    get_lane_provider,
-    get_provider_api_key,
-    is_lane_execution_enabled,
+from agent.services import ai_copy_provider_adapter
+from agent.services.ai_copy_provider_adapter import (
+    AICopyProviderError,
+    AICopyProviderNotConfigured,
+    ERR_RESPONSE_INVALID,
 )
 
 
 LOGGER = logging.getLogger(__name__)
-QWEN_TEXT_BASE_URL = str(os.environ.get("DASHSCOPE_COMPAT_BASE_URL") or "").strip().rstrip("/")
-QWEN_TEXT_MODEL = str(os.environ.get("QWEN_TEXT_MODEL") or "qwen-plus").strip() or "qwen-plus"
 
 
-def _resolve_text_assist_qwen_model() -> str:
-    """Honor the operator's UI-selected text_assist model ONLY when the lane is
-    pointed at qwen (this path is a qwen-specific transport). Otherwise keep the
-    env/default qwen model. Default lane == qwen/qwen-plus, so this is a no-op in
-    the default configuration."""
-    try:
-        if get_lane_provider("text_assist") == "qwen":
-            lane_model = get_lane_model("text_assist")
-            if lane_model:
-                return lane_model
-    except Exception:
-        pass
-    return QWEN_TEXT_MODEL
-QWEN_TEXT_TIMEOUT_SECONDS = 20.0
-QWEN_FALLBACK_BASE_URLS = [
-    "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-    "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
-]
+class TextAssistEvidenceCompletion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_knowledge_summary: str | None = None
+    benefits: list[str] = Field(default_factory=list)
+    usage_summary: str | None = None
+    target_customer: str | None = None
+    usp_list: list[str] = Field(default_factory=list)
+    size_or_volume: str | None = None
+    package_notes: str | None = None
+    warnings_or_limitations: list[str] = Field(default_factory=list)
+    confidence: Literal["HIGH", "MEDIUM", "LOW"] = "LOW"
+    provenance: list[str] = Field(default_factory=list)
+    needs_review: bool = True
+
+
+class _SmartRegistrationCompletionResponse(ProductKnowledgeCompleteResponse):
+    suggested_product_knowledge_summary: str | None = None
+    suggested_benefits: list[str] = Field(default_factory=list)
+    suggested_warnings_or_limitations: list[str] = Field(default_factory=list)
+    evidence_field_status: dict[str, EvidenceCompletionFieldMetadata] = Field(
+        default_factory=dict
+    )
 
 
 AI_FORM_ACCEPTED_FORMATS = [
@@ -159,20 +160,27 @@ def _resolve_extraction_status(request: ProductKnowledgeCompleteRequest) -> str 
 
 def complete_product_knowledge(
     request: ProductKnowledgeCompleteRequest,
+    *,
+    enable_text_assist: bool = False,
 ) -> ProductKnowledgeCompleteResponse:
     request = _normalize_completion_request(request)
 
     # 1. Fact Extraction from messy text
     extracted_facts = _extract_facts(request)
-    qwen_usp_applied = False
 
     # 2. Claim Analysis first so manual-owned sensitive lanes can influence taxonomy safely.
     claim_gate, claim_tokens, claim_risk, copy_safety = _analyze_claims(request, extracted_facts)
-    if claim_gate == "CLAIM_SAFE":
-        qwen_usp_list = _extract_qwen_usp_suggestions(request, extracted_facts)
-        if qwen_usp_list:
-            extracted_facts["usp_list"] = qwen_usp_list
-            qwen_usp_applied = True
+    text_assist_completion: TextAssistEvidenceCompletion | None = None
+    text_assist_warnings: list[str] = []
+    text_assist_provenance: list[str] = []
+    if enable_text_assist and claim_gate == "CLAIM_SAFE":
+        (
+            text_assist_completion,
+            text_assist_warnings,
+            text_assist_provenance,
+        ) = _complete_missing_evidence_with_text_assist(request)
+    elif enable_text_assist:
+        text_assist_warnings.append("TEXT_ASSIST_SKIPPED_CLAIM_GATE")
     taxonomy_candidate = _resolve_taxonomy_candidate(request, extracted_facts, claim_tokens)
 
     # 3. Build temporary product dictionary for inference
@@ -196,10 +204,6 @@ def complete_product_knowledge(
     
     # 7. Map suggested fields
     normalized_name = _build_normalized_name(request, extracted_facts)
-    suggested_usp_list = extracted_facts.get("usp_list", [])
-    if not suggested_usp_list and request.benefits_text:
-        # Basic split by newline or bullet
-        suggested_usp_list = [line.strip("- *•").strip() for line in request.benefits_text.split("\n") if line.strip()]
     hook_cta = generate_registration_hook_cta(
         {
             "product_name": normalized_name or request.product_name,
@@ -213,9 +217,19 @@ def complete_product_knowledge(
             "silo": taxonomy_candidate.get("silo"),
         }
     )
+    evidence_candidates, evidence_field_status = (
+        _resolve_evidence_completion_candidates(
+            request,
+            extracted_facts,
+            hook_cta,
+            text_assist_completion,
+            text_assist_provenance,
+        )
+    )
+    suggested_usp_list = list(evidence_candidates.get("usp_list") or [])
 
     image_analysis = dict(intelligence.get("image_analysis") or {})
-    warnings = list(intelligence.get("warnings", []))
+    warnings = list(intelligence.get("warnings", [])) + text_assist_warnings
     if image_size_warning:
         warnings.append(image_size_warning)
     extraction_status = _resolve_extraction_status(request)
@@ -224,22 +238,28 @@ def complete_product_knowledge(
         if "TIKTOKSHOP_MANUAL_COMPLETION_REQUIRED" not in missing_evidence:
             missing_evidence.append("TIKTOKSHOP_MANUAL_COMPLETION_REQUIRED")
 
-    provenance = ["product_knowledge_completion_service:v1"]
-    if qwen_usp_applied:
-        provenance.append("qwen_usp_suggest_only:v1")
+    provenance = ["product_knowledge_completion_service:v2"] + text_assist_provenance
+    human_review_fields = _identify_review_fields(intelligence, physics, claim_gate)
+    human_review_fields.extend(
+        field
+        for field, metadata in evidence_field_status.items()
+        if metadata.needs_review
+    )
+    human_review_fields = list(dict.fromkeys(human_review_fields))
 
-    if qwen_usp_applied:
-        warnings.append("QWEN_USP_SUGGESTION_APPLIED")
-
-    return ProductKnowledgeCompleteResponse(
+    return _SmartRegistrationCompletionResponse(
         completion_status=completion_status,
         input_quality_status=input_quality,
         declared_evidence_summary=_build_evidence_summary(request, extracted_facts),
         declared_input_fields=_build_declared_input_fields(request),
         extracted_product_facts=extracted_facts,
         suggested_normalized_name=normalized_name,
-        suggested_size_or_volume=extracted_facts.get("size_or_volume") or request.size_or_volume,
-        suggested_package_notes=request.package_notes,
+        suggested_product_knowledge_summary=evidence_candidates.get(
+            "product_knowledge_summary"
+        ),
+        suggested_benefits=list(evidence_candidates.get("benefits") or []),
+        suggested_size_or_volume=evidence_candidates.get("size_or_volume"),
+        suggested_package_notes=evidence_candidates.get("package_notes"),
         suggested_source_lane=request.source_lane,
         suggested_category=taxonomy_candidate.get("category"),
         suggested_subcategory=taxonomy_candidate.get("subcategory"),
@@ -256,11 +276,15 @@ def complete_product_knowledge(
         suggested_copy_formula=intelligence.get("copy_formula"),
         suggested_silo=taxonomy_candidate.get("silo"),
         suggested_trigger_id=taxonomy_candidate.get("trigger_id"),
-        suggested_target_customer=hook_cta.get("target_customer"),
-        suggested_usage_summary=hook_cta.get("usage_summary"),
+        suggested_target_customer=evidence_candidates.get("target_customer"),
+        suggested_usage_summary=evidence_candidates.get("usage_summary"),
         suggested_usp_list=suggested_usp_list[:5],
+        suggested_warnings_or_limitations=list(
+            evidence_candidates.get("warnings_or_limitations") or []
+        ),
         suggested_hook_angles=list(hook_cta.get("hook_angles") or []),
         suggested_cta_angles=list(hook_cta.get("cta_angles") or []),
+        evidence_field_status=evidence_field_status,
         claim_tokens=claim_tokens,
         claim_gate=claim_gate,
         claim_risk_level=claim_risk,
@@ -275,7 +299,7 @@ def complete_product_knowledge(
         image_analysis_image_url=image_analysis.get("image_url"),
         extraction_status=extraction_status,
         missing_required_evidence=missing_evidence,
-        human_review_fields=_identify_review_fields(intelligence, physics, claim_gate),
+        human_review_fields=human_review_fields,
         readiness_by_mode=readiness,
         provenance=provenance,
         warnings=warnings + (["AFFILIATE_LANE_CONTAMINATION_RISK"] if _normalize_source_lane(request.source_lane) in ["FASTMOSS", "TIKTOKSHOP"] else []),
@@ -316,77 +340,31 @@ def _extract_facts(request: ProductKnowledgeCompleteRequest) -> dict[str, Any]:
     return facts
 
 
-def _build_qwen_usp_source_text(request: ProductKnowledgeCompleteRequest) -> str:
-    parts = [
-        request.product_name,
-        request.paste_anything_about_product,
-        request.ingredients_text,
-        request.usage_text,
-        request.target_customer_text,
-    ]
-    return "\n".join(str(part).strip() for part in parts if str(part or "").strip())
+def _clean_suggestion_text(value: Any, *, limit: int = 800) -> str | None:
+    normalized = " ".join(str(value or "").split()).strip(" -•*")
+    return normalized[:limit] if normalized else None
 
 
-def _extract_json_object_from_text(payload: str) -> dict[str, Any] | None:
-    text = str(payload or "").strip()
-    if not text:
-        return None
-
-    fenced_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S | re.I)
-    if fenced_match:
-        try:
-            return json.loads(fenced_match.group(1))
-        except json.JSONDecodeError:
-            return None
-
-    start = text.find("{")
-    end = text.rfind("}")
-    if start >= 0 and end > start:
-        try:
-            return json.loads(text[start : end + 1])
-        except json.JSONDecodeError:
-            return None
-    return None
-
-
-def _extract_qwen_message_text(response_json: dict[str, Any]) -> str:
-    choices = list(response_json.get("choices") or [])
-    if not choices:
-        return ""
-    message = dict(choices[0].get("message") or {})
-    content = message.get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        chunks: list[str] = []
-        for item in content:
-            if isinstance(item, dict) and str(item.get("type") or "") == "text":
-                text = str(item.get("text") or "").strip()
-                if text:
-                    chunks.append(text)
-        return "\n".join(chunks)
-    return ""
-
-
-def _normalize_qwen_usp_list(payload: dict[str, Any] | None) -> list[str]:
-    if not payload:
-        return []
-    raw_items = payload.get("usp_list")
-    if not isinstance(raw_items, list):
-        return []
+def _clean_suggestion_list(value: Any, *, limit: int = 5) -> list[str]:
+    if isinstance(value, str):
+        raw_items = value.splitlines()
+    elif isinstance(value, list):
+        raw_items = value
+    else:
+        raw_items = []
 
     normalized: list[str] = []
     seen: set[str] = set()
     for item in raw_items:
-        value = " ".join(str(item or "").split()).strip(" -•*")
-        if not value:
+        cleaned = _clean_suggestion_text(item, limit=240)
+        if not cleaned:
             continue
-        key = value.casefold()
+        key = cleaned.casefold()
         if key in seen:
             continue
         seen.add(key)
-        normalized.append(value[:160])
-        if len(normalized) >= 5:
+        normalized.append(cleaned)
+        if len(normalized) >= limit:
             break
     return normalized
 
@@ -395,108 +373,423 @@ def _extract_qwen_usp_suggestions(
     request: ProductKnowledgeCompleteRequest,
     facts: dict[str, Any],
 ) -> list[str]:
-    if facts.get("usp_list"):
-        return []
-    if request.benefits_text:
+    """Backward-compatible private helper routed through the generic adapter.
+
+    Smart Registration no longer calls this Qwen-specific entry point. It remains
+    only for older internal callers and fails closed unless text_assist is
+    explicitly configured to Qwen.
+    """
+    if facts.get("usp_list") or request.benefits_text:
         return []
     if _normalize_source_lane(request.source_lane) not in {"OWNED", "MANUAL"}:
         return []
-    if not str(request.paste_anything_about_product or "").strip():
+    source_text = "\n".join(
+        str(item).strip()
+        for item in (
+            request.product_name,
+            request.paste_anything_about_product,
+            request.ingredients_text,
+            request.usage_text,
+            request.target_customer_text,
+        )
+        if str(item or "").strip()
+    )
+    status = ai_copy_provider_adapter.provider_status()
+    if status.get("provider_id") != "qwen" or not status.get("configured"):
         return []
+    try:
+        payload = ai_copy_provider_adapter.complete_json(
+            (
+                "Extract only explicit USP candidates. Return strict JSON with "
+                "one key named usp_list. No markdown and no invented claims."
+            ),
+            source_text,
+        )
+    except (AICopyProviderError, AICopyProviderNotConfigured):
+        return []
+    return _clean_suggestion_list(payload.get("usp_list"))
 
-    source_text = _build_qwen_usp_source_text(request)
-    if not source_text:
-        return []
 
-    # PROVIDER-BOUNDARY GUARD (fail closed): this is a Qwen-specific transport
-    # (posts to the Qwen/DashScope /chat/completions endpoint). It must NEVER read
-    # or send a non-Qwen lane key. If the operator has routed the text_assist lane
-    # to any non-Qwen provider, skip extraction entirely — before any key is read.
-    if get_lane_provider("text_assist") != "qwen":
-        LOGGER.info("Qwen USP extraction skipped: text_assist lane provider is not qwen")
-        return []
-
-    api_key = get_lane_api_key("text_assist")
-    if not api_key:
-        return []
-    if not is_lane_execution_enabled("text_assist"):
-        LOGGER.info("Qwen USP extraction skipped: text_assist lane execution disabled")
-        return []
-
-    payload = {
-        "model": _resolve_text_assist_qwen_model(),
-        "temperature": 0.1,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You extract only explicit product USP candidates from messy seller text. "
-                    "Return strict JSON with one key: usp_list. "
-                    "Rules: max 5 items, no invented facts, no medical or exaggerated claims unless the exact wording is already present, "
-                    "no category or taxonomy output, no markdown."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    "Extract explicit USP candidates from this product text.\n"
-                    "Return JSON only in the form {\"usp_list\": [\"...\"]}.\n\n"
-                    f"{source_text}"
-                ),
-            },
-        ],
+def _text_assist_source_payload(
+    request: ProductKnowledgeCompleteRequest,
+) -> dict[str, Any]:
+    return {
+        "product_name": request.product_name,
+        "product_knowledge_text": request.product_knowledge_text,
+        "benefits_text": request.benefits_text,
+        "usage_text": request.usage_text,
+        "target_customer_text": request.target_customer_text,
+        "ingredients_text": request.ingredients_text,
+        "warnings_text": request.warnings_text,
+        "size_or_volume": request.size_or_volume,
+        "package_notes": request.package_notes,
+        "paste_anything_about_product": request.paste_anything_about_product,
+        "category": request.category,
+        "source_lane": request.source_lane,
     }
 
-    last_error: Exception | None = None
-    for base_url in _iter_qwen_base_urls():
-        try:
-            response = httpx.post(
-                f"{base_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-                timeout=QWEN_TEXT_TIMEOUT_SECONDS,
-            )
-            response.raise_for_status()
-            response_json = response.json()
-            message_text = _extract_qwen_message_text(response_json)
-            return _normalize_qwen_usp_list(_extract_json_object_from_text(message_text))
-        except httpx.HTTPStatusError as exc:
-            last_error = exc
-            if exc.response.status_code in {401, 403, 404}:
-                continue
-            LOGGER.warning("Qwen USP extraction failed closed via %s: %s", base_url, exc)
-            return []
-        except httpx.RequestError as exc:
-            last_error = exc
-            continue
-        except Exception as exc:
-            last_error = exc
-            LOGGER.warning("Qwen USP extraction failed closed via %s: %s", base_url, exc)
-            return []
 
-    if last_error is not None:
-        LOGGER.warning("Qwen USP extraction failed closed after regional fallback: %s", last_error)
-    return []
+def _has_sufficient_text_assist_evidence(payload: dict[str, Any]) -> bool:
+    source_text = " ".join(
+        str(payload.get(field) or "").strip()
+        for field in (
+            "product_knowledge_text",
+            "benefits_text",
+            "usage_text",
+            "target_customer_text",
+            "ingredients_text",
+            "warnings_text",
+            "paste_anything_about_product",
+        )
+    ).strip()
+    return bool(str(payload.get("product_name") or "").strip()) and len(source_text) >= 20
 
 
-def _iter_qwen_base_urls() -> list[str]:
-    ordered: list[str] = []
-    if QWEN_TEXT_BASE_URL:
-        ordered.append(QWEN_TEXT_BASE_URL)
-    ordered.extend(QWEN_FALLBACK_BASE_URLS)
+def _normalize_text_assist_completion(
+    completion: TextAssistEvidenceCompletion,
+) -> TextAssistEvidenceCompletion:
+    confidence = "MEDIUM" if completion.confidence == "HIGH" else completion.confidence
+    return completion.model_copy(
+        update={
+            "product_knowledge_summary": _clean_suggestion_text(
+                completion.product_knowledge_summary
+            ),
+            "benefits": _clean_suggestion_list(completion.benefits),
+            "usage_summary": _clean_suggestion_text(completion.usage_summary),
+            "target_customer": _clean_suggestion_text(completion.target_customer),
+            "usp_list": _clean_suggestion_list(completion.usp_list),
+            "size_or_volume": _clean_suggestion_text(
+                completion.size_or_volume,
+                limit=120,
+            ),
+            "package_notes": _clean_suggestion_text(
+                completion.package_notes,
+                limit=240,
+            ),
+            "warnings_or_limitations": _clean_suggestion_list(
+                completion.warnings_or_limitations
+            ),
+            "confidence": confidence,
+            "needs_review": True,
+        }
+    )
 
-    unique: list[str] = []
-    seen: set[str] = set()
-    for item in ordered:
-        normalized = str(item or "").strip().rstrip("/")
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        unique.append(normalized)
-    return unique
+
+def _complete_missing_evidence_with_text_assist(
+    request: ProductKnowledgeCompleteRequest,
+) -> tuple[TextAssistEvidenceCompletion | None, list[str], list[str]]:
+    status = ai_copy_provider_adapter.provider_status()
+    if not bool(status.get("configured")):
+        return None, ["TEXT_ASSIST_NOT_CONFIGURED"], []
+
+    source_payload = _text_assist_source_payload(request)
+    if not _has_sufficient_text_assist_evidence(source_payload):
+        return None, ["TEXT_ASSIST_SKIPPED_INSUFFICIENT_SOURCE_EVIDENCE"], []
+
+    provider_id = str(status.get("provider_id") or "unknown")
+    model_id = str(status.get("model_id") or "unknown")
+    provider_provenance = [
+        f"text_assist:{provider_id}:{model_id}:review_only",
+    ]
+    system_prompt = (
+        "You create review-only product evidence suggestions from supplied source text. "
+        "Return one strict JSON object with exactly these keys: "
+        "product_knowledge_summary, benefits, usage_summary, target_customer, usp_list, "
+        "size_or_volume, package_notes, warnings_or_limitations, confidence, provenance, "
+        "needs_review. Use null or [] when the source is insufficient. Never invent medical, "
+        "cure, guaranteed-result, permanence, regulatory, platform-approval, safety, or "
+        "performance claims. Size and package facts must appear explicitly in the source. "
+        "confidence must be LOW or MEDIUM, provenance must be a JSON string array, "
+        "needs_review must be true, and no markdown is allowed."
+    )
+    user_prompt = (
+        "Complete only missing fields from this source evidence. Existing non-empty fields "
+        "are authoritative and must not be rewritten. JSON source evidence:\n"
+        f"{json.dumps(source_payload, ensure_ascii=False, sort_keys=True)}"
+    )
+
+    try:
+        raw_completion = ai_copy_provider_adapter.complete_json(
+            system_prompt,
+            user_prompt,
+        )
+        if not isinstance(raw_completion, dict) or set(raw_completion) != set(
+            TextAssistEvidenceCompletion.model_fields
+        ):
+            return None, ["TEXT_ASSIST_INVALID_RESPONSE"], []
+        completion = _normalize_text_assist_completion(
+            TextAssistEvidenceCompletion.model_validate(raw_completion)
+        )
+    except AICopyProviderNotConfigured:
+        return None, ["TEXT_ASSIST_NOT_CONFIGURED"], []
+    except AICopyProviderError as exc:
+        warning = (
+            "TEXT_ASSIST_INVALID_RESPONSE"
+            if exc.code == ERR_RESPONSE_INVALID
+            else "TEXT_ASSIST_CALL_FAILED"
+        )
+        LOGGER.warning("Smart Registration text_assist failed closed: %s", exc.code)
+        return None, [warning], []
+    except ValidationError:
+        LOGGER.warning("Smart Registration text_assist returned schema-invalid JSON")
+        return None, ["TEXT_ASSIST_INVALID_RESPONSE"], []
+    except Exception as exc:
+        LOGGER.warning(
+            "Smart Registration text_assist failed closed with an unexpected error: %s",
+            type(exc).__name__,
+        )
+        return None, ["TEXT_ASSIST_CALL_FAILED"], []
+
+    ai_claim_gate, _, _, _ = _analyze_claims(
+        ProductKnowledgeCompleteRequest(
+            product_name=request.product_name,
+            product_knowledge_text=completion.product_knowledge_summary,
+            benefits_text="\n".join(completion.benefits),
+            usage_text=completion.usage_summary,
+            target_customer_text=completion.target_customer,
+            warnings_text="\n".join(completion.warnings_or_limitations),
+            paste_anything_about_product="\n".join(completion.usp_list),
+            source_lane=request.source_lane,
+        ),
+        {},
+    )
+    if ai_claim_gate != "CLAIM_SAFE":
+        return None, ["TEXT_ASSIST_UNSAFE_SUGGESTION_DISCARDED"], []
+
+    return completion, ["TEXT_ASSIST_SUGGESTIONS_REQUIRE_REVIEW"], provider_provenance
+
+
+def _field_metadata(
+    status: str,
+    *,
+    confidence: str,
+    provenance: list[str],
+) -> EvidenceCompletionFieldMetadata:
+    return EvidenceCompletionFieldMetadata(
+        status=status,
+        confidence=confidence,
+        provenance=provenance,
+        needs_review=status != "EXACT_SOURCE_EVIDENCE",
+    )
+
+
+def _resolve_evidence_completion_candidates(
+    request: ProductKnowledgeCompleteRequest,
+    extracted_facts: dict[str, Any],
+    hook_cta: dict[str, Any],
+    text_assist: TextAssistEvidenceCompletion | None,
+    text_assist_provenance: list[str],
+) -> tuple[dict[str, Any], dict[str, EvidenceCompletionFieldMetadata]]:
+    candidates: dict[str, Any] = {}
+    metadata: dict[str, EvidenceCompletionFieldMetadata] = {}
+    ai_confidence = text_assist.confidence if text_assist else "LOW"
+
+    def set_field(
+        field: str,
+        value: Any,
+        status: str,
+        confidence: str,
+        provenance: list[str],
+    ) -> None:
+        candidates[field] = value
+        metadata[field] = _field_metadata(
+            status,
+            confidence=confidence,
+            provenance=provenance,
+        )
+
+    declared_summary = _clean_suggestion_text(request.product_knowledge_text)
+    if declared_summary:
+        set_field(
+            "product_knowledge_summary",
+            declared_summary,
+            "EXACT_SOURCE_EVIDENCE",
+            "HIGH",
+            ["declared_evidence:product_knowledge_text"],
+        )
+    elif text_assist and text_assist.product_knowledge_summary:
+        set_field(
+            "product_knowledge_summary",
+            text_assist.product_knowledge_summary,
+            "AI_SUGGESTED",
+            ai_confidence,
+            text_assist_provenance,
+        )
+
+    declared_benefits = _clean_suggestion_list(request.benefits_text)
+    if declared_benefits:
+        set_field(
+            "benefits",
+            declared_benefits,
+            "EXACT_SOURCE_EVIDENCE",
+            "HIGH",
+            ["declared_evidence:benefits_text"],
+        )
+    elif text_assist and text_assist.benefits:
+        set_field(
+            "benefits",
+            text_assist.benefits,
+            "AI_SUGGESTED",
+            ai_confidence,
+            text_assist_provenance,
+        )
+
+    declared_usage = _clean_suggestion_text(request.usage_text)
+    if declared_usage:
+        set_field(
+            "usage_summary",
+            declared_usage,
+            "EXACT_SOURCE_EVIDENCE",
+            "HIGH",
+            ["declared_evidence:usage_text"],
+        )
+    elif text_assist and text_assist.usage_summary:
+        set_field(
+            "usage_summary",
+            text_assist.usage_summary,
+            "AI_SUGGESTED",
+            ai_confidence,
+            text_assist_provenance,
+        )
+    elif _clean_suggestion_text(hook_cta.get("usage_summary")):
+        set_field(
+            "usage_summary",
+            _clean_suggestion_text(hook_cta.get("usage_summary")),
+            "SYSTEM_INFERRED",
+            "LOW",
+            ["registration_hook_cta_generation_service:v1"],
+        )
+
+    declared_target = _clean_suggestion_text(request.target_customer_text)
+    if declared_target:
+        set_field(
+            "target_customer",
+            declared_target,
+            "EXACT_SOURCE_EVIDENCE",
+            "HIGH",
+            ["declared_evidence:target_customer_text"],
+        )
+    elif text_assist and text_assist.target_customer:
+        set_field(
+            "target_customer",
+            text_assist.target_customer,
+            "AI_SUGGESTED",
+            ai_confidence,
+            text_assist_provenance,
+        )
+    elif _clean_suggestion_text(hook_cta.get("target_customer")):
+        set_field(
+            "target_customer",
+            _clean_suggestion_text(hook_cta.get("target_customer")),
+            "SYSTEM_INFERRED",
+            "LOW",
+            ["registration_hook_cta_generation_service:v1"],
+        )
+
+    declared_usp = declared_benefits or _clean_suggestion_list(
+        extracted_facts.get("usp_list")
+    )
+    if declared_usp:
+        set_field(
+            "usp_list",
+            declared_usp,
+            "EXACT_SOURCE_EVIDENCE",
+            "HIGH",
+            ["declared_evidence:benefits_text"],
+        )
+    elif text_assist and (text_assist.usp_list or text_assist.benefits):
+        set_field(
+            "usp_list",
+            text_assist.usp_list or text_assist.benefits,
+            "AI_SUGGESTED",
+            ai_confidence,
+            text_assist_provenance,
+        )
+    else:
+        candidates["usp_list"] = []
+
+    exact_size = _clean_suggestion_text(
+        extracted_facts.get("size_or_volume") or request.size_or_volume,
+        limit=120,
+    )
+    if exact_size:
+        set_field(
+            "size_or_volume",
+            exact_size,
+            "EXACT_SOURCE_EVIDENCE",
+            "HIGH",
+            ["deterministic_extraction:size_or_volume"],
+        )
+    elif text_assist and text_assist.size_or_volume:
+        set_field(
+            "size_or_volume",
+            text_assist.size_or_volume,
+            "AI_SUGGESTED",
+            ai_confidence,
+            text_assist_provenance,
+        )
+    else:
+        set_field(
+            "size_or_volume",
+            "N/A",
+            "NOT_AVAILABLE",
+            "NOT_APPLICABLE",
+            ["product_knowledge_completion_service:deterministic_fallback"],
+        )
+
+    exact_package = _clean_suggestion_text(request.package_notes, limit=240)
+    if exact_package:
+        set_field(
+            "package_notes",
+            exact_package,
+            "EXACT_SOURCE_EVIDENCE",
+            "HIGH",
+            ["declared_evidence:package_notes"],
+        )
+    elif text_assist and text_assist.package_notes:
+        set_field(
+            "package_notes",
+            text_assist.package_notes,
+            "AI_SUGGESTED",
+            ai_confidence,
+            text_assist_provenance,
+        )
+    else:
+        set_field(
+            "package_notes",
+            "NOT_AVAILABLE",
+            "NOT_AVAILABLE",
+            "NOT_APPLICABLE",
+            ["product_knowledge_completion_service:deterministic_fallback"],
+        )
+
+    exact_warnings = _clean_suggestion_list(request.warnings_text)
+    if exact_warnings:
+        set_field(
+            "warnings_or_limitations",
+            exact_warnings,
+            "EXACT_SOURCE_EVIDENCE",
+            "HIGH",
+            ["declared_evidence:warnings_text"],
+        )
+    elif text_assist and text_assist.warnings_or_limitations:
+        set_field(
+            "warnings_or_limitations",
+            text_assist.warnings_or_limitations,
+            "AI_SUGGESTED",
+            ai_confidence,
+            text_assist_provenance,
+        )
+    else:
+        set_field(
+            "warnings_or_limitations",
+            ["NOT_AVAILABLE"],
+            "NOT_AVAILABLE",
+            "NOT_APPLICABLE",
+            ["product_knowledge_completion_service:deterministic_fallback"],
+        )
+
+    return candidates, metadata
 
 
 _SIZE_PATTERNS = [
@@ -859,6 +1152,8 @@ def _analyze_claims(request: ProductKnowledgeCompleteRequest, facts: dict[str, A
         request.product_name,
         request.product_knowledge_text,
         request.benefits_text,
+        request.usage_text,
+        request.target_customer_text,
         request.ingredients_text,
         request.warnings_text,
         request.paste_anything_about_product
