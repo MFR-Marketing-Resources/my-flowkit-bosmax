@@ -14,6 +14,36 @@ from agent.services.product_strategy_taxonomy_service import (
 
 LIP_KEY = ("beauty_makeup", "lipstick_lip_tint", "LIP_COLOR")
 REMPAH_KEY = ("food_cooking", "rempah_seasoning", "SPICE_SEASONING")
+EXPANDED_KEYS = {
+    ("baby_care", "baby_diaper", "BABY_DIAPER"),
+    (
+        "electronics_accessory",
+        "electronics_accessory",
+        "ELECTRONICS_ACCESSORY",
+    ),
+    (
+        "electronics_accessory",
+        "electronics_wearable",
+        "ELECTRONICS_SMALL_DEVICE",
+    ),
+    ("fashion_apparel", "apparel", "APPAREL"),
+    ("fashion_apparel", "modestwear", "MODESTWEAR"),
+    ("fashion_apparel", "sportswear", "SPORTSWEAR"),
+    ("food_cooking", "sambal", "PACKAGED_SAUCE_SAMBAL"),
+    ("food_cooking", "sauce", "PACKAGED_SAUCE_SAMBAL"),
+    ("food_ready_to_eat", "instant_food", "PACKAGED_FOOD"),
+    ("food_ready_to_eat", "packaged_food", "PACKAGED_FOOD"),
+    ("fragrance", "fragrance", "FRAGRANCE"),
+    ("home_storage", "storage_organizer", "HOUSEHOLD_STORAGE"),
+    (
+        "household_cleaning",
+        "household_cleaner",
+        "HOUSEHOLD_CLEANER",
+    ),
+    ("household_laundry", "detergent", "LAUNDRY_DETERGENT"),
+    ("household_laundry", "softener", "FABRIC_SOFTENER"),
+}
+ALL_STRATEGY_KEYS = {LIP_KEY, REMPAH_KEY, *EXPANDED_KEYS}
 
 
 def _taxonomy(
@@ -107,7 +137,8 @@ async def _install_preview_fakes(
 
 
 def test_p4_registry_is_product_type_keyed_not_product_id_keyed():
-    assert set(PRODUCT_TYPE_COPY_STRATEGY_REGISTRY) == {LIP_KEY, REMPAH_KEY}
+    assert set(PRODUCT_TYPE_COPY_STRATEGY_REGISTRY) == ALL_STRATEGY_KEYS
+    assert len(PRODUCT_TYPE_COPY_STRATEGY_REGISTRY) == 17
     assert all(len(key) == 3 for key in PRODUCT_TYPE_COPY_STRATEGY_REGISTRY)
     assert not any(
         "product_id" in entry for entry in PRODUCT_TYPE_COPY_STRATEGY_REGISTRY.values()
@@ -117,9 +148,9 @@ def test_p4_registry_is_product_type_keyed_not_product_id_keyed():
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("product_id", "key"),
-    (
-        ("future-owner-verified-lip-product", LIP_KEY),
-        ("future-owner-verified-rempah-product", REMPAH_KEY),
+    tuple(
+        (f"future-owner-verified-product-{index}", key)
+        for index, key in enumerate(sorted(ALL_STRATEGY_KEYS))
     ),
 )
 async def test_p4_accepts_arbitrary_verified_products_for_all_durations(
@@ -266,9 +297,9 @@ async def test_p4_blocks_registered_type_with_wrong_scene(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_p4_blocks_verified_product_without_registered_strategy(monkeypatch):
-    product_id = "verified-fragrance-product"
-    key = ("fragrance", "fragrance", "FRAGRANCE")
-    product = _product(product_id, key=key, name="Verified Fragrance")
+    product_id = "verified-blender-product"
+    key = ("home_equipment", "blender", "ELECTRONICS_SMALL_DEVICE")
+    product = _product(product_id, key=key, name="Verified Blender")
     taxonomy = _taxonomy(product_id, key=key)
     await _install_preview_fakes(
         monkeypatch,
@@ -402,9 +433,24 @@ async def test_p4_rejects_unsafe_rendered_copy(monkeypatch):
 
 
 def test_p4_registry_templates_fit_duration_budgets_after_substitution():
-    examples = (
-        (_product("lip", name="ACME Velvet Matte Lipstick 4G"), LIP_KEY),
-        (_product("spice", key=REMPAH_KEY), REMPAH_KEY),
+    examples = tuple(
+        (
+            _product(
+                f"safe-example-{index}",
+                key=key,
+                name=(
+                    "ACME Velvet Matte Lipstick 4G"
+                    if key == LIP_KEY
+                    else (
+                        "Rempah Nasi Khowmok (140g+- / pack)"
+                        if key == REMPAH_KEY
+                        else "Raw Catalog Title Confirm 24H Waterproof"
+                    )
+                ),
+            ),
+            key,
+        )
+        for index, key in enumerate(sorted(ALL_STRATEGY_KEYS))
     )
     for product, key in examples:
         entry = PRODUCT_TYPE_COPY_STRATEGY_REGISTRY[key]
@@ -423,6 +469,120 @@ def test_p4_registry_templates_fit_duration_budgets_after_substitution():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("key", "expected_scene_evidence"),
+    (
+        (
+            ("baby_care", "baby_diaper", "BABY_DIAPER"),
+            "remove one diaper from the pack",
+        ),
+        (
+            (
+                "electronics_accessory",
+                "electronics_accessory",
+                "ELECTRONICS_ACCESSORY",
+            ),
+            "show the connector or control clearly",
+        ),
+        (
+            (
+                "electronics_accessory",
+                "electronics_wearable",
+                "ELECTRONICS_SMALL_DEVICE",
+            ),
+            "remove the device from its packaging",
+        ),
+        (
+            ("fashion_apparel", "apparel", "APPAREL"),
+            "hold the garment on a hanger",
+        ),
+        (
+            ("fashion_apparel", "modestwear", "MODESTWEAR"),
+            "drape the garment or scarf naturally",
+        ),
+        (
+            ("fashion_apparel", "sportswear", "SPORTSWEAR"),
+            "show waistband, seam, and fabric detail",
+        ),
+        (
+            ("food_cooking", "sambal", "PACKAGED_SAUCE_SAMBAL"),
+            "open the jar or pack cleanly",
+        ),
+        (
+            ("food_cooking", "sauce", "PACKAGED_SAUCE_SAMBAL"),
+            "open the jar or pack cleanly",
+        ),
+        (
+            ("food_ready_to_eat", "instant_food", "PACKAGED_FOOD"),
+            "show the intact seal and open the pack cleanly",
+        ),
+        (
+            ("food_ready_to_eat", "packaged_food", "PACKAGED_FOOD"),
+            "show the intact seal and open the pack cleanly",
+        ),
+        (
+            ("fragrance", "fragrance", "FRAGRANCE"),
+            "spritz once onto the wrist from a normal distance",
+        ),
+        (
+            ("home_storage", "storage_organizer", "HOUSEHOLD_STORAGE"),
+            "open and close the storage product",
+        ),
+        (
+            (
+                "household_cleaning",
+                "household_cleaner",
+                "HOUSEHOLD_CLEANER",
+            ),
+            "apply a product-appropriate amount to a suitable surface",
+        ),
+        (
+            ("household_laundry", "detergent", "LAUNDRY_DETERGENT"),
+            "measure detergent with the product cap or proper cup",
+        ),
+        (
+            ("household_laundry", "softener", "FABRIC_SOFTENER"),
+            "measure a product-appropriate amount",
+        ),
+    ),
+)
+async def test_p4_expanded_strategies_use_fixed_safe_copy_and_scene_actions(
+    monkeypatch,
+    key,
+    expected_scene_evidence,
+):
+    product_id = f"expanded-{'-'.join(key)}"
+    product = _product(
+        product_id,
+        key=key,
+        name="Raw Catalog Title Confirm 24H Waterproof",
+    )
+    taxonomy = _taxonomy(product_id, key=key)
+    await _install_preview_fakes(
+        monkeypatch,
+        product=product,
+        taxonomy=taxonomy,
+    )
+
+    response = await service.build_product_type_copy_strategy(product_id, 8)
+
+    rendered_copy = " ".join(
+        (
+            response.hook_line,
+            response.demo_line,
+            response.benefit_line,
+            response.cta_line,
+            response.overlay_text,
+        )
+    ).casefold()
+    assert "raw catalog title" not in rendered_copy
+    assert "confirm" not in rendered_copy
+    assert "24h" not in rendered_copy
+    assert "waterproof" not in rendered_copy
+    assert expected_scene_evidence in response.scene_action
+
+
+@pytest.mark.asyncio
 async def test_p4_eligible_report_counts_supported_blocked_and_missing(
     monkeypatch,
 ):
@@ -437,31 +597,35 @@ async def test_p4_eligible_report_counts_supported_blocked_and_missing(
         consumer_status="BLOCKED_REVIEW_REQUIRED",
         authority_source="AUTO_DERIVED",
     )
-    fragrance_key = ("fragrance", "fragrance", "FRAGRANCE")
-    fragrance = _product(
-        "verified-missing-strategy",
-        key=fragrance_key,
-        name="Verified Fragrance",
+    unsupported_key = (
+        "home_equipment",
+        "blender",
+        "ELECTRONICS_SMALL_DEVICE",
     )
-    fragrance_taxonomy = _taxonomy(
+    unsupported = _product(
         "verified-missing-strategy",
-        key=fragrance_key,
+        key=unsupported_key,
+        name="Verified Blender",
+    )
+    unsupported_taxonomy = _taxonomy(
+        "verified-missing-strategy",
+        key=unsupported_key,
     )
     archived = _product("archived-lip", lifecycle_status="ARCHIVED")
     archived_taxonomy = _taxonomy("archived-lip")
-    sambal_key = (
-        "food_ready_to_eat",
-        "packaged_food",
-        "PACKAGED_FOOD",
+    unknown_key = (
+        "generic_unclassified",
+        "unknown_product_type",
+        "GENERIC_FALLBACK",
     )
-    sambal = _product(
+    unknown = _product(
         "9c85cd83-32f1-4d8b-98bb-6a78f681ed1a",
-        key=sambal_key,
-        name="Sambal Serbaguna",
+        key=unknown_key,
+        name="Unknown Product",
     )
-    sambal_taxonomy = _taxonomy(
-        str(sambal["id"]),
-        key=sambal_key,
+    unknown_taxonomy = _taxonomy(
+        str(unknown["id"]),
+        key=unknown_key,
         review_status="REVIEW_REQUIRED",
         consumer_status="BLOCKED_REVIEW_REQUIRED",
         authority_source="AUTO_DERIVED",
@@ -470,9 +634,9 @@ async def test_p4_eligible_report_counts_supported_blocked_and_missing(
         (lip, lip_taxonomy),
         (spice, spice_taxonomy),
         (unverified, unverified_taxonomy),
-        (fragrance, fragrance_taxonomy),
+        (unsupported, unsupported_taxonomy),
         (archived, archived_taxonomy),
-        (sambal, sambal_taxonomy),
+        (unknown, unknown_taxonomy),
     )
     products = [product for product, _taxonomy_value in pairs]
     attached = [
@@ -526,7 +690,7 @@ async def test_p4_eligible_report_counts_supported_blocked_and_missing(
     assert report.blocked_by_reason["COPY_STRATEGY_NOT_REGISTERED"] == 2
     assert {
         group.product_type_group for group in report.missing_copy_strategy_groups
-    } == {"fragrance", "packaged_food"}
+    } == {"blender", "unknown_product_type"}
     assert {item.product_id for item in report.sample_eligible} == {
         "eligible-lip",
         "eligible-spice",

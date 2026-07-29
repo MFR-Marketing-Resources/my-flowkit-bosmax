@@ -357,27 +357,42 @@ def _resolve_product_facts(
             "overlay_label": _overlay_label(product_reference, size_label),
         }
 
-    product_reference, use_context = _rempah_product_reference(product)
-    benefit_evidence = (
-        f"Aroma {use_context} lebih jelas"
-        if use_context != "hidangan pilihan"
-        else "Aroma rempah lebih jelas"
-    )
-    cta_prompt = (
-        f"Semak pek {size_label}."
-        if size_label
-        else "Semak pilihan rempah."
-    )
+    if key == ("food_cooking", "rempah_seasoning", "SPICE_SEASONING"):
+        product_reference, use_context = _rempah_product_reference(product)
+        benefit_evidence = (
+            f"Aroma {use_context} lebih jelas"
+            if use_context != "hidangan pilihan"
+            else "Aroma rempah lebih jelas"
+        )
+        cta_prompt = (
+            f"Semak pek {size_label}."
+            if size_label
+            else "Semak pilihan rempah."
+        )
+        return {
+            "product_name": product_name,
+            "product_reference": product_reference,
+            "product_descriptor": "rempah masakan",
+            "size_label": size_label,
+            "use_context": use_context,
+            "benefit_evidence": benefit_evidence,
+            "finish_descriptor": "hasil masakan",
+            "cta_prompt": cta_prompt,
+            "overlay_label": _overlay_label(product_reference, size_label),
+        }
+
+    # Expanded P4 entries use fixed product-type copy. Raw catalog titles and
+    # unapproved claims therefore never enter the rendered script by default.
     return {
         "product_name": product_name,
-        "product_reference": product_reference,
-        "product_descriptor": "rempah masakan",
-        "size_label": size_label,
-        "use_context": use_context,
-        "benefit_evidence": benefit_evidence,
-        "finish_descriptor": "hasil masakan",
-        "cta_prompt": cta_prompt,
-        "overlay_label": _overlay_label(product_reference, size_label),
+        "product_reference": "produk",
+        "product_descriptor": key[1].replace("_", " "),
+        "size_label": "",
+        "use_context": "penggunaan produk",
+        "benefit_evidence": "Butiran produk mudah dilihat",
+        "finish_descriptor": "hasil penggunaan",
+        "cta_prompt": "Semak arahan produk.",
+        "overlay_label": "PANDUAN PRODUK",
     }
 
 
