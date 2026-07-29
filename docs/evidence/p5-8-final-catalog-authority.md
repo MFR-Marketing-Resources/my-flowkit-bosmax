@@ -214,9 +214,86 @@ untouched accepted main `82bd26c70b37d1ad5b7d8731ed39019d5e169bb8`;
 P5.8 does not modify that compiler or its test, and the mission explicitly
 forbids repairing this unrelated baseline failure.
 
-## Pending post-merge evidence
+## Canonical delivery evidence
 
-The delivery record will be completed after the source patch is merged:
+The source patch and the canonical dry-run guard repair were merged through
+reviewed, non-draft pull requests:
 
-- PR, merge, canonical backup/apply/rollback proof;
-- canonical runtime and browser UAT proof.
+- PR #539:
+  `https://github.com/MFR-Marketing-Resources/my-flowkit-bosmax/pull/539`.
+- Feature commit:
+  `62b3e4322bf9e45e8fb017f46cb146072e335045`.
+- Feature merge:
+  `0d572d4e5f5712622cb0fcac4870b4100c5c91a9`.
+- PR #540:
+  `https://github.com/MFR-Marketing-Resources/my-flowkit-bosmax/pull/540`.
+- Canonical preview-guard repair:
+  `bf63ee61a050d0cee259b4bbb45f6f500aa73517`.
+- Canonical source merge:
+  `2578c998c574c170f95a812828c4ec0606197d9c`.
+- Both repositories reported no configured remote checks; no CI claim is made.
+
+The final guarded transaction ran against:
+`C:\Users\USER\Desktop\_ref_flowkit\flow_agent.db`.
+
+- Pre-apply backup:
+  `C:\Users\USER\AppData\Local\Temp\bosmax-p58-canonical-2578c99-final\backups\flow_agent.p58-pre-apply-20260729T104541Z.db`.
+- Backup SHA-256:
+  `1d579cd5c12ce46f972c5c53f02c90478921acada27cfc68a70f9012511d3673`.
+- Backup integrity and quick checks: `ok`; product count: 659.
+- Canonical dry run: 96 registry inserts, 20 registry updates, 541 taxonomy
+  updates, 37 manual taxonomy decisions preserved, zero mutation.
+- First apply authority fingerprint:
+  `b429255ea88712694f3e4108d7f2f64ca837f370de7c8129ff4417ccdbc701a3`
+  -> `d083b2b915ded3b14f850a87d3ab13b5cb4cb51a46a7324eb2e6213d97d4d0c1`.
+- Protected non-authority fingerprint remained
+  `d68dbe0870c19877a8ce605fe4881bcd08b532f86f1187b291ea5c30f263868c`.
+- Second apply: zero registry/taxonomy mutations; authority and protected
+  fingerprints unchanged.
+- Post-apply integrity and quick checks: `ok`; product count: 659.
+- Rollback was not required; the backup and transactional rollback path remain
+  available.
+- Final canonical matrix SHA-256:
+  `5924a8e5509998cb41865ec3b6ee0ccff8226790d409ce83bba811c520535644`.
+- Final P6 cohort SHA-256:
+  `15b7e2aff4ede06b1a28805b111f9993b2208040e40bcee76693abc2a6ddbe7f`.
+- P6 cohort count: 438; P6 execution started: 0.
+
+The canonical evidence pack is:
+`C:\Users\USER\AppData\Local\Temp\bosmax-p58-canonical-2578c99-final\evidence`.
+It contains the final matrix CSV/JSON, registry, residual queue, cohort,
+blocker summary, sanitized DeepSeek ledger, backup/apply manifest, queue
+safety proof, and post-apply database checks.
+
+## Canonical runtime and rendered UAT
+
+The canonical runtime was restarted with the official repository helper after
+the source merges. Runtime proof reported:
+
+- backend Git SHA:
+  `2578c998c574c170f95a812828c4ec0606197d9c`;
+- dashboard bundle: `index-BJ8S5Y-H.js`;
+- route count: 466;
+- `source_stale_since_start=false`;
+- effective database:
+  `C:\Users\USER\Desktop\_ref_flowkit\flow_agent.db`;
+- product count: 659; storage warnings: none.
+
+Rendered browser UAT covered direct refresh, loading, success, empty-filter,
+compact 768x720, scoped authority-request failure, recovery, Products, and
+Smart Registration states. The failure was injected only through a
+tab-scoped blocked URL and was removed before recovery. It did not change the
+server or database. Recovery returned HTTP 200 for the authority, P4, and
+registry APIs and restored counts 659/438/2/3/216. Products loaded its active
+298-row FastMoss view from HTTP 200. Smart Registration loaded its review queue
+from HTTP 200 without a submit or mutation.
+
+Browser evidence is held at:
+`C:\Users\USER\AppData\Local\Temp\bosmax-p58-canonical-2578c99-final\browser-uat`.
+The manifest is `p58-browser-uat-manifest.json`, SHA-256
+`e1c918d1c7f0b850b55e5426ea94941b6bdc47850f4c04c386315ff2b06e39e7`.
+
+A final canonical dry run after browser UAT reported zero registry/taxonomy
+mutations, the same authority and protected fingerprints, 659 products,
+integrity/quick checks `ok`, the same 438-product cohort, and
+`p6_not_started=true`.
