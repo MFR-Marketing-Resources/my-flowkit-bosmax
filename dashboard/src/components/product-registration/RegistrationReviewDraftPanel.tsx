@@ -17,6 +17,21 @@ interface Props {
 	onClear: () => void;
 }
 
+interface EvidenceCompletionFieldMetadata {
+	status:
+		| "EXACT_SOURCE_EVIDENCE"
+		| "AI_SUGGESTED"
+		| "SYSTEM_INFERRED"
+		| "NOT_AVAILABLE";
+	confidence: "HIGH" | "MEDIUM" | "LOW" | "NOT_APPLICABLE";
+	provenance: string[];
+	needs_review: boolean;
+}
+
+type EvidenceAwareRegistrationReviewDraft = RegistrationReviewDraft & {
+	evidence_field_status?: Record<string, EvidenceCompletionFieldMetadata>;
+};
+
 interface EvidenceEditorState {
 	product_name: string;
 	product_knowledge_text: string;
@@ -496,6 +511,9 @@ export default function RegistrationReviewDraftPanel({
 	onUpdate,
 	onClear,
 }: Props) {
+	const evidenceFieldStatus = (
+		draft as EvidenceAwareRegistrationReviewDraft
+	).evidence_field_status;
 	const [approvals, setApprovals] = useState<Record<string, boolean>>(
 		draft.approval_checklist,
 	);
@@ -1609,10 +1627,10 @@ export default function RegistrationReviewDraftPanel({
 								</div>
 							) : null}
 							<p className="text-xs leading-relaxed text-slate-400">
-								Recompute validates current evidence; it will not fill missing
-								evidence. It will not approve review fields. Product Intelligence
-								AI Fill remains a separate review-only provider action; this
-								draft extractor does not consume AI tokens.
+								Save &amp; Recompute may use the configured text_assist lane to
+								propose missing evidence. AI suggestions remain review-only,
+								never replace declared evidence, and never approve a field.
+								Unavailable non-critical facts are labelled N/A or NOT_AVAILABLE.
 							</p>
 							{imageAnalysisStatus === "ANALYSIS_SKIPPED" ? (
 								<p className="text-xs leading-relaxed text-sky-200">
@@ -2097,6 +2115,8 @@ export default function RegistrationReviewDraftPanel({
 								([key, value]) => {
 									const isReviewRequired =
 										draft.human_review_fields.includes(key);
+									const evidenceMetadata =
+										evidenceFieldStatus?.[key];
 									if (
 										(value === null ||
 											value === undefined ||
@@ -2130,12 +2150,34 @@ export default function RegistrationReviewDraftPanel({
 															REVIEW REQ
 														</span>
 													) : null}
+													{evidenceMetadata ? (
+														<span
+															className={`rounded px-1 text-[8px] font-bold ${
+																evidenceMetadata.status ===
+																"EXACT_SOURCE_EVIDENCE"
+																	? "bg-emerald-500/10 text-emerald-400"
+																	: evidenceMetadata.status === "AI_SUGGESTED"
+																		? "bg-violet-500/10 text-violet-300"
+																		: evidenceMetadata.status === "NOT_AVAILABLE"
+																			? "bg-slate-700 text-slate-300"
+																			: "bg-sky-500/10 text-sky-300"
+															}`}
+														>
+															{evidenceMetadata.status.replace(/_/g, " ")}
+														</span>
+													) : null}
 												</div>
 												<span className="truncate text-sm font-medium text-white">
 													{Array.isArray(value)
 														? value.join(", ")
 														: String(value)}
 												</span>
+												{evidenceMetadata ? (
+													<span className="truncate text-[9px] text-slate-500">
+														Confidence: {evidenceMetadata.confidence} ·{" "}
+														{evidenceMetadata.provenance.join(", ")}
+													</span>
+												) : null}
 											</div>
 											{draft.review_status !== "COMMITTED" ? (
 												<button
@@ -2287,6 +2329,30 @@ export default function RegistrationReviewDraftPanel({
 											</span>
 										))}
 									</div>
+								</div>
+							) : null}
+							{draft.warnings.length > 0 ? (
+								<div className="space-y-2">
+									<span className="text-[10px] font-bold uppercase text-amber-500">
+										Recompute Warnings
+									</span>
+									<ul className="space-y-1 text-[10px] text-amber-200">
+										{draft.warnings.map((warning) => (
+											<li key={warning}>{warning}</li>
+										))}
+									</ul>
+								</div>
+							) : null}
+							{draft.provenance.length > 0 ? (
+								<div className="space-y-2">
+									<span className="text-[10px] font-bold uppercase text-slate-500">
+										Completion Provenance
+									</span>
+									<ul className="space-y-1 text-[10px] text-slate-400">
+										{draft.provenance.map((item) => (
+											<li key={item}>{item}</li>
+										))}
+									</ul>
 								</div>
 							) : null}
 						</div>

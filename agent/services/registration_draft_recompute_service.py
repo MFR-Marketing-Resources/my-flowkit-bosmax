@@ -73,7 +73,10 @@ def _build_completion_request_from_draft(
 
 
 def recompute_review_draft(draft: RegistrationReviewDraft) -> RegistrationReviewDraft:
-    completion = complete_product_knowledge(_build_completion_request_from_draft(draft))
+    completion = complete_product_knowledge(
+        _build_completion_request_from_draft(draft),
+        enable_text_assist=True,
+    )
     refreshed = create_registration_review_draft(completion)
 
     refreshed.review_draft_id = draft.review_draft_id

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -53,6 +53,18 @@ class ProductRegistrationEvaluateResponse(BaseModel):
     no_db_write_reason: str | None = None
 
 
+class EvidenceCompletionFieldMetadata(BaseModel):
+    status: Literal[
+        "EXACT_SOURCE_EVIDENCE",
+        "AI_SUGGESTED",
+        "SYSTEM_INFERRED",
+        "NOT_AVAILABLE",
+    ]
+    confidence: Literal["HIGH", "MEDIUM", "LOW", "NOT_APPLICABLE"]
+    provenance: list[str] = Field(default_factory=list)
+    needs_review: bool = True
+
+
 class RegistrationReviewDraft(BaseModel):
     review_draft_id: str
     review_status: str  # REVIEW_READY / NEEDS_HUMAN_REVIEW / BLOCKED
@@ -62,6 +74,9 @@ class RegistrationReviewDraft(BaseModel):
     declared_evidence_fields: dict[str, Any] = Field(default_factory=dict)
     system_inferred_fields: dict[str, Any] = Field(default_factory=dict)
     canonical_candidate_fields: dict[str, Any] = Field(default_factory=dict)
+    evidence_field_status: dict[str, EvidenceCompletionFieldMetadata] = Field(
+        default_factory=dict
+    )
     
     # Review / Safety
     human_review_fields: list[str] = Field(default_factory=list)
