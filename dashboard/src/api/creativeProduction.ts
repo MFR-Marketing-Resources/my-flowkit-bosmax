@@ -342,7 +342,10 @@ export function controlProductionPlan(
 	});
 }
 
-export function listExecutionLanes(): Promise<{ lanes: ExecutionLane[] }> {
+export function listExecutionLanes(): Promise<{
+	lanes: ExecutionLane[];
+	live_execution_certified: boolean;
+}> {
 	return getAPI("/api/creative-production/lanes");
 }
 

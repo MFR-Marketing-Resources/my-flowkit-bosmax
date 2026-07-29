@@ -183,7 +183,10 @@ async def cancel_plan(plan_id: str, body: PlanActionRequest):
 
 @router.get("/lanes")
 async def list_lanes():
-    return {"lanes": await scheduler.list_lanes()}
+    return {
+        "lanes": await scheduler.list_lanes(),
+        "live_execution_certified": scheduler.live_execution_certified(),
+    }
 
 
 @router.patch("/lanes/{lane_id}")
