@@ -88,6 +88,10 @@ class _ScoutingRule:
     terms: tuple[str, ...] = ()
     families: tuple[str, ...] = ()
     specific_strategy_ids: tuple[str, ...] = ()
+    display_name: str | None = None
+    auto_classification_enabled: bool = True
+    reviewer_id: str | None = None
+    reviewer_note: str | None = None
 
 
 SCOUTING_CLUSTER_ORDER = (
@@ -103,6 +107,7 @@ SCOUTING_CLUSTER_ORDER = (
     "baby_care",
     "fashion_apparel",
     "electronics_accessory",
+    "traditional_wellness",
     "sensitive_wellness",
     "generic_unclassified",
 )
@@ -122,6 +127,30 @@ _PRODUCT_TEXT_FIELDS = (
 
 
 _SCOUTING_RULES = (
+    _ScoutingRule(
+        "traditional_wellness",
+        "traditional_herbal_oil",
+        specific_strategy_ids=("TRADITIONAL_HERBAL_OIL",),
+        display_name="Traditional Herbal Oil",
+        auto_classification_enabled=False,
+        reviewer_id="owner:Faris",
+        reviewer_note=(
+            "Owner-approved activation under "
+            "BOSMAX-P5-CANONICAL-CLOSURE-AND-PRODUCT-ACTIVATION-20260729"
+        ),
+    ),
+    _ScoutingRule(
+        "traditional_wellness",
+        "herbal_roll_on_oil",
+        specific_strategy_ids=("HERBAL_ROLL_ON_OIL",),
+        display_name="Herbal Roll-On Oil",
+        auto_classification_enabled=False,
+        reviewer_id="owner:Faris",
+        reviewer_note=(
+            "Owner-approved activation under "
+            "BOSMAX-P5-CANONICAL-CLOSURE-AND-PRODUCT-ACTIVATION-20260729"
+        ),
+    ),
     _ScoutingRule(
         "sensitive_wellness",
         "male_wellness",
@@ -414,7 +443,10 @@ def product_strategy_type_registry_seed_entries() -> list[dict[str, object]]:
             {
                 "cluster": rule.cluster,
                 "product_type_group": rule.product_type_group,
-                "display_name": rule.product_type_group.replace("_", " ").title(),
+                "display_name": (
+                    rule.display_name
+                    or rule.product_type_group.replace("_", " ").title()
+                ),
                 "matched_scene_strategy_id": (
                     rule.specific_strategy_ids[0]
                     if has_specific_strategy
@@ -426,8 +458,10 @@ def product_strategy_type_registry_seed_entries() -> list[dict[str, object]]:
                 "registry_status": (
                     "ACTIVE" if has_specific_strategy else "REVIEW_REQUIRED"
                 ),
-                "auto_classification_enabled": True,
+                "auto_classification_enabled": rule.auto_classification_enabled,
                 "authority_source": "SYSTEM_SEED",
+                "reviewer_id": rule.reviewer_id,
+                "reviewer_note": rule.reviewer_note,
             }
         )
     entries.append(

@@ -18,6 +18,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
+import time
 from typing import Any
 
 from agent.services.ai_provider_model_catalog import (
@@ -56,6 +58,10 @@ ERR_NOT_CONFIGURED = "AI_COPY_ASSIST_PROVIDER_NOT_CONFIGURED"
 ERR_RESPONSE_INVALID = "AI_COPY_ASSIST_RESPONSE_INVALID"
 ERR_CALL_FAILED = "AI_COPY_ASSIST_CALL_FAILED"
 
+_provider_call_lock = threading.Lock()
+_provider_call_count = 0
+_last_provider_call_receipt: dict[str, Any] | None = None
+
 
 class AICopyProviderNotConfigured(Exception):
     """Raised when the text_assist lane is not configured/enabled (default)."""
@@ -70,6 +76,83 @@ class AICopyProviderError(Exception):
         super().__init__(code)
         self.code = code
         self.detail = detail
+
+
+def provider_call_receipt() -> dict[str, Any]:
+    """Return process-local, secret-free evidence for the latest HTTP call."""
+
+    with _provider_call_lock:
+        last_call = (
+            dict(_last_provider_call_receipt)
+            if _last_provider_call_receipt is not None
+            else None
+        )
+        if last_call is not None:
+            last_call["usage"] = dict(last_call.get("usage") or {})
+        return {
+            "request_count_since_process_start": _provider_call_count,
+            "last_call": last_call,
+        }
+
+
+def _begin_provider_call(
+    *, provider_id: str, model: str, transport: str
+) -> int:
+    global _provider_call_count, _last_provider_call_receipt
+    with _provider_call_lock:
+        _provider_call_count += 1
+        call_id = _provider_call_count
+        _last_provider_call_receipt = {
+            "call_id": call_id,
+            "lane": LANE,
+            "provider_id": provider_id,
+            "model_id": model,
+            "transport": transport,
+            "started_at": time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ",
+                time.gmtime(),
+            ),
+            "response_status": "IN_FLIGHT",
+            "http_status": None,
+            "usage": {},
+        }
+        return call_id
+
+
+def _finish_provider_call(
+    call_id: int,
+    *,
+    response_status: str,
+    http_status: int | None,
+    usage: dict[str, int | float] | None = None,
+) -> None:
+    global _last_provider_call_receipt
+    with _provider_call_lock:
+        if (
+            _last_provider_call_receipt is None
+            or _last_provider_call_receipt.get("call_id") != call_id
+        ):
+            return
+        _last_provider_call_receipt = {
+            **_last_provider_call_receipt,
+            "completed_at": time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ",
+                time.gmtime(),
+            ),
+            "response_status": response_status,
+            "http_status": http_status,
+            "usage": dict(usage or {}),
+        }
+
+
+def _safe_usage(payload: object) -> dict[str, int | float]:
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        str(key): value
+        for key, value in payload.items()
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+    }
 
 
 def is_configured() -> bool:
@@ -215,7 +298,7 @@ def _split_system_and_turns(
 
 def _complete_anthropic(
     messages: list[dict[str, str]], api_key: str, base_url: str, model: str
-) -> str:
+) -> tuple[str, int | None, dict[str, int | float]]:
     """Native Anthropic Messages transport (/v1/messages). Scoped to the
     text_assist lane; disabled by default and exercised only via unit tests."""
     import httpx  # local import — only when actually executing a configured call
@@ -242,13 +325,17 @@ def _complete_anthropic(
     blocks = data.get("content") or []
     for block in blocks:
         if isinstance(block, dict) and str(block.get("type") or "") == "text":
-            return str(block.get("text") or "")
+            return (
+                str(block.get("text") or ""),
+                getattr(response, "status_code", None),
+                _safe_usage(data.get("usage")),
+            )
     raise AICopyProviderError(ERR_RESPONSE_INVALID, detail="no text block in response")
 
 
 def _complete_openai_compatible(
     messages: list[dict[str, str]], api_key: str, base_url: str, model: str
-) -> str:
+) -> tuple[str, int | None, dict[str, int | float]]:
     """OpenAI-compatible /chat/completions transport (qwen/openai/gemini/deepseek).
     Mirrors the proven product_knowledge_service httpx pattern."""
     import httpx  # local import — only when actually executing a configured call
@@ -264,7 +351,11 @@ def _complete_openai_compatible(
     )
     response.raise_for_status()
     data = response.json()
-    return str(data["choices"][0]["message"]["content"])
+    return (
+        str(data["choices"][0]["message"]["content"]),
+        getattr(response, "status_code", None),
+        _safe_usage(data.get("usage")),
+    )
 
 
 def _complete(messages: list[dict[str, str]]) -> str:
@@ -280,18 +371,48 @@ def _complete(messages: list[dict[str, str]]) -> str:
         raise AICopyProviderError(
             ERR_CALL_FAILED, detail="text_assist key/base_url/model unresolved"
         )
-    try:
-        if transport == TRANSPORT_ANTHROPIC_MESSAGES:
-            return _complete_anthropic(messages, api_key, base_url, model)
-        if transport == TRANSPORT_OPENAI_COMPATIBLE:
-            return _complete_openai_compatible(messages, api_key, base_url, model)
-        # Unknown / unimplemented transport — fail closed, never guess.
+    if transport not in {
+        TRANSPORT_ANTHROPIC_MESSAGES,
+        TRANSPORT_OPENAI_COMPATIBLE,
+    }:
         raise AICopyProviderError(
             ERR_CALL_FAILED, detail=f"unsupported transport for {provider_id}: {transport}"
         )
+    call_id = _begin_provider_call(
+        provider_id=provider_id,
+        model=model,
+        transport=transport,
+    )
+    try:
+        if transport == TRANSPORT_ANTHROPIC_MESSAGES:
+            text, http_status, usage = _complete_anthropic(
+                messages, api_key, base_url, model
+            )
+        else:
+            text, http_status, usage = _complete_openai_compatible(
+                messages, api_key, base_url, model
+            )
+        _finish_provider_call(
+            call_id,
+            response_status="SUCCEEDED",
+            http_status=http_status,
+            usage=usage,
+        )
+        return text
     except AICopyProviderError:
+        _finish_provider_call(
+            call_id,
+            response_status="FAILED",
+            http_status=None,
+        )
         raise
     except Exception as exc:  # network / shape / auth — fail closed
+        response = getattr(exc, "response", None)
+        _finish_provider_call(
+            call_id,
+            response_status="FAILED",
+            http_status=getattr(response, "status_code", None),
+        )
         raise AICopyProviderError(ERR_CALL_FAILED, detail=str(exc)) from exc
 
 

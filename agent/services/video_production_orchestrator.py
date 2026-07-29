@@ -64,6 +64,8 @@ F_INITIAL = "INITIAL_FAILED"
 F_EXTEND = "EXTEND_FAILED"
 F_FINAL = "FINAL_RENDER_FAILED"
 F_AUTH = "AUTHORIZATION_INVALID"
+OWNER_RECOVERY_HOLD_CODE = "OWNER_AUTHORIZED_RECOVERY_HOLD"
+OWNER_RECOVERY_HOLD_VERSION = 1
 
 # structured side-effect vocab
 SUB_NOT_ATTEMPTED, SUB_SUBMITTED, SUB_UNCERTAIN, SUB_TERMINAL = (
@@ -793,6 +795,167 @@ _HUMAN = {
 
 def _human_stage(status: Optional[str]) -> str:
     return _HUMAN.get(status or "", "Preparing video")
+
+
+async def contain_restart_recovery_jobs(
+    job_ids: list[str],
+    *,
+    authorized_by: str,
+    authorization_note: str,
+) -> dict[str, Any]:
+    """Revoke exact startup-recovery authorizations without touching side effects.
+
+    The operation is all-or-nothing. It refuses jobs with a provider operation
+    reference because an unknown operation must not be concealed by this narrow
+    owner hold. Re-applying the same containment is an idempotent readback.
+    """
+
+    resolved_job_ids = [str(job_id).strip() for job_id in job_ids if str(job_id).strip()]
+    if not resolved_job_ids or len(set(resolved_job_ids)) != len(resolved_job_ids):
+        raise OrchestratorError(
+            "INVALID_RECOVERY_CONTAINMENT_SCOPE",
+            "job_ids must be non-empty and unique",
+        )
+    resolved_authorized_by = str(authorized_by or "").strip()
+    resolved_note = str(authorization_note or "").strip()
+    if not resolved_authorized_by or not resolved_note:
+        raise OrchestratorError(
+            "RECOVERY_CONTAINMENT_AUTHORITY_REQUIRED",
+            "authorized_by and authorization_note are required",
+        )
+
+    mutation_records: list[dict[str, Any]] = []
+    readbacks: list[dict[str, Any]] = []
+    effect_snapshots: dict[str, list[dict]] = {}
+    contained_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    for job_id in resolved_job_ids:
+        job = await _crud.get_video_production_job(job_id)
+        if not job:
+            raise OrchestratorError("VIDEO_JOB_NOT_FOUND", job_id)
+        raw_stage_state = job.get("stage_state_json")
+        if raw_stage_state:
+            try:
+                stage_state = json.loads(raw_stage_state)
+            except (TypeError, ValueError) as exc:
+                raise OrchestratorError(
+                    "INVALID_RECOVERY_AUDIT_STATE",
+                    job_id,
+                ) from exc
+            if not isinstance(stage_state, dict):
+                raise OrchestratorError("INVALID_RECOVERY_AUDIT_STATE", job_id)
+        else:
+            stage_state = {}
+
+        effects = await _crud.list_video_job_side_effects(job_id)
+        effect_snapshots[job_id] = effects
+        if any(str(effect.get("operation_ref") or "").strip() for effect in effects):
+            raise OrchestratorError(
+                "RECOVERY_CONTAINMENT_OPERATION_REF_PRESENT",
+                job_id,
+            )
+
+        existing_hold = stage_state.get("owner_recovery_hold")
+        if job.get("authorization_token") is None:
+            if not isinstance(existing_hold, dict):
+                raise OrchestratorError(
+                    "RECOVERY_CONTAINMENT_AUTHORIZATION_ALREADY_ABSENT",
+                    job_id,
+                )
+            readbacks.append(
+                {
+                    "job_id": job_id,
+                    "changed": False,
+                    "status_before": job.get("status"),
+                    "status_after": job.get("status"),
+                    "error_code_before": job.get("error_code"),
+                    "error_code_after": job.get("error_code"),
+                    "authorization_present_before": False,
+                    "authorization_present_after": False,
+                    "owner_recovery_hold": existing_hold,
+                    "side_effect_count": len(effects),
+                }
+            )
+            continue
+
+        if job.get("status") not in {S_AUTHORIZED, S_AUTH_EXPIRED}:
+            raise OrchestratorError(
+                "RECOVERY_CONTAINMENT_UNSUPPORTED_STATUS",
+                f"{job_id}:{job.get('status')}",
+            )
+
+        hold = {
+            "version": OWNER_RECOVERY_HOLD_VERSION,
+            "authorized_by": resolved_authorized_by,
+            "authorization_note": resolved_note,
+            "contained_at": contained_at,
+            "prior_status": job.get("status"),
+            "prior_error_code": job.get("error_code"),
+            "authorization_revoked": True,
+            "provider_polling_allowed": False,
+            "generation_resubmission_allowed": False,
+            "side_effect_ledger_preserved": True,
+        }
+        stage_state["owner_recovery_hold"] = hold
+        next_error = (
+            job.get("error_code")
+            if job.get("status") == S_AUTH_EXPIRED and job.get("error_code")
+            else OWNER_RECOVERY_HOLD_CODE
+        )
+        mutation_records.append(
+            {
+                "job_id": job_id,
+                "status": S_AUTH_EXPIRED,
+                "error_code": next_error,
+                "stage_state_json": json.dumps(
+                    stage_state,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                "expected_status": job.get("status"),
+                "expected_authorization_token": job.get("authorization_token"),
+                "expected_stage_state_json": raw_stage_state,
+            }
+        )
+        readbacks.append(
+            {
+                "job_id": job_id,
+                "changed": True,
+                "status_before": job.get("status"),
+                "status_after": S_AUTH_EXPIRED,
+                "error_code_before": job.get("error_code"),
+                "error_code_after": next_error,
+                "authorization_present_before": True,
+                "authorization_present_after": False,
+                "owner_recovery_hold": hold,
+                "side_effect_count": len(effects),
+            }
+        )
+
+    changed_count = await _crud.contain_video_production_jobs_for_restart(
+        mutation_records
+    )
+    for item in readbacks:
+        job_id = str(item["job_id"])
+        after = await _crud.get_video_production_job(job_id)
+        if not after or after.get("authorization_token") is not None:
+            raise OrchestratorError("RECOVERY_CONTAINMENT_READBACK_FAILED", job_id)
+        if await _crud.list_video_job_side_effects(job_id) != effect_snapshots[job_id]:
+            raise OrchestratorError(
+                "RECOVERY_CONTAINMENT_SIDE_EFFECT_DRIFT",
+                job_id,
+            )
+        item["status_after"] = after.get("status")
+        item["error_code_after"] = after.get("error_code")
+
+    return {
+        "changed_count": changed_count,
+        "jobs": readbacks,
+        "startup_recovery_candidates_remaining": len(
+            await _crud.list_non_terminal_authorized_jobs()
+        ),
+    }
 
 
 async def resume_in_flight_jobs(client, *, generate_initial: InitialGenFn,

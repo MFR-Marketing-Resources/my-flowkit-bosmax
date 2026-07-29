@@ -1102,6 +1102,150 @@ SCENE_STRATEGIES: dict[str, SceneStrategyEntry] = {
         },
         "sensitive_handling_rules": (),
     },
+    "TRADITIONAL_HERBAL_OIL": {
+        "product_family": "TRADITIONAL_WELLNESS",
+        "product_type": "TRADITIONAL_HERBAL_OIL",
+        "use_case": (
+            "label-forward traditional oil introduction",
+            "small external-use application",
+            "gentle adult self-care routine",
+            "shelf storage and daily portability",
+        ),
+        "allowed_scene_strategy": (
+            "heritage bottle hero with the label visible",
+            "cap opening followed by a small external-use application",
+            "gentle forearm or wrist self-care massage",
+            "daily or nightly shelf-and-bag routine",
+        ),
+        "allowed_actions": (
+            "hold the bottle label-forward",
+            "open the cap carefully and prepare a small amount",
+            "apply a small amount to an adult forearm or wrist",
+            "massage the external area gently as a normal self-care routine",
+            "close the cap and store the bottle upright or in a small bag",
+        ),
+        "forbidden_actions": (
+            *_COMMON_PHYSICS_FORBIDDEN,
+            *_COMMON_CLAIM_FORBIDDEN,
+            "eat, drink, ingest, or taste the oil",
+            "apply the oil to eyes, broken skin, or intimate areas",
+            "diagnose pain, disease, injury, or an anatomical condition",
+            "show treatment, healing, recovery, or before-and-after results",
+            "demonstrate use on a child",
+            "invent ingredients, efficacy, dosage, or medical endorsement",
+        ),
+        "scene_contexts": (
+            "warm heritage tabletop with the bottle label visible",
+            "calm adult wrist or forearm self-care moment",
+            "bedside shelf during a quiet nightly routine",
+            "small travel bag with the closed bottle stored upright",
+        ),
+        "camera_routes": (
+            "label-forward bottle hero to cap-opening close-up",
+            "small external application to gentle forearm massage",
+            "night-routine shelf reveal to closed-bottle storage",
+            "hand-held portability shot to upright bag placement",
+        ),
+        "avatar_hints": (
+            "adult buyer demonstrating a calm external-use routine",
+            "adult creator handling the heritage bottle without outcome claims",
+        ),
+        "wardrobe_hints": (
+            "fully covered neutral everyday clothing with forearm access",
+            "modest home-routine styling with no clinical cues",
+        ),
+        "direct_script_slots": {
+            "hook": (
+                "Rutin warisan bermula dengan botol dan label yang jelas.",
+                "Satu langkah ringkas untuk rutin luaran harian.",
+            ),
+            "benefit": (
+                "Sapu sedikit pada bahagian luaran dan urut dengan lembut.",
+                "Tutup semula dan simpan botol dengan kemas selepas guna.",
+            ),
+            "cta": (
+                "Semak label dan ikut arahan penggunaan produk.",
+                "Pilih format yang sesuai untuk rutin korang.",
+            ),
+        },
+        "sensitive_handling_rules": (
+            "External adult use only; no ingestion, intimate application, or child use.",
+            "Scenes demonstrate handling and routine only, never treatment or efficacy.",
+            "All application follows the visible product label and uses a small amount.",
+        ),
+    },
+    "HERBAL_ROLL_ON_OIL": {
+        "product_family": "TRADITIONAL_WELLNESS",
+        "product_type": "HERBAL_ROLL_ON_OIL",
+        "use_case": (
+            "label-forward herbal roll-on introduction",
+            "controlled external roll-on application",
+            "gentle adult self-care routine",
+            "pocket, shelf, or travel-bag storage",
+        ),
+        "allowed_scene_strategy": (
+            "compact roll-on hero with label and applicator visible",
+            "controlled wrist, forearm, or shoulder roll-on application",
+            "gentle external self-care routine with no outcome claim",
+            "portable daily carry and upright storage",
+        ),
+        "allowed_actions": (
+            "hold the roll-on label-forward",
+            "remove the cap and show the intact roll-on applicator",
+            "roll a small amount onto an adult wrist, forearm, or covered shoulder area",
+            "massage the external area gently only when the label supports it",
+            "replace the cap and store the roll-on upright in a pocket or small bag",
+        ),
+        "forbidden_actions": (
+            *_COMMON_PHYSICS_FORBIDDEN,
+            *_COMMON_CLAIM_FORBIDDEN,
+            "eat, drink, ingest, or taste the roll-on oil",
+            "apply the product to eyes, broken skin, or intimate areas",
+            "diagnose pain, nerves, disease, injury, or an anatomical condition",
+            "show treatment, healing, recovery, or before-and-after results",
+            "demonstrate use on a child",
+            "invent ingredients, efficacy, dosage, or medical endorsement",
+        ),
+        "scene_contexts": (
+            "clean tabletop with the compact roll-on label visible",
+            "calm adult wrist or forearm application moment",
+            "everyday desk or bedside self-care routine",
+            "small travel bag or pocket portability setup",
+        ),
+        "camera_routes": (
+            "label-forward roll-on hero to intact applicator close-up",
+            "controlled external roll to gentle routine context",
+            "desk or bedside reveal to capped upright storage",
+            "hand-held compact-size shot to travel-bag placement",
+        ),
+        "avatar_hints": (
+            "adult buyer demonstrating only a controlled external roll-on routine",
+            "adult creator presenting portability without medical or performance claims",
+        ),
+        "wardrobe_hints": (
+            "fully covered neutral everyday clothing with wrist or forearm access",
+            "modest travel or desk-routine styling with no clinical cues",
+        ),
+        "direct_script_slots": {
+            "hook": (
+                "Format roll-on untuk rutin luaran yang ringkas.",
+                "Pegang, semak label, dan lihat aplikator dengan jelas.",
+            ),
+            "benefit": (
+                "Roll sedikit pada bahagian luaran mengikut arahan label.",
+                "Tutup semula dan bawa dalam rutin harian korang.",
+            ),
+            "cta": (
+                "Semak label sebelum guna.",
+                "Pilih format mudah bawa untuk rutin korang.",
+            ),
+        },
+        "sensitive_handling_rules": (
+            "External adult use only; no ingestion, intimate application, or child use.",
+            "The roll-on is presented as a portable routine format, not a treatment.",
+            "No pain, nerve, medical, sexual-performance, or guaranteed-result framing.",
+        ),
+    },
     "SENSITIVE_WELLNESS": {
         "product_family": "SENSITIVE_WELLNESS",
         "product_type": "SENSITIVE_WELLNESS",
@@ -1240,6 +1384,28 @@ class _StrategyRule:
 
 
 _MATCH_RULES = (
+    _StrategyRule(
+        "HERBAL_ROLL_ON_OIL",
+        families=("HERBAL_ROLL_ON_OIL",),
+        terms=(
+            "herbal roll on oil",
+            "herbal oil roll on",
+            "bosmax herbs roll on",
+            "bosmax herbs 5 ml",
+        ),
+    ),
+    _StrategyRule(
+        "TRADITIONAL_HERBAL_OIL",
+        families=(
+            "TRADITIONAL_HERBAL_OIL",
+            "TRADITIONAL_HERBAL_OIL_BOTTLE",
+        ),
+        terms=(
+            "traditional herbal oil",
+            "minyak warisan cap burung",
+            "minyak warisan tok cap burung",
+        ),
+    ),
     _StrategyRule(
         "SENSITIVE_WELLNESS",
         families=("MALE_HEALTH_SENSITIVE", "FEMALE_HEALTH_SENSITIVE"),

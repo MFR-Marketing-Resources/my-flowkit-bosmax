@@ -42,6 +42,16 @@ EXPANDED_KEYS = {
     ),
     ("household_laundry", "detergent", "LAUNDRY_DETERGENT"),
     ("household_laundry", "softener", "FABRIC_SOFTENER"),
+    (
+        "traditional_wellness",
+        "traditional_herbal_oil",
+        "TRADITIONAL_HERBAL_OIL",
+    ),
+    (
+        "traditional_wellness",
+        "herbal_roll_on_oil",
+        "HERBAL_ROLL_ON_OIL",
+    ),
 }
 ALL_STRATEGY_KEYS = {LIP_KEY, REMPAH_KEY, *EXPANDED_KEYS}
 
@@ -138,7 +148,7 @@ async def _install_preview_fakes(
 
 def test_p4_registry_is_product_type_keyed_not_product_id_keyed():
     assert set(PRODUCT_TYPE_COPY_STRATEGY_REGISTRY) == ALL_STRATEGY_KEYS
-    assert len(PRODUCT_TYPE_COPY_STRATEGY_REGISTRY) == 17
+    assert len(PRODUCT_TYPE_COPY_STRATEGY_REGISTRY) == 19
     assert all(len(key) == 3 for key in PRODUCT_TYPE_COPY_STRATEGY_REGISTRY)
     assert not any(
         "product_id" in entry for entry in PRODUCT_TYPE_COPY_STRATEGY_REGISTRY.values()
@@ -543,6 +553,22 @@ def test_p4_registry_templates_fit_duration_budgets_after_substitution():
         (
             ("household_laundry", "softener", "FABRIC_SOFTENER"),
             "measure a product-appropriate amount",
+        ),
+        (
+            (
+                "traditional_wellness",
+                "traditional_herbal_oil",
+                "TRADITIONAL_HERBAL_OIL",
+            ),
+            "apply a small amount to an adult forearm or wrist",
+        ),
+        (
+            (
+                "traditional_wellness",
+                "herbal_roll_on_oil",
+                "HERBAL_ROLL_ON_OIL",
+            ),
+            "roll a small amount onto an adult wrist",
         ),
     ),
 )

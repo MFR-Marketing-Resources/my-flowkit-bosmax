@@ -86,3 +86,32 @@ def test_ai_provider_put_activate_and_clear_round_trip(monkeypatch, tmp_path):
     assert clear_payload["active_provider"] is None
     assert anthropic_cleared["has_key"] is False
     assert anthropic_cleared["status"] == "KEY_MISSING"
+
+
+def test_text_assist_call_receipt_is_read_only_and_secret_free(monkeypatch):
+    monkeypatch.setattr(
+        "agent.api.ai_provider_settings.ai_copy_provider_adapter.provider_call_receipt",
+        lambda: {
+            "request_count_since_process_start": 1,
+            "last_call": {
+                "call_id": 1,
+                "lane": "text_assist",
+                "provider_id": "deepseek",
+                "model_id": "deepseek-v4-pro",
+                "transport": "openai_compatible_chat",
+                "response_status": "SUCCEEDED",
+                "http_status": 200,
+                "usage": {"total_tokens": 64},
+            },
+        },
+    )
+
+    response = TestClient(_build_app()).get(
+        "/api/ai-providers/text-assist/call-receipt"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["request_count_since_process_start"] == 1
+    assert response.json()["last_call"]["provider_id"] == "deepseek"
+    assert "api_key" not in response.text
+    assert "authorization" not in response.text.casefold()

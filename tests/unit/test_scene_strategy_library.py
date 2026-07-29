@@ -366,3 +366,53 @@ def test_production_compiler_adds_sensitive_fail_closed_constraints() -> None:
     assert "forbidden actions:" in final_prompt
     assert "apply the product to intimate areas" in final_prompt
     assert "sensitive handling rules:" in final_prompt
+
+
+@pytest.mark.parametrize(
+    ("product", "expected_strategy", "expected_action"),
+    (
+        (
+            _product(
+                "Minyak Warisan Cap Burung 25ml",
+                product_type="TRADITIONAL_HERBAL_OIL",
+                product_physics="TRADITIONAL_HERBAL_OIL_BOTTLE",
+            ),
+            "TRADITIONAL_HERBAL_OIL",
+            "apply a small amount to an adult forearm or wrist",
+        ),
+        (
+            _product(
+                "Bosmax Herbs 5 ML",
+                category="Male Health",
+                type="Herbal Oil Roll On",
+            ),
+            "HERBAL_ROLL_ON_OIL",
+            "roll a small amount onto an adult wrist",
+        ),
+    ),
+)
+def test_traditional_wellness_strategies_are_specific_and_claim_safe(
+    product: dict[str, object],
+    expected_strategy: str,
+    expected_action: str,
+) -> None:
+    strategy = resolve_scene_strategy(product)
+    allowed = " ".join(strategy["allowed_actions"]).casefold()
+    forbidden = " ".join(strategy["forbidden_actions"]).casefold()
+    scripts = " ".join(
+        [
+            *strategy["direct_script_slots"]["hook"],
+            *strategy["direct_script_slots"]["benefit"],
+            *strategy["direct_script_slots"]["cta"],
+        ]
+    ).casefold()
+
+    assert strategy["strategy_id"] == expected_strategy
+    assert strategy["fallback_used"] is False
+    assert expected_action in allowed
+    assert "label-forward" in allowed
+    assert "store" in allowed
+    assert "intimate areas" in forbidden
+    assert "demonstrate use on a child" in forbidden
+    assert "invent ingredients" in forbidden
+    assert not any(term in scripts for term in ("cure", "rawat", "sembuh", "ubat"))

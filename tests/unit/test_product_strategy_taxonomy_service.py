@@ -78,6 +78,40 @@ async def test_registry_seed_is_dry_run_safe_and_preserves_manual_pairs():
         for item in readback.items
         if item.product_type_group == "custom_palette"
     ).authority_source == "MANUAL_REGISTRATION"
+    traditional_rows = {
+        item.product_type_group: item
+        for item in readback.items
+        if item.cluster == "traditional_wellness"
+    }
+    assert set(traditional_rows) == {
+        "traditional_herbal_oil",
+        "herbal_roll_on_oil",
+    }
+    assert all(item.registry_status == "ACTIVE" for item in traditional_rows.values())
+    assert all(
+        item.scene_coverage_status == "COVERED"
+        for item in traditional_rows.values()
+    )
+    assert all(
+        item.auto_classification_enabled is False
+        for item in traditional_rows.values()
+    )
+    assert all(
+        item.reviewer_id == "owner:Faris" and item.reviewed_at
+        for item in traditional_rows.values()
+    )
+
+    reapplied = await service.seed_product_strategy_type_registry(
+        ProductStrategyTypeRegistrySeedRequest(
+            dry_run=False,
+            confirm_apply=service.REGISTRY_SEED_CONFIRMATION,
+        )
+    )
+    assert reapplied.mutation_performed is False
+    assert reapplied.planned_insert_count == 0
+    assert len((await service.list_product_strategy_type_registry()).items) == len(
+        readback.items
+    )
 
 
 @pytest.mark.asyncio

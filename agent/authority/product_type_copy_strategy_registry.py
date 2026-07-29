@@ -619,6 +619,90 @@ PRODUCT_TYPE_COPY_STRATEGY_REGISTRY: Final[
             },
         },
     },
+    (
+        "traditional_wellness",
+        "traditional_herbal_oil",
+        "TRADITIONAL_HERBAL_OIL",
+    ): {
+        "copy_strategy_id": "P4_TRADITIONAL_HERBAL_OIL_PRODUCT_TYPE_V1",
+        "source_strategy": "PRODUCT_TYPE_COPY_STRATEGY_REGISTRY",
+        "scene_action_indices": (0, 1, 2, 3, 4),
+        "scene_result_template": (
+            "show the label, small external-use amount, gentle routine, and "
+            "closed-bottle storage clearly"
+        ),
+        "scripts": {
+            8: {
+                "hook_line": "Rutin warisan untuk harian.",
+                "demo_line": "Sapu sedikit ikut label.",
+                "benefit_line": "Mudah dibawa dan disimpan.",
+                "cta_line": "Semak arahan sebelum guna.",
+                "overlay_text": "RUTIN LUARAN WARISAN",
+            },
+            10: {
+                "hook_line": "Rutin warisan dalam format mudah bawa.",
+                "demo_line": "Pegang botol, semak label, sapu sedikit.",
+                "benefit_line": "Untuk penjagaan luaran harian.",
+                "cta_line": "Ikut arahan pada label.",
+                "overlay_text": "SEMAK LABEL SEBELUM GUNA",
+            },
+            16: {
+                "hook_line": (
+                    "Warisan harian dalam satu rutin luaran yang ringkas."
+                ),
+                "demo_line": (
+                    "Pegang botol, buka penutup dan sapu sedikit pada lengan."
+                ),
+                "benefit_line": (
+                    "Urut lembut, kemudian tutup dan simpan botol dengan kemas."
+                ),
+                "cta_line": "Semak label sebelum guna.",
+                "overlay_text": "SAPU SEDIKIT IKUT LABEL",
+            },
+        },
+    },
+    (
+        "traditional_wellness",
+        "herbal_roll_on_oil",
+        "HERBAL_ROLL_ON_OIL",
+    ): {
+        "copy_strategy_id": "P4_HERBAL_ROLL_ON_OIL_PRODUCT_TYPE_V1",
+        "source_strategy": "PRODUCT_TYPE_COPY_STRATEGY_REGISTRY",
+        "scene_action_indices": (0, 1, 2, 4),
+        "scene_result_template": (
+            "show the label, intact applicator, controlled external roll, and "
+            "capped upright storage clearly"
+        ),
+        "scripts": {
+            8: {
+                "hook_line": "Rutin ringkas dalam satu roll-on.",
+                "demo_line": "Roll sedikit pada pergelangan.",
+                "benefit_line": "Mudah dibawa setiap hari.",
+                "cta_line": "Semak label sebelum guna.",
+                "overlay_text": "ROLL-ON UNTUK RUTIN LUARAN",
+            },
+            10: {
+                "hook_line": "Roll-on ringkas untuk rutin luaran harian.",
+                "demo_line": "Tunjuk label dan roll sedikit pada pergelangan.",
+                "benefit_line": "Mudah dibawa dan disimpan.",
+                "cta_line": "Semak arahan sebelum guna.",
+                "overlay_text": "FORMAT MUDAH BAWA",
+            },
+            16: {
+                "hook_line": (
+                    "Format roll-on menjadikan rutin luaran lebih ringkas."
+                ),
+                "demo_line": (
+                    "Tunjuk label, buka penutup dan roll sedikit pada lengan."
+                ),
+                "benefit_line": (
+                    "Tutup semula dan simpan tegak dalam beg selepas guna."
+                ),
+                "cta_line": "Ikut arahan pada label.",
+                "overlay_text": "ROLL SEDIKIT IKUT LABEL",
+            },
+        },
+    },
 }
 
 PRODUCT_TYPE_COPY_STRATEGY_KEYS: Final[frozenset[ProductTypeCopyStrategyKey]] = (
