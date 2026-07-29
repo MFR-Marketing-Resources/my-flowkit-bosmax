@@ -14,6 +14,7 @@ import type {
 	ProductStrategyTypeRegistrationRequest,
 	ProductStrategyTypeRegistryEntry,
 	ProductStrategyTypeRegistryResponse,
+	ProductTypeCopyEligibleReport,
 } from "../types";
 import { fetchAPI } from "./client";
 
@@ -39,6 +40,12 @@ export async function fetchProductDetail(productId: string): Promise<Product> {
 export async function fetchProductStrategyTypeRegistry(): Promise<ProductStrategyTypeRegistryResponse> {
 	return fetchAPI<ProductStrategyTypeRegistryResponse>(
 		"/api/creative-intelligence/product-strategy-type-registry",
+	);
+}
+
+export async function fetchProductTypeCopyEligibleReport(): Promise<ProductTypeCopyEligibleReport> {
+	return fetchAPI<ProductTypeCopyEligibleReport>(
+		"/api/copywriting/p4/eligible-report",
 	);
 }
 

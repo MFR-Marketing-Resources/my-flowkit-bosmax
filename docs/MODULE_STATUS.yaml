@@ -149,6 +149,9 @@ domains:
       - tests/api/test_product_strategy_taxonomy_api.py
       - tests/api/test_product_registration_review_api.py
       - tests/ui/test_product_strategy_taxonomy_ui_contract.py
+      # P5.5 Dedicated Product Type Registry — standalone operator control room
+      - dashboard/src/pages/ProductTypeRegistryPage.tsx
+      - dashboard/src/pages/ProductTypeRegistryPage.test.tsx
       # P3A Lip-Color Copy Registry — verified-taxonomy-gated, preview-only
       - agent/authority/lip_color_copy_registry.py
       - agent/models/lip_color_copy_strategy.py

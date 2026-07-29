@@ -1122,6 +1122,33 @@ export interface ProductStrategyTypeRegistrationRequest {
 	reviewer_note: string;
 }
 
+export interface ProductTypeCopyReportProduct {
+	product_id: string;
+	product_name: string;
+	cluster: string;
+	product_type_group: string;
+	scene_strategy_id: string;
+	blocked_reasons: string[];
+}
+
+export interface ProductTypeCopyReportGroup {
+	cluster: string;
+	product_type_group: string;
+	scene_strategy_id: string;
+	count: number;
+}
+
+export interface ProductTypeCopyEligibleReport {
+	total_products: number;
+	eligible_count: number;
+	blocked_count: number;
+	eligible_by_product_type: ProductTypeCopyReportGroup[];
+	blocked_by_reason: Record<string, number>;
+	missing_copy_strategy_groups: ProductTypeCopyReportGroup[];
+	sample_eligible: ProductTypeCopyReportProduct[];
+	sample_blocked: ProductTypeCopyReportProduct[];
+}
+
 export interface Product {
 	id: string;
 	product_id?: string;
