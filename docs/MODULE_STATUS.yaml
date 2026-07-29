@@ -161,6 +161,12 @@ domains:
       - agent/services/rempah_copy_strategy_service.py
       - tests/unit/test_rempah_copy_strategy_service.py
       - tests/api/test_rempah_copy_strategy_api.py
+      # P4 Generalized Product-Type Copy Strategy — taxonomy-gated, read-only
+      - agent/authority/product_type_copy_strategy_registry.py
+      - agent/models/product_type_copy_strategy.py
+      - agent/services/product_type_copy_strategy_service.py
+      - tests/unit/test_product_type_copy_strategy_service.py
+      - tests/api/test_product_type_copy_strategy_api.py
 
       # Scene Context Registry Round 2 — preview-only background plate promotion
       - agent/services/scene_context_promotion_service.py
