@@ -130,6 +130,35 @@ async def test_canonical_path_guard_fails_closed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_canonical_path_guard_allows_non_mutating_preview() -> None:
+    await crud.create_product(
+        raw_product_title="Reviewed Blush",
+        source="MANUAL",
+        category="Beauty & Personal Care",
+        subcategory="Makeup",
+        type="Blush",
+    )
+    database_path = Path(DB_PATH)
+    connection = sqlite3.connect(database_path)
+    try:
+        expected_product_count = int(
+            connection.execute("SELECT COUNT(*) FROM product").fetchone()[0]
+        )
+    finally:
+        connection.close()
+
+    preview = service.apply_catalog_authority(
+        database_path,
+        expected_product_count=expected_product_count,
+        canonical_database_path=database_path,
+    )
+
+    assert preview.mode == "DRY_RUN"
+    assert preview.mutation_performed is False
+    assert preview.confirmation_required == service.P58_APPLY_CONFIRMATION
+
+
+@pytest.mark.asyncio
 async def test_apply_aborts_when_authority_changes_before_write_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

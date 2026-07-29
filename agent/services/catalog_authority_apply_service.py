@@ -356,7 +356,11 @@ def apply_catalog_authority(
     resolved_path = database_path.resolve()
     if canonical_database_path is not None:
         resolved_canonical = canonical_database_path.resolve()
-        if resolved_path == resolved_canonical and not allow_canonical:
+        if (
+            apply
+            and resolved_path == resolved_canonical
+            and not allow_canonical
+        ):
             raise RuntimeError("P58_CANONICAL_DATABASE_APPLY_NOT_AUTHORIZED")
     if apply and confirmation != P58_APPLY_CONFIRMATION:
         raise RuntimeError("P58_APPLY_CONFIRMATION_REQUIRED")
