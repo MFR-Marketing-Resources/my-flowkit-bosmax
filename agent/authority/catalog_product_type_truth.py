@@ -18,6 +18,11 @@ P57_REVIEWER_NOTE = (
     "Product Truth source-type mapping reviewed under "
     "P5.7-CATALOG-COVERAGE-CONVERGENCE-20260729"
 )
+P58_REVIEWER_ID = "owner-mission:P5.8"
+P58_REVIEWER_NOTE = (
+    "Final catalog authority reviewed under "
+    "BOSMAX-P5.8-FINAL-CATALOG-AUTHORITY-P4-CLOSURE-20260729"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +34,10 @@ class CatalogProductTypeTruthMapping:
     source_categories: tuple[str, ...] = ()
     source_subcategories: tuple[str, ...] = ()
     specific_scene_strategy_id: str | None = None
+    auto_classification_enabled: bool = True
+    include_in_registry: bool = True
+    reviewer_id: str = P57_REVIEWER_ID
+    reviewer_note: str = P57_REVIEWER_NOTE
 
 
 CATALOG_PRODUCT_TYPE_TRUTH_MAPPINGS = (
@@ -578,7 +587,610 @@ CATALOG_PRODUCT_TYPE_TRUTH_MAPPINGS = (
         source_types=("Knitting & Crochet",),
         specific_scene_strategy_id="KNITTING_CROCHET",
     ),
+    # P5.8 source-taxonomy closure. These mappings are exact reusable source
+    # signatures, not title-derived aliases.
+    CatalogProductTypeTruthMapping(
+        "automotive_care",
+        "car_surface_coating",
+        "Car Surface Coating",
+        source_types=("Paint Care",),
+        specific_scene_strategy_id="CAR_CARE",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "baby_care",
+        "baby_feeding_accessory",
+        "Baby Feeding Accessory",
+        source_types=("Baby Bottles & Accessories",),
+        specific_scene_strategy_id="BABY_FEEDING",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "baby_care",
+        "baby_skincare",
+        "Baby Skincare",
+        source_types=("Baby Skincare",),
+        specific_scene_strategy_id="BABY_SKINCARE",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "home_textiles",
+        "bath_linen",
+        "Bath Linen",
+        source_types=("Towels", "Towels & Shower Caps"),
+        specific_scene_strategy_id="BATH_LINEN",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "stationery",
+        "sticky_note",
+        "Sticky Note",
+        source_types=("Labels, Index Dividers & Stamps",),
+        specific_scene_strategy_id="STATIONERY",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "stationery",
+        "gift_stationery",
+        "Gift Stationery",
+        source_types=("School & Educational Supplies",),
+        specific_scene_strategy_id="STATIONERY",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "stationery",
+        "money_packet",
+        "Money Packet",
+        source_types=("Money Packet",),
+        specific_scene_strategy_id="STATIONERY",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "fashion_accessory",
+        "brooch",
+        "Brooch",
+        source_types=("Collar Clips & Brooches",),
+        specific_scene_strategy_id="FASHION_ACCESSORY",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "health_device",
+        "pregnancy_test",
+        "Pregnancy Test",
+        source_types=("Family Planning Tests",),
+        specific_scene_strategy_id="HEALTH_TEST_DEVICE",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "health_device",
+        "health_monitor",
+        "Health Monitor",
+        source_types=("Health Monitors & Tests",),
+        specific_scene_strategy_id="HEALTH_TEST_DEVICE",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "home_lighting",
+        "outdoor_light",
+        "Outdoor Light",
+        source_types=("Outdoor Lighting",),
+        specific_scene_strategy_id="OUTDOOR_LIGHTING",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "garden_care",
+        "plant_care",
+        "Plant Care",
+        source_types=("Plant Care & Support",),
+        specific_scene_strategy_id="PLANT_CARE",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "home_electrical",
+        "power_saver_device",
+        "Power Saver Device",
+        source_types=("Power Savers",),
+        specific_scene_strategy_id="ELECTRICAL_DEVICE",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "household_cleaning",
+        "cleaning_cloth",
+        "Cleaning Cloth",
+        source_types=("Cleaning Cloths",),
+        specific_scene_strategy_id="CLEANING_TOOL",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "kitchen_storage",
+        "food_cover",
+        "Food Cover",
+        source_types=("Dust Covers",),
+        source_subcategories=("Home Care Supplies",),
+        specific_scene_strategy_id="FOOD_COVER",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "home_decor",
+        "photo_frame",
+        "Photo Frame",
+        source_types=("Photo Frames",),
+        specific_scene_strategy_id="HOME_DECOR",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "kitchen_cookware",
+        "pan_wok",
+        "Pan And Wok",
+        source_types=("Pans & Woks",),
+        specific_scene_strategy_id="COOKWARE",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "kitchen_drinkware",
+        "insulated_bottle",
+        "Insulated Bottle",
+        source_types=("Water Bottles",),
+        specific_scene_strategy_id="DRINKWARE",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "home_lighting",
+        "usb_light",
+        "USB Light",
+        source_types=("USB & Mobile Lights",),
+        specific_scene_strategy_id="SMALL_LIGHT",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "beauty_makeup",
+        "blush",
+        "Blush",
+        source_types=("Blush",),
+        specific_scene_strategy_id="BLUSH",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "home_decor",
+        "decorative_magnet",
+        "Decorative Magnet",
+        source_types=("Refrigerator Magnets",),
+        specific_scene_strategy_id="HOME_DECOR",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "household_cleaning",
+        "trash_bag",
+        "Trash Bag",
+        source_types=("Trash Bags",),
+        specific_scene_strategy_id="CLEANING_TOOL",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "home_decor",
+        "candle",
+        "Candle",
+        source_types=("Candles",),
+        specific_scene_strategy_id="HOME_DECOR",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "household_pest_control",
+        "pest_control",
+        "Pest Control",
+        source_types=("Pest & Weed Control",),
+        specific_scene_strategy_id="PEST_CONTROL",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "automotive_care",
+        "car_care_fluid",
+        "Car Care Fluid",
+        source_types=("Cleaning & Care Fluids",),
+        specific_scene_strategy_id="CAR_CARE",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "kitchen_tool",
+        "kitchen_tool",
+        "Kitchen Tool",
+        source_types=("Specialty Kitchen Utensils",),
+        specific_scene_strategy_id="KITCHEN_TOOL",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "stationery",
+        "notebook",
+        "Notebook",
+        source_types=("Notebooks & Paper",),
+        specific_scene_strategy_id="STATIONERY",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
+    CatalogProductTypeTruthMapping(
+        "fashion_apparel",
+        "apparel_set",
+        "Apparel Set",
+        source_types=("Sets",),
+        source_categories=("Womenswear & Underwear",),
+        source_subcategories=("Women's Suits & Overalls",),
+        specific_scene_strategy_id="APPAREL",
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    ),
 )
+
+
+def _p58_mapping(
+    cluster: str,
+    product_type_group: str,
+    display_name: str,
+    scene_strategy_id: str,
+    *,
+    include_in_registry: bool = True,
+) -> CatalogProductTypeTruthMapping:
+    return CatalogProductTypeTruthMapping(
+        cluster=cluster,
+        product_type_group=product_type_group,
+        display_name=display_name,
+        specific_scene_strategy_id=scene_strategy_id,
+        auto_classification_enabled=False,
+        include_in_registry=include_in_registry,
+        reviewer_id=P58_REVIEWER_ID,
+        reviewer_note=P58_REVIEWER_NOTE,
+    )
+
+
+# Product-ID authority is used only where an APPROVED Product Truth snapshot,
+# or an exact duplicate source signature, proves the product type but the source
+# category path is too broad or contradictory. It is never a runtime title rule.
+P58_PRODUCT_TRUTH_OVERRIDES = {
+    "b4b0f581-f1aa-4677-beaa-54268199c377": _p58_mapping(
+        "home_textiles", "bedding", "Bedding", "BEDDING"
+    ),
+    "753d305a-4133-40db-aa2d-56791f7c1d08": _p58_mapping(
+        "home_textiles", "curtain", "Curtain", "CURTAIN"
+    ),
+    "d3830470-9019-490b-8362-87245b24b917": _p58_mapping(
+        "home_textiles", "bath_linen", "Bath Linen", "BATH_LINEN"
+    ),
+    "013b7710-a55e-4053-9224-e1149f052f57": _p58_mapping(
+        "home_improvement", "wall_covering", "Wall Covering", "WALL_COVERING"
+    ),
+    "8014da71-6b87-4476-9eb2-a91baf7fc0dd": _p58_mapping(
+        "outdoor_equipment", "headlamp", "Headlamp", "OUTDOOR_LIGHTING"
+    ),
+    "733aa9ad-1ade-4fb3-a9f2-e4d70a841127": _p58_mapping(
+        "outdoor_equipment", "fishing_reel", "Fishing Reel", "FISHING_GEAR"
+    ),
+    "ec58c4af-78a8-49ab-9a3f-7ab3bcdf76c4": _p58_mapping(
+        "fitness_equipment",
+        "pull_up_bar",
+        "Pull Up Bar",
+        "FITNESS_EQUIPMENT",
+    ),
+    "aae1b6f9-6d8f-43e3-9723-0d517ae8daec": _p58_mapping(
+        "automotive_care", "car_surface_coating", "Car Surface Coating", "CAR_CARE"
+    ),
+    "d7df7ab0-09fe-42b5-9d5c-3211988a75a3": _p58_mapping(
+        "automotive_accessory",
+        "phone_mount",
+        "Automotive Phone Mount",
+        "AUTOMOTIVE_ACCESSORY",
+    ),
+    "21dcae04-86de-4af7-9698-eb2a3331614b": _p58_mapping(
+        "consumer_audio", "wireless_earbuds", "Wireless Earbuds", "AUDIO_DEVICE"
+    ),
+    "6388605e-9bb3-43e2-beef-c07f89500a50": _p58_mapping(
+        "consumer_audio", "radio", "Radio", "AUDIO_DEVICE"
+    ),
+    "1d970a08-8477-44c2-b514-35b05011e9c7": _p58_mapping(
+        "baby_care",
+        "baby_feeding_accessory",
+        "Baby Feeding Accessory",
+        "BABY_FEEDING",
+    ),
+    "6a6efac9-63a0-4cb1-a7ec-34cc78030ba7": _p58_mapping(
+        "craft_hobby", "sewing_tool", "Sewing Tool", "SEWING_TOOL"
+    ),
+    "1925cb8e-7fed-4bdf-9e1c-e738abe19194": _p58_mapping(
+        "kitchen_cookware", "grill_pan", "Grill Pan", "COOKWARE"
+    ),
+    "303f796d-5935-4f18-90f2-47f5e8037f6f": _p58_mapping(
+        "pet_care", "cat_litter", "Cat Litter", "PET_LITTER"
+    ),
+    "038434f0-97ea-4d8d-afcf-52db4d85c434": _p58_mapping(
+        "home_improvement", "wall_covering", "Wall Covering", "WALL_COVERING"
+    ),
+    "f93df31c-ac2c-4d76-8342-27aef23ca549": _p58_mapping(
+        "craft_hobby", "epoxy_resin", "Epoxy Resin", "CRAFT_MATERIAL"
+    ),
+    "efcc1f31-c91b-46fb-acc6-d736a5271884": _p58_mapping(
+        "beauty_personal_care",
+        "hair_treatment",
+        "Hair Treatment",
+        "HAIR_TREATMENT",
+    ),
+    "666ca472-5045-4781-a2a4-c39292a3a617": _p58_mapping(
+        "beauty_personal_care", "oral_care", "Oral Care", "ORAL_CARE"
+    ),
+    "35f19456-907c-414b-a631-f2d742facb8c": _p58_mapping(
+        "beauty_personal_care",
+        "personal_care_device",
+        "Personal Care Device",
+        "PERSONAL_CARE_DEVICE",
+    ),
+    "1512b029-ba11-407d-bc87-d2f7990b0315": _p58_mapping(
+        "beauty_makeup",
+        "complexion_makeup",
+        "Complexion Makeup",
+        "COMPLEXION_MAKEUP",
+    ),
+    "f722256e-ba18-47c9-a2ae-dcb007656775": _p58_mapping(
+        "beauty_personal_care",
+        "body_moisturizer",
+        "Body Moisturizer",
+        "BODY_MOISTURIZER",
+    ),
+    "3c34f3a1-ba39-4eb5-903d-815b96bf84e8": _p58_mapping(
+        "sensitive_wellness",
+        "traditional_herbal_preparation",
+        "Traditional Herbal Preparation",
+        "SENSITIVE_WELLNESS",
+    ),
+    "f67305f1-3786-4727-96c4-7e972cf50129": _p58_mapping(
+        "traditional_wellness",
+        "traditional_herbal_oil",
+        "Traditional Herbal Oil",
+        "TRADITIONAL_HERBAL_OIL",
+        include_in_registry=False,
+    ),
+    "85ddc17a-ba47-4e03-a0a6-bc1e62f46436": _p58_mapping(
+        "sensitive_wellness",
+        "feminine_hygiene",
+        "Feminine Hygiene",
+        "FEMININE_HYGIENE",
+    ),
+    "b6d3b5b7-b61b-4537-b148-5f00b968e567": _p58_mapping(
+        "beauty_personal_care",
+        "personal_care_device",
+        "Personal Care Device",
+        "PERSONAL_CARE_DEVICE",
+    ),
+    "20f2352c-0f62-41c9-b1d9-8ee9c77d887f": _p58_mapping(
+        "beauty_skincare", "moisturizer", "Moisturizer", "MOISTURIZER"
+    ),
+    "1ed2a06c-d579-4ebd-b227-d414cac6a356": _p58_mapping(
+        "beauty_personal_care",
+        "bath_salt",
+        "Bath Salt",
+        "BODY_BATH",
+    ),
+    "ddee46a2-367d-4fb5-897e-76730804f5a6": _p58_mapping(
+        "beauty_skincare", "moisturizer", "Moisturizer", "MOISTURIZER"
+    ),
+    "61d52713-af50-4195-8b04-9c2b266ed3ea": _p58_mapping(
+        "beauty_skincare", "sunscreen", "Sunscreen", "SUNSCREEN"
+    ),
+    "69f37eee-aff0-4084-b8b6-3f64ba87271b": _p58_mapping(
+        "beauty_personal_care",
+        "hair_treatment",
+        "Hair Treatment",
+        "HAIR_TREATMENT",
+    ),
+    "25c6f610-8360-4b11-9a78-1ed6f16b928d": _p58_mapping(
+        "beauty_makeup",
+        "makeup_setting_spray",
+        "Makeup Setting Spray",
+        "MAKEUP_SETTING_SPRAY",
+    ),
+    "3e7e7411-9b50-4005-acf6-d99d85e4d7e1": _p58_mapping(
+        "beauty_makeup", "nail_color", "Nail Color", "NAIL_COLOR"
+    ),
+    "54017efd-5d1c-40b5-9875-ec1bdde88536": _p58_mapping(
+        "beauty_makeup", "blush", "Blush", "BLUSH"
+    ),
+    "626a87b3-3cc7-4b61-8859-9f976ec9d15c": _p58_mapping(
+        "beauty_makeup",
+        "makeup_setting_spray",
+        "Makeup Setting Spray",
+        "MAKEUP_SETTING_SPRAY",
+    ),
+    "b60fb472-0a9a-4717-9751-6bf6d6e92344": _p58_mapping(
+        "fashion_apparel", "sleepwear", "Sleepwear", "SLEEPWEAR"
+    ),
+    "7e4ea3ee-a37d-4ddd-b460-a6938cbd89e9": _p58_mapping(
+        "fashion_apparel",
+        "bottom_apparel",
+        "Bottom Apparel",
+        "BOTTOM_APPAREL",
+    ),
+    "4bab2b57-da68-482c-9f31-3d700ac0ac6b": _p58_mapping(
+        "household_cleaning",
+        "baby_bottle_cleanser",
+        "Baby Bottle Cleanser",
+        "HOUSEHOLD_CLEANER",
+    ),
+    "a54125d1-385c-4a78-92b5-273bc9aa1cf1": _p58_mapping(
+        "fashion_footwear", "footwear", "Footwear", "FOOTWEAR"
+    ),
+    "b0919477-44ed-4518-9cb1-241ad26a4f00": _p58_mapping(
+        "fashion_apparel", "top_apparel", "Top Apparel", "TOP_APPAREL"
+    ),
+    "129e569c-73a1-494c-bcf1-4ec0b90b1fbf": _p58_mapping(
+        "household_cleaning",
+        "cleaning_tool",
+        "Cleaning Tool",
+        "CLEANING_TOOL",
+    ),
+    "447debb4-7ed1-4536-aa7b-42719a8b378c": _p58_mapping(
+        "home_storage",
+        "storage_organizer",
+        "Storage Organizer",
+        "HOUSEHOLD_STORAGE",
+    ),
+    "1a5f4257-6711-42e4-8dcf-d61345fda1bd": _p58_mapping(
+        "kitchen_drinkware",
+        "insulated_bottle",
+        "Insulated Bottle",
+        "DRINKWARE",
+    ),
+    "ee5f12c2-d249-487a-b3f6-694d26a82356": _p58_mapping(
+        "household_cleaning",
+        "pressure_washer",
+        "Pressure Washer",
+        "CLEANING_EQUIPMENT",
+    ),
+    "0ddfd65c-6ffc-43fe-aa3f-8fff0a13a886": _p58_mapping(
+        "garden_care", "plant_support", "Plant Support", "PLANT_CARE"
+    ),
+    "96616701-0020-4430-97f0-1d4001c40ae7": _p58_mapping(
+        "household_cleaning", "trash_bag", "Trash Bag", "CLEANING_TOOL"
+    ),
+    "aaa1f472-b2d4-4fe3-a095-a8ccf0313360": _p58_mapping(
+        "household_cleaning",
+        "cleaning_cloth",
+        "Cleaning Cloth",
+        "CLEANING_TOOL",
+    ),
+    "bfc4c9c0-64b1-4104-82ad-8c0409ef8e93": _p58_mapping(
+        "kitchen_cookware", "pan_wok", "Pan And Wok", "COOKWARE"
+    ),
+    "0dd690d7-e3d5-4155-a354-9a8c1476b9c9": _p58_mapping(
+        "craft_hobby", "craft_material", "Craft Material", "CRAFT_MATERIAL"
+    ),
+    "ae47b55b-58d4-441e-97d3-0d6c785bb530": _p58_mapping(
+        "household_pest_control",
+        "pest_control",
+        "Pest Control",
+        "PEST_CONTROL",
+    ),
+    "6869a834-6fda-442a-8d51-394fccca3267": _p58_mapping(
+        "stationery", "gift_bag", "Gift Bag", "STATIONERY"
+    ),
+    "40655de2-037e-48a0-8708-160831d120b4": _p58_mapping(
+        "household_cleaning", "trash_bag", "Trash Bag", "CLEANING_TOOL"
+    ),
+    "2270741c-17ff-4915-86b3-aedde625452d": _p58_mapping(
+        "fashion_footwear", "footwear", "Footwear", "FOOTWEAR"
+    ),
+    "e6f07364-c8e0-4839-b99a-7195578163ac": _p58_mapping(
+        "fragrance", "fragrance", "Fragrance", "FRAGRANCE"
+    ),
+    "fdb9d59b-c971-4f6e-b81c-5a6731e32093": _p58_mapping(
+        "fashion_apparel", "modestwear", "Modestwear", "MODESTWEAR"
+    ),
+    "9dbd8102-700c-4b84-bc1d-9d7d6e616918": _p58_mapping(
+        "beauty_personal_care", "oral_care", "Oral Care", "ORAL_CARE"
+    ),
+    "e3e3819f-c312-4e73-9db8-477471860616": _p58_mapping(
+        "pet_care", "pet_food", "Pet Food", "PET_FOOD"
+    ),
+    "5fcb8133-d048-4b2d-8493-08aba78ab9e2": _p58_mapping(
+        "baby_care",
+        "baby_feeding_accessory",
+        "Baby Feeding Accessory",
+        "BABY_FEEDING",
+    ),
+    "3be06f47-a156-4d5f-8d8c-91c786e89012": _p58_mapping(
+        "sensitive_wellness",
+        "wellness_supplement",
+        "Wellness Supplement",
+        "WELLNESS_SUPPLEMENT",
+    ),
+    "e9f06816-46b1-421d-8921-3ea183ed4760": _p58_mapping(
+        "sensitive_wellness",
+        "wellness_supplement",
+        "Wellness Supplement",
+        "WELLNESS_SUPPLEMENT",
+    ),
+    "4d491c01-2c5a-40c0-869e-54c50050d95d": _p58_mapping(
+        "beauty_personal_care",
+        "body_moisturizer",
+        "Body Moisturizer",
+        "BODY_MOISTURIZER",
+    ),
+    "2ccd3036-61d8-4e01-a35b-e9569dace960": _p58_mapping(
+        "beauty_personal_care",
+        "lip_treatment",
+        "Lip Treatment",
+        "LIP_TREATMENT",
+    ),
+    "b2ac8af7-80c2-4082-a222-6a47b92272c2": _p58_mapping(
+        "baby_care",
+        "baby_feeding_accessory",
+        "Baby Feeding Accessory",
+        "BABY_FEEDING",
+    ),
+    "867bd162-ef79-46ef-a7aa-97fb2387c058": _p58_mapping(
+        "books_media", "book", "Book", "BOOK"
+    ),
+    "9c2af744-87d2-4cb0-b60a-e81dbbb761dd": _p58_mapping(
+        "fashion_apparel", "apparel_set", "Apparel Set", "APPAREL"
+    ),
+    "baf8e9ea-fa91-4257-a980-413384ac5509": _p58_mapping(
+        "household_cleaning",
+        "air_duster",
+        "Air Duster",
+        "CLEANING_EQUIPMENT",
+    ),
+    "931829bd-0e0d-40db-9dcf-495a4dcc8329": _p58_mapping(
+        "kitchen_drinkware",
+        "insulated_bottle",
+        "Insulated Bottle",
+        "DRINKWARE",
+    ),
+}
+
+
+P58_INSUFFICIENT_PRODUCT_TRUTH_REASONS = {
+    "8e75f1a8-ba43-444e-8b40-c71d140c76c5": (
+        "APPROVED_PRODUCT_TRUTH_DESCRIPTION_ABSENT"
+    ),
+    "5d298e84-2dc2-4747-9a0b-77499f5c8569": (
+        "APPROVED_DESCRIPTION_IDENTIFIES_SAMPLE_SIZE_NOT_PRODUCT_SUBSTANCE"
+    ),
+    "60c65d01-5d27-465b-8b9b-20d3a8cd8b99": (
+        "PRODUCT_TITLE_ONLY_WITHOUT_APPROVED_PRODUCT_TRUTH"
+    ),
+}
+
+
+P58_PRODUCT_AUTHORITY_BLOCKERS = {
+    "7712a709-d9eb-4203-a07f-249bceff9213": (
+        "UNVERIFIED_ELECTRICITY_SAVINGS_CLAIM",
+        "ELECTRICAL_SAFETY_REVIEW_REQUIRED",
+    ),
+    "8014da71-6b87-4476-9eb2-a91baf7fc0dd": (
+        "UNVERIFIED_LIGHT_OUTPUT_AND_RUNTIME_CLAIMS",
+    ),
+}
 
 
 def _normalize(value: object) -> str:
@@ -594,6 +1206,10 @@ def resolve_catalog_product_type_truth(
 ) -> CatalogProductTypeTruthMapping | None:
     """Resolve an exact source-authority mapping without title inference."""
 
+    product_id = str(product.get("id") or product.get("product_id") or "")
+    reviewed_override = P58_PRODUCT_TRUTH_OVERRIDES.get(product_id)
+    if reviewed_override is not None:
+        return reviewed_override
     source_type = _normalize(product.get("type"))
     source_category = _normalize(product.get("category"))
     source_subcategory = _normalize(product.get("subcategory"))
@@ -610,13 +1226,31 @@ def resolve_catalog_product_type_truth(
     return None
 
 
+def catalog_product_type_truth_provenance(
+    product: Mapping[str, object],
+) -> str:
+    product_id = str(product.get("id") or product.get("product_id") or "")
+    if product_id in P58_PRODUCT_TRUTH_OVERRIDES:
+        return "P5_8_PRODUCT_TRUTH_REVIEW"
+    if resolve_catalog_product_type_truth(product) is not None:
+        return "SOURCE_TAXONOMY"
+    return "UNRESOLVED"
+
+
 def iter_catalog_product_type_truth_registry_entries() -> tuple[
     CatalogProductTypeTruthMapping, ...
 ]:
     """Return one deterministic registry row per exact product-type pair."""
 
     by_pair: dict[tuple[str, str], CatalogProductTypeTruthMapping] = {}
-    for mapping in CATALOG_PRODUCT_TYPE_TRUTH_MAPPINGS:
+    for mapping in (
+        *CATALOG_PRODUCT_TYPE_TRUTH_MAPPINGS,
+        *(
+            mapping
+            for mapping in P58_PRODUCT_TRUTH_OVERRIDES.values()
+            if mapping.include_in_registry
+        ),
+    ):
         pair = (mapping.cluster, mapping.product_type_group)
         existing = by_pair.get(pair)
         if existing is None:

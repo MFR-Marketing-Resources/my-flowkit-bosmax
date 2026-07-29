@@ -120,3 +120,43 @@ class CatalogCoverageMatrixReport(BaseModel):
     coverage_groups: list[CatalogCoverageMatrixGroup]
     products: list[CatalogCoverageMatrixProduct]
     matrix_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class CatalogAuthorityMatrixProduct(CatalogCoverageMatrixProduct):
+    mapping_provenance: Literal[
+        "SOURCE_TAXONOMY",
+        "P5_8_PRODUCT_TRUTH_REVIEW",
+        "MANUAL_TAXONOMY_REVIEW",
+        "UNRESOLVED",
+    ]
+    mapping_reviewer_id: str | None = None
+    mapping_reviewer_note: str | None = None
+    taxonomy_reviewer_id: str | None = None
+    taxonomy_reviewed_at: str | None = None
+    terminal_state: Literal[
+        "P6_READY",
+        "REVIEW_BLOCKED_WITH_EXACT_REASON",
+        "INSUFFICIENT_PRODUCT_TRUTH",
+        "ARCHIVED_NOT_IN_SCOPE",
+    ]
+    terminal_reasons: list[str] = Field(default_factory=list)
+
+
+class CatalogAuthorityMatrixReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    report_version: Literal["p5.8_final_catalog_authority_v1"]
+    total_products: int = Field(ge=0)
+    active_products: int = Field(ge=0)
+    archived_products: int = Field(ge=0)
+    product_truth_mapped_count: int = Field(ge=0)
+    p4_supported_count: int = Field(ge=0)
+    unknown_product_type_count: int = Field(ge=0)
+    unknown_product_type_p4_supported_count: int = Field(ge=0)
+    terminal_state_counts: dict[str, int]
+    p6_launch_cohort_count: int = Field(ge=0)
+    p6_launch_cohort_product_ids: list[str]
+    blocked_by_reason: dict[str, int]
+    coverage_groups: list[CatalogCoverageMatrixGroup]
+    products: list[CatalogAuthorityMatrixProduct]
+    matrix_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")

@@ -14,8 +14,6 @@ from dataclasses import dataclass
 from typing import Literal, Mapping, TypedDict
 
 from agent.authority.catalog_product_type_truth import (
-    P57_REVIEWER_ID,
-    P57_REVIEWER_NOTE,
     iter_catalog_product_type_truth_registry_entries,
     resolve_catalog_product_type_truth,
 )
@@ -466,11 +464,15 @@ def product_strategy_type_registry_seed_entries() -> list[dict[str, object]]:
                 "registry_status": (
                     "ACTIVE" if has_specific_strategy else "REVIEW_REQUIRED"
                 ),
-                "auto_classification_enabled": True,
+                "auto_classification_enabled": (
+                    mapping.auto_classification_enabled
+                ),
                 "authority_source": "SYSTEM_SEED",
-                "reviewer_id": P57_REVIEWER_ID if has_specific_strategy else None,
+                "reviewer_id": (
+                    mapping.reviewer_id if has_specific_strategy else None
+                ),
                 "reviewer_note": (
-                    P57_REVIEWER_NOTE if has_specific_strategy else None
+                    mapping.reviewer_note if has_specific_strategy else None
                 ),
             }
         )
@@ -658,12 +660,12 @@ def _matched_rule(
             ),
             display_name=truth_mapping.display_name,
             reviewer_id=(
-                P57_REVIEWER_ID
+                truth_mapping.reviewer_id
                 if truth_mapping.specific_scene_strategy_id
                 else None
             ),
             reviewer_note=(
-                P57_REVIEWER_NOTE
+                truth_mapping.reviewer_note
                 if truth_mapping.specific_scene_strategy_id
                 else None
             ),

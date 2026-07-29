@@ -1,0 +1,45 @@
+{
+  "mission_id": "BOSMAX-P5.8-FINAL-CATALOG-AUTHORITY-P4-CLOSURE-20260729",
+  "configured_provider_id": "deepseek",
+  "configured_model": "deepseek-v4-pro",
+  "max_provider_calls": 20,
+  "request_count": 2,
+  "valid_provider_decision_count": 0,
+  "accepted_provider_decision_count": 0,
+  "rejected_provider_decision_count": 0,
+  "blocked_provider_decision_count": 0,
+  "attempts": [
+    {
+      "call_number": 1,
+      "batch_signature_count": 20,
+      "provider_id": "deepseek",
+      "model": "deepseek-v4-pro",
+      "status": "FAILED_NO_VALID_RESPONSE",
+      "response_status": "TIMEOUT",
+      "finish_reason": null,
+      "input_tokens": null,
+      "output_tokens": null,
+      "duration_seconds": 42.8,
+      "valid_decision_count": 0,
+      "error_type": "httpx.ReadTimeout",
+      "raw_provider_output_retained": false
+    },
+    {
+      "call_number": 2,
+      "batch_signature_count": 10,
+      "provider_id": "deepseek",
+      "model": "deepseek-v4-pro",
+      "status": "FAILED_NO_VALID_RESPONSE",
+      "response_status": "TIMEOUT",
+      "finish_reason": null,
+      "input_tokens": null,
+      "output_tokens": null,
+      "duration_seconds": 42.4,
+      "valid_decision_count": 0,
+      "error_type": "httpx.ReadTimeout",
+      "raw_provider_output_retained": false
+    }
+  ],
+  "raw_provider_output_retained": false,
+  "canonical_mutation_from_provider_output": false
+}

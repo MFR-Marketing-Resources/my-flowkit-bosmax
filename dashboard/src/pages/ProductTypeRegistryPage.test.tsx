@@ -12,17 +12,20 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import appSource from "../App.tsx?raw";
 import {
+	fetchCatalogAuthorityReport,
 	fetchProductStrategyTypeRegistry,
 	fetchProductTypeCopyEligibleReport,
 	registerProductStrategyType,
 } from "../api/products";
 import type {
+	CatalogAuthorityReport,
 	ProductStrategyTypeRegistryResponse,
 	ProductTypeCopyEligibleReport,
 } from "../types";
 import ProductTypeRegistryPage from "./ProductTypeRegistryPage";
 
 vi.mock("../api/products", () => ({
+	fetchCatalogAuthorityReport: vi.fn(),
 	fetchProductStrategyTypeRegistry: vi.fn(),
 	fetchProductTypeCopyEligibleReport: vi.fn(),
 	registerProductStrategyType: vi.fn(),
@@ -117,6 +120,66 @@ const P4_REPORT: ProductTypeCopyEligibleReport = {
 	sample_blocked: [],
 };
 
+const AUTHORITY_REPORT: CatalogAuthorityReport = {
+	report_version: "p5.8_final_catalog_authority_v1",
+	total_products: 659,
+	active_products: 443,
+	archived_products: 216,
+	product_truth_mapped_count: 628,
+	p4_supported_count: 640,
+	unknown_product_type_count: 14,
+	unknown_product_type_p4_supported_count: 0,
+	terminal_state_counts: {
+		P6_READY: 438,
+		REVIEW_BLOCKED_WITH_EXACT_REASON: 2,
+		INSUFFICIENT_PRODUCT_TRUTH: 3,
+		ARCHIVED_NOT_IN_SCOPE: 216,
+	},
+	p6_launch_cohort_count: 438,
+	p6_launch_cohort_product_ids: ["product-ready-1"],
+	blocked_by_reason: {
+		UNVERIFIED_ELECTRICITY_SAVINGS_CLAIM: 1,
+	},
+	coverage_groups: [],
+	products: [
+		{
+			product_id: "product-blocked-1",
+			product_name: "Power Saver Device",
+			lifecycle_status: "ACTIVE",
+			source_category: "Home Improvement",
+			source_subcategory: "Electrical Equipment & Supplies",
+			source_product_type: "Power Savers",
+			product_truth_mapped: true,
+			cluster: "home_electrical",
+			product_type_group: "power_saver_device",
+			scene_strategy_id: "ELECTRICAL_DEVICE",
+			registry_status: "ACTIVE",
+			review_status: "REVIEW_REQUIRED",
+			consumer_status: "BLOCKED_REVIEW_REQUIRED",
+			scene_coverage_status: "COVERED",
+			taxonomy_stale: false,
+			fallback_used: false,
+			specific_strategy: true,
+			p4_support_status: "P4_SUPPORTED",
+			p6_launch_cohort: false,
+			blockers: ["TAXONOMY_NOT_VERIFIED"],
+			mapping_provenance: "SOURCE_TAXONOMY",
+			mapping_reviewer_id: "owner-mission:P5.8",
+			mapping_reviewer_note: "P5.8 reviewed mapping.",
+			taxonomy_reviewer_id: null,
+			taxonomy_reviewed_at: null,
+			terminal_state: "REVIEW_BLOCKED_WITH_EXACT_REASON",
+			terminal_reasons: [
+				"UNVERIFIED_ELECTRICITY_SAVINGS_CLAIM",
+				"ELECTRICAL_SAFETY_REVIEW_REQUIRED",
+			],
+		},
+	],
+	matrix_sha256:
+		"a467357037d44c54be040fc09d0940795849916785fa4ffada05688cd80b7053",
+};
+
+const mockedFetchAuthority = vi.mocked(fetchCatalogAuthorityReport);
 const mockedFetchRegistry = vi.mocked(fetchProductStrategyTypeRegistry);
 const mockedFetchCopyReport = vi.mocked(fetchProductTypeCopyEligibleReport);
 const mockedRegister = vi.mocked(registerProductStrategyType);
@@ -146,9 +209,11 @@ function fillRequiredRegistrationFields() {
 
 describe("ProductTypeRegistryPage", () => {
 	beforeEach(() => {
+		mockedFetchAuthority.mockReset();
 		mockedFetchRegistry.mockReset();
 		mockedFetchCopyReport.mockReset();
 		mockedRegister.mockReset();
+		mockedFetchAuthority.mockResolvedValue(AUTHORITY_REPORT);
 		mockedFetchRegistry.mockResolvedValue(REGISTRY);
 		mockedFetchCopyReport.mockResolvedValue(P4_REPORT);
 	});
@@ -175,6 +240,23 @@ describe("ProductTypeRegistryPage", () => {
 		expect(
 			within(eyelinerRow).getByText("4 blocked by missing strategy"),
 		).toBeVisible();
+	});
+
+	it("renders the 659-product terminal-state authority and exact blockers", async () => {
+		renderPage();
+		const summary = await screen.findByTestId("catalog-authority-summary");
+		expect(within(summary).getByText("659")).toBeVisible();
+		expect(within(summary).getByText("438")).toBeVisible();
+		expect(within(summary).getByText("2")).toBeVisible();
+		expect(within(summary).getByText("3")).toBeVisible();
+		expect(within(summary).getByText("216")).toBeVisible();
+		const blocked = screen.getByTestId("terminal-product-product-blocked-1");
+		expect(
+			within(blocked).getByText("REVIEW_BLOCKED_WITH_EXACT_REASON"),
+		).toBeVisible();
+		expect(within(blocked).getByText("SOURCE_TAXONOMY")).toBeVisible();
+		expect(blocked).toHaveTextContent("UNVERIFIED_ELECTRICITY_SAVINGS_CLAIM");
+		expect(blocked).toHaveTextContent("ELECTRICAL_SAFETY_REVIEW_REQUIRED");
 	});
 
 	it("searches and filters by every requested registry dimension", async () => {

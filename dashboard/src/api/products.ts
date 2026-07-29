@@ -1,4 +1,5 @@
 import type {
+	CatalogAuthorityReport,
 	Product,
 	ProductCatalogResponse,
 	ProductIntelligenceFieldProvenanceListResponse,
@@ -46,6 +47,12 @@ export async function fetchProductStrategyTypeRegistry(): Promise<ProductStrateg
 export async function fetchProductTypeCopyEligibleReport(): Promise<ProductTypeCopyEligibleReport> {
 	return fetchAPI<ProductTypeCopyEligibleReport>(
 		"/api/copywriting/p4/eligible-report",
+	);
+}
+
+export async function fetchCatalogAuthorityReport(): Promise<CatalogAuthorityReport> {
+	return fetchAPI<CatalogAuthorityReport>(
+		"/api/copywriting/p5-8/catalog-authority",
 	);
 }
 

@@ -1149,6 +1149,76 @@ export interface ProductTypeCopyEligibleReport {
 	sample_blocked: ProductTypeCopyReportProduct[];
 }
 
+export type CatalogAuthorityTerminalState =
+	| "P6_READY"
+	| "REVIEW_BLOCKED_WITH_EXACT_REASON"
+	| "INSUFFICIENT_PRODUCT_TRUTH"
+	| "ARCHIVED_NOT_IN_SCOPE";
+
+export interface CatalogAuthorityProduct {
+	product_id: string;
+	product_name: string;
+	lifecycle_status: string;
+	source_category?: string | null;
+	source_subcategory?: string | null;
+	source_product_type?: string | null;
+	product_truth_mapped: boolean;
+	cluster: string;
+	product_type_group: string;
+	scene_strategy_id: string;
+	registry_status: "ACTIVE" | "REVIEW_REQUIRED" | "UNREGISTERED";
+	review_status: "VERIFIED" | "REVIEW_REQUIRED";
+	consumer_status: "READY" | "BLOCKED_REVIEW_REQUIRED";
+	scene_coverage_status: "COVERED" | "PARTIAL" | "FALLBACK_ONLY";
+	taxonomy_stale: boolean;
+	fallback_used: boolean;
+	specific_strategy: boolean;
+	p4_support_status: "P4_SUPPORTED" | "P4_UNSUPPORTED";
+	p6_launch_cohort: boolean;
+	blockers: string[];
+	mapping_provenance:
+		| "SOURCE_TAXONOMY"
+		| "P5_8_PRODUCT_TRUTH_REVIEW"
+		| "MANUAL_TAXONOMY_REVIEW"
+		| "UNRESOLVED";
+	mapping_reviewer_id?: string | null;
+	mapping_reviewer_note?: string | null;
+	taxonomy_reviewer_id?: string | null;
+	taxonomy_reviewed_at?: string | null;
+	terminal_state: CatalogAuthorityTerminalState;
+	terminal_reasons: string[];
+}
+
+export interface CatalogAuthorityCoverageGroup {
+	lifecycle_status: string;
+	cluster: string;
+	product_type_group: string;
+	scene_strategy_id: string;
+	registry_status: "ACTIVE" | "REVIEW_REQUIRED" | "UNREGISTERED";
+	scene_coverage_status: "COVERED" | "PARTIAL" | "FALLBACK_ONLY";
+	p4_support_status: "P4_SUPPORTED" | "P4_UNSUPPORTED";
+	product_count: number;
+	p6_launch_count: number;
+}
+
+export interface CatalogAuthorityReport {
+	report_version: "p5.8_final_catalog_authority_v1";
+	total_products: number;
+	active_products: number;
+	archived_products: number;
+	product_truth_mapped_count: number;
+	p4_supported_count: number;
+	unknown_product_type_count: number;
+	unknown_product_type_p4_supported_count: number;
+	terminal_state_counts: Record<CatalogAuthorityTerminalState, number>;
+	p6_launch_cohort_count: number;
+	p6_launch_cohort_product_ids: string[];
+	blocked_by_reason: Record<string, number>;
+	coverage_groups: CatalogAuthorityCoverageGroup[];
+	products: CatalogAuthorityProduct[];
+	matrix_sha256: string;
+}
+
 export interface Product {
 	id: string;
 	product_id?: string;

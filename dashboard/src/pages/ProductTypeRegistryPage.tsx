@@ -2,11 +2,14 @@ import { RefreshCw, Search, Tags } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
+	fetchCatalogAuthorityReport,
 	fetchProductStrategyTypeRegistry,
 	fetchProductTypeCopyEligibleReport,
 	registerProductStrategyType,
 } from "../api/products";
 import type {
+	CatalogAuthorityReport,
+	CatalogAuthorityTerminalState,
 	ProductStrategyTypeRegistrationRequest,
 	ProductStrategyTypeRegistryEntry,
 	ProductStrategyTypeRegistryResponse,
@@ -85,15 +88,29 @@ function coverageClass(status: CoverageStatus) {
 	return "border-slate-600 bg-slate-800/70 text-slate-300";
 }
 
+function terminalStateClass(status: CatalogAuthorityTerminalState) {
+	if (status === "P6_READY")
+		return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+	if (status === "REVIEW_BLOCKED_WITH_EXACT_REASON")
+		return "border-amber-500/30 bg-amber-500/10 text-amber-300";
+	if (status === "INSUFFICIENT_PRODUCT_TRUTH")
+		return "border-rose-500/30 bg-rose-500/10 text-rose-300";
+	return "border-slate-600 bg-slate-800/70 text-slate-300";
+}
+
 export default function ProductTypeRegistryPage() {
 	const [registry, setRegistry] =
 		useState<ProductStrategyTypeRegistryResponse>(EMPTY_REGISTRY);
 	const [copyReport, setCopyReport] =
 		useState<ProductTypeCopyEligibleReport | null>(null);
+	const [authorityReport, setAuthorityReport] =
+		useState<CatalogAuthorityReport | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [copyReportLoading, setCopyReportLoading] = useState(true);
+	const [authorityLoading, setAuthorityLoading] = useState(true);
 	const [registryError, setRegistryError] = useState<string | null>(null);
 	const [copyReportError, setCopyReportError] = useState<string | null>(null);
+	const [authorityError, setAuthorityError] = useState<string | null>(null);
 	const [search, setSearch] = useState("");
 	const [clusterFilter, setClusterFilter] = useState("ALL");
 	const [statusFilter, setStatusFilter] = useState("ALL");
@@ -153,10 +170,28 @@ export default function ProductTypeRegistryPage() {
 		}
 	}, []);
 
+	const loadAuthorityReport = useCallback(async () => {
+		setAuthorityLoading(true);
+		setAuthorityError(null);
+		try {
+			setAuthorityReport(await fetchCatalogAuthorityReport());
+		} catch (error) {
+			setAuthorityReport(null);
+			setAuthorityError(
+				error instanceof Error
+					? error.message
+					: "P5.8 final catalog authority is unavailable.",
+			);
+		} finally {
+			setAuthorityLoading(false);
+		}
+	}, []);
+
 	useEffect(() => {
 		void loadRegistry();
 		void loadCopyReport();
-	}, [loadCopyReport, loadRegistry]);
+		void loadAuthorityReport();
+	}, [loadAuthorityReport, loadCopyReport, loadRegistry]);
 
 	const concreteClusters = useMemo(
 		() =>
@@ -264,6 +299,15 @@ export default function ProductTypeRegistryPage() {
 		(item) => item.registry_status === "ACTIVE",
 	).length;
 	const reviewRequiredCount = registry.items.length - activeCount;
+	const terminalExceptions = useMemo(
+		() =>
+			(authorityReport?.products ?? []).filter(
+				(product) =>
+					product.lifecycle_status === "ACTIVE" &&
+					product.terminal_state !== "P6_READY",
+			),
+		[authorityReport],
+	);
 
 	function updateSceneStrategy(matchedSceneStrategyId: string) {
 		setForm((current) => {
@@ -369,6 +413,7 @@ export default function ProductTypeRegistryPage() {
 					onClick={() => {
 						void loadRegistry();
 						void loadCopyReport();
+						void loadAuthorityReport();
 					}}
 					disabled={loading}
 					className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-blue-500/60 hover:text-blue-200 disabled:cursor-not-allowed disabled:opacity-50"
@@ -402,6 +447,112 @@ export default function ProductTypeRegistryPage() {
 						<div className="mt-1 text-xl font-bold text-slate-100">{value}</div>
 					</div>
 				))}
+			</section>
+
+			<section
+				aria-label="Final catalog authority"
+				className="space-y-4 rounded-xl border border-slate-800 bg-slate-950 p-4"
+				data-testid="catalog-authority-summary"
+			>
+				<div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+					<div>
+						<h2 className="text-sm font-bold uppercase tracking-wider text-slate-200">
+							P5.8 Final Catalog Authority
+						</h2>
+						<p className="mt-1 text-xs text-slate-500">
+							One terminal state per product. P6 cohort is frozen here; P6 has
+							not started.
+						</p>
+					</div>
+					{authorityReport && (
+						<div className="font-mono text-[10px] text-slate-500">
+							Matrix {authorityReport.matrix_sha256.slice(0, 16)}…
+						</div>
+					)}
+				</div>
+				<div className="grid gap-px overflow-hidden rounded-lg border border-slate-800 bg-slate-800 sm:grid-cols-2 xl:grid-cols-5">
+					{[
+						[
+							"Catalog products",
+							authorityLoading
+								? "Loading"
+								: (authorityReport?.total_products ?? "Unavailable"),
+						],
+						[
+							"P6 ready",
+							authorityReport?.terminal_state_counts.P6_READY ?? "—",
+						],
+						[
+							"Review blocked",
+							authorityReport?.terminal_state_counts
+								.REVIEW_BLOCKED_WITH_EXACT_REASON ?? "—",
+						],
+						[
+							"Insufficient truth",
+							authorityReport?.terminal_state_counts
+								.INSUFFICIENT_PRODUCT_TRUTH ?? "—",
+						],
+						[
+							"Archived",
+							authorityReport?.terminal_state_counts.ARCHIVED_NOT_IN_SCOPE ??
+								"—",
+						],
+					].map(([label, value]) => (
+						<div key={label} className="bg-slate-950 px-4 py-3">
+							<div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+								{label}
+							</div>
+							<div className="mt-1 text-lg font-bold text-slate-100">
+								{value}
+							</div>
+						</div>
+					))}
+				</div>
+				{authorityError && (
+					<div
+						className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200"
+						data-testid="catalog-authority-warning"
+					>
+						Registry remains available. Final authority report could not be
+						loaded: {authorityError}
+					</div>
+				)}
+				{authorityReport && terminalExceptions.length > 0 && (
+					<div className="space-y-2" data-testid="catalog-terminal-exceptions">
+						<div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+							Active terminal exceptions ({terminalExceptions.length})
+						</div>
+						<div className="grid gap-2 lg:grid-cols-2">
+							{terminalExceptions.map((product) => (
+								<div
+									key={product.product_id}
+									className="rounded-lg border border-slate-800 bg-slate-900/60 p-3"
+									data-testid={`terminal-product-${product.product_id}`}
+								>
+									<div className="flex flex-wrap items-center gap-2">
+										<span
+											className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${terminalStateClass(product.terminal_state)}`}
+										>
+											{product.terminal_state}
+										</span>
+										<span className="text-[10px] font-semibold text-slate-500">
+											{product.mapping_provenance}
+										</span>
+									</div>
+									<div className="mt-2 text-sm font-semibold text-slate-100">
+										{product.product_name}
+									</div>
+									<div className="mt-1 font-mono text-[11px] text-slate-500">
+										{product.cluster} / {product.product_type_group}
+									</div>
+									<div className="mt-2 text-xs text-slate-400">
+										{product.terminal_reasons.join(" · ")}
+									</div>
+								</div>
+							))}
+						</div>
+					</div>
+				)}
 			</section>
 
 			{copyReportError && (

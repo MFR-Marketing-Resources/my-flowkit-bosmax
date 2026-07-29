@@ -14,11 +14,15 @@ from agent.models.rempah_copy_strategy import (
     RempahDurationSeconds,
 )
 from agent.models.product_type_copy_strategy import (
+    CatalogAuthorityMatrixReport,
     CatalogCoverageMatrixReport,
     ProductTypeCopyEligibleReport,
     ProductTypeCopyStrategyResponse,
 )
-from agent.services.catalog_coverage_service import build_catalog_coverage_matrix
+from agent.services.catalog_coverage_service import (
+    build_catalog_authority_matrix,
+    build_catalog_coverage_matrix,
+)
 from agent.services.copy_set_service import CopySetError
 from agent.services.copywriting_readiness_service import get_copywriting_readiness
 from agent.services.fastmoss_product_reference_service import (
@@ -126,6 +130,16 @@ async def p4_product_type_eligible_report():
 async def p5_7_catalog_coverage_matrix():
     """Return the authoritative full-catalog coverage and P6 launch cohort."""
     return await build_catalog_coverage_matrix()
+
+
+@router.get(
+    "/p5-8/catalog-authority",
+    response_model=CatalogAuthorityMatrixReport,
+)
+async def p5_8_catalog_authority_matrix():
+    """Return all 659 products with one deterministic terminal state each."""
+
+    return await build_catalog_authority_matrix()
 
 
 @router.get("/readiness/{product_id}")
