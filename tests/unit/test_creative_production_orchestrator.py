@@ -282,6 +282,50 @@ async def test_compile_reuses_existing_wgp_compiler_and_spends_zero(
 
 
 @pytest.mark.asyncio
+async def test_f2v_compile_preserves_frames_source_lane(
+    monkeypatch,
+):
+    fake = AsyncMock(
+        return_value={
+            "workspace_generation_package_id": "wgp-p6-f2v-1",
+            "status": "READY_MANUAL",
+            "blockers_json": "[]",
+            "final_prompt_text": "Compiled F2V frames prompt.",
+            "prompt_fingerprint": "prompt-fp-p6-f2v",
+        }
+    )
+    monkeypatch.setattr(
+        compiler.wgp_service,
+        "create_f2v_generation_package",
+        fake,
+    )
+
+    await compiler._compile_video(
+        {
+            "item_id": "p6item-f2v",
+            "product_id": PRODUCT_ID,
+            "creative_dna_sha256": "dna-p6-f2v",
+        },
+        {
+            "plan_id": "p6plan-f2v",
+            "logical_mode": "F2V",
+        },
+        {
+            "duration_seconds": "8",
+            "copy_set_id": COPY_SET_ID,
+            "scene_strategy_context": "Approved F2V scene strategy.",
+            "finished_frame_asset_id": "asset-p6-f2v-frame",
+        },
+    )
+
+    assert fake.await_args.kwargs["source_mode"] == "FRAMES"
+    assert fake.await_args.kwargs["start_frame_asset_id"] == (
+        "asset-p6-f2v-frame"
+    )
+    assert "avatar_id" not in fake.await_args.kwargs
+
+
+@pytest.mark.asyncio
 async def test_img_payload_preserves_compiler_and_resolves_flow_reference(
     monkeypatch,
 ):

@@ -63,6 +63,7 @@ async def _compile_video(
     elif logical_mode == "F2V":
         package = await wgp_service.create_f2v_generation_package(
             **common,
+            source_mode="FRAMES",
             start_frame_asset_id=(
                 dimensions.get("finished_frame_asset_id") or None
             ),
