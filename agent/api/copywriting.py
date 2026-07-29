@@ -13,6 +13,10 @@ from agent.models.rempah_copy_strategy import (
     RempahCopyStrategyResponse,
     RempahDurationSeconds,
 )
+from agent.models.product_type_copy_strategy import (
+    ProductTypeCopyEligibleReport,
+    ProductTypeCopyStrategyResponse,
+)
 from agent.services.copy_set_service import CopySetError
 from agent.services.copywriting_readiness_service import get_copywriting_readiness
 from agent.services.fastmoss_product_reference_service import (
@@ -25,6 +29,11 @@ from agent.services.lip_color_copy_strategy_service import (
 from agent.services.rempah_copy_strategy_service import (
     RempahCopyStrategyError,
     build_rempah_copy_strategy,
+)
+from agent.services.product_type_copy_strategy_service import (
+    ProductTypeCopyStrategyError,
+    build_product_type_copy_eligible_report,
+    build_product_type_copy_strategy,
 )
 
 router = APIRouter(prefix="/copywriting", tags=["copywriting"])
@@ -72,6 +81,40 @@ async def p3b_rempah_copy_strategy(
                 "blocked_reasons": exc.blocked_reasons,
             },
         ) from exc
+
+
+@router.get(
+    "/p4/product-type/{product_id}",
+    response_model=ProductTypeCopyStrategyResponse,
+)
+async def p4_product_type_copy_strategy(
+    product_id: str,
+    duration_seconds: int = 8,
+):
+    """Preview generalized Direct BM copy without persistence or providers."""
+    try:
+        return await build_product_type_copy_strategy(
+            product_id,
+            duration_seconds,
+        )
+    except ProductTypeCopyStrategyError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={
+                "error": exc.code,
+                "product_id": exc.product_id,
+                "blocked_reasons": exc.blocked_reasons,
+            },
+        ) from exc
+
+
+@router.get(
+    "/p4/eligible-report",
+    response_model=ProductTypeCopyEligibleReport,
+)
+async def p4_product_type_eligible_report():
+    """Return the read-only full-catalog P4 eligibility summary."""
+    return await build_product_type_copy_eligible_report()
 
 
 @router.get("/readiness/{product_id}")
