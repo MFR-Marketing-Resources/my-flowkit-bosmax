@@ -1,5 +1,9 @@
 import pytest
 from agent.models.product_knowledge import ProductKnowledgeCompleteRequest
+from agent.services.ai_copy_provider_adapter import (
+    AICopyProviderError,
+    ERR_RESPONSE_INVALID,
+)
 from agent.services.product_knowledge_service import complete_product_knowledge
 
 
@@ -24,6 +28,40 @@ def _disable_live_providers(monkeypatch):
         "agent.services.product_image_analysis_service.get_lane_api_key",
         lambda lane: None,
     )
+
+
+def _valid_text_assist_payload():
+    return {
+        "product_knowledge_summary": "Serbuk perasa untuk masakan harian.",
+        "benefits": ["Membantu melengkapkan rasa masakan"],
+        "usage_summary": "Tabur secukup rasa ketika memasak.",
+        "target_customer": "Pengguna yang memasak di rumah",
+        "usp_list": ["Mudah digunakan untuk masakan harian"],
+        "size_or_volume": None,
+        "package_notes": "Dibungkus dalam pek serbuk.",
+        "warnings_or_limitations": [],
+        "confidence": "MEDIUM",
+        "provenance": ["SOURCE_TEXT_REVIEW_ONLY"],
+        "needs_review": True,
+    }
+
+
+def _enable_mock_deepseek(monkeypatch, completion):
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.provider_status",
+        lambda: {
+            "lane": "text_assist",
+            "configured": True,
+            "provider_id": "deepseek",
+            "model_id": "deepseek-v4-pro",
+            "execution_enabled": True,
+        },
+    )
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.complete_json",
+        lambda *args, **kwargs: completion,
+    )
+
 
 def test_complete_product_knowledge_basic():
     request = ProductKnowledgeCompleteRequest(
@@ -264,7 +302,7 @@ def test_complete_product_knowledge_uses_configured_deepseek_text_assist(monkeyp
             "size_or_volume": None,
             "package_notes": "Dibungkus dalam pek serbuk.",
             "warnings_or_limitations": [],
-            "confidence": "MEDIUM",
+            "confidence": "HIGH",
             "provenance": ["SOURCE_TEXT_REVIEW_ONLY"],
             "needs_review": True,
         },
@@ -292,6 +330,7 @@ def test_complete_product_knowledge_uses_configured_deepseek_text_assist(monkeyp
     assert response.suggested_size_or_volume == "N/A"
     assert response.evidence_field_status["benefits"].status == "AI_SUGGESTED"
     assert response.evidence_field_status["benefits"].needs_review is True
+    assert response.evidence_field_status["benefits"].confidence == "MEDIUM"
     assert "benefits" in response.human_review_fields
     assert "text_assist:deepseek:deepseek-v4-pro:review_only" in response.provenance
     assert response.extracted_product_facts["usp_list"] == []
@@ -346,8 +385,116 @@ def test_complete_product_knowledge_invalid_text_assist_json_fails_closed(monkey
     )
 
     assert "TEXT_ASSIST_INVALID_RESPONSE" in response.warnings
+    assert "TEXT_ASSIST_DIAGNOSTIC_MISSING_KEYS" in response.warnings
+    assert any(
+        warning.startswith("TEXT_ASSIST_MISSING_KEYS:")
+        for warning in response.warnings
+    )
+    assert any(
+        warning.startswith("TEXT_ASSIST_UNEXPECTED_KEYS:")
+        for warning in response.warnings
+    )
     assert response.suggested_size_or_volume == "N/A"
     assert response.suggested_package_notes == "NOT_AVAILABLE"
+
+
+@pytest.mark.parametrize(
+    ("case", "diagnostic", "metadata_prefix"),
+    [
+        ("missing_key", "MISSING_KEYS", "TEXT_ASSIST_MISSING_KEYS:"),
+        ("unexpected_key", "UNEXPECTED_KEYS", "TEXT_ASSIST_UNEXPECTED_KEYS:"),
+        (
+            "wrong_field_type",
+            "FIELD_TYPE_INVALID",
+            "TEXT_ASSIST_VALIDATION_FIELD_PATHS:",
+        ),
+        (
+            "invalid_confidence",
+            "ENUM_INVALID",
+            "TEXT_ASSIST_VALIDATION_FIELD_PATHS:",
+        ),
+        (
+            "needs_review_false",
+            "NEEDS_REVIEW_INVALID",
+            "TEXT_ASSIST_VALIDATION_FIELD_PATHS:",
+        ),
+    ],
+)
+def test_text_assist_schema_failures_are_exact_and_preserve_manual_fields(
+    monkeypatch,
+    case,
+    diagnostic,
+    metadata_prefix,
+):
+    payload = _valid_text_assist_payload()
+    if case == "missing_key":
+        payload.pop("benefits")
+    elif case == "unexpected_key":
+        payload["unknown_field"] = "blocked"
+    elif case == "wrong_field_type":
+        payload["benefits"] = "not-a-list"
+    elif case == "invalid_confidence":
+        payload["confidence"] = "CERTAIN"
+    elif case == "needs_review_false":
+        payload["needs_review"] = False
+    _enable_mock_deepseek(monkeypatch, payload)
+
+    response = complete_product_knowledge(
+        ProductKnowledgeCompleteRequest(
+            product_name="Serbuk Perasa Warisan",
+            product_knowledge_text="Ringkasan manual kekal berkuasa.",
+            paste_anything_about_product=(
+                "Serbuk perasa untuk masakan harian dan penggunaan di rumah."
+            ),
+            source_lane="MANUAL",
+        ),
+        enable_text_assist=True,
+    )
+
+    assert "TEXT_ASSIST_INVALID_RESPONSE" in response.warnings
+    assert f"TEXT_ASSIST_DIAGNOSTIC_{diagnostic}" in response.warnings
+    assert any(
+        warning.startswith(metadata_prefix) for warning in response.warnings
+    )
+    assert response.suggested_product_knowledge_summary == (
+        "Ringkasan manual kekal berkuasa."
+    )
+    assert (
+        response.evidence_field_status["product_knowledge_summary"].status
+        == "EXACT_SOURCE_EVIDENCE"
+    )
+    assert all(
+        metadata.status != "AI_SUGGESTED"
+        for metadata in response.evidence_field_status.values()
+    )
+
+
+def test_adapter_diagnostic_is_exposed_without_provider_content(monkeypatch):
+    error = AICopyProviderError(
+        ERR_RESPONSE_INVALID,
+        diagnostic_category="TRUNCATED_RESPONSE",
+        diagnostic_metadata={"finish_reason": "length"},
+        finish_reason="length",
+    )
+    _enable_mock_deepseek(monkeypatch, None)
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.ai_copy_provider_adapter.complete_json",
+        lambda *args, **kwargs: (_ for _ in ()).throw(error),
+    )
+
+    response = complete_product_knowledge(
+        ProductKnowledgeCompleteRequest(
+            product_name="Serbuk Perasa Warisan",
+            paste_anything_about_product="Serbuk perasa untuk masakan harian.",
+            source_lane="MANUAL",
+        ),
+        enable_text_assist=True,
+    )
+
+    assert "TEXT_ASSIST_INVALID_RESPONSE" in response.warnings
+    assert "TEXT_ASSIST_DIAGNOSTIC_TRUNCATED_RESPONSE" in response.warnings
+    assert "TEXT_ASSIST_FINISH_REASON:length" in response.warnings
+    assert response.suggested_benefits == []
 
 
 def test_complete_product_knowledge_provider_failure_fails_closed(monkeypatch):

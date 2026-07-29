@@ -101,6 +101,12 @@ def test_text_assist_call_receipt_is_read_only_and_secret_free(monkeypatch):
                 "transport": "openai_compatible_chat",
                 "response_status": "SUCCEEDED",
                 "http_status": 200,
+                "finish_reason": "stop",
+                "structured_output_requested": True,
+                "json_output_mode": "json_object",
+                "json_parse_status": "VALID",
+                "diagnostic_category": None,
+                "diagnostic_metadata": {},
                 "usage": {"total_tokens": 64},
             },
         },
@@ -113,5 +119,8 @@ def test_text_assist_call_receipt_is_read_only_and_secret_free(monkeypatch):
     assert response.status_code == 200
     assert response.json()["request_count_since_process_start"] == 1
     assert response.json()["last_call"]["provider_id"] == "deepseek"
+    assert response.json()["last_call"]["finish_reason"] == "stop"
+    assert response.json()["last_call"]["json_output_mode"] == "json_object"
+    assert response.json()["last_call"]["json_parse_status"] == "VALID"
     assert "api_key" not in response.text
     assert "authorization" not in response.text.casefold()

@@ -54,7 +54,7 @@ class TextAssistEvidenceCompletion(BaseModel):
     warnings_or_limitations: list[str] = Field(default_factory=list)
     confidence: Literal["HIGH", "MEDIUM", "LOW"] = "LOW"
     provenance: list[str] = Field(default_factory=list)
-    needs_review: bool = True
+    needs_review: Literal[True] = True
 
 
 class _SmartRegistrationCompletionResponse(ProductKnowledgeCompleteResponse):
@@ -475,6 +475,67 @@ def _normalize_text_assist_completion(
     )
 
 
+def _text_assist_invalid_response_warnings(
+    category: str,
+    metadata: dict[str, object] | None = None,
+) -> list[str]:
+    safe_category = re.sub(r"[^A-Z0-9_]", "", str(category or "").upper())
+    if not safe_category:
+        safe_category = "SCHEMA_VALIDATION_FAILED"
+    warnings = [
+        "TEXT_ASSIST_INVALID_RESPONSE",
+        f"TEXT_ASSIST_DIAGNOSTIC_{safe_category}",
+    ]
+    safe_metadata = metadata or {}
+    for key, warning_prefix in (
+        ("missing_keys", "TEXT_ASSIST_MISSING_KEYS"),
+        ("unexpected_keys", "TEXT_ASSIST_UNEXPECTED_KEYS"),
+        ("validation_field_paths", "TEXT_ASSIST_VALIDATION_FIELD_PATHS"),
+    ):
+        value = safe_metadata.get(key)
+        if isinstance(value, (list, tuple, set)):
+            names = sorted(
+                {
+                    re.sub(r"[^A-Za-z0-9_.-]", "", str(item))[:120]
+                    for item in value
+                    if str(item).strip()
+                }
+            )
+            if names:
+                warnings.append(f"{warning_prefix}:{','.join(names[:32])}")
+    finish_reason = re.sub(
+        r"[^A-Za-z0-9_.-]",
+        "",
+        str(safe_metadata.get("finish_reason") or ""),
+    )[:64]
+    if finish_reason:
+        warnings.append(f"TEXT_ASSIST_FINISH_REASON:{finish_reason}")
+    return warnings
+
+
+def _classify_text_assist_validation_error(
+    exc: ValidationError,
+) -> tuple[str, dict[str, list[str]]]:
+    errors = exc.errors(include_url=False, include_input=False)
+    field_paths = sorted(
+        {
+            ".".join(str(part) for part in error.get("loc") or ())
+            for error in errors
+            if error.get("loc")
+        }
+    )
+    root_fields = {path.split(".", 1)[0] for path in field_paths}
+    if "needs_review" in root_fields:
+        category = "NEEDS_REVIEW_INVALID"
+    elif "confidence" in root_fields or any(
+        str(error.get("type") or "") == "literal_error" for error in errors
+    ):
+        category = "ENUM_INVALID"
+    else:
+        category = "FIELD_TYPE_INVALID"
+    return category, {"validation_field_paths": field_paths}
+
+
 def _complete_missing_evidence_with_text_assist(
     request: ProductKnowledgeCompleteRequest,
 ) -> tuple[TextAssistEvidenceCompletion | None, list[str], list[str]]:
@@ -513,26 +574,62 @@ def _complete_missing_evidence_with_text_assist(
             system_prompt,
             user_prompt,
         )
-        if not isinstance(raw_completion, dict) or set(raw_completion) != set(
-            TextAssistEvidenceCompletion.model_fields
-        ):
-            return None, ["TEXT_ASSIST_INVALID_RESPONSE"], []
+        if not isinstance(raw_completion, dict):
+            return (
+                None,
+                _text_assist_invalid_response_warnings("NON_OBJECT_JSON"),
+                [],
+            )
+        expected_keys = set(TextAssistEvidenceCompletion.model_fields)
+        actual_keys = set(raw_completion)
+        missing_keys = sorted(expected_keys - actual_keys)
+        unexpected_keys = sorted(actual_keys - expected_keys)
+        if missing_keys:
+            return (
+                None,
+                _text_assist_invalid_response_warnings(
+                    "MISSING_KEYS",
+                    {
+                        "missing_keys": missing_keys,
+                        "unexpected_keys": unexpected_keys,
+                    },
+                ),
+                [],
+            )
+        if unexpected_keys:
+            return (
+                None,
+                _text_assist_invalid_response_warnings(
+                    "UNEXPECTED_KEYS",
+                    {"unexpected_keys": unexpected_keys},
+                ),
+                [],
+            )
         completion = _normalize_text_assist_completion(
             TextAssistEvidenceCompletion.model_validate(raw_completion)
         )
     except AICopyProviderNotConfigured:
         return None, ["TEXT_ASSIST_NOT_CONFIGURED"], []
     except AICopyProviderError as exc:
-        warning = (
-            "TEXT_ASSIST_INVALID_RESPONSE"
-            if exc.code == ERR_RESPONSE_INVALID
-            else "TEXT_ASSIST_CALL_FAILED"
-        )
         LOGGER.warning("Smart Registration text_assist failed closed: %s", exc.code)
-        return None, [warning], []
-    except ValidationError:
+        if exc.code == ERR_RESPONSE_INVALID:
+            return (
+                None,
+                _text_assist_invalid_response_warnings(
+                    exc.diagnostic_category or "SCHEMA_VALIDATION_FAILED",
+                    exc.diagnostic_metadata,
+                ),
+                [],
+            )
+        return None, ["TEXT_ASSIST_CALL_FAILED"], []
+    except ValidationError as exc:
         LOGGER.warning("Smart Registration text_assist returned schema-invalid JSON")
-        return None, ["TEXT_ASSIST_INVALID_RESPONSE"], []
+        category, metadata = _classify_text_assist_validation_error(exc)
+        return (
+            None,
+            _text_assist_invalid_response_warnings(category, metadata),
+            [],
+        )
     except Exception as exc:
         LOGGER.warning(
             "Smart Registration text_assist failed closed with an unexpected error: %s",
