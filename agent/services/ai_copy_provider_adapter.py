@@ -45,6 +45,8 @@ _MODEL_ENV = "PRODUCT_TEXT_ASSIST_MODEL"
 _TIMEOUT_SECONDS = 30.0
 _ANTHROPIC_VERSION = "2023-06-01"
 _ANTHROPIC_MAX_TOKENS = 1024
+_OPENAI_JSON_MAX_TOKENS = 4096
+_JSON_OUTPUT_PROVIDER_IDS = frozenset({"deepseek", "openai"})
 _DEFAULT_BASE_URLS = {
     "deepseek": "https://api.deepseek.com/v1",
     "openai": "https://api.openai.com/v1",
@@ -57,6 +59,12 @@ _DEFAULT_BASE_URLS = {
 ERR_NOT_CONFIGURED = "AI_COPY_ASSIST_PROVIDER_NOT_CONFIGURED"
 ERR_RESPONSE_INVALID = "AI_COPY_ASSIST_RESPONSE_INVALID"
 ERR_CALL_FAILED = "AI_COPY_ASSIST_CALL_FAILED"
+
+DIAGNOSTIC_EMPTY_CONTENT = "EMPTY_CONTENT"
+DIAGNOSTIC_JSON_PARSE_FAILED = "JSON_PARSE_FAILED"
+DIAGNOSTIC_NON_OBJECT_JSON = "NON_OBJECT_JSON"
+DIAGNOSTIC_TRUNCATED_RESPONSE = "TRUNCATED_RESPONSE"
+DIAGNOSTIC_CONTENT_EXTRACTION_FAILED = "CONTENT_EXTRACTION_FAILED"
 
 _provider_call_lock = threading.Lock()
 _provider_call_count = 0
@@ -72,10 +80,25 @@ class AICopyProviderNotConfigured(Exception):
 class AICopyProviderError(Exception):
     """Raised when a configured provider call fails or returns invalid JSON."""
 
-    def __init__(self, code: str, detail: Any = None):
+    def __init__(
+        self,
+        code: str,
+        detail: Any = None,
+        *,
+        diagnostic_category: str | None = None,
+        diagnostic_metadata: dict[str, object] | None = None,
+        http_status: int | None = None,
+        finish_reason: str | None = None,
+        usage: dict[str, int | float] | None = None,
+    ):
         super().__init__(code)
         self.code = code
         self.detail = detail
+        self.diagnostic_category = diagnostic_category
+        self.diagnostic_metadata = dict(diagnostic_metadata or {})
+        self.http_status = http_status
+        self.finish_reason = finish_reason
+        self.usage = dict(usage or {})
 
 
 def provider_call_receipt() -> dict[str, Any]:
@@ -96,7 +119,12 @@ def provider_call_receipt() -> dict[str, Any]:
 
 
 def _begin_provider_call(
-    *, provider_id: str, model: str, transport: str
+    *,
+    provider_id: str,
+    model: str,
+    transport: str,
+    structured_output_requested: bool,
+    json_output_mode: str | None,
 ) -> int:
     global _provider_call_count, _last_provider_call_receipt
     with _provider_call_lock:
@@ -108,12 +136,18 @@ def _begin_provider_call(
             "provider_id": provider_id,
             "model_id": model,
             "transport": transport,
+            "structured_output_requested": structured_output_requested,
+            "json_output_mode": json_output_mode,
             "started_at": time.strftime(
                 "%Y-%m-%dT%H:%M:%SZ",
                 time.gmtime(),
             ),
             "response_status": "IN_FLIGHT",
             "http_status": None,
+            "finish_reason": None,
+            "json_parse_status": None,
+            "diagnostic_category": None,
+            "diagnostic_metadata": {},
             "usage": {},
         }
         return call_id
@@ -125,6 +159,7 @@ def _finish_provider_call(
     response_status: str,
     http_status: int | None,
     usage: dict[str, int | float] | None = None,
+    finish_reason: str | None = None,
 ) -> None:
     global _last_provider_call_receipt
     with _provider_call_lock:
@@ -141,7 +176,30 @@ def _finish_provider_call(
             ),
             "response_status": response_status,
             "http_status": http_status,
+            "finish_reason": finish_reason,
             "usage": dict(usage or {}),
+        }
+
+
+def _record_json_parse_result(
+    call_id: int,
+    *,
+    status: str,
+    diagnostic_category: str | None = None,
+    diagnostic_metadata: dict[str, object] | None = None,
+) -> None:
+    global _last_provider_call_receipt
+    with _provider_call_lock:
+        if (
+            _last_provider_call_receipt is None
+            or _last_provider_call_receipt.get("call_id") != call_id
+        ):
+            return
+        _last_provider_call_receipt = {
+            **_last_provider_call_receipt,
+            "json_parse_status": status,
+            "diagnostic_category": diagnostic_category,
+            "diagnostic_metadata": dict(diagnostic_metadata or {}),
         }
 
 
@@ -213,19 +271,47 @@ def _resolve_model(provider_id: str | None) -> str | None:
     return env or None
 
 
-def _extract_json_object(text: str) -> dict[str, Any]:
-    """Pull the first JSON object out of a model message (tolerating code fences)."""
+def _extract_json_object(
+    text: str,
+    *,
+    finish_reason: str | None = None,
+) -> dict[str, Any]:
+    """Parse one JSON object, allowing only a lossless full-message code fence."""
+
+    safe_finish_reason = str(finish_reason or "").strip() or None
+    if safe_finish_reason == "length":
+        raise AICopyProviderError(
+            ERR_RESPONSE_INVALID,
+            diagnostic_category=DIAGNOSTIC_TRUNCATED_RESPONSE,
+            diagnostic_metadata={"finish_reason": "length"},
+            finish_reason="length",
+        )
     raw = str(text or "").strip()
     if not raw:
-        raise AICopyProviderError(ERR_RESPONSE_INVALID, detail="empty response")
-    fenced = re.search(r"\{.*\}", raw, re.DOTALL)
-    candidate = fenced.group(0) if fenced else raw
+        raise AICopyProviderError(
+            ERR_RESPONSE_INVALID,
+            diagnostic_category=DIAGNOSTIC_EMPTY_CONTENT,
+            diagnostic_metadata={"finish_reason": safe_finish_reason},
+            finish_reason=safe_finish_reason,
+        )
+    fenced = re.fullmatch(r"```(?:json)?\s*(\{.*\})\s*```", raw, re.DOTALL | re.I)
+    candidate = fenced.group(1) if fenced else raw
     try:
         parsed = json.loads(candidate)
     except (TypeError, ValueError) as exc:
-        raise AICopyProviderError(ERR_RESPONSE_INVALID, detail=str(exc)) from exc
+        raise AICopyProviderError(
+            ERR_RESPONSE_INVALID,
+            diagnostic_category=DIAGNOSTIC_JSON_PARSE_FAILED,
+            diagnostic_metadata={"finish_reason": safe_finish_reason},
+            finish_reason=safe_finish_reason,
+        ) from exc
     if not isinstance(parsed, dict):
-        raise AICopyProviderError(ERR_RESPONSE_INVALID, detail="not a JSON object")
+        raise AICopyProviderError(
+            ERR_RESPONSE_INVALID,
+            diagnostic_category=DIAGNOSTIC_NON_OBJECT_JSON,
+            diagnostic_metadata={"finish_reason": safe_finish_reason},
+            finish_reason=safe_finish_reason,
+        )
     return parsed
 
 
@@ -298,7 +384,7 @@ def _split_system_and_turns(
 
 def _complete_anthropic(
     messages: list[dict[str, str]], api_key: str, base_url: str, model: str
-) -> tuple[str, int | None, dict[str, int | float]]:
+) -> tuple[str, int | None, dict[str, int | float], str | None]:
     """Native Anthropic Messages transport (/v1/messages). Scoped to the
     text_assist lane; disabled by default and exercised only via unit tests."""
     import httpx  # local import — only when actually executing a configured call
@@ -329,16 +415,37 @@ def _complete_anthropic(
                 str(block.get("text") or ""),
                 getattr(response, "status_code", None),
                 _safe_usage(data.get("usage")),
+                str(data.get("stop_reason") or "").strip() or None,
             )
-    raise AICopyProviderError(ERR_RESPONSE_INVALID, detail="no text block in response")
+    raise AICopyProviderError(
+        ERR_RESPONSE_INVALID,
+        diagnostic_category=DIAGNOSTIC_CONTENT_EXTRACTION_FAILED,
+        http_status=getattr(response, "status_code", None),
+        finish_reason=str(data.get("stop_reason") or "").strip() or None,
+        usage=_safe_usage(data.get("usage")),
+    )
 
 
 def _complete_openai_compatible(
-    messages: list[dict[str, str]], api_key: str, base_url: str, model: str
-) -> tuple[str, int | None, dict[str, int | float]]:
+    messages: list[dict[str, str]],
+    api_key: str,
+    base_url: str,
+    model: str,
+    *,
+    json_output_enabled: bool,
+) -> tuple[str, int | None, dict[str, int | float], str | None]:
     """OpenAI-compatible /chat/completions transport (qwen/openai/gemini/deepseek).
     Mirrors the proven product_knowledge_service httpx pattern."""
     import httpx  # local import — only when actually executing a configured call
+
+    payload: dict[str, object] = {
+        "model": model,
+        "temperature": 0.5,
+        "messages": messages,
+    }
+    if json_output_enabled:
+        payload["response_format"] = {"type": "json_object"}
+        payload["max_tokens"] = _OPENAI_JSON_MAX_TOKENS
 
     response = httpx.post(
         f"{base_url}/chat/completions",
@@ -346,19 +453,43 @@ def _complete_openai_compatible(
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         },
-        json={"model": model, "temperature": 0.5, "messages": messages},
+        json=payload,
         timeout=_TIMEOUT_SECONDS,
     )
     response.raise_for_status()
     data = response.json()
+    usage = _safe_usage(data.get("usage")) if isinstance(data, dict) else {}
+    http_status = getattr(response, "status_code", None)
+    choices = data.get("choices") if isinstance(data, dict) else None
+    first_choice = choices[0] if isinstance(choices, list) and choices else None
+    finish_reason = (
+        str(first_choice.get("finish_reason") or "").strip() or None
+        if isinstance(first_choice, dict)
+        else None
+    )
+    message = first_choice.get("message") if isinstance(first_choice, dict) else None
+    if not isinstance(message, dict) or "content" not in message:
+        raise AICopyProviderError(
+            ERR_RESPONSE_INVALID,
+            diagnostic_category=DIAGNOSTIC_CONTENT_EXTRACTION_FAILED,
+            diagnostic_metadata={"finish_reason": finish_reason},
+            http_status=http_status,
+            finish_reason=finish_reason,
+            usage=usage,
+        )
     return (
-        str(data["choices"][0]["message"]["content"]),
-        getattr(response, "status_code", None),
-        _safe_usage(data.get("usage")),
+        str(message.get("content") or ""),
+        http_status,
+        usage,
+        finish_reason,
     )
 
 
-def _complete(messages: list[dict[str, str]]) -> str:
+def _complete(
+    messages: list[dict[str, str]],
+    *,
+    structured_output: bool = False,
+) -> tuple[str, str | None, int]:
     """Execute a chat completion via the configured text_assist lane. Anthropic
     speaks its native /v1/messages shape; every other provider is OpenAI-compatible.
     Never reached in tests (disabled by default)."""
@@ -378,33 +509,58 @@ def _complete(messages: list[dict[str, str]]) -> str:
         raise AICopyProviderError(
             ERR_CALL_FAILED, detail=f"unsupported transport for {provider_id}: {transport}"
         )
+    json_output_enabled = (
+        structured_output
+        and transport == TRANSPORT_OPENAI_COMPATIBLE
+        and provider_id in _JSON_OUTPUT_PROVIDER_IDS
+    )
     call_id = _begin_provider_call(
         provider_id=provider_id,
         model=model,
         transport=transport,
+        structured_output_requested=structured_output,
+        json_output_mode="json_object" if json_output_enabled else None,
     )
     try:
         if transport == TRANSPORT_ANTHROPIC_MESSAGES:
-            text, http_status, usage = _complete_anthropic(
+            text, http_status, usage, finish_reason = _complete_anthropic(
                 messages, api_key, base_url, model
             )
         else:
-            text, http_status, usage = _complete_openai_compatible(
-                messages, api_key, base_url, model
+            text, http_status, usage, finish_reason = _complete_openai_compatible(
+                messages,
+                api_key,
+                base_url,
+                model,
+                json_output_enabled=json_output_enabled,
             )
         _finish_provider_call(
             call_id,
             response_status="SUCCEEDED",
             http_status=http_status,
             usage=usage,
+            finish_reason=finish_reason,
         )
-        return text
-    except AICopyProviderError:
+        return text, finish_reason, call_id
+    except AICopyProviderError as exc:
         _finish_provider_call(
             call_id,
-            response_status="FAILED",
-            http_status=None,
+            response_status=(
+                "INVALID_RESPONSE"
+                if exc.code == ERR_RESPONSE_INVALID
+                else "FAILED"
+            ),
+            http_status=exc.http_status,
+            usage=exc.usage,
+            finish_reason=exc.finish_reason,
         )
+        if exc.code == ERR_RESPONSE_INVALID:
+            _record_json_parse_result(
+                call_id,
+                status="INVALID",
+                diagnostic_category=exc.diagnostic_category,
+                diagnostic_metadata=exc.diagnostic_metadata,
+            )
         raise
     except Exception as exc:  # network / shape / auth — fail closed
         response = getattr(exc, "response", None)
@@ -421,8 +577,8 @@ def generate_candidate(brief: str) -> dict[str, Any]:
     provider and return the parsed candidate JSON dict."""
     if not is_configured():
         raise AICopyProviderNotConfigured(ERR_NOT_CONFIGURED)
-    message_text = _complete(build_messages(brief))
-    return _extract_json_object(message_text)
+    message_text, finish_reason, _ = _complete(build_messages(brief))
+    return _extract_json_object(message_text, finish_reason=finish_reason)
 
 
 def complete_json(system: str, user: str) -> dict[str, Any]:
@@ -431,5 +587,19 @@ def complete_json(system: str, user: str) -> dict[str, Any]:
     SAME provider/key/model/transport as copy — no new secrets, no hardcoded model."""
     if not is_configured():
         raise AICopyProviderNotConfigured(ERR_NOT_CONFIGURED)
-    text = _complete([{"role": "system", "content": system}, {"role": "user", "content": user}])
-    return _extract_json_object(text)
+    text, finish_reason, call_id = _complete(
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        structured_output=True,
+    )
+    try:
+        parsed = _extract_json_object(text, finish_reason=finish_reason)
+    except AICopyProviderError as exc:
+        _record_json_parse_result(
+            call_id,
+            status="INVALID",
+            diagnostic_category=exc.diagnostic_category,
+            diagnostic_metadata=exc.diagnostic_metadata,
+        )
+        raise
+    _record_json_parse_result(call_id, status="VALID")
+    return parsed

@@ -105,7 +105,12 @@ def test_openai_compatible_transport_uses_lane_model(state, monkeypatch):
         captured["json"] = json
         return _FakeResp(
             {
-                "choices": [{"message": {"content": CANDIDATE_JSON}}],
+                "choices": [
+                    {
+                        "message": {"content": CANDIDATE_JSON},
+                        "finish_reason": "stop",
+                    }
+                ],
                 "usage": {
                     "prompt_tokens": 41,
                     "completion_tokens": 23,
@@ -133,6 +138,12 @@ def test_openai_compatible_transport_uses_lane_model(state, monkeypatch):
         "completed_at": receipt["last_call"]["completed_at"],
         "response_status": "SUCCEEDED",
         "http_status": 200,
+        "finish_reason": "stop",
+        "structured_output_requested": False,
+        "json_output_mode": None,
+        "json_parse_status": None,
+        "diagnostic_category": None,
+        "diagnostic_metadata": {},
         "usage": {
             "prompt_tokens": 41,
             "completion_tokens": 23,
@@ -142,6 +153,235 @@ def test_openai_compatible_transport_uses_lane_model(state, monkeypatch):
     serialized_receipt = json.dumps(receipt)
     assert "sk-qwen-live-abcdef" not in serialized_receipt
     assert "brief text" not in serialized_receipt
+
+
+def test_complete_json_uses_deepseek_json_output_and_records_safe_receipt(
+    state, monkeypatch
+):
+    svc.update_provider_key("deepseek", "sk-deepseek-live-abcdef")
+    svc.update_lane_settings(
+        "text_assist",
+        "deepseek",
+        "deepseek-v4-pro",
+        execution_enabled=True,
+    )
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        return _FakeResp(
+            {
+                "choices": [
+                    {
+                        "message": {"content": '{"safe": true}'},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 17,
+                    "completion_tokens": 5,
+                    "total_tokens": 22,
+                },
+            }
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    result = adapter.complete_json(
+        "Return a strict JSON object.",
+        "Use only supplied review evidence.",
+    )
+
+    assert result == {"safe": True}
+    assert captured["url"].endswith("/chat/completions")
+    assert captured["json"]["model"] == "deepseek-v4-pro"
+    assert captured["json"]["response_format"] == {"type": "json_object"}
+    assert captured["json"]["max_tokens"] == 4096
+    receipt = adapter.provider_call_receipt()["last_call"]
+    assert receipt["response_status"] == "SUCCEEDED"
+    assert receipt["http_status"] == 200
+    assert receipt["finish_reason"] == "stop"
+    assert receipt["structured_output_requested"] is True
+    assert receipt["json_output_mode"] == "json_object"
+    assert receipt["json_parse_status"] == "VALID"
+    assert receipt["diagnostic_category"] is None
+    serialized_receipt = json.dumps(receipt)
+    assert "sk-deepseek-live-abcdef" not in serialized_receipt
+    assert "supplied review evidence" not in serialized_receipt
+    assert '{"safe": true}' not in serialized_receipt
+
+
+def test_complete_json_does_not_apply_json_mode_to_unlisted_provider(
+    state, monkeypatch
+):
+    svc.update_provider_key("qwen", "sk-qwen-live-abcdef")
+    svc.update_lane_settings(
+        "text_assist",
+        "qwen",
+        "qwen-max",
+        execution_enabled=True,
+    )
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["json"] = json
+        return _FakeResp(
+            {
+                "choices": [
+                    {
+                        "message": {"content": '{"safe": true}'},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    assert adapter.complete_json("Return JSON.", "Safe input.") == {"safe": True}
+    assert "response_format" not in captured["json"]
+    assert "max_tokens" not in captured["json"]
+    receipt = adapter.provider_call_receipt()["last_call"]
+    assert receipt["structured_output_requested"] is True
+    assert receipt["json_output_mode"] is None
+
+
+@pytest.mark.parametrize(
+    ("content", "finish_reason", "category"),
+    [
+        ("", "stop", adapter.DIAGNOSTIC_EMPTY_CONTENT),
+        ("{", "stop", adapter.DIAGNOSTIC_JSON_PARSE_FAILED),
+        ("[]", "stop", adapter.DIAGNOSTIC_NON_OBJECT_JSON),
+        ('{"safe": true}', "length", adapter.DIAGNOSTIC_TRUNCATED_RESPONSE),
+        (
+            'prefix {"safe": true} suffix',
+            "stop",
+            adapter.DIAGNOSTIC_JSON_PARSE_FAILED,
+        ),
+    ],
+)
+def test_json_parser_fails_closed_with_exact_category(
+    content, finish_reason, category
+):
+    with pytest.raises(adapter.AICopyProviderError) as caught:
+        adapter._extract_json_object(content, finish_reason=finish_reason)
+    assert caught.value.code == adapter.ERR_RESPONSE_INVALID
+    assert caught.value.diagnostic_category == category
+
+
+def test_json_parser_accepts_lossless_full_message_code_fence():
+    assert adapter._extract_json_object(
+        '```json\n{"safe": true}\n```',
+        finish_reason="stop",
+    ) == {"safe": True}
+
+
+def test_provider_http_200_invalid_content_is_diagnosed_without_content(
+    state, monkeypatch
+):
+    svc.update_provider_key("deepseek", "sk-deepseek-live-abcdef")
+    svc.update_lane_settings(
+        "text_assist",
+        "deepseek",
+        "deepseek-v4-pro",
+        execution_enabled=True,
+    )
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda *args, **kwargs: _FakeResp(
+            {
+                "choices": [
+                    {"message": {"content": ""}, "finish_reason": "stop"}
+                ],
+                "usage": {"total_tokens": 12},
+            }
+        ),
+    )
+
+    with pytest.raises(adapter.AICopyProviderError) as caught:
+        adapter.complete_json("Return JSON.", "Private source text.")
+
+    assert caught.value.diagnostic_category == adapter.DIAGNOSTIC_EMPTY_CONTENT
+    receipt = adapter.provider_call_receipt()["last_call"]
+    assert receipt["response_status"] == "SUCCEEDED"
+    assert receipt["http_status"] == 200
+    assert receipt["json_parse_status"] == "INVALID"
+    assert receipt["diagnostic_category"] == adapter.DIAGNOSTIC_EMPTY_CONTENT
+    serialized_receipt = json.dumps(receipt)
+    assert "Private source text" not in serialized_receipt
+    assert "sk-deepseek-live-abcdef" not in serialized_receipt
+
+
+def test_provider_http_200_missing_message_has_extraction_diagnostic(
+    state, monkeypatch
+):
+    svc.update_provider_key("deepseek", "sk-deepseek-live-abcdef")
+    svc.update_lane_settings(
+        "text_assist",
+        "deepseek",
+        "deepseek-v4-pro",
+        execution_enabled=True,
+    )
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda *args, **kwargs: _FakeResp(
+            {
+                "choices": [{"finish_reason": "stop"}],
+                "usage": {"total_tokens": 8},
+            }
+        ),
+    )
+
+    with pytest.raises(adapter.AICopyProviderError) as caught:
+        adapter.complete_json("Return JSON.", "Safe input.")
+
+    assert (
+        caught.value.diagnostic_category
+        == adapter.DIAGNOSTIC_CONTENT_EXTRACTION_FAILED
+    )
+    receipt = adapter.provider_call_receipt()["last_call"]
+    assert receipt["response_status"] == "INVALID_RESPONSE"
+    assert receipt["http_status"] == 200
+    assert (
+        receipt["diagnostic_category"]
+        == adapter.DIAGNOSTIC_CONTENT_EXTRACTION_FAILED
+    )
+
+
+def test_provider_http_failure_is_fail_closed_and_receipted(state, monkeypatch):
+    svc.update_provider_key("deepseek", "sk-deepseek-live-abcdef")
+    svc.update_lane_settings(
+        "text_assist",
+        "deepseek",
+        "deepseek-v4-pro",
+        execution_enabled=True,
+    )
+
+    def fail_post(*args, **kwargs):
+        response = httpx.Response(
+            503,
+            request=httpx.Request("POST", "https://api.deepseek.com/v1/chat/completions"),
+        )
+        raise httpx.HTTPStatusError(
+            "service unavailable",
+            request=response.request,
+            response=response,
+        )
+
+    monkeypatch.setattr(httpx, "post", fail_post)
+
+    with pytest.raises(adapter.AICopyProviderError) as caught:
+        adapter.complete_json("Return JSON.", "Safe input.")
+
+    assert caught.value.code == adapter.ERR_CALL_FAILED
+    receipt = adapter.provider_call_receipt()["last_call"]
+    assert receipt["response_status"] == "FAILED"
+    assert receipt["http_status"] == 503
+    assert receipt["json_parse_status"] is None
 
 
 def test_anthropic_transport_wired(state, monkeypatch):
