@@ -100,6 +100,7 @@ export default function CreativeProductionStudioPage() {
 	const [selectedPlanId, setSelectedPlanId] = useState("");
 	const [detail, setDetail] = useState<PlanDetail | null>(null);
 	const [lanes, setLanes] = useState<ExecutionLane[]>([]);
+	const [liveExecutionCertified, setLiveExecutionCertified] = useState(false);
 	const [poolAuthority, setPoolAuthority] =
 		useState<GovernedPoolAuthority | null>(null);
 	const [preflight, setPreflight] = useState<CapacityPreflight | null>(null);
@@ -145,6 +146,7 @@ export default function CreativeProductionStudioPage() {
 			setCohort(authority);
 			setPlans(planList.plans);
 			setLanes(laneList.lanes);
+			setLiveExecutionCertified(laneList.live_execution_certified);
 			const nextPlanId =
 				preferredPlanId || selectedPlanId || planList.plans[0]?.plan_id || "";
 			if (nextPlanId) {
@@ -240,6 +242,7 @@ export default function CreativeProductionStudioPage() {
 	const selectedPlan = detail?.plan;
 	const actionDisabled = !selectedPlan || Boolean(busy);
 	const liveEnabled =
+		liveExecutionCertified &&
 		selectedPlan?.status === "SCHEDULED" &&
 		livePhrase === P6_LIVE_CONFIRMATION &&
 		!busy;
@@ -971,10 +974,13 @@ export default function CreativeProductionStudioPage() {
 										<h2 className="font-semibold text-rose-100">
 											Live execution — separately authorized boundary
 										</h2>
-										<p className="mt-1 text-xs text-rose-200/70">
-											This deployment keeps P6 live certification disabled. Even
-											the exact phrase cannot bypass the server gate. No live
-											media authorization was granted in this mission.
+										<p
+											className="mt-1 text-xs text-rose-200/70"
+											data-testid="p6-live-certification-truth"
+										>
+											{liveExecutionCertified
+												? "Runtime live-execution certification is present. Dispatch still requires a scheduled plan, the exact confirmation phrase, a matching dry-run proof, and a verified lane. Entering the phrase and requesting dispatch explicitly authorizes credit-spending media generation."
+												: "Runtime live-execution certification is absent. The exact confirmation phrase cannot bypass the server gate."}
 										</p>
 										<div className="mt-3 flex flex-col gap-2 sm:flex-row">
 											<input

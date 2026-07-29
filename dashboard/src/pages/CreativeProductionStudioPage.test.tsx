@@ -151,6 +151,7 @@ const DETAIL = {
 };
 
 const LANES = {
+	live_execution_certified: false,
 	lanes: [
 		{
 			lane_id: "google-flow-video-primary",
@@ -314,6 +315,34 @@ describe("P6 Production Studio rendered contract", () => {
 			target: { value: "AUTHORIZE_P6_LIVE_CREDIT_SPEND" },
 		});
 		expect(liveButton).toBeDisabled();
+		expect(startProductionPlan).not.toHaveBeenCalled();
+	});
+
+	it("reflects runtime certification and only enables a scheduled exact-phrase request", async () => {
+		const scheduledDetail = {
+			...DETAIL,
+			plan: {
+				...PLAN,
+				status: "SCHEDULED",
+				blockers: [],
+			},
+		};
+		prime(scheduledDetail);
+		listExecutionLanes.mockResolvedValue({
+			...LANES,
+			live_execution_certified: true,
+		});
+		render(<CreativeProductionStudioPage />);
+		await screen.findByTestId("p6-plan-status");
+		expect(screen.getByTestId("p6-live-certification-truth")).toHaveTextContent(
+			"Runtime live-execution certification is present",
+		);
+		const liveButton = screen.getByTestId("p6-action-live-start");
+		expect(liveButton).toBeDisabled();
+		fireEvent.change(screen.getByTestId("p6-live-confirmation"), {
+			target: { value: "AUTHORIZE_P6_LIVE_CREDIT_SPEND" },
+		});
+		expect(liveButton).toBeEnabled();
 		expect(startProductionPlan).not.toHaveBeenCalled();
 	});
 

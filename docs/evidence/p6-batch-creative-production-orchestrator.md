@@ -55,9 +55,10 @@ recorded.
 
 ## Zero-credit rehearsal evidence
 
-- Python focused P6 pack: 29 tests passed.
-- Rendered Production Studio test: 5 tests passed.
-- Full dashboard Vitest suite: 57 files, 477 tests passed.
+- Python focused P6 pack after both authority hardening follow-ups: 31 tests
+  passed.
+- Rendered Production Studio test: 6 tests passed.
+- Full dashboard Vitest suite: 57 files, 478 tests passed.
 - Dashboard TypeScript/Vite production build: passed.
 - Provider media calls during focused tests: 0.
 - Media credit spend during focused tests: 0.
@@ -99,11 +100,32 @@ recorded.
 - Scoped Biome check for every P6 TypeScript surface and `App.tsx`: exit 0.
 - Mandor ownership check: `workspace`, 20 changed paths, exit 0.
 
-## Final validation and delivery
+## Delivery and canonical proof
 
-The final branch SHA, full regression results, Mandor/Biome/dependency gates,
-isolated canonical-DB-copy migration, pull request, merge, canonical backup,
-runtime restart and browser UAT evidence are recorded in the pull request and
-final mission report after those gates complete.
+- Feature PR #542 merged as
+  `c74adde12e452c10d0a0d926b117340618503bd8`.
+- F2V compiler-authority follow-up PR #543 merged as
+  `be0456f6028cc4ff1ccb3abd11337fe759bf55ba`.
+- Canonical migration created the nine P6 tables against an online backup with
+  `PRAGMA integrity_check=ok`; the 659-product catalog was preserved.
+- Canonical browser rehearsal created one governed F2V item, compiled it through
+  the real workspace compiler, approved it, assigned one durable wave, and
+  produced one matching `NOT_SUBMITTED` dry-run attempt. Provider job ID stayed
+  null and intended credit spend stayed zero.
+- Pause survived an official runtime restart. Resume, reconciliation, retry
+  refusal and cancellation were rendered and persisted. The final plan and item
+  are `CANCELLED`; the attempt is `NOT_SUBMITTED`; no lane lease remains.
+- A post-deployment truth audit found that canonical runtime carried a
+  pre-existing global live-execution certificate while the UI text claimed the
+  deployment certificate was disabled. The final surgical hardening exposes the
+  backend certificate in the typed lane response, binds live-button enablement
+  to that value, and renders the actual runtime state. The regression test
+  supplies the exact phrase but never clicks dispatch.
+- Final truth-hardening validation: Mandor resolved all five changed paths to
+  the `workspace` domain; scoped Biome returned exit 0; the dashboard production
+  build returned exit 0; all 57 dashboard files and 478 tests passed; the P6
+  Python pack passed 31 tests; dependency-cruiser examined 168 modules and 467
+  dependencies with zero violations.
 
-Live media generation remains outside this mission's validation boundary.
+Live media generation, provider submission and throughput certification remain
+outside this mission's validation boundary.

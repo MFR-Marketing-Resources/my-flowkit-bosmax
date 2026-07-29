@@ -111,6 +111,23 @@ async def test_control_and_retry_endpoints_preserve_request_identity(monkeypatch
     retry.assert_awaited_once_with("attempt", body)
 
 
+@pytest.mark.asyncio
+async def test_lane_api_exposes_runtime_live_certification_truth(monkeypatch):
+    list_lanes = AsyncMock(return_value=[{"lane_id": "video"}])
+    monkeypatch.setattr(api.scheduler, "list_lanes", list_lanes)
+    monkeypatch.setattr(
+        api.scheduler,
+        "live_execution_certified",
+        lambda: True,
+    )
+    result = await api.list_lanes()
+    assert result == {
+        "lanes": [{"lane_id": "video"}],
+        "live_execution_certified": True,
+    }
+    list_lanes.assert_awaited_once()
+
+
 def test_router_exposes_complete_operator_control_plane():
     method_paths = {
         (method, route.path)
