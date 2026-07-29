@@ -1317,7 +1317,7 @@ async def create_product_strategy_type_registry_entry(record: dict) -> dict:
 
 
 async def seed_product_strategy_type_registry(records: list[dict]) -> int:
-    """Insert missing system entries atomically without overwriting any pair."""
+    """Insert or refresh system entries without overwriting manual pairs."""
 
     if not records:
         return 0
@@ -1326,7 +1326,17 @@ async def seed_product_strategy_type_registry(records: list[dict]) -> int:
     sql = (
         f"INSERT INTO product_strategy_type_registry ({', '.join(columns)}) "
         f"VALUES ({', '.join('?' for _ in columns)}) "
-        "ON CONFLICT(cluster, product_type_group) DO NOTHING"
+        "ON CONFLICT(cluster, product_type_group) DO UPDATE SET "
+        "display_name=excluded.display_name, "
+        "matched_scene_strategy_id=excluded.matched_scene_strategy_id, "
+        "scene_coverage_status=excluded.scene_coverage_status, "
+        "registry_status=excluded.registry_status, "
+        "auto_classification_enabled=excluded.auto_classification_enabled, "
+        "reviewer_id=excluded.reviewer_id, "
+        "reviewer_note=excluded.reviewer_note, "
+        "reviewed_at=excluded.reviewed_at, "
+        "updated_at=excluded.updated_at "
+        "WHERE product_strategy_type_registry.authority_source='SYSTEM_SEED'"
     )
     changed = 0
     async with _db_lock:

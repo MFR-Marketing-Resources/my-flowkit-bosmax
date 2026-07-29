@@ -213,6 +213,52 @@ def test_required_product_groups_have_specific_strategies(
 
 
 @pytest.mark.parametrize(
+    ("fields", "expected_strategy"),
+    (
+        (
+            {
+                "name": "Female Wellness Comfort Pants",
+                "category": "Fashion",
+                "subcategory": "Bottoms",
+                "type": "Pants",
+            },
+            "BOTTOM_APPAREL",
+        ),
+        (
+            {
+                "name": "Household Detergent Style Cleaner",
+                "category": "Household",
+                "type": "Household Cleaners",
+            },
+            "HOUSEHOLD_CLEANER",
+        ),
+        (
+            {
+                "name": "Compact Vacuum Kitchen Device",
+                "category": "Home Appliances",
+                "type": "Vacuum Sealers",
+            },
+            "VACUUM_SEALER",
+        ),
+    ),
+)
+def test_exact_product_truth_mapping_precedes_title_keywords(
+    fields,
+    expected_strategy,
+) -> None:
+    name = str(fields["name"])
+    strategy = resolve_scene_strategy(
+        _product(name, **{key: value for key, value in fields.items() if key != "name"})
+    )
+
+    assert strategy["strategy_id"] == expected_strategy
+    assert strategy["resolution_source"].startswith(
+        "product_truth_source_type:"
+    )
+    assert strategy["fallback_used"] is False
+
+
+@pytest.mark.parametrize(
     "name",
     [
         "Herba Tahan Lama Lelaki",

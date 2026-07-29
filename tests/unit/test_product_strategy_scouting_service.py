@@ -81,10 +81,10 @@ def test_beauty_makeup_groups_lip_products_and_separates_mascara() -> None:
     assert groups["lipstick_lip_tint"]["matched_scene_strategy_id"] == "LIP_COLOR"
     assert groups["lipstick_lip_tint"]["coverage_status"] == "COVERED"
     assert groups["mascara"]["product_count"] == 1
-    assert groups["mascara"]["matched_scene_strategy_id"] == "BEAUTY_PERSONAL_CARE"
-    assert groups["mascara"]["specific_strategy_count"] == 0
-    assert groups["mascara"]["coverage_status"] == "PARTIAL"
-    assert beauty["next_product_type_group"] == "mascara"
+    assert groups["mascara"]["matched_scene_strategy_id"] == "MASCARA"
+    assert groups["mascara"]["specific_strategy_count"] == 1
+    assert groups["mascara"]["coverage_status"] == "COVERED"
+    assert beauty["next_product_type_group"] is None
 
 
 def test_cleanser_and_serum_are_separate_beauty_personal_care_groups() -> None:
@@ -298,16 +298,18 @@ def test_report_ranks_cluster_first_and_recommends_exactly_one_next_type() -> No
     )
     assert report["recommended_next_work"] == report["ranked_work_queue"][0]
     assert report["recommended_next_work"] == {
-        "cluster": "beauty_makeup",
-        "product_type_group": "mascara",
+        "cluster": "home_equipment",
+        "product_type_group": "vacuum",
         "coverage_status": "PARTIAL",
         "recommended_next_action": (
-            "Expand beauty_makeup -> mascara as one scoped strategy; the "
-            "current resolver uses BEAUTY_PERSONAL_CARE, but "
+            "Expand home_equipment -> vacuum as one scoped strategy; the "
+            "current resolver uses HOUSEHOLD_CLEANER, but "
             "product-type-specific coverage is 0/1."
         ),
     }
-    assert "vacuum" not in report["recommended_next_work"]["recommended_next_action"]
+    assert "mascara" not in report["recommended_next_work"][
+        "recommended_next_action"
+    ]
     assert "sambal" not in report["recommended_next_work"]["recommended_next_action"]
     assert all(
         item["recommended_next_action"].count("->") == 1
@@ -337,11 +339,73 @@ def test_direct_copy_notes_only_come_from_specific_scene_strategy_coverage() -> 
     assert "Sekali sapu warna terus naik." in groups["lipstick_lip_tint"][
         "direct_copy_notes"
     ]["hook"]
-    assert groups["mascara"]["direct_copy_notes"] == {
-        "hook": [],
-        "benefit": [],
-        "cta": [],
+    assert groups["mascara"]["direct_copy_notes"]["hook"] == [
+        "Tengok bentuk berus maskara ni."
+    ]
+    assert groups["mascara"]["direct_copy_notes"]["benefit"] == [
+        "Tunjuk berus dan satu sapuan terkawal pada bulu mata."
+    ]
+    assert groups["mascara"]["direct_copy_notes"]["cta"] == [
+        "Semak jenis berus sebelum pilih."
+    ]
+
+
+def test_product_truth_source_type_outranks_misleading_title_and_family() -> None:
+    cases = (
+        (
+            _product(
+                "pants-1",
+                "Female Wellness Comfort Pants",
+                category="Fashion",
+                subcategory="Bottoms",
+                product_type="Pants",
+            ),
+            ("fashion_apparel", "bottom_apparel", "BOTTOM_APPAREL"),
+        ),
+        (
+            _product(
+                "wipes-1",
+                "Perfumed Baby Wipes",
+                category="Beauty",
+                product_type="Baby Wipes",
+            ),
+            ("baby_care", "baby_wipes", "BABY_WIPES"),
+        ),
+        (
+            _product(
+                "sealer-1",
+                "Compact Vacuum Kitchen Device",
+                category="Home Appliances",
+                product_type="Vacuum Sealers",
+            ),
+            ("home_equipment", "vacuum_sealer", "VACUUM_SEALER"),
+        ),
+    )
+
+    for product, expected in cases:
+        tag = classify_product_strategy_tag(product)
+        assert (
+            tag["cluster"],
+            tag["product_type_group"],
+            tag["matched_scene_strategy_id"],
+        ) == expected
+        assert tag["fallback_used"] is False
+        assert tag["specific_strategy"] is True
+
+
+def test_broad_beauty_and_unknown_types_remain_review_only_without_p4() -> None:
+    by_key = {
+        (str(entry["cluster"]), str(entry["product_type_group"])): entry
+        for entry in product_strategy_type_registry_seed_entries()
     }
+
+    for key in (
+        ("beauty_personal_care", "beauty_personal_care_other"),
+        ("generic_unclassified", "unknown_product_type"),
+    ):
+        entry = by_key[key]
+        assert entry["registry_status"] == "REVIEW_REQUIRED"
+        assert entry["scene_coverage_status"] == "FALLBACK_ONLY"
 
 
 def test_traditional_wellness_seed_rows_are_owner_reviewed_and_manual_only() -> None:

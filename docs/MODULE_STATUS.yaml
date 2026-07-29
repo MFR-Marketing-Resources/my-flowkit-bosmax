@@ -170,6 +170,13 @@ domains:
       - agent/services/product_type_copy_strategy_service.py
       - tests/unit/test_product_type_copy_strategy_service.py
       - tests/api/test_product_type_copy_strategy_api.py
+      # P5.7 Catalog Coverage Convergence — Product Truth and P6 cohort boundary
+      - agent/authority/catalog_product_type_truth.py
+      - agent/services/catalog_coverage_service.py
+      - scripts/p57-catalog-coverage-rehearsal.py
+      - tests/unit/test_catalog_product_type_truth.py
+      - tests/unit/test_catalog_coverage_service.py
+      - docs/evidence/p5-7-catalog-coverage-convergence.md
 
       # Scene Context Registry Round 2 — preview-only background plate promotion
       - agent/services/scene_context_promotion_service.py

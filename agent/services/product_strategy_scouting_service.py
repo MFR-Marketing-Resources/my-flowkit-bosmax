@@ -13,6 +13,12 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Literal, Mapping, TypedDict
 
+from agent.authority.catalog_product_type_truth import (
+    P57_REVIEWER_ID,
+    P57_REVIEWER_NOTE,
+    iter_catalog_product_type_truth_registry_entries,
+    resolve_catalog_product_type_truth,
+)
 from agent.services.bosmax_product_family import derive_bosmax_product_family
 from agent.services.scene_strategy_library import (
     ResolvedSceneStrategy,
@@ -97,15 +103,23 @@ class _ScoutingRule:
 SCOUTING_CLUSTER_ORDER = (
     "beauty_makeup",
     "beauty_personal_care",
+    "beauty_skincare",
     "fragrance",
     "food_cooking",
     "food_ready_to_eat",
+    "food_beverage",
+    "pet_care",
     "household_laundry",
     "household_cleaning",
     "home_equipment",
     "home_storage",
+    "home_textiles",
+    "home_improvement",
+    "books_media",
+    "craft_hobby",
     "baby_care",
     "fashion_apparel",
+    "fashion_footwear",
     "electronics_accessory",
     "traditional_wellness",
     "sensitive_wellness",
@@ -423,7 +437,6 @@ _SCOUTING_RULES = (
         "beauty_personal_care",
         "beauty_personal_care_other",
         families=("BEAUTY_PERSONAL_CARE",),
-        specific_strategy_ids=("BEAUTY_PERSONAL_CARE",),
     ),
 )
 
@@ -433,6 +446,34 @@ def product_strategy_type_registry_seed_entries() -> list[dict[str, object]]:
 
     entries: list[dict[str, object]] = []
     seen: set[tuple[str, str]] = set()
+    for mapping in iter_catalog_product_type_truth_registry_entries():
+        pair = (mapping.cluster, mapping.product_type_group)
+        seen.add(pair)
+        has_specific_strategy = mapping.specific_scene_strategy_id is not None
+        entries.append(
+            {
+                "cluster": mapping.cluster,
+                "product_type_group": mapping.product_type_group,
+                "display_name": mapping.display_name,
+                "matched_scene_strategy_id": (
+                    mapping.specific_scene_strategy_id
+                    if has_specific_strategy
+                    else "GENERIC_FALLBACK"
+                ),
+                "scene_coverage_status": (
+                    "COVERED" if has_specific_strategy else "FALLBACK_ONLY"
+                ),
+                "registry_status": (
+                    "ACTIVE" if has_specific_strategy else "REVIEW_REQUIRED"
+                ),
+                "auto_classification_enabled": True,
+                "authority_source": "SYSTEM_SEED",
+                "reviewer_id": P57_REVIEWER_ID if has_specific_strategy else None,
+                "reviewer_note": (
+                    P57_REVIEWER_NOTE if has_specific_strategy else None
+                ),
+            }
+        )
     for rule in _SCOUTING_RULES:
         key = (rule.cluster, rule.product_type_group)
         if key in seen:
@@ -605,6 +646,29 @@ def _matched_rule(
     product: Mapping[str, object],
     strategy: ResolvedSceneStrategy,
 ) -> _ScoutingRule:
+    truth_mapping = resolve_catalog_product_type_truth(product)
+    if truth_mapping is not None:
+        return _ScoutingRule(
+            truth_mapping.cluster,
+            truth_mapping.product_type_group,
+            specific_strategy_ids=(
+                (truth_mapping.specific_scene_strategy_id,)
+                if truth_mapping.specific_scene_strategy_id
+                else ()
+            ),
+            display_name=truth_mapping.display_name,
+            reviewer_id=(
+                P57_REVIEWER_ID
+                if truth_mapping.specific_scene_strategy_id
+                else None
+            ),
+            reviewer_note=(
+                P57_REVIEWER_NOTE
+                if truth_mapping.specific_scene_strategy_id
+                else None
+            ),
+        )
+
     haystack = _product_text(product)
     family = _normalize(
         derive_bosmax_product_family(dict(product))["bosmax_product_family"]

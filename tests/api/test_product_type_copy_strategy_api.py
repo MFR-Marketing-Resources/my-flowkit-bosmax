@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from agent.main import app
 from agent.models.product_type_copy_strategy import (
+    CatalogCoverageMatrixReport,
     ProductTypeCopyEligibleReport,
     ProductTypeCopyReportGroup,
     ProductTypeCopyReportProduct,
@@ -95,6 +96,25 @@ def _eligible_report() -> ProductTypeCopyEligibleReport:
                 ],
             )
         ],
+    )
+
+
+def _catalog_coverage_report() -> CatalogCoverageMatrixReport:
+    return CatalogCoverageMatrixReport(
+        report_version="p5.7_catalog_coverage_v1",
+        total_products=659,
+        active_products=443,
+        archived_products=216,
+        product_truth_mapped_count=476,
+        p4_supported_count=324,
+        unknown_product_type_count=37,
+        unknown_product_type_p4_supported_count=0,
+        p6_launch_cohort_count=1,
+        p6_launch_cohort_product_ids=[_PRODUCT_ID],
+        blocked_by_reason={"TAXONOMY_NOT_VERIFIED": 658},
+        coverage_groups=[],
+        products=[],
+        matrix_sha256="a" * 64,
     )
 
 
@@ -226,3 +246,26 @@ def test_p4_eligible_report_route_returns_typed_counts(monkeypatch):
         "TAXONOMY_NOT_VERIFIED",
         "COPY_STRATEGY_NOT_REGISTERED",
     ]
+
+
+def test_p5_7_catalog_coverage_route_returns_explicit_launch_cohort(
+    monkeypatch,
+):
+    async def fake_report():
+        return _catalog_coverage_report()
+
+    monkeypatch.setattr(
+        "agent.api.copywriting.build_catalog_coverage_matrix",
+        fake_report,
+    )
+
+    response = TestClient(app).get(
+        "/api/copywriting/p5-7/catalog-coverage"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_products"] == 659
+    assert payload["unknown_product_type_p4_supported_count"] == 0
+    assert payload["p6_launch_cohort_product_ids"] == [_PRODUCT_ID]
+    assert payload["matrix_sha256"] == "a" * 64

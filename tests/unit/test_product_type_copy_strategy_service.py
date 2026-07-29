@@ -7,6 +7,9 @@ from agent.authority.product_type_copy_strategy_registry import (
 )
 from agent.models.product_strategy_taxonomy import ProductStrategyTaxonomy
 from agent.services import product_type_copy_strategy_service as service
+from agent.services.product_strategy_scouting_service import (
+    product_strategy_type_registry_seed_entries,
+)
 from agent.services.product_strategy_taxonomy_service import (
     ProductStrategyTaxonomyError,
 )
@@ -53,7 +56,7 @@ EXPANDED_KEYS = {
         "HERBAL_ROLL_ON_OIL",
     ),
 }
-ALL_STRATEGY_KEYS = {LIP_KEY, REMPAH_KEY, *EXPANDED_KEYS}
+ALL_STRATEGY_KEYS = set(PRODUCT_TYPE_COPY_STRATEGY_REGISTRY)
 
 
 def _taxonomy(
@@ -147,9 +150,23 @@ async def _install_preview_fakes(
 
 
 def test_p4_registry_is_product_type_keyed_not_product_id_keyed():
-    assert set(PRODUCT_TYPE_COPY_STRATEGY_REGISTRY) == ALL_STRATEGY_KEYS
-    assert len(PRODUCT_TYPE_COPY_STRATEGY_REGISTRY) == 19
+    active_covered_keys = {
+        (
+            str(entry["cluster"]),
+            str(entry["product_type_group"]),
+            str(entry["matched_scene_strategy_id"]),
+        )
+        for entry in product_strategy_type_registry_seed_entries()
+        if entry["registry_status"] == "ACTIVE"
+        and entry["scene_coverage_status"] == "COVERED"
+    }
+
+    assert set(PRODUCT_TYPE_COPY_STRATEGY_REGISTRY) == active_covered_keys
     assert all(len(key) == 3 for key in PRODUCT_TYPE_COPY_STRATEGY_REGISTRY)
+    assert not any(
+        key[1] in {"unknown_product_type", "beauty_personal_care_other"}
+        for key in PRODUCT_TYPE_COPY_STRATEGY_REGISTRY
+    )
     assert not any(
         "product_id" in entry for entry in PRODUCT_TYPE_COPY_STRATEGY_REGISTRY.values()
     )
@@ -307,9 +324,13 @@ async def test_p4_blocks_registered_type_with_wrong_scene(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_p4_blocks_verified_product_without_registered_strategy(monkeypatch):
-    product_id = "verified-blender-product"
-    key = ("home_equipment", "blender", "ELECTRONICS_SMALL_DEVICE")
-    product = _product(product_id, key=key, name="Verified Blender")
+    product_id = "verified-broad-beauty-product"
+    key = (
+        "beauty_personal_care",
+        "beauty_personal_care_other",
+        "GENERIC_FALLBACK",
+    )
+    product = _product(product_id, key=key, name="Unmapped Beauty Product")
     taxonomy = _taxonomy(product_id, key=key)
     await _install_preview_fakes(
         monkeypatch,
@@ -624,14 +645,14 @@ async def test_p4_eligible_report_counts_supported_blocked_and_missing(
         authority_source="AUTO_DERIVED",
     )
     unsupported_key = (
-        "home_equipment",
-        "blender",
-        "ELECTRONICS_SMALL_DEVICE",
+        "beauty_personal_care",
+        "beauty_personal_care_other",
+        "GENERIC_FALLBACK",
     )
     unsupported = _product(
         "verified-missing-strategy",
         key=unsupported_key,
-        name="Verified Blender",
+        name="Verified Unmapped Beauty Product",
     )
     unsupported_taxonomy = _taxonomy(
         "verified-missing-strategy",
@@ -716,7 +737,7 @@ async def test_p4_eligible_report_counts_supported_blocked_and_missing(
     assert report.blocked_by_reason["COPY_STRATEGY_NOT_REGISTERED"] == 2
     assert {
         group.product_type_group for group in report.missing_copy_strategy_groups
-    } == {"blender", "unknown_product_type"}
+    } == {"beauty_personal_care_other", "unknown_product_type"}
     assert {item.product_id for item in report.sample_eligible} == {
         "eligible-lip",
         "eligible-spice",
