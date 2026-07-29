@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from agent.main import app
 from agent.models.product_type_copy_strategy import (
+    CatalogAuthorityMatrixReport,
     CatalogCoverageMatrixReport,
     ProductTypeCopyEligibleReport,
     ProductTypeCopyReportGroup,
@@ -115,6 +116,33 @@ def _catalog_coverage_report() -> CatalogCoverageMatrixReport:
         coverage_groups=[],
         products=[],
         matrix_sha256="a" * 64,
+    )
+
+
+def _catalog_authority_report() -> CatalogAuthorityMatrixReport:
+    return CatalogAuthorityMatrixReport(
+        report_version="p5.8_final_catalog_authority_v1",
+        total_products=659,
+        active_products=443,
+        archived_products=216,
+        product_truth_mapped_count=628,
+        p4_supported_count=640,
+        unknown_product_type_count=14,
+        unknown_product_type_p4_supported_count=0,
+        terminal_state_counts={
+            "ARCHIVED_NOT_IN_SCOPE": 216,
+            "INSUFFICIENT_PRODUCT_TRUTH": 3,
+            "P6_READY": 438,
+            "REVIEW_BLOCKED_WITH_EXACT_REASON": 2,
+        },
+        p6_launch_cohort_count=438,
+        p6_launch_cohort_product_ids=[_PRODUCT_ID],
+        blocked_by_reason={
+            "UNVERIFIED_ELECTRICITY_SAVINGS_CLAIM": 1,
+        },
+        coverage_groups=[],
+        products=[],
+        matrix_sha256="b" * 64,
     )
 
 
@@ -269,3 +297,32 @@ def test_p5_7_catalog_coverage_route_returns_explicit_launch_cohort(
     assert payload["unknown_product_type_p4_supported_count"] == 0
     assert payload["p6_launch_cohort_product_ids"] == [_PRODUCT_ID]
     assert payload["matrix_sha256"] == "a" * 64
+
+
+def test_p5_8_catalog_authority_route_returns_terminal_state_counts(
+    monkeypatch,
+):
+    async def fake_report():
+        return _catalog_authority_report()
+
+    monkeypatch.setattr(
+        "agent.api.copywriting.build_catalog_authority_matrix",
+        fake_report,
+    )
+
+    response = TestClient(app).get(
+        "/api/copywriting/p5-8/catalog-authority"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_products"] == 659
+    assert payload["terminal_state_counts"] == {
+        "ARCHIVED_NOT_IN_SCOPE": 216,
+        "INSUFFICIENT_PRODUCT_TRUTH": 3,
+        "P6_READY": 438,
+        "REVIEW_BLOCKED_WITH_EXACT_REASON": 2,
+    }
+    assert payload["unknown_product_type_p4_supported_count"] == 0
+    assert payload["p6_launch_cohort_count"] == 438
+    assert payload["matrix_sha256"] == "b" * 64

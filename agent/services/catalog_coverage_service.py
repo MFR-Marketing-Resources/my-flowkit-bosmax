@@ -7,6 +7,9 @@ import json
 from collections import Counter
 
 from agent.authority.catalog_product_type_truth import (
+    P58_INSUFFICIENT_PRODUCT_TRUTH_REASONS,
+    P58_PRODUCT_AUTHORITY_BLOCKERS,
+    catalog_product_type_truth_provenance,
     resolve_catalog_product_type_truth,
 )
 from agent.authority.product_type_copy_strategy_registry import (
@@ -15,6 +18,8 @@ from agent.authority.product_type_copy_strategy_registry import (
 from agent.db import crud
 from agent.models.product_strategy_taxonomy import ProductStrategyTaxonomy
 from agent.models.product_type_copy_strategy import (
+    CatalogAuthorityMatrixProduct,
+    CatalogAuthorityMatrixReport,
     CatalogCoverageMatrixGroup,
     CatalogCoverageMatrixProduct,
     CatalogCoverageMatrixReport,
@@ -257,5 +262,157 @@ async def build_catalog_coverage_matrix() -> CatalogCoverageMatrixReport:
     )
 
 
-__all__ = ["build_catalog_coverage_matrix"]
+async def build_catalog_authority_matrix() -> CatalogAuthorityMatrixReport:
+    """Return the final P5.8 terminal state for every catalog product."""
+
+    coverage = await build_catalog_coverage_matrix()
+    products = await crud.list_products(include_archived=True)
+    attached = await attach_product_strategy_taxonomies(products)
+    product_by_id = {
+        str(product.get("id") or product.get("product_id") or ""): product
+        for product in attached
+    }
+
+    rows: list[CatalogAuthorityMatrixProduct] = []
+    blocked_counts: Counter[str] = Counter()
+    for coverage_row in coverage.products:
+        product = product_by_id[coverage_row.product_id]
+        taxonomy = ProductStrategyTaxonomy.model_validate(
+            product["strategy_taxonomy"]
+        )
+        truth_mapping = resolve_catalog_product_type_truth(product)
+        manual_taxonomy_authority = bool(
+            taxonomy.authority_source == "MANUAL_OVERRIDE"
+            and taxonomy.review_status == "VERIFIED"
+            and taxonomy.consumer_status == "READY"
+            and not taxonomy.is_stale
+            and taxonomy.product_type_group != _UNKNOWN_PRODUCT_TYPE
+            and taxonomy.matched_scene_strategy_id != "GENERIC_FALLBACK"
+        )
+        authority_mapped = truth_mapping is not None or manual_taxonomy_authority
+        authority_blockers = list(
+            P58_PRODUCT_AUTHORITY_BLOCKERS.get(coverage_row.product_id, ())
+        )
+        blockers = list(
+            dict.fromkeys([*coverage_row.blockers, *authority_blockers])
+        )
+        p6_ready = bool(
+            authority_mapped
+            and coverage_row.p6_launch_cohort
+            and not authority_blockers
+        )
+        insufficient_reason = P58_INSUFFICIENT_PRODUCT_TRUTH_REASONS.get(
+            coverage_row.product_id
+        )
+        if coverage_row.lifecycle_status != "ACTIVE":
+            terminal_state = "ARCHIVED_NOT_IN_SCOPE"
+            terminal_reasons = ["PRODUCT_LIFECYCLE_ARCHIVED"]
+        elif insufficient_reason is not None:
+            terminal_state = "INSUFFICIENT_PRODUCT_TRUTH"
+            terminal_reasons = [insufficient_reason]
+        elif not authority_mapped:
+            terminal_state = "INSUFFICIENT_PRODUCT_TRUTH"
+            terminal_reasons = [
+                "NO_EXACT_SOURCE_OR_REVIEWED_PRODUCT_TRUTH_MAPPING"
+            ]
+        elif p6_ready:
+            terminal_state = "P6_READY"
+            terminal_reasons = []
+        else:
+            terminal_state = "REVIEW_BLOCKED_WITH_EXACT_REASON"
+            terminal_reasons = blockers or ["P6_READINESS_GATE_NOT_SATISFIED"]
+        mapping_provenance = catalog_product_type_truth_provenance(product)
+        if truth_mapping is None and manual_taxonomy_authority:
+            mapping_provenance = "MANUAL_TAXONOMY_REVIEW"
+        blocked_counts.update(terminal_reasons)
+        rows.append(
+            CatalogAuthorityMatrixProduct(
+                **coverage_row.model_dump(
+                    exclude={
+                        "blockers",
+                        "p6_launch_cohort",
+                        "product_truth_mapped",
+                    }
+                ),
+                blockers=blockers,
+                p6_launch_cohort=terminal_state == "P6_READY",
+                product_truth_mapped=authority_mapped,
+                mapping_provenance=mapping_provenance,
+                mapping_reviewer_id=(
+                    truth_mapping.reviewer_id
+                    if truth_mapping is not None
+                    else taxonomy.reviewer_id
+                ),
+                mapping_reviewer_note=(
+                    truth_mapping.reviewer_note
+                    if truth_mapping is not None
+                    else taxonomy.reviewer_note
+                ),
+                taxonomy_reviewer_id=taxonomy.reviewer_id,
+                taxonomy_reviewed_at=taxonomy.reviewed_at,
+                terminal_state=terminal_state,
+                terminal_reasons=terminal_reasons,
+            )
+        )
+
+    rows.sort(
+        key=lambda row: (
+            row.terminal_state,
+            row.product_type_group,
+            row.product_name.casefold(),
+            row.product_id,
+        )
+    )
+    matrix_payload = json.dumps(
+        [row.model_dump(mode="json") for row in rows],
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    p6_product_ids = sorted(
+        row.product_id for row in rows if row.terminal_state == "P6_READY"
+    )
+    terminal_state_counts = Counter(row.terminal_state for row in rows)
+    return CatalogAuthorityMatrixReport(
+        report_version="p5.8_final_catalog_authority_v1",
+        total_products=len(rows),
+        active_products=sum(
+            row.lifecycle_status == "ACTIVE" for row in rows
+        ),
+        archived_products=sum(
+            row.lifecycle_status == "ARCHIVED" for row in rows
+        ),
+        product_truth_mapped_count=sum(
+            row.product_truth_mapped for row in rows
+        ),
+        p4_supported_count=sum(
+            row.p4_support_status == "P4_SUPPORTED" for row in rows
+        ),
+        unknown_product_type_count=sum(
+            row.product_type_group == _UNKNOWN_PRODUCT_TYPE for row in rows
+        ),
+        unknown_product_type_p4_supported_count=sum(
+            row.product_type_group == _UNKNOWN_PRODUCT_TYPE
+            and row.p4_support_status == "P4_SUPPORTED"
+            for row in rows
+        ),
+        terminal_state_counts=dict(sorted(terminal_state_counts.items())),
+        p6_launch_cohort_count=len(p6_product_ids),
+        p6_launch_cohort_product_ids=p6_product_ids,
+        blocked_by_reason=dict(
+            sorted(
+                blocked_counts.items(),
+                key=lambda item: (-item[1], item[0]),
+            )
+        ),
+        coverage_groups=coverage.coverage_groups,
+        products=rows,
+        matrix_sha256=hashlib.sha256(matrix_payload).hexdigest(),
+    )
+
+
+__all__ = [
+    "build_catalog_authority_matrix",
+    "build_catalog_coverage_matrix",
+]
 

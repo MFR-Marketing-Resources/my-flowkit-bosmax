@@ -157,3 +157,27 @@ async def test_matrix_is_full_deterministic_and_launch_cohort_is_fail_closed(
     assert "P4_NOT_SUPPORTED" in by_id["unknown"].blockers
     assert "PRODUCT_NOT_ACTIVE" in by_id["archived"].blockers
     assert "TAXONOMY_STALE" in by_id["stale"].blockers
+
+    authority_first = await service.build_catalog_authority_matrix()
+    authority_second = await service.build_catalog_authority_matrix()
+    authority_by_id = {
+        row.product_id: row for row in authority_first.products
+    }
+    assert authority_first.terminal_state_counts == {
+        "ARCHIVED_NOT_IN_SCOPE": 1,
+        "INSUFFICIENT_PRODUCT_TRUTH": 1,
+        "P6_READY": 1,
+        "REVIEW_BLOCKED_WITH_EXACT_REASON": 1,
+    }
+    assert authority_by_id["eligible"].terminal_state == "P6_READY"
+    assert (
+        authority_by_id["unknown"].terminal_state
+        == "INSUFFICIENT_PRODUCT_TRUTH"
+    )
+    assert authority_by_id["archived"].terminal_state == "ARCHIVED_NOT_IN_SCOPE"
+    assert (
+        authority_by_id["stale"].terminal_state
+        == "REVIEW_BLOCKED_WITH_EXACT_REASON"
+    )
+    assert authority_by_id["unknown"].p6_launch_cohort is False
+    assert authority_first.matrix_sha256 == authority_second.matrix_sha256

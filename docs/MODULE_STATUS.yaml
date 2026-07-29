@@ -177,6 +177,14 @@ domains:
       - tests/unit/test_catalog_product_type_truth.py
       - tests/unit/test_catalog_coverage_service.py
       - docs/evidence/p5-7-catalog-coverage-convergence.md
+      # P5.8 Final Catalog Authority — terminal-state and transactional closure
+      - agent/services/catalog_authority_review_service.py
+      - agent/services/catalog_authority_apply_service.py
+      - scripts/p58-catalog-authority-closure.py
+      - tests/unit/test_catalog_authority_review_service.py
+      - tests/unit/test_catalog_authority_apply_service.py
+      - docs/evidence/p5-8-final-catalog-authority.md
+      - docs/evidence/p5-8-deepseek-review-ledger.json
 
       # Scene Context Registry Round 2 — preview-only background plate promotion
       - agent/services/scene_context_promotion_service.py
