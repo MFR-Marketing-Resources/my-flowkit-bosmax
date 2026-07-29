@@ -52,9 +52,71 @@ class TextAssistEvidenceCompletion(BaseModel):
     size_or_volume: str | None = None
     package_notes: str | None = None
     warnings_or_limitations: list[str] = Field(default_factory=list)
-    confidence: Literal["HIGH", "MEDIUM", "LOW"] = "LOW"
+    confidence: Literal["LOW", "MEDIUM"] = "LOW"
     provenance: list[str] = Field(default_factory=list)
     needs_review: Literal[True] = True
+
+
+def _json_schema_types(field_schema: dict[str, Any]) -> tuple[str, ...]:
+    json_types: list[str] = []
+    direct_type = field_schema.get("type")
+    if isinstance(direct_type, str):
+        json_types.append(direct_type)
+    for option in field_schema.get("anyOf") or []:
+        if not isinstance(option, dict):
+            continue
+        option_type = option.get("type")
+        if isinstance(option_type, str):
+            json_types.append(option_type)
+    return tuple(dict.fromkeys(json_types))
+
+
+def _text_assist_schema_contract_prompt() -> str:
+    schema = TextAssistEvidenceCompletion.model_json_schema()
+    properties = schema.get("properties") or {}
+    field_names = tuple(TextAssistEvidenceCompletion.model_fields)
+    array_fields = tuple(
+        field_name
+        for field_name in field_names
+        if isinstance(properties.get(field_name), dict)
+        and properties[field_name].get("type") == "array"
+        and isinstance(properties[field_name].get("items"), dict)
+        and properties[field_name]["items"].get("type") == "string"
+    )
+    nullable_scalar_fields = tuple(
+        field_name
+        for field_name in field_names
+        if isinstance(properties.get(field_name), dict)
+        and set(_json_schema_types(properties[field_name])) == {"string", "null"}
+    )
+    confidence_values = tuple(
+        value
+        for value in properties["confidence"].get("enum") or []
+        if isinstance(value, str)
+    )
+    canonical_example = json.dumps(
+        TextAssistEvidenceCompletion().model_dump(mode="json"),
+        ensure_ascii=False,
+        indent=2,
+    )
+    array_rules = " ".join(
+        f"{field_name} must always be an array of strings; "
+        "use [] when unavailable."
+        for field_name in array_fields
+    )
+    return (
+        "Return exactly one JSON object and no markdown. "
+        f"Return exactly the listed keys: {', '.join(field_names)}. "
+        f"Canonical valid JSON example:\n{canonical_example}\n"
+        f"{array_rules} "
+        "Never return null or a scalar for an array field. "
+        f"Nullable scalar fields may use null: {', '.join(nullable_scalar_fields)}. "
+        "Only nullable scalar fields may use null. "
+        'A single list item must still be wrapped in an array, for example '
+        'warnings_or_limitations: ["warning text"], never a scalar. '
+        f"confidence must be {' or '.join(confidence_values)}. "
+        "needs_review must be true."
+    )
 
 
 class _SmartRegistrationCompletionResponse(ProductKnowledgeCompleteResponse):
@@ -491,6 +553,7 @@ def _text_assist_invalid_response_warnings(
         ("missing_keys", "TEXT_ASSIST_MISSING_KEYS"),
         ("unexpected_keys", "TEXT_ASSIST_UNEXPECTED_KEYS"),
         ("validation_field_paths", "TEXT_ASSIST_VALIDATION_FIELD_PATHS"),
+        ("validation_type_metadata", "TEXT_ASSIST_VALIDATION_TYPES"),
     ):
         value = safe_metadata.get(key)
         if isinstance(value, (list, tuple, set)):
@@ -513,8 +576,25 @@ def _text_assist_invalid_response_warnings(
     return warnings
 
 
+def _json_type_name(value: object) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    if isinstance(value, (int, float)):
+        return "number"
+    return "object"
+
+
 def _classify_text_assist_validation_error(
     exc: ValidationError,
+    raw_completion: dict[str, object],
 ) -> tuple[str, dict[str, list[str]]]:
     errors = exc.errors(include_url=False, include_input=False)
     field_paths = sorted(
@@ -533,7 +613,49 @@ def _classify_text_assist_validation_error(
         category = "ENUM_INVALID"
     else:
         category = "FIELD_TYPE_INVALID"
-    return category, {"validation_field_paths": field_paths}
+
+    schema_properties = (
+        TextAssistEvidenceCompletion.model_json_schema().get("properties") or {}
+    )
+    validation_type_metadata: set[str] = set()
+    for error in errors:
+        location = tuple(error.get("loc") or ())
+        if not location:
+            continue
+        field_schema = schema_properties.get(str(location[0]))
+        actual_value: object = raw_completion.get(str(location[0]))
+        for path_part in location[1:]:
+            if isinstance(field_schema, dict) and field_schema.get("type") == "array":
+                field_schema = field_schema.get("items")
+            elif isinstance(field_schema, dict) and field_schema.get("type") == "object":
+                field_schema = (field_schema.get("properties") or {}).get(
+                    str(path_part)
+                )
+            if isinstance(actual_value, list) and isinstance(path_part, int):
+                actual_value = actual_value[path_part]
+            elif isinstance(actual_value, dict):
+                actual_value = actual_value.get(str(path_part))
+        expected_types = (
+            _json_schema_types(field_schema)
+            if isinstance(field_schema, dict)
+            else ()
+        )
+        expected_json_type = "-or-".join(expected_types) or "object"
+        field_path = ".".join(str(part) for part in location)
+        validation_error_type = re.sub(
+            r"[^A-Za-z0-9_-]",
+            "",
+            str(error.get("type") or "validation_error"),
+        )
+        validation_type_metadata.add(
+            f"{field_path}.expected-{expected_json_type}."
+            f"actual-{_json_type_name(actual_value)}."
+            f"error-{validation_error_type}"
+        )
+    return category, {
+        "validation_field_paths": field_paths,
+        "validation_type_metadata": sorted(validation_type_metadata),
+    }
 
 
 def _complete_missing_evidence_with_text_assist(
@@ -554,14 +676,10 @@ def _complete_missing_evidence_with_text_assist(
     ]
     system_prompt = (
         "You create review-only product evidence suggestions from supplied source text. "
-        "Return one strict JSON object with exactly these keys: "
-        "product_knowledge_summary, benefits, usage_summary, target_customer, usp_list, "
-        "size_or_volume, package_notes, warnings_or_limitations, confidence, provenance, "
-        "needs_review. Use null or [] when the source is insufficient. Never invent medical, "
+        f"{_text_assist_schema_contract_prompt()} "
+        "Never invent medical, "
         "cure, guaranteed-result, permanence, regulatory, platform-approval, safety, or "
         "performance claims. Size and package facts must appear explicitly in the source. "
-        "confidence must be LOW or MEDIUM, provenance must be a JSON string array, "
-        "needs_review must be true, and no markdown is allowed."
     )
     user_prompt = (
         "Complete only missing fields from this source evidence. Existing non-empty fields "
@@ -624,7 +742,10 @@ def _complete_missing_evidence_with_text_assist(
         return None, ["TEXT_ASSIST_CALL_FAILED"], []
     except ValidationError as exc:
         LOGGER.warning("Smart Registration text_assist returned schema-invalid JSON")
-        category, metadata = _classify_text_assist_validation_error(exc)
+        category, metadata = _classify_text_assist_validation_error(
+            exc,
+            raw_completion,
+        )
         return (
             None,
             _text_assist_invalid_response_warnings(category, metadata),

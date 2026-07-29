@@ -1,10 +1,15 @@
+import json
+
 import pytest
 from agent.models.product_knowledge import ProductKnowledgeCompleteRequest
 from agent.services.ai_copy_provider_adapter import (
     AICopyProviderError,
     ERR_RESPONSE_INVALID,
 )
-from agent.services.product_knowledge_service import complete_product_knowledge
+from agent.services.product_knowledge_service import (
+    TextAssistEvidenceCompletion,
+    complete_product_knowledge,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -302,7 +307,7 @@ def test_complete_product_knowledge_uses_configured_deepseek_text_assist(monkeyp
             "size_or_volume": None,
             "package_notes": "Dibungkus dalam pek serbuk.",
             "warnings_or_limitations": [],
-            "confidence": "HIGH",
+            "confidence": "MEDIUM",
             "provenance": ["SOURCE_TEXT_REVIEW_ONLY"],
             "needs_review": True,
         },
@@ -320,6 +325,44 @@ def test_complete_product_knowledge_uses_configured_deepseek_text_assist(monkeyp
     )
 
     assert len(calls) == 1
+    system_prompt, user_prompt = calls[0]
+    canonical_example = json.dumps(
+        TextAssistEvidenceCompletion().model_dump(mode="json"),
+        ensure_ascii=False,
+        indent=2,
+    )
+    assert canonical_example in system_prompt
+    assert "Use null or []" not in system_prompt
+    assert (
+        "benefits must always be an array of strings; use [] when unavailable."
+        in system_prompt
+    )
+    assert (
+        "usp_list must always be an array of strings; use [] when unavailable."
+        in system_prompt
+    )
+    assert (
+        "warnings_or_limitations must always be an array of strings; "
+        "use [] when unavailable."
+    ) in system_prompt
+    assert (
+        "provenance must always be an array of strings; use [] when unavailable."
+        in system_prompt
+    )
+    assert "Never return null or a scalar for an array field." in system_prompt
+    assert "Nullable scalar fields may use null:" in system_prompt
+    assert (
+        'A single list item must still be wrapped in an array, for example '
+        'warnings_or_limitations: ["warning text"], never a scalar.'
+    ) in system_prompt
+    assert "confidence must be LOW or MEDIUM." in system_prompt
+    assert "needs_review must be true." in system_prompt
+    assert "Return exactly one JSON object and no markdown." in system_prompt
+    assert all(
+        field_name in system_prompt
+        for field_name in TextAssistEvidenceCompletion.model_fields
+    )
+    assert "JSON source evidence:" in user_prompt
     assert response.suggested_product_knowledge_summary == (
         "Serbuk perasa untuk masakan harian."
     )
@@ -334,6 +377,110 @@ def test_complete_product_knowledge_uses_configured_deepseek_text_assist(monkeyp
     assert "benefits" in response.human_review_fields
     assert "text_assist:deepseek:deepseek-v4-pro:review_only" in response.provenance
     assert response.extracted_product_facts["usp_list"] == []
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        TextAssistEvidenceCompletion().model_dump(mode="json"),
+        {
+            **_valid_text_assist_payload(),
+            "benefits": [],
+            "usp_list": [],
+            "warnings_or_limitations": [],
+            "provenance": [],
+        },
+        {
+            **_valid_text_assist_payload(),
+            "benefits": ["Benefit"],
+            "usp_list": ["USP"],
+            "warnings_or_limitations": ["Warning"],
+            "provenance": ["SOURCE_TEXT_REVIEW_ONLY"],
+        },
+        {
+            **_valid_text_assist_payload(),
+            "warnings_or_limitations": ["Single warning"],
+        },
+        {
+            **_valid_text_assist_payload(),
+            "product_knowledge_summary": None,
+            "usage_summary": None,
+            "target_customer": None,
+            "size_or_volume": None,
+            "package_notes": None,
+        },
+    ],
+)
+def test_text_assist_canonical_field_shapes_validate(payload):
+    completion = TextAssistEvidenceCompletion.model_validate(payload)
+
+    assert all(
+        isinstance(getattr(completion, field_name), list)
+        for field_name in (
+            "benefits",
+            "usp_list",
+            "warnings_or_limitations",
+            "provenance",
+        )
+    )
+    assert completion.confidence in {"LOW", "MEDIUM"}
+    assert completion.needs_review is True
+
+
+@pytest.mark.parametrize(
+    ("warnings_value", "expected_metadata"),
+    [
+        (
+            None,
+            "warnings_or_limitations.expected-array.actual-null.error-list_type",
+        ),
+        (
+            "Single warning",
+            "warnings_or_limitations.expected-array.actual-string.error-list_type",
+        ),
+        (
+            {},
+            "warnings_or_limitations.expected-array.actual-object.error-list_type",
+        ),
+        (
+            ["Safe warning", 7],
+            "warnings_or_limitations.1.expected-string.actual-number.error-string_type",
+        ),
+    ],
+)
+def test_text_assist_array_shape_failures_expose_only_safe_type_metadata(
+    monkeypatch,
+    warnings_value,
+    expected_metadata,
+):
+    payload = _valid_text_assist_payload()
+    payload["warnings_or_limitations"] = warnings_value
+    _enable_mock_deepseek(monkeypatch, payload)
+
+    response = complete_product_knowledge(
+        ProductKnowledgeCompleteRequest(
+            product_name="Serbuk Perasa Warisan",
+            product_knowledge_text="Ringkasan manual kekal berkuasa.",
+            paste_anything_about_product=(
+                "Serbuk perasa untuk masakan harian dan penggunaan di rumah."
+            ),
+            source_lane="MANUAL",
+        ),
+        enable_text_assist=True,
+    )
+
+    assert "TEXT_ASSIST_INVALID_RESPONSE" in response.warnings
+    assert "TEXT_ASSIST_DIAGNOSTIC_FIELD_TYPE_INVALID" in response.warnings
+    assert (
+        f"TEXT_ASSIST_VALIDATION_TYPES:{expected_metadata}" in response.warnings
+    )
+    assert response.suggested_product_knowledge_summary == (
+        "Ringkasan manual kekal berkuasa."
+    )
+    assert all(
+        metadata.status != "AI_SUGGESTED"
+        for metadata in response.evidence_field_status.values()
+    )
 
 
 def test_complete_product_knowledge_disabled_text_assist_uses_safe_fallback(monkeypatch):
@@ -434,7 +581,7 @@ def test_text_assist_schema_failures_are_exact_and_preserve_manual_fields(
     elif case == "wrong_field_type":
         payload["benefits"] = "not-a-list"
     elif case == "invalid_confidence":
-        payload["confidence"] = "CERTAIN"
+        payload["confidence"] = "HIGH"
     elif case == "needs_review_false":
         payload["needs_review"] = False
     _enable_mock_deepseek(monkeypatch, payload)
