@@ -21,6 +21,8 @@
 			"dashboard/src/pages/OperatorPage.tsx",
 			"dashboard/src/pages/ProductAssetGeneratorPage.tsx",
 			"dashboard/src/pages/ProductRegistrationPage.tsx",
+			"dashboard/src/pages/ProductTypeRegistryPage.tsx",
+			"dashboard/src/pages/ProductTypeRegistryPage.test.tsx",
 			"dashboard/src/pages/ProductsSalesAnalyzerPage.tsx",
 			"dashboard/src/pages/WorkspaceJobsPage.tsx",
 			"extension/background.js",

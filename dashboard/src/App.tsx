@@ -16,6 +16,7 @@ import {
 	Settings as SettingsIcon,
 	Siren,
 	Sparkles,
+	Tags,
 	Users,
 	Video,
 	X,
@@ -58,6 +59,7 @@ import ProductionQueuePage from "./pages/ProductionQueuePage";
 import RpaProductionStudioPage from "./pages/RpaProductionStudioPage";
 import RpaQueueControlPage from "./pages/RpaQueueControlPage";
 import ProductRegistrationPage from "./pages/ProductRegistrationPage";
+import ProductTypeRegistryPage from "./pages/ProductTypeRegistryPage";
 import ProductsSalesAnalyzerPage from "./pages/ProductsSalesAnalyzerPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import PromptPreviewPage from "./pages/PromptPreviewPage";
@@ -120,6 +122,11 @@ const NAV_GROUPS = [
 				to: "/assets/scene-context-registry",
 				icon: Sparkles,
 				label: "Scene Registry",
+			},
+			{
+				to: "/assets/product-type-registry",
+				icon: Tags,
+				label: "Product Type Registry",
 			},
 			{
 				to: "/assets/img-cockpit",
@@ -538,6 +545,10 @@ function Layout() {
 						<Route
 							path="/assets/scene-context-registry"
 							element={<SceneContextRegistryPage />}
+						/>
+						<Route
+							path="/assets/product-type-registry"
+							element={<ProductTypeRegistryPage />}
 						/>
 						<Route
 							path="/assets/img-cockpit"
