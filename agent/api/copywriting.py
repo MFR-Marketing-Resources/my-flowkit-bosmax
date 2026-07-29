@@ -9,6 +9,10 @@ from agent.models.lip_color_copy_strategy import (
     LipColorCopyStrategyResponse,
     LipColorDurationSeconds,
 )
+from agent.models.rempah_copy_strategy import (
+    RempahCopyStrategyResponse,
+    RempahDurationSeconds,
+)
 from agent.services.copy_set_service import CopySetError
 from agent.services.copywriting_readiness_service import get_copywriting_readiness
 from agent.services.fastmoss_product_reference_service import (
@@ -17,6 +21,10 @@ from agent.services.fastmoss_product_reference_service import (
 from agent.services.lip_color_copy_strategy_service import (
     LipColorCopyStrategyError,
     build_lip_color_copy_strategy,
+)
+from agent.services.rempah_copy_strategy_service import (
+    RempahCopyStrategyError,
+    build_rempah_copy_strategy,
 )
 
 router = APIRouter(prefix="/copywriting", tags=["copywriting"])
@@ -34,6 +42,28 @@ async def p3a_lip_color_copy_strategy(
     try:
         return await build_lip_color_copy_strategy(product_id, duration_seconds)
     except LipColorCopyStrategyError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={
+                "error": exc.code,
+                "product_id": exc.product_id,
+                "blocked_reasons": exc.blocked_reasons,
+            },
+        ) from exc
+
+
+@router.get(
+    "/p3b/rempah/{product_id}",
+    response_model=RempahCopyStrategyResponse,
+)
+async def p3b_rempah_copy_strategy(
+    product_id: str,
+    duration_seconds: RempahDurationSeconds = RempahDurationSeconds.SECONDS_8,
+):
+    """Preview Direct BM P3B rempah copy without provider calls or persistence."""
+    try:
+        return await build_rempah_copy_strategy(product_id, duration_seconds)
+    except RempahCopyStrategyError as exc:
         raise HTTPException(
             status_code=exc.status_code,
             detail={
