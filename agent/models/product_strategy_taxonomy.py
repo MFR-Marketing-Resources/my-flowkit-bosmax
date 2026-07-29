@@ -178,6 +178,7 @@ class ProductStrategyTypeRegistrySeedResponse(BaseModel):
     mutation_performed: bool
     seed_count: int
     planned_insert_count: int
+    planned_update_count: int
     unchanged_count: int
     preserved_manual_registration_count: int
     active_count: int

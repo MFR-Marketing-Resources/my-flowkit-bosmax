@@ -282,6 +282,7 @@ def test_registry_list_register_and_dry_run_seed_contracts(monkeypatch):
             mutation_performed=False,
             seed_count=30,
             planned_insert_count=30,
+            planned_update_count=0,
             unchanged_count=0,
             preserved_manual_registration_count=0,
             active_count=23,

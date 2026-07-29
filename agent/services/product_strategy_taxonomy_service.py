@@ -14,6 +14,9 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Mapping
 
+from agent.authority.catalog_product_type_truth import (
+    resolve_catalog_product_type_truth,
+)
 from agent.db import crud
 from agent.models.product_strategy_taxonomy import (
     ProductStrategyTaxonomy,
@@ -373,14 +376,40 @@ async def seed_product_strategy_type_registry(
     }
     now = _now()
     records_to_write: list[dict[str, object]] = []
+    planned_insert_count = 0
+    planned_update_count = 0
     preserved_manual_registration_count = 0
+    comparable_fields = (
+        "display_name",
+        "matched_scene_strategy_id",
+        "scene_coverage_status",
+        "registry_status",
+        "auto_classification_enabled",
+        "authority_source",
+        "reviewer_id",
+        "reviewer_note",
+    )
     for record in seed_records:
         key = (str(record["cluster"]), str(record["product_type_group"]))
         existing = existing_by_key.get(key)
         if existing:
             if existing.get("authority_source") == "MANUAL_REGISTRATION":
                 preserved_manual_registration_count += 1
-            continue
+                continue
+            normalized_record = {
+                **record,
+                "auto_classification_enabled": int(
+                    bool(record["auto_classification_enabled"])
+                ),
+            }
+            if all(
+                existing.get(field) == normalized_record.get(field)
+                for field in comparable_fields
+            ):
+                continue
+            planned_update_count += 1
+        else:
+            planned_insert_count += 1
         records_to_write.append(
             {
                 **record,
@@ -399,7 +428,8 @@ async def seed_product_strategy_type_registry(
         dry_run=True,
         mutation_performed=False,
         seed_count=len(seed_records),
-        planned_insert_count=len(records_to_write),
+        planned_insert_count=planned_insert_count,
+        planned_update_count=planned_update_count,
         unchanged_count=len(seed_records) - len(records_to_write),
         preserved_manual_registration_count=preserved_manual_registration_count,
         active_count=sum(
@@ -469,6 +499,23 @@ def _read_model_from_row(
 
     taxonomy = _row_to_taxonomy(row)
     current_fingerprint = product_strategy_fingerprint(product)
+    current_candidate = build_product_strategy_taxonomy_candidate(product)
+    binding_fields = (
+        "cluster",
+        "product_type_group",
+        "matched_scene_strategy_id",
+        "scene_coverage_status",
+        "fallback_used",
+        "specific_strategy",
+    )
+    binding_changed = any(
+        getattr(taxonomy, field) != getattr(current_candidate, field)
+        for field in binding_fields
+    )
+    binding_is_stale = binding_changed and (
+        taxonomy.authority_source == "AUTO_DERIVED"
+        or resolve_catalog_product_type_truth(product) is not None
+    )
     if taxonomy.materialization_status == "PLACEHOLDER":
         taxonomy.product_fingerprint = current_fingerprint
         taxonomy.is_stale = False
@@ -478,17 +525,27 @@ def _read_model_from_row(
             [
                 reason
                 for reason in taxonomy.review_reasons
-                if reason != "STALE_PRODUCT_FINGERPRINT"
+                if reason
+                not in {
+                    "STALE_PRODUCT_FINGERPRINT",
+                    "STALE_TAXONOMY_BINDING",
+                }
             ]
             + ["NOT_MATERIALIZED"]
         )
-    elif taxonomy.product_fingerprint != current_fingerprint:
-        taxonomy.is_stale = True
-        taxonomy.review_status = "REVIEW_REQUIRED"
-        taxonomy.consumer_status = "BLOCKED_REVIEW_REQUIRED"
-        taxonomy.review_reasons = _unique(
-            [*taxonomy.review_reasons, "STALE_PRODUCT_FINGERPRINT"]
-        )
+    else:
+        stale_reasons: list[str] = []
+        if taxonomy.product_fingerprint != current_fingerprint:
+            stale_reasons.append("STALE_PRODUCT_FINGERPRINT")
+        if binding_is_stale:
+            stale_reasons.append("STALE_TAXONOMY_BINDING")
+        if stale_reasons:
+            taxonomy.is_stale = True
+            taxonomy.review_status = "REVIEW_REQUIRED"
+            taxonomy.consumer_status = "BLOCKED_REVIEW_REQUIRED"
+            taxonomy.review_reasons = _unique(
+                [*taxonomy.review_reasons, *stale_reasons]
+            )
     return taxonomy
 
 
@@ -597,6 +654,17 @@ async def _build_backfill_plan(
             == candidate.product_fingerprint
             and str(existing_row.get("materialization_status") or "")
             == "MATERIALIZED"
+            and str(existing_row.get("cluster") or "") == candidate.cluster
+            and str(existing_row.get("product_type_group") or "")
+            == candidate.product_type_group
+            and str(existing_row.get("matched_scene_strategy_id") or "")
+            == candidate.matched_scene_strategy_id
+            and str(existing_row.get("scene_coverage_status") or "")
+            == candidate.scene_coverage_status
+            and bool(existing_row.get("fallback_used"))
+            == candidate.fallback_used
+            and bool(existing_row.get("specific_strategy"))
+            == candidate.specific_strategy
         ):
             unchanged_count += 1
             final_taxonomies.append(_read_model_from_row(product, existing_row))

@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from agent.db import crud
+from agent.db.schema import get_db
 from agent.models.product_strategy_taxonomy import (
     ProductStrategyTaxonomy,
     ProductStrategyTaxonomyBackfillRequest,
@@ -48,6 +49,7 @@ async def test_registry_seed_is_dry_run_safe_and_preserves_manual_pairs():
     assert preview.dry_run is True
     assert preview.mutation_performed is False
     assert preview.planned_insert_count == preview.seed_count
+    assert preview.planned_update_count == 0
     assert await crud.list_product_strategy_type_registry() == []
 
     manual = await service.register_product_strategy_type(
@@ -109,9 +111,47 @@ async def test_registry_seed_is_dry_run_safe_and_preserves_manual_pairs():
     )
     assert reapplied.mutation_performed is False
     assert reapplied.planned_insert_count == 0
+    assert reapplied.planned_update_count == 0
     assert len((await service.list_product_strategy_type_registry()).items) == len(
         readback.items
     )
+
+
+@pytest.mark.asyncio
+async def test_registry_seed_upgrades_existing_system_pair():
+    await _seed_registry()
+    db = await get_db()
+    await db.execute(
+        "UPDATE product_strategy_type_registry "
+        "SET matched_scene_strategy_id='GENERIC_FALLBACK', "
+        "scene_coverage_status='FALLBACK_ONLY', "
+        "registry_status='REVIEW_REQUIRED', reviewer_id=NULL, "
+        "reviewer_note=NULL, reviewed_at=NULL "
+        "WHERE cluster='beauty_makeup' AND product_type_group='mascara'"
+    )
+    await db.commit()
+
+    preview = await service.seed_product_strategy_type_registry(
+        ProductStrategyTypeRegistrySeedRequest()
+    )
+    assert preview.planned_update_count == 1
+
+    applied = await service.seed_product_strategy_type_registry(
+        ProductStrategyTypeRegistrySeedRequest(
+            dry_run=False,
+            confirm_apply=service.REGISTRY_SEED_CONFIRMATION,
+        )
+    )
+    assert applied.mutation_performed is True
+    mascara = await crud.get_product_strategy_type_registry_entry(
+        "beauty_makeup",
+        "mascara",
+    )
+    assert mascara is not None
+    assert mascara["matched_scene_strategy_id"] == "MASCARA"
+    assert mascara["scene_coverage_status"] == "COVERED"
+    assert mascara["registry_status"] == "ACTIVE"
+    assert mascara["reviewer_id"] == "owner-mission:P5.7"
 
 
 @pytest.mark.asyncio
@@ -151,8 +191,8 @@ async def test_review_required_registry_pair_cannot_be_verified():
     await _seed_registry()
 
     entry = await service.validate_product_strategy_assignment(
-        cluster="beauty_makeup",
-        product_type_group="mascara",
+        cluster="beauty_personal_care",
+        product_type_group="beauty_personal_care_other",
         matched_scene_strategy_id="GENERIC_FALLBACK",
         scene_coverage_status="FALLBACK_ONLY",
         review_status="REVIEW_REQUIRED",
@@ -164,8 +204,8 @@ async def test_review_required_registry_pair_cannot_be_verified():
         match="PRODUCT_STRATEGY_TYPE_NOT_ACTIVE",
     ):
         await service.validate_product_strategy_assignment(
-            cluster="beauty_makeup",
-            product_type_group="mascara",
+            cluster="beauty_personal_care",
+            product_type_group="beauty_personal_care_other",
             matched_scene_strategy_id="GENERIC_FALLBACK",
             scene_coverage_status="FALLBACK_ONLY",
             review_status="VERIFIED",
@@ -187,7 +227,7 @@ def test_classification_separates_covered_partial_and_fallback(monkeypatch):
         _product_payload("lip", "Velvet Lipstick", "Lipstick")
     )
     partial = service.build_product_strategy_taxonomy_candidate(
-        _product_payload("mascara", "Waterproof Mascara", "Mascara")
+        _product_payload("serum", "Waterproof Beauty Serum", "Serum")
     )
     fallback = service.build_product_strategy_taxonomy_candidate(
         {
@@ -286,6 +326,54 @@ async def test_new_product_gets_fail_closed_placeholder_then_backfill_readback()
     assert readback.materialization_status == "MATERIALIZED"
     assert readback.scene_coverage_status == "FALLBACK_ONLY"
     assert readback.review_status == "REVIEW_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_backfill_refreshes_auto_derived_binding_when_classifier_changes():
+    product = await crud.create_product(
+        source="MANUAL",
+        raw_product_title="Waterproof Mascara",
+        product_display_name="Waterproof Mascara",
+        product_short_name="Waterproof Mascara",
+        category="Beauty & Personal Care",
+        subcategory="Makeup",
+        type="Mascara",
+        product_type="Mascara",
+    )
+    candidate = service.build_product_strategy_taxonomy_candidate(
+        product,
+        materialization_status="MATERIALIZED",
+    )
+    legacy_record = service._taxonomy_to_record(candidate)
+    legacy_record.update(
+        {
+            "product_type_group": "beauty_personal_care_other",
+            "matched_scene_strategy_id": "BEAUTY_PERSONAL_CARE",
+            "scene_coverage_status": "PARTIAL",
+            "specific_strategy": 0,
+        }
+    )
+    await crud.materialize_product_strategy_taxonomies([legacy_record])
+
+    preview = await service.run_product_strategy_taxonomy_backfill(
+        ProductStrategyTaxonomyBackfillRequest()
+    )
+    assert preview.planned_update_count == 1
+
+    applied = await service.run_product_strategy_taxonomy_backfill(
+        ProductStrategyTaxonomyBackfillRequest(
+            dry_run=False,
+            confirm_apply=service.BACKFILL_CONFIRMATION,
+        )
+    )
+    assert applied.mutation_performed is True
+    refreshed = await service.get_product_strategy_taxonomy_read_model(
+        product["id"]
+    )
+    assert refreshed.product_type_group == "mascara"
+    assert refreshed.matched_scene_strategy_id == "MASCARA"
+    assert refreshed.scene_coverage_status == "COVERED"
+    assert refreshed.is_stale is False
 
 
 @pytest.mark.asyncio
@@ -444,6 +532,105 @@ async def test_stale_product_fingerprint_fails_closed():
         match="TAXONOMY_NOT_VERIFIED",
     ):
         await service.require_verified_product_strategy_taxonomy(product["id"])
+
+
+@pytest.mark.asyncio
+async def test_stale_taxonomy_binding_fails_closed_without_product_change(
+    monkeypatch,
+):
+    await _seed_registry()
+    product = await crud.create_product(
+        "Velvet Lipstick",
+        source="MANUAL",
+        product_display_name="Velvet Lipstick",
+        product_short_name="Velvet Lipstick",
+        category="Beauty & Personal Care",
+        type="Lipstick & Lip Gloss",
+        product_type="Lipstick & Lip Gloss",
+    )
+    await service.review_product_strategy_taxonomy(
+        product["id"],
+        ProductStrategyTaxonomyReviewRequest(
+            expected_product_fingerprint=service.product_strategy_fingerprint(product),
+            cluster="beauty_makeup",
+            product_type_group="lipstick_lip_tint",
+            matched_scene_strategy_id="LIP_COLOR",
+            scene_coverage_status="COVERED",
+            review_status="VERIFIED",
+            reviewer_id="admin-1",
+            reviewer_note="Verified against the prior binding.",
+        ),
+    )
+    real_builder = service.build_product_strategy_taxonomy_candidate
+
+    def changed_binding(product_payload, **kwargs):
+        candidate = real_builder(product_payload, **kwargs)
+        return candidate.model_copy(
+            update={
+                "cluster": "beauty_makeup",
+                "product_type_group": "mascara",
+                "matched_scene_strategy_id": "MASCARA",
+            }
+        )
+
+    monkeypatch.setattr(
+        service,
+        "build_product_strategy_taxonomy_candidate",
+        changed_binding,
+    )
+
+    readback = await service.get_product_strategy_taxonomy_read_model(product["id"])
+
+    assert readback.product_fingerprint == service.product_strategy_fingerprint(product)
+    assert readback.is_stale is True
+    assert readback.review_status == "REVIEW_REQUIRED"
+    assert readback.consumer_status == "BLOCKED_REVIEW_REQUIRED"
+    assert "STALE_TAXONOMY_BINDING" in readback.review_reasons
+
+
+@pytest.mark.asyncio
+async def test_manual_custom_binding_without_product_truth_remains_authoritative():
+    await service.register_product_strategy_type(
+        ProductStrategyTypeRegistrationRequest(
+            cluster="beauty_makeup",
+            product_type_group="custom_palette",
+            display_name="Custom Palette",
+            matched_scene_strategy_id="LIP_COLOR",
+            scene_coverage_status="COVERED",
+            registry_status="ACTIVE",
+            reviewer_id="admin-1",
+            reviewer_note="Reviewed custom Product Truth evidence.",
+        )
+    )
+    product = await crud.create_product(
+        "Opaque Custom Palette",
+        source="MANUAL",
+        product_display_name="Opaque Custom Palette",
+        product_short_name="Opaque Custom Palette",
+        category="Beauty",
+        type="Custom Palette",
+        product_type="Custom Palette",
+    )
+    await service.review_product_strategy_taxonomy(
+        product["id"],
+        ProductStrategyTaxonomyReviewRequest(
+            expected_product_fingerprint=service.product_strategy_fingerprint(product),
+            cluster="beauty_makeup",
+            product_type_group="custom_palette",
+            matched_scene_strategy_id="LIP_COLOR",
+            scene_coverage_status="COVERED",
+            review_status="VERIFIED",
+            reviewer_id="admin-1",
+            reviewer_note="Verified against custom Product Truth evidence.",
+        ),
+    )
+
+    readback = await service.get_product_strategy_taxonomy_read_model(product["id"])
+
+    assert readback.product_type_group == "custom_palette"
+    assert readback.review_status == "VERIFIED"
+    assert readback.consumer_status == "READY"
+    assert readback.is_stale is False
 
 
 @pytest.mark.asyncio

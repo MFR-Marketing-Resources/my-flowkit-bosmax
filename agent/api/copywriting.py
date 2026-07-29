@@ -14,9 +14,11 @@ from agent.models.rempah_copy_strategy import (
     RempahDurationSeconds,
 )
 from agent.models.product_type_copy_strategy import (
+    CatalogCoverageMatrixReport,
     ProductTypeCopyEligibleReport,
     ProductTypeCopyStrategyResponse,
 )
+from agent.services.catalog_coverage_service import build_catalog_coverage_matrix
 from agent.services.copy_set_service import CopySetError
 from agent.services.copywriting_readiness_service import get_copywriting_readiness
 from agent.services.fastmoss_product_reference_service import (
@@ -115,6 +117,15 @@ async def p4_product_type_copy_strategy(
 async def p4_product_type_eligible_report():
     """Return the read-only full-catalog P4 eligibility summary."""
     return await build_product_type_copy_eligible_report()
+
+
+@router.get(
+    "/p5-7/catalog-coverage",
+    response_model=CatalogCoverageMatrixReport,
+)
+async def p5_7_catalog_coverage_matrix():
+    """Return the authoritative full-catalog coverage and P6 launch cohort."""
+    return await build_catalog_coverage_matrix()
 
 
 @router.get("/readiness/{product_id}")

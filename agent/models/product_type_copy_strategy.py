@@ -62,3 +62,61 @@ class ProductTypeCopyEligibleReport(BaseModel):
     missing_copy_strategy_groups: list[ProductTypeCopyReportGroup]
     sample_eligible: list[ProductTypeCopyReportProduct]
     sample_blocked: list[ProductTypeCopyReportProduct]
+
+
+class CatalogCoverageMatrixProduct(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: str
+    product_name: str
+    lifecycle_status: str
+    source_category: str | None = None
+    source_subcategory: str | None = None
+    source_product_type: str | None = None
+    product_truth_mapped: bool
+    cluster: str
+    product_type_group: str
+    scene_strategy_id: str
+    registry_status: Literal["ACTIVE", "REVIEW_REQUIRED", "UNREGISTERED"]
+    review_status: Literal["VERIFIED", "REVIEW_REQUIRED"]
+    consumer_status: Literal["READY", "BLOCKED_REVIEW_REQUIRED"]
+    scene_coverage_status: Literal["COVERED", "PARTIAL", "FALLBACK_ONLY"]
+    taxonomy_stale: bool
+    fallback_used: bool
+    specific_strategy: bool
+    p4_support_status: Literal["P4_SUPPORTED", "P4_UNSUPPORTED"]
+    p6_launch_cohort: bool
+    blockers: list[str] = Field(default_factory=list)
+
+
+class CatalogCoverageMatrixGroup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lifecycle_status: str
+    cluster: str
+    product_type_group: str
+    scene_strategy_id: str
+    registry_status: Literal["ACTIVE", "REVIEW_REQUIRED", "UNREGISTERED"]
+    scene_coverage_status: Literal["COVERED", "PARTIAL", "FALLBACK_ONLY"]
+    p4_support_status: Literal["P4_SUPPORTED", "P4_UNSUPPORTED"]
+    product_count: int = Field(ge=0)
+    p6_launch_count: int = Field(ge=0)
+
+
+class CatalogCoverageMatrixReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    report_version: Literal["p5.7_catalog_coverage_v1"]
+    total_products: int = Field(ge=0)
+    active_products: int = Field(ge=0)
+    archived_products: int = Field(ge=0)
+    product_truth_mapped_count: int = Field(ge=0)
+    p4_supported_count: int = Field(ge=0)
+    unknown_product_type_count: int = Field(ge=0)
+    unknown_product_type_p4_supported_count: int = Field(ge=0)
+    p6_launch_cohort_count: int = Field(ge=0)
+    p6_launch_cohort_product_ids: list[str]
+    blocked_by_reason: dict[str, int]
+    coverage_groups: list[CatalogCoverageMatrixGroup]
+    products: list[CatalogCoverageMatrixProduct]
+    matrix_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
