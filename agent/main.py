@@ -46,6 +46,7 @@ from agent.api.scene_context_registry import router as scene_context_registry_ro
 from agent.api.workspace_generation_packages import router as workspace_generation_packages_router
 from agent.api.production_queue import router as production_queue_router
 from agent.api.bulk_generation import router as bulk_generation_router
+from agent.api.creative_production import router as creative_production_router
 from agent.api.postiz import router as postiz_router
 from agent.api.social_copy_packages import router as social_copy_packages_router
 from agent.api.results import router as results_router
@@ -136,6 +137,15 @@ async def run_ws_server():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    _p6_svc = None
+    try:
+        from agent.services import creative_production_scheduler_service as _p6_svc
+
+        _p6_recovery = await _p6_svc.recover_after_restart()
+        if any(_p6_recovery.values()):
+            logger.info("P6 creative production recovery: %s", _p6_recovery)
+    except Exception as _p6_e:  # pragma: no cover
+        logger.warning("P6 creative production recovery skipped: %s", _p6_e)
     try:
         from agent.services import bulk_generation_service as _bulk_svc
 
@@ -247,6 +257,11 @@ async def lifespan(app: FastAPI):
     worker_task = asyncio.create_task(controller.start())
     from agent.services.workspace_generation_package_service import _scheduler_loop
     scheduler_task = asyncio.create_task(_scheduler_loop())
+    p6_scheduler_task = (
+        asyncio.create_task(_p6_svc.scheduler_loop())
+        if _p6_svc is not None
+        else None
+    )
 
     async def _resume_durable_video_jobs():
         # Restart recovery: RESUME (poll only) any in-flight authorized full-video
@@ -277,6 +292,8 @@ async def lifespan(app: FastAPI):
     ws_task.cancel()
     worker_task.cancel()
     scheduler_task.cancel()
+    if p6_scheduler_task is not None:
+        p6_scheduler_task.cancel()
     await close_db()
     logger.info("Flow Kit stopped")
 
@@ -302,6 +319,7 @@ app.include_router(scene_context_registry_router, prefix="/api")
 app.include_router(workspace_generation_packages_router, prefix="/api")
 app.include_router(production_queue_router, prefix="/api")
 app.include_router(bulk_generation_router, prefix="/api")
+app.include_router(creative_production_router, prefix="/api")
 app.include_router(postiz_router, prefix="/api")
 app.include_router(social_copy_packages_router, prefix="/api")
 app.include_router(results_router, prefix="/api")
