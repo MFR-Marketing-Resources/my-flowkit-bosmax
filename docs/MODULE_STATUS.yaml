@@ -155,6 +155,12 @@ domains:
       - agent/services/lip_color_copy_strategy_service.py
       - tests/unit/test_lip_color_copy_strategy_service.py
       - tests/api/test_lip_color_copy_strategy_api.py
+      # P3B Rempah Copy Registry — verified-taxonomy-gated, preview-only
+      - agent/authority/rempah_copy_registry.py
+      - agent/models/rempah_copy_strategy.py
+      - agent/services/rempah_copy_strategy_service.py
+      - tests/unit/test_rempah_copy_strategy_service.py
+      - tests/api/test_rempah_copy_strategy_api.py
 
       # Scene Context Registry Round 2 — preview-only background plate promotion
       - agent/services/scene_context_promotion_service.py
