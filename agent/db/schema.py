@@ -2719,6 +2719,282 @@ CREATE INDEX IF NOT EXISTS idx_poster_deliverable_product
 """)
         await db.commit()
 
+        # P6 Batch Creative Production Orchestrator — durable control plane.
+        #
+        # These tables are additive. Existing workspace_generation_package,
+        # production_run, bulk_generation_* and legacy batch rows remain intact.
+        # The orchestrator owns business planning, immutable creative identity,
+        # lane capacity/leases, attempt idempotency, recovery and output QA while
+        # the existing ADR-007 services remain the only media-execution door.
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS creative_production_plan (
+    plan_id                    TEXT PRIMARY KEY,
+    request_id                 TEXT NOT NULL UNIQUE,
+    created_by                 TEXT NOT NULL,
+    name                       TEXT NOT NULL,
+    campaign_key               TEXT NOT NULL DEFAULT '',
+    product_scope_json         TEXT NOT NULL DEFAULT '[]',
+    p58_cohort_sha256          TEXT NOT NULL,
+    p58_cohort_count           INTEGER NOT NULL,
+    target_video_count         INTEGER NOT NULL DEFAULT 0 CHECK(target_video_count BETWEEN 0 AND 200),
+    target_image_count         INTEGER NOT NULL DEFAULT 0 CHECK(target_image_count BETWEEN 0 AND 200),
+    target_poster_count        INTEGER NOT NULL DEFAULT 0 CHECK(target_poster_count BETWEEN 0 AND 200),
+    operating_window_hours     INTEGER NOT NULL DEFAULT 12 CHECK(operating_window_hours BETWEEN 1 AND 24),
+    allocation_strategy        TEXT NOT NULL DEFAULT 'ROUND_ROBIN',
+    variation_strategy         TEXT NOT NULL DEFAULT 'SAME_ANGLE_DIFF_DIALOGUE_DIFF_VISUALS',
+    logical_mode               TEXT NOT NULL DEFAULT 'T2V'
+                               CHECK(logical_mode IN ('T2V','HYBRID','F2V','I2V')),
+    model_keys_json            TEXT NOT NULL DEFAULT '[]',
+    duration_seconds_json      TEXT NOT NULL DEFAULT '[]',
+    pool_snapshot_json         TEXT NOT NULL DEFAULT '{}',
+    execution_policy_json      TEXT NOT NULL DEFAULT '{}',
+    capacity_snapshot_json     TEXT NOT NULL DEFAULT '{}',
+    compile_snapshot_json      TEXT NOT NULL DEFAULT '{}',
+    blockers_json              TEXT NOT NULL DEFAULT '[]',
+    status                     TEXT NOT NULL DEFAULT 'DRAFT'
+                               CHECK(status IN (
+                                   'DRAFT','PREFLIGHT_BLOCKED','PREFLIGHT_READY',
+                                   'PENDING_APPROVAL','APPROVED','SCHEDULED',
+                                   'RUNNING','PAUSED','COMPLETED',
+                                   'COMPLETED_WITH_FAILURES','CANCELLED','FAILED'
+                               )),
+    control_action             TEXT NOT NULL DEFAULT 'NONE'
+                               CHECK(control_action IN ('NONE','PAUSE_REQUESTED','CANCEL_REQUESTED')),
+    control_version            INTEGER NOT NULL DEFAULT 0,
+    approved_by                TEXT,
+    approved_at                TEXT,
+    created_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS creative_production_wave (
+    wave_id                    TEXT PRIMARY KEY,
+    plan_id                    TEXT NOT NULL REFERENCES creative_production_plan(plan_id) ON DELETE CASCADE,
+    wave_ordinal               INTEGER NOT NULL,
+    name                       TEXT NOT NULL,
+    scheduled_at               TEXT,
+    status                     TEXT NOT NULL DEFAULT 'PLANNED'
+                               CHECK(status IN (
+                                   'PLANNED','APPROVED','QUEUED','RUNNING','PAUSED',
+                                   'COMPLETED','COMPLETED_WITH_FAILURES','CANCELLED','FAILED'
+                               )),
+    created_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE(plan_id, wave_ordinal)
+);
+
+CREATE TABLE IF NOT EXISTS creative_production_batch (
+    production_batch_id        TEXT PRIMARY KEY,
+    plan_id                    TEXT NOT NULL REFERENCES creative_production_plan(plan_id) ON DELETE CASCADE,
+    wave_id                    TEXT REFERENCES creative_production_wave(wave_id) ON DELETE SET NULL,
+    batch_ordinal              INTEGER NOT NULL,
+    label                      TEXT NOT NULL,
+    status                     TEXT NOT NULL DEFAULT 'PLANNED'
+                               CHECK(status IN (
+                                   'PLANNED','PENDING_APPROVAL','APPROVED','QUEUED',
+                                   'RUNNING','COMPLETED','COMPLETED_WITH_FAILURES',
+                                   'CANCELLED','FAILED'
+                               )),
+    created_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE(plan_id, batch_ordinal)
+);
+
+CREATE TABLE IF NOT EXISTS creative_production_item (
+    item_id                    TEXT PRIMARY KEY,
+    plan_id                    TEXT NOT NULL REFERENCES creative_production_plan(plan_id) ON DELETE CASCADE,
+    wave_id                    TEXT REFERENCES creative_production_wave(wave_id) ON DELETE SET NULL,
+    production_batch_id        TEXT REFERENCES creative_production_batch(production_batch_id) ON DELETE SET NULL,
+    item_ordinal               INTEGER NOT NULL,
+    product_id                 TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    media_type                 TEXT NOT NULL CHECK(media_type IN ('VIDEO','IMAGE','POSTER')),
+    logical_mode               TEXT NOT NULL DEFAULT 'T2V',
+    creative_dimensions_json   TEXT NOT NULL DEFAULT '{}',
+    creative_dna_sha256        TEXT NOT NULL,
+    dedupe_guard_key           TEXT NOT NULL UNIQUE,
+    controlled_reuse_reason    TEXT,
+    prompt_fingerprint         TEXT,
+    workspace_generation_package_id TEXT
+                               REFERENCES workspace_generation_package(workspace_generation_package_id)
+                               ON DELETE SET NULL,
+    prompt_package_json        TEXT NOT NULL DEFAULT '{}',
+    execution_policy_json      TEXT NOT NULL DEFAULT '{}',
+    status                     TEXT NOT NULL DEFAULT 'PLANNED'
+                               CHECK(status IN (
+                                   'PLANNED','COMPILED','DEDUPE_BLOCKED','PENDING_APPROVAL',
+                                   'APPROVED','WAVE_ASSIGNED','QUEUED','DISPATCHING',
+                                   'SUBMITTED','GENERATING','GENERATED','RETRIEVING',
+                                   'RETRIEVED','QA_PENDING','QA_APPROVED','QA_REJECTED',
+                                   'REPLACEMENT_PLANNED','FAILED','CANCELLED','SUPERSEDED'
+                               )),
+    output_media_id            TEXT,
+    replacement_for_item_id    TEXT REFERENCES creative_production_item(item_id) ON DELETE SET NULL,
+    replaced_by_item_id        TEXT REFERENCES creative_production_item(item_id) ON DELETE SET NULL,
+    created_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE(plan_id, item_ordinal)
+);
+
+CREATE TABLE IF NOT EXISTS creative_execution_lane (
+    lane_id                    TEXT PRIMARY KEY,
+    provider                   TEXT NOT NULL,
+    engine                     TEXT NOT NULL,
+    eligible_media_types_json  TEXT NOT NULL DEFAULT '[]',
+    runtime_metadata_json      TEXT NOT NULL DEFAULT '{}',
+    verified_max_inflight      INTEGER NOT NULL DEFAULT 1 CHECK(verified_max_inflight BETWEEN 1 AND 32),
+    interval_seconds           INTEGER NOT NULL DEFAULT 45 CHECK(interval_seconds >= 0),
+    cooldown_after_n_jobs      INTEGER NOT NULL DEFAULT 5 CHECK(cooldown_after_n_jobs >= 0),
+    cooldown_seconds           INTEGER NOT NULL DEFAULT 300 CHECK(cooldown_seconds >= 0),
+    health_status              TEXT NOT NULL DEFAULT 'UNKNOWN'
+                               CHECK(health_status IN ('UNKNOWN','HEALTHY','DEGRADED','UNAVAILABLE')),
+    enabled                    INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),
+    runtime_proof_status       TEXT NOT NULL DEFAULT 'UNVERIFIED'
+                               CHECK(runtime_proof_status IN ('UNVERIFIED','VERIFIED','EXPIRED','REVOKED')),
+    evidence_reference         TEXT NOT NULL DEFAULT '',
+    last_success_at            TEXT,
+    last_failure_at            TEXT,
+    completed_job_count        INTEGER NOT NULL DEFAULT 0 CHECK(completed_job_count >= 0),
+    next_available_at          TEXT,
+    created_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS creative_generation_attempt (
+    attempt_id                 TEXT PRIMARY KEY,
+    item_id                    TEXT NOT NULL REFERENCES creative_production_item(item_id) ON DELETE CASCADE,
+    attempt_number             INTEGER NOT NULL CHECK(attempt_number >= 1),
+    idempotency_key            TEXT NOT NULL UNIQUE,
+    action_request_id          TEXT NOT NULL,
+    lane_id                    TEXT REFERENCES creative_execution_lane(lane_id) ON DELETE SET NULL,
+    attempt_state              TEXT NOT NULL DEFAULT 'NOT_SUBMITTED'
+                               CHECK(attempt_state IN (
+                                   'NOT_SUBMITTED','SUBMISSION_STARTED',
+                                   'SUBMISSION_OUTCOME_UNCERTAIN','PROVIDER_JOB_KNOWN',
+                                   'GENERATED_NOT_RETRIEVED','RETRIEVED_NOT_REGISTERED',
+                                   'REGISTERED','QA_REJECTED','REPLACEMENT_REQUESTED',
+                                   'FAILED','CANCELLED','SUPERSEDED'
+                               )),
+    payload_snapshot_json      TEXT NOT NULL DEFAULT '{}',
+    payload_sha256             TEXT NOT NULL,
+    provider                   TEXT NOT NULL DEFAULT '',
+    engine                     TEXT NOT NULL DEFAULT '',
+    model_key                  TEXT NOT NULL DEFAULT '',
+    duration_seconds           INTEGER,
+    credit_spend_intended      INTEGER NOT NULL DEFAULT 0 CHECK(credit_spend_intended IN (0,1)),
+    credit_confirmation        TEXT,
+    last_actor_id              TEXT,
+    last_action_request_id     TEXT,
+    provider_job_id            TEXT,
+    artifact_media_id          TEXT,
+    failure_stage              TEXT,
+    failure_code               TEXT,
+    recovery_class             TEXT,
+    supersedes_attempt_id      TEXT REFERENCES creative_generation_attempt(attempt_id) ON DELETE SET NULL,
+    created_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    submission_started_at      TEXT,
+    provider_known_at          TEXT,
+    generated_at               TEXT,
+    retrieved_at               TEXT,
+    registered_at              TEXT,
+    completed_at               TEXT,
+    updated_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE(item_id, attempt_number),
+    UNIQUE(item_id, action_request_id)
+);
+
+CREATE TABLE IF NOT EXISTS creative_execution_lane_lease (
+    lease_id                   TEXT PRIMARY KEY,
+    lane_id                    TEXT NOT NULL REFERENCES creative_execution_lane(lane_id) ON DELETE CASCADE,
+    attempt_id                 TEXT NOT NULL UNIQUE
+                               REFERENCES creative_generation_attempt(attempt_id) ON DELETE CASCADE,
+    lease_slot                 INTEGER NOT NULL CHECK(lease_slot >= 0),
+    lease_token                TEXT NOT NULL UNIQUE,
+    owner_instance_id          TEXT NOT NULL,
+    acquired_at                TEXT NOT NULL,
+    expires_at                 TEXT NOT NULL,
+    released_at                TEXT,
+    release_reason             TEXT
+);
+
+CREATE TABLE IF NOT EXISTS creative_output_qa (
+    qa_id                      TEXT PRIMARY KEY,
+    item_id                    TEXT NOT NULL REFERENCES creative_production_item(item_id) ON DELETE CASCADE,
+    attempt_id                 TEXT NOT NULL REFERENCES creative_generation_attempt(attempt_id) ON DELETE CASCADE,
+    artifact_media_id          TEXT NOT NULL,
+    status                     TEXT NOT NULL DEFAULT 'QA_PENDING'
+                               CHECK(status IN ('QA_PENDING','QA_APPROVED','QA_REJECTED')),
+    checklist_json             TEXT NOT NULL DEFAULT '{}',
+    reviewer_id                TEXT,
+    reviewer_note              TEXT,
+    reviewed_at                TEXT,
+    created_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE(item_id, attempt_id, artifact_media_id)
+);
+
+CREATE TABLE IF NOT EXISTS creative_production_audit_event (
+    event_id                   TEXT PRIMARY KEY,
+    plan_id                    TEXT NOT NULL REFERENCES creative_production_plan(plan_id) ON DELETE CASCADE,
+    item_id                    TEXT REFERENCES creative_production_item(item_id) ON DELETE SET NULL,
+    attempt_id                 TEXT REFERENCES creative_generation_attempt(attempt_id) ON DELETE SET NULL,
+    request_id                 TEXT NOT NULL,
+    actor_id                   TEXT NOT NULL,
+    action                     TEXT NOT NULL,
+    source_state               TEXT,
+    target_state               TEXT,
+    evidence_json              TEXT NOT NULL DEFAULT '{}',
+    created_at                 TEXT NOT NULL,
+    UNIQUE(plan_id, request_id, action)
+);
+
+CREATE INDEX IF NOT EXISTS idx_creative_production_plan_status_updated
+    ON creative_production_plan(status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_creative_production_item_plan_status
+    ON creative_production_item(plan_id, status, item_ordinal);
+CREATE INDEX IF NOT EXISTS idx_creative_production_item_product_dna
+    ON creative_production_item(product_id, creative_dna_sha256);
+CREATE INDEX IF NOT EXISTS idx_creative_generation_attempt_state
+    ON creative_generation_attempt(attempt_state, updated_at);
+CREATE INDEX IF NOT EXISTS idx_creative_generation_attempt_provider_job
+    ON creative_generation_attempt(provider_job_id);
+CREATE INDEX IF NOT EXISTS idx_creative_execution_lane_health
+    ON creative_execution_lane(enabled, runtime_proof_status, health_status);
+CREATE INDEX IF NOT EXISTS idx_creative_execution_lane_lease_expiry
+    ON creative_execution_lane_lease(lane_id, expires_at, released_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_creative_execution_lane_active_slot
+    ON creative_execution_lane_lease(lane_id, lease_slot)
+    WHERE released_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_creative_output_qa_status
+    ON creative_output_qa(status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_creative_production_audit_plan
+    ON creative_production_audit_event(plan_id, created_at);
+
+INSERT OR IGNORE INTO creative_execution_lane (
+    lane_id, provider, engine, eligible_media_types_json,
+    runtime_metadata_json, verified_max_inflight, interval_seconds,
+    cooldown_after_n_jobs, cooldown_seconds, health_status, enabled,
+    runtime_proof_status, evidence_reference
+) VALUES (
+    'google-flow-video-primary', 'GOOGLE_FLOW', 'ADR_007_API_FIRST',
+    '["VIDEO"]', '{"execution_door":"make_video.start_generate"}',
+    1, 83, 5, 300, 'UNKNOWN', 1, 'VERIFIED',
+    '.ai/status/CURRENT_STATE.md + ADR-007'
+);
+
+INSERT OR IGNORE INTO creative_execution_lane (
+    lane_id, provider, engine, eligible_media_types_json,
+    runtime_metadata_json, verified_max_inflight, interval_seconds,
+    cooldown_after_n_jobs, cooldown_seconds, health_status, enabled,
+    runtime_proof_status, evidence_reference
+) VALUES (
+    'google-flow-image-primary', 'GOOGLE_FLOW', 'IMAGE_API_FIRST',
+    '["IMAGE","POSTER"]', '{}',
+    1, 45, 5, 300, 'UNKNOWN', 0, 'UNVERIFIED',
+    'runtime proof required before live assignment'
+);
+""")
+        await db.commit()
+
     logger.info("Database initialized at %s", DB_PATH)
 
 

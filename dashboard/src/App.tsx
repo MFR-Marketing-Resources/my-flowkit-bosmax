@@ -41,6 +41,7 @@ import AvatarRegistryPage from "./pages/AvatarRegistryPage";
 import SceneContextRegistryPage from "./pages/SceneContextRegistryPage";
 import BatchPromptBuilderPage from "./pages/BatchPromptBuilderPage";
 import CreativeLibraryPage from "./pages/CreativeLibraryPage";
+import CreativeProductionStudioPage from "./pages/CreativeProductionStudioPage";
 import ImgCockpitPage from "./pages/ImgCockpitPage";
 import ImgFastlanePage from "./pages/ImgFastlanePage";
 import CreativeLibraryWorkspacePage from "./pages/CreativeLibraryWorkspacePage";
@@ -95,7 +96,7 @@ const NAV_GROUPS = [
 			},
 			{ to: "/batches", icon: Briefcase, label: "Batch Prompt Builder" },
 			{ to: "/production-queue", icon: Film, label: "Production Queue" },
-			{ to: "/rpa-production-studio", icon: Video, label: "RPA Production Studio" },
+			{ to: "/production-studio", icon: Video, label: "Production Studio (P6)" },
 			{ to: "/rpa-queue-control", icon: Bot, label: "RPA Queue Control" },
 			{ to: "/postiz", icon: Send, label: "Postiz Publish" },
 		],
@@ -527,6 +528,10 @@ function Layout() {
 						<Route
 							path="/rpa-production-studio"
 							element={<RpaProductionStudioPage />}
+						/>
+						<Route
+							path="/production-studio"
+							element={<CreativeProductionStudioPage />}
 						/>
 						<Route
 							path="/rpa-queue-control"

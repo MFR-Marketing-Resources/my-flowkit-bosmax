@@ -4,6 +4,7 @@
 		"ignoreUnknown": true,
 		"includes": [
 			"dashboard/src/App.tsx",
+			"dashboard/src/api/creativeProduction.ts",
 			"dashboard/src/api/products.ts",
 			"dashboard/src/api/workspacePackages.ts",
 			"dashboard/src/components/workspace/T2VModule.tsx",
@@ -14,6 +15,8 @@
 			"dashboard/src/pages/ApprovedPackagesPage.tsx",
 			"dashboard/src/pages/AssetRegistryPage.tsx",
 			"dashboard/src/pages/CreativeLibraryPage.tsx",
+			"dashboard/src/pages/CreativeProductionStudioPage.tsx",
+			"dashboard/src/pages/CreativeProductionStudioPage.test.tsx",
 			"dashboard/src/poster/guided/posterGuided.ts",
 			"dashboard/src/poster/guided/usePosterGuidedWorkflow.ts",
 			"dashboard/src/components/poster/guided/PosterGuidedShell.tsx",

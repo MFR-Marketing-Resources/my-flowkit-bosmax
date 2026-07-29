@@ -88,6 +88,21 @@ domains:
       - agent/api/telemetry.py
       - agent/db/crud.py
       - agent/db/schema.py
+      - agent/db/creative_production_crud.py
+      - agent/models/creative_production.py
+      - agent/api/creative_production.py
+      - agent/services/creative_production_plan_service.py
+      - agent/services/creative_production_compile_service.py
+      - agent/services/creative_production_scheduler_service.py
+      - dashboard/src/api/creativeProduction.ts
+      - dashboard/src/pages/CreativeProductionStudioPage.tsx
+      - dashboard/src/pages/CreativeProductionStudioPage.test.tsx
+      - tests/api/test_creative_production_api.py
+      - tests/unit/test_creative_production_orchestrator.py
+      - tests/unit/test_creative_production_migration.py
+      - tests/ui/test_creative_production_ui_contract.py
+      - docs/evidence/p6-batch-creative-production-orchestrator.md
+      - scripts/p6-creative-production-rehearsal.py
       - agent/main.py
       - agent/models/creative_asset.py
       - agent/models/i2v_semantic_slot_resolver.py

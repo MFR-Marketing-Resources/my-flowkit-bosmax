@@ -1,0 +1,273 @@
+"""Typed P6 Batch Creative Production Orchestrator contracts."""
+
+from __future__ import annotations
+
+from enum import StrEnum
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+P58_COHORT_COUNT = 438
+P58_COHORT_SHA256 = (
+    "15b7e2aff4ede06b1a28805b111f9993b2208040e40bcee76693abc2a6ddbe7f"
+)
+P6_LIVE_CONFIRMATION = "AUTHORIZE_P6_LIVE_CREDIT_SPEND"
+
+
+class PlanStatus(StrEnum):
+    DRAFT = "DRAFT"
+    PREFLIGHT_BLOCKED = "PREFLIGHT_BLOCKED"
+    PREFLIGHT_READY = "PREFLIGHT_READY"
+    PENDING_APPROVAL = "PENDING_APPROVAL"
+    APPROVED = "APPROVED"
+    SCHEDULED = "SCHEDULED"
+    RUNNING = "RUNNING"
+    PAUSED = "PAUSED"
+    COMPLETED = "COMPLETED"
+    COMPLETED_WITH_FAILURES = "COMPLETED_WITH_FAILURES"
+    CANCELLED = "CANCELLED"
+    FAILED = "FAILED"
+
+
+class ItemStatus(StrEnum):
+    PLANNED = "PLANNED"
+    COMPILED = "COMPILED"
+    DEDUPE_BLOCKED = "DEDUPE_BLOCKED"
+    PENDING_APPROVAL = "PENDING_APPROVAL"
+    APPROVED = "APPROVED"
+    WAVE_ASSIGNED = "WAVE_ASSIGNED"
+    QUEUED = "QUEUED"
+    DISPATCHING = "DISPATCHING"
+    SUBMITTED = "SUBMITTED"
+    GENERATING = "GENERATING"
+    GENERATED = "GENERATED"
+    RETRIEVING = "RETRIEVING"
+    RETRIEVED = "RETRIEVED"
+    QA_PENDING = "QA_PENDING"
+    QA_APPROVED = "QA_APPROVED"
+    QA_REJECTED = "QA_REJECTED"
+    REPLACEMENT_PLANNED = "REPLACEMENT_PLANNED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+    SUPERSEDED = "SUPERSEDED"
+
+
+class AttemptState(StrEnum):
+    NOT_SUBMITTED = "NOT_SUBMITTED"
+    SUBMISSION_STARTED = "SUBMISSION_STARTED"
+    SUBMISSION_OUTCOME_UNCERTAIN = "SUBMISSION_OUTCOME_UNCERTAIN"
+    PROVIDER_JOB_KNOWN = "PROVIDER_JOB_KNOWN"
+    GENERATED_NOT_RETRIEVED = "GENERATED_NOT_RETRIEVED"
+    RETRIEVED_NOT_REGISTERED = "RETRIEVED_NOT_REGISTERED"
+    REGISTERED = "REGISTERED"
+    QA_REJECTED = "QA_REJECTED"
+    REPLACEMENT_REQUESTED = "REPLACEMENT_REQUESTED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+    SUPERSEDED = "SUPERSEDED"
+
+
+class CreativePoolSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    copy_set_ids: list[str] = Field(default_factory=list, max_length=400)
+    poster_copy_set_ids: list[str] = Field(default_factory=list, max_length=400)
+    avatar_codes: list[str] = Field(default_factory=list, max_length=400)
+    product_reference_asset_ids: list[str] = Field(
+        default_factory=list,
+        max_length=400,
+    )
+    finished_frame_asset_ids: list[str] = Field(
+        default_factory=list,
+        max_length=400,
+    )
+    character_asset_ids: list[str] = Field(default_factory=list, max_length=400)
+    scene_asset_ids: list[str] = Field(default_factory=list, max_length=400)
+    style_asset_ids: list[str] = Field(default_factory=list, max_length=200)
+    layout_ids: list[str] = Field(default_factory=list, max_length=200)
+
+
+class CreativeProductionExecutionPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    aspect: Literal["9:16", "16:9"] = "9:16"
+    credit_policy: Literal["EXPLICIT_CONFIRMATION_REQUIRED"] = (
+        "EXPLICIT_CONFIRMATION_REQUIRED"
+    )
+    near_duplicate_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
+    copy_reuse_cap: int = Field(default=15, ge=1, le=15)
+    capacity_objective_not_sla: Literal[True] = True
+
+
+class ProductionPlanCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(min_length=8, max_length=128)
+    operator_id: str = Field(min_length=2, max_length=160)
+    name: str = Field(min_length=3, max_length=160)
+    campaign_key: str = Field(default="", max_length=160)
+    product_ids: list[str] = Field(min_length=1, max_length=P58_COHORT_COUNT)
+    target_video_count: int = Field(default=0, ge=0, le=200)
+    target_image_count: int = Field(default=0, ge=0, le=200)
+    target_poster_count: int = Field(default=0, ge=0, le=200)
+    operating_window_hours: Literal[8, 12, 24] = 12
+    allocation_strategy: Literal["ROUND_ROBIN", "PRODUCT_WEIGHTED"] = "ROUND_ROBIN"
+    variation_strategy: Literal[
+        "SAME_SCRIPT_DIFF_VISUALS",
+        "SAME_ANGLE_DIFF_DIALOGUE_DIFF_VISUALS",
+        "DIFF_SCRIPT_DIFF_VISUALS",
+        "OPERATOR_MATRIX",
+    ] = "SAME_ANGLE_DIFF_DIALOGUE_DIFF_VISUALS"
+    logical_mode: Literal["T2V", "HYBRID", "F2V", "I2V"] = "T2V"
+    model_keys: list[str] = Field(min_length=1, max_length=12)
+    duration_seconds: list[int] = Field(min_length=1, max_length=12)
+    pools: CreativePoolSelection
+    controlled_reuse_reason: str | None = Field(default=None, max_length=500)
+    controlled_reuse_max_per_dna: int = Field(default=1, ge=1, le=3)
+    execution_policy: CreativeProductionExecutionPolicy = Field(
+        default_factory=CreativeProductionExecutionPolicy
+    )
+
+    @model_validator(mode="after")
+    def validate_targets(self) -> "ProductionPlanCreateRequest":
+        if (
+            self.target_video_count
+            + self.target_image_count
+            + self.target_poster_count
+            <= 0
+        ):
+            raise ValueError("at least one media target is required")
+        if len(set(self.product_ids)) != len(self.product_ids):
+            raise ValueError("product_ids must be unique")
+        if len(set(self.model_keys)) != len(self.model_keys):
+            raise ValueError("model_keys must be unique")
+        if any(not model.strip() for model in self.model_keys):
+            raise ValueError("model_keys cannot contain empty values")
+        if len(set(self.duration_seconds)) != len(self.duration_seconds):
+            raise ValueError("duration_seconds must be unique")
+        if any(duration < 1 or duration > 240 for duration in self.duration_seconds):
+            raise ValueError("duration_seconds values must be between 1 and 240")
+        if self.controlled_reuse_max_per_dna > 1 and not str(
+            self.controlled_reuse_reason or ""
+        ).strip():
+            raise ValueError(
+                "controlled_reuse_reason is required when exact reuse is enabled"
+            )
+        return self
+
+
+class ProductionPlanUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(min_length=8, max_length=128)
+    operator_id: str = Field(min_length=2, max_length=160)
+    name: str | None = Field(default=None, min_length=3, max_length=160)
+    campaign_key: str | None = Field(default=None, max_length=160)
+    target_video_count: int | None = Field(default=None, ge=0, le=200)
+    target_image_count: int | None = Field(default=None, ge=0, le=200)
+    target_poster_count: int | None = Field(default=None, ge=0, le=200)
+    operating_window_hours: Literal[8, 12, 24] | None = None
+    allocation_strategy: Literal["ROUND_ROBIN", "PRODUCT_WEIGHTED"] | None = None
+    variation_strategy: Literal[
+        "SAME_SCRIPT_DIFF_VISUALS",
+        "SAME_ANGLE_DIFF_DIALOGUE_DIFF_VISUALS",
+        "DIFF_SCRIPT_DIFF_VISUALS",
+        "OPERATOR_MATRIX",
+    ] | None = None
+    logical_mode: Literal["T2V", "HYBRID", "F2V", "I2V"] | None = None
+    model_keys: list[str] | None = Field(default=None, min_length=1, max_length=12)
+    duration_seconds: list[int] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=12,
+    )
+    pools: CreativePoolSelection | None = None
+    controlled_reuse_reason: str | None = Field(default=None, max_length=500)
+    controlled_reuse_max_per_dna: int | None = Field(default=None, ge=1, le=3)
+
+
+class PoolAuthorityRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_ids: list[str] = Field(min_length=1, max_length=P58_COHORT_COUNT)
+    logical_mode: Literal["T2V", "HYBRID", "F2V", "I2V"] = "T2V"
+
+
+class PlanActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(min_length=8, max_length=128)
+    operator_id: str = Field(min_length=2, max_length=160)
+
+
+class WaveAssignmentRequest(PlanActionRequest):
+    wave_count: int = Field(default=1, ge=1, le=50)
+    batch_size: int = Field(default=25, ge=1, le=200)
+    scheduled_at: str | None = None
+
+
+class DryRunRequest(PlanActionRequest):
+    aspect: str = Field(default="9:16", pattern=r"^(9:16|16:9)$")
+
+
+class StartPlanRequest(DryRunRequest):
+    live: bool = False
+    credit_confirmation: str | None = Field(default=None, max_length=160)
+
+
+class AttemptTransitionRequest(PlanActionRequest):
+    attempt_state: AttemptState
+    provider_job_id: str | None = Field(default=None, max_length=300)
+    artifact_media_id: str | None = Field(default=None, max_length=300)
+    failure_stage: str | None = Field(default=None, max_length=120)
+    failure_code: str | None = Field(default=None, max_length=300)
+
+
+class LanePatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    health_status: Literal["UNKNOWN", "HEALTHY", "DEGRADED", "UNAVAILABLE"]
+    enabled: bool
+    runtime_proof_status: Literal["UNVERIFIED", "VERIFIED", "EXPIRED", "REVOKED"]
+    evidence_reference: str = Field(min_length=3, max_length=500)
+
+
+class QaDecisionRequest(PlanActionRequest):
+    decision: Literal["QA_APPROVED", "QA_REJECTED"]
+    reviewer_note: str = Field(default="", max_length=1000)
+    request_replacement: bool = False
+
+
+class P58CohortAuthorityResponse(BaseModel):
+    cohort_count: int
+    cohort_sha256: str
+    product_ids: list[str]
+    products: list[dict[str, str]]
+    matches_frozen_authority: bool
+    p6_not_started: bool = False
+
+
+class CapacityPreflightResponse(BaseModel):
+    plan_id: str
+    status: Literal["PREFLIGHT_READY", "PREFLIGHT_BLOCKED"]
+    requested: dict[str, int]
+    safe_capacity: dict[str, int]
+    pool_counts: dict[str, int]
+    quota_pressure: dict[str, float]
+    historical_exclusions: int
+    blockers: list[dict[str, Any]]
+    remediation: list[dict[str, Any]]
+    assumptions: dict[str, Any]
+    snapshot_sha256: str
+
+
+class ProductionPlanDetailResponse(BaseModel):
+    plan: dict[str, Any]
+    waves: list[dict[str, Any]]
+    batches: list[dict[str, Any]]
+    items: list[dict[str, Any]]
+    attempts: list[dict[str, Any]]
+    qa: list[dict[str, Any]]
+    audit_events: list[dict[str, Any]]
+    progress: dict[str, Any]
