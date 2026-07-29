@@ -44,8 +44,9 @@ def state(monkeypatch, tmp_path):
 
 
 class _FakeResp:
-    def __init__(self, data):
+    def __init__(self, data, status_code=200):
         self._data = data
+        self.status_code = status_code
 
     def raise_for_status(self):
         return None
@@ -94,12 +95,24 @@ def test_openai_compatible_transport_uses_lane_model(state, monkeypatch):
     svc.update_lane_settings("text_assist", "qwen", "qwen-max", execution_enabled=True)
 
     captured = {}
+    count_before = adapter.provider_call_receipt()[
+        "request_count_since_process_start"
+    ]
 
     def fake_post(url, headers=None, json=None, timeout=None):
         captured["url"] = url
         captured["headers"] = headers
         captured["json"] = json
-        return _FakeResp({"choices": [{"message": {"content": CANDIDATE_JSON}}]})
+        return _FakeResp(
+            {
+                "choices": [{"message": {"content": CANDIDATE_JSON}}],
+                "usage": {
+                    "prompt_tokens": 41,
+                    "completion_tokens": 23,
+                    "total_tokens": 64,
+                },
+            }
+        )
 
     monkeypatch.setattr(httpx, "post", fake_post)
 
@@ -108,6 +121,27 @@ def test_openai_compatible_transport_uses_lane_model(state, monkeypatch):
     assert captured["json"]["model"] == "qwen-max"  # UI-selected lane model
     assert captured["url"].endswith("/chat/completions")
     assert captured["headers"]["Authorization"] == "Bearer sk-qwen-live-abcdef"
+    receipt = adapter.provider_call_receipt()
+    assert receipt["request_count_since_process_start"] == count_before + 1
+    assert receipt["last_call"] == {
+        "call_id": count_before + 1,
+        "lane": "text_assist",
+        "provider_id": "qwen",
+        "model_id": "qwen-max",
+        "transport": cat.TRANSPORT_OPENAI_COMPATIBLE,
+        "started_at": receipt["last_call"]["started_at"],
+        "completed_at": receipt["last_call"]["completed_at"],
+        "response_status": "SUCCEEDED",
+        "http_status": 200,
+        "usage": {
+            "prompt_tokens": 41,
+            "completion_tokens": 23,
+            "total_tokens": 64,
+        },
+    }
+    serialized_receipt = json.dumps(receipt)
+    assert "sk-qwen-live-abcdef" not in serialized_receipt
+    assert "brief text" not in serialized_receipt
 
 
 def test_anthropic_transport_wired(state, monkeypatch):

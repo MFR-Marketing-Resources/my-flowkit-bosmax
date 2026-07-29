@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict
 
+from agent.services import ai_copy_provider_adapter
 from agent.services.ai_provider_model_catalog import (
     disable_provider_model,
     reset_seed_catalog,
@@ -91,6 +92,11 @@ class AIProviderRegistryResponse(BaseModel):
     lanes: list[AIProviderLaneSetting] = []
 
 
+class AITextAssistCallReceiptResponse(BaseModel):
+    request_count_since_process_start: int
+    last_call: dict[str, Any] | None = None
+
+
 class AIProviderKeyUpdateRequest(BaseModel):
     api_key: str
 
@@ -127,6 +133,16 @@ def _registry() -> AIProviderRegistryResponse:
 @router.get("", response_model=AIProviderRegistryResponse)
 async def get_ai_provider_settings():
     return _registry()
+
+
+@router.get(
+    "/text-assist/call-receipt",
+    response_model=AITextAssistCallReceiptResponse,
+)
+async def get_text_assist_call_receipt():
+    return AITextAssistCallReceiptResponse(
+        **ai_copy_provider_adapter.provider_call_receipt()
+    )
 
 
 @router.get("/model-catalog", response_model=ModelCatalogResponse)

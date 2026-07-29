@@ -3189,6 +3189,51 @@ async def list_non_terminal_authorized_jobs() -> list[dict]:
     return [dict(r) for r in await cur.fetchall()]
 
 
+async def contain_video_production_jobs_for_restart(records: list[dict]) -> int:
+    """Atomically revoke exact job authorizations after service-level validation.
+
+    This maintenance primitive updates only the lifecycle row. Side-effect ledger
+    rows and their UNCERTAIN/MAY_HAVE_SPENT evidence remain immutable.
+    """
+
+    if not records:
+        return 0
+    db = await get_db()
+    changed = 0
+    async with _db_lock:
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            for record in records:
+                cur = await db.execute(
+                    "UPDATE video_production_job SET "
+                    "authorization_token=NULL, authorization_expires_at=NULL, "
+                    "status=?, error_code=?, stage_state_json=?, "
+                    "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
+                    "WHERE job_id=? AND status=? AND authorization_token=? "
+                    "AND stage_state_json IS ?",
+                    (
+                        record["status"],
+                        record["error_code"],
+                        record["stage_state_json"],
+                        record["job_id"],
+                        record["expected_status"],
+                        record["expected_authorization_token"],
+                        record["expected_stage_state_json"],
+                    ),
+                )
+                if cur.rowcount != 1:
+                    raise RuntimeError(
+                        "VIDEO_PRODUCTION_JOB_CONTAINMENT_CONCURRENT_CHANGE:"
+                        f"{record['job_id']}"
+                    )
+                changed += 1
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    return changed
+
+
 async def get_video_production_job(job_id: str) -> dict | None:
     db = await get_db()
     cur = await db.execute(

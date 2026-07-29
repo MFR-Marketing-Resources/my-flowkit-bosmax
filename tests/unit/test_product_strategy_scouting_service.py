@@ -3,6 +3,8 @@ from __future__ import annotations
 from agent.services.product_strategy_scouting_service import (
     SCOUTING_CLUSTER_ORDER,
     build_product_strategy_scouting_report,
+    classify_product_strategy_tag,
+    product_strategy_type_registry_seed_entries,
 )
 
 
@@ -340,3 +342,48 @@ def test_direct_copy_notes_only_come_from_specific_scene_strategy_coverage() -> 
         "benefit": [],
         "cta": [],
     }
+
+
+def test_traditional_wellness_seed_rows_are_owner_reviewed_and_manual_only() -> None:
+    entries = product_strategy_type_registry_seed_entries()
+    by_key = {
+        (str(entry["cluster"]), str(entry["product_type_group"])): entry
+        for entry in entries
+    }
+
+    assert len(by_key) == len(entries)
+    assert "traditional_wellness" in SCOUTING_CLUSTER_ORDER
+    for key, strategy_id, display_name in (
+        (
+            ("traditional_wellness", "traditional_herbal_oil"),
+            "TRADITIONAL_HERBAL_OIL",
+            "Traditional Herbal Oil",
+        ),
+        (
+            ("traditional_wellness", "herbal_roll_on_oil"),
+            "HERBAL_ROLL_ON_OIL",
+            "Herbal Roll-On Oil",
+        ),
+    ):
+        entry = by_key[key]
+        assert entry["display_name"] == display_name
+        assert entry["matched_scene_strategy_id"] == strategy_id
+        assert entry["scene_coverage_status"] == "COVERED"
+        assert entry["registry_status"] == "ACTIVE"
+        assert entry["auto_classification_enabled"] is False
+        assert entry["reviewer_id"] == "owner:Faris"
+        assert "BOSMAX-P5-CANONICAL-CLOSURE" in str(entry["reviewer_note"])
+
+
+def test_traditional_wellness_rules_do_not_auto_classify_products() -> None:
+    tag = classify_product_strategy_tag(
+        _product(
+            "future-herbal-oil",
+            "Traditional Herbal Oil",
+            category="Traditional Wellness",
+            product_type="Traditional Herbal Oil",
+        )
+    )
+
+    assert tag["cluster"] == "generic_unclassified"
+    assert tag["product_type_group"] == "unknown_product_type"

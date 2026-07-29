@@ -290,6 +290,107 @@ async def test_restart_sweep_adds_no_new_credit(monkeypatch, tmp_path):
     assert (client.extend_submits, client.concat_submits) == before
 
 
+async def test_owner_recovery_hold_is_atomic_auditable_and_idempotent(
+    monkeypatch,
+    tmp_path,
+):
+    first, _ = await _plan_authorize(monkeypatch, "hold-first")
+    second, _ = await _plan_authorize(monkeypatch, "hold-second")
+    uncertain, _ = await _plan_authorize(monkeypatch, "hold-uncertain")
+    await crud.update_video_production_job_full(
+        first["job_id"],
+        status=orch.S_AUTH_EXPIRED,
+        error_code=orch.S_AUTH_EXPIRED,
+        stage_state_json=json.dumps({"existing": "first"}),
+    )
+    await crud.update_video_production_job_full(
+        second["job_id"],
+        status=orch.S_AUTH_EXPIRED,
+        error_code=orch.S_AUTH_EXPIRED,
+        stage_state_json=json.dumps({"existing": "second"}),
+    )
+    uncertain_job = await crud.get_video_production_job(uncertain["job_id"])
+    uncertain_key = orch._stage_key(
+        uncertain_job,
+        "INITIAL",
+        uncertain_job["logical_job_key"],
+    )
+    await crud.reserve_video_job_side_effect(
+        uncertain_key,
+        job_id=uncertain["job_id"],
+        stage="INITIAL",
+    )
+    await crud.increment_side_effect_submit_count(uncertain_key)
+    await crud.update_video_job_side_effect(
+        uncertain_key,
+        submission_state=orch.SUB_UNCERTAIN,
+        credit_state=orch.CR_MAY_HAVE_SPENT,
+        retry_safety=orch.RS_BLOCKED,
+        detail="provider acceptance unknown",
+    )
+    side_effect_before = await crud.get_video_job_side_effect(uncertain_key)
+
+    result = await orch.contain_restart_recovery_jobs(
+        [first["job_id"], second["job_id"], uncertain["job_id"]],
+        authorized_by="owner:Faris",
+        authorization_note=(
+            "BOSMAX-P5-CANONICAL-CLOSURE-AND-PRODUCT-ACTIVATION-20260729"
+        ),
+    )
+
+    assert result["changed_count"] == 3
+    assert result["startup_recovery_candidates_remaining"] == 0
+    for planned in (first, second, uncertain):
+        row = await crud.get_video_production_job(planned["job_id"])
+        assert row["status"] == orch.S_AUTH_EXPIRED
+        assert row["authorization_token"] is None
+        audit = json.loads(row["stage_state_json"])["owner_recovery_hold"]
+        assert audit["authorized_by"] == "owner:Faris"
+        assert audit["provider_polling_allowed"] is False
+        assert audit["generation_resubmission_allowed"] is False
+        assert audit["side_effect_ledger_preserved"] is True
+    assert await crud.get_video_job_side_effect(uncertain_key) == side_effect_before
+
+    async def forbidden_generate(_job):
+        raise AssertionError("contained restart must not submit generation")
+
+    resumed = await orch.resume_in_flight_jobs(
+        FakeClient("contained"),
+        generate_initial=forbidden_generate,
+        out_dir=tmp_path,
+    )
+    assert resumed == []
+
+    reapplied = await orch.contain_restart_recovery_jobs(
+        [first["job_id"], second["job_id"], uncertain["job_id"]],
+        authorized_by="owner:Faris",
+        authorization_note=(
+            "BOSMAX-P5-CANONICAL-CLOSURE-AND-PRODUCT-ACTIVATION-20260729"
+        ),
+    )
+    assert reapplied["changed_count"] == 0
+    assert reapplied["startup_recovery_candidates_remaining"] == 0
+    assert await crud.get_video_job_side_effect(uncertain_key) == side_effect_before
+
+
+async def test_owner_recovery_hold_rejects_unknown_scope_before_mutation(
+    monkeypatch,
+):
+    planned, _ = await _plan_authorize(monkeypatch, "hold-atomic-reject")
+    before = await crud.get_video_production_job(planned["job_id"])
+
+    with pytest.raises(orch.OrchestratorError, match="VIDEO_JOB_NOT_FOUND"):
+        await orch.contain_restart_recovery_jobs(
+            [planned["job_id"], "vj_missing"],
+            authorized_by="owner:Faris",
+            authorization_note="Exact owner-authorized containment.",
+        )
+
+    after = await crud.get_video_production_job(planned["job_id"])
+    assert after["authorization_token"] == before["authorization_token"]
+    assert after["status"] == before["status"]
+
+
 # ── restart-after-expiry recovery (Mission 5) ───────────────────────────────
 async def test_expiry_before_initial_stops_and_reauth_resumes(monkeypatch, tmp_path):
     planned, auth = await _plan_authorize(monkeypatch, "exp0")

@@ -387,9 +387,11 @@ async def seed_product_strategy_type_registry(
                 "auto_classification_enabled": int(
                     bool(record["auto_classification_enabled"])
                 ),
-                "reviewer_id": None,
-                "reviewer_note": None,
-                "reviewed_at": None,
+                "reviewer_id": record.get("reviewer_id"),
+                "reviewer_note": record.get("reviewer_note"),
+                "reviewed_at": (
+                    now if record.get("reviewer_id") is not None else None
+                ),
                 "updated_at": now,
             }
         )
