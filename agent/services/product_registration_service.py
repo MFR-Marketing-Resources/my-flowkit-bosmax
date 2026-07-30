@@ -578,12 +578,9 @@ def create_registration_review_draft(
     materials = evidence_audit.sanitized_fields.get("materials_text")
     if materials:
         candidates["materials_or_components"] = materials
-    candidates["ingredients_applicability"] = (
-        "NOT_APPLICABLE"
-        if evidence_audit.decisions["ingredients_or_materials"].applicability
-        == "NOT_APPLICABLE"
-        else "APPLICABLE"
-    )
+    candidates["ingredients_applicability"] = evidence_audit.decisions[
+        "ingredients_or_materials"
+    ].applicability
     if evidence_audit.issue_codes:
         review_status = "NEEDS_HUMAN_REVIEW"
         completion.human_review_fields = list(

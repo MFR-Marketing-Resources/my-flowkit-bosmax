@@ -227,9 +227,8 @@ def test_taxonomy_suggestion_rejects_scene_or_coverage_mismatch(
     )
 
 
-@pytest.mark.parametrize(
-    ("completion_request", "expected"),
-    [
+def _ingredients_applicability_cases():
+    return [
         (
             ProductKnowledgeCompleteRequest(
                 product_name="Hydrating facial serum",
@@ -252,7 +251,12 @@ def test_taxonomy_suggestion_rejects_scene_or_coverage_mismatch(
             ),
             "UNKNOWN",
         ),
-    ],
+    ]
+
+
+@pytest.mark.parametrize(
+    ("completion_request", "expected"),
+    _ingredients_applicability_cases(),
 )
 def test_completion_preserves_ingredients_applicability_tristate(
     completion_request,
@@ -262,6 +266,30 @@ def test_completion_preserves_ingredients_applicability_tristate(
         complete_product_knowledge(completion_request).ingredients_applicability
         == expected
     )
+
+
+@pytest.mark.parametrize(
+    ("completion_request", "expected"),
+    _ingredients_applicability_cases(),
+)
+def test_draft_preserves_ingredients_applicability_tristate(
+    completion_request,
+    expected,
+):
+    completion = complete_product_knowledge(completion_request)
+    draft = create_registration_review_draft(completion)
+
+    assert completion.ingredients_applicability == expected
+    assert (
+        draft.evidence_field_status["ingredients_or_materials"].applicability
+        == expected
+    )
+    assert (
+        draft.canonical_candidate_fields["ingredients_applicability"]
+        == expected
+    )
+    if expected == "UNKNOWN":
+        assert draft.review_status == "NEEDS_HUMAN_REVIEW"
 
 
 def _draft(**overrides) -> RegistrationReviewDraft:
