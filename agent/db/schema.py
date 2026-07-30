@@ -2237,6 +2237,88 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_copy_component_dedupe
     ON copy_component(product_id, component_type, dedupe_key);
 CREATE INDEX IF NOT EXISTS idx_copy_component_pool
     ON copy_component(product_id, angle_key, component_type, status, archived);
+
+-- P7 Creative Supply Factory. These tables are orchestration and review
+-- ledgers only: they never store provider credentials, mutate Product Truth,
+-- or open a media-generation path.
+CREATE TABLE IF NOT EXISTS creative_supply_run (
+    run_id                    TEXT PRIMARY KEY,
+    mission_id                TEXT NOT NULL,
+    roster_sha256             TEXT NOT NULL,
+    cohort_sha256             TEXT NOT NULL,
+    roster_json               TEXT NOT NULL,
+    angle_plan_json           TEXT NOT NULL,
+    target_policy_json        TEXT NOT NULL,
+    state                     TEXT NOT NULL DEFAULT 'DRAFT'
+        CHECK(state IN ('DRAFT','READY','RUNNING','PAUSED','COMPLETED','BLOCKED','CANCELLED')),
+    provider_budget_max       INTEGER NOT NULL DEFAULT 120
+        CHECK(provider_budget_max BETWEEN 1 AND 120),
+    provider_calls_used       INTEGER NOT NULL DEFAULT 0
+        CHECK(provider_calls_used >= 0),
+    reviewer_id               TEXT NOT NULL,
+    pause_reason              TEXT,
+    last_error                TEXT,
+    created_at                TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at                TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS creative_supply_task (
+    task_id                   TEXT PRIMARY KEY,
+    run_id                    TEXT NOT NULL REFERENCES creative_supply_run(run_id) ON DELETE CASCADE,
+    product_id                TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    angle_key                 TEXT NOT NULL,
+    angle_label               TEXT NOT NULL,
+    component_type            TEXT NOT NULL
+        CHECK(component_type IN ('HOOK','SUBHOOK','USP_SET','CTA')),
+    task_kind                 TEXT NOT NULL DEFAULT 'AUTHOR_DEFICIT'
+        CHECK(task_kind IN ('AUTHOR_DEFICIT','LEGACY_AUDIT')),
+    deficit_round             INTEGER NOT NULL DEFAULT 1 CHECK(deficit_round >= 0),
+    target_approved_count     INTEGER NOT NULL CHECK(target_approved_count >= 1),
+    requested_count           INTEGER NOT NULL CHECK(requested_count BETWEEN 0 AND 12),
+    attempt_count             INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count BETWEEN 0 AND 2),
+    provider_call_count       INTEGER NOT NULL DEFAULT 0 CHECK(provider_call_count BETWEEN 0 AND 2),
+    state                     TEXT NOT NULL DEFAULT 'PENDING'
+        CHECK(state IN (
+            'PENDING','RUNNING','REVIEW_REQUIRED','COMPLETED',
+            'RETRY_ELIGIBLE','FAILED','BLOCKED','CANCELLED'
+        )),
+    transient_failure_proven  INTEGER NOT NULL DEFAULT 0
+        CHECK(transient_failure_proven IN (0,1)),
+    idempotency_key           TEXT NOT NULL UNIQUE,
+    provider_receipt_json     TEXT NOT NULL DEFAULT '{}',
+    result_json               TEXT NOT NULL DEFAULT '{}',
+    last_error                TEXT,
+    created_at                TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at                TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE(run_id, product_id, angle_key, component_type, task_kind, deficit_round)
+);
+
+CREATE TABLE IF NOT EXISTS creative_supply_review_event (
+    event_id                  TEXT PRIMARY KEY,
+    run_id                    TEXT NOT NULL REFERENCES creative_supply_run(run_id) ON DELETE CASCADE,
+    task_id                   TEXT NOT NULL REFERENCES creative_supply_task(task_id) ON DELETE CASCADE,
+    component_id              TEXT NOT NULL REFERENCES copy_component(component_id) ON DELETE RESTRICT,
+    product_id                TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    angle_key                 TEXT NOT NULL,
+    component_type            TEXT NOT NULL,
+    decision                  TEXT NOT NULL CHECK(decision IN ('APPROVED','REJECTED')),
+    reviewed_content_sha256   TEXT NOT NULL,
+    reasons_json              TEXT NOT NULL,
+    safety_json               TEXT NOT NULL,
+    provider_provenance_json  TEXT NOT NULL,
+    reviewer_id               TEXT NOT NULL,
+    reviewed_at               TEXT NOT NULL,
+    UNIQUE(task_id, component_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_creative_supply_run_state
+    ON creative_supply_run(state, updated_at);
+CREATE INDEX IF NOT EXISTS idx_creative_supply_task_next
+    ON creative_supply_task(run_id, state, created_at);
+CREATE INDEX IF NOT EXISTS idx_creative_supply_task_slot
+    ON creative_supply_task(run_id, product_id, angle_key, component_type);
+CREATE INDEX IF NOT EXISTS idx_creative_supply_review_product
+    ON creative_supply_review_event(run_id, product_id, reviewed_at);
 """)
         await db.commit()
 

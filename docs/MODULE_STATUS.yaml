@@ -103,6 +103,20 @@ domains:
       - tests/ui/test_creative_production_ui_contract.py
       - docs/evidence/p6-batch-creative-production-orchestrator.md
       - scripts/p6-creative-production-rehearsal.py
+      - agent/api/creative_supply.py
+      - agent/db/creative_supply_crud.py
+      - agent/services/creative_supply_delta_service.py
+      - agent/services/creative_supply_factory_service.py
+      - dashboard/src/api/creativeSupply.ts
+      - dashboard/src/components/CreativeSupplyFactoryPanel.tsx
+      - dashboard/src/components/CreativeSupplyFactoryPanel.test.tsx
+      - docs/evidence/p7-creative-supply-live-production.md
+      - scripts/p7-canonical-delta.py
+      - scripts/p7-creative-supply-factory.py
+      - tests/api/test_creative_supply_api.py
+      - tests/unit/test_creative_supply_delta.py
+      - tests/unit/test_creative_supply_factory.py
+      - tests/unit/test_creative_supply_migration.py
       - agent/main.py
       - agent/models/creative_asset.py
       - agent/models/i2v_semantic_slot_resolver.py
