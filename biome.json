@@ -21,6 +21,8 @@
 			"dashboard/src/poster/guided/usePosterGuidedWorkflow.ts",
 			"dashboard/src/components/poster/guided/PosterGuidedShell.tsx",
 			"dashboard/src/components/poster/guided/PosterGuidedShell.test.tsx",
+			"dashboard/src/components/product-registration/RegistrationReviewDraftPanel.tsx",
+			"dashboard/src/components/product-registration/RegistrationReviewDraftPanel.test.tsx",
 			"dashboard/src/pages/OperatorPage.tsx",
 			"dashboard/src/pages/ProductAssetGeneratorPage.tsx",
 			"dashboard/src/pages/ProductRegistrationPage.tsx",
@@ -28,6 +30,7 @@
 			"dashboard/src/pages/ProductTypeRegistryPage.test.tsx",
 			"dashboard/src/pages/ProductsSalesAnalyzerPage.tsx",
 			"dashboard/src/pages/WorkspaceJobsPage.tsx",
+			"dashboard/src/types/index.ts",
 			"extension/background.js",
 			"extension/popup.js",
 			"extension/side_panel.js"

@@ -499,7 +499,17 @@ def _joined_product_text(product: dict[str, Any]) -> str:
 
 
 def _contains_any(haystack: str, keywords: list[str]) -> bool:
-    return any(_normalize_key(keyword) in haystack for keyword in keywords)
+    return any(
+        bool(
+            normalized_keyword
+            and re.search(
+                rf"(?<!\w){re.escape(normalized_keyword)}(?!\w)",
+                haystack,
+            )
+        )
+        for keyword in keywords
+        if (normalized_keyword := _normalize_key(keyword))
+    )
 
 
 def _first_non_empty(*values: Any) -> str | None:
@@ -1362,14 +1372,22 @@ def _destination_readiness(
 ) -> dict[str, str]:
     review_required = copy_route != "DIRECT" or claim_gate != "CLAIM_SAFE" or confidence == "LOW"
     text_to_video = "READY" if not review_required else "NEEDS_REVIEW"
-    image_capable = image_analysis_status not in {
-        "IMAGE_MISSING",
-        "IMAGE_INACCESSIBLE",
-        "UNSUPPORTED_IMAGE_FORMAT",
-    }
-    frames = "READY" if image_capable and not review_required else "NEEDS_REVIEW"
-    ingredients = "READY" if image_capable and confidence in {"HIGH", "MEDIUM"} else "NEEDS_REVIEW"
-    image = "READY" if not review_required else "NEEDS_REVIEW"
+    semantic_image_ready = image_analysis_status == "ANALYZED"
+    frames = (
+        "READY"
+        if semantic_image_ready and not review_required
+        else "NEEDS_REVIEW"
+    )
+    ingredients = (
+        "READY"
+        if semantic_image_ready and confidence in {"HIGH", "MEDIUM"}
+        else "NEEDS_REVIEW"
+    )
+    image = (
+        "READY"
+        if semantic_image_ready and not review_required
+        else "NEEDS_REVIEW"
+    )
     return {
         "TEXT_TO_VIDEO": text_to_video,
         "FRAMES": frames,

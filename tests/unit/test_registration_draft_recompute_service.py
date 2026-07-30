@@ -55,7 +55,11 @@ def test_recompute_refreshes_candidates_readiness_and_freshness():
     assert refreshed.canonical_candidate_fields["hook_angles"] == ["Manual hook override"]
     assert refreshed.canonical_candidate_fields["cta_angles"] == ["Manual CTA override"]
     assert refreshed.system_inferred_fields["hook_angles_source"] == "MANUAL_OVERRIDE"
-    assert refreshed.readiness_by_mode["IMG"].status == "READY"
+    assert refreshed.readiness_by_mode["IMG"].status == "BLOCKED"
+    assert (
+        "SEMANTIC_IMAGE_ANALYSIS_REQUIRED"
+        in refreshed.readiness_by_mode["IMG"].detail
+    )
     assert "PRICE_EVIDENCE" not in refreshed.missing_required_evidence
     assert refreshed.review_draft_id == "draft-bosmax-recompute"
 

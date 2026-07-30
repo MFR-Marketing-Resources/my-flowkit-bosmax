@@ -41,6 +41,7 @@ domains:
       - tests/api/test_runtime_storage_diagnostic_api.py
       - tests/unit/test_product_asset_generator_state_aware_preview.py
       - scripts/doctor-runtime-storage.py
+      - scripts/smart_registration_catalog_audit.py
       - dashboard/src/components/prompt-tool/usePromptToolHydration.ts
       - tests/ui/test_prompt_tool_catalog_fallback_contract.py
       - .ai/audits/evidence/pr-197-counter-audit-2.md
@@ -456,6 +457,7 @@ domains:
       - tests/unit/test_make_video_binding.py
       - tests/unit/test_retrieval_freshness_exclusion.py
       - agent/services/batch_planner.py
+      - agent/models/product_knowledge.py
       - agent/models/product_registration.py
       - agent/services/product_knowledge_service.py
       - agent/api/product_intelligence.py
@@ -471,6 +473,9 @@ domains:
       - agent/services/registration_draft_storage_service.py
       - agent/services/registration_draft_evidence_editor_service.py
       - agent/services/registration_draft_recompute_service.py
+      - agent/services/registration_evidence_quality_service.py
+      - agent/services/registration_consistency_service.py
+      - agent/services/registration_authority_fingerprint_service.py
       - agent/services/registration_hook_cta_generation_service.py
       - agent/services/product_image_analysis_service.py
       - agent/services/video_reviewer.py
@@ -688,6 +693,7 @@ domains:
       - tests/unit/test_product_registration_review_service.py
       - tests/unit/test_registration_draft_evidence_editor_service.py
       - tests/unit/test_registration_draft_recompute_service.py
+      - tests/unit/test_smart_registration_autonomous_convergence.py
       - tests/unit/test_registration_hook_cta_generation_service.py
       - tests/api/test_registration_draft_evidence_editor_api.py
       - tests/api/test_registration_draft_image_attach_api.py

@@ -59,10 +59,27 @@ class EvidenceCompletionFieldMetadata(BaseModel):
         "AI_SUGGESTED",
         "SYSTEM_INFERRED",
         "NOT_AVAILABLE",
+        "NOT_APPLICABLE",
+        "INVALID_MARKETING_METADATA",
+        "INVALID_CTA_COPY",
+        "PLACEHOLDER",
+        "CROSS_FIELD_CONTAMINATION",
+        "REPAIR_SUGGESTED",
     ]
     confidence: Literal["HIGH", "MEDIUM", "LOW", "NOT_APPLICABLE"]
     provenance: list[str] = Field(default_factory=list)
     needs_review: bool = True
+    reason_codes: list[str] = Field(default_factory=list)
+    evidence_used: list[str] = Field(default_factory=list)
+    raw_value: Any = None
+    repair_candidate: Any = None
+    repair_action: Literal[
+        "NONE",
+        "FILL_MISSING",
+        "REPAIR_INVALID_OR_PLACEHOLDER",
+        "MARK_NOT_APPLICABLE",
+    ] = "NONE"
+    applicability: Literal["APPLICABLE", "NOT_APPLICABLE", "UNKNOWN"] = "UNKNOWN"
 
 
 class RegistrationReviewDraft(BaseModel):
@@ -113,7 +130,15 @@ class RegistrationReviewDraft(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
 
-    draft_freshness_status: str = "FRESH"
+    evidence_quality_status: str = "NOT_EVALUATED"
+    evidence_quality_issues: list[str] = Field(default_factory=list)
+    consistency_status: str = "NOT_EVALUATED"
+    consistency_issues: list[str] = Field(default_factory=list)
+    authority_fingerprint: str | None = None
+    authority_versions: dict[str, str] = Field(default_factory=dict)
+    hook_cta_input_fingerprint: str | None = None
+    recompute_required_reasons: list[str] = Field(default_factory=list)
+    draft_freshness_status: str = "STALE_RECOMPUTE_REQUIRED"
     last_evidence_edit_at: str | None = None
     last_recomputed_at: str | None = None
     image_asset_status: str = "IMAGE_REFERENCE_MISSING"

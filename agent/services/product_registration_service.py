@@ -4,11 +4,24 @@ from typing import Any
 
 from agent.db import crud
 from agent.models.product_registration import (
+    EvidenceCompletionFieldMetadata,
     ProductRegistrationEvaluateRequest,
     ProductRegistrationEvaluateResponse,
     RegistrationReviewDraft,
 )
-from agent.models.product_knowledge import ProductKnowledgeCompleteResponse
+from agent.models.product_knowledge import (
+    ProductKnowledgeCompleteRequest,
+    ProductKnowledgeCompleteResponse,
+)
+from agent.services.registration_authority_fingerprint_service import (
+    stamp_authority_fingerprint,
+)
+from agent.services.registration_evidence_quality_service import (
+    audit_registration_evidence,
+)
+from agent.services.registration_hook_cta_generation_service import (
+    generate_registration_hook_cta,
+)
 from agent.services.product_intelligence_service import (
     inject_product_intelligence_fields,
     resolve_product_intelligence_profile,
@@ -510,6 +523,107 @@ def create_registration_review_draft(
     for blocked in completion.blocked_fields:
         if blocked in candidates:
             candidates.pop(blocked)
+
+    evidence_request = ProductKnowledgeCompleteRequest.model_validate(
+        declared_evidence
+    )
+    evidence_audit = audit_registration_evidence(
+        evidence_request,
+        product_family=str(candidates.get("bosmax_product_family") or ""),
+    )
+    for field, decision in evidence_audit.decisions.items():
+        existing_metadata = evidence_field_status.get(field)
+        if (
+            existing_metadata is not None
+            and existing_metadata.status == "AI_SUGGESTED"
+        ):
+            evidence_field_status[field] = existing_metadata.model_copy(
+                update={
+                    "reason_codes": list(decision.reason_codes),
+                    "evidence_used": list(
+                        dict.fromkeys(
+                            existing_metadata.provenance
+                            + decision.evidence_used
+                        )
+                    ),
+                    "raw_value": decision.raw_value,
+                    "repair_candidate": candidates.get(field),
+                    "repair_action": (
+                        "REPAIR_INVALID_OR_PLACEHOLDER"
+                        if decision.status != "NOT_AVAILABLE"
+                        else "FILL_MISSING"
+                    ),
+                    "applicability": decision.applicability,
+                    "needs_review": True,
+                }
+            )
+            continue
+        evidence_field_status[field] = EvidenceCompletionFieldMetadata(
+            status=decision.status,
+            confidence=decision.confidence,
+            provenance=list(decision.evidence_used),
+            needs_review=decision.status != "EXACT_SOURCE_EVIDENCE",
+            reason_codes=list(decision.reason_codes),
+            evidence_used=list(decision.evidence_used),
+            raw_value=decision.raw_value,
+            repair_candidate=decision.sanitized_value,
+            repair_action=decision.repair_action,
+            applicability=decision.applicability,
+        )
+        if (
+            decision.repair_action == "REPAIR_INVALID_OR_PLACEHOLDER"
+            and field in candidates
+        ):
+            candidates.pop(field, None)
+    materials = evidence_audit.sanitized_fields.get("materials_text")
+    if materials:
+        candidates["materials_or_components"] = materials
+    candidates["ingredients_applicability"] = (
+        "NOT_APPLICABLE"
+        if evidence_audit.decisions["ingredients_or_materials"].applicability
+        == "NOT_APPLICABLE"
+        else "APPLICABLE"
+    )
+    if evidence_audit.issue_codes:
+        review_status = "NEEDS_HUMAN_REVIEW"
+        completion.human_review_fields = list(
+            dict.fromkeys(
+                completion.human_review_fields
+                + [
+                    field
+                    for field, decision in evidence_audit.decisions.items()
+                    if decision.repair_action
+                    in {"REPAIR_INVALID_OR_PLACEHOLDER", "FILL_MISSING"}
+                ]
+            )
+        )
+
+    if evidence_audit.issue_codes:
+        reconciled_hook_cta = generate_registration_hook_cta(
+            {
+                "product_name": candidates.get("normalized_name")
+                or declared_evidence.get("product_name"),
+                "benefits_text": evidence_audit.sanitized_fields.get(
+                    "benefits_text"
+                ),
+                "target_customer_text": evidence_audit.sanitized_fields.get(
+                    "target_customer_text"
+                ),
+                "usage_text": evidence_audit.sanitized_fields.get("usage_text"),
+                "category": candidates.get("category")
+                or declared_evidence.get("category"),
+                "claim_gate": completion.claim_gate,
+                "claim_tokens": completion.claim_tokens,
+                "copy_route": candidates.get("copy_route"),
+                "silo": candidates.get("silo"),
+            }
+        )
+        candidates["hook_angles"] = list(
+            reconciled_hook_cta.get("hook_angles") or []
+        )
+        candidates["cta_angles"] = list(
+            reconciled_hook_cta.get("cta_angles") or []
+        )
             
     # 5. Handle Affiliate Risk in status
     for warning in completion.warnings:
@@ -569,7 +683,7 @@ def create_registration_review_draft(
         materialization_status="PREVIEW",
     )
 
-    return RegistrationReviewDraft(
+    draft = RegistrationReviewDraft(
         review_draft_id=draft_id,
         review_status=review_status,
         source_lane=source_lane,
@@ -605,11 +719,15 @@ def create_registration_review_draft(
         approval_checklist={f: False for f in candidates.keys()},
         readiness_by_mode=completion.readiness_by_mode,
         provenance=completion.provenance + ["registration_review_service:v1"],
-        warnings=completion.warnings,
+        warnings=list(
+            dict.fromkeys(completion.warnings + evidence_audit.issue_codes)
+        ),
         errors=completion.errors,
-        draft_freshness_status="FRESH",
+        evidence_quality_status=evidence_audit.status,
+        evidence_quality_issues=evidence_audit.issue_codes,
         last_evidence_edit_at=now,
         last_recomputed_at=now,
         image_asset_status=image_asset_status,
         image_asset_detail=image_asset_detail,
     )
+    return stamp_authority_fingerprint(draft)

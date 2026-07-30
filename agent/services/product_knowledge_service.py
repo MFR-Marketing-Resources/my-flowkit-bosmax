@@ -30,6 +30,12 @@ from agent.config import BASE_DIR
 from agent.services.registration_hook_cta_generation_service import (
     generate_registration_hook_cta,
 )
+from agent.services.registration_evidence_quality_service import (
+    audit_registration_evidence,
+)
+from agent.services.registration_consistency_service import (
+    evaluate_registration_consistency,
+)
 from agent.services import ai_copy_provider_adapter
 from agent.services.ai_copy_provider_adapter import (
     AICopyProviderError,
@@ -39,6 +45,40 @@ from agent.services.ai_copy_provider_adapter import (
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+class TextAssistFieldRepair(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field: Literal[
+        "product_knowledge_summary",
+        "benefits",
+        "usage_summary",
+        "target_customer",
+        "materials_or_components",
+        "size_or_volume",
+        "package_notes",
+        "warnings_or_limitations",
+    ]
+    proposed_value: str | list[str] | None = None
+    evidence_used: list[str] = Field(default_factory=list)
+    confidence: Literal["LOW", "MEDIUM"] = "LOW"
+    reason: str
+    action: Literal["FILL_MISSING", "REPAIR_INVALID_OR_PLACEHOLDER"]
+    needs_review: Literal[True] = True
+
+
+class TextAssistTaxonomySuggestion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    category: str
+    subcategory: str
+    type: str
+    registry_entry_key: str
+    evidence_used: list[str] = Field(default_factory=list)
+    confidence: Literal["LOW", "MEDIUM"] = "LOW"
+    reason: str
+    needs_review: Literal[True] = True
 
 
 class TextAssistEvidenceCompletion(BaseModel):
@@ -51,6 +91,12 @@ class TextAssistEvidenceCompletion(BaseModel):
     usp_list: list[str] = Field(default_factory=list)
     size_or_volume: str | None = None
     package_notes: str | None = None
+    materials_or_components: str | None = None
+    ingredients_applicability: Literal[
+        "APPLICABLE", "NOT_APPLICABLE", "UNKNOWN"
+    ] = "UNKNOWN"
+    field_repairs: list[TextAssistFieldRepair] = Field(default_factory=list)
+    taxonomy_suggestion: TextAssistTaxonomySuggestion | None = None
     warnings_or_limitations: list[str] = Field(default_factory=list)
     confidence: Literal["LOW", "MEDIUM"] = "LOW"
     provenance: list[str] = Field(default_factory=list)
@@ -289,6 +335,43 @@ def complete_product_knowledge(
         )
     )
     suggested_usp_list = list(evidence_candidates.get("usp_list") or [])
+    completion_evidence_audit = audit_registration_evidence(
+        request,
+        product_family=str(intelligence.get("bosmax_product_family") or ""),
+    )
+    consistency = evaluate_registration_consistency(
+        {
+            "category": taxonomy_candidate.get("category"),
+            "subcategory": taxonomy_candidate.get("subcategory"),
+            "type": taxonomy_candidate.get("type"),
+            "bosmax_product_family": intelligence.get("bosmax_product_family"),
+            "physical_state": intelligence.get("physical_state"),
+            "physics_class": physics.get("physics_class"),
+            "copy_formula": intelligence.get("copy_formula"),
+        }
+    )
+    taxonomy_repair: dict[str, Any] | None = None
+    if text_assist_completion and text_assist_completion.taxonomy_suggestion:
+        suggestion = text_assist_completion.taxonomy_suggestion
+        deterministic_match = all(
+            normalize_mapping_text(value)
+            == normalize_mapping_text(taxonomy_candidate.get(field))
+            for field, value in (
+                ("category", suggestion.category),
+                ("subcategory", suggestion.subcategory),
+                ("type", suggestion.type),
+            )
+        )
+        registry_backed = (
+            suggestion.registry_entry_key == "home_textiles/curtain"
+            and normalize_mapping_text(suggestion.type) == "curtains"
+        )
+        if deterministic_match and registry_backed:
+            taxonomy_repair = suggestion.model_dump(mode="json")
+        else:
+            text_assist_warnings.append(
+                "TEXT_ASSIST_TAXONOMY_SUGGESTION_NOT_APPLIED_WITHOUT_REGISTRY_VALIDATION"
+            )
 
     image_analysis = dict(intelligence.get("image_analysis") or {})
     warnings = list(intelligence.get("warnings", [])) + text_assist_warnings
@@ -326,6 +409,21 @@ def complete_product_knowledge(
         suggested_category=taxonomy_candidate.get("category"),
         suggested_subcategory=taxonomy_candidate.get("subcategory"),
         suggested_type=taxonomy_candidate.get("type"),
+        suggested_materials_or_components=(
+            text_assist_completion.materials_or_components
+            if text_assist_completion
+            and text_assist_completion.materials_or_components
+            else completion_evidence_audit.sanitized_fields.get("materials_text")
+        ),
+        ingredients_applicability=(
+            "NOT_APPLICABLE"
+            if completion_evidence_audit.decisions[
+                "ingredients_or_materials"
+            ].applicability
+            == "NOT_APPLICABLE"
+            else "APPLICABLE"
+        ),
+        suggested_taxonomy_repair=taxonomy_repair,
         suggested_bosmax_product_family=intelligence.get("bosmax_product_family"),
         suggested_package_form=intelligence.get("package_form"),
         suggested_physical_state=intelligence.get("physical_state"),
@@ -362,9 +460,24 @@ def complete_product_knowledge(
         extraction_status=extraction_status,
         missing_required_evidence=missing_evidence,
         human_review_fields=human_review_fields,
+        evidence_quality_status=completion_evidence_audit.status,
+        evidence_quality_issues=completion_evidence_audit.issue_codes,
+        consistency_status=consistency.status,
+        consistency_issues=consistency.issue_codes,
         readiness_by_mode=readiness,
         provenance=provenance,
-        warnings=warnings + (["AFFILIATE_LANE_CONTAMINATION_RISK"] if _normalize_source_lane(request.source_lane) in ["FASTMOSS", "TIKTOKSHOP"] else []),
+        warnings=list(
+            dict.fromkeys(
+                warnings
+                + completion_evidence_audit.issue_codes
+                + (
+                    ["AFFILIATE_LANE_CONTAMINATION_RISK"]
+                    if _normalize_source_lane(request.source_lane)
+                    in ["FASTMOSS", "TIKTOKSHOP"]
+                    else []
+                )
+            )
+        ),
         errors=intelligence.get("errors", [])
     )
 
@@ -487,7 +600,24 @@ def _text_assist_source_payload(
         "package_notes": request.package_notes,
         "paste_anything_about_product": request.paste_anything_about_product,
         "category": request.category,
+        "subcategory": request.subcategory,
+        "type": request.type,
+        "product_type": request.product_type,
+        "product_type_id": request.product_type_id,
+        "materials_text": request.materials_text,
         "source_lane": request.source_lane,
+        "evidence_quality": {
+            field: {
+                "status": decision.status,
+                "reason_codes": decision.reason_codes,
+                "repair_action": decision.repair_action,
+                "applicability": decision.applicability,
+            }
+            for field, decision in audit_registration_evidence(
+                request,
+                product_family=None,
+            ).decisions.items()
+        },
     }
 
 
@@ -511,8 +641,7 @@ def _normalize_text_assist_completion(
     completion: TextAssistEvidenceCompletion,
 ) -> TextAssistEvidenceCompletion:
     confidence = "MEDIUM" if completion.confidence == "HIGH" else completion.confidence
-    return completion.model_copy(
-        update={
+    updates: dict[str, Any] = {
             "product_knowledge_summary": _clean_suggestion_text(
                 completion.product_knowledge_summary
             ),
@@ -531,10 +660,40 @@ def _normalize_text_assist_completion(
             "warnings_or_limitations": _clean_suggestion_list(
                 completion.warnings_or_limitations
             ),
+            "materials_or_components": _clean_suggestion_text(
+                completion.materials_or_components,
+                limit=240,
+            ),
             "confidence": confidence,
             "needs_review": True,
         }
-    )
+    repair_field_map = {
+        "product_knowledge_summary": "product_knowledge_summary",
+        "benefits": "benefits",
+        "usage_summary": "usage_summary",
+        "target_customer": "target_customer",
+        "materials_or_components": "materials_or_components",
+        "size_or_volume": "size_or_volume",
+        "package_notes": "package_notes",
+        "warnings_or_limitations": "warnings_or_limitations",
+    }
+    for repair in completion.field_repairs:
+        target = repair_field_map[repair.field]
+        current = updates.get(target)
+        if current not in (None, "", []):
+            continue
+        if target in {"benefits", "warnings_or_limitations"}:
+            proposed = (
+                repair.proposed_value
+                if isinstance(repair.proposed_value, list)
+                else [repair.proposed_value]
+                if repair.proposed_value
+                else []
+            )
+            updates[target] = _clean_suggestion_list(proposed)
+        else:
+            updates[target] = _clean_suggestion_text(repair.proposed_value)
+    return completion.model_copy(update=updates)
 
 
 def _text_assist_invalid_response_warnings(
@@ -682,8 +841,13 @@ def _complete_missing_evidence_with_text_assist(
         "performance claims. Size and package facts must appear explicitly in the source. "
     )
     user_prompt = (
-        "Complete only missing fields from this source evidence. Existing non-empty fields "
-        "are authoritative and must not be rewritten. JSON source evidence:\n"
+        "Complete missing fields and repair only fields explicitly marked invalid or "
+        "placeholder by evidence_quality. Verified exact-source fields are immutable. "
+        "Every repair must state FILL_MISSING or REPAIR_INVALID_OR_PLACEHOLDER, the "
+        "evidence used, confidence, reason, and needs_review=true. Ingredients may be "
+        "NOT_APPLICABLE for non-consumable products; use materials_or_components instead. "
+        "Taxonomy suggestions are review-only and must name an existing registry_entry_key. "
+        "JSON source evidence:\n"
         f"{json.dumps(source_payload, ensure_ascii=False, sort_keys=True)}"
     )
 
@@ -699,8 +863,16 @@ def _complete_missing_evidence_with_text_assist(
                 [],
             )
         expected_keys = set(TextAssistEvidenceCompletion.model_fields)
+        optional_extension_keys = {
+            "materials_or_components",
+            "ingredients_applicability",
+            "field_repairs",
+            "taxonomy_suggestion",
+        }
         actual_keys = set(raw_completion)
-        missing_keys = sorted(expected_keys - actual_keys)
+        missing_keys = sorted(
+            (expected_keys - optional_extension_keys) - actual_keys
+        )
         unexpected_keys = sorted(actual_keys - expected_keys)
         if missing_keys:
             return (
@@ -798,6 +970,11 @@ def _resolve_evidence_completion_candidates(
     text_assist: TextAssistEvidenceCompletion | None,
     text_assist_provenance: list[str],
 ) -> tuple[dict[str, Any], dict[str, EvidenceCompletionFieldMetadata]]:
+    evidence_audit = audit_registration_evidence(
+        request,
+        product_family=None,
+    )
+    request = request.model_copy(update=evidence_audit.sanitized_fields)
     candidates: dict[str, Any] = {}
     metadata: dict[str, EvidenceCompletionFieldMetadata] = {}
     ai_confidence = text_assist.confidence if text_assist else "LOW"
@@ -1076,11 +1253,17 @@ def _build_temp_product(
         "product_display_name": name,
         "source": _normalize_source_lane(request.source_lane) or "MANUAL",
         "category": taxonomy_candidate.get("category") or request.category,
-        "subcategory": taxonomy_candidate.get("subcategory"),
-        "type": taxonomy_candidate.get("type"),
+        "subcategory": taxonomy_candidate.get("subcategory") or request.subcategory,
+        "type": (
+            taxonomy_candidate.get("type")
+            or request.type
+            or request.product_type
+            or request.product_type_id
+        ),
         "price": extracted_facts.get("price") or request.price,
         "size_or_volume": extracted_facts.get("size_or_volume") or request.size_or_volume,
         "ingredients": request.ingredients_text,
+        "materials": request.materials_text,
         "benefits": request.benefits_text,
         "usage": request.usage_text,
         "warnings": request.warnings_text,
@@ -1245,15 +1428,38 @@ def _resolve_taxonomy_candidate(
         "product_display_name": normalized_name,
         "product_short_name": normalized_name,
         "source": _normalize_source_lane(request.source_lane) or "MANUAL",
+        "category": request.category,
+        "subcategory": request.subcategory,
+        "type": request.type or request.product_type or request.product_type_id,
     }
     mapping = resolve_product_mapping(product=base_product, source_hint=_normalize_source_lane(request.source_lane))
     candidate = {
-        "category": mapping.get("category") or None,
-        "subcategory": mapping.get("subcategory") or None,
-        "type": mapping.get("type") or None,
+        "category": request.category or mapping.get("category") or None,
+        "subcategory": request.subcategory or mapping.get("subcategory") or None,
+        "type": (
+            request.type
+            or request.product_type
+            or request.product_type_id
+            or mapping.get("type")
+            or None
+        ),
         "silo": mapping.get("silo") or None,
         "trigger_id": mapping.get("trigger_id") or None,
     }
+    if (
+        candidate["category"] == "Textiles & Soft Furnishings"
+        and not candidate["subcategory"]
+    ):
+        candidate["subcategory"] = "Household Textiles"
+    if (
+        candidate["category"] == "Textiles & Soft Furnishings"
+        and not candidate["type"]
+        and _contains_any_normalized(
+            normalize_mapping_text(request.product_name),
+            ["langsir", "curtain"],
+        )
+    ):
+        candidate["type"] = "Curtains"
 
     combined_text = normalize_mapping_text(
         " ".join(

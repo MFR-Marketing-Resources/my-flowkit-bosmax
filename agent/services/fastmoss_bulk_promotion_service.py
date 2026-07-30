@@ -320,6 +320,18 @@ def _ref_to_completion_request(ref: dict[str, Any]) -> ProductKnowledgeCompleteR
         source_lane="FASTMOSS_PROMOTED",
         paste_anything_about_product=paste_knowledge,
         category=category,
+        subcategory=_clean(ref.get("subcategory")) or _hub_text("subcategory"),
+        type=_clean(ref.get("type")) or _hub_text("type"),
+        product_type=(
+            _clean(ref.get("product_type"))
+            or _hub_text("product_type")
+            or _hub_text("type_of_product")
+        ),
+        product_type_id=(
+            _clean(ref.get("product_type_id"))
+            or _hub_text("product_type_id")
+        ),
+        materials_text=_hub_text("materials_text"),
         image_url=_clean(ref.get("image_url")) or None,
         source_url=_clean(ref.get("source_url")) or None,
         tiktok_product_url=_clean(ref.get("tiktok_product_url")) or None,
