@@ -26,24 +26,35 @@ function previewUrl(product: CohortProduct): string | null {
 
 function ProductThumbnail({ product }: { product: CohortProduct }) {
 	const source = previewUrl(product);
+	const [failedSource, setFailedSource] = useState<string | null>(null);
+	const imageFailed = Boolean(source && failedSource === source);
+	const fallbackLabel = imageFailed ? "Load failed" : "No image";
+	const accessibleLabel = imageFailed
+		? `Product image unavailable for ${product.product_name}`
+		: source
+			? `Product image for ${product.product_name}`
+			: `No approved product image for ${product.product_name}`;
 	return (
-		<div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg border border-slate-700 bg-slate-900">
-			<ImageOff
-				aria-hidden="true"
-				className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600"
-				size={17}
-			/>
-			{source ? (
+		<div
+			role="img"
+			aria-label={accessibleLabel}
+			data-image-state={imageFailed ? "error" : source ? "ready" : "missing"}
+			className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg border border-slate-700 bg-slate-900"
+		>
+			{source && !imageFailed ? (
 				<img
 					src={source}
 					alt=""
 					loading="lazy"
-					onError={(event) => {
-						event.currentTarget.hidden = true;
-					}}
+					onError={() => setFailedSource(source)}
 					className="relative h-full w-full object-cover"
 				/>
-			) : null}
+			) : (
+				<div className="flex h-full w-full flex-col items-center justify-center gap-0.5 px-1 text-center text-[8px] leading-none text-slate-500">
+					<ImageOff aria-hidden="true" size={14} />
+					<span>{fallbackLabel}</span>
+				</div>
+			)}
 		</div>
 	);
 }
@@ -62,6 +73,7 @@ export default function ProductAllocationPicker({
 	const rootRef = useRef<HTMLDivElement>(null);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const triggerRef = useRef<HTMLButtonElement>(null);
+	const quantityInputRefs = useRef(new Map<string, HTMLInputElement>());
 
 	const allocationByProduct = useMemo(
 		() =>
@@ -87,6 +99,10 @@ export default function ProductAllocationPicker({
 				product: CohortProduct;
 			} => Boolean(entry.product),
 		);
+	const totalVideoCount = allocations.reduce(
+		(total, allocation) => total + allocation.video_count,
+		0,
+	);
 	const normalizedSearch = search.trim().toLocaleLowerCase();
 	const matchedProducts = useMemo(
 		() =>
@@ -108,10 +124,6 @@ export default function ProductAllocationPicker({
 		return () => document.removeEventListener("mousedown", closeOnOutsideClick);
 	}, []);
 
-	useEffect(() => {
-		setActiveIndex(0);
-	}, [search]);
-
 	const openPicker = () => {
 		setOpen(true);
 		window.setTimeout(() => inputRef.current?.focus(), 0);
@@ -131,6 +143,11 @@ export default function ProductAllocationPicker({
 				video_count: 1,
 			},
 		]);
+		setOpen(false);
+		window.setTimeout(
+			() => quantityInputRefs.current.get(productId)?.focus(),
+			0,
+		);
 	};
 
 	const updateQuantity = (productId: string, videoCount: number) => {
@@ -199,8 +216,8 @@ export default function ProductAllocationPicker({
 						</span>
 						<span className="mt-0.5 block text-[11px] text-slate-400">
 							{allocations.length
-								? "Add products or review the current selection"
-								: "Search the governed P5.8 production cohort"}
+								? "Add products or adjust each video quantity below"
+								: "Select a product to set its video quantity"}
 						</span>
 					</span>
 					<ChevronDown
@@ -225,7 +242,10 @@ export default function ProductAllocationPicker({
 										: undefined
 								}
 								value={search}
-								onChange={(event) => setSearch(event.target.value)}
+								onChange={(event) => {
+									setSearch(event.target.value);
+									setActiveIndex(0);
+								}}
 								onKeyDown={handleSearchKeyDown}
 								placeholder="Search products by name"
 								className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-slate-600"
@@ -234,7 +254,10 @@ export default function ProductAllocationPicker({
 								<button
 									type="button"
 									aria-label="Clear product search"
-									onClick={() => setSearch("")}
+									onClick={() => {
+										setSearch("");
+										setActiveIndex(0);
+									}}
 									className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-white"
 								>
 									<X size={14} />
@@ -290,14 +313,16 @@ export default function ProductAllocationPicker({
 												</span>
 											</span>
 											<span
-												aria-hidden="true"
-												className={`flex h-5 w-5 items-center justify-center rounded border ${
+												className={`flex min-w-16 items-center justify-center gap-1 rounded border px-2 py-1 text-[10px] font-semibold ${
 													selected
 														? "border-cyan-400 bg-cyan-500 text-slate-950"
-														: "border-slate-600"
+														: "border-slate-600 text-slate-300"
 												}`}
 											>
-												{selected ? <Check size={13} /> : null}
+												{selected ? (
+													<Check aria-hidden="true" size={12} />
+												) : null}
+												{selected ? "Selected" : "Select"}
 											</span>
 										</button>
 									);
@@ -319,9 +344,21 @@ export default function ProductAllocationPicker({
 					aria-label="Selected products and quantities"
 					className="space-y-2"
 				>
-					<div className="flex items-center justify-between">
-						<div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-							Selected products
+					<div className="flex items-end justify-between gap-3">
+						<div>
+							<div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+								Selected products
+							</div>
+							<div
+								aria-live="polite"
+								data-testid="p6-allocation-summary"
+								className="mt-1 text-[11px] text-cyan-200"
+							>
+								{selectedProducts.length}{" "}
+								{selectedProducts.length === 1 ? "product" : "products"} ·{" "}
+								{totalVideoCount} total{" "}
+								{totalVideoCount === 1 ? "video" : "videos"}
+							</div>
 						</div>
 						<button
 							type="button"
@@ -353,8 +390,15 @@ export default function ProductAllocationPicker({
 									</div>
 								</div>
 								<label className="shrink-0 text-[10px] text-slate-400">
-									Videos
+									Video quantity
 									<input
+										ref={(node) => {
+											if (node) {
+												quantityInputRefs.current.set(product.product_id, node);
+											} else {
+												quantityInputRefs.current.delete(product.product_id);
+											}
+										}}
 										aria-label={`Video quantity for ${product.product_name}`}
 										type="number"
 										min={1}

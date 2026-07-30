@@ -185,6 +185,96 @@ async def p58_authority(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_cohort_authority_projects_existing_image_readiness(
+    monkeypatch, tmp_path
+):
+    minyak_image = tmp_path / "minyak-warisan.jpg"
+    bosmax_image = tmp_path / "bosmax-herbs.png"
+    minyak_image.write_bytes(b"minyak-image")
+    bosmax_image.write_bytes(b"bosmax-image")
+    rows = [
+        SimpleNamespace(
+            product_id="mwcb-product",
+            product_name="Minyak Warisan Cap Burung 25ml",
+            product_type_group="herbal_oil",
+            scene_strategy_id="HERBAL_OIL",
+        ),
+        SimpleNamespace(
+            product_id="bosmax-product",
+            product_name="Bosmax Herbs 5 ML",
+            product_type_group="herbal_oil",
+            scene_strategy_id="HERBAL_OIL",
+        ),
+        SimpleNamespace(
+            product_id="remote-product",
+            product_name="Remote Product",
+            product_type_group="serum",
+            scene_strategy_id="SERUM",
+        ),
+        SimpleNamespace(
+            product_id="missing-product",
+            product_name="Missing Product",
+            product_type_group="serum",
+            scene_strategy_id="SERUM",
+        ),
+    ]
+    monkeypatch.setattr(
+        plans,
+        "build_catalog_authority_matrix",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                p6_launch_cohort_product_ids=[row.product_id for row in rows],
+                products=rows,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        plans.crud,
+        "list_products",
+        AsyncMock(
+            return_value=[
+                {
+                    "id": "mwcb-product",
+                    "image_url": None,
+                    "image_asset_status": "DOWNLOADED",
+                    "local_image_path": str(minyak_image),
+                },
+                {
+                    "id": "bosmax-product",
+                    "image_url": "UNKNOWN",
+                    "image_asset_status": "DOWNLOADED",
+                    "local_image_path": str(bosmax_image),
+                },
+                {
+                    "id": "remote-product",
+                    "image_url": "https://cdn.example.com/product.webp",
+                    "image_asset_status": "UNRESOLVED",
+                    "local_image_path": None,
+                },
+                {
+                    "id": "missing-product",
+                    "image_url": None,
+                    "image_asset_status": "UNRESOLVED",
+                    "local_image_path": None,
+                },
+            ]
+        ),
+    )
+
+    authority = await plans.load_p58_cohort_authority()
+    products = {product["product_id"]: product for product in authority.products}
+
+    assert products["mwcb-product"]["image_readiness_status"] == "IMAGE_CACHE_READY"
+    assert products["bosmax-product"]["image_readiness_status"] == "IMAGE_CACHE_READY"
+    assert products["remote-product"]["image_readiness_status"] == "IMAGE_READY"
+    assert (
+        products["missing-product"]["image_readiness_status"] == "IMAGE_URL_MISSING"
+    )
+    assert products["mwcb-product"]["image_url"] == ""
+    assert products["bosmax-product"]["image_url"] == "UNKNOWN"
+
+
+@pytest.mark.asyncio
 async def test_schema_has_constraints_indexes_and_conservative_lanes():
     db = await get_db()
     cursor = await db.execute(
