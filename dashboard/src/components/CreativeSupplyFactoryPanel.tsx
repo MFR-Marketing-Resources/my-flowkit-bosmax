@@ -57,16 +57,24 @@ export default function CreativeSupplyFactoryPanel() {
 	const [runs, setRuns] = useState<SupplyRunSummary[]>([]);
 	const [runId, setRunId] = useState("");
 	const [status, setStatus] = useState<SupplyRunStatus | null>(null);
+	const [loading, setLoading] = useState(true);
 	const [busy, setBusy] = useState("");
 	const [error, setError] = useState("");
 	const [reviewReasons, setReviewReasons] = useState<Record<string, string>>({});
 
 	const refresh = useCallback(async (preferredRunId?: string) => {
-		const listed = await listSupplyRuns();
-		setRuns(listed.runs);
-		const next = preferredRunId || listed.runs[0]?.run_id || "";
-		setRunId(next);
-		setStatus(next ? await fetchSupplyRun(next) : null);
+		setLoading(true);
+		setError("");
+		setStatus(null);
+		try {
+			const listed = await listSupplyRuns();
+			setRuns(listed.runs);
+			const next = preferredRunId || listed.runs[0]?.run_id || "";
+			setRunId(next);
+			setStatus(next ? await fetchSupplyRun(next) : null);
+		} finally {
+			setLoading(false);
+		}
 	}, []);
 
 	useEffect(() => {
@@ -193,7 +201,24 @@ export default function CreativeSupplyFactoryPanel() {
 				</div>
 			)}
 
-			{!status ? (
+			{loading && !status ? (
+				<div
+					data-testid="p7-loading-run"
+					className="mt-4 flex items-center gap-2 rounded-xl border border-violet-500/30 bg-violet-950/20 p-5 text-sm text-violet-100"
+				>
+					<RefreshCw size={15} className="animate-spin" />
+					Loading the selected canonical P7 run…
+				</div>
+			) : error && !status ? (
+				<div
+					data-testid="p7-load-failed"
+					className="mt-4 flex items-center gap-2 rounded-xl border border-rose-500/40 bg-rose-950/30 p-5 text-sm text-rose-100"
+				>
+					<AlertTriangle size={15} />
+					The selected P7 run did not settle. Use Refresh creative supply to
+					retry the canonical read.
+				</div>
+			) : !status ? (
 				<div
 					data-testid="p7-empty-run"
 					className="mt-4 rounded-xl border border-dashed border-slate-700 p-5 text-sm text-slate-400"

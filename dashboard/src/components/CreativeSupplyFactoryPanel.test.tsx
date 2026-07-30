@@ -146,6 +146,40 @@ describe("CreativeSupplyFactoryPanel", () => {
 		expect(screen.queryByText(/approve all/i)).not.toBeInTheDocument();
 	});
 
+	it("keeps loading distinct from a truthful no-run state while detail settles", async () => {
+		let resolveStatus: (value: typeof STATUS) => void = () => undefined;
+		fetchSupplyRun.mockImplementationOnce(
+			() =>
+				new Promise<typeof STATUS>((resolve) => {
+					resolveStatus = resolve;
+				}),
+		);
+
+		render(<CreativeSupplyFactoryPanel />);
+		expect(await screen.findByTestId("p7-loading-run")).toHaveTextContent(
+			"Loading the selected canonical P7 run",
+		);
+		expect(screen.queryByTestId("p7-empty-run")).not.toBeInTheDocument();
+
+		resolveStatus(STATUS);
+		expect(await screen.findByText("1/120")).toBeInTheDocument();
+		expect(screen.queryByTestId("p7-loading-run")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("p7-empty-run")).not.toBeInTheDocument();
+	});
+
+	it("renders a retryable load failure instead of a false no-run state", async () => {
+		fetchSupplyRun.mockRejectedValueOnce(new Error("detail unavailable"));
+
+		render(<CreativeSupplyFactoryPanel />);
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"detail unavailable",
+		);
+		expect(screen.getByTestId("p7-load-failed")).toHaveTextContent(
+			"Use Refresh creative supply",
+		);
+		expect(screen.queryByTestId("p7-empty-run")).not.toBeInTheDocument();
+	});
+
 	it("refuses blind review and binds an explicit decision to the content sha", async () => {
 		render(<CreativeSupplyFactoryPanel />);
 		await screen.findByTestId("p7-review-component-ui");

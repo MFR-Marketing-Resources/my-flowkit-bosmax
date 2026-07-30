@@ -195,3 +195,19 @@ roster/cohort hashes.
 No provider, DeepSeek or media submission occurred during implementation and
 local validation. Canonical deployment and the one-attempt decision gate remain
 runtime evidence steps after merge.
+
+### Canonical panel-state follow-up
+
+The first canonical rendered UAT after PR `#547` exposed a second, bounded
+read-model presentation defect. The fast summary request populated the
+completed run in the selector, but the panel rendered the authoritative
+`No frozen P7 run` empty state while the separate 1.46 MB detail request was
+still pending. The backend returned correct summary and detail identities; the
+contradiction was local React state, not missing data.
+
+The panel now clears stale detail at every refresh and distinguishes
+`loading`, `load failed`, and a completed request with zero runs. A pending or
+failed detail read can no longer render the no-run authority message. Two
+rendered regressions hold that boundary, and the complete dashboard gate now
+passes `58` files and `484` tests. No provider, DeepSeek, creative-supply
+authoring, or media call occurred in this follow-up.
