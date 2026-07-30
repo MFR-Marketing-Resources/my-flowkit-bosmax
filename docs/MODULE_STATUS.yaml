@@ -136,6 +136,7 @@ domains:
       - tests/unit/test_creative_treatment_prompt_compiler.py
       - tests/unit/test_creative_treatment_rempah_pilot.py
       - docs/evidence/p7-5-creative-treatment-rempah-pilot.md
+      - docs/evidence/p7-5d-canonical-activation-live-uat.md
       - agent/main.py
       - agent/models/creative_asset.py
       - agent/models/i2v_semantic_slot_resolver.py
