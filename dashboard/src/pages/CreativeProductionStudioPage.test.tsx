@@ -8,6 +8,7 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { GovernedPoolAuthority } from "../api/creativeProduction";
 
 const fetchCohortAuthority = vi.fn();
 const fetchGovernedPoolAuthority = vi.fn();
@@ -343,14 +344,21 @@ describe("P6 Production Studio rendered contract", () => {
 		await screen.findByTestId("p6-plan-status");
 		fireEvent.click(screen.getByRole("button", { name: /Choose products/ }));
 		fireEvent.click(await screen.findByRole("option", { name: /P6 Product/ }));
+		await waitFor(() =>
+			expect(fetchGovernedPoolAuthority).toHaveBeenCalledTimes(1),
+		);
 		fireEvent.change(screen.getByLabelText("Video quantity for P6 Product"), {
 			target: { value: "3" },
 		});
+		expect(fetchGovernedPoolAuthority).toHaveBeenCalledTimes(1);
 		fireEvent.change(screen.getByLabelText("Governed video duration"), {
 			target: { value: "16" },
 		});
 		expect(screen.getByTestId("p6-orchestration-summary")).toHaveTextContent(
 			"Extend · 2 continuous 8-second segments",
+		);
+		await waitFor(() =>
+			expect(screen.getByTestId("p6-create-plan")).toBeEnabled(),
 		);
 		await act(async () => {
 			fireEvent.click(screen.getByTestId("p6-create-plan"));
@@ -363,6 +371,76 @@ describe("P6 Production Studio rendered contract", () => {
 			model_keys: ["veo_3_1_lite"],
 			duration_seconds: [16],
 		});
+	});
+
+	it("ignores stale pool authority responses after the operator changes mode", async () => {
+		prime();
+		const readyAuthority: GovernedPoolAuthority = {
+			product_ids: ["product-1"],
+			logical_mode: "F2V",
+			products: [],
+			copy_sets: [],
+			poster_copy_sets: [],
+			avatar_profiles: [],
+			product_reference_assets: [],
+			finished_frame_assets: [],
+			character_assets: [],
+			scene_assets: [],
+			style_assets: [],
+			poster_recipes: [],
+			blockers: [],
+			copy_reuse_cap: 15,
+			near_duplicate_threshold: 0.8,
+			credit_spend: 0,
+		};
+		let resolveT2v: ((authority: typeof readyAuthority) => void) | undefined;
+		let resolveF2v: ((authority: typeof readyAuthority) => void) | undefined;
+		fetchGovernedPoolAuthority.mockImplementation(
+			(_productIds: string[], logicalMode: string) =>
+				new Promise<typeof readyAuthority>((resolve) => {
+					if (logicalMode === "F2V") resolveF2v = resolve;
+					else resolveT2v = resolve;
+				}),
+		);
+		render(<CreativeProductionStudioPage />);
+		await screen.findByTestId("p6-plan-status");
+		fireEvent.click(screen.getByRole("button", { name: /Choose products/ }));
+		fireEvent.click(await screen.findByRole("option", { name: /P6 Product/ }));
+		await waitFor(() =>
+			expect(fetchGovernedPoolAuthority).toHaveBeenCalledWith(
+				["product-1"],
+				"T2V",
+			),
+		);
+		fireEvent.change(screen.getByLabelText("Video logical mode"), {
+			target: { value: "F2V" },
+		});
+		await waitFor(() =>
+			expect(fetchGovernedPoolAuthority).toHaveBeenCalledWith(
+				["product-1"],
+				"F2V",
+			),
+		);
+		await act(async () => {
+			resolveF2v?.(readyAuthority);
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId("p6-create-plan")).toBeEnabled(),
+		);
+		await act(async () => {
+			resolveT2v?.({
+				...readyAuthority,
+				logical_mode: "T2V",
+				blockers: [
+					{
+						code: "APPROVED_PRODUCT_AVATAR_SELECTION_REQUIRED",
+						product_id: "product-1",
+					},
+				],
+			});
+		});
+		expect(screen.queryByTestId("p6-pool-authority-blockers")).toBeNull();
+		expect(screen.getByTestId("p6-create-plan")).toBeEnabled();
 	});
 
 	it("keeps Omni 10 seconds single-shot and exposes no unproven Omni Extend total", async () => {
