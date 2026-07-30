@@ -1700,6 +1700,43 @@ def _allocation_state_text(state: Mapping[str, Any] | None) -> str:
     return "; ".join(value for value in values if value)
 
 
+def _treatment_shot_lines(
+    treatment: Mapping[str, Any],
+) -> list[str]:
+    lines: list[str] = []
+    for shot in treatment.get("shot_grammar") or []:
+        if not isinstance(shot, Mapping):
+            continue
+        action_refs = ",".join(
+            str(value) for value in shot.get("action_sequences") or []
+        )
+        lines.append(
+            " | ".join(
+                (
+                    f"purpose={_clean(shot.get('purpose'))}",
+                    f"framing={_clean(shot.get('framing'))}",
+                    f"camera={_clean(shot.get('camera_motion'))}",
+                    f"subject={_clean(shot.get('subject'))}",
+                    f"duration={shot.get('duration_seconds')}s",
+                    f"actions={action_refs}",
+                    "continuity_in="
+                    + "; ".join(
+                        _clean(value)
+                        for value in shot.get("continuity_in") or []
+                    ),
+                    "continuity_out="
+                    + "; ".join(
+                        _clean(value)
+                        for value in shot.get("continuity_out") or []
+                    ),
+                )
+            )
+        )
+    if not lines:
+        raise ValueError("TREATMENT_SHOT_GRAMMAR_REQUIRED")
+    return lines
+
+
 def render_block(
     *,
     source_mode: str,
@@ -1723,6 +1760,7 @@ def render_block(
     shot_plan: list[str] | None = None,
     shot_count_hint: int | None = None,
     allocation: Mapping[str, Any] | None = None,
+    creative_treatment: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Render one canonical prompt block from an allocation when one is required."""
     mode = str(source_mode or "").strip().upper()
@@ -1736,6 +1774,19 @@ def render_block(
             raise ValueError("BLOCK_ALLOCATION_INDEX_MISMATCH")
         if int(allocation_data.get("duration_seconds") or 0) != block_seconds:
             raise ValueError("BLOCK_ALLOCATION_DURATION_MISMATCH")
+    treatment = dict(creative_treatment or {})
+    treatment_format = str(treatment.get("format") or "").upper()
+    if treatment:
+        if treatment_format not in {"UGC", "PGC", "CINEMATIC"}:
+            raise ValueError("TREATMENT_FORMAT_UNSUPPORTED")
+        if str(treatment.get("generation_mode") or "").upper() != "SINGLE":
+            raise ValueError("TREATMENT_EXTEND_UNSUPPORTED")
+        if total_blocks != 1 or block_index != 1:
+            raise ValueError("TREATMENT_EXTEND_UNSUPPORTED")
+        if float(treatment.get("duration_seconds") or 0) != float(
+            block_seconds
+        ):
+            raise ValueError("TREATMENT_INCOMPATIBLE")
     lang = language_name(target_language)
     is_final = bool(allocation_data.get("is_final")) if allocation_data else block_index == total_blocks
     is_continuation = block_index > 1
@@ -1750,7 +1801,9 @@ def render_block(
     presenter = None
     presenter_text = None
     family = _infer_product_family(product, norm_copy)
-    if mode in ("HYBRID", "T2V") or (mode == "IMAGES" and presenter_profile):
+    if (
+        mode in ("HYBRID", "T2V") and treatment_format != "PGC"
+    ) or (mode == "IMAGES" and presenter_profile):
         presenter = presenter_profile or avatar_registry.resolve_presenter(
             seed=_clean(product.get("id") or product.get("name") or "bosmax"),
         )
@@ -1775,6 +1828,25 @@ def render_block(
         s1 += f" Treat it as a real {category.lower()} product, not a generic prop."
     if angle_hint:
         s1 += f" The commercial angle is {angle_hint}."
+    if treatment:
+        format_objective = {
+            "UGC": (
+                "Use an authentic presenter-led creator grammar with direct "
+                "human demonstration and believable handheld immediacy."
+            ),
+            "PGC": (
+                "Use a product-led commercial grammar with controlled tabletop "
+                "demonstration, precise product action, and no visible presenter."
+            ),
+            "CINEMATIC": (
+                "Use a composed cinematic grammar with deliberate lensing, "
+                "motivated camera movement, lighting continuity, and visual rhythm."
+            ),
+        }[treatment_format]
+        s1 = (
+            f"{s1} Approved Creative Treatment "
+            f"{treatment.get('treatment_id')}: {format_objective}"
+        )
     is_video = mode != "IMAGES"
     has_product_reference = mode in ("HYBRID", "FRAMES", "INGREDIENTS") or bool(
         (asset_role_map or {}).get("PRODUCT_REFERENCE")
@@ -1804,6 +1876,32 @@ def render_block(
     )
     if s3_lock_lines:
         s3 = "\n".join([s3, *s3_lock_lines])
+    if treatment:
+        action_lines = [
+            (
+                f"Action {step.get('sequence')}: "
+                f"{_clean(step.get('action_text'))}; "
+                f"actor={_clean(step.get('actor_role'))}; "
+                f"state={_clean(step.get('initial_state'))} -> "
+                f"{_clean(step.get('resulting_state'))}; "
+                "continuity="
+                + "; ".join(
+                    _clean(value)
+                    for value in step.get("continuity_requirements") or []
+                )
+            )
+            for step in treatment.get("action_sequence") or []
+            if isinstance(step, Mapping)
+        ]
+        if not action_lines:
+            raise ValueError("TREATMENT_ACTION_SEQUENCE_REQUIRED")
+        s3 = "\n".join(
+            [
+                s3,
+                "Execute this approved action sequence exactly:",
+                *action_lines,
+            ]
+        )
     if allocation_data:
         allocated_beats = list(allocation_data.get("assigned_story_beats") or [])
         if not allocated_beats:
@@ -1823,6 +1921,8 @@ def render_block(
                 f"Begin from this exact allocated state: {entry_text}.",
                 f"Preserve this allocated exit state for the next block: {exit_text}.",
             ])
+    elif treatment:
+        shots = _treatment_shot_lines(treatment)
     else:
         shots = list(shot_plan or [])
     if not shots:
@@ -1854,17 +1954,38 @@ def render_block(
             f"{still_camera_note} {lens_note}",
         ]
     else:
-        s5_lines = [
-            "Handheld vertical 9:16 framing with natural micro-jitter and organic human sway.",
-            camera_notes or "Eye-level medium close-up to close-up range; soft natural light; no flash, no hard fill.",
-            "Do not introduce any unrequested isolated product-only flash shot, cutaway "
-            "packshot, product-only insert montage, or sudden hero product spotlight sequence. "
-            "Keep the product within the intended continuous scene at its true small scale and "
-            "preserve the current reference and state relationship: if the presenter is holding "
-            "the product, keep it in hand; if the product is resting in its own scene or setting, "
-            "keep it there naturally — either way, do not cut away to an isolated hero product "
-            "beauty shot.",
-        ]
+        if not treatment:
+            s5_lines = [
+                "Handheld vertical 9:16 framing with natural micro-jitter and organic human sway.",
+                camera_notes or "Eye-level medium close-up to close-up range; soft natural light; no flash, no hard fill.",
+                "Do not introduce any unrequested isolated product-only flash shot, cutaway "
+                "packshot, product-only insert montage, or sudden hero product spotlight sequence. "
+                "Keep the product within the intended continuous scene at its true small scale and "
+                "preserve the current reference and state relationship: if the presenter is holding "
+                "the product, keep it in hand; if the product is resting in its own scene or setting, "
+                "keep it there naturally — either way, do not cut away to an isolated hero product "
+                "beauty shot.",
+            ]
+        elif treatment_format == "PGC":
+            s5_lines = [
+                "Locked-off or precisely controlled product-led composition; no handheld creator sway.",
+                camera_notes
+                or "Use measured tabletop camera movement, clean product separation, and controlled commercial lighting.",
+                "No visible presenter. Hands may enter only when authorized by the treatment action sequence.",
+            ]
+        elif treatment_format == "CINEMATIC":
+            s5_lines = [
+                "Deliberate cinematic composition with motivated camera movement and stable continuity.",
+                camera_notes
+                or "Use intentional lens language, shaped lighting, controlled depth, and purposeful visual rhythm.",
+                "Every cut and movement must serve the approved shot grammar; no generic creator-camera fallback.",
+            ]
+        else:
+            s5_lines = [
+                "Handheld vertical 9:16 framing with natural micro-jitter and organic human sway.",
+                camera_notes or "Eye-level medium close-up to close-up range; soft natural light; no flash, no hard fill.",
+                "Keep the product within the intended continuous creator scene at its true scale.",
+            ]
     if is_continuation:
         s5_lines.append(
             "For the first half second, continue the exact motion already in progress. For the "
@@ -1874,9 +1995,14 @@ def render_block(
         )
     s5 = "\n".join(s5_lines)
     dialogue = (
+        _clean(treatment.get("dialogue_text"))
+        if treatment
+        else
         "" if mode == "IMAGES" else _clean(allocation_data.get("exact_dialogue_slice"))
     ) if allocation_data else (
-        "" if mode == "IMAGES" else build_block_dialogue(
+        _clean(treatment.get("dialogue_text"))
+        if treatment
+        else "" if mode == "IMAGES" else build_block_dialogue(
             copy=norm_copy, block_index=block_index, total_blocks=total_blocks,
             budget=budget, target_language=target_language, family=family,
             approved_dialogue=approved_dialogue,
@@ -1885,6 +2011,18 @@ def render_block(
     s6 = dialogue if dialogue else "(No spoken dialogue in this block.)"
     family_voice = _family_voice_clause(family, target_language)
     s7 = (
+        (
+            f"Use the approved {treatment_format} audio grammar. "
+            + (
+                f"The presenter speaks {lang} directly and naturally; no voice-over."
+                if treatment_format == "UGC"
+                else f"Use a controlled {lang} product-led voice-over; no visible presenter speech."
+                if treatment_format == "PGC"
+                else f"Deliver the approved {lang} dialogue with cinematic pacing and exact synchronization."
+            )
+        )
+        if treatment
+        else
         f"The presenter speaks {lang} only, direct to camera, in short, natural, conversational phrasing — present in the moment, never narrating from outside it. "
         f"{family_voice + ' ' if family_voice else ''}"
         "No voice-over. No off-camera speech. No audio-only dialogue."
@@ -1948,6 +2086,8 @@ def render_block(
         "dialogue_word_count": len(dialogue.split()) if dialogue else 0,
         "allocation": allocation_data or None,
         "presenter": presenter,
+        "creative_treatment": treatment or None,
+        "compiled_shot_grammar": shots if treatment else None,
         "scrub_violations": violations,
         "sections": dict(zip(CANONICAL_SECTIONS, bodies)),
     }
@@ -1973,13 +2113,22 @@ def compile_prompt_set(
     overlay_text: str | None = None,
     camera_notes: str = "",
     handling_notes: str = "",
+    creative_treatment: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compile the full MULTI-PROMPT SET: one complete 9-section block per
     workbook-derived block (1-7). This is THE canonical entrypoint."""
     mode = str(source_mode or "").strip().upper()
     if mode not in SOURCE_MODES:
         raise ValueError(f"UNSUPPORTED_SOURCE_MODE:{source_mode}")
-    if mode == "IMAGES":
+    if creative_treatment:
+        if str(creative_treatment.get("generation_mode") or "").upper() != "SINGLE":
+            raise ValueError("TREATMENT_EXTEND_UNSUPPORTED")
+        if float(creative_treatment.get("duration_seconds") or 0) != float(
+            duration_seconds
+        ):
+            raise ValueError("TREATMENT_INCOMPATIBLE")
+        plan = [duration_seconds]
+    elif mode == "IMAGES":
         plan = [0]
     else:
         plan = resolve_block_plan(engine, duration_seconds, preferred_lane=preferred_lane)
@@ -2001,7 +2150,9 @@ def compile_prompt_set(
     total = len(plan)
     planner_result = None
     allocations: list[dict[str, Any] | None]
-    if mode == "IMAGES":
+    if creative_treatment:
+        allocations = [None]
+    elif mode == "IMAGES":
         allocations = [None]
     else:
         from agent.services.full_storyboard_extend_planner import plan_full_storyboard
@@ -2032,6 +2183,7 @@ def compile_prompt_set(
             camera_notes=camera_notes, handling_notes=handling_notes,
             shot_count_hint=1 if mode == "IMAGES" else min(4, max(2, round((seconds or duration_seconds) / 4))),
             allocation=allocation,
+            creative_treatment=creative_treatment,
         ))
     all_violations = [v for b in blocks for v in b["scrub_violations"]]
     if all_violations:
@@ -2047,4 +2199,18 @@ def compile_prompt_set(
         "presenter": resolved_profile,
         "blocks": blocks,
         "planner_result": planner_result,
+        "treatment_lineage": (
+            {
+                "treatment_id": creative_treatment.get("treatment_id"),
+                "treatment_sha256": creative_treatment.get(
+                    "treatment_sha256"
+                ),
+                "visual_fingerprint_sha256": creative_treatment.get(
+                    "visual_fingerprint_sha256"
+                ),
+                "format": creative_treatment.get("format"),
+            }
+            if creative_treatment
+            else None
+        ),
     }

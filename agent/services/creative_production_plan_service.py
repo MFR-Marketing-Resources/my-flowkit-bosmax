@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from agent.db import creative_production_crud as p6db
+from agent.db import creative_treatment_crud as treatment_db
 from agent.db import crud
 from agent.models.creative_production import (
     CapacityPreflightResponse,
@@ -27,6 +28,7 @@ from agent.models.creative_production import (
 )
 from agent.services import avatar_registry
 from agent.services import copy_rotation_service
+from agent.services import creative_treatment_service as treatment_service
 from agent.services import poster_recipe_service
 from agent.services import video_models
 from agent.services.catalog_coverage_service import build_catalog_authority_matrix
@@ -208,6 +210,339 @@ def _video_allocations(plan: dict[str, Any]) -> dict[str, int]:
     }
 
 
+_TREATMENT_DEPENDENCY_HASH_FIELDS = (
+    "product_truth_sha256",
+    "copy_set_sha256",
+    "creative_selection_sha256",
+    "scene_strategy_sha256",
+    "avatar_sha256",
+    "wardrobe_sha256",
+    "scene_template_sha256",
+    "camera_preset_sha256",
+    "dialogue_sha256",
+)
+
+
+def _treatment_error(
+    code: str,
+    message: str,
+    *,
+    status_code: int = 422,
+    details: dict[str, Any] | None = None,
+) -> CreativeProductionError:
+    return CreativeProductionError(
+        code,
+        message,
+        status_code=status_code,
+        details=details,
+    )
+
+
+async def resolve_treatment_authority(
+    treatment_id: str,
+    *,
+    plan: dict[str, Any] | None = None,
+    expected: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Resolve one immutable P7.5 treatment projection for a P6 video item."""
+
+    row = await treatment_db.get_treatment(treatment_id)
+    if row is None:
+        raise _treatment_error(
+            "TREATMENT_NOT_FOUND",
+            f"Creative Treatment {treatment_id} was not found.",
+            status_code=404,
+        )
+    if str(row.get("status") or "") != "APPROVED":
+        raise _treatment_error(
+            "TREATMENT_NOT_APPROVED",
+            f"Creative Treatment {treatment_id} is not approved.",
+            status_code=409,
+        )
+    if str(row.get("generation_mode") or "").upper() != "SINGLE":
+        raise _treatment_error(
+            "TREATMENT_EXTEND_UNSUPPORTED",
+            "P7.5 v1 accepts SINGLE treatments only.",
+        )
+    format_name = str(row.get("format") or "").upper()
+    if format_name not in {"UGC", "PGC", "CINEMATIC"}:
+        raise _treatment_error(
+            "TREATMENT_FORMAT_UNSUPPORTED",
+            f"Unsupported treatment format {format_name or '<empty>'}.",
+        )
+    decoded = treatment_service._decode_treatment(row)
+    compatibility = decoded.get("compatibility_profile") or {}
+    if not isinstance(compatibility, dict):
+        raise _treatment_error(
+            "TREATMENT_INCOMPATIBLE",
+            "Treatment compatibility authority is malformed.",
+        )
+    if "FALLBACK" in str(row.get("scene_strategy_id") or "").upper():
+        raise _treatment_error(
+            "TREATMENT_GENERIC_FALLBACK_FORBIDDEN",
+            "Generic fallback scene authority is forbidden for P6 video.",
+        )
+    expected_source_mode = {
+        "T2V": "T2V",
+        "HYBRID": "HYBRID",
+        "F2V": "FRAMES",
+        "I2V": "INGREDIENTS",
+    }.get(str(compatibility.get("logical_mode") or ""))
+    if (
+        expected_source_mode is None
+        or str(compatibility.get("source_mode") or "")
+        != expected_source_mode
+    ):
+        raise _treatment_error(
+            "TREATMENT_INCOMPATIBLE",
+            "Treatment source mode does not match its governed logical mode.",
+            details={"treatment_id": treatment_id},
+        )
+    try:
+        current = await treatment_service._revalidate(row)
+    except treatment_service.CreativeTreatmentError as exc:
+        code = (
+            "TREATMENT_HASH_STALE"
+            if exc.code == "TREATMENT_AUTHORITY_STALE"
+            else "TREATMENT_DEPENDENCY_STALE"
+        )
+        raise _treatment_error(
+            code,
+            "Creative Treatment dependency authority has drifted.",
+            status_code=409,
+            details={"treatment_id": treatment_id, "authority_code": exc.code},
+        ) from exc
+
+    if plan is not None:
+        product_scope = set(_loads(plan.get("product_scope_json"), []))
+        if str(row["product_id"]) not in product_scope:
+            raise _treatment_error(
+                "TREATMENT_INCOMPATIBLE",
+                "Treatment product is outside the P6 plan scope.",
+                details={"treatment_id": treatment_id},
+            )
+        logical_mode = str(plan.get("logical_mode") or "")
+        if str(compatibility.get("logical_mode") or "") != logical_mode:
+            raise _treatment_error(
+                "TREATMENT_INCOMPATIBLE",
+                "Treatment logical mode does not match the P6 plan.",
+                details={
+                    "treatment_id": treatment_id,
+                    "treatment_logical_mode": compatibility.get("logical_mode"),
+                    "plan_logical_mode": logical_mode,
+                },
+            )
+        durations = {
+            float(value)
+            for value in _loads(plan.get("duration_seconds_json"), [])
+        }
+        if float(row["duration_seconds"]) not in durations:
+            raise _treatment_error(
+                "TREATMENT_INCOMPATIBLE",
+                "Treatment duration is outside the P6 duration pool.",
+                details={"treatment_id": treatment_id},
+            )
+        plan_models = _loads(plan.get("model_keys_json"), [])
+        compatible_models = [
+            str(value)
+            for value in compatibility.get("model_keys") or plan_models
+            if str(value) in plan_models
+        ]
+        if not compatible_models:
+            raise _treatment_error(
+                "TREATMENT_INCOMPATIBLE",
+                "Treatment has no compatible model in the P6 model pool.",
+                details={"treatment_id": treatment_id},
+            )
+    else:
+        compatible_models = [
+            str(value) for value in compatibility.get("model_keys") or []
+        ]
+
+    group_projection: dict[str, Any] | None = None
+    group_id = str(row.get("variation_group_id") or "").strip()
+    if group_id:
+        group = await treatment_db.get_variation_group(group_id)
+        if group is None or str(group.get("status") or "") != "APPROVED":
+            raise _treatment_error(
+                "VARIATION_GROUP_NOT_APPROVED",
+                f"Variation Group {group_id} is not approved.",
+                status_code=409,
+            )
+        members = await treatment_db.list_group_members(group_id)
+        try:
+            group_sha256, member_projection = treatment_service._group_snapshot(
+                group,
+                members,
+            )
+        except treatment_service.CreativeTreatmentError as exc:
+            mapped = (
+                "VARIATION_GROUP_DIALOGUE_MISMATCH"
+                if "DIALOGUE" in exc.code
+                else "VARIATION_GROUP_NOT_APPROVED"
+            )
+            raise _treatment_error(
+                mapped,
+                "Variation Group authority failed revalidation.",
+                status_code=409,
+                details={"group_id": group_id, "authority_code": exc.code},
+            ) from exc
+        if group_sha256 != str(group.get("group_sha256") or ""):
+            raise _treatment_error(
+                "VARIATION_GROUP_HASH_STALE",
+                "Variation Group membership hash has drifted.",
+                status_code=409,
+                details={"group_id": group_id},
+            )
+        group_projection = {
+            "group_id": group_id,
+            "group_sha256": group_sha256,
+            "dialogue_sha256": group["dialogue_sha256"],
+            "member_count": len(member_projection),
+            "members": member_projection,
+        }
+
+    projection = {
+        "treatment_id": treatment_id,
+        "treatment_sha256": str(current["treatment_sha256"]),
+        "product_id": str(row["product_id"]),
+        "format": format_name,
+        "generation_mode": "SINGLE",
+        "duration_seconds": float(row["duration_seconds"]),
+        "copy_set_id": str(row["copy_set_id"]),
+        "content_angle": str(row.get("content_angle") or ""),
+        "dialogue_text": str(row.get("dialogue_text") or ""),
+        "avatar_code": str(row.get("avatar_code") or ""),
+        "wardrobe_text": str(row.get("wardrobe_text") or ""),
+        "scene_strategy_id": str(row["scene_strategy_id"]),
+        "scene_template_id": str(row.get("scene_template_id") or ""),
+        "camera_preset_code": str(row.get("camera_preset_code") or ""),
+        "asset_bindings": decoded.get("asset_bindings") or [],
+        "action_sequence": decoded.get("action_sequence") or [],
+        "shot_grammar": decoded.get("shot_grammar") or [],
+        "compatibility_profile": compatibility,
+        "compatible_model_keys": compatible_models,
+        "selected_model_key": compatible_models[0] if compatible_models else "",
+        "visual_fingerprint_sha256": str(
+            row["visual_fingerprint_sha256"]
+        ),
+        "variation_group": group_projection,
+        "variation_group_id": group_id or None,
+        "variation_ordinal": row.get("variation_ordinal"),
+        "dependency_hashes": {
+            field: row.get(field)
+            for field in _TREATMENT_DEPENDENCY_HASH_FIELDS
+        },
+    }
+    if expected is not None:
+        if expected.get("dependency_hashes") != projection[
+            "dependency_hashes"
+        ]:
+            raise _treatment_error(
+                "TREATMENT_DEPENDENCY_STALE",
+                "Stored P6 treatment dependencies no longer match authority.",
+                status_code=409,
+                details={"treatment_id": treatment_id},
+            )
+        if expected.get("variation_group") != projection["variation_group"]:
+            raise _treatment_error(
+                "VARIATION_GROUP_HASH_STALE",
+                "Stored P6 Variation Group lineage no longer matches authority.",
+                status_code=409,
+                details={"treatment_id": treatment_id},
+            )
+        if (
+            expected.get("treatment_sha256")
+            != projection["treatment_sha256"]
+            or expected.get("visual_fingerprint_sha256")
+            != projection["visual_fingerprint_sha256"]
+        ):
+            raise _treatment_error(
+                "TREATMENT_HASH_STALE",
+                "Stored P6 treatment lineage no longer matches authority.",
+                status_code=409,
+                details={"treatment_id": treatment_id},
+            )
+    return projection
+
+
+async def _resolve_plan_treatments(
+    plan: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if int(plan.get("target_video_count") or 0) <= 0:
+        return []
+    pool = _loads(plan.get("pool_snapshot_json"), {})
+    treatment_ids = [
+        str(value).strip()
+        for value in pool.get("treatment_ids") or []
+        if str(value).strip()
+    ]
+    if not treatment_ids:
+        raise _treatment_error(
+            "TREATMENT_IDS_REQUIRED_FOR_VIDEO",
+            "P6 video plans require explicit approved Creative Treatment IDs.",
+        )
+    if len(treatment_ids) != len(set(treatment_ids)):
+        raise _treatment_error(
+            "TREATMENT_INCOMPATIBLE",
+            "Treatment IDs must be unique.",
+        )
+    expected_by_id = {
+        str(item.get("treatment_id") or ""): item
+        for item in pool.get("treatments") or []
+        if isinstance(item, dict) and item.get("treatment_id")
+    }
+    projections = [
+        await resolve_treatment_authority(
+            treatment_id,
+            plan=plan,
+            expected=expected_by_id.get(treatment_id),
+        )
+        for treatment_id in treatment_ids
+    ]
+    if int(plan["target_video_count"]) > len(projections):
+        raise _treatment_error(
+            "TREATMENT_INCOMPATIBLE",
+            "Video target exceeds eligible unique treatment authority.",
+            details={
+                "requested": int(plan["target_video_count"]),
+                "available": len(projections),
+            },
+        )
+    allocations = _video_allocations(plan)
+    counts = Counter(item["product_id"] for item in projections)
+    for product_id, requested in allocations.items():
+        if requested > counts[product_id]:
+            raise _treatment_error(
+                "TREATMENT_INCOMPATIBLE",
+                "Product video allocation exceeds eligible treatments.",
+                details={
+                    "product_id": product_id,
+                    "requested": requested,
+                    "available": counts[product_id],
+                },
+            )
+    return projections
+
+
+async def resolve_item_treatment(
+    dimensions: dict[str, Any],
+    plan: dict[str, Any],
+) -> dict[str, Any]:
+    expected = dimensions.get("creative_treatment")
+    if not isinstance(expected, dict) or not expected.get("treatment_id"):
+        raise _treatment_error(
+            "TREATMENT_LINEAGE_REQUIRED",
+            "Nonterminal P6 video items require immutable treatment lineage.",
+            status_code=409,
+        )
+    return await resolve_treatment_authority(
+        str(expected["treatment_id"]),
+        plan=plan,
+        expected=expected,
+    )
+
+
 async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
     existing = await p6db.get_plan_by_request_id(body.request_id)
     request_snapshot = _request_snapshot(body)
@@ -234,6 +569,24 @@ async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
         }
     )
     plan_id = f"p6plan_{uuid.uuid4().hex[:20]}"
+    pool_snapshot = {
+        **body.pools.model_dump(mode="json"),
+        "controlled_reuse_reason": body.controlled_reuse_reason,
+        "controlled_reuse_max_per_dna": body.controlled_reuse_max_per_dna,
+        "product_video_allocations": [
+            allocation.model_dump(mode="json")
+            for allocation in body.product_video_allocations
+        ],
+    }
+    authority_plan = {
+        "product_scope_json": _stable_json(sorted(body.product_ids)),
+        "target_video_count": body.target_video_count,
+        "logical_mode": body.logical_mode,
+        "model_keys_json": _stable_json(body.model_keys),
+        "duration_seconds_json": _stable_json(body.duration_seconds),
+        "pool_snapshot_json": _stable_json(pool_snapshot),
+    }
+    pool_snapshot["treatments"] = await _resolve_plan_treatments(authority_plan)
     row = await p6db.create_plan(
         {
             "plan_id": plan_id,
@@ -253,19 +606,7 @@ async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
             "logical_mode": body.logical_mode,
             "model_keys_json": _stable_json(body.model_keys),
             "duration_seconds_json": _stable_json(body.duration_seconds),
-            "pool_snapshot_json": _stable_json(
-                {
-                    **body.pools.model_dump(mode="json"),
-                    "controlled_reuse_reason": body.controlled_reuse_reason,
-                    "controlled_reuse_max_per_dna": (
-                        body.controlled_reuse_max_per_dna
-                    ),
-                    "product_video_allocations": [
-                        allocation.model_dump(mode="json")
-                        for allocation in body.product_video_allocations
-                    ],
-                }
-            ),
+            "pool_snapshot_json": _stable_json(pool_snapshot),
             "execution_policy_json": _stable_json(policy),
             "status": PlanStatus.DRAFT.value,
         }
@@ -424,6 +765,10 @@ async def update_plan(
                 "controlled_reuse_max_per_dna",
                 prior_pool.get("controlled_reuse_max_per_dna", 1),
             ),
+            "product_video_allocations": prior_pool.get(
+                "product_video_allocations",
+                [],
+            ),
         }
         values["pool_snapshot_json"] = _stable_json(next_pool)
     elif {
@@ -453,6 +798,14 @@ async def update_plan(
             "CONTROLLED_REUSE_REASON_REQUIRED",
             "Exact DNA reuse requires an explicit reason and bounded reuse limit.",
         )
+    authority_plan = {**plan, **values}
+    next_pool["treatments"] = await _resolve_plan_treatments(
+        {
+            **authority_plan,
+            "pool_snapshot_json": _stable_json(next_pool),
+        }
+    )
+    values["pool_snapshot_json"] = _stable_json(next_pool)
     policy.update(
         {
             "last_update_request_id": request_id,
@@ -618,6 +971,8 @@ async def _load_approved_pools(plan: dict[str, Any]) -> dict[str, Any]:
     blockers: list[dict[str, Any]] = []
     logical_mode = str(plan["logical_mode"])
     target_video_count = int(plan["target_video_count"])
+    treatment_projections = await _resolve_plan_treatments(plan)
+    treatment_authority_active = bool(treatment_projections)
 
     products: dict[str, dict[str, Any]] = {}
     for product_id in product_ids:
@@ -733,6 +1088,7 @@ async def _load_approved_pools(plan: dict[str, Any]) -> dict[str, Any]:
         profile = avatar_index.get(selected_code)
         avatar_required = (
             target_video_count > 0 and logical_mode in {"T2V", "HYBRID", "I2V"}
+            and not treatment_authority_active
         )
         if (
             avatar_required
@@ -892,6 +1248,7 @@ async def _load_approved_pools(plan: dict[str, Any]) -> dict[str, Any]:
         },
         "scene_strategies": scene_strategies,
         "creative_selections": creative_selections,
+        "treatments": treatment_projections,
         "blockers": blockers,
     }
 
@@ -1034,6 +1391,12 @@ def _creative_dna_payload(dimensions: dict[str, str]) -> dict[str, str]:
         "engine_block_duration_seconds",
         "segment_count",
         "execution_route",
+        "treatment_id",
+        "treatment_sha256",
+        "treatment_visual_fingerprint_sha256",
+        "treatment_format",
+        "variation_group_id",
+        "variation_group_sha256",
     )
     return {field: str(dimensions.get(field) or "") for field in governed_fields}
 
@@ -1084,6 +1447,128 @@ def _product_dimension_rows(
     policy = _loads(plan.get("execution_policy_json"), {})
     near_threshold = float(policy.get("near_duplicate_threshold") or 0.80)
     blockers: list[dict[str, Any]] = []
+
+    if media_type == "VIDEO" and approved.get("treatments"):
+        treatment_rows = [
+            treatment
+            for treatment in approved["treatments"]
+            if treatment["product_id"] == product_id
+        ]
+        rows: list[dict[str, Any]] = []
+        for treatment in treatment_rows:
+            asset_by_role = {
+                str(binding.get("role") or ""): str(
+                    binding.get("asset_id") or ""
+                )
+                for binding in treatment["asset_bindings"]
+                if isinstance(binding, dict)
+            }
+            duration = int(float(treatment["duration_seconds"]))
+            model_key = str(treatment["selected_model_key"])
+            try:
+                orchestration = video_models.resolve_orchestration(
+                    model_key,
+                    duration,
+                )
+            except ValueError as exc:
+                blockers.append(
+                    {
+                        "code": "TREATMENT_INCOMPATIBLE",
+                        "treatment_id": treatment["treatment_id"],
+                        "detail": str(exc),
+                    }
+                )
+                continue
+            if orchestration["generation_mode"] != "SINGLE":
+                blockers.append(
+                    {
+                        "code": "TREATMENT_EXTEND_UNSUPPORTED",
+                        "treatment_id": treatment["treatment_id"],
+                    }
+                )
+                continue
+            group = treatment.get("variation_group") or {}
+            rows.append(
+                {
+                    "product_id": product_id,
+                    "media_type": "VIDEO",
+                    "logical_mode": logical_mode,
+                    "copy_set_id": treatment["copy_set_id"],
+                    "copy_identity_sha256": treatment["dependency_hashes"][
+                        "copy_set_sha256"
+                    ],
+                    "marketing_angle": treatment["content_angle"],
+                    "hook": treatment["dialogue_text"],
+                    "cta": "",
+                    "formula_family": "CREATIVE_TREATMENT",
+                    "claim_safety_status": "APPROVED",
+                    "copy_usage_count": "0",
+                    "near_duplicate_status": "CLEAR",
+                    "near_duplicate_score": "0.0",
+                    "similar_to_copy_set_id": "",
+                    "avatar_code": treatment["avatar_code"],
+                    "age_band": "",
+                    "wardrobe": treatment["wardrobe_text"],
+                    "avatar_variant": "",
+                    "product_reference_asset_id": asset_by_role.get(
+                        "PRODUCT_REFERENCE",
+                        "",
+                    ),
+                    "finished_frame_asset_id": asset_by_role.get(
+                        "COMPOSITE_FRAME_REFERENCE",
+                        "",
+                    ),
+                    "character_asset_id": asset_by_role.get(
+                        "CHARACTER_REFERENCE",
+                        "",
+                    ),
+                    "scene_asset_id": asset_by_role.get(
+                        "SCENE_CONTEXT_REFERENCE",
+                        "",
+                    ),
+                    "style_asset_id": asset_by_role.get(
+                        "STYLE_REFERENCE",
+                        "",
+                    ),
+                    "scene_strategy_id": treatment["scene_strategy_id"],
+                    "scene_family": treatment["scene_strategy_id"],
+                    "scene_strategy": treatment["scene_strategy_id"],
+                    "scene_context": treatment["scene_template_id"],
+                    "product_interaction": _stable_json(
+                        treatment["action_sequence"]
+                    ),
+                    "camera_composition": treatment["camera_preset_code"],
+                    "strategy_avatar_hint": treatment["avatar_code"],
+                    "strategy_wardrobe_hint": treatment["wardrobe_text"],
+                    "scene_strategy_context": treatment[
+                        "scene_template_id"
+                    ],
+                    "layout_id": "",
+                    "model_key": model_key,
+                    "duration_seconds": str(duration),
+                    "generation_mode": "SINGLE",
+                    "engine_block_duration_seconds": str(duration),
+                    "segment_count": "1",
+                    "execution_route": orchestration["execution_route"],
+                    "treatment_id": treatment["treatment_id"],
+                    "treatment_sha256": treatment["treatment_sha256"],
+                    "treatment_visual_fingerprint_sha256": treatment[
+                        "visual_fingerprint_sha256"
+                    ],
+                    "treatment_format": treatment["format"],
+                    "variation_group_id": treatment.get(
+                        "variation_group_id"
+                    )
+                    or "",
+                    "variation_group_sha256": group.get("group_sha256") or "",
+                    "creative_treatment": treatment,
+                    "exact_duplicate_status": "UNIQUE",
+                    "quota_status": "WITHIN_POLICY",
+                    "readiness": "PREFLIGHT_ELIGIBLE",
+                    "blockers": "",
+                }
+            )
+        return len(treatment_rows), rows, blockers
 
     if media_type == "POSTER":
         copies = approved["poster_copy_sets"].get(product_id) or []
@@ -1450,8 +1935,10 @@ async def _capacity_candidates(
     copy_capacity_slots = 0
     capped_candidates: dict[str, list[tuple[str, dict[str, str]]]] = {}
     for media_type, rows in candidates.items():
-        if media_type == "POSTER":
+        if media_type in {"VIDEO", "POSTER"}:
             capped_candidates[media_type] = rows
+            if media_type == "VIDEO":
+                copy_capacity_slots += len(rows)
             continue
         used_per_copy: Counter[str] = Counter()
         eligible_rows: list[tuple[str, dict[str, str]]] = []
@@ -1495,6 +1982,7 @@ async def _capacity_candidates(
         "layouts": len(_unique(approved["raw"].get("layout_ids") or [])),
         "models": len(_loads(plan.get("model_keys_json"), [])),
         "durations": len(_loads(plan.get("duration_seconds_json"), [])),
+        "treatments": len(approved.get("treatments") or []),
         "copy_capacity_slots": copy_capacity_slots,
     }
     return raw_capacity, candidates, approved_counts, blockers, len(historical)
@@ -1674,6 +2162,9 @@ async def run_capacity_preflight(
     )
     safe_capacity: dict[str, int] = {}
     for media_type, rows in candidates.items():
+        if media_type == "VIDEO":
+            safe_capacity[media_type] = unique_capacity[media_type]
+            continue
         if media_type == "POSTER":
             safe_capacity[media_type] = unique_capacity[media_type] * (
                 controlled_reuse_max if controlled_reuse_reason else 1
@@ -1704,24 +2195,7 @@ async def run_capacity_preflight(
             for dna, dimension in candidates["VIDEO"]
             if dimension.get("product_id") == product_id
         ]
-        remaining_by_copy: Counter[str] = Counter()
-        unique_by_copy: Counter[str] = Counter()
-        for _, dimension in product_rows:
-            copy_set_id = dimension["copy_set_id"]
-            historical_usage = int(dimension.get("copy_usage_count") or 0)
-            remaining_by_copy[copy_set_id] = max(
-                copy_rotation_service.REUSE_CAP - historical_usage,
-                0,
-            )
-            unique_by_copy[copy_set_id] += 1
-        product_safe_capacity = sum(
-            min(
-                unique_count
-                * (controlled_reuse_max if controlled_reuse_reason else 1),
-                remaining_by_copy[copy_set_id],
-            )
-            for copy_set_id, unique_count in unique_by_copy.items()
-        )
+        product_safe_capacity = len({dna for dna, _ in product_rows})
         if requested_count > product_safe_capacity:
             blockers.append(
                 {
@@ -1769,7 +2243,12 @@ async def run_capacity_preflight(
     }
     remediation = _capacity_remediation(blockers, pool_counts)
     assumptions = {
-        "capacity_is_unique_cartesian_product": True,
+        "capacity_is_unique_cartesian_product": (
+            int(plan["target_video_count"]) == 0
+        ),
+        "video_capacity_is_cartesian_product": False,
+        "video_capacity_authority": "APPROVED_CREATIVE_TREATMENTS",
+        "video_controlled_reuse_enabled": False,
         "historical_exact_dna_excluded": True,
         "near_duplicate_is_warning_only": True,
         "controlled_reuse_reason": controlled_reuse_reason or None,
@@ -1931,8 +2410,9 @@ async def materialize_content_matrix(
                 )
             cursor = 0
             selected_in_group = 0
+            media_reuse_max = 1 if media_type == "VIDEO" else controlled_reuse_max
             while selected_in_group < group_target:
-                if cursor >= len(group_rows) * controlled_reuse_max:
+                if cursor >= len(group_rows) * media_reuse_max:
                     raise CreativeProductionError(
                         "CONTROLLED_CAPACITY_SELECTION_FAILED",
                         (
@@ -1944,11 +2424,13 @@ async def materialize_content_matrix(
                 dna, dimensions = group_rows[cursor % len(group_rows)]
                 cursor += 1
                 if dna_uses[dna] >= (
-                    controlled_reuse_max if controlled_reuse_reason else 1
+                    media_reuse_max
+                    if controlled_reuse_reason and media_type != "VIDEO"
+                    else 1
                 ):
                     continue
                 copy_set_id = dimensions["copy_set_id"]
-                if media_type != "POSTER":
+                if media_type == "IMAGE":
                     historical_usage = int(
                         dimensions.get("copy_usage_count") or 0
                     )

@@ -37,6 +37,7 @@ from agent.services.creative_production_plan_service import (
     _sha,
     _stable_json,
     record_audit_event,
+    resolve_item_treatment,
 )
 
 
@@ -250,6 +251,27 @@ async def _build_item_payload(
     dimensions = _loads(item.get("creative_dimensions_json"), {})
     model_key = str(dimensions.get("model_key") or "")
     duration_seconds = int(dimensions.get("duration_seconds") or 8)
+    treatment: dict[str, Any] | None = None
+    if media_type == "VIDEO":
+        try:
+            treatment = await resolve_item_treatment(dimensions, plan)
+        except CreativeProductionError as exc:
+            return {}, [exc.code]
+        package_lineage = package.get("treatment_lineage")
+        if not isinstance(package_lineage, dict):
+            return {}, ["TREATMENT_LINEAGE_REQUIRED"]
+        expected_lineage = {
+            "treatment_id": treatment["treatment_id"],
+            "treatment_sha256": treatment["treatment_sha256"],
+            "visual_fingerprint_sha256": treatment[
+                "visual_fingerprint_sha256"
+            ],
+            "dependency_hashes": treatment["dependency_hashes"],
+            "variation_group": treatment["variation_group"],
+            "format": treatment["format"],
+        }
+        if package_lineage != expected_lineage:
+            return {}, ["TREATMENT_HASH_STALE"]
     if media_type == "POSTER":
         prompt = (
             package.get("final_prompt_text")
@@ -281,6 +303,8 @@ async def _build_item_payload(
         or package.get("generation_mode")
         or "SINGLE"
     ).upper()
+    if media_type == "VIDEO" and generation_mode != "SINGLE":
+        return {}, ["TREATMENT_EXTEND_UNSUPPORTED"]
     if media_type == "VIDEO" and generation_mode == "EXTEND":
         resolved, blockers = (
             production_queue_service.extend_execution_preconditions(
@@ -357,7 +381,7 @@ async def _build_item_payload(
             },
             blockers,
         )
-    return await production_queue_service.build_execution_payload(
+    payload, blockers = await production_queue_service.build_execution_payload(
         wgp,
         {
             "model": model_key,
@@ -367,6 +391,19 @@ async def _build_item_payload(
             "count": 1,
         },
     )
+    if treatment is not None:
+        payload["creative_treatment_lineage"] = {
+            "treatment_id": treatment["treatment_id"],
+            "treatment_sha256": treatment["treatment_sha256"],
+            "visual_fingerprint_sha256": treatment[
+                "visual_fingerprint_sha256"
+            ],
+            "dependency_hashes": treatment["dependency_hashes"],
+            "variation_group": treatment["variation_group"],
+            "format": treatment["format"],
+        }
+        payload["compiled_shot_grammar"] = treatment["shot_grammar"]
+    return payload, blockers
 
 
 async def _resolve_flow_media_id(

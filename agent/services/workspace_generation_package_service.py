@@ -253,6 +253,7 @@ async def create_f2v_generation_package(
     copy_intelligence: dict | None = None,
     copy_set_id: str | None = None,
     scene_context_override: str | None = None,
+    creative_treatment: dict | None = None,
 ) -> dict:
     """Create a durable F2V workspace generation package."""
     mode = "F2V"
@@ -292,6 +293,7 @@ async def create_f2v_generation_package(
         requested_total_duration_seconds=requested_total_duration_seconds,
         avatar_id=avatar_id,
         copy_intelligence=copy_intelligence,
+        creative_treatment=creative_treatment,
     )
 
     final_prompt_text: str = compiler_result.get("final_compiled_prompt_text", "")
@@ -433,6 +435,7 @@ async def create_i2v_generation_package(
     workspace_execution_package_id: str | None = None,
     recipe_id: str = "PRODUCT_HELD_BY_CHARACTER_IN_SCENE",
     generation_mode: str = "SINGLE",
+    duration_seconds: int = 8,
     target_language: str = "BM_MS",
     camera_style: str = "UGC_IPHONE_RAW",
     character_presence: str = "VISIBLE_CREATOR",
@@ -450,6 +453,7 @@ async def create_i2v_generation_package(
     copy_intelligence: dict | None = None,
     copy_set_id: str | None = None,
     scene_context_override: str | None = None,
+    creative_treatment: dict | None = None,
 ) -> dict:
     """Create a durable I2V workspace generation package."""
     mode = "I2V"
@@ -502,7 +506,7 @@ async def create_i2v_generation_package(
         ),
         approved_package=approved,
         mode=mode,
-        duration_seconds=8,
+        duration_seconds=duration_seconds,
         generation_mode=generation_mode,
         target_language=target_language,
         camera_style=camera_style,
@@ -514,6 +518,7 @@ async def create_i2v_generation_package(
         engine_duration_target=engine_duration_target,
         requested_total_duration_seconds=requested_total_duration_seconds,
         copy_intelligence=copy_intelligence,
+        creative_treatment=creative_treatment,
     )
 
     base_prompt: str = compiler_result.get("final_compiled_prompt_text", "")
@@ -768,6 +773,7 @@ async def create_t2v_generation_package(
     copy_intelligence: dict | None = None,
     copy_set_id: str | None = None,
     scene_context_override: str | None = None,
+    creative_treatment: dict | None = None,
 ) -> dict:
     """Create a durable T2V workspace generation package (text-only, no frame uploads)."""
     mode = "T2V"
@@ -804,6 +810,7 @@ async def create_t2v_generation_package(
         requested_total_duration_seconds=requested_total_duration_seconds,
         avatar_id=avatar_id,
         copy_intelligence=copy_intelligence,
+        creative_treatment=creative_treatment,
     )
 
     final_prompt_text: str = compiler_result.get("final_compiled_prompt_text", "")
