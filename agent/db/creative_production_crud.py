@@ -363,6 +363,20 @@ async def list_attempts(plan_id: str) -> list[dict[str, Any]]:
     return [dict(row) for row in await cursor.fetchall()]
 
 
+async def list_attempts_for_reconciliation(
+    *,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM creative_generation_attempt "
+        "WHERE attempt_state='PROVIDER_JOB_KNOWN' "
+        "ORDER BY updated_at, attempt_id LIMIT ?",
+        (limit,),
+    )
+    return [dict(row) for row in await cursor.fetchall()]
+
+
 _ATTEMPT_UPDATE_COLUMNS = {
     "lane_id",
     "attempt_state",
@@ -370,6 +384,10 @@ _ATTEMPT_UPDATE_COLUMNS = {
     "last_actor_id",
     "last_action_request_id",
     "provider_job_id",
+    "provider_project_id",
+    "provider_correlation_id",
+    "provider_snapshot_json",
+    "provider_snapshot_updated_at",
     "artifact_media_id",
     "failure_stage",
     "failure_code",

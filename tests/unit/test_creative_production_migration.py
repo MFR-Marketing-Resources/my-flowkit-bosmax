@@ -34,6 +34,15 @@ async def test_additive_migration_is_idempotent_and_preserves_rows():
     row = await p6db.get_plan(str(values["plan_id"]))
     assert row is not None
     assert row["name"] == values["name"]
+    db = await get_db()
+    cursor = await db.execute("PRAGMA table_info(creative_generation_attempt)")
+    attempt_columns = {column[1] for column in await cursor.fetchall()}
+    assert {
+        "provider_project_id",
+        "provider_correlation_id",
+        "provider_snapshot_json",
+        "provider_snapshot_updated_at",
+    } <= attempt_columns
 
 
 @pytest.mark.asyncio

@@ -9,8 +9,12 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
+import aiosqlite
+
+from agent.db import schema
 from agent.db.schema import _db_lock, get_db
 
 
@@ -101,11 +105,31 @@ async def get_run(run_id: str) -> dict[str, Any] | None:
 
 
 async def list_runs() -> list[dict[str, Any]]:
-    db = await get_db()
-    cursor = await db.execute(
-        "SELECT * FROM creative_supply_run ORDER BY created_at DESC, run_id DESC"
-    )
-    return [_hydrate_run(row) or {} for row in await cursor.fetchall()]
+    database_uri = f"{Path(schema.DB_PATH).resolve().as_uri()}?mode=ro"
+    async with aiosqlite.connect(database_uri, uri=True) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute("PRAGMA query_only=ON")
+        await db.execute("PRAGMA busy_timeout=5000")
+        cursor = await db.execute(
+            """
+            SELECT
+                run_id,
+                mission_id,
+                roster_sha256,
+                cohort_sha256,
+                state,
+                provider_budget_max,
+                provider_calls_used,
+                reviewer_id,
+                pause_reason,
+                last_error,
+                created_at,
+                updated_at
+            FROM creative_supply_run
+            ORDER BY created_at DESC, run_id DESC
+            """
+        )
+        return [dict(row) for row in await cursor.fetchall()]
 
 
 async def update_run(run_id: str, **fields: Any) -> dict[str, Any] | None:

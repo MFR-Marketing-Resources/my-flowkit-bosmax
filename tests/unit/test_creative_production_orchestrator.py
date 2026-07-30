@@ -742,6 +742,102 @@ async def test_scheduler_tick_is_inert_without_existing_bulk_certification(
 
 
 @pytest.mark.asyncio
+async def test_scheduler_tick_reconciles_existing_attempt_without_live_certification(
+    monkeypatch,
+):
+    reconcile = AsyncMock()
+    monkeypatch.setattr(
+        scheduler.p6db,
+        "list_attempts_for_reconciliation",
+        AsyncMock(return_value=[{"attempt_id": "p6attempt-existing"}]),
+    )
+    monkeypatch.setattr(scheduler, "reconcile_attempt", reconcile)
+    monkeypatch.setattr(
+        scheduler.production_queue_service,
+        "bulk_live_execution_certified",
+        lambda: False,
+    )
+
+    result = await scheduler.scheduler_tick()
+
+    assert result["live_execution_certified"] is False
+    assert result["attempts_dispatched"] == 0
+    reconcile.assert_awaited_once_with("p6attempt-existing")
+
+
+@pytest.mark.asyncio
+async def test_reconcile_persists_provider_identity_and_terminal_render_evidence(
+    p58_authority,
+    monkeypatch,
+):
+    plan, item = await _approved_plan(monkeypatch)
+    attempt = await scheduler._create_attempt(
+        {**item, "plan_id": plan["plan_id"]},
+        action_request_id="attempt-provider-observation",
+        actor_id="p6-reconciliation-test",
+        payload={"mode": "F2V", "prompt": "safe"},
+        credit_spend_intended=True,
+    )
+    attempt = await p6db.update_attempt(
+        attempt["attempt_id"],
+        attempt_state=AttemptState.PROVIDER_JOB_KNOWN.value,
+        provider_job_id="g_provider_observation",
+        provider_known_at=datetime.now(UTC).isoformat(),
+        updated_at=datetime.now(UTC).isoformat(),
+    )
+    provider_job = {
+        "job_id": "g_provider_observation",
+        "status": "RENDER_NOT_MATERIALIZED",
+        "stage": "render_not_materialized",
+        "project_id": "flow-project-bosmax",
+        "approved": True,
+        "generation_started": True,
+        "generation_identity": {
+            "sse_prompt": "safe",
+            "expected_model": "veo_3_1_r2v_lite",
+            "tool_call_id": "provider-tool-call-1",
+            "response_id": "provider-response-1",
+            "seed": 314159,
+        },
+        "identity_captured": True,
+        "tools_seen": ["generateVideoFromStartFrame"],
+        "correlation_stats": {
+            "completed_candidates_seen": 0,
+            "completed_candidate_ids": [],
+        },
+        "credit_state": "CREDIT_UNKNOWN",
+        "credit_spent_likely": False,
+        "error": "video not found/retrieved in time",
+    }
+    attempt = await scheduler._persist_provider_observation(attempt, provider_job)
+    monkeypatch.setattr(scheduler.make_video, "get_job", lambda _job_id: None)
+    start_generate = AsyncMock()
+    monkeypatch.setattr(scheduler.make_video, "start_generate", start_generate)
+
+    result = await scheduler.reconcile_attempt(attempt["attempt_id"])
+
+    assert result["provider_state"] == "RENDER_NOT_MATERIALIZED"
+    assert result["provider_state_source"] == "DURABLE_PROVIDER_SNAPSHOT"
+    assert result["resubmission_allowed"] is True
+    assert result["attempt"]["attempt_state"] == AttemptState.FAILED.value
+    assert result["attempt"]["provider_project_id"] == "flow-project-bosmax"
+    assert (
+        result["attempt"]["provider_correlation_id"]
+        == "provider-tool-call-1"
+    )
+    assert (
+        result["attempt"]["provider_snapshot"]["correlation_stats"][
+            "completed_candidates_seen"
+        ]
+        == 0
+    )
+    stored_item = await p6db.get_item(item["item_id"])
+    assert stored_item is not None
+    assert stored_item["status"] == "FAILED"
+    start_generate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_restart_recovery_registers_existing_artifact_without_resubmit(
     p58_authority,
     monkeypatch,

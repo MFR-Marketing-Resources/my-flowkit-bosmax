@@ -2967,6 +2967,10 @@ CREATE TABLE IF NOT EXISTS creative_generation_attempt (
     last_actor_id              TEXT,
     last_action_request_id     TEXT,
     provider_job_id            TEXT,
+    provider_project_id        TEXT,
+    provider_correlation_id    TEXT,
+    provider_snapshot_json     TEXT NOT NULL DEFAULT '{}',
+    provider_snapshot_updated_at TEXT,
     artifact_media_id          TEXT,
     failure_stage              TEXT,
     failure_code               TEXT,
@@ -3075,6 +3079,24 @@ INSERT OR IGNORE INTO creative_execution_lane (
     'runtime proof required before live assignment'
 );
 """)
+        cursor = await db.execute("PRAGMA table_info(creative_generation_attempt)")
+        attempt_columns = {row[1] for row in await cursor.fetchall()}
+        attempt_observation_columns = {
+            "provider_project_id": "TEXT",
+            "provider_correlation_id": "TEXT",
+            "provider_snapshot_json": "TEXT NOT NULL DEFAULT '{}'",
+            "provider_snapshot_updated_at": "TEXT",
+        }
+        for column_name, column_type in attempt_observation_columns.items():
+            if column_name not in attempt_columns:
+                await db.execute(
+                    "ALTER TABLE creative_generation_attempt "
+                    f"ADD COLUMN {column_name} {column_type}"
+                )
+                logger.info(
+                    "Migrated: added %s column to creative_generation_attempt",
+                    column_name,
+                )
         await db.commit()
 
     logger.info("Database initialized at %s", DB_PATH)

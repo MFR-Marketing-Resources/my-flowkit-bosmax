@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+import threading
+import time
 
 import pytest
 
@@ -175,3 +177,43 @@ async def test_p7_task_claim_is_atomic_and_never_returns_the_same_slot_twice():
     assert first["state"] == second["state"] == "RUNNING"
     assert first["attempt_count"] == second["attempt_count"] == 1
     assert await supply_db.claim_next_pending_task(str(run["run_id"])) is None
+
+
+@pytest.mark.asyncio
+async def test_run_list_is_summary_only_and_bypasses_shared_worker_queue():
+    await _seed_product()
+    run = await supply_db.create_run(
+        mission_id="BOSMAX-P7-R1-READ-MODEL",
+        roster_sha256="c" * 64,
+        cohort_sha256="d" * 64,
+        roster=[{"product_id": "p7-product"}],
+        angle_plan=[
+            {"product_id": "p7-product", "angle_key": "angle-read-model"}
+        ],
+        target_policy={"TOP10": {"components": {"HOOK": 5}}},
+        provider_budget_max=120,
+        reviewer_id="codex-p7-reviewer",
+    )
+    shared_db = await get_db()
+    worker_started = threading.Event()
+
+    def hold_shared_worker(seconds: float) -> int:
+        worker_started.set()
+        time.sleep(seconds)
+        return 1
+
+    await shared_db.create_function("p7_hold_shared_worker", 1, hold_shared_worker)
+    blocker = asyncio.create_task(
+        shared_db.execute("SELECT p7_hold_shared_worker(?)", (0.6,))
+    )
+    assert await asyncio.to_thread(worker_started.wait, 1.0)
+    listed = await asyncio.wait_for(supply_db.list_runs(), timeout=0.25)
+    await blocker
+
+    summary = next(item for item in listed if item["run_id"] == run["run_id"])
+    assert summary["mission_id"] == "BOSMAX-P7-R1-READ-MODEL"
+    assert summary["roster_sha256"] == "c" * 64
+    assert summary["cohort_sha256"] == "d" * 64
+    assert "roster" not in summary
+    assert "angle_plan" not in summary
+    assert "target_policy" not in summary

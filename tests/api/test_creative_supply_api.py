@@ -8,6 +8,33 @@ from fastapi import HTTPException
 from agent.api import creative_supply as api
 
 
+@pytest.mark.asyncio
+async def test_list_route_returns_summary_read_model(monkeypatch):
+    summary = {
+        "runs": [
+            {
+                "run_id": "csr-p7-r1",
+                "mission_id": "BOSMAX-P7-R1",
+                "roster_sha256": "a" * 64,
+                "cohort_sha256": "b" * 64,
+                "state": "COMPLETED",
+                "provider_budget_max": 120,
+                "provider_calls_used": 79,
+                "reviewer_id": "codex-p7-reviewer",
+                "pause_reason": None,
+                "last_error": None,
+                "created_at": "2026-07-30T00:00:00Z",
+                "updated_at": "2026-07-30T01:00:00Z",
+            }
+        ]
+    }
+    list_runs = AsyncMock(return_value=summary)
+    monkeypatch.setattr(api.service, "list_runs", list_runs)
+
+    assert await api.list_runs() == summary
+    list_runs.assert_awaited_once_with()
+
+
 def _create_body() -> api.CreateRunRequest:
     roster = [
         api.RosterItem(
