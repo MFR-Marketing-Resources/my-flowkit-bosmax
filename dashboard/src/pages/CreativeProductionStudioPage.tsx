@@ -192,7 +192,51 @@ export default function CreativeProductionStudioPage() {
 				preferredPlanId || selectedPlanId || planList.plans[0]?.plan_id || "";
 			if (nextPlanId) {
 				setSelectedPlanId(nextPlanId);
-				setDetail(await fetchProductionPlan(nextPlanId));
+				const fetchedDetail = await fetchProductionPlan(nextPlanId);
+				setDetail(fetchedDetail);
+				if (fetchedDetail?.plan) {
+					const plan = fetchedDetail.plan;
+					const planModelKey =
+						plan.model_key ||
+						(Array.isArray((plan as unknown as Record<string, unknown>).model_keys)
+							? (plan as unknown as { model_keys: string[] }).model_keys[0]
+							: "") ||
+						"";
+					const planDuration =
+						typeof plan.duration_seconds === "number"
+							? plan.duration_seconds
+							: Array.isArray(
+										(plan as unknown as Record<string, unknown>).duration_seconds,
+									)
+								? (plan as unknown as { duration_seconds: number[] }).duration_seconds[0]
+								: 8;
+
+					const planAllocations =
+						Array.isArray(plan.allocations) && plan.allocations.length > 0
+							? plan.allocations
+							: Array.isArray(plan.product_scope) && plan.product_scope.length > 0
+								? plan.product_scope.map((id) => ({
+										product_id: id,
+										video_count: Math.max(
+											1,
+											Math.floor(
+												(plan.target_video_count || plan.product_scope.length) /
+													plan.product_scope.length,
+											),
+										),
+									}))
+								: [];
+
+					setAllocations(planAllocations);
+					setForm((current) => ({
+						...current,
+						name: plan.name,
+						logicalMode: (plan.logical_mode as "T2V" | "HYBRID" | "F2V" | "I2V") || "T2V",
+						modelKey: planModelKey || current.modelKey,
+						durationSeconds: planDuration || current.durationSeconds,
+						aspect: ((plan.aspect_ratio || (plan.execution_policy?.aspect as string)) as "9:16" | "16:9") || "9:16",
+					}));
+				}
 			} else {
 				setDetail(null);
 			}
@@ -274,7 +318,13 @@ export default function CreativeProductionStudioPage() {
 	}, [poolAuthorityProductKey, form.logicalMode]);
 
 	const selectedModel = videoModels.find(
-		(model) => model.key === form.modelKey,
+		(model) =>
+			model.key === form.modelKey ||
+			model.ui_label === form.modelKey ||
+			model.key.toLowerCase().replace(/[^a-z0-9]/g, "") ===
+				form.modelKey.toLowerCase().replace(/[^a-z0-9]/g, "") ||
+			model.ui_label.toLowerCase().replace(/[^a-z0-9]/g, "") ===
+				form.modelKey.toLowerCase().replace(/[^a-z0-9]/g, ""),
 	);
 	const durationOptions = useMemo(() => {
 		if (!selectedModel) return [];
@@ -295,9 +345,10 @@ export default function CreativeProductionStudioPage() {
 		}));
 		return [...singles, ...extensions];
 	}, [selectedModel]);
-	const selectedDuration =
-		durationOptions.find((option) => option.seconds === form.durationSeconds) ??
-		null;
+	const selectedDurationOption = durationOptions.find(
+		(option) => option.seconds === form.durationSeconds,
+	);
+	const selectedDuration = form.durationSeconds;
 	const totalVideoCount = allocations.reduce(
 		(total, allocation) => total + allocation.video_count,
 		0,
@@ -371,7 +422,7 @@ export default function CreativeProductionStudioPage() {
 			allocation_strategy: "ROUND_ROBIN",
 			variation_strategy: "SAME_ANGLE_DIFF_DIALOGUE_DIFF_VISUALS",
 			logical_mode: form.logicalMode,
-			model_keys: [form.modelKey],
+			model_keys: [selectedModel?.key || form.modelKey],
 			duration_seconds: [form.durationSeconds],
 			pools: {
 				copy_set_ids: splitValues(form.copySetIds),
@@ -399,13 +450,153 @@ export default function CreativeProductionStudioPage() {
 		return created;
 	};
 
+	const getPlanAllocations = useCallback(
+		(planObj: Record<string, unknown>): ProductVideoAllocation[] => {
+			if (Array.isArray(planObj.allocations) && planObj.allocations.length > 0) {
+				return planObj.allocations as ProductVideoAllocation[];
+			}
+			if (
+				Array.isArray(planObj.product_scope) &&
+				planObj.product_scope.length > 0
+			) {
+				const scope = planObj.product_scope as string[];
+				const totalVids = (planObj.target_video_count as number) || scope.length;
+				const perProd = Math.max(1, Math.floor(totalVids / scope.length));
+				return scope.map((id) => ({
+					product_id: id,
+					video_count: perProd,
+				}));
+			}
+			return [];
+		},
+		[],
+	);
+
+	const isDraftMismatched = useMemo(() => {
+		if (!detail?.plan) return false;
+		const plan = detail.plan;
+		const formProdCount = allocations.length;
+		const planAllocations = getPlanAllocations(
+			plan as unknown as Record<string, unknown>,
+		);
+		if (formProdCount !== planAllocations.length) return true;
+
+		const formProductIds = allocations
+			.map((a) => a.product_id)
+			.sort()
+			.join(",");
+		const planProductIds = planAllocations
+			.map((a) => a.product_id)
+			.sort()
+			.join(",");
+		if (formProductIds !== planProductIds) return true;
+
+		const formTotalVideos = allocations.reduce(
+			(sum, a) => sum + a.video_count,
+			0,
+		);
+		const planTotalVideos =
+			planAllocations.reduce((sum, a) => sum + a.video_count, 0) ||
+			plan.target_video_count;
+		if (formTotalVideos !== planTotalVideos) return true;
+
+		if (form.logicalMode !== plan.logical_mode) return true;
+
+		const planModelKey =
+			plan.model_key ||
+			(Array.isArray((plan as unknown as Record<string, unknown>).model_keys)
+				? (plan as unknown as { model_keys: string[] }).model_keys[0]
+				: "") ||
+			"";
+		const normalizeKey = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, "");
+		if (planModelKey && normalizeKey(form.modelKey) !== normalizeKey(planModelKey))
+			return true;
+
+		const planDuration =
+			typeof plan.duration_seconds === "number"
+				? plan.duration_seconds
+				: Array.isArray(
+							(plan as unknown as Record<string, unknown>).duration_seconds,
+						)
+					? (plan as unknown as { duration_seconds: number[] }).duration_seconds[0]
+					: 8;
+		if (planDuration && Number(selectedDuration) !== planDuration) return true;
+
+		return false;
+	}, [
+		detail,
+		allocations,
+		form.logicalMode,
+		form.modelKey,
+		selectedDuration,
+		getPlanAllocations,
+	]);
+
+	const syncFormToActivePlan = useCallback(() => {
+		if (!detail?.plan) return;
+		const plan = detail.plan;
+		const planModelKey =
+			plan.model_key ||
+			(Array.isArray((plan as unknown as Record<string, unknown>).model_keys)
+				? (plan as unknown as { model_keys: string[] }).model_keys[0]
+				: "") ||
+			"";
+		const planDuration =
+			typeof plan.duration_seconds === "number"
+				? plan.duration_seconds
+				: Array.isArray(
+							(plan as unknown as Record<string, unknown>).duration_seconds,
+						)
+					? (plan as unknown as { duration_seconds: number[] }).duration_seconds[0]
+					: 8;
+
+		setAllocations(
+			getPlanAllocations(plan as unknown as Record<string, unknown>),
+		);
+		setForm((current) => ({
+			...current,
+			name: plan.name,
+			logicalMode: (plan.logical_mode as "T2V" | "HYBRID" | "F2V" | "I2V") || "T2V",
+			modelKey: planModelKey || current.modelKey,
+			durationSeconds: planDuration || current.durationSeconds,
+			aspect: ((plan.aspect_ratio || (plan.execution_policy?.aspect as string)) as "9:16" | "16:9") || "9:16",
+		}));
+	}, [detail, getPlanAllocations]);
+
+	const switchToNewDraft = useCallback(() => {
+		setSelectedPlanId("");
+		setDetail(null);
+		setPreflight(null);
+	}, []);
+
 	const selectedPlan = detail?.plan;
-	const actionDisabled = !selectedPlan || Boolean(busy);
+	const actionDisabled = !selectedPlan || Boolean(busy) || isDraftMismatched;
 	const liveEnabled =
 		liveExecutionCertified &&
 		selectedPlan?.status === "SCHEDULED" &&
 		livePhrase === P6_LIVE_CONFIRMATION &&
-		!busy;
+		!busy &&
+		!isDraftMismatched;
+
+	const liveDisabledReason = useMemo(() => {
+		if (isDraftMismatched) {
+			return "Form draft differs from active plan snapshot. Sync form or start new draft to authorize.";
+		}
+		if (!liveExecutionCertified) {
+			return "Runtime live-execution certification is absent.";
+		}
+		if (selectedPlan?.status !== "SCHEDULED") {
+			return `Plan must be in SCHEDULED status before live execution (current status: ${selectedPlan?.status || "NONE"}).`;
+		}
+		if (livePhrase !== P6_LIVE_CONFIRMATION) {
+			return `Confirmation phrase does not match. Type exact phrase: ${P6_LIVE_CONFIRMATION}`;
+		}
+		if (busy) {
+			return "Action in progress...";
+		}
+		return "All safety gates must pass before live dispatch.";
+	}, [isDraftMismatched, liveExecutionCertified, selectedPlan, livePhrase, busy]);
+
 	const preflightSnapshot =
 		(preflight ??
 			(selectedPlan?.capacity_snapshot as unknown as CapacityPreflight)) ||
@@ -428,6 +619,22 @@ export default function CreativeProductionStudioPage() {
 	}, [detail]);
 
 	const primaryActionConfig = useMemo(() => {
+		if (isDraftMismatched && selectedPlan) {
+			return {
+				step: activeStep,
+				title: "Draft Configuration Mismatch",
+				subtitle: `Current form draft differs from active selected plan (${selectedPlan.name}).`,
+				buttonLabel: "Form Mismatched",
+				buttonTestId: "p6-primary-action",
+				actionName: "mismatch",
+				executeAction: async () => {},
+				disabled: true,
+				disabledReason:
+					"Form draft differs from active plan snapshot. Sync form to plan or create a new plan draft.",
+				isCreditSpend: false,
+			};
+		}
+
 		if (!detail?.plan) {
 			return {
 				step: 1,
@@ -617,6 +824,9 @@ export default function CreativeProductionStudioPage() {
 		liveExecutionCertified,
 		livePhrase,
 		create,
+		isDraftMismatched,
+		selectedPlan,
+		activeStep,
 	]);
 
 	return (
@@ -724,8 +934,128 @@ export default function CreativeProductionStudioPage() {
 				</div>
 			)}
 
+			<section
+				data-testid="p6-plan-selector-bar"
+				className="rounded-2xl border border-cyan-500/30 bg-cyan-950/20 p-4"
+			>
+				<div className="flex flex-wrap items-center justify-between gap-3">
+					<div className="flex items-center gap-2">
+						<Layers3 className="text-cyan-400" size={18} />
+						<span className="text-xs font-bold uppercase tracking-wider text-cyan-200">
+							Active Production Plan Selection
+						</span>
+					</div>
+					<div className="flex items-center gap-2 min-w-0 flex-1 justify-end">
+						<select
+							aria-label="Select production plan"
+							data-testid="p6-plan-select"
+							value={selectedPlanId}
+							onChange={(e) => {
+								const nextId = e.target.value;
+								if (!nextId) {
+									switchToNewDraft();
+								} else {
+									setSelectedPlanId(nextId);
+									void refresh(nextId);
+								}
+							}}
+							className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-white outline-none focus:border-cyan-500 max-w-xs truncate"
+						>
+							<option value="">+ Create New Production Plan Draft</option>
+							{plans.map((p) => (
+								<option key={p.plan_id} value={p.plan_id}>
+									{p.name} ({p.status} · {p.target_video_count} vids)
+								</option>
+							))}
+						</select>
+						<button
+							type="button"
+							onClick={switchToNewDraft}
+							className="rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-200 shrink-0"
+						>
+							New Draft
+						</button>
+					</div>
+				</div>
+
+				{selectedPlan ? (
+					<div className="mt-3 border-t border-cyan-500/20 pt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+						<div>
+							<span className="font-bold text-white">{selectedPlan.name}</span>{" "}
+							<span className="font-mono text-[10px] text-slate-400">
+								({selectedPlan.plan_id})
+							</span>
+							<div className="mt-0.5 text-[11px] text-cyan-300">
+								Active Plan Snapshot: {selectedPlan.target_video_count} video
+								{selectedPlan.target_video_count === 1 ? "" : "s"} across{" "}
+								{getPlanAllocations(selectedPlan as unknown as Record<string, unknown>).length} product
+								{getPlanAllocations(selectedPlan as unknown as Record<string, unknown>).length === 1 ? "" : "s"} ·{" "}
+								{selectedPlan.logical_mode} · {selectedPlan.model_key || selectedPlan.model_keys?.[0] || ""} ·{" "}
+								{typeof selectedPlan.duration_seconds === "number"
+									? selectedPlan.duration_seconds
+									: (selectedPlan.duration_seconds?.[0] ?? 8)}s (
+								{(typeof selectedPlan.duration_seconds === "number"
+									? selectedPlan.duration_seconds
+									: (selectedPlan.duration_seconds?.[0] ?? 8)) > 10
+									? "EXTEND"
+									: "SINGLE"}) ·{" "}
+								{selectedPlan.aspect_ratio || (selectedPlan.execution_policy?.aspect as string) || "9:16"}
+							</div>
+						</div>
+						<div className="flex items-center gap-2">
+							<StatusBadge status={selectedPlan.status} />
+							{isDraftMismatched ? (
+								<button
+									type="button"
+									onClick={syncFormToActivePlan}
+									className="rounded bg-cyan-600/30 hover:bg-cyan-600/50 border border-cyan-500/50 px-2.5 py-1 text-[11px] font-semibold text-cyan-100"
+								>
+									Sync Form to Active Plan
+								</button>
+							) : null}
+						</div>
+					</div>
+				) : (
+					<div className="mt-2 text-xs text-slate-400">
+						Editing a new plan draft. Configure products, video settings, and
+						click "Create durable plan" below.
+					</div>
+				)}
+			</section>
+
 			<div className="grid gap-6 2xl:grid-cols-[420px_minmax(0,1fr)]">
 				<aside className="space-y-4">
+					{isDraftMismatched && selectedPlan ? (
+						<div
+							data-testid="p6-draft-mismatch-warning"
+							className="rounded-2xl border border-amber-500/50 bg-amber-950/40 p-4 text-xs text-amber-200 space-y-2.5"
+						>
+							<div className="flex items-center gap-2 font-bold text-amber-300 text-sm">
+								<AlertTriangle size={17} className="shrink-0 text-amber-400" />
+								Form draft differs from active plan ({selectedPlan.name})
+							</div>
+							<p className="text-[11px] leading-relaxed text-amber-200/80">
+								Form edits do not modify the active plan snapshot. Workflow actions and live dispatch are disabled to prevent state mismatch.
+							</p>
+							<div className="flex flex-wrap gap-2 pt-1">
+								<button
+									type="button"
+									onClick={syncFormToActivePlan}
+									className="rounded-lg bg-amber-500/30 hover:bg-amber-500/50 border border-amber-500/50 px-3 py-1.5 text-xs font-semibold text-amber-100 transition"
+								>
+									Sync Form to Active Plan
+								</button>
+								<button
+									type="button"
+									onClick={switchToNewDraft}
+									className="rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-200 transition"
+								>
+									Start New Plan Draft
+								</button>
+							</div>
+						</div>
+					) : null}
+
 					<section className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4">
 						<div className="mb-3 flex items-center gap-2">
 							<WandSparkles size={16} className="text-cyan-300" />
@@ -884,22 +1214,22 @@ export default function CreativeProductionStudioPage() {
 									</select>
 								</label>
 							</div>
-							{selectedDuration ? (
+							{selectedDurationOption ? (
 								<div
 									data-testid="p6-orchestration-summary"
 									className={`rounded-xl border p-3 text-xs ${
-										selectedDuration.generationMode === "EXTEND"
+										selectedDurationOption.generationMode === "EXTEND"
 											? "border-violet-500/40 bg-violet-950/30 text-violet-100"
 											: "border-emerald-500/30 bg-emerald-950/30 text-emerald-100"
 									}`}
 								>
 									<strong>
-										{selectedDuration.generationMode === "EXTEND"
-											? `Extend · ${selectedDuration.segments} continuous ${selectedDuration.blockSeconds}-second segments`
+										{selectedDurationOption.generationMode === "EXTEND"
+											? `Extend · ${selectedDurationOption.segments} continuous ${selectedDurationOption.blockSeconds}-second segments`
 											: "Single-shot"}
 									</strong>
 									<div className="mt-1 text-[10px] opacity-80">
-										{selectedDuration.generationMode === "EXTEND"
+										{selectedDurationOption.generationMode === "EXTEND"
 											? "Compile creates a reviewed multi-block plan and durable /video-jobs identity. Final concat occurs only after separate live authorization."
 											: "One governed provider job after separate live authorization."}
 									</div>
@@ -1580,9 +1910,14 @@ export default function CreativeProductionStudioPage() {
 								<div className="flex items-start gap-3">
 									<LockKeyhole className="mt-0.5 shrink-0 text-rose-300" />
 									<div className="min-w-0 flex-1">
-										<h2 className="font-semibold text-rose-100">
-											Live execution — separately authorized boundary
-										</h2>
+										<div className="flex items-center justify-between gap-2">
+											<h2 className="font-semibold text-rose-100">
+												Live execution — separately authorized boundary
+											</h2>
+											<span className="rounded border border-rose-500/40 bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold text-rose-300 shrink-0">
+												Spends Media Credits
+											</span>
+										</div>
 										<p
 											className="mt-1 text-xs text-rose-200/70"
 											data-testid="p6-live-certification-truth"
@@ -1591,6 +1926,17 @@ export default function CreativeProductionStudioPage() {
 												? "Runtime live-execution certification is present. Dispatch still requires a scheduled plan, the exact confirmation phrase, a matching dry-run proof, and a verified lane. Entering the phrase and requesting dispatch explicitly authorizes credit-spending media generation."
 												: "Runtime live-execution certification is absent. The exact confirmation phrase cannot bypass the server gate."}
 										</p>
+
+										{!liveEnabled && liveDisabledReason ? (
+											<div
+												data-testid="p6-live-disabled-reason"
+												className="mt-2.5 flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-950/30 p-2.5 text-xs text-amber-200 font-medium"
+											>
+												<AlertTriangle size={15} className="shrink-0 text-amber-400" />
+												<span>{liveDisabledReason}</span>
+											</div>
+										) : null}
+
 										<div className="mt-3 flex flex-col gap-2 sm:flex-row">
 											<input
 												aria-label="P6 live credit confirmation"
@@ -1613,9 +1959,11 @@ export default function CreativeProductionStudioPage() {
 														),
 													)
 												}
-												className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-700"
+												className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-700 hover:bg-rose-500 transition"
 											>
-												Request one governed dispatch
+												{liveEnabled
+													? `Authorize & Start Production — ${selectedPlan?.target_video_count || totalVideoCount} Videos`
+													: "Request live production dispatch"}
 											</button>
 										</div>
 									</div>

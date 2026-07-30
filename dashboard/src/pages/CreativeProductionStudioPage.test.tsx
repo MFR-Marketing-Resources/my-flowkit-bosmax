@@ -63,7 +63,7 @@ const COHORT = {
 	cohort_count: 438,
 	cohort_sha256:
 		"15b7e2aff4ede06b1a28805b111f9993b2208040e40bcee76693abc2a6ddbe7f",
-	product_ids: ["product-1"],
+	product_ids: ["product-1", "product-2"],
 	products: [
 		{
 			product_id: "product-1",
@@ -71,6 +71,15 @@ const COHORT = {
 			product_type_group: "lip_color",
 			scene_strategy_id: "LIP_COLOR",
 			image_url: "https://example.com/product-1.jpg",
+			image_readiness_status: "IMAGE_CACHE_READY",
+			readiness_status: "PRODUCTION_READY",
+		},
+		{
+			product_id: "product-2",
+			product_name: "P6 Product Two",
+			product_type_group: "lip_color",
+			scene_strategy_id: "LIP_COLOR",
+			image_url: "https://example.com/product-2.jpg",
 			image_readiness_status: "IMAGE_CACHE_READY",
 			readiness_status: "PRODUCTION_READY",
 		},
@@ -342,8 +351,6 @@ describe("P6 Production Studio rendered contract", () => {
 		createProductionPlan.mockResolvedValue(PLAN);
 		render(<CreativeProductionStudioPage />);
 		await screen.findByTestId("p6-plan-status");
-		fireEvent.click(screen.getByRole("button", { name: /Choose products/ }));
-		fireEvent.click(await screen.findByRole("option", { name: /P6 Product/ }));
 		await waitFor(() =>
 			expect(fetchGovernedPoolAuthority).toHaveBeenCalledTimes(1),
 		);
@@ -404,8 +411,6 @@ describe("P6 Production Studio rendered contract", () => {
 		);
 		render(<CreativeProductionStudioPage />);
 		await screen.findByTestId("p6-plan-status");
-		fireEvent.click(screen.getByRole("button", { name: /Choose products/ }));
-		fireEvent.click(await screen.findByRole("option", { name: /P6 Product/ }));
 		await waitFor(() =>
 			expect(fetchGovernedPoolAuthority).toHaveBeenCalledWith(
 				["product-1"],
@@ -524,18 +529,46 @@ describe("P6 Production Studio rendered contract", () => {
 		prime();
 		render(<CreativeProductionStudioPage />);
 		await screen.findByTestId("p6-plan-status");
-		fireEvent.click(screen.getByRole("button", { name: /Choose products/i }));
-		fireEvent.click(screen.getAllByTestId("p6-product-option")[0]);
 		const selected = await screen.findByTestId("p6-selected-product");
 		expect(selected).toBeInTheDocument();
-		const decreaseBtn = screen.getByRole("button", { name: /Decrease quantity for/i });
-		const increaseBtn = screen.getByRole("button", { name: /Increase quantity for/i });
+		const decreaseBtn = screen.getByRole("button", {
+			name: /Decrease quantity for/i,
+		});
+		const increaseBtn = screen.getByRole("button", {
+			name: /Increase quantity for/i,
+		});
+		expect(decreaseBtn).toBeEnabled();
+		fireEvent.click(decreaseBtn);
+		expect(screen.getByLabelText(/Video quantity for/i)).toHaveValue(1);
 		expect(decreaseBtn).toBeDisabled();
 		fireEvent.click(increaseBtn);
 		expect(screen.getByLabelText(/Video quantity for/i)).toHaveValue(2);
 		expect(decreaseBtn).toBeEnabled();
-		fireEvent.click(decreaseBtn);
-		expect(screen.getByLabelText(/Video quantity for/i)).toHaveValue(1);
+	});
+
+	it("detects draft vs active plan mismatch and surfaces warning", async () => {
+		prime();
+		render(<CreativeProductionStudioPage />);
+		await screen.findByTestId("p6-plan-status");
+		expect(screen.getByTestId("p6-plan-selector-bar")).toBeInTheDocument();
+		fireEvent.click(screen.getByText(/product.*selected/i));
+		fireEvent.click(screen.getAllByTestId("p6-product-option")[1]);
+		expect(
+			await screen.findByTestId("p6-draft-mismatch-warning"),
+		).toBeInTheDocument();
+		expect(screen.getByTestId("p6-primary-action")).toBeDisabled();
+		expect(screen.getByTestId("p6-primary-action")).toHaveTextContent(
+			"Form Mismatched",
+		);
+	});
+
+	it("renders plain-language live gate disabled reasons", async () => {
+		prime();
+		render(<CreativeProductionStudioPage />);
+		await screen.findByTestId("p6-plan-status");
+		expect(screen.getByTestId("p6-live-disabled-reason")).toHaveTextContent(
+			"Runtime live-execution certification is absent",
+		);
 	});
 });
 

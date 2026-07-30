@@ -375,86 +375,97 @@ export default function ProductAllocationPicker({
 							<div
 								key={product.product_id}
 								data-testid="p6-selected-product"
-								className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/70 p-2.5"
+								className="flex flex-col gap-2 rounded-xl border border-slate-800 bg-slate-900/70 p-3"
 							>
-								<div className="flex items-center gap-3 min-w-0 flex-1">
-									<ProductThumbnail product={product} />
-									<div className="min-w-0 flex-1">
-										<div className="truncate text-xs font-semibold text-white" title={product.product_name}>
-											{product.product_name}
-										</div>
-										<div
-											className={`mt-0.5 text-[10px] ${
-												blocker ? "text-amber-200" : "text-emerald-300"
-											}`}
-										>
-											{blocker || "Ready for governed planning"}
-										</div>
-									</div>
-								</div>
-								<div className="flex items-center gap-2 shrink-0">
-									<div className="flex flex-col items-end">
-										<span className="text-[10px] text-slate-400">Video quantity</span>
-										<div className="mt-1 flex items-center rounded-lg border border-slate-700 bg-slate-950 p-0.5">
-											<button
-												type="button"
-												aria-label={`Decrease quantity for ${product.product_name}`}
-												onClick={() =>
-													updateQuantity(
-														product.product_id,
-														Math.max(1, allocation.video_count - 1),
-													)
-												}
-												disabled={allocation.video_count <= 1}
-												className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent"
+								<div className="flex items-center justify-between gap-2 min-w-0">
+									<div className="flex items-center gap-2.5 min-w-0 flex-1">
+										<ProductThumbnail product={product} />
+										<div className="min-w-0 flex-1">
+											<div
+												className="truncate text-xs font-semibold text-white"
+												title={product.product_name}
 											>
-												<Minus size={13} />
-											</button>
-											<input
-												ref={(node) => {
-													if (node) {
-														quantityInputRefs.current.set(product.product_id, node);
-													} else {
-														quantityInputRefs.current.delete(product.product_id);
-													}
-												}}
-												aria-label={`Video quantity for ${product.product_name}`}
-												type="number"
-												min={1}
-												max={200}
-												value={allocation.video_count}
-												onChange={(event) =>
-													updateQuantity(
-														product.product_id,
-														Number(event.target.value),
-													)
-												}
-												className="w-12 text-center text-xs font-semibold text-white bg-transparent outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-											/>
-											<button
-												type="button"
-												aria-label={`Increase quantity for ${product.product_name}`}
-												onClick={() =>
-													updateQuantity(
-														product.product_id,
-														Math.min(200, allocation.video_count + 1),
-													)
-												}
-												disabled={allocation.video_count >= 200}
-												className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent"
+												{product.product_name}
+											</div>
+											<div
+												className={`mt-0.5 text-[10px] ${
+													blocker ? "text-amber-200" : "text-emerald-300"
+												}`}
 											>
-												<Plus size={13} />
-											</button>
+												{blocker || "Ready for governed planning"}
+											</div>
 										</div>
 									</div>
 									<button
 										type="button"
 										aria-label={`Remove ${product.product_name}`}
 										onClick={() => toggleProduct(product.product_id)}
-										className="rounded-lg p-2 text-slate-500 hover:bg-rose-950/40 hover:text-rose-300"
+										className="shrink-0 rounded-lg p-1.5 text-slate-500 hover:bg-rose-950/40 hover:text-rose-300"
 									>
 										<Trash2 size={15} />
 									</button>
+								</div>
+
+								<div className="flex items-center justify-between gap-2 border-t border-slate-800/80 pt-2 min-w-0">
+									<span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
+										Video quantity:
+									</span>
+									<div className="flex items-center rounded-lg border border-slate-700 bg-slate-950 p-0.5 shrink-0">
+										<button
+											type="button"
+											aria-label={`Decrease quantity for ${product.product_name}`}
+											onClick={() =>
+												updateQuantity(
+													product.product_id,
+													Math.max(1, allocation.video_count - 1),
+												)
+											}
+											disabled={allocation.video_count <= 1}
+											className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent"
+										>
+											<Minus size={13} />
+										</button>
+										<input
+											ref={(node) => {
+												if (node) {
+													quantityInputRefs.current.set(
+														product.product_id,
+														node,
+													);
+												} else {
+													quantityInputRefs.current.delete(
+														product.product_id,
+													);
+												}
+											}}
+											aria-label={`Video quantity for ${product.product_name}`}
+											type="number"
+											min={1}
+											max={200}
+											value={allocation.video_count}
+											onChange={(event) =>
+												updateQuantity(
+													product.product_id,
+													Number(event.target.value),
+												)
+											}
+											className="w-12 text-center text-xs font-semibold text-white bg-transparent outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+										/>
+										<button
+											type="button"
+											aria-label={`Increase quantity for ${product.product_name}`}
+											onClick={() =>
+												updateQuantity(
+													product.product_id,
+													Math.min(200, allocation.video_count + 1),
+												)
+											}
+											disabled={allocation.video_count >= 200}
+											className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent"
+										>
+											<Plus size={13} />
+										</button>
+									</div>
 								</div>
 							</div>
 						);
