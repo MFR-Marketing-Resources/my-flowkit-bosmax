@@ -71,6 +71,7 @@ class AttemptState(StrEnum):
 class CreativePoolSelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    treatment_ids: list[str] = Field(default_factory=list, max_length=200)
     copy_set_ids: list[str] = Field(default_factory=list, max_length=400)
     poster_copy_set_ids: list[str] = Field(default_factory=list, max_length=400)
     avatar_codes: list[str] = Field(default_factory=list, max_length=400)
@@ -153,6 +154,10 @@ class ProductionPlanCreateRequest(BaseModel):
             raise ValueError("at least one media target is required")
         if len(set(self.product_ids)) != len(self.product_ids):
             raise ValueError("product_ids must be unique")
+        if len(set(self.pools.treatment_ids)) != len(self.pools.treatment_ids):
+            raise ValueError("treatment_ids must be unique")
+        if self.target_video_count > 0 and not self.pools.treatment_ids:
+            raise ValueError("TREATMENT_IDS_REQUIRED_FOR_VIDEO")
         if self.product_video_allocations:
             allocation_ids = [
                 allocation.product_id

@@ -777,6 +777,7 @@ def compile_ugc_video_prompt(
     requested_total_duration_seconds: int | None = None,
     route: str | None = None,
     allow_manual_block_plan: bool = False,
+    creative_treatment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized_mode = str(mode or "").strip().upper()
     if normalized_mode not in SUPPORTED_MODES:
@@ -786,6 +787,16 @@ def compile_ugc_video_prompt(
     resolved_character_presence = normalize_character_presence(character_presence)
     resolved_creator_persona = normalize_creator_persona(creator_persona)
     resolved_target_language = normalize_target_language(target_language)
+    treatment = dict(creative_treatment or {})
+    if treatment:
+        if str(treatment.get("generation_mode") or "").upper() != "SINGLE":
+            raise ValueError("TREATMENT_EXTEND_UNSUPPORTED")
+        if requested_total_duration_seconds is not None or blocks:
+            raise ValueError("TREATMENT_EXTEND_UNSUPPORTED")
+        if float(treatment.get("duration_seconds") or 0) != float(
+            duration_seconds
+        ):
+            raise ValueError("TREATMENT_INCOMPATIBLE")
     capability = get_engine_mode_capability(normalized_mode)
     if resolved_generation_mode not in capability.get("supports_generation_modes", []):
         raise ValueError(
@@ -821,7 +832,10 @@ def compile_ugc_video_prompt(
     resolved_route = _extend_route_planner.normalize_route(route) or (
         _extend_route_planner.default_route_for_engine(engine_duration_target)
     )
-    if requested_total_duration_seconds:
+    if treatment:
+        blocks = [{"block_index": 1, "duration_seconds": duration_seconds}]
+        resolved_generation_mode = "SINGLE"
+    elif requested_total_duration_seconds:
         # Fail-closed: RouteDurationAuthorityMissing (unproven route),
         # UNSUPPORTED_EXTEND_TOTAL_DURATION_<n> (bad total), or PREFERRED_LANE_REQUIRED
         # (ambiguous total) — never a silent plan.
@@ -859,6 +873,13 @@ def compile_ugc_video_prompt(
     resolved_copy = dict(copy_intelligence or {})
     if not resolved_copy:
         resolved_copy = _landbank.lookup(str(product.get("id") or "")) or {}
+    if treatment:
+        resolved_copy = {
+            **resolved_copy,
+            "angle": str(treatment.get("content_angle") or ""),
+            "hook": str(treatment.get("dialogue_text") or ""),
+            "cta": "",
+        }
     if not resolved_copy.get("hook") and safe_hook_angles:
         resolved_copy["hook"] = _clean(safe_hook_angles[0])
     if not resolved_copy.get("cta") and safe_cta_angles:
@@ -868,7 +889,7 @@ def compile_ugc_video_prompt(
         sentences = [x.strip() for x in _re.split(r"(?<=[.!?])\s+", resolved_claim_safe_rewrite) if x.strip()]
         resolved_copy["usps"] = sentences[:3]
     resolved_scene_strategy = _scene_strategies.resolve_scene_strategy(product)
-    if resolved_source_mode != "IMAGES":
+    if resolved_source_mode != "IMAGES" and not treatment:
         direct_slots = resolved_scene_strategy["direct_script_slots"]
         if not resolved_copy.get("hook"):
             resolved_copy["hook"] = direct_slots["hook"][0]
@@ -895,7 +916,11 @@ def compile_ugc_video_prompt(
         approved_package = {**approved_package, "scene_context": _scene_override}
 
     resolved_presenter = None
-    if resolved_source_mode in ("HYBRID", "T2V") and resolved_character_presence != "FACELESS":
+    if (
+        resolved_source_mode in ("HYBRID", "T2V")
+        and resolved_character_presence != "FACELESS"
+        and str(treatment.get("format") or "").upper() != "PGC"
+    ):
         # Production presenter identity is always resolved from Avatar Registry.
         # Visible production presenter identity requires explicit operator choice.
         # Legacy creator-persona/composer and deterministic pool selection are not authority.
@@ -926,7 +951,7 @@ def compile_ugc_video_prompt(
         _ingredient_roles = {"PRODUCT_REFERENCE": True}
     planner_result: dict[str, Any] | None = None
     allocation_by_block: dict[int, dict[str, Any]] = {}
-    if resolved_source_mode != "IMAGES":
+    if resolved_source_mode != "IMAGES" and not treatment:
         planner_route = (
             "DEV_MANUAL_BLOCK_PLAN"
             if resolved_generation_mode == "EXTEND" and not requested_total_duration_seconds
@@ -988,6 +1013,10 @@ def compile_ugc_video_prompt(
             handling_notes=_handling_line(product, normalized_mode),
             shot_count_hint=_shot_policy["recommended"],
             allocation=allocation,
+            approved_dialogue=(
+                str(treatment.get("dialogue_text") or "") or None
+            ),
+            creative_treatment=treatment or None,
         )
         shots = [
             x.split(": ", 1)[-1]
@@ -1096,4 +1125,21 @@ def compile_ugc_video_prompt(
         "continuation_lineage": continuation_lineage,
         "runtime_config_snapshot": get_runtime_config(),
         "engine_target": _clean(engine_target) or _clean(approved_package.get("mode")) or normalized_mode,
+        "treatment_lineage": (
+            {
+                "treatment_id": treatment.get("treatment_id"),
+                "treatment_sha256": treatment.get("treatment_sha256"),
+                "visual_fingerprint_sha256": treatment.get(
+                    "visual_fingerprint_sha256"
+                ),
+                "format": treatment.get("format"),
+                "variation_group": treatment.get("variation_group"),
+                "dependency_hashes": treatment.get("dependency_hashes"),
+            }
+            if treatment
+            else None
+        ),
+        "compiled_shot_grammar": (
+            treatment.get("shot_grammar") if treatment else None
+        ),
     }
