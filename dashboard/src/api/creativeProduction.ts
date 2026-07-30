@@ -105,6 +105,8 @@ export interface ProductionPlan {
 	name: string;
 	campaign_key: string;
 	product_scope: string[];
+	allocations?: ProductVideoAllocation[];
+	product_video_allocations?: ProductVideoAllocation[];
 	p58_cohort_sha256: string;
 	p58_cohort_count: number;
 	target_video_count: number;
@@ -113,9 +115,11 @@ export interface ProductionPlan {
 	operating_window_hours: number;
 	allocation_strategy: string;
 	variation_strategy: string;
-	logical_mode: string;
+	logical_mode: "T2V" | "HYBRID" | "F2V" | "I2V" | string;
+	model_key?: string;
 	model_keys: string[];
 	duration_seconds: number[];
+	aspect_ratio?: string;
 	pool_snapshot: Record<string, unknown>;
 	execution_policy: Record<string, unknown>;
 	capacity_snapshot: Record<string, unknown>;
