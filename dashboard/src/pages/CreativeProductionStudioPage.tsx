@@ -132,6 +132,7 @@ export default function CreativeProductionStudioPage() {
 	const [liveExecutionCertified, setLiveExecutionCertified] = useState(false);
 	const [poolAuthority, setPoolAuthority] =
 		useState<GovernedPoolAuthority | null>(null);
+	const [poolAuthorityLoading, setPoolAuthorityLoading] = useState(false);
 	const [preflight, setPreflight] = useState<CapacityPreflight | null>(null);
 	const [busy, setBusy] = useState("");
 	const [error, setError] = useState("");
@@ -227,16 +228,41 @@ export default function CreativeProductionStudioPage() {
 			});
 	}, []);
 
+	const poolAuthorityProductKey = useMemo(
+		() =>
+			allocations
+				.map((allocation) => allocation.product_id)
+				.sort()
+				.join("\u001f"),
+		[allocations],
+	);
+
 	useEffect(() => {
-		const productIds = allocations.map((allocation) => allocation.product_id);
+		const productIds = poolAuthorityProductKey.split("\u001f").filter(Boolean);
 		if (!productIds.length) {
 			setPoolAuthority(null);
+			setPoolAuthorityLoading(false);
 			return;
 		}
+		let active = true;
+		setPoolAuthority(null);
+		setPoolAuthorityLoading(true);
 		void fetchGovernedPoolAuthority(productIds, form.logicalMode)
-			.then(setPoolAuthority)
-			.catch((reason) => setError(String(reason)));
-	}, [allocations, form.logicalMode]);
+			.then((authority) => {
+				if (!active) return;
+				setPoolAuthority(authority);
+				setPoolAuthorityLoading(false);
+			})
+			.catch((reason) => {
+				if (!active) return;
+				setPoolAuthority(null);
+				setPoolAuthorityLoading(false);
+				setError(String(reason));
+			});
+		return () => {
+			active = false;
+		};
+	}, [poolAuthorityProductKey, form.logicalMode]);
 
 	const selectedModel = videoModels.find(
 		(model) => model.key === form.modelKey,
@@ -701,6 +727,14 @@ export default function CreativeProductionStudioPage() {
 									Advanced approved pools and reuse controls
 								</summary>
 								<div className="mt-3 grid gap-3">
+									{poolAuthorityLoading ? (
+										<div
+											data-testid="p6-pool-authority-loading"
+											className="rounded-lg border border-sky-500/30 bg-sky-950/20 p-2 text-xs text-sky-100"
+										>
+											Loading governed supply for the selected products…
+										</div>
+									) : null}
 									{[
 										{
 											key: "copySetIds",
@@ -853,6 +887,8 @@ export default function CreativeProductionStudioPage() {
 									!cohort?.matches_frozen_authority ||
 									!allocations.length ||
 									invalidAllocation ||
+									poolAuthorityLoading ||
+									!poolAuthority ||
 									!form.modelKey ||
 									!selectedDuration ||
 									Boolean(modelRegistryError) ||
