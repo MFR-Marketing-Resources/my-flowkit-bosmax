@@ -95,6 +95,7 @@ def _decode_row(row: dict[str, Any]) -> dict[str, Any]:
         ("creative_dimensions_json", {}),
         ("prompt_package_json", {}),
         ("payload_snapshot_json", {}),
+        ("provider_snapshot_json", {}),
         ("eligible_media_types_json", []),
         ("runtime_metadata_json", {}),
         ("checklist_json", {}),

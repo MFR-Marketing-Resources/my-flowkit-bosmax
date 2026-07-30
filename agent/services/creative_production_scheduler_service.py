@@ -93,6 +93,97 @@ ATTEMPT_TRANSITIONS: dict[str, set[str]] = {
     AttemptState.SUPERSEDED.value: set(),
 }
 
+_PROVIDER_SNAPSHOT_KEYS = (
+    "job_id",
+    "status",
+    "stage",
+    "mode",
+    "project_id",
+    "binding",
+    "approved",
+    "generation_started",
+    "generation_identity",
+    "identity_captured",
+    "identity_gap_sse",
+    "tools_seen",
+    "gen_tool_matched",
+    "model",
+    "model_used",
+    "model_unverified",
+    "duration_used",
+    "duration_unverified",
+    "num_videos",
+    "media_id",
+    "media_ids",
+    "artifacts",
+    "artifact",
+    "local_path",
+    "size_mb",
+    "credit_state",
+    "credit_spent_likely",
+    "correlation_stats",
+    "output_correlation",
+    "recovery_required",
+    "recovery_hint",
+    "error",
+    "original_error",
+    "artifact_record_error",
+    "created",
+)
+_PROVIDER_TERMINAL_FAILURE_STATES = {
+    "FAILED",
+    "ERROR",
+    "CANCELLED",
+    "RENDER_NOT_MATERIALIZED",
+    "STALE_OR_FOREIGN_CANDIDATES_ONLY",
+}
+
+
+def _provider_snapshot(job: dict[str, Any]) -> dict[str, Any]:
+    selected = {
+        key: job.get(key)
+        for key in _PROVIDER_SNAPSHOT_KEYS
+        if key in job
+    }
+    return json.loads(json.dumps(selected, ensure_ascii=False, default=str))
+
+
+def _provider_correlation_id(job: dict[str, Any]) -> str | None:
+    identity = job.get("generation_identity")
+    if not isinstance(identity, dict):
+        return None
+    value = identity.get("tool_call_id") or identity.get("response_id")
+    return str(value) if value else None
+
+
+async def _persist_provider_observation(
+    attempt: dict[str, Any],
+    job: dict[str, Any],
+) -> dict[str, Any]:
+    snapshot = _provider_snapshot(job)
+    previous = _loads(attempt.get("provider_snapshot_json"), {})
+    if isinstance(previous, dict):
+        previous = {
+            key: value
+            for key, value in previous.items()
+            if key != "observed_at"
+        }
+    if previous == snapshot:
+        return attempt
+    observed_at = _now()
+    project_id = job.get("project_id")
+    if not project_id and isinstance(job.get("binding"), dict):
+        project_id = job["binding"].get("project_id")
+    snapshot["observed_at"] = observed_at
+    return await p6db.update_attempt(
+        str(attempt["attempt_id"]),
+        provider_project_id=str(project_id) if project_id else None,
+        provider_correlation_id=_provider_correlation_id(job),
+        provider_snapshot_json=_stable_json(snapshot),
+        provider_snapshot_updated_at=observed_at,
+        updated_at=observed_at,
+    )
+
 
 def live_execution_certified() -> bool:
     return production_queue_service.bulk_live_execution_certified()
@@ -524,13 +615,16 @@ async def _dispatch_attempt(
             "The generation door returned no durable job identity.",
             status_code=502,
         )
-    await p6db.update_attempt(
+    attempt = await p6db.update_attempt(
         attempt["attempt_id"],
         attempt_state=AttemptState.PROVIDER_JOB_KNOWN.value,
         provider_job_id=provider_job_id,
         provider_known_at=_now(),
         updated_at=_now(),
     )
+    initial_job = make_video.get_job(provider_job_id)
+    if initial_job is not None:
+        attempt = await _persist_provider_observation(attempt, initial_job)
     await p6db.update_item(
         item["item_id"],
         status=ItemStatus.SUBMITTED.value,
@@ -873,8 +967,9 @@ async def reconcile_attempt(attempt_id: str) -> dict[str, Any]:
             "provider_state": "UNKNOWN",
             "resubmission_allowed": False,
         }
-    job = make_video.get_job(provider_job_id)
-    if job is None:
+    live_job = make_video.get_job(provider_job_id)
+    job_source = "LIVE_PROCESS"
+    if live_job is None:
         artifact = await p6db.get_generated_artifact_by_job_id(provider_job_id)
         if artifact is not None:
             media_id = str(artifact["media_id"])
@@ -916,33 +1011,62 @@ async def reconcile_attempt(attempt_id: str) -> dict[str, Any]:
             return {
                 "attempt": _decode_row(attempt),
                 "provider_state": "ARTIFACT_LEDGER_REGISTERED",
+                "provider_state_source": "GENERATED_ARTIFACT_LEDGER",
                 "resubmission_allowed": False,
             }
+        job = _loads(attempt.get("provider_snapshot_json"), {})
+        if not isinstance(job, dict) or not job:
+            return {
+                "attempt": _decode_row(attempt),
+                "provider_state": "LOCAL_JOB_STATE_UNAVAILABLE",
+                "provider_state_source": "NONE",
+                "resubmission_allowed": False,
+                "recovery_action": "PROVIDER_RECONCILIATION_REQUIRED",
+            }
+        job_source = "DURABLE_PROVIDER_SNAPSHOT"
+    else:
+        attempt = await _persist_provider_observation(attempt, live_job)
+        job = live_job
+    status = str(job.get("status") or "").upper()
+    media_ids: list[str] = []
+    for value in job.get("media_ids") or []:
+        if value and str(value) not in media_ids:
+            media_ids.append(str(value))
+    if job.get("media_id") and str(job["media_id"]) not in media_ids:
+        media_ids.append(str(job["media_id"]))
+    for artifact in job.get("artifacts") or []:
+        if (
+            isinstance(artifact, dict)
+            and artifact.get("media_id")
+            and str(artifact["media_id"]) not in media_ids
+        ):
+            media_ids.append(str(artifact["media_id"]))
+
+    terminal_observation = (
+        status in {"DONE", "COMPLETED", "GENERATED_BUT_UNRETRIEVED"}
+        or status in _PROVIDER_TERMINAL_FAILURE_STATES
+    )
+    if job_source == "DURABLE_PROVIDER_SNAPSHOT" and not terminal_observation:
         return {
             "attempt": _decode_row(attempt),
             "provider_state": "LOCAL_JOB_STATE_UNAVAILABLE",
+            "provider_state_source": job_source,
+            "last_observed_provider_state": status or "UNKNOWN",
             "resubmission_allowed": False,
             "recovery_action": "PROVIDER_RECONCILIATION_REQUIRED",
         }
-    status = str(job.get("status") or "").upper()
-    media_ids = [
-        str(value)
-        for value in (
-            job.get("media_ids")
-            or ([job.get("media_id")] if job.get("media_id") else [])
-        )
-        if value
-    ]
+
     if status in {"DONE", "COMPLETED"} and media_ids:
         media_id = media_ids[0]
         artifact = await crud.get_generated_artifact(media_id)
+        now = _now()
         if artifact is not None:
             state = AttemptState.REGISTERED.value
             await p6db.update_item(
                 attempt["item_id"],
                 status=ItemStatus.QA_PENDING.value,
                 output_media_id=media_id,
-                updated_at=_now(),
+                updated_at=now,
             )
             await p6db.upsert_qa(
                 {
@@ -952,8 +1076,8 @@ async def reconcile_attempt(attempt_id: str) -> dict[str, Any]:
                     "artifact_media_id": media_id,
                     "status": "QA_PENDING",
                     "checklist_json": "{}",
-                    "created_at": _now(),
-                    "updated_at": _now(),
+                    "created_at": now,
+                    "updated_at": now,
                 }
             )
         else:
@@ -962,41 +1086,85 @@ async def reconcile_attempt(attempt_id: str) -> dict[str, Any]:
             attempt_id,
             attempt_state=state,
             artifact_media_id=media_id,
-            generated_at=attempt.get("generated_at") or _now(),
-            retrieved_at=_now(),
-            registered_at=_now() if state == AttemptState.REGISTERED.value else None,
-            completed_at=_now() if state == AttemptState.REGISTERED.value else None,
-            updated_at=_now(),
+            generated_at=attempt.get("generated_at") or now,
+            retrieved_at=now,
+            registered_at=now if state == AttemptState.REGISTERED.value else None,
+            completed_at=now if state == AttemptState.REGISTERED.value else None,
+            updated_at=now,
         )
         await p6db.release_lease(
             attempt_id,
-            released_at=_now(),
+            released_at=now,
             release_reason=state,
         )
-    elif status in {"FAILED", "ERROR", "CANCELLED"}:
+    elif status == "GENERATED_BUT_UNRETRIEVED":
+        now = _now()
         attempt = await p6db.update_attempt(
             attempt_id,
-            attempt_state=AttemptState.FAILED.value,
-            failure_stage="PROVIDER_JOB",
+            attempt_state=AttemptState.GENERATED_NOT_RETRIEVED.value,
+            failure_stage="RETRIEVAL",
             failure_code=str(job.get("error") or status)[:300],
-            recovery_class="NEW_GENERATION_RETRY_ALLOWED_AFTER_REVIEW",
-            completed_at=_now(),
-            updated_at=_now(),
+            recovery_class="RETRIEVAL_ONLY_NO_RESUBMIT",
+            generated_at=attempt.get("generated_at") or now,
+            updated_at=now,
         )
         await p6db.update_item(
             attempt["item_id"],
-            status=ItemStatus.FAILED.value,
-            updated_at=_now(),
+            status=ItemStatus.GENERATED.value,
+            updated_at=now,
         )
         await p6db.release_lease(
             attempt_id,
-            released_at=_now(),
-            release_reason="PROVIDER_JOB_FAILED",
+            released_at=now,
+            release_reason=status,
+        )
+    elif status in _PROVIDER_TERMINAL_FAILURE_STATES:
+        now = _now()
+        cancelled = status == "CANCELLED"
+        failure_stage = {
+            "RENDER_NOT_MATERIALIZED": "PROVIDER_RENDER",
+            "STALE_OR_FOREIGN_CANDIDATES_ONLY": "OUTPUT_CORRELATION",
+        }.get(status, "PROVIDER_JOB")
+        failure_code = f"{status}: {job.get('error') or status}"[:300]
+        attempt = await p6db.update_attempt(
+            attempt_id,
+            attempt_state=(
+                AttemptState.CANCELLED.value
+                if cancelled
+                else AttemptState.FAILED.value
+            ),
+            failure_stage=failure_stage,
+            failure_code=failure_code,
+            recovery_class=(
+                "CANCELLED_NO_RESUBMIT"
+                if cancelled
+                else "NEW_GENERATION_RETRY_ALLOWED_AFTER_REVIEW"
+            ),
+            completed_at=now,
+            updated_at=now,
+        )
+        await p6db.update_item(
+            attempt["item_id"],
+            status=(
+                ItemStatus.CANCELLED.value
+                if cancelled
+                else ItemStatus.FAILED.value
+            ),
+            updated_at=now,
+        )
+        await p6db.release_lease(
+            attempt_id,
+            released_at=now,
+            release_reason=status,
         )
     return {
         "attempt": _decode_row(attempt),
         "provider_state": status,
-        "resubmission_allowed": status in {"FAILED", "ERROR", "CANCELLED"},
+        "provider_state_source": job_source,
+        "resubmission_allowed": (
+            status in _PROVIDER_TERMINAL_FAILURE_STATES
+            and status != "CANCELLED"
+        ),
     }
 
 
@@ -1051,6 +1219,16 @@ async def recover_after_restart() -> dict[str, Any]:
 
 
 async def scheduler_tick() -> dict[str, Any]:
+    for attempt in await p6db.list_attempts_for_reconciliation(limit=200):
+        try:
+            await reconcile_attempt(str(attempt["attempt_id"]))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "P6 provider reconciliation failed for attempt %s",
+                attempt["attempt_id"],
+            )
     if not live_execution_certified():
         return {
             "live_execution_certified": False,

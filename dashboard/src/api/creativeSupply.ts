@@ -9,6 +9,21 @@ export type SupplyRunState =
 	| "BLOCKED"
 	| "CANCELLED";
 
+export interface SupplyRunSummary {
+	run_id: string;
+	mission_id: string;
+	roster_sha256: string;
+	cohort_sha256: string;
+	state: SupplyRunState;
+	provider_budget_max: number;
+	provider_calls_used: number;
+	reviewer_id: string;
+	pause_reason: string | null;
+	last_error: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
 export interface SupplyRun {
 	run_id: string;
 	mission_id: string;
@@ -133,7 +148,7 @@ export interface SupplyRunStatus {
 	exact_blockers: string[];
 }
 
-export function listSupplyRuns(): Promise<{ runs: SupplyRun[] }> {
+export function listSupplyRuns(): Promise<{ runs: SupplyRunSummary[] }> {
 	return getAPI("/api/creative-supply/runs");
 }
 

@@ -18,7 +18,7 @@ import {
 	reconcileInterruptedSupplyTask,
 	requeueUnsubmittedSupplyTask,
 	type ReviewCandidate,
-	type SupplyRun,
+	type SupplyRunSummary,
 	type SupplyRunStatus,
 	retrySupplyTask,
 	reviewSupplyComponent,
@@ -54,7 +54,7 @@ function Metric({ label, value }: { label: string; value: string | number }) {
 }
 
 export default function CreativeSupplyFactoryPanel() {
-	const [runs, setRuns] = useState<SupplyRun[]>([]);
+	const [runs, setRuns] = useState<SupplyRunSummary[]>([]);
 	const [runId, setRunId] = useState("");
 	const [status, setStatus] = useState<SupplyRunStatus | null>(null);
 	const [busy, setBusy] = useState("");
