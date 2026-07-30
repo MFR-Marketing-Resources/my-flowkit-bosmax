@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ImageOff, Search, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ImageOff, Minus, Plus, Search, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
 	CohortProduct,
@@ -151,10 +151,11 @@ export default function ProductAllocationPicker({
 	};
 
 	const updateQuantity = (productId: string, videoCount: number) => {
+		const validCount = Number.isNaN(videoCount) ? 1 : Math.max(1, Math.min(200, videoCount));
 		onChange(
 			allocations.map((allocation) =>
 				allocation.product_id === productId
-					? { ...allocation, video_count: videoCount }
+					? { ...allocation, video_count: validCount }
 					: allocation,
 			),
 		);
@@ -352,7 +353,7 @@ export default function ProductAllocationPicker({
 							<div
 								aria-live="polite"
 								data-testid="p6-allocation-summary"
-								className="mt-1 text-[11px] text-cyan-200"
+								className="mt-1 text-[11px] font-medium text-cyan-200"
 							>
 								{selectedProducts.length}{" "}
 								{selectedProducts.length === 1 ? "product" : "products"} ·{" "}
@@ -374,53 +375,87 @@ export default function ProductAllocationPicker({
 							<div
 								key={product.product_id}
 								data-testid="p6-selected-product"
-								className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/70 p-2"
+								className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/70 p-2.5"
 							>
-								<ProductThumbnail product={product} />
-								<div className="min-w-0 flex-1">
-									<div className="truncate text-xs font-semibold text-white">
-										{product.product_name}
-									</div>
-									<div
-										className={`mt-1 text-[10px] ${
-											blocker ? "text-amber-200" : "text-emerald-300"
-										}`}
-									>
-										{blocker || "Ready for governed planning"}
+								<div className="flex items-center gap-3 min-w-0 flex-1">
+									<ProductThumbnail product={product} />
+									<div className="min-w-0 flex-1">
+										<div className="truncate text-xs font-semibold text-white" title={product.product_name}>
+											{product.product_name}
+										</div>
+										<div
+											className={`mt-0.5 text-[10px] ${
+												blocker ? "text-amber-200" : "text-emerald-300"
+											}`}
+										>
+											{blocker || "Ready for governed planning"}
+										</div>
 									</div>
 								</div>
-								<label className="shrink-0 text-[10px] text-slate-400">
-									Video quantity
-									<input
-										ref={(node) => {
-											if (node) {
-												quantityInputRefs.current.set(product.product_id, node);
-											} else {
-												quantityInputRefs.current.delete(product.product_id);
-											}
-										}}
-										aria-label={`Video quantity for ${product.product_name}`}
-										type="number"
-										min={1}
-										max={200}
-										value={allocation.video_count}
-										onChange={(event) =>
-											updateQuantity(
-												product.product_id,
-												Number(event.target.value),
-											)
-										}
-										className="mt-1 block w-16 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-center text-xs text-white"
-									/>
-								</label>
-								<button
-									type="button"
-									aria-label={`Remove ${product.product_name}`}
-									onClick={() => toggleProduct(product.product_id)}
-									className="rounded-lg p-2 text-slate-500 hover:bg-rose-950/40 hover:text-rose-300"
-								>
-									<Trash2 size={14} />
-								</button>
+								<div className="flex items-center gap-2 shrink-0">
+									<div className="flex flex-col items-end">
+										<span className="text-[10px] text-slate-400">Video quantity</span>
+										<div className="mt-1 flex items-center rounded-lg border border-slate-700 bg-slate-950 p-0.5">
+											<button
+												type="button"
+												aria-label={`Decrease quantity for ${product.product_name}`}
+												onClick={() =>
+													updateQuantity(
+														product.product_id,
+														Math.max(1, allocation.video_count - 1),
+													)
+												}
+												disabled={allocation.video_count <= 1}
+												className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent"
+											>
+												<Minus size={13} />
+											</button>
+											<input
+												ref={(node) => {
+													if (node) {
+														quantityInputRefs.current.set(product.product_id, node);
+													} else {
+														quantityInputRefs.current.delete(product.product_id);
+													}
+												}}
+												aria-label={`Video quantity for ${product.product_name}`}
+												type="number"
+												min={1}
+												max={200}
+												value={allocation.video_count}
+												onChange={(event) =>
+													updateQuantity(
+														product.product_id,
+														Number(event.target.value),
+													)
+												}
+												className="w-12 text-center text-xs font-semibold text-white bg-transparent outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+											/>
+											<button
+												type="button"
+												aria-label={`Increase quantity for ${product.product_name}`}
+												onClick={() =>
+													updateQuantity(
+														product.product_id,
+														Math.min(200, allocation.video_count + 1),
+													)
+												}
+												disabled={allocation.video_count >= 200}
+												className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent"
+											>
+												<Plus size={13} />
+											</button>
+										</div>
+									</div>
+									<button
+										type="button"
+										aria-label={`Remove ${product.product_name}`}
+										onClick={() => toggleProduct(product.product_id)}
+										className="rounded-lg p-2 text-slate-500 hover:bg-rose-950/40 hover:text-rose-300"
+									>
+										<Trash2 size={15} />
+									</button>
+								</div>
 							</div>
 						);
 					})}
@@ -429,3 +464,4 @@ export default function ProductAllocationPicker({
 		</div>
 	);
 }
+
