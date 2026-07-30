@@ -38,6 +38,7 @@ from agent.services.creative_production_plan_service import (
     _stable_json,
     record_audit_event,
     resolve_item_treatment,
+    require_complete_plan_snapshot,
 )
 
 
@@ -780,6 +781,7 @@ async def start_plan(
             "Live execution requires a scheduled plan.",
             status_code=409,
         )
+    await require_complete_plan_snapshot(plan_id)
     items = await p6db.list_items(
         plan_id,
         statuses=["WAVE_ASSIGNED", "QUEUED"],

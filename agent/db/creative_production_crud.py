@@ -68,6 +68,7 @@ _PLAN_UPDATE_COLUMNS = {
     "model_keys_json",
     "duration_seconds_json",
     "pool_snapshot_json",
+    "plan_snapshot_json",
     "execution_policy_json",
     "capacity_snapshot_json",
     "compile_snapshot_json",

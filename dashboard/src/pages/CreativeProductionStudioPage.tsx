@@ -16,7 +16,7 @@ import {
 	WandSparkles,
 	XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	approveProductionPlan,
 	assignProductionWaves,
@@ -39,6 +39,7 @@ import {
 	P6_LIVE_CONFIRMATION,
 	type PlanDetail,
 	type ProductionPlan,
+	type ProductionPlanCanonicalSnapshot,
 	type ProductVideoAllocation,
 	preflightProductionPlan,
 	reconcileAttempt,
@@ -72,9 +73,9 @@ const blockerMessage = (code: string) => {
 		return "This product does not have enough unique approved material for the requested quantity. Reduce quantity or add approved supply.";
 	}
 	if (/MODEL|DURATION/.test(code)) {
-		return "The selected model and duration are not a governed combination. Choose an available duration.";
+		return "The selected model and duration cannot be used together. Choose an available duration.";
 	}
-	return "This product needs additional governed production authority before it can proceed.";
+	return "This product needs more approved production material before it can proceed.";
 };
 
 const technicalCode = (blocker: Record<string, unknown>) =>
@@ -132,10 +133,20 @@ const WORKFLOW_STEPS = [
 	{ id: 6, label: "Generate", desc: "Spends credits" },
 ];
 
+type StudioMode =
+	| "NEW_DRAFT"
+	| "ACTIVE_PLAN"
+	| "UNSAVED_DRAFT_FROM_ACTIVE_PLAN"
+	| "LOADING_PLAN"
+	| "LEGACY_INCOMPLETE_PLAN";
+
 export default function CreativeProductionStudioPage() {
 	const [cohort, setCohort] = useState<CohortAuthority | null>(null);
 	const [plans, setPlans] = useState<ProductionPlan[]>([]);
 	const [selectedPlanId, setSelectedPlanId] = useState("");
+	const [studioMode, setStudioMode] = useState<StudioMode>("NEW_DRAFT");
+	const [draftSourceSnapshot, setDraftSourceSnapshot] =
+		useState<ProductionPlanCanonicalSnapshot | null>(null);
 	const [detail, setDetail] = useState<PlanDetail | null>(null);
 	const [lanes, setLanes] = useState<ExecutionLane[]>([]);
 	const [liveExecutionCertified, setLiveExecutionCertified] = useState(false);
@@ -151,11 +162,14 @@ export default function CreativeProductionStudioPage() {
 	const [allocations, setAllocations] = useState<ProductVideoAllocation[]>([]);
 	const [videoModels, setVideoModels] = useState<VideoModelInfo[]>([]);
 	const [modelRegistryError, setModelRegistryError] = useState("");
+	const [historySearch, setHistorySearch] = useState("");
+	const [historyStatus, setHistoryStatus] = useState("ACTIVE");
+	const planRequestSequence = useRef(0);
 	const [activeView, setActiveView] = useState<"matrix" | "attempts" | "qa">(
 		"matrix",
 	);
 	const [form, setForm] = useState({
-		name: "Daily governed creative plan",
+		name: "New production plan",
 		campaignKey: "",
 		imageCount: 0,
 		posterCount: 0,
@@ -177,71 +191,68 @@ export default function CreativeProductionStudioPage() {
 		controlledReuseMaxPerDna: 1,
 	});
 
+	const loadPlan = useCallback(async (planId: string) => {
+		const requestSequence = ++planRequestSequence.current;
+		setSelectedPlanId(planId);
+		setStudioMode("LOADING_PLAN");
+		setDetail(null);
+		setPreflight(null);
+		setLivePhrase("");
+		setLastEvidence("");
+		setActiveView("matrix");
+		try {
+			const fetchedDetail = await fetchProductionPlan(planId);
+			if (requestSequence !== planRequestSequence.current) return null;
+			const itemIds = new Set(fetchedDetail.items.map((item) => item.item_id));
+			const planIdMismatch =
+				fetchedDetail.plan.plan_id !== planId ||
+				fetchedDetail.snapshot.plan_id !== planId ||
+				fetchedDetail.waves.some((row) => row.plan_id !== planId) ||
+				fetchedDetail.batches.some((row) => row.plan_id !== planId) ||
+				fetchedDetail.items.some((item) => item.plan_id !== planId) ||
+				fetchedDetail.audit_events.some((row) => row.plan_id !== planId) ||
+				fetchedDetail.attempts.some(
+					(attempt) => !itemIds.has(attempt.item_id),
+				) ||
+				fetchedDetail.qa.some((row) => !itemIds.has(String(row.item_id ?? "")));
+			if (planIdMismatch) {
+				throw new Error(
+					"Selected plan response is internally inconsistent. No plan data was rendered.",
+				);
+			}
+			setDetail(fetchedDetail);
+			setStudioMode(
+				fetchedDetail.snapshot.completeness === "COMPLETE"
+					? "ACTIVE_PLAN"
+					: "LEGACY_INCOMPLETE_PLAN",
+			);
+			return fetchedDetail;
+		} catch (reason) {
+			if (requestSequence !== planRequestSequence.current) return null;
+			setSelectedPlanId("");
+			setDetail(null);
+			setStudioMode("NEW_DRAFT");
+			throw reason;
+		}
+	}, []);
+
 	const refresh = useCallback(
 		async (preferredPlanId?: string) => {
-			const [authority, planList, laneList] = await Promise.all([
-				fetchCohortAuthority(),
+			void fetchCohortAuthority()
+				.then(setCohort)
+				.catch((reason) => setError((current) => current || String(reason)));
+			const [planList, laneList] = await Promise.all([
 				listProductionPlans(),
 				listExecutionLanes(),
 			]);
-			setCohort(authority);
 			setPlans(planList.plans);
 			setLanes(laneList.lanes);
 			setLiveExecutionCertified(laneList.live_execution_certified);
-			const nextPlanId =
-				preferredPlanId || selectedPlanId || planList.plans[0]?.plan_id || "";
-			if (nextPlanId) {
-				setSelectedPlanId(nextPlanId);
-				const fetchedDetail = await fetchProductionPlan(nextPlanId);
-				setDetail(fetchedDetail);
-				if (fetchedDetail?.plan) {
-					const plan = fetchedDetail.plan;
-					const planModelKey =
-						plan.model_key ||
-						(Array.isArray((plan as unknown as Record<string, unknown>).model_keys)
-							? (plan as unknown as { model_keys: string[] }).model_keys[0]
-							: "") ||
-						"";
-					const planDuration =
-						typeof plan.duration_seconds === "number"
-							? plan.duration_seconds
-							: Array.isArray(
-										(plan as unknown as Record<string, unknown>).duration_seconds,
-									)
-								? (plan as unknown as { duration_seconds: number[] }).duration_seconds[0]
-								: 8;
-
-					const planAllocations =
-						Array.isArray(plan.allocations) && plan.allocations.length > 0
-							? plan.allocations
-							: Array.isArray(plan.product_scope) && plan.product_scope.length > 0
-								? plan.product_scope.map((id) => ({
-										product_id: id,
-										video_count: Math.max(
-											1,
-											Math.floor(
-												(plan.target_video_count || plan.product_scope.length) /
-													plan.product_scope.length,
-											),
-										),
-									}))
-								: [];
-
-					setAllocations(planAllocations);
-					setForm((current) => ({
-						...current,
-						name: plan.name,
-						logicalMode: (plan.logical_mode as "T2V" | "HYBRID" | "F2V" | "I2V") || "T2V",
-						modelKey: planModelKey || current.modelKey,
-						durationSeconds: planDuration || current.durationSeconds,
-						aspect: ((plan.aspect_ratio || (plan.execution_policy?.aspect as string)) as "9:16" | "16:9") || "9:16",
-					}));
-				}
-			} else {
-				setDetail(null);
+			if (preferredPlanId) {
+				await loadPlan(preferredPlanId);
 			}
 		},
-		[selectedPlanId],
+		[loadPlan],
 	);
 
 	useEffect(() => {
@@ -398,8 +409,8 @@ export default function CreativeProductionStudioPage() {
 		setError("");
 		try {
 			const evidence = await action();
-			setLastEvidence(JSON.stringify(evidence, null, 2));
 			await refresh(selectedPlanId);
+			setLastEvidence(JSON.stringify(evidence, null, 2));
 		} catch (reason) {
 			setError(reason instanceof Error ? reason.message : String(reason));
 		} finally {
@@ -450,143 +461,145 @@ export default function CreativeProductionStudioPage() {
 		return created;
 	};
 
-	const getPlanAllocations = useCallback(
-		(planObj: Record<string, unknown>): ProductVideoAllocation[] => {
-			if (Array.isArray(planObj.allocations) && planObj.allocations.length > 0) {
-				return planObj.allocations as ProductVideoAllocation[];
-			}
-			if (
-				Array.isArray(planObj.product_scope) &&
-				planObj.product_scope.length > 0
-			) {
-				const scope = planObj.product_scope as string[];
-				const totalVids = (planObj.target_video_count as number) || scope.length;
-				const perProd = Math.max(1, Math.floor(totalVids / scope.length));
-				return scope.map((id) => ({
-					product_id: id,
-					video_count: perProd,
-				}));
-			}
-			return [];
-		},
-		[],
-	);
-
-	const isDraftMismatched = useMemo(() => {
-		if (!detail?.plan) return false;
-		const plan = detail.plan;
-		const formProdCount = allocations.length;
-		const planAllocations = getPlanAllocations(
-			plan as unknown as Record<string, unknown>,
-		);
-		if (formProdCount !== planAllocations.length) return true;
-
-		const formProductIds = allocations
-			.map((a) => a.product_id)
-			.sort()
-			.join(",");
-		const planProductIds = planAllocations
-			.map((a) => a.product_id)
-			.sort()
-			.join(",");
-		if (formProductIds !== planProductIds) return true;
-
-		const formTotalVideos = allocations.reduce(
-			(sum, a) => sum + a.video_count,
-			0,
-		);
-		const planTotalVideos =
-			planAllocations.reduce((sum, a) => sum + a.video_count, 0) ||
-			plan.target_video_count;
-		if (formTotalVideos !== planTotalVideos) return true;
-
-		if (form.logicalMode !== plan.logical_mode) return true;
-
-		const planModelKey =
-			plan.model_key ||
-			(Array.isArray((plan as unknown as Record<string, unknown>).model_keys)
-				? (plan as unknown as { model_keys: string[] }).model_keys[0]
-				: "") ||
-			"";
-		const normalizeKey = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, "");
-		if (planModelKey && normalizeKey(form.modelKey) !== normalizeKey(planModelKey))
-			return true;
-
-		const planDuration =
-			typeof plan.duration_seconds === "number"
-				? plan.duration_seconds
-				: Array.isArray(
-							(plan as unknown as Record<string, unknown>).duration_seconds,
-						)
-					? (plan as unknown as { duration_seconds: number[] }).duration_seconds[0]
-					: 8;
-		if (planDuration && Number(selectedDuration) !== planDuration) return true;
-
-		return false;
-	}, [
-		detail,
-		allocations,
-		form.logicalMode,
-		form.modelKey,
-		selectedDuration,
-		getPlanAllocations,
-	]);
-
-	const syncFormToActivePlan = useCallback(() => {
-		if (!detail?.plan) return;
-		const plan = detail.plan;
-		const planModelKey =
-			plan.model_key ||
-			(Array.isArray((plan as unknown as Record<string, unknown>).model_keys)
-				? (plan as unknown as { model_keys: string[] }).model_keys[0]
-				: "") ||
-			"";
-		const planDuration =
-			typeof plan.duration_seconds === "number"
-				? plan.duration_seconds
-				: Array.isArray(
-							(plan as unknown as Record<string, unknown>).duration_seconds,
-						)
-					? (plan as unknown as { duration_seconds: number[] }).duration_seconds[0]
-					: 8;
-
+	const duplicateActivePlan = useCallback(() => {
+		if (!detail) return;
+		const snapshot = detail.snapshot;
+		const configuration = snapshot.video_configurations[0];
+		const pool = snapshot.pool_snapshot;
+		const poolValues = (key: string) =>
+			Array.isArray(pool[key]) ? (pool[key] as string[]).join("\n") : "";
+		planRequestSequence.current += 1;
+		setDraftSourceSnapshot(snapshot);
 		setAllocations(
-			getPlanAllocations(plan as unknown as Record<string, unknown>),
+			snapshot.product_allocations.map(({ product_id, video_count }) => ({
+				product_id,
+				video_count,
+			})),
 		);
 		setForm((current) => ({
 			...current,
-			name: plan.name,
-			logicalMode: (plan.logical_mode as "T2V" | "HYBRID" | "F2V" | "I2V") || "T2V",
-			modelKey: planModelKey || current.modelKey,
-			durationSeconds: planDuration || current.durationSeconds,
-			aspect: ((plan.aspect_ratio || (plan.execution_policy?.aspect as string)) as "9:16" | "16:9") || "9:16",
+			name: `${snapshot.plan_name} copy`,
+			campaignKey: snapshot.purpose ?? "",
+			imageCount: snapshot.target_image_count,
+			posterCount: snapshot.target_poster_count,
+			windowHours: snapshot.operating_window_hours,
+			logicalMode: snapshot.logical_mode,
+			modelKey: configuration?.model_key ?? current.modelKey,
+			durationSeconds:
+				configuration?.requested_total_duration_seconds ??
+				current.durationSeconds,
+			aspect: snapshot.aspect_ratio,
+			copySetIds: poolValues("copy_set_ids"),
+			posterCopySetIds: poolValues("poster_copy_set_ids"),
+			avatarCodes: poolValues("avatar_codes"),
+			productReferenceAssetIds: poolValues("product_reference_asset_ids"),
+			finishedFrameAssetIds: poolValues("finished_frame_asset_ids"),
+			characterAssetIds: poolValues("character_asset_ids"),
+			sceneAssetIds: poolValues("scene_asset_ids"),
+			styleAssetIds: poolValues("style_asset_ids"),
+			layoutIds: poolValues("layout_ids"),
+			controlledReuseReason: String(pool.controlled_reuse_reason ?? ""),
+			controlledReuseMaxPerDna: Number(pool.controlled_reuse_max_per_dna ?? 1),
 		}));
-	}, [detail, getPlanAllocations]);
-
-	const switchToNewDraft = useCallback(() => {
 		setSelectedPlanId("");
 		setDetail(null);
 		setPreflight(null);
+		setLivePhrase("");
+		setLastEvidence("");
+		setActiveView("matrix");
+		setStudioMode("UNSAVED_DRAFT_FROM_ACTIVE_PLAN");
+	}, [detail]);
+
+	const switchToNewDraft = useCallback(() => {
+		planRequestSequence.current += 1;
+		setSelectedPlanId("");
+		setDetail(null);
+		setPreflight(null);
+		setLivePhrase("");
+		setLastEvidence("");
+		setActiveView("matrix");
+		setDraftSourceSnapshot(null);
+		setAllocations([]);
+		setForm((current) => ({
+			...current,
+			name: "New production plan",
+			campaignKey: "",
+			imageCount: 0,
+			posterCount: 0,
+			windowHours: 12,
+			logicalMode: "T2V",
+			aspect: "9:16",
+			copySetIds: "",
+			posterCopySetIds: "",
+			avatarCodes: "",
+			productReferenceAssetIds: "",
+			finishedFrameAssetIds: "",
+			characterAssetIds: "",
+			sceneAssetIds: "",
+			styleAssetIds: "",
+			layoutIds: "",
+			controlledReuseReason: "",
+			controlledReuseMaxPerDna: 1,
+		}));
+		setStudioMode("NEW_DRAFT");
 	}, []);
 
 	const selectedPlan = detail?.plan;
-	const actionDisabled = !selectedPlan || Boolean(busy) || isDraftMismatched;
+	const selectedSnapshot = detail?.snapshot;
+	const verifiedVideoLane = lanes.find(
+		(lane) =>
+			lane.enabled &&
+			lane.health_status === "HEALTHY" &&
+			lane.runtime_proof_status === "VERIFIED" &&
+			lane.eligible_media_types.includes("VIDEO"),
+	);
+	const hasDryRunProof = Boolean(
+		detail?.attempts.some(
+			(attempt) =>
+				!attempt.credit_spend_intended &&
+				attempt.attempt_state === "NOT_SUBMITTED",
+		),
+	);
+	const actionDisabled =
+		studioMode !== "ACTIVE_PLAN" ||
+		!selectedPlan ||
+		selectedSnapshot?.completeness !== "COMPLETE" ||
+		Boolean(busy);
 	const liveEnabled =
 		liveExecutionCertified &&
+		studioMode === "ACTIVE_PLAN" &&
 		selectedPlan?.status === "SCHEDULED" &&
+		selectedSnapshot?.completeness === "COMPLETE" &&
+		selectedSnapshot.plan_id === selectedPlan.plan_id &&
+		Boolean(verifiedVideoLane) &&
+		hasDryRunProof &&
 		livePhrase === P6_LIVE_CONFIRMATION &&
-		!busy &&
-		!isDraftMismatched;
+		!busy;
 
 	const liveDisabledReason = useMemo(() => {
-		if (isDraftMismatched) {
-			return "Form draft differs from active plan snapshot. Sync form or start new draft to authorize.";
+		if (studioMode === "UNSAVED_DRAFT_FROM_ACTIVE_PLAN") {
+			return "Create the new plan before starting production.";
+		}
+		if (!selectedPlan || !selectedSnapshot) {
+			return "Select an existing plan before starting production.";
+		}
+		if (selectedSnapshot.completeness !== "COMPLETE") {
+			return `This legacy plan is missing: ${selectedSnapshot.missing_fields.join(", ")}.`;
+		}
+		if (studioMode !== "ACTIVE_PLAN") {
+			return "Select an existing plan before starting production.";
 		}
 		if (!liveExecutionCertified) {
 			return "Runtime live-execution certification is absent.";
 		}
+		if (!verifiedVideoLane) {
+			return "No verified healthy video lane is available.";
+		}
 		if (selectedPlan?.status !== "SCHEDULED") {
 			return `Plan must be in SCHEDULED status before live execution (current status: ${selectedPlan?.status || "NONE"}).`;
+		}
+		if (!hasDryRunProof) {
+			return "A matching zero-credit dry run is required.";
 		}
 		if (livePhrase !== P6_LIVE_CONFIRMATION) {
 			return `Confirmation phrase does not match. Type exact phrase: ${P6_LIVE_CONFIRMATION}`;
@@ -595,7 +608,16 @@ export default function CreativeProductionStudioPage() {
 			return "Action in progress...";
 		}
 		return "All safety gates must pass before live dispatch.";
-	}, [isDraftMismatched, liveExecutionCertified, selectedPlan, livePhrase, busy]);
+	}, [
+		studioMode,
+		selectedPlan,
+		selectedSnapshot,
+		liveExecutionCertified,
+		verifiedVideoLane,
+		hasDryRunProof,
+		livePhrase,
+		busy,
+	]);
 
 	const preflightSnapshot =
 		(preflight ??
@@ -618,31 +640,36 @@ export default function CreativeProductionStudioPage() {
 		return 3;
 	}, [detail]);
 
-	const primaryActionConfig = useMemo(() => {
-		if (isDraftMismatched && selectedPlan) {
+	const primaryActionConfig = (() => {
+		if (studioMode === "LEGACY_INCOMPLETE_PLAN" && selectedSnapshot) {
 			return {
 				step: activeStep,
-				title: "Draft Configuration Mismatch",
-				subtitle: `Current form draft differs from active selected plan (${selectedPlan.name}).`,
-				buttonLabel: "Form Mismatched",
+				title: "Legacy plan — incomplete snapshot",
+				subtitle: `Missing plan data: ${selectedSnapshot.missing_fields.join(", ")}.`,
+				buttonLabel: "Production unavailable",
 				buttonTestId: "p6-primary-action",
-				actionName: "mismatch",
+				actionName: "legacy-incomplete",
 				executeAction: async () => {},
 				disabled: true,
 				disabledReason:
-					"Form draft differs from active plan snapshot. Sync form to plan or create a new plan draft.",
+					"This plan remains inspectable but cannot start production.",
 				isCreditSpend: false,
 			};
 		}
 
 		if (!detail?.plan) {
+			const isUnsaved = studioMode === "UNSAVED_DRAFT_FROM_ACTIVE_PLAN";
 			return {
 				step: 1,
-				title: "Create Production Plan",
+				title: isUnsaved ? "Unsaved new plan" : "New production plan",
 				subtitle:
-					"Persist durable plan configuration and product allocations.",
+					"Choose products and exact quantities, then save this production plan.",
 				buttonLabel:
-					busy === "create" ? "Persisting plan…" : "Create durable plan",
+					busy === "create"
+						? "Creating plan…"
+						: isUnsaved
+							? "Create new production plan"
+							: "Create production plan",
 				buttonTestId: "p6-primary-action",
 				actionName: "create",
 				executeAction: () => create(),
@@ -660,15 +687,15 @@ export default function CreativeProductionStudioPage() {
 					Boolean(poolAuthority?.blockers.length) ||
 					!form.name,
 				disabledReason: !cohort?.matches_frozen_authority
-					? "Cohort authority check required"
+					? "Product list check required"
 					: !allocations.length
 						? "Select at least one product"
 						: invalidAllocation
 							? "Product quantities must be between 1 and 200"
 							: poolAuthorityLoading
-								? "Loading governed supply..."
+								? "Loading approved supply..."
 								: poolAuthority?.blockers.length
-									? "Governed pool blockers must be resolved"
+									? "Approved supply blockers must be resolved"
 									: !form.name
 										? "Enter a plan name"
 										: "Fill in all required fields",
@@ -697,7 +724,9 @@ export default function CreativeProductionStudioPage() {
 						return result;
 					}),
 				disabled: actionDisabled,
-				disabledReason: busy ? "Action in progress..." : "Select or resume plan",
+				disabledReason: busy
+					? "Action in progress..."
+					: "Select or resume plan",
 				isCreditSpend: false,
 			};
 		}
@@ -721,7 +750,9 @@ export default function CreativeProductionStudioPage() {
 					return compileProductionPlan(planId, operatorId);
 				},
 				disabled: actionDisabled,
-				disabledReason: busy ? "Action in progress..." : "Select or resume plan",
+				disabledReason: busy
+					? "Action in progress..."
+					: "Select or resume plan",
 				isCreditSpend: false,
 			};
 		}
@@ -743,7 +774,9 @@ export default function CreativeProductionStudioPage() {
 					return assignProductionWaves(planId, operatorId, 2, 25);
 				},
 				disabled: actionDisabled,
-				disabledReason: busy ? "Action in progress..." : "Select or resume plan",
+				disabledReason: busy
+					? "Action in progress..."
+					: "Select or resume plan",
 				isCreditSpend: false,
 			};
 		}
@@ -760,28 +793,37 @@ export default function CreativeProductionStudioPage() {
 						: "Run dry-run verification (0 credits)",
 				buttonTestId: "p6-primary-action",
 				actionName: "Dry run · 0 credit",
-				executeAction: () => dryRunProductionPlan(planId, operatorId),
+				executeAction: () =>
+					dryRunProductionPlan(
+						planId,
+						operatorId,
+						detail.snapshot.aspect_ratio,
+					),
 				disabled: actionDisabled,
-				disabledReason: busy ? "Action in progress..." : "Select or resume plan",
+				disabledReason: busy
+					? "Action in progress..."
+					: "Select or resume plan",
 				isCreditSpend: false,
 			};
 		}
 
 		if (status === "SCHEDULED") {
-			const videoCount = detail.plan.target_video_count || totalVideoCount || 1;
+			const videoCount = detail.snapshot.target_video_count;
 			return {
 				step: 6,
-				title: `Authorize and Generate ${videoCount} Video${videoCount === 1 ? "" : "s"}`,
-				subtitle:
-					"Separately authorized live generation action. This action WILL spend media credits.",
+				title: `Start production for ${detail.snapshot.plan_name}`,
+				subtitle: `This sends the next queued item now and authorizes the scheduler to continue this ${videoCount}-video plan. This action spends media credits.`,
 				buttonLabel:
-					busy === "live"
-						? "Dispatching live job…"
-						: `Authorize & generate ${videoCount} video${videoCount === 1 ? "" : "s"}`,
+					busy === "live" ? "Starting production…" : "Start production",
 				buttonTestId: "p6-primary-action",
 				actionName: "live",
 				executeAction: () =>
-					startProductionPlan(planId, operatorId, livePhrase),
+					startProductionPlan(
+						planId,
+						operatorId,
+						livePhrase,
+						detail.snapshot.aspect_ratio,
+					),
 				disabled: !liveEnabled,
 				disabledReason: !liveExecutionCertified
 					? "Runtime live-execution certification is absent"
@@ -806,28 +848,49 @@ export default function CreativeProductionStudioPage() {
 			disabledReason: `Plan is in state (${String(status)})`,
 			isCreditSpend: false,
 		};
-	}, [
-		detail,
-		busy,
-		cohort,
-		allocations,
-		invalidAllocation,
-		poolAuthorityLoading,
-		poolAuthority,
-		form,
-		selectedDuration,
-		modelRegistryError,
-		operatorId,
-		totalVideoCount,
-		actionDisabled,
-		liveEnabled,
-		liveExecutionCertified,
-		livePhrase,
-		create,
-		isDraftMismatched,
-		selectedPlan,
-		activeStep,
-	]);
+	})();
+
+	const primaryPlans = useMemo(
+		() =>
+			plans.filter((plan) =>
+				[
+					"DRAFT",
+					"PREFLIGHT_BLOCKED",
+					"PREFLIGHT_READY",
+					"PENDING_APPROVAL",
+					"APPROVED",
+					"SCHEDULED",
+					"RUNNING",
+					"PAUSED",
+				].includes(plan.status),
+			),
+		[plans],
+	);
+	const filteredHistory = useMemo(() => {
+		const query = historySearch.trim().toLocaleLowerCase();
+		return plans.filter((plan) => {
+			const statusMatches =
+				historyStatus === "ALL" ||
+				(historyStatus === "ACTIVE"
+					? primaryPlans.some((candidate) => candidate.plan_id === plan.plan_id)
+					: historyStatus === "COMPLETED"
+						? ["COMPLETED", "COMPLETED_WITH_FAILURES"].includes(plan.status)
+						: historyStatus === "CANCELLED_FAILED"
+							? ["CANCELLED", "FAILED"].includes(plan.status)
+							: plan.status === historyStatus);
+			const allocationNames =
+				plan.snapshot_summary?.product_allocations
+					.map((allocation) => allocation.product_name)
+					.join(" ") ?? "";
+			return (
+				statusMatches &&
+				(!query ||
+					`${plan.name} ${plan.plan_id} ${allocationNames}`
+						.toLocaleLowerCase()
+						.includes(query))
+			);
+		});
+	}, [plans, primaryPlans, historySearch, historyStatus]);
 
 	return (
 		<div className="mx-auto max-w-[1680px] space-y-4 p-4 text-slate-100">
@@ -836,20 +899,20 @@ export default function CreativeProductionStudioPage() {
 					<div>
 						<div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-cyan-300">
 							<ShieldCheck size={15} />
-							P6 · Sovereign production control plane
+							Production Studio
 						</div>
 						<h1 className="text-2xl font-bold tracking-tight">
-							Batch Creative Production Orchestrator
+							Production plans
 						</h1>
 						<p className="mt-2 max-w-3xl text-sm text-slate-400">
-							Durable plan → capacity → DNA matrix → compile → approve → waves →
-							dry-run → separately authorized execution → QA. Planning never
-							spends media credits.
+							Choose products, review capacity, prepare the content matrix, run
+							a zero-credit check, then start production only with explicit
+							confirmation.
 						</p>
 					</div>
 					<div className="grid min-w-[320px] grid-cols-2 gap-2">
 						<Metric
-							label="Frozen P5.8 cohort"
+							label="Available products"
 							value={cohort?.cohort_count ?? "…"}
 							tone={
 								cohort?.matches_frozen_authority
@@ -864,8 +927,8 @@ export default function CreativeProductionStudioPage() {
 					<StatusBadge
 						status={
 							cohort?.matches_frozen_authority
-								? "PRODUCT AUTHORITY READY"
-								: "PRODUCT AUTHORITY CHECK REQUIRED"
+								? "PRODUCT LIST READY"
+								: "PRODUCT LIST CHECK REQUIRED"
 						}
 						testId="p6-cohort-authority"
 					/>
@@ -876,7 +939,7 @@ export default function CreativeProductionStudioPage() {
 						Compile + dry run = 0 media credits
 					</span>
 					<details className="rounded border border-slate-800 bg-slate-900 px-2 py-1 text-slate-500">
-						<summary className="cursor-pointer">Technical authority</summary>
+						<summary className="cursor-pointer">Technical details</summary>
 						<div className="mt-2 font-mono">
 							Cohort SHA: {cohort?.cohort_sha256 ?? "loading"}
 						</div>
@@ -895,7 +958,7 @@ export default function CreativeProductionStudioPage() {
 								Creative supply
 							</div>
 							<div className="mt-1 text-sm text-slate-300">
-								P7 governed supply remains available when more approved variants
+								Approved creative supply remains available when more variants
 								are needed.
 							</div>
 						</div>
@@ -942,7 +1005,7 @@ export default function CreativeProductionStudioPage() {
 					<div className="flex items-center gap-2">
 						<Layers3 className="text-cyan-400" size={18} />
 						<span className="text-xs font-bold uppercase tracking-wider text-cyan-200">
-							Active Production Plan Selection
+							Select existing plan
 						</span>
 					</div>
 					<div className="flex items-center gap-2 min-w-0 flex-1 justify-end">
@@ -955,16 +1018,17 @@ export default function CreativeProductionStudioPage() {
 								if (!nextId) {
 									switchToNewDraft();
 								} else {
-									setSelectedPlanId(nextId);
-									void refresh(nextId);
+									void loadPlan(nextId).catch((reason) =>
+										setError(String(reason)),
+									);
 								}
 							}}
 							className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-white outline-none focus:border-cyan-500 max-w-xs truncate"
 						>
-							<option value="">+ Create New Production Plan Draft</option>
-							{plans.map((p) => (
+							<option value="">New production plan</option>
+							{primaryPlans.map((p) => (
 								<option key={p.plan_id} value={p.plan_id}>
-									{p.name} ({p.status} · {p.target_video_count} vids)
+									{p.name} ({p.status} · {p.target_video_count} videos)
 								</option>
 							))}
 						</select>
@@ -973,481 +1037,541 @@ export default function CreativeProductionStudioPage() {
 							onClick={switchToNewDraft}
 							className="rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-200 shrink-0"
 						>
-							New Draft
+							Return to new plan
 						</button>
 					</div>
 				</div>
 
-				{selectedPlan ? (
+				{studioMode === "LOADING_PLAN" ? (
+					<div
+						data-testid="p6-plan-loading"
+						className="mt-2 text-xs text-cyan-200"
+					>
+						Loading the selected plan…
+					</div>
+				) : selectedPlan && selectedSnapshot ? (
 					<div className="mt-3 border-t border-cyan-500/20 pt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
 						<div>
-							<span className="font-bold text-white">{selectedPlan.name}</span>{" "}
+							<span className="font-bold text-white">
+								{selectedSnapshot.plan_name}
+							</span>{" "}
 							<span className="font-mono text-[10px] text-slate-400">
-								({selectedPlan.plan_id})
+								({selectedSnapshot.plan_id})
 							</span>
 							<div className="mt-0.5 text-[11px] text-cyan-300">
-								Active Plan Snapshot: {selectedPlan.target_video_count} video
-								{selectedPlan.target_video_count === 1 ? "" : "s"} across{" "}
-								{getPlanAllocations(selectedPlan as unknown as Record<string, unknown>).length} product
-								{getPlanAllocations(selectedPlan as unknown as Record<string, unknown>).length === 1 ? "" : "s"} ·{" "}
-								{selectedPlan.logical_mode} · {selectedPlan.model_key || selectedPlan.model_keys?.[0] || ""} ·{" "}
-								{typeof selectedPlan.duration_seconds === "number"
-									? selectedPlan.duration_seconds
-									: (selectedPlan.duration_seconds?.[0] ?? 8)}s (
-								{(typeof selectedPlan.duration_seconds === "number"
-									? selectedPlan.duration_seconds
-									: (selectedPlan.duration_seconds?.[0] ?? 8)) > 10
-									? "EXTEND"
-									: "SINGLE"}) ·{" "}
-								{selectedPlan.aspect_ratio || (selectedPlan.execution_policy?.aspect as string) || "9:16"}
+								{selectedSnapshot.target_video_count} video
+								{selectedSnapshot.target_video_count === 1 ? "" : "s"} across{" "}
+								{selectedSnapshot.product_allocations.length} product
+								{selectedSnapshot.product_allocations.length === 1 ? "" : "s"} ·{" "}
+								{selectedSnapshot.logical_mode} ·{" "}
+								{selectedSnapshot.video_configurations
+									.map(
+										(configuration) =>
+											`${configuration.model_label} · ${configuration.requested_total_duration_seconds}s ${configuration.generation_mode}`,
+									)
+									.join(" / ")}{" "}
+								· {selectedSnapshot.aspect_ratio}
 							</div>
 						</div>
 						<div className="flex items-center gap-2">
 							<StatusBadge status={selectedPlan.status} />
-							{isDraftMismatched ? (
-								<button
-									type="button"
-									onClick={syncFormToActivePlan}
-									className="rounded bg-cyan-600/30 hover:bg-cyan-600/50 border border-cyan-500/50 px-2.5 py-1 text-[11px] font-semibold text-cyan-100"
-								>
-									Sync Form to Active Plan
-								</button>
-							) : null}
+							<button
+								type="button"
+								onClick={duplicateActivePlan}
+								className="rounded bg-cyan-600/30 hover:bg-cyan-600/50 border border-cyan-500/50 px-2.5 py-1 text-[11px] font-semibold text-cyan-100"
+							>
+								Duplicate as new plan
+							</button>
 						</div>
 					</div>
 				) : (
 					<div className="mt-2 text-xs text-slate-400">
-						Editing a new plan draft. Configure products, video settings, and
-						click "Create durable plan" below.
+						{studioMode === "UNSAVED_DRAFT_FROM_ACTIVE_PLAN"
+							? "UNSAVED NEW PLAN — the selected historical plan remains read-only."
+							: "NEW PRODUCTION PLAN — no existing plan is selected."}
 					</div>
 				)}
 			</section>
 
 			<div className="grid gap-6 2xl:grid-cols-[420px_minmax(0,1fr)]">
 				<aside className="space-y-4">
-					{isDraftMismatched && selectedPlan ? (
+					{studioMode === "UNSAVED_DRAFT_FROM_ACTIVE_PLAN" &&
+					draftSourceSnapshot ? (
 						<div
-							data-testid="p6-draft-mismatch-warning"
+							data-testid="p6-unsaved-draft-warning"
 							className="rounded-2xl border border-amber-500/50 bg-amber-950/40 p-4 text-xs text-amber-200 space-y-2.5"
 						>
 							<div className="flex items-center gap-2 font-bold text-amber-300 text-sm">
 								<AlertTriangle size={17} className="shrink-0 text-amber-400" />
-								Form draft differs from active plan ({selectedPlan.name})
+								UNSAVED NEW PLAN
 							</div>
 							<p className="text-[11px] leading-relaxed text-amber-200/80">
-								Form edits do not modify the active plan snapshot. Workflow actions and live dispatch are disabled to prevent state mismatch.
+								This draft was copied from {draftSourceSnapshot.plan_name}. Its
+								matrix, attempts, QA and live controls are not attached to this
+								draft.
 							</p>
-							<div className="flex flex-wrap gap-2 pt-1">
-								<button
-									type="button"
-									onClick={syncFormToActivePlan}
-									className="rounded-lg bg-amber-500/30 hover:bg-amber-500/50 border border-amber-500/50 px-3 py-1.5 text-xs font-semibold text-amber-100 transition"
-								>
-									Sync Form to Active Plan
-								</button>
-								<button
-									type="button"
-									onClick={switchToNewDraft}
-									className="rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-200 transition"
-								>
-									Start New Plan Draft
-								</button>
-							</div>
+							<details className="text-[10px] text-amber-100/70">
+								<summary>Source plan technical details</summary>
+								<div className="mt-1 font-mono">
+									{draftSourceSnapshot.plan_id}
+								</div>
+							</details>
 						</div>
 					) : null}
 
-					<section className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4">
-						<div className="mb-3 flex items-center gap-2">
-							<WandSparkles size={16} className="text-cyan-300" />
-							<h2 className="font-semibold">Create governed plan</h2>
-						</div>
-						<div className="grid gap-3">
-							<label className="text-xs text-slate-400">
-								Plan name
-								<input
-									aria-label="Plan name"
-									value={form.name}
-									onChange={(event) =>
-										setForm({ ...form, name: event.target.value })
-									}
-									className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"
-								/>
-							</label>
-							<div>
-								<div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-300">
-									A. Choose products
-								</div>
-								<ProductAllocationPicker
-									products={cohort?.products ?? []}
-									allocations={allocations}
-									onChange={setAllocations}
-									blockersByProduct={blockersByProduct}
-									loading={!cohort}
-									error={
-										cohort || !error
-											? ""
-											: "Governed product authority unavailable."
-									}
-								/>
+					{studioMode === "NEW_DRAFT" ||
+					studioMode === "UNSAVED_DRAFT_FROM_ACTIVE_PLAN" ? (
+						<section className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4">
+							<div className="mb-3 flex items-center gap-2">
+								<WandSparkles size={16} className="text-cyan-300" />
+								<h2 className="font-semibold">New production plan</h2>
 							</div>
-							<label className="text-xs text-slate-400">
-								Operator identity
-								<input
-									aria-label="P6 operator identity"
-									value={operatorId}
-									onChange={(event) => setOperatorId(event.target.value)}
-									className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"
-								/>
-							</label>
-							<div className="grid grid-cols-3 gap-2">
-								<div className="rounded-lg border border-cyan-500/30 bg-cyan-950/20 p-2">
-									<div className="text-[10px] text-slate-400">Videos</div>
-									<div className="mt-1 text-lg font-semibold text-cyan-200">
-										{totalVideoCount}
+							<div className="grid gap-3">
+								<label className="text-xs text-slate-400">
+									Plan name
+									<input
+										aria-label="Plan name"
+										value={form.name}
+										onChange={(event) =>
+											setForm({ ...form, name: event.target.value })
+										}
+										className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"
+									/>
+								</label>
+								<div>
+									<div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-300">
+										A. Choose products
 									</div>
-									<div className="text-[9px] text-slate-500">
-										From product quantities
-									</div>
+									<ProductAllocationPicker
+										products={cohort?.products ?? []}
+										allocations={allocations}
+										onChange={setAllocations}
+										blockersByProduct={blockersByProduct}
+										loading={!cohort}
+										error={
+											cohort || !error
+												? ""
+												: "Governed product authority unavailable."
+										}
+									/>
 								</div>
-								{(
-									[
-										["imageCount", "Images"],
-										["posterCount", "Posters"],
-									] as const
-								).map(([key, label]) => (
-									<label key={key} className="text-xs text-slate-400">
-										{label}
-										<input
-											aria-label={label}
-											type="number"
-											min={0}
-											max={200}
-											value={form[key]}
-											onChange={(event) =>
-												setForm({
-													...form,
-													[key]: Number(event.target.value),
-												})
-											}
-											className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-white"
-										/>
-									</label>
-								))}
-							</div>
-							<div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-300">
-								B. Configure video
-							</div>
-							<div className="grid grid-cols-2 gap-2">
 								<label className="text-xs text-slate-400">
-									Video mode
-									<select
-										aria-label="Video logical mode"
-										value={form.logicalMode}
-										onChange={(event) =>
-											setForm({
-												...form,
-												logicalMode: event.target
-													.value as typeof form.logicalMode,
-											})
-										}
-										className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-white"
-									>
-										{["T2V", "HYBRID", "F2V", "I2V"].map((mode) => (
-											<option key={mode}>{mode}</option>
-										))}
-									</select>
+									Operator identity
+									<input
+										aria-label="P6 operator identity"
+										value={operatorId}
+										onChange={(event) => setOperatorId(event.target.value)}
+										className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"
+									/>
 								</label>
-								<label className="text-xs text-slate-400">
-									Model
-									<select
-										aria-label="Governed video model"
-										value={form.modelKey}
-										onChange={(event) => chooseModel(event.target.value)}
-										disabled={!videoModels.length}
-										className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-white"
-									>
-										{videoModels.map((model) => (
-											<option key={model.key} value={model.key}>
-												{model.ui_label}
-											</option>
-										))}
-									</select>
-								</label>
-								<label className="text-xs text-slate-400">
-									Duration
-									<select
-										aria-label="Governed video duration"
-										value={form.durationSeconds}
-										onChange={(event) =>
-											setForm({
-												...form,
-												durationSeconds: Number(event.target.value),
-											})
-										}
-										className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-white"
-									>
-										{durationOptions.map((option) => (
-											<option key={option.seconds} value={option.seconds}>
-												{option.seconds}s —{" "}
-												{option.generationMode === "SINGLE"
-													? "Single"
-													: `Extend · ${option.segments} × ${option.blockSeconds}s`}
-											</option>
-										))}
-									</select>
-								</label>
-								<label className="text-xs text-slate-400">
-									Aspect ratio
-									<select
-										aria-label="Video aspect ratio"
-										value={form.aspect}
-										onChange={(event) =>
-											setForm({
-												...form,
-												aspect: event.target.value as typeof form.aspect,
-											})
-										}
-										className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-white"
-									>
-										<option value="9:16">9:16 · Portrait</option>
-										<option value="16:9">16:9 · Landscape</option>
-									</select>
-								</label>
-							</div>
-							{selectedDurationOption ? (
-								<div
-									data-testid="p6-orchestration-summary"
-									className={`rounded-xl border p-3 text-xs ${
-										selectedDurationOption.generationMode === "EXTEND"
-											? "border-violet-500/40 bg-violet-950/30 text-violet-100"
-											: "border-emerald-500/30 bg-emerald-950/30 text-emerald-100"
-									}`}
-								>
-									<strong>
-										{selectedDurationOption.generationMode === "EXTEND"
-											? `Extend · ${selectedDurationOption.segments} continuous ${selectedDurationOption.blockSeconds}-second segments`
-											: "Single-shot"}
-									</strong>
-									<div className="mt-1 text-[10px] opacity-80">
-										{selectedDurationOption.generationMode === "EXTEND"
-											? "Compile creates a reviewed multi-block plan and durable /video-jobs identity. Final concat occurs only after separate live authorization."
-											: "One governed provider job after separate live authorization."}
-									</div>
-								</div>
-							) : null}
-							{modelRegistryError ? (
-								<div className="rounded-lg border border-rose-500/30 bg-rose-950/30 p-2 text-xs text-rose-200">
-									The canonical model registry is unavailable. Plan creation is
-									locked.
-								</div>
-							) : null}
-							<div className="grid grid-cols-2 gap-2">
-								<label className="text-xs text-slate-400">
-									Operating window
-									<select
-										aria-label="Operating window hours"
-										value={form.windowHours}
-										onChange={(event) =>
-											setForm({
-												...form,
-												windowHours: Number(event.target.value),
-											})
-										}
-										className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-white"
-									>
-										{[8, 12, 24].map((hours) => (
-											<option key={hours} value={hours}>
-												{hours} hours
-											</option>
-										))}
-									</select>
-								</label>
-							</div>
-							<details className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
-								<summary className="cursor-pointer text-xs font-semibold text-slate-300">
-									Advanced approved pools and reuse controls
-								</summary>
-								<div className="mt-3 grid gap-3">
-									{poolAuthorityLoading ? (
-										<div
-											data-testid="p6-pool-authority-loading"
-											className="rounded-lg border border-sky-500/30 bg-sky-950/20 p-2 text-xs text-sky-100"
-										>
-											Loading governed supply for the selected products…
+								<div className="grid grid-cols-3 gap-2">
+									<div className="rounded-lg border border-cyan-500/30 bg-cyan-950/20 p-2">
+										<div className="text-[10px] text-slate-400">Videos</div>
+										<div className="mt-1 text-lg font-semibold text-cyan-200">
+											{totalVideoCount}
 										</div>
-									) : null}
-									{[
-										{
-											key: "copySetIds",
-											label: "COPY_APPROVED Copy Sets",
-											options: poolAuthority?.copy_sets ?? [],
-											valueKey: "copy_set_id",
-											labelKeys: ["angle", "hook"],
-										},
-										{
-											key: "posterCopySetIds",
-											label: "POSTER_COPY_APPROVED Copy Sets",
-											options: poolAuthority?.poster_copy_sets ?? [],
-											valueKey: "poster_copy_set_id",
-											labelKeys: ["headline", "cta"],
-										},
-										{
-											key: "avatarCodes",
-											label: "Product-first approved avatars",
-											options: poolAuthority?.avatar_profiles ?? [],
-											valueKey: "avatar_code",
-											labelKeys: ["character_name", "variant"],
-										},
-										{
-											key: "productReferenceAssetIds",
-											label: "Product reference assets",
-											options: poolAuthority?.product_reference_assets ?? [],
-											valueKey: "asset_id",
-											labelKeys: ["name", "semantic_role"],
-										},
-										{
-											key: "finishedFrameAssetIds",
-											label: "Finished composite frames",
-											options: poolAuthority?.finished_frame_assets ?? [],
-											valueKey: "asset_id",
-											labelKeys: ["name", "semantic_role"],
-										},
-										{
-											key: "characterAssetIds",
-											label: "Character reference assets",
-											options: poolAuthority?.character_assets ?? [],
-											valueKey: "asset_id",
-											labelKeys: ["name", "semantic_role"],
-										},
-										{
-											key: "sceneAssetIds",
-											label: "Scene context assets",
-											options: poolAuthority?.scene_assets ?? [],
-											valueKey: "asset_id",
-											labelKeys: ["name", "semantic_role"],
-										},
-										{
-											key: "styleAssetIds",
-											label: "Style reference assets",
-											options: poolAuthority?.style_assets ?? [],
-											valueKey: "asset_id",
-											labelKeys: ["name", "semantic_role"],
-										},
-										{
-											key: "layoutIds",
-											label: "Authoritative poster recipes",
-											options: poolAuthority?.poster_recipes ?? [],
-											valueKey: "recipe_id",
-											labelKeys: ["name", "layout_family"],
-										},
-									].map(({ key, label, options, valueKey, labelKeys }) => (
+										<div className="text-[9px] text-slate-500">
+											From product quantities
+										</div>
+									</div>
+									{(
+										[
+											["imageCount", "Images"],
+											["posterCount", "Posters"],
+										] as const
+									).map(([key, label]) => (
 										<label key={key} className="text-xs text-slate-400">
 											{label}
-											<select
-												multiple
+											<input
 												aria-label={label}
-												value={splitValues(
-													form[key as keyof typeof form] as string,
-												)}
+												type="number"
+												min={0}
+												max={200}
+												value={form[key]}
 												onChange={(event) =>
 													setForm({
 														...form,
-														[key]: Array.from(
-															event.currentTarget.selectedOptions,
-															(option) => option.value,
-														).join(","),
+														[key]: Number(event.target.value),
 													})
 												}
-												className="mt-1 min-h-20 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-white"
-											>
-												{options.map((option) => {
-													const value = String(option[valueKey] ?? "");
-													const descriptor = labelKeys
-														.map((labelKey) => String(option[labelKey] ?? ""))
-														.filter(Boolean)
-														.join(" · ");
-													return (
-														<option key={value} value={value}>
-															{descriptor || value}
-														</option>
-													);
-												})}
-											</select>
+												className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-white"
+											/>
 										</label>
 									))}
-									{poolAuthority?.blockers.length ? (
-										<div
-											data-testid="p6-pool-authority-blockers"
-											className="rounded-lg border border-amber-500/30 bg-amber-950/20 p-2 text-xs text-amber-100"
-										>
-											{poolAuthority.blockers.length} governed pool blocker(s).
-											The server will fail closed until they are resolved.
-										</div>
-									) : null}
+								</div>
+								<div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-300">
+									B. Configure video
+								</div>
+								<div className="grid grid-cols-2 gap-2">
 									<label className="text-xs text-slate-400">
-										Controlled reuse reason (optional and explicit)
-										<input
-											aria-label="Controlled reuse reason"
-											value={form.controlledReuseReason}
+										Video mode
+										<select
+											aria-label="Video logical mode"
+											value={form.logicalMode}
 											onChange={(event) =>
 												setForm({
 													...form,
-													controlledReuseReason: event.target.value,
+													logicalMode: event.target
+														.value as typeof form.logicalMode,
 												})
 											}
-											className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-white"
-										/>
+											className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-white"
+										>
+											{["T2V", "HYBRID", "F2V", "I2V"].map((mode) => (
+												<option key={mode}>{mode}</option>
+											))}
+										</select>
 									</label>
 									<label className="text-xs text-slate-400">
-										Maximum exact DNA reuse (1–3)
+										Model
 										<select
-											aria-label="Maximum exact DNA reuse"
-											value={form.controlledReuseMaxPerDna}
+											aria-label="Governed video model"
+											value={form.modelKey}
+											onChange={(event) => chooseModel(event.target.value)}
+											disabled={!videoModels.length}
+											className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-white"
+										>
+											{videoModels.map((model) => (
+												<option key={model.key} value={model.key}>
+													{model.ui_label}
+												</option>
+											))}
+										</select>
+									</label>
+									<label className="text-xs text-slate-400">
+										Duration
+										<select
+											aria-label="Governed video duration"
+											value={form.durationSeconds}
 											onChange={(event) =>
 												setForm({
 													...form,
-													controlledReuseMaxPerDna: Number(event.target.value),
+													durationSeconds: Number(event.target.value),
 												})
 											}
-											className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-white"
+											className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-white"
 										>
-											{[1, 2, 3].map((value) => (
-												<option key={value} value={value}>
-													{value}
+											{durationOptions.map((option) => (
+												<option key={option.seconds} value={option.seconds}>
+													{option.seconds}s —{" "}
+													{option.generationMode === "SINGLE"
+														? "Single"
+														: `Extend · ${option.segments} × ${option.blockSeconds}s`}
+												</option>
+											))}
+										</select>
+									</label>
+									<label className="text-xs text-slate-400">
+										Aspect ratio
+										<select
+											aria-label="Video aspect ratio"
+											value={form.aspect}
+											onChange={(event) =>
+												setForm({
+													...form,
+													aspect: event.target.value as typeof form.aspect,
+												})
+											}
+											className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-white"
+										>
+											<option value="9:16">9:16 · Portrait</option>
+											<option value="16:9">16:9 · Landscape</option>
+										</select>
+									</label>
+								</div>
+								{selectedDurationOption ? (
+									<div
+										data-testid="p6-orchestration-summary"
+										className={`rounded-xl border p-3 text-xs ${
+											selectedDurationOption.generationMode === "EXTEND"
+												? "border-violet-500/40 bg-violet-950/30 text-violet-100"
+												: "border-emerald-500/30 bg-emerald-950/30 text-emerald-100"
+										}`}
+									>
+										<strong>
+											{selectedDurationOption.generationMode === "EXTEND"
+												? `Extend · ${selectedDurationOption.segments} continuous ${selectedDurationOption.blockSeconds}-second segments`
+												: "Single-shot"}
+										</strong>
+										<div className="mt-1 text-[10px] opacity-80">
+											{selectedDurationOption.generationMode === "EXTEND"
+												? "Compile creates a reviewed multi-block plan and durable /video-jobs identity. Final concat occurs only after separate live authorization."
+												: "One governed provider job after separate live authorization."}
+										</div>
+									</div>
+								) : null}
+								{modelRegistryError ? (
+									<div className="rounded-lg border border-rose-500/30 bg-rose-950/30 p-2 text-xs text-rose-200">
+										The canonical model registry is unavailable. Plan creation
+										is locked.
+									</div>
+								) : null}
+								<div className="grid grid-cols-2 gap-2">
+									<label className="text-xs text-slate-400">
+										Operating window
+										<select
+											aria-label="Operating window hours"
+											value={form.windowHours}
+											onChange={(event) =>
+												setForm({
+													...form,
+													windowHours: Number(event.target.value),
+												})
+											}
+											className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-white"
+										>
+											{[8, 12, 24].map((hours) => (
+												<option key={hours} value={hours}>
+													{hours} hours
 												</option>
 											))}
 										</select>
 									</label>
 								</div>
-							</details>
+								<details className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+									<summary className="cursor-pointer text-xs font-semibold text-slate-300">
+										Advanced approved pools and reuse controls
+									</summary>
+									<div className="mt-3 grid gap-3">
+										{poolAuthorityLoading ? (
+											<div
+												data-testid="p6-pool-authority-loading"
+												className="rounded-lg border border-sky-500/30 bg-sky-950/20 p-2 text-xs text-sky-100"
+											>
+												Loading governed supply for the selected products…
+											</div>
+										) : null}
+										{[
+											{
+												key: "copySetIds",
+												label: "COPY_APPROVED Copy Sets",
+												options: poolAuthority?.copy_sets ?? [],
+												valueKey: "copy_set_id",
+												labelKeys: ["angle", "hook"],
+											},
+											{
+												key: "posterCopySetIds",
+												label: "POSTER_COPY_APPROVED Copy Sets",
+												options: poolAuthority?.poster_copy_sets ?? [],
+												valueKey: "poster_copy_set_id",
+												labelKeys: ["headline", "cta"],
+											},
+											{
+												key: "avatarCodes",
+												label: "Product-first approved avatars",
+												options: poolAuthority?.avatar_profiles ?? [],
+												valueKey: "avatar_code",
+												labelKeys: ["character_name", "variant"],
+											},
+											{
+												key: "productReferenceAssetIds",
+												label: "Product reference assets",
+												options: poolAuthority?.product_reference_assets ?? [],
+												valueKey: "asset_id",
+												labelKeys: ["name", "semantic_role"],
+											},
+											{
+												key: "finishedFrameAssetIds",
+												label: "Finished composite frames",
+												options: poolAuthority?.finished_frame_assets ?? [],
+												valueKey: "asset_id",
+												labelKeys: ["name", "semantic_role"],
+											},
+											{
+												key: "characterAssetIds",
+												label: "Character reference assets",
+												options: poolAuthority?.character_assets ?? [],
+												valueKey: "asset_id",
+												labelKeys: ["name", "semantic_role"],
+											},
+											{
+												key: "sceneAssetIds",
+												label: "Scene context assets",
+												options: poolAuthority?.scene_assets ?? [],
+												valueKey: "asset_id",
+												labelKeys: ["name", "semantic_role"],
+											},
+											{
+												key: "styleAssetIds",
+												label: "Style reference assets",
+												options: poolAuthority?.style_assets ?? [],
+												valueKey: "asset_id",
+												labelKeys: ["name", "semantic_role"],
+											},
+											{
+												key: "layoutIds",
+												label: "Authoritative poster recipes",
+												options: poolAuthority?.poster_recipes ?? [],
+												valueKey: "recipe_id",
+												labelKeys: ["name", "layout_family"],
+											},
+										].map(({ key, label, options, valueKey, labelKeys }) => (
+											<label key={key} className="text-xs text-slate-400">
+												{label}
+												<select
+													multiple
+													aria-label={label}
+													value={splitValues(
+														form[key as keyof typeof form] as string,
+													)}
+													onChange={(event) =>
+														setForm({
+															...form,
+															[key]: Array.from(
+																event.currentTarget.selectedOptions,
+																(option) => option.value,
+															).join(","),
+														})
+													}
+													className="mt-1 min-h-20 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-white"
+												>
+													{options.map((option) => {
+														const value = String(option[valueKey] ?? "");
+														const descriptor = labelKeys
+															.map((labelKey) => String(option[labelKey] ?? ""))
+															.filter(Boolean)
+															.join(" · ");
+														return (
+															<option key={value} value={value}>
+																{descriptor || value}
+															</option>
+														);
+													})}
+												</select>
+											</label>
+										))}
+										{poolAuthority?.blockers.length ? (
+											<div
+												data-testid="p6-pool-authority-blockers"
+												className="rounded-lg border border-amber-500/30 bg-amber-950/20 p-2 text-xs text-amber-100"
+											>
+												{poolAuthority.blockers.length} governed pool
+												blocker(s). The server will fail closed until they are
+												resolved.
+											</div>
+										) : null}
+										<label className="text-xs text-slate-400">
+											Controlled reuse reason (optional and explicit)
+											<input
+												aria-label="Controlled reuse reason"
+												value={form.controlledReuseReason}
+												onChange={(event) =>
+													setForm({
+														...form,
+														controlledReuseReason: event.target.value,
+													})
+												}
+												className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-white"
+											/>
+										</label>
+										<label className="text-xs text-slate-400">
+											Maximum exact DNA reuse (1–3)
+											<select
+												aria-label="Maximum exact DNA reuse"
+												value={form.controlledReuseMaxPerDna}
+												onChange={(event) =>
+													setForm({
+														...form,
+														controlledReuseMaxPerDna: Number(
+															event.target.value,
+														),
+													})
+												}
+												className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-white"
+											>
+												{[1, 2, 3].map((value) => (
+													<option key={value} value={value}>
+														{value}
+													</option>
+												))}
+											</select>
+										</label>
+									</div>
+								</details>
+								<button
+									type="button"
+									data-testid="p6-create-plan"
+									disabled={
+										Boolean(busy) ||
+										!cohort?.matches_frozen_authority ||
+										!allocations.length ||
+										invalidAllocation ||
+										poolAuthorityLoading ||
+										!poolAuthority ||
+										!form.modelKey ||
+										!selectedDuration ||
+										Boolean(modelRegistryError) ||
+										!operatorId.trim() ||
+										Boolean(poolAuthority?.blockers.length) ||
+										!form.name
+									}
+									onClick={() => void execute("create", create)}
+									className="rounded-lg bg-cyan-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-700"
+								>
+									{busy === "create"
+										? "Creating plan…"
+										: studioMode === "UNSAVED_DRAFT_FROM_ACTIVE_PLAN"
+											? "Create new production plan"
+											: "Create production plan"}
+								</button>
+							</div>
+						</section>
+					) : selectedSnapshot ? (
+						<section
+							data-testid="p6-readonly-plan-snapshot"
+							className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4"
+						>
+							<h2 className="font-semibold">Selected plan</h2>
+							<p className="mt-1 text-xs text-slate-400">
+								Read-only plan snapshot
+							</p>
+							<div className="mt-3 space-y-2 text-xs">
+								{selectedSnapshot.product_allocations.map((allocation) => (
+									<div
+										key={allocation.product_id}
+										className="flex justify-between rounded border border-slate-800 p-2"
+									>
+										<span>{allocation.product_name}</span>
+										<span>
+											{allocation.video_count} video
+											{allocation.video_count === 1 ? "" : "s"}
+										</span>
+									</div>
+								))}
+								<div>
+									{selectedSnapshot.video_configurations.map(
+										(configuration) => (
+											<div
+												key={`${configuration.model_key}-${configuration.requested_total_duration_seconds}`}
+											>
+												{configuration.model_label} ·{" "}
+												{configuration.requested_total_duration_seconds}s{" "}
+												{configuration.generation_mode} ·{" "}
+												{configuration.segment_count} segment
+												{configuration.segment_count === 1 ? "" : "s"}
+											</div>
+										),
+									)}
+								</div>
+								<div>Aspect ratio: {selectedSnapshot.aspect_ratio}</div>
+								<div>
+									Operating window: {selectedSnapshot.operating_window_hours}{" "}
+									hours
+								</div>
+							</div>
 							<button
 								type="button"
-								data-testid="p6-create-plan"
-								disabled={
-									Boolean(busy) ||
-									!cohort?.matches_frozen_authority ||
-									!allocations.length ||
-									invalidAllocation ||
-									poolAuthorityLoading ||
-									!poolAuthority ||
-									!form.modelKey ||
-									!selectedDuration ||
-									Boolean(modelRegistryError) ||
-									!operatorId.trim() ||
-									Boolean(poolAuthority?.blockers.length) ||
-									!form.name
-								}
-								onClick={() => void execute("create", create)}
-								className="rounded-lg bg-cyan-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-700"
+								onClick={duplicateActivePlan}
+								className="mt-3 w-full rounded-lg bg-cyan-600 px-3 py-2 text-sm font-semibold text-white"
 							>
-								{busy === "create" ? "Persisting…" : "Create durable plan"}
+								Duplicate as new plan
 							</button>
-						</div>
-					</section>
+						</section>
+					) : null}
 
 					<section className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4">
 						<div className="mb-3 flex items-center justify-between">
-							<h2 className="font-semibold">Production plans</h2>
+							<h2 className="font-semibold">Production history</h2>
 							<button
 								type="button"
 								aria-label="Refresh production plans"
@@ -1457,38 +1581,80 @@ export default function CreativeProductionStudioPage() {
 								<RefreshCw size={14} />
 							</button>
 						</div>
+						<div className="mb-3 grid grid-cols-2 gap-2">
+							<input
+								aria-label="Search production history"
+								value={historySearch}
+								onChange={(event) => setHistorySearch(event.target.value)}
+								placeholder="Search plans or products"
+								className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-white"
+							/>
+							<select
+								aria-label="Filter production history by status"
+								value={historyStatus}
+								onChange={(event) => setHistoryStatus(event.target.value)}
+								className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-white"
+							>
+								<option value="ACTIVE">Active and drafts</option>
+								<option value="COMPLETED">Completed</option>
+								<option value="CANCELLED_FAILED">Cancelled / failed</option>
+								<option value="ALL">All history</option>
+							</select>
+						</div>
 						<div className="max-h-72 space-y-2 overflow-auto">
-							{plans.length === 0 && (
+							{filteredHistory.length === 0 && (
 								<div
 									data-testid="p6-empty-plans"
 									className="rounded-lg border border-dashed border-slate-700 p-4 text-center text-xs text-slate-500"
 								>
-									No P6 plan yet.
+									No plans match this filter.
 								</div>
 							)}
-							{plans.map((plan) => (
-								<button
-									key={plan.plan_id}
-									type="button"
-									onClick={() =>
-										void execute("select", async () => {
-											setSelectedPlanId(plan.plan_id);
-											setDetail(await fetchProductionPlan(plan.plan_id));
-										})
-									}
-									className={`w-full rounded-xl border p-3 text-left ${
-										selectedPlanId === plan.plan_id
-											? "border-cyan-500/60 bg-cyan-950/30"
-											: "border-slate-800 bg-slate-900/70"
-									}`}
-								>
-									<div className="flex items-start justify-between gap-2">
-										<div className="text-sm font-medium">{plan.name}</div>
-										<StatusBadge status={plan.status} />
-									</div>
-								</button>
-							))}
+							{filteredHistory.map((plan) => {
+								const configuration =
+									plan.snapshot_summary?.video_configurations[0];
+								const productCount =
+									plan.snapshot_summary?.product_allocations.length ?? 0;
+								return (
+									<button
+										key={plan.plan_id}
+										type="button"
+										onClick={() =>
+											void loadPlan(plan.plan_id).catch((reason) =>
+												setError(String(reason)),
+											)
+										}
+										className={`w-full rounded-xl border p-3 text-left ${
+											selectedPlanId === plan.plan_id
+												? "border-cyan-500/60 bg-cyan-950/30"
+												: "border-slate-800 bg-slate-900/70"
+										}`}
+									>
+										<div className="flex items-start justify-between gap-2">
+											<div className="text-sm font-medium">{plan.name}</div>
+											<StatusBadge status={plan.status} />
+										</div>
+										<div className="mt-1 text-[10px] text-slate-400">
+											{productCount} product{productCount === 1 ? "" : "s"} ·{" "}
+											{plan.target_video_count} video
+											{plan.target_video_count === 1 ? "" : "s"} ·{" "}
+											{plan.logical_mode}
+											{configuration
+												? ` · ${configuration.requested_total_duration_seconds}s ${configuration.generation_mode}`
+												: " · Incomplete snapshot"}{" "}
+											· Updated {new Date(plan.updated_at).toLocaleString()}
+										</div>
+									</button>
+								);
+							})}
 						</div>
+						<details className="mt-3 text-[10px] text-slate-500">
+							<summary>History classification details</summary>
+							<p className="mt-1">
+								Status filters are authoritative. Test and UAT plans are not
+								classified by name because no reliable provenance marker exists.
+							</p>
+						</details>
 					</section>
 				</aside>
 
@@ -1496,7 +1662,9 @@ export default function CreativeProductionStudioPage() {
 					{!detail ? (
 						<div className="rounded-2xl border border-dashed border-slate-700 bg-slate-950/60 p-12 text-center text-slate-500">
 							<Database className="mx-auto mb-3" />
-							Create or select a durable P6 production plan.
+							{studioMode === "LOADING_PLAN"
+								? "Loading the selected plan…"
+								: "Create a new production plan or select an existing plan."}
 						</div>
 					) : (
 						<>
@@ -1757,7 +1925,11 @@ export default function CreativeProductionStudioPage() {
 										[
 											"Dry run · 0 credit",
 											() =>
-												dryRunProductionPlan(detail.plan.plan_id, operatorId),
+												dryRunProductionPlan(
+													detail.plan.plan_id,
+													operatorId,
+													detail.snapshot.aspect_ratio,
+												),
 											"p6-action-dry-run",
 										],
 									].map(([label, action, testId]) => (
@@ -1912,7 +2084,7 @@ export default function CreativeProductionStudioPage() {
 									<div className="min-w-0 flex-1">
 										<div className="flex items-center justify-between gap-2">
 											<h2 className="font-semibold text-rose-100">
-												Live execution — separately authorized boundary
+												Start production for {detail.snapshot.plan_name}
 											</h2>
 											<span className="rounded border border-rose-500/40 bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold text-rose-300 shrink-0">
 												Spends Media Credits
@@ -1923,16 +2095,29 @@ export default function CreativeProductionStudioPage() {
 											data-testid="p6-live-certification-truth"
 										>
 											{liveExecutionCertified
-												? "Runtime live-execution certification is present. Dispatch still requires a scheduled plan, the exact confirmation phrase, a matching dry-run proof, and a verified lane. Entering the phrase and requesting dispatch explicitly authorizes credit-spending media generation."
-												: "Runtime live-execution certification is absent. The exact confirmation phrase cannot bypass the server gate."}
+												? `${detail.snapshot.product_allocations.length} product${detail.snapshot.product_allocations.length === 1 ? "" : "s"} · ${detail.snapshot.target_video_count} video${detail.snapshot.target_video_count === 1 ? "" : "s"} · ${detail.snapshot.video_configurations.map((configuration) => `${configuration.model_label} · ${configuration.requested_total_duration_seconds}s ${configuration.generation_mode}`).join(" / ")}. This sends the next queued item now and authorizes the scheduler to continue the same plan.`
+												: "Production is unavailable because the runtime certification is absent."}
 										</p>
+										<details className="mt-2 text-[10px] text-rose-200/60">
+											<summary>Technical details</summary>
+											<div className="mt-1 font-mono">
+												Plan: {detail.snapshot.plan_id}
+												<br />
+												Lane: {verifiedVideoLane?.lane_id ?? "NOT VERIFIED"}
+												<br />
+												Aspect: {detail.snapshot.aspect_ratio}
+											</div>
+										</details>
 
 										{!liveEnabled && liveDisabledReason ? (
 											<div
 												data-testid="p6-live-disabled-reason"
 												className="mt-2.5 flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-950/30 p-2.5 text-xs text-amber-200 font-medium"
 											>
-												<AlertTriangle size={15} className="shrink-0 text-amber-400" />
+												<AlertTriangle
+													size={15}
+													className="shrink-0 text-amber-400"
+												/>
 												<span>{liveDisabledReason}</span>
 											</div>
 										) : null}
@@ -1956,14 +2141,15 @@ export default function CreativeProductionStudioPage() {
 															detail.plan.plan_id,
 															operatorId,
 															livePhrase,
+															detail.snapshot.aspect_ratio,
 														),
 													)
 												}
 												className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-700 hover:bg-rose-500 transition"
 											>
 												{liveEnabled
-													? `Authorize & Start Production — ${selectedPlan?.target_video_count || totalVideoCount} Videos`
-													: "Request live production dispatch"}
+													? "Start production"
+													: "Production unavailable"}
 											</button>
 										</div>
 									</div>

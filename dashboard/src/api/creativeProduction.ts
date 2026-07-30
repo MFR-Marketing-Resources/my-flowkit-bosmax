@@ -98,6 +98,64 @@ export interface ProductVideoAllocation {
 	video_count: number;
 }
 
+export interface PlanProductAllocationSnapshot extends ProductVideoAllocation {
+	product_name: string;
+}
+
+export interface PlanVideoConfigurationSnapshot {
+	model_key: string;
+	model_label: string;
+	requested_total_duration_seconds: number;
+	engine_block_duration_seconds: number;
+	generation_mode: "SINGLE" | "EXTEND";
+	segment_count: number;
+	execution_route: string;
+}
+
+export interface ProductionPlanCanonicalSnapshot {
+	schema_version: 1;
+	completeness: "COMPLETE" | "LEGACY_INCOMPLETE";
+	missing_fields: string[];
+	source: "CREATE_REQUEST" | "LEGACY_RECONCILIATION" | "LEGACY_PREVIEW";
+	evidence: Record<string, unknown>;
+	plan_id: string;
+	plan_name: string;
+	purpose: string | null;
+	status: PlanStatus;
+	operator_id: string;
+	request_id: string;
+	product_allocations: PlanProductAllocationSnapshot[];
+	target_video_count: number;
+	target_image_count: number;
+	target_poster_count: number;
+	logical_mode: "T2V" | "HYBRID" | "F2V" | "I2V";
+	video_configurations: PlanVideoConfigurationSnapshot[];
+	aspect_ratio: "9:16" | "16:9";
+	operating_window_hours: number;
+	allocation_strategy: string;
+	variation_strategy: string;
+	approved_pool_snapshot: Record<string, unknown> | null;
+	pool_snapshot: Record<string, unknown>;
+	cohort_snapshot: {
+		cohort_sha256: string;
+		cohort_count: number;
+		product_ids: string[];
+	};
+	matrix_count: number;
+	attempts_count: number;
+	qa_count: number;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface ProductionPlanSnapshotSummary {
+	completeness: "COMPLETE" | "LEGACY_INCOMPLETE";
+	missing_fields: string[];
+	product_allocations: PlanProductAllocationSnapshot[];
+	video_configurations: PlanVideoConfigurationSnapshot[];
+	aspect_ratio: "9:16" | "16:9" | null;
+}
+
 export interface ProductionPlan {
 	plan_id: string;
 	request_id: string;
@@ -105,8 +163,8 @@ export interface ProductionPlan {
 	name: string;
 	campaign_key: string;
 	product_scope: string[];
-	allocations?: ProductVideoAllocation[];
-	product_video_allocations?: ProductVideoAllocation[];
+	plan_snapshot: ProductionPlanCanonicalSnapshot | Record<string, never>;
+	snapshot_summary?: ProductionPlanSnapshotSummary;
 	p58_cohort_sha256: string;
 	p58_cohort_count: number;
 	target_video_count: number;
@@ -188,6 +246,7 @@ export interface ExecutionLane {
 
 export interface PlanDetail {
 	plan: ProductionPlan;
+	snapshot: ProductionPlanCanonicalSnapshot;
 	waves: Array<Record<string, unknown>>;
 	batches: Array<Record<string, unknown>>;
 	items: ProductionItem[];
@@ -327,10 +386,11 @@ export function assignProductionWaves(
 export function dryRunProductionPlan(
 	planId: string,
 	operatorId: string,
+	aspect: "9:16" | "16:9",
 ): Promise<Record<string, unknown>> {
 	return postAPI(`/api/creative-production/plans/${planId}/dry-run`, {
 		...planAction(operatorId),
-		aspect: "9:16",
+		aspect,
 	});
 }
 
@@ -338,10 +398,11 @@ export function startProductionPlan(
 	planId: string,
 	operatorId: string,
 	confirmation: string,
+	aspect: "9:16" | "16:9",
 ): Promise<Record<string, unknown>> {
 	return postAPI(`/api/creative-production/plans/${planId}/start`, {
 		...planAction(operatorId),
-		aspect: "9:16",
+		aspect,
 		live: true,
 		credit_confirmation: confirmation,
 	});

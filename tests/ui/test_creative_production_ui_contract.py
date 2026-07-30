@@ -51,7 +51,9 @@ def test_live_and_dry_run_are_visibly_separate():
     page = _read("dashboard/src/pages/CreativeProductionStudioPage.tsx")
     client = _read("dashboard/src/api/creativeProduction.ts")
     assert "Compile + dry run = 0 media credits" in page
-    assert "separately authorized boundary" in page
+    assert "This action spends media credits" in page
+    assert "sends the next queued item now" in page
+    assert "authorizes the scheduler to continue" in page
     assert 'P6_LIVE_CONFIRMATION = "AUTHORIZE_P6_LIVE_CREDIT_SPEND"' in client
     assert 'credit_policy: "EXPLICIT_CONFIRMATION_REQUIRED"' in page
     assert "live_media_authorization_granted" not in page
@@ -80,6 +82,23 @@ def test_p7_and_technical_evidence_are_collapsed_without_being_deleted():
     page = _read("dashboard/src/pages/CreativeProductionStudioPage.tsx")
     assert 'data-testid="p7-compact-summary"' in page
     assert "<CreativeSupplyFactoryPanel />" in page
-    assert "Technical authority" in page
+    assert "Technical details" in page
     assert "Technical execution-lane status" in page
     assert "Technical details" in page
+
+
+def test_plan_state_is_explicit_and_canonical_data_is_not_reconstructed():
+    page = _read("dashboard/src/pages/CreativeProductionStudioPage.tsx")
+    for mode in (
+        "NEW_DRAFT",
+        "ACTIVE_PLAN",
+        "UNSAVED_DRAFT_FROM_ACTIVE_PLAN",
+        "LOADING_PLAN",
+        "LEGACY_INCOMPLETE_PLAN",
+    ):
+        assert mode in page
+    assert "planRequestSequence" in page
+    assert "snapshot.product_allocations" in page
+    assert "plans[0]" not in page
+    assert "Math.floor" not in page
+    assert "product_scope.map" not in page
