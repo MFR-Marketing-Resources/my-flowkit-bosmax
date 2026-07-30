@@ -30,6 +30,7 @@ from agent.services import copy_rotation_service
 from agent.services import poster_recipe_service
 from agent.services import video_models
 from agent.services.catalog_coverage_service import build_catalog_authority_matrix
+from agent.services.product_intelligence import resolve_image_readiness
 from agent.services.scene_strategy_library import (
     build_scene_strategy_context,
     resolve_scene_strategy,
@@ -121,9 +122,14 @@ async def load_p58_cohort_authority() -> P58CohortAuthorityResponse:
     report = await build_catalog_authority_matrix()
     product_ids = sorted(report.p6_launch_cohort_product_ids)
     cohort_sha = _sha(product_ids)
+    catalog_product_rows = await crud.list_products(include_archived=False)
     catalog_products = {
         str(product.get("id") or ""): product
-        for product in await crud.list_products(include_archived=False)
+        for product in catalog_product_rows
+    }
+    image_readiness_by_id = {
+        str(product.get("id") or ""): resolve_image_readiness(product)
+        for product in catalog_product_rows
     }
     ready_rows = sorted(
         (row for row in report.products if row.product_id in set(product_ids)),
@@ -144,7 +150,7 @@ async def load_p58_cohort_authority() -> P58CohortAuthorityResponse:
                     or ""
                 ),
                 "image_readiness_status": str(
-                    (catalog_products.get(row.product_id) or {}).get(
+                    (image_readiness_by_id.get(row.product_id) or {}).get(
                         "image_readiness_status"
                     )
                     or ""
