@@ -537,7 +537,10 @@ export interface ApprovedProductPackage {
 // (or fallback) Copy Set. Never carries prompt-leaking internal metadata.
 export type CopyBindingStatus = "BOUND" | "NOT_SELECTED" | "REJECTED";
 export interface CopyBindingLineage {
-	copy_source: "selected_copy_set" | "landbank_fallback" | "claim_safe_fallback";
+	copy_source:
+		| "selected_copy_set"
+		| "landbank_fallback"
+		| "claim_safe_fallback";
 	copy_binding_status: CopyBindingStatus;
 	copy_set_id: string | null;
 	copy_set_status: string | null;
@@ -633,7 +636,10 @@ export interface WorkspaceExecutionPackage {
 			| "INDEPENDENT_BLOCK"
 			| "GOOGLE_FLOW_EXTEND"
 			| string;
-		prompt_purpose?: "PRODUCTION_INDEPENDENT" | "MANUAL_EXTENSION_RESEARCH" | string;
+		prompt_purpose?:
+			| "PRODUCTION_INDEPENDENT"
+			| "MANUAL_EXTENSION_RESEARCH"
+			| string;
 		previous_block_index?: number | null;
 		continuation_source?: string | null;
 		audio_seam_contract?: {
@@ -820,7 +826,11 @@ export interface CopySet {
 	provenance: Record<string, unknown>;
 	claim_review: {
 		completeness?: { complete: boolean; missing_fields: string[] };
-		safety?: { safe: boolean; violations: string[]; detail?: Record<string, string> };
+		safety?: {
+			safe: boolean;
+			violations: string[];
+			detail?: Record<string, string>;
+		};
 		route_type?: string;
 		approved?: boolean;
 		grounding_source?: string;
@@ -835,7 +845,12 @@ export interface CopySet {
 			valid: boolean;
 			review_required: boolean;
 			slot_coverage: Record<string, boolean>;
-			violations: { code: string; message?: string; severity?: string; slot?: string }[];
+			violations: {
+				code: string;
+				message?: string;
+				severity?: string;
+				slot?: string;
+			}[];
 		};
 		sales_clarity?: {
 			clarity_score: number;
@@ -912,7 +927,11 @@ export interface AICopyCandidate {
 	copy_set: CopySet;
 	created: boolean;
 	dedupe_match: boolean;
-	safety: { safe: boolean; violations: string[]; detail?: Record<string, string> };
+	safety: {
+		safe: boolean;
+		violations: string[];
+		detail?: Record<string, string>;
+	};
 	warnings: string[];
 }
 
@@ -2449,6 +2468,12 @@ export interface ProductKnowledgeCompleteRequest {
 	image_base64?: string;
 	image_filename?: string;
 	paste_anything_about_product?: string;
+	category?: string;
+	subcategory?: string;
+	type?: string;
+	product_type?: string;
+	product_type_id?: string;
+	materials_text?: string;
 }
 
 export interface ProductKnowledgeCompleteResponse {
@@ -2464,6 +2489,9 @@ export interface ProductKnowledgeCompleteResponse {
 	suggested_category?: string;
 	suggested_subcategory?: string;
 	suggested_type?: string;
+	suggested_materials_or_components?: string;
+	ingredients_applicability?: "APPLICABLE" | "NOT_APPLICABLE" | "UNKNOWN";
+	suggested_taxonomy_repair?: Record<string, DisplayFieldValue> | null;
 	suggested_bosmax_product_family?: string;
 	suggested_package_form?: string;
 	suggested_physical_state?: string;
@@ -2497,6 +2525,10 @@ export interface ProductKnowledgeCompleteResponse {
 	missing_required_evidence: string[];
 	human_review_fields: string[];
 	blocked_fields: string[];
+	evidence_quality_status?: string;
+	evidence_quality_issues?: string[];
+	consistency_status?: string;
+	consistency_issues?: string[];
 	readiness_by_mode: Record<string, ModeReadiness>;
 	provenance: string[];
 	warnings: string[];
@@ -2557,6 +2589,14 @@ export interface RegistrationReviewDraft {
 	provenance: string[];
 	warnings: string[];
 	errors: string[];
+	evidence_quality_status?: string;
+	evidence_quality_issues?: string[];
+	consistency_status?: string;
+	consistency_issues?: string[];
+	authority_fingerprint?: string | null;
+	authority_versions?: Record<string, string>;
+	hook_cta_input_fingerprint?: string | null;
+	recompute_required_reasons?: string[];
 	draft_freshness_status: string;
 	last_evidence_edit_at?: string;
 	last_recomputed_at?: string;

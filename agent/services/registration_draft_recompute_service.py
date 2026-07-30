@@ -8,6 +8,9 @@ from agent.models.product_knowledge import ProductKnowledgeCompleteRequest
 from agent.models.product_registration import RegistrationReviewDraft
 from agent.services.product_knowledge_service import complete_product_knowledge
 from agent.services.product_registration_service import create_registration_review_draft
+from agent.services.registration_authority_fingerprint_service import (
+    stamp_authority_fingerprint,
+)
 
 
 def _now() -> str:
@@ -60,6 +63,12 @@ def _build_completion_request_from_draft(
         "commission_rate": evidence.get("commission_rate"),
         "size_or_volume": evidence.get("size_or_volume"),
         "package_notes": evidence.get("package_notes"),
+        "category": evidence.get("category"),
+        "subcategory": evidence.get("subcategory"),
+        "type": evidence.get("type"),
+        "product_type": evidence.get("product_type"),
+        "product_type_id": evidence.get("product_type_id"),
+        "materials_text": evidence.get("materials_text"),
         "source_lane": evidence.get("source_lane") or draft.source_lane,
         "image_url": evidence.get("image_url"),
         "product_url": evidence.get("product_url"),
@@ -92,10 +101,20 @@ def recompute_review_draft(draft: RegistrationReviewDraft) -> RegistrationReview
         "CLEAR_DRAFT",
     ]
     refreshed.approval_checklist = {
-        field: False for field in refreshed.canonical_candidate_fields.keys()
+        field: bool(
+            draft.approval_checklist.get(field)
+            and draft.canonical_candidate_fields.get(field)
+            == refreshed.canonical_candidate_fields.get(field)
+        )
+        for field in refreshed.canonical_candidate_fields
     }
     refreshed.rejection_checklist = {
-        field: False for field in refreshed.canonical_candidate_fields.keys()
+        field: bool(
+            draft.rejection_checklist.get(field)
+            and draft.canonical_candidate_fields.get(field)
+            == refreshed.canonical_candidate_fields.get(field)
+        )
+        for field in refreshed.canonical_candidate_fields
     }
     if (
         draft.strategy_taxonomy is not None
@@ -128,5 +147,4 @@ def recompute_review_draft(draft: RegistrationReviewDraft) -> RegistrationReview
     now = _now()
     refreshed.last_evidence_edit_at = draft.last_evidence_edit_at or draft.updated_at or now
     refreshed.last_recomputed_at = now
-    refreshed.draft_freshness_status = "FRESH"
-    return refreshed
+    return stamp_authority_fingerprint(refreshed)

@@ -304,6 +304,21 @@ class RegistrationCommitService:
 
         if draft.draft_freshness_status != "FRESH":
             blocked_reasons.append("DRAFT_RECOMPUTE_REQUIRED")
+        if draft.recompute_required_reasons:
+            blocked_reasons.append(
+                "AUTHORITY_RECOMPUTE_REQUIRED: "
+                + ", ".join(draft.recompute_required_reasons)
+            )
+        if draft.evidence_quality_status == "REVIEW_REQUIRED":
+            blocked_reasons.append(
+                "EVIDENCE_QUALITY_REVIEW_REQUIRED: "
+                + ", ".join(draft.evidence_quality_issues)
+            )
+        if draft.consistency_status == "BLOCKED_REVIEW_REQUIRED":
+            blocked_reasons.append(
+                "CONSISTENCY_REVIEW_REQUIRED: "
+                + ", ".join(draft.consistency_issues)
+            )
 
         if not draft.last_recomputed_at:
             blocked_reasons.append("DRAFT_RECOMPUTE_REQUIRED")

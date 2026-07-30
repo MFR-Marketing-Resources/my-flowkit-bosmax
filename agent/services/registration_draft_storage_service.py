@@ -9,6 +9,9 @@ from agent.models.product_registration import (
     RegistrationReviewDraft,
     RegistrationReviewDraftFieldDecisions
 )
+from agent.services.registration_authority_fingerprint_service import (
+    apply_authority_freshness,
+)
 
 class RegistrationDraftStorageService:
     @staticmethod
@@ -37,7 +40,9 @@ class RegistrationDraftStorageService:
             return None
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-            return RegistrationReviewDraft.model_validate(data)
+            return apply_authority_freshness(
+                RegistrationReviewDraft.model_validate(data)
+            )
 
     @staticmethod
     def list_drafts() -> List[RegistrationReviewDraft]:
@@ -48,7 +53,11 @@ class RegistrationDraftStorageService:
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    drafts.append(RegistrationReviewDraft.model_validate(data))
+                    drafts.append(
+                        apply_authority_freshness(
+                            RegistrationReviewDraft.model_validate(data)
+                        )
+                    )
             except Exception:
                 continue
         # Sort by updated_at descending

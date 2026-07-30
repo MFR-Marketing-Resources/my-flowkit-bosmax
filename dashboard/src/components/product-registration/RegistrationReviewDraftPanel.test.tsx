@@ -23,8 +23,7 @@ const reviewDraft: RegistrationReviewDraft = {
 	review_status: "NEEDS_HUMAN_REVIEW",
 	source_lane: "FASTMOSS_PROMOTED",
 	declared_evidence_fields: {
-		product_name:
-			"Sample capsules, tersedia dalam 30 / 60 / 120 Softgels",
+		product_name: "Sample capsules, tersedia dalam 30 / 60 / 120 Softgels",
 		product_knowledge_text: "",
 		benefits_text:
 			"#NaturalEnhancement #HerbalSupplement\n15-30s\nFeminine soft music",
@@ -182,9 +181,7 @@ describe("RegistrationReviewDraftPanel next-action guidance", () => {
 		expect(taxonomy).toHaveTextContent("sensitive_wellness");
 		expect(taxonomy).toHaveTextContent("female_wellness");
 		expect(taxonomy).toHaveTextContent("SENSITIVE_WELLNESS");
-		expect(taxonomy).toHaveTextContent(
-			"COVERED / BLOCKED_REVIEW_REQUIRED",
-		);
+		expect(taxonomy).toHaveTextContent("COVERED / BLOCKED_REVIEW_REQUIRED");
 		expect(taxonomy).toHaveTextContent("INTELLIGENCE_LOW");
 	});
 
@@ -205,9 +202,7 @@ describe("RegistrationReviewDraftPanel next-action guidance", () => {
 				benefits: {
 					status: "AI_SUGGESTED",
 					confidence: "MEDIUM",
-					provenance: [
-						"text_assist:deepseek:deepseek-v4-pro:review_only",
-					],
+					provenance: ["text_assist:deepseek:deepseek-v4-pro:review_only"],
 					needs_review: true,
 				},
 				size_or_volume: {
@@ -229,8 +224,8 @@ describe("RegistrationReviewDraftPanel next-action guidance", () => {
 		};
 		renderPanel(evidenceDraft);
 
-		expect(screen.getByText("AI SUGGESTED")).toBeInTheDocument();
-		expect(screen.getByText("NOT AVAILABLE")).toBeInTheDocument();
+		expect(screen.getAllByText("AI SUGGESTED").length).toBeGreaterThan(0);
+		expect(screen.getAllByText("NOT AVAILABLE").length).toBeGreaterThan(0);
 		expect(screen.getByText(/Confidence: MEDIUM/)).toHaveTextContent(
 			"text_assist:deepseek:deepseek-v4-pro:review_only",
 		);
@@ -238,17 +233,20 @@ describe("RegistrationReviewDraftPanel next-action guidance", () => {
 			screen.getByText("TEXT_ASSIST_SUGGESTIONS_REQUIRE_REVIEW"),
 		).toBeInTheDocument();
 		expect(
-			screen.getAllByText(
-				"text_assist:deepseek:deepseek-v4-pro:review_only",
-			).length,
+			screen.getAllByText("text_assist:deepseek:deepseek-v4-pro:review_only")
+				.length,
 		).toBeGreaterThan(0);
 	});
 
 	it("saves a registry-backed manual taxonomy preview for commit", async () => {
+		const baseTaxonomy = reviewDraft.strategy_taxonomy;
+		if (!baseTaxonomy) {
+			throw new Error("TEST_FIXTURE_TAXONOMY_REQUIRED");
+		}
 		const savedDraft: RegistrationReviewDraft = {
 			...reviewDraft,
 			strategy_taxonomy: {
-				...reviewDraft.strategy_taxonomy!,
+				...baseTaxonomy,
 				review_status: "VERIFIED",
 				consumer_status: "BLOCKED_REVIEW_REQUIRED",
 				authority_source: "MANUAL_OVERRIDE",
@@ -318,9 +316,7 @@ describe("RegistrationReviewDraftPanel next-action guidance", () => {
 		const benefitsField = screen.getByPlaceholderText(
 			"Benefits and USP from the seller or product owner.",
 		);
-		fireEvent.click(
-			screen.getByRole("button", { name: "Jump to Benefits" }),
-		);
+		fireEvent.click(screen.getByRole("button", { name: "Jump to Benefits" }));
 		expect(benefitsField).toHaveFocus();
 
 		const candidatesHeading = screen.getByRole("heading", {
@@ -357,31 +353,29 @@ describe("RegistrationReviewDraftPanel next-action guidance", () => {
 		expect(
 			screen.getByPlaceholderText("Warnings, pantang, or restrictions."),
 		).toHaveValue("");
-		expect(screen.getByTestId("registration-variant-candidates")).toHaveTextContent(
-			"30 softgels",
-		);
-		expect(screen.getByTestId("registration-variant-candidates")).toHaveTextContent(
-			"60 softgels",
-		);
-		expect(screen.getByTestId("registration-variant-candidates")).toHaveTextContent(
-			"120 softgels",
-		);
+		expect(
+			screen.getByTestId("registration-variant-candidates"),
+		).toHaveTextContent("30 softgels");
+		expect(
+			screen.getByTestId("registration-variant-candidates"),
+		).toHaveTextContent("60 softgels");
+		expect(
+			screen.getByTestId("registration-variant-candidates"),
+		).toHaveTextContent("120 softgels");
 
-		fireEvent.click(
-			screen.getByRole("button", { name: "Use 120 softgels" }),
-		);
+		fireEvent.click(screen.getByRole("button", { name: "Use 120 softgels" }));
 		expect(screen.getByPlaceholderText("5 ML")).toHaveValue("120 softgels");
 		expect(patchAPI).not.toHaveBeenCalled();
-		expect(
-			screen.getByText(/no approval was changed/i),
-		).toBeInTheDocument();
+		expect(screen.getByText(/no approval was changed/i)).toBeInTheDocument();
 	});
 
 	it("reports why recompute leaves missing evidence unchanged", async () => {
 		vi.mocked(patchAPI).mockResolvedValue(reviewDraft);
 		renderPanel();
 
-		fireEvent.click(screen.getByRole("button", { name: "Save & Recompute" }));
+		fireEvent.click(
+			screen.getByRole("button", { name: "Analyze & Repair Draft" }),
+		);
 
 		await waitFor(() =>
 			expect(
@@ -411,11 +405,15 @@ describe("RegistrationReviewDraftPanel next-action guidance", () => {
 		fireEvent.change(screen.getByPlaceholderText("5 ML"), {
 			target: { value: "30 softgels" },
 		});
-		fireEvent.click(screen.getByRole("button", { name: "Save & Recompute" }));
+		fireEvent.click(
+			screen.getByRole("button", { name: "Analyze & Repair Draft" }),
+		);
 
 		await waitFor(() =>
 			expect(
-				screen.getByText(/Evidence saved. Still requires human review because:/),
+				screen.getByText(
+					/Evidence saved. Still requires human review because:/,
+				),
 			).toHaveTextContent(
 				"Review and approve candidate fields: Category, Subcategory, BOSMAX product family.",
 			),
@@ -424,5 +422,81 @@ describe("RegistrationReviewDraftPanel next-action guidance", () => {
 			screen.getByText(/Evidence saved. Still requires human review because:/),
 		).toHaveTextContent("Sensitive claims require human verification.");
 		expect(onUpdate).toHaveBeenCalledWith(resolvedDraft);
+	});
+
+	it("renders curtain-specific labels and the convergence decision trail", () => {
+		const curtainDraft = {
+			...reviewDraft,
+			declared_evidence_fields: {
+				...reviewDraft.declared_evidence_fields,
+				product_name: "HOT Langsir Kabinet Fabrik Tingkap Berpetak Soft Cotton",
+				benefits_text: "#LangsirViral\n15-30s\nMakeover music",
+				ingredients_text: "Kitchen glow-up! Order now!",
+			},
+			canonical_candidate_fields: {
+				...reviewDraft.canonical_candidate_fields,
+				category: "Textiles & Soft Furnishings",
+				subcategory: "Household Textiles",
+				type: "Curtains",
+				bosmax_product_family: "HOME_TEXTILE",
+				physics_class: "HOME_TEXTILE_SOFT_GOOD",
+				copy_formula: "TEXTURE_COMFORT",
+				materials_or_components: "fabric; soft cotton",
+				ingredients_applicability: "NOT_APPLICABLE",
+			},
+			evidence_quality_status: "REVIEW_REQUIRED",
+			evidence_quality_issues: ["EVIDENCE_BENEFITS_PRODUCTION_METADATA"],
+			consistency_status: "CONSISTENT",
+			consistency_issues: [],
+			authority_fingerprint: "authority-fingerprint",
+			hook_cta_input_fingerprint: "hook-fingerprint",
+			recompute_required_reasons: [],
+			evidence_field_status: {
+				benefits: {
+					status: "AI_SUGGESTED",
+					confidence: "MEDIUM",
+					provenance: ["text_assist:review_only"],
+					needs_review: true,
+					reason_codes: ["EVIDENCE_BENEFITS_PRODUCTION_METADATA"],
+					evidence_used: ["product_name:Soft Cotton"],
+					raw_value: "#LangsirViral\n15-30s\nMakeover music",
+					repair_candidate: ["Soft cotton curtain for cabinet coverage"],
+					repair_action: "REPAIR_INVALID_OR_PLACEHOLDER",
+					applicability: "APPLICABLE",
+				},
+			},
+		} as RegistrationReviewDraft & {
+			evidence_field_status: Record<string, unknown>;
+		};
+
+		renderPanel(curtainDraft);
+
+		expect(
+			screen.getByText("Autonomous Convergence Pipeline"),
+		).toBeInTheDocument();
+		expect(
+			screen.getAllByText("HOME_TEXTILE_SOFT_GOOD").length,
+		).toBeGreaterThan(0);
+		expect(screen.getAllByText("TEXTURE_COMFORT").length).toBeGreaterThan(0);
+		expect(
+			screen.getByLabelText("Materials / Components Text"),
+		).toBeInTheDocument();
+		expect(screen.getByLabelText("Dimensions / Size")).toHaveAttribute(
+			"placeholder",
+			"e.g. 120 × 45 cm",
+		);
+		expect(
+			screen.getByRole("button", { name: "Analyze & Repair Draft" }),
+		).toBeInTheDocument();
+		const decisions = screen.getByTestId(
+			"registration-evidence-quality-decisions",
+		);
+		expect(decisions).toHaveTextContent(
+			"Raw: #LangsirViral 15-30s Makeover music",
+		);
+		expect(decisions).toHaveTextContent(
+			"Repair candidate: Soft cotton curtain for cabinet coverage",
+		);
+		expect(decisions).toHaveTextContent("REPAIR_INVALID_OR_PLACEHOLDER");
 	});
 });

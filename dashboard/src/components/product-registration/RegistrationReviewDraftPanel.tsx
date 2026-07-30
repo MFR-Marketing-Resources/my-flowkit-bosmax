@@ -5,10 +5,10 @@ import {
 	registerProductStrategyType,
 } from "../../api/products";
 import type {
+	ProductStrategyTypeRegistryResponse,
 	RegistrationCommitResponse,
 	RegistrationReviewDraft,
 	RegistrationReviewDraftEvidencePatchRequest,
-	ProductStrategyTypeRegistryResponse,
 } from "../../types";
 
 interface Props {
@@ -22,10 +22,26 @@ interface EvidenceCompletionFieldMetadata {
 		| "EXACT_SOURCE_EVIDENCE"
 		| "AI_SUGGESTED"
 		| "SYSTEM_INFERRED"
-		| "NOT_AVAILABLE";
+		| "NOT_AVAILABLE"
+		| "NOT_APPLICABLE"
+		| "INVALID_MARKETING_METADATA"
+		| "INVALID_CTA_COPY"
+		| "PLACEHOLDER"
+		| "CROSS_FIELD_CONTAMINATION"
+		| "REPAIR_SUGGESTED";
 	confidence: "HIGH" | "MEDIUM" | "LOW" | "NOT_APPLICABLE";
 	provenance: string[];
 	needs_review: boolean;
+	reason_codes?: string[];
+	evidence_used?: string[];
+	raw_value?: unknown;
+	repair_candidate?: unknown;
+	repair_action?:
+		| "NONE"
+		| "FILL_MISSING"
+		| "REPAIR_INVALID_OR_PLACEHOLDER"
+		| "MARK_NOT_APPLICABLE";
+	applicability?: "APPLICABLE" | "NOT_APPLICABLE" | "UNKNOWN";
 }
 
 type EvidenceAwareRegistrationReviewDraft = RegistrationReviewDraft & {
@@ -122,10 +138,7 @@ function normalizeEvidenceText(value: string): string {
 }
 
 function wordCount(value: string): number {
-	return value
-		.trim()
-		.split(/\s+/)
-		.filter(Boolean).length;
+	return value.trim().split(/\s+/).filter(Boolean).length;
 }
 
 function isPlaceholderEvidence(value: string): boolean {
@@ -173,7 +186,10 @@ function extractVariantCandidates(sourceText: string): string[] {
 	return candidates;
 }
 
-function candidateMatchesCurrentValue(candidate: string, currentValue: string): boolean {
+function candidateMatchesCurrentValue(
+	candidate: string,
+	currentValue: string,
+): boolean {
 	const candidateAmount = candidate.match(/\d+(?:\.\d+)?/)?.[0];
 	const currentAmount = currentValue.match(/\d+(?:\.\d+)?/)?.[0];
 	if (!candidateAmount || !currentAmount || candidateAmount !== currentAmount) {
@@ -209,10 +225,18 @@ function extractExplicitEvidence(
 function buildEvidenceAssessments(
 	form: EvidenceEditorState,
 	variantCandidates: string[],
+	labels: { ingredients: string; size: string } = {
+		ingredients: "Ingredients",
+		size: "Size / Volume",
+	},
 ): EvidenceFieldGuidance[] {
 	const assessments: EvidenceFieldGuidance[] = [];
 	const addTextAssessment = (
-		field: "product_knowledge_text" | "benefits_text" | "ingredients_text" | "warnings_text",
+		field:
+			| "product_knowledge_text"
+			| "benefits_text"
+			| "ingredients_text"
+			| "warnings_text",
 		label: string,
 		minimumWords: number,
 	) => {
@@ -251,13 +275,13 @@ function buildEvidenceAssessments(
 
 	addTextAssessment("product_knowledge_text", "Product Knowledge", 8);
 	addTextAssessment("benefits_text", "Benefits", 5);
-	addTextAssessment("ingredients_text", "Ingredients", 2);
+	addTextAssessment("ingredients_text", labels.ingredients, 2);
 	addTextAssessment("warnings_text", "Warnings", 3);
 
 	if (!form.size_or_volume.trim()) {
 		assessments.push({
 			field: "size_or_volume",
-			label: "Size / Volume",
+			label: labels.size,
 			focusId: EVIDENCE_FIELD_IDS.size_or_volume,
 			status: "Missing",
 			detail: "Select or enter the exact registered pack variant.",
@@ -270,7 +294,7 @@ function buildEvidenceAssessments(
 	) {
 		assessments.push({
 			field: "size_or_volume",
-			label: "Size / Volume",
+			label: labels.size,
 			focusId: EVIDENCE_FIELD_IDS.size_or_volume,
 			status: "Needs human review",
 			detail:
@@ -284,7 +308,8 @@ function buildEvidenceAssessments(
 			label: "Package Notes",
 			focusId: EVIDENCE_FIELD_IDS.package_notes,
 			status: "Missing",
-			detail: "Describe the verified bottle, blister, pouch, box, or other pack.",
+			detail:
+				"Describe the verified bottle, blister, pouch, box, or other pack.",
 		});
 	}
 
@@ -319,11 +344,12 @@ function buildReviewReasons(
 		);
 	}
 	if (!approvals.normalized_name) {
-		reasons.push("The normalized product name still requires explicit approval.");
+		reasons.push(
+			"The normalized product name still requires explicit approval.",
+		);
 	}
 	const unresolvedCandidates = draft.human_review_fields.filter(
-		(field) =>
-			field in draft.canonical_candidate_fields && !approvals[field],
+		(field) => field in draft.canonical_candidate_fields && !approvals[field],
 	);
 	if (unresolvedCandidates.length > 0) {
 		reasons.push(
@@ -343,14 +369,15 @@ function buildReviewReasons(
 		reasons.push(`Sensitive claims require human verification.${tokenDetail}`);
 	}
 	if (draft.claim_gate === "CLAIM_BLOCKED") {
-		reasons.push("Claim safety is blocked; unsafe claims must be removed or rejected.");
+		reasons.push(
+			"Claim safety is blocked; unsafe claims must be removed or rejected.",
+		);
 	}
 	if (draft.blocked_fields.length > 0) {
 		reasons.push(`Blocked fields: ${draft.blocked_fields.join(", ")}.`);
 	}
 	return reasons;
 }
-
 
 function readFileAsDataUrl(file: File): Promise<string> {
 	return new Promise((resolve, reject) => {
@@ -443,7 +470,10 @@ function EvidenceInput({
 				}`}
 			/>
 			{guidance ? (
-				<p id={descriptionId} className="text-[11px] leading-relaxed text-amber-200">
+				<p
+					id={descriptionId}
+					className="text-[11px] leading-relaxed text-amber-200"
+				>
 					{guidance.detail}
 				</p>
 			) : null}
@@ -498,7 +528,10 @@ function EvidenceTextarea({
 				}`}
 			/>
 			{guidance ? (
-				<p id={descriptionId} className="text-[11px] leading-relaxed text-amber-200">
+				<p
+					id={descriptionId}
+					className="text-[11px] leading-relaxed text-amber-200"
+				>
 					{guidance.detail}
 				</p>
 			) : null}
@@ -511,9 +544,30 @@ export default function RegistrationReviewDraftPanel({
 	onUpdate,
 	onClear,
 }: Props) {
-	const evidenceFieldStatus = (
-		draft as EvidenceAwareRegistrationReviewDraft
-	).evidence_field_status;
+	const evidenceFieldStatus = (draft as EvidenceAwareRegistrationReviewDraft)
+		.evidence_field_status;
+	const candidateFamily = String(
+		draft.canonical_candidate_fields.bosmax_product_family || "",
+	).toUpperCase();
+	const candidateTaxonomy = [
+		draft.canonical_candidate_fields.category,
+		draft.canonical_candidate_fields.subcategory,
+		draft.canonical_candidate_fields.type,
+	]
+		.map((value) => String(value || "").toLowerCase())
+		.join(" ");
+	const isNonConsumableTextile =
+		candidateFamily === "HOME_TEXTILE" ||
+		/(textile|furnishing|curtain|langsir)/.test(candidateTaxonomy);
+	const ingredientsFieldLabel = isNonConsumableTextile
+		? "Materials / Components"
+		: "Ingredients";
+	const sizeFieldLabel = isNonConsumableTextile
+		? "Dimensions / Size"
+		: "Size / Volume";
+	const sizeFieldPlaceholder = isNonConsumableTextile
+		? "e.g. 120 × 45 cm"
+		: "5 ML";
 	const [approvals, setApprovals] = useState<Record<string, boolean>>(
 		draft.approval_checklist,
 	);
@@ -598,9 +652,7 @@ export default function RegistrationReviewDraftPanel({
 
 	const taxonomyGroupOptions = useMemo(
 		() =>
-			taxonomyRegistry.items.filter(
-				(item) => item.cluster === taxonomyCluster,
-			),
+			taxonomyRegistry.items.filter((item) => item.cluster === taxonomyCluster),
 		[taxonomyCluster, taxonomyRegistry.items],
 	);
 	const selectedTaxonomyEntry = useMemo(
@@ -645,16 +697,17 @@ export default function RegistrationReviewDraftPanel({
 		],
 	);
 	const evidenceAssessments = useMemo(
-		() => buildEvidenceAssessments(evidenceForm, variantCandidates),
-		[evidenceForm, variantCandidates],
+		() =>
+			buildEvidenceAssessments(evidenceForm, variantCandidates, {
+				ingredients: ingredientsFieldLabel,
+				size: sizeFieldLabel,
+			}),
+		[evidenceForm, ingredientsFieldLabel, sizeFieldLabel, variantCandidates],
 	);
 	const guidanceByField = useMemo(
 		() =>
 			new Map(
-				evidenceAssessments.map((assessment) => [
-					assessment.field,
-					assessment,
-				]),
+				evidenceAssessments.map((assessment) => [assessment.field, assessment]),
 			),
 		[evidenceAssessments],
 	);
@@ -667,8 +720,7 @@ export default function RegistrationReviewDraftPanel({
 	const hasUnresolvedCandidateReview =
 		!approvals.normalized_name ||
 		draft.human_review_fields.some(
-			(field) =>
-				field in draft.canonical_candidate_fields && !approvals[field],
+			(field) => field in draft.canonical_candidate_fields && !approvals[field],
 		);
 	const hasClaimReview =
 		draft.claim_gate !== "CLAIM_SAFE" ||
@@ -699,10 +751,7 @@ export default function RegistrationReviewDraftPanel({
 			applied.push(label);
 		};
 
-		if (
-			!next.product_knowledge_text.trim() &&
-			wordCount(sourceText) >= 8
-		) {
+		if (!next.product_knowledge_text.trim() && wordCount(sourceText) >= 8) {
 			next.product_knowledge_text = sourceText;
 			applied.push("Product Knowledge");
 		}
@@ -714,11 +763,7 @@ export default function RegistrationReviewDraftPanel({
 		applyTextProposal(
 			"usage_text",
 			"Usage",
-			extractExplicitEvidence(sourceText, [
-				"usage",
-				"cara guna",
-				"how to use",
-			]),
+			extractExplicitEvidence(sourceText, ["usage", "cara guna", "how to use"]),
 		);
 		applyTextProposal(
 			"ingredients_text",
@@ -908,9 +953,7 @@ export default function RegistrationReviewDraftPanel({
 					authority_source: "MANUAL_OVERRIDE",
 					materialization_status: "PREVIEW",
 					review_reasons:
-						reviewStatus === "VERIFIED"
-							? []
-							: ["MANUAL_REVIEW_REQUIRED"],
+						reviewStatus === "VERIFIED" ? [] : ["MANUAL_REVIEW_REQUIRED"],
 					reviewer_id: taxonomyReviewerId.trim(),
 					reviewer_note: taxonomyReviewerNote.trim(),
 					reviewed_at: new Date().toISOString(),
@@ -1148,6 +1191,102 @@ export default function RegistrationReviewDraftPanel({
 				</p>
 			</div>
 
+			<section
+				data-testid="registration-convergence-pipeline"
+				className="rounded-2xl border border-indigo-500/20 bg-slate-900/60 p-6"
+			>
+				<div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+					<div>
+						<h4 className="text-sm font-bold uppercase tracking-wider text-white">
+							Autonomous Convergence Pipeline
+						</h4>
+						<p className="mt-1 text-xs text-slate-400">
+							Source evidence remains immutable; semantic repairs and every
+							downstream resolver stay review-gated.
+						</p>
+					</div>
+					<span className="rounded-full bg-indigo-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-indigo-300">
+						{draft.draft_freshness_status}
+					</span>
+				</div>
+				<div className="mt-4 grid grid-cols-2 gap-3 text-xs md:grid-cols-4">
+					{[
+						[
+							"Evidence Quality",
+							draft.evidence_quality_status || "NOT EVALUATED",
+						],
+						[
+							"Family",
+							String(
+								draft.canonical_candidate_fields.bosmax_product_family ||
+									"UNKNOWN",
+							),
+						],
+						[
+							"Physics",
+							String(
+								draft.canonical_candidate_fields.physics_class || "UNKNOWN",
+							),
+						],
+						[
+							"Copy",
+							String(
+								draft.canonical_candidate_fields.copy_formula || "UNKNOWN",
+							),
+						],
+						[
+							"Taxonomy",
+							draft.strategy_taxonomy?.product_type_group || "UNRESOLVED",
+						],
+						[
+							"Hook / CTA",
+							draft.hook_cta_input_fingerprint ? "RECONCILED" : "UNVERIFIED",
+						],
+						["Consistency", draft.consistency_status || "NOT EVALUATED"],
+						[
+							"Mode Readiness",
+							Object.values(draft.readiness_by_mode).some(
+								(readiness) => readiness.status === "BLOCKED",
+							)
+								? "BLOCKED"
+								: "REVIEWED",
+						],
+					].map(([label, value]) => (
+						<div
+							key={label}
+							className="rounded-lg border border-slate-800 bg-slate-950/60 p-3"
+						>
+							<div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">
+								{label}
+							</div>
+							<div className="mt-1 break-words font-semibold text-slate-100">
+								{value}
+							</div>
+						</div>
+					))}
+				</div>
+				{[
+					...(draft.evidence_quality_issues || []),
+					...(draft.consistency_issues || []),
+					...(draft.recompute_required_reasons || []),
+				].length > 0 ? (
+					<div className="mt-4 flex flex-wrap gap-2">
+						{[
+							...(draft.evidence_quality_issues || []),
+							...(draft.consistency_issues || []),
+							...(draft.recompute_required_reasons || []),
+						].map((issue) => (
+							<span
+								key={issue}
+								className="rounded bg-amber-500/10 px-2 py-1 text-[9px] font-bold text-amber-300"
+							>
+								{issue}
+							</span>
+						))}
+					</div>
+				) : null}
+			</section>
+
 			{draft.strategy_taxonomy ? (
 				<section
 					data-testid="registration-strategy-taxonomy"
@@ -1240,9 +1379,7 @@ export default function RegistrationReviewDraftPanel({
 								>
 									<option value="">Select cluster</option>
 									{taxonomyRegistry.clusters
-										.filter(
-											(cluster) => cluster !== "generic_unclassified",
-										)
+										.filter((cluster) => cluster !== "generic_unclassified")
 										.map((cluster) => (
 											<option key={cluster} value={cluster}>
 												{cluster}
@@ -1331,9 +1468,7 @@ export default function RegistrationReviewDraftPanel({
 									aria-label="Registration product type group code"
 									placeholder="product_type_group"
 									value={newTaxonomyGroup}
-									onChange={(event) =>
-										setNewTaxonomyGroup(event.target.value)
-									}
+									onChange={(event) => setNewTaxonomyGroup(event.target.value)}
 									className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
 								/>
 								<input
@@ -1386,9 +1521,7 @@ export default function RegistrationReviewDraftPanel({
 									value={newTaxonomyRegistryStatus}
 									onChange={(event) =>
 										setNewTaxonomyRegistryStatus(
-											event.target.value as
-												| "ACTIVE"
-												| "REVIEW_REQUIRED",
+											event.target.value as "ACTIVE" | "REVIEW_REQUIRED",
 										)
 									}
 									className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
@@ -1499,9 +1632,7 @@ export default function RegistrationReviewDraftPanel({
 									<button
 										type="button"
 										onClick={() =>
-											focusEvidenceField(
-												EVIDENCE_FIELD_IDS.size_or_volume,
-											)
+											focusEvidenceField(EVIDENCE_FIELD_IDS.size_or_volume)
 										}
 										className="rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-xs font-bold text-amber-100 transition-colors hover:bg-amber-400/20"
 									>
@@ -1512,9 +1643,7 @@ export default function RegistrationReviewDraftPanel({
 									<button
 										type="button"
 										onClick={() =>
-											focusEvidenceField(
-												"registration-canonical-candidates",
-											)
+											focusEvidenceField("registration-canonical-candidates")
 										}
 										className="rounded-lg border border-slate-600 bg-slate-900/70 px-3 py-2 text-xs font-bold text-slate-100 transition-colors hover:border-amber-400/50"
 									>
@@ -1615,9 +1744,7 @@ export default function RegistrationReviewDraftPanel({
 											</div>
 											<button
 												type="button"
-												onClick={() =>
-													focusEvidenceField(assessment.focusId)
-												}
+												onClick={() => focusEvidenceField(assessment.focusId)}
 												className="shrink-0 rounded-lg border border-slate-700 px-2 py-1 text-[10px] font-bold text-slate-200 hover:border-amber-400/50"
 											>
 												Jump to {assessment.label}
@@ -1630,7 +1757,8 @@ export default function RegistrationReviewDraftPanel({
 								Save &amp; Recompute may use the configured text_assist lane to
 								propose missing evidence. AI suggestions remain review-only,
 								never replace declared evidence, and never approve a field.
-								Unavailable non-critical facts are labelled N/A or NOT_AVAILABLE.
+								Unavailable non-critical facts are labelled N/A or
+								NOT_AVAILABLE.
 							</p>
 							{imageAnalysisStatus === "ANALYSIS_SKIPPED" ? (
 								<p className="text-xs leading-relaxed text-sky-200">
@@ -1724,7 +1852,7 @@ export default function RegistrationReviewDraftPanel({
 						/>
 						<EvidenceTextarea
 							id={EVIDENCE_FIELD_IDS.ingredients_text}
-							label="Ingredients Text"
+							label={`${ingredientsFieldLabel} Text`}
 							value={evidenceForm.ingredients_text}
 							onChange={(value) =>
 								setEvidenceForm((current) => ({
@@ -1732,7 +1860,11 @@ export default function RegistrationReviewDraftPanel({
 									ingredients_text: value,
 								}))
 							}
-							placeholder="Ingredients, materials, or formulation notes."
+							placeholder={
+								isNonConsumableTextile
+									? "Verified fabric, fibre, trim, and construction notes."
+									: "Ingredients, materials, or formulation notes."
+							}
 							rows={3}
 							guidance={guidanceByField.get("ingredients_text")}
 						/>
@@ -1811,7 +1943,7 @@ export default function RegistrationReviewDraftPanel({
 							/>
 							<EvidenceInput
 								id={EVIDENCE_FIELD_IDS.size_or_volume}
-								label="Size / Volume"
+								label={sizeFieldLabel}
 								value={evidenceForm.size_or_volume}
 								onChange={(value) =>
 									setEvidenceForm((current) => ({
@@ -1819,7 +1951,7 @@ export default function RegistrationReviewDraftPanel({
 										size_or_volume: value,
 									}))
 								}
-								placeholder="5 ML"
+								placeholder={sizeFieldPlaceholder}
 								guidance={guidanceByField.get("size_or_volume")}
 							/>
 							<EvidenceInput
@@ -2045,7 +2177,7 @@ export default function RegistrationReviewDraftPanel({
 							disabled={isSavingEvidence || draft.review_status === "COMMITTED"}
 							className="rounded-xl border border-indigo-500/40 bg-indigo-500 px-4 py-2 text-xs font-bold uppercase tracking-widest text-white transition-all hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
 						>
-							{isSavingEvidence ? "Recomputing..." : "Save & Recompute"}
+							{isSavingEvidence ? "Analyzing..." : "Analyze & Repair Draft"}
 						</button>
 					</div>
 				</div>
@@ -2076,6 +2208,57 @@ export default function RegistrationReviewDraftPanel({
 							)}
 						</div>
 					</section>
+
+					{evidenceFieldStatus ? (
+						<section
+							data-testid="registration-evidence-quality-decisions"
+							className="rounded-2xl border border-violet-500/20 bg-slate-900/50 p-6"
+						>
+							<h4 className="mb-4 text-sm font-bold uppercase tracking-wider text-white">
+								Evidence Quality Decisions
+							</h4>
+							<div className="space-y-3">
+								{Object.entries(evidenceFieldStatus).map(
+									([field, metadata]) => (
+										<div
+											key={field}
+											className="rounded-lg border border-slate-700/50 bg-slate-950/50 p-3"
+										>
+											<div className="flex flex-wrap items-center gap-2">
+												<span className="text-[10px] font-bold uppercase text-slate-400">
+													{field.replace(/_/g, " ")}
+												</span>
+												<span className="rounded bg-violet-500/10 px-2 py-0.5 text-[9px] font-bold text-violet-300">
+													{metadata.status.replace(/_/g, " ")}
+												</span>
+												<span className="text-[9px] text-slate-500">
+													{metadata.repair_action || "NONE"} ·{" "}
+													{metadata.applicability || "UNKNOWN"}
+												</span>
+											</div>
+											{metadata.raw_value !== undefined &&
+											metadata.raw_value !== null ? (
+												<p className="mt-2 text-[11px] text-slate-400">
+													Raw: {toText(metadata.raw_value)}
+												</p>
+											) : null}
+											{metadata.repair_candidate !== undefined &&
+											metadata.repair_candidate !== null ? (
+												<p className="mt-1 text-[11px] text-violet-200">
+													Repair candidate: {toText(metadata.repair_candidate)}
+												</p>
+											) : null}
+											{metadata.reason_codes?.length ? (
+												<p className="mt-1 text-[9px] text-amber-300">
+													{metadata.reason_codes.join(", ")}
+												</p>
+											) : null}
+										</div>
+									),
+								)}
+							</div>
+						</section>
+					) : null}
 
 					<section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
 						<h4 className="mb-4 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-white">
@@ -2115,8 +2298,7 @@ export default function RegistrationReviewDraftPanel({
 								([key, value]) => {
 									const isReviewRequired =
 										draft.human_review_fields.includes(key);
-									const evidenceMetadata =
-										evidenceFieldStatus?.[key];
+									const evidenceMetadata = evidenceFieldStatus?.[key];
 									if (
 										(value === null ||
 											value === undefined ||
@@ -2158,7 +2340,8 @@ export default function RegistrationReviewDraftPanel({
 																	? "bg-emerald-500/10 text-emerald-400"
 																	: evidenceMetadata.status === "AI_SUGGESTED"
 																		? "bg-violet-500/10 text-violet-300"
-																		: evidenceMetadata.status === "NOT_AVAILABLE"
+																		: evidenceMetadata.status ===
+																				"NOT_AVAILABLE"
 																			? "bg-slate-700 text-slate-300"
 																			: "bg-sky-500/10 text-sky-300"
 															}`}

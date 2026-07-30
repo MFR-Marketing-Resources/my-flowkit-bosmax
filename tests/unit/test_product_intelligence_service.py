@@ -248,6 +248,9 @@ def test_image_analysis_skips_when_provider_complete_but_execution_disabled(monk
     )
     assert result["image_analysis"]["status"] == "ANALYSIS_SKIPPED"
     assert "image_analysis:provider_execution_disabled" in result["provenance"]
+    assert result["destination_readiness"]["IMAGE"] == "NEEDS_REVIEW"
+    assert result["destination_readiness"]["INGREDIENTS"] == "NEEDS_REVIEW"
+    assert result["destination_readiness"]["FRAMES"] == "NEEDS_REVIEW"
 
 
 def test_image_analysis_not_configured_when_vision_lane_incomplete(monkeypatch):

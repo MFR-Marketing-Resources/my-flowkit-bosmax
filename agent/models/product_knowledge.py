@@ -33,6 +33,11 @@ class ProductKnowledgeCompleteRequest(BaseModel):
     image_filename: str | None = None
     paste_anything_about_product: str | None = None
     category: str | None = None
+    subcategory: str | None = None
+    type: str | None = None
+    product_type: str | None = None
+    product_type_id: str | None = None
+    materials_text: str | None = None
 
 
 class ModeReadiness(BaseModel):
@@ -56,6 +61,9 @@ class ProductKnowledgeCompleteResponse(BaseModel):
     suggested_category: str | None = None
     suggested_subcategory: str | None = None
     suggested_type: str | None = None
+    suggested_materials_or_components: str | None = None
+    ingredients_applicability: str = "UNKNOWN"
+    suggested_taxonomy_repair: dict[str, Any] | None = None
     suggested_bosmax_product_family: str | None = None
     suggested_package_form: str | None = None
     suggested_physical_state: str | None = None
@@ -94,6 +102,10 @@ class ProductKnowledgeCompleteResponse(BaseModel):
     missing_required_evidence: list[str] = Field(default_factory=list)
     human_review_fields: list[str] = Field(default_factory=list)
     blocked_fields: list[str] = Field(default_factory=list)
+    evidence_quality_status: str = "NOT_EVALUATED"
+    evidence_quality_issues: list[str] = Field(default_factory=list)
+    consistency_status: str = "NOT_EVALUATED"
+    consistency_issues: list[str] = Field(default_factory=list)
     
     # Readiness
     readiness_by_mode: dict[str, ModeReadiness] = Field(default_factory=dict)

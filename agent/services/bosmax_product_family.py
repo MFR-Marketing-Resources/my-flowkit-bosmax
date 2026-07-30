@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from agent.services.product_mapping import normalize_mapping_text
@@ -19,7 +20,17 @@ def _joined_text(product: dict[str, Any]) -> str:
 
 
 def _contains_any(haystack: str, keywords: list[str]) -> bool:
-    return any(normalize_mapping_text(keyword) in haystack for keyword in keywords)
+    return any(
+        bool(
+            normalized_keyword
+            and re.search(
+                rf"(?<!\w){re.escape(normalized_keyword)}(?!\w)",
+                haystack,
+            )
+        )
+        for keyword in keywords
+        if (normalized_keyword := normalize_mapping_text(keyword))
+    )
 
 
 def derive_bosmax_product_family(product: dict[str, Any]) -> dict[str, Any]:
@@ -85,6 +96,7 @@ def derive_bosmax_product_family(product: dict[str, Any]) -> dict[str, Any]:
             "cadar",
             "duvet",
             "curtain",
+            "langsir",
             "pillow",
             "quilt",
             "carpet",
