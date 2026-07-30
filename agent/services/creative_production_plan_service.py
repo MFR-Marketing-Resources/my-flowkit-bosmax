@@ -28,6 +28,7 @@ from agent.models.creative_production import (
 from agent.services import avatar_registry
 from agent.services import copy_rotation_service
 from agent.services import poster_recipe_service
+from agent.services import video_models
 from agent.services.catalog_coverage_service import build_catalog_authority_matrix
 from agent.services.scene_strategy_library import (
     build_scene_strategy_context,
@@ -120,6 +121,10 @@ async def load_p58_cohort_authority() -> P58CohortAuthorityResponse:
     report = await build_catalog_authority_matrix()
     product_ids = sorted(report.p6_launch_cohort_product_ids)
     cohort_sha = _sha(product_ids)
+    catalog_products = {
+        str(product.get("id") or ""): product
+        for product in await crud.list_products(include_archived=False)
+    }
     ready_rows = sorted(
         (row for row in report.products if row.product_id in set(product_ids)),
         key=lambda row: (row.product_name.casefold(), row.product_id),
@@ -134,6 +139,17 @@ async def load_p58_cohort_authority() -> P58CohortAuthorityResponse:
                 "product_name": row.product_name,
                 "product_type_group": row.product_type_group,
                 "scene_strategy_id": row.scene_strategy_id,
+                "image_url": str(
+                    (catalog_products.get(row.product_id) or {}).get("image_url")
+                    or ""
+                ),
+                "image_readiness_status": str(
+                    (catalog_products.get(row.product_id) or {}).get(
+                        "image_readiness_status"
+                    )
+                    or ""
+                ),
+                "readiness_status": "PRODUCTION_READY",
             }
             for row in ready_rows
         ],
@@ -172,6 +188,18 @@ async def _assert_frozen_cohort(product_ids: list[str]) -> P58CohortAuthorityRes
 
 def _request_snapshot(body: ProductionPlanCreateRequest) -> dict[str, Any]:
     return body.model_dump(mode="json", exclude_none=False)
+
+
+def _video_allocations(plan: dict[str, Any]) -> dict[str, int]:
+    pool = _loads(plan.get("pool_snapshot_json"), {})
+    rows = pool.get("product_video_allocations") or []
+    return {
+        str(row.get("product_id") or ""): int(row.get("video_count") or 0)
+        for row in rows
+        if isinstance(row, dict)
+        and str(row.get("product_id") or "").strip()
+        and int(row.get("video_count") or 0) > 0
+    }
 
 
 async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
@@ -226,6 +254,10 @@ async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
                     "controlled_reuse_max_per_dna": (
                         body.controlled_reuse_max_per_dna
                     ),
+                    "product_video_allocations": [
+                        allocation.model_dump(mode="json")
+                        for allocation in body.product_video_allocations
+                    ],
                 }
             ),
             "execution_policy_json": _stable_json(policy),
@@ -992,6 +1024,10 @@ def _creative_dna_payload(dimensions: dict[str, str]) -> dict[str, str]:
         "product_interaction",
         "model_key",
         "duration_seconds",
+        "generation_mode",
+        "engine_block_duration_seconds",
+        "segment_count",
+        "execution_route",
     )
     return {field: str(dimensions.get(field) or "") for field in governed_fields}
 
@@ -1293,6 +1329,22 @@ def _product_dimension_rows(
         model_keys,
         durations,
     ):
+        try:
+            orchestration = video_models.resolve_orchestration(
+                model_key,
+                int(duration),
+            )
+        except ValueError as exc:
+            blockers.append(
+                {
+                    "code": "INVALID_MODEL_DURATION_COMBINATION",
+                    "product_id": product_id,
+                    "model_key": str(model_key),
+                    "duration_seconds": int(duration),
+                    "detail": str(exc),
+                }
+            )
+            continue
         copy_fields = _copy_dimensions(copy, near_threshold)
         scene_asset = approved["assets"].get(visual["scene_asset_id"]) or {}
         base_scene = str(
@@ -1320,6 +1372,12 @@ def _product_dimension_rows(
                 "layout_id": layout,
                 "model_key": str(model_key),
                 "duration_seconds": str(duration),
+                "generation_mode": orchestration["generation_mode"],
+                "engine_block_duration_seconds": str(
+                    orchestration["engine_block_duration_seconds"]
+                ),
+                "segment_count": str(orchestration["segment_count"]),
+                "execution_route": orchestration["execution_route"],
                 "exact_duplicate_status": "UNIQUE",
                 "quota_status": "WITHIN_POLICY",
                 "readiness": "PREFLIGHT_ELIGIBLE",
@@ -1633,6 +1691,41 @@ async def run_capacity_preflight(
             )
             for copy_set_id, unique_count in unique_by_copy.items()
         )
+    video_allocations = _video_allocations(plan)
+    for product_id, requested_count in video_allocations.items():
+        product_rows = [
+            (dna, dimension)
+            for dna, dimension in candidates["VIDEO"]
+            if dimension.get("product_id") == product_id
+        ]
+        remaining_by_copy: Counter[str] = Counter()
+        unique_by_copy: Counter[str] = Counter()
+        for _, dimension in product_rows:
+            copy_set_id = dimension["copy_set_id"]
+            historical_usage = int(dimension.get("copy_usage_count") or 0)
+            remaining_by_copy[copy_set_id] = max(
+                copy_rotation_service.REUSE_CAP - historical_usage,
+                0,
+            )
+            unique_by_copy[copy_set_id] += 1
+        product_safe_capacity = sum(
+            min(
+                unique_count
+                * (controlled_reuse_max if controlled_reuse_reason else 1),
+                remaining_by_copy[copy_set_id],
+            )
+            for copy_set_id, unique_count in unique_by_copy.items()
+        )
+        if requested_count > product_safe_capacity:
+            blockers.append(
+                {
+                    "code": "PRODUCT_VIDEO_CAPACITY_SHORTFALL",
+                    "product_id": product_id,
+                    "requested": requested_count,
+                    "available": product_safe_capacity,
+                    "shortfall": requested_count - product_safe_capacity,
+                }
+            )
     for media_type, target in requested.items():
         if target <= safe_capacity[media_type]:
             continue
@@ -1682,6 +1775,8 @@ async def run_capacity_preflight(
         "operating_window_hours": int(plan["operating_window_hours"]),
         "raw_capacity_before_history": raw_capacity,
         "unique_capacity_before_controlled_reuse": unique_capacity,
+        "product_video_allocations": video_allocations,
+        "explicit_product_allocation": bool(video_allocations),
         "lane_window_capacity": lane_capacity,
         "lane_evidence": lane_evidence,
     }
@@ -1788,6 +1883,7 @@ async def materialize_content_matrix(
     }
     selected: list[tuple[str, dict[str, str], int]] = []
     ordinal = 0
+    video_allocations = _video_allocations(plan)
     for media_type in ("VIDEO", "IMAGE", "POSTER"):
         rows = candidates[media_type]
         target = requested[media_type]
@@ -1799,42 +1895,92 @@ async def materialize_content_matrix(
             )
         dna_uses: Counter[str] = Counter()
         copy_uses: Counter[str] = Counter()
-        cursor = 0
-        while sum(dna_uses.values()) < target:
-            if cursor >= len(rows) * controlled_reuse_max:
+        selection_groups: list[
+            tuple[str | None, int, list[tuple[str, dict[str, str]]]]
+        ]
+        if media_type == "VIDEO" and video_allocations:
+            selection_groups = [
+                (
+                    product_id,
+                    product_target,
+                    [
+                        (dna, dimension)
+                        for dna, dimension in rows
+                        if dimension.get("product_id") == product_id
+                    ],
+                )
+                for product_id, product_target in video_allocations.items()
+            ]
+        else:
+            selection_groups = [(None, target, rows)]
+        for product_id, group_target, group_rows in selection_groups:
+            if not group_rows and group_target:
                 raise CreativeProductionError(
-                    "CONTROLLED_CAPACITY_SELECTION_FAILED",
-                    f"Bounded selection could not fill {media_type} target.",
+                    "PRODUCT_CAPACITY_CANDIDATE_MISSING",
+                    (
+                        f"No safe {media_type} candidates remain for "
+                        f"{product_id or 'the governed scope'}."
+                    ),
                     status_code=409,
                 )
-            dna, dimensions = rows[cursor % len(rows)]
-            cursor += 1
-            if dna_uses[dna] >= (
-                controlled_reuse_max if controlled_reuse_reason else 1
-            ):
-                continue
-            copy_set_id = dimensions["copy_set_id"]
-            if media_type != "POSTER":
-                historical_usage = int(
-                    dimensions.get("copy_usage_count") or 0
-                )
-                if (
-                    copy_uses[copy_set_id] + historical_usage
-                    >= copy_rotation_service.REUSE_CAP
+            cursor = 0
+            selected_in_group = 0
+            while selected_in_group < group_target:
+                if cursor >= len(group_rows) * controlled_reuse_max:
+                    raise CreativeProductionError(
+                        "CONTROLLED_CAPACITY_SELECTION_FAILED",
+                        (
+                            f"Bounded selection could not fill {media_type} "
+                            f"target for {product_id or 'the governed scope'}."
+                        ),
+                        status_code=409,
+                    )
+                dna, dimensions = group_rows[cursor % len(group_rows)]
+                cursor += 1
+                if dna_uses[dna] >= (
+                    controlled_reuse_max if controlled_reuse_reason else 1
                 ):
                     continue
-            rendered_dimensions = dict(dimensions)
-            if dna_uses[dna]:
-                rendered_dimensions["exact_duplicate_status"] = (
-                    "CONTROLLED_REUSE"
-                )
-                rendered_dimensions["readiness"] = (
-                    "CONTROLLED_REUSE_APPROVED_BY_PLAN_POLICY"
-                )
-            selected.append((dna, rendered_dimensions, ordinal))
-            dna_uses[dna] += 1
-            copy_uses[copy_set_id] += 1
-            ordinal += 1
+                copy_set_id = dimensions["copy_set_id"]
+                if media_type != "POSTER":
+                    historical_usage = int(
+                        dimensions.get("copy_usage_count") or 0
+                    )
+                    if (
+                        copy_uses[copy_set_id] + historical_usage
+                        >= copy_rotation_service.REUSE_CAP
+                    ):
+                        continue
+                rendered_dimensions = dict(dimensions)
+                if dna_uses[dna]:
+                    rendered_dimensions["exact_duplicate_status"] = (
+                        "CONTROLLED_REUSE"
+                    )
+                    rendered_dimensions["readiness"] = (
+                        "CONTROLLED_REUSE_APPROVED_BY_PLAN_POLICY"
+                    )
+                selected.append((dna, rendered_dimensions, ordinal))
+                dna_uses[dna] += 1
+                copy_uses[copy_set_id] += 1
+                ordinal += 1
+                selected_in_group += 1
+
+    if video_allocations:
+        materialized_video_counts = Counter(
+            dimensions["product_id"]
+            for _, dimensions, _ in selected
+            if dimensions["media_type"] == "VIDEO"
+        )
+        if dict(materialized_video_counts) != video_allocations:
+            raise CreativeProductionError(
+                "PRODUCT_VIDEO_ALLOCATION_INVARIANT_FAILED",
+                "Materialized video items do not match the durable product allocation.",
+                status_code=409,
+                details={
+                    "requested": video_allocations,
+                    "materialized": dict(materialized_video_counts),
+                },
+            )
 
     avatar_counts = Counter(
         dimensions.get("avatar_code") or ""

@@ -276,6 +276,59 @@ async def _build_item_payload(
     wgp = await crud.get_workspace_generation_package(str(wgp_id))
     if wgp is None:
         return {}, ["WORKSPACE_GENERATION_PACKAGE_NOT_FOUND"]
+    generation_mode = str(
+        wgp.get("generation_mode")
+        or package.get("generation_mode")
+        or "SINGLE"
+    ).upper()
+    if media_type == "VIDEO" and generation_mode == "EXTEND":
+        resolved, blockers = (
+            production_queue_service.extend_execution_preconditions(
+                wgp,
+                {
+                    "model": model_key,
+                    "aspect": aspect,
+                },
+            )
+        )
+        video_job_id = str(package.get("video_job_id") or "")
+        video_job_fingerprint = str(
+            package.get("video_job_plan_fingerprint") or ""
+        )
+        if not video_job_id or not video_job_fingerprint:
+            blockers.append("EXTEND_VIDEO_JOB_PLAN_REQUIRED")
+        total_seconds = int(
+            resolved.get("total_seconds")
+            or package.get("requested_total_duration_seconds")
+            or duration_seconds
+        )
+        block_seconds = int(
+            package.get("engine_block_duration_seconds") or 8
+        )
+        return (
+            {
+                "mode": str(resolved.get("logical_mode") or item["logical_mode"]),
+                "logical_mode": str(
+                    resolved.get("logical_mode") or item["logical_mode"]
+                ),
+                "generation_mode": "EXTEND",
+                "execution_lane": "VIDEO_JOBS_ORCHESTRATOR",
+                "workspace_generation_package_id": str(wgp_id),
+                "workspace_execution_package_id": resolved.get(
+                    "execution_package_id"
+                ),
+                "video_job_id": video_job_id,
+                "video_job_plan_fingerprint": video_job_fingerprint,
+                "model": model_key,
+                "aspect": aspect,
+                "requested_total_duration_seconds": total_seconds,
+                "duration_s": total_seconds,
+                "engine_block_duration_seconds": block_seconds,
+                "segment_count": total_seconds // block_seconds,
+                "num_videos": 1,
+            },
+            blockers,
+        )
     if media_type == "IMAGE":
         prompt = str(wgp.get("final_prompt_text") or "")
         blockers = [] if prompt.strip() else ["EMPTY_FINAL_PROMPT"]
@@ -552,16 +605,31 @@ async def _dispatch_attempt(
     )
     payload = _loads(attempt["payload_snapshot_json"], {})
     try:
-        result = await make_video.start_generate(
-            mode=payload["mode"],
-            prompt=payload["prompt"],
-            image_media_ids=payload.get("image_media_ids"),
-            aspect=payload.get("aspect") or "9:16",
-            model=payload.get("model"),
-            duration_s=payload.get("duration_s"),
-            num_videos=int(payload.get("num_videos") or 1),
-            image_model=payload.get("image_model"),
-        )
+        if str(payload.get("generation_mode") or "").upper() == "EXTEND":
+            result = await production_queue_service._fire_extend_via_video_jobs(
+                item,
+                {
+                    "model": payload.get("model"),
+                    "aspect": payload.get("aspect") or "9:16",
+                },
+                str(payload["workspace_generation_package_id"]),
+            )
+            if not result.get("ok"):
+                raise CreativeProductionError(
+                    "EXTEND_DISPATCH_FAILED",
+                    str(result.get("error") or "Durable Extend dispatch failed."),
+                )
+        else:
+            result = await make_video.start_generate(
+                mode=payload["mode"],
+                prompt=payload["prompt"],
+                image_media_ids=payload.get("image_media_ids"),
+                aspect=payload.get("aspect") or "9:16",
+                model=payload.get("model"),
+                duration_s=payload.get("duration_s"),
+                num_videos=int(payload.get("num_videos") or 1),
+                image_model=payload.get("image_model"),
+            )
     except Exception as exc:
         await p6db.update_attempt(
             attempt["attempt_id"],
@@ -622,7 +690,12 @@ async def _dispatch_attempt(
         provider_known_at=_now(),
         updated_at=_now(),
     )
-    initial_job = make_video.get_job(provider_job_id)
+    if provider_job_id.startswith("vj_"):
+        from agent.services import video_production_orchestrator as video_jobs
+
+        initial_job = await video_jobs.get_job_status(provider_job_id)
+    else:
+        initial_job = make_video.get_job(provider_job_id)
     if initial_job is not None:
         attempt = await _persist_provider_observation(attempt, initial_job)
     await p6db.update_item(
@@ -967,8 +1040,38 @@ async def reconcile_attempt(attempt_id: str) -> dict[str, Any]:
             "provider_state": "UNKNOWN",
             "resubmission_allowed": False,
         }
-    live_job = make_video.get_job(provider_job_id)
-    job_source = "LIVE_PROCESS"
+    if provider_job_id.startswith("vj_"):
+        from agent.services import video_production_orchestrator as video_jobs
+
+        try:
+            video_job = await video_jobs.get_job_status(provider_job_id)
+        except video_jobs.OrchestratorError:
+            live_job = None
+        else:
+            video_status = str(video_job.get("status") or "")
+            if video_status == video_jobs.S_COMPLETE:
+                live_job = {
+                    **video_job,
+                    "status": "COMPLETED",
+                    "media_id": video_job.get("final_media_id"),
+                }
+            elif video_status in {
+                video_jobs.F_INITIAL,
+                video_jobs.F_EXTEND,
+                video_jobs.F_FINAL,
+                video_jobs.F_AUTH,
+            }:
+                live_job = {
+                    **video_job,
+                    "status": "FAILED",
+                    "error": video_job.get("error_code") or video_status,
+                }
+            else:
+                live_job = video_job
+        job_source = "VIDEO_JOBS_ORCHESTRATOR"
+    else:
+        live_job = make_video.get_job(provider_job_id)
+        job_source = "LIVE_PROCESS"
     if live_job is None:
         artifact = await p6db.get_generated_artifact_by_job_id(provider_job_id)
         if artifact is not None:

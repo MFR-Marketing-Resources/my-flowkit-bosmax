@@ -36,16 +36,21 @@ export type ItemStatus =
 	| "CANCELLED"
 	| "SUPERSEDED";
 
+export interface CohortProduct {
+	product_id: string;
+	product_name: string;
+	product_type_group: string;
+	scene_strategy_id: string;
+	image_url: string;
+	image_readiness_status: string;
+	readiness_status: string;
+}
+
 export interface CohortAuthority {
 	cohort_count: number;
 	cohort_sha256: string;
 	product_ids: string[];
-	products: Array<{
-		product_id: string;
-		product_name: string;
-		product_type_group: string;
-		scene_strategy_id: string;
-	}>;
+	products: CohortProduct[];
 	matches_frozen_authority: boolean;
 	p6_not_started: boolean;
 }
@@ -68,6 +73,7 @@ export interface CreateProductionPlanRequest {
 	name: string;
 	campaign_key: string;
 	product_ids: string[];
+	product_video_allocations: ProductVideoAllocation[];
 	target_video_count: number;
 	target_image_count: number;
 	target_poster_count: number;
@@ -85,6 +91,11 @@ export interface CreateProductionPlanRequest {
 	controlled_reuse_reason: string | null;
 	controlled_reuse_max_per_dna: number;
 	execution_policy: Record<string, unknown>;
+}
+
+export interface ProductVideoAllocation {
+	product_id: string;
+	video_count: number;
 }
 
 export interface ProductionPlan {

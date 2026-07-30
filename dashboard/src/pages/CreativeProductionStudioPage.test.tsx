@@ -26,6 +26,7 @@ const controlProductionPlan = vi.fn();
 const reconcileAttempt = vi.fn();
 const retryAttempt = vi.fn();
 const decideItemQa = vi.fn();
+const fetchVideoModels = vi.fn();
 
 vi.mock("../api/creativeProduction", () => ({
 	fetchCohortAuthority: (...args: unknown[]) => fetchCohortAuthority(...args),
@@ -51,6 +52,10 @@ vi.mock("../api/creativeProduction", () => ({
 	P6_LIVE_CONFIRMATION: "AUTHORIZE_P6_LIVE_CREDIT_SPEND",
 }));
 
+vi.mock("../api/productionQueue", () => ({
+	fetchVideoModels: (...args: unknown[]) => fetchVideoModels(...args),
+}));
+
 import CreativeProductionStudioPage from "./CreativeProductionStudioPage";
 
 const COHORT = {
@@ -64,6 +69,9 @@ const COHORT = {
 			product_name: "P6 Product",
 			product_type_group: "lip_color",
 			scene_strategy_id: "LIP_COLOR",
+			image_url: "https://example.com/product-1.jpg",
+			image_readiness_status: "IMAGE_CACHE_READY",
+			readiness_status: "PRODUCTION_READY",
 		},
 	],
 	matches_frozen_authority: true,
@@ -127,6 +135,8 @@ const DETAIL = {
 				angle: "proof",
 				hook: "problem",
 				layout_id: "",
+				generation_mode: "SINGLE",
+				duration_seconds: "8",
 			},
 			creative_dna_sha256: "a".repeat(64),
 			controlled_reuse_reason: null,
@@ -189,6 +199,27 @@ const LANES = {
 };
 
 function prime(detail = DETAIL) {
+	fetchVideoModels.mockResolvedValue({
+		default: "veo_3_1_lite",
+		models: [
+			{
+				key: "veo_3_1_lite",
+				ui_label: "Veo 3.1 - Lite",
+				default_duration_s: 8,
+				allowed_durations_s: [4, 6, 8],
+				extend_block_duration_s: 8,
+				extend_totals_s: [16, 24],
+			},
+			{
+				key: "omni_flash",
+				ui_label: "Omni Flash",
+				default_duration_s: 10,
+				allowed_durations_s: [4, 6, 8, 10],
+				extend_block_duration_s: null,
+				extend_totals_s: [],
+			},
+		],
+	});
 	fetchCohortAuthority.mockResolvedValue(COHORT);
 	fetchGovernedPoolAuthority.mockResolvedValue({
 		product_ids: ["product-1"],
@@ -261,7 +292,7 @@ describe("P6 Production Studio rendered contract", () => {
 		prime();
 		render(<CreativeProductionStudioPage />);
 		expect(await screen.findByTestId("p6-cohort-authority")).toHaveTextContent(
-			"COHORT_AUTHORITY_VERIFIED",
+			"PRODUCT AUTHORITY READY",
 		);
 		expect(screen.getByTestId("p6-zero-credit-boundary")).toHaveTextContent(
 			"0 media credits",
@@ -303,6 +334,51 @@ describe("P6 Production Studio rendered contract", () => {
 			),
 		);
 		expect(startProductionPlan).not.toHaveBeenCalled();
+	});
+
+	it("creates an explicit per-product allocation with a governed Extend choice", async () => {
+		prime();
+		createProductionPlan.mockResolvedValue(PLAN);
+		render(<CreativeProductionStudioPage />);
+		await screen.findByTestId("p6-plan-status");
+		fireEvent.click(screen.getByRole("button", { name: /Choose products/ }));
+		fireEvent.click(await screen.findByRole("option", { name: /P6 Product/ }));
+		fireEvent.change(screen.getByLabelText("Video quantity for P6 Product"), {
+			target: { value: "3" },
+		});
+		fireEvent.change(screen.getByLabelText("Governed video duration"), {
+			target: { value: "16" },
+		});
+		expect(screen.getByTestId("p6-orchestration-summary")).toHaveTextContent(
+			"Extend · 2 continuous 8-second segments",
+		);
+		await act(async () => {
+			fireEvent.click(screen.getByTestId("p6-create-plan"));
+		});
+		await waitFor(() => expect(createProductionPlan).toHaveBeenCalledTimes(1));
+		expect(createProductionPlan.mock.calls[0][0]).toMatchObject({
+			product_ids: ["product-1"],
+			product_video_allocations: [{ product_id: "product-1", video_count: 3 }],
+			target_video_count: 3,
+			model_keys: ["veo_3_1_lite"],
+			duration_seconds: [16],
+		});
+	});
+
+	it("keeps Omni 10 seconds single-shot and exposes no unproven Omni Extend total", async () => {
+		prime();
+		render(<CreativeProductionStudioPage />);
+		await screen.findByTestId("p6-plan-status");
+		fireEvent.change(screen.getByLabelText("Governed video model"), {
+			target: { value: "omni_flash" },
+		});
+		const duration = screen.getByLabelText("Governed video duration");
+		expect(duration).toHaveValue("10");
+		expect(duration).toHaveTextContent("10s — Single");
+		expect(duration).not.toHaveTextContent("20s");
+		expect(screen.getByTestId("p6-orchestration-summary")).toHaveTextContent(
+			"Single-shot",
+		);
 	});
 
 	it("keeps live dispatch disabled until scheduled and exact phrase are both present", async () => {

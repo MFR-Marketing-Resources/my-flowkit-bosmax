@@ -95,12 +95,16 @@ domains:
       - agent/services/creative_production_plan_service.py
       - agent/services/creative_production_compile_service.py
       - agent/services/creative_production_scheduler_service.py
+      - agent/services/video_models.py
       - dashboard/src/api/creativeProduction.ts
+      - dashboard/src/components/production-studio/ProductAllocationPicker.tsx
+      - dashboard/src/components/production-studio/ProductAllocationPicker.test.tsx
       - dashboard/src/pages/CreativeProductionStudioPage.tsx
       - dashboard/src/pages/CreativeProductionStudioPage.test.tsx
       - tests/api/test_creative_production_api.py
       - tests/unit/test_creative_production_orchestrator.py
       - tests/unit/test_creative_production_migration.py
+      - tests/unit/test_video_models.py
       - tests/ui/test_creative_production_ui_contract.py
       - docs/evidence/p6-batch-creative-production-orchestrator.md
       - scripts/p6-creative-production-rehearsal.py

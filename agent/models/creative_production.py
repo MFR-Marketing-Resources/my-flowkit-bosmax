@@ -100,6 +100,15 @@ class CreativeProductionExecutionPolicy(BaseModel):
     capacity_objective_not_sla: Literal[True] = True
 
 
+class ProductVideoAllocation(BaseModel):
+    """Explicit durable video quantity for one selected cohort product."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: str = Field(min_length=1, max_length=200)
+    video_count: int = Field(ge=1, le=200)
+
+
 class ProductionPlanCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -108,6 +117,10 @@ class ProductionPlanCreateRequest(BaseModel):
     name: str = Field(min_length=3, max_length=160)
     campaign_key: str = Field(default="", max_length=160)
     product_ids: list[str] = Field(min_length=1, max_length=P58_COHORT_COUNT)
+    product_video_allocations: list[ProductVideoAllocation] = Field(
+        default_factory=list,
+        max_length=P58_COHORT_COUNT,
+    )
     target_video_count: int = Field(default=0, ge=0, le=200)
     target_image_count: int = Field(default=0, ge=0, le=200)
     target_poster_count: int = Field(default=0, ge=0, le=200)
@@ -140,6 +153,28 @@ class ProductionPlanCreateRequest(BaseModel):
             raise ValueError("at least one media target is required")
         if len(set(self.product_ids)) != len(self.product_ids):
             raise ValueError("product_ids must be unique")
+        if self.product_video_allocations:
+            allocation_ids = [
+                allocation.product_id
+                for allocation in self.product_video_allocations
+            ]
+            if len(set(allocation_ids)) != len(allocation_ids):
+                raise ValueError(
+                    "product_video_allocations product_id values must be unique"
+                )
+            if set(allocation_ids) != set(self.product_ids):
+                raise ValueError(
+                    "product_video_allocations must cover product_ids exactly"
+                )
+            allocated_total = sum(
+                allocation.video_count
+                for allocation in self.product_video_allocations
+            )
+            if allocated_total != self.target_video_count:
+                raise ValueError(
+                    "sum(product_video_allocations.video_count) must equal "
+                    "target_video_count"
+                )
         if len(set(self.model_keys)) != len(self.model_keys):
             raise ValueError("model_keys must be unique")
         if any(not model.strip() for model in self.model_keys):
@@ -148,6 +183,16 @@ class ProductionPlanCreateRequest(BaseModel):
             raise ValueError("duration_seconds must be unique")
         if any(duration < 1 or duration > 240 for duration in self.duration_seconds):
             raise ValueError("duration_seconds values must be between 1 and 240")
+        from agent.services import video_models
+
+        for model_key in self.model_keys:
+            for duration in self.duration_seconds:
+                try:
+                    video_models.resolve_orchestration(model_key, duration)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"invalid governed model-duration combination: {exc}"
+                    ) from exc
         if self.controlled_reuse_max_per_dna > 1 and not str(
             self.controlled_reuse_reason or ""
         ).strip():

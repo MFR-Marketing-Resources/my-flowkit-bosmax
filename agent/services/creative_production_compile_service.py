@@ -32,10 +32,70 @@ async def _compile_video(
     plan: dict[str, Any],
     dimensions: dict[str, Any],
 ) -> tuple[str, str, dict[str, Any]]:
+    generation_mode = str(
+        dimensions.get("generation_mode") or "SINGLE"
+    ).upper()
+    total_duration = int(dimensions["duration_seconds"])
+    engine_block_duration = int(
+        dimensions.get("engine_block_duration_seconds") or total_duration
+    )
+    execution_policy = _loads(plan.get("execution_policy_json"), {})
+    aspect = str(execution_policy.get("aspect") or "9:16")
+    logical_mode = str(plan["logical_mode"])
+    workspace_execution_package_id: str | None = None
+    if generation_mode == "EXTEND":
+        try:
+            execution_package = (
+                await wgp_service._create_bulk_extend_execution_package(
+                    item_index=int(item["item_ordinal"]),
+                    product_id=str(item["product_id"]),
+                    logical_mode=logical_mode,
+                    source_mode=(
+                        "FRAMES"
+                        if logical_mode == "F2V"
+                        else logical_mode
+                        if logical_mode in {"T2V", "HYBRID"}
+                        else None
+                    ),
+                    generation_mode="EXTEND",
+                    duration_seconds=engine_block_duration,
+                    requested_total_duration_seconds=total_duration,
+                    target_language="BM_MS",
+                    model=str(dimensions["model_key"]),
+                    aspect=aspect,
+                    copy_set_id=str(dimensions.get("copy_set_id") or ""),
+                    start_frame_asset_id=(
+                        dimensions.get("finished_frame_asset_id") or None
+                    ),
+                    product_reference_asset_id=(
+                        dimensions.get("product_reference_asset_id") or None
+                    ),
+                    character_reference_asset_id=(
+                        dimensions.get("character_asset_id") or None
+                    ),
+                    scene_context_reference_asset_id=(
+                        dimensions.get("scene_asset_id") or None
+                    ),
+                )
+            )
+        except ValueError as exc:
+            raise CreativeProductionError(
+                "EXTEND_EXECUTION_PACKAGE_BLOCKED",
+                "The existing durable Extend planner refused this item.",
+                details={"item_id": item["item_id"], "detail": str(exc)},
+            ) from exc
+        workspace_execution_package_id = str(
+            execution_package["workspace_execution_package_id"]
+        )
+
     common: dict[str, Any] = {
         "product_id": item["product_id"],
-        "generation_mode": "SINGLE",
-        "duration_seconds": int(dimensions["duration_seconds"]),
+        "workspace_execution_package_id": workspace_execution_package_id,
+        "generation_mode": generation_mode,
+        "duration_seconds": engine_block_duration,
+        "requested_total_duration_seconds": (
+            total_duration if generation_mode == "EXTEND" else None
+        ),
         "batch_run_id": plan["plan_id"],
         "copy_set_id": dimensions.get("copy_set_id") or None,
         "scene_context_override": (
@@ -46,7 +106,6 @@ async def _compile_video(
             f"{item['item_id']} DNA {item['creative_dna_sha256']}"
         ),
     }
-    logical_mode = str(plan["logical_mode"])
     if logical_mode == "T2V":
         package = await wgp_service.create_t2v_generation_package(
             **common,
@@ -110,6 +169,47 @@ async def _compile_video(
             "EMPTY_COMPILED_PROMPT",
             "Existing compiler returned an empty prompt.",
         )
+    video_job_plan: dict[str, Any] | None = None
+    if generation_mode == "EXTEND":
+        from agent.api.flow import (
+            VideoJobPlanRequest,
+            _VIDEO_ASPECT_TO_RATIO,
+            _plan_video_job,
+        )
+
+        aspect_ratio = next(
+            (
+                enum
+                for enum, ratio in _VIDEO_ASPECT_TO_RATIO.items()
+                if ratio == aspect
+            ),
+            None,
+        )
+        if not aspect_ratio:
+            raise CreativeProductionError(
+                "EXTEND_UNSUPPORTED_ASPECT",
+                f"The durable Extend lane does not support aspect {aspect}.",
+            )
+        video_job_plan = await _plan_video_job(
+            VideoJobPlanRequest(
+                product_id=str(item["product_id"]),
+                execution_package_id=workspace_execution_package_id,
+                requested_total_duration_seconds=total_duration,
+                model=str(dimensions["model_key"]),
+                aspect_ratio=aspect_ratio,
+                client_request_nonce=str(
+                    package["workspace_generation_package_id"]
+                ),
+            ),
+            trust_client_authority=False,
+        )
+        if not str(video_job_plan.get("job_id") or "") or not str(
+            video_job_plan.get("plan_fingerprint") or ""
+        ):
+            raise CreativeProductionError(
+                "EXTEND_VIDEO_JOB_PLAN_INCOMPLETE",
+                "The durable /video-jobs planner returned no complete identity.",
+            )
     return (
         str(package["workspace_generation_package_id"]),
         str(package.get("prompt_fingerprint") or _prompt_sha(prompt)),
@@ -121,6 +221,22 @@ async def _compile_video(
             "prompt_fingerprint": package.get("prompt_fingerprint"),
             "final_prompt_text": prompt,
             "logical_mode": logical_mode,
+            "generation_mode": generation_mode,
+            "requested_total_duration_seconds": total_duration,
+            "engine_block_duration_seconds": engine_block_duration,
+            "segment_count": int(dimensions.get("segment_count") or 1),
+            "execution_route": str(
+                dimensions.get("execution_route") or "SINGLE_SHOT_QUEUE"
+            ),
+            "workspace_execution_package_id": workspace_execution_package_id,
+            "video_job_id": (
+                video_job_plan.get("job_id") if video_job_plan else None
+            ),
+            "video_job_plan_fingerprint": (
+                video_job_plan.get("plan_fingerprint")
+                if video_job_plan
+                else None
+            ),
             "status": package.get("status"),
         },
     )
