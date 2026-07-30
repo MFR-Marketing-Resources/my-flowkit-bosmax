@@ -10,13 +10,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from collections import Counter
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Mapping
 
 from agent.authority.catalog_product_type_truth import (
     resolve_catalog_product_type_truth,
 )
+from agent.config import DB_PATH
 from agent.db import crud
 from agent.models.product_strategy_taxonomy import (
     ProductStrategyTaxonomy,
@@ -60,6 +63,33 @@ _FINGERPRINT_FIELDS = (
 
 class ProductStrategyTaxonomyError(ValueError):
     """Stable service error surfaced by Product and Creative Intelligence APIs."""
+
+
+def lookup_product_strategy_type_registry_entry(
+    cluster: str,
+    product_type_group: str,
+    *,
+    db_path: Path | None = None,
+) -> dict[str, object] | None:
+    """Read one exact registry pair from the authoritative SQLite database."""
+
+    resolved_path = Path(db_path or DB_PATH).resolve()
+    if not resolved_path.is_file() or not cluster or not product_type_group:
+        return None
+    try:
+        with sqlite3.connect(
+            f"{resolved_path.as_uri()}?mode=ro",
+            uri=True,
+        ) as connection:
+            connection.row_factory = sqlite3.Row
+            row = connection.execute(
+                "SELECT * FROM product_strategy_type_registry "
+                "WHERE cluster=? AND product_type_group=?",
+                (cluster, product_type_group),
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    return dict(row) if row else None
 
 
 def _now() -> str:

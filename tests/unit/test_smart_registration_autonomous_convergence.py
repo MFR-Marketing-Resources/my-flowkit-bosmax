@@ -1,13 +1,22 @@
 import sqlite3
 
+import pytest
+
 from agent.models.product_knowledge import ProductKnowledgeCompleteRequest
 from agent.models.product_registration import RegistrationReviewDraft
 from agent.services.product_intelligence_service import (
     resolve_product_intelligence_profile,
 )
-from agent.services.product_knowledge_service import complete_product_knowledge
+from agent.services.product_knowledge_service import (
+    TextAssistTaxonomySuggestion,
+    complete_product_knowledge,
+    validate_text_assist_taxonomy_suggestion_registry,
+)
 from agent.services.product_registration_service import (
     create_registration_review_draft,
+)
+from agent.services.product_strategy_taxonomy_service import (
+    lookup_product_strategy_type_registry_entry,
 )
 from agent.services.registration_authority_fingerprint_service import (
     apply_authority_freshness,
@@ -27,6 +36,232 @@ CURTAIN_TITLE = (
     "Meja Guru, Pejabat ( ready made ) ukuran standard Fabrik Tingkap "
     "Berpetak Soft Cotton Custom"
 )
+
+
+def _registry_database(tmp_path, *rows: tuple[str, str, str, str, str, str]):
+    database_path = tmp_path / "product-strategy-registry.db"
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        """
+        CREATE TABLE product_strategy_type_registry (
+            cluster TEXT NOT NULL,
+            product_type_group TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            matched_scene_strategy_id TEXT NOT NULL,
+            scene_coverage_status TEXT NOT NULL,
+            registry_status TEXT NOT NULL,
+            PRIMARY KEY (cluster, product_type_group)
+        )
+        """
+    )
+    connection.executemany(
+        "INSERT INTO product_strategy_type_registry VALUES (?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    connection.commit()
+    connection.close()
+    return database_path
+
+
+def _taxonomy_suggestion(
+    *,
+    category: str = "Textiles & Soft Furnishings",
+    subcategory: str = "Household Textiles",
+    product_type: str = "Curtains",
+    cluster: str = "home_textiles",
+    product_type_group: str = "curtain",
+    scene_strategy: str = "CURTAIN",
+    coverage: str = "COVERED",
+    registry_entry_key: str | None = None,
+) -> TextAssistTaxonomySuggestion:
+    return TextAssistTaxonomySuggestion(
+        category=category,
+        subcategory=subcategory,
+        type=product_type,
+        cluster=cluster,
+        product_type_group=product_type_group,
+        matched_scene_strategy_id=scene_strategy,
+        scene_coverage_status=coverage,
+        registry_entry_key=registry_entry_key
+        or f"{cluster}/{product_type_group}",
+        evidence_used=["product_name:Langsir"],
+        confidence="MEDIUM",
+        reason="Exact active registry binding.",
+        needs_review=True,
+    )
+
+
+def _registry_lookup(database_path):
+    return lambda cluster, product_type_group: (
+        lookup_product_strategy_type_registry_entry(
+            cluster,
+            product_type_group,
+            db_path=database_path,
+        )
+    )
+
+
+def test_taxonomy_suggestion_accepts_active_curtain_registry_row(tmp_path):
+    database_path = _registry_database(
+        tmp_path,
+        (
+            "home_textiles",
+            "curtain",
+            "Curtain",
+            "CURTAIN",
+            "COVERED",
+            "ACTIVE",
+        ),
+    )
+
+    assert (
+        validate_text_assist_taxonomy_suggestion_registry(
+            _taxonomy_suggestion(),
+            registry_lookup=_registry_lookup(database_path),
+        )
+        is not None
+    )
+
+
+def test_taxonomy_suggestion_accepts_another_active_registered_type(tmp_path):
+    database_path = _registry_database(
+        tmp_path,
+        (
+            "beauty_makeup",
+            "lipstick_lip_tint",
+            "Lipstick Lip Tint",
+            "LIP_COLOR",
+            "COVERED",
+            "ACTIVE",
+        ),
+    )
+    suggestion = _taxonomy_suggestion(
+        category="Beauty & Personal Care",
+        subcategory="Makeup & Cosmetics",
+        product_type="Lipstick & Lip Tint",
+        cluster="beauty_makeup",
+        product_type_group="lipstick_lip_tint",
+        scene_strategy="LIP_COLOR",
+    )
+
+    assert (
+        validate_text_assist_taxonomy_suggestion_registry(
+            suggestion,
+            registry_lookup=_registry_lookup(database_path),
+        )
+        is not None
+    )
+
+
+def test_taxonomy_suggestion_rejects_unknown_registry_key(tmp_path):
+    database_path = _registry_database(tmp_path)
+    suggestion = _taxonomy_suggestion(
+        registry_entry_key="unknown/missing",
+    )
+
+    assert (
+        validate_text_assist_taxonomy_suggestion_registry(
+            suggestion,
+            registry_lookup=_registry_lookup(database_path),
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("registry_status", ["INACTIVE", "REVIEW_REQUIRED"])
+def test_taxonomy_suggestion_rejects_non_active_registry_row(
+    tmp_path,
+    registry_status,
+):
+    database_path = _registry_database(
+        tmp_path,
+        (
+            "home_textiles",
+            "curtain",
+            "Curtain",
+            "CURTAIN",
+            "COVERED",
+            registry_status,
+        ),
+    )
+
+    assert (
+        validate_text_assist_taxonomy_suggestion_registry(
+            _taxonomy_suggestion(),
+            registry_lookup=_registry_lookup(database_path),
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("scene_strategy", "coverage"),
+    [
+        ("HOME_LIFESTYLE", "COVERED"),
+        ("CURTAIN", "PARTIAL"),
+    ],
+)
+def test_taxonomy_suggestion_rejects_scene_or_coverage_mismatch(
+    tmp_path,
+    scene_strategy,
+    coverage,
+):
+    database_path = _registry_database(
+        tmp_path,
+        (
+            "home_textiles",
+            "curtain",
+            "Curtain",
+            scene_strategy,
+            coverage,
+            "ACTIVE",
+        ),
+    )
+
+    assert (
+        validate_text_assist_taxonomy_suggestion_registry(
+            _taxonomy_suggestion(),
+            registry_lookup=_registry_lookup(database_path),
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("completion_request", "expected"),
+    [
+        (
+            ProductKnowledgeCompleteRequest(
+                product_name="Hydrating facial serum",
+                category="Beauty & Personal Care",
+                ingredients_text="Water, glycerin",
+            ),
+            "APPLICABLE",
+        ),
+        (
+            ProductKnowledgeCompleteRequest(
+                product_name=CURTAIN_TITLE,
+                category="Textiles & Soft Furnishings",
+                subcategory="Household Textiles",
+            ),
+            "NOT_APPLICABLE",
+        ),
+        (
+            ProductKnowledgeCompleteRequest(
+                product_name="Unclassified review product",
+            ),
+            "UNKNOWN",
+        ),
+    ],
+)
+def test_completion_preserves_ingredients_applicability_tristate(
+    completion_request,
+    expected,
+):
+    assert (
+        complete_product_knowledge(completion_request).ingredients_applicability
+        == expected
+    )
 
 
 def _draft(**overrides) -> RegistrationReviewDraft:
@@ -254,6 +489,10 @@ def test_text_assist_can_repair_invalid_nonempty_field_as_review_only(
                 "category": "Textiles & Soft Furnishings",
                 "subcategory": "Household Textiles",
                 "type": "Curtains",
+                "cluster": "home_textiles",
+                "product_type_group": "curtain",
+                "matched_scene_strategy_id": "CURTAIN",
+                "scene_coverage_status": "COVERED",
                 "registry_entry_key": "home_textiles/curtain",
                 "evidence_used": ["product_name:Langsir"],
                 "confidence": "MEDIUM",
@@ -264,6 +503,17 @@ def test_text_assist_can_repair_invalid_nonempty_field_as_review_only(
             "confidence": "MEDIUM",
             "provenance": ["SOURCE_TEXT_REVIEW_ONLY"],
             "needs_review": True,
+        },
+    )
+    monkeypatch.setattr(
+        "agent.services.product_knowledge_service.lookup_product_strategy_type_registry_entry",
+        lambda cluster, product_type_group: {
+            "cluster": cluster,
+            "product_type_group": product_type_group,
+            "display_name": "Curtain",
+            "matched_scene_strategy_id": "CURTAIN",
+            "scene_coverage_status": "COVERED",
+            "registry_status": "ACTIVE",
         },
     )
     completion = complete_product_knowledge(

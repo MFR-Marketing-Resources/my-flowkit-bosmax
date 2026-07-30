@@ -7,7 +7,7 @@ import uuid
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -18,6 +18,7 @@ from agent.models.product_knowledge import (
     AIFormImportResponse,
 )
 from agent.models.product_registration import EvidenceCompletionFieldMetadata
+from agent.models.product_strategy_taxonomy import ProductStrategyCoverageStatus
 from agent.services.bosmax_product_family import derive_bosmax_product_family
 from agent.services.product_intelligence_service import (
     BLOCKED_CLAIM_TOKENS,
@@ -26,6 +27,9 @@ from agent.services.product_intelligence_service import (
 )
 from agent.services.product_physics import resolve_product_physics
 from agent.services.product_mapping import normalize_mapping_text, resolve_product_mapping
+from agent.services.product_strategy_taxonomy_service import (
+    lookup_product_strategy_type_registry_entry,
+)
 from agent.config import BASE_DIR
 from agent.services.registration_hook_cta_generation_service import (
     generate_registration_hook_cta,
@@ -74,6 +78,10 @@ class TextAssistTaxonomySuggestion(BaseModel):
     category: str
     subcategory: str
     type: str
+    cluster: str | None = None
+    product_type_group: str | None = None
+    matched_scene_strategy_id: str | None = None
+    scene_coverage_status: ProductStrategyCoverageStatus | None = None
     registry_entry_key: str
     evidence_used: list[str] = Field(default_factory=list)
     confidence: Literal["LOW", "MEDIUM"] = "LOW"
@@ -101,6 +109,54 @@ class TextAssistEvidenceCompletion(BaseModel):
     confidence: Literal["LOW", "MEDIUM"] = "LOW"
     provenance: list[str] = Field(default_factory=list)
     needs_review: Literal[True] = True
+
+
+TaxonomyRegistryLookup = Callable[
+    [str, str],
+    Mapping[str, Any] | None,
+]
+
+
+def validate_text_assist_taxonomy_suggestion_registry(
+    suggestion: TextAssistTaxonomySuggestion,
+    *,
+    registry_lookup: TaxonomyRegistryLookup | None = None,
+) -> dict[str, Any] | None:
+    """Return the exact active registry row only when every binding agrees."""
+
+    cluster = suggestion.cluster
+    product_type_group = suggestion.product_type_group
+    matched_scene_strategy_id = suggestion.matched_scene_strategy_id
+    scene_coverage_status = suggestion.scene_coverage_status
+    if not all(
+        (
+            cluster,
+            product_type_group,
+            matched_scene_strategy_id,
+            scene_coverage_status,
+        )
+    ):
+        return None
+    if suggestion.registry_entry_key != f"{cluster}/{product_type_group}":
+        return None
+
+    lookup = registry_lookup or lookup_product_strategy_type_registry_entry
+    registry_entry = lookup(cluster, product_type_group)
+    if not registry_entry:
+        return None
+    expected_binding = {
+        "cluster": cluster,
+        "product_type_group": product_type_group,
+        "registry_status": "ACTIVE",
+        "matched_scene_strategy_id": matched_scene_strategy_id,
+        "scene_coverage_status": scene_coverage_status,
+    }
+    if any(
+        registry_entry.get(field) != expected
+        for field, expected in expected_binding.items()
+    ):
+        return None
+    return dict(registry_entry)
 
 
 def _json_schema_types(field_schema: dict[str, Any]) -> tuple[str, ...]:
@@ -362,11 +418,12 @@ def complete_product_knowledge(
                 ("type", suggestion.type),
             )
         )
-        registry_backed = (
-            suggestion.registry_entry_key == "home_textiles/curtain"
-            and normalize_mapping_text(suggestion.type) == "curtains"
+        registry_entry = (
+            validate_text_assist_taxonomy_suggestion_registry(suggestion)
+            if deterministic_match
+            else None
         )
-        if deterministic_match and registry_backed:
+        if registry_entry:
             taxonomy_repair = suggestion.model_dump(mode="json")
         else:
             text_assist_warnings.append(
@@ -415,14 +472,9 @@ def complete_product_knowledge(
             and text_assist_completion.materials_or_components
             else completion_evidence_audit.sanitized_fields.get("materials_text")
         ),
-        ingredients_applicability=(
-            "NOT_APPLICABLE"
-            if completion_evidence_audit.decisions[
-                "ingredients_or_materials"
-            ].applicability
-            == "NOT_APPLICABLE"
-            else "APPLICABLE"
-        ),
+        ingredients_applicability=completion_evidence_audit.decisions[
+            "ingredients_or_materials"
+        ].applicability,
         suggested_taxonomy_repair=taxonomy_repair,
         suggested_bosmax_product_family=intelligence.get("bosmax_product_family"),
         suggested_package_form=intelligence.get("package_form"),
@@ -846,7 +898,9 @@ def _complete_missing_evidence_with_text_assist(
         "Every repair must state FILL_MISSING or REPAIR_INVALID_OR_PLACEHOLDER, the "
         "evidence used, confidence, reason, and needs_review=true. Ingredients may be "
         "NOT_APPLICABLE for non-consumable products; use materials_or_components instead. "
-        "Taxonomy suggestions are review-only and must name an existing registry_entry_key. "
+        "Taxonomy suggestions are review-only and must name an existing registry_entry_key "
+        "with the exact cluster, product_type_group, matched_scene_strategy_id, and "
+        "scene_coverage_status from that registry row. "
         "JSON source evidence:\n"
         f"{json.dumps(source_payload, ensure_ascii=False, sort_keys=True)}"
     )
