@@ -26,11 +26,15 @@ def _create_body() -> ProductionPlanCreateRequest:
         operator_id="api-owner",
         name="API plan",
         product_ids=["product-1"],
+        product_video_allocations=[
+            ProductVideoAllocation(product_id="product-1", video_count=1)
+        ],
         target_video_count=1,
         model_keys=["Veo 3.1 - Lite"],
         duration_seconds=[8],
         pools=CreativePoolSelection(
             copy_set_ids=["copy-1"],
+            treatment_ids=["treatment-1"],
         ),
     )
 
@@ -48,7 +52,10 @@ def test_create_contract_validates_explicit_allocation_and_governed_duration():
         target_video_count=3,
         model_keys=["veo_3_1_lite"],
         duration_seconds=[16, 24],
-        pools=CreativePoolSelection(copy_set_ids=["copy-1", "copy-2"]),
+        pools=CreativePoolSelection(
+            copy_set_ids=["copy-1", "copy-2"],
+            treatment_ids=["treatment-1", "treatment-2", "treatment-3"],
+        ),
     )
     assert sum(
         allocation.video_count for allocation in body.product_video_allocations
@@ -66,11 +73,26 @@ def test_create_contract_validates_explicit_allocation_and_governed_duration():
             target_video_count=1,
             model_keys=["veo_3_1_lite"],
             duration_seconds=[8],
-            pools=CreativePoolSelection(),
+            pools=CreativePoolSelection(treatment_ids=["treatment-1"]),
         )
 
     with pytest.raises(ValidationError, match="greater than or equal to 1"):
         ProductVideoAllocation(product_id="product-1", video_count=0)
+
+    with pytest.raises(
+        ValidationError,
+        match="product_video_allocations is required",
+    ):
+        ProductionPlanCreateRequest(
+            request_id="api-create-missing-allocation",
+            operator_id="api-owner",
+            name="Missing allocation",
+            product_ids=["product-1"],
+            target_video_count=1,
+            model_keys=["veo_3_1_lite"],
+            duration_seconds=[8],
+            pools=CreativePoolSelection(treatment_ids=["treatment-1"]),
+        )
 
 
 def test_create_contract_keeps_omni_10_single_and_refuses_unproven_20s():
@@ -85,7 +107,7 @@ def test_create_contract_keeps_omni_10_single_and_refuses_unproven_20s():
         target_video_count=1,
         model_keys=["omni_flash"],
         duration_seconds=[10],
-        pools=CreativePoolSelection(),
+        pools=CreativePoolSelection(treatment_ids=["treatment-1"]),
     )
     assert valid.duration_seconds == [10]
 
@@ -95,10 +117,13 @@ def test_create_contract_keeps_omni_10_single_and_refuses_unproven_20s():
             operator_id="api-owner",
             name="Invalid Omni Extend plan",
             product_ids=["product-1"],
+            product_video_allocations=[
+                ProductVideoAllocation(product_id="product-1", video_count=1)
+            ],
             target_video_count=1,
             model_keys=["omni_flash"],
             duration_seconds=[20],
-            pools=CreativePoolSelection(),
+            pools=CreativePoolSelection(treatment_ids=["treatment-1"]),
         )
 
 

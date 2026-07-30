@@ -21,6 +21,7 @@ from agent.models.creative_production import (
     P58_COHORT_SHA256,
     P58CohortAuthorityResponse,
     PlanStatus,
+    ProductionPlanCanonicalSnapshot,
     ProductionPlanCreateRequest,
     ProductionPlanDetailResponse,
     ProductionPlanUpdateRequest,
@@ -92,6 +93,7 @@ def _decode_row(row: dict[str, Any]) -> dict[str, Any]:
         ("model_keys_json", []),
         ("duration_seconds_json", []),
         ("pool_snapshot_json", {}),
+        ("plan_snapshot_json", {}),
         ("execution_policy_json", {}),
         ("capacity_snapshot_json", {}),
         ("compile_snapshot_json", {}),
@@ -114,6 +116,187 @@ def _decode_row(row: dict[str, Any]) -> dict[str, Any]:
             decoded["credit_spend_intended"]
         )
     return decoded
+
+
+def _video_configuration_snapshot(
+    model_keys: list[str],
+    duration_seconds: list[int],
+    missing_fields: list[str],
+) -> list[dict[str, Any]]:
+    configurations: list[dict[str, Any]] = []
+    for model_key in model_keys:
+        for duration in duration_seconds:
+            try:
+                spec = video_models.resolve(model_key)
+                orchestration = video_models.resolve_orchestration(
+                    model_key,
+                    int(duration),
+                )
+            except (TypeError, ValueError):
+                if "video_configurations" not in missing_fields:
+                    missing_fields.append("video_configurations")
+                continue
+            configurations.append(
+                {
+                    "model_key": str(spec["key"]),
+                    "model_label": str(spec["ui_label"]),
+                    **orchestration,
+                }
+            )
+    if not configurations and "video_configurations" not in missing_fields:
+        missing_fields.append("video_configurations")
+    return configurations
+
+
+def _validated_allocation_rows(
+    product_ids: list[str],
+    target_video_count: int,
+    allocations: Any,
+) -> list[dict[str, Any]] | None:
+    if target_video_count == 0:
+        if allocations:
+            return None
+        return [
+            {"product_id": product_id, "video_count": 0}
+            for product_id in product_ids
+        ]
+    if not isinstance(allocations, list) or not allocations:
+        return None
+    by_product: dict[str, int] = {}
+    for allocation in allocations:
+        if not isinstance(allocation, dict):
+            return None
+        product_id = str(allocation.get("product_id") or "")
+        try:
+            video_count = int(allocation.get("video_count"))
+        except (TypeError, ValueError):
+            return None
+        if (
+            not product_id
+            or product_id in by_product
+            or video_count < 1
+            or video_count > 200
+        ):
+            return None
+        by_product[product_id] = video_count
+    if set(by_product) != set(product_ids):
+        return None
+    if sum(by_product.values()) != target_video_count:
+        return None
+    return [
+        {"product_id": product_id, "video_count": by_product[product_id]}
+        for product_id in product_ids
+    ]
+
+
+def _snapshot_from_plan_values(
+    plan: dict[str, Any],
+    *,
+    allocations: Any,
+    product_names: dict[str, str],
+    source: str,
+    evidence: dict[str, Any],
+    matrix_count: int = 0,
+    attempts_count: int = 0,
+    qa_count: int = 0,
+    extra_missing_fields: list[str] | None = None,
+) -> dict[str, Any]:
+    missing_fields = list(extra_missing_fields or [])
+    product_ids = [
+        str(value)
+        for value in _loads(plan.get("product_scope_json"), [])
+        if str(value)
+    ]
+    target_video_count = int(plan.get("target_video_count") or 0)
+    valid_allocations = _validated_allocation_rows(
+        product_ids,
+        target_video_count,
+        allocations,
+    )
+    product_allocations: list[dict[str, Any]] = []
+    if valid_allocations is None:
+        missing_fields.append("product_allocations")
+    else:
+        for allocation in valid_allocations:
+            product_id = str(allocation["product_id"])
+            product_name = str(product_names.get(product_id) or "").strip()
+            if not product_name:
+                if "product_names" not in missing_fields:
+                    missing_fields.append("product_names")
+                product_name = product_id
+            product_allocations.append(
+                {
+                    **allocation,
+                    "product_name": product_name,
+                }
+            )
+
+    model_keys = [
+        str(value)
+        for value in _loads(plan.get("model_keys_json"), [])
+        if str(value).strip()
+    ]
+    durations = [
+        int(value)
+        for value in _loads(plan.get("duration_seconds_json"), [])
+        if isinstance(value, int) or str(value).isdigit()
+    ]
+    video_configurations = (
+        _video_configuration_snapshot(
+            model_keys,
+            durations,
+            missing_fields,
+        )
+        if target_video_count > 0
+        else []
+    )
+    pool_snapshot = _loads(plan.get("pool_snapshot_json"), {})
+    execution_policy = _loads(plan.get("execution_policy_json"), {})
+    aspect = str(execution_policy.get("aspect") or "")
+    if aspect not in {"9:16", "16:9"}:
+        missing_fields.append("aspect_ratio")
+        aspect = "9:16"
+
+    unique_missing = sorted(set(missing_fields))
+    return {
+        "schema_version": 1,
+        "completeness": (
+            "LEGACY_INCOMPLETE" if unique_missing else "COMPLETE"
+        ),
+        "missing_fields": unique_missing,
+        "source": source,
+        "evidence": evidence,
+        "plan_id": str(plan["plan_id"]),
+        "plan_name": str(plan["name"]),
+        "purpose": str(plan.get("campaign_key") or "").strip() or None,
+        "status": str(plan["status"]),
+        "operator_id": str(plan["created_by"]),
+        "request_id": str(plan["request_id"]),
+        "product_allocations": product_allocations,
+        "target_video_count": target_video_count,
+        "target_image_count": int(plan.get("target_image_count") or 0),
+        "target_poster_count": int(plan.get("target_poster_count") or 0),
+        "logical_mode": str(plan["logical_mode"]),
+        "video_configurations": video_configurations,
+        "aspect_ratio": aspect,
+        "operating_window_hours": int(plan["operating_window_hours"]),
+        "allocation_strategy": str(plan["allocation_strategy"]),
+        "variation_strategy": str(plan["variation_strategy"]),
+        "approved_pool_snapshot": (
+            pool_snapshot if plan.get("approved_by") else None
+        ),
+        "pool_snapshot": pool_snapshot,
+        "cohort_snapshot": {
+            "cohort_sha256": str(plan["p58_cohort_sha256"]),
+            "cohort_count": int(plan["p58_cohort_count"]),
+            "product_ids": product_ids,
+        },
+        "matrix_count": matrix_count,
+        "attempts_count": attempts_count,
+        "qa_count": qa_count,
+        "created_at": str(plan["created_at"]),
+        "updated_at": str(plan["updated_at"]),
+    }
 
 
 def _unique(values: list[str]) -> list[str]:
@@ -192,6 +375,238 @@ async def _assert_frozen_cohort(product_ids: list[str]) -> P58CohortAuthorityRes
             details={"product_ids": outside},
         )
     return authority
+
+
+async def _catalog_product_names() -> dict[str, str]:
+    return {
+        str(product.get("id") or ""): str(
+            product.get("product_display_name")
+            or product.get("product_name")
+            or product.get("raw_product_title")
+            or product.get("name")
+            or ""
+        )
+        for product in await crud.list_products(include_archived=True)
+        if str(product.get("id") or "")
+    }
+
+
+def _reconstruct_product_allocations(
+    plan: dict[str, Any],
+    items: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]] | None, dict[str, Any]]:
+    product_ids = [
+        str(value)
+        for value in _loads(plan.get("product_scope_json"), [])
+        if str(value)
+    ]
+    target_video_count = int(plan.get("target_video_count") or 0)
+    pool_snapshot = _loads(plan.get("pool_snapshot_json"), {})
+    persisted = _validated_allocation_rows(
+        product_ids,
+        target_video_count,
+        pool_snapshot.get("product_video_allocations"),
+    )
+    if persisted is not None:
+        return persisted, {
+            "allocation_source": "PERSISTED_POOL_SNAPSHOT",
+            "allocation_item_ids": [],
+        }
+
+    primary_video_items = [
+        item
+        for item in items
+        if str(item.get("media_type") or "") == "VIDEO"
+        and not str(item.get("replacement_for_item_id") or "")
+    ]
+    counts = Counter(
+        str(item.get("product_id") or "")
+        for item in primary_video_items
+        if str(item.get("product_id") or "")
+    )
+    item_allocations = [
+        {"product_id": product_id, "video_count": int(counts[product_id])}
+        for product_id in product_ids
+        if counts[product_id] > 0
+    ]
+    validated = _validated_allocation_rows(
+        product_ids,
+        target_video_count,
+        item_allocations,
+    )
+    return validated, {
+        "allocation_source": (
+            "PRIMARY_VIDEO_ITEMS" if validated is not None else "NOT_PROVABLE"
+        ),
+        "allocation_item_ids": sorted(
+            str(item.get("item_id") or "")
+            for item in primary_video_items
+            if str(item.get("item_id") or "")
+        ),
+    }
+
+
+async def _render_plan_snapshot(
+    plan: dict[str, Any],
+    *,
+    items: list[dict[str, Any]],
+    attempts: list[dict[str, Any]],
+    qa: list[dict[str, Any]],
+) -> ProductionPlanCanonicalSnapshot:
+    persisted = _loads(plan.get("plan_snapshot_json"), {})
+    if persisted:
+        snapshot = dict(persisted)
+        snapshot.update(
+            {
+                "status": str(plan["status"]),
+                "approved_pool_snapshot": (
+                    snapshot.get("pool_snapshot")
+                    if plan.get("approved_by")
+                    else None
+                ),
+                "matrix_count": len(items),
+                "attempts_count": len(attempts),
+                "qa_count": len(qa),
+                "updated_at": str(plan["updated_at"]),
+            }
+        )
+        return ProductionPlanCanonicalSnapshot.model_validate(snapshot)
+
+    allocations, allocation_evidence = _reconstruct_product_allocations(
+        plan,
+        items,
+    )
+    snapshot = _snapshot_from_plan_values(
+        plan,
+        allocations=allocations,
+        product_names=await _catalog_product_names(),
+        source="LEGACY_PREVIEW",
+        evidence={
+            **allocation_evidence,
+            "product_name_source": "CURRENT_CANONICAL_CATALOG_PREVIEW",
+            "persisted": False,
+        },
+        matrix_count=len(items),
+        attempts_count=len(attempts),
+        qa_count=len(qa),
+        extra_missing_fields=(
+            [] if allocations is not None else ["product_allocations"]
+        ),
+    )
+    snapshot["completeness"] = "LEGACY_INCOMPLETE"
+    if "persisted_plan_snapshot" not in snapshot["missing_fields"]:
+        snapshot["missing_fields"].append("persisted_plan_snapshot")
+        snapshot["missing_fields"].sort()
+    return ProductionPlanCanonicalSnapshot.model_validate(snapshot)
+
+
+async def reconcile_legacy_plan_snapshots(
+    *,
+    request_id: str,
+    operator_id: str,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    product_names = await _catalog_product_names()
+    results: list[dict[str, Any]] = []
+    for plan in await p6db.list_plans(100_000):
+        persisted = _loads(plan.get("plan_snapshot_json"), {})
+        if persisted:
+            results.append(
+                {
+                    "plan_id": str(plan["plan_id"]),
+                    "result": "ALREADY_RECONCILED",
+                    "completeness": str(persisted.get("completeness") or ""),
+                }
+            )
+            continue
+        items = await p6db.list_items(str(plan["plan_id"]))
+        allocations, allocation_evidence = _reconstruct_product_allocations(
+            plan,
+            items,
+        )
+        reconciled_at = _now()
+        snapshot = _snapshot_from_plan_values(
+            plan,
+            allocations=allocations,
+            product_names=product_names,
+            source="LEGACY_RECONCILIATION",
+            evidence={
+                **allocation_evidence,
+                "product_name_source": (
+                    "CURRENT_CANONICAL_CATALOG_AT_RECONCILIATION"
+                ),
+                "reconciled_at": reconciled_at,
+                "reconciliation_request_id": request_id,
+            },
+            matrix_count=len(items),
+            attempts_count=len(
+                await p6db.list_attempts(str(plan["plan_id"]))
+            ),
+            qa_count=len(await p6db.list_qa(str(plan["plan_id"]))),
+            extra_missing_fields=(
+                [] if allocations is not None else ["product_allocations"]
+            ),
+        )
+        if not dry_run:
+            await p6db.update_plan(
+                str(plan["plan_id"]),
+                plan_snapshot_json=_stable_json(snapshot),
+            )
+            await record_audit_event(
+                plan_id=str(plan["plan_id"]),
+                request_id=f"{request_id}:{plan['plan_id']}",
+                actor_id=operator_id,
+                action="RECONCILE_PLAN_SNAPSHOT",
+                source_state=str(plan["status"]),
+                target_state=str(plan["status"]),
+                evidence={
+                    "completeness": snapshot["completeness"],
+                    "missing_fields": snapshot["missing_fields"],
+                    **allocation_evidence,
+                },
+            )
+        results.append(
+            {
+                "plan_id": str(plan["plan_id"]),
+                "result": "DRY_RUN" if dry_run else "RECONCILED",
+                "completeness": snapshot["completeness"],
+                "missing_fields": snapshot["missing_fields"],
+                **allocation_evidence,
+            }
+        )
+    return {
+        "dry_run": dry_run,
+        "plans": results,
+        "complete_count": sum(
+            result.get("completeness") == "COMPLETE" for result in results
+        ),
+        "incomplete_count": sum(
+            result.get("completeness") == "LEGACY_INCOMPLETE"
+            for result in results
+        ),
+    }
+
+
+async def require_complete_plan_snapshot(plan_id: str) -> dict[str, Any]:
+    plan = await _require_plan(plan_id)
+    snapshot = _loads(plan.get("plan_snapshot_json"), {})
+    if (
+        snapshot.get("completeness") != "COMPLETE"
+        or snapshot.get("plan_id") != plan_id
+    ):
+        raise CreativeProductionError(
+            "PLAN_SNAPSHOT_INCOMPLETE",
+            "Live production requires a complete persisted plan snapshot.",
+            status_code=409,
+            details={
+                "plan_id": plan_id,
+                "missing_fields": snapshot.get(
+                    "missing_fields",
+                    ["persisted_plan_snapshot"],
+                ),
+            },
+        )
+    return snapshot
 
 
 def _request_snapshot(body: ProductionPlanCreateRequest) -> dict[str, Any]:
@@ -569,6 +984,7 @@ async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
         }
     )
     plan_id = f"p6plan_{uuid.uuid4().hex[:20]}"
+    created_at = _now()
     pool_snapshot = {
         **body.pools.model_dump(mode="json"),
         "controlled_reuse_reason": body.controlled_reuse_reason,
@@ -578,39 +994,61 @@ async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
             for allocation in body.product_video_allocations
         ],
     }
-    authority_plan = {
-        "product_scope_json": _stable_json(sorted(body.product_ids)),
+    values: dict[str, Any] = {
+        "plan_id": plan_id,
+        "request_id": body.request_id,
+        "created_by": body.operator_id.strip(),
+        "name": body.name.strip(),
+        "campaign_key": body.campaign_key.strip(),
+        "product_scope_json": _stable_json(body.product_ids),
+        "p58_cohort_sha256": authority.cohort_sha256,
+        "p58_cohort_count": authority.cohort_count,
         "target_video_count": body.target_video_count,
+        "target_image_count": body.target_image_count,
+        "target_poster_count": body.target_poster_count,
+        "operating_window_hours": body.operating_window_hours,
+        "allocation_strategy": body.allocation_strategy,
+        "variation_strategy": body.variation_strategy,
         "logical_mode": body.logical_mode,
         "model_keys_json": _stable_json(body.model_keys),
         "duration_seconds_json": _stable_json(body.duration_seconds),
         "pool_snapshot_json": _stable_json(pool_snapshot),
+        "execution_policy_json": _stable_json(policy),
+        "status": PlanStatus.DRAFT.value,
+        "created_at": created_at,
+        "updated_at": created_at,
     }
-    pool_snapshot["treatments"] = await _resolve_plan_treatments(authority_plan)
-    row = await p6db.create_plan(
-        {
-            "plan_id": plan_id,
-            "request_id": body.request_id,
-            "created_by": body.operator_id.strip(),
-            "name": body.name.strip(),
-            "campaign_key": body.campaign_key.strip(),
-            "product_scope_json": _stable_json(sorted(body.product_ids)),
-            "p58_cohort_sha256": authority.cohort_sha256,
-            "p58_cohort_count": authority.cohort_count,
-            "target_video_count": body.target_video_count,
-            "target_image_count": body.target_image_count,
-            "target_poster_count": body.target_poster_count,
-            "operating_window_hours": body.operating_window_hours,
-            "allocation_strategy": body.allocation_strategy,
-            "variation_strategy": body.variation_strategy,
-            "logical_mode": body.logical_mode,
-            "model_keys_json": _stable_json(body.model_keys),
-            "duration_seconds_json": _stable_json(body.duration_seconds),
-            "pool_snapshot_json": _stable_json(pool_snapshot),
-            "execution_policy_json": _stable_json(policy),
-            "status": PlanStatus.DRAFT.value,
-        }
+    pool_snapshot["treatments"] = await _resolve_plan_treatments(values)
+    values["pool_snapshot_json"] = _stable_json(pool_snapshot)
+    product_names = {
+        str(product.get("product_id") or ""): str(
+            product.get("product_name")
+            or product.get("product_display_name")
+            or product.get("name")
+            or ""
+        )
+        for product in authority.products
+    }
+    snapshot = _snapshot_from_plan_values(
+        values,
+        allocations=pool_snapshot["product_video_allocations"],
+        product_names=product_names,
+        source="CREATE_REQUEST",
+        evidence={
+            "create_request_sha256": request_sha,
+            "allocation_source": "CREATE_REQUEST",
+            "product_name_source": "P58_COHORT_AUTHORITY_AT_CREATE",
+        },
     )
+    if snapshot["completeness"] != "COMPLETE":
+        raise CreativeProductionError(
+            "PLAN_SNAPSHOT_INCOMPLETE",
+            "A new production plan requires a complete canonical snapshot.",
+            status_code=409,
+            details={"missing_fields": snapshot["missing_fields"]},
+        )
+    values["plan_snapshot_json"] = _stable_json(snapshot)
+    row = await p6db.create_plan(values)
     await record_audit_event(
         plan_id=plan_id,
         request_id=body.request_id,
@@ -624,7 +1062,34 @@ async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
 
 
 async def list_plans(limit: int = 50) -> list[dict[str, Any]]:
-    return [_decode_row(row) for row in await p6db.list_plans(limit)]
+    plans: list[dict[str, Any]] = []
+    for row in await p6db.list_plans(limit):
+        decoded = _decode_row(row)
+        snapshot = decoded.get("plan_snapshot")
+        if isinstance(snapshot, dict) and snapshot:
+            decoded["snapshot_summary"] = {
+                "completeness": snapshot.get("completeness"),
+                "missing_fields": snapshot.get("missing_fields", []),
+                "product_allocations": snapshot.get(
+                    "product_allocations",
+                    [],
+                ),
+                "video_configurations": snapshot.get(
+                    "video_configurations",
+                    [],
+                ),
+                "aspect_ratio": snapshot.get("aspect_ratio"),
+            }
+        else:
+            decoded["snapshot_summary"] = {
+                "completeness": "LEGACY_INCOMPLETE",
+                "missing_fields": ["persisted_plan_snapshot"],
+                "product_allocations": [],
+                "video_configurations": [],
+                "aspect_ratio": None,
+            }
+        plans.append(decoded)
+    return plans
 
 
 async def _require_plan(plan_id: str) -> dict[str, Any]:
@@ -688,6 +1153,20 @@ async def update_plan(
             "A materialized content matrix makes plan configuration immutable.",
             status_code=409,
         )
+    prior_snapshot = _loads(plan.get("plan_snapshot_json"), {})
+    if prior_snapshot.get("completeness") != "COMPLETE":
+        raise CreativeProductionError(
+            "PLAN_SNAPSHOT_INCOMPLETE",
+            "Reconcile the legacy plan snapshot before changing its configuration.",
+            status_code=409,
+            details={
+                "plan_id": plan_id,
+                "missing_fields": prior_snapshot.get(
+                    "missing_fields",
+                    ["persisted_plan_snapshot"],
+                ),
+            },
+        )
 
     patch = body.model_dump(mode="json", exclude_none=True)
     request_id = str(patch.pop("request_id"))
@@ -716,6 +1195,35 @@ async def update_plan(
         raise CreativeProductionError(
             "MEDIA_TARGET_REQUIRED",
             "At least one video, image or poster target is required.",
+        )
+    product_scope = [
+        str(value)
+        for value in _loads(plan.get("product_scope_json"), [])
+        if str(value)
+    ]
+    prior_pool = _loads(plan.get("pool_snapshot_json"), {})
+    if (
+        "target_video_count" in patch
+        and "product_video_allocations" not in patch
+    ):
+        raise CreativeProductionError(
+            "PRODUCT_VIDEO_ALLOCATIONS_REQUIRED",
+            "Changing target_video_count requires exact product allocations.",
+        )
+    allocation_rows = patch.get(
+        "product_video_allocations",
+        prior_pool.get("product_video_allocations"),
+    )
+    valid_allocations = _validated_allocation_rows(
+        product_scope,
+        current_targets["target_video_count"],
+        allocation_rows,
+    )
+    if valid_allocations is None:
+        raise CreativeProductionError(
+            "PRODUCT_VIDEO_ALLOCATIONS_INVALID",
+            "Product allocations must cover the plan products exactly and sum "
+            "to target_video_count.",
         )
 
     values: dict[str, Any] = {
@@ -754,7 +1262,6 @@ async def update_plan(
             )
         values["duration_seconds_json"] = _stable_json(durations)
     if "pools" in patch:
-        prior_pool = _loads(plan.get("pool_snapshot_json"), {})
         next_pool = {
             **patch["pools"],
             "controlled_reuse_reason": patch.get(
@@ -765,17 +1272,15 @@ async def update_plan(
                 "controlled_reuse_max_per_dna",
                 prior_pool.get("controlled_reuse_max_per_dna", 1),
             ),
-            "product_video_allocations": prior_pool.get(
-                "product_video_allocations",
-                [],
-            ),
+            "product_video_allocations": valid_allocations,
         }
         values["pool_snapshot_json"] = _stable_json(next_pool)
     elif {
         "controlled_reuse_reason",
         "controlled_reuse_max_per_dna",
+        "product_video_allocations",
     } & set(patch):
-        next_pool = _loads(plan.get("pool_snapshot_json"), {})
+        next_pool = dict(prior_pool)
         if "controlled_reuse_reason" in patch:
             next_pool["controlled_reuse_reason"] = patch[
                 "controlled_reuse_reason"
@@ -784,6 +1289,7 @@ async def update_plan(
             next_pool["controlled_reuse_max_per_dna"] = patch[
                 "controlled_reuse_max_per_dna"
             ]
+        next_pool["product_video_allocations"] = valid_allocations
         values["pool_snapshot_json"] = _stable_json(next_pool)
 
     next_pool = _loads(
@@ -815,6 +1321,32 @@ async def update_plan(
         }
     )
     values["execution_policy_json"] = _stable_json(policy)
+    next_plan = {**plan, **values}
+    product_names = {
+        str(allocation.get("product_id") or ""): str(
+            allocation.get("product_name") or ""
+        )
+        for allocation in prior_snapshot.get("product_allocations", [])
+        if isinstance(allocation, dict)
+    }
+    snapshot = _snapshot_from_plan_values(
+        next_plan,
+        allocations=valid_allocations,
+        product_names=product_names,
+        source=str(prior_snapshot["source"]),
+        evidence={
+            **dict(prior_snapshot.get("evidence") or {}),
+            "last_update_request_sha256": request_sha,
+            "last_updated_by": operator_id,
+        },
+    )
+    if snapshot["completeness"] != "COMPLETE":
+        raise CreativeProductionError(
+            "PLAN_SNAPSHOT_INCOMPLETE",
+            "The plan update would produce an incomplete canonical snapshot.",
+            details={"missing_fields": snapshot["missing_fields"]},
+        )
+    values["plan_snapshot_json"] = _stable_json(snapshot)
     updated = await p6db.update_plan(plan_id, **values)
     await record_audit_event(
         plan_id=plan_id,
@@ -948,13 +1480,22 @@ async def get_plan_detail(plan_id: str) -> ProductionPlanDetailResponse:
             "SUPERSEDED",
         )
     )
+    decoded_items = [_decode_row(row) for row in items]
+    decoded_attempts = [_decode_row(row) for row in attempts]
+    decoded_qa = [_decode_row(row) for row in qa]
     return ProductionPlanDetailResponse(
         plan=_decode_row(plan),
+        snapshot=await _render_plan_snapshot(
+            plan,
+            items=decoded_items,
+            attempts=decoded_attempts,
+            qa=decoded_qa,
+        ),
         waves=[_decode_row(row) for row in waves],
         batches=[_decode_row(row) for row in batches],
-        items=[_decode_row(row) for row in items],
-        attempts=[_decode_row(row) for row in attempts],
-        qa=[_decode_row(row) for row in qa],
+        items=decoded_items,
+        attempts=decoded_attempts,
+        qa=decoded_qa,
         audit_events=[_decode_row(row) for row in audit_events],
         progress={
             "total": len(items),

@@ -8,7 +8,6 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { GovernedPoolAuthority } from "../api/creativeProduction";
 
 const fetchCohortAuthority = vi.fn();
 const fetchGovernedPoolAuthority = vi.fn();
@@ -57,121 +56,313 @@ vi.mock("../api/productionQueue", () => ({
 	fetchVideoModels: (...args: unknown[]) => fetchVideoModels(...args),
 }));
 
+vi.mock("../components/CreativeSupplyFactoryPanel", () => ({
+	default: () => <div data-testid="p7-supply-preserved">Creative supply</div>,
+}));
+
 import CreativeProductionStudioPage from "./CreativeProductionStudioPage";
 
-const COHORT = {
-	cohort_count: 438,
-	cohort_sha256:
-		"15b7e2aff4ede06b1a28805b111f9993b2208040e40bcee76693abc2a6ddbe7f",
-	product_ids: ["product-1", "product-2"],
-	products: [
-		{
-			product_id: "product-1",
-			product_name: "P6 Product",
-			product_type_group: "lip_color",
-			scene_strategy_id: "LIP_COLOR",
-			image_url: "https://example.com/product-1.jpg",
-			image_readiness_status: "IMAGE_CACHE_READY",
-			readiness_status: "PRODUCTION_READY",
-		},
-		{
-			product_id: "product-2",
-			product_name: "P6 Product Two",
-			product_type_group: "lip_color",
-			scene_strategy_id: "LIP_COLOR",
-			image_url: "https://example.com/product-2.jpg",
-			image_readiness_status: "IMAGE_CACHE_READY",
-			readiness_status: "PRODUCTION_READY",
-		},
-	],
-	matches_frozen_authority: true,
-	p6_not_started: false,
-};
-
-const PLAN = {
-	plan_id: "p6plan-ui",
-	request_id: "request-ui",
-	created_by: "p6-production-operator",
-	name: "Rendered P6 plan",
-	campaign_key: "",
-	product_scope: ["product-1"],
-	p58_cohort_sha256: COHORT.cohort_sha256,
-	p58_cohort_count: 438,
-	target_video_count: 2,
-	target_image_count: 0,
-	target_poster_count: 0,
-	operating_window_hours: 12,
-	allocation_strategy: "ROUND_ROBIN",
-	variation_strategy: "SAME_ANGLE_DIFF_DIALOGUE_DIFF_VISUALS",
-	logical_mode: "T2V",
-	model_keys: ["Veo 3.1 - Lite"],
-	duration_seconds: [8],
-	pool_snapshot: {},
-	execution_policy: {},
-	capacity_snapshot: {
-		requested: { VIDEO: 2, IMAGE: 0, POSTER: 0 },
-		safe_capacity: { VIDEO: 1, IMAGE: 0, POSTER: 0 },
+const COHORT_SHA =
+	"15b7e2aff4ede06b1a28805b111f9993b2208040e40bcee76693abc2a6ddbe7f";
+const PRODUCTS = [
+	{
+		product_id: "product-a",
+		product_name: "P6 Product A",
+		product_type_group: "lip_color",
+		scene_strategy_id: "LIP_COLOR",
+		image_url: "https://example.com/a.jpg",
+		image_readiness_status: "IMAGE_CACHE_READY",
+		readiness_status: "PRODUCTION_READY",
 	},
-	compile_snapshot: {},
-	blockers: [
-		{
-			code: "UNIQUE_CAPACITY_SHORTFALL",
-			media_type: "VIDEO",
-			shortfall: 1,
-		},
-	],
-	status: "PREFLIGHT_BLOCKED",
-	control_action: "NONE",
-	control_version: 0,
-	approved_by: null,
-	approved_at: null,
-	created_at: "2026-07-29T00:00:00Z",
-	updated_at: "2026-07-29T00:00:00Z",
+	{
+		product_id: "product-b",
+		product_name: "P6 Product B",
+		product_type_group: "herbal_oil",
+		scene_strategy_id: "HERBAL_OIL",
+		image_url: "https://example.com/b.jpg",
+		image_readiness_status: "IMAGE_CACHE_READY",
+		readiness_status: "PRODUCTION_READY",
+	},
+];
+
+const singleConfiguration = {
+	model_key: "veo_3_1_lite",
+	model_label: "Veo 3.1 - Lite",
+	requested_total_duration_seconds: 8,
+	engine_block_duration_seconds: 8,
+	generation_mode: "SINGLE",
+	segment_count: 1,
+	execution_route: "SINGLE_SHOT_QUEUE",
+};
+const extendConfiguration = {
+	model_key: "veo_3_1_lite",
+	model_label: "Veo 3.1 - Lite",
+	requested_total_duration_seconds: 16,
+	engine_block_duration_seconds: 8,
+	generation_mode: "EXTEND",
+	segment_count: 2,
+	execution_route: "VIDEO_JOBS_ORCHESTRATOR",
 };
 
-const DETAIL = {
-	plan: PLAN,
-	waves: [],
-	batches: [],
-	items: [
-		{
-			item_id: "p6item-ui",
-			plan_id: PLAN.plan_id,
-			item_ordinal: 0,
-			product_id: "product-1",
-			media_type: "VIDEO",
-			logical_mode: "T2V",
-			creative_dimensions: {
-				angle: "proof",
-				hook: "problem",
-				layout_id: "",
-				generation_mode: "SINGLE",
-				duration_seconds: "8",
-			},
-			creative_dna_sha256: "a".repeat(64),
+function makeSnapshot({
+	planId,
+	name,
+	status,
+	allocations,
+	configuration,
+	completeness = "COMPLETE",
+	missingFields = [],
+}: {
+	planId: string;
+	name: string;
+	status: string;
+	allocations: Array<{
+		product_id: string;
+		product_name: string;
+		video_count: number;
+	}>;
+	configuration: typeof singleConfiguration;
+	completeness?: "COMPLETE" | "LEGACY_INCOMPLETE";
+	missingFields?: string[];
+}) {
+	const targetVideoCount = allocations.reduce(
+		(total, allocation) => total + allocation.video_count,
+		0,
+	);
+	return {
+		schema_version: 1,
+		completeness,
+		missing_fields: missingFields,
+		source:
+			completeness === "COMPLETE" ? "CREATE_REQUEST" : "LEGACY_RECONCILIATION",
+		evidence: {},
+		plan_id: planId,
+		plan_name: name,
+		purpose: "P6.3-R2 fixture",
+		status,
+		operator_id: "p6-production-operator",
+		request_id: `request-${planId}`,
+		product_allocations: allocations,
+		target_video_count: targetVideoCount,
+		target_image_count: 0,
+		target_poster_count: 0,
+		logical_mode: "T2V",
+		video_configurations: [configuration],
+		aspect_ratio: "16:9",
+		operating_window_hours: 12,
+		allocation_strategy: "ROUND_ROBIN",
+		variation_strategy: "SAME_ANGLE_DIFF_DIALOGUE_DIFF_VISUALS",
+		approved_pool_snapshot: {},
+		pool_snapshot: {
+			copy_set_ids: [],
+			poster_copy_set_ids: [],
+			avatar_codes: [],
+			product_reference_asset_ids: [],
+			finished_frame_asset_ids: [],
+			character_asset_ids: [],
+			scene_asset_ids: [],
+			style_asset_ids: [],
+			layout_ids: [],
 			controlled_reuse_reason: null,
-			prompt_fingerprint: null,
-			workspace_generation_package_id: null,
-			prompt_package: {},
-			status: "PLANNED",
-			output_media_id: null,
-			replacement_for_item_id: null,
-			replaced_by_item_id: null,
+			controlled_reuse_max_per_dna: 1,
 		},
+		cohort_snapshot: {
+			cohort_sha256: COHORT_SHA,
+			cohort_count: 438,
+			product_ids: allocations.map((allocation) => allocation.product_id),
+		},
+		matrix_count: targetVideoCount,
+		attempts_count: 0,
+		qa_count: 0,
+		created_at: "2026-07-29T00:00:00Z",
+		updated_at: "2026-07-30T00:00:00Z",
+	};
+}
+
+function makePlan(snapshot: ReturnType<typeof makeSnapshot>) {
+	return {
+		plan_id: snapshot.plan_id,
+		request_id: snapshot.request_id,
+		created_by: snapshot.operator_id,
+		name: snapshot.plan_name,
+		campaign_key: snapshot.purpose ?? "",
+		product_scope: snapshot.cohort_snapshot.product_ids,
+		plan_snapshot: snapshot,
+		snapshot_summary: {
+			completeness: snapshot.completeness,
+			missing_fields: snapshot.missing_fields,
+			product_allocations: snapshot.product_allocations,
+			video_configurations: snapshot.video_configurations,
+			aspect_ratio: snapshot.aspect_ratio,
+		},
+		p58_cohort_sha256: COHORT_SHA,
+		p58_cohort_count: 438,
+		target_video_count: snapshot.target_video_count,
+		target_image_count: 0,
+		target_poster_count: 0,
+		operating_window_hours: 12,
+		allocation_strategy: "ROUND_ROBIN",
+		variation_strategy: "SAME_ANGLE_DIFF_DIALOGUE_DIFF_VISUALS",
+		logical_mode: "T2V",
+		model_keys: ["veo_3_1_lite"],
+		duration_seconds: [
+			snapshot.video_configurations[0]?.requested_total_duration_seconds ?? 8,
+		],
+		pool_snapshot: snapshot.pool_snapshot,
+		execution_policy: { aspect: snapshot.aspect_ratio },
+		capacity_snapshot: {},
+		compile_snapshot: {},
+		blockers: [],
+		status: snapshot.status,
+		control_action: "NONE",
+		control_version: 0,
+		approved_by: "p6-approver",
+		approved_at: "2026-07-29T01:00:00Z",
+		created_at: snapshot.created_at,
+		updated_at: snapshot.updated_at,
+	};
+}
+
+const SNAPSHOT_A = makeSnapshot({
+	planId: "plan-a",
+	name: "Plan A",
+	status: "PREFLIGHT_BLOCKED",
+	allocations: [
+		{ product_id: "product-a", product_name: "P6 Product A", video_count: 1 },
 	],
-	attempts: [],
-	qa: [],
-	audit_events: [],
-	progress: {
-		total: 1,
-		terminal: 0,
-		percent: 0,
-		by_status: { PLANNED: 1 },
-	},
+	configuration: singleConfiguration,
+});
+const SNAPSHOT_B = makeSnapshot({
+	planId: "plan-b",
+	name: "Plan B",
+	status: "SCHEDULED",
+	allocations: [
+		{ product_id: "product-a", product_name: "P6 Product A", video_count: 3 },
+		{ product_id: "product-b", product_name: "P6 Product B", video_count: 2 },
+	],
+	configuration: extendConfiguration,
+});
+const SNAPSHOT_LEGACY = makeSnapshot({
+	planId: "plan-legacy",
+	name: "Legacy Plan",
+	status: "SCHEDULED",
+	allocations: [],
+	configuration: singleConfiguration,
+	completeness: "LEGACY_INCOMPLETE",
+	missingFields: ["product_allocations"],
+});
+const SNAPSHOT_COMPLETED = makeSnapshot({
+	planId: "plan-completed",
+	name: "Completed Plan",
+	status: "COMPLETED",
+	allocations: [
+		{ product_id: "product-a", product_name: "P6 Product A", video_count: 1 },
+	],
+	configuration: singleConfiguration,
+});
+const SNAPSHOT_CANCELLED = makeSnapshot({
+	planId: "plan-cancelled",
+	name: "Cancelled Plan",
+	status: "CANCELLED",
+	allocations: [
+		{ product_id: "product-a", product_name: "P6 Product A", video_count: 1 },
+	],
+	configuration: singleConfiguration,
+});
+
+const PLANS = [
+	makePlan(SNAPSHOT_A),
+	makePlan(SNAPSHOT_B),
+	makePlan(SNAPSHOT_LEGACY),
+	makePlan(SNAPSHOT_COMPLETED),
+	makePlan(SNAPSHOT_CANCELLED),
+];
+
+function item(planId: string, ordinal: number, productId: string) {
+	return {
+		item_id: `${planId}-item-${ordinal}`,
+		plan_id: planId,
+		item_ordinal: ordinal,
+		product_id: productId,
+		media_type: "VIDEO",
+		logical_mode: "T2V",
+		creative_dimensions: {
+			generation_mode: planId === "plan-b" ? "EXTEND" : "SINGLE",
+			duration_seconds: planId === "plan-b" ? "16" : "8",
+		},
+		creative_dna_sha256: `${ordinal}`.repeat(64),
+		controlled_reuse_reason: null,
+		prompt_fingerprint: null,
+		workspace_generation_package_id: null,
+		prompt_package: {},
+		status: "PLANNED",
+		output_media_id: null,
+		replacement_for_item_id: null,
+		replaced_by_item_id: null,
+	};
+}
+
+function makeDetail(
+	snapshot: ReturnType<typeof makeSnapshot>,
+	items: ReturnType<typeof item>[],
+) {
+	return {
+		plan: makePlan(snapshot),
+		snapshot,
+		waves: [],
+		batches: [],
+		items,
+		attempts:
+			snapshot.plan_id === "plan-b"
+				? [
+						{
+							attempt_id: "plan-b-dry-attempt",
+							item_id: "plan-b-item-0",
+							attempt_number: 1,
+							idempotency_key: "dry-plan-b",
+							lane_id: null,
+							attempt_state: "NOT_SUBMITTED",
+							payload_sha256: "b".repeat(64),
+							credit_spend_intended: false,
+							provider_job_id: null,
+							artifact_media_id: null,
+							failure_stage: null,
+							failure_code: null,
+							recovery_class: null,
+						},
+					]
+				: [],
+		qa: [],
+		audit_events: [],
+		progress: {
+			total: items.length,
+			terminal: 0,
+			percent: 0,
+			by_status: { PLANNED: items.length },
+		},
+	};
+}
+
+const DETAILS: Record<string, ReturnType<typeof makeDetail>> = {
+	"plan-a": makeDetail(SNAPSHOT_A, [item("plan-a", 0, "product-a")]),
+	"plan-b": makeDetail(SNAPSHOT_B, [
+		item("plan-b", 0, "product-a"),
+		item("plan-b", 1, "product-a"),
+		item("plan-b", 2, "product-a"),
+		item("plan-b", 3, "product-b"),
+		item("plan-b", 4, "product-b"),
+	]),
+	"plan-legacy": makeDetail(SNAPSHOT_LEGACY, []),
+	"plan-completed": makeDetail(SNAPSHOT_COMPLETED, [
+		item("plan-completed", 0, "product-a"),
+	]),
+	"plan-cancelled": makeDetail(SNAPSHOT_CANCELLED, [
+		item("plan-cancelled", 0, "product-a"),
+	]),
 };
 
-const LANES = {
-	live_execution_certified: false,
+const HEALTHY_LANES = {
+	live_execution_certified: true,
 	lanes: [
 		{
 			lane_id: "google-flow-video-primary",
@@ -183,32 +374,16 @@ const LANES = {
 			cooldown_seconds: 300,
 			next_available_at: null,
 			completed_job_count: 0,
-			health_status: "UNKNOWN",
+			health_status: "HEALTHY",
 			enabled: true,
 			runtime_proof_status: "VERIFIED",
 			evidence_reference: "ADR-007",
 			active_lease_count: 0,
 		},
-		{
-			lane_id: "google-flow-image-primary",
-			provider: "GOOGLE_FLOW",
-			engine: "IMAGE_API_FIRST",
-			eligible_media_types: ["IMAGE", "POSTER"],
-			verified_max_inflight: 1,
-			min_interval_seconds: 83,
-			cooldown_seconds: 300,
-			next_available_at: null,
-			completed_job_count: 0,
-			health_status: "UNKNOWN",
-			enabled: false,
-			runtime_proof_status: "UNVERIFIED",
-			evidence_reference: "proof required",
-			active_lease_count: 0,
-		},
 	],
 };
 
-function prime(detail = DETAIL) {
+function prime() {
 	fetchVideoModels.mockResolvedValue({
 		default: "veo_3_1_lite",
 		models: [
@@ -220,19 +395,18 @@ function prime(detail = DETAIL) {
 				extend_block_duration_s: 8,
 				extend_totals_s: [16, 24],
 			},
-			{
-				key: "omni_flash",
-				ui_label: "Omni Flash",
-				default_duration_s: 10,
-				allowed_durations_s: [4, 6, 8, 10],
-				extend_block_duration_s: null,
-				extend_totals_s: [],
-			},
 		],
 	});
-	fetchCohortAuthority.mockResolvedValue(COHORT);
+	fetchCohortAuthority.mockResolvedValue({
+		cohort_count: 438,
+		cohort_sha256: COHORT_SHA,
+		product_ids: PRODUCTS.map((product) => product.product_id),
+		products: PRODUCTS,
+		matches_frozen_authority: true,
+		p6_not_started: false,
+	});
 	fetchGovernedPoolAuthority.mockResolvedValue({
-		product_ids: ["product-1"],
+		product_ids: [],
 		logical_mode: "T2V",
 		products: [],
 		copy_sets: [],
@@ -249,46 +423,25 @@ function prime(detail = DETAIL) {
 		near_duplicate_threshold: 0.8,
 		credit_spend: 0,
 	});
-	listProductionPlans.mockResolvedValue({ plans: [detail.plan] });
-	fetchProductionPlan.mockResolvedValue(detail);
-	listExecutionLanes.mockResolvedValue(LANES);
-	preflightProductionPlan.mockResolvedValue({
-		plan_id: PLAN.plan_id,
-		status: "PREFLIGHT_BLOCKED",
-		requested: { VIDEO: 2, IMAGE: 0, POSTER: 0 },
-		safe_capacity: { VIDEO: 1, IMAGE: 0, POSTER: 0 },
-		pool_counts: {},
-		quota_pressure: {},
-		historical_exclusions: 0,
-		blockers: PLAN.blockers,
-		remediation: [],
-		assumptions: {},
-		snapshot_sha256: "snapshot",
-	});
+	listProductionPlans.mockResolvedValue({ plans: PLANS });
+	fetchProductionPlan.mockImplementation((planId: string) =>
+		Promise.resolve(DETAILS[planId]),
+	);
+	listExecutionLanes.mockResolvedValue(HEALTHY_LANES);
+	startProductionPlan.mockResolvedValue({ plan_id: "plan-b" });
+}
+
+async function selectPlan(planId: string) {
+	const select = await screen.findByLabelText("Select production plan");
+	fireEvent.change(select, { target: { value: planId } });
+	await screen.findByTestId("p6-plan-status");
 }
 
 beforeEach(() => {
 	vi.stubGlobal("crypto", {
 		randomUUID: () => "00000000-0000-4000-8000-000000000001",
 	});
-	fetchGovernedPoolAuthority.mockResolvedValue({
-		product_ids: ["product-1"],
-		logical_mode: "T2V",
-		products: [],
-		copy_sets: [],
-		poster_copy_sets: [],
-		avatar_profiles: [],
-		product_reference_assets: [],
-		finished_frame_assets: [],
-		character_assets: [],
-		scene_assets: [],
-		style_assets: [],
-		poster_recipes: [],
-		blockers: [],
-		copy_reuse_cap: 15,
-		near_duplicate_threshold: 0.8,
-		credit_spend: 0,
-	});
+	prime();
 });
 
 afterEach(() => {
@@ -297,278 +450,207 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
-describe("P6 Production Studio rendered contract", () => {
-	it("renders frozen cohort, zero-credit boundary, truthful states and lanes", async () => {
-		prime();
+describe("P6.3-R2 production plan state isolation", () => {
+	it("opens in NEW_DRAFT without auto-selecting history or rendering old plan data", async () => {
 		render(<CreativeProductionStudioPage />);
-		expect(await screen.findByTestId("p6-cohort-authority")).toHaveTextContent(
-			"PRODUCT AUTHORITY READY",
+		await screen.findByText(
+			"NEW PRODUCTION PLAN — no existing plan is selected.",
 		);
-		expect(screen.getByTestId("p6-zero-credit-boundary")).toHaveTextContent(
-			"0 media credits",
+		expect(fetchProductionPlan).not.toHaveBeenCalled();
+		expect(screen.getByLabelText("Select production plan")).toHaveValue("");
+		expect(screen.queryByTestId("p6-content-matrix")).not.toBeInTheDocument();
+		expect(
+			screen.queryByTestId("p6-live-confirmation"),
+		).not.toBeInTheDocument();
+		expect(screen.getByTestId("p6-create-plan")).toHaveTextContent(
+			"Create production plan",
 		);
-		expect(await screen.findByTestId("p6-plan-status")).toHaveTextContent(
-			"PREFLIGHT_BLOCKED",
-		);
+	});
+
+	it("loads an existing plan only by explicit selection and renders exact 3+2 EXTEND truth", async () => {
+		render(<CreativeProductionStudioPage />);
+		await selectPlan("plan-b");
+		const snapshot = screen.getByTestId("p6-readonly-plan-snapshot");
+		expect(snapshot).toHaveTextContent("P6 Product A");
+		expect(snapshot).toHaveTextContent("3 videos");
+		expect(snapshot).toHaveTextContent("P6 Product B");
+		expect(snapshot).toHaveTextContent("2 videos");
+		expect(snapshot).toHaveTextContent("16s EXTEND");
+		expect(snapshot).toHaveTextContent("2 segments");
 		expect(screen.getByTestId("p6-content-matrix")).toHaveTextContent(
-			"PLANNED",
+			"plan-b-item-4",
+		);
+	});
+
+	it("ignores a late Plan A response after Plan B has been selected", async () => {
+		let resolvePlanA:
+			| ((detail: ReturnType<typeof makeDetail>) => void)
+			| undefined;
+		fetchProductionPlan.mockImplementation((planId: string) => {
+			if (planId === "plan-a") {
+				return new Promise((resolve) => {
+					resolvePlanA = resolve;
+				});
+			}
+			return Promise.resolve(DETAILS[planId]);
+		});
+		render(<CreativeProductionStudioPage />);
+		const select = await screen.findByLabelText("Select production plan");
+		fireEvent.change(select, { target: { value: "plan-a" } });
+		fireEvent.change(select, { target: { value: "plan-b" } });
+		expect(await screen.findByText("Plan B")).toBeInTheDocument();
+		await act(async () => {
+			resolvePlanA?.(DETAILS["plan-a"]);
+		});
+		expect(screen.getByTestId("p6-readonly-plan-snapshot")).toHaveTextContent(
+			"16s EXTEND",
+		);
+		expect(screen.getByLabelText("Select production plan")).toHaveValue(
+			"plan-b",
+		);
+	});
+
+	it("duplicates an active plan into an explicit UNSAVED draft with no old matrix or live action", async () => {
+		render(<CreativeProductionStudioPage />);
+		await selectPlan("plan-b");
+		fireEvent.click(screen.getAllByText("Duplicate as new plan")[0]);
+		expect(
+			await screen.findByTestId("p6-unsaved-draft-warning"),
+		).toHaveTextContent("UNSAVED NEW PLAN");
+		expect(
+			screen.getByLabelText("Video quantity for P6 Product A"),
+		).toHaveValue(3);
+		expect(
+			screen.getByLabelText("Video quantity for P6 Product B"),
+		).toHaveValue(2);
+		expect(screen.queryByTestId("p6-content-matrix")).not.toBeInTheDocument();
+		expect(
+			screen.queryByTestId("p6-live-confirmation"),
+		).not.toBeInTheDocument();
+		expect(screen.getByTestId("p6-create-plan")).toHaveTextContent(
+			"Create new production plan",
+		);
+	});
+
+	it("returns atomically to a blank new plan", async () => {
+		render(<CreativeProductionStudioPage />);
+		await selectPlan("plan-a");
+		fireEvent.click(screen.getByText("Return to new plan"));
+		expect(
+			await screen.findByText(
+				"NEW PRODUCTION PLAN — no existing plan is selected.",
+			),
+		).toBeInTheDocument();
+		expect(screen.queryByTestId("p6-content-matrix")).not.toBeInTheDocument();
+		expect(
+			screen.queryByTestId("p6-readonly-plan-snapshot"),
+		).not.toBeInTheDocument();
+	});
+
+	it("marks incomplete legacy plans and keeps production disabled without inventing allocation", async () => {
+		render(<CreativeProductionStudioPage />);
+		await selectPlan("plan-legacy");
+		expect(screen.getByTestId("p6-primary-action")).toHaveTextContent(
+			"Production unavailable",
 		);
 		expect(
-			screen.getByTestId("p6-lane-google-flow-video-primary"),
-		).toHaveTextContent("Max inflight");
+			screen.getByText("Legacy plan — incomplete snapshot"),
+		).toBeInTheDocument();
+		expect(screen.getByTestId("p6-live-disabled-reason")).toHaveTextContent(
+			"product_allocations",
+		);
 		expect(
-			screen.getByTestId("p6-lane-google-flow-image-primary"),
-		).toHaveTextContent("UNVERIFIED");
+			screen.getByTestId("p6-readonly-plan-snapshot"),
+		).not.toHaveTextContent(/1 video/);
 	});
 
-	it("renders exact capacity shortfall rather than fabricating output", async () => {
-		prime();
+	it("filters history by authoritative status and does not classify test plans by name", async () => {
 		render(<CreativeProductionStudioPage />);
-		const report = await screen.findByTestId("p6-capacity-report");
-		expect(report).toHaveTextContent("Safe unique");
-		expect(report).toHaveTextContent("UNIQUE_CAPACITY_SHORTFALL");
-		expect(report).toHaveTextContent('"shortfall":1');
+		await screen.findByText("Production history");
+		expect(screen.queryByText("Completed Plan")).not.toBeInTheDocument();
+		expect(screen.queryByText("Cancelled Plan")).not.toBeInTheDocument();
+		fireEvent.change(
+			screen.getByLabelText("Filter production history by status"),
+			{ target: { value: "ALL" } },
+		);
+		expect(await screen.findByText("Completed Plan")).toBeInTheDocument();
+		expect(screen.getByText("Cancelled Plan")).toBeInTheDocument();
+		expect(
+			screen.getByText(/no reliable provenance marker exists/i),
+		).toBeInTheDocument();
 	});
 
-	it("wires the credit-free preflight action to the P6 API", async () => {
-		prime();
+	it("resets confirmation on plan switch and binds start to the exact plan and aspect", async () => {
 		render(<CreativeProductionStudioPage />);
-		await screen.findByTestId("p6-plan-status");
-		await act(async () => {
-			fireEvent.click(screen.getByTestId("p6-action-preflight"));
+		await selectPlan("plan-b");
+		const confirmation = screen.getByTestId("p6-live-confirmation");
+		fireEvent.change(confirmation, {
+			target: { value: "AUTHORIZE_P6_LIVE_CREDIT_SPEND" },
+		});
+		expect(screen.getByTestId("p6-action-live-start")).toBeEnabled();
+		expect(
+			screen.getAllByText(/sends the next queued item now/i),
+		).not.toHaveLength(0);
+		expect(screen.getByText(/Plan: plan-b/)).toBeInTheDocument();
+		fireEvent.change(screen.getByLabelText("Select production plan"), {
+			target: { value: "plan-a" },
 		});
 		await waitFor(() =>
-			expect(preflightProductionPlan).toHaveBeenCalledWith(
-				"p6plan-ui",
+			expect(screen.getByTestId("p6-live-confirmation")).toHaveValue(""),
+		);
+		fireEvent.change(screen.getByLabelText("Select production plan"), {
+			target: { value: "plan-b" },
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId("p6-plan-status")).toHaveTextContent(
+				"SCHEDULED",
+			),
+		);
+		fireEvent.change(screen.getByTestId("p6-live-confirmation"), {
+			target: { value: "AUTHORIZE_P6_LIVE_CREDIT_SPEND" },
+		});
+		fireEvent.click(screen.getByTestId("p6-action-live-start"));
+		await waitFor(() =>
+			expect(startProductionPlan).toHaveBeenCalledWith(
+				"plan-b",
 				"p6-production-operator",
+				"AUTHORIZE_P6_LIVE_CREDIT_SPEND",
+				"16:9",
 			),
 		);
-		expect(startProductionPlan).not.toHaveBeenCalled();
 	});
 
-	it("creates an explicit per-product allocation with a governed Extend choice", async () => {
-		prime();
-		createProductionPlan.mockResolvedValue(PLAN);
-		render(<CreativeProductionStudioPage />);
-		await screen.findByTestId("p6-plan-status");
-		await waitFor(() =>
-			expect(fetchGovernedPoolAuthority).toHaveBeenCalledTimes(1),
-		);
-		fireEvent.change(screen.getByLabelText("Video quantity for P6 Product"), {
-			target: { value: "3" },
-		});
-		expect(fetchGovernedPoolAuthority).toHaveBeenCalledTimes(1);
-		fireEvent.change(screen.getByLabelText("Governed video duration"), {
-			target: { value: "16" },
-		});
-		expect(screen.getByTestId("p6-orchestration-summary")).toHaveTextContent(
-			"Extend · 2 continuous 8-second segments",
-		);
-		await waitFor(() =>
-			expect(screen.getByTestId("p6-create-plan")).toBeEnabled(),
-		);
-		await act(async () => {
-			fireEvent.click(screen.getByTestId("p6-create-plan"));
-		});
-		await waitFor(() => expect(createProductionPlan).toHaveBeenCalledTimes(1));
-		expect(createProductionPlan.mock.calls[0][0]).toMatchObject({
-			product_ids: ["product-1"],
-			product_video_allocations: [{ product_id: "product-1", video_count: 3 }],
-			target_video_count: 3,
-			model_keys: ["veo_3_1_lite"],
-			duration_seconds: [16],
-		});
-	});
-
-	it("ignores stale pool authority responses after the operator changes mode", async () => {
-		prime();
-		const readyAuthority: GovernedPoolAuthority = {
-			product_ids: ["product-1"],
-			logical_mode: "F2V",
-			products: [],
-			copy_sets: [],
-			poster_copy_sets: [],
-			avatar_profiles: [],
-			product_reference_assets: [],
-			finished_frame_assets: [],
-			character_assets: [],
-			scene_assets: [],
-			style_assets: [],
-			poster_recipes: [],
-			blockers: [],
-			copy_reuse_cap: 15,
-			near_duplicate_threshold: 0.8,
-			credit_spend: 0,
-		};
-		let resolveT2v: ((authority: typeof readyAuthority) => void) | undefined;
-		let resolveF2v: ((authority: typeof readyAuthority) => void) | undefined;
-		fetchGovernedPoolAuthority.mockImplementation(
-			(_productIds: string[], logicalMode: string) =>
-				new Promise<typeof readyAuthority>((resolve) => {
-					if (logicalMode === "F2V") resolveF2v = resolve;
-					else resolveT2v = resolve;
-				}),
-		);
-		render(<CreativeProductionStudioPage />);
-		await screen.findByTestId("p6-plan-status");
-		await waitFor(() =>
-			expect(fetchGovernedPoolAuthority).toHaveBeenCalledWith(
-				["product-1"],
-				"T2V",
-			),
-		);
-		fireEvent.change(screen.getByLabelText("Video logical mode"), {
-			target: { value: "F2V" },
-		});
-		await waitFor(() =>
-			expect(fetchGovernedPoolAuthority).toHaveBeenCalledWith(
-				["product-1"],
-				"F2V",
-			),
-		);
-		await act(async () => {
-			resolveF2v?.(readyAuthority);
-		});
-		await waitFor(() =>
-			expect(screen.getByTestId("p6-create-plan")).toBeEnabled(),
-		);
-		await act(async () => {
-			resolveT2v?.({
-				...readyAuthority,
-				logical_mode: "T2V",
-				blockers: [
+	it("refuses to render matrix, attempts or QA when a response is not plan-bound", async () => {
+		fetchProductionPlan.mockImplementation((planId: string) => {
+			if (planId !== "plan-a") return Promise.resolve(DETAILS[planId]);
+			return Promise.resolve({
+				...DETAILS["plan-a"],
+				items: [
 					{
-						code: "APPROVED_PRODUCT_AVATAR_SELECTION_REQUIRED",
-						product_id: "product-1",
+						...DETAILS["plan-a"].items[0],
+						plan_id: "wrong-plan",
 					},
 				],
 			});
 		});
-		expect(screen.queryByTestId("p6-pool-authority-blockers")).toBeNull();
-		expect(screen.getByTestId("p6-create-plan")).toBeEnabled();
-	});
-
-	it("keeps Omni 10 seconds single-shot and exposes no unproven Omni Extend total", async () => {
-		prime();
 		render(<CreativeProductionStudioPage />);
-		await screen.findByTestId("p6-plan-status");
-		fireEvent.change(screen.getByLabelText("Governed video model"), {
-			target: { value: "omni_flash" },
-		});
-		const duration = screen.getByLabelText("Governed video duration");
-		expect(duration).toHaveValue("10");
-		expect(duration).toHaveTextContent("10s — Single");
-		expect(duration).not.toHaveTextContent("20s");
-		expect(screen.getByTestId("p6-orchestration-summary")).toHaveTextContent(
-			"Single-shot",
+		const select = await screen.findByLabelText("Select production plan");
+		fireEvent.change(select, { target: { value: "plan-a" } });
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"internally inconsistent",
 		);
+		expect(screen.queryByTestId("p6-content-matrix")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("p6-attempt-list")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("p6-qa-list")).not.toBeInTheDocument();
 	});
 
-	it("keeps live dispatch disabled until scheduled and exact phrase are both present", async () => {
-		prime();
+	it("preserves plain operator labels and SINGLE/EXTEND semantics", async () => {
 		render(<CreativeProductionStudioPage />);
-		await screen.findByTestId("p6-plan-status");
-		const liveButton = screen.getByTestId("p6-action-live-start");
-		expect(liveButton).toBeDisabled();
-		fireEvent.change(screen.getByTestId("p6-live-confirmation"), {
-			target: { value: "AUTHORIZE_P6_LIVE_CREDIT_SPEND" },
-		});
-		expect(liveButton).toBeDisabled();
-		expect(startProductionPlan).not.toHaveBeenCalled();
-	});
-
-	it("reflects runtime certification and only enables a scheduled exact-phrase request", async () => {
-		const scheduledDetail = {
-			...DETAIL,
-			plan: {
-				...PLAN,
-				status: "SCHEDULED",
-				blockers: [],
-			},
-		};
-		prime(scheduledDetail);
-		listExecutionLanes.mockResolvedValue({
-			...LANES,
-			live_execution_certified: true,
-		});
-		render(<CreativeProductionStudioPage />);
-		await screen.findByTestId("p6-plan-status");
-		expect(screen.getByTestId("p6-live-certification-truth")).toHaveTextContent(
-			"Runtime live-execution certification is present",
-		);
-		const liveButton = screen.getByTestId("p6-action-live-start");
-		expect(liveButton).toBeDisabled();
-		fireEvent.change(screen.getByTestId("p6-live-confirmation"), {
-			target: { value: "AUTHORIZE_P6_LIVE_CREDIT_SPEND" },
-		});
-		expect(liveButton).toBeEnabled();
-		expect(startProductionPlan).not.toHaveBeenCalled();
-	});
-
-	it("renders a coherent empty plan state", async () => {
-		fetchCohortAuthority.mockResolvedValue(COHORT);
-		listProductionPlans.mockResolvedValue({ plans: [] });
-		listExecutionLanes.mockResolvedValue(LANES);
-		render(<CreativeProductionStudioPage />);
-		expect(await screen.findByTestId("p6-empty-plans")).toBeInTheDocument();
-		expect(
-			screen.getByText(/Create or select a durable P6/),
-		).toBeInTheDocument();
-	});
-
-	it("renders the 6-step progressive stepper and context-sensitive primary CTA", async () => {
-		prime();
-		render(<CreativeProductionStudioPage />);
-		await screen.findByTestId("p6-plan-status");
-		expect(screen.getByText("Production Stepper & Next Action")).toBeInTheDocument();
-		expect(screen.getByText("STEP 3 OF 6")).toBeInTheDocument();
-		expect(screen.getByTestId("p6-primary-action")).toHaveTextContent("Run preflight inspection");
-	});
-
-	it("renders quantity increment and decrement controls in product picker", async () => {
-		prime();
-		render(<CreativeProductionStudioPage />);
-		await screen.findByTestId("p6-plan-status");
-		const selected = await screen.findByTestId("p6-selected-product");
-		expect(selected).toBeInTheDocument();
-		const decreaseBtn = screen.getByRole("button", {
-			name: /Decrease quantity for/i,
-		});
-		const increaseBtn = screen.getByRole("button", {
-			name: /Increase quantity for/i,
-		});
-		expect(decreaseBtn).toBeEnabled();
-		fireEvent.click(decreaseBtn);
-		expect(screen.getByLabelText(/Video quantity for/i)).toHaveValue(1);
-		expect(decreaseBtn).toBeDisabled();
-		fireEvent.click(increaseBtn);
-		expect(screen.getByLabelText(/Video quantity for/i)).toHaveValue(2);
-		expect(decreaseBtn).toBeEnabled();
-	});
-
-	it("detects draft vs active plan mismatch and surfaces warning", async () => {
-		prime();
-		render(<CreativeProductionStudioPage />);
-		await screen.findByTestId("p6-plan-status");
-		expect(screen.getByTestId("p6-plan-selector-bar")).toBeInTheDocument();
-		fireEvent.click(screen.getByText(/product.*selected/i));
-		fireEvent.click(screen.getAllByTestId("p6-product-option")[1]);
-		expect(
-			await screen.findByTestId("p6-draft-mismatch-warning"),
-		).toBeInTheDocument();
-		expect(screen.getByTestId("p6-primary-action")).toBeDisabled();
-		expect(screen.getByTestId("p6-primary-action")).toHaveTextContent(
-			"Form Mismatched",
-		);
-	});
-
-	it("renders plain-language live gate disabled reasons", async () => {
-		prime();
-		render(<CreativeProductionStudioPage />);
-		await screen.findByTestId("p6-plan-status");
-		expect(screen.getByTestId("p6-live-disabled-reason")).toHaveTextContent(
-			"Runtime live-execution certification is absent",
+		expect(await screen.findByText("Select existing plan")).toBeInTheDocument();
+		expect(screen.getAllByText("New production plan")).not.toHaveLength(0);
+		await selectPlan("plan-a");
+		expect(screen.getByTestId("p6-readonly-plan-snapshot")).toHaveTextContent(
+			"8s SINGLE",
 		);
 	});
 });
-

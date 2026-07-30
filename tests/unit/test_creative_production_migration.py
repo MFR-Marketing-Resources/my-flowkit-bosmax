@@ -43,6 +43,12 @@ async def test_additive_migration_is_idempotent_and_preserves_rows():
         "provider_snapshot_json",
         "provider_snapshot_updated_at",
     } <= attempt_columns
+    plan_cursor = await db.execute(
+        "PRAGMA table_info(creative_production_plan)"
+    )
+    plan_columns = {column[1] for column in await plan_cursor.fetchall()}
+    assert "plan_snapshot_json" in plan_columns
+    assert row["plan_snapshot_json"] == "{}"
 
 
 @pytest.mark.asyncio

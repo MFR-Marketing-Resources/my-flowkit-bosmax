@@ -26,6 +26,7 @@ from agent.models.creative_production import (
     ProductionPlanCreateRequest,
     ProductionPlanUpdateRequest,
     QaDecisionRequest,
+    StartPlanRequest,
 )
 from agent.services import creative_production_compile_service as compiler
 from agent.services import creative_production_plan_service as plans
@@ -96,6 +97,9 @@ def _body(
         operator_id="p6-test-operator",
         name="P6 deterministic plan",
         product_ids=[PRODUCT_ID],
+        product_video_allocations=[
+            ProductVideoAllocation(product_id=PRODUCT_ID, video_count=target)
+        ],
         target_video_count=target,
         logical_mode="T2V",
         model_keys=["Veo 3.1 - Lite"],
@@ -377,6 +381,27 @@ async def test_explicit_multi_product_allocation_materializes_exact_counts(
         {"product_id": PRODUCT_ID_2, "video_count": 1},
         {"product_id": PRODUCT_ID_3, "video_count": 3},
     ]
+    detail = await plans.get_plan_detail(plan["plan_id"])
+    assert detail.snapshot.completeness == "COMPLETE"
+    assert [
+        (allocation.product_id, allocation.video_count)
+        for allocation in detail.snapshot.product_allocations
+    ] == [
+        (PRODUCT_ID, 2),
+        (PRODUCT_ID_2, 1),
+        (PRODUCT_ID_3, 3),
+    ]
+    assert detail.snapshot.video_configurations[0].model_key == "veo_3_1_lite"
+    assert (
+        detail.snapshot.video_configurations[0].generation_mode
+        == "EXTEND"
+    )
+    assert (
+        detail.snapshot.video_configurations[0].engine_block_duration_seconds
+        == 8
+    )
+    assert detail.snapshot.video_configurations[0].segment_count == 2
+    assert detail.snapshot.aspect_ratio == "9:16"
     report = await plans.run_capacity_preflight(plan["plan_id"])
     assert report.status == "PREFLIGHT_READY"
     assert report.assumptions["explicit_product_allocation"] is True
@@ -390,6 +415,132 @@ async def test_explicit_multi_product_allocation_materializes_exact_counts(
         assert dimensions["segment_count"] == "2"
         assert dimensions["execution_route"] == "VIDEO_JOBS_ORCHESTRATOR"
     assert counts == {PRODUCT_ID: 2, PRODUCT_ID_2: 1, PRODUCT_ID_3: 3}
+
+
+@pytest.mark.asyncio
+async def test_legacy_snapshot_reconciliation_uses_exact_items_and_fails_closed(
+    p58_authority,
+    monkeypatch,
+):
+    common = {
+        "created_by": "p6-reconciler",
+        "name": "Legacy snapshot fixture",
+        "product_scope_json": json.dumps([PRODUCT_ID]),
+        "p58_cohort_sha256": P58_COHORT_SHA256,
+        "p58_cohort_count": P58_COHORT_COUNT,
+        "logical_mode": "T2V",
+        "model_keys_json": json.dumps(["Veo 3.1 - Lite"]),
+        "duration_seconds_json": json.dumps([8]),
+        "pool_snapshot_json": "{}",
+        "execution_policy_json": json.dumps({"aspect": "9:16"}),
+    }
+    exact_plan_id = "p6plan-legacy-exact"
+    incomplete_plan_id = "p6plan-legacy-incomplete"
+    await p6db.create_plan(
+        {
+            **common,
+            "plan_id": exact_plan_id,
+            "request_id": "request-legacy-exact",
+            "target_video_count": 2,
+        }
+    )
+    await p6db.create_plan(
+        {
+            **common,
+            "plan_id": incomplete_plan_id,
+            "request_id": "request-legacy-incomplete",
+            "target_video_count": 1,
+        }
+    )
+    await p6db.insert_items(
+        [
+            {
+                "item_id": f"{exact_plan_id}-item-{ordinal}",
+                "plan_id": exact_plan_id,
+                "item_ordinal": ordinal,
+                "product_id": PRODUCT_ID,
+                "media_type": "VIDEO",
+                "creative_dna_sha256": f"{ordinal + 1:064x}",
+                "dedupe_guard_key": f"legacy-exact-{ordinal}",
+            }
+            for ordinal in range(2)
+        ]
+        + [
+            {
+                "item_id": f"{incomplete_plan_id}-item-{ordinal}",
+                "plan_id": incomplete_plan_id,
+                "item_ordinal": ordinal,
+                "product_id": PRODUCT_ID,
+                "media_type": "VIDEO",
+                "creative_dna_sha256": f"{ordinal + 101:064x}",
+                "dedupe_guard_key": f"legacy-incomplete-{ordinal}",
+            }
+            for ordinal in range(2)
+        ]
+    )
+
+    result = await plans.reconcile_legacy_plan_snapshots(
+        request_id="request-p63-r2-reconcile",
+        operator_id="p6-reconciler",
+    )
+    by_plan = {row["plan_id"]: row for row in result["plans"]}
+    assert by_plan[exact_plan_id]["completeness"] == "COMPLETE"
+    assert by_plan[exact_plan_id]["allocation_source"] == "PRIMARY_VIDEO_ITEMS"
+    assert (
+        by_plan[incomplete_plan_id]["completeness"]
+        == "LEGACY_INCOMPLETE"
+    )
+    assert (
+        by_plan[incomplete_plan_id]["allocation_source"] == "NOT_PROVABLE"
+    )
+
+    exact = await p6db.get_plan(exact_plan_id)
+    incomplete = await p6db.get_plan(incomplete_plan_id)
+    assert exact is not None
+    assert incomplete is not None
+    exact_snapshot = json.loads(exact["plan_snapshot_json"])
+    incomplete_snapshot = json.loads(incomplete["plan_snapshot_json"])
+    assert exact_snapshot["product_allocations"] == [
+        {
+            "product_id": PRODUCT_ID,
+            "product_name": "P6 Product 1",
+            "video_count": 2,
+        }
+    ]
+    assert incomplete_snapshot["product_allocations"] == []
+    assert "product_allocations" in incomplete_snapshot["missing_fields"]
+    await plans.require_complete_plan_snapshot(exact_plan_id)
+    with pytest.raises(
+        plans.CreativeProductionError,
+        match="complete persisted plan snapshot",
+    ):
+        await plans.require_complete_plan_snapshot(incomplete_plan_id)
+    await p6db.update_plan(
+        incomplete_plan_id,
+        status="SCHEDULED",
+        updated_at=datetime.now(UTC).isoformat(),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "live_execution_certified",
+        lambda: True,
+    )
+    with pytest.raises(
+        plans.CreativeProductionError,
+        match="complete persisted plan snapshot",
+    ):
+        await scheduler.start_plan(
+            incomplete_plan_id,
+            StartPlanRequest(
+                request_id="request-incomplete-live",
+                operator_id="p6-reconciler",
+                aspect="9:16",
+                live=True,
+                credit_confirmation="AUTHORIZE_P6_LIVE_CREDIT_SPEND",
+            ),
+        )
+    audit = await p6db.list_audit_events(incomplete_plan_id)
+    assert audit[-1]["action"] == "RECONCILE_PLAN_SNAPSHOT"
 
 
 @pytest.mark.asyncio
@@ -1019,13 +1170,31 @@ async def test_plan_update_and_governed_pool_authority_are_fail_closed(
     p58_authority,
 ):
     plan = await plans.create_plan(_body("request-p6-update-0001", target=1))
+    with pytest.raises(
+        plans.CreativeProductionError,
+        match="requires exact product allocations",
+    ):
+        await plans.update_plan(
+            plan["plan_id"],
+            ProductionPlanUpdateRequest(
+                request_id="request-p6-update-missing-allocation",
+                operator_id="p6-owner",
+                target_video_count=2,
+            ),
+        )
     updated = await plans.update_plan(
         plan["plan_id"],
         ProductionPlanUpdateRequest(
-            request_id="request-p6-update-0002",
-            operator_id="p6-owner",
-            target_video_count=2,
-            operating_window_hours=24,
+                request_id="request-p6-update-0002",
+                operator_id="p6-owner",
+                target_video_count=2,
+                product_video_allocations=[
+                    ProductVideoAllocation(
+                        product_id=PRODUCT_ID,
+                        video_count=2,
+                    )
+                ],
+                operating_window_hours=24,
         ),
     )
     assert updated["target_video_count"] == 2

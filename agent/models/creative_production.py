@@ -110,6 +110,60 @@ class ProductVideoAllocation(BaseModel):
     video_count: int = Field(ge=1, le=200)
 
 
+class ProductionPlanProductAllocationSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: str
+    product_name: str
+    video_count: int = Field(ge=0, le=200)
+
+
+class ProductionPlanVideoConfigurationSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model_key: str
+    model_label: str
+    requested_total_duration_seconds: int
+    engine_block_duration_seconds: int
+    generation_mode: Literal["SINGLE", "EXTEND"]
+    segment_count: int
+    execution_route: str
+
+
+class ProductionPlanCanonicalSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    completeness: Literal["COMPLETE", "LEGACY_INCOMPLETE"]
+    missing_fields: list[str]
+    source: Literal["CREATE_REQUEST", "LEGACY_RECONCILIATION", "LEGACY_PREVIEW"]
+    evidence: dict[str, Any]
+    plan_id: str
+    plan_name: str
+    purpose: str | None
+    status: PlanStatus
+    operator_id: str
+    request_id: str
+    product_allocations: list[ProductionPlanProductAllocationSnapshot]
+    target_video_count: int
+    target_image_count: int
+    target_poster_count: int
+    logical_mode: Literal["T2V", "HYBRID", "F2V", "I2V"]
+    video_configurations: list[ProductionPlanVideoConfigurationSnapshot]
+    aspect_ratio: Literal["9:16", "16:9"]
+    operating_window_hours: int
+    allocation_strategy: str
+    variation_strategy: str
+    approved_pool_snapshot: dict[str, Any] | None
+    pool_snapshot: dict[str, Any]
+    cohort_snapshot: dict[str, Any]
+    matrix_count: int
+    attempts_count: int
+    qa_count: int
+    created_at: str
+    updated_at: str
+
+
 class ProductionPlanCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -158,6 +212,14 @@ class ProductionPlanCreateRequest(BaseModel):
             raise ValueError("treatment_ids must be unique")
         if self.target_video_count > 0 and not self.pools.treatment_ids:
             raise ValueError("TREATMENT_IDS_REQUIRED_FOR_VIDEO")
+        if self.target_video_count > 0 and not self.product_video_allocations:
+            raise ValueError(
+                "product_video_allocations is required when target_video_count is positive"
+            )
+        if self.target_video_count == 0 and self.product_video_allocations:
+            raise ValueError(
+                "product_video_allocations must be empty when target_video_count is zero"
+            )
         if self.product_video_allocations:
             allocation_ids = [
                 allocation.product_id
@@ -215,6 +277,10 @@ class ProductionPlanUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=3, max_length=160)
     campaign_key: str | None = Field(default=None, max_length=160)
     target_video_count: int | None = Field(default=None, ge=0, le=200)
+    product_video_allocations: list[ProductVideoAllocation] | None = Field(
+        default=None,
+        max_length=P58_COHORT_COUNT,
+    )
     target_image_count: int | None = Field(default=None, ge=0, le=200)
     target_poster_count: int | None = Field(default=None, ge=0, le=200)
     operating_window_hours: Literal[8, 12, 24] | None = None
@@ -314,6 +380,7 @@ class CapacityPreflightResponse(BaseModel):
 
 class ProductionPlanDetailResponse(BaseModel):
     plan: dict[str, Any]
+    snapshot: ProductionPlanCanonicalSnapshot
     waves: list[dict[str, Any]]
     batches: list[dict[str, Any]]
     items: list[dict[str, Any]]

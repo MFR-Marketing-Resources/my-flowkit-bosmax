@@ -2968,6 +2968,7 @@ CREATE TABLE IF NOT EXISTS creative_production_plan (
     model_keys_json            TEXT NOT NULL DEFAULT '[]',
     duration_seconds_json      TEXT NOT NULL DEFAULT '[]',
     pool_snapshot_json         TEXT NOT NULL DEFAULT '{}',
+    plan_snapshot_json         TEXT NOT NULL DEFAULT '{}',
     execution_policy_json      TEXT NOT NULL DEFAULT '{}',
     capacity_snapshot_json     TEXT NOT NULL DEFAULT '{}',
     compile_snapshot_json      TEXT NOT NULL DEFAULT '{}',
@@ -3218,6 +3219,19 @@ INSERT OR IGNORE INTO creative_execution_lane (
     'runtime proof required before live assignment'
 );
 """)
+        plan_cursor = await db.execute(
+            "PRAGMA table_info(creative_production_plan)"
+        )
+        plan_columns = {row[1] for row in await plan_cursor.fetchall()}
+        if "plan_snapshot_json" not in plan_columns:
+            await db.execute(
+                "ALTER TABLE creative_production_plan "
+                "ADD COLUMN plan_snapshot_json TEXT NOT NULL DEFAULT '{}'"
+            )
+            logger.info(
+                "Migrated: added plan_snapshot_json column to "
+                "creative_production_plan"
+            )
         cursor = await db.execute("PRAGMA table_info(creative_generation_attempt)")
         attempt_columns = {row[1] for row in await cursor.fetchall()}
         attempt_observation_columns = {

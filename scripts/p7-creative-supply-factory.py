@@ -202,6 +202,7 @@ async def _p6_rehearse(args: argparse.Namespace) -> dict[str, Any]:
         CreativePoolSelection,
         DryRunRequest,
         PlanActionRequest,
+        ProductVideoAllocation,
         ProductionPlanCreateRequest,
         WaveAssignmentRequest,
     )
@@ -238,6 +239,12 @@ async def _p6_rehearse(args: argparse.Namespace) -> dict[str, Any]:
                 name=f"P7 {slug} bounded live-video activation anchor 9:16",
                 campaign_key=f"P7_HERO_{slug.upper()}_VIDEO_ANCHOR_916",
                 product_ids=[product_id],
+                product_video_allocations=[
+                    ProductVideoAllocation(
+                        product_id=product_id,
+                        video_count=1,
+                    )
+                ],
                 target_video_count=1,
                 operating_window_hours=12,
                 logical_mode="F2V",
