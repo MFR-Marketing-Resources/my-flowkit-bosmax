@@ -287,7 +287,7 @@ export default function CreativeProductionStudioPage() {
 				setModelRegistryError(
 					reason instanceof Error
 						? reason.message
-						: "Canonical model registry unavailable.",
+						: "Video model list unavailable.",
 				);
 			});
 	}, []);
@@ -1148,11 +1148,7 @@ export default function CreativeProductionStudioPage() {
 										onChange={setAllocations}
 										blockersByProduct={blockersByProduct}
 										loading={!cohort}
-										error={
-											cohort || !error
-												? ""
-												: "Governed product authority unavailable."
-										}
+										error={cohort || !error ? "" : "Product list unavailable."}
 									/>
 								</div>
 								<label className="text-xs text-slate-400">
@@ -1295,15 +1291,15 @@ export default function CreativeProductionStudioPage() {
 										</strong>
 										<div className="mt-1 text-[10px] opacity-80">
 											{selectedDurationOption.generationMode === "EXTEND"
-												? "Compile creates a reviewed multi-block plan and durable /video-jobs identity. Final concat occurs only after separate live authorization."
-												: "One governed provider job after separate live authorization."}
+												? "Compile prepares a reviewed multi-part video. Joining happens only after separate live confirmation."
+												: "One video starts only after separate live confirmation."}
 										</div>
 									</div>
 								) : null}
 								{modelRegistryError ? (
 									<div className="rounded-lg border border-rose-500/30 bg-rose-950/30 p-2 text-xs text-rose-200">
-										The canonical model registry is unavailable. Plan creation
-										is locked.
+										The video model list is unavailable. Plan creation is
+										locked.
 									</div>
 								) : null}
 								<div className="grid grid-cols-2 gap-2">
@@ -2294,8 +2290,8 @@ export default function CreativeProductionStudioPage() {
 									<div data-testid="p6-attempt-list" className="space-y-2">
 										{detail.attempts.length === 0 && (
 											<div className="rounded border border-dashed border-slate-700 p-5 text-center text-xs text-slate-500">
-												No attempt yet. Dry run creates a durable NOT_SUBMITTED
-												attempt without spending credits.
+												No attempt yet. Dry run records a zero-credit check
+												without starting production.
 											</div>
 										)}
 										{detail.attempts.map((attempt: GenerationAttempt) => (
@@ -2393,15 +2389,15 @@ export default function CreativeProductionStudioPage() {
 					<div className="flex items-start gap-2 rounded-xl border border-amber-500/20 bg-amber-950/20 p-3 text-xs text-amber-200/80">
 						<AlertTriangle className="mt-0.5 shrink-0" size={15} />
 						<div>
-							Legacy Batch Prompt Builder, Production Queue and RPA Studio
-							remain compatibility surfaces only. The unified P6 plan is the new
-							operator authority; legacy schema is not deleted in this patch.
+							Older Batch Prompt Builder, Production Queue and RPA Studio
+							records remain available for history. Use Production Studio for
+							current plans.
 						</div>
 					</div>
 					<div className="flex items-center gap-2 text-[10px] text-slate-600">
 						<Clock3 size={11} />
-						Capacity is a measured objective, never an SLA. One verified video
-						lane defaults to one inflight job.
+						Capacity is an estimate, not a guarantee. One verified video lane
+						handles one job at a time.
 					</div>
 				</main>
 			</div>
