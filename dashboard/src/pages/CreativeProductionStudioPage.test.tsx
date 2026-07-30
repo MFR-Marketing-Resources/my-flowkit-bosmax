@@ -510,4 +510,32 @@ describe("P6 Production Studio rendered contract", () => {
 			screen.getByText(/Create or select a durable P6/),
 		).toBeInTheDocument();
 	});
+
+	it("renders the 6-step progressive stepper and context-sensitive primary CTA", async () => {
+		prime();
+		render(<CreativeProductionStudioPage />);
+		await screen.findByTestId("p6-plan-status");
+		expect(screen.getByText("Production Stepper & Next Action")).toBeInTheDocument();
+		expect(screen.getByText("STEP 3 OF 6")).toBeInTheDocument();
+		expect(screen.getByTestId("p6-primary-action")).toHaveTextContent("Run preflight inspection");
+	});
+
+	it("renders quantity increment and decrement controls in product picker", async () => {
+		prime();
+		render(<CreativeProductionStudioPage />);
+		await screen.findByTestId("p6-plan-status");
+		fireEvent.click(screen.getByRole("button", { name: /Choose products/i }));
+		fireEvent.click(screen.getAllByTestId("p6-product-option")[0]);
+		const selected = await screen.findByTestId("p6-selected-product");
+		expect(selected).toBeInTheDocument();
+		const decreaseBtn = screen.getByRole("button", { name: /Decrease quantity for/i });
+		const increaseBtn = screen.getByRole("button", { name: /Increase quantity for/i });
+		expect(decreaseBtn).toBeDisabled();
+		fireEvent.click(increaseBtn);
+		expect(screen.getByLabelText(/Video quantity for/i)).toHaveValue(2);
+		expect(decreaseBtn).toBeEnabled();
+		fireEvent.click(decreaseBtn);
+		expect(screen.getByLabelText(/Video quantity for/i)).toHaveValue(1);
+	});
 });
+

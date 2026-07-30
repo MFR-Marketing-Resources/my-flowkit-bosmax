@@ -123,6 +123,15 @@ function Metric({
 	);
 }
 
+const WORKFLOW_STEPS = [
+	{ id: 1, label: "Products", desc: "Select & quantity" },
+	{ id: 2, label: "Video Setup", desc: "Mode & duration" },
+	{ id: 3, label: "Preflight", desc: "Capacity check" },
+	{ id: 4, label: "Matrix & Compile", desc: "0 credits" },
+	{ id: 5, label: "Waves & Dry Run", desc: "0 credits" },
+	{ id: 6, label: "Generate", desc: "Spends credits" },
+];
+
 export default function CreativeProductionStudioPage() {
 	const [cohort, setCohort] = useState<CohortAuthority | null>(null);
 	const [plans, setPlans] = useState<ProductionPlan[]>([]);
@@ -408,6 +417,208 @@ export default function CreativeProductionStudioPage() {
 		[preflight, selectedPlan],
 	);
 
+	const activeStep = useMemo(() => {
+		if (!detail?.plan) return 1;
+		const status = detail.plan.status;
+		if (status === "DRAFT" || status === "PREFLIGHT_BLOCKED") return 3;
+		if (status === "PREFLIGHT_READY") return 4;
+		if (status === "PENDING_APPROVAL" || status === "APPROVED") return 5;
+		if (status === "SCHEDULED") return 6;
+		return 3;
+	}, [detail]);
+
+	const primaryActionConfig = useMemo(() => {
+		if (!detail?.plan) {
+			return {
+				step: 1,
+				title: "Create Production Plan",
+				subtitle:
+					"Persist durable plan configuration and product allocations.",
+				buttonLabel:
+					busy === "create" ? "Persisting plan…" : "Create durable plan",
+				buttonTestId: "p6-primary-action",
+				actionName: "create",
+				executeAction: () => create(),
+				disabled:
+					Boolean(busy) ||
+					!cohort?.matches_frozen_authority ||
+					!allocations.length ||
+					invalidAllocation ||
+					poolAuthorityLoading ||
+					!poolAuthority ||
+					!form.modelKey ||
+					!selectedDuration ||
+					Boolean(modelRegistryError) ||
+					!operatorId.trim() ||
+					Boolean(poolAuthority?.blockers.length) ||
+					!form.name,
+				disabledReason: !cohort?.matches_frozen_authority
+					? "Cohort authority check required"
+					: !allocations.length
+						? "Select at least one product"
+						: invalidAllocation
+							? "Product quantities must be between 1 and 200"
+							: poolAuthorityLoading
+								? "Loading governed supply..."
+								: poolAuthority?.blockers.length
+									? "Governed pool blockers must be resolved"
+									: !form.name
+										? "Enter a plan name"
+										: "Fill in all required fields",
+				isCreditSpend: false,
+			};
+		}
+
+		const planId = detail.plan.plan_id;
+		const status = detail.plan.status;
+
+		if (status === "DRAFT" || status === "PREFLIGHT_BLOCKED") {
+			return {
+				step: 3,
+				title: "Run Preflight Inspection",
+				subtitle:
+					"Verify unique supply capacity against requested video quantity.",
+				buttonLabel:
+					busy === "Preflight"
+						? "Inspecting capacity…"
+						: "Run preflight inspection",
+				buttonTestId: "p6-primary-action",
+				actionName: "Preflight",
+				executeAction: () =>
+					preflightProductionPlan(planId, operatorId).then((result) => {
+						setPreflight(result);
+						return result;
+					}),
+				disabled: actionDisabled,
+				disabledReason: busy ? "Action in progress..." : "Select or resume plan",
+				isCreditSpend: false,
+			};
+		}
+
+		if (status === "PREFLIGHT_READY") {
+			return {
+				step: 4,
+				title: "Build Content Matrix & Compile Prompts",
+				subtitle:
+					"Generate creative DNA items and compile execution prompts (0 credits).",
+				buttonLabel:
+					busy === "Build matrix"
+						? "Materializing matrix…"
+						: busy === "Compile · 0 credit"
+							? "Compiling prompts…"
+							: "Build matrix & compile (0 credits)",
+				buttonTestId: "p6-primary-action",
+				actionName: "Build matrix",
+				executeAction: async () => {
+					await materializeContentMatrix(planId, operatorId);
+					return compileProductionPlan(planId, operatorId);
+				},
+				disabled: actionDisabled,
+				disabledReason: busy ? "Action in progress..." : "Select or resume plan",
+				isCreditSpend: false,
+			};
+		}
+
+		if (status === "PENDING_APPROVAL") {
+			return {
+				step: 5,
+				title: "Approve Production Items & Assign Waves",
+				subtitle:
+					"Approve compiled creative items and assign parallel execution waves.",
+				buttonLabel:
+					busy === "Bulk approve"
+						? "Approving items…"
+						: "Approve items & assign waves",
+				buttonTestId: "p6-primary-action",
+				actionName: "Bulk approve",
+				executeAction: async () => {
+					await approveProductionPlan(planId, operatorId);
+					return assignProductionWaves(planId, operatorId, 2, 25);
+				},
+				disabled: actionDisabled,
+				disabledReason: busy ? "Action in progress..." : "Select or resume plan",
+				isCreditSpend: false,
+			};
+		}
+
+		if (status === "APPROVED") {
+			return {
+				step: 5,
+				title: "Run Dry-Run Verification · 0 Credits",
+				subtitle:
+					"Perform full dry-run simulation to verify provider readiness without spending credits.",
+				buttonLabel:
+					busy === "Dry run · 0 credit"
+						? "Executing dry run…"
+						: "Run dry-run verification (0 credits)",
+				buttonTestId: "p6-primary-action",
+				actionName: "Dry run · 0 credit",
+				executeAction: () => dryRunProductionPlan(planId, operatorId),
+				disabled: actionDisabled,
+				disabledReason: busy ? "Action in progress..." : "Select or resume plan",
+				isCreditSpend: false,
+			};
+		}
+
+		if (status === "SCHEDULED") {
+			const videoCount = detail.plan.target_video_count || totalVideoCount || 1;
+			return {
+				step: 6,
+				title: `Authorize and Generate ${videoCount} Video${videoCount === 1 ? "" : "s"}`,
+				subtitle:
+					"Separately authorized live generation action. This action WILL spend media credits.",
+				buttonLabel:
+					busy === "live"
+						? "Dispatching live job…"
+						: `Authorize & generate ${videoCount} video${videoCount === 1 ? "" : "s"}`,
+				buttonTestId: "p6-primary-action",
+				actionName: "live",
+				executeAction: () =>
+					startProductionPlan(planId, operatorId, livePhrase),
+				disabled: !liveEnabled,
+				disabledReason: !liveExecutionCertified
+					? "Runtime live-execution certification is absent"
+					: livePhrase !== P6_LIVE_CONFIRMATION
+						? `Type exact confirmation phrase "${P6_LIVE_CONFIRMATION}" below to authorize`
+						: busy
+							? "Dispatching..."
+							: "All gates must pass",
+				isCreditSpend: true,
+			};
+		}
+
+		return {
+			step: 3,
+			title: `Plan ${String(status)}`,
+			subtitle: `Current plan status is ${String(status)}`,
+			buttonLabel: String(status),
+			buttonTestId: "p6-primary-action",
+			actionName: String(status),
+			executeAction: async () => {},
+			disabled: true,
+			disabledReason: `Plan is in state (${String(status)})`,
+			isCreditSpend: false,
+		};
+	}, [
+		detail,
+		busy,
+		cohort,
+		allocations,
+		invalidAllocation,
+		poolAuthorityLoading,
+		poolAuthority,
+		form,
+		selectedDuration,
+		modelRegistryError,
+		operatorId,
+		totalVideoCount,
+		actionDisabled,
+		liveEnabled,
+		liveExecutionCertified,
+		livePhrase,
+		create,
+	]);
+
 	return (
 		<div className="mx-auto max-w-[1680px] space-y-4 p-4 text-slate-100">
 			<header className="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-950 via-slate-950 to-cyan-950/30 p-5 shadow-2xl">
@@ -513,7 +724,7 @@ export default function CreativeProductionStudioPage() {
 				</div>
 			)}
 
-			<div className="grid gap-4 xl:grid-cols-[390px_minmax(0,1fr)]">
+			<div className="grid gap-6 2xl:grid-cols-[420px_minmax(0,1fr)]">
 				<aside className="space-y-4">
 					<section className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4">
 						<div className="mb-3 flex items-center gap-2">
@@ -1051,14 +1262,123 @@ export default function CreativeProductionStudioPage() {
 								</div>
 							</section>
 
-							<section className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4">
-								<div className="mb-3 flex items-center gap-2">
-									<GitBranch size={16} className="text-cyan-300" />
-									<h2 className="font-semibold">
-										Deterministic workflow gates
-									</h2>
+							<section className="rounded-2xl border border-slate-800 bg-slate-950/90 p-4 shadow-xl">
+								<div className="mb-3 flex items-center justify-between">
+									<div className="flex items-center gap-2">
+										<GitBranch size={16} className="text-cyan-300" />
+										<h2 className="font-semibold text-slate-100">
+											Production Stepper & Next Action
+										</h2>
+									</div>
+									<span className="text-[11px] font-semibold text-cyan-300">
+										STEP {activeStep} OF 6
+									</span>
 								</div>
-								<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
+
+								<div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+									{WORKFLOW_STEPS.map((step) => {
+										const isCurrent = step.id === activeStep;
+										const isDone = step.id < activeStep;
+										return (
+											<div
+												key={step.id}
+												className={`flex flex-col justify-between rounded-xl border p-2.5 transition ${
+													isCurrent
+														? "border-cyan-500/80 bg-cyan-950/40 ring-1 ring-cyan-500/50"
+														: isDone
+															? "border-emerald-500/40 bg-emerald-950/20 text-slate-300"
+															: "border-slate-800 bg-slate-900/40 text-slate-500"
+												}`}
+											>
+												<div className="flex items-center justify-between">
+													<span
+														className={`text-[10px] font-bold ${
+															isCurrent
+																? "text-cyan-300"
+																: isDone
+																	? "text-emerald-400"
+																	: "text-slate-500"
+														}`}
+													>
+														STEP {step.id}
+													</span>
+													{isDone ? (
+														<CheckCircle2
+															size={13}
+															className="text-emerald-400"
+														/>
+													) : null}
+												</div>
+												<div className="mt-1.5 text-xs font-semibold text-white">
+													{step.label}
+												</div>
+												<div className="mt-0.5 text-[9px] text-slate-400">
+													{step.desc}
+												</div>
+											</div>
+										);
+									})}
+								</div>
+
+								<div className="mt-4 rounded-xl border border-slate-700 bg-gradient-to-r from-slate-900 via-slate-900 to-slate-950 p-4">
+									<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+										<div>
+											<div className="flex items-center gap-2">
+												<span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400">
+													Current Primary Action
+												</span>
+												{primaryActionConfig.isCreditSpend ? (
+													<span className="rounded border border-rose-500/40 bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold text-rose-300">
+														Spends Media Credits
+													</span>
+												) : (
+													<span className="rounded border border-emerald-500/40 bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
+														0 Media Credits
+													</span>
+												)}
+											</div>
+											<h3 className="mt-1 text-base font-bold text-white">
+												{primaryActionConfig.title}
+											</h3>
+											<p className="mt-0.5 text-xs text-slate-400">
+												{primaryActionConfig.subtitle}
+											</p>
+											{primaryActionConfig.disabled &&
+											primaryActionConfig.disabledReason ? (
+												<div className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-300">
+													<AlertTriangle size={13} className="shrink-0" />
+													<span>{primaryActionConfig.disabledReason}</span>
+												</div>
+											) : null}
+										</div>
+
+										<button
+											type="button"
+											data-testid={primaryActionConfig.buttonTestId}
+											disabled={primaryActionConfig.disabled}
+											onClick={() =>
+												void execute(
+													primaryActionConfig.actionName,
+													primaryActionConfig.executeAction,
+												)
+											}
+											className={`shrink-0 rounded-xl px-5 py-3 text-xs font-bold transition shadow-lg disabled:cursor-not-allowed disabled:opacity-40 ${
+												primaryActionConfig.isCreditSpend
+													? "bg-rose-600 hover:bg-rose-500 text-white disabled:bg-slate-700"
+													: "bg-cyan-600 hover:bg-cyan-500 text-white disabled:bg-slate-700"
+											}`}
+										>
+											{primaryActionConfig.buttonLabel}
+										</button>
+									</div>
+								</div>
+							</section>
+
+							<details className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4">
+								<summary className="cursor-pointer text-xs font-semibold text-slate-300">
+									Advanced workflow controls (individual gates)
+								</summary>
+								<div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
 									{[
 										[
 											"Preflight",
@@ -1128,7 +1448,7 @@ export default function CreativeProductionStudioPage() {
 										</button>
 									))}
 								</div>
-							</section>
+							</details>
 
 							<details
 								data-testid="p6-capacity-report"
