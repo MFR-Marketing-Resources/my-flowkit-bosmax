@@ -44,6 +44,7 @@ import {
 	retryAttempt,
 	startProductionPlan,
 } from "../api/creativeProduction";
+import CreativeSupplyFactoryPanel from "../components/CreativeSupplyFactoryPanel";
 
 const splitValues = (value: string) =>
 	value
@@ -308,6 +309,8 @@ export default function CreativeProductionStudioPage() {
 					</span>
 				</div>
 			</header>
+
+			<CreativeSupplyFactoryPanel />
 
 			{error && (
 				<div
