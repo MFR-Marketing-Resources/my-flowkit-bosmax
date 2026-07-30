@@ -244,6 +244,8 @@ export interface VideoModelInfo {
 	ui_label: string;
 	default_duration_s?: number;
 	allowed_durations_s?: number[];
+	extend_block_duration_s?: number | null;
+	extend_totals_s?: number[];
 	cost?: unknown;
 	[key: string]: unknown;
 }

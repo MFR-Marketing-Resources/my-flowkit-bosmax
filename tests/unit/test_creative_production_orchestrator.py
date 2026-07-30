@@ -22,6 +22,7 @@ from agent.models.creative_production import (
     P58CohortAuthorityResponse,
     PlanActionRequest,
     PoolAuthorityRequest,
+    ProductVideoAllocation,
     ProductionPlanCreateRequest,
     ProductionPlanUpdateRequest,
     QaDecisionRequest,
@@ -32,43 +33,55 @@ from agent.services import creative_production_scheduler_service as scheduler
 
 
 PRODUCT_ID = "p6-product-1"
+PRODUCT_ID_2 = "p6-product-2"
+PRODUCT_ID_3 = "p6-product-3"
 COPY_SET_ID = "p6-copy-1"
+COPY_SET_ID_2 = "p6-copy-2"
+COPY_SET_ID_3 = "p6-copy-3"
 AVATAR_CODE = "BOS_F_ALYA_01"
 
 
 async def _seed_authority_inputs() -> None:
     db = await get_db()
-    await db.execute(
-        "INSERT OR IGNORE INTO product "
-        "(id,raw_product_title,product_display_name,product_short_name,"
-        "product_type,lifecycle_status) VALUES (?,?,?,?,?,'ACTIVE')",
+    for index, (product_id, copy_set_id) in enumerate(
         (
-            PRODUCT_ID,
-            "P6 Product",
-            "P6 Product",
-            "P6 Product",
-            "lipstick",
+            (PRODUCT_ID, COPY_SET_ID),
+            (PRODUCT_ID_2, COPY_SET_ID_2),
+            (PRODUCT_ID_3, COPY_SET_ID_3),
         ),
-    )
-    await db.execute(
-        "INSERT OR IGNORE INTO copy_set "
-        "(copy_set_id,product_id,angle,hook,cta,status,dedupe_key) "
-        "VALUES (?,?,?,?,?,'COPY_APPROVED',?)",
-        (
-            COPY_SET_ID,
-            PRODUCT_ID,
-            "benefit",
-            "hook",
-            "buy now",
-            "p6-copy-dedupe",
-        ),
-    )
-    await db.execute(
-        "INSERT OR REPLACE INTO creative_product_selection "
-        "(selection_id,product_id,selected_avatar_code,status,created_at,updated_at) "
-        "VALUES (?,?,?,'APPROVED',datetime('now'),datetime('now'))",
-        ("p6-selection-1", PRODUCT_ID, AVATAR_CODE),
-    )
+        start=1,
+    ):
+        await db.execute(
+            "INSERT OR IGNORE INTO product "
+            "(id,raw_product_title,product_display_name,product_short_name,"
+            "product_type,lifecycle_status) VALUES (?,?,?,?,?,'ACTIVE')",
+            (
+                product_id,
+                f"P6 Product {index}",
+                f"P6 Product {index}",
+                f"P6 Product {index}",
+                "lipstick",
+            ),
+        )
+        await db.execute(
+            "INSERT OR IGNORE INTO copy_set "
+            "(copy_set_id,product_id,angle,hook,cta,status,dedupe_key) "
+            "VALUES (?,?,?,?,?,'COPY_APPROVED',?)",
+            (
+                copy_set_id,
+                product_id,
+                "benefit",
+                f"hook {index}",
+                "buy now",
+                f"p6-copy-dedupe-{index}",
+            ),
+        )
+        await db.execute(
+            "INSERT OR REPLACE INTO creative_product_selection "
+            "(selection_id,product_id,selected_avatar_code,status,created_at,updated_at) "
+            "VALUES (?,?,?,'APPROVED',datetime('now'),datetime('now'))",
+            (f"p6-selection-{index}", product_id, AVATAR_CODE),
+        )
     await db.commit()
 
 
@@ -114,14 +127,26 @@ async def p58_authority(monkeypatch):
     authority = P58CohortAuthorityResponse(
         cohort_count=P58_COHORT_COUNT,
         cohort_sha256=P58_COHORT_SHA256,
-        product_ids=[PRODUCT_ID],
+        product_ids=[PRODUCT_ID, PRODUCT_ID_2, PRODUCT_ID_3],
         products=[
             {
                 "product_id": PRODUCT_ID,
-                "product_display_name": "P6 Product",
+                "product_display_name": "P6 Product 1",
                 "product_type": "lipstick",
                 "scene_strategy_id": "LIP_COLOR",
-            }
+            },
+            {
+                "product_id": PRODUCT_ID_2,
+                "product_display_name": "P6 Product 2",
+                "product_type": "lipstick",
+                "scene_strategy_id": "LIP_COLOR",
+            },
+            {
+                "product_id": PRODUCT_ID_3,
+                "product_display_name": "P6 Product 3",
+                "product_type": "lipstick",
+                "scene_strategy_id": "LIP_COLOR",
+            },
         ],
         matches_frozen_authority=True,
         p6_not_started=False,
@@ -141,7 +166,17 @@ async def p58_authority(monkeypatch):
                         product_id=PRODUCT_ID,
                         terminal_state="P6_READY",
                         scene_strategy_id="LIP_COLOR",
-                    )
+                    ),
+                    SimpleNamespace(
+                        product_id=PRODUCT_ID_2,
+                        terminal_state="P6_READY",
+                        scene_strategy_id="LIP_COLOR",
+                    ),
+                    SimpleNamespace(
+                        product_id=PRODUCT_ID_3,
+                        terminal_state="P6_READY",
+                        scene_strategy_id="LIP_COLOR",
+                    ),
                 ]
             )
         ),
@@ -194,6 +229,15 @@ async def test_plan_creation_is_idempotent_and_binds_frozen_cohort(p58_authority
 
 
 @pytest.mark.asyncio
+async def test_plan_refuses_product_outside_frozen_cohort(p58_authority):
+    body = _body("request-p6-outside-cohort-0001")
+    body.product_ids = ["outside-frozen-cohort"]
+    with pytest.raises(plans.CreativeProductionError) as error:
+        await plans.create_plan(body)
+    assert error.value.code == "PRODUCT_OUTSIDE_P58_COHORT"
+
+
+@pytest.mark.asyncio
 async def test_preflight_capacity_matrix_and_historical_dna(p58_authority):
     plan = await plans.create_plan(_body("request-p6-capacity-0001"))
     report = await plans.run_capacity_preflight(plan["plan_id"])
@@ -210,6 +254,52 @@ async def test_preflight_capacity_matrix_and_historical_dna(p58_authority):
     second_report = await plans.run_capacity_preflight(second["plan_id"])
     assert second_report.historical_exclusions == 2
     assert second_report.safe_capacity["VIDEO"] == 2
+
+
+@pytest.mark.asyncio
+async def test_explicit_multi_product_allocation_materializes_exact_counts(
+    p58_authority,
+):
+    body = ProductionPlanCreateRequest(
+        request_id="request-p6-allocation-0001",
+        operator_id="p6-test-operator",
+        name="P6 explicit allocation plan",
+        product_ids=[PRODUCT_ID, PRODUCT_ID_2, PRODUCT_ID_3],
+        product_video_allocations=[
+            ProductVideoAllocation(product_id=PRODUCT_ID, video_count=2),
+            ProductVideoAllocation(product_id=PRODUCT_ID_2, video_count=1),
+            ProductVideoAllocation(product_id=PRODUCT_ID_3, video_count=3),
+        ],
+        target_video_count=6,
+        logical_mode="T2V",
+        model_keys=["veo_3_1_lite"],
+        duration_seconds=[16],
+        pools=CreativePoolSelection(
+            copy_set_ids=[COPY_SET_ID, COPY_SET_ID_2, COPY_SET_ID_3],
+            avatar_codes=[AVATAR_CODE],
+        ),
+        controlled_reuse_reason="P6 exact allocation invariant test.",
+        controlled_reuse_max_per_dna=3,
+    )
+    plan = await plans.create_plan(body)
+    assert plan["pool_snapshot"]["product_video_allocations"] == [
+        {"product_id": PRODUCT_ID, "video_count": 2},
+        {"product_id": PRODUCT_ID_2, "video_count": 1},
+        {"product_id": PRODUCT_ID_3, "video_count": 3},
+    ]
+    report = await plans.run_capacity_preflight(plan["plan_id"])
+    assert report.status == "PREFLIGHT_READY"
+    assert report.assumptions["explicit_product_allocation"] is True
+    matrix = await plans.materialize_content_matrix(plan["plan_id"])
+    counts: dict[str, int] = {}
+    for item in matrix["items"]:
+        counts[item["product_id"]] = counts.get(item["product_id"], 0) + 1
+        dimensions = item["creative_dimensions"]
+        assert dimensions["generation_mode"] == "EXTEND"
+        assert dimensions["engine_block_duration_seconds"] == "8"
+        assert dimensions["segment_count"] == "2"
+        assert dimensions["execution_route"] == "VIDEO_JOBS_ORCHESTRATOR"
+    assert counts == {PRODUCT_ID: 2, PRODUCT_ID_2: 1, PRODUCT_ID_3: 3}
 
 
 @pytest.mark.asyncio
@@ -326,6 +416,92 @@ async def test_f2v_compile_preserves_frames_source_lane(
 
 
 @pytest.mark.asyncio
+async def test_extend_compile_creates_durable_video_job_plan_without_single_queue(
+    monkeypatch,
+):
+    execution_package = AsyncMock(
+        return_value={
+            "workspace_execution_package_id": "wep-p6-extend",
+            "execution_allowed": True,
+            "blockers": [],
+            "copy_binding": {"copy_set_id": COPY_SET_ID},
+        }
+    )
+    generation_package = AsyncMock(
+        return_value={
+            "workspace_generation_package_id": "wgp-p6-extend",
+            "workspace_execution_package_id": "wep-p6-extend",
+            "status": "READY_MANUAL",
+            "blockers_json": "[]",
+            "final_prompt_text": "Reviewed two-block Extend prompt.",
+            "prompt_fingerprint": "prompt-fp-p6-extend",
+        }
+    )
+    video_job_plan = AsyncMock(
+        return_value={
+            "job_id": "vj-p6-extend",
+            "plan_fingerprint": "plan-fp-p6-extend",
+            "reused": False,
+        }
+    )
+    monkeypatch.setattr(
+        compiler.wgp_service,
+        "_create_bulk_extend_execution_package",
+        execution_package,
+    )
+    monkeypatch.setattr(
+        compiler.wgp_service,
+        "create_t2v_generation_package",
+        generation_package,
+    )
+    from agent.api import flow as flow_api
+
+    monkeypatch.setattr(flow_api, "_plan_video_job", video_job_plan)
+
+    _, _, evidence = await compiler._compile_video(
+        {
+            "item_id": "p6item-extend",
+            "item_ordinal": 0,
+            "product_id": PRODUCT_ID,
+            "creative_dna_sha256": "dna-p6-extend",
+        },
+        {
+            "plan_id": "p6plan-extend",
+            "logical_mode": "T2V",
+            "execution_policy_json": '{"aspect":"9:16"}',
+        },
+        {
+            "duration_seconds": "16",
+            "engine_block_duration_seconds": "8",
+            "segment_count": "2",
+            "generation_mode": "EXTEND",
+            "execution_route": "VIDEO_JOBS_ORCHESTRATOR",
+            "model_key": "veo_3_1_lite",
+            "copy_set_id": COPY_SET_ID,
+            "avatar_code": AVATAR_CODE,
+        },
+    )
+
+    assert generation_package.await_args.kwargs["duration_seconds"] == 8
+    assert (
+        generation_package.await_args.kwargs[
+            "requested_total_duration_seconds"
+        ]
+        == 16
+    )
+    assert generation_package.await_args.kwargs[
+        "workspace_execution_package_id"
+    ] == "wep-p6-extend"
+    request = video_job_plan.await_args.args[0]
+    assert request.requested_total_duration_seconds == 16
+    assert request.client_request_nonce == "wgp-p6-extend"
+    assert video_job_plan.await_args.kwargs["trust_client_authority"] is False
+    assert evidence["generation_mode"] == "EXTEND"
+    assert evidence["video_job_id"] == "vj-p6-extend"
+    assert evidence["execution_route"] == "VIDEO_JOBS_ORCHESTRATOR"
+
+
+@pytest.mark.asyncio
 async def test_img_payload_preserves_compiler_and_resolves_flow_reference(
     monkeypatch,
 ):
@@ -365,6 +541,125 @@ async def test_img_payload_preserves_compiler_and_resolves_flow_reference(
     assert payload["prompt"] == "Governed IMG prompt."
     assert payload["image_media_ids"] == [flow_media_id]
     assert payload["image_model"] == "NANO_BANANA_PRO"
+
+
+@pytest.mark.asyncio
+async def test_extend_dry_run_payload_retains_route_blocks_and_video_job_identity(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        scheduler.crud,
+        "get_workspace_generation_package",
+        AsyncMock(
+            return_value={
+                "generation_mode": "EXTEND",
+                "workspace_execution_package_id": "wep-p6-extend",
+                "prompt_blocks_json": json.dumps(
+                    [
+                        {"duration_seconds": 8},
+                        {"duration_seconds": 8},
+                        {"duration_seconds": 8},
+                    ]
+                ),
+            }
+        ),
+    )
+    payload, blockers = await scheduler._build_item_payload(
+        {
+            "media_type": "VIDEO",
+            "logical_mode": "T2V",
+            "workspace_generation_package_id": "wgp-p6-extend",
+            "prompt_package_json": json.dumps(
+                {
+                    "generation_mode": "EXTEND",
+                    "video_job_id": "vj-p6-extend",
+                    "video_job_plan_fingerprint": "plan-fp-p6-extend",
+                    "requested_total_duration_seconds": 24,
+                    "engine_block_duration_seconds": 8,
+                }
+            ),
+            "creative_dimensions_json": json.dumps(
+                {
+                    "model_key": "veo_3_1_lite",
+                    "duration_seconds": 24,
+                }
+            ),
+        },
+        {},
+        aspect="9:16",
+    )
+    assert blockers == []
+    assert payload["execution_lane"] == "VIDEO_JOBS_ORCHESTRATOR"
+    assert payload["generation_mode"] == "EXTEND"
+    assert payload["requested_total_duration_seconds"] == 24
+    assert payload["engine_block_duration_seconds"] == 8
+    assert payload["segment_count"] == 3
+    assert payload["video_job_id"] == "vj-p6-extend"
+
+
+@pytest.mark.asyncio
+async def test_extend_dispatch_uses_existing_video_jobs_authority_not_single_door(
+    monkeypatch,
+):
+    attempt = {
+        "attempt_id": "attempt-p6-extend",
+        "item_id": "item-p6-extend",
+        "payload_snapshot_json": json.dumps(
+            {
+                "generation_mode": "EXTEND",
+                "workspace_generation_package_id": "wgp-p6-extend",
+                "model": "veo_3_1_lite",
+                "aspect": "9:16",
+            }
+        ),
+    }
+    monkeypatch.setattr(
+        scheduler,
+        "_acquire_item_lease",
+        AsyncMock(
+            return_value=(
+                {
+                    "lane_id": "google-flow-video-primary",
+                    "cooldown_seconds": 1,
+                },
+                {"lease_id": "lease-p6-extend"},
+            )
+        ),
+    )
+
+    async def update_attempt(attempt_id, **changes):
+        return {**attempt, **changes}
+
+    monkeypatch.setattr(scheduler.p6db, "update_attempt", update_attempt)
+    monkeypatch.setattr(scheduler.p6db, "update_item", AsyncMock())
+    monkeypatch.setattr(
+        scheduler.production_queue_service,
+        "_fire_extend_via_video_jobs",
+        AsyncMock(return_value={"ok": True, "job_id": "vj-p6-extend"}),
+    )
+    single_door = AsyncMock()
+    monkeypatch.setattr(scheduler.make_video, "start_generate", single_door)
+    from agent.services import video_production_orchestrator as video_jobs
+
+    monkeypatch.setattr(
+        video_jobs,
+        "get_job_status",
+        AsyncMock(return_value={"job_id": "vj-p6-extend", "status": "CREATED"}),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "_persist_provider_observation",
+        AsyncMock(side_effect=lambda current, _: current),
+    )
+
+    result = await scheduler._dispatch_attempt(
+        {"item_id": "item-p6-extend"},
+        attempt,
+        credit_confirmation="AUTHORIZE_P6_LIVE_CREDIT_SPEND",
+    )
+    assert result["provider_job_id"] == "vj-p6-extend"
+    scheduler.production_queue_service._fire_extend_via_video_jobs.assert_awaited_once()
+    single_door.assert_not_awaited()
 
 
 async def _approved_plan(monkeypatch) -> tuple[dict, dict]:

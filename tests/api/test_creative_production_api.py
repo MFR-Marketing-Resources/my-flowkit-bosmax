@@ -6,12 +6,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from agent.api import creative_production as api
 from agent.models.creative_production import (
     CreativePoolSelection,
     DryRunRequest,
     PlanActionRequest,
+    ProductVideoAllocation,
     ProductionPlanCreateRequest,
     StartPlanRequest,
 )
@@ -31,6 +33,73 @@ def _create_body() -> ProductionPlanCreateRequest:
             copy_set_ids=["copy-1"],
         ),
     )
+
+
+def test_create_contract_validates_explicit_allocation_and_governed_duration():
+    body = ProductionPlanCreateRequest(
+        request_id="api-create-extend-0001",
+        operator_id="api-owner",
+        name="API Extend plan",
+        product_ids=["product-1", "product-2"],
+        product_video_allocations=[
+            ProductVideoAllocation(product_id="product-1", video_count=2),
+            ProductVideoAllocation(product_id="product-2", video_count=1),
+        ],
+        target_video_count=3,
+        model_keys=["veo_3_1_lite"],
+        duration_seconds=[16, 24],
+        pools=CreativePoolSelection(copy_set_ids=["copy-1", "copy-2"]),
+    )
+    assert sum(
+        allocation.video_count for allocation in body.product_video_allocations
+    ) == body.target_video_count
+
+    with pytest.raises(ValidationError, match="must equal target_video_count"):
+        ProductionPlanCreateRequest(
+            request_id="api-create-invalid-allocation",
+            operator_id="api-owner",
+            name="Invalid allocation",
+            product_ids=["product-1"],
+            product_video_allocations=[
+                ProductVideoAllocation(product_id="product-1", video_count=2)
+            ],
+            target_video_count=1,
+            model_keys=["veo_3_1_lite"],
+            duration_seconds=[8],
+            pools=CreativePoolSelection(),
+        )
+
+    with pytest.raises(ValidationError, match="greater than or equal to 1"):
+        ProductVideoAllocation(product_id="product-1", video_count=0)
+
+
+def test_create_contract_keeps_omni_10_single_and_refuses_unproven_20s():
+    valid = ProductionPlanCreateRequest(
+        request_id="api-create-omni-0001",
+        operator_id="api-owner",
+        name="Omni single plan",
+        product_ids=["product-1"],
+        product_video_allocations=[
+            ProductVideoAllocation(product_id="product-1", video_count=1)
+        ],
+        target_video_count=1,
+        model_keys=["omni_flash"],
+        duration_seconds=[10],
+        pools=CreativePoolSelection(),
+    )
+    assert valid.duration_seconds == [10]
+
+    with pytest.raises(ValidationError, match="does not support 20s"):
+        ProductionPlanCreateRequest(
+            request_id="api-create-omni-0002",
+            operator_id="api-owner",
+            name="Invalid Omni Extend plan",
+            product_ids=["product-1"],
+            target_video_count=1,
+            model_keys=["omni_flash"],
+            duration_seconds=[20],
+            pools=CreativePoolSelection(),
+        )
 
 
 @pytest.mark.asyncio

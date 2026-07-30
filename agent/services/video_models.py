@@ -18,6 +18,8 @@ VIDEO_MODELS = {
         "agent_label": "Veo 3.1 - Lite",
         "default_duration_s": 8,
         "allowed_durations_s": [4, 6, 8],
+        "extend_block_duration_s": 8,
+        "extend_totals_s": [16, 24],
         "expected_cost_by_duration": {4: 10, 6: 10, 8: 10},
         "model_usage_aliases": ["lite"],  # matches veo_3_1_lite / veo_3_1_r2v_lite
     },
@@ -27,6 +29,8 @@ VIDEO_MODELS = {
         "agent_label": "Veo 3.1 - Fast",
         "default_duration_s": 8,
         "allowed_durations_s": [4, 6, 8],
+        "extend_block_duration_s": 8,
+        "extend_totals_s": [16, 24],
         "expected_cost_by_duration": {4: 20, 6: 20, 8: 20},
         "model_usage_aliases": ["fast"],
     },
@@ -36,6 +40,8 @@ VIDEO_MODELS = {
         "agent_label": "Veo 3.1 - Quality",
         "default_duration_s": 8,
         "allowed_durations_s": [8],
+        "extend_block_duration_s": 8,
+        "extend_totals_s": [16, 24],
         "expected_cost_by_duration": {8: 100},
         "model_usage_aliases": ["quality"],
     },
@@ -45,6 +51,10 @@ VIDEO_MODELS = {
         "agent_label": "Gemini Omni Flash",
         "default_duration_s": 10,
         "allowed_durations_s": [4, 6, 8, 10],
+        # No Omni multi-block contract has been runtime-proven. Keep 20s/30s
+        # absent until the durable planner and provider prove 10s blocks.
+        "extend_block_duration_s": None,
+        "extend_totals_s": [],
         "expected_cost_by_duration": {4: 15, 6: 20, 8: 25, 10: 30},
         # "abra" = Omni Flash's INTERNAL engine name in the fired tool args —
         # captured live 2026-07-02 (job g_385ad916534f fired abra_r2v_10s for an
@@ -87,6 +97,34 @@ def model_matches(model_used, model) -> bool:
     return any(a in mu for a in resolve(model)["model_usage_aliases"])
 
 
+def resolve_orchestration(model, duration_s: int) -> dict:
+    """Resolve one governed model-duration choice to its execution authority."""
+    spec = resolve(model)
+    duration = int(duration_s)
+    if duration in spec["allowed_durations_s"]:
+        return {
+            "generation_mode": "SINGLE",
+            "requested_total_duration_seconds": duration,
+            "engine_block_duration_seconds": duration,
+            "segment_count": 1,
+            "execution_route": "SINGLE_SHOT_QUEUE",
+        }
+    if duration in spec["extend_totals_s"]:
+        block = int(spec["extend_block_duration_s"])
+        return {
+            "generation_mode": "EXTEND",
+            "requested_total_duration_seconds": duration,
+            "engine_block_duration_seconds": block,
+            "segment_count": duration // block,
+            "execution_route": "VIDEO_JOBS_ORCHESTRATOR",
+        }
+    allowed = [*spec["allowed_durations_s"], *spec["extend_totals_s"]]
+    raise ValueError(
+        f"{spec['ui_label']} does not support {duration}s "
+        f"(governed choices: {allowed})"
+    )
+
+
 def public_list() -> list:
     """Registry shape for the dashboard dropdown (SSOT). `default_cost` is the CEILING/typical
     price (promo-variable), kept under this name for UI/test compatibility — NOT an exact value."""
@@ -96,6 +134,8 @@ def public_list() -> list:
             "ui_label": s["ui_label"],
             "default_duration_s": s["default_duration_s"],
             "allowed_durations_s": s["allowed_durations_s"],
+            "extend_block_duration_s": s["extend_block_duration_s"],
+            "extend_totals_s": s["extend_totals_s"],
             # ceiling/typical price (promo may be lower); kept as `default_cost` for compatibility
             "default_cost": s["expected_cost_by_duration"][s["default_duration_s"]],
         }
