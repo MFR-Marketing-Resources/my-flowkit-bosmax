@@ -122,6 +122,20 @@ domains:
       - tests/unit/test_creative_supply_delta.py
       - tests/unit/test_creative_supply_factory.py
       - tests/unit/test_creative_supply_migration.py
+      # P7.5 Creative Treatment and Choreography Mapping — bounded, review-gated
+      # video-treatment authority and P6 integration. EXTEND remains excluded.
+      - .ai/architecture/CREATIVE_TREATMENT_AND_CHOREOGRAPHY_MAPPING.md
+      - agent/models/creative_treatment.py
+      - agent/db/creative_treatment_crud.py
+      - agent/services/creative_treatment_service.py
+      - agent/api/creative_treatments.py
+      - tests/unit/test_creative_treatment_migration.py
+      - tests/unit/test_creative_treatment_service.py
+      - tests/api/test_creative_treatments_api.py
+      - tests/unit/test_creative_production_treatment_integration.py
+      - tests/unit/test_creative_treatment_prompt_compiler.py
+      - tests/unit/test_creative_treatment_rempah_pilot.py
+      - docs/evidence/p7-5-creative-treatment-rempah-pilot.md
       - agent/main.py
       - agent/models/creative_asset.py
       - agent/models/i2v_semantic_slot_resolver.py
