@@ -247,19 +247,42 @@ async def list_exceptions(
 
 # ── failed-generation reporting honesty ──────────────────────────────────────
 # A single all-time FAILED count reads as "N active incidents". It is not: most are
-# historical, and a large share are the ADR-007 dead DOM-clicking F2V lane (frozen,
-# delete-only, never repaired). This report adds honest time windows + error/mode
-# grouping and CLASSIFIES the dead-lane rows without deleting or rewriting any history.
-_DEAD_DOM_PREFIXES = ("ERR_F2V_", "ERR_CDP_FILE_CHOOSER")
-_DEAD_DOM_EXACT = ("ERR_FLOW_EDITOR_REQUIRED",)
+# historical. Some are the ADR-007 dead DOM-clicking F2V lane — but a matching error
+# PREFIX is not provenance. Only exact error codes that name a DOM UI element the frozen
+# lane drove are asserted "dead DOM". Codes that merely match a legacy pattern — including
+# CDP (which ADR-007 still permits as an upload transport) and generic F2V — are labelled
+# "provenance unverified", NOT dead DOM. No telemetry is deleted or rewritten.
+DEAD_DOM_LANE = "dead_dom_lane"
+LEGACY_UNVERIFIED = "legacy_pattern_provenance_unverified"
+OTHER = "other"
+
+# Provable frozen-lane codes: each names a DOM UI element the dead DOM-clicking lane drove.
+_PROVEN_DEAD_DOM_LANE = frozenset({
+    "ERR_F2V_OPTION_RATIO_9_16_NOT_FOUND",
+    "ERR_F2V_SETTINGS_PANEL_NOT_OPEN",
+    "ERR_F2V_START_BUTTON_NOT_FOUND",
+    "ERR_F2V_SOP_RUNNER_THREW",
+})
+# Loose legacy pattern — matched but NOT provable (upload/CDP/generic). Labelled unverified.
+_LEGACY_PATTERN_PREFIXES = ("ERR_F2V_", "ERR_CDP_FILE_CHOOSER")
+_LEGACY_PATTERN_EXACT = ("ERR_FLOW_EDITOR_REQUIRED",)
+
+
+def classify_error_provenance(error_code: Optional[str]) -> str:
+    """dead_dom_lane (provable) | legacy_pattern_provenance_unverified | other. Pure
+    classification — nothing is deleted or reactivated."""
+    if not error_code:
+        return OTHER
+    if error_code in _PROVEN_DEAD_DOM_LANE:
+        return DEAD_DOM_LANE
+    if error_code.startswith(_LEGACY_PATTERN_PREFIXES) or error_code in _LEGACY_PATTERN_EXACT:
+        return LEGACY_UNVERIFIED
+    return OTHER
 
 
 def is_dead_dom_lane_error(error_code: Optional[str]) -> bool:
-    """True if the error_code belongs to the ADR-007 dead DOM-clicking lane. Pure
-    classification — nothing is deleted or reactivated."""
-    if not error_code:
-        return False
-    return error_code.startswith(_DEAD_DOM_PREFIXES) or error_code in _DEAD_DOM_EXACT
+    """True only for PROVABLE frozen-lane codes (not loose-pattern matches)."""
+    return classify_error_provenance(error_code) == DEAD_DOM_LANE
 
 
 async def failed_generation_report() -> dict:
@@ -271,9 +294,12 @@ async def failed_generation_report() -> dict:
 
     windows = {}
     for label, days in (("last_24h", 1), ("last_7d", 7), ("last_30d", 30)):
+        # count by WHEN it failed (failed_at), falling back to created_at when NULL —
+        # consistent with the drill-down ordering and the existing telemetry contract.
         windows[label] = await _scalar(
             db,
-            "SELECT COUNT(*) FROM request_telemetry WHERE status='FAILED' AND created_at >= ?",
+            "SELECT COUNT(*) FROM request_telemetry WHERE status='FAILED' "
+            "AND COALESCE(failed_at, created_at) >= ?",
             [_cut(days)],
         )
     windows["all_time"] = await _scalar(
@@ -284,7 +310,10 @@ async def failed_generation_report() -> dict:
         "SELECT COUNT(DISTINCT product_id) FROM request_telemetry WHERE status='FAILED' AND product_id IS NOT NULL",
         [],
     )
-    cur = await db.execute("SELECT MIN(created_at) mn, MAX(created_at) mx FROM request_telemetry WHERE status='FAILED'")
+    cur = await db.execute(
+        "SELECT MIN(COALESCE(failed_at, created_at)) mn, MAX(COALESCE(failed_at, created_at)) mx "
+        "FROM request_telemetry WHERE status='FAILED'"
+    )
     span_row = await cur.fetchone()
     await cur.close()
 
@@ -293,14 +322,13 @@ async def failed_generation_report() -> dict:
         "FROM request_telemetry WHERE status='FAILED' GROUP BY ec ORDER BY n DESC"
     )
     by_error_code = []
-    dead = 0
+    counts = {DEAD_DOM_LANE: 0, LEGACY_UNVERIFIED: 0, OTHER: 0}
     for r in await cur.fetchall():
         ec = r["ec"]
         n = int(r["n"])
-        d = is_dead_dom_lane_error(None if ec == "(none)" else ec)
-        if d:
-            dead += n
-        by_error_code.append({"error_code": ec, "count": n, "dead_dom_lane": d})
+        cls = classify_error_provenance(None if ec == "(none)" else ec)
+        counts[cls] += n
+        by_error_code.append({"error_code": ec, "count": n, "classification": cls})
     await cur.close()
 
     cur = await db.execute(
@@ -314,14 +342,16 @@ async def failed_generation_report() -> dict:
         "windows": windows,
         "window_labels": {"last_24h": "last 24h", "last_7d": "last 7d",
                           "last_30d": "last 30d", "all_time": "all-time (historical)"},
+        "windows_counted_by": "COALESCE(failed_at, created_at)",
         "distinct_products_all_time": distinct_products,
         "time_span": {"min": span_row["mn"], "max": span_row["mx"]},
-        "dead_dom_lane_count": dead,
-        "non_dead_lane_count": windows["all_time"] - dead,
-        "dead_dom_lane_note": (
-            "ADR-007: the DOM-clicking F2V lane is dead/frozen (delete-only). "
-            "These rows are historical archaeology, NOT active incidents — classified, "
-            "never deleted or rewritten."
+        "dead_dom_lane_count": counts[DEAD_DOM_LANE],
+        "provenance_unverified_count": counts[LEGACY_UNVERIFIED],
+        "other_count": counts[OTHER],
+        "classification_note": (
+            "Only exact frozen-lane DOM-UI error codes are labelled dead DOM. Legacy-pattern "
+            "codes without provable provenance (incl. CDP, an ADR-007-permitted upload "
+            "transport) are 'provenance unverified', not asserted dead. No telemetry deleted."
         ),
         "by_error_code": by_error_code,
         "by_mode": by_mode,

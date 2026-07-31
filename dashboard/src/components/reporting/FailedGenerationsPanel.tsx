@@ -38,11 +38,13 @@ export function FailedGenerationsPanel({ report, loading, error }: FailedGenerat
 
 			<p className="text-[11px] leading-relaxed text-slate-500">
 				All-time is <span className="text-slate-300">cumulative history</span>, not active
-				incidents. Of {report.windows.all_time.toLocaleString()} all-time failures,{" "}
-				<span className="text-slate-300">{report.dead_dom_lane_count.toLocaleString()}</span> are
-				the <span className="text-slate-400">ADR-007 dead DOM-lane</span> (archaeology, never
-				repaired) and {report.non_dead_lane_count.toLocaleString()} are other; they span{" "}
-				{report.distinct_products_all_time} products.
+				incidents. Of {report.windows.all_time.toLocaleString()}:{" "}
+				<span className="text-slate-300">{report.dead_dom_lane_count.toLocaleString()}</span>{" "}
+				provable <span className="text-slate-400">ADR-007 dead DOM-lane</span>,{" "}
+				{report.provenance_unverified_count.toLocaleString()} legacy-pattern (provenance
+				unverified — not asserted dead), {report.other_count.toLocaleString()} other; across{" "}
+				{report.distinct_products_all_time} products. Windows counted by{" "}
+				<span className="font-mono">{report.windows_counted_by}</span>.
 			</p>
 
 			<div>
@@ -53,7 +55,10 @@ export function FailedGenerationsPanel({ report, loading, error }: FailedGenerat
 					{report.by_error_code.slice(0, 8).map((e) => (
 						<div key={e.error_code} className="flex items-center justify-between gap-2 text-xs">
 							<span className="min-w-0 flex-1 truncate font-mono text-slate-300">{e.error_code}</span>
-							{e.dead_dom_lane && <Badge tone="neutral">legacy DOM</Badge>}
+							{e.classification === "dead_dom_lane" && <Badge tone="neutral">dead DOM</Badge>}
+							{e.classification === "legacy_pattern_provenance_unverified" && (
+								<Badge tone="warn">unverified</Badge>
+							)}
 							<span className="tabular-nums text-slate-400">{e.count}</span>
 						</div>
 					))}
