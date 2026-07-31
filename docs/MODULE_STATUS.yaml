@@ -1040,4 +1040,9 @@ domains:
       # POST /api/products/{id}/cache-image endpoint; recovers the REAL marketplace image
       # only, never generates or substitutes one, and never changes lifecycle.
       - scripts/mission07_archived_image_recovery.py
+      # Mission-07G: bounded correction of the MANUAL_OVERRIDE strategy bindings the
+      # governed backfill deliberately preserves. Applies only where the CURRENT derived
+      # binding differs from stored AND the target registry pair is ACTIVE + COVERED, then
+      # holds the row REVIEW_REQUIRED because a changed binding is a human decision.
+      - scripts/mission07g_scene_binding_closure.py
       - data/products/product_mapping_rules.json

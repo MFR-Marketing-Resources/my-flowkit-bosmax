@@ -926,6 +926,35 @@ P58_PRODUCT_TRUTH_OVERRIDES = {
     "0d58bd3c-b1f9-49d0-a83b-0165fc821bfa": _p07g_mapping(
         "pet_care", "pet_cage_accessory", "Pet Cage Accessory", "PET_CAGE_ACCESSORY"
     ),
+    # ── Mission-07G round 3: two products stuck on the beauty generic-fallback pair ──
+    # Both carry category "Beauty" with NO subcategory/type, so they fell to
+    # beauty_personal_care_other -> GENERIC_FALLBACK -> PARTIAL coverage. Their titles
+    # name the product class unambiguously, and both target pairs already exist
+    # ACTIVE + COVERED in the registry, so no new authority is created here.
+    # "INAIYA EASY HERBAL HAIR COLOUR 400ml | Tutup Uban Cepat" -> hair colour.
+    "canonical-inaiya-hair-colour": _p07g_mapping(
+        "beauty_personal_care", "hair_color", "Hair Color", "HAIR_COLOR"
+    ),
+    # "BeFocusPro+ Bantu Tidur Lena, Lebih Bertenaga & Kekal Fokus" -> an ingestible
+    # sleep/focus supplement, which belongs to the sensitive_wellness claim regime rather
+    # than generic beauty; WELLNESS_SUPPLEMENT keeps its stricter claim handling.
+    "cc69a4ae-4ab5-4c7c-93e1-87eb796eeed1": _p07g_mapping(
+        "sensitive_wellness", "wellness_supplement", "Wellness Supplement",
+        "WELLNESS_SUPPLEMENT"
+    ),
+    # "6pcs Combo Herbal Cream BTFL Organic Yellow Cream". Title states a form but no
+    # function, and both truth fields are empty, so it also sat on the beauty fallback.
+    # The packaging resolves it: 百肤灵 草本乳膏 / BAIFULING CAOBENRUGAO, a 15g herbal
+    # cream marked 外 (external use) from a pharmaceutical manufacturer. That is a
+    # traditional herbal preparation by its own label, and SENSITIVE_WELLNESS is the
+    # claim-suppressing scene grammar such a product must run under. The canonical pair
+    # is clustered under sensitive_wellness, not beauty_personal_care, so no new registry
+    # authority is created. Binding it does NOT release it: it stays REVIEW_REQUIRED with
+    # no approved Product Truth.
+    "8e75f1a8-ba43-444e-8b40-c71d140c76c5": _p07g_mapping(
+        "sensitive_wellness", "traditional_herbal_preparation",
+        "Traditional Herbal Preparation", "SENSITIVE_WELLNESS"
+    ),
     "b4b0f581-f1aa-4677-beaa-54268199c377": _p58_mapping(
         "home_textiles", "bedding", "Bedding", "BEDDING"
     ),
