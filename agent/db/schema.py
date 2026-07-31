@@ -3378,6 +3378,74 @@ INSERT OR IGNORE INTO creative_execution_lane (
     'runtime proof required before live assignment'
 );
 """)
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS product_treatment_factory_plan (
+    plan_id                    TEXT PRIMARY KEY,
+    plan_identity_sha256       TEXT NOT NULL UNIQUE CHECK(length(plan_identity_sha256)=64),
+    cohort_sha256              TEXT NOT NULL CHECK(length(cohort_sha256)=64),
+    context_sha256             TEXT NOT NULL CHECK(length(context_sha256)=64),
+    status                     TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','SCANNED','PREPARING','PAUSED','COMPLETED','COMPLETED_WITH_BLOCKERS','FAILED')),
+    product_count              INTEGER NOT NULL CHECK(product_count >= 1),
+    request_json               TEXT NOT NULL,
+    authority_versions_json    TEXT NOT NULL,
+    readiness_summary_json     TEXT NOT NULL DEFAULT '{}',
+    capacity_summary_json      TEXT NOT NULL DEFAULT '{}',
+    failure_count              INTEGER NOT NULL DEFAULT 0 CHECK(failure_count >= 0),
+    provider_calls_enabled     INTEGER NOT NULL DEFAULT 0 CHECK(provider_calls_enabled=0),
+    media_generation_enabled   INTEGER NOT NULL DEFAULT 0 CHECK(media_generation_enabled=0),
+    created_by                 TEXT NOT NULL,
+    pause_reason               TEXT,
+    created_at                 TEXT NOT NULL,
+    scanned_at                 TEXT,
+    preparation_started_at     TEXT,
+    completed_at               TEXT,
+    updated_at                 TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS product_treatment_factory_task (
+    task_id                    TEXT PRIMARY KEY,
+    plan_id                    TEXT NOT NULL REFERENCES product_treatment_factory_plan(plan_id) ON DELETE CASCADE,
+    product_id                 TEXT NOT NULL,
+    task_type                  TEXT NOT NULL CHECK(task_type IN ('PRODUCT_TRUTH_REVIEW','EVIDENCE_REVIEW','COPY_GROUNDING','COPY_COMPOSITION','COPY_REVIEW','CREATIVE_SELECTION','ASSET_SUPPLY','TREATMENT_CANDIDATE','TREATMENT_REVIEW','P6_CAPACITY')),
+    status                     TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING','READY','RUNNING','REVIEW_REQUIRED','SATISFIED','PAUSED','FAILED','SUPERSEDED')),
+    task_identity_sha256       TEXT NOT NULL UNIQUE CHECK(length(task_identity_sha256)=64),
+    required_authority_sha256  TEXT NOT NULL CHECK(length(required_authority_sha256)=64),
+    blocker_code               TEXT,
+    next_action                TEXT,
+    template_id                TEXT,
+    template_sha256            TEXT CHECK(template_sha256 IS NULL OR length(template_sha256)=64),
+    treatment_id               TEXT,
+    treatment_sha256           TEXT CHECK(treatment_sha256 IS NULL OR length(treatment_sha256)=64),
+    snapshot_json              TEXT NOT NULL DEFAULT '{}',
+    result_json                TEXT NOT NULL DEFAULT '{}',
+    error_code                 TEXT,
+    attempt_count              INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+    created_at                 TEXT NOT NULL,
+    started_at                 TEXT,
+    satisfied_at               TEXT,
+    superseded_at              TEXT,
+    updated_at                 TEXT NOT NULL,
+    UNIQUE(plan_id, product_id, task_type, required_authority_sha256)
+);
+
+CREATE TABLE IF NOT EXISTS product_treatment_factory_event (
+    event_id                   TEXT PRIMARY KEY,
+    plan_id                    TEXT NOT NULL REFERENCES product_treatment_factory_plan(plan_id) ON DELETE CASCADE,
+    task_id                    TEXT REFERENCES product_treatment_factory_task(task_id) ON DELETE SET NULL,
+    event_identity_sha256      TEXT NOT NULL UNIQUE CHECK(length(event_identity_sha256)=64),
+    actor_id                   TEXT NOT NULL,
+    action                     TEXT NOT NULL,
+    source_state               TEXT,
+    target_state               TEXT,
+    evidence_json              TEXT NOT NULL DEFAULT '{}',
+    created_at                 TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_treatment_factory_plan_status ON product_treatment_factory_plan(status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_product_treatment_factory_task_plan_status ON product_treatment_factory_task(plan_id, status, product_id);
+CREATE INDEX IF NOT EXISTS idx_product_treatment_factory_task_product_type ON product_treatment_factory_task(product_id, task_type, status);
+CREATE INDEX IF NOT EXISTS idx_product_treatment_factory_event_plan ON product_treatment_factory_event(plan_id, created_at);
+""")
         plan_cursor = await db.execute(
             "PRAGMA table_info(creative_production_plan)"
         )

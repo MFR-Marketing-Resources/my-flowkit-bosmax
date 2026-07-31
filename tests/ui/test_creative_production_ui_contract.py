@@ -102,3 +102,61 @@ def test_plan_state_is_explicit_and_canonical_data_is_not_reconstructed():
     assert "plans[0]" not in page
     assert "Math.floor" not in page
     assert "product_scope.map" not in page
+
+
+def test_universal_factory_is_embedded_in_the_existing_production_studio():
+    page = _read("dashboard/src/pages/CreativeProductionStudioPage.tsx")
+    panel = _read(
+        "dashboard/src/components/production-studio/"
+        "ProductTreatmentFactoryPanel.tsx"
+    )
+    assert "ProductTreatmentFactoryPanel" in page
+    assert "<ProductTreatmentFactoryPanel />" in page
+    assert 'id="product-treatment-factory"' in panel
+    assert 'href="/production-studio#product-treatment-factory"' in panel
+    assert "/product-treatment-factory" not in _read("dashboard/src/App.tsx")
+
+
+def test_factory_operator_surface_preserves_zero_credit_and_review_authority():
+    client = _read("dashboard/src/api/productTreatmentFactory.ts")
+    panel = _read(
+        "dashboard/src/components/production-studio/"
+        "ProductTreatmentFactoryPanel.tsx"
+    )
+    for endpoint in ("plans", "prepare", "pause", "resume"):
+        assert endpoint in client
+    assert "provider_calls_enabled: false" in panel
+    assert "media_generation_enabled: false" in panel
+    assert "Credit spend:" in panel
+    assert "never approves authority" in panel
+    assert "never dispatches generation" in panel
+    assert "AUTHORIZE_P6_LIVE_CREDIT_SPEND" not in panel
+
+
+def test_factory_operator_surface_exposes_complete_snapshot_truth():
+    panel = _read(
+        "dashboard/src/components/production-studio/"
+        "ProductTreatmentFactoryPanel.tsx"
+    )
+    for contract in (
+        "ptf-loading-state",
+        "ptf-empty-state",
+        "ptf-error-state",
+        "ptf-blocked-state",
+        "ptf-success-state",
+        "All active canonical products",
+        "Explicit product IDs",
+        "Filter factory taxonomy",
+        "Filter factory readiness",
+        "Filter factory next action",
+        "Evidence applicability and provenance",
+        "Copy and Treatment authority",
+        "Action, format and visual authority",
+        "Wardrobe",
+        "Background / scene",
+        "Eligible assets by role",
+        "Per-product task isolation",
+        "Plan hash",
+        "Template → Treatment lineage",
+    ):
+        assert contract in panel

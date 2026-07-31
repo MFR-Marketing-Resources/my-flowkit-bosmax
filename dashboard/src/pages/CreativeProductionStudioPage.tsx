@@ -52,6 +52,7 @@ import {
 import { fetchVideoModels, type VideoModelInfo } from "../api/productionQueue";
 import CreativeSupplyFactoryPanel from "../components/CreativeSupplyFactoryPanel";
 import ProductAllocationPicker from "../components/production-studio/ProductAllocationPicker";
+import ProductTreatmentFactoryPanel from "../components/production-studio/ProductTreatmentFactoryPanel";
 
 const splitValues = (value: string) =>
 	value
@@ -1092,6 +1093,8 @@ export default function CreativeProductionStudioPage() {
 					<CreativeSupplyFactoryPanel />
 				</div>
 			</details>
+
+			<ProductTreatmentFactoryPanel />
 
 			{error && (
 				<div

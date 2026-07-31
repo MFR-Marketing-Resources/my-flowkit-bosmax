@@ -89,6 +89,7 @@ from agent.services.ai_provider_settings_service import apply_runtime_provider_e
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 from agent.api.product_readiness import router as product_readiness_router
+from agent.api.product_treatment_factory import router as product_treatment_factory_router
 logger = logging.getLogger(__name__)
 
 
@@ -328,6 +329,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Flow Kit", version="0.2.0", lifespan=lifespan)
+app.include_router(product_treatment_factory_router, prefix="/api")
 app.include_router(product_readiness_router, prefix="/api")
 
 app.add_middleware(

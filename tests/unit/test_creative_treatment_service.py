@@ -225,6 +225,40 @@ def _request(
     )
 
 
+def test_empty_asset_bindings_require_an_empty_compatibility_role_set() -> None:
+    payload = _request().model_dump(mode="json")
+    payload["asset_bindings"] = []
+
+    with pytest.raises(
+        ValueError,
+        match="ASSET_BINDINGS_REQUIRED_BY_COMPATIBILITY_PROFILE",
+    ):
+        CreateTreatmentRequest.model_validate(payload)
+
+
+@pytest.mark.asyncio
+async def test_t2v_treatment_allows_zero_asset_bindings_when_no_roles_are_required(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _seed_authority(monkeypatch)
+    payload = _request().model_dump(mode="json")
+    payload["compatibility_profile"] = {
+        "logical_mode": "T2V",
+        "source_mode": "T2V",
+        "model_keys": ["veo_3_1"],
+        "required_asset_roles": [],
+    }
+    payload["asset_bindings"] = []
+
+    created = await service.create_treatment(
+        CreateTreatmentRequest.model_validate(payload)
+    )
+
+    assert created["compatibility_profile"]["logical_mode"] == "T2V"
+    assert created["compatibility_profile"]["required_asset_roles"] == []
+    assert created["asset_bindings"] == []
+
+
 def _extend_request(duration_seconds: int) -> CreateTreatmentRequest:
     segment_count = duration_seconds // 8
     allowed_actions = SCENE_STRATEGIES["SPICE_SEASONING"]["allowed_actions"]

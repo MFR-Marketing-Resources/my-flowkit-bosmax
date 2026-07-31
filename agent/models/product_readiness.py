@@ -12,7 +12,7 @@ EvidenceState = Literal[
     "UNKNOWN_REVIEW_REQUIRED",
 ]
 PrimaryReadinessStatus = Literal[
-    "TREATMENT_READY",
+    "READY",
     "REVIEW_REQUIRED",
     "EVIDENCE_REQUIRED",
     "ASSET_REQUIRED",
