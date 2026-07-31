@@ -7,7 +7,8 @@ import {
 	useReportingFilters,
 	asFilters,
 } from "../components/reporting/ReportingFilterContext";
-import { useExceptions, type ExceptionKind } from "../api/reporting";
+import { useExceptions, useFailedGenerations, type ExceptionKind } from "../api/reporting";
+import { FailedGenerationsPanel } from "../components/reporting/FailedGenerationsPanel";
 
 // Operational Intelligence — exception-first. Show what's broken, count it, and drill
 // into the exact product list. Every exception widget owns its own fetch.
@@ -20,7 +21,7 @@ const KIND_META: { kind: ExceptionKind; label: string; tone: KpiTone }[] = [
 	{ kind: "missing_product_type", label: "Missing product type", tone: "warn" },
 	{ kind: "mapping_blocked", label: "Mapping blocked", tone: "danger" },
 	{ kind: "prompt_not_ready", label: "Prompt not ready", tone: "info" },
-	{ kind: "failed_generation", label: "Failed generations", tone: "danger" },
+	{ kind: "failed_generation", label: "Failed gen (all-time historical)", tone: "danger" },
 ];
 
 function LifecycleToggle() {
@@ -76,6 +77,7 @@ function OperationsInner() {
 	const f = useReportingFilters();
 	const [selected, setSelected] = useState<ExceptionKind>("missing_copy");
 	const table = useExceptions(selected, asFilters(f));
+	const failed = useFailedGenerations();
 	const selectedLabel =
 		KIND_META.find((m) => m.kind === selected)?.label ?? selected;
 
@@ -106,6 +108,17 @@ function OperationsInner() {
 					/>
 				))}
 			</div>
+
+			<Section
+				title="Failed generations — honest time windows"
+				helper="All-time is cumulative history, not active incidents; ADR-007 dead DOM-lane failures are flagged, never deleted."
+			>
+				<FailedGenerationsPanel
+					report={failed.data}
+					loading={failed.loading}
+					error={failed.error}
+				/>
+			</Section>
 
 			<Section
 				title={selectedLabel}
