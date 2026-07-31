@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -36,20 +36,13 @@ QUERIES: dict[str, str] = {
     "missing_copy_by_mapping_status": f"SELECT COALESCE(mapping_status,'(null)') k, COUNT(*) n FROM product p WHERE {ACTIVE} AND NOT EXISTS(SELECT 1 FROM copy_set c WHERE c.product_id=p.id AND COALESCE(c.archived,0)=0) GROUP BY mapping_status ORDER BY n DESC",
     "missing_copy_with_intel_snapshot": f"SELECT COUNT(*) FROM product p WHERE {ACTIVE} AND NOT EXISTS(SELECT 1 FROM copy_set c WHERE c.product_id=p.id AND COALESCE(c.archived,0)=0) AND EXISTS(SELECT 1 FROM product_intelligence_snapshot s WHERE s.product_id=p.id)",
     "missing_intel_active": f"SELECT COUNT(*) FROM product p WHERE {ACTIVE} AND NOT EXISTS(SELECT 1 FROM product_intelligence_snapshot s WHERE s.product_id=p.id)",
-    "failed_total": "SELECT COUNT(*) FROM request_telemetry WHERE status='FAILED'",
-    "failed_distinct_products": "SELECT COUNT(DISTINCT product_id) FROM request_telemetry WHERE status='FAILED' AND product_id IS NOT NULL",
-    "failed_time_span": "SELECT MIN(created_at), MAX(created_at) FROM request_telemetry WHERE status='FAILED'",
-    "failed_by_error_code": "SELECT COALESCE(error_code,'(null)') k, COUNT(*) n FROM request_telemetry WHERE status='FAILED' GROUP BY error_code ORDER BY n DESC",
-    "failed_by_mode": "SELECT COALESCE(mode,'(null)') k, COUNT(*) n FROM request_telemetry WHERE status='FAILED' GROUP BY mode ORDER BY n DESC",
     "active_by_source": f"SELECT COALESCE(source,'(null)') k, COUNT(*) n FROM product WHERE {ACTIVE} GROUP BY source ORDER BY n DESC",
 }
+# NOTE: failed-generation telemetry / dead-DOM classification is intentionally NOT in this
+# mapping audit — it belongs to the failed-generation reporting PR (separate concern).
 
 # Tables this workstream could theoretically mutate — content-hashed for a no-write proof.
 INTEGRITY_TABLES = ["product", "product_strategy_taxonomy", "request_telemetry"]
-
-# ADR-007 dead DOM-lane error markers (archaeology; delete-only, never repaired).
-DEAD_DOM_PREFIX = "ERR_F2V_"
-DEAD_DOM_EXTRA = ("ERR_CDP_FILE_CHOOSER", "ERR_FLOW_EDITOR_REQUIRED")
 
 
 def _fetch(cur, sql):
@@ -78,27 +71,6 @@ def main():
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     audit = {label: {"sql": sql, "result": _fetch(cur, sql)} for label, sql in QUERIES.items()}
-
-    # derive the honest failed-generation classification (dead-DOM vs other)
-    fbe = audit["failed_by_error_code"]["result"]
-    dead = sum(e["count"] for e in fbe if e["key"].startswith(DEAD_DOM_PREFIX) or e["key"].startswith(DEAD_DOM_EXTRA))
-    total_failed = audit["failed_total"]["result"]
-    audit["_derived_failed_classification"] = {
-        "note": "ADR-007 dead DOM-lane failures are archaeology, not active incidents.",
-        "dead_dom_lane_failed": dead,
-        "other_or_null_failed": total_failed - dead,
-        "total_failed": total_failed,
-    }
-
-    # Honest time windows (relative to audit run time) — a single all-time count
-    # misrepresents historical failures as active incidents.
-    now = datetime.now(timezone.utc)
-    for label, days in (("failed_last_24h", 1), ("failed_last_7d", 7), ("failed_last_30d", 30)):
-        cut = (now - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        sql = "SELECT COUNT(*) FROM request_telemetry WHERE status='FAILED' AND created_at>=?"
-        audit[label] = {"sql": sql.replace("?", f"'{cut}'"),
-                        "result": cur.execute(sql, (cut,)).fetchone()[0]}
-    audit["failed_all_time"] = {"sql": QUERIES["failed_total"], "result": total_failed}
 
     (OUT / "audit.json").write_text(
         json.dumps({"mission": "BOSMAX-MAPPING-TELEMETRY-CLOSURE-01",

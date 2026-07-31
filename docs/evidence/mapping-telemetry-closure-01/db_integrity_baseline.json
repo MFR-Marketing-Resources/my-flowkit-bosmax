@@ -1,6 +1,6 @@
 {
   "mission": "BOSMAX-MAPPING-TELEMETRY-CLOSURE-01",
-  "generated_at_utc": "2026-07-31T09:57:23Z",
+  "generated_at_utc": "2026-07-31T10:49:06Z",
   "db_file": "flow_agent.db",
   "purpose": "no-write proof \u2014 re-run after any work; hashes must be identical",
   "tables": {
