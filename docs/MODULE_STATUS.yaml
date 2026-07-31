@@ -138,6 +138,32 @@ domains:
       - tests/unit/test_creative_treatment_rempah_pilot.py
       - docs/evidence/p7-5-creative-treatment-rempah-pilot.md
       - docs/evidence/p7-5-p6-integration-closure.md
+      # Universal Product Readiness and Treatment Factory — deterministic,
+      # review-gated catalog preparation upstream of P7.5 and P6.
+      - .ai/architecture/UNIVERSAL_PRODUCT_READINESS_AND_TREATMENT_FACTORY.md
+      - agent/models/product_readiness.py
+      - agent/authority/product_readiness_applicability_registry.py
+      - agent/services/product_readiness_applicability_service.py
+      - agent/api/product_readiness.py
+      - tests/unit/test_product_readiness_applicability_service.py
+      - tests/api/test_product_readiness_api.py
+      - agent/models/product_treatment_factory.py
+      - agent/db/product_treatment_factory_crud.py
+      - agent/services/product_treatment_template_service.py
+      - agent/services/product_treatment_factory_service.py
+      - agent/api/product_treatment_factory.py
+      - scripts/universal-product-treatment-factory-rehearsal.py
+      - tests/unit/test_product_treatment_factory_migration.py
+      - tests/unit/test_product_treatment_template_service.py
+      - tests/unit/test_product_treatment_factory_service.py
+      - tests/unit/test_universal_product_treatment_factory_rehearsal.py
+      - tests/api/test_product_treatment_factory_api.py
+      - dashboard/src/api/productTreatmentFactory.ts
+      - dashboard/src/components/production-studio/ProductTreatmentFactoryPanel.tsx
+      - dashboard/src/components/production-studio/ProductTreatmentFactoryPanel.test.tsx
+      - docs/evidence/universal-product-treatment-factory-activation.md
+      - docs/evidence/universal-product-treatment-factory-catalog.json
+      - docs/evidence/universal-product-treatment-factory-scale-proof.json
       - agent/main.py
       - agent/models/creative_asset.py
       - agent/models/i2v_semantic_slot_resolver.py
