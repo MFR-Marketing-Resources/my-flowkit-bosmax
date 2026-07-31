@@ -1,0 +1,20 @@
+{
+  "mission": "BOSMAX-MAPPING-TELEMETRY-CLOSURE-01",
+  "generated_at_utc": "2026-07-31T09:57:23Z",
+  "db_file": "flow_agent.db",
+  "purpose": "no-write proof \u2014 re-run after any work; hashes must be identical",
+  "tables": {
+    "product": {
+      "row_count": 659,
+      "sha256": "ec799e446eb4537e9f7cca7ea30de60117013c432c94cf5f7e5f25c727461995"
+    },
+    "product_strategy_taxonomy": {
+      "row_count": 659,
+      "sha256": "da608e5ea1cb0b3efe519d40523c4190bc1a418d3377c1de40413c63c8ec7ecd"
+    },
+    "request_telemetry": {
+      "row_count": 520,
+      "sha256": "7315fbf3dadf0cd20c4adeaac75d4fbb85e45787abca5628cfd81200f1226be0"
+    }
+  }
+}

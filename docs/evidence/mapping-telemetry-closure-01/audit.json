@@ -1,0 +1,376 @@
+{
+  "mission": "BOSMAX-MAPPING-TELEMETRY-CLOSURE-01",
+  "generated_at_utc": "2026-07-31T09:57:23Z",
+  "db_file": "flow_agent.db",
+  "audit": {
+    "active_total": {
+      "sql": "SELECT COUNT(*) FROM product WHERE lifecycle_status='ACTIVE'",
+      "result": 443
+    },
+    "mapping_status_distribution_all": {
+      "sql": "SELECT COALESCE(mapping_status,'(null)') k, COUNT(*) n FROM product GROUP BY mapping_status ORDER BY n DESC",
+      "result": [
+        {
+          "key": "(null)",
+          "count": 290
+        },
+        {
+          "key": "APPROVED",
+          "count": 241
+        },
+        {
+          "key": "READY",
+          "count": 115
+        },
+        {
+          "key": "BLOCKED",
+          "count": 13
+        }
+      ]
+    },
+    "mapping_status_distribution_active": {
+      "sql": "SELECT COALESCE(mapping_status,'(null)') k, COUNT(*) n FROM product WHERE lifecycle_status='ACTIVE' GROUP BY mapping_status ORDER BY n DESC",
+      "result": [
+        {
+          "key": "(null)",
+          "count": 285
+        },
+        {
+          "key": "READY",
+          "count": 110
+        },
+        {
+          "key": "APPROVED",
+          "count": 38
+        },
+        {
+          "key": "BLOCKED",
+          "count": 10
+        }
+      ]
+    },
+    "active_mapping_null": {
+      "sql": "SELECT COUNT(*) FROM product WHERE lifecycle_status='ACTIVE' AND mapping_status IS NULL",
+      "result": 285
+    },
+    "active_mapping_blocked": {
+      "sql": "SELECT COUNT(*) FROM product WHERE lifecycle_status='ACTIVE' AND mapping_status='BLOCKED'",
+      "result": 10
+    },
+    "active_prompt_missing_fields": {
+      "sql": "SELECT COUNT(*) FROM product WHERE lifecycle_status='ACTIVE' AND prompt_readiness_status='MISSING_FIELDS'",
+      "result": 10
+    },
+    "overlap_blocked_and_prompt_missing": {
+      "sql": "SELECT COUNT(*) FROM product WHERE lifecycle_status='ACTIVE' AND mapping_status='BLOCKED' AND prompt_readiness_status='MISSING_FIELDS'",
+      "result": 10
+    },
+    "missing_copy_active": {
+      "sql": "SELECT COUNT(*) FROM product p WHERE lifecycle_status='ACTIVE' AND NOT EXISTS(SELECT 1 FROM copy_set c WHERE c.product_id=p.id AND COALESCE(c.archived,0)=0)",
+      "result": 430
+    },
+    "missing_copy_by_mapping_status": {
+      "sql": "SELECT COALESCE(mapping_status,'(null)') k, COUNT(*) n FROM product p WHERE lifecycle_status='ACTIVE' AND NOT EXISTS(SELECT 1 FROM copy_set c WHERE c.product_id=p.id AND COALESCE(c.archived,0)=0) GROUP BY mapping_status ORDER BY n DESC",
+      "result": [
+        {
+          "key": "(null)",
+          "count": 279
+        },
+        {
+          "key": "READY",
+          "count": 105
+        },
+        {
+          "key": "APPROVED",
+          "count": 36
+        },
+        {
+          "key": "BLOCKED",
+          "count": 10
+        }
+      ]
+    },
+    "missing_copy_with_intel_snapshot": {
+      "sql": "SELECT COUNT(*) FROM product p WHERE lifecycle_status='ACTIVE' AND NOT EXISTS(SELECT 1 FROM copy_set c WHERE c.product_id=p.id AND COALESCE(c.archived,0)=0) AND EXISTS(SELECT 1 FROM product_intelligence_snapshot s WHERE s.product_id=p.id)",
+      "result": 409
+    },
+    "missing_intel_active": {
+      "sql": "SELECT COUNT(*) FROM product p WHERE lifecycle_status='ACTIVE' AND NOT EXISTS(SELECT 1 FROM product_intelligence_snapshot s WHERE s.product_id=p.id)",
+      "result": 21
+    },
+    "failed_total": {
+      "sql": "SELECT COUNT(*) FROM request_telemetry WHERE status='FAILED'",
+      "result": 261
+    },
+    "failed_distinct_products": {
+      "sql": "SELECT COUNT(DISTINCT product_id) FROM request_telemetry WHERE status='FAILED' AND product_id IS NOT NULL",
+      "result": 19
+    },
+    "failed_time_span": {
+      "sql": "SELECT MIN(created_at), MAX(created_at) FROM request_telemetry WHERE status='FAILED'",
+      "result": [
+        {
+          "key": "2026-05-17T10:07:04Z",
+          "count": "2026-07-25T15:12:33Z"
+        }
+      ]
+    },
+    "failed_by_error_code": {
+      "sql": "SELECT COALESCE(error_code,'(null)') k, COUNT(*) n FROM request_telemetry WHERE status='FAILED' GROUP BY error_code ORDER BY n DESC",
+      "result": [
+        {
+          "key": "(null)",
+          "count": 60
+        },
+        {
+          "key": "ERR_F2V_OPTION_RATIO_9_16_NOT_FOUND",
+          "count": 34
+        },
+        {
+          "key": "ERR_F2V_SETTINGS_PANEL_NOT_OPEN",
+          "count": 32
+        },
+        {
+          "key": "ERR_F2V_START_BUTTON_NOT_FOUND",
+          "count": 18
+        },
+        {
+          "key": "ERR_F2V_SOP_RUNNER_THREW",
+          "count": 11
+        },
+        {
+          "key": "ERR_CDP_FILE_CHOOSER_TIMEOUT",
+          "count": 9
+        },
+        {
+          "key": "ERR_FLOW_EDITOR_REQUIRED",
+          "count": 6
+        },
+        {
+          "key": "ERR_F2V_UPLOAD_MEDIA_NOT_FOUND",
+          "count": 6
+        },
+        {
+          "key": "ERR_F2V_ADD_TO_PROMPT_NOT_FOUND",
+          "count": 6
+        },
+        {
+          "key": "ERR_PACKAGE_START_LOCAL_FILE_REQUIRED",
+          "count": 5
+        },
+        {
+          "key": "ERR_BACKGROUND_ASSET_FETCH_FAILED",
+          "count": 5
+        },
+        {
+          "key": "ERR_WRONG_MODE_IMAGE_SELECTED",
+          "count": 4
+        },
+        {
+          "key": "ERR_PACKAGE_REQUIRED",
+          "count": 4
+        },
+        {
+          "key": "ERR_FLOW_TAB_NOT_TARGETED",
+          "count": 4
+        },
+        {
+          "key": "ERR_F2V_OPTION_VIDEO_NOT_FOUND",
+          "count": 4
+        },
+        {
+          "key": "ERR_F2V_NEW_PROJECT_FAILED",
+          "count": 4
+        },
+        {
+          "key": "ERR_CONTENT_ASYNC_RESPONSE_TIMEOUT",
+          "count": 4
+        },
+        {
+          "key": "ERR_WRONG_MODEL_FOR_F2V",
+          "count": 3
+        },
+        {
+          "key": "ERR_F2V_SETTINGS_NOT_CONFIGURED_BEFORE_UPLOAD",
+          "count": 3
+        },
+        {
+          "key": "video not found/retrieved in time",
+          "count": 2
+        },
+        {
+          "key": "agent did not approve a video: {'code': 403, 'message': 'reCAPTCHA evaluation failed', 'status': 'PERMISSION_DENIED', 'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'PUBLIC_ERROR_UNUSUAL_ACTIVITY'}]}",
+          "count": 2
+        },
+        {
+          "key": "VIDEO_JOB_IN_FLIGHT",
+          "count": 2
+        },
+        {
+          "key": "EXECUTION_FAILED",
+          "count": 2
+        },
+        {
+          "key": "ERR_START_MEDIA_NOT_FOUND",
+          "count": 2
+        },
+        {
+          "key": "ERR_FLOW_STORED_PROJECT_INVALID",
+          "count": 2
+        },
+        {
+          "key": "ERR_CDP_FILE_CHOOSER_NOT_ARMED",
+          "count": 2
+        },
+        {
+          "key": "ERR_BACKGROUND_STATUS_UNAVAILABLE",
+          "count": 2
+        },
+        {
+          "key": "BROKEN_EDITOR_PAGE: the bound Flow editor shows error markers \u2014 Something went wrong",
+          "count": 2
+        },
+        {
+          "key": "TAB_DRIFT: harvest tab 873107175 != bound 873107181",
+          "count": 1
+        },
+        {
+          "key": "RATE_LIMITED: Google anti-abuse rate limiter (reCAPTCHA / unusual activity) blocked the request before approval \u2014 0 credits were spent. Cool down ~1-2h before retrying; do not hammer retries.",
+          "count": 1
+        },
+        {
+          "key": "NO_OPEN_EDITOR: open the target Flow project in the controlled tab first",
+          "count": 1
+        },
+        {
+          "key": "Maximum call stack size exceeded",
+          "count": 1
+        },
+        {
+          "key": "FAILED_WRONG_MODEL: expected omni_flash, got abra_r2v_10s",
+          "count": 1
+        },
+        {
+          "key": "FAILED_WRONG_MODEL: expected default, got abra_i2v_6s",
+          "count": 1
+        },
+        {
+          "key": "FAILED_WRONG_DURATION: expected defaults, got 6s",
+          "count": 1
+        },
+        {
+          "key": "FAILED_RENDER_REPORTED_BY_AGENT: the Flow agent reports the generation failed server-side \u2014 safe to resubmit",
+          "count": 1
+        },
+        {
+          "key": "F2V_SOP_SETTINGS_PANEL_OPENED",
+          "count": 1
+        },
+        {
+          "key": "ERR_UNKNOWN_MESSAGE_TYPE",
+          "count": 1
+        },
+        {
+          "key": "ERR_START_SLOT_NOT_FOUND",
+          "count": 1
+        },
+        {
+          "key": "ERR_START_LOCAL_FILE_REQUIRED",
+          "count": 1
+        },
+        {
+          "key": "ERR_NO_FLOW_TAB",
+          "count": 1
+        },
+        {
+          "key": "ERR_MATERIALIZE_ASSET_FAILED",
+          "count": 1
+        },
+        {
+          "key": "ERR_MAIN_WORLD_SUBMIT_HANDLER_NOT_FOUND",
+          "count": 1
+        },
+        {
+          "key": "ERR_FRAMES_PANEL_NOT_READY",
+          "count": 1
+        },
+        {
+          "key": "ERR_FRAMES_CONTROL_NOT_VISIBLE_AFTER_VIDEO_SELECTED",
+          "count": 1
+        },
+        {
+          "key": "ERR_FLOW_EDITOR_AUTONAV_FAILED",
+          "count": 1
+        },
+        {
+          "key": "ERR_F2V_PROMPT_FIELD_NOT_FOUND",
+          "count": 1
+        },
+        {
+          "key": "ERR_F2V_OPTION_VEO_3_1_LITE_NOT_FOUND",
+          "count": 1
+        },
+        {
+          "key": "ERR_ASPECT_9_16_NOT_SELECTED",
+          "count": 1
+        }
+      ]
+    },
+    "failed_by_mode": {
+      "sql": "SELECT COALESCE(mode,'(null)') k, COUNT(*) n FROM request_telemetry WHERE status='FAILED' GROUP BY mode ORDER BY n DESC",
+      "result": [
+        {
+          "key": "F2V",
+          "count": 258
+        },
+        {
+          "key": "T2V",
+          "count": 1
+        },
+        {
+          "key": "IMG",
+          "count": 1
+        },
+        {
+          "key": "(null)",
+          "count": 1
+        }
+      ]
+    },
+    "active_by_source": {
+      "sql": "SELECT COALESCE(source,'(null)') k, COUNT(*) n FROM product WHERE lifecycle_status='ACTIVE' GROUP BY source ORDER BY n DESC",
+      "result": [
+        {
+          "key": "FASTMOSS",
+          "count": 298
+        },
+        {
+          "key": "MANUAL",
+          "count": 145
+        }
+      ]
+    },
+    "_derived_failed_classification": {
+      "note": "ADR-007 dead DOM-lane failures are archaeology, not active incidents.",
+      "dead_dom_lane_failed": 137,
+      "other_or_null_failed": 124,
+      "total_failed": 261
+    },
+    "failed_last_24h": {
+      "sql": "SELECT COUNT(*) FROM request_telemetry WHERE status='FAILED' AND created_at>='2026-07-30T09:57:23Z'",
+      "result": 0
+    },
+    "failed_last_7d": {
+      "sql": "SELECT COUNT(*) FROM request_telemetry WHERE status='FAILED' AND created_at>='2026-07-24T09:57:23Z'",
+      "result": 3
+    },
+    "failed_last_30d": {
+      "sql": "SELECT COUNT(*) FROM request_telemetry WHERE status='FAILED' AND created_at>='2026-07-01T09:57:23Z'",
+      "result": 33
+    },
+    "failed_all_time": {
+      "sql": "SELECT COUNT(*) FROM request_telemetry WHERE status='FAILED'",
+      "result": 261
+    }
+  }
+}
