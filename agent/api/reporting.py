@@ -62,7 +62,13 @@ async def exceptions(
     product_type_group: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    q: Optional[str] = Query(None, description="free-text search over the WHOLE cohort"),
+    sort_by: Optional[str] = Query(None, description="allowlisted column; anything else falls back"),
+    sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
 ):
     if kind not in svc.EXCEPTION_KINDS:
         raise HTTPException(status_code=422, detail=f"UNKNOWN_EXCEPTION_KIND: {kind}")
-    return await svc.list_exceptions(kind, lifecycle_status, cluster, product_type_group, limit, offset)
+    return await svc.list_exceptions(
+        kind, lifecycle_status, cluster, product_type_group, limit, offset,
+        q=q, sort_by=sort_by, sort_dir=sort_dir,
+    )

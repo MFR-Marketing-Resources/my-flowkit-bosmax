@@ -78,13 +78,19 @@ export interface ExceptionItem {
 	failed_at?: string | null;
 }
 
-/** Additive split of `total`, never a filter — `total` keeps its previous meaning.
- * Archived products are ARCHIVED_NOT_IN_SCOPE under the merged P5.8 catalog authority,
- * so under "All (incl. archived)" they are documented N/A, not actionable coverage. */
+/** Explicit accounting so the UI never infers a headline. `total` keeps its previous
+ * meaning (every row matching the predicate in the requested scope).
+ * Archived rows are real catalogue debt that merely must not enter production; test
+ * fixtures are harness rows that are not products at all. */
 export interface ExceptionApplicability {
+	active_missing: number;
+	archived_missing: number;
+	real_product_missing: number;
+	test_fixture_excluded: number;
+	documented_na_reason: string;
+	/** retained for the previous consumer contract */
 	required_missing: number;
 	documented_na_archived: number;
-	documented_na_reason: string;
 }
 
 export interface ExceptionList {
@@ -93,6 +99,9 @@ export interface ExceptionList {
 	applicability?: ExceptionApplicability;
 	limit: number;
 	offset: number;
+	q?: string | null;
+	sort_by?: string | null;
+	sort_dir?: string;
 	items: ExceptionItem[];
 }
 
@@ -139,14 +148,31 @@ export const fetchPromptReadiness = (f: ReportingFilters) =>
 		`/api/reporting/coverage/prompt-readiness?${qs(f)}`,
 	);
 
+export interface ExceptionQuery {
+	limit?: number;
+	offset?: number;
+	q?: string;
+	sort_by?: string;
+	sort_dir?: "asc" | "desc";
+}
+
+/** Paging, search and sorting are all resolved SERVER-side over the whole cohort.
+ * Never widen `limit` to "fetch everything and paginate locally" — the cohort is
+ * hundreds of rows and a truncated fetch silently hides products. */
 export const fetchExceptions = (
 	kind: ExceptionKind,
 	f: ReportingFilters,
-	limit = 100,
-	offset = 0,
+	query: ExceptionQuery = {},
 ) =>
 	getAPI<ExceptionList>(
-		`/api/reporting/exceptions?${qs(f, { kind, limit, offset })}`,
+		`/api/reporting/exceptions?${qs(f, {
+			kind,
+			limit: query.limit ?? 15,
+			offset: query.offset ?? 0,
+			q: query.q || undefined,
+			sort_by: query.sort_by || undefined,
+			sort_dir: query.sort_dir || undefined,
+		})}`,
 	);
 
 export const fetchClusterAudit = () =>
@@ -210,8 +236,28 @@ export const useClusterAudit = () => useAsync(fetchClusterAudit, []);
 
 export const useMappingSummary = () => useAsync(fetchMappingSummary, []);
 
+/** KPI cards only need the counts, so they request a single row. */
 export const useExceptions = (kind: ExceptionKind, f: ReportingFilters) =>
-	useAsync(() => fetchExceptions(kind, f), [kind, ...fkey(f)]);
+	useAsync(() => fetchExceptions(kind, f, { limit: 1 }), [kind, ...fkey(f)]);
+
+/** Drill-down table: one server page at a time. */
+export const useExceptionPage = (
+	kind: ExceptionKind,
+	f: ReportingFilters,
+	query: ExceptionQuery,
+) =>
+	useAsync(
+		() => fetchExceptions(kind, f, query),
+		[
+			kind,
+			...fkey(f),
+			query.limit ?? 15,
+			query.offset ?? 0,
+			query.q ?? "",
+			query.sort_by ?? "",
+			query.sort_dir ?? "",
+		],
+	);
 
 // ── failed-generation honesty ────────────────────────────────────────────────
 export type ErrorProvenance =
