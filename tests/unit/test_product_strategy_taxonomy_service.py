@@ -226,8 +226,11 @@ def test_classification_separates_covered_partial_and_fallback(monkeypatch):
     covered = service.build_product_strategy_taxonomy_candidate(
         _product_payload("lip", "Velvet Lipstick", "Lipstick")
     )
-    partial = service.build_product_strategy_taxonomy_candidate(
+    newly_covered = service.build_product_strategy_taxonomy_candidate(
         _product_payload("serum", "Waterproof Beauty Serum", "Serum")
+    )
+    partial = service.build_product_strategy_taxonomy_candidate(
+        _product_payload("chopper", "Mini Food Chopper", "Chopper")
     )
     fallback = service.build_product_strategy_taxonomy_candidate(
         {
@@ -241,6 +244,9 @@ def test_classification_separates_covered_partial_and_fallback(monkeypatch):
     assert covered.review_status == "REVIEW_REQUIRED"
     assert covered.consumer_status == "BLOCKED_REVIEW_REQUIRED"
     assert "AUTO_DERIVED_REVIEW_REQUIRED" in covered.review_reasons
+    assert newly_covered.scene_coverage_status == "COVERED"
+    assert newly_covered.matched_scene_strategy_id == "SERUM"
+    assert "SCENE_PARTIAL" not in newly_covered.review_reasons
     assert partial.scene_coverage_status == "PARTIAL"
     assert partial.review_status == "REVIEW_REQUIRED"
     assert "SCENE_PARTIAL" in partial.review_reasons

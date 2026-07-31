@@ -827,6 +827,17 @@ PRODUCT_TYPE_COPY_STRATEGY_REGISTRY: Final[
         cta_line="Semak cara guna.",
         overlay_text="SUKATAN PENCUCI MUKA",
     ),
+    ("beauty_personal_care", "cleanser", "CLEANSER"): _fixed_strategy(
+        copy_strategy_id="P4_CLEANSER_PRODUCT_TYPE_V1",
+        scene_result_template=(
+            "show the sealed label, dispenser, controlled amount, and directions clearly"
+        ),
+        hook_line="Tengok label dan tekstur pencuci.",
+        demo_line="Tunjuk sedikit pada palet bersih.",
+        benefit_line="Arahan label mudah dilihat.",
+        cta_line="Semak cara guna pada label.",
+        overlay_text="LABEL DAN TEKSTUR",
+    ),
     (
         "beauty_makeup",
         "complexion_makeup",
@@ -857,6 +868,17 @@ PRODUCT_TYPE_COPY_STRATEGY_REGISTRY: Final[
         benefit_line="Guna ikut arahan label.",
         cta_line="Semak ramuan produk.",
         overlay_text="SATU TITIS TERKAWAL",
+    ),
+    ("beauty_personal_care", "serum", "SERUM"): _fixed_strategy(
+        copy_strategy_id="P4_SERUM_PRODUCT_TYPE_V1",
+        scene_result_template=(
+            "show the sealed label, dispenser, controlled amount, and directions clearly"
+        ),
+        hook_line="Tengok label dan tekstur serum.",
+        demo_line="Tunjuk sukatan pada palet bersih.",
+        benefit_line="Ramuan dan arahan mudah dilihat.",
+        cta_line="Semak amaran pada label.",
+        overlay_text="SUKATAN DAN ARAHAN",
     ),
     ("beauty_makeup", "mascara", "MASCARA"): _fixed_strategy(
         copy_strategy_id="P4_MASCARA_PRODUCT_TYPE_V1",
@@ -979,6 +1001,15 @@ PRODUCT_TYPE_COPY_STRATEGY_REGISTRY: Final[
         "VACUUM_CLEANER",
     ): _fixed_strategy(
         copy_strategy_id="P4_VACUUM_CLEANER_PRODUCT_TYPE_V1",
+        scene_result_template="show the nozzle, bin, filter, and controls clearly",
+        hook_line="Tengok aksesori vakum.",
+        demo_line="Tunjuk muncung, penapis dan kawalan.",
+        benefit_line="Komponen mudah dilihat.",
+        cta_line="Semak arahan produk.",
+        overlay_text="AKSESORI DAN KAWALAN",
+    ),
+    ("home_equipment", "vacuum", "VACUUM_CLEANER"): _fixed_strategy(
+        copy_strategy_id="P4_VACUUM_PRODUCT_TYPE_V1",
         scene_result_template="show the nozzle, bin, filter, and controls clearly",
         hook_line="Tengok aksesori vakum.",
         demo_line="Tunjuk muncung, penapis dan kawalan.",
