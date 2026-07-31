@@ -1151,6 +1151,28 @@ CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_statu
                 await db.execute(f"ALTER TABLE request_telemetry ADD COLUMN {column_name} {column_type}")
                 logger.info("Migrated: added %s column to request_telemetry", column_name)
 
+        # Cost/engine instrumentation (BOSMAX Command Centre): capture per-generation
+        # provider/engine/model + credit estimates on the durable, every-outcome
+        # telemetry ledger so the (deferred) cost dashboard has history. Additive and
+        # nullable — older rows read NULL. Monetary estimated_cost/actual_cost are
+        # reserved for a future credit->currency rate (the system stores credits today,
+        # not money); credits_spent is filled where a real debit is known.
+        cursor = await db.execute("PRAGMA table_info(request_telemetry)")
+        telemetry_cost_columns = {row[1] for row in await cursor.fetchall()}
+        telemetry_cost_column_defs = {
+            "provider": "TEXT",
+            "engine": "TEXT",
+            "model_label": "TEXT",
+            "credits_spent": "REAL",
+            "estimated_credits": "REAL",
+            "estimated_cost": "REAL",
+            "actual_cost": "REAL",
+        }
+        for column_name, column_type in telemetry_cost_column_defs.items():
+            if column_name not in telemetry_cost_columns:
+                await db.execute(f"ALTER TABLE request_telemetry ADD COLUMN {column_name} {column_type}")
+                logger.info("Migrated: added %s column to request_telemetry", column_name)
+
         cursor = await db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='request_stage_event'")
         stage_event_row = await cursor.fetchone()
         stage_event_sql = stage_event_row[0] if stage_event_row else ""

@@ -988,3 +988,6 @@ domains:
       - dashboard/src/pages/ReportingExecutivePage.tsx
       - dashboard/src/pages/ReportingOperationsPage.tsx
       - dashboard/package-lock.json
+      # Command Centre — cost/engine instrumentation on the durable request_telemetry
+      # ledger (additive nullable columns; captured now, cost dashboard deferred).
+      - tests/unit/test_request_telemetry_instrumentation.py
