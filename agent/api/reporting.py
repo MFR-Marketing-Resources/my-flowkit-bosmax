@@ -47,6 +47,13 @@ async def coverage_prompt_readiness(
     return await svc.prompt_readiness_histogram(lifecycle_status, cluster, product_type_group)
 
 
+@router.get("/failed-generations")
+async def failed_generations():
+    """Honest failed-generation reporting: 24h/7d/30d/all-time windows + error/mode
+    grouping + ADR-007 dead-DOM-lane classification. Read-only; deletes no history."""
+    return await svc.failed_generation_report()
+
+
 @router.get("/exceptions")
 async def exceptions(
     kind: str = Query(..., description=f"one of: {', '.join(svc.EXCEPTION_KINDS)}"),
