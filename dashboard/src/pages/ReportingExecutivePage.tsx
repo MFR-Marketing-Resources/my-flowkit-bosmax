@@ -1,0 +1,204 @@
+import { Section } from "../components/ui";
+import { KpiCard } from "../components/reporting/KpiCard";
+import { CoverageBar } from "../components/reporting/CoverageBar";
+import { BarPanel, type BarDatum } from "../components/reporting/charts/BarPanel";
+import {
+	DonutPanel,
+	type DonutSlice,
+} from "../components/reporting/charts/DonutPanel";
+import {
+	ReportingFilterProvider,
+	useReportingFilters,
+	asFilters,
+} from "../components/reporting/ReportingFilterContext";
+import {
+	useClusterAudit,
+	useCopywritingCoverage,
+	useMappingSummary,
+	useProductIntelligenceCoverage,
+	usePromptReadiness,
+} from "../api/reporting";
+
+// Management Intelligence — the executive coverage picture. Every widget owns its data
+// hook (independent load/fail). All aggregation is server-side; these are pure views.
+
+function LifecycleToggle() {
+	const f = useReportingFilters();
+	return (
+		<div className="inline-flex rounded-lg border border-slate-800 bg-slate-900 p-0.5 text-xs">
+			{(["ACTIVE", "ALL"] as const).map((s) => (
+				<button
+					key={s}
+					type="button"
+					onClick={() => f.setLifecycle(s)}
+					className={`rounded-md px-3 py-1 transition ${
+						f.lifecycle_status === s
+							? "bg-sky-600 text-white"
+							: "text-slate-400 hover:text-slate-200"
+					}`}
+				>
+					{s === "ACTIVE" ? "Active only" : "All (incl. archived)"}
+				</button>
+			))}
+		</div>
+	);
+}
+
+function ExecutiveInner() {
+	const f = useReportingFilters();
+	const filters = asFilters(f);
+	const copy = useCopywritingCoverage(filters);
+	const intel = useProductIntelligenceCoverage(filters);
+	const prompt = usePromptReadiness(filters);
+	const clusters = useClusterAudit();
+	const mapping = useMappingSummary();
+
+	const clusterData: BarDatum[] = clusters.data
+		? Object.entries(clusters.data.cluster_counts)
+				.map(([label, value]) => ({ label, value }))
+				.sort((a, b) => b.value - a.value)
+				.slice(0, 15)
+		: [];
+
+	const copyDonut: DonutSlice[] = copy.data
+		? [
+				{ label: "Has copy", value: copy.data.products_with_copy, color: "#10b981" },
+				{ label: "Missing", value: copy.data.products_missing_copy, color: "#334155" },
+			]
+		: [];
+
+	const clusterCount = clusters.data
+		? Object.keys(clusters.data.cluster_counts).length
+		: 0;
+
+	return (
+		<div className="space-y-6">
+			<div className="flex flex-wrap items-center justify-between gap-3">
+				<div>
+					<h2 className="text-lg font-semibold text-slate-100">
+						Management Intelligence
+					</h2>
+					<p className="text-xs text-slate-500">
+						Catalogue coverage &amp; quality at a glance. Toggle scope; click a KPI
+						to drill into the Operations tab.
+					</p>
+				</div>
+				<LifecycleToggle />
+			</div>
+
+			<div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
+				<KpiCard
+					label="Products (scope)"
+					value={(copy.data?.total_products ?? 0).toLocaleString()}
+					hint={f.lifecycle_status === "ACTIVE" ? "active only" : "incl. archived"}
+					loading={copy.loading}
+				/>
+				<KpiCard
+					label="Copy coverage"
+					value={`${copy.data?.coverage_pct ?? 0}%`}
+					hint={`${(copy.data?.products_missing_copy ?? 0).toLocaleString()} missing`}
+					tone={(copy.data?.coverage_pct ?? 0) < 50 ? "danger" : "success"}
+					loading={copy.loading}
+				/>
+				<KpiCard
+					label="Product intel"
+					value={`${intel.data?.coverage_pct ?? 0}%`}
+					hint={`${(intel.data?.missing_snapshot ?? 0).toLocaleString()} missing`}
+					tone={(intel.data?.coverage_pct ?? 0) < 50 ? "warn" : "success"}
+					loading={intel.loading}
+				/>
+				<KpiCard
+					label="Clusters"
+					value={clusterCount}
+					hint="canonical"
+					loading={clusters.loading}
+				/>
+				<KpiCard
+					label="Uncategorised"
+					value={(clusters.data?.unknown_review_required ?? 0).toLocaleString()}
+					hint="need cluster review"
+					tone={(clusters.data?.unknown_review_required ?? 0) > 0 ? "warn" : "success"}
+					loading={clusters.loading}
+				/>
+				<KpiCard
+					label="Prompt ready"
+					value={(prompt.data?.READY ?? 0).toLocaleString()}
+					hint={`${(prompt.data?.not_evaluated ?? 0).toLocaleString()} not evaluated`}
+					loading={prompt.loading}
+				/>
+			</div>
+
+			<Section
+				title="Products per cluster"
+				helper="Catalogue-wide distribution (not affected by the scope toggle)."
+			>
+				{clusters.error ? (
+					<p className="text-xs text-red-400">{clusters.error}</p>
+				) : clusterData.length === 0 ? (
+					<p className="text-xs text-slate-500">
+						{clusters.loading ? "Loading…" : "No cluster data."}
+					</p>
+				) : (
+					<BarPanel data={clusterData} />
+				)}
+			</Section>
+
+			<div className="grid gap-6 lg:grid-cols-2">
+				<Section
+					title="Copywriting coverage"
+					helper="Products with at least one authored copy set, in the current scope."
+				>
+					{copy.error ? (
+						<p className="text-xs text-red-400">{copy.error}</p>
+					) : (
+						<DonutPanel
+							data={copyDonut}
+							centerValue={`${copy.data?.coverage_pct ?? 0}%`}
+							centerLabel="has copy"
+						/>
+					)}
+				</Section>
+
+				<Section
+					title="Readiness"
+					helper="Prompt-readiness and product-mapping state."
+				>
+					<div className="space-y-4">
+						<CoverageBar
+							label="Prompt ready"
+							covered={prompt.data?.READY ?? 0}
+							total={prompt.data?.total_products ?? 0}
+							tone="info"
+						/>
+						<CoverageBar
+							label="Product intelligence"
+							covered={intel.data?.with_snapshot ?? 0}
+							total={intel.data?.total_products ?? 0}
+							tone="success"
+						/>
+						<CoverageBar
+							label="Mapping ready"
+							covered={mapping.data?.ready ?? 0}
+							total={mapping.data?.total_products ?? 0}
+							tone="success"
+						/>
+						<CoverageBar
+							label="Mapping blocked"
+							covered={mapping.data?.blocked ?? 0}
+							total={mapping.data?.total_products ?? 0}
+							tone="danger"
+						/>
+					</div>
+				</Section>
+			</div>
+		</div>
+	);
+}
+
+export default function ReportingExecutivePage() {
+	return (
+		<ReportingFilterProvider>
+			<ExecutiveInner />
+		</ReportingFilterProvider>
+	);
+}

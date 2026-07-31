@@ -969,3 +969,22 @@ domains:
       - dashboard/src/types/posterCompositionPlan.ts
       - dashboard/src/components/poster/CompositionPlanSummary.tsx
       - dashboard/src/components/poster/CompositionPlanSummary.test.tsx
+      # BOSMAX COMMAND CENTRE (Tier A): read-only Management + Operational
+      # Intelligence dashboard. Isolated reporting router/service (composes existing
+      # services + fills the copy-presence / snapshot / prompt-readiness / exception
+      # gaps), recharts as a pure render layer, every KPI drills to the product page.
+      - agent/api/reporting.py
+      - agent/services/reporting_service.py
+      - tests/unit/test_reporting_service.py
+      - tests/api/test_reporting_api.py
+      - dashboard/src/api/reporting.ts
+      - dashboard/src/api/reporting.test.ts
+      - dashboard/src/components/reporting/ReportingFilterContext.tsx
+      - dashboard/src/components/reporting/KpiCard.tsx
+      - dashboard/src/components/reporting/CoverageBar.tsx
+      - dashboard/src/components/reporting/ExceptionTable.tsx
+      - dashboard/src/components/reporting/charts/BarPanel.tsx
+      - dashboard/src/components/reporting/charts/DonutPanel.tsx
+      - dashboard/src/pages/ReportingExecutivePage.tsx
+      - dashboard/src/pages/ReportingOperationsPage.tsx
+      - dashboard/package-lock.json

@@ -49,6 +49,8 @@ import CockpitSettingsPage from "./pages/CockpitSettingsPage";
 import CopyIntelligencePage from "./pages/CopyIntelligencePage";
 import CopySetRegistryPage from "./pages/CopySetRegistryPage";
 import DashboardPage from "./pages/DashboardPage";
+import ReportingExecutivePage from "./pages/ReportingExecutivePage";
+import ReportingOperationsPage from "./pages/ReportingOperationsPage";
 import GalleryPage from "./pages/GalleryPage";
 import LogsPage from "./pages/LogsPage";
 import OperatorPage from "./pages/OperatorPage";
@@ -173,6 +175,13 @@ const NAV_GROUPS = [
 			{ to: "/products", icon: PackageSearch, label: "Products" },
 			{ to: "/projects", icon: FolderOpen, label: "Projects" },
 			{ to: "/gallery", icon: Film, label: "Gallery" },
+		],
+	},
+	{
+		label: "COMMAND CENTRE",
+		items: [
+			{ to: "/reporting/executive", icon: Gauge, label: "Executive" },
+			{ to: "/reporting/operations", icon: Siren, label: "Operations" },
 		],
 	},
 	{
@@ -507,6 +516,14 @@ function Layout() {
 							element={<LibraryPage kind="image" />}
 						/>
 						<Route path="/results" element={<ResultsHubPage />} />
+						<Route
+							path="/reporting/executive"
+							element={<ReportingExecutivePage />}
+						/>
+						<Route
+							path="/reporting/operations"
+							element={<ReportingOperationsPage />}
+						/>
 						<Route path="/operator/f2v" element={<OperatorPage mode="F2V" />} />
 						<Route path="/operator/i2v" element={<OperatorPage mode="I2V" />} />
 						<Route path="/operator/img" element={<OperatorPage mode="IMG" />} />
