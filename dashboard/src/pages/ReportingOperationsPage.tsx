@@ -75,11 +75,10 @@ function ExceptionKpi({
 	const active = app?.active_missing ?? 0;
 	const archived = app?.archived_missing ?? 0;
 	const fixtures = app?.test_fixture_excluded ?? 0;
-	const headline = app
-		? isAll
-			? app.real_product_missing
-			: active
-		: (data?.total ?? 0);
+	// `total` is the real-product count (fixtures are quarantined out of the default
+	// query), so the headline is the SAME number the drill-down pager reports. Deriving it
+	// separately is what let the card say 402 while the table said "1-15 of 410".
+	const headline = data?.total ?? 0;
 
 	// The breakdown stays visible when the card is selected — it is the whole point of
 	// the ALL tab and must not be replaced by "shown below".
