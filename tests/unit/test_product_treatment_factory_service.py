@@ -204,6 +204,42 @@ async def test_create_plan_is_idempotent_and_isolates_blocked_products(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_list_plans_returns_lightweight_summaries_and_detail_keeps_tasks(
+    monkeypatch,
+):
+    async def scan_product(context):
+        return _scan(context.product_id, approved_copy=True)
+
+    monkeypatch.setattr(service, "_scan_product", scan_product)
+    created = await service.create_plan(
+        CreateFactoryPlanRequest(
+            products=[_context("product-a")],
+            created_by="factory-test",
+        )
+    )
+    original_list_tasks = factory_crud.list_tasks
+    task_reads: list[str] = []
+
+    async def track_list_tasks(plan_id: str):
+        task_reads.append(plan_id)
+        return await original_list_tasks(plan_id)
+
+    monkeypatch.setattr(factory_crud, "list_tasks", track_list_tasks)
+
+    summaries = await service.list_plans(status=created.status, limit=10)
+
+    assert len(summaries) == 1
+    assert summaries[0].plan_id == created.plan_id
+    assert summaries[0].tasks == []
+    assert task_reads == []
+
+    detail = await service.get_plan(created.plan_id)
+
+    assert len(detail.tasks) == 10
+    assert task_reads == [created.plan_id]
+
+
+@pytest.mark.asyncio
 async def test_prepare_continues_after_one_product_task_fails(monkeypatch):
     scans = {
         "product-a": _scan("product-a"),
