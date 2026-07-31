@@ -599,12 +599,39 @@ def _report_groups(
     ]
 
 
+def _registry_assignment_is_valid(
+    taxonomy: ProductStrategyTaxonomy,
+    registry_by_pair: Mapping[tuple[str, str], Mapping[str, object]],
+) -> bool:
+    row = registry_by_pair.get(
+        (taxonomy.cluster, taxonomy.product_type_group)
+    )
+    if row is None:
+        return False
+    if (
+        str(row.get("matched_scene_strategy_id") or "")
+        != taxonomy.matched_scene_strategy_id
+        or str(row.get("scene_coverage_status") or "")
+        != taxonomy.scene_coverage_status
+    ):
+        return False
+    return not (
+        taxonomy.review_status == "VERIFIED"
+        and str(row.get("registry_status") or "") != "ACTIVE"
+    )
+
+
 async def build_product_type_copy_eligible_report(
 ) -> ProductTypeCopyEligibleReport:
     """Return a bounded read-only eligibility report for the full catalog."""
 
     products = await crud.list_products(include_archived=True)
     attached = await attach_product_strategy_taxonomies(products)
+    registry_rows = await crud.list_product_strategy_type_registry()
+    registry_by_pair = {
+        (str(row["cluster"]), str(row["product_type_group"])): row
+        for row in registry_rows
+    }
     eligible: list[ProductTypeCopyReportProduct] = []
     blocked: list[
         tuple[tuple[int, int, str], ProductTypeCopyReportProduct]
@@ -622,15 +649,11 @@ async def build_product_type_copy_eligible_report(
             reasons.append("PRODUCT_NOT_ACTIVE")
         reasons.extend(_taxonomy_blocked_reasons(taxonomy))
 
-        if not reasons:
-            try:
-                canonical = await require_verified_product_strategy_taxonomy(
-                    taxonomy.product_id
-                )
-            except ProductStrategyTaxonomyError:
-                reasons.append("TAXONOMY_NOT_VERIFIED")
-            else:
-                reasons.extend(_taxonomy_blocked_reasons(canonical))
+        if not reasons and not _registry_assignment_is_valid(
+            taxonomy,
+            registry_by_pair,
+        ):
+            reasons.append("TAXONOMY_NOT_VERIFIED")
 
         reasons = list(dict.fromkeys(reasons))
         report_product = _report_product(product, taxonomy, reasons)

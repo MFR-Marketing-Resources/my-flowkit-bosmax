@@ -482,6 +482,29 @@ async def seed_product_strategy_type_registry(
     return response
 
 
+async def reconcile_existing_system_product_strategy_type_registry(
+) -> ProductStrategyTypeRegistrySeedResponse | None:
+    """Refresh an initialized system registry from source authority.
+
+    Fresh databases still require the explicit seed command. Once system seed
+    rows exist, startup may safely refresh them because the existing upsert
+    preserves every manual registration and is idempotent.
+    """
+
+    existing_rows = await crud.list_product_strategy_type_registry()
+    if not any(
+        row.get("authority_source") == "SYSTEM_SEED"
+        for row in existing_rows
+    ):
+        return None
+    return await seed_product_strategy_type_registry(
+        ProductStrategyTypeRegistrySeedRequest(
+            dry_run=False,
+            confirm_apply=REGISTRY_SEED_CONFIRMATION,
+        )
+    )
+
+
 async def validate_product_strategy_assignment(
     *,
     cluster: str,
