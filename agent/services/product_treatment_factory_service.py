@@ -144,8 +144,14 @@ def _task_projection(row: dict[str, object]) -> FactoryTaskProjection:
     )
 
 
-async def _plan_projection(row: dict[str, object]) -> FactoryPlanProjection:
-    task_rows = await factory_crud.list_tasks(str(row["plan_id"]))
+async def _plan_projection(
+    row: dict[str, object],
+    *,
+    include_tasks: bool = True,
+) -> FactoryPlanProjection:
+    task_rows = (
+        await factory_crud.list_tasks(str(row["plan_id"])) if include_tasks else []
+    )
     return FactoryPlanProjection(
         plan_id=str(row["plan_id"]),
         plan_identity_sha256=str(row["plan_identity_sha256"]),
@@ -1131,4 +1137,4 @@ async def list_plans(
     limit: int = 100,
 ) -> list[FactoryPlanProjection]:
     rows = await factory_crud.list_plans(status=status, limit=limit)
-    return [await _plan_projection(row) for row in rows]
+    return [await _plan_projection(row, include_tasks=False) for row in rows]
