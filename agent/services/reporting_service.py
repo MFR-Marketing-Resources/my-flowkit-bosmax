@@ -234,6 +234,7 @@ async def list_exceptions(
     q: Optional[str] = None,
     sort_by: Optional[str] = None,
     sort_dir: str = "desc",
+    include_test_fixtures: bool = False,
 ) -> dict:
     """Filtered, paginated drill-down list for one exception kind. Raises ValueError
     on an unknown kind (the router maps it to 422)."""
@@ -274,7 +275,12 @@ async def list_exceptions(
         like = f"%{search}%"
         search_params = [like, like, like]
 
-    scope = f"{where}{search_sql}"
+    # Quarantine is the DEFAULT. Test fixtures are not products, so they must not appear in
+    # the operational list, the pager, search results or `total` — otherwise the headline
+    # and the drill-down disagree (the headline counts real products, the table counted
+    # products + fixtures). Pass include_test_fixtures=true for the explicit fixture view.
+    fixture_sql = "" if include_test_fixtures else f" AND NOT {_TEST_FIXTURE_PREDICATE}"
+    scope = f"{where}{search_sql}{fixture_sql}"
     scope_params = params + search_params
     total = await _scalar(db, f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {predicate}{scope}", scope_params)
 
@@ -284,22 +290,27 @@ async def list_exceptions(
     #   archived_missing - real products, ARCHIVED_NOT_IN_SCOPE for production (P5.8) but
     #                      still real catalogue debt; NOT hidden
     #   test_fixture_*   - harness rows that are not products at all
-    # Both counts describe the REQUESTED scope, so they always reconcile against `total`.
-    # Under lifecycle_status=ACTIVE the archived figure is naturally 0.
+    # Real-product split of the REQUESTED scope. Both use `real_scope`, which always
+    # excludes fixtures, so active + archived reconciles exactly against the default
+    # `total`. Under lifecycle_status=ACTIVE the archived figure is naturally 0.
+    real_scope = f"{where}{search_sql} AND NOT {_TEST_FIXTURE_PREDICATE}"
     active_missing = await _scalar(
         db,
-        f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {predicate}{scope}"
-        f" AND p.lifecycle_status = 'ACTIVE' AND NOT {_TEST_FIXTURE_PREDICATE}",
+        f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {predicate}{real_scope}"
+        " AND p.lifecycle_status = 'ACTIVE'",
         scope_params)
     archived_missing = await _scalar(
         db,
-        f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {predicate}{scope}"
-        f" AND p.lifecycle_status <> 'ACTIVE' AND NOT {_TEST_FIXTURE_PREDICATE}",
+        f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {predicate}{real_scope}"
+        " AND p.lifecycle_status <> 'ACTIVE'",
         scope_params)
+    # Counted WITHOUT the exclusion, so the quarantined set stays disclosed rather than
+    # vanishing once it is filtered out of the operational list.
     fixtures_in_scope = await _scalar(
         db,
-        f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {predicate}{scope} AND {_TEST_FIXTURE_PREDICATE}",
-        scope_params)
+        f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {predicate}{where}{search_sql}"
+        f" AND {_TEST_FIXTURE_PREDICATE}",
+        params + search_params)
 
     order_col = _SORTABLE.get((sort_by or "").strip(), "p.updated_at")
     direction = "ASC" if str(sort_dir).strip().lower() == "asc" else "DESC"
@@ -336,6 +347,7 @@ async def list_exceptions(
             "required_missing": active_missing,
             "documented_na_archived": archived_missing,
         },
+        "include_test_fixtures": include_test_fixtures,
         "limit": limit,
         "offset": offset,
         "q": search or None,

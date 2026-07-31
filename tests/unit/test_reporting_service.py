@@ -202,9 +202,14 @@ async def test_exceptions_excludes_test_fixtures_from_real_product_totals():
     assert app["archived_missing"] == 1
     assert app["real_product_missing"] == 2
     assert app["test_fixture_excluded"] == 1
-    # `total` still counts every matching row, fixture included — nothing is hidden.
-    assert res["total"] == 3
-    assert app["real_product_missing"] + app["test_fixture_excluded"] == res["total"]
+    # `total` is the REAL-PRODUCT count: fixtures are quarantined out of the default list
+    # so the headline and the pager share one denominator (B-578-01).
+    assert res["total"] == 2
+    assert app["real_product_missing"] == res["total"]
+    # nothing is hidden — the fixture is still reachable through the explicit view
+    everything = await svc.list_exceptions(
+        "missing_copy", lifecycle_status="ALL", include_test_fixtures=True)
+    assert everything["total"] == res["total"] + app["test_fixture_excluded"]
 
 
 async def test_exceptions_server_side_pagination_has_no_gaps_or_duplicates():
@@ -212,14 +217,15 @@ async def test_exceptions_server_side_pagination_has_no_gaps_or_duplicates():
     seen: list[str] = []
     for offset in (0, 1, 2):
         page = await svc.list_exceptions(
-            "missing_copy", lifecycle_status="ALL", limit=1, offset=offset)
+            "missing_copy", lifecycle_status="ALL", limit=1, offset=offset,
+            include_test_fixtures=True)
         assert page["total"] == 3          # total is the WHOLE cohort, not the page
-        assert len(page["items"]) == 1
-        seen.append(page["items"][0]["product_id"])
+        seen.extend(i["product_id"] for i in page["items"])
     assert sorted(seen) == ["F1", "P2", "P3"]
     assert len(set(seen)) == 3             # no duplicates across pages
     # past the last page -> empty, but total unchanged
-    tail = await svc.list_exceptions("missing_copy", lifecycle_status="ALL", limit=1, offset=3)
+    tail = await svc.list_exceptions(
+        "missing_copy", lifecycle_status="ALL", limit=1, offset=3, include_test_fixtures=True)
     assert tail["items"] == [] and tail["total"] == 3
 
 
@@ -244,4 +250,64 @@ async def test_exceptions_sort_allowlist_rejects_unknown_column():
     bad = await svc.list_exceptions(
         "missing_copy", lifecycle_status="ALL", sort_by="p.id; DROP TABLE product--")
     assert bad["sort_by"] is None
-    assert bad["total"] == 3
+    assert bad["total"] == 2  # real products; the injection-shaped value changed nothing
+
+
+async def test_exceptions_default_quarantines_fixtures_from_total_and_items():
+    """B-578-01: headline, pager total and rows must use ONE denominator.
+
+    Previously fixtures were excluded from `real_product_missing` but still counted in
+    `total` and returned as rows, so the card said 402 while the table said 410.
+    """
+    await _seed_fixture_and_bulk()
+    res = await svc.list_exceptions("missing_copy", lifecycle_status="ALL")
+    app = res["applicability"]
+    assert res["include_test_fixtures"] is False
+    # total is now real products only, and reconciles exactly with the split
+    assert res["total"] == 2
+    assert app["active_missing"] + app["archived_missing"] == res["total"]
+    assert app["real_product_missing"] == res["total"]
+    # the quarantined set is still disclosed, not vanished
+    assert app["test_fixture_excluded"] == 1
+    # and no fixture row reaches the operational list
+    assert "F1" not in {i["product_id"] for i in res["items"]}
+
+
+async def test_exceptions_fixture_view_returns_only_fixtures_on_demand():
+    await _seed_fixture_and_bulk()
+    everything = await svc.list_exceptions(
+        "missing_copy", lifecycle_status="ALL", include_test_fixtures=True)
+    assert everything["total"] == 3
+    assert "F1" in {i["product_id"] for i in everything["items"]}
+
+
+async def test_exceptions_search_cannot_leak_a_fixture_into_the_default_list():
+    await _seed_fixture_and_bulk()
+    res = await svc.list_exceptions("missing_copy", lifecycle_status="ALL", q="Smoke")
+    assert res["total"] == 0
+    assert res["items"] == []
+    # ...but it is still disclosed as quarantined
+    assert res["applicability"]["test_fixture_excluded"] == 1
+
+
+async def test_exceptions_pages_union_equals_real_product_cohort():
+    await _seed_fixture_and_bulk()
+    first = await svc.list_exceptions("missing_copy", lifecycle_status="ALL", limit=1, offset=0)
+    total = first["total"]
+    seen: list[str] = []
+    for offset in range(0, total):
+        page = await svc.list_exceptions(
+            "missing_copy", lifecycle_status="ALL", limit=1, offset=offset)
+        assert page["total"] == total          # pager total stable across pages
+        seen.extend(i["product_id"] for i in page["items"])
+    assert sorted(seen) == ["P2", "P3"]        # exactly the real products, no fixture
+    assert len(set(seen)) == len(seen)         # no duplicates
+
+
+async def test_exceptions_active_and_all_each_reconcile_independently():
+    await _seed_fixture_and_bulk()
+    for lifecycle in ("ACTIVE", "ALL"):
+        res = await svc.list_exceptions("missing_copy", lifecycle_status=lifecycle)
+        app = res["applicability"]
+        assert app["active_missing"] + app["archived_missing"] == res["total"], lifecycle
+        assert "F1" not in {i["product_id"] for i in res["items"]}, lifecycle

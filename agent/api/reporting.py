@@ -65,10 +65,15 @@ async def exceptions(
     q: Optional[str] = Query(None, description="free-text search over the WHOLE cohort"),
     sort_by: Optional[str] = Query(None, description="allowlisted column; anything else falls back"),
     sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
+    include_test_fixtures: bool = Query(
+        False,
+        description="quarantined harness rows are excluded by default; true = fixture view",
+    ),
 ):
     if kind not in svc.EXCEPTION_KINDS:
         raise HTTPException(status_code=422, detail=f"UNKNOWN_EXCEPTION_KIND: {kind}")
     return await svc.list_exceptions(
         kind, lifecycle_status, cluster, product_type_group, limit, offset,
         q=q, sort_by=sort_by, sort_dir=sort_dir,
+        include_test_fixtures=include_test_fixtures,
     )
