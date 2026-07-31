@@ -149,3 +149,53 @@ patched by this closure.
 No provider authorization, generation submission, Generate click, DeepSeek
 request, or credit-spending action occurred during implementation or local
 validation.
+
+## Post-merge rendered UAT remediation ledger
+
+Browser UAT on canonical data proved a performance blocker in
+`/api/creative-production/cohort-authority`.
+
+26. `agent/services/product_intelligence_service.py`
+27. `tests/unit/test_product_intelligence_service.py`
+28. `agent/services/product_image_analysis_service.py`
+29. `tests/unit/test_product_image_analysis_service.py`
+30. `agent/services/catalog_coverage_service.py`
+31. `tests/unit/test_catalog_coverage_service.py`
+
+No other follow-up file is authorized until this ledger is amended again for
+that follow-up.
+
+## Post-merge remediation validation
+
+- Initial canonical browser UAT on merge `214db5e...` rendered Studio but
+  `/api/creative-production/cohort-authority` exceeded 30 seconds and
+  blocked the governed product picker.
+- CPU profiling proved all 659 taxonomy read models were recomputed
+  twice and sales-name/image-path work was repeated per product.
+- Repair:
+  - reuses the pre-normalized sales-name index;
+  - avoids filesystem canonicalization for metadata-only image paths;
+  - reuses one attached taxonomy product set across both matrices.
+- Canonical-data read-only authority benchmark:
+  - 18.322 seconds;
+  - 659 products;
+  - P6 launch cohort count 438;
+  - SHA-256 `0a7d54cdd46bf1ab6cad98b282c6ee1dd21463b2692cb3f05fa059e9ee72f0ec`.
+- Focused product-intelligence/image-analysis/catalog suite:
+  - exit code 0; 42 passed.
+- Original P7.5-P6 mission regression suite:
+  - exit code 0; 61 passed; one pre-existing Pydantic warning.
+- `npx tsx scripts/mandor-check.ts`:
+  - exit code 0; `domain=workspace paths=7`.
+- `npx @biomejs/biome check --write .`:
+  - exit code 0; 32 configured files checked;
+  - 29 formatter-only files outside the ledger were restored exactly.
+- `npx depcruise agent/services --config .dependency-cruiser.cjs`:
+  - exit code 0; zero violations; zero modules traversed.
+- Aggregate `scripts/verify-gate.ps1`:
+  - Mandor, dashboard build, and dashboard Vitest passed;
+  - backend smoke retained the clean-base failure: 187 passed, one failed.
+- No provider call, generation submission, Generate click, DeepSeek request,
+  browser action with submit semantics, or credit-spending action occurred.
+- Final rendered no-submit UAT remains gated on merging and rolling out this
+  follow-up branch.

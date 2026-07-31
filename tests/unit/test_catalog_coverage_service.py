@@ -88,6 +88,7 @@ async def test_matrix_is_full_deterministic_and_launch_cohort_is_fail_closed(
     )
     stale = _product("stale", _taxonomy("stale", is_stale=True))
     attached = [eligible, unknown, archived, stale]
+    attach_calls = 0
 
     async def fake_products(**kwargs):
         assert kwargs == {"include_archived": True}
@@ -95,6 +96,8 @@ async def test_matrix_is_full_deterministic_and_launch_cohort_is_fail_closed(
                 for item in attached]
 
     async def fake_attach(products):
+        nonlocal attach_calls
+        attach_calls += 1
         assert len(products) == len(attached)
         return attached
 
@@ -181,3 +184,4 @@ async def test_matrix_is_full_deterministic_and_launch_cohort_is_fail_closed(
     )
     assert authority_by_id["unknown"].p6_launch_cohort is False
     assert authority_first.matrix_sha256 == authority_second.matrix_sha256
+    assert attach_calls == 4

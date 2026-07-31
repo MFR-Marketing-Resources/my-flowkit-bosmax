@@ -79,7 +79,10 @@ def _launch_blockers(
     return list(dict.fromkeys(blockers))
 
 
-async def build_catalog_coverage_matrix() -> CatalogCoverageMatrixReport:
+async def build_catalog_coverage_matrix(
+    *,
+    _attached_products: list[dict[str, object]] | None = None,
+) -> CatalogCoverageMatrixReport:
     """Return every catalog product; this report is never sample-bounded."""
 
     if any(
@@ -88,8 +91,11 @@ async def build_catalog_coverage_matrix() -> CatalogCoverageMatrixReport:
     ):
         raise RuntimeError("UNKNOWN_PRODUCT_TYPE_MUST_NOT_HAVE_P4_STRATEGY")
 
-    products = await crud.list_products(include_archived=True)
-    attached = await attach_product_strategy_taxonomies(products)
+    if _attached_products is None:
+        products = await crud.list_products(include_archived=True)
+        attached = await attach_product_strategy_taxonomies(products)
+    else:
+        attached = _attached_products
     type_registry = await list_product_strategy_type_registry()
     registry_by_pair = {
         (item.cluster, item.product_type_group): item
@@ -265,9 +271,11 @@ async def build_catalog_coverage_matrix() -> CatalogCoverageMatrixReport:
 async def build_catalog_authority_matrix() -> CatalogAuthorityMatrixReport:
     """Return the final P5.8 terminal state for every catalog product."""
 
-    coverage = await build_catalog_coverage_matrix()
     products = await crud.list_products(include_archived=True)
     attached = await attach_product_strategy_taxonomies(products)
+    coverage = await build_catalog_coverage_matrix(
+        _attached_products=attached,
+    )
     product_by_id = {
         str(product.get("id") or product.get("product_id") or ""): product
         for product in attached

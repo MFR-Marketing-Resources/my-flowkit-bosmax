@@ -2,6 +2,7 @@ from typing import Any
 
 import pytest
 
+from agent.services import product_intelligence_service as intelligence_service
 from agent.services.product_intelligence import enrich_product
 from agent.services.product_intelligence_service import (
     _resolve_sales_metrics,
@@ -474,6 +475,56 @@ async def test_backfill_preview_returns_distribution_counts_and_does_not_write_d
     assert result["group_distribution"]["LAUNDRY_CARE"] == 1
     assert result["group_distribution"]["FASHION_AND_APPAREL"] == 1
     assert result["write_back_status"] == "READ_ONLY_NO_DB_WRITES"
+
+
+def test_fuzzy_sales_match_reuses_precomputed_normalized_names(monkeypatch):
+    matched_record = {
+        "file_type_id": "PRODUCT_SEARCH_SALES_RANK",
+        "names": ["Premium Atlas Product Bundle"],
+    }
+    distractors = [
+        {
+            "file_type_id": "PRODUCT_SEARCH_SALES_RANK",
+            "names": [f"Distractor Product {index}"],
+        }
+        for index in range(200)
+    ]
+    index = {
+        "records": [*distractors, matched_record],
+        "by_name": {
+            **{
+                f"distractor product {index}": [record]
+                for index, record in enumerate(distractors)
+            },
+            "premium atlas product bundle": [matched_record],
+        },
+        "by_source_url": {},
+        "by_tiktok_url": {},
+    }
+    normalized_inputs: list[str] = []
+    original_normalize = intelligence_service._normalize_key
+
+    def tracked_normalize(value: Any) -> str:
+        normalized_inputs.append(str(value))
+        return original_normalize(value)
+
+    monkeypatch.setattr(
+        intelligence_service,
+        "_normalize_key",
+        tracked_normalize,
+    )
+
+    records, provenance, matched_by = intelligence_service._match_sales_records(
+        index,
+        _product(),
+    )
+
+    assert records == [matched_record]
+    assert matched_by == "UNIQUE_FUZZY_NAME"
+    assert provenance == ["sales_metrics:matched_unique_fuzzy_name"]
+    assert not any(
+        value.startswith("Distractor Product") for value in normalized_inputs
+    )
 
 
 def test_latest_import_batch_metrics_are_preferred_over_legacy(monkeypatch):

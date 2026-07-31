@@ -835,15 +835,19 @@ def _match_sales_records(index: dict[str, Any], product: dict[str, Any]) -> tupl
         raw_names = [name for name in _product_names(product) if len(_normalize_key(name)) >= 10]
         for candidate in raw_names:
             normalized = _normalize_key(candidate)
-            fuzzy = [
-                record
-                for record in index["records"]
-                if any(
-                    normalized in _normalize_key(record_name)
-                    or _normalize_key(record_name) in normalized
-                    for record_name in record["names"]
-                )
-            ]
+            fuzzy_by_identity: dict[int, dict[str, Any]] = {}
+            # The by-name index is normalized once when the sales index is built.
+            # Reusing those keys prevents every product taxonomy read from
+            # regex-normalizing the complete sales-record corpus again.
+            for indexed_name, indexed_records in index["by_name"].items():
+                if (
+                    normalized not in indexed_name
+                    and indexed_name not in normalized
+                ):
+                    continue
+                for record in indexed_records:
+                    fuzzy_by_identity.setdefault(id(record), record)
+            fuzzy = list(fuzzy_by_identity.values())
             if len(fuzzy) == 1:
                 matched.extend(fuzzy)
                 provenance.append("sales_metrics:matched_unique_fuzzy_name")

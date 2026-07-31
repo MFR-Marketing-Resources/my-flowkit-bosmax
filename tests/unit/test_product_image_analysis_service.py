@@ -3,10 +3,12 @@ from unittest.mock import patch
 
 import pytest
 
+from agent.config import BASE_DIR
 from agent.models.product_intelligence import ProductIntelligenceImageAnalysis
 from agent.services.product_image_analysis_service import (
     PROVIDER_EXECUTION_DISABLED_WARNING,
     SEMANTIC_IMAGE_WARNING,
+    _coerce_local_path,
     analyze_product_image_payload,
 )
 
@@ -14,6 +16,24 @@ _no_vision_key = patch(
     "agent.services.product_image_analysis_service.get_lane_api_key",
     return_value=None,
 )
+
+
+def test_relative_local_image_path_avoids_filesystem_canonicalization(
+    monkeypatch,
+):
+    def forbidden_resolve(*_args, **_kwargs):
+        raise AssertionError("filesystem canonicalization is not read-model work")
+
+    relative_path = Path("outputs") / "missing-product.jpg"
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            Path,
+            "resolve",
+            forbidden_resolve,
+        )
+        coerced = _coerce_local_path(str(relative_path))
+
+    assert coerced == BASE_DIR / relative_path
 
 
 @_no_vision_key
