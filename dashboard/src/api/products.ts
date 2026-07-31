@@ -44,9 +44,12 @@ export async function fetchProductStrategyTypeRegistry(): Promise<ProductStrateg
 	);
 }
 
-export async function fetchProductTypeCopyEligibleReport(): Promise<ProductTypeCopyEligibleReport> {
+export async function fetchProductTypeCopyEligibleReport(
+	signal?: AbortSignal,
+): Promise<ProductTypeCopyEligibleReport> {
 	return fetchAPI<ProductTypeCopyEligibleReport>(
 		"/api/copywriting/p4/eligible-report",
+		{ signal },
 	);
 }
 
