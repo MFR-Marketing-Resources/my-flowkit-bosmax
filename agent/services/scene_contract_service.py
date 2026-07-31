@@ -124,19 +124,8 @@ def evaluate_scene_contract(
     }
 
 
-def scene_gap_sql_predicate(alias: str = "t") -> str:
-    """SQL mirror of the STRUCTURAL half of `evaluate_scene_contract`.
-
-    Covers everything decidable from stored columns plus the precomputed library
-    allowlist: missing binding, unknown id, generic fallback, fallback_used, non-COVERED
-    coverage and library entries with an empty required array (such ids are simply absent
-    from the allowlist).
-
-    `STALE_PRODUCT_FINGERPRINT` is intentionally NOT in this predicate: deciding it needs
-    the product fingerprint recomputed per row, which cannot run inside a COUNT over the
-    whole catalogue. Staleness is still reported per row by `evaluate_scene_contract`, and
-    is separately counted by the existing strategy-taxonomy stale reporting.
-    """
+def _structural_gap_sql(alias: str = "t") -> str:
+    """SQL for everything decidable from stored columns + the library allowlist."""
     ids = ", ".join("'" + sid.replace("'", "''") + "'"
                     for sid in sorted(COMPLETE_SCENE_STRATEGY_IDS))
     if not ids:  # defensive: an empty library means every product is a gap
@@ -148,3 +137,40 @@ def scene_gap_sql_predicate(alias: str = "t") -> str:
         f" OR COALESCE({alias}.scene_coverage_status, '') <> 'COVERED'"
         f" OR COALESCE({alias}.fallback_used, 0) = 1)"
     )
+
+
+async def stale_product_ids(db) -> frozenset[str]:
+    """Product ids whose STORED taxonomy fingerprint no longer matches the product.
+
+    Computed exactly, every call, with NO cache. A full recompute over the whole catalogue
+    measures ~0.06s for 651 products, so a cache buys nothing and costs correctness: any
+    signature cheap enough to be worth computing (row counts, max updated_at) misses a
+    fingerprint that changed without an `updated_at` bump, which silently reports a stale
+    binding as COMPLETE — the exact class of bug this function exists to prevent.
+    """
+    from agent.services.product_strategy_taxonomy_service import product_strategy_fingerprint
+
+    cur = await db.execute(
+        "SELECT p.*, t.product_fingerprint AS _stored_fp FROM product p "
+        "LEFT JOIN product_strategy_taxonomy t ON t.product_id = p.id")
+    rows = [dict(r) for r in await cur.fetchall()]
+    await cur.close()
+    return frozenset(
+        str(r["id"]) for r in rows
+        if str(r.get("_stored_fp") or "") != product_strategy_fingerprint(r)
+    )
+
+
+def scene_gap_sql_predicate(alias: str = "t", stale_ids: frozenset[str] | None = None) -> str:
+    """Full authoritative scene-gap predicate: structural gaps OR a stale fingerprint.
+
+    A stale binding means the stored strategy no longer corresponds to the product's
+    current identity, so the contract cannot be trusted even when coverage reads COVERED.
+    Pass `stale_ids` from `stale_product_ids()`; omitting it yields structural-only and is
+    reserved for callers that have already handled staleness themselves.
+    """
+    structural = _structural_gap_sql(alias)
+    if not stale_ids:
+        return structural
+    quoted = ", ".join("'" + pid.replace("'", "''") + "'" for pid in sorted(stale_ids))
+    return f"({structural} OR p.id IN ({quoted}))"

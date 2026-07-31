@@ -425,3 +425,106 @@ async def test_scene_strategy_gaps_is_a_real_exception_kind():
     # and every returned row must actually be a gap
     for item in res["items"]:
         assert item["scene_contract_status"] == "GAP", item["product_id"]
+
+
+# ── B-581-01 / B-581-02: fingerprint staleness must reach BOTH the KPI and the rows ──
+async def _make_stale(product_id: str):
+    """Corrupt the stored taxonomy fingerprint so the product is genuinely stale."""
+    db = await get_db()
+    await db.execute(
+        "UPDATE product_strategy_taxonomy SET product_fingerprint='DEFINITELY_NOT_CURRENT'"
+        " WHERE product_id=?", (product_id,))
+    await db.commit()
+
+
+async def _make_scene_complete(product_id: str):
+    """Give a product a real, fully-covered scene binding.
+
+    The insert trigger seeds a placeholder with no scene strategy, so a freshly seeded
+    product is already a STRUCTURAL gap — it has to be made genuinely complete first for a
+    staleness-only assertion to mean anything.
+    """
+    db = await get_db()
+    from agent.services.product_strategy_taxonomy_service import product_strategy_fingerprint
+    cur = await db.execute("SELECT * FROM product WHERE id=?", (product_id,))
+    product = dict(await cur.fetchone())
+    await cur.close()
+    await db.execute(
+        "UPDATE product_strategy_taxonomy SET matched_scene_strategy_id='PET_CAGE_ACCESSORY',"
+        " scene_coverage_status='COVERED', fallback_used=0, product_fingerprint=?"
+        " WHERE product_id=?",
+        (product_strategy_fingerprint(product), product_id))
+    await db.commit()
+
+
+async def test_stale_fingerprint_is_counted_by_the_scene_gap_kpi():
+    """B-581-01: a stale binding cannot be trusted, so it must reach the card total.
+
+    The predicate previously covered structural gaps only, so a stale product was counted
+    as COMPLETE.
+    """
+    await _seed()
+    await _make_scene_complete("P1")   # P1 is now genuinely COMPLETE
+    before = await svc.list_exceptions("scene_strategy_gaps", lifecycle_status="ALL")
+    assert "P1" not in {i["product_id"] for i in before["items"]}
+    await _make_stale("P1")
+    after = await svc.list_exceptions("scene_strategy_gaps", lifecycle_status="ALL")
+    assert after["total"] == before["total"] + 1
+    assert "P1" in {i["product_id"] for i in after["items"]}
+
+
+async def test_stale_fingerprint_reaches_the_actual_reporting_row():
+    """B-581-02: production rows previously always used the evaluator default (False).
+
+    Exercises the real list_exceptions path, not a direct evaluate_scene_contract call.
+    """
+    await _seed()
+    await _make_scene_complete("P1")
+    await _make_stale("P1")
+    res = await svc.list_exceptions("scene_strategy_gaps", lifecycle_status="ALL")
+    row = next(i for i in res["items"] if i["product_id"] == "P1")
+    assert row["scene_contract_status"] == "GAP"
+    assert "STALE_PRODUCT_FINGERPRINT" in row["scene_gap_reasons"]
+    # the binding itself stays visible — staleness annotates, it does not blank the row
+    assert row["scene_strategy_id"] is not None
+
+
+async def test_no_stale_product_is_ever_reported_complete():
+    await _seed()
+    await _make_scene_complete("P1")
+    await _make_stale("P1")
+    for kind in ("missing_copy", "scene_strategy_gaps"):
+        res = await svc.list_exceptions(kind, lifecycle_status="ALL")
+        for item in res["items"]:
+            if item["product_id"] == "P1":
+                assert item["scene_contract_status"] == "GAP", kind
+
+
+async def test_scene_gap_kpi_equals_the_union_of_its_paginated_ids():
+    """Card total must equal the union of every id the drill-down can actually reach."""
+    await _seed()
+    await _make_scene_complete("P1")
+    await _make_stale("P1")
+    first = await svc.list_exceptions("scene_strategy_gaps", lifecycle_status="ALL", limit=1)
+    total = first["total"]
+    seen: set[str] = set()
+    for offset in range(total):
+        page = await svc.list_exceptions(
+            "scene_strategy_gaps", lifecycle_status="ALL", limit=1, offset=offset)
+        assert page["total"] == total
+        seen |= {i["product_id"] for i in page["items"]}
+    assert len(seen) == total          # no duplicates, no gaps
+    app = first["applicability"]
+    assert app["active_missing"] + app["archived_missing"] == total
+
+
+async def test_structural_and_stale_gaps_deduplicate():
+    """A product that is BOTH structurally broken and stale counts once, with both reasons."""
+    await _seed()
+    await _make_stale("P2")            # P2 already has the generic-fallback placeholder
+    res = await svc.list_exceptions("scene_strategy_gaps", lifecycle_status="ALL")
+    ids = [i["product_id"] for i in res["items"]]
+    assert ids.count("P2") == 1
+    row = next(i for i in res["items"] if i["product_id"] == "P2")
+    assert "STALE_PRODUCT_FINGERPRINT" in row["scene_gap_reasons"]
+    assert len(row["scene_gap_reasons"]) >= 2

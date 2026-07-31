@@ -17,6 +17,7 @@ from agent.db.schema import get_db
 from agent.services.scene_contract_service import (
     evaluate_scene_contract,
     scene_gap_sql_predicate,
+    stale_product_ids,
 )
 
 # Base relation for product-scoped queries: product LEFT JOIN its taxonomy sidecar
@@ -41,9 +42,10 @@ _EXCEPTION_PREDICATES: dict[str, str] = {
     "missing_intelligence": "NOT EXISTS (SELECT 1 FROM product_intelligence_snapshot s WHERE s.product_id = p.id)",
     "missing_image": "p.asset_status = 'UNRESOLVED'",
     "prompt_not_ready": "p.prompt_readiness_status = 'MISSING_FIELDS'",
-    # Structural scene-contract gap. The SQL mirrors scene_contract_service, which owns the
-    # rule; there is no minimum-variant threshold — one safe concrete scene is complete.
-    "scene_strategy_gaps": scene_gap_sql_predicate("t"),
+    # Placeholder only. The real predicate is resolved per request in list_exceptions
+    # because the authoritative rule also needs the fingerprint-stale id set, which is
+    # computed from live data rather than stored columns.
+    "scene_strategy_gaps": "1=0",
 }
 EXCEPTION_KINDS: tuple[str, ...] = tuple(_EXCEPTION_PREDICATES.keys()) + ("failed_generation",)
 
@@ -269,7 +271,14 @@ async def list_exceptions(
         await cur.close()
         return {"kind": kind, "total": total, "limit": limit, "offset": offset, "items": items}
 
-    predicate = _EXCEPTION_PREDICATES[kind]
+    # The authoritative scene contract also fails on a stale fingerprint, so the stale id
+    # set is resolved BEFORE counting and feeds both the KPI predicate and every row.
+    stale_ids = await stale_product_ids(db)
+    predicate = (
+        scene_gap_sql_predicate("t", stale_ids)
+        if kind == "scene_strategy_gaps"
+        else _EXCEPTION_PREDICATES[kind]
+    )
     where, params = _product_filters(lifecycle_status, cluster, product_type_group)
 
     # Free-text search runs in SQL over the WHOLE cohort, not over a fetched page.
@@ -344,7 +353,8 @@ async def list_exceptions(
     # Per-row scene contract. Evaluated in Python for the page only (<= `limit` rows), so
     # the row detail is exact while the KPI count stays a single SQL COUNT.
     for item in items:
-        item.update(evaluate_scene_contract(item))
+        item.update(evaluate_scene_contract(
+            item, fingerprint_stale=str(item.get("product_id") or "") in stale_ids))
     return {
         "kind": kind,
         "scope": _scope(lifecycle_status, cluster, product_type_group),
