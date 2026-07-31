@@ -1033,4 +1033,8 @@ domains:
       # existing generate_copy_set service so the stored copy contract, dedupe key and
       # claim scan stay in one place; nothing is approved here.
       - scripts/mission07_seed_to_copy.py
+      # Mission-07C phase C: archived source-image recovery. Drives the existing
+      # POST /api/products/{id}/cache-image endpoint; recovers the REAL marketplace image
+      # only, never generates or substitutes one, and never changes lifecycle.
+      - scripts/mission07_archived_image_recovery.py
       - data/products/product_mapping_rules.json
