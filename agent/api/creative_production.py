@@ -17,6 +17,7 @@ from agent.models.creative_production import (
     ProductionPlanUpdateRequest,
     QaDecisionRequest,
     StartPlanRequest,
+    TreatmentAvailabilityRequest,
     WaveAssignmentRequest,
 )
 from agent.services import creative_production_compile_service as compiler
@@ -68,6 +69,24 @@ async def list_plans(
 async def pool_authority(body: PoolAuthorityRequest):
     try:
         return await plans.get_governed_pool_authority(body)
+    except plans.CreativeProductionError as exc:
+        raise _http(exc) from exc
+
+
+@router.post("/treatment-availability")
+async def treatment_availability(body: TreatmentAvailabilityRequest):
+    try:
+        return await plans.resolve_treatment_availability(
+            product_video_allocations=[
+                item.model_dump(mode="json")
+                for item in body.product_video_allocations
+            ],
+            logical_mode=body.logical_mode,
+            model_key=body.model_key,
+            duration_seconds=body.duration_seconds,
+            creative_format=body.creative_format,
+            treatment_ids=body.treatment_ids,
+        )
     except plans.CreativeProductionError as exc:
         raise _http(exc) from exc
 

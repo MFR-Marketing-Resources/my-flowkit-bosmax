@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 
 import pytest
-from pydantic import ValidationError
 
 from agent.models.creative_production import (
     CreativePoolSelection,
     ProductionPlanCreateRequest,
 )
+from agent.services import creative_production_compile_service as compiler
 from agent.services import creative_production_plan_service as plans
 from agent.services import creative_production_scheduler_service as scheduler
 from agent.services import creative_treatment_service
@@ -71,6 +71,7 @@ def _projection(treatment_id: str = "treatment-1") -> dict:
         "variation_group_id": None,
         "variation_ordinal": None,
         "dependency_hashes": {"copy_set_sha256": "c" * 64},
+        "segment_plan": [],
     }
 
 
@@ -93,18 +94,93 @@ def _plan(*, treatment_ids: list[str], target: int = 1) -> dict:
     }
 
 
-def test_video_request_requires_explicit_treatment_ids() -> None:
-    with pytest.raises(ValidationError, match="TREATMENT_IDS_REQUIRED_FOR_VIDEO"):
-        ProductionPlanCreateRequest(
-            request_id="request-p75c-0001",
-            operator_id="operator",
-            name="Treatment plan",
-            product_ids=["product-1"],
-            target_video_count=1,
-            model_keys=["Veo 3.1 - Lite"],
-            duration_seconds=[8],
-            pools=CreativePoolSelection(),
+def test_video_request_allows_server_authoritative_treatment_allocation() -> None:
+    request = ProductionPlanCreateRequest(
+        request_id="request-p75c-0001",
+        operator_id="operator",
+        name="Treatment plan",
+        product_ids=["product-1"],
+        product_video_allocations=[
+            {"product_id": "product-1", "video_count": 1},
+        ],
+        target_video_count=1,
+        model_keys=["Veo 3.1 - Lite"],
+        duration_seconds=[8],
+        pools=CreativePoolSelection(),
+    )
+    assert request.pools.treatment_ids == []
+    assert request.product_video_allocations[0].video_count == 1
+
+
+@pytest.mark.asyncio
+async def test_treatment_availability_is_deterministic_and_reports_exact_shortage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    treatment_ids_by_product = {
+        "product-1": ["treatment-a-2", "treatment-a-1"],
+        "product-2": ["treatment-b-1"],
+    }
+
+    async def list_treatments(
+        *,
+        product_id: str,
+        status: str,
+        limit: int,
+    ) -> list[dict]:
+        assert status == "APPROVED"
+        assert limit == 200
+        return [
+            {"treatment_id": treatment_id}
+            for treatment_id in treatment_ids_by_product[product_id]
+        ]
+
+    async def resolve(treatment_id: str) -> dict:
+        projection = _projection(treatment_id)
+        projection["product_id"] = (
+            "product-2" if treatment_id.startswith("treatment-b") else "product-1"
         )
+        return projection
+
+    monkeypatch.setattr(plans.treatment_db, "list_treatments", list_treatments)
+    monkeypatch.setattr(plans, "resolve_treatment_authority", resolve)
+
+    shortage = await plans.resolve_treatment_availability(
+        product_video_allocations=[
+            {"product_id": "product-1", "video_count": 2},
+            {"product_id": "product-2", "video_count": 2},
+        ],
+        logical_mode="T2V",
+        model_key="Veo 3.1 - Lite",
+        duration_seconds=8,
+    )
+    assert shortage["ready"] is False
+    assert shortage["selected_treatment_ids"] == [
+        "treatment-a-1",
+        "treatment-a-2",
+        "treatment-b-1",
+    ]
+    assert shortage["product_results"][1]["shortage"] == 1
+    assert shortage["blockers"][0]["code"] == "TREATMENT_CAPACITY_INSUFFICIENT"
+
+    ready = await plans.resolve_treatment_availability(
+        product_video_allocations=[
+            {"product_id": "product-1", "video_count": 2},
+        ],
+        logical_mode="T2V",
+        model_key="Veo 3.1 - Lite",
+        duration_seconds=8,
+    )
+    repeated = await plans.resolve_treatment_availability(
+        product_video_allocations=[
+            {"product_id": "product-1", "video_count": 2},
+        ],
+        logical_mode="T2V",
+        model_key="Veo 3.1 - Lite",
+        duration_seconds=8,
+    )
+    assert ready["ready"] is True
+    assert ready["selection_mode"] == "AUTO"
+    assert ready["availability_sha256"] == repeated["availability_sha256"]
 
 
 @pytest.mark.asyncio
@@ -258,6 +334,232 @@ async def test_legacy_nonterminal_video_item_fails_lineage() -> None:
 
 
 @pytest.mark.asyncio
+async def test_extend_compile_links_one_wep_and_wgp_to_master_segment_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    treatment = {
+        **_projection(),
+        "generation_mode": "EXTEND",
+        "duration_seconds": 16,
+        "segment_plan": {
+            "segment_plan_sha256": "d" * 64,
+            "ordered_segment_sha256s": ["1" * 64, "2" * 64],
+            "segment_count": 2,
+            "segments": [
+                {
+                    "segment_index": 1,
+                    "duration_seconds": 8,
+                    "segment_sha256": "1" * 64,
+                },
+                {
+                    "segment_index": 2,
+                    "duration_seconds": 8,
+                    "segment_sha256": "2" * 64,
+                },
+            ],
+        },
+    }
+    calls: dict[str, dict] = {}
+
+    async def resolve_item(dimensions: dict, plan: dict) -> dict:
+        del dimensions, plan
+        return treatment
+
+    async def create_wep(**kwargs) -> dict:
+        calls["wep"] = kwargs
+        return {
+            "workspace_execution_package_id": "wep-treatment-extend",
+            "readiness": "READY",
+            "blockers": [],
+        }
+
+    async def create_wgp(**kwargs) -> dict:
+        calls["wgp"] = kwargs
+        return {
+            "workspace_generation_package_id": "wgp-treatment-extend",
+            "prompt_fingerprint": "f" * 64,
+            "final_prompt_text": "approved governed EXTEND prompt",
+            "status": "READY",
+            "blockers_json": "[]",
+        }
+
+    monkeypatch.setattr(compiler, "resolve_item_treatment", resolve_item)
+    monkeypatch.setattr(
+        compiler.wep_service,
+        "create_workspace_execution_package",
+        create_wep,
+    )
+    monkeypatch.setattr(
+        compiler.wgp_service,
+        "create_t2v_generation_package",
+        create_wgp,
+    )
+
+    package_id, prompt_sha, prompt_package = await compiler._compile_video(
+        {
+            "item_id": "item-treatment-extend",
+            "product_id": "product-1",
+            "creative_dna_sha256": "e" * 64,
+        },
+        {
+            "plan_id": "plan-treatment-extend",
+            "logical_mode": "T2V",
+            "execution_policy_json": json.dumps({"aspect": "9:16"}),
+        },
+        {
+            "generation_mode": "EXTEND",
+            "duration_seconds": 16,
+            "engine_block_duration_seconds": 8,
+            "segment_count": 2,
+            "execution_route": "VIDEO_JOBS_ORCHESTRATOR",
+            "model_key": "Veo 3.1 - Lite",
+        },
+    )
+
+    assert package_id == "wgp-treatment-extend"
+    assert prompt_sha == "f" * 64
+    assert calls["wep"]["generation_mode"] == "EXTEND"
+    assert calls["wep"]["requested_total_duration_seconds"] == 16
+    assert calls["wep"]["creative_treatment"] == treatment
+    assert (
+        calls["wgp"]["workspace_execution_package_id"]
+        == "wep-treatment-extend"
+    )
+    assert calls["wgp"]["creative_treatment"] == treatment
+    assert prompt_package["workspace_execution_package_id"] == (
+        "wep-treatment-extend"
+    )
+    assert prompt_package["treatment_lineage"]["segment_plan_sha256"] == (
+        "d" * 64
+    )
+    assert prompt_package["treatment_lineage"][
+        "ordered_segment_sha256s"
+    ] == ["1" * 64, "2" * 64]
+
+
+@pytest.mark.asyncio
+async def test_extend_scheduler_persists_job_plan_without_provider_authorization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent.api import flow as flow_api
+
+    treatment = {
+        **_projection(),
+        "generation_mode": "EXTEND",
+        "duration_seconds": 16,
+        "segment_plan": {
+            "segment_plan_sha256": "d" * 64,
+            "ordered_segment_sha256s": ["1" * 64, "2" * 64],
+        },
+    }
+    lineage = {
+        "treatment_id": treatment["treatment_id"],
+        "treatment_sha256": treatment["treatment_sha256"],
+        "visual_fingerprint_sha256": treatment[
+            "visual_fingerprint_sha256"
+        ],
+        "dependency_hashes": treatment["dependency_hashes"],
+        "variation_group": None,
+        "format": "UGC",
+        "generation_mode": "EXTEND",
+        "segment_plan_sha256": "d" * 64,
+        "ordered_segment_sha256s": ["1" * 64, "2" * 64],
+    }
+    plan_calls: list[tuple[object, bool]] = []
+
+    async def resolve_item(dimensions: dict, plan: dict) -> dict:
+        del dimensions, plan
+        return treatment
+
+    async def get_wgp(wgp_id: str) -> dict:
+        assert wgp_id == "wgp-treatment-extend"
+        return {
+            "workspace_generation_package_id": wgp_id,
+            "workspace_execution_package_id": "wep-treatment-extend",
+            "product_id": "product-1",
+            "product_name_snapshot": "P6 Product",
+            "generation_mode": "EXTEND",
+        }
+
+    def extend_preconditions(
+        wgp: dict,
+        settings: dict,
+    ) -> tuple[dict, list[str]]:
+        assert wgp["workspace_generation_package_id"] == (
+            "wgp-treatment-extend"
+        )
+        assert settings == {
+            "model": "Veo 3.1 - Lite",
+            "aspect": "9:16",
+        }
+        return (
+            {
+                "logical_mode": "T2V",
+                "total_seconds": 16,
+                "execution_package_id": "wep-treatment-extend",
+            },
+            [],
+        )
+
+    async def plan_video_job(
+        body: object,
+        *,
+        trust_client_authority: bool,
+    ) -> dict:
+        plan_calls.append((body, trust_client_authority))
+        return {
+            "job_id": "video-job-treatment-extend",
+            "plan_fingerprint": "9" * 64,
+        }
+
+    monkeypatch.setattr(scheduler, "resolve_item_treatment", resolve_item)
+    monkeypatch.setattr(scheduler.crud, "get_workspace_generation_package", get_wgp)
+    monkeypatch.setattr(
+        scheduler.production_queue_service,
+        "extend_execution_preconditions",
+        extend_preconditions,
+    )
+    monkeypatch.setattr(flow_api, "_plan_video_job", plan_video_job)
+
+    payload, blockers = await scheduler._build_item_payload(
+        {
+            "media_type": "VIDEO",
+            "logical_mode": "T2V",
+            "workspace_generation_package_id": "wgp-treatment-extend",
+            "prompt_package_json": json.dumps(
+                {
+                    "generation_mode": "EXTEND",
+                    "requested_total_duration_seconds": 16,
+                    "engine_block_duration_seconds": 8,
+                    "treatment_lineage": lineage,
+                }
+            ),
+            "creative_dimensions_json": json.dumps(
+                {
+                    "model_key": "Veo 3.1 - Lite",
+                    "duration_seconds": "16",
+                    "generation_mode": "EXTEND",
+                    "creative_treatment": treatment,
+                }
+            ),
+        },
+        _plan(treatment_ids=["treatment-1"]),
+        aspect="9:16",
+    )
+
+    assert blockers == []
+    assert payload["video_job_id"] == "video-job-treatment-extend"
+    assert payload["video_job_plan_fingerprint"] == "9" * 64
+    assert payload["execution_lane"] == "VIDEO_JOBS_ORCHESTRATOR"
+    assert payload["creative_treatment_lineage"] == lineage
+    assert len(plan_calls) == 1
+    request, trust_client_authority = plan_calls[0]
+    assert trust_client_authority is False
+    assert request.client_request_nonce == "wgp-treatment-extend"
+    assert request.requested_total_duration_seconds == 16
+
+
+@pytest.mark.asyncio
 async def test_payload_hash_input_carries_revalidated_lineage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -271,6 +573,9 @@ async def test_payload_hash_input_carries_revalidated_lineage(
         "dependency_hashes": treatment["dependency_hashes"],
         "variation_group": None,
         "format": "UGC",
+        "generation_mode": "SINGLE",
+        "segment_plan_sha256": None,
+        "ordered_segment_sha256s": [],
     }
 
     async def resolve_item(dimensions: dict, plan: dict) -> dict:

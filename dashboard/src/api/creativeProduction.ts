@@ -56,6 +56,7 @@ export interface CohortAuthority {
 }
 
 export interface CreativePoolSelection {
+	treatment_ids: string[];
 	copy_set_ids: string[];
 	poster_copy_set_ids: string[];
 	avatar_codes: string[];
@@ -87,6 +88,7 @@ export interface CreateProductionPlanRequest {
 	logical_mode: "T2V" | "HYBRID" | "F2V" | "I2V";
 	model_keys: string[];
 	duration_seconds: number[];
+	creative_format: CreativeTreatmentFormatPreference;
 	pools: CreativePoolSelection;
 	controlled_reuse_reason: string | null;
 	controlled_reuse_max_per_dna: number;
@@ -96,6 +98,48 @@ export interface CreateProductionPlanRequest {
 export interface ProductVideoAllocation {
 	product_id: string;
 	video_count: number;
+}
+
+export type CreativeTreatmentFormatPreference =
+	| "AUTO"
+	| "UGC"
+	| "PGC"
+	| "CINEMATIC";
+
+export interface TreatmentAvailabilityRequest {
+	product_video_allocations: ProductVideoAllocation[];
+	logical_mode: "T2V" | "HYBRID" | "F2V" | "I2V";
+	model_key: string;
+	duration_seconds: number;
+	creative_format: CreativeTreatmentFormatPreference;
+	treatment_ids: string[];
+}
+
+export interface TreatmentAvailability {
+	ready: boolean;
+	selection_mode: "AUTO" | "EXPLICIT";
+	availability_sha256: string;
+	requested: {
+		logical_mode: string;
+		model_key: string;
+		duration_seconds: number;
+		creative_format: CreativeTreatmentFormatPreference;
+		video_count: number;
+	};
+	selected_treatment_ids: string[];
+	selected_treatments: Array<Record<string, unknown>>;
+	product_results: Array<{
+		product_id: string;
+		requested: number;
+		eligible_capacity: number;
+		selected_count: number;
+		selected_treatment_ids: string[];
+		ready: boolean;
+		shortage: number;
+	}>;
+	supported_formats: Array<"UGC" | "PGC" | "CINEMATIC">;
+	supported_configurations: Array<Record<string, unknown>>;
+	blockers: Array<Record<string, unknown>>;
 }
 
 export interface PlanProductAllocationSnapshot extends ProductVideoAllocation {
@@ -329,6 +373,12 @@ export function fetchGovernedPoolAuthority(
 		product_ids: productIds,
 		logical_mode: logicalMode,
 	});
+}
+
+export function fetchTreatmentAvailability(
+	body: TreatmentAvailabilityRequest,
+): Promise<TreatmentAvailability> {
+	return postAPI("/api/creative-production/treatment-availability", body);
 }
 
 export function preflightProductionPlan(

@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fetchCohortAuthority = vi.fn();
 const fetchGovernedPoolAuthority = vi.fn();
+const fetchTreatmentAvailability = vi.fn();
 const listProductionPlans = vi.fn();
 const fetchProductionPlan = vi.fn();
 const listExecutionLanes = vi.fn();
@@ -32,6 +33,8 @@ vi.mock("../api/creativeProduction", () => ({
 	fetchCohortAuthority: (...args: unknown[]) => fetchCohortAuthority(...args),
 	fetchGovernedPoolAuthority: (...args: unknown[]) =>
 		fetchGovernedPoolAuthority(...args),
+	fetchTreatmentAvailability: (...args: unknown[]) =>
+		fetchTreatmentAvailability(...args),
 	listProductionPlans: (...args: unknown[]) => listProductionPlans(...args),
 	fetchProductionPlan: (...args: unknown[]) => fetchProductionPlan(...args),
 	listExecutionLanes: (...args: unknown[]) => listExecutionLanes(...args),
@@ -84,6 +87,81 @@ const PRODUCTS = [
 		readiness_status: "PRODUCTION_READY",
 	},
 ];
+
+type AvailabilityFixtureRequest = {
+	product_video_allocations: Array<{
+		product_id: string;
+		video_count: number;
+	}>;
+	logical_mode: string;
+	model_key: string;
+	duration_seconds: number;
+	creative_format: string;
+	treatment_ids?: string[];
+};
+
+function makeTreatmentAvailability(
+	body: AvailabilityFixtureRequest,
+	ready = true,
+) {
+	const productResults = body.product_video_allocations.map((allocation) => {
+		const selectedIds = ready
+			? Array.from(
+					{ length: allocation.video_count },
+					(_, index) => `${allocation.product_id}-treatment-${index + 1}`,
+				)
+			: [];
+		return {
+			product_id: allocation.product_id,
+			requested: allocation.video_count,
+			eligible_capacity: ready ? allocation.video_count : 0,
+			selected_count: selectedIds.length,
+			selected_treatment_ids: selectedIds,
+			ready,
+			shortage: ready ? 0 : allocation.video_count,
+			excluded_authority: [],
+		};
+	});
+	const selectedTreatmentIds = productResults.flatMap(
+		(product) => product.selected_treatment_ids,
+	);
+	return {
+		ready,
+		selection_mode: body.treatment_ids?.length ? "EXPLICIT" : "AUTO",
+		requested: {
+			logical_mode: body.logical_mode,
+			model_key: body.model_key,
+			duration_seconds: body.duration_seconds,
+			creative_format: body.creative_format,
+			video_count: body.product_video_allocations.reduce(
+				(total, allocation) => total + allocation.video_count,
+				0,
+			),
+		},
+		selected_treatment_ids: selectedTreatmentIds,
+		selected_treatments: [],
+		product_results: productResults,
+		supported_formats: ["UGC", "PGC", "CINEMATIC"],
+		supported_configurations: [
+			{
+				format: "UGC",
+				logical_mode: body.logical_mode,
+				generation_mode: body.duration_seconds > 8 ? "EXTEND" : "SINGLE",
+				duration_seconds: body.duration_seconds,
+				model_keys: [body.model_key],
+			},
+		],
+		blockers: ready
+			? []
+			: [
+					{
+						code: "TREATMENT_CAPACITY_INSUFFICIENT",
+						product_id: body.product_video_allocations[0]?.product_id,
+					},
+				],
+		availability_sha256: ready ? "a".repeat(64) : "b".repeat(64),
+	};
+}
 
 const singleConfiguration = {
 	model_key: "veo_3_1_lite",
@@ -154,6 +232,11 @@ function makeSnapshot({
 		variation_strategy: "SAME_ANGLE_DIFF_DIALOGUE_DIFF_VISUALS",
 		approved_pool_snapshot: {},
 		pool_snapshot: {
+			treatment_ids: Array.from(
+				{ length: targetVideoCount },
+				(_, index) => `${planId}-treatment-${index + 1}`,
+			),
+			creative_format: "UGC",
 			copy_set_ids: [],
 			poster_copy_set_ids: [],
 			avatar_codes: [],
@@ -423,6 +506,10 @@ function prime() {
 		near_duplicate_threshold: 0.8,
 		credit_spend: 0,
 	});
+	fetchTreatmentAvailability.mockImplementation(
+		(body: AvailabilityFixtureRequest) =>
+			Promise.resolve(makeTreatmentAvailability(body)),
+	);
 	listProductionPlans.mockResolvedValue({ plans: PLANS });
 	fetchProductionPlan.mockImplementation((planId: string) =>
 		Promise.resolve(DETAILS[planId]),
@@ -477,6 +564,10 @@ describe("P6.3-R2 production plan state isolation", () => {
 		expect(snapshot).toHaveTextContent("2 videos");
 		expect(snapshot).toHaveTextContent("16s EXTEND");
 		expect(snapshot).toHaveTextContent("2 segments");
+		expect(
+			screen.getByTestId("p6-selected-treatment-authority"),
+		).toHaveTextContent("5 immutable approvals");
+		expect(snapshot).toHaveTextContent("plan-b-treatment-5");
 		expect(screen.getByTestId("p6-content-matrix")).toHaveTextContent(
 			"plan-b-item-4",
 		);
@@ -508,6 +599,62 @@ describe("P6.3-R2 production plan state isolation", () => {
 		expect(screen.getByLabelText("Select production plan")).toHaveValue(
 			"plan-b",
 		);
+	});
+
+	it("fails closed during capacity checks and ignores a stale shortage response", async () => {
+		let resolveFirst:
+			| ((value: ReturnType<typeof makeTreatmentAvailability>) => void)
+			| undefined;
+		let firstRequest: AvailabilityFixtureRequest | undefined;
+		fetchTreatmentAvailability
+			.mockReset()
+			.mockImplementationOnce(
+				(body: AvailabilityFixtureRequest) =>
+					new Promise((resolve) => {
+						firstRequest = body;
+						resolveFirst = resolve;
+					}),
+			)
+			.mockImplementationOnce((body: AvailabilityFixtureRequest) =>
+				Promise.resolve(makeTreatmentAvailability(body)),
+			);
+
+		render(<CreativeProductionStudioPage />);
+		await screen.findByText("Select existing plan");
+		fireEvent.click(screen.getByRole("button", { name: /Choose products/i }));
+		fireEvent.click(
+			await screen.findByRole("option", { name: /P6 Product A/i }),
+		);
+
+		await waitFor(() =>
+			expect(fetchTreatmentAvailability).toHaveBeenCalledTimes(1),
+		);
+		expect(screen.getByTestId("p6-create-plan")).toBeDisabled();
+		expect(screen.getByTestId("p6-treatment-availability")).toHaveTextContent(
+			"CHECKING",
+		);
+
+		fireEvent.change(screen.getByLabelText("Video quantity for P6 Product A"), {
+			target: { value: "2" },
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId("p6-treatment-availability")).toHaveTextContent(
+				"2/2 unique approved treatments allocated",
+			),
+		);
+		await waitFor(() =>
+			expect(screen.getByTestId("p6-create-plan")).toBeEnabled(),
+		);
+
+		await act(async () => {
+			if (!firstRequest) throw new Error("first availability request missing");
+			resolveFirst?.(makeTreatmentAvailability(firstRequest, false));
+		});
+		expect(screen.getByTestId("p6-treatment-availability")).toHaveTextContent(
+			"2/2 unique approved treatments allocated",
+		);
+		expect(screen.getByTestId("p6-create-plan")).toBeEnabled();
+		expect(screen.queryByText(/0\/1 eligible/i)).not.toBeInTheDocument();
 	});
 
 	it("duplicates an active plan into an explicit UNSAVED draft with no old matrix or live action", async () => {

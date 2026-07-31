@@ -1779,13 +1779,28 @@ def render_block(
     if treatment:
         if treatment_format not in {"UGC", "PGC", "CINEMATIC"}:
             raise ValueError("TREATMENT_FORMAT_UNSUPPORTED")
-        if str(treatment.get("generation_mode") or "").upper() != "SINGLE":
-            raise ValueError("TREATMENT_EXTEND_UNSUPPORTED")
-        if total_blocks != 1 or block_index != 1:
-            raise ValueError("TREATMENT_EXTEND_UNSUPPORTED")
-        if float(treatment.get("duration_seconds") or 0) != float(
-            block_seconds
-        ):
+        treatment_mode = str(
+            treatment.get("generation_mode") or ""
+        ).upper()
+        if treatment_mode == "SINGLE":
+            if total_blocks != 1 or block_index != 1 or float(
+                treatment.get("duration_seconds") or 0
+            ) != float(block_seconds):
+                raise ValueError("TREATMENT_INCOMPATIBLE")
+        elif treatment_mode == "EXTEND":
+            if (
+                total_blocks <= 1
+                or not allocation_data
+                or int(treatment.get("active_segment_index") or 0)
+                != block_index
+                or not str(treatment.get("active_segment_sha256") or "")
+                or float(
+                    treatment.get("active_segment_duration_seconds") or 0
+                )
+                != float(block_seconds)
+            ):
+                raise ValueError("TREATMENT_SEGMENT_PLAN_INVALID")
+        else:
             raise ValueError("TREATMENT_INCOMPATIBLE")
     lang = language_name(target_language)
     is_final = bool(allocation_data.get("is_final")) if allocation_data else block_index == total_blocks
@@ -1902,7 +1917,22 @@ def render_block(
                 *action_lines,
             ]
         )
-    if allocation_data:
+    if treatment:
+        shots = _treatment_shot_lines(treatment)
+        if allocation_data:
+            entry_text = _allocation_state_text(
+                allocation_data.get("entry_continuity_state")
+            )
+            exit_text = _allocation_state_text(
+                allocation_data.get("exit_continuity_state")
+            )
+            if entry_text and exit_text:
+                s3 = "\n".join([
+                    s3,
+                    f"Begin from this exact allocated state: {entry_text}.",
+                    f"Preserve this allocated exit state for the next block: {exit_text}.",
+                ])
+    elif allocation_data:
         allocated_beats = list(allocation_data.get("assigned_story_beats") or [])
         if not allocated_beats:
             raise ValueError("BLOCK_ALLOCATION_STORY_BEATS_MISSING")
@@ -1913,16 +1943,18 @@ def render_block(
         ]
         if not shots:
             raise ValueError("BLOCK_ALLOCATION_STORY_BEATS_MISSING")
-        entry_text = _allocation_state_text(allocation_data.get("entry_continuity_state"))
-        exit_text = _allocation_state_text(allocation_data.get("exit_continuity_state"))
+        entry_text = _allocation_state_text(
+            allocation_data.get("entry_continuity_state")
+        )
+        exit_text = _allocation_state_text(
+            allocation_data.get("exit_continuity_state")
+        )
         if entry_text and exit_text:
             s3 = "\n".join([
                 s3,
                 f"Begin from this exact allocated state: {entry_text}.",
                 f"Preserve this allocated exit state for the next block: {exit_text}.",
             ])
-    elif treatment:
-        shots = _treatment_shot_lines(treatment)
     else:
         shots = list(shot_plan or [])
     if not shots:
@@ -2115,24 +2147,55 @@ def compile_prompt_set(
     handling_notes: str = "",
     creative_treatment: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Compile the full MULTI-PROMPT SET: one complete 9-section block per
-    workbook-derived block (1-7). This is THE canonical entrypoint."""
+    """Compile one complete canonical 9-section prompt per governed block."""
     mode = str(source_mode or "").strip().upper()
     if mode not in SOURCE_MODES:
         raise ValueError(f"UNSUPPORTED_SOURCE_MODE:{source_mode}")
-    if creative_treatment:
-        if str(creative_treatment.get("generation_mode") or "").upper() != "SINGLE":
-            raise ValueError("TREATMENT_EXTEND_UNSUPPORTED")
-        if float(creative_treatment.get("duration_seconds") or 0) != float(
-            duration_seconds
-        ):
+    treatment = dict(creative_treatment or {})
+    treatment_segment_plan: dict[str, Any] | None = None
+    treatment_segments: list[dict[str, Any]] = []
+    if treatment:
+        treatment_mode = str(treatment.get("generation_mode") or "").upper()
+        if treatment_mode == "SINGLE":
+            if float(treatment.get("duration_seconds") or 0) != float(
+                duration_seconds
+            ):
+                raise ValueError("TREATMENT_INCOMPATIBLE")
+            plan = [duration_seconds]
+        elif treatment_mode == "EXTEND":
+            raw_segment_plan = treatment.get("segment_plan")
+            if not isinstance(raw_segment_plan, dict):
+                raise ValueError("TREATMENT_SEGMENT_PLAN_INVALID")
+            treatment_segment_plan = raw_segment_plan
+            treatment_segments = list(
+                treatment_segment_plan.get("segments") or []
+            )
+            plan = [
+                int(segment["duration_seconds"])
+                for segment in treatment_segments
+            ]
+            if (
+                not plan
+                or len(plan)
+                != int(treatment_segment_plan.get("segment_count") or 0)
+                or sum(plan) != duration_seconds
+                or [
+                    segment.get("segment_sha256")
+                    for segment in treatment_segments
+                ]
+                != treatment_segment_plan.get("ordered_segment_sha256s")
+            ):
+                raise ValueError("TREATMENT_SEGMENT_PLAN_INVALID")
+        else:
             raise ValueError("TREATMENT_INCOMPATIBLE")
-        plan = [duration_seconds]
     elif mode == "IMAGES":
         plan = [0]
     else:
-        plan = resolve_block_plan(engine, duration_seconds, preferred_lane=preferred_lane)
-    # HYBRID law: resolve ONE concrete presenter BEFORE rendering, reuse across blocks.
+        plan = resolve_block_plan(
+            engine,
+            duration_seconds,
+            preferred_lane=preferred_lane,
+        )
     resolved_profile = presenter_profile
     if mode in ("HYBRID", "T2V") and not resolved_profile:
         resolved_profile = avatar_registry.resolve_presenter(
@@ -2141,21 +2204,46 @@ def compile_prompt_set(
             seed=_clean(product.get("id") or product.get("name") or "bosmax"),
         )
     if mode == "INGREDIENTS":
-        roles = {str(k).upper(): v for k, v in (asset_role_map or {}).items()}
-        if not (roles.get("PRODUCT_REFERENCE") and roles.get("AVATAR_REFERENCE")):
-            raise ValueError("INGREDIENTS_ASSET_ROLE_MAP_INCOMPLETE: PRODUCT_REFERENCE + AVATAR_REFERENCE required")
+        roles = {
+            str(key).upper(): value
+            for key, value in (asset_role_map or {}).items()
+        }
+        if not (
+            roles.get("PRODUCT_REFERENCE")
+            and roles.get("AVATAR_REFERENCE")
+        ):
+            raise ValueError(
+                "INGREDIENTS_ASSET_ROLE_MAP_INCOMPLETE: "
+                "PRODUCT_REFERENCE + AVATAR_REFERENCE required"
+            )
         if not roles.get("STYLE_SCENE_REFERENCE"):
             style_scene_source = "SCENE_CONTEXT_ONLY"
         asset_role_map = roles
     total = len(plan)
     planner_result = None
     allocations: list[dict[str, Any] | None]
-    if creative_treatment:
-        allocations = [None]
-    elif mode == "IMAGES":
+    if treatment_segment_plan:
+        allocations = [
+            segment.get("planner_allocation")
+            for segment in treatment_segments
+        ]
+        if any(not isinstance(item, dict) for item in allocations):
+            raise ValueError("TREATMENT_SEGMENT_PLAN_INVALID")
+        planner_result = {
+            "plan_version": treatment_segment_plan["plan_version"],
+            "input_fingerprint": treatment_segment_plan["input_fingerprint"],
+            "planner_fingerprint": treatment_segment_plan[
+                "planner_fingerprint"
+            ],
+            "resolved_block_plan": plan,
+            "block_allocations": allocations,
+        }
+    elif treatment or mode == "IMAGES":
         allocations = [None]
     else:
-        from agent.services.full_storyboard_extend_planner import plan_full_storyboard
+        from agent.services.full_storyboard_extend_planner import (
+            plan_full_storyboard,
+        )
 
         planner_result = plan_full_storyboard(
             route_id="CANONICAL_WORKBOOK_BLOCK_PLAN",
@@ -2167,27 +2255,69 @@ def compile_prompt_set(
             wps_mode=wps_mode,
             scene_context=scene_context,
             approved_dialogue=approved_dialogue,
-            shot_count_by_block=[min(4, max(2, round(seconds / 4))) for seconds in plan],
+            shot_count_by_block=[
+                min(4, max(2, round(seconds / 4)))
+                for seconds in plan
+            ],
         ).to_dict()
         allocations = list(planner_result["block_allocations"])
     blocks = []
-    for i, seconds in enumerate(plan, start=1):
-        allocation = allocations[i - 1]
-        blocks.append(render_block(
-            source_mode=mode, engine=engine, block_index=i, total_blocks=total,
-            block_seconds=seconds or duration_seconds, product=product,
-            scene_context=scene_context, copy=copy, approved_dialogue=approved_dialogue,
-            presenter_profile=resolved_profile, asset_role_map=asset_role_map,
-            style_scene_source=style_scene_source, target_language=target_language,
-            wps_mode=wps_mode, overlay_allowed=overlay_allowed, overlay_text=overlay_text,
-            camera_notes=camera_notes, handling_notes=handling_notes,
-            shot_count_hint=1 if mode == "IMAGES" else min(4, max(2, round((seconds or duration_seconds) / 4))),
-            allocation=allocation,
-            creative_treatment=creative_treatment,
-        ))
-    all_violations = [v for b in blocks for v in b["scrub_violations"]]
+    for index, seconds in enumerate(plan, start=1):
+        allocation = allocations[index - 1]
+        block_treatment = treatment
+        block_dialogue = approved_dialogue
+        if treatment_segment_plan:
+            segment = treatment_segments[index - 1]
+            block_treatment = {
+                **treatment,
+                "action_sequence": segment["action_sequence"],
+                "shot_grammar": segment["shot_grammar"],
+                "dialogue_text": segment["exact_dialogue_slice"],
+                "active_segment_index": segment["segment_index"],
+                "active_segment_sha256": segment["segment_sha256"],
+                "active_segment_duration_seconds": segment[
+                    "duration_seconds"
+                ],
+            }
+            block_dialogue = str(segment["exact_dialogue_slice"])
+        blocks.append(
+            render_block(
+                source_mode=mode,
+                engine=engine,
+                block_index=index,
+                total_blocks=total,
+                block_seconds=seconds or duration_seconds,
+                product=product,
+                scene_context=scene_context,
+                copy=copy,
+                approved_dialogue=block_dialogue,
+                presenter_profile=resolved_profile,
+                asset_role_map=asset_role_map,
+                style_scene_source=style_scene_source,
+                target_language=target_language,
+                wps_mode=wps_mode,
+                overlay_allowed=overlay_allowed,
+                overlay_text=overlay_text,
+                camera_notes=camera_notes,
+                handling_notes=handling_notes,
+                shot_count_hint=(
+                    1
+                    if mode == "IMAGES"
+                    else min(4, max(2, round((seconds or duration_seconds) / 4)))
+                ),
+                allocation=allocation,
+                creative_treatment=block_treatment or None,
+            )
+        )
+    all_violations = [
+        violation
+        for block in blocks
+        for violation in block["scrub_violations"]
+    ]
     if all_violations:
-        raise ValueError(f"ENGINE_OUTPUT_SCRUB_FAILED:{sorted(set(all_violations))}")
+        raise ValueError(
+            f"ENGINE_OUTPUT_SCRUB_FAILED:{sorted(set(all_violations))}"
+        )
     return {
         "compiler_authority": "canonical_prompt_compiler_v1",
         "source_mode": mode,
@@ -2201,16 +2331,21 @@ def compile_prompt_set(
         "planner_result": planner_result,
         "treatment_lineage": (
             {
-                "treatment_id": creative_treatment.get("treatment_id"),
-                "treatment_sha256": creative_treatment.get(
-                    "treatment_sha256"
-                ),
-                "visual_fingerprint_sha256": creative_treatment.get(
+                "treatment_id": treatment.get("treatment_id"),
+                "treatment_sha256": treatment.get("treatment_sha256"),
+                "visual_fingerprint_sha256": treatment.get(
                     "visual_fingerprint_sha256"
                 ),
-                "format": creative_treatment.get("format"),
+                "format": treatment.get("format"),
+                "generation_mode": treatment.get("generation_mode"),
+                "segment_plan_sha256": treatment_segment_plan.get(
+                    "segment_plan_sha256"
+                ) if treatment_segment_plan else None,
+                "ordered_segment_sha256s": treatment_segment_plan.get(
+                    "ordered_segment_sha256s", []
+                ) if treatment_segment_plan else [],
             }
-            if creative_treatment
+            if treatment
             else None
         ),
     }

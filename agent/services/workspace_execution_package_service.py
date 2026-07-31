@@ -292,6 +292,7 @@ async def create_workspace_execution_package(
     avatar_id: str | None = None,
     scene_context_override: str | None = None,
     scene_context_code: str | None = None,
+    creative_treatment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     # Explicit-Fallback-Confirmation V1 (FINAL generation only — preview stays
     # warning-only): producing a saved execution package with NO approved Copy
@@ -336,6 +337,7 @@ async def create_workspace_execution_package(
         avatar_id=avatar_id,
         scene_context_override=scene_context_override,
         copy_set_id=copy_set_id,
+        creative_treatment=creative_treatment,
     )
     copy_binding_lineage = compiler_result.get("copy_binding")
     # Explicit-Fallback-Confirmation V1: when the operator confirmed fallback
@@ -432,6 +434,23 @@ async def create_workspace_execution_package(
             "canonical_package_fingerprint": compiler_result.get("canonical_package_fingerprint"),
         },
     }
+    if creative_treatment:
+        segment_plan = creative_treatment.get("segment_plan") or {}
+        request_lineage_payload["creative_treatment_lineage"] = {
+            "treatment_id": creative_treatment.get("treatment_id"),
+            "treatment_sha256": creative_treatment.get("treatment_sha256"),
+            "visual_fingerprint_sha256": creative_treatment.get(
+                "visual_fingerprint_sha256"
+            ),
+            "format": creative_treatment.get("format"),
+            "generation_mode": creative_treatment.get("generation_mode"),
+            "segment_plan_sha256": segment_plan.get("segment_plan_sha256")
+            if isinstance(segment_plan, dict)
+            else None,
+            "ordered_segment_sha256s": segment_plan.get(
+                "ordered_segment_sha256s", []
+            ) if isinstance(segment_plan, dict) else [],
+        }
     for key in ("metadata_handoff", "overlay_spec", "export_spec", "image_route"):
         if compiler_result.get(key) is not None:
             request_lineage_payload["compiler"][key] = compiler_result.get(key)
@@ -630,6 +649,7 @@ async def compile_workspace_prompt_preview(
     copy_set_id: str | None = None,
     avatar_id: str | None = None,
     scene_context_override: str | None = None,
+    creative_treatment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized_mode = normalize_mode(mode)
     # Source-lineage law (2026-07-09 corrective audit): a caller that names a
@@ -685,6 +705,7 @@ async def compile_workspace_prompt_preview(
             avatar_id=avatar_id,
             scene_context_override=scene_context_override,
             copy_intelligence=copy_binding["copy_intelligence"],
+            creative_treatment=creative_treatment,
         )
     prompt_scan = scan_prompt_text(
         compiler_result["final_compiled_prompt_text"],

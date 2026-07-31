@@ -15,6 +15,7 @@ from agent.models.creative_production import (
     PlanActionRequest,
     ProductVideoAllocation,
     ProductionPlanCreateRequest,
+    TreatmentAvailabilityRequest,
     StartPlanRequest,
 )
 from agent.services.creative_production_plan_service import CreativeProductionError
@@ -138,6 +139,46 @@ async def test_create_plan_api_uses_typed_service_contract(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_treatment_availability_api_preserves_typed_zero_credit_contract(
+    monkeypatch,
+):
+    availability = AsyncMock(
+        return_value={
+            "ready": True,
+            "selection_mode": "AUTO",
+            "selected_treatment_ids": ["treatment-1"],
+            "credit_spend": 0,
+        }
+    )
+    monkeypatch.setattr(
+        api.plans,
+        "resolve_treatment_availability",
+        availability,
+    )
+    body = TreatmentAvailabilityRequest(
+        product_video_allocations=[
+            ProductVideoAllocation(product_id="product-1", video_count=1),
+        ],
+        logical_mode="T2V",
+        model_key="veo_3_1_lite",
+        duration_seconds=16,
+        creative_format="UGC",
+    )
+    result = await api.treatment_availability(body)
+    assert result["credit_spend"] == 0
+    availability.assert_awaited_once_with(
+        product_video_allocations=[
+            {"product_id": "product-1", "video_count": 1},
+        ],
+        logical_mode="T2V",
+        model_key="veo_3_1_lite",
+        duration_seconds=16,
+        creative_format="UGC",
+        treatment_ids=[],
+    )
+
+
+@pytest.mark.asyncio
 async def test_api_returns_stable_structured_error(monkeypatch):
     monkeypatch.setattr(
         api.plans,
@@ -231,6 +272,7 @@ def test_router_exposes_complete_operator_control_plane():
     expected = {
         ("GET", "/creative-production/cohort-authority"),
         ("POST", "/creative-production/pool-authority"),
+        ("POST", "/creative-production/treatment-availability"),
         ("POST", "/creative-production/plans"),
         ("PATCH", "/creative-production/plans/{plan_id}"),
         ("GET", "/creative-production/plans/{plan_id}"),

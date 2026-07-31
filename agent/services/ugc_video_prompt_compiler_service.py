@@ -788,15 +788,38 @@ def compile_ugc_video_prompt(
     resolved_creator_persona = normalize_creator_persona(creator_persona)
     resolved_target_language = normalize_target_language(target_language)
     treatment = dict(creative_treatment or {})
+    treatment_segment_plan: dict[str, Any] | None = None
     if treatment:
-        if str(treatment.get("generation_mode") or "").upper() != "SINGLE":
-            raise ValueError("TREATMENT_EXTEND_UNSUPPORTED")
-        if requested_total_duration_seconds is not None or blocks:
-            raise ValueError("TREATMENT_EXTEND_UNSUPPORTED")
-        if float(treatment.get("duration_seconds") or 0) != float(
-            duration_seconds
-        ):
+        treatment_mode = str(
+            treatment.get("generation_mode") or ""
+        ).upper()
+        if treatment_mode not in {"SINGLE", "EXTEND"}:
             raise ValueError("TREATMENT_INCOMPATIBLE")
+        if treatment_mode != resolved_generation_mode:
+            raise ValueError("TREATMENT_GENERATION_MODE_MISMATCH")
+        if blocks:
+            raise ValueError("TREATMENT_CLIENT_BLOCK_PLAN_FORBIDDEN")
+        if treatment_mode == "SINGLE":
+            if requested_total_duration_seconds is not None or float(
+                treatment.get("duration_seconds") or 0
+            ) != float(duration_seconds):
+                raise ValueError("TREATMENT_INCOMPATIBLE")
+        else:
+            raw_segment_plan = treatment.get("segment_plan")
+            if not isinstance(raw_segment_plan, dict):
+                raise ValueError("TREATMENT_SEGMENT_PLAN_INVALID")
+            treatment_segment_plan = raw_segment_plan
+            treatment_total = int(
+                treatment_segment_plan.get(
+                    "requested_total_duration_seconds"
+                ) or 0
+            )
+            if (
+                requested_total_duration_seconds != treatment_total
+                or int(float(treatment.get("duration_seconds") or 0))
+                != treatment_total
+            ):
+                raise ValueError("TREATMENT_INCOMPATIBLE")
     capability = get_engine_mode_capability(normalized_mode)
     if resolved_generation_mode not in capability.get("supports_generation_modes", []):
         raise ValueError(
@@ -832,7 +855,35 @@ def compile_ugc_video_prompt(
     resolved_route = _extend_route_planner.normalize_route(route) or (
         _extend_route_planner.default_route_for_engine(engine_duration_target)
     )
-    if treatment:
+    if treatment_segment_plan is not None:
+        treatment_segments = treatment_segment_plan.get("segments") or []
+        if (
+            not isinstance(treatment_segments, list)
+            or len(treatment_segments)
+            != int(treatment_segment_plan.get("segment_count") or 0)
+            or [
+                segment.get("segment_sha256")
+                for segment in treatment_segments
+            ]
+            != treatment_segment_plan.get("ordered_segment_sha256s")
+        ):
+            raise ValueError("TREATMENT_SEGMENT_PLAN_INVALID")
+        blocks = [
+            {
+                "block_index": int(segment["segment_index"]),
+                "duration_seconds": int(segment["duration_seconds"]),
+            }
+            for segment in treatment_segments
+        ]
+        if sum(item["duration_seconds"] for item in blocks) != int(
+            requested_total_duration_seconds or 0
+        ):
+            raise ValueError("TREATMENT_SEGMENT_PLAN_INVALID")
+        resolved_generation_mode = "EXTEND"
+        resolved_route = str(
+            treatment_segment_plan.get("execution_route") or resolved_route
+        )
+    elif treatment:
         blocks = [{"block_index": 1, "duration_seconds": duration_seconds}]
         resolved_generation_mode = "SINGLE"
     elif requested_total_duration_seconds:
@@ -951,7 +1002,32 @@ def compile_ugc_video_prompt(
         _ingredient_roles = {"PRODUCT_REFERENCE": True}
     planner_result: dict[str, Any] | None = None
     allocation_by_block: dict[int, dict[str, Any]] = {}
-    if resolved_source_mode != "IMAGES" and not treatment:
+    if treatment_segment_plan is not None:
+        segment_allocations = [
+            segment.get("planner_allocation")
+            for segment in treatment_segment_plan["segments"]
+        ]
+        if any(
+            not isinstance(allocation, dict)
+            for allocation in segment_allocations
+        ):
+            raise ValueError("TREATMENT_SEGMENT_PLAN_INVALID")
+        planner_result = {
+            "plan_version": treatment_segment_plan["plan_version"],
+            "input_fingerprint": treatment_segment_plan["input_fingerprint"],
+            "planner_fingerprint": treatment_segment_plan[
+                "planner_fingerprint"
+            ],
+            "resolved_block_plan": treatment_segment_plan[
+                "resolved_block_plan"
+            ],
+            "block_allocations": segment_allocations,
+        }
+        allocation_by_block = {
+            int(allocation["block_index"]): allocation
+            for allocation in segment_allocations
+        }
+    elif resolved_source_mode != "IMAGES" and not treatment:
         planner_route = (
             "DEV_MANUAL_BLOCK_PLAN"
             if resolved_generation_mode == "EXTEND" and not requested_total_duration_seconds
@@ -994,6 +1070,20 @@ def compile_ugc_video_prompt(
         )
         _shot_policy = get_shot_policy(block["duration_seconds"])
         _camera = _camera_profile(resolved_camera_style)
+        block_treatment = treatment
+        if treatment_segment_plan is not None:
+            segment = treatment_segment_plan["segments"][
+                int(block["block_index"]) - 1
+            ]
+            block_treatment = {
+                **treatment,
+                "action_sequence": segment["action_sequence"],
+                "shot_grammar": segment["shot_grammar"],
+                "dialogue_text": segment["exact_dialogue_slice"],
+                "active_segment_index": segment["segment_index"],
+                "active_segment_sha256": segment["segment_sha256"],
+                "active_segment_duration_seconds": segment["duration_seconds"],
+            }
         rendered = _canonical.render_block(
             source_mode=resolved_source_mode,
             engine="GOOGLE_FLOW",
@@ -1014,9 +1104,9 @@ def compile_ugc_video_prompt(
             shot_count_hint=_shot_policy["recommended"],
             allocation=allocation,
             approved_dialogue=(
-                str(treatment.get("dialogue_text") or "") or None
+                str(block_treatment.get("dialogue_text") or "") or None
             ),
-            creative_treatment=treatment or None,
+            creative_treatment=block_treatment or None,
         )
         shots = [
             x.split(": ", 1)[-1]
@@ -1133,6 +1223,13 @@ def compile_ugc_video_prompt(
                     "visual_fingerprint_sha256"
                 ),
                 "format": treatment.get("format"),
+                "generation_mode": treatment.get("generation_mode"),
+                "segment_plan_sha256": treatment_segment_plan.get(
+                    "segment_plan_sha256"
+                ) if treatment_segment_plan else None,
+                "ordered_segment_sha256s": treatment_segment_plan.get(
+                    "ordered_segment_sha256s", []
+                ) if treatment_segment_plan else [],
                 "variation_group": treatment.get("variation_group"),
                 "dependency_hashes": treatment.get("dependency_hashes"),
             }

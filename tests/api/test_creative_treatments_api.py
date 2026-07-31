@@ -60,13 +60,18 @@ def _treatment_body() -> CreateTreatmentRequest:
     )
 
 
-def test_contract_refuses_extend_and_partial_variation_binding():
+def test_contract_accepts_governed_extend_and_refuses_partial_variation_binding():
     payload = _treatment_body().model_dump(mode="json")
     payload["generation_mode"] = "EXTEND"
-    with pytest.raises(ValidationError):
-        CreateTreatmentRequest(**payload)
+    payload["duration_seconds"] = 16
+    payload["compatibility_profile"]["model_keys"] = ["veo_3_1"]
+    payload["shot_grammar"][0]["duration_seconds"] = 16
+    extend = CreateTreatmentRequest(**payload)
+    assert extend.generation_mode == "EXTEND"
+    assert extend.duration_seconds == 16
 
     payload["generation_mode"] = "SINGLE"
+    payload["duration_seconds"] = 8
     payload["variation_ordinal"] = 1
     with pytest.raises(
         ValidationError,

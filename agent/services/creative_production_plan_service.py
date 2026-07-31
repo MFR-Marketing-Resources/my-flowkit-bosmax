@@ -674,10 +674,11 @@ async def resolve_treatment_authority(
             f"Creative Treatment {treatment_id} is not approved.",
             status_code=409,
         )
-    if str(row.get("generation_mode") or "").upper() != "SINGLE":
+    generation_mode = str(row.get("generation_mode") or "").upper()
+    if generation_mode not in {"SINGLE", "EXTEND"}:
         raise _treatment_error(
-            "TREATMENT_EXTEND_UNSUPPORTED",
-            "P7.5 v1 accepts SINGLE treatments only.",
+            "TREATMENT_GENERATION_MODE_UNSUPPORTED",
+            f"Unsupported treatment generation mode {generation_mode or '<empty>'}.",
         )
     format_name = str(row.get("format") or "").upper()
     if format_name not in {"UGC", "PGC", "CINEMATIC"}:
@@ -758,11 +759,20 @@ async def resolve_treatment_authority(
                 details={"treatment_id": treatment_id},
             )
         plan_models = _loads(plan.get("model_keys_json"), [])
-        compatible_models = [
-            str(value)
-            for value in compatibility.get("model_keys") or plan_models
-            if str(value) in plan_models
-        ]
+        compatible_models: list[str] = []
+        for value in compatibility.get("model_keys") or plan_models:
+            model_key = str(value)
+            if model_key not in plan_models:
+                continue
+            try:
+                orchestration = video_models.resolve_orchestration(
+                    model_key,
+                    int(float(row["duration_seconds"])),
+                )
+            except ValueError:
+                continue
+            if orchestration["generation_mode"] == generation_mode:
+                compatible_models.append(model_key)
         if not compatible_models:
             raise _treatment_error(
                 "TREATMENT_INCOMPATIBLE",
@@ -822,7 +832,7 @@ async def resolve_treatment_authority(
         "treatment_sha256": str(current["treatment_sha256"]),
         "product_id": str(row["product_id"]),
         "format": format_name,
-        "generation_mode": "SINGLE",
+        "generation_mode": generation_mode,
         "duration_seconds": float(row["duration_seconds"]),
         "copy_set_id": str(row["copy_set_id"]),
         "content_angle": str(row.get("content_angle") or ""),
@@ -836,6 +846,7 @@ async def resolve_treatment_authority(
         "action_sequence": decoded.get("action_sequence") or [],
         "shot_grammar": decoded.get("shot_grammar") or [],
         "compatibility_profile": compatibility,
+        "segment_plan": current.get("segment_plan") or [],
         "compatible_model_keys": compatible_models,
         "selected_model_key": compatible_models[0] if compatible_models else "",
         "visual_fingerprint_sha256": str(
@@ -879,6 +890,182 @@ async def resolve_treatment_authority(
                 details={"treatment_id": treatment_id},
             )
     return projection
+
+
+async def resolve_treatment_availability(
+    *,
+    product_video_allocations: list[dict[str, Any]],
+    logical_mode: str,
+    model_key: str,
+    duration_seconds: int,
+    creative_format: str = "AUTO",
+    treatment_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Resolve deterministic approved-treatment capacity for Studio and create."""
+
+    try:
+        requested_orchestration = video_models.resolve_orchestration(
+            model_key,
+            duration_seconds,
+        )
+    except ValueError as exc:
+        raise CreativeProductionError(
+            "INVALID_MODEL_DURATION_COMBINATION",
+            str(exc),
+            status_code=422,
+        ) from exc
+    requested_format = str(creative_format or "AUTO").upper()
+    explicit_ids = {
+        str(value).strip()
+        for value in treatment_ids or []
+        if str(value).strip()
+    }
+    requested_total = sum(
+        int(item["video_count"])
+        for item in product_video_allocations
+    )
+    selection_mode = "EXPLICIT" if explicit_ids else "AUTO"
+    product_results: list[dict[str, Any]] = []
+    selected_treatments: list[dict[str, Any]] = []
+    supported_by_key: dict[str, dict[str, Any]] = {}
+    blockers: list[dict[str, Any]] = []
+
+    for allocation in product_video_allocations:
+        product_id = str(allocation["product_id"])
+        requested = int(allocation["video_count"])
+        rows = await treatment_db.list_treatments(
+            product_id=product_id,
+            status="APPROVED",
+            limit=200,
+        )
+        eligible: list[dict[str, Any]] = []
+        excluded: list[dict[str, str]] = []
+        for row in sorted(rows, key=lambda item: str(item["treatment_id"])):
+            treatment_id = str(row["treatment_id"])
+            try:
+                projection = await resolve_treatment_authority(treatment_id)
+            except CreativeProductionError as exc:
+                excluded.append({"treatment_id": treatment_id, "code": exc.code})
+                continue
+            compatibility = projection["compatibility_profile"]
+            configured_models = [
+                str(value)
+                for value in compatibility.get("model_keys") or [model_key]
+            ]
+            supported = {
+                "format": projection["format"],
+                "logical_mode": compatibility.get("logical_mode"),
+                "generation_mode": projection["generation_mode"],
+                "duration_seconds": int(projection["duration_seconds"]),
+                "model_keys": sorted(configured_models),
+            }
+            supported_by_key[_stable_json(supported)] = supported
+            exact_match = (
+                str(compatibility.get("logical_mode") or "") == logical_mode
+                and model_key in configured_models
+                and math.isclose(
+                    float(projection["duration_seconds"]),
+                    float(duration_seconds),
+                    abs_tol=0.001,
+                )
+                and projection["generation_mode"]
+                == requested_orchestration["generation_mode"]
+                and (
+                    requested_format == "AUTO"
+                    or projection["format"] == requested_format
+                )
+            )
+            if exact_match and (not explicit_ids or treatment_id in explicit_ids):
+                eligible.append(projection)
+        eligible.sort(key=lambda item: str(item["treatment_id"]))
+        selected = eligible if explicit_ids else eligible[:requested]
+        selected_treatments.extend(selected)
+        available = len(eligible)
+        ready = len(selected) == requested
+        shortage = max(0, requested - len(selected))
+        product_result = {
+            "product_id": product_id,
+            "requested": requested,
+            "eligible_capacity": available,
+            "selected_count": len(selected),
+            "selected_treatment_ids": [
+                item["treatment_id"] for item in selected
+            ],
+            "ready": ready,
+            "shortage": shortage,
+            "excluded_authority": excluded,
+        }
+        product_results.append(product_result)
+        if not ready:
+            blockers.append(
+                {
+                    "code": "TREATMENT_CAPACITY_INSUFFICIENT",
+                    "product_id": product_id,
+                    "requested": requested,
+                    "available": len(selected),
+                    "shortage": shortage,
+                    "remediation": (
+                        "Approve additional Creative Treatments matching the "
+                        "selected format, mode, model, and duration."
+                    ),
+                }
+            )
+
+    selected_ids = {
+        str(item["treatment_id"]) for item in selected_treatments
+    }
+    unused_explicit_ids = sorted(explicit_ids - selected_ids)
+    if explicit_ids and len(explicit_ids) != requested_total:
+        blockers.append(
+            {
+                "code": "TREATMENT_SELECTION_COUNT_MISMATCH",
+                "requested": requested_total,
+                "selected": len(explicit_ids),
+                "remediation": "Select exactly one unique treatment per video.",
+            }
+        )
+    if unused_explicit_ids:
+        blockers.append(
+            {
+                "code": "TREATMENT_SELECTION_INELIGIBLE",
+                "treatment_ids": unused_explicit_ids,
+                "remediation": (
+                    "Remove treatments outside the product or selected governed "
+                    "configuration."
+                ),
+            }
+        )
+    selected_treatments.sort(
+        key=lambda item: (str(item["product_id"]), str(item["treatment_id"])),
+    )
+    supported_configurations = [
+        supported_by_key[key] for key in sorted(supported_by_key)
+    ]
+    result = {
+        "ready": not blockers and len(selected_treatments) == requested_total,
+        "selection_mode": selection_mode,
+        "requested": {
+            "logical_mode": logical_mode,
+            "model_key": model_key,
+            "duration_seconds": duration_seconds,
+            "creative_format": requested_format,
+            "video_count": requested_total,
+        },
+        "selected_treatment_ids": [
+            item["treatment_id"] for item in selected_treatments
+        ],
+        "selected_treatments": selected_treatments,
+        "product_results": product_results,
+        "supported_formats": sorted(
+            {item["format"] for item in supported_configurations}
+        ),
+        "supported_configurations": supported_configurations,
+        "blockers": blockers,
+    }
+    return {
+        **result,
+        "availability_sha256": _sha(result),
+    }
 
 
 async def _resolve_plan_treatments(
@@ -973,6 +1160,34 @@ async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
         return _decode_row(existing)
 
     authority = await _assert_frozen_cohort(body.product_ids)
+    allocation_snapshot = [
+        allocation.model_dump(mode="json")
+        for allocation in body.product_video_allocations
+    ]
+    availability: dict[str, Any] | None = None
+    if body.target_video_count > 0:
+        if len(body.model_keys) != 1 or len(body.duration_seconds) != 1:
+            raise CreativeProductionError(
+                "TREATMENT_SELECTION_CONFIGURATION_AMBIGUOUS",
+                "Treatment-backed video plans require one model and one duration.",
+                status_code=422,
+            )
+        availability = await resolve_treatment_availability(
+            product_video_allocations=allocation_snapshot,
+            logical_mode=body.logical_mode,
+            model_key=body.model_keys[0],
+            duration_seconds=body.duration_seconds[0],
+            creative_format=body.creative_format,
+            treatment_ids=body.pools.treatment_ids,
+        )
+        if not availability["ready"]:
+            raise CreativeProductionError(
+                "TREATMENT_CAPACITY_INSUFFICIENT",
+                "Approved Creative Treatment capacity is insufficient.",
+                status_code=409,
+                details=availability,
+            )
+
     policy = body.execution_policy.model_dump(mode="json")
     policy.update(
         {
@@ -987,13 +1202,28 @@ async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
     created_at = _now()
     pool_snapshot = {
         **body.pools.model_dump(mode="json"),
+        "creative_format": body.creative_format,
         "controlled_reuse_reason": body.controlled_reuse_reason,
         "controlled_reuse_max_per_dna": body.controlled_reuse_max_per_dna,
-        "product_video_allocations": [
-            allocation.model_dump(mode="json")
-            for allocation in body.product_video_allocations
-        ],
+        "product_video_allocations": allocation_snapshot,
     }
+    if availability is not None:
+        pool_snapshot["treatment_ids"] = availability[
+            "selected_treatment_ids"
+        ]
+        pool_snapshot["treatments"] = availability["selected_treatments"]
+        pool_snapshot["treatment_selection_mode"] = availability[
+            "selection_mode"
+        ]
+        pool_snapshot["treatment_availability_sha256"] = availability[
+            "availability_sha256"
+        ]
+        pool_snapshot["treatment_availability"] = {
+            key: value
+            for key, value in availability.items()
+            if key != "selected_treatments"
+        }
+
     values: dict[str, Any] = {
         "plan_id": plan_id,
         "request_id": body.request_id,
@@ -1018,8 +1248,9 @@ async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
         "created_at": created_at,
         "updated_at": created_at,
     }
-    pool_snapshot["treatments"] = await _resolve_plan_treatments(values)
-    values["pool_snapshot_json"] = _stable_json(pool_snapshot)
+    if body.target_video_count > 0:
+        pool_snapshot["treatments"] = await _resolve_plan_treatments(values)
+        values["pool_snapshot_json"] = _stable_json(pool_snapshot)
     product_names = {
         str(product.get("product_id") or ""): str(
             product.get("product_name")
@@ -1038,6 +1269,9 @@ async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
             "create_request_sha256": request_sha,
             "allocation_source": "CREATE_REQUEST",
             "product_name_source": "P58_COHORT_AUTHORITY_AT_CREATE",
+            "treatment_availability_sha256": pool_snapshot.get(
+                "treatment_availability_sha256"
+            ),
         },
     )
     if snapshot["completeness"] != "COMPLETE":
@@ -1056,7 +1290,12 @@ async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
         action="CREATE_PLAN",
         source_state=None,
         target_state=PlanStatus.DRAFT.value,
-        evidence={"create_request_sha256": request_sha},
+        evidence={
+            "create_request_sha256": request_sha,
+            "treatment_availability_sha256": pool_snapshot.get(
+                "treatment_availability_sha256"
+            ),
+        },
     )
     return _decode_row(row)
 
@@ -2020,10 +2259,24 @@ def _product_dimension_rows(
                     }
                 )
                 continue
-            if orchestration["generation_mode"] != "SINGLE":
+            if orchestration["generation_mode"] != treatment["generation_mode"]:
                 blockers.append(
                     {
-                        "code": "TREATMENT_EXTEND_UNSUPPORTED",
+                        "code": "TREATMENT_INCOMPATIBLE",
+                        "treatment_id": treatment["treatment_id"],
+                        "detail": "Treatment mode does not match model orchestration.",
+                    }
+                )
+                continue
+            segment_plan = treatment.get("segment_plan") or []
+            if orchestration["generation_mode"] == "EXTEND" and (
+                not isinstance(segment_plan, dict)
+                or int(segment_plan.get("segment_count") or 0)
+                != int(orchestration["segment_count"])
+            ):
+                blockers.append(
+                    {
+                        "code": "TREATMENT_SEGMENT_PLAN_INVALID",
                         "treatment_id": treatment["treatment_id"],
                     }
                 )
@@ -2087,9 +2340,11 @@ def _product_dimension_rows(
                     "layout_id": "",
                     "model_key": model_key,
                     "duration_seconds": str(duration),
-                    "generation_mode": "SINGLE",
-                    "engine_block_duration_seconds": str(duration),
-                    "segment_count": "1",
+                    "generation_mode": orchestration["generation_mode"],
+                    "engine_block_duration_seconds": str(
+                        orchestration["engine_block_duration_seconds"]
+                    ),
+                    "segment_count": str(orchestration["segment_count"]),
                     "execution_route": orchestration["execution_route"],
                     "treatment_id": treatment["treatment_id"],
                     "treatment_sha256": treatment["treatment_sha256"],
