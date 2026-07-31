@@ -25,8 +25,7 @@ from agent.models.creative_treatment import (
     ReviewTreatmentRequest,
     ReviewVariationGroupRequest,
 )
-from agent.services import avatar_registry
-from agent.services.creative_handoff_service import prepare_generation_handoff
+from agent.services import avatar_registry, creative_handoff_service
 from agent.services.product_strategy_taxonomy_service import (
     ProductStrategyTaxonomyError,
     require_verified_product_strategy_taxonomy,
@@ -341,8 +340,8 @@ def _validate_sequence(body: CreateTreatmentRequest, strategy: dict[str, Any]) -
 def _validate_format(
     body: CreateTreatmentRequest,
     avatar_profile: dict[str, Any] | None,
+    actor_roles: set[str],
 ) -> None:
-    actor_roles = {step.actor_role for step in body.action_sequence}
     if body.format == "UGC":
         if not avatar_profile:
             raise CreativeTreatmentError("UGC_AVATAR_REQUIRED", status_code=422)
@@ -359,11 +358,17 @@ def _validate_format(
                 "PGC_PRODUCT_LED_ACTOR_REQUIRED",
                 status_code=422,
             )
-    elif avatar_profile and not str(avatar_profile.get("wardrobe") or "").strip():
-        raise CreativeTreatmentError(
-            "CINEMATIC_AVATAR_WARDROBE_REQUIRED",
-            status_code=422,
-        )
+    elif "PRESENTER" in actor_roles:
+        if not avatar_profile:
+            raise CreativeTreatmentError(
+                "CINEMATIC_AVATAR_REQUIRED",
+                status_code=422,
+            )
+        if not str(avatar_profile.get("wardrobe") or "").strip():
+            raise CreativeTreatmentError(
+                "CINEMATIC_AVATAR_WARDROBE_REQUIRED",
+                status_code=422,
+            )
 
 
 async def _resolve_assets(
@@ -449,6 +454,45 @@ async def _resolve_assets(
     return sorted(assets, key=lambda item: (item["role"], item["asset_id"]))
 
 
+def _resolve_selection_handoff(selection: dict[str, Any]) -> dict[str, Any]:
+    scene_id = selection.get("selected_scene_template_id")
+    camera_code = selection.get("selected_camera_preset_code")
+    scene = (
+        creative_handoff_service._scene_index().get(scene_id) if scene_id else None
+    )
+    if scene_id and not scene:
+        raise CreativeTreatmentError(
+            "INVALID_SCENE_TEMPLATE_ID",
+            status_code=422,
+        )
+    camera = (
+        creative_handoff_service._camera_index().get(camera_code)
+        if camera_code
+        else None
+    )
+    if camera_code and not camera:
+        raise CreativeTreatmentError(
+            "INVALID_CAMERA_PRESET_CODE",
+            status_code=422,
+        )
+    return {
+        "scene_template": {
+            "template_id": scene_id,
+            "variant": (scene or {}).get("variant"),
+            "main_action": (scene or {}).get("main_action"),
+            "setting": (scene or {}).get("setting"),
+            "raw_prompt_template": (scene or {}).get("full_prompt_template"),
+        },
+        "camera_preset": {
+            "preset_code": camera_code,
+            "preset_name": (camera or {}).get("preset_name"),
+            "shot_type": (camera or {}).get("shot_type"),
+            "distance_angle": (camera or {}).get("distance_angle"),
+            "movement": (camera or {}).get("movement"),
+        },
+    }
+
+
 async def _resolve_authority(
     body: CreateTreatmentRequest,
 ) -> ResolvedAuthority:
@@ -498,10 +542,11 @@ async def _resolve_authority(
         or selection.get("status") != "APPROVED"
     ):
         raise CreativeTreatmentError("CREATIVE_SELECTION_NOT_APPROVED")
-    try:
-        handoff = await prepare_generation_handoff(body.product_id)
-    except ValueError as exc:
-        raise CreativeTreatmentError(str(exc)) from exc
+    actor_roles = {step.actor_role for step in body.action_sequence}
+    consumes_selected_avatar = body.format == "UGC" or (
+        body.format == "CINEMATIC" and "PRESENTER" in actor_roles
+    )
+    handoff = _resolve_selection_handoff(selection)
 
     try:
         taxonomy_model = await require_verified_product_strategy_taxonomy(
@@ -538,7 +583,7 @@ async def _resolve_authority(
 
     avatar_code = selection.get("selected_avatar_code")
     avatar_profile: dict[str, Any] | None = None
-    if avatar_code:
+    if consumes_selected_avatar and avatar_code:
         try:
             avatar_profile = avatar_registry.resolve_presenter(
                 avatar_id=str(avatar_code),
@@ -548,7 +593,7 @@ async def _resolve_authority(
                 "INVALID_AVATAR_CODE",
                 status_code=422,
             ) from exc
-    _validate_format(body, avatar_profile)
+    _validate_format(body, avatar_profile, actor_roles)
     _validate_sequence(body, strategy)
     assets = await _resolve_assets(body)
     dialogue_text = _dialogue_from_copy(copy_set)
@@ -654,7 +699,7 @@ def _build_treatment_snapshot(
         "scene_strategy_id": body.scene_strategy_id,
         "content_angle": str(authority.copy_set.get("angle") or ""),
         "dialogue_text": authority.dialogue_text,
-        "avatar_code": authority.selection.get("selected_avatar_code"),
+        "avatar_code": (avatar_profile or {}).get("avatar_code"),
         "wardrobe_text": (avatar_profile or {}).get("wardrobe"),
         "scene_template_id": scene.get("template_id"),
         "camera_preset_code": camera.get("preset_code"),

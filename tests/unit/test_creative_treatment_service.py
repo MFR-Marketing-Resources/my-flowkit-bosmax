@@ -22,6 +22,7 @@ COPY_SET_ID = "copy-p75b-service"
 SNAPSHOT_ID = "truth-p75b-service"
 SELECTION_ID = "selection-p75b-service"
 ASSET_ID = "asset-p75b-service"
+AVATAR_CODE = "BOS_F_P75D_01"
 
 
 async def _seed_authority(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -104,10 +105,10 @@ async def _seed_authority(monkeypatch: pytest.MonkeyPatch) -> None:
     await db.execute(
         """
         INSERT INTO creative_product_selection (
-            product_id, selection_id, cluster, status
-        ) VALUES (?, ?, 'food_cooking', 'APPROVED')
+            product_id, selection_id, cluster, selected_avatar_code, status
+        ) VALUES (?, ?, 'food_cooking', ?, 'APPROVED')
         """,
-        (PRODUCT_ID, SELECTION_ID),
+        (PRODUCT_ID, SELECTION_ID, AVATAR_CODE),
     )
     await db.execute(
         """
@@ -151,12 +152,23 @@ async def _seed_authority(monkeypatch: pytest.MonkeyPatch) -> None:
         "require_verified_product_strategy_taxonomy",
         _taxonomy,
     )
+    monkeypatch.setattr(
+        service.avatar_registry,
+        "resolve_presenter",
+        lambda avatar_id: {
+            "avatar_code": avatar_id,
+            "character_name": "Presenter P7.5-D",
+            "wardrobe": "Approved spice cooking wardrobe",
+        },
+    )
 
 
 def _request(
     *,
     created_by: str = "author",
     action_index: int = 0,
+    format: str = "PGC",
+    actor_role: str = "PRODUCT",
     group_id: str | None = None,
     ordinal: int | None = None,
     supersedes_treatment_id: str | None = None,
@@ -170,7 +182,7 @@ def _request(
         copy_set_id=COPY_SET_ID,
         creative_selection_id=SELECTION_ID,
         scene_strategy_id="SPICE_SEASONING",
-        format="PGC",
+        format=format,
         generation_mode="SINGLE",
         duration_seconds=8,
         action_sequence=[
@@ -178,7 +190,7 @@ def _request(
                 "sequence": 1,
                 "allowed_action_index": action_index,
                 "action_text": action_text,
-                "actor_role": "PRODUCT",
+                "actor_role": actor_role,
                 "initial_state": "Product pack sealed",
                 "resulting_state": "Product demonstrated",
                 "continuity_requirements": ["pack identity remains stable"],
@@ -248,6 +260,181 @@ async def test_treatment_hash_is_deterministic_and_lifecycle_is_audited(
         "REVIEW_REQUIRED",
         "APPROVED",
     ]
+
+
+@pytest.mark.asyncio
+async def test_pgc_ignores_upstream_avatar_and_preserves_selection_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    await _seed_authority(monkeypatch)
+
+    def _unexpected_avatar_resolution(avatar_id: str):
+        raise AssertionError(f"PGC must not resolve selected avatar {avatar_id}")
+
+    monkeypatch.setattr(
+        service.avatar_registry,
+        "resolve_presenter",
+        _unexpected_avatar_resolution,
+    )
+    created = await service.create_treatment(_request())
+    current = await service._revalidate(
+        await service.treatment_crud.get_treatment(created["treatment_id"]),
+    )
+
+    assert created["creative_selection_id"] == SELECTION_ID
+    assert created["creative_selection_sha256"]
+    assert created["avatar_code"] is None
+    assert created["wardrobe_text"] is None
+    assert created["avatar_sha256"] is None
+    assert created["wardrobe_sha256"] is None
+    assert current["treatment_sha256"] == created["treatment_sha256"]
+
+
+@pytest.mark.asyncio
+async def test_pgc_rejects_presenter_even_when_upstream_selection_has_avatar(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    await _seed_authority(monkeypatch)
+
+    with pytest.raises(
+        service.CreativeTreatmentError,
+        match="PGC_PRODUCT_LED_ACTOR_REQUIRED",
+    ):
+        await service.create_treatment(_request(actor_role="PRESENTER"))
+
+
+@pytest.mark.asyncio
+async def test_ugc_consumes_selected_avatar_and_requires_complete_authority(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    await _seed_authority(monkeypatch)
+    created = await service.create_treatment(
+        _request(format="UGC", actor_role="PRESENTER"),
+    )
+    assert created["avatar_code"] == AVATAR_CODE
+    assert created["wardrobe_text"] == "Approved spice cooking wardrobe"
+    assert created["avatar_sha256"]
+    assert created["wardrobe_sha256"]
+
+    with pytest.raises(
+        service.CreativeTreatmentError,
+        match="UGC_PRESENTER_ACTION_REQUIRED",
+    ):
+        await service.create_treatment(_request(format="UGC"))
+
+    db = await get_db()
+    await db.execute(
+        """
+        UPDATE creative_product_selection
+        SET selected_avatar_code=NULL
+        WHERE product_id=?
+        """,
+        (PRODUCT_ID,),
+    )
+    await db.commit()
+    with pytest.raises(service.CreativeTreatmentError, match="UGC_AVATAR_REQUIRED"):
+        await service.create_treatment(
+            _request(format="UGC", actor_role="PRESENTER"),
+        )
+
+    await db.execute(
+        """
+        UPDATE creative_product_selection
+        SET selected_avatar_code=?
+        WHERE product_id=?
+        """,
+        (AVATAR_CODE, PRODUCT_ID),
+    )
+    await db.commit()
+    monkeypatch.setattr(
+        service.avatar_registry,
+        "resolve_presenter",
+        lambda avatar_id: {"avatar_code": avatar_id, "wardrobe": ""},
+    )
+    with pytest.raises(
+        service.CreativeTreatmentError,
+        match="UGC_WARDROBE_REQUIRED",
+    ):
+        await service.create_treatment(
+            _request(format="UGC", actor_role="PRESENTER"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_cinematic_consumes_avatar_only_for_presenter_actions(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    await _seed_authority(monkeypatch)
+
+    def _unexpected_avatar_resolution(avatar_id: str):
+        raise AssertionError(
+            f"non-presenter CINEMATIC must not resolve selected avatar {avatar_id}",
+        )
+
+    monkeypatch.setattr(
+        service.avatar_registry,
+        "resolve_presenter",
+        _unexpected_avatar_resolution,
+    )
+    product_led = await service.create_treatment(_request(format="CINEMATIC"))
+    assert product_led["avatar_code"] is None
+    assert product_led["wardrobe_text"] is None
+    assert product_led["avatar_sha256"] is None
+    assert product_led["wardrobe_sha256"] is None
+
+    monkeypatch.setattr(
+        service.avatar_registry,
+        "resolve_presenter",
+        lambda avatar_id: {
+            "avatar_code": avatar_id,
+            "wardrobe": "Approved spice cooking wardrobe",
+        },
+    )
+    presenter_led = await service.create_treatment(
+        _request(format="CINEMATIC", actor_role="PRESENTER"),
+    )
+    assert presenter_led["avatar_code"] == AVATAR_CODE
+    assert presenter_led["wardrobe_text"] == "Approved spice cooking wardrobe"
+
+    db = await get_db()
+    await db.execute(
+        """
+        UPDATE creative_product_selection
+        SET selected_avatar_code=NULL
+        WHERE product_id=?
+        """,
+        (PRODUCT_ID,),
+    )
+    await db.commit()
+    with pytest.raises(
+        service.CreativeTreatmentError,
+        match="CINEMATIC_AVATAR_REQUIRED",
+    ):
+        await service.create_treatment(
+            _request(format="CINEMATIC", actor_role="PRESENTER"),
+        )
+
+    await db.execute(
+        """
+        UPDATE creative_product_selection
+        SET selected_avatar_code=?
+        WHERE product_id=?
+        """,
+        (AVATAR_CODE, PRODUCT_ID),
+    )
+    await db.commit()
+    monkeypatch.setattr(
+        service.avatar_registry,
+        "resolve_presenter",
+        lambda avatar_id: {"avatar_code": avatar_id, "wardrobe": ""},
+    )
+    with pytest.raises(
+        service.CreativeTreatmentError,
+        match="CINEMATIC_AVATAR_WARDROBE_REQUIRED",
+    ):
+        await service.create_treatment(
+            _request(format="CINEMATIC", actor_role="PRESENTER"),
+        )
 
 
 @pytest.mark.asyncio

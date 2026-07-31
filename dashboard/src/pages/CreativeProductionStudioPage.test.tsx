@@ -530,6 +530,11 @@ describe("P6.3-R2 production plan state isolation", () => {
 		expect(screen.getByTestId("p6-create-plan")).toHaveTextContent(
 			"Create new production plan",
 		);
+		expect(
+			screen.getByText(
+				/joining happens only after separate live confirmation/i,
+			),
+		).toBeInTheDocument();
 	});
 
 	it("returns atomically to a blank new plan", async () => {
@@ -648,6 +653,8 @@ describe("P6.3-R2 production plan state isolation", () => {
 		render(<CreativeProductionStudioPage />);
 		expect(await screen.findByText("Select existing plan")).toBeInTheDocument();
 		expect(screen.getAllByText("New production plan")).not.toHaveLength(0);
+		expect(screen.queryByText(/durable \/video-jobs/i)).not.toBeInTheDocument();
+		expect(screen.queryByText(/operator authority/i)).not.toBeInTheDocument();
 		await selectPlan("plan-a");
 		expect(screen.getByTestId("p6-readonly-plan-snapshot")).toHaveTextContent(
 			"8s SINGLE",
