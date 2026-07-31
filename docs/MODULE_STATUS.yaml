@@ -1016,3 +1016,7 @@ domains:
       # + updated_at; never re-verifies or re-classifies.
       - agent/services/strategy_fingerprint_reconciliation.py
       - tests/unit/test_strategy_fingerprint_reconciliation.py
+      # Bounded operational driver: loads the owner-accepted hashed cohort and binds the
+      # plan digest to the exact cohort it applies (the 283-vs-284 mismatch that made the
+      # first canonical run abort with PLAN_DIGEST_MISMATCH and repair nothing).
+      - scripts/strategy_fingerprint_reconciliation_04c.py
