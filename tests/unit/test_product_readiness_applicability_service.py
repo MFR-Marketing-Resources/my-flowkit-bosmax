@@ -227,7 +227,7 @@ def test_non_consumable_archetypes_never_require_ingredients(
 
     ingredients = _requirement(result, "INGREDIENTS_OR_COMPOSITION")
     assert ingredients.state == "NOT_APPLICABLE"
-    assert result.primary_status == "TREATMENT_READY"
+    assert result.primary_status == "READY"
 
 
 @pytest.mark.parametrize(
@@ -295,7 +295,7 @@ def test_usage_is_action_aware_for_static_hero_vs_demonstration():
     assert _requirement(
         static_result, "USAGE_OR_INSTRUCTIONS"
     ).state == "NOT_APPLICABLE"
-    assert static_result.primary_status == "TREATMENT_READY"
+    assert static_result.primary_status == "READY"
     assert _requirement(
         demonstration_result, "USAGE_OR_INSTRUCTIONS"
     ).state == "NOT_STATED_IN_EVIDENCE"
@@ -367,7 +367,7 @@ def test_allowed_claims_empty_requires_explicit_intentional_human_decision():
     assert _requirement(
         explicit_empty, "ALLOWED_CLAIMS"
     ).state == "VERIFIED_VALUE"
-    assert explicit_empty.primary_status == "TREATMENT_READY"
+    assert explicit_empty.primary_status == "READY"
 
 
 def test_unknown_and_generic_taxonomy_never_become_production_ready():
@@ -457,8 +457,8 @@ def test_format_actor_policies_are_distinct_and_fail_closed():
     assert "UGC_AVATAR_SELECTION_REQUIRED" in {
         item.code for item in ugc.blockers
     }
-    assert pgc.primary_status == "TREATMENT_READY"
-    assert cinematic.primary_status == "TREATMENT_READY"
+    assert pgc.primary_status == "READY"
+    assert cinematic.primary_status == "READY"
 
 
 def test_reference_mode_routes_missing_visual_authority_to_asset_required():

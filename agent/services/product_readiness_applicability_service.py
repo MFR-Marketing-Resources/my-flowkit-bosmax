@@ -867,7 +867,7 @@ def evaluate_resolved_readiness(
     elif asset_codes:
         primary_status = "ASSET_REQUIRED"
     elif resolved.treatment.p6_ready and not blockers:
-        primary_status = "TREATMENT_READY"
+        primary_status = "READY"
     else:
         primary_status = "REVIEW_REQUIRED"
 

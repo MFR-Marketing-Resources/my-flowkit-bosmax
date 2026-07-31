@@ -63,6 +63,13 @@ vi.mock("../components/CreativeSupplyFactoryPanel", () => ({
 	default: () => <div data-testid="p7-supply-preserved">Creative supply</div>,
 }));
 
+vi.mock(
+	"../components/production-studio/ProductTreatmentFactoryPanel",
+	() => ({
+		default: () => <div data-testid="ptf-panel-preserved">Factory panel</div>,
+	}),
+);
+
 import CreativeProductionStudioPage from "./CreativeProductionStudioPage";
 
 const COHORT_SHA =
@@ -552,6 +559,7 @@ describe("P6.3-R2 production plan state isolation", () => {
 		expect(screen.getByTestId("p6-create-plan")).toHaveTextContent(
 			"Create production plan",
 		);
+		expect(screen.getByTestId("ptf-panel-preserved")).toBeInTheDocument();
 	});
 
 	it("loads an existing plan only by explicit selection and renders exact 3+2 EXTEND truth", async () => {

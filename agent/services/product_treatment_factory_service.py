@@ -245,11 +245,37 @@ async def _scan_product(context: FactoryProductContext) -> ProductScan:
                 resolved
             )
         )
+    except Exception as error:
+        return ProductScan(
+            context=context,
+            resolved=None,
+            readiness=None,
+            template=None,
+            copy_preview={},
+            treatments=[],
+            error_code=_error_code(error),
+        )
+    try:
         template = resolve_treatment_template(
             context=readiness_request,
             profile=readiness.applicability_profile,
             requirements=readiness.evidence_requirements,
         )
+    except Exception as error:
+        return ProductScan(
+            context=context,
+            resolved=resolved,
+            readiness=readiness,
+            template=None,
+            copy_preview={},
+            treatments=[],
+            error_code=(
+                "UNSUPPORTED_PRODUCT_TAXONOMY"
+                if readiness.primary_status == "UNSUPPORTED_PRODUCT_TAXONOMY"
+                else _error_code(error)
+            ),
+        )
+    try:
         raw_preview = await copy_composer_service.compose_and_persist(
             context.product_id,
             1,
@@ -273,9 +299,9 @@ async def _scan_product(context: FactoryProductContext) -> ProductScan:
     except Exception as error:
         return ProductScan(
             context=context,
-            resolved=None,
-            readiness=None,
-            template=None,
+            resolved=resolved,
+            readiness=readiness,
+            template=template,
             copy_preview={},
             treatments=[],
             error_code=_error_code(error),
@@ -350,6 +376,19 @@ def _task_decision(
     scan: ProductScan,
     task_type: FactoryTaskType,
 ) -> tuple[FactoryTaskStatus, str | None, str | None]:
+    if (
+        scan.readiness is not None
+        and scan.readiness.primary_status == "UNSUPPORTED_PRODUCT_TAXONOMY"
+    ):
+        return (
+            "REVIEW_REQUIRED",
+            "UNSUPPORTED_PRODUCT_TAXONOMY",
+            (
+                scan.readiness.next_actions[0]
+                if scan.readiness.next_actions
+                else "VERIFY_SUPPORTED_PRODUCT_TAXONOMY"
+            ),
+        )
     if scan.error_code or scan.readiness is None or scan.resolved is None:
         return "REVIEW_REQUIRED", scan.error_code or "FACTORY_SCAN_FAILED", "REVIEW_PRODUCT"
 
@@ -636,11 +675,15 @@ def _treatment_request_from_snapshot(
         asset_id = _first_string(eligible_by_role.get(role))
         if asset_id:
             asset_bindings.append(AssetBindingRequest(role=role, asset_id=asset_id))
+    compatibility = _mapping(template.get("compatibility_profile"))
+    required_asset_roles = _string_list(
+        compatibility.get("required_asset_roles")
+    )
     if (
         not product_truth_snapshot_id
         or not copy_set_id
         or not creative_selection_id
-        or not asset_bindings
+        or (required_asset_roles and not asset_bindings)
     ):
         raise ProductTreatmentFactoryError(
             "TREATMENT_PREREQUISITES_REQUIRED",

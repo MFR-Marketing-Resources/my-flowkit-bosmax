@@ -98,7 +98,7 @@ class CreateTreatmentRequest(BaseModel):
     action_sequence: list[TreatmentActionStep] = Field(min_length=1)
     shot_grammar: list[TreatmentShot] = Field(min_length=1)
     compatibility_profile: TreatmentCompatibilityProfile
-    asset_bindings: list[AssetBindingRequest] = Field(min_length=1)
+    asset_bindings: list[AssetBindingRequest] = Field(default_factory=list)
     variation_group_id: str | None = None
     variation_ordinal: int | None = Field(default=None, ge=1, le=5)
     supersedes_treatment_id: str | None = None
@@ -106,6 +106,11 @@ class CreateTreatmentRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_variation_binding(self) -> "CreateTreatmentRequest":
+        if (
+            not self.asset_bindings
+            and self.compatibility_profile.required_asset_roles
+        ):
+            raise ValueError("ASSET_BINDINGS_REQUIRED_BY_COMPATIBILITY_PROFILE")
         has_group = self.variation_group_id is not None
         has_ordinal = self.variation_ordinal is not None
         if has_group != has_ordinal:

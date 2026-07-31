@@ -326,7 +326,7 @@ Consequences:
 
 Every active catalog product resolves to exactly one primary status:
 
-- `TREATMENT_READY`;
+- `READY`;
 - `REVIEW_REQUIRED`;
 - `EVIDENCE_REQUIRED`;
 - `ASSET_REQUIRED`;
@@ -347,7 +347,7 @@ this fail-closed precedence:
 5. copy and selection are ready but required approved visual roles are absent
    → `ASSET_REQUIRED`;
 6. one current approved treatment passes P7.5 and P6 revalidation →
-   `TREATMENT_READY`;
+   `READY`;
 7. otherwise the treatment candidate or approval remains
    `REVIEW_REQUIRED`.
 
@@ -475,7 +475,7 @@ The factory may identify and prepare work. It may not impersonate an approver.
 Generic fallback is forbidden for production readiness.
 
 - A fallback taxonomy, scene, action, camera, actor, asset, Copy Set, template,
-  or treatment cannot yield `TREATMENT_READY`.
+  or treatment cannot yield `READY`.
 - A registered taxonomy without a specific applicability profile is
   `UNSUPPORTED_PRODUCT_TAXONOMY`.
 - Unsupported profiles return exact profile, taxonomy, and remediation codes.

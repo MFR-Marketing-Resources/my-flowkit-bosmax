@@ -127,7 +127,7 @@ def _scan(
     readiness = ProductReadinessProjection(
         projection_version="test-v1",
         product_id=product_id,
-        primary_status="TREATMENT_READY" if approved_treatment else "REVIEW_REQUIRED",
+        primary_status="READY" if approved_treatment else "REVIEW_REQUIRED",
         context=readiness_context,
         context_sha256="e" * 64,
         product_authority_sha256="a" * 64,
@@ -434,3 +434,88 @@ async def test_product_scan_converts_unexpected_authority_failure_into_product_b
     assert scan.context.product_id == "product-a"
     assert scan.error_code == "AUTHORITY_READ_FAILED"
     assert scan.readiness is None
+
+
+@pytest.mark.asyncio
+async def test_product_scan_preserves_unsupported_taxonomy_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    baseline = _scan("unsupported-product")
+    assert baseline.resolved is not None
+    assert baseline.readiness is not None
+    unsupported = baseline.readiness.model_copy(
+        update={
+            "primary_status": "UNSUPPORTED_PRODUCT_TAXONOMY",
+            "next_actions": ["VERIFY_SUPPORTED_PRODUCT_TAXONOMY"],
+        }
+    )
+
+    async def resolve(_request):
+        return baseline.resolved
+
+    def evaluate(_resolved):
+        return unsupported
+
+    def reject_template(**_kwargs):
+        raise RuntimeError("APPLICABILITY_PROFILE_UNSUPPORTED")
+
+    monkeypatch.setattr(
+        service.product_readiness_applicability_service,
+        "resolve_readiness_input",
+        resolve,
+    )
+    monkeypatch.setattr(
+        service.product_readiness_applicability_service,
+        "evaluate_resolved_readiness",
+        evaluate,
+    )
+    monkeypatch.setattr(service, "resolve_treatment_template", reject_template)
+
+    scan = await service._scan_product(_context("unsupported-product"))
+    task_status, blocker_code, next_action = service._task_decision(
+        scan,
+        "PRODUCT_TRUTH_REVIEW",
+    )
+
+    assert scan.resolved is baseline.resolved
+    assert scan.readiness is unsupported
+    assert scan.readiness.primary_status == "UNSUPPORTED_PRODUCT_TAXONOMY"
+    assert scan.error_code == "UNSUPPORTED_PRODUCT_TAXONOMY"
+    assert task_status == "REVIEW_REQUIRED"
+    assert blocker_code == "UNSUPPORTED_PRODUCT_TAXONOMY"
+    assert next_action == "VERIFY_SUPPORTED_PRODUCT_TAXONOMY"
+
+
+def test_t2v_factory_request_allows_zero_bindings_when_no_roles_are_required() -> None:
+    scan = _scan("t2v-product", approved_copy=True)
+    snapshot = service._task_snapshot(scan)
+    context = dict(snapshot["context"])
+    context["logical_mode"] = "T2V"
+    snapshot["context"] = context
+    resolved = dict(snapshot["resolved_authority"])
+    assets = dict(resolved["assets"])
+    assets["required_roles"] = []
+    assets["eligible_asset_ids_by_role"] = {}
+    assets["missing_roles"] = []
+    resolved["assets"] = assets
+    snapshot["resolved_authority"] = resolved
+    template = dict(snapshot["treatment_template"])
+    compatibility = dict(template["compatibility_profile"])
+    compatibility["logical_mode"] = "T2V"
+    compatibility["source_mode"] = "T2V"
+    compatibility["required_asset_roles"] = []
+    template["compatibility_profile"] = compatibility
+    snapshot["treatment_template"] = template
+
+    request = service._treatment_request_from_snapshot(
+        {
+            "task_id": "task-t2v",
+            "product_id": "t2v-product",
+            "snapshot": snapshot,
+        },
+        created_by="factory-test",
+    )
+
+    assert request.compatibility_profile.logical_mode == "T2V"
+    assert request.compatibility_profile.required_asset_roles == []
+    assert request.asset_bindings == []
