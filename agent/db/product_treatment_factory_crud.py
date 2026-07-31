@@ -165,16 +165,31 @@ async def get_plan_by_identity(
     return _hydrate_plan(await cursor.fetchone())
 
 
-async def list_plans(limit: int = 100) -> list[dict[str, object]]:
+async def list_plans(
+    *,
+    status: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, object]]:
     db = await get_db()
-    cursor = await db.execute(
-        """
-        SELECT * FROM product_treatment_factory_plan
-        ORDER BY created_at DESC, plan_id DESC
-        LIMIT ?
-        """,
-        (limit,),
-    )
+    if status is None:
+        cursor = await db.execute(
+            """
+            SELECT * FROM product_treatment_factory_plan
+            ORDER BY created_at DESC, plan_id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+    else:
+        cursor = await db.execute(
+            """
+            SELECT * FROM product_treatment_factory_plan
+            WHERE status=?
+            ORDER BY created_at DESC, plan_id DESC
+            LIMIT ?
+            """,
+            (status, limit),
+        )
     return [
         hydrated
         for row in await cursor.fetchall()

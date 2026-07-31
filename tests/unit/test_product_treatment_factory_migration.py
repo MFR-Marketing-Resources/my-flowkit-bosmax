@@ -119,6 +119,24 @@ async def test_plan_and_task_survive_database_reopen_without_duplicates():
 
 
 @pytest.mark.asyncio
+async def test_list_plans_supports_optional_status_filter():
+    scanned_plan, _ = await _create_plan("1" * 64)
+    draft_plan, _ = await _create_plan("2" * 64)
+    await factory_crud.update_plan(str(scanned_plan["plan_id"]), status="SCANNED")
+
+    all_plans = await factory_crud.list_plans(limit=10)
+    scanned_plans = await factory_crud.list_plans(status="SCANNED", limit=10)
+    missing_plans = await factory_crud.list_plans(status="COMPLETED", limit=10)
+
+    assert {row["plan_id"] for row in all_plans} == {
+        scanned_plan["plan_id"],
+        draft_plan["plan_id"],
+    }
+    assert [row["plan_id"] for row in scanned_plans] == [scanned_plan["plan_id"]]
+    assert missing_plans == []
+
+
+@pytest.mark.asyncio
 async def test_fail_closed_constraints_reject_unsafe_flags_and_invalid_lifecycles():
     plan, _ = await _create_plan()
     task, _ = await factory_crud.create_or_get_task(
