@@ -10,6 +10,7 @@ effects. Functions accept the cross-filter + pagination seam params
 (lifecycle_status / cluster / product_type_group / limit / offset) and apply them
 server-side, so those capabilities can light up later without an API change.
 """
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from agent.db.schema import get_db
@@ -241,4 +242,87 @@ async def list_exceptions(
         "limit": limit,
         "offset": offset,
         "items": items,
+    }
+
+
+# ── failed-generation reporting honesty ──────────────────────────────────────
+# A single all-time FAILED count reads as "N active incidents". It is not: most are
+# historical, and a large share are the ADR-007 dead DOM-clicking F2V lane (frozen,
+# delete-only, never repaired). This report adds honest time windows + error/mode
+# grouping and CLASSIFIES the dead-lane rows without deleting or rewriting any history.
+_DEAD_DOM_PREFIXES = ("ERR_F2V_", "ERR_CDP_FILE_CHOOSER")
+_DEAD_DOM_EXACT = ("ERR_FLOW_EDITOR_REQUIRED",)
+
+
+def is_dead_dom_lane_error(error_code: Optional[str]) -> bool:
+    """True if the error_code belongs to the ADR-007 dead DOM-clicking lane. Pure
+    classification — nothing is deleted or reactivated."""
+    if not error_code:
+        return False
+    return error_code.startswith(_DEAD_DOM_PREFIXES) or error_code in _DEAD_DOM_EXACT
+
+
+async def failed_generation_report() -> dict:
+    db = await get_db()
+    now = datetime.now(timezone.utc)
+
+    def _cut(days: int) -> str:
+        return (now - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    windows = {}
+    for label, days in (("last_24h", 1), ("last_7d", 7), ("last_30d", 30)):
+        windows[label] = await _scalar(
+            db,
+            "SELECT COUNT(*) FROM request_telemetry WHERE status='FAILED' AND created_at >= ?",
+            [_cut(days)],
+        )
+    windows["all_time"] = await _scalar(
+        db, "SELECT COUNT(*) FROM request_telemetry WHERE status='FAILED'", []
+    )
+    distinct_products = await _scalar(
+        db,
+        "SELECT COUNT(DISTINCT product_id) FROM request_telemetry WHERE status='FAILED' AND product_id IS NOT NULL",
+        [],
+    )
+    cur = await db.execute("SELECT MIN(created_at) mn, MAX(created_at) mx FROM request_telemetry WHERE status='FAILED'")
+    span_row = await cur.fetchone()
+    await cur.close()
+
+    cur = await db.execute(
+        "SELECT COALESCE(error_code,'(none)') ec, COUNT(*) n "
+        "FROM request_telemetry WHERE status='FAILED' GROUP BY ec ORDER BY n DESC"
+    )
+    by_error_code = []
+    dead = 0
+    for r in await cur.fetchall():
+        ec = r["ec"]
+        n = int(r["n"])
+        d = is_dead_dom_lane_error(None if ec == "(none)" else ec)
+        if d:
+            dead += n
+        by_error_code.append({"error_code": ec, "count": n, "dead_dom_lane": d})
+    await cur.close()
+
+    cur = await db.execute(
+        "SELECT COALESCE(mode,'(none)') m, COUNT(*) n "
+        "FROM request_telemetry WHERE status='FAILED' GROUP BY m ORDER BY n DESC"
+    )
+    by_mode = [{"mode": r["m"], "count": int(r["n"])} for r in await cur.fetchall()]
+    await cur.close()
+
+    return {
+        "windows": windows,
+        "window_labels": {"last_24h": "last 24h", "last_7d": "last 7d",
+                          "last_30d": "last 30d", "all_time": "all-time (historical)"},
+        "distinct_products_all_time": distinct_products,
+        "time_span": {"min": span_row["mn"], "max": span_row["mx"]},
+        "dead_dom_lane_count": dead,
+        "non_dead_lane_count": windows["all_time"] - dead,
+        "dead_dom_lane_note": (
+            "ADR-007: the DOM-clicking F2V lane is dead/frozen (delete-only). "
+            "These rows are historical archaeology, NOT active incidents — classified, "
+            "never deleted or rewritten."
+        ),
+        "by_error_code": by_error_code,
+        "by_mode": by_mode,
     }

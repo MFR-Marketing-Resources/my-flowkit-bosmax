@@ -9,6 +9,7 @@ import {
 	fetchClusterAudit,
 	fetchCopywritingCoverage,
 	fetchExceptions,
+	fetchFailedGenerations,
 	fetchMappingSummary,
 } from "./reporting";
 import { getAPI } from "./client";
@@ -68,5 +69,10 @@ describe("reporting api URL building (/api prefix + filter seam)", () => {
 		mockedGet.mockResolvedValue({} as never);
 		await fetchMappingSummary();
 		expect(url()).toBe("/api/products/mapping-summary");
+	});
+
+	it("failed-generations uses the honest report endpoint", async () => {
+		await fetchFailedGenerations();
+		expect(url()).toBe("/api/reporting/failed-generations");
 	});
 });

@@ -202,3 +202,21 @@ export const useMappingSummary = () => useAsync(fetchMappingSummary, []);
 
 export const useExceptions = (kind: ExceptionKind, f: ReportingFilters) =>
 	useAsync(() => fetchExceptions(kind, f), [kind, ...fkey(f)]);
+
+// ── failed-generation honesty ────────────────────────────────────────────────
+export interface FailedGenerationReport {
+	windows: { last_24h: number; last_7d: number; last_30d: number; all_time: number };
+	window_labels: Record<string, string>;
+	distinct_products_all_time: number;
+	time_span: { min: string | null; max: string | null };
+	dead_dom_lane_count: number;
+	non_dead_lane_count: number;
+	dead_dom_lane_note: string;
+	by_error_code: { error_code: string; count: number; dead_dom_lane: boolean }[];
+	by_mode: { mode: string; count: number }[];
+}
+
+export const fetchFailedGenerations = () =>
+	getAPI<FailedGenerationReport>("/api/reporting/failed-generations");
+
+export const useFailedGenerations = () => useAsync(fetchFailedGenerations, []);
