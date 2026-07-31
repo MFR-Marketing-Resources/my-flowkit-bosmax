@@ -1,0 +1,61 @@
+"""Read-only reporting router — BOSMAX Command Centre (Tier A).
+
+Thin transport wrapper. ALL aggregation / filtering / KPI / drill-down logic lives in
+`agent/services/reporting_service.py` (the service layer) so the logic is unit-testable
+and the chart library stays a swappable pure-view layer.
+
+Serves ONLY the coverage/exception gaps that existing endpoints do not already answer
+(authored-copy presence, snapshot coverage, prompt-readiness histogram, filterable
+drill-down). Cluster counts, mapping-summary, image counts and the failed-job SUMMARY
+are served elsewhere and consumed by the frontend directly — not duplicated here.
+
+Every endpoint is GET, read-only, and accepts the cross-filter + pagination seam params.
+"""
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Query
+
+from agent.services import reporting_service as svc
+
+router = APIRouter(prefix="/api/reporting", tags=["reporting"])
+
+
+@router.get("/coverage/copywriting")
+async def coverage_copywriting(
+    lifecycle_status: str = Query("ACTIVE"),
+    cluster: Optional[str] = Query(None),
+    product_type_group: Optional[str] = Query(None),
+):
+    return await svc.copywriting_coverage(lifecycle_status, cluster, product_type_group)
+
+
+@router.get("/coverage/product-intelligence")
+async def coverage_product_intelligence(
+    lifecycle_status: str = Query("ACTIVE"),
+    cluster: Optional[str] = Query(None),
+    product_type_group: Optional[str] = Query(None),
+):
+    return await svc.product_intelligence_coverage(lifecycle_status, cluster, product_type_group)
+
+
+@router.get("/coverage/prompt-readiness")
+async def coverage_prompt_readiness(
+    lifecycle_status: str = Query("ACTIVE"),
+    cluster: Optional[str] = Query(None),
+    product_type_group: Optional[str] = Query(None),
+):
+    return await svc.prompt_readiness_histogram(lifecycle_status, cluster, product_type_group)
+
+
+@router.get("/exceptions")
+async def exceptions(
+    kind: str = Query(..., description=f"one of: {', '.join(svc.EXCEPTION_KINDS)}"),
+    lifecycle_status: str = Query("ACTIVE"),
+    cluster: Optional[str] = Query(None),
+    product_type_group: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    if kind not in svc.EXCEPTION_KINDS:
+        raise HTTPException(status_code=422, detail=f"UNKNOWN_EXCEPTION_KIND: {kind}")
+    return await svc.list_exceptions(kind, lifecycle_status, cluster, product_type_group, limit, offset)

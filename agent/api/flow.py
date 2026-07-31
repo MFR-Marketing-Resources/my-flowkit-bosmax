@@ -2398,6 +2398,14 @@ async def _persist_generation_results(snapshot, job, all_ids):
         pass
 
 
+def _telemetry_cost_kwargs(result_snapshot: dict = None) -> dict:
+    """Non-null cost/engine instrumentation fields from a result snapshot, for the
+    request_telemetry ledger. crud filters to allowed columns; None values are dropped
+    so a snapshot without instrumentation simply leaves the columns untouched."""
+    instr = (result_snapshot or {}).get("instrumentation") or {}
+    return {k: v for k, v in instr.items() if v is not None}
+
+
 async def _bridge_generate_job_telemetry(request_id: str, job_id: str,
                                          result_snapshot: dict = None):
     """Mirror a make_video job's progress into request telemetry so the dashboard
@@ -2430,6 +2438,7 @@ async def _bridge_generate_job_telemetry(request_id: str, job_id: str,
             await crud.upsert_request_telemetry(
                 request_id, status="COMPLETED", completed_at=crud._now(),
                 last_heartbeat_at=crud._now(),
+                **_telemetry_cost_kwargs(result_snapshot),
             )
             await crud.update_request(request_id, status="COMPLETED", updated_at=crud._now())
             await _persist_generation_results(result_snapshot, job, all_ids)
@@ -2439,6 +2448,7 @@ async def _bridge_generate_job_telemetry(request_id: str, job_id: str,
             await crud.upsert_request_telemetry(
                 request_id, status="FAILED", failed_at=crud._now(),
                 error_message=code, error_code=code, last_heartbeat_at=crud._now(),
+                **_telemetry_cost_kwargs(result_snapshot),
             )
             await crud.add_stage_event(
                 request_id, "FAILED", "FAIL", f"job={job_id} {code}", "backend",
@@ -2783,6 +2793,15 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
     # settings the operator fired so they survive the 48h artifact purge and can
     # be copied to manually re-drive Flow if automation breaks. The finished
     # media ids are attached on completion inside the telemetry bridge.
+    # Cost/engine instrumentation (best-effort; NULL on any failure — NEVER blocks
+    # generation). The bridge persists these onto the durable telemetry ledger.
+    _instr: dict = {"provider": "google_flow", "engine": model_key, "model_label": body.get("model")}
+    try:
+        if model_key:
+            from agent.services import video_models as _vm_instr
+            _instr["estimated_credits"] = _vm_instr.expected_cost(model_key, duration_s)
+    except Exception:  # noqa: BLE001 — telemetry is best-effort, never fatal
+        pass
     result_snapshot = {
         "request_id": request_id,
         "job_id": job_id,
@@ -2799,6 +2818,7 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
             body.get("workspace_execution_package_id")
             or body.get("workspace_generation_package_id")),
         "project_id": created_project_id,
+        "instrumentation": _instr,
     }
     asyncio.create_task(
         _bridge_generate_job_telemetry(request_id, job_id, result_snapshot))
