@@ -61,12 +61,22 @@ function ExceptionKpi({
 }) {
 	const f = useReportingFilters();
 	const { data, loading } = useExceptions(kind, asFilters(f));
+	// Headline the number that is actually actionable. Archived products are
+	// ARCHIVED_NOT_IN_SCOPE (P5.8), so folding them into one figure overstates the work.
+	const app = data?.applicability;
+	const required = app?.required_missing ?? data?.total ?? 0;
+	const archived = app?.documented_na_archived ?? 0;
+	const hint = selected
+		? "▾ shown below"
+		: archived > 0
+			? `+${archived.toLocaleString()} archived N/A · click to drill`
+			: "click to drill";
 	return (
 		<KpiCard
 			label={label}
-			value={(data?.total ?? 0).toLocaleString()}
-			tone={(data?.total ?? 0) === 0 ? "success" : tone}
-			hint={selected ? "▾ shown below" : "click to drill"}
+			value={required.toLocaleString()}
+			tone={required === 0 ? "success" : tone}
+			hint={hint}
 			loading={loading}
 			onClick={() => onSelect(kind)}
 		/>

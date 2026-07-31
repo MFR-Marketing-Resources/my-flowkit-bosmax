@@ -42,7 +42,12 @@ LANE = "text_assist"
 # endpoints (not model choices) and may be overridden per deployment.
 _BASE_URL_ENV = "PRODUCT_TEXT_ASSIST_BASE_URL"
 _MODEL_ENV = "PRODUCT_TEXT_ASSIST_MODEL"
-_TIMEOUT_SECONDS = 30.0
+# A completion of ~1.3k tokens does not reliably finish inside 30s. Measured on the live
+# DeepSeek text_assist lane (2026-07-31): one call landed at ~29s and succeeded, then every
+# subsequent call exceeded 30s and failed `AI_COPY_ASSIST_CALL_FAILED: The read operation
+# timed out` (HTTP 502) — the lane was configured correctly and the provider was healthy;
+# only this ceiling was too tight. Kept well under the caller's own request timeout.
+_TIMEOUT_SECONDS = 120.0
 _ANTHROPIC_VERSION = "2023-06-01"
 _ANTHROPIC_MAX_TOKENS = 1024
 _OPENAI_JSON_MAX_TOKENS = 4096

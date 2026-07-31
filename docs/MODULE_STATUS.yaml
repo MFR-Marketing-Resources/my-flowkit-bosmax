@@ -1020,3 +1020,13 @@ domains:
       # plan digest to the exact cohort it applies (the 283-vs-284 mismatch that made the
       # first canonical run abort with PLAN_DIGEST_MISMATCH and repair nothing).
       - scripts/strategy_fingerprint_reconciliation_04c.py
+      # Mission-07C: bounded, resumable, serial driver for the governed AI Copy Assist
+      # route over the accepted 255-product cohort. Driver only - grounding, claim gating
+      # and DRAFT status stay in the existing service; no direct-provider bypass.
+      - scripts/mission07_copy_generation_runner.py
+      # Mission-07C phase 1: bounded fill-empty-only identity closure for the ACTIVE
+      # products whose mapping failed closed, plus the variant-category-spelling authority
+      # entries those products need. Every write is paired with the bounded 04C
+      # strategy-fingerprint reconciliation.
+      - scripts/mission07_identity_closure.py
+      - data/products/product_mapping_rules.json

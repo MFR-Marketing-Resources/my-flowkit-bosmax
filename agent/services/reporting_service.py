@@ -222,6 +222,17 @@ async def list_exceptions(
     predicate = _EXCEPTION_PREDICATES[kind]
     where, params = _product_filters(lifecycle_status, cluster, product_type_group)
     total = await _scalar(db, f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {predicate}{where}", params)
+
+    # Applicability split. NOT a new predicate and NOT a filter: `total` is unchanged. It
+    # reuses the existing lifecycle authority — a non-ACTIVE product is ARCHIVED_NOT_IN_SCOPE
+    # / PRODUCT_LIFECYCLE_ARCHIVED under the merged P5.8 catalog authority and is excluded
+    # from prompt and media generation by `mode_readiness`. Under `lifecycle_status=ALL` a
+    # single number therefore reads as actionable coverage when most of it is documented
+    # N/A, so the two are reported separately and the UI can stop conflating them.
+    active_where, active_params = _product_filters("ACTIVE", cluster, product_type_group)
+    required_missing = await _scalar(
+        db, f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {predicate}{active_where}", active_params
+    )
     cur = await db.execute(
         f"SELECT p.id AS product_id, {_DISPLAY_NAME} AS product_display_name, "
         "p.category AS category, p.product_type AS product_type, "
@@ -239,6 +250,11 @@ async def list_exceptions(
         "kind": kind,
         "scope": _scope(lifecycle_status, cluster, product_type_group),
         "total": total,
+        "applicability": {
+            "required_missing": required_missing,
+            "documented_na_archived": total - required_missing,
+            "documented_na_reason": "PRODUCT_LIFECYCLE_ARCHIVED",
+        },
         "limit": limit,
         "offset": offset,
         "items": items,
