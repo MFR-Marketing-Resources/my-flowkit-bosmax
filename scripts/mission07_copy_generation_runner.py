@@ -114,7 +114,11 @@ def _post(product_id: str, timeout: int) -> tuple[bool, dict]:
                       "grounded": (payload.get("grounding") or {}).get("grounded")}
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:300]
-        return False, {"error": f"HTTP_{e.code}", "detail": detail}
+        # 4xx is the service REFUSING, not failing — e.g. 422 COPY_GROUNDING_INSUFFICIENT
+        # when a product has no approved intelligence snapshot. Retrying cannot change the
+        # answer, so mark it permanent and move on instead of burning the retry budget.
+        return False, {"error": f"HTTP_{e.code}", "detail": detail,
+                       "permanent": 400 <= e.code < 500}
     except Exception as e:  # noqa: BLE001 - a driver must record, not raise
         return False, {"error": type(e).__name__, "detail": str(e)[:300]}
 
@@ -127,6 +131,8 @@ async def run_one(pid: str, sem: asyncio.Semaphore, retries: int, timeout: int) 
             dur = round(time.monotonic() - t0, 1)
             if ok:
                 return {"product_id": pid, "ok": True, "attempt": attempt, "seconds": dur, **info}
+            if info.get("permanent"):
+                break  # the service refused; another identical call cannot succeed
             if attempt <= retries:
                 await asyncio.sleep(min(60, 5 * (2 ** (attempt - 1))))  # 5s, 10s, 20s ...
         return {"product_id": pid, "ok": False, "attempt": attempt, "seconds": dur, **info}

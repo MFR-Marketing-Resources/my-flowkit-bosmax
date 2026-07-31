@@ -924,6 +924,15 @@ PRODUCT_TYPE_COPY_STRATEGY_REGISTRY: Final[
         cta_line="Semak rasa produk.",
         overlay_text="ISI DAN HIDANGAN",
     ),
+    ("pet_care", "pet_cage_accessory", "PET_CAGE_ACCESSORY"): _fixed_strategy(
+        copy_strategy_id="P4_PET_CAGE_ACCESSORY_PRODUCT_TYPE_V1",
+        scene_result_template="show the measured mat size, plastic finish and wipe-clean fit in an empty cage",
+        hook_line="Semak saiz pelapik sangkar.",
+        demo_line="Letak dalam sangkar kosong.",
+        benefit_line="Permukaan mudah dilap.",
+        cta_line="Ukur dasar sangkar dahulu.",
+        overlay_text="UKUR DASAR SANGKAR",
+    ),
     ("pet_care", "pet_food", "PET_FOOD"): _fixed_strategy(
         copy_strategy_id="P4_PET_FOOD_PRODUCT_TYPE_V1",
         scene_result_template="show the species label and measured pet serving clearly",
