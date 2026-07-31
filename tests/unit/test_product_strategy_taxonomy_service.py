@@ -156,6 +156,9 @@ async def test_registry_seed_upgrades_existing_system_pair():
 
 @pytest.mark.asyncio
 async def test_startup_reconcile_refreshes_only_initialized_system_seed_rows():
+    db = await get_db()
+    await db.execute("DELETE FROM product_strategy_type_registry")
+    await db.commit()
     assert (
         await service.reconcile_existing_system_product_strategy_type_registry()
         is None
@@ -163,7 +166,6 @@ async def test_startup_reconcile_refreshes_only_initialized_system_seed_rows():
     assert await crud.list_product_strategy_type_registry() == []
 
     await _seed_registry()
-    db = await get_db()
     stale_pairs = (
         ("beauty_personal_care", "cleanser"),
         ("beauty_personal_care", "serum"),
@@ -309,6 +311,46 @@ def test_classification_separates_covered_partial_and_fallback(monkeypatch):
     assert fallback.scene_coverage_status == "FALLBACK_ONLY"
     assert fallback.cluster == "generic_unclassified"
     assert fallback.consumer_status == "BLOCKED_REVIEW_REQUIRED"
+
+
+@pytest.mark.parametrize(
+    "product",
+    [
+        _product_payload("lip", "Velvet Lipstick", "Lipstick"),
+        _product_payload("serum", "Waterproof Beauty Serum", "Serum"),
+        _product_payload("chopper", "Mini Food Chopper", "Chopper"),
+        {
+            **_product_payload("unknown", "Mystery Item X9", "Unknown"),
+            "category": "Miscellaneous",
+            "subcategory": "",
+        },
+    ],
+)
+def test_strategy_binding_matches_full_candidate_semantics(
+    monkeypatch,
+    product,
+):
+    monkeypatch.setattr(
+        service,
+        "resolve_product_intelligence_profile",
+        lambda _product: {
+            "confidence": "HIGH",
+            "intelligence_status": "READY",
+            "taxonomy_conflict": False,
+        },
+    )
+
+    binding = service._strategy_binding(product)
+    candidate = service.build_product_strategy_taxonomy_candidate(product)
+
+    assert binding == {
+        "cluster": candidate.cluster,
+        "product_type_group": candidate.product_type_group,
+        "matched_scene_strategy_id": candidate.matched_scene_strategy_id,
+        "scene_coverage_status": candidate.scene_coverage_status,
+        "fallback_used": candidate.fallback_used,
+        "specific_strategy": candidate.specific_strategy,
+    }
 
 
 def test_model_rejects_auto_derived_verified_taxonomy():
@@ -623,23 +665,17 @@ async def test_stale_taxonomy_binding_fails_closed_without_product_change(
             reviewer_note="Verified against the prior binding.",
         ),
     )
-    real_builder = service.build_product_strategy_taxonomy_candidate
+    real_binding = service._strategy_binding
 
-    def changed_binding(product_payload, **kwargs):
-        candidate = real_builder(product_payload, **kwargs)
-        return candidate.model_copy(
-            update={
-                "cluster": "beauty_makeup",
-                "product_type_group": "mascara",
-                "matched_scene_strategy_id": "MASCARA",
-            }
-        )
+    def changed_binding(product_payload):
+        return {
+            **real_binding(product_payload),
+            "cluster": "beauty_makeup",
+            "product_type_group": "mascara",
+            "matched_scene_strategy_id": "MASCARA",
+        }
 
-    monkeypatch.setattr(
-        service,
-        "build_product_strategy_taxonomy_candidate",
-        changed_binding,
-    )
+    monkeypatch.setattr(service, "_strategy_binding", changed_binding)
 
     readback = await service.get_product_strategy_taxonomy_read_model(product["id"])
 
@@ -727,4 +763,43 @@ async def test_catalog_attachment_checks_persisted_product_not_transient_enrichm
     assert (
         "STALE_PRODUCT_FINGERPRINT"
         not in attached[0]["strategy_taxonomy"]["review_reasons"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_materialized_attachment_skips_full_intelligence_candidate(
+    monkeypatch,
+):
+    product = await crud.create_product(
+        "Velvet Lipstick",
+        source="MANUAL",
+        product_display_name="Velvet Lipstick",
+        product_short_name="Velvet Lipstick",
+        category="Beauty & Personal Care",
+        type="Lipstick",
+        product_type="Lipstick",
+    )
+    await service.run_product_strategy_taxonomy_backfill(
+        ProductStrategyTaxonomyBackfillRequest(
+            dry_run=False,
+            confirm_apply=service.BACKFILL_CONFIRMATION,
+        )
+    )
+
+    def unexpected_candidate(_product, **_kwargs):
+        raise AssertionError(
+            "materialized readback must not rebuild product intelligence"
+        )
+
+    monkeypatch.setattr(
+        service,
+        "build_product_strategy_taxonomy_candidate",
+        unexpected_candidate,
+    )
+
+    attached = await service.attach_product_strategy_taxonomies([product])
+
+    assert attached[0]["strategy_taxonomy"]["product_id"] == product["id"]
+    assert attached[0]["strategy_taxonomy"]["materialization_status"] == (
+        "MATERIALIZED"
     )

@@ -74,7 +74,9 @@ def _coerce_local_path(value: str | None) -> Path | None:
     candidate = Path(value)
     if not candidate.is_absolute():
         candidate = BASE_DIR / candidate
-    return candidate.resolve()
+    # Catalog read models only need an absolute local path for metadata checks.
+    # Path.resolve() can block on stale Windows drive/UNC references.
+    return candidate
 
 
 def _is_supported_image_path(path: Path) -> bool:
@@ -371,9 +373,10 @@ def analyze_product_image_payload(
         evidence.append("image_reference:local_image_path_present")
         metadata["local_image_path_raw"] = local_image_path
     if local_path:
-        metadata["local_file_exists"] = local_path.exists()
+        local_file_exists = local_path.exists()
+        metadata["local_file_exists"] = local_file_exists
         metadata["local_file_suffix"] = local_path.suffix.lower() or None
-        if local_path.exists():
+        if local_file_exists:
             evidence.append("image_reference:local_file_exists")
             metadata["local_file_size_bytes"] = local_path.stat().st_size
             metadata["local_file_mime_type"] = mimetypes.guess_type(local_path.name)[0]
