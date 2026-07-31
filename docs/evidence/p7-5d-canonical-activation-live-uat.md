@@ -2,12 +2,123 @@
 
 ## Status
 
-`BLOCKED_BEFORE_TREATMENT_CREATION`
+`OWNER_PRODUCT_TRUTH_EVIDENCE_REQUIRED`
 
-P7.5-D completed the canonical migration and the bounded two-product readiness
-audit. Neither authorized `SPICE_SEASONING` candidate passes the complete
-upstream-authority gate, so no treatment, Variation Group, P6 plan, provider
-job, or live UAT record was created.
+P7.5-D-R1 merged through PR #560 and the canonical migration was replayed twice
+from the post-merge source. The format-scoped avatar-consumption defect is
+resolved, but neither authorized `SPICE_SEASONING` candidate passes the
+complete Product Truth or downstream supply gates. No treatment, Variation
+Group, P6 plan, provider job, or live UAT record was created.
+
+## P7.5-D-R1 continuation — 2026-07-31
+
+### Governed landing and base proof
+
+- Authorized R1 head:
+  `1f4da2826d9c1490d18a701e2eed21c01e002da2`.
+- Governed local-verification status:
+  `BOSMAX Local Verification / P7.5-D-R1` = `success` on the exact R1 head.
+  This was a local-verification attestation, not a GitHub Actions execution.
+- PR #560:
+  `https://github.com/MFR-Marketing-Resources/my-flowkit-bosmax/pull/560`.
+- PR #560 merge and verified remote main:
+  `d3343bf83242004575b79f2201e8bdcec980b348`.
+- P7.5-A, P7.5-B, P7.5-C and the authorized R1 head are all verified
+  ancestors of that remote-main SHA.
+- PR #558 was updated only after the merge proof, using a non-rewriting merge
+  commit. No R1 source file was modified by PR #558.
+
+### D1 replay and backup recoverability
+
+The original pre-migration backup remains recoverable:
+
+- SHA-256:
+  `e7d8e88fcf9966e2fbdae78dfdec3f4057e542f119ef334fa2e0a0653fe8f919`;
+- size: 124,088,320 bytes;
+- `PRAGMA integrity_check`: `ok`;
+- `PRAGMA quick_check`: `ok`;
+- products: 659.
+
+A fresh online backup was created immediately before the post-R1 replay. The
+current-main official `init_db()` procedure then passed twice:
+
+- pre-replay SHA-256:
+  `2ca9767d516758daa3ee444858d451485ce137c98ffc57a2f6ada2a64f5b3946`;
+- migration replay pass 1: `PASS`;
+- migration replay pass 2: `PASS`;
+- post-replay SHA-256:
+  `2ca9767d516758daa3ee444858d451485ce137c98ffc57a2f6ada2a64f5b3946`;
+- application tables: 64;
+- `PRAGMA integrity_check`: `ok`;
+- `PRAGMA quick_check`: `ok`;
+- foreign-key violations: 0;
+- products: 659;
+- Creative Treatments: 0;
+- Variation Groups: 0;
+- treatment audit events: 0.
+
+The byte-identical pre/post hashes prove that the replay introduced no schema
+or canonical-data mutation.
+
+### R1 source blocker resolution
+
+PR #560 implements format-scoped selection consumption:
+
+- UGC consumes the approved selected avatar and wardrobe;
+- PGC preserves Creative Selection lineage but consumes and persists no
+  avatar or wardrobe;
+- CINEMATIC consumes the selected avatar only when its Action Sequence declares
+  `PRESENTER`.
+
+The former one-selection UGC/PGC contradiction recorded later in this document
+is historical and superseded by the verified R1 merge.
+
+### Current D2 two-candidate gate
+
+Both candidates remain active, exact verified `SPICE_SEASONING` products with
+specific `SPICE_SEASONING` scene strategy, covered scene authority, no fallback
+and `P6_READY` catalogue authority. Neither can be selected yet:
+
+| Candidate | Approved Product Truth | Exact missing Product Truth fields | Copy Sets | Creative Selection | Product-bound video assets |
+|---|---|---|---:|---|---:|
+| Rempah Nasi Khowmok | `21cb61b9-5512-40e9-b3a6-5ae0d35a4cee` / `def670ba12bed5da457030f2a3c11aeb228a7e0b7d0551f8b2fd49fb9fe2ceb6` | `usage_text`, `ingredients_text`, `warnings_text`, `allowed_claims_json` | 0 approved | absent | 0 eligible |
+| Rempah Ayam Madu | `b857ce79-6ccf-4e72-9de9-e5f2bcba81df` / `35a230671976f4893680b8f20e6665cbea524d60a8ae2c81666782c356316c78` | `usage_text`, `ingredients_text`, `warnings_text`, `allowed_claims_json` | 0 approved | absent | 0 eligible |
+
+Both snapshots remain `MISSING_REQUIRED_FIELDS` with completeness `0.7143`.
+The Nasi Khowmok product has one `copy_intelligence_seed` in `NEEDS_REVIEW`;
+it is not an approved Copy Set. The Ayam Madu product has no seed.
+
+Both recorded remote product images were reachable during this audit, but the
+stored canonical local-image paths are absent. The Nasi Khowmok front image
+verifies a 140g pack for 500g of basmati rice. Neither front image supplies
+complete ingredients or warnings. A reachable image is not a registered or
+approved Creative Asset.
+
+### Consolidated owner evidence gate
+
+No owner identity or approval phrase was synthesized. Before D2 can select a
+candidate, the owner must provide or verify product-specific evidence for one
+candidate's exact four missing Product Truth fields. For Nasi Khowmok, the
+image-derived 140g/500g-basmati usage may be reviewed; product-specific
+ingredients, warnings and allowed claims remain absent. For Ayam Madu, all four
+fields remain absent from canonical provenance.
+
+Only after that evidence exists may the governed workflows create, in order:
+
+1. a new complete approved Product Truth snapshot;
+2. sufficient claim-grounded Copy Sets, with exactly one declared
+   five-member same-dialogue reuse;
+3. one approved Creative Selection with avatar, wardrobe, scene and camera;
+4. real product-bound approved-for-video Creative Assets;
+5. the twelve D3 treatments and D4 zero-credit proof.
+
+Copy Set, Creative Selection and asset IDs/hashes do not yet exist. Creating
+those authorities before complete Product Truth would weaken claim grounding
+and is forbidden. Provider calls, Google Flow calls and credit spend remain
+zero.
+
+The remaining sections preserve the original D1 and pre-R1 audit. Where they
+conflict with this continuation section, this section is current.
 
 ## Authority and baseline
 
@@ -259,8 +370,9 @@ owner.
 
 ## Next decision
 
-`OWNER_AUTHORITY_AND_SOURCE_DECISION_REQUIRED`
+`OWNER_PRODUCT_TRUTH_EVIDENCE_REQUIRED`
 
-Resume D2 only after the governed upstream records exist and the UGC/PGC
-compatibility decision is merged. Re-evaluate both authorized products from
-current canonical state; do not substitute Sambal Nyet.
+Supply and approve the exact missing Product Truth evidence for one authorized
+candidate. Then resume the governed Product Truth, Copy Set, Creative
+Selection and Creative Asset preparation sequence. Do not substitute Sambal
+Nyet, call a provider, or spend credits.
