@@ -151,3 +151,30 @@ async def test_exceptions_unknown_kind_raises():
     import pytest
     with pytest.raises(ValueError):
         await svc.list_exceptions("bogus")
+
+
+async def test_exceptions_applicability_splits_archived_from_required():
+    """`All (incl. archived)` must not read as actionable coverage.
+
+    A non-ACTIVE product is ARCHIVED_NOT_IN_SCOPE / PRODUCT_LIFECYCLE_ARCHIVED under the
+    merged P5.8 catalog authority, so it is documented N/A, not a missing requirement.
+    `total` must stay exactly as before — this is an additive split, never a filter.
+    """
+    await _seed()
+    # P2 is ACTIVE without copy; P3 is ARCHIVED without copy.
+    res = await svc.list_exceptions("missing_copy", lifecycle_status="ALL")
+    assert res["total"] == 2
+    assert res["applicability"]["required_missing"] == 1
+    assert res["applicability"]["documented_na_archived"] == 1
+    assert res["applicability"]["documented_na_reason"] == "PRODUCT_LIFECYCLE_ARCHIVED"
+    # the split must always reconcile back to the unchanged total
+    assert (res["applicability"]["required_missing"]
+            + res["applicability"]["documented_na_archived"]) == res["total"]
+
+
+async def test_exceptions_applicability_active_scope_has_no_archived_residue():
+    await _seed()
+    res = await svc.list_exceptions("missing_copy", lifecycle_status="ACTIVE")
+    assert res["total"] == 1
+    assert res["applicability"]["required_missing"] == 1
+    assert res["applicability"]["documented_na_archived"] == 0

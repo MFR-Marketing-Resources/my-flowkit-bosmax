@@ -78,9 +78,19 @@ export interface ExceptionItem {
 	failed_at?: string | null;
 }
 
+/** Additive split of `total`, never a filter — `total` keeps its previous meaning.
+ * Archived products are ARCHIVED_NOT_IN_SCOPE under the merged P5.8 catalog authority,
+ * so under "All (incl. archived)" they are documented N/A, not actionable coverage. */
+export interface ExceptionApplicability {
+	required_missing: number;
+	documented_na_archived: number;
+	documented_na_reason: string;
+}
+
 export interface ExceptionList {
 	kind: ExceptionKind;
 	total: number;
+	applicability?: ExceptionApplicability;
 	limit: number;
 	offset: number;
 	items: ExceptionItem[];
