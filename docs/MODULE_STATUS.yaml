@@ -1009,3 +1009,10 @@ domains:
       # windows + ADR-007 dead-DOM classification. Read-only; frontend pure view.
       - dashboard/src/components/reporting/FailedGenerationsPanel.tsx
       - tests/unit/test_failed_generation_report.py
+      # SEV-1 04C: bounded strategy-fingerprint reconciliation. A bounded mapping repair
+      # changes fingerprint-bearing identity fields, staling otherwise-unchanged strategy
+      # rows (STALE_PRODUCT_FINGERPRINT -> BLOCKED_REVIEW_REQUIRED -> dropped from P4/P6).
+      # Reconciles ONLY provably fingerprint-only drift; writes ONLY product_fingerprint
+      # + updated_at; never re-verifies or re-classifies.
+      - agent/services/strategy_fingerprint_reconciliation.py
+      - tests/unit/test_strategy_fingerprint_reconciliation.py
