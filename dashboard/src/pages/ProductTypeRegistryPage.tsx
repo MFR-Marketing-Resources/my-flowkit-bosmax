@@ -40,6 +40,26 @@ const INPUT_CLASS =
 	"mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500/40";
 const PRODUCT_TYPE_PATTERN = /^[a-z][a-z0-9_]*$/;
 const P4_EVIDENCE_TIMEOUT_MS = 10_000;
+const TRANSIENT_FETCH_RETRY_DELAY_MS = 250;
+
+function isTransientFetchFailure(error: unknown) {
+	return (
+		error instanceof TypeError &&
+		/failed to fetch|networkerror|network request failed/i.test(error.message)
+	);
+}
+
+async function retryTransientFetch<T>(request: () => Promise<T>): Promise<T> {
+	try {
+		return await request();
+	} catch (error) {
+		if (!isTransientFetchFailure(error)) throw error;
+		await new Promise((resolve) =>
+			setTimeout(resolve, TRANSIENT_FETCH_RETRY_DELAY_MS),
+		);
+		return request();
+	}
+}
 
 async function fetchP4EvidenceWithTimeout() {
 	const controller = new AbortController();
@@ -182,7 +202,9 @@ export default function ProductTypeRegistryPage() {
 		setCopyReportLoading(true);
 		setCopyReportError(null);
 		try {
-			setCopyReport(await fetchP4EvidenceWithTimeout());
+			setCopyReport(
+				await retryTransientFetch(() => fetchP4EvidenceWithTimeout()),
+			);
 		} catch (error) {
 			setCopyReport(null);
 			setCopyReportError(
@@ -199,7 +221,9 @@ export default function ProductTypeRegistryPage() {
 		setAuthorityLoading(true);
 		setAuthorityError(null);
 		try {
-			setAuthorityReport(await fetchCatalogAuthorityReport());
+			setAuthorityReport(
+				await retryTransientFetch(() => fetchCatalogAuthorityReport()),
+			);
 		} catch (error) {
 			setAuthorityReport(null);
 			setAuthorityError(
@@ -535,11 +559,21 @@ export default function ProductTypeRegistryPage() {
 				</div>
 				{authorityError && (
 					<div
-						className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200"
+						className="flex flex-col gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200 sm:flex-row sm:items-center sm:justify-between"
 						data-testid="catalog-authority-warning"
 					>
-						Registry remains available. Final authority report could not be
-						loaded: {authorityError}
+						<div>
+							Registry remains available. Final authority report could not be
+							loaded: {authorityError}
+						</div>
+						<button
+							type="button"
+							onClick={() => void loadAuthorityReport()}
+							disabled={authorityLoading}
+							className="shrink-0 rounded-lg border border-amber-400/40 px-3 py-1.5 text-xs font-semibold text-amber-100 transition hover:border-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
+						>
+							Retry final authority
+						</button>
 					</div>
 				)}
 				{authorityReport && terminalExceptions.length > 0 && (
