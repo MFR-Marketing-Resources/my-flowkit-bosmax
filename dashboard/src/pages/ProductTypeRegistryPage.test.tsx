@@ -361,6 +361,61 @@ describe("ProductTypeRegistryPage", () => {
 		expect(within(lipRow).getByText("P4 supported")).toBeVisible();
 	});
 
+	it("retries transient transport failures once for both evidence reports", async () => {
+		mockedFetchCopyReport
+			.mockRejectedValueOnce(new TypeError("Failed to fetch"))
+			.mockResolvedValueOnce(P4_REPORT);
+		mockedFetchAuthority
+			.mockRejectedValueOnce(new TypeError("Failed to fetch"))
+			.mockResolvedValueOnce(AUTHORITY_REPORT);
+
+		renderPage();
+
+		await waitFor(() =>
+			expect(screen.getByTestId("catalog-authority-summary")).toHaveTextContent(
+				"659",
+			),
+		);
+		await waitFor(() =>
+			expect(
+				screen.getByTestId("registry-row-lipstick_lip_tint"),
+			).toHaveTextContent("P4 supported"),
+		);
+		expect(mockedFetchCopyReport).toHaveBeenCalledTimes(2);
+		expect(mockedFetchAuthority).toHaveBeenCalledTimes(2);
+		expect(
+			screen.queryByTestId("catalog-authority-warning"),
+		).not.toBeInTheDocument();
+		expect(screen.queryByTestId("p4-report-warning")).not.toBeInTheDocument();
+	});
+
+	it("keeps persistent final-authority failure fail-closed and supports manual retry", async () => {
+		mockedFetchAuthority.mockRejectedValue(new TypeError("Failed to fetch"));
+		renderPage();
+
+		const warning = await screen.findByTestId("catalog-authority-warning");
+		expect(warning).toHaveTextContent("Failed to fetch");
+		const callsBeforeManualRetry = mockedFetchAuthority.mock.calls.length;
+		expect(callsBeforeManualRetry).toBeGreaterThanOrEqual(2);
+
+		mockedFetchAuthority.mockResolvedValue(AUTHORITY_REPORT);
+		fireEvent.click(
+			screen.getByRole("button", { name: "Retry final authority" }),
+		);
+
+		expect(
+			await screen.findByTestId("catalog-authority-summary"),
+		).toHaveTextContent("659");
+		await waitFor(() =>
+			expect(
+				screen.queryByTestId("catalog-authority-warning"),
+			).not.toBeInTheDocument(),
+		);
+		expect(mockedFetchAuthority).toHaveBeenCalledTimes(
+			callsBeforeManualRetry + 1,
+		);
+	});
+
 	it("registers through the official API and refreshes the registry", async () => {
 		const created = {
 			cluster: "beauty_makeup",
