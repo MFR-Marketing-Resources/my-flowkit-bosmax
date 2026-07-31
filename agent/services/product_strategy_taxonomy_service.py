@@ -116,6 +116,28 @@ def product_strategy_fingerprint(product: Mapping[str, object]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _strategy_binding(
+    product: Mapping[str, object],
+) -> dict[str, object]:
+    """Resolve only the classifier fields required for binding-staleness checks."""
+
+    tag = classify_product_strategy_tag(product)
+    if tag["fallback_used"]:
+        coverage_status = "FALLBACK_ONLY"
+    elif tag["specific_strategy"]:
+        coverage_status = "COVERED"
+    else:
+        coverage_status = "PARTIAL"
+    return {
+        "cluster": tag["cluster"],
+        "product_type_group": tag["product_type_group"],
+        "matched_scene_strategy_id": tag["matched_scene_strategy_id"],
+        "scene_coverage_status": coverage_status,
+        "fallback_used": bool(tag["fallback_used"]),
+        "specific_strategy": bool(tag["specific_strategy"]),
+    }
+
+
 def build_product_strategy_taxonomy_candidate(
     product: Mapping[str, object],
     *,
@@ -123,14 +145,8 @@ def build_product_strategy_taxonomy_candidate(
 ) -> ProductStrategyTaxonomy:
     """Build one deterministic taxonomy candidate without writing anything."""
 
-    tag = classify_product_strategy_tag(product)
+    binding = _strategy_binding(product)
     intelligence = resolve_product_intelligence_profile(dict(product))
-    if tag["fallback_used"]:
-        coverage_status = "FALLBACK_ONLY"
-    elif tag["specific_strategy"]:
-        coverage_status = "COVERED"
-    else:
-        coverage_status = "PARTIAL"
 
     confidence = str(intelligence.get("confidence") or "LOW").upper()
     if confidence not in {"HIGH", "MEDIUM", "LOW"}:
@@ -143,9 +159,9 @@ def build_product_strategy_taxonomy_candidate(
     # contract. Even a HIGH/COVERED resolver result therefore starts fail-closed
     # until an admin reviews this fingerprinted taxonomy explicitly.
     review_reasons: list[str] = ["AUTO_DERIVED_REVIEW_REQUIRED"]
-    if coverage_status != "COVERED":
-        review_reasons.append(f"SCENE_{coverage_status}")
-    if tag["cluster"] == "generic_unclassified":
+    if binding["scene_coverage_status"] != "COVERED":
+        review_reasons.append(f"SCENE_{binding['scene_coverage_status']}")
+    if binding["cluster"] == "generic_unclassified":
         review_reasons.append("GENERIC_UNCLASSIFIED")
     if confidence != "HIGH":
         review_reasons.append(f"INTELLIGENCE_{confidence}")
@@ -160,12 +176,14 @@ def build_product_strategy_taxonomy_candidate(
         product_id=str(product.get("id") or product.get("product_id") or ""),
         taxonomy_version=TAXONOMY_VERSION,
         product_fingerprint=product_strategy_fingerprint(product),
-        cluster=tag["cluster"],
-        product_type_group=tag["product_type_group"],
-        matched_scene_strategy_id=tag["matched_scene_strategy_id"],
-        scene_coverage_status=coverage_status,
-        fallback_used=bool(tag["fallback_used"]),
-        specific_strategy=bool(tag["specific_strategy"]),
+        cluster=str(binding["cluster"]),
+        product_type_group=str(binding["product_type_group"]),
+        matched_scene_strategy_id=str(
+            binding["matched_scene_strategy_id"]
+        ),
+        scene_coverage_status=str(binding["scene_coverage_status"]),
+        fallback_used=bool(binding["fallback_used"]),
+        specific_strategy=bool(binding["specific_strategy"]),
         classification_confidence=confidence,
         review_status=review_status,
         consumer_status=(
@@ -552,23 +570,6 @@ def _read_model_from_row(
 
     taxonomy = _row_to_taxonomy(row)
     current_fingerprint = product_strategy_fingerprint(product)
-    current_candidate = build_product_strategy_taxonomy_candidate(product)
-    binding_fields = (
-        "cluster",
-        "product_type_group",
-        "matched_scene_strategy_id",
-        "scene_coverage_status",
-        "fallback_used",
-        "specific_strategy",
-    )
-    binding_changed = any(
-        getattr(taxonomy, field) != getattr(current_candidate, field)
-        for field in binding_fields
-    )
-    binding_is_stale = binding_changed and (
-        taxonomy.authority_source == "AUTO_DERIVED"
-        or resolve_catalog_product_type_truth(product) is not None
-    )
     if taxonomy.materialization_status == "PLACEHOLDER":
         taxonomy.product_fingerprint = current_fingerprint
         taxonomy.is_stale = False
@@ -587,6 +588,15 @@ def _read_model_from_row(
             + ["NOT_MATERIALIZED"]
         )
     else:
+        current_binding = _strategy_binding(product)
+        binding_changed = any(
+            getattr(taxonomy, field) != value
+            for field, value in current_binding.items()
+        )
+        binding_is_stale = binding_changed and (
+            taxonomy.authority_source == "AUTO_DERIVED"
+            or resolve_catalog_product_type_truth(product) is not None
+        )
         stale_reasons: list[str] = []
         if taxonomy.product_fingerprint != current_fingerprint:
             stale_reasons.append("STALE_PRODUCT_FINGERPRINT")

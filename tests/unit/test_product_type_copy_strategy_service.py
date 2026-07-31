@@ -15,6 +15,8 @@ from agent.services.product_strategy_taxonomy_service import (
 )
 
 
+from agent.services import product_strategy_taxonomy_service as taxonomy_service
+
 LIP_KEY = ("beauty_makeup", "lipstick_lip_tint", "LIP_COLOR")
 REMPAH_KEY = ("food_cooking", "rempah_seasoning", "SPICE_SEASONING")
 EXPANDED_KEYS = {
@@ -777,3 +779,177 @@ def test_p4_report_bulk_registry_gate_rejects_mismatched_assignment():
             }
         },
     ) is False
+
+
+@pytest.mark.asyncio
+async def test_p4_report_uses_constant_bulk_reads_for_large_catalog(
+    monkeypatch,
+):
+    product_count = 1_200
+    products = [
+        _product(
+            f"catalog-lip-{index:04d}",
+            name=f"Catalog Lip {index:04d}",
+        )
+        for index in reversed(range(product_count))
+    ]
+    taxonomy_rows = []
+    for product in products:
+        taxonomy = _taxonomy(str(product["id"]))
+        row = taxonomy.model_dump(mode="python")
+        row["product_fingerprint"] = taxonomy_service.product_strategy_fingerprint(
+            product
+        )
+        row["review_reasons_json"] = "[]"
+        row.pop("review_reasons", None)
+        row.pop("is_stale", None)
+        taxonomy_rows.append(row)
+
+    calls = {
+        "products": 0,
+        "taxonomies": 0,
+        "fingerprint_products": 0,
+        "registry": 0,
+    }
+
+    async def fake_products(**_kwargs):
+        calls["products"] += 1
+        return products
+
+    async def fake_taxonomies(product_ids):
+        calls["taxonomies"] += 1
+        assert len(product_ids) == product_count
+        return taxonomy_rows
+
+    async def fake_fingerprint_products(product_ids):
+        calls["fingerprint_products"] += 1
+        assert len(product_ids) == product_count
+        return products
+
+    async def fake_registry():
+        calls["registry"] += 1
+        return [
+            {
+                "cluster": LIP_KEY[0],
+                "product_type_group": LIP_KEY[1],
+                "matched_scene_strategy_id": LIP_KEY[2],
+                "scene_coverage_status": "COVERED",
+                "registry_status": "ACTIVE",
+            }
+        ]
+
+    def unexpected_candidate(_product, **_kwargs):
+        raise AssertionError(
+            "materialized report rows must not rebuild product intelligence"
+        )
+
+    monkeypatch.setattr(service.crud, "list_products", fake_products)
+    monkeypatch.setattr(
+        service.crud,
+        "list_product_strategy_taxonomies",
+        fake_taxonomies,
+    )
+    monkeypatch.setattr(
+        service.crud,
+        "list_product_rows_for_strategy_taxonomy",
+        fake_fingerprint_products,
+    )
+    monkeypatch.setattr(
+        service.crud,
+        "list_product_strategy_type_registry",
+        fake_registry,
+    )
+    monkeypatch.setattr(
+        taxonomy_service,
+        "_strategy_binding",
+        lambda _product: {
+            "cluster": LIP_KEY[0],
+            "product_type_group": LIP_KEY[1],
+            "matched_scene_strategy_id": LIP_KEY[2],
+            "scene_coverage_status": "COVERED",
+            "fallback_used": False,
+            "specific_strategy": True,
+        },
+    )
+    monkeypatch.setattr(
+        taxonomy_service,
+        "build_product_strategy_taxonomy_candidate",
+        unexpected_candidate,
+    )
+
+    report = await service.build_product_type_copy_eligible_report()
+
+    assert calls == {
+        "products": 1,
+        "taxonomies": 1,
+        "fingerprint_products": 1,
+        "registry": 1,
+    }
+    assert report.total_products == product_count
+    assert report.eligible_count == product_count
+    assert report.blocked_count == 0
+    assert [item.product_id for item in report.sample_eligible] == [
+        f"catalog-lip-{index:04d}"
+        for index in range(service.P4_REPORT_SAMPLE_LIMIT)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_p4_report_empty_catalog_is_deterministic(monkeypatch):
+    calls = {
+        "products": 0,
+        "taxonomies": 0,
+        "fingerprint_products": 0,
+        "registry": 0,
+    }
+
+    async def fake_products(**_kwargs):
+        calls["products"] += 1
+        return []
+
+    async def fake_taxonomies(product_ids):
+        calls["taxonomies"] += 1
+        assert product_ids == []
+        return []
+
+    async def fake_fingerprint_products(product_ids):
+        calls["fingerprint_products"] += 1
+        assert product_ids == []
+        return []
+
+    async def fake_registry():
+        calls["registry"] += 1
+        return []
+
+    monkeypatch.setattr(service.crud, "list_products", fake_products)
+    monkeypatch.setattr(
+        service.crud,
+        "list_product_strategy_taxonomies",
+        fake_taxonomies,
+    )
+    monkeypatch.setattr(
+        service.crud,
+        "list_product_rows_for_strategy_taxonomy",
+        fake_fingerprint_products,
+    )
+    monkeypatch.setattr(
+        service.crud,
+        "list_product_strategy_type_registry",
+        fake_registry,
+    )
+
+    first = await service.build_product_type_copy_eligible_report()
+    second = await service.build_product_type_copy_eligible_report()
+
+    assert calls == {
+        "products": 2,
+        "taxonomies": 2,
+        "fingerprint_products": 2,
+        "registry": 2,
+    }
+    assert first == second
+    assert first.total_products == 0
+    assert first.eligible_count == 0
+    assert first.blocked_count == 0
+    assert first.sample_eligible == []
+    assert first.sample_blocked == []

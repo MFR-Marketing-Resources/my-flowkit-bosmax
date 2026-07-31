@@ -265,9 +265,22 @@ def test_p4_eligible_report_route_returns_typed_counts(monkeypatch):
 
     assert response.status_code == 200
     payload = response.json()
+    assert set(payload) == {
+        "total_products",
+        "eligible_count",
+        "blocked_count",
+        "eligible_by_product_type",
+        "blocked_by_reason",
+        "missing_copy_strategy_groups",
+        "sample_eligible",
+        "sample_blocked",
+    }
     assert payload["total_products"] == 659
     assert payload["eligible_count"] == 11
     assert payload["blocked_count"] == 648
+    assert payload["eligible_count"] + payload["blocked_count"] == payload[
+        "total_products"
+    ]
     assert payload["eligible_by_product_type"][0]["count"] == 9
     assert payload["missing_copy_strategy_groups"][0]["count"] == 133
     assert payload["sample_blocked"][0]["blocked_reasons"] == [
