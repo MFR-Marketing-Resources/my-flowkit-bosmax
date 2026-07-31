@@ -270,6 +270,17 @@ async def _build_item_payload(
             "dependency_hashes": treatment["dependency_hashes"],
             "variation_group": treatment["variation_group"],
             "format": treatment["format"],
+            "generation_mode": treatment["generation_mode"],
+            "segment_plan_sha256": (
+                treatment["segment_plan"].get("segment_plan_sha256")
+                if isinstance(treatment.get("segment_plan"), dict)
+                else None
+            ),
+            "ordered_segment_sha256s": (
+                treatment["segment_plan"].get("ordered_segment_sha256s", [])
+                if isinstance(treatment.get("segment_plan"), dict)
+                else []
+            ),
         }
         if package_lineage != expected_lineage:
             return {}, ["TREATMENT_HASH_STALE"]
@@ -304,8 +315,6 @@ async def _build_item_payload(
         or package.get("generation_mode")
         or "SINGLE"
     ).upper()
-    if media_type == "VIDEO" and generation_mode != "SINGLE":
-        return {}, ["TREATMENT_EXTEND_UNSUPPORTED"]
     if media_type == "VIDEO" and generation_mode == "EXTEND":
         resolved, blockers = (
             production_queue_service.extend_execution_preconditions(
@@ -316,12 +325,6 @@ async def _build_item_payload(
                 },
             )
         )
-        video_job_id = str(package.get("video_job_id") or "")
-        video_job_fingerprint = str(
-            package.get("video_job_plan_fingerprint") or ""
-        )
-        if not video_job_id or not video_job_fingerprint:
-            blockers.append("EXTEND_VIDEO_JOB_PLAN_REQUIRED")
         total_seconds = int(
             resolved.get("total_seconds")
             or package.get("requested_total_duration_seconds")
@@ -330,6 +333,41 @@ async def _build_item_payload(
         block_seconds = int(
             package.get("engine_block_duration_seconds") or 8
         )
+        video_job_id = str(package.get("video_job_id") or "")
+        video_job_fingerprint = str(
+            package.get("video_job_plan_fingerprint") or ""
+        )
+        if not blockers and (not video_job_id or not video_job_fingerprint):
+            try:
+                from agent.api.flow import (
+                    VideoJobPlanRequest,
+                    _plan_video_job,
+                )
+
+                planned = await _plan_video_job(
+                    VideoJobPlanRequest(
+                        product_id=str(wgp.get("product_id") or "") or None,
+                        product_name=str(
+                            wgp.get("product_name_snapshot") or ""
+                        ) or None,
+                        execution_package_id=str(
+                            resolved.get("execution_package_id") or ""
+                        ),
+                        requested_total_duration_seconds=total_seconds,
+                        model=model_key,
+                        aspect_ratio=aspect,
+                        client_request_nonce=str(wgp_id),
+                    ),
+                    trust_client_authority=False,
+                )
+                video_job_id = str(planned.get("job_id") or "")
+                video_job_fingerprint = str(
+                    planned.get("plan_fingerprint") or ""
+                )
+            except Exception as exc:  # noqa: BLE001 - typed as blocker below
+                blockers.append(f"EXTEND_VIDEO_JOB_PLAN_FAILED:{exc}")
+        if not video_job_id or not video_job_fingerprint:
+            blockers.append("EXTEND_VIDEO_JOB_PLAN_REQUIRED")
         return (
             {
                 "mode": str(resolved.get("logical_mode") or item["logical_mode"]),
@@ -351,6 +389,7 @@ async def _build_item_payload(
                 "engine_block_duration_seconds": block_seconds,
                 "segment_count": total_seconds // block_seconds,
                 "num_videos": 1,
+                "creative_treatment_lineage": expected_lineage,
             },
             blockers,
         )
@@ -393,16 +432,7 @@ async def _build_item_payload(
         },
     )
     if treatment is not None:
-        payload["creative_treatment_lineage"] = {
-            "treatment_id": treatment["treatment_id"],
-            "treatment_sha256": treatment["treatment_sha256"],
-            "visual_fingerprint_sha256": treatment[
-                "visual_fingerprint_sha256"
-            ],
-            "dependency_hashes": treatment["dependency_hashes"],
-            "variation_group": treatment["variation_group"],
-            "format": treatment["format"],
-        }
+        payload["creative_treatment_lineage"] = expected_lineage
         payload["compiled_shot_grammar"] = treatment["shot_grammar"]
     return payload, blockers
 

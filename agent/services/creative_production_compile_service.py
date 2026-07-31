@@ -10,6 +10,7 @@ from agent.db import creative_production_crud as p6db
 from agent.models.creative_production import PlanActionRequest
 from agent.models.poster_prompt_draft import PosterPromptDraftRequest
 from agent.services import workspace_generation_package_service as wgp_service
+from agent.services import workspace_execution_package_service as wep_service
 from agent.services.creative_production_plan_service import (
     CreativeProductionError,
     _decode_row,
@@ -43,13 +44,61 @@ async def _compile_video(
     execution_policy = _loads(plan.get("execution_policy_json"), {})
     aspect = str(execution_policy.get("aspect") or "9:16")
     logical_mode = str(plan["logical_mode"])
-    if generation_mode != "SINGLE":
-        raise CreativeProductionError(
-            "TREATMENT_EXTEND_UNSUPPORTED",
-            "P7.5 v1 video compilation accepts SINGLE treatments only.",
-        )
     treatment = await resolve_item_treatment(dimensions, plan)
+    segment_plan = treatment.get("segment_plan") or []
+    if generation_mode == "EXTEND" and not isinstance(segment_plan, dict):
+        raise CreativeProductionError(
+            "TREATMENT_SEGMENT_PLAN_INVALID",
+            "Governed EXTEND compilation requires immutable segment lineage.",
+        )
+
     workspace_execution_package_id: str | None = None
+    if generation_mode == "EXTEND":
+        wep = await wep_service.create_workspace_execution_package(
+            product_id=item["product_id"],
+            mode=logical_mode,
+            duration_seconds=engine_block_duration,
+            aspect_ratio=aspect,
+            model=str(dimensions["model_key"]),
+            manual_override=False,
+            generation_mode="EXTEND",
+            requested_total_duration_seconds=total_duration,
+            source_mode=str(
+                treatment["compatibility_profile"].get("source_mode") or ""
+            ) or None,
+            copy_set_id=treatment["copy_set_id"],
+            avatar_id=dimensions.get("avatar_code") or None,
+            scene_context_override=(
+                dimensions.get("scene_strategy_context") or None
+            ),
+            product_reference_asset_id=(
+                dimensions.get("product_reference_asset_id") or None
+            ),
+            start_frame_asset_id=(
+                dimensions.get("finished_frame_asset_id")
+                or dimensions.get("product_reference_asset_id")
+                or None
+            ),
+            character_reference_asset_id=(
+                dimensions.get("character_asset_id") or None
+            ),
+            scene_context_reference_asset_id=(
+                dimensions.get("scene_asset_id") or None
+            ),
+            style_reference_asset_id=(
+                dimensions.get("style_asset_id") or None
+            ),
+            creative_treatment=treatment,
+        )
+        if wep.get("readiness") != "READY" or wep.get("blockers"):
+            raise CreativeProductionError(
+                "WEP_COMPILATION_BLOCKED",
+                "Workspace execution package refused governed EXTEND.",
+                details={"blockers": wep.get("blockers") or []},
+            )
+        workspace_execution_package_id = str(
+            wep["workspace_execution_package_id"]
+        )
 
     common: dict[str, Any] = {
         "product_id": item["product_id"],
@@ -164,6 +213,13 @@ async def _compile_video(
                 "dependency_hashes": treatment["dependency_hashes"],
                 "variation_group": treatment["variation_group"],
                 "format": treatment["format"],
+                "generation_mode": generation_mode,
+                "segment_plan_sha256": segment_plan.get(
+                    "segment_plan_sha256"
+                ) if isinstance(segment_plan, dict) else None,
+                "ordered_segment_sha256s": segment_plan.get(
+                    "ordered_segment_sha256s", []
+                ) if isinstance(segment_plan, dict) else [],
             },
             "compiled_shot_grammar": treatment["shot_grammar"],
             "status": package.get("status"),

@@ -22,6 +22,7 @@ import {
 	assignProductionWaves,
 	type CapacityPreflight,
 	type CohortAuthority,
+	type CreativeTreatmentFormatPreference,
 	compileProductionPlan,
 	controlProductionPlan,
 	createProductionPlan,
@@ -31,6 +32,7 @@ import {
 	fetchCohortAuthority,
 	fetchGovernedPoolAuthority,
 	fetchProductionPlan,
+	fetchTreatmentAvailability,
 	type GenerationAttempt,
 	type GovernedPoolAuthority,
 	listExecutionLanes,
@@ -45,6 +47,7 @@ import {
 	reconcileAttempt,
 	retryAttempt,
 	startProductionPlan,
+	type TreatmentAvailability,
 } from "../api/creativeProduction";
 import { fetchVideoModels, type VideoModelInfo } from "../api/productionQueue";
 import CreativeSupplyFactoryPanel from "../components/CreativeSupplyFactoryPanel";
@@ -153,6 +156,12 @@ export default function CreativeProductionStudioPage() {
 	const [poolAuthority, setPoolAuthority] =
 		useState<GovernedPoolAuthority | null>(null);
 	const [poolAuthorityLoading, setPoolAuthorityLoading] = useState(false);
+	const [treatmentAvailability, setTreatmentAvailability] =
+		useState<TreatmentAvailability | null>(null);
+	const [treatmentAvailabilityLoading, setTreatmentAvailabilityLoading] =
+		useState(false);
+	const [treatmentAvailabilityError, setTreatmentAvailabilityError] =
+		useState("");
 	const [preflight, setPreflight] = useState<CapacityPreflight | null>(null);
 	const [busy, setBusy] = useState("");
 	const [error, setError] = useState("");
@@ -165,6 +174,7 @@ export default function CreativeProductionStudioPage() {
 	const [historySearch, setHistorySearch] = useState("");
 	const [historyStatus, setHistoryStatus] = useState("ACTIVE");
 	const planRequestSequence = useRef(0);
+	const treatmentAvailabilitySequence = useRef(0);
 	const [activeView, setActiveView] = useState<"matrix" | "attempts" | "qa">(
 		"matrix",
 	);
@@ -177,6 +187,8 @@ export default function CreativeProductionStudioPage() {
 		logicalMode: "T2V" as "T2V" | "HYBRID" | "F2V" | "I2V",
 		modelKey: "",
 		durationSeconds: 8,
+		creativeFormat: "AUTO" as CreativeTreatmentFormatPreference,
+		treatmentIds: "",
 		aspect: "9:16" as "9:16" | "16:9",
 		copySetIds: "",
 		posterCopySetIds: "",
@@ -328,6 +340,51 @@ export default function CreativeProductionStudioPage() {
 		};
 	}, [poolAuthorityProductKey, form.logicalMode]);
 
+	useEffect(() => {
+		const requestSequence = ++treatmentAvailabilitySequence.current;
+		if (!allocations.length || !form.modelKey || !form.durationSeconds) {
+			setTreatmentAvailability(null);
+			setTreatmentAvailabilityLoading(false);
+			setTreatmentAvailabilityError("");
+			return;
+		}
+		setTreatmentAvailability(null);
+		setTreatmentAvailabilityLoading(true);
+		setTreatmentAvailabilityError("");
+		void fetchTreatmentAvailability({
+			product_video_allocations: allocations,
+			logical_mode: form.logicalMode,
+			model_key: form.modelKey,
+			duration_seconds: form.durationSeconds,
+			creative_format: form.creativeFormat,
+			treatment_ids: splitValues(form.treatmentIds),
+		})
+			.then((availability) => {
+				if (requestSequence !== treatmentAvailabilitySequence.current) {
+					return;
+				}
+				setTreatmentAvailability(availability);
+				setTreatmentAvailabilityLoading(false);
+			})
+			.catch((reason) => {
+				if (requestSequence !== treatmentAvailabilitySequence.current) {
+					return;
+				}
+				setTreatmentAvailability(null);
+				setTreatmentAvailabilityLoading(false);
+				setTreatmentAvailabilityError(
+					reason instanceof Error ? reason.message : String(reason),
+				);
+			});
+	}, [
+		allocations,
+		form.creativeFormat,
+		form.durationSeconds,
+		form.logicalMode,
+		form.modelKey,
+		form.treatmentIds,
+	]);
+
 	const selectedModel = videoModels.find(
 		(model) =>
 			model.key === form.modelKey ||
@@ -370,6 +427,47 @@ export default function CreativeProductionStudioPage() {
 			allocation.video_count < 1 ||
 			allocation.video_count > 200,
 	);
+	const treatmentShortage = treatmentAvailability?.product_results.find(
+		(product) => !product.ready,
+	);
+	const treatmentDisabledReason = treatmentAvailabilityLoading
+		? "Checking approved Creative Treatment capacity..."
+		: treatmentAvailabilityError
+			? "Creative Treatment capacity is unavailable."
+			: treatmentShortage
+				? `Creative Treatment shortage for ${
+						cohort?.products.find(
+							(product) => product.product_id === treatmentShortage.product_id,
+						)?.product_name ?? treatmentShortage.product_id
+					}: ${treatmentShortage.selected_count}/${treatmentShortage.requested} eligible.`
+				: treatmentAvailability && !treatmentAvailability.ready
+					? "The selected Creative Treatment configuration is not ready."
+					: "";
+	const supportsTreatmentConfiguration = (
+		modelKey: string,
+		durationSeconds: number,
+		format: CreativeTreatmentFormatPreference,
+	) => {
+		const configurations =
+			treatmentAvailability?.supported_configurations ?? [];
+		if (!configurations.length) return true;
+		return configurations.some((configuration) => {
+			const modelKeys = Array.isArray(configuration.model_keys)
+				? configuration.model_keys.map(String)
+				: [];
+			return (
+				String(configuration.logical_mode ?? "") === form.logicalMode &&
+				modelKeys.includes(modelKey) &&
+				Number(configuration.duration_seconds) === durationSeconds &&
+				(format === "AUTO" || String(configuration.format ?? "") === format)
+			);
+		});
+	};
+	const treatmentCreateBlocked =
+		treatmentAvailabilityLoading ||
+		Boolean(treatmentAvailabilityError) ||
+		!treatmentAvailability ||
+		!treatmentAvailability.ready;
 	const blockersByProduct = useMemo(() => {
 		const result: Record<string, string> = {};
 		for (const blocker of poolAuthority?.blockers ?? []) {
@@ -378,8 +476,15 @@ export default function CreativeProductionStudioPage() {
 				result[productId] = blockerMessage(technicalCode(blocker));
 			}
 		}
+		for (const product of treatmentAvailability?.product_results ?? []) {
+			if (!product.ready) {
+				result[product.product_id] =
+					`Creative Treatment shortage: ${product.selected_count}/${product.requested} ` +
+					`eligible (${product.shortage} more approval${product.shortage === 1 ? "" : "s"} required).`;
+			}
+		}
 		return result;
-	}, [poolAuthority]);
+	}, [poolAuthority, treatmentAvailability]);
 	const productNameById = useMemo(
 		() =>
 			new Map(
@@ -435,7 +540,9 @@ export default function CreativeProductionStudioPage() {
 			logical_mode: form.logicalMode,
 			model_keys: [selectedModel?.key || form.modelKey],
 			duration_seconds: [form.durationSeconds],
+			creative_format: form.creativeFormat,
 			pools: {
+				treatment_ids: splitValues(form.treatmentIds),
 				copy_set_ids: splitValues(form.copySetIds),
 				poster_copy_set_ids: splitValues(form.posterCopySetIds),
 				avatar_codes: splitValues(form.avatarCodes),
@@ -489,6 +596,10 @@ export default function CreativeProductionStudioPage() {
 				configuration?.requested_total_duration_seconds ??
 				current.durationSeconds,
 			aspect: snapshot.aspect_ratio,
+			creativeFormat: String(
+				pool.creative_format ?? "AUTO",
+			) as CreativeTreatmentFormatPreference,
+			treatmentIds: poolValues("treatment_ids"),
 			copySetIds: poolValues("copy_set_ids"),
 			posterCopySetIds: poolValues("poster_copy_set_ids"),
 			avatarCodes: poolValues("avatar_codes"),
@@ -529,6 +640,7 @@ export default function CreativeProductionStudioPage() {
 			windowHours: 12,
 			logicalMode: "T2V",
 			aspect: "9:16",
+			creativeFormat: "AUTO",
 			copySetIds: "",
 			posterCopySetIds: "",
 			avatarCodes: "",
@@ -538,6 +650,7 @@ export default function CreativeProductionStudioPage() {
 			sceneAssetIds: "",
 			styleAssetIds: "",
 			layoutIds: "",
+			treatmentIds: "",
 			controlledReuseReason: "",
 			controlledReuseMaxPerDna: 1,
 		}));
@@ -546,6 +659,11 @@ export default function CreativeProductionStudioPage() {
 
 	const selectedPlan = detail?.plan;
 	const selectedSnapshot = detail?.snapshot;
+	const selectedTreatmentIds = Array.isArray(
+		selectedSnapshot?.pool_snapshot.treatment_ids,
+	)
+		? (selectedSnapshot.pool_snapshot.treatment_ids as string[])
+		: [];
 	const verifiedVideoLane = lanes.find(
 		(lane) =>
 			lane.enabled &&
@@ -680,6 +798,7 @@ export default function CreativeProductionStudioPage() {
 					invalidAllocation ||
 					poolAuthorityLoading ||
 					!poolAuthority ||
+					treatmentCreateBlocked ||
 					!form.modelKey ||
 					!selectedDuration ||
 					Boolean(modelRegistryError) ||
@@ -696,9 +815,11 @@ export default function CreativeProductionStudioPage() {
 								? "Loading approved supply..."
 								: poolAuthority?.blockers.length
 									? "Approved supply blockers must be resolved"
-									: !form.name
-										? "Enter a plan name"
-										: "Fill in all required fields",
+									: treatmentDisabledReason
+										? treatmentDisabledReason
+										: !form.name
+											? "Enter a plan name"
+											: "Fill in all required fields",
 				isCreditSpend: false,
 			};
 		}
@@ -1228,7 +1349,18 @@ export default function CreativeProductionStudioPage() {
 											className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-white"
 										>
 											{videoModels.map((model) => (
-												<option key={model.key} value={model.key}>
+												<option
+													key={model.key}
+													value={model.key}
+													disabled={
+														model.key !== form.modelKey &&
+														!supportsTreatmentConfiguration(
+															model.key,
+															form.durationSeconds,
+															form.creativeFormat,
+														)
+													}
+												>
 													{model.ui_label}
 												</option>
 											))}
@@ -1248,7 +1380,18 @@ export default function CreativeProductionStudioPage() {
 											className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-white"
 										>
 											{durationOptions.map((option) => (
-												<option key={option.seconds} value={option.seconds}>
+												<option
+													key={option.seconds}
+													value={option.seconds}
+													disabled={
+														option.seconds !== form.durationSeconds &&
+														!supportsTreatmentConfiguration(
+															selectedModel?.key ?? form.modelKey,
+															option.seconds,
+															form.creativeFormat,
+														)
+													}
+												>
 													{option.seconds}s —{" "}
 													{option.generationMode === "SINGLE"
 														? "Single"
@@ -1274,6 +1417,76 @@ export default function CreativeProductionStudioPage() {
 											<option value="16:9">16:9 · Landscape</option>
 										</select>
 									</label>
+								</div>
+								<label className="text-xs text-slate-400">
+									Creative Treatment format
+									<select
+										aria-label="Creative Treatment format"
+										value={form.creativeFormat}
+										onChange={(event) =>
+											setForm({
+												...form,
+												creativeFormat: event.target
+													.value as CreativeTreatmentFormatPreference,
+											})
+										}
+										className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-white"
+									>
+										{["AUTO", "UGC", "PGC", "CINEMATIC"].map((format) => (
+											<option
+												key={format}
+												value={format}
+												disabled={
+													format !== "AUTO" &&
+													Boolean(
+														treatmentAvailability?.supported_formats.length,
+													) &&
+													!treatmentAvailability?.supported_formats.includes(
+														format as "UGC" | "PGC" | "CINEMATIC",
+													)
+												}
+											>
+												{format === "AUTO"
+													? "Auto-select approved format"
+													: format}
+											</option>
+										))}
+									</select>
+								</label>
+								<div
+									data-testid="p6-treatment-availability"
+									className={`rounded-xl border p-3 text-xs ${
+										treatmentAvailability?.ready
+											? "border-emerald-500/30 bg-emerald-950/30 text-emerald-100"
+											: "border-amber-500/40 bg-amber-950/30 text-amber-100"
+									}`}
+								>
+									<div className="flex items-center justify-between gap-2">
+										<strong>Creative Treatment capacity</strong>
+										<StatusBadge
+											status={
+												treatmentAvailabilityLoading
+													? "CHECKING"
+													: treatmentAvailability?.ready
+														? "READY"
+														: "BLOCKED"
+											}
+										/>
+									</div>
+									<div className="mt-2">
+										{treatmentDisabledReason ||
+											`${treatmentAvailability?.selected_treatment_ids.length ?? 0}/${totalVideoCount} unique approved treatments allocated.`}
+									</div>
+									{treatmentAvailability?.product_results.map((product) => (
+										<div
+											key={product.product_id}
+											className="mt-1 text-[10px] opacity-80"
+										>
+											{productNameById.get(product.product_id) ??
+												product.product_id}
+											: {product.selected_count}/{product.requested}
+										</div>
+									))}
 								</div>
 								{selectedDurationOption ? (
 									<div
@@ -1436,6 +1649,25 @@ export default function CreativeProductionStudioPage() {
 												</select>
 											</label>
 										))}
+										<label className="text-xs text-slate-400">
+											Approved Creative Treatment IDs (optional override)
+											<textarea
+												aria-label="Approved Creative Treatment IDs"
+												value={form.treatmentIds}
+												onChange={(event) =>
+													setForm({
+														...form,
+														treatmentIds: event.target.value,
+													})
+												}
+												placeholder="Leave empty for deterministic automatic allocation; one ID per line"
+												className="mt-1 min-h-20 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-xs text-white"
+											/>
+											<span className="mt-1 block text-[10px] text-slate-500">
+												Overrides still require exact product, mode, model,
+												duration, format, and APPROVED state.
+											</span>
+										</label>
 										{poolAuthority?.blockers.length ? (
 											<div
 												data-testid="p6-pool-authority-blockers"
@@ -1494,6 +1726,7 @@ export default function CreativeProductionStudioPage() {
 										invalidAllocation ||
 										poolAuthorityLoading ||
 										!poolAuthority ||
+										treatmentCreateBlocked ||
 										!form.modelKey ||
 										!selectedDuration ||
 										Boolean(modelRegistryError) ||
@@ -1553,6 +1786,13 @@ export default function CreativeProductionStudioPage() {
 								<div>
 									Operating window: {selectedSnapshot.operating_window_hours}{" "}
 									hours
+								</div>
+								<div data-testid="p6-selected-treatment-authority">
+									Creative Treatments: {selectedTreatmentIds.length} immutable
+									approval{selectedTreatmentIds.length === 1 ? "" : "s"}
+									{selectedTreatmentIds.length
+										? ` · ${selectedTreatmentIds.join(", ")}`
+										: " · legacy snapshot has no governed treatment authority"}
 								</div>
 							</div>
 							<button

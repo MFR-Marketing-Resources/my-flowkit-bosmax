@@ -138,12 +138,12 @@ async def create_treatment(row: dict[str, Any]) -> dict[str, Any]:
                 scene_template_id, scene_template_sha256,
                 camera_preset_code, camera_preset_sha256,
                 asset_bindings_json, action_sequence_json, shot_grammar_json,
-                compatibility_profile_json, visual_fingerprint_sha256,
+                compatibility_profile_json, segment_plan_json, visual_fingerprint_sha256,
                 variation_group_id, variation_ordinal, treatment_sha256,
                 supersedes_treatment_id, created_by
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             """,
             (
@@ -177,6 +177,7 @@ async def create_treatment(row: dict[str, Any]) -> dict[str, Any]:
                 row["action_sequence_json"],
                 row["shot_grammar_json"],
                 row["compatibility_profile_json"],
+                row.get("segment_plan_json", "[]"),
                 row["visual_fingerprint_sha256"],
                 row.get("variation_group_id"),
                 row.get("variation_ordinal"),

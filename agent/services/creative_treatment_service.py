@@ -25,7 +25,12 @@ from agent.models.creative_treatment import (
     ReviewTreatmentRequest,
     ReviewVariationGroupRequest,
 )
-from agent.services import avatar_registry, creative_handoff_service
+from agent.services import (
+    avatar_registry,
+    creative_handoff_service,
+    full_storyboard_extend_planner,
+    video_models,
+)
 from agent.services.product_strategy_taxonomy_service import (
     ProductStrategyTaxonomyError,
     require_verified_product_strategy_taxonomy,
@@ -141,6 +146,20 @@ def _dialogue_from_copy(copy_set: dict[str, Any]) -> str:
     if not dialogue:
         raise CreativeTreatmentError("COPY_SET_DIALOGUE_EMPTY", status_code=422)
     return unicodedata.normalize("NFC", dialogue)
+
+
+def _planner_dialogue_from_copy(copy_set: dict[str, Any]) -> str:
+    """Preserve Copy Set clauses while making CTA boundaries unambiguous."""
+
+    clauses = []
+    for raw_clause in _dialogue_from_copy(copy_set).splitlines():
+        clause = raw_clause.strip()
+        if not clause:
+            continue
+        if clause[-1] not in ".!?":
+            clause = f"{clause}."
+        clauses.append(clause)
+    return " ".join(clauses)
 
 
 def _projection(row: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
@@ -335,6 +354,180 @@ def _validate_sequence(body: CreateTreatmentRequest, strategy: dict[str, Any]) -
                 "shot_duration_seconds": total_duration,
             },
         )
+
+
+def _derive_segment_plan(
+    *,
+    body: CreateTreatmentRequest,
+    authority: ResolvedAuthority,
+    action_sequence: list[dict[str, Any]],
+    shot_grammar: list[dict[str, Any]],
+    dependency_hashes: dict[str, Any],
+    asset_bindings: list[dict[str, Any]],
+) -> dict[str, Any] | list[Any]:
+    if body.generation_mode == "SINGLE":
+        return []
+    if not body.compatibility_profile.model_keys:
+        raise CreativeTreatmentError(
+            "TREATMENT_EXTEND_MODEL_REQUIRED",
+            status_code=422,
+        )
+    duration = int(body.duration_seconds)
+    if not math.isclose(body.duration_seconds, duration, abs_tol=0.001):
+        raise CreativeTreatmentError(
+            "TREATMENT_DURATION_WHOLE_SECONDS_REQUIRED",
+            status_code=422,
+        )
+
+    resolved: list[dict[str, Any]] = []
+    for model_key in body.compatibility_profile.model_keys:
+        try:
+            orchestration = video_models.resolve_orchestration(model_key, duration)
+        except ValueError as exc:
+            raise CreativeTreatmentError(
+                "TREATMENT_EXTEND_CONFIGURATION_UNSUPPORTED",
+                status_code=422,
+                details={"model_key": model_key, "message": str(exc)},
+            ) from exc
+        if orchestration["generation_mode"] != "EXTEND":
+            raise CreativeTreatmentError(
+                "TREATMENT_EXTEND_CONFIGURATION_UNSUPPORTED",
+                status_code=422,
+                details={"model_key": model_key, "orchestration": orchestration},
+            )
+        resolved.append(orchestration)
+    baseline = resolved[0]
+    if any(_canonical(item) != _canonical(baseline) for item in resolved[1:]):
+        raise CreativeTreatmentError(
+            "TREATMENT_EXTEND_MODEL_ORCHESTRATION_MISMATCH",
+            status_code=422,
+        )
+
+    block_duration = int(baseline["engine_block_duration_seconds"])
+    segment_count = int(baseline["segment_count"])
+    block_plan = [block_duration] * segment_count
+    shots_by_block: list[list[dict[str, Any]]] = []
+    shot_cursor = 0
+    for block_index in range(segment_count):
+        elapsed = 0.0
+        scoped_shots: list[dict[str, Any]] = []
+        while shot_cursor < len(shot_grammar) and elapsed < block_duration:
+            shot = shot_grammar[shot_cursor]
+            next_elapsed = elapsed + float(shot["duration_seconds"])
+            if next_elapsed > block_duration + 0.001:
+                raise CreativeTreatmentError(
+                    "TREATMENT_SHOT_CROSSES_ENGINE_BLOCK",
+                    status_code=422,
+                    details={
+                        "block_index": block_index + 1,
+                        "shot_sequence": shot["sequence"],
+                    },
+                )
+            scoped_shots.append(shot)
+            elapsed = next_elapsed
+            shot_cursor += 1
+        if not math.isclose(elapsed, block_duration, abs_tol=0.001):
+            raise CreativeTreatmentError(
+                "TREATMENT_ENGINE_BLOCK_DURATION_MISMATCH",
+                status_code=422,
+                details={
+                    "block_index": block_index + 1,
+                    "expected_seconds": block_duration,
+                    "actual_seconds": elapsed,
+                },
+            )
+        shots_by_block.append(scoped_shots)
+    if shot_cursor != len(shot_grammar):
+        raise CreativeTreatmentError(
+            "TREATMENT_ENGINE_BLOCK_COUNT_MISMATCH",
+            status_code=422,
+        )
+
+    try:
+        planner = full_storyboard_extend_planner.plan_full_storyboard(
+            route_id=str(baseline["execution_route"]),
+            source_mode=body.compatibility_profile.source_mode,
+            product=authority.product_truth,
+            copy_intelligence=authority.copy_set,
+            resolved_block_plan=block_plan,
+            target_language="BM_MS",
+            wps_mode="SWEET",
+            scene_context=_canonical_json(authority.handoff["scene_template"]),
+            dialogue_enabled=True,
+            approved_dialogue=_planner_dialogue_from_copy(authority.copy_set),
+            shot_count_by_block=[len(items) for items in shots_by_block],
+        ).to_dict()
+    except full_storyboard_extend_planner.PlannerValidationError as exc:
+        raise CreativeTreatmentError(
+            "TREATMENT_EXTEND_STORYBOARD_INVALID",
+            status_code=422,
+            details={"planner_code": exc.code, "message": str(exc)},
+        ) from exc
+
+    allocations = list(planner["block_allocations"])
+    if len(allocations) != segment_count:
+        raise CreativeTreatmentError(
+            "TREATMENT_EXTEND_PLANNER_BLOCK_COUNT_MISMATCH",
+            status_code=422,
+        )
+    action_by_sequence = {item["sequence"]: item for item in action_sequence}
+    segments: list[dict[str, Any]] = []
+    for block_index, (shots, allocation) in enumerate(
+        zip(shots_by_block, allocations, strict=True),
+        start=1,
+    ):
+        action_ids = {
+            int(sequence)
+            for shot in shots
+            for sequence in shot["action_sequences"]
+        }
+        scoped_actions = [
+            action_by_sequence[sequence]
+            for sequence in sorted(action_ids)
+        ]
+        segment_content = {
+            "segment_index": block_index,
+            "operation": "INITIAL" if block_index == 1 else "EXTEND",
+            "duration_seconds": block_duration,
+            "action_sequence": scoped_actions,
+            "shot_grammar": shots,
+            "exact_dialogue_slice": allocation["exact_dialogue_slice"],
+            "dialogue_utterances": allocation["assigned_dialogue_utterances"],
+            "entry_continuity_state": allocation["entry_continuity_state"],
+            "exit_continuity_state": allocation["exit_continuity_state"],
+            "seam_policy": allocation["seam_policy"],
+            "continuation_instruction": allocation["continuation_instruction"],
+            "end_frame_instruction": allocation["end_frame_instruction"],
+            "planner_allocation_sha256": canonical_sha256(allocation),
+            "planner_allocation": allocation,
+            "asset_bindings": asset_bindings,
+            "dependency_hashes": dependency_hashes,
+        }
+        segments.append(
+            {
+                **segment_content,
+                "segment_sha256": canonical_sha256(segment_content),
+            }
+        )
+    segment_plan_content = {
+        "plan_version": planner["plan_version"],
+        "input_fingerprint": planner["input_fingerprint"],
+        "planner_fingerprint": planner["planner_fingerprint"],
+        "generation_mode": "EXTEND",
+        "requested_total_duration_seconds": duration,
+        "engine_block_duration_seconds": block_duration,
+        "segment_count": segment_count,
+        "execution_route": baseline["execution_route"],
+        "resolved_block_plan": block_plan,
+        "ordered_segment_sha256s": [
+            segment["segment_sha256"] for segment in segments
+        ],
+        "segments": segments,
+    }
+    return {
+        **segment_plan_content,
+        "segment_plan_sha256": canonical_sha256(segment_plan_content),
+    }
 
 
 def _validate_format(
@@ -675,6 +868,14 @@ def _build_treatment_snapshot(
         else None,
         "dialogue_sha256": canonical_sha256(authority.dialogue_text),
     }
+    segment_plan = _derive_segment_plan(
+        body=body,
+        authority=authority,
+        action_sequence=action_sequence,
+        shot_grammar=shot_grammar,
+        dependency_hashes=hashes,
+        asset_bindings=asset_bindings,
+    )
     visual_projection = {
         "format": body.format,
         "duration_seconds": body.duration_seconds,
@@ -686,6 +887,8 @@ def _build_treatment_snapshot(
         "shot_grammar": shot_grammar,
         "compatibility_profile": compatibility,
     }
+    if segment_plan:
+        visual_projection["segment_plan"] = segment_plan
     visual_fingerprint = canonical_sha256(visual_projection)
     content = {
         "treatment_id": treatment_id,
@@ -713,6 +916,8 @@ def _build_treatment_snapshot(
         "visual_fingerprint_sha256": visual_fingerprint,
         **hashes,
     }
+    if segment_plan:
+        content["segment_plan"] = segment_plan
     return {
         **content,
         "treatment_sha256": canonical_sha256(content),
@@ -754,6 +959,14 @@ async def _revalidate(row: dict[str, Any]) -> dict[str, Any]:
         body=body,
         authority=authority,
     )
+    stored_segment_plan = _parse_json(row.get("segment_plan_json"), [])
+    if _canonical(stored_segment_plan) != _canonical(
+        current.get("segment_plan", []),
+    ):
+        raise CreativeTreatmentError(
+            "TREATMENT_AUTHORITY_STALE",
+            details={"authority": "segment_plan"},
+        )
     if current["treatment_sha256"] != row["treatment_sha256"]:
         raise CreativeTreatmentError(
             "TREATMENT_AUTHORITY_STALE",
@@ -798,8 +1011,15 @@ def _decode_treatment(row: dict[str, Any]) -> dict[str, Any]:
         "action_sequence_json",
         "shot_grammar_json",
         "compatibility_profile_json",
+        "segment_plan_json",
     ):
-        result[key.removesuffix("_json")] = _parse_json(result.pop(key), [])
+        default: dict[str, Any] | list[Any] = (
+            [] if key != "compatibility_profile_json" else {}
+        )
+        result[key.removesuffix("_json")] = _parse_json(
+            result.pop(key),
+            default,
+        )
     return result
 
 
@@ -845,6 +1065,7 @@ async def create_treatment(body: CreateTreatmentRequest) -> dict[str, Any]:
         "compatibility_profile_json": _canonical_json(
             snapshot["compatibility_profile"],
         ),
+        "segment_plan_json": _canonical_json(snapshot.get("segment_plan", [])),
     }
     created = await treatment_crud.create_treatment(row)
     return _decode_treatment(created)

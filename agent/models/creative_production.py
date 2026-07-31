@@ -110,6 +110,31 @@ class ProductVideoAllocation(BaseModel):
     video_count: int = Field(ge=1, le=200)
 
 
+class TreatmentAvailabilityRequest(BaseModel):
+    """Server-authoritative Creative Treatment capacity query for Studio."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    product_video_allocations: list[ProductVideoAllocation] = Field(
+        min_length=1,
+        max_length=P58_COHORT_COUNT,
+    )
+    logical_mode: Literal["T2V", "HYBRID", "F2V", "I2V"]
+    model_key: str = Field(min_length=1, max_length=160)
+    duration_seconds: int = Field(ge=1, le=240)
+    creative_format: Literal["AUTO", "UGC", "PGC", "CINEMATIC"] = "AUTO"
+    treatment_ids: list[str] = Field(default_factory=list, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_unique_authority(self) -> "TreatmentAvailabilityRequest":
+        product_ids = [item.product_id for item in self.product_video_allocations]
+        if len(set(product_ids)) != len(product_ids):
+            raise ValueError("product_video_allocations product_id values must be unique")
+        if len(set(self.treatment_ids)) != len(self.treatment_ids):
+            raise ValueError("treatment_ids must be unique")
+        return self
+
+
 class ProductionPlanProductAllocationSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -190,6 +215,9 @@ class ProductionPlanCreateRequest(BaseModel):
     logical_mode: Literal["T2V", "HYBRID", "F2V", "I2V"] = "T2V"
     model_keys: list[str] = Field(min_length=1, max_length=12)
     duration_seconds: list[int] = Field(min_length=1, max_length=12)
+    creative_format: Literal[
+        "AUTO", "UGC", "PGC", "CINEMATIC"
+    ] = "AUTO"
     pools: CreativePoolSelection
     controlled_reuse_reason: str | None = Field(default=None, max_length=500)
     controlled_reuse_max_per_dna: int = Field(default=1, ge=1, le=3)
@@ -210,8 +238,6 @@ class ProductionPlanCreateRequest(BaseModel):
             raise ValueError("product_ids must be unique")
         if len(set(self.pools.treatment_ids)) != len(self.pools.treatment_ids):
             raise ValueError("treatment_ids must be unique")
-        if self.target_video_count > 0 and not self.pools.treatment_ids:
-            raise ValueError("TREATMENT_IDS_REQUIRED_FOR_VIDEO")
         if self.target_video_count > 0 and not self.product_video_allocations:
             raise ValueError(
                 "product_video_allocations is required when target_video_count is positive"
