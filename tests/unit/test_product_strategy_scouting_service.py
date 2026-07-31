@@ -107,8 +107,10 @@ def test_cleanser_and_serum_are_separate_beauty_personal_care_groups() -> None:
 
     groups = _groups(_cluster(report, "beauty_personal_care"))
     assert set(groups) == {"cleanser", "serum"}
-    assert groups["cleanser"]["coverage_status"] == "PARTIAL"
-    assert groups["serum"]["coverage_status"] == "PARTIAL"
+    assert groups["cleanser"]["matched_scene_strategy_id"] == "CLEANSER"
+    assert groups["cleanser"]["coverage_status"] == "COVERED"
+    assert groups["serum"]["matched_scene_strategy_id"] == "SERUM"
+    assert groups["serum"]["coverage_status"] == "COVERED"
 
 
 def test_food_cooking_keeps_rempah_sambal_and_sauce_in_clean_type_groups() -> None:
@@ -208,9 +210,9 @@ def test_vacuum_blender_and_chopper_are_home_equipment_not_cleaning() -> None:
     home_equipment = _cluster(report, "home_equipment")
     groups = _groups(home_equipment)
     assert set(groups) == {"vacuum", "blender", "chopper"}
-    assert groups["vacuum"]["matched_scene_strategy_id"] == "HOUSEHOLD_CLEANER"
-    assert groups["vacuum"]["specific_strategy_count"] == 0
-    assert groups["vacuum"]["coverage_status"] == "PARTIAL"
+    assert groups["vacuum"]["matched_scene_strategy_id"] == "VACUUM_CLEANER"
+    assert groups["vacuum"]["specific_strategy_count"] == 1
+    assert groups["vacuum"]["coverage_status"] == "COVERED"
     assert groups["blender"]["matched_scene_strategy_id"] == "ELECTRONICS_SMALL_DEVICE"
     assert groups["chopper"]["matched_scene_strategy_id"] == "PACKAGED_FOOD"
     assert groups["chopper"]["specific_strategy_count"] == 0
@@ -263,7 +265,7 @@ def test_unknown_product_is_generic_and_fallback_only() -> None:
     assert unknown["matched_scene_strategy_id"] == "GENERIC_FALLBACK"
 
 
-def test_report_ranks_cluster_first_and_recommends_exactly_one_next_type() -> None:
+def test_report_has_no_recommended_work_when_all_groups_are_covered() -> None:
     report = build_product_strategy_scouting_report(
         [
             _product(
@@ -296,25 +298,8 @@ def test_report_ranks_cluster_first_and_recommends_exactly_one_next_type() -> No
     assert [cluster["cluster"] for cluster in report["clusters"]] == list(
         SCOUTING_CLUSTER_ORDER
     )
-    assert report["recommended_next_work"] == report["ranked_work_queue"][0]
-    assert report["recommended_next_work"] == {
-        "cluster": "home_equipment",
-        "product_type_group": "vacuum",
-        "coverage_status": "PARTIAL",
-        "recommended_next_action": (
-            "Expand home_equipment -> vacuum as one scoped strategy; the "
-            "current resolver uses HOUSEHOLD_CLEANER, but "
-            "product-type-specific coverage is 0/1."
-        ),
-    }
-    assert "mascara" not in report["recommended_next_work"][
-        "recommended_next_action"
-    ]
-    assert "sambal" not in report["recommended_next_work"]["recommended_next_action"]
-    assert all(
-        item["recommended_next_action"].count("->") == 1
-        for item in report["ranked_work_queue"]
-    )
+    assert report["ranked_work_queue"] == []
+    assert report["recommended_next_work"] is None
 
 
 def test_direct_copy_notes_only_come_from_specific_scene_strategy_coverage() -> None:
@@ -393,7 +378,7 @@ def test_product_truth_source_type_outranks_misleading_title_and_family() -> Non
         assert tag["specific_strategy"] is True
 
 
-def test_broad_beauty_and_unknown_types_remain_review_only_without_p4() -> None:
+def test_only_broad_and_unknown_types_remain_review_only_without_p4() -> None:
     by_key = {
         (str(entry["cluster"]), str(entry["product_type_group"])): entry
         for entry in product_strategy_type_registry_seed_entries()
@@ -401,11 +386,23 @@ def test_broad_beauty_and_unknown_types_remain_review_only_without_p4() -> None:
 
     for key in (
         ("beauty_personal_care", "beauty_personal_care_other"),
+        ("home_equipment", "home_appliance"),
         ("generic_unclassified", "unknown_product_type"),
     ):
         entry = by_key[key]
         assert entry["registry_status"] == "REVIEW_REQUIRED"
         assert entry["scene_coverage_status"] == "FALLBACK_ONLY"
+
+    review_keys = {
+        key
+        for key, entry in by_key.items()
+        if entry["registry_status"] == "REVIEW_REQUIRED"
+    }
+    assert review_keys == {
+        ("beauty_personal_care", "beauty_personal_care_other"),
+        ("home_equipment", "home_appliance"),
+        ("generic_unclassified", "unknown_product_type"),
+    }
 
 
 def test_traditional_wellness_seed_rows_are_owner_reviewed_and_manual_only() -> None:

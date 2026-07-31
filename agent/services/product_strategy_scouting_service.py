@@ -226,11 +226,13 @@ _SCOUTING_RULES = (
             "pencuci muka",
             "cleansing gel",
         ),
+        specific_strategy_ids=("CLEANSER",),
     ),
     _ScoutingRule(
         "beauty_personal_care",
         "serum",
         terms=("serum", "face essence", "facial essence"),
+        specific_strategy_ids=("SERUM",),
     ),
     _ScoutingRule(
         "fragrance",
@@ -314,6 +316,12 @@ _SCOUTING_RULES = (
     # surface-cleaning product.
     _ScoutingRule(
         "home_equipment",
+        "vacuum_sealer",
+        terms=("vacuum sealer", "food sealer"),
+        specific_strategy_ids=("VACUUM_SEALER",),
+    ),
+    _ScoutingRule(
+        "home_equipment",
         "vacuum",
         terms=(
             "vacuum",
@@ -321,6 +329,7 @@ _SCOUTING_RULES = (
             "cordless vacuum",
             "robot vacuum",
         ),
+        specific_strategy_ids=("VACUUM_CLEANER",),
     ),
     _ScoutingRule(
         "home_equipment",

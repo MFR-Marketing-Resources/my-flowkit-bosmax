@@ -251,6 +251,62 @@ SCENE_STRATEGIES: dict[str, SceneStrategyEntry] = {
         },
         "sensitive_handling_rules": (),
     },
+    "CLEANSER": _simple_scene_strategy(
+        product_family="BEAUTY_PERSONAL_CARE",
+        product_type="CLEANSER",
+        use_case=(
+            "cleanser packaging and dispenser check",
+            "texture and label-direction walkthrough",
+        ),
+        allowed_scene_strategy=(
+            "sealed cleanser label and dispenser inspection",
+            "controlled cleanser texture demonstration",
+        ),
+        allowed_actions=(
+            "show the seal, label, dispenser, and stated directions",
+            "dispense one small amount onto a clean demonstration palette",
+        ),
+        scene_contexts=("clean sink-side product inspection",),
+        camera_routes=("label and dispenser macro to controlled texture reveal",),
+        avatar_hints=("adult personal-care buyer",),
+        wardrobe_hints=("clean neutral homewear",),
+        hook=("Tengok label, dispenser dan tekstur pencuci ni.",),
+        benefit=("Tunjuk sedikit pada palet bersih tanpa mereka cara penggunaan.",),
+        cta=("Semak arahan dan amaran pada label.",),
+        forbidden_actions=(
+            "apply the cleanser to eyes, intimate areas, or inside the body",
+            "invent a facial, body, hair, or household use not stated on the label",
+        ),
+        sensitive_handling_rules=("keep the demonstration external and label-directed",),
+    ),
+    "SERUM": _simple_scene_strategy(
+        product_family="BEAUTY_PERSONAL_CARE",
+        product_type="SERUM",
+        use_case=(
+            "serum packaging and dispenser check",
+            "controlled texture and amount walkthrough",
+        ),
+        allowed_scene_strategy=(
+            "sealed serum label and dispenser inspection",
+            "controlled serum texture demonstration",
+        ),
+        allowed_actions=(
+            "show the seal, label, dropper or pump, and stated directions",
+            "dispense one small amount onto a clean demonstration palette",
+        ),
+        scene_contexts=("bright clean personal-care inspection table",),
+        camera_routes=("label and dispenser macro to controlled texture reveal",),
+        avatar_hints=("adult personal-care buyer",),
+        wardrobe_hints=("clean neutral homewear",),
+        hook=("Tengok label, dispenser dan tekstur serum ni.",),
+        benefit=("Tunjuk satu sukatan kecil tanpa mereka kegunaan produk.",),
+        cta=("Semak ramuan, arahan dan amaran pada label.",),
+        forbidden_actions=(
+            "apply the serum to eyes, lips, intimate areas, or inside the body",
+            "invent a face, body, hair, lip, or ingestible use not stated on the label",
+        ),
+        sensitive_handling_rules=("keep the demonstration external and label-directed",),
+    ),
     "FRAGRANCE": {
         "product_family": "beauty_fragrance",
         "product_type": "FRAGRANCE",
@@ -2850,6 +2906,20 @@ _MATCH_RULES = (
         ),
     ),
     _StrategyRule(
+        "CLEANSER",
+        terms=(
+            "cleanser",
+            "facial wash",
+            "face wash",
+            "pencuci muka",
+            "cleansing gel",
+        ),
+    ),
+    _StrategyRule(
+        "SERUM",
+        terms=("serum", "face essence", "facial essence"),
+    ),
+    _StrategyRule(
         "FRAGRANCE",
         families=("beauty_fragrance",),
         terms=("fragrance", "perfume", "body mist", "body spray", "eau de parfum"),
@@ -2932,6 +3002,14 @@ _MATCH_RULES = (
             "portable fan",
             "bluetooth speaker",
         ),
+    ),
+    _StrategyRule(
+        "VACUUM_SEALER",
+        terms=("vacuum sealer", "food sealer"),
+    ),
+    _StrategyRule(
+        "VACUUM_CLEANER",
+        terms=("vacuum", "vacuum cleaner", "cordless vacuum", "robot vacuum"),
     ),
     _StrategyRule(
         "HOUSEHOLD_CLEANER",

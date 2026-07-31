@@ -195,7 +195,9 @@ def test_detergent_maps_to_measured_laundry_use() -> None:
         ("USB Cable Charger", "ELECTRONICS_ACCESSORY"),
         ("Mini Wireless Device", "ELECTRONICS_SMALL_DEVICE"),
         ("Mini Chopper", "ELECTRONICS_SMALL_DEVICE"),
-        ("Daily Face Serum", "BEAUTY_PERSONAL_CARE"),
+        ("Gentle Facial Cleanser", "CLEANSER"),
+        ("Daily Face Serum", "SERUM"),
+        ("Cordless Vacuum Cleaner", "VACUUM_CLEANER"),
         ("Sambal Ikan Bilis", "PACKAGED_SAUCE_SAMBAL"),
     ],
 )
@@ -255,6 +257,19 @@ def test_exact_product_truth_mapping_precedes_title_keywords(
     assert strategy["resolution_source"].startswith(
         "product_truth_source_type:"
     )
+    assert strategy["fallback_used"] is False
+
+
+def test_vacuum_sealer_keyword_precedes_generic_vacuum_keyword() -> None:
+    strategy = resolve_scene_strategy(
+        _product(
+            "Compact Vacuum Sealer",
+            category="Home Appliances",
+            type="Unmapped Appliance",
+        )
+    )
+
+    assert strategy["strategy_id"] == "VACUUM_SEALER"
     assert strategy["fallback_used"] is False
 
 
