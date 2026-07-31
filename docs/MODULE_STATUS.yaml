@@ -123,8 +123,9 @@ domains:
       - tests/unit/test_creative_supply_factory.py
       - tests/unit/test_creative_supply_migration.py
       # P7.5 Creative Treatment and Choreography Mapping — bounded, review-gated
-      # video-treatment authority and P6 integration. EXTEND remains excluded.
+      # video-treatment authority and P6 integration.
       - .ai/architecture/CREATIVE_TREATMENT_AND_CHOREOGRAPHY_MAPPING.md
+      - .ai/architecture/CREATIVE_TREATMENT_P6_INTEGRATION_CLOSURE.md
       - agent/models/creative_treatment.py
       - agent/db/creative_treatment_crud.py
       - agent/services/creative_treatment_service.py
@@ -136,6 +137,7 @@ domains:
       - tests/unit/test_creative_treatment_prompt_compiler.py
       - tests/unit/test_creative_treatment_rempah_pilot.py
       - docs/evidence/p7-5-creative-treatment-rempah-pilot.md
+      - docs/evidence/p7-5-p6-integration-closure.md
       # Universal Product Readiness and Treatment Factory — deterministic,
       # review-gated catalog preparation upstream of P7.5 and P6.
       - .ai/architecture/UNIVERSAL_PRODUCT_READINESS_AND_TREATMENT_FACTORY.md

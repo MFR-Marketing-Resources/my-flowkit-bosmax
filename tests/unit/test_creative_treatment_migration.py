@@ -139,15 +139,25 @@ async def test_required_tables_indexes_and_hash_triggers_exist():
 
 
 @pytest.mark.asyncio
-async def test_generation_mode_variation_pair_and_approved_hash_are_enforced():
+async def test_generation_modes_variation_pair_and_approved_hash_are_enforced():
     await _seed_authority()
     db = await get_db()
-    treatment_id = "treatment-p75b-constraints"
-    row = _treatment_row(treatment_id=treatment_id)
-    row["generation_mode"] = "EXTEND"
-    with pytest.raises(sqlite3.IntegrityError):
-        await treatment_crud.create_treatment(row)
 
+    extend_id = "treatment-p75b-extend"
+    extend_row = _treatment_row(treatment_id=extend_id)
+    extend_row["generation_mode"] = "EXTEND"
+    await treatment_crud.create_treatment(extend_row)
+    persisted_extend = await treatment_crud.get_treatment(extend_id)
+    assert persisted_extend is not None
+    assert persisted_extend["generation_mode"] == "EXTEND"
+    assert persisted_extend["segment_plan_json"] == "[]"
+
+    invalid_row = _treatment_row(treatment_id="treatment-p75b-invalid-mode")
+    invalid_row["generation_mode"] = "BATCH"
+    with pytest.raises(sqlite3.IntegrityError):
+        await treatment_crud.create_treatment(invalid_row)
+
+    treatment_id = "treatment-p75b-constraints"
     row = _treatment_row(treatment_id=treatment_id)
     row["variation_ordinal"] = 1
     with pytest.raises(sqlite3.IntegrityError):

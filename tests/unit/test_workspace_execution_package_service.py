@@ -524,6 +524,7 @@ async def test_workspace_execution_package_history_parses_snapshot_rows(monkeypa
 @pytest.mark.asyncio
 async def test_workspace_execution_package_preserves_extend_lineage(monkeypatch):
     captured = {}
+    compiler_captured = {}
 
     async def fake_package(product_id: str, mode: str):
         return {
@@ -542,6 +543,7 @@ async def test_workspace_execution_package_preserves_extend_lineage(monkeypatch)
         }
 
     async def fake_compile(**kwargs):
+        compiler_captured.update(kwargs)
         return {
             "final_compiled_prompt_text": "Block 1 (ANCHOR)\n...\n\nBlock 2 (CONTINUATION)\n...",
             "prompt_blocks": [
@@ -549,7 +551,7 @@ async def test_workspace_execution_package_preserves_extend_lineage(monkeypatch)
                     "block_id": "block_1",
                     "block_index": 1,
                     "block_role": "ANCHOR",
-                    "duration_seconds": 10,
+                    "duration_seconds": 8,
                     "shot_count": 3,
                     "dialogue_word_budget": 17,
                     "continuation_from_block_id": None,
@@ -560,7 +562,7 @@ async def test_workspace_execution_package_preserves_extend_lineage(monkeypatch)
                     "block_id": "block_2",
                     "block_index": 2,
                     "block_role": "CONTINUATION",
-                    "duration_seconds": 6,
+                    "duration_seconds": 8,
                     "shot_count": 1,
                     "dialogue_word_budget": 10,
                     "continuation_from_block_id": "block_1",
@@ -602,6 +604,17 @@ async def test_workspace_execution_package_preserves_extend_lineage(monkeypatch)
     monkeypatch.setattr("agent.services.workspace_execution_package_service.compile_workspace_prompt_preview", fake_compile)
     monkeypatch.setattr("agent.services.workspace_execution_package_service.crud.create_or_replace_workspace_execution_package", fake_store)
 
+    treatment = {
+        "treatment_id": "treatment-wep-extend",
+        "treatment_sha256": "a" * 64,
+        "visual_fingerprint_sha256": "b" * 64,
+        "format": "UGC",
+        "generation_mode": "EXTEND",
+        "segment_plan": {
+            "segment_plan_sha256": "c" * 64,
+            "ordered_segment_sha256s": ["1" * 64, "2" * 64],
+        },
+    }
     result = await create_workspace_execution_package(
         "prod-extend",
         "F2V",
@@ -611,10 +624,11 @@ async def test_workspace_execution_package_preserves_extend_lineage(monkeypatch)
         False,
         generation_mode="EXTEND",
         blocks=[
-            {"block_index": 1, "duration_seconds": 10},
-            {"block_index": 2, "duration_seconds": 6},
+            {"block_index": 1, "duration_seconds": 8},
+            {"block_index": 2, "duration_seconds": 8},
         ],
         copy_fallback_confirmed=True,  # no Copy Set selected — fallback confirmed
+        creative_treatment=treatment,
     )
 
     assert result["generation_mode"] == "EXTEND"
@@ -622,6 +636,16 @@ async def test_workspace_execution_package_preserves_extend_lineage(monkeypatch)
     assert result["prompt_blocks"][1]["continuation_from_block_id"] == "block_1"
     assert result["continuation_lineage"][0]["continuation_from_block_id"] == "block_1"
     assert captured["duration_seconds"] == 16
+    assert compiler_captured["creative_treatment"] == treatment
+    stored_lineage = json.loads(captured["request_lineage_payload"])[
+        "creative_treatment_lineage"
+    ]
+    assert stored_lineage["treatment_id"] == "treatment-wep-extend"
+    assert stored_lineage["segment_plan_sha256"] == "c" * 64
+    assert stored_lineage["ordered_segment_sha256s"] == [
+        "1" * 64,
+        "2" * 64,
+    ]
 
 
 @pytest.mark.asyncio

@@ -225,6 +225,50 @@ def _request(
     )
 
 
+def _extend_request(duration_seconds: int) -> CreateTreatmentRequest:
+    segment_count = duration_seconds // 8
+    allowed_actions = SCENE_STRATEGIES["SPICE_SEASONING"]["allowed_actions"]
+    payload = _request().model_dump(mode="json")
+    payload.update(
+        {
+            "generation_mode": "EXTEND",
+            "duration_seconds": duration_seconds,
+            "action_sequence": [
+                {
+                    "sequence": index,
+                    "allowed_action_index": (index - 1) % len(allowed_actions),
+                    "action_text": allowed_actions[
+                        (index - 1) % len(allowed_actions)
+                    ],
+                    "actor_role": "PRODUCT",
+                    "initial_state": f"state-{index - 1}",
+                    "resulting_state": f"state-{index}",
+                    "continuity_requirements": [
+                        "pack identity remains stable",
+                    ],
+                }
+                for index in range(1, segment_count + 1)
+            ],
+            "shot_grammar": [
+                {
+                    "sequence": index,
+                    "action_sequences": [index],
+                    "purpose": f"governed segment {index}",
+                    "framing": "product close-up",
+                    "camera_motion": "controlled push-in",
+                    "subject": "rempah and plated dish",
+                    "duration_seconds": 8,
+                    "continuity_in": [f"state-{index - 1}"],
+                    "continuity_out": [f"state-{index}"],
+                }
+                for index in range(1, segment_count + 1)
+            ],
+        }
+    )
+    payload["compatibility_profile"]["model_keys"] = ["veo_3_1_lite"]
+    return CreateTreatmentRequest(**payload)
+
+
 async def _approve(treatment: dict, actor: str = "reviewer") -> dict:
     await service.submit_treatment_review(
         treatment["treatment_id"],
@@ -260,6 +304,49 @@ async def test_treatment_hash_is_deterministic_and_lifecycle_is_audited(
         "REVIEW_REQUIRED",
         "APPROVED",
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("duration_seconds", "expected_segment_count"),
+    [(16, 2), (24, 3)],
+)
+async def test_extend_treatment_derives_immutable_segment_authority(
+    monkeypatch: pytest.MonkeyPatch,
+    duration_seconds: int,
+    expected_segment_count: int,
+) -> None:
+    await _seed_authority(monkeypatch)
+    created = await service.create_treatment(
+        _extend_request(duration_seconds),
+    )
+    plan = created["segment_plan"]
+
+    assert created["generation_mode"] == "EXTEND"
+    assert plan["requested_total_duration_seconds"] == duration_seconds
+    assert plan["engine_block_duration_seconds"] == 8
+    assert plan["segment_count"] == expected_segment_count
+    assert plan["resolved_block_plan"] == [8] * expected_segment_count
+    assert [segment["operation"] for segment in plan["segments"]] == [
+        "INITIAL",
+        *(["EXTEND"] * (expected_segment_count - 1)),
+    ]
+    assert [
+        segment["shot_grammar"][0]["sequence"]
+        for segment in plan["segments"]
+    ] == list(range(1, expected_segment_count + 1))
+    assert plan["ordered_segment_sha256s"] == [
+        segment["segment_sha256"] for segment in plan["segments"]
+    ]
+
+    current = await service._revalidate(
+        await service.treatment_crud.get_treatment(created["treatment_id"]),
+    )
+    assert service._canonical(current["segment_plan"]) == service._canonical(
+        plan
+    )
+    assert current["treatment_sha256"] == created["treatment_sha256"]
+    assert (await _approve(created))["status"] == "APPROVED"
 
 
 @pytest.mark.asyncio

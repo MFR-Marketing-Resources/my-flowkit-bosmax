@@ -7,6 +7,9 @@ import copy
 import pytest
 
 from agent.services.canonical_prompt_compiler import compile_prompt_set
+from agent.services.full_storyboard_extend_planner import (
+    plan_full_storyboard,
+)
 from agent.services.ugc_video_prompt_compiler_service import (
     compile_ugc_video_prompt,
 )
@@ -52,6 +55,98 @@ def _treatment(format_name: str) -> dict:
         "dependency_hashes": {"copy_set_sha256": "c" * 64},
         "variation_group": None,
     }
+
+
+def _extend_treatment(segment_count: int) -> dict:
+    treatment = _treatment("UGC")
+    total_seconds = segment_count * 8
+    planner = plan_full_storyboard(
+        route_id="VIDEO_JOBS_ORCHESTRATOR",
+        source_mode="FRAMES",
+        product={
+            "id": "rempah-product",
+            "name": "Rempah Nasi Khowmok",
+            "category": "SPICE_SEASONING",
+        },
+        copy_intelligence={
+            "hook": "Harum rempah terus naik.",
+            "subhook": "Masakan terasa lengkap untuk keluarga.",
+            "cta": "Cuba hari ini.",
+        },
+        resolved_block_plan=[8] * segment_count,
+        target_language="BM_MS",
+        wps_mode="SWEET",
+        scene_context="dapur rumah",
+        dialogue_enabled=True,
+        approved_dialogue=(
+            "Harum rempah terus naik. Masakan terasa lengkap untuk keluarga. "
+            "Cuba hari ini."
+        ),
+        shot_count_by_block=[1] * segment_count,
+    ).to_dict()
+    segments = []
+    for index, allocation in enumerate(
+        planner["block_allocations"],
+        start=1,
+    ):
+        segment_sha256 = str(index) * 64
+        segments.append(
+            {
+                "segment_index": index,
+                "operation": "INITIAL" if index == 1 else "EXTEND",
+                "duration_seconds": 8,
+                "action_sequence": [
+                    {
+                        "sequence": index,
+                        "allowed_action_index": index - 1,
+                        "action_text": f"Governed action segment {index}",
+                        "actor_role": "HANDS",
+                        "initial_state": f"state-{index - 1}",
+                        "resulting_state": f"state-{index}",
+                        "continuity_requirements": ["identity remains stable"],
+                    },
+                ],
+                "shot_grammar": [
+                    {
+                        "sequence": index,
+                        "action_sequences": [index],
+                        "purpose": f"governed shot segment {index}",
+                        "framing": "close-up",
+                        "camera_motion": "controlled push",
+                        "subject": "rempah product",
+                        "duration_seconds": 8,
+                        "continuity_in": [f"state-{index - 1}"],
+                        "continuity_out": [f"state-{index}"],
+                    },
+                ],
+                "exact_dialogue_slice": allocation["exact_dialogue_slice"],
+                "planner_allocation": allocation,
+                "segment_sha256": segment_sha256,
+            }
+        )
+    treatment.update(
+        {
+            "generation_mode": "EXTEND",
+            "duration_seconds": total_seconds,
+            "segment_plan": {
+                "plan_version": planner["plan_version"],
+                "input_fingerprint": planner["input_fingerprint"],
+                "planner_fingerprint": planner["planner_fingerprint"],
+                "generation_mode": "EXTEND",
+                "requested_total_duration_seconds": total_seconds,
+                "engine_block_duration_seconds": 8,
+                "segment_count": segment_count,
+                "execution_route": "VIDEO_JOBS_ORCHESTRATOR",
+                "resolved_block_plan": [8] * segment_count,
+                "ordered_segment_sha256s": [
+                    segment["segment_sha256"] for segment in segments
+                ],
+                "segments": segments,
+                "segment_plan_sha256": "d" * 64,
+            },
+        }
+    )
+    return treatment
 
 
 def _compile(format_name: str) -> dict:
@@ -120,19 +215,72 @@ def test_pgc_has_no_creator_camera_fallback() -> None:
     assert "no handheld creator sway" in prompt.lower()
 
 
-def test_treatment_extend_is_rejected_before_planning() -> None:
-    treatment = _treatment("UGC")
-    treatment["generation_mode"] = "EXTEND"
-    with pytest.raises(ValueError, match="TREATMENT_EXTEND_UNSUPPORTED"):
-        compile_ugc_video_prompt(
+@pytest.mark.parametrize(
+    ("total_seconds", "segment_count"),
+    [(16, 2), (24, 3)],
+)
+def test_treatment_extend_preserves_stored_segment_authority(
+    total_seconds: int,
+    segment_count: int,
+) -> None:
+    treatment = _extend_treatment(segment_count)
+    canonical = compile_prompt_set(
+        source_mode="FRAMES",
+        duration_seconds=total_seconds,
+        product={
+            "id": "rempah-product",
+            "name": "Rempah Nasi Khowmok",
+            "category": "SPICE_SEASONING",
+        },
+        creative_treatment=copy.deepcopy(treatment),
+    )
+    assert canonical["block_plan"] == [8] * segment_count
+    assert canonical["total_blocks"] == segment_count
+    assert canonical["planner_result"]["block_allocations"] == [
+        segment["planner_allocation"]
+        for segment in treatment["segment_plan"]["segments"]
+    ]
+    assert canonical["treatment_lineage"] == {
+        "treatment_id": treatment["treatment_id"],
+        "treatment_sha256": treatment["treatment_sha256"],
+        "visual_fingerprint_sha256": treatment[
+            "visual_fingerprint_sha256"
+        ],
+        "format": "UGC",
+        "generation_mode": "EXTEND",
+        "segment_plan_sha256": "d" * 64,
+        "ordered_segment_sha256s": treatment["segment_plan"][
+            "ordered_segment_sha256s"
+        ],
+    }
+    for index, block in enumerate(canonical["blocks"], start=1):
+        action_section = block["sections"][
+            "SECTION 3 - CONTINUITY & STATE LOCK"
+        ]
+        assert f"Governed action segment {index}" in action_section
+        assert (
+            f"purpose=governed shot segment {index}"
+            in block["sections"]["SECTION 4 - VISUAL STORY"]
+        )
+
+    ugc = compile_ugc_video_prompt(
             product={"id": "rempah-product", "name": "Rempah"},
             approved_package={"mode": "F2V"},
             mode="F2V",
             source_mode="FRAMES",
-            generation_mode="SINGLE",
+            generation_mode="EXTEND",
             duration_seconds=8,
-            creative_treatment=treatment,
-        )
+            requested_total_duration_seconds=total_seconds,
+            route="VIDEO_JOBS_ORCHESTRATOR",
+            creative_treatment=copy.deepcopy(treatment),
+    )
+    assert len(ugc["prompt_blocks"]) == segment_count
+    assert ugc["planner_result"]["block_allocations"] == canonical[
+        "planner_result"
+    ]["block_allocations"]
+    assert ugc["treatment_lineage"]["ordered_segment_sha256s"] == treatment[
+        "segment_plan"
+    ]["ordered_segment_sha256s"]
 
 
 def test_canonical_entrypoint_preserves_treatment_lineage() -> None:

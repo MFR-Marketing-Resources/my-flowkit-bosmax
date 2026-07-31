@@ -2439,7 +2439,7 @@ CREATE TABLE IF NOT EXISTS creative_treatment (
     status                       TEXT NOT NULL DEFAULT 'DRAFT'
         CHECK(status IN ('DRAFT','REVIEW_REQUIRED','APPROVED','REJECTED','SUPERSEDED')),
     format                       TEXT NOT NULL CHECK(format IN ('UGC','PGC','CINEMATIC')),
-    generation_mode              TEXT NOT NULL CHECK(generation_mode = 'SINGLE'),
+    generation_mode              TEXT NOT NULL CHECK(generation_mode IN ('SINGLE','EXTEND')),
     duration_seconds             REAL NOT NULL CHECK(duration_seconds > 0),
     product_truth_snapshot_id    TEXT NOT NULL
         REFERENCES product_intelligence_snapshot(snapshot_id) ON DELETE RESTRICT,
@@ -2469,6 +2469,7 @@ CREATE TABLE IF NOT EXISTS creative_treatment (
     action_sequence_json         TEXT NOT NULL,
     shot_grammar_json            TEXT NOT NULL,
     compatibility_profile_json   TEXT NOT NULL,
+    segment_plan_json             TEXT NOT NULL DEFAULT '[]',
     visual_fingerprint_sha256    TEXT NOT NULL CHECK(length(visual_fingerprint_sha256) = 64),
     variation_group_id           TEXT REFERENCES creative_variation_group(group_id) ON DELETE RESTRICT,
     variation_ordinal            INTEGER CHECK(variation_ordinal BETWEEN 1 AND 5),
@@ -2530,7 +2531,7 @@ BEFORE UPDATE OF
     scene_template_id, scene_template_sha256,
     camera_preset_code, camera_preset_sha256,
     asset_bindings_json, action_sequence_json, shot_grammar_json,
-    compatibility_profile_json, visual_fingerprint_sha256,
+    compatibility_profile_json, segment_plan_json, visual_fingerprint_sha256,
     variation_group_id, variation_ordinal, supersedes_treatment_id
 ON creative_treatment
 WHEN OLD.status IN ('APPROVED','SUPERSEDED')
@@ -2675,6 +2676,164 @@ BEGIN
 END;
 """)
         await db.commit()
+        # P7.5-P6 closure: widen the immutable treatment authority to governed
+        # EXTEND and persist its derived segment plan. SQLite cannot modify a
+        # CHECK constraint in place, so legacy tables are rebuilt transactionally.
+        treatment_cursor = await db.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type='table' AND name='creative_treatment'"
+        )
+        treatment_table = await treatment_cursor.fetchone()
+        treatment_columns_cursor = await db.execute(
+            "PRAGMA table_info(creative_treatment)"
+        )
+        treatment_columns = {
+            row[1] for row in await treatment_columns_cursor.fetchall()
+        }
+        treatment_sql = str(treatment_table[0] if treatment_table else "")
+        treatment_needs_rebuild = bool(treatment_table) and (
+            "segment_plan_json" not in treatment_columns
+            or "generation_mode IN ('SINGLE','EXTEND')" not in treatment_sql
+        )
+        if treatment_needs_rebuild:
+            await db.execute("PRAGMA foreign_keys=OFF")
+            try:
+                await db.executescript("""
+BEGIN IMMEDIATE;
+CREATE TABLE creative_treatment_p75_p6_new (
+    treatment_id                 TEXT PRIMARY KEY,
+    product_id                   TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    version                      INTEGER NOT NULL CHECK(version >= 1),
+    status                       TEXT NOT NULL DEFAULT 'DRAFT'
+        CHECK(status IN ('DRAFT','REVIEW_REQUIRED','APPROVED','REJECTED','SUPERSEDED')),
+    format                       TEXT NOT NULL CHECK(format IN ('UGC','PGC','CINEMATIC')),
+    generation_mode              TEXT NOT NULL CHECK(generation_mode IN ('SINGLE','EXTEND')),
+    duration_seconds             REAL NOT NULL CHECK(duration_seconds > 0),
+    product_truth_snapshot_id    TEXT NOT NULL
+        REFERENCES product_intelligence_snapshot(snapshot_id) ON DELETE RESTRICT,
+    product_truth_sha256         TEXT NOT NULL CHECK(length(product_truth_sha256) = 64),
+    copy_set_id                  TEXT NOT NULL REFERENCES copy_set(copy_set_id) ON DELETE RESTRICT,
+    copy_set_sha256              TEXT NOT NULL CHECK(length(copy_set_sha256) = 64),
+    creative_selection_id        TEXT NOT NULL,
+    creative_selection_sha256    TEXT NOT NULL CHECK(length(creative_selection_sha256) = 64),
+    scene_strategy_id            TEXT NOT NULL,
+    scene_strategy_sha256        TEXT NOT NULL CHECK(length(scene_strategy_sha256) = 64),
+    content_angle                TEXT NOT NULL,
+    dialogue_text                TEXT NOT NULL,
+    dialogue_sha256              TEXT NOT NULL CHECK(length(dialogue_sha256) = 64),
+    avatar_code                  TEXT,
+    avatar_sha256                TEXT CHECK(avatar_sha256 IS NULL OR length(avatar_sha256) = 64),
+    wardrobe_text                TEXT,
+    wardrobe_sha256              TEXT CHECK(wardrobe_sha256 IS NULL OR length(wardrobe_sha256) = 64),
+    scene_template_id            TEXT,
+    scene_template_sha256        TEXT CHECK(
+        scene_template_sha256 IS NULL OR length(scene_template_sha256) = 64
+    ),
+    camera_preset_code           TEXT,
+    camera_preset_sha256         TEXT CHECK(
+        camera_preset_sha256 IS NULL OR length(camera_preset_sha256) = 64
+    ),
+    asset_bindings_json          TEXT NOT NULL,
+    action_sequence_json         TEXT NOT NULL,
+    shot_grammar_json            TEXT NOT NULL,
+    compatibility_profile_json   TEXT NOT NULL,
+    segment_plan_json             TEXT NOT NULL DEFAULT '[]',
+    visual_fingerprint_sha256    TEXT NOT NULL CHECK(length(visual_fingerprint_sha256) = 64),
+    variation_group_id           TEXT REFERENCES creative_variation_group(group_id) ON DELETE RESTRICT,
+    variation_ordinal            INTEGER CHECK(variation_ordinal BETWEEN 1 AND 5),
+    treatment_sha256             TEXT NOT NULL CHECK(length(treatment_sha256) = 64),
+    supersedes_treatment_id       TEXT REFERENCES creative_treatment_p75_p6_new(treatment_id) ON DELETE RESTRICT,
+    created_by                   TEXT NOT NULL,
+    submitted_by                 TEXT,
+    reviewed_by                  TEXT,
+    reviewer_note                TEXT,
+    created_at                   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at                   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    submitted_at                 TEXT,
+    reviewed_at                  TEXT,
+    UNIQUE(product_id, version),
+    UNIQUE(variation_group_id, variation_ordinal),
+    CHECK(
+        (variation_group_id IS NULL AND variation_ordinal IS NULL)
+        OR (variation_group_id IS NOT NULL AND variation_ordinal IS NOT NULL)
+    )
+);
+INSERT INTO creative_treatment_p75_p6_new (
+    treatment_id, product_id, version, status, format,
+    generation_mode, duration_seconds,
+    product_truth_snapshot_id, product_truth_sha256,
+    copy_set_id, copy_set_sha256,
+    creative_selection_id, creative_selection_sha256,
+    scene_strategy_id, scene_strategy_sha256,
+    content_angle, dialogue_text, dialogue_sha256,
+    avatar_code, avatar_sha256, wardrobe_text, wardrobe_sha256,
+    scene_template_id, scene_template_sha256,
+    camera_preset_code, camera_preset_sha256,
+    asset_bindings_json, action_sequence_json, shot_grammar_json,
+    compatibility_profile_json, segment_plan_json, visual_fingerprint_sha256,
+    variation_group_id, variation_ordinal, treatment_sha256,
+    supersedes_treatment_id, created_by, submitted_by, reviewed_by,
+    reviewer_note, created_at, updated_at, submitted_at, reviewed_at
+)
+SELECT
+    treatment_id, product_id, version, status, format,
+    generation_mode, duration_seconds,
+    product_truth_snapshot_id, product_truth_sha256,
+    copy_set_id, copy_set_sha256,
+    creative_selection_id, creative_selection_sha256,
+    scene_strategy_id, scene_strategy_sha256,
+    content_angle, dialogue_text, dialogue_sha256,
+    avatar_code, avatar_sha256, wardrobe_text, wardrobe_sha256,
+    scene_template_id, scene_template_sha256,
+    camera_preset_code, camera_preset_sha256,
+    asset_bindings_json, action_sequence_json, shot_grammar_json,
+    compatibility_profile_json, '[]', visual_fingerprint_sha256,
+    variation_group_id, variation_ordinal, treatment_sha256,
+    supersedes_treatment_id, created_by, submitted_by, reviewed_by,
+    reviewer_note, created_at, updated_at, submitted_at, reviewed_at
+FROM creative_treatment;
+DROP TABLE creative_treatment;
+ALTER TABLE creative_treatment_p75_p6_new RENAME TO creative_treatment;
+CREATE INDEX idx_creative_treatment_product_status
+    ON creative_treatment(product_id, status, version);
+CREATE INDEX idx_creative_treatment_group
+    ON creative_treatment(variation_group_id, variation_ordinal);
+CREATE INDEX idx_creative_treatment_dialogue
+    ON creative_treatment(product_id, dialogue_sha256, status);
+CREATE TRIGGER trg_creative_treatment_approved_hash_immutable
+BEFORE UPDATE OF treatment_sha256 ON creative_treatment
+WHEN OLD.status IN ('APPROVED','SUPERSEDED')
+     AND NEW.treatment_sha256 <> OLD.treatment_sha256
+BEGIN
+    SELECT RAISE(ABORT, 'APPROVED_TREATMENT_HASH_IMMUTABLE');
+END;
+CREATE TRIGGER trg_creative_treatment_approved_content_immutable
+BEFORE UPDATE OF
+    product_id, version, format, generation_mode, duration_seconds,
+    product_truth_snapshot_id, product_truth_sha256,
+    copy_set_id, copy_set_sha256,
+    creative_selection_id, creative_selection_sha256,
+    scene_strategy_id, scene_strategy_sha256,
+    content_angle, dialogue_text, dialogue_sha256,
+    avatar_code, avatar_sha256, wardrobe_text, wardrobe_sha256,
+    scene_template_id, scene_template_sha256,
+    camera_preset_code, camera_preset_sha256,
+    asset_bindings_json, action_sequence_json, shot_grammar_json,
+    compatibility_profile_json, segment_plan_json, visual_fingerprint_sha256,
+    variation_group_id, variation_ordinal, supersedes_treatment_id
+ON creative_treatment
+WHEN OLD.status IN ('APPROVED','SUPERSEDED')
+BEGIN
+    SELECT RAISE(ABORT, 'APPROVED_TREATMENT_CONTENT_IMMUTABLE');
+END;
+COMMIT;
+""")
+                logger.info(
+                    "Migrated: widened creative_treatment generation_mode and "
+                    "added segment_plan_json"
+                )
+            finally:
+                await db.execute("PRAGMA foreign_keys=ON")
 
         # Product Intelligence Snapshot foundation (Product Intelligence Backbone
         # PR 1). Durable sidecar storage only — this does not change product-row

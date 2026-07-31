@@ -93,7 +93,7 @@ class CreateTreatmentRequest(BaseModel):
     creative_selection_id: str = Field(min_length=1)
     scene_strategy_id: str = Field(min_length=1)
     format: CreativeTreatmentFormat
-    generation_mode: Literal["SINGLE"] = "SINGLE"
+    generation_mode: Literal["SINGLE", "EXTEND"] = "SINGLE"
     duration_seconds: float = Field(gt=0)
     action_sequence: list[TreatmentActionStep] = Field(min_length=1)
     shot_grammar: list[TreatmentShot] = Field(min_length=1)

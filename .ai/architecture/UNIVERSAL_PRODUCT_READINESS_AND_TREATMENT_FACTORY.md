@@ -4,11 +4,11 @@
 
 **Status:** ARCHITECTURE AUTHORITY ON MERGE
 
-**Version:** 1.0.0
+**Version:** 1.1.0
 
 **Mission:** `BOSMAX-UNIVERSAL-PRODUCT-TO-TREATMENT-FACTORY-20260731`
 
-**Audit base SHA:** `a61dcacbb68be53f56ee8b28a610dea9fca2734a`
+**Audit base SHA:** `214db5eba4388719e7f5a7e9afd4438e8e0a97d8`
 
 ## 1. Authority and bounded scope
 
@@ -23,7 +23,8 @@ subordinate to:
 5. `.ai/ENGINEERING_LOCKDOWN.md`;
 6. `.ai/architecture/BATCH_CREATIVE_PRODUCTION_ORCHESTRATOR_ARCHITECTURE_LOCK.md`;
 7. `.ai/architecture/CREATIVE_TREATMENT_AND_CHOREOGRAPHY_MAPPING.md`;
-8. `docs/PRODUCT_TRUTH_RECONCILIATION_CONTRACT.md`.
+8. `.ai/architecture/CREATIVE_TREATMENT_P6_INTEGRATION_CLOSURE.md`;
+9. `docs/PRODUCT_TRUTH_RECONCILIATION_CONTRACT.md`.
 
 The logical subdomain remains physically owned by the `workspace` Mandor
 domain. This phase changes documentation and bounded ownership only. It does
@@ -42,7 +43,7 @@ database and active runtime were not mutated or restarted.
 
 | Evidence                       | Verified value                                                     |
 | ------------------------------ | ------------------------------------------------------------------ |
-| Audit base                     | `a61dcacbb68be53f56ee8b28a610dea9fca2734a`                         |
+| Audit base                     | `214db5eba4388719e7f5a7e9afd4438e8e0a97d8`                         |
 | Database backup SHA-256        | `2ca9767d516758daa3ee444858d451485ce137c98ffc57a2f6ada2a64f5b3946` |
 | Database size                  | `124305408` bytes                                                  |
 | Integrity / quick check        | `ok` / `ok`                                                        |
@@ -85,6 +86,12 @@ all six strategies.
 Implementation must evaluate the latest stored registry plus latest source
 authority. It must not hard-code this six-profile snapshot. Static source or
 registry presence alone does not prove universal production readiness.
+
+The audit base also contains merged PR #562. Its closure supersedes the prior
+`SINGLE`-only and no-dashboard boundaries: P7.5 now owns governed 16- and
+24-second master-treatment segment lineage, and P6 owns deterministic
+availability/capacity selection. The preserved backup still contains zero
+treatments, so source capability is not misreported as catalog readiness.
 
 ### 2.2 Product Truth and evidence
 
@@ -195,11 +202,18 @@ A **Treatment Template** is an immutable, deterministic policy projection:
 
 ```text
 taxonomy + risk flags + indexed action + format + logical mode
++ generation mode + total duration + orchestration shape
 → evidence requirements + actor policy + asset roles + shot-grammar constraints
 ```
 
 It contains no product fact, approval, asset, free-form claim, or provider
 permission.
+
+For governed `EXTEND`, a template may constrain segment-scoped evidence,
+actions, continuity, asset roles, and shot grammar. It never authors a segment
+plan. P7.5 derives and revalidates the immutable `INITIAL → EXTEND`
+master-treatment lineage required by
+`.ai/architecture/CREATIVE_TREATMENT_P6_INTEGRATION_CLOSURE.md`.
 
 A **Treatment Instance** is the existing P7.5 Creative Treatment bound to one
 product, approved Product Truth snapshot, approved Copy Set, approved Creative
@@ -208,6 +222,10 @@ Selection, assets, actions, and structured shots.
 The factory records template ID/hash to treatment ID/hash lineage in its task
 snapshot. The resolved P7.5 treatment remains the downstream production
 authority; P6 never executes a template directly.
+
+One approved master Treatment Instance is one P6 candidate. `EXTEND` segments
+are not independently selectable, reusable, approvable, or billable. Factory
+and P6 capacity count approved master treatments, never segment count.
 
 ## 5. Mandatory evidence states
 
@@ -257,7 +275,9 @@ evaluate(
   indexed Scene Strategy action,
   UGC | PGC | CINEMATIC,
   logical mode,
-  generation mode
+  generation mode,
+  requested model,
+  requested total duration
 )
 → requirements
 → evidence states
@@ -267,7 +287,19 @@ evaluate(
 → projection version/hash
 ```
 
-`generation_mode=EXTEND` remains unsupported under P7.5.
+`generation_mode` is either `SINGLE` or governed `EXTEND`.
+
+- `SINGLE` is one eight-second master treatment.
+- `EXTEND` is one 16- or 24-second master treatment with exactly two or three
+  ordered eight-second engine blocks.
+- every declared model must support the logical mode, total duration, and same
+  orchestration shape;
+- P7.5, not the client or factory, derives the ordered `INITIAL → EXTEND`
+  segment plan and immutable master/segment hashes;
+- readiness revalidates segment-scoped actions, shots, dialogue, continuity,
+  dependency hashes, planner allocation, and treatment hash;
+- any unsupported model/duration, client-authored segment plan, segment/hash
+  mismatch, or stale lineage blocks with the existing exact P7.5/P6 reason.
 
 ### 6.1 Minimum rule behavior
 
@@ -551,8 +583,9 @@ The disposable proof must produce:
   dialogue leakage.
 
 Fail-closed proofs include unknown taxonomy, missing or not-stated critical
-evidence, claim block, stale upstream authority, generic fallback, unsupported
-EXTEND, missing treatment lineage, a sixth Variation Group member, and
+evidence, claim block, stale upstream authority, generic fallback, an
+unsupported `EXTEND` model/duration, client-authored or mismatched segment
+lineage, missing treatment lineage, a sixth Variation Group member, and
 accidental duplicate dialogue.
 
 ## 16. Sequential implementation boundaries
