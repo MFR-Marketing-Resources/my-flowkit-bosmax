@@ -1,0 +1,115 @@
+{
+  "mission": "BOSMAX-MAPPING-TELEMETRY-CLOSURE-01",
+  "generated_at_utc": "2026-07-31T10:49:06Z",
+  "db_file": "flow_agent.db",
+  "audit": {
+    "active_total": {
+      "sql": "SELECT COUNT(*) FROM product WHERE lifecycle_status='ACTIVE'",
+      "result": 443
+    },
+    "mapping_status_distribution_all": {
+      "sql": "SELECT COALESCE(mapping_status,'(null)') k, COUNT(*) n FROM product GROUP BY mapping_status ORDER BY n DESC",
+      "result": [
+        {
+          "key": "(null)",
+          "count": 290
+        },
+        {
+          "key": "APPROVED",
+          "count": 241
+        },
+        {
+          "key": "READY",
+          "count": 115
+        },
+        {
+          "key": "BLOCKED",
+          "count": 13
+        }
+      ]
+    },
+    "mapping_status_distribution_active": {
+      "sql": "SELECT COALESCE(mapping_status,'(null)') k, COUNT(*) n FROM product WHERE lifecycle_status='ACTIVE' GROUP BY mapping_status ORDER BY n DESC",
+      "result": [
+        {
+          "key": "(null)",
+          "count": 285
+        },
+        {
+          "key": "READY",
+          "count": 110
+        },
+        {
+          "key": "APPROVED",
+          "count": 38
+        },
+        {
+          "key": "BLOCKED",
+          "count": 10
+        }
+      ]
+    },
+    "active_mapping_null": {
+      "sql": "SELECT COUNT(*) FROM product WHERE lifecycle_status='ACTIVE' AND mapping_status IS NULL",
+      "result": 285
+    },
+    "active_mapping_blocked": {
+      "sql": "SELECT COUNT(*) FROM product WHERE lifecycle_status='ACTIVE' AND mapping_status='BLOCKED'",
+      "result": 10
+    },
+    "active_prompt_missing_fields": {
+      "sql": "SELECT COUNT(*) FROM product WHERE lifecycle_status='ACTIVE' AND prompt_readiness_status='MISSING_FIELDS'",
+      "result": 10
+    },
+    "overlap_blocked_and_prompt_missing": {
+      "sql": "SELECT COUNT(*) FROM product WHERE lifecycle_status='ACTIVE' AND mapping_status='BLOCKED' AND prompt_readiness_status='MISSING_FIELDS'",
+      "result": 10
+    },
+    "missing_copy_active": {
+      "sql": "SELECT COUNT(*) FROM product p WHERE lifecycle_status='ACTIVE' AND NOT EXISTS(SELECT 1 FROM copy_set c WHERE c.product_id=p.id AND COALESCE(c.archived,0)=0)",
+      "result": 430
+    },
+    "missing_copy_by_mapping_status": {
+      "sql": "SELECT COALESCE(mapping_status,'(null)') k, COUNT(*) n FROM product p WHERE lifecycle_status='ACTIVE' AND NOT EXISTS(SELECT 1 FROM copy_set c WHERE c.product_id=p.id AND COALESCE(c.archived,0)=0) GROUP BY mapping_status ORDER BY n DESC",
+      "result": [
+        {
+          "key": "(null)",
+          "count": 279
+        },
+        {
+          "key": "READY",
+          "count": 105
+        },
+        {
+          "key": "APPROVED",
+          "count": 36
+        },
+        {
+          "key": "BLOCKED",
+          "count": 10
+        }
+      ]
+    },
+    "missing_copy_with_intel_snapshot": {
+      "sql": "SELECT COUNT(*) FROM product p WHERE lifecycle_status='ACTIVE' AND NOT EXISTS(SELECT 1 FROM copy_set c WHERE c.product_id=p.id AND COALESCE(c.archived,0)=0) AND EXISTS(SELECT 1 FROM product_intelligence_snapshot s WHERE s.product_id=p.id)",
+      "result": 409
+    },
+    "missing_intel_active": {
+      "sql": "SELECT COUNT(*) FROM product p WHERE lifecycle_status='ACTIVE' AND NOT EXISTS(SELECT 1 FROM product_intelligence_snapshot s WHERE s.product_id=p.id)",
+      "result": 21
+    },
+    "active_by_source": {
+      "sql": "SELECT COALESCE(source,'(null)') k, COUNT(*) n FROM product WHERE lifecycle_status='ACTIVE' GROUP BY source ORDER BY n DESC",
+      "result": [
+        {
+          "key": "FASTMOSS",
+          "count": 298
+        },
+        {
+          "key": "MANUAL",
+          "count": 145
+        }
+      ]
+    }
+  }
+}

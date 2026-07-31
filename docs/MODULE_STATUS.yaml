@@ -991,6 +991,20 @@ domains:
       # Command Centre — cost/engine instrumentation on the durable request_telemetry
       # ledger (additive nullable columns; captured now, cost dashboard deferred).
       - tests/unit/test_request_telemetry_instrumentation.py
+      # BOSMAX-MAPPING-TELEMETRY-CLOSURE: read-only forensic audit + NULL-cohort
+      # dry-run + bounded (owner-gated, unexecuted) mapping backfill mechanism.
+      # Zero canonical mutation, zero credits.
+      - scripts/mapping_telemetry_closure_audit.py
+      - scripts/mapping_telemetry_closure_dryrun.py
+      - scripts/mapping_telemetry_closure_verify_nowrite.py
+      - scripts/mapping_telemetry_closure_blocked10.py
+      - agent/services/mapping_backfill_bounded.py
+      - tests/unit/test_mapping_backfill_bounded.py
+      - docs/evidence/mapping-telemetry-closure-01/audit.json
+      - docs/evidence/mapping-telemetry-closure-01/db_integrity_baseline.json
+      - docs/evidence/mapping-telemetry-closure-01/null_cohort_dryrun.json
+      - docs/evidence/mapping-telemetry-closure-01/blocked_10_decision.json
+      - docs/evidence/mapping-telemetry-closure-01/blocked_10_decision.md
       # Failed-generation reporting honesty (MAPPING-TELEMETRY-CLOSURE): 24h/7d/all-time
       # windows + ADR-007 dead-DOM classification. Read-only; frontend pure view.
       - dashboard/src/components/reporting/FailedGenerationsPanel.tsx

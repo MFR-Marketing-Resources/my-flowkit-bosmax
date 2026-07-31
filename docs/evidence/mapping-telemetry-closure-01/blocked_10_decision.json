@@ -1,0 +1,320 @@
+{
+  "mission": "BOSMAX-MAPPING-TELEMETRY-CLOSURE-01",
+  "applied": false,
+  "note": "PROPOSAL ONLY — owner decides; nothing applied.",
+  "count": 10,
+  "decisions": [
+    {
+      "product_id": "ad805d7d-e6fa-4a05-ad96-edc8e0295ae8",
+      "title": "BISKUT MAKMUR SUSU - KAMPUNG BITES - MELT IN MOUTH - 330g",
+      "current": {
+        "category": "Food & Beverage",
+        "subcategory": null,
+        "type": null
+      },
+      "missing_fields": [
+        "subcategory",
+        "type"
+      ],
+      "product_type_group": "packaged_food",
+      "product_type_group_provenance": {
+        "cluster": "food_ready_to_eat",
+        "authority_source": "MANUAL_OVERRIDE",
+        "classification_confidence": "LOW",
+        "review_status": "VERIFIED"
+      },
+      "proposed_taxonomy": {
+        "subcategory": "Snacks & Biscuits",
+        "type": "Packaged Food"
+      },
+      "collision_risk": "LOW",
+      "collision_detail": "category and cluster family agree",
+      "recommendation": "DURABLE_RULE",
+      "reason": "reusable non-ambiguous product family (product_type_group) — a category→subcategory/type rule serves this + future products"
+    },
+    {
+      "product_id": "ec58c4af-78a8-49ab-9a3f-7ab3bcdf76c4",
+      "title": "Penebuk Pintu Tarik Atas, Tanpa Tebuk, Bar Mendatar Gim, Senaman Pintu, Kecergasan, Boleh Laras, 62 cm hingga 100 cm",
+      "current": {
+        "category": "Sports & Outdoors",
+        "subcategory": null,
+        "type": null
+      },
+      "missing_fields": [
+        "subcategory",
+        "type",
+        "silo",
+        "trigger_id",
+        "formula",
+        "claim_risk_level"
+      ],
+      "product_type_group": "pull_up_bar",
+      "product_type_group_provenance": {
+        "cluster": "fitness_equipment",
+        "authority_source": "MANUAL_OVERRIDE",
+        "classification_confidence": "LOW",
+        "review_status": "VERIFIED"
+      },
+      "proposed_taxonomy": {
+        "subcategory": "Fitness Equipment",
+        "type": "Pull-Up Bar"
+      },
+      "collision_risk": "LOW",
+      "collision_detail": "category and cluster family agree",
+      "recommendation": "DURABLE_RULE",
+      "reason": "reusable non-ambiguous product family (product_type_group) — a category→subcategory/type rule serves this + future products"
+    },
+    {
+      "product_id": "21dcae04-86de-4af7-9698-eb2a3331614b",
+      "title": "Alat Dengar Bluetooth Pengaliran Tulang, Wayarles, dengan Paparan Digital LED, Mikrofon dan Pengurangan Bunyi, Penyumbat Telinga Muzik Berkualiti Tinggi HIFI, Sesuai untuk Perniagaan dan Sukan, Reka Bentuk Fesyen",
+      "current": {
+        "category": "Electronics & Gadgets",
+        "subcategory": null,
+        "type": null
+      },
+      "missing_fields": [
+        "subcategory",
+        "type",
+        "silo",
+        "trigger_id",
+        "formula",
+        "claim_risk_level",
+        "physics_class",
+        "recommended_grip"
+      ],
+      "product_type_group": "wireless_earbuds",
+      "product_type_group_provenance": {
+        "cluster": "consumer_audio",
+        "authority_source": "MANUAL_OVERRIDE",
+        "classification_confidence": "LOW",
+        "review_status": "VERIFIED"
+      },
+      "proposed_taxonomy": {
+        "subcategory": "Audio",
+        "type": "Wireless Earbuds"
+      },
+      "collision_risk": "LOW",
+      "collision_detail": "category and cluster family agree",
+      "recommendation": "DURABLE_RULE",
+      "reason": "reusable non-ambiguous product family (product_type_group) — a category→subcategory/type rule serves this + future products"
+    },
+    {
+      "product_id": "1063eec6-976c-415f-95dd-be5c7b53608b",
+      "title": "Nakamichi Rapid Windshield Treatment Water Cleaner 30ml Pencuci Cermin Kereta Kompak & Mudah Penggunaan untuk Pembersihan Kuat",
+      "current": {
+        "category": "Automotive",
+        "subcategory": null,
+        "type": null
+      },
+      "missing_fields": [
+        "subcategory",
+        "type",
+        "silo",
+        "trigger_id",
+        "formula",
+        "claim_risk_level"
+      ],
+      "product_type_group": "household_cleaner",
+      "product_type_group_provenance": {
+        "cluster": "household_cleaning",
+        "authority_source": "MANUAL_OVERRIDE",
+        "classification_confidence": "LOW",
+        "review_status": "VERIFIED"
+      },
+      "proposed_taxonomy": {
+        "subcategory": "Cleaning",
+        "type": "Surface Cleaner"
+      },
+      "collision_risk": "HIGH",
+      "collision_detail": "stored category domain 'automotive' != cluster family domain 'household'",
+      "recommendation": "BOUNDED_OVERRIDE",
+      "reason": "category/cluster collision or unmapped family — needs a human-reviewed, product-specific override, not a broad rule"
+    },
+    {
+      "product_id": "4591673f-301f-4b26-b580-f23263422f7b",
+      "title": "DOCTOR BAI Laundry BAYI 2IN1 WITH SOFTENER 1.5L@dr.bai detergent @baby sabun basuh",
+      "current": {
+        "category": "Home & Living",
+        "subcategory": null,
+        "type": null
+      },
+      "missing_fields": [
+        "subcategory",
+        "type"
+      ],
+      "product_type_group": "detergent",
+      "product_type_group_provenance": {
+        "cluster": "household_laundry",
+        "authority_source": "MANUAL_OVERRIDE",
+        "classification_confidence": "LOW",
+        "review_status": "VERIFIED"
+      },
+      "proposed_taxonomy": {
+        "subcategory": "Laundry",
+        "type": "Laundry Detergent"
+      },
+      "collision_risk": "LOW",
+      "collision_detail": "category and cluster family agree",
+      "recommendation": "DURABLE_RULE",
+      "reason": "reusable non-ambiguous product family (product_type_group) — a category→subcategory/type rule serves this + future products"
+    },
+    {
+      "product_id": "40655de2-037e-48a0-8708-160831d120b4",
+      "title": "【ABIG】200pcs 45x59 Point-off Rubbish Plastic Bag Garbage Bag for Home/Office Use Trash Bag Blue Supplies Plastik Sampah",
+      "current": {
+        "category": "Home & Living",
+        "subcategory": null,
+        "type": null
+      },
+      "missing_fields": [
+        "subcategory",
+        "type"
+      ],
+      "product_type_group": "trash_bag",
+      "product_type_group_provenance": {
+        "cluster": "household_cleaning",
+        "authority_source": "MANUAL_OVERRIDE",
+        "classification_confidence": "LOW",
+        "review_status": "VERIFIED"
+      },
+      "proposed_taxonomy": {
+        "subcategory": "Household Supplies",
+        "type": "Trash Bag"
+      },
+      "collision_risk": "LOW",
+      "collision_detail": "category and cluster family agree",
+      "recommendation": "DURABLE_RULE",
+      "reason": "reusable non-ambiguous product family (product_type_group) — a category→subcategory/type rule serves this + future products"
+    },
+    {
+      "product_id": "6ddfea5c-05a2-49cb-98ef-6e424a184d32",
+      "title": "Drypers Touch Baby Diapers NB80/ S44 (1 Packs)",
+      "current": {
+        "category": "Baby & Kids",
+        "subcategory": null,
+        "type": null
+      },
+      "missing_fields": [
+        "subcategory",
+        "type",
+        "silo",
+        "trigger_id",
+        "formula",
+        "claim_risk_level"
+      ],
+      "product_type_group": "baby_diaper",
+      "product_type_group_provenance": {
+        "cluster": "baby_care",
+        "authority_source": "MANUAL_OVERRIDE",
+        "classification_confidence": "LOW",
+        "review_status": "VERIFIED"
+      },
+      "proposed_taxonomy": {
+        "subcategory": "Diapering",
+        "type": "Baby Diaper"
+      },
+      "collision_risk": "LOW",
+      "collision_detail": "category and cluster family agree",
+      "recommendation": "DURABLE_RULE",
+      "reason": "reusable non-ambiguous product family (product_type_group) — a category→subcategory/type rule serves this + future products"
+    },
+    {
+      "product_id": "2dc99727-59b8-41b8-9462-6e8ff23c09d6",
+      "title": "Tudung Sekolah Awning Scuba TudungSiComel On Point Jaminan 180 Hari Lycra Korea Lembut & Awning Kemas",
+      "current": {
+        "category": "Fashion",
+        "subcategory": null,
+        "type": null
+      },
+      "missing_fields": [
+        "subcategory",
+        "type",
+        "silo",
+        "trigger_id",
+        "formula",
+        "claim_risk_level"
+      ],
+      "product_type_group": "modestwear",
+      "product_type_group_provenance": {
+        "cluster": "fashion_apparel",
+        "authority_source": "MANUAL_OVERRIDE",
+        "classification_confidence": "LOW",
+        "review_status": "VERIFIED"
+      },
+      "proposed_taxonomy": {
+        "subcategory": "Muslim Fashion",
+        "type": "Hijab / Scarf"
+      },
+      "collision_risk": "LOW",
+      "collision_detail": "category and cluster family agree",
+      "recommendation": "DURABLE_RULE",
+      "reason": "reusable non-ambiguous product family (product_type_group) — a category→subcategory/type rule serves this + future products"
+    },
+    {
+      "product_id": "c41ccd1c-aa3d-48f8-a80c-f01414ea221e",
+      "title": "JBL PHANTOM P90 True Wireless Bluetooth In-Ear Earbuds: Deep waterproofing, ultra-long battery life, TWS technology, powerful bass, 3D surround sound, intelligent noise reduction, professional-grade gaming experience—ideal for calls, music, and sports.",
+      "current": {
+        "category": "Electronics & Gadgets",
+        "subcategory": null,
+        "type": null
+      },
+      "missing_fields": [
+        "subcategory",
+        "type",
+        "silo",
+        "trigger_id",
+        "formula",
+        "claim_risk_level",
+        "physics_class",
+        "recommended_grip"
+      ],
+      "product_type_group": "electronics_accessory",
+      "product_type_group_provenance": {
+        "cluster": "electronics_accessory",
+        "authority_source": "MANUAL_OVERRIDE",
+        "classification_confidence": "LOW",
+        "review_status": "VERIFIED"
+      },
+      "proposed_taxonomy": {
+        "subcategory": "(needs owner input)",
+        "type": "(needs owner input)"
+      },
+      "collision_risk": "LOW",
+      "collision_detail": "category and cluster family agree",
+      "recommendation": "BOUNDED_OVERRIDE",
+      "reason": "category/cluster collision or unmapped family — needs a human-reviewed, product-specific override, not a broad rule"
+    },
+    {
+      "product_id": "2af04e4c-c731-4e8d-86f4-5e74b8ff3539",
+      "title": "Produk baharu: bawal murah\n Voila Scarf / Tudung bawal murah / Skarf bercetak kain voil kapas (saiz 46 inci) / Skarf bercetak bunga kecil / Skarf segi empat bercetak / Tudung coral",
+      "current": {
+        "category": "Fashion",
+        "subcategory": null,
+        "type": null
+      },
+      "missing_fields": [
+        "subcategory",
+        "type",
+        "silo",
+        "trigger_id",
+        "formula",
+        "claim_risk_level"
+      ],
+      "product_type_group": "modestwear",
+      "product_type_group_provenance": {
+        "cluster": "fashion_apparel",
+        "authority_source": "MANUAL_OVERRIDE",
+        "classification_confidence": "LOW",
+        "review_status": "VERIFIED"
+      },
+      "proposed_taxonomy": {
+        "subcategory": "Muslim Fashion",
+        "type": "Hijab / Scarf"
+      },
+      "collision_risk": "LOW",
+      "collision_detail": "category and cluster family agree",
+      "recommendation": "DURABLE_RULE",
+      "reason": "reusable non-ambiguous product family (product_type_group) — a category→subcategory/type rule serves this + future products"
+    }
+  ]
+}
