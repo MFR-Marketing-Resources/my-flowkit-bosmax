@@ -63,6 +63,11 @@ IDENTITY_ASSIGNMENTS: dict[str, tuple[str, str, str]] = {
     "c41ccd1c": ("Audio & Video", "Audio & Video Accessories", "EXISTING"),
     "ec58c4af": ("Fitness Equipment", "Pull-Up Bars", "NEW_MINIMAL"),
     # e06d8afd carries a NULL stored mapping_status; enrichment alone resolves it.
+    # Phase 3: the only ACTIVE product still in the missing-cluster / missing-product-type
+    # buckets. Its empty subcategory/type left the strategy binding on the generic
+    # fallback; this pair (already curated under "Computers & Office Equipment") resolves
+    # cluster=stationery, product_type_group=gift_stationery, scene=STATIONERY/COVERED.
+    "60c65d01": ("Office Stationery & Supplies", "School & Educational Supplies", "EXISTING"),
 }
 _RESOLVED = ("READY", "APPROVED", "NEEDS_REVIEW")
 

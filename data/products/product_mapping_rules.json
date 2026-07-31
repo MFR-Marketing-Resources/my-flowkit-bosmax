@@ -664,6 +664,19 @@
       "claim_risk_level": "LOW"
     },
     {
+      "_note": "Variant catalogue spelling of 'Computers & Office Equipment'. Same authority values as that rule.",
+      "match": {
+        "category": "Office & Stationery"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "stationery_mass_01",
+      "trigger_id": "TRUST_01",
+      "formula": "FEATURE_BENEFIT",
+      "mode_recommendations": ["Images", "Frames", "Text to Video"],
+      "copywriting_angle": "Practical stationery and school-supply utility",
+      "claim_risk_level": "LOW"
+    },
+    {
       "_note": "Variant catalogue spelling of 'Sports & Outdoor'. Same authority values as that rule.",
       "match": {
         "category": "Sports & Outdoors"
