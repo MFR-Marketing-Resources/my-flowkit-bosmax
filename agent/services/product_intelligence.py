@@ -23,6 +23,13 @@ logger = logging.getLogger(__name__)
 IMAGE_READY_STATES = {"IMAGE_READY", "IMAGE_CACHE_READY"}
 MODE_IMAGE_DEPENDENT = ("Images", "Ingredients", "Frames")
 TEST_PRODUCT_NAMES = {"test product", "test item", "fixture product"}
+# Title prefixes/markers used by harness rows that were written into canonical data by
+# smoke and verification runs (PR223 smoke fixtures, Codex PI verification rows). They
+# carry no image/source URLs because they are not products; they must never be counted as
+# real catalogue debt. Kept in sync with `_TEST_FIXTURE_PREDICATE` in reporting_service.
+_TEST_PRODUCT_TITLE_MARKERS = (
+    "smoke ", "smoke approve", "smoke reject", "smoke claim review",
+)
 _CURRENCY_QUANTUM = Decimal("0.01")
 
 
@@ -51,6 +58,11 @@ def is_test_product(payload: dict[str, Any]) -> bool:
         return True
     if local_image_path in {"test.jpg", "test.jpeg", "test.png", "test.webp", "test.gif"}:
         return True
+    for candidate in (short_name, raw_title):
+        if candidate.startswith("smoke ") or candidate.startswith("codex pi "):
+            return True
+        if any(marker in candidate for marker in _TEST_PRODUCT_TITLE_MARKERS):
+            return True
     return False
 
 

@@ -40,6 +40,43 @@ _EXCEPTION_PREDICATES: dict[str, str] = {
 }
 EXCEPTION_KINDS: tuple[str, ...] = tuple(_EXCEPTION_PREDICATES.keys()) + ("failed_generation",)
 
+# Harness rows that live in canonical data but are not products: PR223 smoke fixtures and
+# Codex verification rows. They carry no image_url / source_url / tiktok_product_url, so
+# they can never be "completed" — counting them as products overstates real catalogue debt.
+# SQL mirror of `product_intelligence.is_test_product` (same names + the harness titles it
+# predates). They are EXCLUDED from real-product totals and REPORTED separately, never
+# deleted and never silently folded into the denominator.
+_TEST_FIXTURE_PREDICATE = (
+    "("
+    "LOWER(TRIM(COALESCE(p.raw_product_title,''))) IN ('test product','test item','fixture product')"
+    " OR LOWER(TRIM(COALESCE(p.product_short_name,''))) IN ('test product','test item','fixture product')"
+    " OR LOWER(COALESCE(p.raw_product_title,'')) LIKE 'test product%'"
+    " OR LOWER(COALESCE(p.raw_product_title,'')) LIKE 'smoke %'"
+    " OR LOWER(COALESCE(p.raw_product_title,'')) LIKE '%smoke approve%'"
+    " OR LOWER(COALESCE(p.raw_product_title,'')) LIKE '%smoke reject%'"
+    " OR LOWER(COALESCE(p.raw_product_title,'')) LIKE '%smoke claim review%'"
+    " OR LOWER(COALESCE(p.raw_product_title,'')) LIKE 'codex pi %verification%'"
+    " OR LOWER(COALESCE(p.id,'')) LIKE 'test|_%' ESCAPE '|'"
+    " OR LOWER(COALESCE(p.id,'')) LIKE 'fixture|_%' ESCAPE '|'"
+    ")"
+)
+
+# Sortable columns for the drill-down. An allowlist, so a user-supplied value can never
+# reach SQL as an identifier. Every sort gets `p.id` appended as a tie-breaker, otherwise
+# rows with equal sort keys can repeat or vanish across pages.
+_SORTABLE: dict[str, str] = {
+    "product_display_name": _DISPLAY_NAME,
+    "category": "p.category",
+    "product_type": "p.product_type",
+    "cluster": "t.cluster",
+    "product_type_group": "t.product_type_group",
+    "mapping_status": "p.mapping_status",
+    "prompt_readiness_status": "p.prompt_readiness_status",
+    "asset_status": "p.asset_status",
+    "lifecycle_status": "p.lifecycle_status",
+    "updated_at": "p.updated_at",
+}
+
 
 def _product_filters(
     lifecycle_status: Optional[str],
@@ -194,6 +231,9 @@ async def list_exceptions(
     product_type_group: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
+    q: Optional[str] = None,
+    sort_by: Optional[str] = None,
+    sort_dir: str = "desc",
 ) -> dict:
     """Filtered, paginated drill-down list for one exception kind. Raises ValueError
     on an unknown kind (the router maps it to 422)."""
@@ -221,28 +261,60 @@ async def list_exceptions(
 
     predicate = _EXCEPTION_PREDICATES[kind]
     where, params = _product_filters(lifecycle_status, cluster, product_type_group)
-    total = await _scalar(db, f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {predicate}{where}", params)
 
-    # Applicability split. NOT a new predicate and NOT a filter: `total` is unchanged. It
-    # reuses the existing lifecycle authority — a non-ACTIVE product is ARCHIVED_NOT_IN_SCOPE
-    # / PRODUCT_LIFECYCLE_ARCHIVED under the merged P5.8 catalog authority and is excluded
-    # from prompt and media generation by `mode_readiness`. Under `lifecycle_status=ALL` a
-    # single number therefore reads as actionable coverage when most of it is documented
-    # N/A, so the two are reported separately and the UI can stop conflating them.
-    active_where, active_params = _product_filters("ACTIVE", cluster, product_type_group)
-    required_missing = await _scalar(
-        db, f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {predicate}{active_where}", active_params
-    )
+    # Free-text search runs in SQL over the WHOLE cohort, not over a fetched page.
+    search = (q or "").strip()
+    search_sql, search_params = "", []
+    if search:
+        search_sql = (
+            f" AND ({_DISPLAY_NAME} LIKE ? COLLATE NOCASE"
+            " OR p.raw_product_title LIKE ? COLLATE NOCASE"
+            " OR p.id LIKE ? COLLATE NOCASE)"
+        )
+        like = f"%{search}%"
+        search_params = [like, like, like]
+
+    scope = f"{where}{search_sql}"
+    scope_params = params + search_params
+    total = await _scalar(db, f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {predicate}{scope}", scope_params)
+
+    # Explicit accounting so the UI never has to infer a headline. `total` keeps its exact
+    # previous meaning (every row matching the predicate in the requested scope).
+    #   active_missing   - live products, actionable now
+    #   archived_missing - real products, ARCHIVED_NOT_IN_SCOPE for production (P5.8) but
+    #                      still real catalogue debt; NOT hidden
+    #   test_fixture_*   - harness rows that are not products at all
+    # Both counts describe the REQUESTED scope, so they always reconcile against `total`.
+    # Under lifecycle_status=ACTIVE the archived figure is naturally 0.
+    active_missing = await _scalar(
+        db,
+        f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {predicate}{scope}"
+        f" AND p.lifecycle_status = 'ACTIVE' AND NOT {_TEST_FIXTURE_PREDICATE}",
+        scope_params)
+    archived_missing = await _scalar(
+        db,
+        f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {predicate}{scope}"
+        f" AND p.lifecycle_status <> 'ACTIVE' AND NOT {_TEST_FIXTURE_PREDICATE}",
+        scope_params)
+    fixtures_in_scope = await _scalar(
+        db,
+        f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {predicate}{scope} AND {_TEST_FIXTURE_PREDICATE}",
+        scope_params)
+
+    order_col = _SORTABLE.get((sort_by or "").strip(), "p.updated_at")
+    direction = "ASC" if str(sort_dir).strip().lower() == "asc" else "DESC"
+    order_sql = f"ORDER BY {order_col} {direction}, p.id ASC"
     cur = await db.execute(
         f"SELECT p.id AS product_id, {_DISPLAY_NAME} AS product_display_name, "
         "p.category AS category, p.product_type AS product_type, "
         "t.cluster AS cluster, t.product_type_group AS product_type_group, "
         "p.mapping_status AS mapping_status, p.prompt_readiness_status AS prompt_readiness_status, "
         "p.image_asset_status AS image_asset_status, p.asset_status AS asset_status, "
-        "p.lifecycle_status AS lifecycle_status "
-        f"{_PRODUCT_BASE} WHERE {predicate}{where} "
-        "ORDER BY p.updated_at DESC LIMIT ? OFFSET ?",
-        params + [limit, offset],
+        "p.lifecycle_status AS lifecycle_status, "
+        f"{_TEST_FIXTURE_PREDICATE} AS is_test_fixture "
+        f"{_PRODUCT_BASE} WHERE {predicate}{scope} "
+        f"{order_sql} LIMIT ? OFFSET ?",
+        scope_params + [limit, offset],
     )
     items = [dict(r) for r in await cur.fetchall()]
     await cur.close()
@@ -251,12 +323,24 @@ async def list_exceptions(
         "scope": _scope(lifecycle_status, cluster, product_type_group),
         "total": total,
         "applicability": {
-            "required_missing": required_missing,
-            "documented_na_archived": total - required_missing,
+            # real-product debt, split by lifecycle. Archived is NOT hidden — it is real
+            # catalogue debt that simply must not enter production.
+            "active_missing": active_missing,
+            "archived_missing": archived_missing,
+            "real_product_missing": active_missing + archived_missing,
+            # harness rows that are not products; excluded from the real-product totals
+            # above and disclosed here rather than folded into the denominator.
+            "test_fixture_excluded": fixtures_in_scope,
             "documented_na_reason": "PRODUCT_LIFECYCLE_ARCHIVED",
+            # retained for the previous consumer contract
+            "required_missing": active_missing,
+            "documented_na_archived": archived_missing,
         },
         "limit": limit,
         "offset": offset,
+        "q": search or None,
+        "sort_by": sort_by if (sort_by or "") in _SORTABLE else None,
+        "sort_dir": "asc" if direction == "ASC" else "desc",
         "items": items,
     }
 

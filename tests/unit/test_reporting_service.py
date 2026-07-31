@@ -178,3 +178,70 @@ async def test_exceptions_applicability_active_scope_has_no_archived_residue():
     assert res["total"] == 1
     assert res["applicability"]["required_missing"] == 1
     assert res["applicability"]["documented_na_archived"] == 0
+
+
+async def _seed_fixture_and_bulk():
+    """P1 real ACTIVE, P2 real ACTIVE w/o copy, P3 real ARCHIVED w/o copy, F1 harness row."""
+    await _seed()
+    db = await get_db()
+    await db.execute(
+        "INSERT INTO product (id, raw_product_title, product_display_name, product_short_name,"
+        " lifecycle_status, mapping_status, prompt_readiness_status, asset_status, created_at, updated_at)"
+        " VALUES ('F1','PR223 Smoke Approve 20260706','PR223 Smoke Approve','PR223 Smoke Approve',"
+        "'ARCHIVED','BLOCKED','MISSING_FIELDS','UNRESOLVED','2026-01-01T00:00:00Z','2026-01-01T00:00:09Z')")
+    await db.commit()
+
+
+async def test_exceptions_excludes_test_fixtures_from_real_product_totals():
+    """Harness rows are not products: they never inflate real catalogue debt."""
+    await _seed_fixture_and_bulk()
+    res = await svc.list_exceptions("missing_copy", lifecycle_status="ALL")
+    app = res["applicability"]
+    # P2 (active) + P3 (archived) are real; F1 is a fixture.
+    assert app["active_missing"] == 1
+    assert app["archived_missing"] == 1
+    assert app["real_product_missing"] == 2
+    assert app["test_fixture_excluded"] == 1
+    # `total` still counts every matching row, fixture included — nothing is hidden.
+    assert res["total"] == 3
+    assert app["real_product_missing"] + app["test_fixture_excluded"] == res["total"]
+
+
+async def test_exceptions_server_side_pagination_has_no_gaps_or_duplicates():
+    await _seed_fixture_and_bulk()
+    seen: list[str] = []
+    for offset in (0, 1, 2):
+        page = await svc.list_exceptions(
+            "missing_copy", lifecycle_status="ALL", limit=1, offset=offset)
+        assert page["total"] == 3          # total is the WHOLE cohort, not the page
+        assert len(page["items"]) == 1
+        seen.append(page["items"][0]["product_id"])
+    assert sorted(seen) == ["F1", "P2", "P3"]
+    assert len(set(seen)) == 3             # no duplicates across pages
+    # past the last page -> empty, but total unchanged
+    tail = await svc.list_exceptions("missing_copy", lifecycle_status="ALL", limit=1, offset=3)
+    assert tail["items"] == [] and tail["total"] == 3
+
+
+async def test_exceptions_search_runs_over_whole_cohort_not_one_page():
+    await _seed_fixture_and_bulk()
+    res = await svc.list_exceptions("missing_copy", lifecycle_status="ALL", limit=1, q="Charlie")
+    assert res["total"] == 1
+    assert res["items"][0]["product_id"] == "P3"
+    assert res["q"] == "Charlie"
+    none = await svc.list_exceptions("missing_copy", lifecycle_status="ALL", q="zzz-no-match")
+    assert none["total"] == 0 and none["items"] == []
+
+
+async def test_exceptions_sort_allowlist_rejects_unknown_column():
+    await _seed_fixture_and_bulk()
+    ok = await svc.list_exceptions(
+        "missing_copy", lifecycle_status="ALL", sort_by="product_display_name", sort_dir="asc")
+    assert ok["sort_by"] == "product_display_name" and ok["sort_dir"] == "asc"
+    names = [i["product_display_name"] for i in ok["items"]]
+    assert names == sorted(names)
+    # an unknown / injection-shaped value must never reach SQL as an identifier
+    bad = await svc.list_exceptions(
+        "missing_copy", lifecycle_status="ALL", sort_by="p.id; DROP TABLE product--")
+    assert bad["sort_by"] is None
+    assert bad["total"] == 3

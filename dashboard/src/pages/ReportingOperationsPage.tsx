@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Section } from "../components/ui";
 import { KpiCard, type KpiTone } from "../components/reporting/KpiCard";
 import { ExceptionTable } from "../components/reporting/ExceptionTable";
@@ -7,7 +7,12 @@ import {
 	useReportingFilters,
 	asFilters,
 } from "../components/reporting/ReportingFilterContext";
-import { useExceptions, useFailedGenerations, type ExceptionKind } from "../api/reporting";
+import {
+	useExceptions,
+	useExceptionPage,
+	useFailedGenerations,
+	type ExceptionKind,
+} from "../api/reporting";
 import { FailedGenerationsPanel } from "../components/reporting/FailedGenerationsPanel";
 
 // Operational Intelligence — exception-first. Show what's broken, count it, and drill
@@ -61,21 +66,39 @@ function ExceptionKpi({
 }) {
 	const f = useReportingFilters();
 	const { data, loading } = useExceptions(kind, asFilters(f));
-	// Headline the number that is actually actionable. Archived products are
-	// ARCHIVED_NOT_IN_SCOPE (P5.8), so folding them into one figure overstates the work.
+	// The headline must match the SELECTED SCOPE. Under "All (incl. archived)" it is the
+	// real missing total across every real product; headlining the ACTIVE figure there
+	// made the two tabs look identical and hid archived catalogue debt. Test fixtures are
+	// excluded from both (they are harness rows, not products) and disclosed separately.
 	const app = data?.applicability;
-	const required = app?.required_missing ?? data?.total ?? 0;
-	const archived = app?.documented_na_archived ?? 0;
-	const hint = selected
-		? "▾ shown below"
-		: archived > 0
-			? `+${archived.toLocaleString()} archived N/A · click to drill`
-			: "click to drill";
+	const isAll = f.lifecycle_status === "ALL";
+	const active = app?.active_missing ?? 0;
+	const archived = app?.archived_missing ?? 0;
+	const fixtures = app?.test_fixture_excluded ?? 0;
+	const headline = app
+		? isAll
+			? app.real_product_missing
+			: active
+		: (data?.total ?? 0);
+
+	// The breakdown stays visible when the card is selected — it is the whole point of
+	// the ALL tab and must not be replaced by "shown below".
+	const parts: string[] = [];
+	if (isAll && app) {
+		parts.push(`${active.toLocaleString()} active`);
+		parts.push(`${archived.toLocaleString()} archived`);
+	}
+	if (fixtures > 0) parts.push(`${fixtures.toLocaleString()} test fixtures excluded`);
+	const breakdown = parts.join(" + ");
+	const hint = [breakdown, selected ? "▾ shown below" : "click to drill"]
+		.filter(Boolean)
+		.join(" · ");
+
 	return (
 		<KpiCard
 			label={label}
-			value={required.toLocaleString()}
-			tone={required === 0 ? "success" : tone}
+			value={headline.toLocaleString()}
+			tone={headline === 0 ? "success" : tone}
 			hint={hint}
 			loading={loading}
 			onClick={() => onSelect(kind)}
@@ -86,7 +109,24 @@ function ExceptionKpi({
 function OperationsInner() {
 	const f = useReportingFilters();
 	const [selected, setSelected] = useState<ExceptionKind>("missing_copy");
-	const table = useExceptions(selected, asFilters(f));
+	const PAGE_SIZE = 15;
+	const [page, setPage] = useState(1);
+	const [q, setQ] = useState("");
+	const [sortBy, setSortBy] = useState("updated_at");
+	const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+	// Any change of cohort or ordering invalidates the current page number.
+	useEffect(() => {
+		setPage(1);
+	}, [selected, f.lifecycle_status, f.cluster, f.product_type_group, q, sortBy, sortDir]);
+
+	const table = useExceptionPage(selected, asFilters(f), {
+		limit: PAGE_SIZE,
+		offset: (page - 1) * PAGE_SIZE,
+		q,
+		sort_by: sortBy,
+		sort_dir: sortDir,
+	});
 	const failed = useFailedGenerations();
 	const selectedLabel =
 		KIND_META.find((m) => m.kind === selected)?.label ?? selected;
@@ -145,6 +185,18 @@ function OperationsInner() {
 						kind={selected}
 						items={table.data?.items ?? []}
 						loading={table.loading}
+						total={table.data?.total ?? 0}
+						page={page}
+						pageSize={PAGE_SIZE}
+						q={q}
+						sortBy={sortBy}
+						sortDir={sortDir}
+						onPageChange={setPage}
+						onSearchChange={setQ}
+						onSortChange={(by, dir) => {
+							setSortBy(by);
+							setSortDir(dir);
+						}}
 					/>
 				)}
 			</Section>

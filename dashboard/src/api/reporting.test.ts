@@ -38,8 +38,7 @@ describe("reporting api URL building (/api prefix + filter seam)", () => {
 				cluster: "beauty_makeup",
 				product_type_group: "lipstick_lip_tint",
 			},
-			25,
-			50,
+			{ limit: 25, offset: 50 },
 		);
 		expect(url().startsWith("/api/reporting/exceptions?")).toBe(true);
 		const p = parse(url());
