@@ -26,6 +26,7 @@ const KIND_META: { kind: ExceptionKind; label: string; tone: KpiTone }[] = [
 	{ kind: "missing_product_type", label: "Missing product type", tone: "warn" },
 	{ kind: "mapping_blocked", label: "Mapping blocked", tone: "danger" },
 	{ kind: "prompt_not_ready", label: "Prompt not ready", tone: "info" },
+	{ kind: "scene_strategy_gaps", label: "Scene strategy gaps", tone: "warn" },
 	{ kind: "failed_generation", label: "Failed gen (all-time historical)", tone: "danger" },
 ];
 

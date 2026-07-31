@@ -311,3 +311,117 @@ async def test_exceptions_active_and_all_each_reconcile_independently():
         app = res["applicability"]
         assert app["active_missing"] + app["archived_missing"] == res["total"], lifecycle
         assert "F1" not in {i["product_id"] for i in res["items"]}, lifecycle
+
+
+# ── scene-strategy contract observability ────────────────────────────────────
+from agent.services import scene_contract_service as scs  # noqa: E402
+
+
+def test_scene_contract_single_variant_is_complete_not_a_gap():
+    """A sensitive product may legitimately have exactly ONE safe concrete scene.
+
+    There is no minimum-variant threshold anywhere; completeness is about the grammar
+    being concrete and usable, not numerous.
+    """
+    res = scs.evaluate_scene_contract({
+        "matched_scene_strategy_id": "PET_CAGE_ACCESSORY",
+        "scene_coverage_status": "COVERED",
+        "fallback_used": 0,
+    })
+    assert res["scene_contract_status"] == "COMPLETE"
+    assert res["scene_gap_reasons"] == []
+    assert res["scene_variants_count"] == 1          # one variant, still complete
+    assert res["scene_strategy_id"] == "PET_CAGE_ACCESSORY"
+
+
+def test_scene_contract_gap_reasons_are_evidence_based():
+    cases = [
+        ({}, "NO_STRATEGY_BINDING"),
+        ({"matched_scene_strategy_id": "GENERIC_FALLBACK",
+          "scene_coverage_status": "COVERED"}, "GENERIC_FALLBACK"),
+        ({"matched_scene_strategy_id": "NOT_A_REAL_STRATEGY",
+          "scene_coverage_status": "COVERED"}, "STRATEGY_ID_NOT_IN_LIBRARY"),
+        ({"matched_scene_strategy_id": "PET_CAGE_ACCESSORY",
+          "scene_coverage_status": "PARTIAL"}, "PARTIAL_COVERAGE"),
+        ({"matched_scene_strategy_id": "PET_CAGE_ACCESSORY",
+          "scene_coverage_status": "COVERED", "fallback_used": 1}, "GENERIC_FALLBACK"),
+    ]
+    for taxonomy, expected in cases:
+        res = scs.evaluate_scene_contract(taxonomy)
+        assert res["scene_contract_status"] == "GAP", taxonomy
+        assert expected in res["scene_gap_reasons"], (taxonomy, res["scene_gap_reasons"])
+
+
+def test_scene_contract_reports_stale_fingerprint_without_hiding_the_binding():
+    res = scs.evaluate_scene_contract(
+        {"matched_scene_strategy_id": "PET_CAGE_ACCESSORY",
+         "scene_coverage_status": "COVERED", "fallback_used": 0},
+        fingerprint_stale=True)
+    assert res["scene_contract_status"] == "GAP"
+    assert res["scene_gap_reasons"] == ["STALE_PRODUCT_FINGERPRINT"]
+    assert res["scene_strategy_id"] == "PET_CAGE_ACCESSORY"   # binding still reported
+
+
+def test_scene_variants_count_is_variants_not_strategy_count():
+    """One matched strategy id -> the number of scenes INSIDE it, never 1-per-strategy."""
+    for sid in list(scs.COMPLETE_SCENE_STRATEGY_IDS)[:20]:
+        entry = scs.SCENE_STRATEGIES[sid]
+        expected = len(entry["allowed_scene_strategy"])
+        assert scs.scene_variants_count(sid) == expected
+        assert expected >= 1
+    assert scs.scene_variants_count("NOT_A_REAL_STRATEGY") == 0
+
+
+def test_scene_gap_sql_predicate_agrees_with_the_python_evaluator():
+    """The SQL mirror and the pure evaluator must never disagree on structural gaps."""
+    import sqlite3
+    from agent.services.reporting_service import _PRODUCT_BASE
+    rows = [
+        # (id, strategy, coverage, fallback) -> expected structural gap?
+        ("S1", "PET_CAGE_ACCESSORY", "COVERED", 0, False),
+        ("S2", "GENERIC_FALLBACK", "FALLBACK_ONLY", 1, True),
+        ("S3", None, None, 0, True),
+        ("S4", "NOT_A_REAL_STRATEGY", "COVERED", 0, True),
+        ("S5", "PET_CAGE_ACCESSORY", "PARTIAL", 0, True),
+    ]
+    con = sqlite3.connect(":memory:")
+    con.execute("CREATE TABLE p (id TEXT)")
+    con.execute("CREATE TABLE t (product_id TEXT, matched_scene_strategy_id TEXT,"
+                " scene_coverage_status TEXT, fallback_used INTEGER)")
+    for pid, sid, cov, fb, _exp in rows:
+        con.execute("INSERT INTO p VALUES (?)", (pid,))
+        con.execute("INSERT INTO t VALUES (?,?,?,?)", (pid, sid, cov, fb))
+    pred = scs.scene_gap_sql_predicate("t")
+    sql_gaps = {r[0] for r in con.execute(
+        f"SELECT p.id FROM p LEFT JOIN t ON t.product_id = p.id WHERE {pred}")}
+    con.close()
+    py_gaps = {
+        pid for pid, sid, cov, fb, _exp in rows
+        if scs.evaluate_scene_contract({
+            "matched_scene_strategy_id": sid, "scene_coverage_status": cov,
+            "fallback_used": fb})["scene_contract_status"] == "GAP"
+    }
+    expected = {pid for pid, _s, _c, _f, exp in rows if exp}
+    assert sql_gaps == py_gaps == expected
+
+
+async def test_exception_rows_carry_the_scene_contract_fields():
+    await _seed()
+    res = await svc.list_exceptions("missing_copy", lifecycle_status="ALL")
+    assert res["items"], "expected at least one row"
+    for item in res["items"]:
+        for field in ("scene_strategy_id", "scene_variants_count", "scene_coverage",
+                      "scene_contract_status", "scene_gap_reasons"):
+            assert field in item, field
+
+
+async def test_scene_strategy_gaps_is_a_real_exception_kind():
+    await _seed()
+    assert "scene_strategy_gaps" in svc.EXCEPTION_KINDS
+    res = await svc.list_exceptions("scene_strategy_gaps", lifecycle_status="ALL")
+    app = res["applicability"]
+    # the card total must reconcile with its own split, like every other bucket
+    assert app["active_missing"] + app["archived_missing"] == res["total"]
+    # and every returned row must actually be a gap
+    for item in res["items"]:
+        assert item["scene_contract_status"] == "GAP", item["product_id"]

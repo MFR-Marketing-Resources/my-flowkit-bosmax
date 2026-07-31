@@ -14,6 +14,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from agent.db.schema import get_db
+from agent.services.scene_contract_service import (
+    evaluate_scene_contract,
+    scene_gap_sql_predicate,
+)
 
 # Base relation for product-scoped queries: product LEFT JOIN its taxonomy sidecar
 # (1:1 via a DB trigger; LEFT JOIN keeps a product with no taxonomy row visible as
@@ -37,6 +41,9 @@ _EXCEPTION_PREDICATES: dict[str, str] = {
     "missing_intelligence": "NOT EXISTS (SELECT 1 FROM product_intelligence_snapshot s WHERE s.product_id = p.id)",
     "missing_image": "p.asset_status = 'UNRESOLVED'",
     "prompt_not_ready": "p.prompt_readiness_status = 'MISSING_FIELDS'",
+    # Structural scene-contract gap. The SQL mirrors scene_contract_service, which owns the
+    # rule; there is no minimum-variant threshold — one safe concrete scene is complete.
+    "scene_strategy_gaps": scene_gap_sql_predicate("t"),
 }
 EXCEPTION_KINDS: tuple[str, ...] = tuple(_EXCEPTION_PREDICATES.keys()) + ("failed_generation",)
 
@@ -75,6 +82,8 @@ _SORTABLE: dict[str, str] = {
     "asset_status": "p.asset_status",
     "lifecycle_status": "p.lifecycle_status",
     "updated_at": "p.updated_at",
+    "matched_scene_strategy_id": "t.matched_scene_strategy_id",
+    "scene_coverage_status": "t.scene_coverage_status",
 }
 
 
@@ -322,6 +331,9 @@ async def list_exceptions(
         "p.mapping_status AS mapping_status, p.prompt_readiness_status AS prompt_readiness_status, "
         "p.image_asset_status AS image_asset_status, p.asset_status AS asset_status, "
         "p.lifecycle_status AS lifecycle_status, "
+        "t.matched_scene_strategy_id AS matched_scene_strategy_id, "
+        "t.scene_coverage_status AS scene_coverage_status, "
+        "t.fallback_used AS fallback_used, "
         f"{_TEST_FIXTURE_PREDICATE} AS is_test_fixture "
         f"{_PRODUCT_BASE} WHERE {predicate}{scope} "
         f"{order_sql} LIMIT ? OFFSET ?",
@@ -329,6 +341,10 @@ async def list_exceptions(
     )
     items = [dict(r) for r in await cur.fetchall()]
     await cur.close()
+    # Per-row scene contract. Evaluated in Python for the page only (<= `limit` rows), so
+    # the row detail is exact while the KPI count stays a single SQL COUNT.
+    for item in items:
+        item.update(evaluate_scene_contract(item))
     return {
         "kind": kind,
         "scope": _scope(lifecycle_status, cluster, product_type_group),

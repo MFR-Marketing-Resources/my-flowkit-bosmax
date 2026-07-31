@@ -32,6 +32,42 @@ const PRODUCT_COLS: DataTableColumn<ExceptionItem>[] = [
 	{ key: "mapping", header: "Mapping", render: (r) => r.mapping_status ?? "—" },
 	{ key: "prompt", header: "Prompt", render: (r) => r.prompt_readiness_status ?? "—" },
 	{ key: "asset", header: "Image", render: (r) => r.asset_status ?? "—" },
+	{
+		key: "scene",
+		header: "Scene Strategy",
+		render: (r) => (
+			<span className="whitespace-normal break-words">
+				{r.scene_strategy_id ?? "—"}
+			</span>
+		),
+	},
+	{
+		// variants INSIDE the one matched strategy - not a count of strategies. One safe
+		// concrete scene is a complete contract, so 1 is never rendered as a warning.
+		key: "scene_variants",
+		header: "Variants",
+		render: (r) => r.scene_variants_count ?? 0,
+	},
+	{ key: "scene_coverage", header: "Coverage", render: (r) => r.scene_coverage ?? "—" },
+	{
+		key: "scene_status",
+		header: "Scene Contract",
+		render: (r) =>
+			r.scene_contract_status === "COMPLETE" ? (
+				<span className="text-emerald-400">COMPLETE</span>
+			) : (
+				<span className="text-amber-400">{r.scene_contract_status ?? "—"}</span>
+			),
+	},
+	{
+		key: "scene_gap",
+		header: "Scene Gap Reason",
+		render: (r) => (
+			<span className="whitespace-normal break-words text-amber-300">
+				{r.scene_gap_reasons?.length ? r.scene_gap_reasons.join(", ") : "—"}
+			</span>
+		),
+	},
 ];
 
 const FAILED_COLS: DataTableColumn<ExceptionItem>[] = [
@@ -70,6 +106,8 @@ const SORT_KEYS: Record<string, string> = {
 	mapping: "mapping_status",
 	prompt: "prompt_readiness_status",
 	asset: "asset_status",
+	scene: "matched_scene_strategy_id",
+	scene_coverage: "scene_coverage_status",
 	failed: "updated_at",
 };
 
