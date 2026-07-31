@@ -139,6 +139,32 @@ async def run_ws_server():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    try:
+        from agent.services import product_strategy_taxonomy_service as _taxonomy_svc
+
+        _registry_reconcile = await (
+            _taxonomy_svc.reconcile_existing_system_product_strategy_type_registry()
+        )
+        if _registry_reconcile is None:
+            logger.info(
+                "Product Strategy Type Registry startup reconcile skipped: "
+                "no initialized SYSTEM_SEED rows"
+            )
+        else:
+            logger.info(
+                "Product Strategy Type Registry startup reconcile: "
+                "changed=%s inserts=%d updates=%d active=%d review_required=%d",
+                _registry_reconcile.mutation_performed,
+                _registry_reconcile.planned_insert_count,
+                _registry_reconcile.planned_update_count,
+                _registry_reconcile.active_count,
+                _registry_reconcile.review_required_count,
+            )
+    except Exception as _registry_e:  # pragma: no cover - never block startup
+        logger.warning(
+            "Product Strategy Type Registry startup reconcile skipped: %s",
+            _registry_e,
+        )
     _p6_svc = None
     try:
         from agent.services import creative_production_scheduler_service as _p6_svc

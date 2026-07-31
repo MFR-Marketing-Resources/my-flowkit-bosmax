@@ -693,7 +693,7 @@ async def test_p4_eligible_report_counts_supported_blocked_and_missing(
         }
         for product, taxonomy in pairs
     ]
-    gate_calls: list[str] = []
+    registry_reads = 0
 
     async def fake_products(**_kwargs):
         return products
@@ -702,13 +702,29 @@ async def test_p4_eligible_report_counts_supported_blocked_and_missing(
         assert received_products == products
         return attached
 
-    async def fake_gate(product_id: str):
-        gate_calls.append(product_id)
-        return {
-            taxonomy.product_id: taxonomy for _product_value, taxonomy in pairs
-        }[product_id]
+    async def fake_registry():
+        nonlocal registry_reads
+        registry_reads += 1
+        return [
+            {
+                "cluster": taxonomy.cluster,
+                "product_type_group": taxonomy.product_type_group,
+                "matched_scene_strategy_id": taxonomy.matched_scene_strategy_id,
+                "scene_coverage_status": taxonomy.scene_coverage_status,
+                "registry_status": "ACTIVE",
+            }
+            for _product_value, taxonomy in pairs
+        ]
+
+    async def unexpected_per_product_gate(_product_id: str):
+        raise AssertionError("P4 report must not run serial per-product DB gates")
 
     monkeypatch.setattr(service.crud, "list_products", fake_products)
+    monkeypatch.setattr(
+        service.crud,
+        "list_product_strategy_type_registry",
+        fake_registry,
+    )
     monkeypatch.setattr(
         service,
         "attach_product_strategy_taxonomies",
@@ -717,7 +733,7 @@ async def test_p4_eligible_report_counts_supported_blocked_and_missing(
     monkeypatch.setattr(
         service,
         "require_verified_product_strategy_taxonomy",
-        fake_gate,
+        unexpected_per_product_gate,
     )
 
     report = await service.build_product_type_copy_eligible_report()
@@ -745,4 +761,19 @@ async def test_p4_eligible_report_counts_supported_blocked_and_missing(
     assert "verified-missing-strategy" in {
         item.product_id for item in report.sample_blocked
     }
-    assert gate_calls == ["eligible-lip", "eligible-spice"]
+    assert registry_reads == 1
+
+
+def test_p4_report_bulk_registry_gate_rejects_mismatched_assignment():
+    taxonomy = _taxonomy("eligible-lip")
+
+    assert service._registry_assignment_is_valid(
+        taxonomy,
+        {
+            (taxonomy.cluster, taxonomy.product_type_group): {
+                "matched_scene_strategy_id": "GENERIC_FALLBACK",
+                "scene_coverage_status": "FALLBACK_ONLY",
+                "registry_status": "REVIEW_REQUIRED",
+            }
+        },
+    ) is False

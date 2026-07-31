@@ -218,7 +218,10 @@ describe("ProductTypeRegistryPage", () => {
 		mockedFetchCopyReport.mockResolvedValue(P4_REPORT);
 	});
 
-	afterEach(cleanup);
+	afterEach(() => {
+		vi.useRealTimers();
+		cleanup();
+	});
 
 	it("renders grouped rows with bounded P4 support and affected-product guidance", async () => {
 		renderPage();
@@ -322,6 +325,40 @@ describe("ProductTypeRegistryPage", () => {
 		expect(screen.getByTestId("p4-report-warning")).toHaveTextContent(
 			"P4 route unavailable",
 		);
+		expect(
+			screen.getByRole("button", { name: "Retry P4 evidence" }),
+		).toBeVisible();
+	});
+
+	it("bounds a stalled P4 request and recovers through the retry action", async () => {
+		vi.useFakeTimers();
+		mockedFetchCopyReport.mockReturnValue(new Promise(() => {}));
+		renderPage();
+
+		await act(async () => {
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+		const lipRow = screen.getByTestId("registry-row-lipstick_lip_tint");
+		expect(within(lipRow).getByText("Loading P4 evidence…")).toBeVisible();
+
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(10_000);
+		});
+		expect(screen.getByTestId("p4-report-warning")).toHaveTextContent(
+			"P4 evidence request timed out after 10 seconds",
+		);
+		expect(
+			within(lipRow).queryByText("Loading P4 evidence…"),
+		).not.toBeInTheDocument();
+
+		mockedFetchCopyReport.mockResolvedValue(P4_REPORT);
+		fireEvent.click(screen.getByRole("button", { name: "Retry P4 evidence" }));
+		await act(async () => {
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+		expect(within(lipRow).getByText("P4 supported")).toBeVisible();
 	});
 
 	it("registers through the official API and refreshes the registry", async () => {

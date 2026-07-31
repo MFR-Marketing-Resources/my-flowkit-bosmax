@@ -155,6 +155,62 @@ async def test_registry_seed_upgrades_existing_system_pair():
 
 
 @pytest.mark.asyncio
+async def test_startup_reconcile_refreshes_only_initialized_system_seed_rows():
+    assert (
+        await service.reconcile_existing_system_product_strategy_type_registry()
+        is None
+    )
+    assert await crud.list_product_strategy_type_registry() == []
+
+    await _seed_registry()
+    db = await get_db()
+    stale_pairs = (
+        ("beauty_personal_care", "cleanser"),
+        ("beauty_personal_care", "serum"),
+        ("home_equipment", "vacuum"),
+    )
+    for cluster, product_type_group in stale_pairs:
+        await db.execute(
+            "UPDATE product_strategy_type_registry "
+            "SET matched_scene_strategy_id='GENERIC_FALLBACK', "
+            "scene_coverage_status='FALLBACK_ONLY', "
+            "registry_status='REVIEW_REQUIRED' "
+            "WHERE cluster=? AND product_type_group=?",
+            (cluster, product_type_group),
+        )
+    await db.commit()
+
+    reconciled = (
+        await service.reconcile_existing_system_product_strategy_type_registry()
+    )
+    assert reconciled is not None
+    assert reconciled.mutation_performed is True
+    assert reconciled.planned_insert_count == 0
+    assert reconciled.planned_update_count == 3
+    assert reconciled.active_count == 125
+    assert reconciled.review_required_count == 3
+
+    expected_strategies = {
+        ("beauty_personal_care", "cleanser"): "CLEANSER",
+        ("beauty_personal_care", "serum"): "SERUM",
+        ("home_equipment", "vacuum"): "VACUUM_CLEANER",
+    }
+    for pair, strategy_id in expected_strategies.items():
+        row = await crud.get_product_strategy_type_registry_entry(*pair)
+        assert row is not None
+        assert row["matched_scene_strategy_id"] == strategy_id
+        assert row["scene_coverage_status"] == "COVERED"
+        assert row["registry_status"] == "ACTIVE"
+
+    second_pass = (
+        await service.reconcile_existing_system_product_strategy_type_registry()
+    )
+    assert second_pass is not None
+    assert second_pass.mutation_performed is False
+    assert second_pass.planned_update_count == 0
+
+
+@pytest.mark.asyncio
 async def test_registry_blocks_active_fallback_and_unregistered_assignment():
     with pytest.raises(
         service.ProductStrategyTaxonomyError,

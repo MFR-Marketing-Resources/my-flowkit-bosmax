@@ -39,6 +39,31 @@ const EMPTY_REGISTRY: ProductStrategyTypeRegistryResponse = {
 const INPUT_CLASS =
 	"mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500/40";
 const PRODUCT_TYPE_PATTERN = /^[a-z][a-z0-9_]*$/;
+const P4_EVIDENCE_TIMEOUT_MS = 10_000;
+
+async function fetchP4EvidenceWithTimeout() {
+	const controller = new AbortController();
+	let timeoutId: ReturnType<typeof setTimeout> | undefined;
+	const timeout = new Promise<never>((_resolve, reject) => {
+		timeoutId = setTimeout(() => {
+			controller.abort();
+			reject(
+				new Error(
+					"P4 evidence request timed out after 10 seconds. Retry the report.",
+				),
+			);
+		}, P4_EVIDENCE_TIMEOUT_MS);
+	});
+	try {
+		return await Promise.race([
+			fetchProductTypeCopyEligibleReport(controller.signal),
+			timeout,
+		]);
+	} finally {
+		if (timeoutId !== undefined) clearTimeout(timeoutId);
+		controller.abort();
+	}
+}
 
 function tupleKey(
 	cluster: string,
@@ -157,7 +182,7 @@ export default function ProductTypeRegistryPage() {
 		setCopyReportLoading(true);
 		setCopyReportError(null);
 		try {
-			setCopyReport(await fetchProductTypeCopyEligibleReport());
+			setCopyReport(await fetchP4EvidenceWithTimeout());
 		} catch (error) {
 			setCopyReport(null);
 			setCopyReportError(
@@ -557,11 +582,21 @@ export default function ProductTypeRegistryPage() {
 
 			{copyReportError && (
 				<div
-					className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
+					className="flex flex-col gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200 sm:flex-row sm:items-center sm:justify-between"
 					data-testid="p4-report-warning"
 				>
-					Registry data remains available. P4 eligibility context could not be
-					loaded: {copyReportError}
+					<div>
+						Registry data remains available. P4 eligibility context could not be
+						loaded: {copyReportError}
+					</div>
+					<button
+						type="button"
+						onClick={() => void loadCopyReport()}
+						disabled={copyReportLoading}
+						className="shrink-0 rounded-lg border border-amber-400/40 px-3 py-1.5 text-xs font-semibold text-amber-100 transition hover:border-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
+					>
+						Retry P4 evidence
+					</button>
 				</div>
 			)}
 
