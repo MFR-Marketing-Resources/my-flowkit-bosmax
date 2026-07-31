@@ -466,7 +466,14 @@ def _resolve_physics_family(title: str, category: str, subcategory: str, type_na
     if category == "kitchenware":
         return "kitchen_tool"
 
-    if category in {"electronics", "household appliances", "phones and electronics"}:
+    # "electronics and gadgets" is a variant catalogue spelling of the same category; without
+    # it those products resolve no physics family and fail mapping closed on physics_class.
+    if category in {
+        "electronics",
+        "electronics and gadgets",
+        "household appliances",
+        "phones and electronics",
+    }:
         return "electronics_small_box"
 
     if category == "automotive and motorcycle":

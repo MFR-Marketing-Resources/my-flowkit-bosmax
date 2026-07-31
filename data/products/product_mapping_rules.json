@@ -623,6 +623,58 @@
       "mode_recommendations": ["Images", "Frames", "Ingredients"],
       "copywriting_angle": "Heritage family standby comfort",
       "claim_risk_level": "MEDIUM"
+    },
+    {
+      "_note": "Variant catalogue spelling of 'Automotive & Motorcycle'. Same authority values as that rule; added so stored products using this spelling resolve silo/trigger/formula instead of failing mapping closed.",
+      "match": {
+        "category": "Automotive"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "household_mass_01",
+      "trigger_id": "AUTHORITY_01",
+      "formula": "FEATURE_BENEFIT",
+      "mode_recommendations": ["Images", "Frames", "Text to Video"],
+      "copywriting_angle": "Authority-led car care and maintenance utility",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "_note": "Variant catalogue spelling of 'Phones & Electronics'. Same authority values as that rule.",
+      "match": {
+        "category": "Electronics & Gadgets"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "electronics_mass_01",
+      "trigger_id": "AUTHORITY_01",
+      "formula": "FEATURE_BENEFIT",
+      "mode_recommendations": ["Images", "Frames", "Text to Video"],
+      "copywriting_angle": "Authority-led features and compatibility",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "_note": "Variant catalogue spelling of 'Baby & Maternity'. Same authority values as that rule.",
+      "match": {
+        "category": "Baby & Kids"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "baby_care_universal_01",
+      "trigger_id": "TRUST_01",
+      "formula": "PAS",
+      "mode_recommendations": ["Images", "Ingredients", "Frames"],
+      "copywriting_angle": "Trust-led baby care and parenting support",
+      "claim_risk_level": "LOW"
+    },
+    {
+      "_note": "Variant catalogue spelling of 'Sports & Outdoor'. Same authority values as that rule.",
+      "match": {
+        "category": "Sports & Outdoors"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "fashion_mass_01",
+      "trigger_id": "CONFIDENCE_01",
+      "formula": "AIDA",
+      "mode_recommendations": ["Images", "Ingredients", "Frames", "Text to Video"],
+      "copywriting_angle": "Confidence-led performance and outdoor readiness",
+      "claim_risk_level": "LOW"
     }
   ]
 }
