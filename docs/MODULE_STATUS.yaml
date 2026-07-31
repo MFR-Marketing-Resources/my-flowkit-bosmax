@@ -1029,4 +1029,8 @@ domains:
       # entries those products need. Every write is paired with the bounded 04C
       # strategy-fingerprint reconciliation.
       - scripts/mission07_identity_closure.py
+      # Mission-07C phase 7: credit-free HUB seed -> DRAFT copy promotion. Drives the
+      # existing generate_copy_set service so the stored copy contract, dedupe key and
+      # claim scan stay in one place; nothing is approved here.
+      - scripts/mission07_seed_to_copy.py
       - data/products/product_mapping_rules.json
