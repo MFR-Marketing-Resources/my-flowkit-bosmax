@@ -2710,6 +2710,28 @@ SCENE_STRATEGIES.update(
             forbidden_actions=("perform stitching or leave sharp tools loose",),
             sensitive_handling_rules=("adult handling only",),
         ),
+        # A hard-plastic cage liner/tray mat. Deliberately NOT pet bedding (it is not soft
+        # furniture), NOT cat litter and NOT pet food — owner ruling, Mission-07G. It is a
+        # cleanable cage accessory, so the grammar is a wipe-clean fit check with no animal
+        # present, mirroring the no-live-animal rule the other pet scenes already use.
+        "PET_CAGE_ACCESSORY": _catalog_specific_scene(
+            product_family="pet_care",
+            product_type="PET_CAGE_ACCESSORY",
+            use_case="size, fit, material, and wipe-clean check",
+            scene="cage liner fit and wipe-clean walkthrough on an empty cage",
+            actions=(
+                "show the mat flat, its measured size, plastic thickness, drainage or grid pattern and edge finish",
+                "lay it into a clean empty cage base and wipe the surface dry with a cloth",
+            ),
+            context="clean empty pet-cage preparation area",
+            hook="Semak saiz, ketebalan dan padanan pelapik.",
+            benefit="Masuk ke dasar sangkar kosong dan lap kering.",
+            cta="Ukur dasar sangkar sebelum beli.",
+            forbidden_actions=(
+                "place a real animal on the mat",
+                "claim odor, hygiene or health benefits",
+            ),
+        ),
         "PET_LITTER": _catalog_specific_scene(
             product_family="pet_care",
             product_type="PET_LITTER",

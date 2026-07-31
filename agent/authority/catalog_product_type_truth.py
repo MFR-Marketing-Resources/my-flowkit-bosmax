@@ -847,6 +847,34 @@ CATALOG_PRODUCT_TYPE_TRUTH_MAPPINGS = (
 )
 
 
+# Mission-07G reviewed decisions. Kept distinct from the P5.8 reviewer so this round's
+# rulings are not misattributed to that earlier review.
+P07G_REVIEWER_ID = "owner-mission:07G"
+P07G_REVIEWER_NOTE = (
+    "Archived catalogue closure reviewed under "
+    "BOSMAX-ALL-659-CATALOGUE-CLOSURE-07G; source taxonomy triple did not describe the "
+    "product, so an exact product-ID-bound decision was recorded instead"
+)
+
+
+def _p07g_mapping(
+    cluster: str,
+    product_type_group: str,
+    display_name: str,
+    scene_strategy_id: str,
+) -> CatalogProductTypeTruthMapping:
+    return CatalogProductTypeTruthMapping(
+        cluster=cluster,
+        product_type_group=product_type_group,
+        display_name=display_name,
+        specific_scene_strategy_id=scene_strategy_id,
+        auto_classification_enabled=False,
+        include_in_registry=True,
+        reviewer_id=P07G_REVIEWER_ID,
+        reviewer_note=P07G_REVIEWER_NOTE,
+    )
+
+
 def _p58_mapping(
     cluster: str,
     product_type_group: str,
@@ -871,6 +899,33 @@ def _p58_mapping(
 # or an exact duplicate source signature, proves the product type but the source
 # category path is too broad or contradictory. It is never a runtime title rule.
 P58_PRODUCT_TRUTH_OVERRIDES = {
+    # ── Mission-07G: five ARCHIVED products left on the generic fallback ──────────
+    # Each carries a source triple that does not describe the product, so a reusable
+    # triple rule would mis-map its neighbours. Bound per product ID instead.
+    # "Stiker Dinding PVC" filed under Tools & Hardware / Fasteners & Hooks — it is a
+    # self-adhesive wall covering.
+    "3bedd53f-4910-4c5b-945f-4aa7e56d18b4": _p07g_mapping(
+        "home_improvement", "wall_covering", "Wall Covering", "WALL_COVERING"
+    ),
+    # "Chenille Stems Pipe Cleaners" filed under Slime & Squishy Toys — craft material.
+    "9c1a1843-6d1d-48e0-97df-a4b493e12d56": _p07g_mapping(
+        "craft_hobby", "craft_material", "Craft Material", "CRAFT_MATERIAL"
+    ),
+    # "Non-Stick Korean BBQ Grill Pan" filed under Household Appliances / Electric Grills
+    # — it is stovetop cookware, not an appliance.
+    "4e0d386d-af76-49ef-b670-1679056e46c8": _p07g_mapping(
+        "kitchen_cookware", "grill_pan", "Grill Pan", "COOKWARE"
+    ),
+    # "SAMPUL DUIT RAYA" — festive money packets.
+    "7a88c55d-82a6-4045-88b2-f635f772cd05": _p07g_mapping(
+        "stationery", "money_packet", "Money Packet", "STATIONERY"
+    ),
+    # "Pelapik Sangkar Pet Cage Floor Mat Plastic" filed under Dog & Cat Furniture /
+    # Beds, Sofas & Mats. Owner ruling: this is a HARD-PLASTIC CAGE LINER, not bedding,
+    # not litter and not food. New minimum authority registered for it.
+    "0d58bd3c-b1f9-49d0-a83b-0165fc821bfa": _p07g_mapping(
+        "pet_care", "pet_cage_accessory", "Pet Cage Accessory", "PET_CAGE_ACCESSORY"
+    ),
     "b4b0f581-f1aa-4677-beaa-54268199c377": _p58_mapping(
         "home_textiles", "bedding", "Bedding", "BEDDING"
     ),
