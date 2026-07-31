@@ -1014,6 +1014,9 @@ domains:
       # rows (STALE_PRODUCT_FINGERPRINT -> BLOCKED_REVIEW_REQUIRED -> dropped from P4/P6).
       # Reconciles ONLY provably fingerprint-only drift; writes ONLY product_fingerprint
       # + updated_at; never re-verifies or re-classifies.
+      # Mission-07G: pure per-product scene-strategy contract evaluator + its SQL mirror.
+      # No minimum-variant threshold: one safe concrete scene is a complete contract.
+      - agent/services/scene_contract_service.py
       - agent/services/strategy_fingerprint_reconciliation.py
       - tests/unit/test_strategy_fingerprint_reconciliation.py
       # Bounded operational driver: loads the owner-accepted hashed cohort and binds the

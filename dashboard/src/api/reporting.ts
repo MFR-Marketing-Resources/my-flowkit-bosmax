@@ -28,6 +28,7 @@ export type ExceptionKind =
 	| "missing_intelligence"
 	| "missing_image"
 	| "prompt_not_ready"
+	| "scene_strategy_gaps"
 	| "failed_generation";
 
 export interface CopywritingCoverage {
@@ -68,6 +69,12 @@ export interface ExceptionItem {
 	image_asset_status?: string | null;
 	asset_status?: string | null;
 	lifecycle_status?: string | null;
+	// authoritative scene-strategy contract, evaluated server-side per row
+	scene_strategy_id?: string | null;
+	scene_variants_count?: number | null;
+	scene_coverage?: string | null;
+	scene_contract_status?: string | null;
+	scene_gap_reasons?: string[] | null;
 	// failed_generation rows carry request-telemetry fields instead:
 	request_id?: string | null;
 	mode?: string | null;
