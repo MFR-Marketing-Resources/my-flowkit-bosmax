@@ -1022,6 +1022,13 @@ domains:
       # only expose how much of that debt is already prepared, so preparation stops being
       # invisible. Nothing new is persisted.
       - agent/services/product_intelligence_stage_service.py
+      # Mission-08A / B-08A-02: promote approved registration Product Knowledge into the
+      # Product Intelligence review-draft lifecycle. Before this BOTH commit lanes wrote
+      # identity/taxonomy/physics/commerce only, so approved knowledge fields were
+      # discarded - and invisibly, because `excluded_fields` lists only UNAPPROVED
+      # candidates. Promotion never approves: no approved_by/approved_at is ever set.
+      - agent/services/registration_intelligence_promotion_service.py
+      - tests/unit/test_registration_intelligence_promotion.py
       - tests/unit/test_product_intelligence_stage_service.py
       - dashboard/src/components/reporting/IntelligenceStagePanel.tsx
       - dashboard/src/components/reporting/IntelligenceStagePanel.test.tsx
