@@ -1045,4 +1045,9 @@ domains:
       # binding differs from stored AND the target registry pair is ACTIVE + COVERED, then
       # holds the row REVIEW_REQUIRED because a changed binding is a human decision.
       - scripts/mission07g_scene_binding_closure.py
+      # Mission-07G-FINAL-SCENE-GAP-04: bounded closure of the LAST real-product scene
+      # gap (Joielle Baby petite-sample box), plus the disclosed PR #583 orphan-pair
+      # repair. Re-derives from authority, refuses generic-fallback / non-COVERED /
+      # registry-or-P4-less targets, and hashes the protected tables before AND after.
+      - scripts/mission07g_final_scene_gap.py
       - data/products/product_mapping_rules.json
