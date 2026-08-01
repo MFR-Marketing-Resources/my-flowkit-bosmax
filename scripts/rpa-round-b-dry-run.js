@@ -57,19 +57,20 @@ const FORBIDDEN_REQUEST_PATTERNS = [
 const FORBIDDEN_CLICK_TESTIDS = new Set([
   "workflow-fallback-confirm",    // would ship fallback copy — ALWAYS forbidden
 ]);
-/** Step 2 picker: the toggle carries no testid of its own, so it is keyed by selector. */
-const PICKER_TOGGLE = '[data-testid="workflow-step-2"] button';
+/** Step 1 picker (Workflow Upgrade V1: Select Product is Step 1): the toggle
+ *  carries no testid of its own, so it is keyed by selector. */
+const PICKER_TOGGLE = '[data-testid="workflow-step-1"] button';
 const PICKER_SEARCH = 'input[placeholder*="Search all products"]';
 /**
  * The ONLY controls this operator may click. Any recorded click outside this set fails the
  * run. This is the real Step 5 protection: the click surface is closed by construction.
  */
 const ALLOWED_CLICK_KEYS = new Set([
-  `selector:${PICKER_TOGGLE}`,     // opens/closes the Step 2 picker; changes no workflow state
-  "product-option",                // Step 2: select the synthetic product by immutable id
-  "copy-set-row",                  // Copy Set: select the already-approved set (never approves)
-  "action-load-hybrid-package",    // Step 3: compile-only, provider-free
-  "action-generate-final-prompt",  // Step 4: sandbox package write (owner-authorized)
+  `selector:${PICKER_TOGGLE}`,     // opens/closes the Step 1 picker; changes no workflow state
+  "product-option",                // Step 1: select the synthetic product by immutable id
+  "copy-set-row",                  // Copy Set (Step 2 Creative Direction): select the already-approved set (never approves)
+  "action-load-hybrid-package",    // Step 4a: compile-only, provider-free
+  "action-generate-final-prompt",  // Step 4b: sandbox package write (owner-authorized)
 ]);
 /**
  * Step 4 (`action-generate-final-prompt`) is OWNER-AUTHORIZED for the SANDBOX ONLY.
@@ -114,7 +115,9 @@ async function readWorkflow(page) {
     return {
       root_mode: q("hybrid-workflow")?.getAttribute("data-mode") ?? null,
       steps: { 1: step(1), 2: step(2), 3: step(3), 4: step(4), 5: step(5) },
-      selected_product_id: q("workflow-step-2")?.getAttribute("data-selected-product-id") ?? "",
+      // Workflow Upgrade V1: the load phase lives inside Step 4 (Compile & Review).
+      load_state: q("workflow-step-4-load")?.getAttribute("data-state") ?? null,
+      selected_product_id: q("workflow-step-1")?.getAttribute("data-selected-product-id") ?? "",
       settings: {
         generation_mode: q("setting-generation-mode")?.getAttribute("data-value") ?? null,
         block_duration: q("setting-block-duration")?.getAttribute("data-value") ?? null,
@@ -287,8 +290,8 @@ async function ensurePickerOpen(page) {
     log(`  generation_mode=${evidence.step1.generation_mode} block_duration=${evidence.step1.block_duration} video_model=${evidence.step1.video_model}`);
     await shot(page, "02-step1-settings");
 
-    // ── Step 2: select the synthetic product BY IMMUTABLE ID through the visible picker.
-    log(`[step-2] select product by immutable id ${PRODUCT_ID}`);
+    // ── Step 1: select the synthetic product BY IMMUTABLE ID through the visible picker.
+    log(`[step-1] select product by immutable id ${PRODUCT_ID}`);
     evidence.catalog_loaded = await catalogReady;
     log(`  catalog GET /api/products resolved=${evidence.catalog_loaded}`);
     await page.waitForSelector(`${PICKER_TOGGLE}:not([disabled])`, { timeout: 20000 });
@@ -300,16 +303,16 @@ async function ensurePickerOpen(page) {
     assert.ok(!opts.some((o) => o.id === PRODUCT_ID && o.ref === "true"), "GUARDRAIL: target product is reference-only");
     const targetOption = await findByAttr(page, "product-option", "data-product-id", PRODUCT_ID);
     assert.ok(targetOption, `product-option for immutable id ${PRODUCT_ID} is not listed`);
-    await clickHandle(targetOption, "Step 2 select synthetic product by immutable id", { product_id: PRODUCT_ID });
+    await clickHandle(targetOption, "Step 1 select synthetic product by immutable id", { product_id: PRODUCT_ID });
     await page.waitForFunction(
-      (pid) => document.querySelector('[data-testid="workflow-step-2"]')?.getAttribute("data-selected-product-id") === pid,
+      (pid) => document.querySelector('[data-testid="workflow-step-1"]')?.getAttribute("data-selected-product-id") === pid,
       PRODUCT_ID, { timeout: 10000 });
     const afterProduct = await readWorkflow(page);
     assert.equal(afterProduct.selected_product_id, PRODUCT_ID, "product selection did not bind");
     assert.ok(!afterProduct.selected_product_id.startsWith("fastmoss-ref:"), "GUARDRAIL: fastmoss-ref selected");
     evidence.after_product = afterProduct;
     await shot(page, "03-step2-product-selected");
-    log(`  selected_product_id=${afterProduct.selected_product_id}  step2=${afterProduct.steps[2]?.state}`);
+    log(`  selected_product_id=${afterProduct.selected_product_id}  step1=${afterProduct.steps[1]?.state}`);
 
     // ── Copy Set: VERIFY the approved set (read-only; the RPA never approves).
     log("[copy-set] verify approved Copy Set is present + selected");
@@ -332,28 +335,28 @@ async function ensurePickerOpen(page) {
     await shot(page, "04-copyset-verified");
     log(`  copy_set ${COPY_SET_ID} status=${approvedRow.status} approved=${approvedRow.approved}`);
 
-    // ── Step 3: Load Package — compile-only, proven provider-free/credit-free.
+    // ── Step 4a: Load Package — compile-only, proven provider-free/credit-free.
     const pre3 = await readWorkflow(page);
     evidence.before_step3 = pre3;
-    log(`[step-3] state=${pre3.steps[3]?.state} load_disabled=${pre3.load_disabled}`);
+    log(`[step-4a] load_state=${pre3.load_state} load_disabled=${pre3.load_disabled}`);
     if (pre3.load_disabled === false) {
-      await safeClick(page, "action-load-hybrid-package", "Step 3 Load Package (compile-only, non-credit)");
+      await safeClick(page, "action-load-hybrid-package", "Step 4a Load Package (compile-only, non-credit)");
       await page.waitForFunction(() => {
-        const s = document.querySelector('[data-testid="workflow-step-3"]')?.getAttribute("data-state");
+        const s = document.querySelector('[data-testid="workflow-step-4-load"]')?.getAttribute("data-state");
         return s === "COMPLETED" || s === "READY" || s === "NOT_READY";
       }, null, { timeout: 30000 }).catch(() => {});
       await page.waitForTimeout(1500);
     } else {
-      log("  Step 3 action disabled — recording state, not forcing (prerequisite unmet)");
+      log("  Step 4a action disabled — recording state, not forcing (prerequisite unmet)");
     }
     evidence.after_step3 = await readWorkflow(page);
     await shot(page, "05-step3-after-load");
-    log(`  step3=${evidence.after_step3.steps[3]?.state}  step4=${evidence.after_step3.steps[4]?.state}`);
+    log(`  step4a_load=${evidence.after_step3.load_state}  step4=${evidence.after_step3.steps[4]?.state}`);
 
     // ── Step 4: OWNER-AUTHORIZED sandbox package write (provider-free, credit-free).
     const pre4 = evidence.after_step3;
     if (STEP4_AUTHORIZED && pre4.generate_disabled === false) {
-      await safeClick(page, "action-generate-final-prompt", "Step 4 Generate Final Prompt (sandbox package write; provider-free)");
+      await safeClick(page, "action-generate-final-prompt", "Step 4b Generate Final Prompt (sandbox package write; provider-free)");
       await page.waitForFunction(() => {
         const s = document.querySelector('[data-testid="workflow-step-4"]')?.getAttribute("data-state");
         return s === "COMPLETED" || s === "READY" || s === "NOT_READY" || s === "FAILED";
