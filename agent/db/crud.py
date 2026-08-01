@@ -590,6 +590,11 @@ async def create_product_intelligence_review_draft(product_id: str, review_statu
     return await _get_with_db(db, "product_intelligence_review_draft", "draft_id", draft_id)
 
 
+async def delete_product_intelligence_review_draft(draft_id: str) -> bool:
+    """Compensation only: remove a draft whose provenance batch failed to persist."""
+    return await _delete("product_intelligence_review_draft", "draft_id", draft_id)
+
+
 async def get_product_intelligence_review_draft(draft_id: str):
     return await _get("product_intelligence_review_draft", "draft_id", draft_id)
 

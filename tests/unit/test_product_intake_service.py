@@ -620,3 +620,93 @@ async def test_verified_provenance_from_a_rejected_draft_is_not_snapshot_coverag
         lane="PRODUCTS_TIKTOKSHOP_IMPORT")
     assert r["outcome"] != NOOP_APPROVED_SNAPSHOT, (
         "a rejected draft's VERIFIED row created a false no-op")
+
+
+# ── B-586-03 atomicity ──────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_provenance_failure_leaves_no_partial_draft_or_provenance(monkeypatch):
+    """Injected failure DURING the provenance batch must leave nothing behind."""
+    from agent.services import product_intake_service as pis
+
+    await _product("intake-atomic")
+    real = pis.build_provenance_inputs
+    calls = {"n": 0}
+
+    def boom(draft, payload):
+        rows = real(draft, payload)
+        calls["n"] += 1
+        raise RuntimeError("provenance store offline")
+
+    monkeypatch.setattr(pis, "build_provenance_inputs", boom)
+    with pytest.raises(RuntimeError):
+        await pis.ensure_product_intelligence(
+            "intake-atomic",
+            _Draft(declared={"product_knowledge_text": "Atomic test.",
+                             "usage_text": "wipe"}),
+            lane="PRODUCTS_MANUAL")
+
+    assert await _draft_count("intake-atomic") == 0, "partial draft survived"
+    assert await _prov_rows("intake-atomic") == [], "partial provenance survived"
+
+    # retry after the fault clears succeeds exactly once
+    monkeypatch.setattr(pis, "build_provenance_inputs", real)
+    r = await pis.ensure_product_intelligence(
+        "intake-atomic",
+        _Draft(declared={"product_knowledge_text": "Atomic test.", "usage_text": "wipe"}),
+        lane="PRODUCTS_MANUAL")
+    assert r["outcome"] == CREATED
+    assert await _draft_count("intake-atomic") == 1
+    assert await _prov_rows("intake-atomic"), "retry wrote no provenance"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_provenance_batch_is_all_or_nothing(monkeypatch):
+    """The batch itself is one transaction: a failure on the 2nd row leaves 0 rows."""
+    from agent.db.schema import get_db
+    from agent.services import product_intake_service as pis
+
+    await _product("intake-batch")
+    db = await get_db()
+    real_execute = db.execute
+    state = {"n": 0}
+
+    async def flaky(sql, *a, **k):
+        if "INSERT INTO product_intelligence_review_field_provenance" in str(sql):
+            state["n"] += 1
+            if state["n"] == 2:
+                raise RuntimeError("disk full mid-batch")
+        return await real_execute(sql, *a, **k)
+
+    monkeypatch.setattr(db, "execute", flaky)
+    with pytest.raises(RuntimeError):
+        await pis.ensure_product_intelligence(
+            "intake-batch",
+            _Draft(declared={"product_knowledge_text": "row one",
+                             "usage_text": "row two", "warnings_text": "row three"}),
+            lane="PRODUCTS_MANUAL")
+    monkeypatch.setattr(db, "execute", real_execute)
+    assert await _prov_rows("intake-batch") == [], "first row of the batch was retained"
+    assert await _draft_count("intake-batch") == 0, "draft survived a failed batch"
+
+
+@pytest.mark.asyncio
+async def test_an_approved_snapshot_survives_a_failed_provenance_batch(monkeypatch):
+    from agent.services import product_intake_service as pis
+
+    await _product("intake-atomic-s")
+    await _seed_provenance("intake-atomic-s", draft_id="as-approved")
+    await _snapshot("intake-atomic-s", "snap-as", status="APPROVED",
+                    product_description="Ratified.",
+                    created_from_review_draft_id="as-approved")
+
+    def boom(draft, payload):
+        raise RuntimeError("provenance store offline")
+
+    monkeypatch.setattr(pis, "build_provenance_inputs", boom)
+    with pytest.raises(RuntimeError):
+        await pis.ensure_product_intelligence(
+            "intake-atomic-s",
+            _Draft(declared={"product_knowledge_text": "Changed after approval."}),
+            lane="PRODUCTS_MANUAL")
+    assert await _snapshot_status("snap-as") == "APPROVED"

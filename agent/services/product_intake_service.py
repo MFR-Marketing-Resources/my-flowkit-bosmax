@@ -403,29 +403,108 @@ async def _incoming_covered(draft_row: Mapping[str, Any], draft: Any,
 
 
 async def _write_provenance(draft_id: str, product_id: str, draft, payload) -> int:
+    """Write ALL provenance rows for a draft in ONE transaction.
+
+    B-586-03: `crud.create_product_intelligence_review_field_provenance` commits per row,
+    so a batch that failed midway left some rows behind. Here every row goes in under a
+    single `_db_lock` + single commit, and any error rolls the whole batch back.
+    """
+    from agent.db import crud
+    from agent.db.schema import _db_lock, get_db
+
+    rows = build_provenance_inputs(draft, payload)
+    if not rows:
+        return 0
+    db = await get_db()
+    now = crud._now()
+    async with _db_lock:
+        try:
+            for row in rows:
+                await db.execute(
+                    "INSERT INTO product_intelligence_review_field_provenance ("
+                    "review_provenance_id, draft_id, product_id, field_name, source_type,"
+                    " evidence_kind, extraction_method, verification_status,"
+                    " declared_value, normalized_value, source_url, source_lane,"
+                    " confidence_score, claim_risk_flag, reviewer_decision, reviewer_note,"
+                    " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (crud._uuid(), draft_id, product_id, row.field_name, row.source_type,
+                     row.evidence_kind, row.extraction_method, row.verification_status,
+                     row.declared_value, row.normalized_value, row.source_url,
+                     row.source_lane, row.confidence_score, row.claim_risk_flag,
+                     row.reviewer_decision, row.reviewer_note, now, now),
+                )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    return len(rows)
+
+
+async def _delete_provenance_for_draft(draft_id: str) -> None:
+    from agent.db.schema import _db_lock, get_db
+
+    db = await get_db()
+    async with _db_lock:
+        await db.execute(
+            "DELETE FROM product_intelligence_review_field_provenance WHERE draft_id=?",
+            (draft_id,))
+        await db.commit()
+
+
+async def _draft_ids_for(product_id: str) -> set[str]:
+    from agent.db.schema import get_db
+
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT draft_id FROM product_intelligence_review_draft WHERE product_id=?",
+        (product_id,))
+    ids = {str(r[0]) for r in await cur.fetchall()}
+    await cur.close()
+    return ids
+
+
+async def _compensate_to(product_id: str, known_draft_ids: set[str]) -> None:
+    """Remove every draft (and its provenance) that appeared during this operation.
+
+    Scoped by PRODUCT, not by draft_id, because `create_review_draft` writes its own
+    provenance with independent commits: a failure inside it never returns a draft_id, so
+    a draft-id-scoped cleanup could not reach the rows it had already written.
+    """
     from agent.db import crud
 
-    written = 0
-    for row in build_provenance_inputs(draft, payload):
-        await crud.create_product_intelligence_review_field_provenance(
-            draft_id=draft_id,
-            product_id=product_id,
-            field_name=row.field_name,
-            source_type=row.source_type,
-            evidence_kind=row.evidence_kind,
-            extraction_method=row.extraction_method,
-            verification_status=row.verification_status,
-            declared_value=row.declared_value,
-            normalized_value=row.normalized_value,
-            source_url=row.source_url,
-            source_lane=row.source_lane,
-            confidence_score=row.confidence_score,
-            claim_risk_flag=row.claim_risk_flag,
-            reviewer_decision=row.reviewer_decision,
-            reviewer_note=row.reviewer_note,
-        )
-        written += 1
-    return written
+    for draft_id in await _draft_ids_for(product_id) - known_draft_ids:
+        await _delete_provenance_for_draft(draft_id)
+        await crud.delete_product_intelligence_review_draft(draft_id)
+
+
+async def _write_provenance_or_compensate(
+    draft_id: str, product_id: str, draft, payload, *, created_draft: bool,
+    prior_row: Mapping[str, Any] | None = None,
+) -> int:
+    """Provenance write with deterministic cleanup of the residual window.
+
+    Honest naming: `create_review_draft` commits the draft before provenance runs and that
+    inner commit cannot be deferred without rewriting the persistence layer, which this
+    mission forbids. So the batch itself is a real transaction, and the gap between the
+    draft commit and the provenance commit is closed by COMPENSATION — a newly created
+    draft is deleted, and an updated draft is restored to its prior column values. The
+    observable guarantee is the same: no partial draft/provenance state survives a failure.
+    """
+    from agent.db import crud
+
+    try:
+        return await _write_provenance(draft_id, product_id, draft, payload)
+    except Exception:
+        await _delete_provenance_for_draft(str(draft_id))
+        if created_draft:
+            await crud.delete_product_intelligence_review_draft(str(draft_id))
+        elif prior_row is not None:
+            restorable = {k: prior_row.get(k) for k in _DIGEST_TARGETS
+                          if k in prior_row}
+            restorable["review_status"] = prior_row.get("review_status")
+            await crud.update_product_intelligence_review_draft(
+                str(draft_id), **restorable)
+        raise
 
 
 async def ensure_product_intelligence(
@@ -500,18 +579,25 @@ async def ensure_product_intelligence(
                     "material_digest": incoming_material,
                     "intelligence_draft_id": open_draft["draft_id"], "wrote": False,
                     "reason": "NO_PROMOTABLE_FIELDS"}
-        updated = await svc.update_review_draft(
-            str(open_draft["draft_id"]),
-            ProductIntelligenceReviewDraftUpdateRequest(
-                **build_create_request(payload).model_dump(exclude_unset=True)),
-        )
-        draft_id = getattr(updated, "draft_id", open_draft["draft_id"])
+        before_ids = await _draft_ids_for(product_id)
+        try:
+            updated = await svc.update_review_draft(
+                str(open_draft["draft_id"]),
+                ProductIntelligenceReviewDraftUpdateRequest(
+                    **build_create_request(payload).model_dump(exclude_unset=True)),
+            )
+            draft_id = getattr(updated, "draft_id", open_draft["draft_id"])
+            update_provenance_rows = await _write_provenance_or_compensate(
+                str(draft_id), product_id, draft, payload,
+                created_draft=False, prior_row=open_draft)
+        except Exception:
+            await _compensate_to(product_id, before_ids)
+            raise
         return {"outcome": UPDATED_REVIEW_REQUIRED, "lane": lane,
                 "product_id": product_id, "evidence_digest": incoming,
                 "intelligence_draft_id": draft_id,
                 "review_status": getattr(updated, "review_status", None),
-                "provenance_rows": await _write_provenance(
-                    str(draft_id), product_id, draft, payload),
+                "provenance_rows": update_provenance_rows,
                 "promoted_fields": [p["target"] for p in payload["promoted_fields"]],
                 "dropped_fields": payload["dropped_fields"], "wrote": True}
 
@@ -521,8 +607,15 @@ async def ensure_product_intelligence(
                 "product_id": product_id, "evidence_digest": incoming,
                 "intelligence_draft_id": None, "wrote": False}
 
-    created = await svc.create_review_draft(product_id, build_create_request(payload))
-    draft_id = getattr(created, "draft_id", None)
+    before_ids = await _draft_ids_for(product_id)
+    try:
+        created = await svc.create_review_draft(product_id, build_create_request(payload))
+        draft_id = getattr(created, "draft_id", None)
+        provenance_rows = await _write_provenance(
+            str(draft_id), product_id, draft, payload) if draft_id else 0
+    except Exception:
+        await _compensate_to(product_id, before_ids)
+        raise
     return {
         "outcome": CREATED_MINIMAL if minimal else CREATED,
         "lane": lane,
@@ -534,7 +627,6 @@ async def ensure_product_intelligence(
         "reason": "NO_PROMOTABLE_FIELDS" if minimal else None,
         "promoted_fields": [p["target"] for p in payload["promoted_fields"]],
         "dropped_fields": payload["dropped_fields"],
-        "provenance_rows": await _write_provenance(
-            str(draft_id), product_id, draft, payload) if draft_id else 0,
+        "provenance_rows": provenance_rows,
         "wrote": True,
     }
