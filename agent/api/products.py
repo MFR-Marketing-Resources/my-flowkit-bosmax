@@ -52,6 +52,10 @@ from agent.services.product_preflight import build_product_preflight
 from agent.services.product_mapping import resolve_product_mapping
 from agent.services.product_physics import resolve_product_physics, evaluate_prompt_readiness
 from agent.services.prompt_pipeline_readiness_service import PromptPipelineReadinessService
+from agent.services.product_intake_service import (
+    ensure_product_intelligence,
+    evidence_from_product_payload,
+)
 from agent.services.claim_safe_rewrite_service import (
     APPROVAL_PHRASE as CLAIM_SAFE_APPROVAL_PHRASE,
     approve_claim_safe_rewrite,
@@ -841,6 +845,110 @@ async def search_products(
     )
 
 
+
+# Governed physics/readiness columns that POST /physics-map with persist=true must
+# actually write. Verified against PRAGMA table_info(product); every other key returned by
+# resolve_product_physics / evaluate_prompt_readiness is derived render guidance with no
+# product column, so persisting it would need a schema change this mission does not own.
+_PHYSICS_PERSIST_COLUMNS = (
+    "physics_class",
+    "product_scale",
+    "recommended_grip",
+    "section_5_product_physics_prompt",
+    "section_5_physics_hint",
+    "prompt_readiness_status",
+)
+
+
+async def _ensure_intake_intelligence(
+    product: dict | None,
+    payload: dict,
+    *,
+    lane: str,
+    created: bool = False,
+    prior: dict | None = None,
+):
+    """B-08A: every runtime intake ends with a Product Intelligence draft.
+
+    These routes created products directly, so a product could enter the catalogue with no
+    intelligence row at all. The seam is idempotent on a normalized evidence digest, so the
+    FastMoss upsert can re-import the same rows without manufacturing duplicate review
+    debt. Deterministic and provider-free - no token spend here.
+
+    B-586-05 failure semantics. Unlike Smart Registration these lanes had NO compensation,
+    so a failing ensure left a committed product with no intelligence record.
+      * `created=True`  -> the product we just inserted is removed, but only while it still
+                           looks exactly as we left it.
+      * `prior` given   -> an EXISTING product is never deleted. Only the columns this
+                           operation actually changed are restored.
+
+    Both are real compare-and-swaps now. The previous version read the row, compared
+    `updated_at` in Python, then issued a separate UPDATE — a concurrent write landing
+    between those two statements was silently overwritten, and nothing checked that the
+    UPDATE matched anything, so "RESTORED" was reported even when it had restored nothing.
+    The applied-after snapshot is taken HERE, before `ensure` runs, so every write this
+    request made is already in it and anything that changes afterwards is provably someone
+    else's work. `_safe_kwargs` is what keeps the guard to real product columns, so a
+    request payload key that is not a column can never widen or weaken the comparison.
+    """
+    if not product or not product.get("id"):
+        return None
+    product_id = str(product["id"])
+    # The exact state this request left behind: the CAS reference point.
+    applied_after = await crud.get_product(product_id) or dict(product)
+    try:
+        return await ensure_product_intelligence(
+            product_id,
+            evidence_from_product_payload(payload, lane=lane),
+            lane=lane,
+        )
+    except Exception as exc:  # noqa: BLE001 - compensating
+        version_guard = {"updated_at": applied_after.get("updated_at")}
+        if created:
+            # Guard on the WHOLE row, not just updated_at. `crud._now()` has one-second
+            # resolution, so an edit landing in the same second as our insert carries an
+            # identical updated_at and a version-only guard would delete the operator's
+            # work. Comparing every column makes the guard independent of clock
+            # granularity: any change at all refuses the delete.
+            removed = await crud.compare_and_delete_product(
+                product_id, expected=applied_after)
+            if not removed:
+                # Someone adopted or edited the product after we created it. Deleting it
+                # now would destroy their work, so it stays and the failure is reported.
+                raise HTTPException(
+                    status_code=500,
+                    detail=(f"INTAKE_INTELLIGENCE_FAILED_CAS_REFUSED:{product_id}"
+                            f":{exc}")) from exc
+            raise HTTPException(
+                status_code=500,
+                detail=f"INTAKE_INTELLIGENCE_FAILED_COMPENSATED:{exc}") from exc
+        if prior is not None:
+            # Restore exactly what THIS operation changed — derived by diffing the
+            # before-state against the applied-after state, not from the request payload
+            # keys. Enrichment, physics, mapping and readiness all write columns that
+            # never appear in the payload, and the payload-keyed version left every one of
+            # them holding the failed operation's values.
+            restore = {k: prior.get(k) for k in prior
+                       if k in applied_after and prior.get(k) != applied_after.get(k)}
+            if not restore:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"INTAKE_INTELLIGENCE_FAILED_NOTHING_TO_RESTORE:{exc}") from exc
+            guard = dict(version_guard)
+            guard.update({k: applied_after.get(k) for k in restore})
+            restored = await crud.compare_and_swap_product(
+                product_id, expected=guard, changes=restore)
+            if not restored:
+                raise HTTPException(
+                    status_code=500,
+                    detail=(f"INTAKE_INTELLIGENCE_FAILED_CAS_REFUSED:{product_id}"
+                            f":{exc}")) from exc
+            raise HTTPException(
+                status_code=500,
+                detail=f"INTAKE_INTELLIGENCE_FAILED_RESTORED:{exc}") from exc
+        raise
+
+
 @router.post("/map")
 async def map_product(data: ProductMapRequest):
     product = await crud.get_product(data.product_id) if data.product_id else None
@@ -873,6 +981,8 @@ async def map_product(data: ProductMapRequest):
             subcategory=enriched.get("subcategory") or None,
             type=enriched.get("type") or None,
         )
+        await _ensure_intake_intelligence(
+            created, data.model_dump(), lane="PRODUCTS_MAP_PERSIST", created=True)
         return await _enrich_product(created, persist=True)
 
     return enriched
@@ -982,7 +1092,27 @@ async def physics_map_product(data: ProductPhysicsRequest):
     payload.update(physics)
     payload.update(readiness)
     if data.persist and product and product.get("id"):
-        await _persist_intelligence(product["id"], payload)
+        # `_persist_intelligence` was called here but defined nowhere in this module and
+        # imported nowhere, so persist=true raised NameError -> 500 on every call.
+        #
+        # B-586-06: the first repair routed this to the intelligence seam only, which
+        # removed the crash but left persist=true semantically dishonest — the physics and
+        # readiness values were computed, returned, and never written. Persist the governed
+        # product columns for real, then ensure intelligence.
+        # Only NON-EMPTY values. resolve_product_physics returns "" for a product whose
+        # type it cannot classify, and persisting those would blank real stored physics.
+        persistable = {k: v for k, v in payload.items()
+                       if k in _PHYSICS_PERSIST_COLUMNS and str(v or "").strip()}
+        # B-586-05: capture the before-state BEFORE writing, and hand it to the seam as
+        # `prior`. Without it this lane persisted physics/readiness columns and then, on a
+        # failing ensure, kept them — the one lane that writes columns the request payload
+        # never names was also the one lane with no way to undo them.
+        prior_product = dict(product)
+        if persistable:
+            await crud.update_product(product["id"], **persistable)
+        await _ensure_intake_intelligence(
+            product, payload, lane="PRODUCTS_PHYSICS_MAP_PERSIST", prior=prior_product)
+        payload["persisted_fields"] = sorted(persistable)
     return payload
 
 
@@ -1022,38 +1152,127 @@ async def create_manual_product(data: ManualProductRequest):
         image_asset_status="DOWNLOADED" if data.image_base64 else "UNRESOLVED",
         asset_status="DOWNLOADED" if data.image_base64 else "UNRESOLVED",
     )
+    # B-586-07: the image MUST be cached before intelligence evidence is built. Running
+    # ensure first meant `local_image_path` did not exist yet, so the uploaded image never
+    # reached the draft or its field provenance — the operator's own evidence was dropped.
     local_image_path, image_asset_status = await _save_manual_image(created["id"], data.image_base64, data.image_filename)
     if local_image_path:
         created = await crud.update_product(created["id"], local_image_path=local_image_path, asset_status=image_asset_status, image_asset_status=image_asset_status)
+    evidence_payload = data.model_dump()
+    if local_image_path:
+        evidence_payload["local_image_path"] = local_image_path
+    await _ensure_intake_intelligence(
+        created, evidence_payload, lane="PRODUCTS_MANUAL", created=True)
     return await _enrich_product(created, persist=True)
 
 
 @router.post("/import-tiktokshop")
 async def import_tiktokshop_product(data: ImportTikTokShopRequest):
-    draft_title = (data.raw_product_title or data.product_display_name or data.product_short_name or "TIKTOKSHOP_PENDING_METADATA").strip()
+    """Source-first import: read the listing, then propose — never invent.
+
+    This route used to create an empty shell and return
+    TIKTOKSHOP_EXTRACTION_NOT_IMPLEMENTED, so every TikTok product entered the catalogue
+    with a placeholder title and no evidence. It now fetches the listing and extracts what
+    the page actually states.
+
+    Extraction runs in a worker thread: `fetch_source` is synchronous httpx, and calling it
+    directly on the event loop would stall the single-process agent's /health for the whole
+    fetch — the same starvation that took the runtime down before (PR #404).
+
+    Extraction failing is NOT an import failure. The operator still gets the product, with
+    the failure recorded, because a fetch that 404s or times out is not a reason to lose the
+    URL they pasted. What it never does is fabricate: an unreachable page yields no fields.
+    """
+    import asyncio
+
+    from agent.services import tiktokshop_extraction_service as tiktok
+
+    extraction: dict[str, Any] = {}
+    extraction_error: str | None = None
+    try:
+        extraction = await asyncio.to_thread(tiktok.extract_product, data.url)
+    except tiktok.TikTokShopExtractionError as exc:
+        extraction_error = exc.code
+    except Exception as exc:  # noqa: BLE001 - extraction must never sink the import
+        extraction_error = f"{tiktok.ERR_FETCH_FAILED}:{exc}"[:200]
+
+    extracted = dict(extraction.get("fields") or {})
+    # Operator-supplied values WIN over extraction: the person pasting the link may be
+    # correcting a listing they can see and we cannot.
+    operator_identity = (data.raw_product_title or data.product_display_name
+                         or data.product_short_name)
+    draft_title = (operator_identity or extracted.get("raw_product_title") or "").strip()
+    if not draft_title:
+        # FAIL CLOSED. The old behaviour committed a canonical product literally titled
+        # TIKTOKSHOP_PENDING_METADATA whenever extraction failed, so an unreachable link
+        # permanently polluted the catalogue with a nameless row that then had to be found
+        # and archived by hand. Nothing is written unless we know what the product IS.
+        return {
+            "ok": False,
+            "error_code": extraction_error or tiktok.ERR_NO_EVIDENCE,
+            "manual_entry_required": True,
+            "product": None,
+            "extraction": {"fields": {}, "candidates": {},
+                           "candidate_status": extraction.get("candidate_status"),
+                           "provenance": []},
+            "detail": ("No product identity could be extracted and none was supplied. "
+                       "Re-submit with a product title to create it manually."),
+        }
+    price = data.price if data.price is not None else extracted.get("price")
+    image_url = data.image_url or extracted.get("image_url")
+
     created = await crud.create_product(
         raw_product_title=draft_title,
         source="TIKTOKSHOP",
         source_url=data.url,
         tiktok_product_url=data.url,
-        product_display_name=_display_name(draft_title, data.product_display_name or "TikTok Shop Draft"),
-        product_short_name=(data.product_short_name or "TikTok Shop Draft").strip(),
+        brand=extracted.get("brand"),
+        product_display_name=_display_name(
+            draft_title, data.product_display_name or draft_title),
+        product_short_name=(data.product_short_name or draft_title).strip()[:120],
         category=data.category,
         subcategory=data.subcategory,
         type=data.type,
-        price=data.price,
-        currency=data.currency,
+        price=price,
+        currency=data.currency or extracted.get("currency"),
         commission_amount=data.commission_amount,
         commission_rate=data.commission_rate,
-        image_url=data.image_url,
-        mapping_review_status="TIKTOKSHOP_EXTRACTION_NOT_IMPLEMENTED",
+        image_url=image_url,
+        # size_or_volume is deliberately NOT passed here: it is not a `product` column, it
+        # is Product Intelligence. It travels in evidence_payload below so it lands on the
+        # review draft with its own provenance, where a human can accept or reject it.
+        mapping_review_status=("TIKTOKSHOP_EXTRACTED" if extracted
+                               else (extraction_error or "TIKTOKSHOP_NO_EVIDENCE")),
         prompt_readiness_status="MISSING_FIELDS",
+        image_asset_status="UNRESOLVED" if image_url else "UNRESOLVED",
     )
+    # Everything the lane learned becomes intake evidence, so the draft and its
+    # field-scoped provenance carry the listing URL rather than a bare product row.
+    evidence_payload = data.model_dump()
+    # EXTRACTED page facts become draft evidence. Model CANDIDATES deliberately do NOT:
+    # writing a proposal into the draft is accepting it, and acceptance is a human act
+    # performed through the review UI. They are returned for review instead.
+    evidence_payload.update({k: v for k, v in extracted.items() if v not in (None, "")})
+    evidence_payload["source_url"] = extraction.get("source_url") or data.url
+    await _ensure_intake_intelligence(
+        created, evidence_payload, lane="PRODUCTS_TIKTOKSHOP_IMPORT", created=True)
     enriched = await _enrich_product(created, persist=True)
     return {
-        "ok": False,
-        "error_code": "TIKTOKSHOP_EXTRACTION_NOT_IMPLEMENTED",
-        "manual_entry_required": True,
+        # `ok` now reflects whether evidence was actually acquired.
+        "ok": bool(extracted),
+        "error_code": extraction_error,
+        "manual_entry_required": not extracted,
+        "extraction": {
+            "fields": extracted,
+            "candidates": extraction.get("candidates") or {},
+            "candidate_status": extraction.get("candidate_status"),
+            "variant": extraction.get("variant"),
+            "variant_resolution": extraction.get("variant_resolution"),
+            "size_resolution": extraction.get("size_resolution"),
+            "evidence_methods": extraction.get("evidence_methods") or [],
+            "absent_extract_only_fields": extraction.get("absent_extract_only_fields") or [],
+            "provenance": extraction.get("provenance") or [],
+        },
         "product": enriched,
     }
 
@@ -1102,11 +1321,19 @@ async def import_fastmoss_catalog():
             if existing:
                 updated_product = await crud.update_product(existing["id"], **payload)
                 await _enrich_product(updated_product, persist=True)
+                # The UPDATE branch is why a create-only hook was insufficient: a
+                # re-import never reaches create_product. Idempotent on the evidence
+                # digest, so unchanged rows are a no-op.
+                await _ensure_intake_intelligence(
+                    updated_product, payload, lane="PRODUCTS_FASTMOSS_REIMPORT",
+                    prior=existing)
                 updated += 1
                 continue
 
             created = await crud.create_product(**payload)
             await _enrich_product(created, persist=True)
+            await _ensure_intake_intelligence(
+                created, payload, lane="PRODUCTS_FASTMOSS_IMPORT", created=True)
             imported += 1
         return {"ok": True, "imported": imported, "updated": updated, "total": len(products)}
     except Exception as exc:

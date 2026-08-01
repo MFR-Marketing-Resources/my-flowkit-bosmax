@@ -559,9 +559,13 @@ async def test_multiple_drafts_and_snapshots_never_inflate_any_kpi():
               for k in ("missing_copy", "missing_intelligence", "mapping_blocked",
                         "missing_image", "prompt_not_ready")}
     # P2 has no snapshot (so it is IN the missing_intelligence cohort); give it 3 drafts.
+    # B-586-04: a product may hold many drafts but only ONE of them may be open, so the
+    # superseded history carries the older two. The fan-out this test guards against is
+    # caused by the ROW COUNT on the join, which is unchanged at 3.
     for i, ts in enumerate(("2026-02-01T00:00:00Z", "2026-02-02T00:00:00Z",
                             "2026-02-03T00:00:00Z")):
-        await _add_draft("P2", f"d{i}", updated_at=ts)
+        await _add_draft("P2", f"d{i}", updated_at=ts,
+                         review_status="DRAFT" if i == 2 else "SUPERSEDED")
     # P1 already has one snapshot; add two more superseded versions.
     for i in (2, 3):
         await db.execute(
@@ -582,7 +586,10 @@ async def test_multiple_drafts_and_snapshots_never_inflate_any_kpi():
 
 async def test_latest_draft_wins_for_the_row_stage():
     await _seed()
-    await _add_draft("P2", "old", updated_at="2026-02-01T00:00:00Z")
+    # The older draft is SUPERSEDED — B-586-04 allows only one open draft per product,
+    # and being superseded is exactly what "the row it must not read" now looks like.
+    await _add_draft("P2", "old", updated_at="2026-02-01T00:00:00Z",
+                     review_status="SUPERSEDED")
     await _add_draft("P2", "new", updated_at="2026-02-09T00:00:00Z",
                      review_status="NEEDS_REVISION",
                      claim_gate="CLAIM_REVIEW_REQUIRED")

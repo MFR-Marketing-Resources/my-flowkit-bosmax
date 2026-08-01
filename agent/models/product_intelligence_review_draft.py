@@ -11,6 +11,10 @@ ReviewDraftStatus = Literal[
     "NEEDS_REVISION",
     "REJECTED",
     "APPROVED",
+    # B-586-04. Written ONLY by duplicate convergence, never by a reviewer: it records
+    # that another draft for this product became canonical. Terminal, so a superseded
+    # row keeps all of its evidence without competing for the one-open-draft slot.
+    "SUPERSEDED",
 ]
 
 

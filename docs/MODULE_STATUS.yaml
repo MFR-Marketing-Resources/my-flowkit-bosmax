@@ -1022,6 +1022,62 @@ domains:
       # only expose how much of that debt is already prepared, so preparation stops being
       # invisible. Nothing new is persisted.
       - agent/services/product_intelligence_stage_service.py
+      # Mission-08A / B-08A-02: promote approved registration Product Knowledge into the
+      # Product Intelligence review-draft lifecycle. Before this BOTH commit lanes wrote
+      # identity/taxonomy/physics/commerce only, so approved knowledge fields were
+      # discarded - and invisibly, because `excluded_fields` lists only UNAPPROVED
+      # candidates. Promotion never approves: no approved_by/approved_at is ever set.
+      - agent/services/registration_intelligence_promotion_service.py
+      # Mission-08A: the ONE idempotent intake door. A create-only wrapper was proven
+      # insufficient - agent/api/products.py /import-fastmoss is an UPSERT whose update
+      # branch never reaches crud.create_product, so the 500-row re-import lane bypassed
+      # any create-time hook. Decides on a normalized evidence digest: unchanged evidence
+      # is a no-op, an approved snapshot is never downgraded, replay cannot duplicate
+      # drafts. Deterministic and provider-free.
+      - agent/services/product_intake_service.py
+      # Mission-08A / B-586-04: ONE canonical answer to "is this draft still open?",
+      # shared by the runtime queries AND by the database's partial UNIQUE index. The
+      # predicate used to be hand-written in four places with two CONTRADICTORY
+      # orderings, so the deduplicator could delete exactly the draft every reader would
+      # have returned. Also defines SUPERSEDED - the only truthful terminal state for a
+      # converged duplicate, since APPROVED/REJECTED would fabricate a review decision.
+      - agent/services/product_intelligence_draft_lifecycle.py
+      # Mission-08A: replaces TIKTOKSHOP_EXTRACTION_NOT_IMPLEMENTED. Source-first -
+      # embedded JSON-LD / rehydration payload / OpenGraph, then deterministic
+      # normalization, then exact variant resolution, then field-scoped provenance, and
+      # only THEN the configured text_assist lane for review-required candidates. The
+      # split that matters: price/size/ingredients/warnings are EXTRACT-ONLY (copied from
+      # the page or absent), never model-supplied; a merchandising label like "Standard"
+      # is never accepted as a pack size. Host-allowlisted and per-redirect revalidated so
+      # the fetcher cannot be used as an SSRF primitive.
+      - agent/services/tiktokshop_extraction_service.py
+      - tests/unit/test_tiktokshop_extraction_service.py
+      # Mission-08A terminal: Recompute for an EXISTING product. The extractor was only
+      # reachable through /api/products/import-tiktokshop, which CALLS create_product - so
+      # refreshing a catalogue item had no governed path and would have minted a duplicate
+      # row every press. This lane is product-ID scoped, reuses the product's open draft,
+      # persists EXACT per-field provenance (JSONLD / META / LABELLED_SECTION rather than
+      # one lane-wide label), and stores DeepSeek output as AI_PROPOSED review candidates.
+      - agent/services/product_intelligence_recompute_service.py
+      - agent/api/product_intelligence.py
+      - tests/api/test_product_intelligence_recompute.py
+      - dashboard/src/api/products.ts
+      - dashboard/src/components/product-intelligence/ProductIntelligenceReviewDraftPanel.tsx
+      - dashboard/src/components/product-intelligence/ProductIntelligenceReviewDraftPanel.test.tsx
+      # Owner-authorized canonical repair for the product groups that already held more
+      # than one OPEN draft before B-586-04 could be enforced. Backup + snapshot + plan
+      # digest first, then proof that ONLY the review-draft table changed. Deletes
+      # nothing: the non-canonical rows are retained as SUPERSEDED with their provenance.
+      - scripts/mission08a_canonical_duplicate_repair.py
+      - docs/evidence/mission08a_canonical_repair/canonical_repair_plan.20260801T084507Z.json
+      - docs/evidence/mission08a_canonical_repair/canonical_repair_proof.20260801T084507Z.json
+      - docs/evidence/mission08a_canonical_repair/canonical_repair_snapshot.20260801T084507Z.json
+      - tests/unit/test_product_intake_service.py
+      - tests/unit/test_reporting_service.py
+      - tests/api/test_product_physics_map_persist.py
+      - tests/api/test_manual_product_image_provenance.py
+      - tests/api/test_intake_orphan_prevention.py
+      - tests/unit/test_registration_intelligence_promotion.py
       - tests/unit/test_product_intelligence_stage_service.py
       - dashboard/src/components/reporting/IntelligenceStagePanel.tsx
       - dashboard/src/components/reporting/IntelligenceStagePanel.test.tsx

@@ -2363,48 +2363,56 @@ export default function RegistrationReviewDraftPanel({
 												) : null}
 											</div>
 											{draft.review_status !== "COMMITTED" ? (
-												<button
-													type="button"
-													onClick={() => toggleApproval(key)}
-													disabled={isUpdating}
-													className={`ml-4 rounded-lg p-2 transition-all ${
-														isApproved
-															? "bg-emerald-500 text-white"
-															: "bg-slate-700 text-slate-400 hover:bg-slate-600"
-													} ${isUpdating ? "cursor-wait opacity-50" : ""}`}
-												>
+												<div className="ml-4 flex shrink-0 items-center gap-2">
+													{/* B-08A-01: this was an icon-only toggle with aria-hidden on both
+													    icons and no accessible name, so neither a sighted operator nor a
+													    screen reader could tell Approve from Approved, or find Reject.
+													    The icon is kept, but it is no longer the only explanation. */}
+													<button
+														type="button"
+														onClick={() => {
+															if (!isApproved) toggleApproval(key);
+														}}
+														disabled={isUpdating}
+														aria-pressed={Boolean(isApproved)}
+														aria-label={`${isApproved ? "Approved" : "Approve"} ${key}`}
+														data-testid={`approve-${key}`}
+														className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide transition-all ${
+															isApproved
+																? "bg-emerald-500 text-white"
+																: "bg-slate-700 text-slate-200 hover:bg-slate-600"
+														} ${isUpdating ? "cursor-wait opacity-50" : ""}`}
+													>
+														<svg
+															aria-hidden="true"
+															className="h-3.5 w-3.5"
+															fill="none"
+															viewBox="0 0 24 24"
+															stroke="currentColor"
+														>
+															<path
+																strokeLinecap="round"
+																strokeLinejoin="round"
+																strokeWidth={2}
+																d={isApproved ? "M5 13l4 4L19 7" : "M12 4v16m8-8H4"}
+															/>
+														</svg>
+														{isApproved ? "Approved" : "Approve"}
+													</button>
 													{isApproved ? (
-														<svg
-															aria-hidden="true"
-															className="h-4 w-4"
-															fill="none"
-															viewBox="0 0 24 24"
-															stroke="currentColor"
+														<button
+															type="button"
+															onClick={() => toggleApproval(key)}
+															disabled={isUpdating}
+															aria-label={`Reject ${key}`}
+															data-testid={`reject-${key}`}
+															title="Withdraw approval - needs more evidence"
+															className="rounded-lg border border-amber-400/40 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide text-amber-200 hover:bg-amber-500/15"
 														>
-															<path
-																strokeLinecap="round"
-																strokeLinejoin="round"
-																strokeWidth={2}
-																d="M5 13l4 4L19 7"
-															/>
-														</svg>
-													) : (
-														<svg
-															aria-hidden="true"
-															className="h-4 w-4"
-															fill="none"
-															viewBox="0 0 24 24"
-															stroke="currentColor"
-														>
-															<path
-																strokeLinecap="round"
-																strokeLinejoin="round"
-																strokeWidth={2}
-																d="M12 4v16m8-8H4"
-															/>
-														</svg>
-													)}
-												</button>
+															Reject
+														</button>
+													) : null}
+												</div>
 											) : null}
 										</div>
 									);

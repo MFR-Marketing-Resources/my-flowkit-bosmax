@@ -1,5 +1,6 @@
 """SQLite schema — async via aiosqlite."""
 import asyncio
+import contextlib
 import aiosqlite
 import logging
 from agent.config import DB_PATH
@@ -7,7 +8,110 @@ from agent.config import DB_PATH
 logger = logging.getLogger(__name__)
 
 _db_connection: aiosqlite.Connection | None = None
-_db_lock = asyncio.Lock()
+
+
+class _ReentrantDbLock:
+    """`_db_lock` with re-entrancy for the task that already holds it.
+
+    B-586-03. Every crud writer serializes on this lock and commits inside it, so a
+    multi-statement operation could not be made atomic: wrapping the crud calls in an
+    outer `async with _db_lock` deadlocked on the first inner acquire, and NOT wrapping
+    them meant each crud call committed its own step, leaving partial state behind after a
+    later failure.
+
+    Re-entrancy is scoped to the owning asyncio task, so a DIFFERENT task still blocks
+    exactly as `asyncio.Lock` did. Drop-in: same `async with` / `locked()` surface, so no
+    crud call site changes.
+    """
+
+    __slots__ = ("_lock", "_owner", "_depth")
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._owner: object | None = None
+        self._depth = 0
+
+    async def acquire(self) -> bool:
+        task = asyncio.current_task()
+        if self._depth and self._owner is task:
+            self._depth += 1
+            return True
+        await self._lock.acquire()
+        self._owner = task
+        self._depth = 1
+        return True
+
+    def release(self) -> None:
+        if self._depth <= 0:
+            raise RuntimeError("_db_lock released more times than acquired")
+        self._depth -= 1
+        if self._depth == 0:
+            self._owner = None
+            self._lock.release()
+
+    async def __aenter__(self) -> "_ReentrantDbLock":
+        await self.acquire()
+        return self
+
+    async def __aexit__(self, *exc_info) -> None:
+        self.release()
+
+    def locked(self) -> bool:
+        return self._lock.locked()
+
+    def held_by_current_task(self) -> bool:
+        return bool(self._depth) and self._owner is asyncio.current_task()
+
+
+_db_lock = _ReentrantDbLock()
+
+
+@contextlib.asynccontextmanager
+async def atomic():
+    """Run several crud writes as ONE transaction: all of them commit, or none do.
+
+    B-586-03. `create_review_draft` and the provenance batch were separate transactions,
+    so a failure between them left a committed draft with no provenance and the code had
+    to "compensate" by deleting rows afterwards — a cleanup that could not tell its own
+    partial work from a concurrent request's finished work.
+
+    Mechanics: the boundary holds the (re-entrant) write lock for its whole body, so no
+    other task can be inside a crud write section at the same time, and inner
+    `await db.commit()` calls are suspended for the duration. One commit on success, one
+    rollback on failure. Because no other task can write while the lock is held, that
+    rollback can only ever discard THIS boundary's own statements.
+
+    Nested use is safe: an inner `atomic()` joins the outer transaction rather than
+    committing early.
+    """
+    db = await get_db()
+    async with _db_lock:
+        if getattr(db, "_flowkit_atomic_depth", 0):
+            # already inside a boundary on this task — join it, do not commit here
+            db._flowkit_atomic_depth += 1
+            try:
+                yield db
+            finally:
+                db._flowkit_atomic_depth -= 1
+            return
+        real_commit = db.commit
+
+        async def _suspended_commit() -> None:
+            return None
+
+        db.commit = _suspended_commit  # type: ignore[method-assign]
+        db._flowkit_atomic_depth = 1
+        try:
+            yield db
+        except BaseException:
+            db.commit = real_commit  # type: ignore[method-assign]
+            db._flowkit_atomic_depth = 0
+            await db.rollback()
+            raise
+        else:
+            db.commit = real_commit  # type: ignore[method-assign]
+            db._flowkit_atomic_depth = 0
+            await db.commit()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS character (
@@ -2937,7 +3041,7 @@ CREATE INDEX IF NOT EXISTS idx_product_intelligence_field_provenance_snapshot_fi
 CREATE TABLE IF NOT EXISTS product_intelligence_review_draft (
     draft_id TEXT PRIMARY KEY,
     product_id TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
-    review_status TEXT NOT NULL CHECK(review_status IN ('DRAFT','READY_FOR_REVIEW','NEEDS_REVISION','REJECTED','APPROVED')),
+    review_status TEXT NOT NULL CHECK(review_status IN ('DRAFT','READY_FOR_REVIEW','NEEDS_REVISION','REJECTED','APPROVED','SUPERSEDED')),
     product_description TEXT,
     benefits_json TEXT NOT NULL DEFAULT '[]',
     usp_json TEXT NOT NULL DEFAULT '[]',
@@ -3499,6 +3603,120 @@ CREATE INDEX IF NOT EXISTS idx_product_treatment_factory_event_plan ON product_t
                     "Migrated: added %s column to creative_generation_attempt",
                     column_name,
                 )
+        await db.commit()
+
+        # ── B-586-04: one OPEN Product Intelligence draft per product ──────────
+        # Enforced by the DATABASE, not by a post-hoc cleanup. The previous
+        # application-level rule ("smallest draft_id wins, delete the losers") was
+        # unsound twice over: it deleted evidence, and it contradicted the reader's
+        # own recency authority, so it could delete exactly the draft
+        # `_latest_open_draft` would have served.
+        #
+        # Three idempotent steps. Each re-runs harmlessly on an already-migrated DB.
+        from agent.services.product_intelligence_draft_lifecycle import (
+            SQL_CANONICAL_ORDER,
+            SQL_OPEN_PREDICATE,
+            UNIQUE_OPEN_DRAFT_INDEX,
+        )
+
+        # (1) The CHECK constraint must permit SUPERSEDED before any row can use it.
+        # SQLite cannot ALTER a CHECK, so this is the documented table rebuild.
+        # `legacy_alter_table=ON` is REQUIRED: without it SQLite 3.25+ rewrites the
+        # child table's REFERENCES clause to point at the renamed _old table, which
+        # would silently detach provenance from its draft.
+        draft_ddl_cursor = await db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' "
+            "AND name='product_intelligence_review_draft'"
+        )
+        draft_ddl_row = await draft_ddl_cursor.fetchone()
+        draft_ddl = (draft_ddl_row[0] if draft_ddl_row else "") or ""
+        if draft_ddl and "'SUPERSEDED'" not in draft_ddl:
+            rebuilt_ddl = draft_ddl.replace(
+                "CHECK(review_status IN ('DRAFT','READY_FOR_REVIEW','NEEDS_REVISION',"
+                "'REJECTED','APPROVED'))",
+                "CHECK(review_status IN ('DRAFT','READY_FOR_REVIEW','NEEDS_REVISION',"
+                "'REJECTED','APPROVED','SUPERSEDED'))",
+            )
+            if rebuilt_ddl == draft_ddl:
+                # The live CHECK is not the shape this migration was written against.
+                # Fail loudly rather than guess at a constraint we do not recognise.
+                raise RuntimeError(
+                    "B-586-04: unrecognised review_status CHECK constraint; refusing to "
+                    "rebuild product_intelligence_review_draft blindly"
+                )
+            cols_cursor = await db.execute(
+                "PRAGMA table_info(product_intelligence_review_draft)")
+            draft_columns = [row[1] for row in await cols_cursor.fetchall()]
+            col_list = ", ".join(f'"{c}"' for c in draft_columns)
+            await db.execute("PRAGMA foreign_keys=OFF")
+            await db.execute("PRAGMA legacy_alter_table=ON")
+            try:
+                await db.execute(
+                    "ALTER TABLE product_intelligence_review_draft "
+                    "RENAME TO _product_intelligence_review_draft_old")
+                await db.execute(rebuilt_ddl)
+                await db.execute(
+                    f"INSERT INTO product_intelligence_review_draft ({col_list}) "
+                    f"SELECT {col_list} FROM _product_intelligence_review_draft_old")
+                await db.execute(
+                    "DROP TABLE _product_intelligence_review_draft_old")
+                await db.execute(
+                    "CREATE INDEX IF NOT EXISTS "
+                    "idx_product_intelligence_review_draft_product_status "
+                    "ON product_intelligence_review_draft"
+                    "(product_id, review_status, created_at)")
+                await db.execute(
+                    "CREATE INDEX IF NOT EXISTS "
+                    "idx_product_intelligence_review_draft_product_updated "
+                    "ON product_intelligence_review_draft(product_id, updated_at)")
+                await db.commit()
+            finally:
+                await db.execute("PRAGMA legacy_alter_table=OFF")
+                await db.execute("PRAGMA foreign_keys=ON")
+            fk_cursor = await db.execute("PRAGMA foreign_key_check")
+            fk_violations = await fk_cursor.fetchall()
+            if fk_violations:
+                raise RuntimeError(
+                    "B-586-04: review-draft rebuild left foreign key violations: "
+                    f"{fk_violations[:5]}")
+            logger.info("Migrated: review_status now permits SUPERSEDED")
+
+        # (2) Converge any product that already holds >1 open draft. Nothing is
+        # deleted: the non-canonical rows keep every column and every provenance row
+        # and are marked SUPERSEDED, which asserts only that another draft became
+        # canonical. No reviewer identity, approved_at or rejected_at is written —
+        # convergence is not a review decision.
+        dup_cursor = await db.execute(
+            "SELECT product_id FROM product_intelligence_review_draft "
+            f"WHERE {SQL_OPEN_PREDICATE} "
+            "GROUP BY product_id HAVING COUNT(*) > 1")
+        duplicate_products = [row[0] for row in await dup_cursor.fetchall()]
+        for dup_product_id in duplicate_products:
+            keep_cursor = await db.execute(
+                "SELECT draft_id FROM product_intelligence_review_draft "
+                f"WHERE product_id=? AND {SQL_OPEN_PREDICATE} "
+                f"ORDER BY {SQL_CANONICAL_ORDER} LIMIT 1",
+                (dup_product_id,))
+            keep_row = await keep_cursor.fetchone()
+            if not keep_row:
+                continue
+            await db.execute(
+                "UPDATE product_intelligence_review_draft "
+                "SET review_status='SUPERSEDED', updated_at=updated_at "
+                f"WHERE product_id=? AND draft_id<>? AND {SQL_OPEN_PREDICATE}",
+                (dup_product_id, keep_row[0]))
+        if duplicate_products:
+            await db.commit()
+            logger.info("Migrated: converged %d product(s) onto one open draft",
+                        len(duplicate_products))
+
+        # (3) The constraint itself. Partial UNIQUE index over open rows only, so a
+        # product may keep any number of APPROVED / REJECTED / SUPERSEDED drafts as
+        # history while never holding two live ones.
+        await db.execute(
+            f"CREATE UNIQUE INDEX IF NOT EXISTS {UNIQUE_OPEN_DRAFT_INDEX} "
+            "ON product_intelligence_review_draft(product_id) "
+            "WHERE review_status NOT IN ('APPROVED','REJECTED','SUPERSEDED')")
         await db.commit()
 
     logger.info("Database initialized at %s", DB_PATH)

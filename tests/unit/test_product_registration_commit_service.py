@@ -10,6 +10,25 @@ def mock_storage():
         yield mock
 
 @pytest.fixture
+def mock_promotion():
+    """B-08A-02 boundary. `crud` is mocked here, so the real promotion would fail closed
+    with PRODUCT_NOT_FOUND — correct behaviour, but it is the DB mock talking, not the
+    commit contract. Patch the boundary and assert it is INVOKED, so the promotion step
+    can never be silently removed from the commit path again."""
+    with patch(
+        "agent.services.registration_intelligence_promotion_service"
+        ".promote_registration_to_intelligence",
+        new=AsyncMock(return_value={
+            "promoted": True,
+            "intelligence_draft_id": "pidraft-1",
+            "promoted_fields": ["size_or_volume", "packaging_description"],
+            "dropped_fields": [],
+        }),
+    ) as mock:
+        yield mock
+
+
+@pytest.fixture
 def mock_crud():
     with patch("agent.services.registration_commit_service.crud") as mock:
         mock.create_product = AsyncMock(return_value={"id": "prod-123"})
@@ -60,7 +79,7 @@ async def test_commit_blocks_unapproved_human_review_fields(mock_storage, mock_c
     assert "UNRESOLVED_REVIEW_FIELDS: category" in result["blocked_reasons"]
 
 @pytest.mark.asyncio
-async def test_successful_commit(mock_storage, mock_crud, tmp_path):
+async def test_successful_commit(mock_storage, mock_crud, mock_promotion, tmp_path):
     image_path = tmp_path / "draft-product.jpg"
     image_path.write_bytes(b"draft-image")
 
@@ -103,11 +122,52 @@ async def test_successful_commit(mock_storage, mock_crud, tmp_path):
     assert mock_crud.create_product.await_args.kwargs["price"] == 15.0
     assert mock_crud.update_product.await_count == 1
 
+    # B-08A-02: commit MUST promote approved Product Knowledge into the Product
+    # Intelligence lifecycle, and MUST surface the resulting draft id. Previously this
+    # draft's declared size_or_volume / packaging_description were discarded silently.
+    mock_promotion.assert_awaited_once()
+    assert mock_promotion.await_args.args[0] == "prod-123"
+    assert result["intelligence_draft_id"] == "pidraft-1"
+    assert result["product_intelligence"]["promoted"] is True
+
+
+@pytest.mark.asyncio
+async def test_commit_compensates_when_intelligence_promotion_fails(
+    mock_storage, mock_crud, tmp_path
+):
+    """No canonical product may survive without its promised intelligence record."""
+    mock_storage.get_draft.return_value = RegistrationReviewDraft(
+        review_draft_id="d4", review_status="READY", source_lane="MANUAL",
+        approval_checklist={"normalized_name": True},
+        declared_evidence_fields={"product_name": "Test Product"},
+        canonical_candidate_fields={"normalized_name": "Test Product"},
+        draft_freshness_status="FRESH",
+        last_evidence_edit_at="2026-05-17T10:00:00Z",
+        last_recomputed_at="2026-05-17T10:00:00Z",
+    )
+    mock_crud.delete_product = AsyncMock(return_value=None)
+    with patch(
+        "agent.services.registration_intelligence_promotion_service"
+        ".promote_registration_to_intelligence",
+        new=AsyncMock(side_effect=RuntimeError("intelligence store offline")),
+    ):
+        result = await RegistrationCommitService.commit_draft(RegistrationCommitRequest(
+            draft_id="d4", write_back_confirmed=True,
+            user_confirmation_phrase="REGISTER_OWNED_PRODUCT"))
+
+    assert result["commit_status"] == "FAILED"
+    assert result["write_back_performed"] is False
+    assert result["failed_stage"] == "PRODUCT_INTELLIGENCE_PROMOTION"
+    assert result["compensated"] is True
+    assert result["committed_product_id"] is None
+    mock_crud.delete_product.assert_awaited_once_with("prod-123")
+
 
 @pytest.mark.asyncio
 async def test_successful_commit_materializes_verified_manual_taxonomy(
     mock_storage,
     mock_crud,
+    mock_promotion,
 ):
     preview = ProductStrategyTaxonomy(
         product_id="draft-taxonomy",
@@ -303,7 +363,7 @@ async def test_commit_fastmoss_promoted_blocks_empty_claim_risk(mock_storage, mo
 
 
 @pytest.mark.asyncio
-async def test_fastmoss_promoted_commit_preserves_source_lane_lineage(mock_storage, mock_crud):
+async def test_fastmoss_promoted_commit_preserves_source_lane_lineage(mock_storage, mock_crud, mock_promotion):
     mock_storage.get_draft.return_value = _make_fastmoss_promoted_draft()
     req = RegistrationCommitRequest(
         draft_id="dfp-001",
@@ -327,7 +387,7 @@ async def test_fastmoss_promoted_commit_preserves_source_lane_lineage(mock_stora
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_fastmoss_promoted_commit_ignores_raw_fastmoss_reference_duplicate(mock_storage, mock_crud):
+async def test_fastmoss_promoted_commit_ignores_raw_fastmoss_reference_duplicate(mock_storage, mock_crud, mock_promotion):
     """Raw source=FASTMOSS row with matching title and no promotion markers must NOT block commit."""
     raw_fastmoss_row = {
         "id": "a7421ac4-7423-4262-86d4-d5be6e687c25",
@@ -410,7 +470,7 @@ async def test_fastmoss_promoted_commit_blocks_already_promoted_duplicate(mock_s
 
 
 @pytest.mark.asyncio
-async def test_fastmoss_promoted_commit_ignores_raw_fastmoss_tiktok_url_match(mock_storage, mock_crud):
+async def test_fastmoss_promoted_commit_ignores_raw_fastmoss_tiktok_url_match(mock_storage, mock_crud, mock_promotion):
     """Raw source=FASTMOSS row matching only on TikTok URL and no promotion markers must NOT block."""
     raw_fastmoss_url_row = {
         "id": "b1111111-0000-0000-0000-000000000001",

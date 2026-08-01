@@ -170,6 +170,41 @@ async def product_intelligence_review_draft_reject(
         raise
 
 
+@router.post("/{product_id}/recompute")
+async def product_intelligence_recompute(product_id: str) -> dict:
+    """Re-acquire an EXISTING product's evidence from its own stored source link.
+
+    Deliberately NOT `/api/products/import-tiktokshop`: that route is an intake door and
+    calls `crud.create_product`, so using it to refresh a product already in the catalogue
+    would mint a duplicate row on every press. This one is product-ID scoped, reuses the
+    product's open draft, and never approves anything.
+    """
+    from agent.services.product_intelligence_recompute_service import (
+        ERR_NO_SOURCE_URL,
+        ERR_PRODUCT_NOT_FOUND,
+        RecomputeError,
+        recompute_product_intelligence,
+    )
+
+    try:
+        return await recompute_product_intelligence(product_id)
+    except RecomputeError as exc:
+        # 404 for "no such product", 422 for "this product cannot be recomputed yet" —
+        # a missing source link is an operator-fixable data gap, not a server fault.
+        status = 404 if exc.code == ERR_PRODUCT_NOT_FOUND else (
+            422 if exc.code == ERR_NO_SOURCE_URL else 502)
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        from agent.services.tiktokshop_extraction_service import (
+            TikTokShopExtractionError,
+        )
+        if isinstance(exc, TikTokShopExtractionError):
+            # The listing could not be read. Surfaced as a real failure rather than a
+            # silent empty success, so the operator is never shown "done" for nothing.
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise
+
+
 @router.get("/{product_id}")
 async def product_intelligence_detail(product_id: str) -> dict:
     return await get_product_intelligence_by_id(product_id)

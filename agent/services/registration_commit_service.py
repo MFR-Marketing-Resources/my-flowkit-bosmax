@@ -131,6 +131,55 @@ async def _manual_taxonomy_validation_error(
     return None
 
 
+async def _promote_intelligence_or_compensate(
+    product: dict[str, Any],
+    draft: RegistrationReviewDraft,
+    *,
+    lane: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """B-08A-02. Returns (promotion_receipt, failure_response); exactly one is not None.
+
+    Before this, BOTH commit lanes wrote identity / taxonomy / physics / commerce only.
+    Approved Product Knowledge was discarded, and invisibly so: `excluded_fields` lists
+    candidates the operator did NOT approve, so an approved field with no canonical
+    mapping appeared nowhere at all.
+
+    Compensation, not a transaction: `crud.create_product` has already committed by the
+    time promotion runs, and the two writes cannot share one SQLite transaction through
+    the existing service seam. So a promotion failure DELETES the product and reports the
+    exact stage — a canonical product must never survive without its promised
+    intelligence record.
+    """
+    from agent.services.registration_intelligence_promotion_service import (
+        promote_registration_to_intelligence,
+    )
+
+    try:
+        receipt = await promote_registration_to_intelligence(product["id"], draft)
+        return receipt, None
+    except Exception as promotion_error:  # noqa: BLE001 - compensating path
+        logger.error(
+            "Intelligence promotion failed (%s) for %s: %s",
+            lane, product["id"], promotion_error,
+        )
+        compensated = True
+        try:
+            await crud.delete_product(product["id"])
+        except Exception as rollback_error:  # noqa: BLE001
+            compensated = False
+            logger.error(
+                "Compensation delete failed for %s: %s", product["id"], rollback_error,
+            )
+        return None, {
+            "commit_status": "FAILED",
+            "write_back_performed": False,
+            "failed_stage": "PRODUCT_INTELLIGENCE_PROMOTION",
+            "compensated": compensated,
+            "committed_product_id": None if compensated else product["id"],
+            "errors": [f"INTELLIGENCE_PROMOTION_FAILED: {promotion_error}"],
+        }
+
+
 async def _materialize_manual_taxonomy(
     product: dict[str, Any],
     draft: RegistrationReviewDraft,
@@ -249,6 +298,11 @@ class RegistrationCommitService:
                 product,
                 draft,
             )
+            promotion, failure = await _promote_intelligence_or_compensate(
+                product, draft, lane="FASTMOSS_PROMOTED",
+            )
+            if failure:
+                return failure
             draft.write_back_performed = True
             draft.write_back_status = "COMMITTED"
             draft.review_status = "COMMITTED"
@@ -259,6 +313,8 @@ class RegistrationCommitService:
                 "committed_product_id": product["id"],
                 "committed_fields": list(payload.keys()),
                 "strategy_taxonomy": materialized_taxonomy,
+                "product_intelligence": promotion,
+                "intelligence_draft_id": (promotion or {}).get("intelligence_draft_id"),
                 "provenance": ["registration_commit_service:fastmoss_promoted:v1"],
             }
         except Exception as e:
@@ -459,7 +515,12 @@ class RegistrationCommitService:
                 product,
                 draft,
             )
-            
+            promotion, failure = await _promote_intelligence_or_compensate(
+                product, draft, lane="MANUAL_OWNED",
+            )
+            if failure:
+                return failure
+
             # Update Draft Status
             draft.write_back_performed = True
             draft.write_back_status = "COMMITTED"
@@ -471,8 +532,14 @@ class RegistrationCommitService:
                 "write_back_performed": True,
                 "committed_product_id": product["id"],
                 "committed_fields": list(final_fields.keys()),
+                # Candidates the operator did NOT approve. This alone hid B-08A-02: an
+                # APPROVED field with no canonical mapping appeared in neither list. The
+                # promotion receipt below now accounts for those explicitly.
                 "excluded_fields": [f for f in draft.canonical_candidate_fields.keys() if not draft.approval_checklist.get(f)],
                 "strategy_taxonomy": materialized_taxonomy,
+                "product_intelligence": promotion,
+                "intelligence_draft_id": (promotion or {}).get("intelligence_draft_id"),
+                "intelligence_dropped_fields": (promotion or {}).get("dropped_fields", []),
                 "provenance": ["registration_commit_service:v1"]
             }
         except Exception as e:

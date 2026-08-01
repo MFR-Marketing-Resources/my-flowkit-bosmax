@@ -500,3 +500,45 @@ describe("RegistrationReviewDraftPanel next-action guidance", () => {
 		expect(decisions).toHaveTextContent("REPAIR_INVALID_OR_PLACEHOLDER");
 	});
 });
+
+describe("B-08A-01 candidate approval affordance", () => {
+	beforeEach(() => {
+		vi.mocked(fetchAPI).mockResolvedValue({
+			items: [],
+			clusters: ["sensitive_wellness", "generic_unclassified"],
+			scene_strategy_ids: ["GENERIC_FALLBACK", "SENSITIVE_WELLNESS"],
+		});
+	});
+
+	afterEach(() => {
+		cleanup();
+		vi.clearAllMocks();
+	});
+
+	it("labels the approve control in text and for assistive tech", () => {
+		// Previously an icon-only button whose two SVGs were both aria-hidden, so it had
+		// no accessible name at all and Approve looked identical to Approved.
+		renderPanel();
+		const approve = screen.getByTestId("approve-normalized_name");
+		expect(approve).toHaveAccessibleName(/approve normalized_name/i);
+		expect(approve).toHaveTextContent(/approve/i);
+		expect(approve).toHaveAttribute("aria-pressed", "false");
+	});
+
+	it("shows Approved state and offers an explicit Reject once approved", () => {
+		renderPanel({
+			...reviewDraft,
+			approval_checklist: { ...reviewDraft.approval_checklist, normalized_name: true },
+		});
+		const approve = screen.getByTestId("approve-normalized_name");
+		expect(approve).toHaveAttribute("aria-pressed", "true");
+		expect(approve).toHaveTextContent(/approved/i);
+		const reject = screen.getByTestId("reject-normalized_name");
+		expect(reject).toHaveAccessibleName(/reject normalized_name/i);
+	});
+
+	it("offers no Reject while a candidate is still unapproved", () => {
+		renderPanel();
+		expect(screen.queryByTestId("reject-normalized_name")).toBeNull();
+	});
+});
