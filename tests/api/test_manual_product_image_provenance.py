@@ -48,6 +48,22 @@ async def test_manual_upload_image_reaches_the_intelligence_evidence():
         "the uploaded image never reached the intelligence evidence — ensure ran before "
         "the image was cached")
 
+    # A substring inside image_evidence_json is NOT provenance. Assert a real row in the
+    # provenance table: build_provenance_inputs only emitted rows for promoted knowledge
+    # fields, so image evidence previously had none at all.
+    cur = await db.execute(
+        "SELECT field_name, evidence_kind, extraction_method, verification_status, "
+        "declared_value FROM product_intelligence_review_field_provenance "
+        "WHERE product_id=? AND field_name='image_evidence_json'", (pid,))
+    prov = [dict(r) for r in await cur.fetchall()]
+    await cur.close()
+    assert prov, "no provenance row was recorded for the uploaded image"
+    uploaded = [r for r in prov if r["evidence_kind"] == "OPERATOR_UPLOADED_IMAGE"]
+    assert uploaded, f"image provenance missing operator-upload semantics: {prov}"
+    assert uploaded[0]["extraction_method"] == "MANUAL_IMAGE_UPLOAD"
+    assert uploaded[0]["verification_status"] == "PENDING_REVIEW"
+    assert uploaded[0]["declared_value"], "image provenance recorded no reference"
+
     cur = await db.execute(
         "SELECT local_image_path FROM product WHERE id=?", (pid,))
     stored = await cur.fetchone()

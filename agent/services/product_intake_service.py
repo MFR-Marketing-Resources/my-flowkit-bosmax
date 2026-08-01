@@ -222,13 +222,15 @@ class IntakeEvidence:
     __slots__ = ("declared_evidence_fields", "canonical_candidate_fields",
                  "approval_checklist", "claim_risk_level", "claim_tokens", "source_lane",
                  "provenance_source_type", "provenance_evidence_kind",
-                 "provenance_extraction_method")
+                 "provenance_extraction_method", "provenance_verification_status")
 
     def __init__(self, fields: Mapping[str, Any], *, lane: str,
                  claim_risk_level: str | None = None,
                  source_type: str | None = None,
                  evidence_kind: str | None = None,
-                 extraction_method: str | None = None):
+                 extraction_method: str | None = None,
+                 verification_status: str | None = None):
+        self.provenance_verification_status = verification_status or "PENDING_REVIEW"
         self.provenance_source_type = source_type or "REGISTRATION_COMMIT"
         self.provenance_evidence_kind = evidence_kind or "OPERATOR_DECLARED"
         self.provenance_extraction_method = extraction_method or "REGISTRATION_PROMOTION"
@@ -340,6 +342,27 @@ async def _stored_provenance(draft_id: str) -> list[dict]:
     return rows
 
 
+async def _product_provenance_covers(product_id: str, draft: Any,
+                                     payload: Mapping[str, Any]) -> bool:
+    """Provenance-strength coverage across ALL of a product's recorded evidence."""
+    from agent.db.schema import get_db
+
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT source_url, source_type, extraction_method, verification_status "
+        "FROM product_intelligence_review_field_provenance WHERE product_id=?",
+        (product_id,))
+    stored = [dict(r) for r in await cur.fetchall()]
+    await cur.close()
+    incoming = [
+        {"source_url": r.source_url, "source_type": r.source_type,
+         "extraction_method": r.extraction_method,
+         "verification_status": r.verification_status}
+        for r in build_provenance_inputs(draft, payload)
+    ]
+    return provenance_is_covered(stored, incoming)
+
+
 async def _incoming_covered(draft_row: Mapping[str, Any], draft: Any,
                             payload: Mapping[str, Any]) -> bool:
     """Production wiring for B-586-02.
@@ -423,7 +446,13 @@ async def ensure_product_intelligence(
     approved = await _approved_snapshot(product_id)
     if approved is not None and not minimal:
         snapshot_values = digest_of_stored_draft(approved)
-        approved_covered = material_is_covered(approved, payload_material)
+        # The approved-snapshot branch leaked: it compared material values only, so
+        # stronger provenance arriving AFTER approval was returned as NOOP without ever
+        # consulting verification strength. Provenance is keyed by product, so the
+        # product-wide rows are the right comparison set for a snapshot.
+        approved_covered = (
+            material_is_covered(approved, payload_material)
+            and await _product_provenance_covers(product_id, draft, payload))
         if snapshot_values == incoming and approved_covered:
             open_same, _t = await _latest_open_draft(product_id)
             return {"outcome": NOOP_APPROVED_SNAPSHOT, "lane": lane,

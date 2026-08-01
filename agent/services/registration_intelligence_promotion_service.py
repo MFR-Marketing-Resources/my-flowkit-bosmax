@@ -176,6 +176,7 @@ def build_provenance_inputs(
         lane_source_type = getattr(draft, "provenance_source_type", None)
         lane_evidence_kind = getattr(draft, "provenance_evidence_kind", None)
         lane_extraction = getattr(draft, "provenance_extraction_method", None)
+        lane_verification = getattr(draft, "provenance_verification_status", None)
         rows.append(ProductIntelligenceReviewFieldProvenanceInput(
             field_name=target,
             declared_value=declared_value,
@@ -187,14 +188,44 @@ def build_provenance_inputs(
                 "OPERATOR_DECLARED" if entry["origin"] == "DECLARED_EVIDENCE"
                 else "OPERATOR_APPROVED_CANDIDATE"),
             extraction_method=lane_extraction or "REGISTRATION_PROMOTION",
-            # Registration approval approves the VALUE, not Product Truth. The
-            # intelligence layer still requires its own review.
-            verification_status="PENDING_REVIEW",
+            # Registration approval approves the VALUE, not Product Truth, so the DEFAULT
+            # is PENDING_REVIEW. It was previously hardcoded, which made a genuine
+            # PENDING -> VERIFIED upgrade impossible to express at all: an acquisition that
+            # actually verified a field could never say so, and the strength comparison in
+            # the intake seam had nothing to compare. A lane may now declare a stronger
+            # status when it truly verified the evidence.
+            verification_status=lane_verification or "PENDING_REVIEW",
             claim_risk_flag=str(getattr(draft, "claim_risk_level", "") or "") or None,
             reviewer_decision=("OPERATOR_APPROVED"
                                if entry["origin"] == "CANONICAL_CANDIDATE"
                                and lane_evidence_kind is None else None),
             reviewer_note=f"promoted from registration draft field '{entry['source']}'",
+        ))
+    # Image evidence previously produced NO provenance row at all: rows are built from
+    # `promoted_fields`, and an image is not a promotable knowledge field. The operator's
+    # uploaded image therefore existed only as a substring inside image_evidence_json,
+    # which is not provenance and cannot be queried as evidence.
+    for key, ref in (payload.get("image_evidence_json") or {}).items():
+        ref_text = _clean(ref)
+        if not ref_text:
+            continue
+        rows.append(ProductIntelligenceReviewFieldProvenanceInput(
+            field_name="image_evidence_json",
+            declared_value=ref_text,
+            normalized_value=ref_text,
+            source_type=(getattr(draft, "provenance_source_type", None)
+                         or "REGISTRATION_COMMIT"),
+            source_url=ref_text if "://" in ref_text else source_url,
+            source_lane=str(getattr(draft, "source_lane", "") or "") or None,
+            evidence_kind=("OPERATOR_UPLOADED_IMAGE" if key == "local_image_path"
+                           else "SOURCE_IMAGE_REFERENCE"),
+            extraction_method=("MANUAL_IMAGE_UPLOAD" if key == "local_image_path"
+                               else "SOURCE_IMAGE_URL"),
+            verification_status=(getattr(draft, "provenance_verification_status", None)
+                                 or "PENDING_REVIEW"),
+            claim_risk_flag=str(getattr(draft, "claim_risk_level", "") or "") or None,
+            reviewer_decision=None,
+            reviewer_note=f"image evidence captured from '{key}'",
         ))
     return rows
 

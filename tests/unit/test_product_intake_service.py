@@ -163,18 +163,66 @@ async def _snapshot_status(sid: str) -> str:
     return row["status"]
 
 
+async def _seed_provenance(pid: str, **row) -> None:
+    """Record evidence provenance for a product whose draft was already APPROVED.
+
+    provenance.draft_id is a real FK, and an approved snapshot is produced FROM an
+    approved draft, so that is the shape seeded here.
+    """
+    from agent.db import crud
+    db = await get_db()
+    draft_id = row.pop("draft_id", f"seed-{pid}")
+    await db.execute(
+        "INSERT INTO product_intelligence_review_draft (draft_id, product_id, "
+        "review_status, created_at, updated_at) VALUES (?,?,?,?,?)",
+        (draft_id, pid, "APPROVED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"))
+    await db.commit()
+    await crud.create_product_intelligence_review_field_provenance(
+        draft_id=draft_id,
+        product_id=pid,
+        field_name=row.pop("field_name", "product_description"),
+        source_type=row.pop("source_type", "REGISTRATION_COMMIT"),
+        evidence_kind=row.pop("evidence_kind", "OPERATOR_DECLARED"),
+        extraction_method=row.pop("extraction_method", "REGISTRATION_PROMOTION"),
+        verification_status=row.pop("verification_status", "PENDING_REVIEW"),
+        declared_value=row.pop("declared_value", None),
+        normalized_value=None, source_url=row.pop("source_url", None),
+        source_lane=None, confidence_score=None, claim_risk_flag=None,
+        reviewer_decision=None, reviewer_note=None,
+    )
+
+
 @pytest.mark.asyncio
-async def test_approved_snapshot_with_identical_evidence_is_a_noop():
+async def test_approved_snapshot_with_identical_values_and_provenance_is_a_noop():
+    """A no-op needs identical VALUES *and* identical provenance. The earlier fixture had
+    an approved snapshot with zero provenance rows, so incoming evidence was genuinely new
+    information about where those values came from."""
     await _product("intake-d")
     await _snapshot("intake-d", "snap-d", status="APPROVED",
                     product_description="Ratified truth.")
+    await _seed_provenance("intake-d")
     r = await ensure_product_intelligence(
         "intake-d", _Draft(declared={"product_knowledge_text": "Ratified truth."}),
         lane="FASTMOSS")
     assert r["outcome"] == NOOP_APPROVED_SNAPSHOT
     assert r["wrote"] is False
     assert await _snapshot_status("snap-d") == "APPROVED"
-    assert await _draft_count("intake-d") == 0
+    # only the pre-existing APPROVED (terminal) draft; no new open draft was opened
+    assert await _draft_count("intake-d") == 1
+
+
+@pytest.mark.asyncio
+async def test_approved_snapshot_with_no_recorded_provenance_records_the_evidence():
+    """The inverse: values match but nothing says where they came from, so the incoming
+    provenance is new and must be captured rather than discarded."""
+    await _product("intake-d3")
+    await _snapshot("intake-d3", "snap-d3", status="APPROVED",
+                    product_description="Ratified truth.")
+    r = await ensure_product_intelligence(
+        "intake-d3", _Draft(declared={"product_knowledge_text": "Ratified truth."}),
+        lane="FASTMOSS")
+    assert r["outcome"] != NOOP_APPROVED_SNAPSHOT
+    assert await _snapshot_status("snap-d3") == "APPROVED", "snapshot must be untouched"
 
 
 @pytest.mark.asyncio
@@ -403,3 +451,70 @@ async def test_stronger_extraction_for_the_same_url_is_not_a_noop_through_the_re
     methods = {r["extraction_method"] for r in await _prov_rows("intake-upgrade")}
     assert "DOM_EXTRACTION" in methods, "upgraded provenance never reached the database"
     assert await _draft_count("intake-upgrade") == 1, "an upgrade must version, not duplicate"
+
+
+# ── B-586-02: the three production-path cases the counter-audit specified ────
+
+class _VerifiedDraft(_Draft):
+    def __init__(self, declared, *, verification_status, source_type="SOURCE_PAGE",
+                 extraction_method="DOM_EXTRACTION"):
+        super().__init__(declared=declared, source_lane="PRODUCTS_TIKTOKSHOP_IMPORT")
+        self.provenance_source_type = source_type
+        self.provenance_evidence_kind = "IMPORTED_MARKETPLACE_LINK"
+        self.provenance_extraction_method = extraction_method
+        self.provenance_verification_status = verification_status
+
+
+@pytest.mark.asyncio
+async def test_A_open_draft_pending_to_verified_is_not_a_noop():
+    """Same URL, same source type, same extraction method — only the verification status
+    rises. This is the case build_provenance_inputs could not previously express."""
+    await _product("intake-ver")
+    url = "https://shop-my.tiktok.com/pdp/ver"
+    ev = {"product_knowledge_text": "Identical text.", "source_url": url}
+    first = await ensure_product_intelligence(
+        "intake-ver", _VerifiedDraft(ev, verification_status="PENDING_REVIEW"),
+        lane="PRODUCTS_TIKTOKSHOP_IMPORT")
+    assert first["outcome"] == CREATED
+
+    upgraded = await ensure_product_intelligence(
+        "intake-ver", _VerifiedDraft(ev, verification_status="VERIFIED"),
+        lane="PRODUCTS_TIKTOKSHOP_IMPORT")
+    assert upgraded["outcome"] != NOOP_DRAFT_UP_TO_DATE, "PENDING->VERIFIED was swallowed"
+    statuses = {r["verification_status"] for r in await _prov_rows("intake-ver")}
+    assert "VERIFIED" in statuses, "VERIFIED provenance never persisted"
+
+
+@pytest.mark.asyncio
+async def test_B_approved_snapshot_plus_stronger_evidence_opens_a_review_draft():
+    await _product("intake-apv")
+    url = "https://shop-my.tiktok.com/pdp/apv"
+    ev = {"product_knowledge_text": "Ratified.", "source_url": url}
+    await ensure_product_intelligence(
+        "intake-apv", _VerifiedDraft(ev, verification_status="PENDING_REVIEW"),
+        lane="PRODUCTS_TIKTOKSHOP_IMPORT")
+    await _snapshot("intake-apv", "snap-apv", status="APPROVED",
+                    product_description="Ratified.")
+
+    r = await ensure_product_intelligence(
+        "intake-apv", _VerifiedDraft(ev, verification_status="VERIFIED"),
+        lane="PRODUCTS_TIKTOKSHOP_IMPORT")
+    assert r["outcome"] != NOOP_APPROVED_SNAPSHOT, (
+        "stronger evidence after approval was discarded by the snapshot branch")
+    assert await _snapshot_status("snap-apv") == "APPROVED", "snapshot was disturbed"
+
+
+@pytest.mark.asyncio
+async def test_C_identical_values_and_identical_provenance_is_a_genuine_noop():
+    await _product("intake-idn")
+    url = "https://shop-my.tiktok.com/pdp/idn"
+    ev = {"product_knowledge_text": "Unchanged.", "source_url": url}
+    await ensure_product_intelligence(
+        "intake-idn", _VerifiedDraft(ev, verification_status="PENDING_REVIEW"),
+        lane="PRODUCTS_TIKTOKSHOP_IMPORT")
+    again = await ensure_product_intelligence(
+        "intake-idn", _VerifiedDraft(ev, verification_status="PENDING_REVIEW"),
+        lane="PRODUCTS_TIKTOKSHOP_IMPORT")
+    assert again["outcome"] == NOOP_DRAFT_UP_TO_DATE
+    assert again["wrote"] is False
+    assert await _draft_count("intake-idn") == 1
