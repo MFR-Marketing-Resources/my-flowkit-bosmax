@@ -173,6 +173,48 @@ def _scan(
         error_code=None,
     )
 
+def test_target_capacity_uses_schema_derived_variation_group_cap():
+    reuse_cap = service.canonical_same_dialogue_reuse_cap()
+
+    assert reuse_cap >= 1
+    assert service.required_dialogue_count(1, reuse_cap) == 1
+    assert service.required_dialogue_count(200, reuse_cap) == (
+        (200 + reuse_cap - 1) // reuse_cap
+    )
+
+
+@pytest.mark.asyncio
+async def test_copy_preparation_composes_exact_target_shortfall(monkeypatch):
+    calls: list[int] = []
+    task = {
+        "task_id": "copy-task",
+        "product_id": "product-a",
+        "snapshot": {
+            "required_dialogues": 3,
+            "provider_calls_enabled": False,
+            "copy_preview": {
+                "required_dialogues": 3,
+                "eligible_approved_copy_set_ids": ["copy-a", "copy-b"],
+                "provider_calls_enabled": False,
+            },
+        },
+    }
+
+    async def compose(product_id, count, *, dry_run):
+        assert product_id == "product-a"
+        assert dry_run is False
+        calls.append(count)
+        return {"product_id": product_id, "created": 1, "produced": 1}
+
+    monkeypatch.setattr(service.copy_composer_service, "compose_and_persist", compose)
+
+    status, result = await service._prepare_copy_task(task)
+
+    assert status == "REVIEW_REQUIRED"
+    assert calls == [1]
+    assert result["requested_count"] == 1
+    assert result["created_count"] == 1
+    assert result["remaining_shortfall"] == 0
 
 @pytest.mark.asyncio
 async def test_create_plan_is_idempotent_and_isolates_blocked_products(monkeypatch):
@@ -288,6 +330,67 @@ async def test_prepare_continues_after_one_product_task_fails(monkeypatch):
     assert prepared.status == "COMPLETED_WITH_BLOCKERS"
     assert prepared.failure_count == 1
 
+@pytest.mark.asyncio
+async def test_treatment_preparation_materializes_required_dialogues_once(monkeypatch):
+    scan = _scan("product-a", approved_copy=True)
+    template = scan.template
+    assert template is not None
+    snapshot = service._task_snapshot(scan)
+    snapshot["required_dialogues"] = 2
+    snapshot["copy_preview"] = {
+        **snapshot["copy_preview"],
+        "required_dialogues": 2,
+        "eligible_approved_copy_set_ids": ["copy-a", "copy-b"],
+    }
+    task = {
+        "task_id": "multi-candidate-task",
+        "plan_id": "factory-plan",
+        "product_id": "product-a",
+        "template_id": template.template_id,
+        "template_sha256": template.template_sha256,
+        "snapshot": snapshot,
+    }
+    existing: list[dict[str, object]] = []
+    created_copy_ids: list[str] = []
+
+    async def list_treatments(**_kwargs):
+        return existing
+
+    async def create_treatment(request):
+        created_copy_ids.append(request.copy_set_id)
+        treatment = {
+            **request.model_dump(mode="json"),
+            "treatment_id": f"treatment-{request.copy_set_id}",
+            "treatment_sha256": "8" * 64,
+            "status": "DRAFT",
+        }
+        existing.append(treatment)
+        return treatment
+
+    monkeypatch.setattr(
+        service.creative_treatment_service,
+        "list_treatments",
+        list_treatments,
+    )
+    monkeypatch.setattr(
+        service.creative_treatment_service,
+        "create_treatment",
+        create_treatment,
+    )
+
+    status, result = await service._prepare_treatment_task(
+        task,
+        actor_id="factory-test",
+    )
+    resumed_status, resumed_result = await service._prepare_treatment_task(
+        task,
+        actor_id="factory-test",
+    )
+
+    assert status == "REVIEW_REQUIRED"
+    assert resumed_status == "REVIEW_REQUIRED"
+    assert created_copy_ids == ["copy-a", "copy-b"]
+    assert result["created_count"] == 2
 
 @pytest.mark.asyncio
 async def test_existing_candidate_signature_is_reused_without_duplicate(monkeypatch):
@@ -405,6 +508,41 @@ async def test_materialized_candidate_promotes_treatment_review_without_approval
     assert candidate.result["status"] == "DRAFT"
     assert "APPROVED" not in {candidate.result["status"], review.status}
 
+
+@pytest.mark.asyncio
+async def test_resume_refreshes_same_plan_tasks_without_duplicate_rows(monkeypatch):
+    scan_calls = 0
+
+    async def scan_product(_context):
+        nonlocal scan_calls
+        scan_calls += 1
+        scan = _scan("product-a", approved_copy=scan_calls == 1)
+        if scan_calls > 1:
+            scan.copy_preview["produced"] = 0
+        return scan
+
+    monkeypatch.setattr(service, "_scan_product", scan_product)
+    request = CreateFactoryPlanRequest(
+        products=[_context("product-a")],
+        created_by="factory-test",
+    )
+    plan = await service.create_plan(request)
+    original_task_ids = [task.task_id for task in plan.tasks]
+    control = service.FactoryPlanControlRequest(
+        actor_id="factory-test",
+        reason="refresh authority",
+    )
+
+    await service.pause_plan(plan.plan_id, control)
+    resumed = await service.resume_plan(plan.plan_id, control)
+
+    assert resumed.plan_id == plan.plan_id
+    assert [task.task_id for task in resumed.tasks] == original_task_ids
+    copy_review = next(
+        task for task in resumed.tasks if task.task_type == "COPY_REVIEW"
+    )
+    assert copy_review.status == "REVIEW_REQUIRED"
+    assert copy_review.blocker_code == "APPROVED_COPY_SET_REQUIRED"
 
 @pytest.mark.asyncio
 async def test_pause_and_resume_are_database_backed(monkeypatch):

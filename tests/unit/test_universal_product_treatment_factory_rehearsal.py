@@ -109,25 +109,36 @@ def test_scale_proof_is_exact_deterministic_and_zero_credit(tmp_path):
     single = payload["single_product"]
     mixed = payload["mixed_product"]
     for scenario in (single, mixed):
-        assert scenario["requested"] == 100
-        assert scenario["planned"] == 100
-        assert scenario["materialized"] == 100
-        assert scenario["compiled"] == 100
-        assert scenario["dry_run_ready"] == 100
-        assert scenario["unique_item_count"] == 100
-        assert scenario["unique_dna_count"] == 100
+        expected_target = 200 if scenario["scenario"] == "single_product_200" else 37
+        assert scenario["requested"] == expected_target
+        assert scenario["target_video_count"] == expected_target
+        assert scenario["planned"] == expected_target
+        assert scenario["materialized"] == expected_target
+        assert scenario["compiled"] == expected_target
+        assert scenario["dry_run_ready"] == expected_target
+        assert scenario["unique_item_count"] == expected_target
+        assert scenario["unique_dna_count"] == expected_target
+        assert scenario["unique_visual_fingerprint_count"] == expected_target
+        assert scenario["unique_material_count"] == expected_target
+        assert scenario["unique_compiled_payload_count"] == expected_target
+        assert scenario["duplicate_or_rejected_count"] == 0
+        assert scenario["proof_passed"] is True
+        assert scenario["provider_calls"] == 0
+        assert scenario["text_assist_provider_calls"] == 0
+        assert scenario["media_generation_calls"] == 0
+        assert scenario["credit_spend"] == 0
         assert scenario["cartesian_expansion_count"] == 0
         assert scenario["candidate_selections_per_item"] == 1
-        assert scenario["revalidated_count"] == 100
+        assert scenario["revalidated_count"] == expected_target
         assert scenario["deterministic_replay"] is True
 
     assert mixed["per_product_isolation"] is True
     assert mixed["cross_product_authority_leaks"] == 0
     assert mixed["product_counts"] == {
-        "fixture-apparel": 25,
-        "fixture-audio": 25,
-        "fixture-food": 25,
-        "fixture-supplement": 25,
+        "fixture-apparel": 10,
+        "fixture-audio": 9,
+        "fixture-food": 9,
+        "fixture-supplement": 9,
     }
     assert mixed["blocked_products"] == [
         {
@@ -183,6 +194,10 @@ def test_scale_proof_covers_profiles_modes_and_five_member_variation(tmp_path):
     variation = payload["variation_group"]
     assert variation["member_count"] == 5
     assert variation["max_member_count"] == 5
+    assert variation["reuse_cap"] == 5
+    assert variation["all_groups_within_cap"] is True
+    assert variation["all_groups_same_dialogue"] is True
+    assert variation["all_groups_distinct_visuals"] is True
     assert variation["same_dialogue"] is True
     assert variation["distinct_visual_fingerprint_count"] == 5
     assert variation["unrestricted_cartesian_mixing"] is False

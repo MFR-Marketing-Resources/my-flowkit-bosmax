@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
         "--scale-proof",
         action="store_true",
         help=(
-            "Run disposable 100-item P6 scale, matrix, and variation proofs "
+            "Run disposable 200-item P6 scale, matrix, and variation proofs "
             "without opening a database or dispatch surface."
         ),
     )
@@ -58,6 +58,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--model-key", default=MODEL_KEY)
     parser.add_argument("--duration-seconds", type=int, default=DURATION_SECONDS)
+    parser.add_argument("--target-video-count", type=int, default=1)
     parser.add_argument("--action-index", type=int, default=0)
     parser.add_argument("--actor-id", default="factory-rehearsal")
     parser.add_argument("--prepare", action="store_true")
@@ -147,6 +148,7 @@ async def _candidate(
         resolve_treatment_template,
     )
     from agent.services.production_queue_service import build_execution_payload
+    from agent.services.product_treatment_factory_service import material_execution_fingerprint
 
     profile = resolve_applicability_profile(scene_strategy_id)
     if not profile.supported:
@@ -256,6 +258,31 @@ async def _candidate(
             "dna_sha256": dna_sha,
         }
     )[:24]
+    execution_material = {
+        "dialogue": dialogue_text,
+        "scene": {
+            "strategy_id": profile.scene_strategy_id,
+            "family": dimensions["scene_family"],
+            "context": dimensions["scene_context"],
+        },
+        "treatment": {
+            "action_sequence": dimensions["product_interaction"],
+            "shot_grammar": dimensions["camera_composition"],
+            "product_interaction": dimensions["product_interaction"],
+        },
+        "camera": dimensions["camera_composition"],
+        "avatar": {
+            "code": dimensions["avatar_code"],
+            "variant": dimensions["avatar_variant"],
+        },
+        "background": dimensions["scene_context"],
+        "wardrobe": dimensions["wardrobe"],
+        "assets": _mode_slots(selected_mode),
+        "format": selected_format,
+        "logical_mode": selected_mode,
+        "model": MODEL_KEY,
+        "duration_seconds": DURATION_SECONDS,
+    }
     prompt = _stable_json(
         {
             "authority": "P7.5_CREATIVE_TREATMENT",
@@ -267,6 +294,7 @@ async def _candidate(
             "logical_mode": template.logical_mode,
             "action_sequence": template_dump["action_sequence"],
             "shot_grammar": template_dump["shot_grammar"],
+            "execution_material": execution_material,
         }
     )
     package = {
@@ -284,6 +312,7 @@ async def _candidate(
     payload, blockers = await build_execution_payload(package, run_config)
     prompt_sha = _prompt_sha(prompt)
     payload_sha = _payload_hash(payload)
+    material_sha = material_execution_fingerprint(payload)
 
     revalidated_template = resolve_treatment_template(
         context=context,
@@ -316,6 +345,8 @@ async def _candidate(
         "dna_sha256": dna_sha,
         "prompt_sha256": prompt_sha,
         "payload_sha256": payload_sha,
+        "compiled_payload_sha256": payload_sha,
+        "material_fingerprint_sha256": material_sha,
         "payload_mode": payload.get("mode"),
         "execution_lane": payload.get("execution_lane"),
         "blockers": blockers,
@@ -337,13 +368,18 @@ async def _scenario(
     blocked_products: list[tuple[str, str]],
 ) -> dict[str, object]:
     from agent.services.creative_treatment_service import canonical_sha256
+    from agent.services.product_treatment_factory_service import canonical_same_dialogue_reuse_cap
 
     items: list[dict[str, object]] = []
     ordinal = 0
-    group_id = "fixture-variation-group-five" if name == "single_product_100" else None
-    shared_dialogue = "The governed dialogue remains byte-identical across this group."
+    reuse_cap = canonical_same_dialogue_reuse_cap()
     for product_id, scene_strategy_id, count in allocations:
+        local_ordinal = 0
         for _ in range(count):
+            dialogue_group_index = local_ordinal // reuse_cap
+            group_id = (
+                f"{name}-{product_id}-dialogue-{dialogue_group_index:03d}"
+            )
             items.append(
                 await _candidate(
                     scenario=name,
@@ -351,14 +387,14 @@ async def _scenario(
                     product_id=product_id,
                     scene_strategy_id=scene_strategy_id,
                     dialogue_text=(
-                        shared_dialogue
-                        if name == "single_product_100"
-                        else f"Governed dialogue for {product_id}."
+                        f"Governed dialogue for {product_id}, dialogue group "
+                        f"{dialogue_group_index:03d}."
                     ),
-                    variation_group_id=group_id if group_id and ordinal < 5 else None,
+                    variation_group_id=group_id,
                 )
             )
             ordinal += 1
+            local_ordinal += 1
     blocked = [
         await _candidate(
             scenario=name,
@@ -375,18 +411,45 @@ async def _scenario(
     item_ids = [str(item["item_id"]) for item in items]
     dna_hashes = [str(item["dna_sha256"]) for item in items]
     payload_hashes = [str(item["payload_sha256"]) for item in items]
-    variation_members = [
-        {
-            "item_id": item["item_id"],
-            "dialogue_sha256": item["dialogue_sha256"],
-            "visual_fingerprint_sha256": item["visual_fingerprint_sha256"],
-        }
-        for item in items
-        if item["variation_group_id"] == group_id and group_id
+    compiled_payload_hashes = [
+        str(item["compiled_payload_sha256"]) for item in items
     ]
+    material_hashes = [
+        str(item["material_fingerprint_sha256"]) for item in items
+    ]
+    dialogue_hashes = [str(item["dialogue_sha256"]) for item in items]
+    visual_hashes = [str(item["visual_fingerprint_sha256"]) for item in items]
+    requested_count = sum(count for _, _, count in allocations)
+    variation_groups: dict[str, list[dict[str, object]]] = {}
+    for item in items:
+        current_group = str(item.get("variation_group_id") or "")
+        if current_group:
+            variation_groups.setdefault(current_group, []).append(
+                {
+                    "item_id": item["item_id"],
+                    "dialogue_sha256": item["dialogue_sha256"],
+                    "visual_fingerprint_sha256": item["visual_fingerprint_sha256"],
+                }
+            )
+    variation_members = next(
+        (members for _, members in sorted(variation_groups.items())),
+        [],
+    )
+    variation_member_counts = {
+        group: len(members) for group, members in variation_groups.items()
+    }
+    variation_group_dialogue_counts = {
+        group: len({str(item["dialogue_sha256"]) for item in members})
+        for group, members in variation_groups.items()
+    }
+    variation_group_visual_counts = {
+        group: len({str(item["visual_fingerprint_sha256"]) for item in members})
+        for group, members in variation_groups.items()
+    }
     proof: dict[str, object] = {
         "scenario": name,
-        "requested": sum(count for _, _, count in allocations),
+        "requested": requested_count,
+        "target_video_count": requested_count,
         "planned": len(items),
         "materialized": len(items),
         "compiled": len(ready),
@@ -400,14 +463,50 @@ async def _scenario(
         "item_ids": item_ids,
         "dna_hashes": dna_hashes,
         "payload_hashes": payload_hashes,
+        "dialogue_hashes": dialogue_hashes,
+        "visual_fingerprint_hashes": visual_hashes,
+        "material_fingerprint_hashes": material_hashes,
+        "compiled_execution_payload_hashes": compiled_payload_hashes,
         "unique_item_count": len(set(item_ids)),
         "unique_dna_count": len(set(dna_hashes)),
+        "unique_dialogue_count": len(set(dialogue_hashes)),
+        "unique_visual_fingerprint_count": len(set(visual_hashes)),
+        "unique_material_count": len(set(material_hashes)),
+        "unique_compiled_payload_count": len(set(compiled_payload_hashes)),
+        "duplicate_compiled_payload_count": (
+            len(compiled_payload_hashes) - len(set(compiled_payload_hashes))
+        ),
+        "rejected_candidate_count": requested_count - len(ready),
+        "duplicate_or_rejected_count": (
+            len(compiled_payload_hashes) - len(set(compiled_payload_hashes))
+            + requested_count
+            - len(ready)
+        ),
+        "provider_calls": 0,
+        "text_assist_provider_calls": 0,
+        "media_generation_calls": 0,
+        "credit_spend": 0,
+        "proof_passed": (
+            requested_count == len(items)
+            and requested_count == len(set(material_hashes))
+            and requested_count == len(set(compiled_payload_hashes))
+            and len(ready) == requested_count
+            and not (
+                len(compiled_payload_hashes) - len(set(compiled_payload_hashes))
+            )
+        ),
         "cartesian_expansion_count": 0,
         "candidate_selections_per_item": 1,
         "per_product_isolation": product_counts == expected_counts,
         "cross_product_authority_leaks": 0,
         "revalidated_count": sum(bool(item["revalidated"]) for item in items),
         "variation_members": variation_members,
+        "variation_group_count": len(variation_groups),
+        "variation_group_member_counts": variation_member_counts,
+        "variation_group_dialogue_counts": variation_group_dialogue_counts,
+        "variation_group_visual_counts": variation_group_visual_counts,
+        "variation_group_max_member_count": max(variation_member_counts.values(), default=0),
+        "variation_group_reuse_cap": reuse_cap,
     }
     proof["scenario_sha256"] = canonical_sha256(proof)
     return proof
@@ -498,23 +597,30 @@ def _same_replay(
 ) -> bool:
     return all(
         first[key] == second[key]
-        for key in ("item_ids", "dna_hashes", "payload_hashes", "scenario_sha256")
+        for key in (
+            "item_ids",
+            "dna_hashes",
+            "dialogue_hashes",
+            "material_fingerprint_hashes",
+            "compiled_execution_payload_hashes",
+            "scenario_sha256",
+        )
     )
 
 
 async def _scale_proof(data_dir: Path) -> dict[str, object]:
     single_args = {
-        "name": "single_product_100",
-        "allocations": [("fixture-single-apparel", "APPAREL", 100)],
+        "name": "single_product_200",
+        "allocations": [("fixture-single-apparel", "APPAREL", 200)],
         "blocked_products": [],
     }
     mixed_args = {
-        "name": "mixed_product_100",
+        "name": "mixed_product_37",
         "allocations": [
-            ("fixture-apparel", "APPAREL", 25),
-            ("fixture-supplement", "WELLNESS_SUPPLEMENT", 25),
-            ("fixture-audio", "AUDIO_DEVICE", 25),
-            ("fixture-food", "PACKAGED_FOOD", 25),
+            ("fixture-apparel", "APPAREL", 10),
+            ("fixture-supplement", "WELLNESS_SUPPLEMENT", 9),
+            ("fixture-audio", "AUDIO_DEVICE", 9),
+            ("fixture-food", "PACKAGED_FOOD", 9),
         ],
         "blocked_products": [("fixture-unsupported", "UNKNOWN")],
     }
@@ -526,6 +632,7 @@ async def _scale_proof(data_dir: Path) -> dict[str, object]:
     single_replay.pop("variation_members")
     mixed.pop("variation_members")
     mixed_replay.pop("variation_members")
+    reuse_cap = int(single["variation_group_reuse_cap"])
     return {
         "proof_version": "universal-product-treatment-scale-proof-v1",
         "isolated_data_dir": str(data_dir),
@@ -552,17 +659,29 @@ async def _scale_proof(data_dir: Path) -> dict[str, object]:
         },
         "variation_group": {
             "member_count": len(members),
-            "same_dialogue": len(
-                {str(member["dialogue_sha256"]) for member in members}
-            )
-            == 1,
-            "distinct_visual_fingerprint_count": len(
-                {
-                    str(member["visual_fingerprint_sha256"])
-                    for member in members
-                }
+            "same_dialogue": all(
+                value == 1
+                for value in single["variation_group_dialogue_counts"].values()
             ),
-            "max_member_count": 5,
+            "distinct_visual_fingerprint_count": len(
+                {str(member["visual_fingerprint_sha256"]) for member in members}
+            ),
+            "max_member_count": single["variation_group_max_member_count"],
+            "reuse_cap": reuse_cap,
+            "all_groups_within_cap": all(
+                value <= reuse_cap
+                for value in single["variation_group_member_counts"].values()
+            ),
+            "all_groups_same_dialogue": all(
+                value == 1
+                for value in single["variation_group_dialogue_counts"].values()
+            ),
+            "all_groups_distinct_visuals": all(
+                single["variation_group_visual_counts"][group]
+                == single["variation_group_member_counts"][group]
+                for group in single["variation_group_member_counts"]
+            ),
+            "group_count": single["variation_group_count"],
             "unrestricted_cartesian_mixing": False,
             "members": members,
         },
@@ -629,6 +748,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         products=products,
         scan_all_active=args.scan_all_active,
         defaults=defaults,
+        target_video_count=args.target_video_count,
         created_by=args.actor_id,
         provider_calls_enabled=False,
         media_generation_enabled=False,

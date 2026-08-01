@@ -46,11 +46,13 @@ export interface FactoryContextDefaults {
 
 export interface FactoryProductContext extends FactoryContextDefaults {
 	product_id: string;
+	target_video_count?: number;
 }
 
 export interface CreateFactoryPlanRequest {
 	products: FactoryProductContext[];
 	scan_all_active: boolean;
+	target_video_count: number;
 	defaults: FactoryContextDefaults;
 	created_by: string;
 	provider_calls_enabled: false;

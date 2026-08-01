@@ -61,6 +61,11 @@ class FactoryContextDefaults(BaseModel):
 
 class FactoryProductContext(FactoryContextDefaults):
     product_id: str = Field(min_length=1)
+    # The public plan target is allocated deterministically across the product
+    # cohort. Zero is an internal allocation for a cohort smaller than the
+    # requested run; it keeps readiness scans product-isolated without
+    # manufacturing content for an unallocated product.
+    target_video_count: int = Field(default=1, ge=0, le=200)
 
 
 class CreateFactoryPlanRequest(BaseModel):
@@ -68,9 +73,10 @@ class CreateFactoryPlanRequest(BaseModel):
 
     products: list[FactoryProductContext] = Field(default_factory=list)
     scan_all_active: bool = False
+    target_video_count: int = Field(default=1, ge=1, le=200)
     defaults: FactoryContextDefaults = Field(default_factory=FactoryContextDefaults)
     created_by: str = Field(min_length=1)
-    provider_calls_enabled: Literal[False] = False
+    provider_calls_enabled: bool = False
     media_generation_enabled: Literal[False] = False
 
     @model_validator(mode="after")
@@ -90,7 +96,7 @@ class PrepareFactoryPlanRequest(BaseModel):
     max_tasks: int = Field(default=1000, ge=1, le=10000)
     materialize_copy_composition: bool = True
     materialize_treatment_candidates: bool = True
-    provider_calls_enabled: Literal[False] = False
+    provider_calls_enabled: bool = False
     media_generation_enabled: Literal[False] = False
 
 
