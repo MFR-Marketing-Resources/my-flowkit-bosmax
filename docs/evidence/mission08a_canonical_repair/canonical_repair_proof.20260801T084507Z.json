@@ -1,0 +1,430 @@
+{
+  "stamp": "20260801T084507Z",
+  "plan_digest": "925b5acc08d18ff693baa61cfa4dcb3d614a4dc971509803b74eae79cfb01142",
+  "snapshot_sha256": "e3bf45e6eb46193badd1e91f383a70af8fabec15c7b256097abe9a023395df00",
+  "backup": {
+    "path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\docs\\evidence\\mission08a_canonical_repair\\flow_agent.pre_repair.20260801T084507Z.db",
+    "bytes": 273190912,
+    "integrity_check": "ok",
+    "foreign_key_violations": 0,
+    "sha256": "04abf93bd2e8896ce760551f9e128906a17b6e457c12be496a6d0f02fe15a1a5"
+  },
+  "before_fingerprint": {
+    "product_intelligence_review_draft": {
+      "rows": 476,
+      "content_sha256": "ef347d938066a7c93c256afd7ab1f258dced00e174ee804c7a1d15d0e5e713c3"
+    },
+    "product_intelligence_review_field_provenance": {
+      "rows": 3841,
+      "content_sha256": "b7ddeebe5822fbb14f71f07d56b8d697aa288770ead30d7b2602b9595f07470f"
+    },
+    "product_intelligence_snapshot": {
+      "rows": 447,
+      "content_sha256": "a73718fa1a658f08b2009961b247f98f3a507ec1f0e84d80284f93a620a54ab0"
+    },
+    "product": {
+      "rows": 659,
+      "content_sha256": "243e9ad7e5511c109735bb443d61926a27a458744159ebe13ff5fe1215dea9d6"
+    },
+    "_request_old": {
+      "rows": 0
+    },
+    "avatar_product_fit": {
+      "rows": 45
+    },
+    "batch": {
+      "rows": 62
+    },
+    "batch_generation_run": {
+      "rows": 7
+    },
+    "batch_queue_event": {
+      "rows": 177
+    },
+    "batch_variant": {
+      "rows": 385
+    },
+    "bulk_generation_item": {
+      "rows": 5
+    },
+    "bulk_generation_run": {
+      "rows": 2
+    },
+    "character": {
+      "rows": 112
+    },
+    "content_combination": {
+      "rows": 74
+    },
+    "copy_component": {
+      "rows": 1036
+    },
+    "copy_generation_batch": {
+      "rows": 13
+    },
+    "copy_intelligence_seed": {
+      "rows": 420
+    },
+    "copy_set": {
+      "rows": 2727
+    },
+    "creative_asset": {
+      "rows": 97
+    },
+    "creative_camera_preset": {
+      "rows": 17
+    },
+    "creative_execution_lane": {
+      "rows": 2
+    },
+    "creative_execution_lane_lease": {
+      "rows": 4
+    },
+    "creative_generation_attempt": {
+      "rows": 26
+    },
+    "creative_output_qa": {
+      "rows": 3
+    },
+    "creative_product_selection": {
+      "rows": 1
+    },
+    "creative_production_audit_event": {
+      "rows": 124
+    },
+    "creative_production_batch": {
+      "rows": 11
+    },
+    "creative_production_item": {
+      "rows": 31
+    },
+    "creative_production_plan": {
+      "rows": 16
+    },
+    "creative_production_wave": {
+      "rows": 12
+    },
+    "creative_scene_prompt": {
+      "rows": 168
+    },
+    "creative_supply_review_event": {
+      "rows": 459
+    },
+    "creative_supply_run": {
+      "rows": 1
+    },
+    "creative_supply_task": {
+      "rows": 219
+    },
+    "creative_treatment": {
+      "rows": 3
+    },
+    "creative_treatment_audit_event": {
+      "rows": 9
+    },
+    "creative_variation_group": {
+      "rows": 0
+    },
+    "extend_lineage": {
+      "rows": 18
+    },
+    "fastmoss_bulk_draft_status": {
+      "rows": 665
+    },
+    "generated_artifact": {
+      "rows": 3
+    },
+    "generation_result": {
+      "rows": 8
+    },
+    "material": {
+      "rows": 0
+    },
+    "poster_copy_set": {
+      "rows": 7
+    },
+    "poster_deliverable": {
+      "rows": 16
+    },
+    "postiz_publish_record": {
+      "rows": 0
+    },
+    "product_intelligence_field_provenance": {
+      "rows": 3610
+    },
+    "product_strategy_taxonomy": {
+      "rows": 659
+    },
+    "product_strategy_type_registry": {
+      "rows": 129
+    },
+    "product_treatment_factory_event": {
+      "rows": 2
+    },
+    "product_treatment_factory_plan": {
+      "rows": 1
+    },
+    "product_treatment_factory_task": {
+      "rows": 4430
+    },
+    "production_run": {
+      "rows": 59
+    },
+    "project": {
+      "rows": 0
+    },
+    "project_character": {
+      "rows": 0
+    },
+    "request": {
+      "rows": 523
+    },
+    "request_stage_event": {
+      "rows": 6623
+    },
+    "request_telemetry": {
+      "rows": 520
+    },
+    "scene": {
+      "rows": 0
+    },
+    "scene_context_promotion_activation_event": {
+      "rows": 7
+    },
+    "scene_context_promotion_review_event": {
+      "rows": 7
+    },
+    "scheduled_batch_run": {
+      "rows": 0
+    },
+    "social_copy_package": {
+      "rows": 2
+    },
+    "video": {
+      "rows": 0
+    },
+    "video_job_side_effect": {
+      "rows": 45
+    },
+    "video_production_job": {
+      "rows": 63
+    },
+    "workspace_execution_package": {
+      "rows": 152
+    },
+    "workspace_generation_package": {
+      "rows": 138
+    }
+  },
+  "after_fingerprint": {
+    "product_intelligence_review_draft": {
+      "rows": 476,
+      "content_sha256": "8cf6ac3c87116068b84be2babb93159de07f2f0df35f351b553edb7181111112"
+    },
+    "product_intelligence_review_field_provenance": {
+      "rows": 3841,
+      "content_sha256": "b7ddeebe5822fbb14f71f07d56b8d697aa288770ead30d7b2602b9595f07470f"
+    },
+    "product_intelligence_snapshot": {
+      "rows": 447,
+      "content_sha256": "a73718fa1a658f08b2009961b247f98f3a507ec1f0e84d80284f93a620a54ab0"
+    },
+    "product": {
+      "rows": 659,
+      "content_sha256": "243e9ad7e5511c109735bb443d61926a27a458744159ebe13ff5fe1215dea9d6"
+    },
+    "_request_old": {
+      "rows": 0
+    },
+    "avatar_product_fit": {
+      "rows": 45
+    },
+    "batch": {
+      "rows": 62
+    },
+    "batch_generation_run": {
+      "rows": 7
+    },
+    "batch_queue_event": {
+      "rows": 177
+    },
+    "batch_variant": {
+      "rows": 385
+    },
+    "bulk_generation_item": {
+      "rows": 5
+    },
+    "bulk_generation_run": {
+      "rows": 2
+    },
+    "character": {
+      "rows": 112
+    },
+    "content_combination": {
+      "rows": 74
+    },
+    "copy_component": {
+      "rows": 1036
+    },
+    "copy_generation_batch": {
+      "rows": 13
+    },
+    "copy_intelligence_seed": {
+      "rows": 420
+    },
+    "copy_set": {
+      "rows": 2727
+    },
+    "creative_asset": {
+      "rows": 97
+    },
+    "creative_camera_preset": {
+      "rows": 17
+    },
+    "creative_execution_lane": {
+      "rows": 2
+    },
+    "creative_execution_lane_lease": {
+      "rows": 4
+    },
+    "creative_generation_attempt": {
+      "rows": 26
+    },
+    "creative_output_qa": {
+      "rows": 3
+    },
+    "creative_product_selection": {
+      "rows": 1
+    },
+    "creative_production_audit_event": {
+      "rows": 124
+    },
+    "creative_production_batch": {
+      "rows": 11
+    },
+    "creative_production_item": {
+      "rows": 31
+    },
+    "creative_production_plan": {
+      "rows": 16
+    },
+    "creative_production_wave": {
+      "rows": 12
+    },
+    "creative_scene_prompt": {
+      "rows": 168
+    },
+    "creative_supply_review_event": {
+      "rows": 459
+    },
+    "creative_supply_run": {
+      "rows": 1
+    },
+    "creative_supply_task": {
+      "rows": 219
+    },
+    "creative_treatment": {
+      "rows": 3
+    },
+    "creative_treatment_audit_event": {
+      "rows": 9
+    },
+    "creative_variation_group": {
+      "rows": 0
+    },
+    "extend_lineage": {
+      "rows": 18
+    },
+    "fastmoss_bulk_draft_status": {
+      "rows": 665
+    },
+    "generated_artifact": {
+      "rows": 3
+    },
+    "generation_result": {
+      "rows": 8
+    },
+    "material": {
+      "rows": 0
+    },
+    "poster_copy_set": {
+      "rows": 7
+    },
+    "poster_deliverable": {
+      "rows": 16
+    },
+    "postiz_publish_record": {
+      "rows": 0
+    },
+    "product_intelligence_field_provenance": {
+      "rows": 3610
+    },
+    "product_strategy_taxonomy": {
+      "rows": 659
+    },
+    "product_strategy_type_registry": {
+      "rows": 129
+    },
+    "product_treatment_factory_event": {
+      "rows": 2
+    },
+    "product_treatment_factory_plan": {
+      "rows": 1
+    },
+    "product_treatment_factory_task": {
+      "rows": 4430
+    },
+    "production_run": {
+      "rows": 59
+    },
+    "project": {
+      "rows": 0
+    },
+    "project_character": {
+      "rows": 0
+    },
+    "request": {
+      "rows": 523
+    },
+    "request_stage_event": {
+      "rows": 6623
+    },
+    "request_telemetry": {
+      "rows": 520
+    },
+    "scene": {
+      "rows": 0
+    },
+    "scene_context_promotion_activation_event": {
+      "rows": 7
+    },
+    "scene_context_promotion_review_event": {
+      "rows": 7
+    },
+    "scheduled_batch_run": {
+      "rows": 0
+    },
+    "social_copy_package": {
+      "rows": 2
+    },
+    "video": {
+      "rows": 0
+    },
+    "video_job_side_effect": {
+      "rows": 45
+    },
+    "video_production_job": {
+      "rows": 63
+    },
+    "workspace_execution_package": {
+      "rows": 152
+    },
+    "workspace_generation_package": {
+      "rows": 138
+    }
+  },
+  "tables_changed": [
+    "product_intelligence_review_draft"
+  ],
+  "failures": []
+}

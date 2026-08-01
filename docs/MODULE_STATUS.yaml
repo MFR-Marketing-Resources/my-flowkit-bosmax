@@ -1042,6 +1042,14 @@ domains:
       # have returned. Also defines SUPERSEDED - the only truthful terminal state for a
       # converged duplicate, since APPROVED/REJECTED would fabricate a review decision.
       - agent/services/product_intelligence_draft_lifecycle.py
+      # Owner-authorized canonical repair for the product groups that already held more
+      # than one OPEN draft before B-586-04 could be enforced. Backup + snapshot + plan
+      # digest first, then proof that ONLY the review-draft table changed. Deletes
+      # nothing: the non-canonical rows are retained as SUPERSEDED with their provenance.
+      - scripts/mission08a_canonical_duplicate_repair.py
+      - docs/evidence/mission08a_canonical_repair/canonical_repair_plan.20260801T084507Z.json
+      - docs/evidence/mission08a_canonical_repair/canonical_repair_proof.20260801T084507Z.json
+      - docs/evidence/mission08a_canonical_repair/canonical_repair_snapshot.20260801T084507Z.json
       - tests/unit/test_product_intake_service.py
       - tests/unit/test_reporting_service.py
       - tests/api/test_product_physics_map_persist.py
