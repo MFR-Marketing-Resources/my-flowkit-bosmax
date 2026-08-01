@@ -67,12 +67,21 @@ export interface AddAnglesResult {
 	added?: number;
 	capped?: boolean;
 	claim_gate?: string;
-	snapshot_version?: number;
+	/**
+	 * Mission-08D: add-angles STAGES a review-required draft and never approves.
+	 * The snapshot only changes after the governed Approve in Product Intelligence.
+	 */
+	approved?: boolean;
+	review_required?: boolean;
+	draft_id?: string;
+	review_status?: string;
+	next_action?: string;
 	error?: string;
 	claim_tokens?: string[];
 }
 
-// FREE — appends persona pains (angles) and re-approves; spends no AI tokens.
+// FREE — appends persona pains (angles) to a REVIEW-REQUIRED draft; spends no AI
+// tokens and never auto-approves a Product Intelligence snapshot.
 export async function addAngles(input: {
 	product_id: string;
 	pains: string[];

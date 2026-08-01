@@ -37,7 +37,7 @@ CLAIM_TEXT_FIELDS = (
 )
 
 BLOCKED_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("cure", re.compile(r"\bcure(?:d|s|ing)?\b", re.IGNORECASE)),
+    ("cure", re.compile(r"\bcur(?:e|ed|es|ing)\b", re.IGNORECASE)),
     ("treat", re.compile(r"\btreat(?:ed|s|ing|ment)?\b", re.IGNORECASE)),
     ("heal", re.compile(r"\bheal(?:ed|s|ing)?\b", re.IGNORECASE)),
     (
@@ -150,13 +150,81 @@ def _matches_any(text: str, patterns: tuple[tuple[str, re.Pattern[str]], ...]) -
     return tokens
 
 
-def evaluate_claim_safety(payload: Mapping[str, Any]) -> dict[str, Any]:
+# ── Mission-08D: contextual non-medical downgrade for `treat` / `cure` ───────
+# The blocked lexicon is intentionally blunt — but "Windshield Treatment" is a product
+# NAME and "allow to cure for 10 minutes" is a coating process, not a health claim, and
+# both permanently blocked real automotive products on the live pilot. The downgrade
+# below is the SMALLEST contextual rule that fixes those without touching medical
+# strictness:
+#   * only the two tokens `treat` and `cure` are ever considered;
+#   * the product's category must be known and must NOT touch health, wellness,
+#     ingestion, body-contact, baby/children or medical territory (unknown/empty
+#     category = NO downgrade — fail closed);
+#   * EVERY occurrence of the token across EVERY scanned segment must sit inside one of
+#     the enumerated non-medical phrases; one bare "treats pain" anywhere and the token
+#     stays fully blocked;
+#   * the result is CLAIM_REVIEW_REQUIRED, never CLAIM_SAFE — a human still has to
+#     read it and record an acknowledgement before approval.
+_HEALTH_CONTEXT_CATEGORY_RE = re.compile(
+    r"(?i)\b(?:health|wellness|herbals?|supplements?|vitamins?|food|beverages?|snacks?|"
+    r"ingest\w*|edibles?|beauty|skincare|cosmetics?|personal\s*care|body|baby|infants?|"
+    r"kids?|child(?:ren)?|toys?|medic(?:al|ine)?|pharma|clinics?)\b")
+_NON_MEDICAL_CONTEXT_RES: dict[str, tuple[re.Pattern[str], ...]] = {
+    "treat": (
+        re.compile(r"(?i)\b(?:windshield|windscreen|surface|coating|glass|paint)\s+"
+                   r"treat(?:ment)?s?\b"),
+    ),
+    "cure": (
+        re.compile(r"(?i)\ballow(?:ing)?(?:\s+\w+){0,3}?\s+to\s+cure\b"),
+        re.compile(r"(?i)\bcuring\s+time\b"),
+        re.compile(r"(?i)\bcure\s+time\b"),
+    ),
+}
+_TOKEN_OCCURRENCE_RES: dict[str, re.Pattern[str]] = {
+    "treat": re.compile(r"(?i)\btreat(?:ed|s|ing|ment)?\b"),
+    "cure": re.compile(r"(?i)\bcur(?:e|ed|es|ing)\b"),
+}
+
+
+def _category_permits_downgrade(product: Mapping[str, Any] | None) -> bool:
+    category = str((product or {}).get("category") or "").strip()
+    if not category:
+        return False  # unknown category -> keep the full block
+    return not _HEALTH_CONTEXT_CATEGORY_RE.search(category)
+
+
+def _every_occurrence_is_non_medical(token: str, segments: list[str]) -> bool:
+    occurrence_re = _TOKEN_OCCURRENCE_RES.get(token)
+    context_res = _NON_MEDICAL_CONTEXT_RES.get(token)
+    if occurrence_re is None or context_res is None:
+        return False
+    saw_any = False
+    for segment in segments:
+        spans = [m.span() for ctx in context_res for m in ctx.finditer(segment)]
+        for match in occurrence_re.finditer(segment):
+            saw_any = True
+            start, end = match.span()
+            if not any(s <= start and end <= e for s, e in spans):
+                return False  # one bare occurrence -> token stays blocked
+    return saw_any
+
+
+def evaluate_claim_safety(
+    payload: Mapping[str, Any],
+    *,
+    product: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     blocked_tokens: list[str] = []
     review_tokens: list[str] = []
-    for segment in _collect_segments(payload):
+    segments = _collect_segments(payload)
+    for segment in segments:
         blocked_tokens.extend(_matches_any(segment, BLOCKED_PATTERNS))
         review_tokens.extend(_matches_any(segment, REVIEW_PATTERNS))
 
+    # Contextual downgrade (08D): `treat`/`cure` drop from BLOCKED to REVIEW_REQUIRED
+    # only when the category is provably non-health AND every single occurrence sits
+    # inside an enumerated non-medical phrase. Callers that cannot supply the product
+    # (product=None) get the unchanged full block.
     existing_allowed = [
         str(item).strip()
         for item in (payload.get("allowed_claims_json") or [])
@@ -179,6 +247,17 @@ def evaluate_claim_safety(payload: Mapping[str, Any]) -> dict[str, Any]:
             review_tokens.extend(claim_review)
         else:
             normalized_allowed.append(claim)
+
+    # Apply the contextual downgrade only after allowed_claims_json has contributed
+    # its tokens too; otherwise an exact non-medical phrase there re-adds a full block.
+    if blocked_tokens and _category_permits_downgrade(product):
+        downgraded: list[str] = []
+        for token in ("treat", "cure"):
+            if token in blocked_tokens and _every_occurrence_is_non_medical(token, segments):
+                downgraded.append(token)
+        if downgraded:
+            blocked_tokens = [t for t in blocked_tokens if t not in downgraded]
+            review_tokens.extend(downgraded)
 
     blocked_tokens = _dedupe_preserve(blocked_tokens)
     review_tokens = _dedupe_preserve(review_tokens)

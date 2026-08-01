@@ -11,6 +11,7 @@ import {
 	prepareProductForCopywriting,
 	recomputeProductIntelligence,
 	rejectProductIntelligenceReviewDraft,
+	setProductIntelligenceFieldDisposition,
 	updateProductIntelligenceReviewDraft,
 	validateProductIntelligenceReviewDraft,
 	type ClaimSafeRewritePreview,
@@ -19,6 +20,7 @@ import {
 	type TikTokRelayBlocker,
 } from "../../api/products";
 import type {
+	FieldAbsenceDisposition,
 	ProductIntelligenceReviewDraft,
 	ProductIntelligenceReviewDraftMutationRequest,
 	ProductIntelligenceReviewDraftValidationResponse,
@@ -41,6 +43,12 @@ const REQUIRED_FIELDS = [
 	"claim_gate",
 	"claim_risk_level",
 ] as const;
+
+const FIELD_ABSENCE_DISPOSITIONS = new Set<FieldAbsenceDisposition>([
+	"NOT_STATED_IN_SOURCE",
+	"NOT_APPLICABLE",
+	"REQUIRES_EXTERNAL_EVIDENCE",
+]);
 
 type DraftFormState = {
 	product_description: string;
@@ -638,22 +646,46 @@ export function describeRelayBlocker(blocker: TikTokRelayBlocker): {
 // Build a friendly "action needed" notice from the STRUCTURED validate report, so we
 // never even attempt an approve that will fail closed (no raw 409 reaches the operator).
 // Returns null when the draft is actually approvable.
+//
+// 08D: `claimReviewAcknowledged` mirrors the backend contract exactly — an explicit
+// acknowledgement clears ONLY a CLAIM_REVIEW_REQUIRED blocker; CLAIM_BLOCKED and every
+// missing/unresolved-field blocker are untouched by it. Governed-absent fields no
+// longer appear in MISSING_REQUIRED_FIELDS blockers server-side, so no FE special-case
+// is needed for them here.
 export function describeApprovalBlockers(
 	report: ProductIntelligenceReviewDraftValidationResponse,
+	claimReviewAcknowledged = false,
 ): string | null {
-	const missing = report.missing_required_fields ?? [];
+	const governed = report.governed_absent_fields ?? {};
+	const missing = (report.missing_required_fields ?? []).filter(
+		(field) => !(field in governed),
+	);
+	const external = report.unresolved_external_fields ?? [];
+	const ungoverned = missing.filter((field) => !external.includes(field));
 	const claimBlocked =
 		report.claim_gate === "CLAIM_BLOCKED" ? (report.claim_tokens_json ?? []) : [];
-	const otherBlockers = report.approval_blockers ?? [];
-	if (!missing.length && !claimBlocked.length && !otherBlockers.length) return null;
+	const otherBlockers = (report.approval_blockers ?? []).filter(
+		(blocker) =>
+			!(claimReviewAcknowledged && blocker.startsWith("CLAIM_REVIEW_REQUIRED")),
+	);
+	if (!ungoverned.length && !external.length && !claimBlocked.length && !otherBlockers.length)
+		return null;
 	const parts: string[] = [];
-	if (missing.length)
+	if (ungoverned.length)
 		parts.push(
-			`lengkapkan ${missing.length} medan wajib yang tiada (${missing.join(", ")})`,
+			`lengkapkan ${ungoverned.length} medan wajib yang tiada (${ungoverned.join(", ")}) atau rekod ketiadaan bergoverned ("Resolve absence…")`,
+		);
+	if (external.length)
+		parts.push(
+			`medan menunggu bukti luaran masih menyekat (${external.join(", ")}) — dapatkan bukti atau tukar keputusan`,
 		);
 	if (claimBlocked.length)
 		parts.push(
 			`buang atau lembutkan perkataan claim ubatan yang disekat (${claimBlocked.join(", ")})`,
+		);
+	if (!parts.length && otherBlockers.some((b) => b.startsWith("CLAIM_REVIEW_REQUIRED")))
+		parts.push(
+			"tandakan kotak pengakuan semakan claim di bawah sebelum Approve",
 		);
 	const how = parts.length
 		? parts.join("; ")
@@ -686,8 +718,21 @@ export default function ProductIntelligenceReviewDraftPanel({
 		useState<ProductIntelligenceReviewDraftValidationResponse | null>(null);
 	const [busyAction, setBusyAction] = useState<
 		| "CREATE" | "PREPARE" | "AI_FILL" | "SAVE" | "VALIDATE" | "APPROVE" | "REJECT"
-		| "RECOMPUTE_SOURCE" | null
+		| "RECOMPUTE_SOURCE" | "DISPOSITION" | null
 	>(null);
+	// 08D governed absence: which missing field is being resolved, the chosen
+	// disposition, the mandatory note, and the second-confirmation step for
+	// NOT_APPLICABLE (an irreversible-feeling declaration deserves two clicks).
+	const [dispositionField, setDispositionField] = useState<string | null>(null);
+	const [dispositionChoice, setDispositionChoice] = useState<
+		"NOT_STATED_IN_SOURCE" | "NOT_APPLICABLE" | "REQUIRES_EXTERNAL_EVIDENCE" | ""
+	>("");
+	const [dispositionNote, setDispositionNote] = useState("");
+	const [dispositionConfirmNA, setDispositionConfirmNA] = useState(false);
+	// 08D claim acknowledgement: records that the approver READ the review-required
+	// claim set. Rendered ONLY for CLAIM_REVIEW_REQUIRED — CLAIM_BLOCKED has no
+	// acknowledgement path, by contract.
+	const [claimAck, setClaimAck] = useState(false);
 	const [aiFillResult, setAiFillResult] = useState<ProductIntelligenceAIFillResult | null>(null);
 	const [recomputeResult, setRecomputeResult] =
 		useState<ProductIntelligenceRecomputeResult | null>(null);
@@ -711,6 +756,20 @@ export default function ProductIntelligenceReviewDraftPanel({
 	const missingRequiredFields = useMemo(() => {
 		if (!activeDraft) return [...REQUIRED_FIELDS];
 		return REQUIRED_FIELDS.filter((fieldName) => !hasValue(activeDraft[fieldName]));
+	}, [activeDraft]);
+
+	const persistedDispositions = useMemo<Record<string, FieldAbsenceDisposition>>(() => {
+		const dispositions: Record<string, FieldAbsenceDisposition> = {};
+		for (const item of activeDraft?.provenance_items ?? []) {
+			const value = item.verification_status as FieldAbsenceDisposition;
+			if (
+				item.evidence_kind === "FIELD_ABSENCE_DISPOSITION" &&
+				FIELD_ABSENCE_DISPOSITIONS.has(value)
+			) {
+				dispositions[item.field_name] = value;
+			}
+		}
+		return dispositions;
 	}, [activeDraft]);
 
 	useEffect(() => {
@@ -777,6 +836,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 		setBlockerNotice(null);
 		setError(null);
 		setMessage(null);
+		setClaimAck(false);
 		if (!selectedDraftId) {
 			setActiveDraft(null);
 			setForm(null);
@@ -811,6 +871,9 @@ export default function ProductIntelligenceReviewDraftPanel({
 
 	const updateFormField = (field: keyof DraftFormState, value: string) => {
 		setForm((current) => (current ? { ...current, [field]: value } : current));
+		setValidation(null);
+		setClaimAck(false);
+		setBlockerNotice(null);
 	};
 
 	const updateProvenanceRow = (
@@ -818,6 +881,9 @@ export default function ProductIntelligenceReviewDraftPanel({
 		field: keyof DraftProvenanceFormRow,
 		value: string,
 	) => {
+		setValidation(null);
+		setClaimAck(false);
+		setBlockerNotice(null);
 		setProvenanceRows((current) =>
 			current.map((row) => {
 				if (row.key !== key) return row;
@@ -838,6 +904,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 		setActiveDraft(draft);
 		setForm(mapDraftToForm(draft));
 		setProvenanceRows(mapDraftToProvenanceRows(draft));
+		setClaimAck(false);
 	};
 
 	const handleCreateDraft = async () => {
@@ -1051,8 +1118,56 @@ export default function ProductIntelligenceReviewDraftPanel({
 		}
 	};
 
+	const handleSetDisposition = async () => {
+		if (!activeDraft || !dispositionField || !dispositionChoice) return;
+		const reviewedBy = form?.reviewed_by.trim();
+		if (!reviewedBy) {
+			setError("Reviewed By is required before recording a governed absence.");
+			return;
+		}
+		// NOT_APPLICABLE is a declaration, not a shrug: first click arms the
+		// confirmation, second click records it.
+		if (dispositionChoice === "NOT_APPLICABLE" && !dispositionConfirmNA) {
+			setDispositionConfirmNA(true);
+			return;
+		}
+		setBusyAction("DISPOSITION");
+		setError(null);
+		setMessage(null);
+		setBlockerNotice(null);
+		try {
+			const report = await setProductIntelligenceFieldDisposition(
+				activeDraft.draft_id,
+				{
+					field_name: dispositionField,
+					disposition: dispositionChoice,
+					reviewed_by: reviewedBy,
+					reviewer_note: dispositionNote.trim(),
+				},
+			);
+			setValidation(report);
+			syncDraftInList(report.draft);
+			const refreshed = await fetchProductIntelligenceReviewDraft(
+				activeDraft.draft_id,
+			);
+			syncDraftInList(refreshed);
+			setMessage(
+				`Recorded ${dispositionChoice} for ${dispositionField} (reviewer-attributed, in field provenance). Nothing was approved.`,
+			);
+			setDispositionField(null);
+			setDispositionChoice("");
+			setDispositionNote("");
+			setDispositionConfirmNA(false);
+		} catch (err) {
+			setError(formatReviewDraftError(err, "Failed to record the absence disposition"));
+		} finally {
+			setBusyAction(null);
+		}
+	};
+
 	const handleApproveDraft = async () => {
 		if (!activeDraft || !form) return;
+		const claimAckAtClick = claimAck;
 		setBusyAction("APPROVE");
 		setError(null);
 		setMessage(null);
@@ -1065,8 +1180,10 @@ export default function ProductIntelligenceReviewDraftPanel({
 			syncDraftInList(report.draft);
 			setValidation(report);
 			// Fail closed BEFORE the approve call: if the draft is not approvable,
-			// surface a clear, actionable notice instead of a raw 409 dump.
-			const blockerMsg = describeApprovalBlockers(report);
+			// surface a clear, actionable notice instead of a raw 409 dump. The
+			// acknowledgement clears ONLY a review-required claim blocker (08D);
+			// CLAIM_BLOCKED and missing/unresolved fields still stop here.
+			const blockerMsg = describeApprovalBlockers(report, claimAckAtClick);
 			if (blockerMsg) {
 				setBlockerNotice(blockerMsg);
 				return;
@@ -1076,6 +1193,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 				{
 					approved_by: form.reviewed_by.trim() || "operator",
 					approval_note: form.reviewer_note.trim() || null,
+					claim_review_acknowledged: claimAckAtClick,
 				},
 			);
 			const refreshedDraft = await fetchProductIntelligenceReviewDraft(
@@ -1674,14 +1792,175 @@ export default function ProductIntelligenceReviewDraftPanel({
 							<div className="grid gap-4 xl:grid-cols-2">
 								<div className="rounded border border-slate-800 bg-slate-900/50 p-3">
 									<SectionHeading title="Missing Required Fields" />
-									<div className="mt-3 flex flex-wrap gap-2">
+									<div className="mt-3 space-y-2">
 										{missingRequiredFields.length > 0 ? (
-											missingRequiredFields.map((field) => (
-												<Badge key={field} label={field} />
-											))
+											missingRequiredFields.map((field) => {
+												const persistedDisposition =
+													persistedDispositions[field];
+												const governed =
+													validation?.governed_absent_fields?.[field] ??
+													(persistedDisposition === "NOT_STATED_IN_SOURCE" ||
+													persistedDisposition === "NOT_APPLICABLE"
+														? persistedDisposition
+														: undefined);
+												const options =
+													validation?.disposition_options?.[field] ?? [];
+												const isExternal =
+													validation?.unresolved_external_fields?.includes(field) ||
+													persistedDisposition === "REQUIRES_EXTERNAL_EVIDENCE";
+												return (
+													<div
+														key={field}
+														className="flex flex-wrap items-center gap-2"
+														data-testid={`missing-field-${field}`}
+													>
+														<Badge label={field} />
+														{governed ? (
+															<span
+																data-testid={`disposition-badge-${field}`}
+																className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-200"
+															>
+																{governed}
+															</span>
+														) : isExternal ? (
+															<span
+																data-testid={`disposition-badge-${field}`}
+																className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200"
+															>
+																REQUIRES_EXTERNAL_EVIDENCE — still blocking
+															</span>
+														) : options.length > 0 ? (
+															<button
+																type="button"
+																data-testid={`resolve-absence-${field}`}
+																onClick={() => {
+																	setDispositionField(field);
+																	setDispositionChoice("");
+																	setDispositionNote("");
+																	setDispositionConfirmNA(false);
+																}}
+																className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold text-sky-200"
+															>
+																Resolve absence…
+															</button>
+														) : (
+															<span className="text-[10px] text-slate-500">
+																value required — no governed absence permitted
+															</span>
+														)}
+													</div>
+												);
+											})
 										) : (
 											<div className="text-[11px] text-emerald-200">
 												All required fields are populated.
+											</div>
+										)}
+										{dispositionField && (
+											<div
+												data-testid="disposition-form"
+												className="mt-2 space-y-2 rounded border border-sky-500/30 bg-sky-500/5 p-3 text-[11px] text-slate-200"
+											>
+												<p className="font-semibold text-sky-100">
+													Resolve absence — {dispositionField}
+												</p>
+												<p className="text-slate-400">
+													This records a reviewed decision in field provenance. It
+													never writes a placeholder into the field itself.
+												</p>
+												<div className="space-y-1">
+													{(validation?.disposition_options?.[dispositionField] ?? []).map(
+														(option) => (
+															<label key={option} className="flex items-start gap-2">
+																<input
+																	type="radio"
+																	name="absence-disposition"
+																	data-testid={`disposition-option-${option}`}
+																	checked={dispositionChoice === option}
+																	onChange={() => {
+																		setDispositionChoice(option);
+																		setDispositionConfirmNA(false);
+																	}}
+																/>
+																<span>
+																	<span className="font-semibold">{option}</span>
+																	<span className="block text-[10px] text-slate-400">
+																		{option === "NOT_STATED_IN_SOURCE"
+																			? "The inspected source omits this fact. Unblocks approval; the snapshot is classified APPROVED WITH GOVERNED ABSENCE, never fully complete."
+																			: option === "NOT_APPLICABLE"
+																				? "This fact does not exist for this product type (category-checked server-side). Requires a second confirmation."
+																				: "Documented as unresolved — approval STAYS blocked until real evidence arrives."}
+																	</span>
+																</span>
+															</label>
+														),
+													)}
+													{!(
+														validation?.disposition_options?.[dispositionField] ?? []
+													).includes("NOT_APPLICABLE") && (
+														<p
+															data-testid="disposition-na-disabled"
+															className="text-[10px] text-amber-200/80"
+														>
+															“Not applicable” is disabled: this product’s category is
+															risk-strict, so absence can only be documented as
+															not-stated or pending external evidence.
+														</p>
+													)}
+												</div>
+												<textarea
+													data-testid="disposition-note"
+													value={dispositionNote}
+													onChange={(event) => setDispositionNote(event.target.value)}
+													placeholder="Mandatory reviewer note — why is this decision correct?"
+													className="h-16 w-full rounded border border-slate-700 bg-slate-950 p-2 text-[11px]"
+												/>
+												{dispositionConfirmNA && (
+													<p
+														data-testid="disposition-na-confirm"
+														className="rounded border border-amber-500/40 bg-amber-500/10 p-2 text-amber-100"
+													>
+														Confirm: you are declaring this field DOES NOT APPLY to
+														this product — not merely missing. Press the button again
+														to record it.
+													</p>
+												)}
+												<div className="flex gap-2">
+													<button
+														type="button"
+														data-testid="disposition-submit"
+														disabled={
+															busyAction !== null ||
+															!form?.reviewed_by.trim() ||
+															!dispositionChoice ||
+															dispositionNote.trim().length < 5
+														}
+														onClick={handleSetDisposition}
+														className="rounded border border-sky-500/40 bg-sky-500/10 px-3 py-1.5 text-[11px] font-semibold text-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
+													>
+														{busyAction === "DISPOSITION"
+															? "Recording…"
+															: dispositionChoice === "NOT_APPLICABLE" &&
+																	!dispositionConfirmNA
+																? "Record decision (confirm next)"
+																: "Record decision"}
+													</button>
+													{!form?.reviewed_by.trim() && (
+														<span
+															data-testid="disposition-reviewer-required"
+															className="self-center text-[10px] text-amber-200"
+														>
+															Enter Reviewed By before recording.
+														</span>
+													)}
+													<button
+														type="button"
+														onClick={() => setDispositionField(null)}
+														className="rounded border border-slate-700 px-3 py-1.5 text-[11px] text-slate-300"
+													>
+														Cancel
+													</button>
+												</div>
 											</div>
 										)}
 									</div>
@@ -1708,6 +1987,34 @@ export default function ProductIntelligenceReviewDraftPanel({
 												)}
 											</div>
 										</div>
+										{validation?.claim_gate === "CLAIM_REVIEW_REQUIRED" && (
+											<label
+												className="flex items-start gap-2 rounded border border-amber-500/30 bg-amber-500/5 p-2"
+												data-testid="claim-ack-row"
+											>
+												<input
+													type="checkbox"
+													data-testid="claim-ack-checkbox"
+													checked={claimAck}
+													onChange={(event) => setClaimAck(event.target.checked)}
+												/>
+												<span className="text-[11px] text-amber-100">
+													Saya telah menyemak token claim di atas dalam konteks
+													produk ini dan mengesahkan ia BUKAN claim perubatan.
+													Pengakuan ini direkodkan bersama approval.
+												</span>
+											</label>
+										)}
+										{validation?.claim_gate === "CLAIM_BLOCKED" && (
+											<p
+												data-testid="claim-blocked-absolute"
+												className="rounded border border-red-500/30 bg-red-500/10 p-2 text-[11px] text-red-100"
+											>
+												CLAIM_BLOCKED adalah mutlak — tiada pengakuan atau bypass.
+												Buang atau lembutkan perkataan yang disekat, Save, dan
+												Validate semula.
+											</p>
+										)}
 										<div>
 											<div className="mb-1 font-semibold text-slate-400">
 												Approval Blockers

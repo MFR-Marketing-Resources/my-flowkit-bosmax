@@ -6,6 +6,7 @@ from agent.models.product_intelligence import ProductIntelligenceResolveRequest
 from agent.models.product_intelligence_review_draft import (
     ProductIntelligenceAIFillRequest,
     ProductIntelligenceAIFillResult,
+    ProductIntelligenceFieldDispositionRequest,
     ProductIntelligenceReviewDraftApproveRequest,
     ProductIntelligenceReviewDraftRejectRequest,
     ProductIntelligenceReviewDraftUpdateRequest,
@@ -136,6 +137,40 @@ async def product_intelligence_review_draft_ai_fill_missing(
         raise
 
 
+@router.post("/review-drafts/{draft_id}/field-dispositions")
+async def product_intelligence_review_draft_field_disposition(
+    draft_id: str,
+    request: ProductIntelligenceFieldDispositionRequest,
+) -> dict:
+    """Record ONE governed absence disposition (Mission-08D).
+
+    NOT_STATED_IN_SOURCE / NOT_APPLICABLE / REQUIRES_EXTERNAL_EVIDENCE, stored as a
+    reviewer-attributed provenance row on the OPEN draft — never as a placeholder in the
+    value column. Upsert semantics: a retry or changed decision updates the single
+    governing row. Returns the same validation payload as /validate so the UI sees the
+    effect immediately. 422 = the request itself is illegal (ineligible field, missing
+    note/reviewer, category forbids NOT_APPLICABLE); 409 = the draft's state refuses it
+    (terminal draft, field already has a value).
+    """
+    from agent.services.product_intelligence_review_draft_service import (
+        set_field_disposition,
+    )
+
+    try:
+        return (await set_field_disposition(draft_id, request)).model_dump()
+    except ValueError as exc:
+        code = str(exc)
+        if code == "DRAFT_NOT_FOUND":
+            raise HTTPException(status_code=404, detail=code) from exc
+        if code.startswith(("DRAFT_DISPOSITION_FORBIDDEN:", "FIELD_HAS_VALUE:")):
+            raise HTTPException(status_code=409, detail=code) from exc
+        if code.startswith(("FIELD_NOT_DISPOSITION_ELIGIBLE:",
+                            "NOT_APPLICABLE_FORBIDDEN_FOR_CATEGORY:")) or code in (
+                "REVIEWER_REQUIRED", "REVIEWER_NOTE_REQUIRED"):
+            raise HTTPException(status_code=422, detail=code) from exc
+        raise
+
+
 @router.post("/review-drafts/{draft_id}/approve")
 async def product_intelligence_review_draft_approve(
     draft_id: str,
@@ -147,7 +182,9 @@ async def product_intelligence_review_draft_approve(
         code = str(exc)
         if code in {"DRAFT_NOT_FOUND", "PRODUCT_NOT_FOUND"}:
             raise HTTPException(status_code=404, detail=code) from exc
-        if code in {"DRAFT_ALREADY_APPROVED", "DRAFT_ALREADY_REJECTED"}:
+        if code in {"DRAFT_ALREADY_APPROVED", "DRAFT_ALREADY_REJECTED"} or code.startswith(
+            "DRAFT_UPDATE_FORBIDDEN:"
+        ):
             raise HTTPException(status_code=409, detail=code) from exc
         if code.startswith("DRAFT_NOT_APPROVABLE:"):
             raise HTTPException(status_code=409, detail=code) from exc
@@ -165,7 +202,9 @@ async def product_intelligence_review_draft_reject(
         code = str(exc)
         if code == "DRAFT_NOT_FOUND":
             raise HTTPException(status_code=404, detail=code) from exc
-        if code in {"DRAFT_ALREADY_APPROVED", "DRAFT_ALREADY_REJECTED"}:
+        if code in {"DRAFT_ALREADY_APPROVED", "DRAFT_ALREADY_REJECTED"} or code.startswith(
+            "DRAFT_UPDATE_FORBIDDEN:"
+        ):
             raise HTTPException(status_code=409, detail=code) from exc
         raise
 

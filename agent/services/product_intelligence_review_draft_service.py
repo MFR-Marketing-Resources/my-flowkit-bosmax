@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
@@ -9,6 +10,7 @@ from uuid import uuid4
 from agent.db import crud
 from agent.db.schema import _db_lock, get_db
 from agent.models.product_intelligence_review_draft import (
+    ProductIntelligenceFieldDispositionRequest,
     ProductIntelligenceReviewDraft,
     ProductIntelligenceReviewDraftApproveRequest,
     ProductIntelligenceReviewDraftCreateRequest,
@@ -24,6 +26,9 @@ from agent.models.product_intelligence_snapshot import ProductIntelligenceSnapsh
 from agent.services import copy_angle_derivation
 from agent.services.product_intelligence_claim_safety_service import (
     evaluate_claim_safety,
+)
+from agent.services.product_intelligence_draft_lifecycle import (
+    TERMINAL_REVIEW_STATUSES,
 )
 
 
@@ -58,6 +63,9 @@ COPY_GROUNDING_REQUIRED_FIELDS = (
     "benefits_json",
     "usp_json",
     "target_customer_text",
+    # The copy-specific incomplete-knowledge mechanism may relax product knowledge,
+    # never the explicit boundary that says which claims the copy may make.
+    "allowed_claims_json",
     "buyer_persona_snapshot_json",
     "copy_strategy_summary_json",
     "claim_gate",
@@ -134,7 +142,100 @@ MEANINGFUL_CONTENT_FIELDS = (
     "buyer_persona_snapshot_json",
     "copy_strategy_summary_json",
 )
-TERMINAL_STATUSES = {"APPROVED", "REJECTED"}
+# One lifecycle authority. SUPERSEDED is terminal evidence, not an open draft that may
+# be edited, dispositioned, rejected, approved, or reused by angle expansion.
+TERMINAL_STATUSES = TERMINAL_REVIEW_STATUSES
+
+# ── Mission-08D: governed field absence ──────────────────────────────────────
+# A required field the source genuinely does not state must not deadlock approval
+# forever — and it must not be "fixed" by typing N/A into the value column, which every
+# downstream reader (claim scan, copy grounding, KPI) would mistake for real knowledge.
+# The governed answer is a field-scoped provenance row on the CURRENT draft:
+#   evidence_kind = FIELD_ABSENCE_DISPOSITION
+#   verification_status = the disposition itself
+#   reviewer_decision / reviewer_note / timestamps = the accountability trail
+# Provenance rows already survive draft saves (they round-trip through
+# `provenance_items`) and are copied into the snapshot at approval, so the decision has
+# lineage for free — no schema change, no new table.
+DISPOSITION_EVIDENCE_KIND = "FIELD_ABSENCE_DISPOSITION"
+DISPOSITION_NOT_STATED = "NOT_STATED_IN_SOURCE"
+DISPOSITION_NOT_APPLICABLE = "NOT_APPLICABLE"
+DISPOSITION_EXTERNAL = "REQUIRES_EXTERNAL_EVIDENCE"
+FIELD_ABSENCE_DISPOSITIONS = (
+    DISPOSITION_NOT_STATED, DISPOSITION_NOT_APPLICABLE, DISPOSITION_EXTERNAL,
+)
+# Only product-KNOWLEDGE requirements may be dispositioned. Copy-critical fields stay
+# hard-required (they are what copy grounds on), and `allowed_claims_json` is locked by
+# owner decision: a claims boundary is authored by a reviewer, never waived as absent.
+DISPOSITION_ELIGIBLE_FIELDS = ("ingredients_text", "warnings_text", "usage_text")
+
+# The readiness a draft/snapshot carries when every remaining required-field gap is
+# covered by a valid disposition. Deliberately a DIFFERENT value from
+# READY_FOR_APPROVAL: reporting must be able to tell "complete" from "governed absence"
+# forever, including inside the frozen snapshot.
+READINESS_GOVERNED_ABSENCE = "READY_WITH_GOVERNED_ABSENCE"
+
+# Category matrix for NOT_APPLICABLE, fail-closed. NA is allowed ONLY when the
+# product's category clearly matches a reviewer-confirmable family; every unknown,
+# empty, chemical-bearing, ingestible, child-related or body-contact category stays
+# strict (NA rejected server-side; NOT_STATED_IN_SOURCE remains available there
+# because documenting absence is always truthful).
+_NA_CONFIRMABLE_CATEGORY_RE = re.compile(
+    r"(?i)\b(?:apparel|clothing|textile|fashion|jersi|jersey|muslimah|stationery|"
+    r"office|gift|kad|card|bag|luggage|electronic|gadget|phone|computer|"
+    r"tools?|equipment|hardware|furniture|decoration|ornament)\b")
+# Explicit strict override: if any of these appear, NA is refused even when a
+# confirmable word also matches ("children's apparel", "toy tool set").
+_NA_STRICT_OVERRIDE_RE = re.compile(
+    r"(?i)\b(?:food|beverages?|supplements?|vitamins?|ingest\w*|edibles?|snacks?|beauty|"
+    r"skincare|cosmetics?|personal\s*care|wellness|herbals?|health|medic(?:al|ine)?|"
+    r"pharma|baby|infants?|kids?|child(?:ren)?|toys?|chemical|cleaner|cleaning|coating|"
+    r"detergent|pesticide|automotive|motorcycle|home\s*supplies)\b")
+
+
+def na_allowed_for_category(category: str | None) -> bool:
+    text = str(category or "").strip()
+    if not text:
+        return False  # unknown category -> strict
+    if _NA_STRICT_OVERRIDE_RE.search(text):
+        return False
+    return bool(_NA_CONFIRMABLE_CATEGORY_RE.search(text))
+
+
+# Placeholder strings must never masquerade as product knowledge. This guards the
+# REQUIRED-field check only (a description legitimately containing "N/A" mid-sentence is
+# untouched — the guard fires only when the WHOLE value is a placeholder token).
+_PLACEHOLDER_TOKENS = frozenset({
+    "n/a", "na", "n.a.", "none", "nil", "-", "--", "tbd", "unknown", "not available",
+    "not_available", "not stated", "not_stated", "not_stated_in_source",
+    "not applicable", "not_applicable", "requires_external_evidence", "tiada",
+    "tidak dinyatakan", "tidak berkenaan",
+})
+
+
+def _is_placeholder(value: Any) -> bool:
+    return isinstance(value, str) and value.strip().casefold() in _PLACEHOLDER_TOKENS
+
+
+def _required_field_present(value: Any) -> bool:
+    return _has_value(value) and not _is_placeholder(value)
+
+
+def _dispositions_from_items(items: Any) -> dict[str, dict[str, Any]]:
+    """field_name -> the disposition row (as attribute-bag/dict), latest wins."""
+    out: dict[str, dict[str, Any]] = {}
+    for item in items or []:
+        kind = getattr(item, "evidence_kind", None) or (
+            item.get("evidence_kind") if isinstance(item, dict) else None)
+        if kind != DISPOSITION_EVIDENCE_KIND:
+            continue
+        get = item.get if isinstance(item, dict) else lambda k, _i=item: getattr(_i, k, None)
+        out[str(get("field_name"))] = {
+            "disposition": str(get("verification_status") or ""),
+            "reviewed_by": get("reviewer_decision"),
+            "reviewer_note": get("reviewer_note"),
+        }
+    return out
 
 
 def _now_iso() -> str:
@@ -472,8 +573,9 @@ def _claim_floor(product: dict[str, Any] | None) -> tuple[str, str]:
 def _evaluate_validation_payload(
     payload: dict[str, Any],
     product: dict[str, Any] | None = None,
+    dispositions: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    claim = evaluate_claim_safety(payload)
+    claim = evaluate_claim_safety(payload, product=product)
     payload.update(claim)
 
     floor_gate, floor_risk = _claim_floor(product)
@@ -481,29 +583,85 @@ def _evaluate_validation_payload(
         payload["claim_gate"] = floor_gate
     if _RISK_ORDER.get(str(payload.get("claim_risk_level") or "LOW"), 0) < _RISK_ORDER[floor_risk]:
         payload["claim_risk_level"] = floor_risk
+    # `_required_field_present`, not `_has_value`: a whole-value placeholder string
+    # ("N/A", "NOT_AVAILABLE", "-") is MISSING knowledge, not present knowledge. The
+    # governed way to record absence is a disposition, never a magic value.
     missing_required_fields = [
-        field_name for field_name in REQUIRED_FIELDS if not _has_value(payload.get(field_name))
+        field_name for field_name in REQUIRED_FIELDS
+        if not _required_field_present(payload.get(field_name))
     ]
     present_required_fields = [
         field_name for field_name in REQUIRED_FIELDS if field_name not in missing_required_fields
     ]
+    # Completeness stays TRUTHFUL: a governed absence never counts as presence.
     completeness_score = round(
         len(present_required_fields) / len(REQUIRED_FIELDS),
         4,
     )
+
+    # Partition the missing set by disposition. Only DISPOSITION_ELIGIBLE_FIELDS may be
+    # governed at all; NOT_APPLICABLE is additionally re-checked against the category
+    # matrix HERE (not only at write time) so a product recategorised after the
+    # disposition was recorded fails closed instead of keeping a now-illegal waiver.
+    dispositions = dispositions or {}
+    category = (product or {}).get("category")
+    governed_absent_fields: dict[str, str] = {}
+    unresolved_external_fields: list[str] = []
+    for field_name in missing_required_fields:
+        row = dispositions.get(field_name)
+        if not row or field_name not in DISPOSITION_ELIGIBLE_FIELDS:
+            continue
+        disposition = str(row.get("disposition") or "")
+        if disposition == DISPOSITION_NOT_STATED:
+            governed_absent_fields[field_name] = disposition
+        elif disposition == DISPOSITION_NOT_APPLICABLE and na_allowed_for_category(category):
+            governed_absent_fields[field_name] = disposition
+        elif disposition == DISPOSITION_EXTERNAL:
+            unresolved_external_fields.append(field_name)
+    ungoverned_missing = [
+        field_name for field_name in missing_required_fields
+        if field_name not in governed_absent_fields
+        and field_name not in unresolved_external_fields
+    ]
+
+    # Which dispositions COULD govern each still-ungoverned eligible field — the server
+    # is the single authority; the UI renders exactly this, disabled reasons included.
+    disposition_options = {
+        field_name: (
+            [DISPOSITION_NOT_STATED]
+            + ([DISPOSITION_NOT_APPLICABLE] if na_allowed_for_category(category) else [])
+            + [DISPOSITION_EXTERNAL]
+        )
+        for field_name in missing_required_fields
+        if field_name in DISPOSITION_ELIGIBLE_FIELDS
+    }
+
     approval_blockers: list[str] = []
     readiness_status = "READY_FOR_APPROVAL"
-    if missing_required_fields:
+    if governed_absent_fields:
+        readiness_status = READINESS_GOVERNED_ABSENCE
+    if ungoverned_missing:
         readiness_status = "MISSING_REQUIRED_FIELDS"
         approval_blockers.append(
-            f"MISSING_REQUIRED_FIELDS:{','.join(missing_required_fields)}",
+            f"MISSING_REQUIRED_FIELDS:{','.join(ungoverned_missing)}",
+        )
+    if unresolved_external_fields:
+        # Documented-but-unresolved is still BLOCKING — that is the whole meaning of
+        # REQUIRES_EXTERNAL_EVIDENCE. Its own prefix so no relaxation path (which strips
+        # MISSING_REQUIRED_FIELDS only) can ever clear it.
+        if readiness_status != "MISSING_REQUIRED_FIELDS":
+            readiness_status = "MISSING_REQUIRED_FIELDS"
+        approval_blockers.append(
+            f"REQUIRES_EXTERNAL_EVIDENCE:{','.join(unresolved_external_fields)}",
         )
     if payload["claim_gate"] == "CLAIM_BLOCKED":
         readiness_status = "CLAIM_BLOCKED"
         approval_blockers.append(
             f"CLAIM_BLOCKED:{','.join(payload['claim_tokens_json']) or 'UNSPECIFIED'}",
         )
-    elif payload["claim_gate"] == "CLAIM_REVIEW_REQUIRED" and readiness_status == "READY_FOR_APPROVAL":
+    elif payload["claim_gate"] == "CLAIM_REVIEW_REQUIRED" and readiness_status in (
+        "READY_FOR_APPROVAL", READINESS_GOVERNED_ABSENCE,
+    ):
         readiness_status = "CLAIM_REVIEW_REQUIRED"
         approval_blockers.append(
             f"CLAIM_REVIEW_REQUIRED:{','.join(payload['claim_tokens_json']) or 'UNSPECIFIED'}",
@@ -521,6 +679,9 @@ def _evaluate_validation_payload(
         "allowed_claims_json": payload["allowed_claims_json"],
         "blocked_claims_json": payload["blocked_claims_json"],
         "approval_blockers": approval_blockers,
+        "governed_absent_fields": governed_absent_fields,
+        "unresolved_external_fields": unresolved_external_fields,
+        "disposition_options": disposition_options,
     }
 
 
@@ -533,7 +694,10 @@ def _derive_review_status(
         return current_status  # type: ignore[return-value]
     if not any(_has_value(payload.get(field_name)) for field_name in MEANINGFUL_CONTENT_FIELDS):
         return "DRAFT"
-    if payload.get("readiness_status") == "READY_FOR_APPROVAL":
+    # Governed absence IS reviewable: every gap is either filled or carries a
+    # reviewer-attributed disposition, so the draft is ready for human review exactly
+    # like a fully complete one (the DISTINCT readiness value keeps them tellable).
+    if payload.get("readiness_status") in ("READY_FOR_APPROVAL", READINESS_GOVERNED_ABSENCE):
         return "READY_FOR_REVIEW"
     return "NEEDS_REVISION"
 
@@ -584,7 +748,9 @@ async def create_review_draft(
     payload.update(request.model_dump(exclude_unset=True))
     payload = _normalize_mutation_payload(payload)
     payload = _apply_derived_angles(payload)
-    validation = _evaluate_validation_payload(payload, product)
+    validation = _evaluate_validation_payload(
+        payload, product,
+        dispositions=_dispositions_from_items(request.provenance_items))
     review_status = _derive_review_status(payload, current_status=None)
     row = await crud.create_product_intelligence_review_draft(
         product_id=product_id,
@@ -669,7 +835,15 @@ async def update_review_draft(
     payload = _normalize_mutation_payload(payload)
     payload = _apply_derived_angles(payload)
     product = await crud.get_product(existing.product_id)
-    validation = _evaluate_validation_payload(payload, product)
+    # Dispositions live on the draft's provenance; an update that does not touch
+    # provenance must still validate WITH them, or every Save would flip a governed
+    # draft back to MISSING_REQUIRED_FIELDS.
+    incoming_items = request.provenance_items if "provenance_items" in request.model_fields_set else None
+    stored_items = await _load_provenance_for_draft(draft_id)
+    validation = _evaluate_validation_payload(
+        payload, product,
+        dispositions=_dispositions_from_items(
+            incoming_items if incoming_items is not None else stored_items))
     review_status = _derive_review_status(payload, current_status=existing.review_status)
     await crud.update_product_intelligence_review_draft(
         draft_id,
@@ -737,6 +911,7 @@ async def validate_review_draft(
         validation = _evaluate_validation_payload(
             draft.model_dump(exclude={"draft_id", "product_id", "created_at", "updated_at", "provenance_items"}),
             product,
+            dispositions=_dispositions_from_items(draft.provenance_items),
         )
         return ProductIntelligenceReviewDraftValidationResponse(
             draft=draft,
@@ -759,8 +934,89 @@ async def validate_review_draft(
     validation = _evaluate_validation_payload(
         updated.model_dump(exclude={"draft_id", "product_id", "created_at", "updated_at", "provenance_items"}),
         product,
+        dispositions=_dispositions_from_items(updated.provenance_items),
     )
     return ProductIntelligenceReviewDraftValidationResponse(draft=updated, **validation)
+
+
+async def set_field_disposition(
+    draft_id: str,
+    request: "ProductIntelligenceFieldDispositionRequest",
+) -> ProductIntelligenceReviewDraftValidationResponse:
+    """Record one reviewer-attributed absence disposition on the CURRENT draft.
+
+    Upsert by (draft_id, field_name, FIELD_ABSENCE_DISPOSITION): a retry or a changed
+    decision UPDATES the single governing row — never a duplicate, and never touching
+    any other provenance. Every rule here fails closed with a typed ValueError the API
+    maps to a status the UI can explain.
+    """
+    draft = await get_review_draft_by_id(draft_id)
+    if not draft:
+        raise ValueError("DRAFT_NOT_FOUND")
+    if draft.review_status in TERMINAL_STATUSES:
+        # A terminal draft's provenance is part of an approved/rejected record;
+        # governing absence happens on the OPEN draft only.
+        raise ValueError(f"DRAFT_DISPOSITION_FORBIDDEN:{draft.review_status}")
+    field_name = request.field_name.strip()
+    if field_name not in DISPOSITION_ELIGIBLE_FIELDS:
+        # Copy-critical fields and allowed_claims_json are hard requirements by owner
+        # decision — there is no governed way to declare them absent.
+        raise ValueError(f"FIELD_NOT_DISPOSITION_ELIGIBLE:{field_name}")
+    if _required_field_present(getattr(draft, field_name, None)):
+        # "This field has a value AND the source doesn't state it" is a contradiction;
+        # clear the value first if the evidence is wrong.
+        raise ValueError(f"FIELD_HAS_VALUE:{field_name}")
+    reviewed_by = request.reviewed_by.strip()
+    if not reviewed_by:
+        raise ValueError("REVIEWER_REQUIRED")
+    note = request.reviewer_note.strip()
+    if len(note) < 5:
+        # The note is the accountability record; "x" is not a rationale.
+        raise ValueError("REVIEWER_NOTE_REQUIRED")
+    product = await crud.get_product(draft.product_id)
+    if (request.disposition == DISPOSITION_NOT_APPLICABLE
+            and not na_allowed_for_category((product or {}).get("category"))):
+        raise ValueError(
+            "NOT_APPLICABLE_FORBIDDEN_FOR_CATEGORY:"
+            f"{(product or {}).get('category') or 'UNKNOWN'}")
+
+    now = _now_iso()
+    db = await get_db()
+    async with _db_lock:
+        cursor = await db.execute(
+            "SELECT review_provenance_id FROM product_intelligence_review_field_provenance "
+            "WHERE draft_id=? AND field_name=? AND evidence_kind=?",
+            (draft_id, field_name, DISPOSITION_EVIDENCE_KIND),
+        )
+        existing = await cursor.fetchone()
+        await cursor.close()
+        if existing:
+            await db.execute(
+                "UPDATE product_intelligence_review_field_provenance "
+                "SET verification_status=?, reviewer_decision=?, reviewer_note=?, updated_at=? "
+                "WHERE review_provenance_id=?",
+                (request.disposition, reviewed_by, note, now,
+                 str(existing["review_provenance_id"])),
+            )
+        else:
+            await db.execute(
+                "INSERT INTO product_intelligence_review_field_provenance ("
+                " review_provenance_id, draft_id, product_id, field_name, declared_value,"
+                " normalized_value, source_type, source_url, source_lane, evidence_kind,"
+                " extraction_method, confidence_score, verification_status,"
+                " claim_risk_flag, reviewer_decision, reviewer_note, created_at, updated_at"
+                ") VALUES (?,?,?,?,NULL,NULL,?,NULL,?,?,?,NULL,?,NULL,?,?,?,?)",
+                (str(uuid4()), draft_id, draft.product_id, field_name,
+                 "REVIEWER_DISPOSITION", "PRODUCTS_GOVERNED_ABSENCE",
+                 DISPOSITION_EVIDENCE_KIND, "MANUAL_REVIEW",
+                 request.disposition, reviewed_by, note, now, now),
+            )
+        await db.commit()
+
+    # Re-validate so the STORED readiness reflects the new disposition immediately —
+    # the response is the same shape the Validate button returns, so the UI needs no
+    # second call to know what changed.
+    return await validate_review_draft(draft_id)
 
 
 async def reject_review_draft(
@@ -774,6 +1030,8 @@ async def reject_review_draft(
         raise ValueError("DRAFT_ALREADY_APPROVED")
     if draft.review_status == "REJECTED":
         raise ValueError("DRAFT_ALREADY_REJECTED")
+    if draft.review_status in TERMINAL_STATUSES:
+        raise ValueError(f"DRAFT_UPDATE_FORBIDDEN:{draft.review_status}")
     rejected_by = (request.rejected_by or draft.reviewed_by or "operator").strip()
     await crud.update_product_intelligence_review_draft(
         draft_id,
@@ -822,6 +1080,8 @@ async def approve_review_draft(
         raise ValueError("DRAFT_ALREADY_APPROVED")
     if draft.review_status == "REJECTED":
         raise ValueError("DRAFT_ALREADY_REJECTED")
+    if draft.review_status in TERMINAL_STATUSES:
+        raise ValueError(f"DRAFT_UPDATE_FORBIDDEN:{draft.review_status}")
     validation = await validate_review_draft(draft_id)
     blockers = list(validation.approval_blockers or [])
     # CLAIM_REVIEW_REQUIRED asks for human eyes on the claim set; it is
@@ -877,6 +1137,15 @@ async def approve_review_draft(
     approved_by = (request.approved_by or draft.reviewed_by or draft.created_by or "operator").strip()
     approval_note = request.approval_note if request.approval_note is not None else draft.reviewer_note
     now = _now_iso()
+    if request.claim_review_acknowledged and validation.claim_gate == "CLAIM_REVIEW_REQUIRED":
+        acknowledgement = (
+            "CLAIM_REVIEW_ACKNOWLEDGED: "
+            f"{approved_by} acknowledged {','.join(validation.claim_tokens_json or []) or 'UNSPECIFIED'} "
+            f"at {now}"
+        )
+        approval_note = "\n".join(
+            part for part in (str(approval_note or "").strip(), acknowledgement) if part
+        )
     db = await get_db()
     snapshot_id = str(uuid4())
     async with _db_lock:
@@ -947,8 +1216,13 @@ async def approve_review_draft(
                 json.dumps(draft.buyer_persona_snapshot_json),
                 json.dumps(draft.copy_strategy_summary_json),
                 draft.confidence_score,
-                draft.completeness_score,
-                draft.readiness_status,
+                # From the JUST-COMPUTED validation, not the draft row: the draft object
+                # here was fetched BEFORE validate refreshed it, and a stale readiness
+                # is exactly how 318 historical snapshots froze MISSING_REQUIRED_FIELDS
+                # while claiming approval. The frozen value is the classification
+                # authority (FULLY_COMPLETE vs READY_WITH_GOVERNED_ABSENCE) forever.
+                validation.completeness_score,
+                validation.readiness_status,
                 draft.draft_id,
                 draft.created_by,
                 approved_by,
@@ -995,7 +1269,12 @@ async def approve_review_draft(
                     item["evidence_kind"],
                     item["extraction_method"],
                     item.get("confidence_score"),
-                    "REVIEWED_APPROVED",
+                    # A governed disposition is the immutable semantic value. Replacing
+                    # it with REVIEWED_APPROVED destroys which absence was approved and
+                    # makes the snapshot depend on the mutable review-draft table.
+                    (item.get("verification_status")
+                     if item.get("evidence_kind") == DISPOSITION_EVIDENCE_KIND
+                     else "REVIEWED_APPROVED"),
                     item.get("claim_risk_flag"),
                     item.get("reviewer_decision") or "APPROVED",
                     item.get("reviewer_note") or approval_note,

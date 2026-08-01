@@ -7,6 +7,7 @@ from agent.models.product_intelligence_review_draft import (
     ProductIntelligenceReviewDraftApproveRequest,
     ProductIntelligenceReviewDraftCreateRequest,
     ProductIntelligenceReviewDraftRejectRequest,
+    ProductIntelligenceReviewDraftUpdateRequest,
 )
 
 
@@ -270,14 +271,15 @@ async def test_claim_review_required_draft_cannot_be_approved_without_override()
 
 # ── allow_incomplete_product_knowledge: approve for COPY grounding ────────────
 def _copy_ready_request(**kw) -> ProductIntelligenceReviewDraftCreateRequest:
-    """Every COPY-critical field present (persona/angles/benefits/usp/desc/audience)
-    but NO product-knowledge fields (usage/ingredients/warnings/allowed_claims) —
+    """Every COPY-critical field present, including the non-waivable claim boundary,
+    but no optional product-knowledge fields (usage/ingredients/warnings) —
     exactly the shape the COPYWRITING HUB bulk importer produces."""
     base = {
         "product_description": "Pocket perfume with a long-lasting floral scent.",
         "benefits_json": ["tahan lama sepanjang hari", "wangian floral"],
         "usp_json": ["floral amber notes", "gift box"],
         "target_customer_text": "Wanita 18-40 yang mahu wangian tahan lama.",
+        "allowed_claims_json": ["portable daily carry"],
         "buyer_persona_snapshot_json": {
             "audience": "wanita 18-40",
             "pains": ["wangi cepat hilang", "susah cari hadiah"],
@@ -297,7 +299,7 @@ async def test_allow_incomplete_product_knowledge_approves_copy_ready_draft():
         product_display_name="Copy Ready Perfume",
     )
     draft = await svc.create_review_draft(product["id"], _copy_ready_request())
-    # Missing usage/ingredients/warnings/allowed_claims -> strict approve blocks.
+    # Missing usage/ingredients/warnings -> strict approve blocks.
     with pytest.raises(ValueError, match="MISSING_REQUIRED_FIELDS"):
         await svc.approve_review_draft(
             draft.draft_id,
@@ -312,6 +314,30 @@ async def test_allow_incomplete_product_knowledge_approves_copy_ready_draft():
     )
     assert approved.status == "APPROVED"
     assert approved.created_from_review_draft_id == draft.draft_id
+
+@pytest.mark.asyncio
+async def test_allow_incomplete_never_waives_empty_allowed_claims():
+    product = await crud.create_product(
+        raw_product_title="Copy Missing Claim Boundary",
+        source="MANUAL",
+        product_display_name="Copy Missing Claim Boundary",
+    )
+    draft = await svc.create_review_draft(
+        product["id"],
+        _copy_ready_request(allowed_claims_json=[]),
+    )
+    with pytest.raises(
+        ValueError,
+        match="MISSING_COPY_CRITICAL_FIELDS:allowed_claims_json",
+    ):
+        await svc.approve_review_draft(
+            draft.draft_id,
+            ProductIntelligenceReviewDraftApproveRequest(
+                approved_by="op",
+                allow_incomplete_product_knowledge=True,
+            ),
+        )
+
 
 
 @pytest.mark.asyncio
@@ -389,6 +415,9 @@ async def test_allow_incomplete_does_not_auto_acknowledge_claim_review():
         ),
     )
     assert approved.status == "APPROVED"
+    refreshed = await svc.get_review_draft_by_id(draft.draft_id)
+    assert "CLAIM_REVIEW_ACKNOWLEDGED: op acknowledged" in (
+        refreshed.reviewer_note or "")
 
 
 # ── AI Fill Missing (DeepSeek-backed) — provider mocked, never spends credits ──
@@ -569,3 +598,301 @@ async def test_ai_fill_only_approved_ci_and_hook_cta_stripped(monkeypatch):
     assert "Commuters" in capture["user"]  # approved avatar reached the prompt
     assert "STILL drinking warm water" not in capture["user"]  # hook stripped
     assert "BUY NOW" not in capture["user"]  # cta stripped
+
+
+# ── Mission-08D: governed field-absence dispositions ─────────────────────────
+from agent.models.product_intelligence_review_draft import (  # noqa: E402
+    ProductIntelligenceFieldDispositionRequest,
+)
+
+
+def _knowledge_gap_request(**kw) -> ProductIntelligenceReviewDraftCreateRequest:
+    """Copy-critical complete + allowed claims present, but usage/ingredients/warnings
+    genuinely absent — the Nakamichi shape."""
+    base = {
+        "product_description": "Compact windshield washer fluid, 30ml concentrate.",
+        "benefits_json": ["titisan air meluncur", "penglihatan jelas"],
+        "usp_json": ["konsentrat 30ml"],
+        "target_customer_text": "Pemandu harian.",
+        "allowed_claims_json": ["kesan water repellent pada cermin"],
+        "source_urls_json": {"source_url": "https://example.com/p"},
+        "image_evidence_json": {"image_url": "https://example.com/i.jpg"},
+        "buyer_persona_snapshot_json": {"audience": "pemandu", "pains": ["cermin kabur"]},
+        "copy_strategy_summary_json": {"angles": ["keselamatan"]},
+        "created_by": "op",
+    }
+    base.update(kw)
+    return ProductIntelligenceReviewDraftCreateRequest(**base)
+
+
+async def _strict_product(name: str, category: str = "Automotive") -> dict:
+    return await crud.create_product(
+        raw_product_title=name, source="MANUAL", product_display_name=name,
+        category=category,
+    )
+
+
+def _disposition(field, disposition, note="Sumber tidak menyatakan fakta ini.",
+                 reviewer="owner"):
+    return ProductIntelligenceFieldDispositionRequest(
+        field_name=field, disposition=disposition,
+        reviewed_by=reviewer, reviewer_note=note,
+    )
+
+
+@pytest.mark.asyncio
+async def test_not_stated_disposition_satisfies_the_field_and_classifies_governed():
+    """THE 08D contract: a truthful absence unlocks approval WITHOUT the blanket flag,
+    and the snapshot freezes READY_WITH_GOVERNED_ABSENCE — never FULLY complete."""
+    product = await _strict_product("Governed NSIS")
+    draft = await svc.create_review_draft(product["id"], _knowledge_gap_request())
+
+    with pytest.raises(ValueError, match="MISSING_REQUIRED_FIELDS"):
+        await svc.approve_review_draft(
+            draft.draft_id,
+            ProductIntelligenceReviewDraftApproveRequest(approved_by="op"))
+
+    for field in ("ingredients_text", "warnings_text", "usage_text"):
+        validation = await svc.set_field_disposition(
+            draft.draft_id, _disposition(field, "NOT_STATED_IN_SOURCE"))
+    assert validation.readiness_status == "READY_WITH_GOVERNED_ABSENCE"
+    assert set(validation.governed_absent_fields) == {
+        "ingredients_text", "warnings_text", "usage_text"}
+    # governed absence is NOT presence: completeness stays truthful
+    assert validation.completeness_score < 1.0
+    assert not any(b.startswith("MISSING_REQUIRED_FIELDS")
+                   for b in validation.approval_blockers)
+
+    approved = await svc.approve_review_draft(
+        draft.draft_id,
+        ProductIntelligenceReviewDraftApproveRequest(approved_by="owner"))
+    assert approved.status == "APPROVED"
+    assert approved.readiness_status == "READY_WITH_GOVERNED_ABSENCE"
+    assert (approved.completeness_score or 0) < 1.0
+    # value columns stay EMPTY — absence is in provenance, never a magic string
+    assert not (approved.ingredients_text or "").strip()
+    assert not (approved.warnings_text or "").strip()
+
+
+@pytest.mark.asyncio
+async def test_disposition_upsert_is_idempotent_and_scoped_to_its_field():
+    product = await _strict_product("Governed Idempotent")
+    draft = await svc.create_review_draft(product["id"], _knowledge_gap_request())
+    await svc.set_field_disposition(
+        draft.draft_id, _disposition("ingredients_text", "NOT_STATED_IN_SOURCE"))
+    await svc.set_field_disposition(
+        draft.draft_id, _disposition("ingredients_text", "NOT_STATED_IN_SOURCE"))
+    # changed decision UPDATES the same governing row
+    await svc.set_field_disposition(
+        draft.draft_id,
+        _disposition("ingredients_text", "REQUIRES_EXTERNAL_EVIDENCE",
+                     note="Tunggu SDS daripada pembekal."))
+    refreshed = await svc.get_review_draft_by_id(draft.draft_id)
+    rows = [item for item in refreshed.provenance_items
+            if item.evidence_kind == "FIELD_ABSENCE_DISPOSITION"]
+    assert len(rows) == 1, "retry/changed decision duplicated the disposition row"
+    assert rows[0].field_name == "ingredients_text"
+    assert rows[0].verification_status == "REQUIRES_EXTERNAL_EVIDENCE"
+    # only its own field is governed — warnings/usage remain ungoverned blockers
+    validation = await svc.validate_review_draft(draft.draft_id)
+    assert "warnings_text" not in validation.governed_absent_fields
+
+
+@pytest.mark.asyncio
+async def test_requires_external_evidence_remains_an_approval_blocker():
+    product = await _strict_product("Governed REE")
+    draft = await svc.create_review_draft(product["id"], _knowledge_gap_request())
+    for field in ("warnings_text", "usage_text"):
+        await svc.set_field_disposition(
+            draft.draft_id, _disposition(field, "NOT_STATED_IN_SOURCE"))
+    validation = await svc.set_field_disposition(
+        draft.draft_id,
+        _disposition("ingredients_text", "REQUIRES_EXTERNAL_EVIDENCE",
+                     note="SDS belum diterima."))
+    assert "ingredients_text" in validation.unresolved_external_fields
+    assert any(b.startswith("REQUIRES_EXTERNAL_EVIDENCE:ingredients_text")
+               for b in validation.approval_blockers)
+    with pytest.raises(ValueError, match="REQUIRES_EXTERNAL_EVIDENCE"):
+        await svc.approve_review_draft(
+            draft.draft_id,
+            ProductIntelligenceReviewDraftApproveRequest(approved_by="op"))
+    # the blanket copy flag must NOT clear it either
+    with pytest.raises(ValueError, match="REQUIRES_EXTERNAL_EVIDENCE"):
+        await svc.approve_review_draft(
+            draft.draft_id,
+            ProductIntelligenceReviewDraftApproveRequest(
+                approved_by="op", allow_incomplete_product_knowledge=True))
+
+
+@pytest.mark.asyncio
+async def test_not_applicable_is_refused_for_strict_and_unknown_categories():
+    """Automotive is a chemical-risk family; unknown categories fail closed."""
+    for name, category in (("Governed NA Auto", "Automotive"),
+                           ("Governed NA Unknown", ""),
+                           ("Governed NA Children", "Children's Apparel")):
+        product = await _strict_product(name, category=category)
+        draft = await svc.create_review_draft(product["id"], _knowledge_gap_request())
+        with pytest.raises(ValueError, match="NOT_APPLICABLE_FORBIDDEN_FOR_CATEGORY"):
+            await svc.set_field_disposition(
+                draft.draft_id,
+                _disposition("ingredients_text", "NOT_APPLICABLE",
+                             note="Produk tiada bahan."))
+
+
+@pytest.mark.asyncio
+async def test_not_applicable_is_allowed_for_confirmable_category_with_note():
+    product = await _strict_product("Governed NA Apparel",
+                                    category="Apparel & Textiles")
+    draft = await svc.create_review_draft(product["id"], _knowledge_gap_request())
+    validation = await svc.set_field_disposition(
+        draft.draft_id,
+        _disposition("ingredients_text", "NOT_APPLICABLE",
+                     note="Produk tekstil — tiada senarai bahan ramuan."))
+    assert validation.governed_absent_fields.get("ingredients_text") == "NOT_APPLICABLE"
+    # mandatory note enforced
+    with pytest.raises(ValueError, match="REVIEWER_NOTE_REQUIRED"):
+        await svc.set_field_disposition(
+            draft.draft_id,
+            _disposition("warnings_text", "NOT_APPLICABLE", note="  x "))
+
+
+@pytest.mark.asyncio
+async def test_dispositions_reject_ineligible_fields_filled_fields_and_terminal_drafts():
+    product = await _strict_product("Governed Guards")
+    draft = await svc.create_review_draft(product["id"], _knowledge_gap_request())
+    # allowed_claims_json can never be waived
+    with pytest.raises(ValueError, match="FIELD_NOT_DISPOSITION_ELIGIBLE"):
+        await svc.set_field_disposition(
+            draft.draft_id, _disposition("allowed_claims_json", "NOT_STATED_IN_SOURCE"))
+    # an ELIGIBLE field holding a value cannot simultaneously be absent
+    filled = await svc.create_review_draft(
+        (await _strict_product("Governed Guards Filled"))["id"],
+        _knowledge_gap_request(usage_text="Sembur dan lap dengan kain microfiber."))
+    with pytest.raises(ValueError, match="FIELD_HAS_VALUE:usage_text"):
+        await svc.set_field_disposition(
+            filled.draft_id, _disposition("usage_text", "NOT_STATED_IN_SOURCE"))
+    # terminal drafts refuse dispositions
+    for field in ("ingredients_text", "warnings_text", "usage_text"):
+        await svc.set_field_disposition(
+            draft.draft_id, _disposition(field, "NOT_STATED_IN_SOURCE"))
+    await svc.approve_review_draft(
+        draft.draft_id,
+        ProductIntelligenceReviewDraftApproveRequest(approved_by="op"))
+    with pytest.raises(ValueError, match="DRAFT_DISPOSITION_FORBIDDEN:APPROVED"):
+        await svc.set_field_disposition(
+            draft.draft_id, _disposition("usage_text", "NOT_STATED_IN_SOURCE"))
+
+
+@pytest.mark.asyncio
+async def test_placeholder_strings_do_not_masquerade_as_knowledge():
+    """Placeholder text typed into a required field is MISSING, not present — the
+    governed disposition is the only way to resolve absence."""
+    product = await _strict_product("Governed Placeholder")
+    draft = await svc.create_review_draft(
+        product["id"],
+        _knowledge_gap_request(ingredients_text="N/A", warnings_text="  n/a ",
+                               usage_text="NOT_AVAILABLE"))
+    validation = await svc.validate_review_draft(draft.draft_id)
+    for field in ("ingredients_text", "warnings_text", "usage_text"):
+        assert field in validation.missing_required_fields, field
+    with pytest.raises(ValueError, match="MISSING_REQUIRED_FIELDS"):
+        await svc.approve_review_draft(
+            draft.draft_id,
+            ProductIntelligenceReviewDraftApproveRequest(approved_by="op"))
+
+
+@pytest.mark.asyncio
+async def test_disposition_provenance_survives_into_the_snapshot_lineage():
+    from agent.services.product_intelligence_snapshot_service import (
+        get_provenance_list_response,
+    )
+
+    product = await _strict_product("Governed Lineage")
+    draft = await svc.create_review_draft(product["id"], _knowledge_gap_request())
+    for field in ("ingredients_text", "warnings_text", "usage_text"):
+        await svc.set_field_disposition(
+            draft.draft_id, _disposition(field, "NOT_STATED_IN_SOURCE"))
+    approved = await svc.approve_review_draft(
+        draft.draft_id,
+        ProductIntelligenceReviewDraftApproveRequest(approved_by="owner"))
+    provenance = await get_provenance_list_response(approved.snapshot_id)
+    rows = [item for item in provenance.items
+            if getattr(item, "evidence_kind", None) == "FIELD_ABSENCE_DISPOSITION"]
+    assert {getattr(r, "field_name", None) for r in rows} >= {
+        "ingredients_text", "warnings_text", "usage_text"}, (
+        "governed dispositions did not survive into snapshot provenance lineage")
+    assert {getattr(r, "verification_status", None) for r in rows} == {
+        "NOT_STATED_IN_SOURCE"}
+    assert {getattr(r, "reviewer_decision", None) for r in rows} == {"owner"}
+
+
+@pytest.mark.asyncio
+async def test_disposition_requires_nonblank_reviewer_identity():
+    product = await _strict_product("Governed Reviewer Required")
+    draft = await svc.create_review_draft(product["id"], _knowledge_gap_request())
+    with pytest.raises(ValueError, match="REVIEWER_REQUIRED"):
+        await svc.set_field_disposition(
+            draft.draft_id,
+            _disposition(
+                "ingredients_text",
+                "NOT_STATED_IN_SOURCE",
+                reviewer="   ",
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_dispositions_are_scoped_to_exact_draft_and_product():
+    product = await _strict_product("Governed Scope One")
+    first = await svc.create_review_draft(product["id"], _knowledge_gap_request())
+    await svc.set_field_disposition(
+        first.draft_id,
+        _disposition("ingredients_text", "NOT_STATED_IN_SOURCE"),
+    )
+    await crud.update_product_intelligence_review_draft(
+        first.draft_id,
+        review_status="SUPERSEDED",
+    )
+
+    second = await svc.create_review_draft(product["id"], _knowledge_gap_request())
+    second_validation = await svc.validate_review_draft(second.draft_id)
+    assert "ingredients_text" not in second_validation.governed_absent_fields
+
+    other_product = await _strict_product("Governed Scope Two")
+    other = await svc.create_review_draft(
+        other_product["id"],
+        _knowledge_gap_request(),
+    )
+    other_validation = await svc.validate_review_draft(other.draft_id)
+    assert "ingredients_text" not in other_validation.governed_absent_fields
+
+
+@pytest.mark.asyncio
+async def test_superseded_draft_is_terminal_for_every_mutation_path():
+    product = await _strict_product("Governed Superseded")
+    draft = await svc.create_review_draft(product["id"], _knowledge_gap_request())
+    await crud.update_product_intelligence_review_draft(
+        draft.draft_id,
+        review_status="SUPERSEDED",
+    )
+
+    with pytest.raises(ValueError, match="DRAFT_UPDATE_FORBIDDEN:SUPERSEDED"):
+        await svc.update_review_draft(
+            draft.draft_id,
+            ProductIntelligenceReviewDraftUpdateRequest(usage_text="changed"),
+        )
+    with pytest.raises(ValueError, match="DRAFT_DISPOSITION_FORBIDDEN:SUPERSEDED"):
+        await svc.set_field_disposition(
+            draft.draft_id,
+            _disposition("ingredients_text", "NOT_STATED_IN_SOURCE"),
+        )
+    with pytest.raises(ValueError, match="DRAFT_UPDATE_FORBIDDEN:SUPERSEDED"):
+        await svc.approve_review_draft(
+            draft.draft_id,
+            ProductIntelligenceReviewDraftApproveRequest(approved_by="owner"),
+        )
+    with pytest.raises(ValueError, match="DRAFT_UPDATE_FORBIDDEN:SUPERSEDED"):
+        await svc.reject_review_draft(
+            draft.draft_id,
+            ProductIntelligenceReviewDraftRejectRequest(rejected_by="owner"),
+        )

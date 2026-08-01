@@ -92,6 +92,83 @@ const STAGE_TONE: Record<IntelligenceStage, string> = {
 // missing_intelligence drill-down. Every field the owner needs to rule on a product
 // without opening SQL: what stage it is at, what is still missing, what the claim gate
 // said, where the evidence came from, and whether copy is blocked behind it.
+// 08D PI-quality drill-down rows: product + lifecycle + quality class + missing fields
+// + governed dispositions + claim gate. All values are server-computed; this renders.
+const PI_QUALITY_COLS: DataTableColumn<ExceptionItem>[] = [
+	{
+		key: "name",
+		header: "Product",
+		render: (r) => (
+			<div className="min-w-[13rem]">
+				<div className="font-medium text-slate-200">
+					{r.product_display_name ?? r.product_id ?? "—"}
+				</div>
+				<div className="font-mono text-[10px] text-slate-500">{r.product_id}</div>
+			</div>
+		),
+		sortValue: (r) => r.product_display_name ?? "",
+	},
+	{
+		key: "lifecycle",
+		header: "Lifecycle",
+		render: (r) => r.lifecycle_status ?? "ACTIVE",
+	},
+	{
+		key: "pi_quality",
+		header: "PI quality",
+		render: (r) => (
+			<span
+				className={
+					r.pi_quality === "FULLY_COMPLETE"
+						? "text-emerald-300"
+						: r.pi_quality === "APPROVED_WITH_GOVERNED_ABSENCE"
+							? "text-sky-300"
+							: r.pi_quality === "LEGACY_APPROVED_INCOMPLETE"
+								? "text-amber-300"
+								: "text-red-300"
+				}
+			>
+				{r.pi_quality ?? "—"}
+			</span>
+		),
+	},
+	{
+		key: "missing",
+		header: "Missing fields",
+		render: (r) =>
+			(r.missing_fields ?? []).length ? (r.missing_fields ?? []).join(", ") : "—",
+	},
+	{
+		key: "dispositions",
+		header: "Governed dispositions",
+		render: (r) => {
+			const rows = r.governed_dispositions ?? [];
+			if (!rows.length) return "—";
+			return (
+				<div className="space-y-0.5">
+					{rows.map((d) => (
+						<div key={d.field_name} className="text-[10px]">
+							<span className="font-semibold text-slate-200">{d.field_name}</span>{" "}
+							<span className="text-sky-300">{d.disposition}</span>
+							{d.reviewed_by ? (
+								<span className="text-slate-500"> · {d.reviewed_by}</span>
+							) : null}
+							{d.reviewed_at ? (
+								<span className="text-slate-600"> · {d.reviewed_at}</span>
+							) : null}
+						</div>
+					))}
+				</div>
+			);
+		},
+	},
+	{
+		key: "claim",
+		header: "Claim gate",
+		render: (r) => r.claim_gate ?? "—",
+	},
+];
+
 const INTELLIGENCE_COLS: DataTableColumn<ExceptionItem>[] = [
 	{
 		key: "name",
@@ -276,7 +353,9 @@ export function ExceptionTable({
 			? FAILED_COLS
 			: kind === "missing_intelligence"
 				? INTELLIGENCE_COLS
-				: PRODUCT_COLS;
+				: kind.startsWith("pi_")
+					? PI_QUALITY_COLS
+					: PRODUCT_COLS;
 	const pageCount = Math.max(1, Math.ceil(total / pageSize));
 	const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
 	const to = Math.min(page * pageSize, total);
@@ -344,7 +423,8 @@ export function ExceptionTable({
 									onClick={() => {
 										if (r.product_id)
 											navigate(
-												kind === "missing_intelligence"
+												kind === "missing_intelligence" ||
+													kind.startsWith("pi_")
 													? intelligenceReviewHref(r.product_id)
 													: `/products?product=${encodeURIComponent(r.product_id)}`,
 											);

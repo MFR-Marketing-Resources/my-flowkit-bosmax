@@ -29,7 +29,27 @@ export type ExceptionKind =
 	| "missing_image"
 	| "prompt_not_ready"
 	| "scene_strategy_gaps"
-	| "failed_generation";
+	| "failed_generation"
+	// 08D PI quality drill-downs (same server pagination/search/sort machinery)
+	| "pi_fully_complete"
+	| "pi_governed_absence"
+	| "pi_legacy_incomplete"
+	| "pi_missing_approved";
+
+/** 08D INTEL QUALITY DEBT — the four mutually-exclusive PI classes, fixture-quarantined,
+ * each split ACTIVE vs ARCHIVED. Backend is the single counting authority. */
+export type PiQualityClass =
+	| "FULLY_COMPLETE"
+	| "APPROVED_WITH_GOVERNED_ABSENCE"
+	| "LEGACY_APPROVED_INCOMPLETE"
+	| "MISSING_APPROVED_INTELLIGENCE";
+
+export interface PiQualitySummary {
+	total_real_products: number;
+	test_fixtures_excluded: number;
+	classes: Record<PiQualityClass, { total: number; active: number; archived: number }>;
+	drill_down_kinds: Record<PiQualityClass, ExceptionKind>;
+}
 
 export interface CopywritingCoverage {
 	total_products: number;
@@ -115,6 +135,15 @@ export interface ExceptionItem {
 	claim_reasons?: string[] | null;
 	approved_snapshot?: boolean | null;
 	snapshot_id?: string | null;
+	// 08D PI-quality drill-down rows (server-computed per page)
+	pi_quality?: PiQualityClass | null;
+	governed_dispositions?: {
+		field_name: string;
+		disposition: string;
+		reviewed_by?: string | null;
+		reviewer_note?: string | null;
+		reviewed_at?: string | null;
+	}[] | null;
 	snapshot_status?: string | null;
 	copy_blocked?: boolean | null;
 	source?: string | null;
@@ -353,3 +382,12 @@ export const fetchFailedGenerations = () =>
 	getAPI<FailedGenerationReport>("/api/reporting/failed-generations");
 
 export const useFailedGenerations = () => useAsync(fetchFailedGenerations, []);
+
+/** 08D: INTEL QUALITY DEBT summary. Defaults to ALL so archived debt stays visible. */
+export const fetchPiQuality = (lifecycle: LifecycleScope = "ALL") =>
+	getAPI<PiQualitySummary>(
+		`/api/reporting/pi-quality?lifecycle_status=${encodeURIComponent(lifecycle)}`,
+	);
+
+export const usePiQuality = (lifecycle: LifecycleScope = "ALL") =>
+	useAsync(() => fetchPiQuality(lifecycle), [lifecycle]);
