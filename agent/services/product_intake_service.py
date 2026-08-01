@@ -42,6 +42,11 @@ import hashlib
 import json
 from typing import Any, Mapping
 
+from agent.services.product_intelligence_draft_lifecycle import (
+    SQL_CANONICAL_ORDER,
+    TERMINAL_REVIEW_STATUSES,
+    is_terminal,
+)
 from agent.services.registration_intelligence_promotion_service import (
     PROMOTION_MAP,
     build_create_request,
@@ -57,7 +62,9 @@ CREATED = "CREATED"
 CREATED_MINIMAL = "CREATED_MINIMAL"
 SKIPPED_TERMINAL_DRAFT = "SKIPPED_TERMINAL_DRAFT"
 
-_TERMINAL = {"APPROVED", "REJECTED"}
+# B-586-04: the open/terminal predicate is now owned by ONE module and shared with the
+# database constraint, so the reader, the deduplicator and the UNIQUE index cannot disagree.
+_TERMINAL = TERMINAL_REVIEW_STATUSES
 _DIGEST_TARGETS = tuple(target for target, _sources in PROMOTION_MAP)
 _LIST_TARGETS = {"benefits_json", "usp_json"}
 
@@ -302,15 +309,14 @@ async def _latest_open_draft(product_id: str):
     db = await get_db()
     cur = await db.execute(
         "SELECT * FROM product_intelligence_review_draft WHERE product_id=? "
-        "ORDER BY COALESCE(updated_at, created_at) DESC, draft_id DESC",
+        f"ORDER BY {SQL_CANONICAL_ORDER}",
         (product_id,),
     )
     rows = [dict(r) for r in await cur.fetchall()]
     await cur.close()
-    terminal_seen = any(str(r.get("review_status") or "").upper() in _TERMINAL
-                        for r in rows)
+    terminal_seen = any(is_terminal(r.get("review_status")) for r in rows)
     for row in rows:
-        if str(row.get("review_status") or "").upper() not in _TERMINAL:
+        if not is_terminal(row.get("review_status")):
             return row, terminal_seen
     return None, terminal_seen
 
@@ -403,148 +409,128 @@ async def _incoming_covered(draft_row: Mapping[str, Any], draft: Any,
 
 
 async def _write_provenance(draft_id: str, product_id: str, draft, payload) -> int:
-    """Write ALL provenance rows for a draft in ONE transaction.
+    """Write ALL provenance rows for a draft inside the caller's transaction.
 
     B-586-03: `crud.create_product_intelligence_review_field_provenance` commits per row,
-    so a batch that failed midway left some rows behind. Here every row goes in under a
-    single `_db_lock` + single commit, and any error rolls the whole batch back.
+    so a batch that failed midway left some rows behind. Every row now goes in under one
+    `atomic()` boundary; when the caller has already opened one, this joins it, so the
+    draft mutation and its provenance commit or roll back together.
     """
     from agent.db import crud
-    from agent.db.schema import _db_lock, get_db
+    from agent.db.schema import atomic
 
     rows = build_provenance_inputs(draft, payload)
     if not rows:
         return 0
-    db = await get_db()
     now = crud._now()
-    async with _db_lock:
-        try:
-            for row in rows:
-                await db.execute(
-                    "INSERT INTO product_intelligence_review_field_provenance ("
-                    "review_provenance_id, draft_id, product_id, field_name, source_type,"
-                    " evidence_kind, extraction_method, verification_status,"
-                    " declared_value, normalized_value, source_url, source_lane,"
-                    " confidence_score, claim_risk_flag, reviewer_decision, reviewer_note,"
-                    " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (crud._uuid(), draft_id, product_id, row.field_name, row.source_type,
-                     row.evidence_kind, row.extraction_method, row.verification_status,
-                     row.declared_value, row.normalized_value, row.source_url,
-                     row.source_lane, row.confidence_score, row.claim_risk_flag,
-                     row.reviewer_decision, row.reviewer_note, now, now),
-                )
-            await db.commit()
-        except Exception:
-            await db.rollback()
-            raise
+    async with atomic() as db:
+        for row in rows:
+            await db.execute(
+                "INSERT INTO product_intelligence_review_field_provenance ("
+                "review_provenance_id, draft_id, product_id, field_name, source_type,"
+                " evidence_kind, extraction_method, verification_status,"
+                " declared_value, normalized_value, source_url, source_lane,"
+                " confidence_score, claim_risk_flag, reviewer_decision, reviewer_note,"
+                " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (crud._uuid(), draft_id, product_id, row.field_name, row.source_type,
+                 row.evidence_kind, row.extraction_method, row.verification_status,
+                 row.declared_value, row.normalized_value, row.source_url,
+                 row.source_lane, row.confidence_score, row.claim_risk_flag,
+                 row.reviewer_decision, row.reviewer_note, now, now),
+            )
     return len(rows)
 
 
-async def _delete_provenance_for_draft(draft_id: str) -> None:
-    from agent.db.schema import _db_lock, get_db
-
-    db = await get_db()
-    async with _db_lock:
-        await db.execute(
-            "DELETE FROM product_intelligence_review_field_provenance WHERE draft_id=?",
-            (draft_id,))
-        await db.commit()
+def _is_empty(target: str, value: Any) -> bool:
+    """Empty for merge purposes: NULL, blank text, `[]` and `{}` all mean "nothing said"."""
+    normalized = _norm(target, value)
+    return normalized is None or normalized == [] or normalized == {}
 
 
-async def _resolve_duplicate_open_drafts(product_id: str, mine: str) -> str:
-    """Converge concurrent first-intakes on exactly ONE open draft.
+def reconcile_evidence(survivor: Mapping[str, Any],
+                       incoming: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Merge what the survivor is SILENT about; never overwrite what it already says.
 
-    B-586-04. An in-process asyncio lock cannot serialize two independent connections or
-    processes, and `create_review_draft` commits internally, so a check-then-insert can
-    interleave: both callers see "no open draft" and both create one. A UNIQUE partial
-    index is the textbook fix but 2 products in canonical data ALREADY hold >1 open draft,
-    so adding one would fail the migration; that conflict is reported for an owner ruling
-    rather than silently mutated here.
+    Returns (fields_to_write, conflicting_field_names).
 
-    Instead every racer applies the SAME deterministic rule — the lexicographically
-    smallest draft_id wins — and deletes its own loser. Both connections independently
-    reach the identical verdict, so the outcome does not depend on who ran last, and the
-    operation is idempotent under replay.
+    B-586-04 forbids resolving a duplicate by deletion, so the losing evidence has to go
+    somewhere. Two cases, and only two:
+      * survivor empty, incoming has a value -> safe to adopt; nothing is lost either way.
+      * both hold DIFFERENT values           -> a genuine disagreement. Auto-picking one
+        would silently destroy a human-reviewable difference, so neither is written and
+        the field is reported instead. The losing row is retained as SUPERSEDED with its
+        provenance intact, which is where the unadopted value stays readable.
     """
-    from agent.db import crud
-    from agent.db.schema import _db_lock, get_db
-
-    db = await get_db()
-    async with _db_lock:
-        cur = await db.execute(
-            "SELECT draft_id FROM product_intelligence_review_draft WHERE product_id=? "
-            "AND UPPER(COALESCE(review_status,'')) NOT IN ('APPROVED','REJECTED') "
-            "ORDER BY draft_id ASC", (product_id,))
-        open_ids = [str(r[0]) for r in await cur.fetchall()]
-        await cur.close()
-    if len(open_ids) <= 1:
-        return mine
-    winner = open_ids[0]
-    for loser in open_ids[1:]:
-        await _delete_provenance_for_draft(loser)
-        await crud.delete_product_intelligence_review_draft(loser)
-    return winner
+    writes: dict[str, Any] = {}
+    conflicts: list[str] = []
+    for target in _DIGEST_TARGETS:
+        if target not in incoming:
+            continue
+        incoming_value = _norm(target, incoming.get(target))
+        if incoming_value is None:
+            continue
+        if _is_empty(target, survivor.get(target)):
+            writes[target] = incoming.get(target)
+        elif _norm(target, survivor.get(target)) != incoming_value:
+            conflicts.append(target)
+    return writes, conflicts
 
 
-async def _draft_ids_for(product_id: str) -> set[str]:
-    from agent.db.schema import get_db
-
-    db = await get_db()
-    cur = await db.execute(
-        "SELECT draft_id FROM product_intelligence_review_draft WHERE product_id=?",
-        (product_id,))
-    ids = {str(r[0]) for r in await cur.fetchall()}
-    await cur.close()
-    return ids
+async def _open_draft_row(product_id: str) -> dict | None:
+    row, _terminal = await _latest_open_draft(product_id)
+    return row
 
 
-async def _compensate_to(product_id: str, known_draft_ids: set[str]) -> None:
-    """Remove every draft (and its provenance) that appeared during this operation.
+async def _reconcile_lost_race(product_id: str, payload: Mapping[str, Any]) -> dict | None:
+    """Another connection created this product's open draft first; adopt theirs.
 
-    Scoped by PRODUCT, not by draft_id, because `create_review_draft` writes its own
-    provenance with independent commits: a failure inside it never returns a draft_id, so
-    a draft-id-scoped cleanup could not reach the rows it had already written.
+    B-586-04. The DB now REJECTS the second open draft outright, so the loser holds no
+    row to clean up — there is nothing to delete and no cleanup rule that could reach a
+    rival's committed work. The loser's job is only to make sure its evidence is not
+    thrown away: it merges the fields the winner left empty and leaves genuine
+    disagreements for a human.
     """
     from agent.db import crud
 
-    for draft_id in await _draft_ids_for(product_id) - known_draft_ids:
-        await _delete_provenance_for_draft(draft_id)
-        await crud.delete_product_intelligence_review_draft(draft_id)
+    survivor = await _open_draft_row(product_id)
+    if survivor is None:
+        return None
+    writes, conflicts = reconcile_evidence(survivor, payload.get("fields") or {})
+    if writes:
+        await crud.update_product_intelligence_review_draft(
+            str(survivor["draft_id"]), **writes)
+    return {"draft_id": str(survivor["draft_id"]), "merged_fields": sorted(writes),
+            "conflicting_fields": conflicts}
 
 
-async def _write_provenance_or_compensate(
-    draft_id: str, product_id: str, draft, payload, *, created_draft: bool,
-    prior_row: Mapping[str, Any] | None = None,
-) -> int:
-    """Provenance write with deterministic cleanup of the residual window.
+def _is_open_draft_conflict(exc: BaseException) -> bool:
+    """Is this the one-open-draft-per-product UNIQUE index rejecting a second row?
 
-    Honest naming: `create_review_draft` commits the draft before provenance runs and that
-    inner commit cannot be deferred without rewriting the persistence layer, which this
-    mission forbids. So the batch itself is a real transaction, and the gap between the
-    draft commit and the provenance commit is closed by COMPENSATION — a newly created
-    draft is deleted, and an updated draft is restored to its prior column values. The
-    observable guarantee is the same: no partial draft/provenance state survives a failure.
+    Matched on the index's own column signature rather than on the exception type alone,
+    so an unrelated integrity error is never swallowed as "someone else won the race".
     """
-    from agent.db import crud
+    import sqlite3
 
-    try:
-        return await _write_provenance(draft_id, product_id, draft, payload)
-    except Exception:
-        # DO NOT delete provenance here. `_write_provenance` is a single transaction that
-        # rolls back on failure, so this operation has written NOTHING — the only rows
-        # present are ones that existed beforehand. The previous version called
-        # `_delete_provenance_for_draft`, which wiped every provenance row on the draft
-        # including pre-existing evidence: a rollback that destroyed data it never wrote.
-        if created_draft:
-            await _delete_provenance_for_draft(str(draft_id))
-            await crud.delete_product_intelligence_review_draft(str(draft_id))
-        elif prior_row is not None:
-            restorable = {k: prior_row.get(k) for k in _DIGEST_TARGETS
-                          if k in prior_row}
-            restorable["review_status"] = prior_row.get("review_status")
-            await crud.update_product_intelligence_review_draft(
-                str(draft_id), **restorable)
-        raise
+    if not isinstance(exc, sqlite3.IntegrityError):
+        return False
+    message = str(exc).upper()
+    return ("UNIQUE" in message
+            and "PRODUCT_INTELLIGENCE_REVIEW_DRAFT.PRODUCT_ID" in message)
+
+
+# B-586-03. `_draft_ids_for` / `_compensate_to` / `_write_provenance_or_compensate` are
+# GONE. They existed only because the draft write and the provenance write were separate
+# transactions, and they had two defects no amount of tuning could fix:
+#
+#   * the cleanup was scoped by PRODUCT, so it could not distinguish its own partial work
+#     from a concurrent request's COMMITTED work and would delete the rival's draft;
+#   * the "restore" replayed a hand-listed subset of columns, so material evidence,
+#     timestamps and any column not on that list silently kept the failed operation's
+#     values instead of the before-state.
+#
+# `atomic()` removes the need for both: on failure nothing was ever committed, so the
+# before-state is restored in full by definition — every column, every provenance row —
+# and a rollback can only ever discard this boundary's own statements.
 
 
 async def ensure_product_intelligence(
@@ -559,6 +545,7 @@ async def ensure_product_intelligence(
     twice with unchanged evidence is a no-op, so a replayed request or a 500-row FastMoss
     re-import cannot manufacture duplicate review debt.
     """
+    from agent.db.schema import atomic
     from agent.models.product_intelligence_review_draft import (
         ProductIntelligenceReviewDraftUpdateRequest,
     )
@@ -619,20 +606,19 @@ async def ensure_product_intelligence(
                     "material_digest": incoming_material,
                     "intelligence_draft_id": open_draft["draft_id"], "wrote": False,
                     "reason": "NO_PROMOTABLE_FIELDS"}
-        before_ids = await _draft_ids_for(product_id)
-        try:
+        # B-586-03: the draft mutation and its provenance are ONE transaction. A failure
+        # anywhere inside rolls both back, so the draft keeps every one of its prior
+        # values — including material evidence and timestamps — and every provenance row
+        # it already had. Nothing is deleted and nothing is "restored" field by field.
+        async with atomic():
             updated = await svc.update_review_draft(
                 str(open_draft["draft_id"]),
                 ProductIntelligenceReviewDraftUpdateRequest(
                     **build_create_request(payload).model_dump(exclude_unset=True)),
             )
             draft_id = getattr(updated, "draft_id", open_draft["draft_id"])
-            update_provenance_rows = await _write_provenance_or_compensate(
-                str(draft_id), product_id, draft, payload,
-                created_draft=False, prior_row=open_draft)
-        except Exception:
-            await _compensate_to(product_id, before_ids)
-            raise
+            update_provenance_rows = await _write_provenance(
+                str(draft_id), product_id, draft, payload)
         return {"outcome": UPDATED_REVIEW_REQUIRED, "lane": lane,
                 "product_id": product_id, "evidence_digest": incoming,
                 "intelligence_draft_id": draft_id,
@@ -647,21 +633,30 @@ async def ensure_product_intelligence(
                 "product_id": product_id, "evidence_digest": incoming,
                 "intelligence_draft_id": None, "wrote": False}
 
-    before_ids = await _draft_ids_for(product_id)
     try:
-        created = await svc.create_review_draft(product_id, build_create_request(payload))
-        draft_id = getattr(created, "draft_id", None)
-        provenance_rows = await _write_provenance(
-            str(draft_id), product_id, draft, payload) if draft_id else 0
-        if draft_id:
-            winner = await _resolve_duplicate_open_drafts(product_id, str(draft_id))
-            if winner != str(draft_id):
-                # another connection won the race; report the surviving draft
-                draft_id = winner
-                provenance_rows = 0
-    except Exception:
-        await _compensate_to(product_id, before_ids)
-        raise
+        async with atomic():
+            created = await svc.create_review_draft(
+                product_id, build_create_request(payload))
+            draft_id = getattr(created, "draft_id", None)
+            provenance_rows = await _write_provenance(
+                str(draft_id), product_id, draft, payload) if draft_id else 0
+    except Exception as exc:
+        # B-586-04: the DATABASE now settles the race. The losing INSERT is rejected
+        # outright and its whole transaction rolls back, so there is no loser row to
+        # clean up and no cleanup rule that could reach the winner's committed work.
+        if not _is_open_draft_conflict(exc):
+            raise
+        reconciled = await _reconcile_lost_race(product_id, payload)
+        if reconciled is None:
+            raise
+        return {"outcome": NOOP_DRAFT_UP_TO_DATE, "lane": lane,
+                "product_id": product_id, "evidence_digest": incoming,
+                "material_digest": incoming_material,
+                "intelligence_draft_id": reconciled["draft_id"],
+                "reason": "CONVERGED_ON_CONCURRENT_DRAFT",
+                "merged_fields": reconciled["merged_fields"],
+                "conflicting_fields": reconciled["conflicting_fields"],
+                "wrote": bool(reconciled["merged_fields"])}
     return {
         "outcome": CREATED_MINIMAL if minimal else CREATED,
         "lane": lane,

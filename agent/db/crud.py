@@ -422,6 +422,70 @@ async def update_product(pid: str, **kw): return await _update("product", "id", 
 async def delete_product(pid: str): return await _delete("product", "id", pid)
 
 
+# ─── Compare-and-swap compensation (B-586-05) ────────────────────────────────
+# A rollback must never clobber a concurrent operator edit. The previous shape was
+#
+#     current = await get_product(pid)
+#     if current["updated_at"] == expected:      # <- check
+#         await update_product(pid, **restore)   # <- write, a separate statement
+#
+# which is not a CAS at all: another writer can land between the check and the write, and
+# nothing verifies that the write matched anything. Both helpers below do the comparison
+# and the mutation in ONE statement and report how many rows actually matched, so the
+# caller can tell "restored" apart from "refused" instead of guessing.
+
+
+def _cas_guard_sql(expected: dict) -> tuple[str, list]:
+    """Build the guard clause. `IS` is SQLite's NULL-safe equality.
+
+    Plain `=` would make every NULL-valued guard column compare false, so a CAS guarding a
+    NULL column could never match and compensation would silently never fire.
+    """
+    if not expected:
+        return "", []
+    clause = " AND ".join(f"{column} IS ?" for column in expected)
+    return f" AND {clause}", list(expected.values())
+
+
+async def compare_and_swap_product(pid: str, *, expected: dict, changes: dict) -> bool:
+    """Write `changes` only while every `expected` column still holds the given value.
+
+    Returns True iff EXACTLY one row matched. False means someone else changed the row
+    underneath us; the caller must report a refusal and must not claim it restored
+    anything.
+    """
+    changes = _safe_kwargs("product", dict(changes))
+    if not changes:
+        return False
+    guards = _safe_kwargs("product", dict(expected))
+    guard_sql, guard_values = _cas_guard_sql(guards)
+    sets = ", ".join(f"{column}=?" for column in changes)
+    db = await get_db()
+    async with _db_lock:
+        cursor = await db.execute(
+            f"UPDATE product SET {sets} WHERE id=?{guard_sql}",
+            [*changes.values(), pid, *guard_values])
+        await db.commit()
+    return cursor.rowcount == 1
+
+
+async def compare_and_delete_product(pid: str, *, expected: dict) -> bool:
+    """Delete the product only while it still looks exactly as this request left it.
+
+    An unconditional delete would destroy a product another operator had meanwhile edited
+    (or that a second request had adopted), so the created-product compensation is guarded
+    the same way the restore path is.
+    """
+    guards = _safe_kwargs("product", dict(expected))
+    guard_sql, guard_values = _cas_guard_sql(guards)
+    db = await get_db()
+    async with _db_lock:
+        cursor = await db.execute(
+            f"DELETE FROM product WHERE id=?{guard_sql}", [pid, *guard_values])
+        await db.commit()
+    return cursor.rowcount == 1
+
+
 async def create_product_intelligence_snapshot(product_id: str, version: int, status: str, **kw) -> dict:
     db = await get_db()
     snapshot_id, now = _uuid(), _now()

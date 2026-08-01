@@ -1035,7 +1035,15 @@ domains:
       # is a no-op, an approved snapshot is never downgraded, replay cannot duplicate
       # drafts. Deterministic and provider-free.
       - agent/services/product_intake_service.py
+      # Mission-08A / B-586-04: ONE canonical answer to "is this draft still open?",
+      # shared by the runtime queries AND by the database's partial UNIQUE index. The
+      # predicate used to be hand-written in four places with two CONTRADICTORY
+      # orderings, so the deduplicator could delete exactly the draft every reader would
+      # have returned. Also defines SUPERSEDED - the only truthful terminal state for a
+      # converged duplicate, since APPROVED/REJECTED would fabricate a review decision.
+      - agent/services/product_intelligence_draft_lifecycle.py
       - tests/unit/test_product_intake_service.py
+      - tests/unit/test_reporting_service.py
       - tests/api/test_product_physics_map_persist.py
       - tests/api/test_manual_product_image_provenance.py
       - tests/api/test_intake_orphan_prevention.py

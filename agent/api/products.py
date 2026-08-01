@@ -877,16 +877,25 @@ async def _ensure_intake_intelligence(
 
     B-586-05 failure semantics. Unlike Smart Registration these lanes had NO compensation,
     so a failing ensure left a committed product with no intelligence record.
-      * `created=True`  -> the product we just inserted is removed; nothing pre-existed, so
-                           deleting it restores the prior state exactly.
+      * `created=True`  -> the product we just inserted is removed, but only while it still
+                           looks exactly as we left it.
       * `prior` given   -> an EXISTING product is never deleted. Only the columns this
-                           operation wrote are restored, and only if the row has not been
-                           changed underneath us (CAS on updated_at), so a concurrent
-                           operator edit is never clobbered by our rollback.
+                           operation actually changed are restored.
+
+    Both are real compare-and-swaps now. The previous version read the row, compared
+    `updated_at` in Python, then issued a separate UPDATE — a concurrent write landing
+    between those two statements was silently overwritten, and nothing checked that the
+    UPDATE matched anything, so "RESTORED" was reported even when it had restored nothing.
+    The applied-after snapshot is taken HERE, before `ensure` runs, so every write this
+    request made is already in it and anything that changes afterwards is provably someone
+    else's work. `_safe_kwargs` is what keeps the guard to real product columns, so a
+    request payload key that is not a column can never widen or weaken the comparison.
     """
     if not product or not product.get("id"):
         return None
     product_id = str(product["id"])
+    # The exact state this request left behind: the CAS reference point.
+    applied_after = await crud.get_product(product_id) or dict(product)
     try:
         return await ensure_product_intelligence(
             product_id,
@@ -894,24 +903,46 @@ async def _ensure_intake_intelligence(
             lane=lane,
         )
     except Exception as exc:  # noqa: BLE001 - compensating
+        version_guard = {"updated_at": applied_after.get("updated_at")}
         if created:
-            try:
-                await crud.delete_product(product_id)
-            except Exception:  # noqa: BLE001
+            # Guard on the WHOLE row, not just updated_at. `crud._now()` has one-second
+            # resolution, so an edit landing in the same second as our insert carries an
+            # identical updated_at and a version-only guard would delete the operator's
+            # work. Comparing every column makes the guard independent of clock
+            # granularity: any change at all refuses the delete.
+            removed = await crud.compare_and_delete_product(
+                product_id, expected=applied_after)
+            if not removed:
+                # Someone adopted or edited the product after we created it. Deleting it
+                # now would destroy their work, so it stays and the failure is reported.
                 raise HTTPException(
                     status_code=500,
-                    detail=(f"INTAKE_INTELLIGENCE_FAILED_AND_ORPHAN_REMAINS:{product_id}"
+                    detail=(f"INTAKE_INTELLIGENCE_FAILED_CAS_REFUSED:{product_id}"
                             f":{exc}")) from exc
             raise HTTPException(
                 status_code=500,
                 detail=f"INTAKE_INTELLIGENCE_FAILED_COMPENSATED:{exc}") from exc
         if prior is not None:
-            current = await crud.get_product(product_id)
-            if current and current.get("updated_at") == product.get("updated_at"):
-                restore = {k: prior.get(k) for k in payload
-                           if k in prior and prior.get(k) != current.get(k)}
-                if restore:
-                    await crud.update_product(product_id, **restore)
+            # Restore exactly what THIS operation changed — derived by diffing the
+            # before-state against the applied-after state, not from the request payload
+            # keys. Enrichment, physics, mapping and readiness all write columns that
+            # never appear in the payload, and the payload-keyed version left every one of
+            # them holding the failed operation's values.
+            restore = {k: prior.get(k) for k in prior
+                       if k in applied_after and prior.get(k) != applied_after.get(k)}
+            if not restore:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"INTAKE_INTELLIGENCE_FAILED_NOTHING_TO_RESTORE:{exc}") from exc
+            guard = dict(version_guard)
+            guard.update({k: applied_after.get(k) for k in restore})
+            restored = await crud.compare_and_swap_product(
+                product_id, expected=guard, changes=restore)
+            if not restored:
+                raise HTTPException(
+                    status_code=500,
+                    detail=(f"INTAKE_INTELLIGENCE_FAILED_CAS_REFUSED:{product_id}"
+                            f":{exc}")) from exc
             raise HTTPException(
                 status_code=500,
                 detail=f"INTAKE_INTELLIGENCE_FAILED_RESTORED:{exc}") from exc
@@ -1072,10 +1103,15 @@ async def physics_map_product(data: ProductPhysicsRequest):
         # type it cannot classify, and persisting those would blank real stored physics.
         persistable = {k: v for k, v in payload.items()
                        if k in _PHYSICS_PERSIST_COLUMNS and str(v or "").strip()}
+        # B-586-05: capture the before-state BEFORE writing, and hand it to the seam as
+        # `prior`. Without it this lane persisted physics/readiness columns and then, on a
+        # failing ensure, kept them — the one lane that writes columns the request payload
+        # never names was also the one lane with no way to undo them.
+        prior_product = dict(product)
         if persistable:
             await crud.update_product(product["id"], **persistable)
         await _ensure_intake_intelligence(
-            product, payload, lane="PRODUCTS_PHYSICS_MAP_PERSIST")
+            product, payload, lane="PRODUCTS_PHYSICS_MAP_PERSIST", prior=prior_product)
         payload["persisted_fields"] = sorted(persistable)
     return payload
 

@@ -143,9 +143,11 @@ async def test_changed_evidence_updates_the_open_draft_review_required():
 
 async def _open_draft_count(pid: str) -> int:
     db = await get_db()
+    from agent.services.product_intelligence_draft_lifecycle import SQL_OPEN_PREDICATE
+
     cur = await db.execute(
         "SELECT COUNT(*) FROM product_intelligence_review_draft WHERE product_id=? "
-        "AND UPPER(COALESCE(review_status,'')) NOT IN ('APPROVED','REJECTED')", (pid,))
+        f"AND {SQL_OPEN_PREDICATE}", (pid,))
     n = (await cur.fetchone())[0]
     await cur.close()
     return int(n)
@@ -762,28 +764,206 @@ async def test_a_draft_created_by_another_connection_is_reconciled_not_duplicate
     assert await _open_draft_count("intake-race2") == 1
 
 
-@pytest.mark.asyncio
-async def test_duplicate_open_drafts_converge_on_the_same_winner_deterministically():
-    """Both racers must independently pick the same survivor, so the outcome cannot
-    depend on which one finished last."""
-    from agent.services.product_intake_service import _resolve_duplicate_open_drafts
+def _raw_connections():
+    """Two INDEPENDENT sqlite3 connections to the same file as the app.
 
-    await _product("intake-conv")
+    An asyncio lock cannot serialize these, which is the whole point: B-586-04 has to hold
+    even when the racers share no Python state. Deliberately NOT the app's aiosqlite
+    connection.
+    """
+    import sqlite3
+
+    from agent.config import DB_PATH
+
+    a = sqlite3.connect(str(DB_PATH), timeout=30)
+    b = sqlite3.connect(str(DB_PATH), timeout=30)
+    for con in (a, b):
+        con.execute("PRAGMA foreign_keys=ON")
+    return a, b
+
+
+@pytest.mark.asyncio
+async def test_database_itself_rejects_a_second_open_draft_across_two_connections():
+    """B-586-04. The invariant must be enforced by the DATABASE.
+
+    The previous rule ran in application code AFTER both inserts had committed and then
+    deleted the loser. Two independent connections defeat it: neither sees the other's
+    uncommitted row, so both insert, and whichever cleanup runs last decides. Here the
+    second INSERT must simply fail.
+    """
+    import sqlite3
+
+    await _product("intake-dbrace")
     db = await get_db()
-    for did in ("zzzz-late", "aaaa-early", "mmmm-mid"):
-        await db.execute(
-            "INSERT INTO product_intelligence_review_draft (draft_id, product_id, "
-            "review_status, created_at, updated_at) VALUES (?,?,?,?,?)",
-            (did, "intake-conv", "DRAFT", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"))
+    await db.execute(
+        "INSERT INTO product_intelligence_review_draft (draft_id, product_id, "
+        "review_status, created_at, updated_at) VALUES (?,?,?,?,?)",
+        ("dbrace-first", "intake-dbrace", "DRAFT", "2026-01-01T00:00:00Z",
+         "2026-01-01T00:00:00Z"))
     await db.commit()
 
-    first = await _resolve_duplicate_open_drafts("intake-conv", "zzzz-late")
-    assert first == "aaaa-early"
-    assert await _open_draft_count("intake-conv") == 1
-    # idempotent under replay
-    again = await _resolve_duplicate_open_drafts("intake-conv", "aaaa-early")
-    assert again == "aaaa-early"
-    assert await _open_draft_count("intake-conv") == 1
+    con_a, con_b = _raw_connections()
+    try:
+        with pytest.raises(sqlite3.IntegrityError) as excinfo:
+            con_b.execute(
+                "INSERT INTO product_intelligence_review_draft (draft_id, product_id, "
+                "review_status, created_at, updated_at) VALUES (?,?,?,?,?)",
+                ("dbrace-second", "intake-dbrace", "NEEDS_REVISION",
+                 "2026-01-01T00:00:01Z", "2026-01-01T00:00:01Z"))
+            con_b.commit()
+        assert "UNIQUE" in str(excinfo.value).upper()
+        con_b.rollback()
+
+        # ... yet a TERMINAL duplicate is still allowed: history is never blocked.
+        con_a.execute(
+            "INSERT INTO product_intelligence_review_draft (draft_id, product_id, "
+            "review_status, created_at, updated_at) VALUES (?,?,?,?,?)",
+            ("dbrace-history", "intake-dbrace", "SUPERSEDED", "2026-01-01T00:00:02Z",
+             "2026-01-01T00:00:02Z"))
+        con_a.commit()
+    finally:
+        con_a.close()
+        con_b.close()
+
+    assert await _open_draft_count("intake-dbrace") == 1
+    assert await _draft_count("intake-dbrace") == 2
+
+
+@pytest.mark.asyncio
+async def test_losing_racer_merges_its_evidence_instead_of_deleting_anything():
+    """The loser must not vanish and must not delete the winner.
+
+    The old rule deleted the losing draft outright, so whatever that racer had captured
+    was gone. Now the loser reconciles: fields the winner left EMPTY are adopted, and a
+    real disagreement is reported rather than silently overwritten.
+    """
+    from agent.services import product_intake_service as pis
+
+    await _product("intake-lostrace")
+    db = await get_db()
+    # the "winner": already committed by a rival connection, with usage_text EMPTY
+    await db.execute(
+        "INSERT INTO product_intelligence_review_draft (draft_id, product_id, "
+        "review_status, product_description, usage_text, created_at, updated_at) "
+        "VALUES (?,?,?,?,?,?,?)",
+        ("lostrace-winner", "intake-lostrace", "NEEDS_REVISION", "Winner text.", None,
+         "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"))
+    await db.commit()
+
+    payload = {"fields": {"product_description": "Loser text.", "usage_text": "Apply."}}
+    result = await pis._reconcile_lost_race("intake-lostrace", payload)
+
+    assert result["draft_id"] == "lostrace-winner"
+    # winner was silent about usage_text -> adopted, nothing lost
+    assert result["merged_fields"] == ["usage_text"]
+    # winner already had a DIFFERENT product_description -> conflict, not overwritten
+    assert result["conflicting_fields"] == ["product_description"]
+
+    cur = await db.execute(
+        "SELECT product_description, usage_text FROM "
+        "product_intelligence_review_draft WHERE draft_id='lostrace-winner'")
+    row = await cur.fetchone()
+    await cur.close()
+    assert row[0] == "Winner text.", "a rival's committed value was overwritten"
+    assert row[1] == "Apply.", "the loser's non-conflicting evidence was discarded"
+    assert await _open_draft_count("intake-lostrace") == 1
+
+
+@pytest.mark.asyncio
+async def test_every_caller_receives_the_same_live_draft_id():
+    """A converged product must not hand different callers different draft ids."""
+    from agent.services.product_intake_service import _latest_open_draft
+
+    await _product("intake-samelive")
+    db = await get_db()
+    await db.execute(
+        "INSERT INTO product_intelligence_review_draft (draft_id, product_id, "
+        "review_status, created_at, updated_at) VALUES (?,?,?,?,?)",
+        ("samelive-open", "intake-samelive", "DRAFT", "2026-01-01T00:00:00Z",
+         "2026-01-01T00:00:00Z"))
+    # a superseded sibling must never be served as the live draft
+    await db.execute(
+        "INSERT INTO product_intelligence_review_draft (draft_id, product_id, "
+        "review_status, created_at, updated_at) VALUES (?,?,?,?,?)",
+        ("samelive-old", "intake-samelive", "SUPERSEDED", "2026-01-02T00:00:00Z",
+         "2026-01-02T00:00:00Z"))
+    await db.commit()
+
+    seen = set()
+    for _ in range(3):
+        row, _terminal = await _latest_open_draft("intake-samelive")
+        seen.add(row["draft_id"])
+    assert seen == {"samelive-open"}
+
+
+@pytest.mark.asyncio
+async def test_superseded_rows_keep_every_value_and_all_their_provenance():
+    """Convergence must not be a disguised delete, and must not fabricate a review."""
+    await _product("intake-keepev")
+    db = await get_db()
+    await db.execute(
+        "INSERT INTO product_intelligence_review_draft (draft_id, product_id, "
+        "review_status, product_description, usage_text, created_at, updated_at) "
+        "VALUES (?,?,?,?,?,?,?)",
+        ("keepev-loser", "intake-keepev", "SUPERSEDED", "Losing evidence.", "Rub in.",
+         "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"))
+    await db.execute(
+        "INSERT INTO product_intelligence_review_field_provenance ("
+        "review_provenance_id, draft_id, product_id, field_name, source_type, "
+        "evidence_kind, extraction_method, verification_status, created_at, updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ("keepev-prov", "keepev-loser", "intake-keepev", "usage_text", "IMPORTED_FASTMOSS",
+         "IMPORTED_MARKETPLACE_ROW", "FASTMOSS_WORKBOOK", "PENDING_REVIEW",
+         "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"))
+    await db.commit()
+
+    cur = await db.execute(
+        "SELECT product_description, usage_text, approved_by, approved_at, rejected_by, "
+        "rejected_at, reviewed_by FROM product_intelligence_review_draft "
+        "WHERE draft_id='keepev-loser'")
+    row = await cur.fetchone()
+    await cur.close()
+    assert row[0] == "Losing evidence." and row[1] == "Rub in."
+    assert all(v is None for v in row[2:]), (
+        "convergence fabricated a reviewer identity or a review decision")
+
+    cur = await db.execute(
+        "SELECT COUNT(*) FROM product_intelligence_review_field_provenance "
+        "WHERE draft_id='keepev-loser'")
+    assert (await cur.fetchone())[0] == 1, "superseded evidence lost its provenance"
+    await cur.close()
+
+
+@pytest.mark.asyncio
+async def test_no_product_in_the_catalogue_holds_two_open_drafts():
+    """The catalogue-wide invariant. Must be zero, always."""
+    from agent.services.product_intelligence_draft_lifecycle import SQL_OPEN_PREDICATE
+
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT product_id, COUNT(*) c FROM product_intelligence_review_draft "
+        f"WHERE {SQL_OPEN_PREDICATE} GROUP BY product_id HAVING c > 1")
+    offenders = [dict(r) for r in await cur.fetchall()]
+    await cur.close()
+    assert offenders == [], f"products holding >1 open draft: {offenders}"
+
+
+@pytest.mark.asyncio
+async def test_the_unique_index_is_persisted_in_the_schema_not_just_in_memory():
+    """"Survives restart" means it lives in sqlite_master, not in a runtime guard."""
+    from agent.services.product_intelligence_draft_lifecycle import (
+        UNIQUE_OPEN_DRAFT_INDEX,
+    )
+
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
+        (UNIQUE_OPEN_DRAFT_INDEX,))
+    row = await cur.fetchone()
+    await cur.close()
+    assert row is not None, "the constraint is not in the persisted schema"
+    assert "UNIQUE" in row[0].upper()
+    assert "PRODUCT_ID" in row[0].upper()
 
 
 @pytest.mark.asyncio
@@ -820,9 +1000,206 @@ async def test_a_failed_update_never_destroys_pre_existing_provenance(monkeypatc
             _Draft(declared={"product_knowledge_text": "Changed text.",
                              "usage_text": "wipe"}),
             lane="PRODUCTS_MANUAL")
-    monkeypatch.setattr(pis, "build_provenance_inputs", real)
-    assert state["n"] >= 2, "the write path was never reached; test proves nothing"
+    monkeypatch.setattr(pis, "_write_provenance", real)
+    assert state["n"] >= 1, "the write path was never reached; test proves nothing"
 
     after = await _prov_rows("intake-noloss")
     assert len(after) == len(before), (
         f"rollback destroyed pre-existing provenance: {len(before)} -> {len(after)}")
+
+
+# ── B-586-03: the persistence boundary ────────────────────────────────────────
+# Row COUNTS are too weak a test. A rollback that restores a hand-listed subset of
+# columns keeps the count identical while leaving the failed operation's values in
+# every column nobody remembered to list. These compare complete row CONTENT.
+
+async def _draft_rows_hash(pid: str) -> str:
+    """SHA-256 over every column of every draft row for this product."""
+    import hashlib
+    import json
+
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM product_intelligence_review_draft WHERE product_id=? "
+        "ORDER BY draft_id", (pid,))
+    rows = [dict(r) for r in await cur.fetchall()]
+    await cur.close()
+    return hashlib.sha256(
+        json.dumps(rows, sort_keys=True, default=str).encode()).hexdigest()
+
+
+async def _prov_rows_hash(pid: str) -> str:
+    """SHA-256 over every column of every provenance row for this product."""
+    import hashlib
+    import json
+
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM product_intelligence_review_field_provenance WHERE product_id=? "
+        "ORDER BY review_provenance_id", (pid,))
+    rows = [dict(r) for r in await cur.fetchall()]
+    await cur.close()
+    return hashlib.sha256(
+        json.dumps(rows, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _fail_on_provenance_write(monkeypatch, pis):
+    """Inject a failure ONLY after the draft mutation has already been applied.
+
+    Deliberately targets `_write_provenance` rather than `build_provenance_inputs`.
+    `build_provenance_inputs` is ALSO called by the coverage check, and that check
+    short-circuits on `material_is_covered` before reaching it — so a call-counting
+    injection fires on the wrong call (or never), and the test silently proves nothing.
+    `_write_provenance` is called only from inside the transaction, immediately after
+    `create_review_draft` / `update_review_draft`, which is exactly the window B-586-03
+    is about. Returns a counter the test MUST assert on, so a mis-armed injection fails
+    loudly instead of passing vacuously.
+    """
+    real = pis._write_provenance
+    state = {"n": 0}
+
+    async def boom(draft_id, product_id, draft, payload):
+        state["n"] += 1
+        raise RuntimeError("provenance store offline")
+
+    monkeypatch.setattr(pis, "_write_provenance", boom)
+    return state, real
+
+
+@pytest.mark.asyncio
+async def test_failed_update_restores_the_complete_before_state_not_just_some_columns(
+        monkeypatch):
+    """B-586-03. EVERY column and EVERY provenance row must match the before-state.
+
+    The compensating version restored only the promotion targets plus review_status, so
+    `source_urls_json`, `image_evidence_json`, `completeness_score`, `readiness_status`,
+    `claim_gate` and `updated_at` all silently kept the FAILED operation's values. Row
+    hashes catch that; row counts do not.
+    """
+    from agent.services import product_intake_service as pis
+
+    await _product("intake-b03-full")
+    await pis.ensure_product_intelligence(
+        "intake-b03-full",
+        _Draft(declared={"product_knowledge_text": "Original knowledge.",
+                         "usage_text": "Apply twice daily.",
+                         "source_url": "https://example.test/original"}),
+        lane="PRODUCTS_MANUAL")
+
+    before_drafts = await _draft_rows_hash("intake-b03-full")
+    before_prov = await _prov_rows_hash("intake-b03-full")
+    assert await _prov_rows("intake-b03-full"), "precondition: provenance exists"
+
+    state, real = _fail_on_provenance_write(monkeypatch, pis)
+    with pytest.raises(RuntimeError):
+        await pis.ensure_product_intelligence(
+            "intake-b03-full",
+            _Draft(declared={"product_knowledge_text": "MUTATED knowledge.",
+                             "usage_text": "Apply once.",
+                             "source_url": "https://example.test/changed"}),
+            lane="PRODUCTS_MANUAL")
+    monkeypatch.setattr(pis, "_write_provenance", real)
+    assert state["n"] >= 1, "the write path was never reached; test proves nothing"
+
+    assert await _draft_rows_hash("intake-b03-full") == before_drafts, (
+        "draft row content differs from the before-state after rollback")
+    assert await _prov_rows_hash("intake-b03-full") == before_prov, (
+        "provenance row content differs from the before-state after rollback")
+
+
+@pytest.mark.asyncio
+async def test_failed_first_intake_leaves_neither_draft_nor_provenance(monkeypatch):
+    """A create that fails must leave the product exactly as it was: nothing at all."""
+    from agent.services import product_intake_service as pis
+
+    await _product("intake-b03-create")
+    assert await _draft_count("intake-b03-create") == 0
+
+    state, real = _fail_on_provenance_write(monkeypatch, pis)
+    with pytest.raises(RuntimeError):
+        await pis.ensure_product_intelligence(
+            "intake-b03-create",
+            _Draft(declared={"product_knowledge_text": "Never persisted.",
+                             "usage_text": "wipe",
+                             "source_url": "https://example.test/new"}),
+            lane="PRODUCTS_MANUAL")
+    monkeypatch.setattr(pis, "_write_provenance", real)
+    assert state["n"] >= 1, "the write path was never reached; test proves nothing"
+
+    assert await _draft_count("intake-b03-create") == 0, "an orphan draft survived"
+    assert await _prov_rows("intake-b03-create") == [], "orphan provenance survived"
+
+
+@pytest.mark.asyncio
+async def test_a_rollback_never_removes_another_requests_committed_work(monkeypatch):
+    """B-586-03. The old cleanup was scoped by PRODUCT and ran after the fact, so it
+    could not tell its own partial work from a rival's finished work. A failing request
+    must not touch a concurrent request that already succeeded."""
+    from agent.services import product_intake_service as pis
+
+    await _product("intake-b03-rivalA")
+    await _product("intake-b03-rivalB")
+
+    # rival A succeeds and commits
+    ok = await pis.ensure_product_intelligence(
+        "intake-b03-rivalA",
+        _Draft(declared={"product_knowledge_text": "Rival A survived.",
+                         "usage_text": "wipe"}),
+        lane="PRODUCTS_MANUAL")
+    assert ok["wrote"] is True
+    rival_drafts = await _draft_rows_hash("intake-b03-rivalA")
+    rival_prov = await _prov_rows_hash("intake-b03-rivalA")
+
+    # rival B fails and rolls back
+    state, real = _fail_on_provenance_write(monkeypatch, pis)
+    with pytest.raises(RuntimeError):
+        await pis.ensure_product_intelligence(
+            "intake-b03-rivalB",
+            _Draft(declared={"product_knowledge_text": "Rival B dies.",
+                             "usage_text": "wipe"}),
+            lane="PRODUCTS_MANUAL")
+    monkeypatch.setattr(pis, "_write_provenance", real)
+    assert state["n"] >= 1
+
+    assert await _draft_rows_hash("intake-b03-rivalA") == rival_drafts, (
+        "a failing request's rollback destroyed a concurrent request's draft")
+    assert await _prov_rows_hash("intake-b03-rivalA") == rival_prov, (
+        "a failing request's rollback destroyed a concurrent request's provenance")
+    assert await _draft_count("intake-b03-rivalB") == 0
+
+
+@pytest.mark.asyncio
+async def test_retry_after_a_rolled_back_failure_succeeds_exactly_once(monkeypatch):
+    """The rollback must leave the product retryable, and the retry must not duplicate."""
+    from agent.services import product_intake_service as pis
+
+    await _product("intake-b03-retry")
+    state, real = _fail_on_provenance_write(monkeypatch, pis)
+    with pytest.raises(RuntimeError):
+        await pis.ensure_product_intelligence(
+            "intake-b03-retry",
+            _Draft(declared={"product_knowledge_text": "Attempt one.",
+                             "usage_text": "wipe"}),
+            lane="PRODUCTS_MANUAL")
+    monkeypatch.setattr(pis, "_write_provenance", real)
+    assert state["n"] >= 1
+    assert await _draft_count("intake-b03-retry") == 0
+
+    retried = await pis.ensure_product_intelligence(
+        "intake-b03-retry",
+        _Draft(declared={"product_knowledge_text": "Attempt one.",
+                         "usage_text": "wipe"}),
+        lane="PRODUCTS_MANUAL")
+    assert retried["outcome"] in (CREATED, CREATED_MINIMAL)
+    assert await _draft_count("intake-b03-retry") == 1
+    assert await _open_draft_count("intake-b03-retry") == 1
+    assert await _prov_rows("intake-b03-retry"), "the retry wrote no provenance"
+
+    # replaying the identical evidence is a no-op, not a second draft
+    again = await pis.ensure_product_intelligence(
+        "intake-b03-retry",
+        _Draft(declared={"product_knowledge_text": "Attempt one.",
+                         "usage_text": "wipe"}),
+        lane="PRODUCTS_MANUAL")
+    assert again["outcome"] == NOOP_DRAFT_UP_TO_DATE
+    assert await _draft_count("intake-b03-retry") == 1

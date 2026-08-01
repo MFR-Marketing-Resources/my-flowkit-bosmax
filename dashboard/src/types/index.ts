@@ -1456,7 +1456,9 @@ export type ProductIntelligenceReviewDraftStatus =
 	| "READY_FOR_REVIEW"
 	| "NEEDS_REVISION"
 	| "REJECTED"
-	| "APPROVED";
+	| "APPROVED"
+	// Written only by duplicate convergence — never a reviewer decision.
+	| "SUPERSEDED";
 
 export type ProductIntelligenceClaimGate =
 	| "CLAIM_SAFE"
