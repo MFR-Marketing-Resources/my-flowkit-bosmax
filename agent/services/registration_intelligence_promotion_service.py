@@ -221,10 +221,17 @@ async def promote_registration_to_intelligence(product_id: str, draft: Any) -> d
     from agent.services import product_intelligence_review_draft_service as svc
 
     payload = build_promotion_payload(draft)
-    if not payload["fields"]:
-        return {"promoted": False, "reason": "NO_PROMOTABLE_FIELDS",
-                "dropped_fields": payload["dropped_fields"],
-                "intelligence_draft_id": None}
+    # A draft whose approved evidence is purely identity / taxonomy / physics / commerce
+    # promotes zero knowledge fields. Returning early here (the first version of this
+    # service did) is NOT safe: the caller only treats an EXCEPTION as failure, so commit
+    # returned COMMITTED with intelligence_draft_id=None and the product entered the
+    # catalogue with no intelligence row at all — silently, and invisible to the KPI.
+    # That is the same orphan condition this mission exists to remove.
+    #
+    # Instead the product still enters the review lifecycle, with an empty draft that
+    # reads as "evidence required" rather than as nothing. `create_review_draft` derives
+    # review_status DRAFT for a contentless payload, which is exactly right.
+    minimal = not payload["fields"]
 
     created = await svc.create_review_draft(product_id, build_create_request(payload))
     draft_id = getattr(created, "draft_id", None)
@@ -249,7 +256,11 @@ async def promote_registration_to_intelligence(product_id: str, draft: Any) -> d
         )
 
     return {
-        "promoted": True,
+        "promoted": not minimal,
+        # True when NO knowledge field was promotable. The product is still in the review
+        # lifecycle; it just has nothing to review yet.
+        "minimal_draft": minimal,
+        "reason": "NO_PROMOTABLE_FIELDS" if minimal else None,
         "intelligence_draft_id": draft_id,
         "intelligence_review_status": getattr(created, "review_status", None),
         "intelligence_claim_gate": getattr(created, "claim_gate", None),

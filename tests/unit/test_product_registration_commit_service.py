@@ -167,6 +167,7 @@ async def test_commit_compensates_when_intelligence_promotion_fails(
 async def test_successful_commit_materializes_verified_manual_taxonomy(
     mock_storage,
     mock_crud,
+    mock_promotion,
 ):
     preview = ProductStrategyTaxonomy(
         product_id="draft-taxonomy",
@@ -362,7 +363,7 @@ async def test_commit_fastmoss_promoted_blocks_empty_claim_risk(mock_storage, mo
 
 
 @pytest.mark.asyncio
-async def test_fastmoss_promoted_commit_preserves_source_lane_lineage(mock_storage, mock_crud):
+async def test_fastmoss_promoted_commit_preserves_source_lane_lineage(mock_storage, mock_crud, mock_promotion):
     mock_storage.get_draft.return_value = _make_fastmoss_promoted_draft()
     req = RegistrationCommitRequest(
         draft_id="dfp-001",
@@ -386,7 +387,7 @@ async def test_fastmoss_promoted_commit_preserves_source_lane_lineage(mock_stora
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_fastmoss_promoted_commit_ignores_raw_fastmoss_reference_duplicate(mock_storage, mock_crud):
+async def test_fastmoss_promoted_commit_ignores_raw_fastmoss_reference_duplicate(mock_storage, mock_crud, mock_promotion):
     """Raw source=FASTMOSS row with matching title and no promotion markers must NOT block commit."""
     raw_fastmoss_row = {
         "id": "a7421ac4-7423-4262-86d4-d5be6e687c25",
@@ -469,7 +470,7 @@ async def test_fastmoss_promoted_commit_blocks_already_promoted_duplicate(mock_s
 
 
 @pytest.mark.asyncio
-async def test_fastmoss_promoted_commit_ignores_raw_fastmoss_tiktok_url_match(mock_storage, mock_crud):
+async def test_fastmoss_promoted_commit_ignores_raw_fastmoss_tiktok_url_match(mock_storage, mock_crud, mock_promotion):
     """Raw source=FASTMOSS row matching only on TikTok URL and no promotion markers must NOT block."""
     raw_fastmoss_url_row = {
         "id": "b1111111-0000-0000-0000-000000000001",

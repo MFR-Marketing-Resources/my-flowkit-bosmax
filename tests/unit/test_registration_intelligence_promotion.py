@@ -136,3 +136,100 @@ def test_blank_and_whitespace_values_are_not_promoted():
         declared={"usage_text": "   ", "warnings_text": ""}))
     assert "usage_text" not in payload["fields"]
     assert "warnings_text" not in payload["fields"]
+
+
+# ── the invariant the mocked commit tests structurally cannot check ──────────
+# Both existing commit test files patch promote_registration_to_intelligence out, so they
+# pass whether or not a product ends up with an intelligence row. These exercise the real
+# service against the real DB.
+
+import pytest_asyncio  # noqa: E402
+
+from agent.db import crud  # noqa: E402
+from agent.db.schema import get_db  # noqa: E402
+from agent.services.registration_intelligence_promotion_service import (  # noqa: E402
+    promote_registration_to_intelligence,
+)
+
+
+async def _make_product(pid: str) -> None:
+    db = await get_db()
+    await db.execute(
+        "INSERT INTO product (id, raw_product_title, product_display_name, "
+        "product_short_name, lifecycle_status, created_at, updated_at) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (pid, "Promotion Fixture", "Promotion Fixture", "Promotion Fixture",
+         "ACTIVE", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+    )
+    await db.commit()
+
+
+async def _drafts_for(pid: str) -> list[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM product_intelligence_review_draft WHERE product_id=?", (pid,))
+    rows = [dict(r) for r in await cur.fetchall()]
+    await cur.close()
+    return rows
+
+
+@pytest.mark.asyncio
+async def test_a_draft_with_no_promotable_knowledge_still_gets_an_intelligence_row():
+    """REGRESSION: this returned early with intelligence_draft_id=None, and because the
+    caller only treats an EXCEPTION as failure, commit reported COMMITTED while the
+    product had zero intelligence rows — silently, and invisible to the KPI."""
+    await _make_product("promo-empty")
+    receipt = await promote_registration_to_intelligence(
+        "promo-empty",
+        _Draft(candidates={"category": "Beauty"}, approval={"category": True}),
+    )
+    assert receipt["intelligence_draft_id"], "a committed product must have a PI draft"
+    assert receipt["minimal_draft"] is True
+    assert receipt["reason"] == "NO_PROMOTABLE_FIELDS"
+    assert len(await _drafts_for("promo-empty")) == 1
+
+
+@pytest.mark.asyncio
+async def test_promoted_knowledge_lands_in_the_intelligence_row_and_survives_reload():
+    await _make_product("promo-full")
+    receipt = await promote_registration_to_intelligence(
+        "promo-full",
+        _Draft(declared={
+            "product_knowledge_text": "Cotton table skirting with lace trim.",
+            "usage_text": "Wipe with a damp cloth.",
+            "package_notes": "One folded piece per polybag.",
+            "size_or_volume": "180cm x 75cm",
+            "source_url": "https://shop.example/p/1",
+        }),
+    )
+    assert receipt["minimal_draft"] is False
+    rows = await _drafts_for("promo-full")
+    assert len(rows) == 1
+    row = rows[0]
+    # the exact fields the catalogue audit found at ~0% because commit dropped them
+    assert row["package_notes"] == "One folded piece per polybag."
+    assert row["size_or_volume"] == "180cm x 75cm"
+    assert row["usage_text"] == "Wipe with a damp cloth."
+    assert row["product_description"] == "Cotton table skirting with lace trim."
+    # and it is NOT approved by promotion
+    assert not row["approved_by"]
+    assert not row["approved_at"]
+
+
+@pytest.mark.asyncio
+async def test_promotion_writes_pending_review_provenance_per_field():
+    await _make_product("promo-prov")
+    await promote_registration_to_intelligence(
+        "promo-prov", _Draft(declared={"product_knowledge_text": "x", "usage_text": "y"}))
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT field_name, source_type, verification_status FROM "
+        "product_intelligence_review_field_provenance WHERE product_id=?", ("promo-prov",))
+    rows = [dict(r) for r in await cur.fetchall()]
+    await cur.close()
+    # `create_review_draft` writes its own provenance too (e.g. source_urls_json), so
+    # scope the assertion to the rows promotion itself is responsible for.
+    mine = [r for r in rows if r["source_type"] == "REGISTRATION_COMMIT"]
+    assert {r["field_name"] for r in mine} == {"product_description", "usage_text"}
+    assert all(r["verification_status"] == "PENDING_REVIEW" for r in rows), (
+        "no promotion path may pre-verify a field")
