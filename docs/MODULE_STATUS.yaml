@@ -1042,6 +1042,16 @@ domains:
       # have returned. Also defines SUPERSEDED - the only truthful terminal state for a
       # converged duplicate, since APPROVED/REJECTED would fabricate a review decision.
       - agent/services/product_intelligence_draft_lifecycle.py
+      # Mission-08A: replaces TIKTOKSHOP_EXTRACTION_NOT_IMPLEMENTED. Source-first -
+      # embedded JSON-LD / rehydration payload / OpenGraph, then deterministic
+      # normalization, then exact variant resolution, then field-scoped provenance, and
+      # only THEN the configured text_assist lane for review-required candidates. The
+      # split that matters: price/size/ingredients/warnings are EXTRACT-ONLY (copied from
+      # the page or absent), never model-supplied; a merchandising label like "Standard"
+      # is never accepted as a pack size. Host-allowlisted and per-redirect revalidated so
+      # the fetcher cannot be used as an SSRF primitive.
+      - agent/services/tiktokshop_extraction_service.py
+      - tests/unit/test_tiktokshop_extraction_service.py
       # Owner-authorized canonical repair for the product groups that already held more
       # than one OPEN draft before B-586-04 could be enforced. Backup + snapshot + plan
       # digest first, then proof that ONLY the review-draft table changed. Deletes

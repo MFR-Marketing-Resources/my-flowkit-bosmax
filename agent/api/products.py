@@ -1168,32 +1168,95 @@ async def create_manual_product(data: ManualProductRequest):
 
 @router.post("/import-tiktokshop")
 async def import_tiktokshop_product(data: ImportTikTokShopRequest):
-    draft_title = (data.raw_product_title or data.product_display_name or data.product_short_name or "TIKTOKSHOP_PENDING_METADATA").strip()
+    """Source-first import: read the listing, then propose — never invent.
+
+    This route used to create an empty shell and return
+    TIKTOKSHOP_EXTRACTION_NOT_IMPLEMENTED, so every TikTok product entered the catalogue
+    with a placeholder title and no evidence. It now fetches the listing and extracts what
+    the page actually states.
+
+    Extraction runs in a worker thread: `fetch_source` is synchronous httpx, and calling it
+    directly on the event loop would stall the single-process agent's /health for the whole
+    fetch — the same starvation that took the runtime down before (PR #404).
+
+    Extraction failing is NOT an import failure. The operator still gets the product, with
+    the failure recorded, because a fetch that 404s or times out is not a reason to lose the
+    URL they pasted. What it never does is fabricate: an unreachable page yields no fields.
+    """
+    import asyncio
+
+    from agent.services import tiktokshop_extraction_service as tiktok
+
+    extraction: dict[str, Any] = {}
+    extraction_error: str | None = None
+    try:
+        extraction = await asyncio.to_thread(tiktok.extract_product, data.url)
+    except tiktok.TikTokShopExtractionError as exc:
+        extraction_error = exc.code
+    except Exception as exc:  # noqa: BLE001 - extraction must never sink the import
+        extraction_error = f"{tiktok.ERR_FETCH_FAILED}:{exc}"[:200]
+
+    extracted = dict(extraction.get("fields") or {})
+    # Operator-supplied values WIN over extraction: the person pasting the link may be
+    # correcting a listing they can see and we cannot.
+    draft_title = (data.raw_product_title or extracted.get("raw_product_title")
+                   or data.product_display_name or data.product_short_name
+                   or "TIKTOKSHOP_PENDING_METADATA").strip()
+    price = data.price if data.price is not None else extracted.get("price")
+    image_url = data.image_url or extracted.get("image_url")
+
     created = await crud.create_product(
         raw_product_title=draft_title,
         source="TIKTOKSHOP",
         source_url=data.url,
         tiktok_product_url=data.url,
-        product_display_name=_display_name(draft_title, data.product_display_name or "TikTok Shop Draft"),
-        product_short_name=(data.product_short_name or "TikTok Shop Draft").strip(),
+        brand=extracted.get("brand"),
+        product_display_name=_display_name(
+            draft_title, data.product_display_name or draft_title),
+        product_short_name=(data.product_short_name or draft_title).strip()[:120],
         category=data.category,
         subcategory=data.subcategory,
         type=data.type,
-        price=data.price,
-        currency=data.currency,
+        price=price,
+        currency=data.currency or extracted.get("currency"),
         commission_amount=data.commission_amount,
         commission_rate=data.commission_rate,
-        image_url=data.image_url,
-        mapping_review_status="TIKTOKSHOP_EXTRACTION_NOT_IMPLEMENTED",
+        image_url=image_url,
+        # size_or_volume is deliberately NOT passed here: it is not a `product` column, it
+        # is Product Intelligence. It travels in evidence_payload below so it lands on the
+        # review draft with its own provenance, where a human can accept or reject it.
+        mapping_review_status=("TIKTOKSHOP_EXTRACTED" if extracted
+                               else (extraction_error or "TIKTOKSHOP_NO_EVIDENCE")),
         prompt_readiness_status="MISSING_FIELDS",
+        image_asset_status="UNRESOLVED" if image_url else "UNRESOLVED",
     )
+    # Everything the lane learned becomes intake evidence, so the draft and its
+    # field-scoped provenance carry the listing URL rather than a bare product row.
+    evidence_payload = data.model_dump()
+    # EXTRACTED page facts become draft evidence. Model CANDIDATES deliberately do NOT:
+    # writing a proposal into the draft is accepting it, and acceptance is a human act
+    # performed through the review UI. They are returned for review instead.
+    evidence_payload.update({k: v for k, v in extracted.items() if v not in (None, "")})
+    evidence_payload["source_url"] = extraction.get("source_url") or data.url
     await _ensure_intake_intelligence(
-        created, data.model_dump(), lane="PRODUCTS_TIKTOKSHOP_IMPORT", created=True)
+        created, evidence_payload, lane="PRODUCTS_TIKTOKSHOP_IMPORT", created=True)
     enriched = await _enrich_product(created, persist=True)
     return {
-        "ok": False,
-        "error_code": "TIKTOKSHOP_EXTRACTION_NOT_IMPLEMENTED",
-        "manual_entry_required": True,
+        # `ok` now reflects whether evidence was actually acquired.
+        "ok": bool(extracted),
+        "error_code": extraction_error,
+        "manual_entry_required": not extracted,
+        "extraction": {
+            "fields": extracted,
+            "candidates": extraction.get("candidates") or {},
+            "candidate_status": extraction.get("candidate_status"),
+            "variant": extraction.get("variant"),
+            "variant_resolution": extraction.get("variant_resolution"),
+            "size_resolution": extraction.get("size_resolution"),
+            "evidence_methods": extraction.get("evidence_methods") or [],
+            "absent_extract_only_fields": extraction.get("absent_extract_only_fields") or [],
+            "provenance": extraction.get("provenance") or [],
+        },
         "product": enriched,
     }
 
