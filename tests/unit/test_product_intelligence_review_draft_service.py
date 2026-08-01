@@ -675,6 +675,45 @@ async def test_not_stated_disposition_satisfies_the_field_and_classifies_governe
 
 
 @pytest.mark.asyncio
+async def test_claim_review_ack_preserves_governed_absence_snapshot_classification():
+    """A reviewed automotive claim must not erase the governed-absence quality class."""
+    product = await _strict_product("Nakamichi Windshield Treatment")
+    draft = await svc.create_review_draft(
+        product["id"],
+        _knowledge_gap_request(
+            product_description="Nakamichi Windshield Treatment 30ml.",
+            usage_text="Apply to the automotive windshield.",
+        ),
+    )
+    for field in ("ingredients_text", "warnings_text"):
+        validation = await svc.set_field_disposition(
+            draft.draft_id,
+            _disposition(field, "NOT_STATED_IN_SOURCE"),
+        )
+
+    assert validation.claim_gate == "CLAIM_REVIEW_REQUIRED"
+    assert validation.readiness_status == "READY_WITH_GOVERNED_ABSENCE"
+    assert validation.approval_blockers == ["CLAIM_REVIEW_REQUIRED:treat"]
+
+    with pytest.raises(ValueError, match="DRAFT_NOT_APPROVABLE:CLAIM_REVIEW_REQUIRED"):
+        await svc.approve_review_draft(
+            draft.draft_id,
+            ProductIntelligenceReviewDraftApproveRequest(approved_by="owner"),
+        )
+
+    approved = await svc.approve_review_draft(
+        draft.draft_id,
+        ProductIntelligenceReviewDraftApproveRequest(
+            approved_by="owner",
+            claim_review_acknowledged=True,
+        ),
+    )
+    assert approved.status == "APPROVED"
+    assert approved.readiness_status == "READY_WITH_GOVERNED_ABSENCE"
+    assert (approved.completeness_score or 0) < 1.0
+
+
+@pytest.mark.asyncio
 async def test_disposition_upsert_is_idempotent_and_scoped_to_its_field():
     product = await _strict_product("Governed Idempotent")
     draft = await svc.create_review_draft(product["id"], _knowledge_gap_request())

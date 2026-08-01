@@ -604,7 +604,7 @@ def _evaluate_validation_payload(
     # matrix HERE (not only at write time) so a product recategorised after the
     # disposition was recorded fails closed instead of keeping a now-illegal waiver.
     dispositions = dispositions or {}
-    category = (product or {}).get("category")
+    category = product.get("category") if isinstance(product, dict) else None
     governed_absent_fields: dict[str, str] = {}
     unresolved_external_fields: list[str] = []
     for field_name in missing_required_fields:
@@ -662,7 +662,11 @@ def _evaluate_validation_payload(
     elif payload["claim_gate"] == "CLAIM_REVIEW_REQUIRED" and readiness_status in (
         "READY_FOR_APPROVAL", READINESS_GOVERNED_ABSENCE,
     ):
-        readiness_status = "CLAIM_REVIEW_REQUIRED"
+        # Claim review is an approval blocker, not a field-completeness class. Preserve
+        # governed absence as the frozen snapshot/reporting authority while the separate
+        # claim gate and blocker continue to require an explicit acknowledgement.
+        if readiness_status == "READY_FOR_APPROVAL":
+            readiness_status = "CLAIM_REVIEW_REQUIRED"
         approval_blockers.append(
             f"CLAIM_REVIEW_REQUIRED:{','.join(payload['claim_tokens_json']) or 'UNSPECIFIED'}",
         )
