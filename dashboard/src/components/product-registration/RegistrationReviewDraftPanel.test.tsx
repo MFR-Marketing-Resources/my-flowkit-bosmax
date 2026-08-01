@@ -6,6 +6,7 @@ import {
 	screen,
 	waitFor,
 } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { fetchAPI, patchAPI, postAPI } from "../../api/client";
@@ -122,6 +123,21 @@ function renderPanel(draft: RegistrationReviewDraft = reviewDraft) {
 		/>,
 	);
 	return { onUpdate };
+}
+
+function StatefulReviewDraftPanel({
+	draft,
+}: {
+	draft: RegistrationReviewDraft;
+}) {
+	const [currentDraft, setCurrentDraft] = useState(draft);
+	return (
+		<RegistrationReviewDraftPanel
+			draft={currentDraft}
+			onUpdate={setCurrentDraft}
+			onClear={vi.fn()}
+		/>
+	);
 }
 
 describe("RegistrationReviewDraftPanel next-action guidance", () => {
@@ -424,6 +440,53 @@ describe("RegistrationReviewDraftPanel next-action guidance", () => {
 		expect(onUpdate).toHaveBeenCalledWith(resolvedDraft);
 	});
 
+	it("preserves unsaved evidence when a candidate decision refreshes the same draft", async () => {
+		const decisionDraft: RegistrationReviewDraft = {
+			...reviewDraft,
+			human_review_fields: reviewDraft.human_review_fields.filter(
+				(field) => field !== "category",
+			),
+			approval_checklist: {
+				...reviewDraft.approval_checklist,
+				category: true,
+			},
+		};
+		vi.mocked(patchAPI).mockResolvedValue(decisionDraft);
+		render(<StatefulReviewDraftPanel draft={reviewDraft} />);
+
+		const warnings = screen.getByPlaceholderText(
+			"Warnings, pantang, or restrictions.",
+		);
+		fireEvent.change(warnings, {
+			target: { value: "Keep away from an open flame." },
+		});
+		fireEvent.change(screen.getByLabelText("Reviewer ID"), {
+			target: { value: "operator-7" },
+		});
+		fireEvent.change(screen.getByLabelText("Reviewer Note"), {
+			target: { value: "Keep this pending review note." },
+		});
+
+		expect(
+			screen.getByTestId("registration-unsaved-evidence-changes"),
+		).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Approve category" }));
+
+		await waitFor(() =>
+			expect(
+				screen.getByRole("button", { name: "Approved category" }),
+			).toBePressed(),
+		);
+		expect(warnings).toHaveValue("Keep away from an open flame.");
+		expect(screen.getByLabelText("Reviewer ID")).toHaveValue("operator-7");
+		expect(screen.getByLabelText("Reviewer Note")).toHaveValue(
+			"Keep this pending review note.",
+		);
+		expect(
+			screen.getByTestId("registration-unsaved-evidence-changes"),
+		).toBeInTheDocument();
+	});
+
 	it("renders curtain-specific labels and the convergence decision trail", () => {
 		const curtainDraft = {
 			...reviewDraft,
@@ -528,7 +591,10 @@ describe("B-08A-01 candidate approval affordance", () => {
 	it("shows Approved state and offers an explicit Reject once approved", () => {
 		renderPanel({
 			...reviewDraft,
-			approval_checklist: { ...reviewDraft.approval_checklist, normalized_name: true },
+			approval_checklist: {
+				...reviewDraft.approval_checklist,
+				normalized_name: true,
+			},
 		});
 		const approve = screen.getByTestId("approve-normalized_name");
 		expect(approve).toHaveAttribute("aria-pressed", "true");
