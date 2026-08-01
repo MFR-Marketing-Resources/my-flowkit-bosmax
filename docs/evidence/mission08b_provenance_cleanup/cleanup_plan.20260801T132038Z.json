@@ -1,0 +1,124 @@
+{
+ "stamp": "20260801T132038Z",
+ "mode": "APPLY",
+ "counts_before": {
+  "product": 659,
+  "product_intelligence_review_draft": 476,
+  "product_intelligence_review_field_provenance": 3855,
+  "product_intelligence_snapshot": 447
+ },
+ "targets": [
+  {
+   "review_provenance_id": "cb075f4d-7f45-40cc-8242-fe0aeccf6508",
+   "product_id": "60c65d01-5d27-465b-8b9b-20d3a8cd8b99",
+   "field_name": "product_description",
+   "declared_value_prefix": "Buy Teachers Day Gift Bag",
+   "defect": "B-08B-D1",
+   "why": "TikTok og:description SEO template stored as a product description; the draft value was restored to the curated description the same day.",
+   "found": true,
+   "verdict": "WILL_REJECT",
+   "before": {
+    "verification_status": "PENDING_REVIEW",
+    "reviewer_decision": null,
+    "reviewer_note": "promoted from registration draft field 'product_description'"
+   }
+  },
+  {
+   "review_provenance_id": "3dfe7408-f31b-4b40-8078-a2ca418b8de5",
+   "product_id": "1063eec6-976c-415f-95dd-be5c7b53608b",
+   "field_name": "product_description",
+   "declared_value_prefix": "Buy Nakamichi Rapid Windshield",
+   "defect": "B-08B-D1",
+   "why": "TikTok og:description SEO template stored as a product description; the draft value was restored to the curated description the same day.",
+   "found": true,
+   "verdict": "WILL_REJECT",
+   "before": {
+    "verification_status": "PENDING_REVIEW",
+    "reviewer_decision": null,
+    "reviewer_note": "promoted from registration draft field 'product_description'"
+   }
+  },
+  {
+   "review_provenance_id": "d307f1e3-019b-4e95-b1b4-1ee2626f0810",
+   "product_id": "1063eec6-976c-415f-95dd-be5c7b53608b",
+   "field_name": "ingredients_text",
+   "declared_value_prefix": "LiquidItem:3 Bottle",
+   "defect": "B-08B-D2",
+   "why": "Customer-review stream (masked usernames, 'Verified purchase') captured by the labelled-section parser and stored as ingredients; the draft field was cleared the same day.",
+   "found": true,
+   "verdict": "WILL_REJECT",
+   "before": {
+    "verification_status": "PENDING_REVIEW",
+    "reviewer_decision": null,
+    "reviewer_note": "promoted from registration draft field 'materials_text'"
+   }
+  },
+  {
+   "review_provenance_id": "930c3fd7-ec80-463e-ab90-463846404e1d",
+   "product_id": "aae1b6f9-6d8f-43e3-9723-0d517ae8daec",
+   "field_name": "product_description",
+   "declared_value_prefix": "Buy Diamond Coating",
+   "defect": "B-08B-D1",
+   "why": "TikTok og:description SEO template stored as a product description; the draft value was restored to the curated description the same day.",
+   "found": true,
+   "verdict": "WILL_REJECT",
+   "before": {
+    "verification_status": "PENDING_REVIEW",
+    "reviewer_decision": null,
+    "reviewer_note": "promoted from registration draft field 'product_description'"
+   }
+  }
+ ],
+ "keep_asserted": [
+  {
+   "id": "2c0e9f48-01cc-48f1-ae55-6f584a276a3d",
+   "state": "PRESENT",
+   "hash": "dcb13012baefd9f6"
+  },
+  {
+   "id": "9338852e-ebd7-46ad-988c-3fdda977b90c",
+   "state": "PRESENT",
+   "hash": "0184517a9aa4f8c0"
+  },
+  {
+   "id": "a4b73865-73cf-4845-adb6-6ccb824ea3a9",
+   "state": "PRESENT",
+   "hash": "c376566d1fd831d0"
+  },
+  {
+   "id": "1e06f7bf-d6b3-4127-8bc7-1a377e38b3a6",
+   "state": "PRESENT",
+   "hash": "77b532e891ff1374"
+  },
+  {
+   "id": "3970ec37-12a9-4c89-b8b1-7e8d09a5aa83",
+   "state": "PRESENT",
+   "hash": "ba33ebf0a82e3be9"
+  },
+  {
+   "id": "5480cd0c-3649-43f6-ab68-18702b34b846",
+   "state": "PRESENT",
+   "hash": "083b63e39751bfe1"
+  },
+  {
+   "id": "6260187b-bd44-40c8-a1f9-e67677ee066a",
+   "state": "PRESENT",
+   "hash": "f232f2276f7f29f3"
+  },
+  {
+   "id": "0344c00d-b0bb-4023-a123-87e1427efe4e",
+   "state": "PRESENT",
+   "hash": "8edb7c14632a4ea3"
+  },
+  {
+   "id": "7cc0d9f7-2781-4f96-a16c-1ca8836193da",
+   "state": "PRESENT",
+   "hash": "8417ac8a1c43d25b"
+  },
+  {
+   "id": "8ee16288-d4b6-4c68-a5d0-fe0cab79ca42",
+   "state": "PRESENT",
+   "hash": "20ecfdd9e63cee22"
+  }
+ ]
+}

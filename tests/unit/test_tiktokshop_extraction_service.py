@@ -270,3 +270,93 @@ async def test_import_route_still_creates_the_product_when_extraction_fails(monk
     assert body["manual_entry_required"] is True
     assert body["extraction"]["fields"] == {}
     assert body["product"]["raw_product_title"] == "Operator Typed Title"
+
+
+# ── B-08B-D1: marketplace boilerplate is not product knowledge ───────────────
+# The live og:description template captured on the first pilot round, verbatim shape:
+BOILERPLATE_DESC = ("Buy Teachers Day Gift Bag Cute School Bag Transparent Design on "
+                    "TikTok Shop. Discover great prices on and get free shipping on "
+                    "eligible items. Shop now for exclusive deals!")
+
+
+def test_the_marketplace_seo_template_is_recognised():
+    assert svc.is_marketplace_boilerplate(BOILERPLATE_DESC)
+    # opener alone is enough — the template always frames "Buy <title> on TikTok Shop"
+    assert svc.is_marketplace_boilerplate(
+        "Buy Nakamichi Windshield Cleaner 30ml on TikTok Shop.")
+    # two markers without the opener still trip the gate
+    assert svc.is_marketplace_boilerplate(
+        "Discover great prices on cleaning fluids. Shop now for exclusive deals!")
+
+
+def test_a_genuine_description_mentioning_the_platform_once_is_not_rejected():
+    """One incidental platform mention must not censor a real description."""
+    assert not svc.is_marketplace_boilerplate(
+        "Minyak urut tradisional 25ml, kini boleh didapati on TikTok Shop dan farmasi "
+        "terpilih. Bahan semula jadi.")
+    assert not svc.is_marketplace_boilerplate("Sarung kusyen velvet warna biru, 45cm.")
+    assert not svc.is_marketplace_boilerplate("")
+
+
+def test_boilerplate_og_description_never_becomes_an_extracted_field():
+    """The defect that overwrote three curated descriptions on the first live pilot."""
+    page = (f'<html><head><meta property="og:title" content="Gift Bag 24CM" />'
+            f'<meta property="og:description" content="{BOILERPLATE_DESC}" />'
+            "</head><body></body></html>")
+    result = svc.extract_product("https://shop.tiktok.com/view/product/1",
+                                 page_text=page, propose=False)
+    assert "product_description" not in result["fields"]
+    assert result["unresolved"]["product_description"] == \
+        svc.REJECTED_MARKETPLACE_BOILERPLATE
+    # the title is still real evidence and still lands
+    assert result["fields"]["raw_product_title"] == "Gift Bag 24CM"
+
+
+def test_a_real_og_description_still_fills_normally():
+    page = ('<html><head><meta property="og:title" content="Gift Bag 24CM" />'
+            '<meta property="og:description" content="Beg hadiah transparent 24CM '
+            'untuk Hari Guru. Material tahan lasak." /></head><body></body></html>')
+    result = svc.extract_product("https://shop.tiktok.com/view/product/1",
+                                 page_text=page, propose=False)
+    assert result["fields"]["product_description"].startswith("Beg hadiah transparent")
+    assert "product_description" not in result["unresolved"]
+
+
+# ── B-08B-D2: labelled sections stop at the review stream ────────────────────
+def test_a_labelled_section_hard_stops_at_review_fingerprints():
+    """The exact leak class from the first live pilot: spec text runs into reviews.
+
+    `…Bottle 2026-04-21 C**N H**d S**r Verified purchase Belum test lagi…` was stored as
+    ingredients_text. Masked usernames and "Verified purchase" cannot occur inside a
+    genuine ingredient statement, so the first fingerprint ends the section.
+    """
+    text = ("Material: Silicone polymer, solvents C**N ·Verified purchase MY Belum "
+            "test lagi dan barang sampai cepat")
+    value = svc.extract_labelled_section(text, ("material",))
+    assert value == "Silicone polymer, solvents"
+    assert "Verified" not in value and "**" not in value
+
+
+def test_a_review_only_region_after_a_label_yields_nothing_not_junk():
+    """When the label is immediately followed by review prose, the honest answer is
+    None — NOT the review text and NOT a model guess."""
+    text = "Material: H**d S**r·Verified purchase Sangat puas hati barang ori"
+    assert svc.extract_labelled_section(text, ("material",)) is None
+
+
+def test_a_realistic_page_with_specs_and_reviews_extracts_specs_only():
+    """Both regions on one page — the shape every rendered TikTok listing actually has."""
+    page = ('<html><head><meta property="og:title" content="Pencuci Cermin 30ml" />'
+            '<meta property="og:description" content="Pencuci cermin kereta 30ml." />'
+            "</head><body><main>"
+            "Specifications Ingredients: Aqua, surfactant blend, isopropanol "
+            "Warning: Jauhkan dari kanak-kanak "
+            "Customer Reviews (128) C**N ·Verified purchase 2026-04-21 Bagus sangat! "
+            "H**d S**r ·Verified purchase Barang ori</main></body></html>")
+    result = svc.extract_product("https://shop.tiktok.com/view/product/2",
+                                 page_text=page, propose=False)
+    assert result["fields"]["materials_text"] == "Aqua, surfactant blend, isopropanol"
+    assert result["fields"]["warnings_text"] == "Jauhkan dari kanak-kanak"
+    for value in result["fields"].values():
+        assert "Verified" not in str(value)
+        assert "**" not in str(value)

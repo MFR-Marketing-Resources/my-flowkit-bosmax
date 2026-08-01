@@ -117,12 +117,22 @@ async def _persist_candidates(draft_id: str, product_id: str,
     updates: dict[str, Any] = {}
     proposed: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
+    from agent.services.tiktokshop_extraction_service import is_marketplace_boilerplate
+
     for source_key, value in (candidates or {}).items():
         column = CANDIDATE_TARGETS.get(source_key)
         if not column or not _has_value(value):
             continue
         if _has_value(getattr(draft, column, None)):
             skipped.append({"field": column, "reason": "EXISTING_EVIDENCE_PRESERVED"})
+            continue
+        # B-08B-D1: an EMPTY description may only be filled with product-specific text.
+        # The model's brief contains the listing's og:description, so a lazy proposal can
+        # be the marketplace SEO template verbatim — the same junk the extraction gate
+        # rejects must not walk in through the candidate door instead.
+        if column == "product_description" and is_marketplace_boilerplate(value):
+            skipped.append({"field": column,
+                            "reason": "REJECTED_MARKETPLACE_BOILERPLATE"})
             continue
         updates[column] = _coerce(column, value)
         proposed.append({"field": column, "value": updates[column]})
@@ -217,6 +227,30 @@ async def recompute_product_intelligence(
     # intelligence. Recompute deliberately does not rewrite the operator's product row.
     evidence_payload = {k: v for k, v in extracted.items()
                         if k not in ("raw_product_title", "brand", "price", "currency")}
+
+    # B-08B-D1 second half: a refresh FILLS, it never REPLACES. The intake seam applies
+    # every non-blank payload field over the open draft, which is right for first intake
+    # and wrong for a recompute — on the first live pilot it swapped three curated
+    # descriptions for TikTok's og:description. Divergent extracted text is therefore
+    # reported as skipped (value shown to the reviewer in the response) rather than
+    # silently replacing stored evidence. Fields the draft leaves empty still fill —
+    # that is the legitimate purpose of a recompute.
+    from agent.services import tiktokshop_extraction_service as tiktok_svc
+    from agent.services.product_intake_service import _latest_open_draft
+
+    evidence_skipped: list[dict[str, Any]] = []
+    open_draft, _terminal = await _latest_open_draft(product_id)
+    if open_draft:
+        for source_key in [k for k in evidence_payload if k != "image_url"]:
+            target = tiktok_svc._SOURCE_KEY_TO_TARGET.get(source_key)  # noqa: SLF001
+            if target and _has_value(open_draft.get(target)):
+                evidence_skipped.append({
+                    "field": target,
+                    "reason": "EXISTING_EVIDENCE_PRESERVED",
+                    "extracted_value_not_stored":
+                        str(evidence_payload.pop(source_key))[:400],
+                })
+
     evidence_payload["source_url"] = extraction.get("source_url") or source_url
 
     intake = await ensure_product_intelligence(
@@ -239,6 +273,10 @@ async def recompute_product_intelligence(
         "source_url": extraction.get("source_url") or source_url,
         "intake_outcome": intake.get("outcome"),
         "extracted_fields": extracted,
+        # Fields where the page stated a value but the draft's existing evidence won.
+        # Surfaced (with the discarded text) so a reviewer can adopt it deliberately;
+        # hiding it would make preservation indistinguishable from a failed extraction.
+        "evidence_skipped": evidence_skipped,
         "unresolved": extraction.get("unresolved") or {},
         "variant": extraction.get("variant"),
         "variant_resolution": extraction.get("variant_resolution"),

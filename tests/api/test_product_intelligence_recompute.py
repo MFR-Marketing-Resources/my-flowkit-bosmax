@@ -663,3 +663,141 @@ async def test_a_link_the_relay_cannot_open_says_so_instead_of_promising_a_retry
     # NOT actionable — no amount of opening tabs fixes a link on an unsupported host.
     assert detail["operator_actionable"] is False
     assert bridge.sent == []
+
+
+# ── B-08B-D1/D2: the data-quality invariants proven at the API boundary ──────
+BOILERPLATE_PAGE = (
+    '<html><head><meta property="og:title" content="Gift Bag 24CM Transparent" />'
+    '<meta property="og:description" content="Buy Gift Bag 24CM Transparent on TikTok '
+    'Shop. Discover great prices on and get free shipping on eligible items. Shop now '
+    'for exclusive deals!" />'
+    '<meta property="og:image" content="https://p16.tiktokcdn.com/img/bag.jpg" />'
+    "</head><body></body></html>")
+
+
+@pytest.mark.asyncio
+async def test_a_curated_description_survives_a_recompute_with_divergent_page_text(
+        monkeypatch):
+    """THE B-08B-D1 defect. A refresh fills, it never replaces.
+
+    The first live pilot swapped three curated descriptions for TikTok's og:description.
+    Here the draft holds a curated value, the page states something different and
+    NON-boilerplate — and the curated value must still win, with the divergence
+    REPORTED rather than silently applied or silently dropped.
+    """
+    _stub_extraction(monkeypatch)
+    product = await _product("Recompute CuratedWins",
+                             tiktok_product_url="https://shop.tiktok.com/view/product/c1")
+    async with await _client() as client:
+        first = await client.post(
+            f"/api/product-intelligence/{product['id']}/recompute")
+        draft_id = first.json()["draft_id"]
+        # the operator curates the description
+        await client.patch(
+            f"/api/product-intelligence/review-drafts/{draft_id}",
+            json={"product_description": "CURATED: Minyak urut 25ml, botol kaca."})
+        again = await client.post(
+            f"/api/product-intelligence/{product['id']}/recompute")
+
+    body = again.json()
+    preserved = {item["field"]: item for item in body["evidence_skipped"]}
+    assert "product_description" in preserved, (
+        "the divergence was not reported — preservation must be visible, not silent")
+    assert preserved["product_description"]["reason"] == "EXISTING_EVIDENCE_PRESERVED"
+    assert preserved["product_description"]["extracted_value_not_stored"], (
+        "the discarded page text must be shown so a reviewer can adopt it deliberately")
+
+    draft = await _draft_row(product["id"])
+    assert draft["product_description"] == "CURATED: Minyak urut 25ml, botol kaca.", (
+        "marketplace extraction overwrote a curated description")
+
+
+@pytest.mark.asyncio
+async def test_seo_boilerplate_never_lands_even_in_an_empty_description(monkeypatch):
+    """An EMPTY field is not a license to store the marketplace's SEO template."""
+    _stub_extraction(monkeypatch, html=BOILERPLATE_PAGE)
+    product = await _product("Recompute BoilerplateEmpty",
+                             tiktok_product_url="https://shop.tiktok.com/view/product/c2")
+    async with await _client() as client:
+        response = await client.post(
+            f"/api/product-intelligence/{product['id']}/recompute")
+
+    body = response.json()
+    assert response.status_code == 200, response.text
+    assert body["unresolved"]["product_description"] == \
+        tiktok.REJECTED_MARKETPLACE_BOILERPLATE
+    assert "product_description" not in body["extracted_fields"]
+
+    draft = await _draft_row(product["id"])
+    assert draft is not None
+    stored = draft["product_description"] or ""
+    assert "Shop now for exclusive deals" not in stored
+    assert "Discover great prices" not in stored
+
+
+@pytest.mark.asyncio
+async def test_a_boilerplate_model_candidate_is_refused_for_an_empty_description(
+        monkeypatch):
+    """The candidate door enforces the same gate as the extraction door."""
+    _stub_extraction(monkeypatch, html=BOILERPLATE_PAGE, candidates={
+        "product_description": ("Buy Gift Bag 24CM Transparent on TikTok Shop. "
+                                "Shop now for exclusive deals!"),
+        "product_form_factor": "Transparent PVC gift bag",
+    })
+    product = await _product("Recompute BoilerplateCandidate",
+                             tiktok_product_url="https://shop.tiktok.com/view/product/c3")
+    async with await _client() as client:
+        response = await client.post(
+            f"/api/product-intelligence/{product['id']}/recompute")
+
+    body = response.json()
+    skipped = {item["field"]: item["reason"] for item in body["candidates_skipped"]}
+    assert skipped.get("product_description") == "REJECTED_MARKETPLACE_BOILERPLATE"
+    persisted = {item["field"] for item in body["candidates_persisted"]}
+    assert "product_form_factor" in persisted, (
+        "a legitimate candidate was collateral damage of the boilerplate gate")
+
+    draft = await _draft_row(product["id"])
+    assert "Shop now" not in (draft["product_description"] or "")
+    assert draft["product_form_factor"] == "Transparent PVC gift bag"
+
+
+@pytest.mark.asyncio
+async def test_a_legitimate_empty_description_still_fills_from_real_page_text(
+        monkeypatch):
+    """The preserve rule must not break the fill-from-source purpose of Recompute."""
+    _stub_extraction(monkeypatch)   # LISTING_HTML carries a real og:description
+    product = await _product("Recompute FillEmpty",
+                             tiktok_product_url="https://shop.tiktok.com/view/product/c4")
+    async with await _client() as client:
+        response = await client.post(
+            f"/api/product-intelligence/{product['id']}/recompute")
+    draft = await _draft_row(product["id"])
+    assert (draft["product_description"] or "").startswith("Minyak urut tradisional")
+    assert response.json()["evidence_skipped"] == []
+
+
+@pytest.mark.asyncio
+async def test_preserve_and_retry_together_stay_idempotent(monkeypatch):
+    """Retry after preservation: same draft, no duplicate provenance, values intact."""
+    _stub_extraction(monkeypatch)
+    product = await _product("Recompute PreserveRetry",
+                             tiktok_product_url="https://shop.tiktok.com/view/product/c5")
+    async with await _client() as client:
+        first = await client.post(
+            f"/api/product-intelligence/{product['id']}/recompute")
+        draft_id = first.json()["draft_id"]
+        await client.patch(
+            f"/api/product-intelligence/review-drafts/{draft_id}",
+            json={"product_description": "CURATED KEKAL."})
+        second = await client.post(
+            f"/api/product-intelligence/{product['id']}/recompute")
+        prov_after_second = await _provenance(product["id"])
+        third = await client.post(
+            f"/api/product-intelligence/{product['id']}/recompute")
+
+    assert second.json()["draft_id"] == third.json()["draft_id"] == draft_id
+    draft = await _draft_row(product["id"])
+    assert draft["product_description"] == "CURATED KEKAL."
+    assert len(await _provenance(product["id"])) == len(prov_after_second), (
+        "a preserved-field retry manufactured provenance rows")

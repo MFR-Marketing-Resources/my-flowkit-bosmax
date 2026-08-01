@@ -88,18 +88,38 @@ def test_only_the_two_authorized_hosts_are_relayable():
 def test_identity_ignores_tracking_query_strings_but_not_the_product():
     """TikTok appends tracking params on every in-app navigation.
 
-    Comparing whole hrefs would reject the operator's own tab; comparing only the host
-    would let ANY open TikTok tab answer for a different product.
+    Comparing whole hrefs would reject the operator's own tab.
     """
     wanted = relay.product_identity(PRODUCT_URL)
     same = relay.product_identity(f"{PRODUCT_URL}?enter_from=mall&trace=abc123")
     other = relay.product_identity("https://shop.tiktok.com/view/product/9999999999999")
-    cross_host = relay.product_identity(
-        "https://shop-my.tiktok.com/view/product/1729543210987654321")
 
     assert relay.identities_match(wanted, same)
     assert not relay.identities_match(wanted, other)
-    assert not relay.identities_match(wanted, cross_host)
+
+
+def test_the_same_product_matches_across_the_two_authorized_hosts():
+    """TikTok's OWN redirect moves a product between the two Shop hosts.
+
+    A stored `shop-my.tiktok.com/pdp/<id>` link opens as
+    `shop.tiktok.com/view/product/<id>`. Requiring the same host made the relay reject the
+    operator's own correct tab on the first live pilot round — reported as
+    NO_MATCHING_TAB while the product sat open on screen. The id is the identity.
+    """
+    stored = relay.product_identity(
+        "https://shop-my.tiktok.com/pdp/1733784168157316566?source=product_detail")
+    redirected = relay.product_identity(
+        "https://shop.tiktok.com/view/product/1733784168157316566?region=MY&local=en")
+    assert relay.identities_match(stored, redirected)
+
+    # The guarantee that actually matters is UNCHANGED: a different product never matches,
+    # on either host. That is what stops one listing's evidence reaching another's draft.
+    different = relay.product_identity(
+        "https://shop.tiktok.com/view/product/1729547196228863761")
+    assert not relay.identities_match(stored, different)
+    assert not relay.identities_match(
+        stored, relay.product_identity(
+            "https://shop-my.tiktok.com/pdp/1729547196228863761"))
 
 
 # ── sanitization: the whole security model ───────────────────────────────────
@@ -219,6 +239,7 @@ async def test_a_disconnected_extension_is_named_not_a_generic_failure(monkeypat
      relay.ERR_CONTENT_SCRIPT_UNREACHABLE),
     ("TIKTOK_TAB_NAVIGATED_AWAY", relay.ERR_TAB_NAVIGATED_AWAY),
     ("TIKTOK_EVIDENCE_EMPTY", relay.ERR_EMPTY_EVIDENCE),
+    ("TIKTOK_HOST_PERMISSION_MISSING", relay.ERR_HOST_PERMISSION_MISSING),
 ])
 async def test_each_browser_state_maps_to_its_own_code(monkeypatch, browser_error,
                                                       expected):
@@ -244,6 +265,50 @@ async def test_the_captcha_is_reported_and_never_solved(monkeypatch):
     # as an attempt to work around the challenge.
     assert len(client.sent) == 1
     assert client.sent[0][0] == relay.WS_METHOD
+
+
+@pytest.mark.asyncio
+async def test_a_permission_blind_extension_is_not_reported_as_an_empty_browser(
+        monkeypatch):
+    """The failure that cost a live pilot round.
+
+    Chrome does not reliably grant newly-added host permissions to an already-installed
+    unpacked extension on runtime.reload(). A permission-blind extension gets `undefined`
+    for every tab.url, so a url-filtered query matches nothing — identical to "no tab
+    open". Told the latter, an operator reopens tabs forever against a browser that can
+    never see them.
+    """
+    install_client(monkeypatch, FakeFlowClient(
+        lambda params: browser_reply(params, ok=False,
+                                     error="TIKTOK_HOST_PERMISSION_MISSING")))
+    with pytest.raises(relay.TikTokRelayError) as excinfo:
+        await relay.acquire_evidence(PRODUCT_URL)
+    assert excinfo.value.code == relay.ERR_HOST_PERMISSION_MISSING
+    assert excinfo.value.code != relay.ERR_NO_MATCHING_TAB
+    assert excinfo.value.operator_actionable
+
+
+@pytest.mark.asyncio
+async def test_no_matching_tab_carries_counts_that_expose_a_permission_blind_browser(
+        monkeypatch):
+    """Counts only — never a tab inventory, which would be the operator's browsing history.
+
+    `tabs_with_readable_url` far below `total_tabs` is the fingerprint of a browser that is
+    hiding urls from the extension even when Chrome claims the permission is granted.
+    """
+    install_client(monkeypatch, FakeFlowClient(
+        lambda params: browser_reply(params, ok=False, error="TIKTOK_NO_MATCHING_TAB",
+                                     open_tiktok_tabs=0, host_permission_granted=True,
+                                     total_tabs=37, tabs_with_readable_url=2)))
+    with pytest.raises(relay.TikTokRelayError) as excinfo:
+        await relay.acquire_evidence(PRODUCT_URL)
+    assert excinfo.value.code == relay.ERR_NO_MATCHING_TAB
+    detail = excinfo.value.detail
+    assert "total_tabs=37" in detail
+    assert "tabs_with_readable_url=2" in detail
+    assert "host_permission_granted=True" in detail
+    # and no URL from the operator's browser leaked into the detail
+    assert "http" not in detail
 
 
 @pytest.mark.asyncio

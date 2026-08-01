@@ -19,10 +19,12 @@
 // account" are one keystroke apart. It therefore builds an explicit, closed object of
 // product facts and returns THAT — it never serialises the document, and it never reads
 // document.cookie, localStorage, sessionStorage, IndexedDB or any request header. Those
-// APIs are not referenced anywhere below, on purpose: a reviewer can grep this file for
-// `cookie` / `Storage` and get zero hits, which is a stronger guarantee than a promise in a
-// comment. The backend re-applies the same allowlist (tiktokshop_browser_relay.py) so a
-// tampered content script still cannot widen what gets stored.
+// APIs are not USED anywhere in the code below, on purpose. (They are named in this
+// comment, so a plain grep of the file does hit them — the machine-checked form of this
+// guarantee is check #3 in scripts/test-tiktok-evidence-relay.js, which strips comments
+// first and then asserts zero occurrences in the remaining source.) The backend re-applies
+// the same allowlist (tiktokshop_browser_relay.py) so a tampered content script still
+// cannot widen what gets stored.
 (() => {
 	"use strict";
 
@@ -42,37 +44,32 @@
 	const MAX_IMAGES = 12;
 	const MAX_VARIANTS = 24;
 
-	// Same markers the server uses, so "still walled" means the same thing on both sides.
-	const SECURITY_MARKERS = [
-		"oec-ttweb-captcha",
-		"captcha/index.js",
-		"verify to continue",
-		"drag the puzzle piece",
-		"slide to verify",
-	];
-
 	const clean = (value) =>
 		String(value ?? "")
 			.replace(/\s+/g, " ")
 			.trim()
 			.slice(0, MAX_FIELD);
 
+	// Called ONLY when the page yielded no product evidence — see collect order below.
+	//
+	// Deliberately does NOT look at <script src>. The server-side detector does, and is
+	// right to: a walled fetch returns nothing BUT the challenge shell, so the captcha
+	// loader url is the whole document. In a rendered, authenticated page that same loader
+	// is present on ordinary product pages that were never challenged, so treating it as a
+	// wall reports SECURITY_CHECK_PRESENT for a listing sitting readable on screen — which
+	// is what it did on the first live pilot round, against tabs the operator had already
+	// cleared by hand.
 	function isSecurityChallenge() {
 		const title = (document.title || "").toLowerCase();
 		if (title === "security check" || title.includes("verify to continue")) return true;
-		// A visible captcha container. Checked for VISIBILITY rather than presence: TikTok
-		// leaves an empty captcha mount in the DOM of pages that were never challenged, and
-		// treating that as a wall would make every healthy page look blocked forever.
+		// A VISIBLE challenge widget. Visibility matters: TikTok leaves an empty captcha
+		// mount in the DOM of pages that were never challenged.
 		const mounts = document.querySelectorAll(
-			"[id*='captcha'],[class*='captcha'],[id*='verify-bar'],[class*='secsdk']",
+			"[id*='captcha'],[class*='captcha'],[id*='verify-bar']",
 		);
 		for (const mount of mounts) {
 			const rect = mount.getBoundingClientRect?.();
 			if (rect && rect.width > 40 && rect.height > 40) return true;
-		}
-		for (const script of document.querySelectorAll("script[src]")) {
-			const src = (script.getAttribute("src") || "").toLowerCase();
-			if (SECURITY_MARKERS.some((marker) => src.includes(marker))) return true;
 		}
 		return false;
 	}
@@ -182,11 +179,18 @@
 
 		for (const root of candidates) {
 			const clone = root.cloneNode(true);
+			// B-08B-D2: review, rating and feedback regions are removed by SELECTOR here and
+			// their text is additionally fingerprint-stopped server-side
+			// (tiktokshop_extraction_service._REVIEW_MARKER_RES). Both layers exist because
+			// TikTok's class names change and a selector alone silently stops matching —
+			// which is exactly how "Verified purchase" prose reached ingredients_text on
+			// the first live pilot.
 			for (const junk of clone.querySelectorAll(
 				"script,style,noscript,iframe,svg,nav,header,footer,aside," +
 					"[role='navigation'],[role='banner'],[role='contentinfo'],[class*='recommend']," +
-					"[class*='related'],[class*='comment'],[class*='review-list'],[class*='footer']," +
-					"[class*='header'],[class*='nav-']",
+					"[class*='related'],[class*='comment'],[class*='review'],[class*='rating']," +
+					"[class*='feedback'],[class*='evaluation'],[data-e2e*='review']," +
+					"[id*='review'],[class*='footer'],[class*='header'],[class*='nav-']",
 			)) {
 				junk.remove();
 			}
@@ -288,23 +292,34 @@
 		// and not an earlier one that arrived late.
 		const requestId = String(message.evidence_request_id || "");
 		try {
-			if (isSecurityChallenge()) {
+			// EVIDENCE FIRST, challenge second. If the page states a product, the page is
+			// readable and that is the end of it — whether or not a captcha SDK happens to
+			// be loaded, and whether or not a challenge was cleared a moment ago.
+			//
+			// This ordering cannot report a wall as a successful empty product, which is
+			// the failure that actually loses data: a challenge shell carries no title and
+			// no description, so it always falls through to the challenge branch below.
+			// What the ordering DOES prevent is the mirror-image failure — refusing to read
+			// a listing that is sitting readable on screen.
+			const evidence = collectEvidence();
+			const hasEvidence = Boolean(evidence.title || evidence.description);
+			if (hasEvidence) {
 				sendResponse({
-					ok: false,
+					ok: true,
 					evidence_request_id: requestId,
-					error: "TIKTOK_SECURITY_CHECK_PRESENT",
+					error: null,
 					observed_url: location.origin + location.pathname,
+					evidence,
 				});
 				return true;
 			}
-			const evidence = collectEvidence();
-			const hasEvidence = Boolean(evidence.title || evidence.description);
 			sendResponse({
-				ok: hasEvidence,
+				ok: false,
 				evidence_request_id: requestId,
-				error: hasEvidence ? null : "TIKTOK_EVIDENCE_EMPTY",
+				error: isSecurityChallenge()
+					? "TIKTOK_SECURITY_CHECK_PRESENT"
+					: "TIKTOK_EVIDENCE_EMPTY",
 				observed_url: location.origin + location.pathname,
-				evidence,
 			});
 		} catch (error) {
 			sendResponse({

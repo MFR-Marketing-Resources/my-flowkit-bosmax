@@ -279,6 +279,17 @@ describe("ProductIntelligenceReviewDraftPanel", () => {
 			reason: "", product_url: "", operator_actionable: false,
 		});
 		expect(wrongHost.retryable).toBe(false);
+
+		// A permission-blind extension reports zero tabs even with the product open on
+		// screen. Telling the operator to open a tab would be advice they have already
+		// followed, so this state must send them to chrome://extensions instead.
+		const blind = describeRelayBlocker({
+			code: "TIKTOK_RELAY_HOST_PERMISSION_MISSING",
+			reason: "", product_url: "", operator_actionable: true,
+		});
+		expect(blind.headline).toMatch(/even though the tab is open/i);
+		expect(blind.steps[0]).toMatch(/chrome:\/\/extensions/);
+		expect(blind.steps.join(" ")).not.toMatch(/Open the stored TikTok product link/);
 	});
 
 	it("[relay] a walled Recompute shows the actionable panel with the raw code and a working Retry", async () => {
@@ -288,6 +299,13 @@ describe("ProductIntelligenceReviewDraftPanel", () => {
 				product_id: "p1", draft_id: "d1",
 				source_url: "https://shop.tiktok.com/view/product/17",
 				intake_outcome: "DRAFT_UPDATED", extracted_fields: { size_or_volume: "25ml" },
+				// B-08B-D1: a preserved field is REPORTED with the discarded page text —
+				// silent preservation would be indistinguishable from failed extraction.
+				evidence_skipped: [{
+					field: "product_description",
+					reason: "EXISTING_EVIDENCE_PRESERVED",
+					extracted_value_not_stored: "Buy Gift Bag on TikTok Shop. Shop now!",
+				}],
 				unresolved: {}, variant: "25ml", variant_resolution: "EXACT_VARIANT_RESOLVED",
 				size_resolution: "EXTRACTED", evidence_methods: ["AUTHENTICATED_DOM"],
 				candidate_status: "REVIEW_REQUIRED", candidates_persisted: [],
@@ -329,6 +347,11 @@ describe("ProductIntelligenceReviewDraftPanel", () => {
 		);
 		// the blocker panel is gone once the acquisition succeeds
 		expect(screen.queryByTestId("recompute-relay-blocker")).toBeNull();
+		// preservation is visible: which field kept its evidence AND what the page said
+		const preserved = await screen.findByTestId("recompute-evidence-preserved");
+		expect(preserved).toHaveTextContent("product_description");
+		expect(preserved).toHaveTextContent("Buy Gift Bag on TikTok Shop");
+		expect(preserved).toHaveTextContent(/a refresh fills, it never replaces/i);
 	});
 
 	it("formatReviewDraftError passes a non-approval error through unchanged", () => {

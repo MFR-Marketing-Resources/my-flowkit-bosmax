@@ -281,6 +281,39 @@ def extract_raw(page_text: str) -> dict[str, Any]:
     return raw
 
 
+# ── marketplace boilerplate gate (B-08B-D1) ──────────────────────────────────
+# TikTok's og:description for a Shop listing is frequently a GENERATED SEO template —
+# "Buy <title> on TikTok Shop. Discover great prices … free shipping on eligible items.
+# Shop now for exclusive deals!" — which carries zero product knowledge. On the first
+# live pilot (2026-08-01) it overwrote three curated descriptions, one of which stated a
+# real pack size. A description that sells the MARKETPLACE is not a description of the
+# PRODUCT, and once stored it feeds copywriting, scenes and claims downstream.
+_BOILERPLATE_MARKER_RES = (
+    re.compile(r"(?i)\bon\s+tiktok\s+shop\b"),
+    re.compile(r"(?i)\bdiscover\s+great\s+prices\b"),
+    re.compile(r"(?i)\bshop\s+now\s+for\s+exclusive\s+deals\b"),
+    re.compile(r"(?i)\bfree\s+shipping\s+on\s+eligible\s+items\b"),
+)
+_BOILERPLATE_OPENER_RE = re.compile(r"(?i)^\s*buy\b.{0,300}\bon\s+tiktok\s+shop\b")
+REJECTED_MARKETPLACE_BOILERPLATE = "REJECTED_MARKETPLACE_BOILERPLATE"
+
+
+def is_marketplace_boilerplate(text: Any) -> bool:
+    """True when a description candidate is the marketplace's SEO template.
+
+    Two independent triggers, so a genuine description that happens to mention the
+    platform once is NOT rejected: either the text OPENS with the template's
+    "Buy … on TikTok Shop" frame, or it carries two or more distinct template markers.
+    """
+    candidate = _clean(text)
+    if not candidate:
+        return False
+    if _BOILERPLATE_OPENER_RE.search(candidate):
+        return True
+    return sum(1 for marker in _BOILERPLATE_MARKER_RES
+               if marker.search(candidate)) >= 2
+
+
 # ── normalization ────────────────────────────────────────────────────────────
 # A real measurement: a number with a recognised unit. `1 Set`, `Standard`, `Default`
 # and `One Size` are merchandising labels and are NOT sizes.
@@ -364,12 +397,41 @@ _SECTION_STOP = ("ingredients", "ingredient", "composition", "bahan", "komposisi
                  "expiry", "manufactured", "brand", "description")
 _MAX_SECTION_CHARS = 600
 
+# B-08B-D2: review-region fingerprints. On a RENDERED product page the specification
+# block and the customer-review stream are adjacent text, and a labelled section that is
+# not closed by another `Label:` runs straight off the spec into the reviews. The first
+# live pilot stored `…Bottle2026-04-21🇲** C**N ** H**d S**r·Verified purchase MY Belum
+# test lagi…` — masked reviewer usernames and review prose — as a product's
+# ingredients_text. These markers cannot legitimately occur inside an ingredient,
+# material or warning statement, so the FIRST one encountered hard-stops the section.
+_REVIEW_MARKER_RES = (
+    re.compile(r"(?i)verified\s+purchase"),
+    # masked reviewer usernames: C**N, H**d S**r, a***b
+    re.compile(r"[A-Za-z0-9]\*{2,}"),
+    re.compile(r"(?i)\bhelpful\s*\(\s*\d"),
+    re.compile(r"(?i)\b(?:customer\s+)?reviews?\s*\(\s*\d"),
+    re.compile(r"(?i)\bulasan\s+pembeli\b"),
+)
+
+
+def _cut_at_review_markers(text: str) -> str:
+    cut = len(text)
+    for marker in _REVIEW_MARKER_RES:
+        match = marker.search(text)
+        if match:
+            cut = min(cut, match.start())
+    return text[:cut]
+
 
 def extract_labelled_section(text: str, labels: tuple[str, ...]) -> str | None:
     """Return the text following `Label:` up to the next known section label.
 
     Deliberately narrow: it requires an explicit label followed by a separator. Guessing
     which sentence "looks like" an ingredient list is how invented ingredients get stored.
+    A section is additionally hard-stopped at the first review fingerprint, because broad
+    concatenated page text is NOT a labelled section even when a label happens to precede
+    it — the label proves where product information STARTS, not that everything after it
+    is product information.
     """
     haystack = _clean(text)
     if not haystack:
@@ -379,7 +441,7 @@ def extract_labelled_section(text: str, labels: tuple[str, ...]) -> str | None:
                           haystack, re.IGNORECASE)
         if not match:
             continue
-        tail = match.group(1)[:_MAX_SECTION_CHARS]
+        tail = _cut_at_review_markers(match.group(1)[:_MAX_SECTION_CHARS])
         cut = len(tail)
         for stop in _SECTION_STOP:
             stop_match = re.search(rf"(?<![A-Za-z]){re.escape(stop)}\s*[:：]", tail,
@@ -404,12 +466,20 @@ def normalize(raw: dict[str, Any], *, source_url: str) -> dict[str, Any]:
                                            source_text=source_text)
 
     fields: dict[str, Any] = {}
+    boilerplate_rejected = False
     if raw.get("title"):
         fields["raw_product_title"] = raw["title"]
     if raw.get("brand"):
         fields["brand"] = raw["brand"]
     if raw.get("description"):
-        fields["product_description"] = raw["description"]
+        # B-08B-D1: the marketplace's own SEO template is not product knowledge. Rejected
+        # here, at the shared normalizer, so BOTH acquisition lanes (direct fetch and
+        # authenticated relay) refuse it identically — and it can therefore never reach a
+        # draft, an empty field included.
+        if is_marketplace_boilerplate(raw["description"]):
+            boilerplate_rejected = True
+        else:
+            fields["product_description"] = raw["description"]
     price = _money(raw.get("price_text"))
     if price is not None:
         fields["price"] = price
@@ -436,6 +506,10 @@ def normalize(raw: dict[str, Any], *, source_url: str) -> dict[str, Any]:
         unresolved["size_or_volume"] = size_reason
     if variant is None:
         unresolved["variant"] = variant_reason
+    if boilerplate_rejected:
+        # Loud, auditable refusal — "the page's description was the marketplace template"
+        # is a different fact from "the page has no description".
+        unresolved["product_description"] = REJECTED_MARKETPLACE_BOILERPLATE
 
     return {
         "fields": fields,

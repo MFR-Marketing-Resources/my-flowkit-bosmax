@@ -558,6 +558,21 @@ export function describeRelayBlocker(blocker: TikTokRelayBlocker): {
 				steps,
 				retryable: true,
 			};
+		case "TIKTOK_RELAY_HOST_PERMISSION_MISSING":
+			return {
+				// The one blocker that looks exactly like "no tab open" but is not: Chrome
+				// is hiding tab URLs from the extension, so it reports zero TikTok tabs
+				// even with the product open on screen. Reopening tabs can never fix it.
+				headline:
+					"Chrome has not granted the BOSMAX extension access to shop.tiktok.com and shop-my.tiktok.com, so it cannot see your product tab at all — even though the tab is open. Opening more tabs will not help.",
+				steps: [
+					"Open chrome://extensions and find the BOSMAX / Flow Kit extension.",
+					"Set its site access to allow shop.tiktok.com and shop-my.tiktok.com (or remove and re-add the unpacked extension to grant the new hosts).",
+					"Keep the product tab open.",
+					"Press Retry.",
+				],
+				retryable: true,
+			};
 		case "TIKTOK_RELAY_EXTENSION_DISCONNECTED":
 			return {
 				headline:
@@ -1566,6 +1581,29 @@ export default function ProductIntelligenceReviewDraftPanel({
 																</li>
 															),
 														)}
+													</ul>
+												</div>
+											)}
+											{(recomputeResult.evidence_skipped ?? []).length > 0 && (
+												<div className="mt-2" data-testid="recompute-evidence-preserved">
+													<p className="font-semibold text-emerald-200">
+														Existing evidence preserved — the page stated a different
+														value, and a refresh fills, it never replaces. Adopt any of
+														these deliberately by editing the field below.
+													</p>
+													<ul className="list-disc pl-4 text-emerald-100/80">
+														{(recomputeResult.evidence_skipped ?? []).map((item) => (
+															<li key={`preserved-${item.field}`}>
+																<span className="font-semibold">{item.field}</span>
+																{item.extracted_value_not_stored ? (
+																	<span className="text-emerald-200/60">
+																		{" "}
+																		— page said: “
+																		{item.extracted_value_not_stored.slice(0, 140)}”
+																	</span>
+																) : null}
+															</li>
+														))}
 													</ul>
 												</div>
 											)}

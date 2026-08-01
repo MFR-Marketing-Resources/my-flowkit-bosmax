@@ -56,6 +56,11 @@ ERR_CORRELATION_MISMATCH = "TIKTOK_RELAY_CORRELATION_MISMATCH"
 ERR_URL_MISMATCH = "TIKTOK_RELAY_URL_MISMATCH"
 ERR_EMPTY_EVIDENCE = "TIKTOK_RELAY_EMPTY_EVIDENCE"
 ERR_TAB_NAVIGATED_AWAY = "TIKTOK_RELAY_TAB_NAVIGATED_AWAY"
+# Chrome did not grant the two TikTok hosts to the installed extension. Distinct from
+# NO_MATCHING_TAB on purpose: a permission-blind extension reports zero tabs even when the
+# operator has the product open in front of them, so conflating the two would have them
+# reopening tabs forever against a browser that can never see them.
+ERR_HOST_PERMISSION_MISSING = "TIKTOK_RELAY_HOST_PERMISSION_MISSING"
 
 # Every code an operator can personally fix by acting in the browser. The API layer turns
 # these into 409 (act, then retry) instead of 502 (server fault), so "open the tab" never
@@ -72,6 +77,9 @@ OPERATOR_ACTIONABLE_CODES = frozenset({
     # act-then-Retry treatment rather than reading as a backend fault.
     ERR_EMPTY_EVIDENCE,
     ERR_URL_MISMATCH,
+    # Fixed in chrome://extensions (re-grant site access, or remove and re-add the
+    # unpacked extension) — an operator step, not a server fault.
+    ERR_HOST_PERMISSION_MISSING,
 })
 # Deliberately NOT actionable: ERR_HOST_NOT_SUPPORTED (a stored link on the wrong host —
 # retrying can never help), ERR_MALFORMED_RESPONSE and ERR_CORRELATION_MISMATCH (defects,
@@ -155,13 +163,23 @@ def product_identity(url: str) -> dict[str, str | None] | None:
 
 def identities_match(wanted: dict[str, Any] | None,
                      candidate: dict[str, Any] | None) -> bool:
+    """The product id is the identity; the host is not.
+
+    Mirrors `tiktokIdentityMatches` in background.js and must stay in step with it. TikTok
+    redirects between the two authorized Shop hosts for the SAME product
+    (`shop-my.tiktok.com/pdp/<id>` opens as `shop.tiktok.com/view/product/<id>`), so a
+    same-host requirement rejects the operator's own correct tab. A 19-digit TikTok Shop
+    product id is globally unique, so id equality is what actually prevents one listing's
+    evidence landing on another product; both hosts are permission-gated by the manifest
+    either way. With no id on either side we require an exact host+path match rather than
+    guessing.
+    """
     if not wanted or not candidate:
-        return False
-    if wanted.get("host") != candidate.get("host"):
         return False
     if wanted.get("product_id") and candidate.get("product_id"):
         return wanted["product_id"] == candidate["product_id"]
-    return wanted.get("path") == candidate.get("path")
+    return (wanted.get("host") == candidate.get("host")
+            and wanted.get("path") == candidate.get("path"))
 
 
 def _redact(value: Any, limit: int) -> str:
@@ -301,9 +319,20 @@ async def acquire_evidence(product_url: str, *,
         if "SECURITY_CHECK" in browser_error:
             raise fail(ERR_SECURITY_CHECK_PRESENT,
                        str(payload.get("observed_url") or product_url)[:200])
+        if "HOST_PERMISSION_MISSING" in browser_error:
+            raise fail(ERR_HOST_PERMISSION_MISSING,
+                       "chrome did not grant shop.tiktok.com / shop-my.tiktok.com "
+                       "to the installed extension")
         if "NO_MATCHING_TAB" in browser_error:
+            # Counts only — never a tab inventory. `tabs_with_readable_url` is what tells a
+            # permission-blind browser apart from an empty one when Chrome reports the
+            # permission as granted but still hides tab urls.
             raise fail(ERR_NO_MATCHING_TAB,
-                       f"open_tiktok_tabs={payload.get('open_tiktok_tabs', 0)}")
+                       f"open_tiktok_tabs={payload.get('open_tiktok_tabs', 0)} "
+                       f"host_permission_granted={payload.get('host_permission_granted')} "
+                       f"total_tabs={payload.get('total_tabs')} "
+                       f"tabs_with_readable_url={payload.get('tabs_with_readable_url')} "
+                       f"visible_products={payload.get('visible_products')}")
         if "CONTENT_SCRIPT_UNREACHABLE" in browser_error:
             raise fail(ERR_CONTENT_SCRIPT_UNREACHABLE, browser_error[:200])
         if "NAVIGATED_AWAY" in browser_error:
