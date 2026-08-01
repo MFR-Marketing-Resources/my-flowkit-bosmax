@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { patchAPI, postAPI } from "../../api/client";
 import {
 	fetchProductStrategyTypeRegistry,
@@ -423,6 +423,15 @@ function buildEvidenceEditorState(
 	};
 }
 
+function evidenceEditorStatesEqual(
+	left: EvidenceEditorState,
+	right: EvidenceEditorState,
+): boolean {
+	return (Object.keys(left) as Array<keyof EvidenceEditorState>).every(
+		(field) => left[field] === right[field],
+	);
+}
+
 function EvidenceInput({
 	id,
 	label,
@@ -574,6 +583,10 @@ export default function RegistrationReviewDraftPanel({
 	const [evidenceForm, setEvidenceForm] = useState<EvidenceEditorState>(() =>
 		buildEvidenceEditorState(draft),
 	);
+	const hydratedDraftIdRef = useRef(draft.review_draft_id);
+	const hydratedEvidenceFormRef = useRef(evidenceForm);
+	const [hasUnsavedEvidenceChanges, setHasUnsavedEvidenceChanges] =
+		useState(false);
 	const [isCommitting, setIsCommitting] = useState(false);
 	const [showConfirm, setShowConfirm] = useState(false);
 	const [confirmPhrase, setConfirmPhrase] = useState("");
@@ -617,16 +630,30 @@ export default function RegistrationReviewDraftPanel({
 	>("REVIEW_REQUIRED");
 
 	useEffect(() => {
+		const changedDraft = hydratedDraftIdRef.current !== draft.review_draft_id;
+		if (changedDraft) {
+			const nextEvidenceForm = buildEvidenceEditorState(draft);
+			hydratedEvidenceFormRef.current = nextEvidenceForm;
+			setHasUnsavedEvidenceChanges(false);
+			setEvidenceForm(nextEvidenceForm);
+			setPendingImageBase64("");
+			setPendingImageFilename("");
+			setPendingImagePreview("");
+			setTaxonomyCluster(draft.strategy_taxonomy?.cluster || "");
+			setTaxonomyGroup(draft.strategy_taxonomy?.product_type_group || "");
+			setTaxonomyReviewerId(draft.strategy_taxonomy?.reviewer_id || "");
+			setTaxonomyReviewerNote(draft.strategy_taxonomy?.reviewer_note || "");
+		}
+		hydratedDraftIdRef.current = draft.review_draft_id;
 		setApprovals(draft.approval_checklist);
-		setEvidenceForm(buildEvidenceEditorState(draft));
-		setPendingImageBase64("");
-		setPendingImageFilename("");
-		setPendingImagePreview("");
-		setTaxonomyCluster(draft.strategy_taxonomy?.cluster || "");
-		setTaxonomyGroup(draft.strategy_taxonomy?.product_type_group || "");
-		setTaxonomyReviewerId(draft.strategy_taxonomy?.reviewer_id || "");
-		setTaxonomyReviewerNote(draft.strategy_taxonomy?.reviewer_note || "");
 	}, [draft]);
+
+	useEffect(() => {
+		const isDirty =
+			Boolean(pendingImageBase64) ||
+			!evidenceEditorStatesEqual(evidenceForm, hydratedEvidenceFormRef.current);
+		setHasUnsavedEvidenceChanges(isDirty);
+	}, [evidenceForm, pendingImageBase64]);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -892,6 +919,11 @@ export default function RegistrationReviewDraftPanel({
 				`/api/product-registration/review-drafts/${draft.review_draft_id}/evidence`,
 				payload,
 			);
+			const updatedEvidenceForm = buildEvidenceEditorState(updated);
+			hydratedDraftIdRef.current = updated.review_draft_id;
+			hydratedEvidenceFormRef.current = updatedEvidenceForm;
+			setHasUnsavedEvidenceChanges(false);
+			setEvidenceForm(updatedEvidenceForm);
 			onUpdate(updated);
 			const updatedReasons = buildReviewReasons(
 				updated,
@@ -2146,6 +2178,16 @@ export default function RegistrationReviewDraftPanel({
 
 				<div className="mt-6 flex flex-col gap-3 border-t border-slate-800 pt-4 md:flex-row md:items-center md:justify-between">
 					<div className="space-y-1 text-xs text-slate-400">
+						{hasUnsavedEvidenceChanges ? (
+							<div
+								data-testid="registration-unsaved-evidence-changes"
+								className="font-semibold text-amber-300"
+							>
+								Unsaved evidence changes are protected while you review
+								candidates. Use Save Draft Only or Analyze &amp; Repair Draft to
+								persist them.
+							</div>
+						) : null}
 						<div>
 							Last evidence edit:{" "}
 							<span className="text-slate-200">
@@ -2394,7 +2436,11 @@ export default function RegistrationReviewDraftPanel({
 																strokeLinecap="round"
 																strokeLinejoin="round"
 																strokeWidth={2}
-																d={isApproved ? "M5 13l4 4L19 7" : "M12 4v16m8-8H4"}
+																d={
+																	isApproved
+																		? "M5 13l4 4L19 7"
+																		: "M12 4v16m8-8H4"
+																}
 															/>
 														</svg>
 														{isApproved ? "Approved" : "Approve"}
