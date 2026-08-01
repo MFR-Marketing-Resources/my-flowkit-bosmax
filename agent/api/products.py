@@ -846,6 +846,20 @@ async def search_products(
 
 
 
+# Governed physics/readiness columns that POST /physics-map with persist=true must
+# actually write. Verified against PRAGMA table_info(product); every other key returned by
+# resolve_product_physics / evaluate_prompt_readiness is derived render guidance with no
+# product column, so persisting it would need a schema change this mission does not own.
+_PHYSICS_PERSIST_COLUMNS = (
+    "physics_class",
+    "product_scale",
+    "recommended_grip",
+    "section_5_product_physics_prompt",
+    "section_5_physics_hint",
+    "prompt_readiness_status",
+)
+
+
 async def _ensure_intake_intelligence(product: dict | None, payload: dict, *, lane: str):
     """B-08A: every runtime intake ends with a Product Intelligence draft.
 
@@ -1007,14 +1021,21 @@ async def physics_map_product(data: ProductPhysicsRequest):
     payload.update(readiness)
     if data.persist and product and product.get("id"):
         # `_persist_intelligence` was called here but defined nowhere in this module and
-        # imported nowhere, so persist=true raised NameError -> 500 on every call. Routed
-        # through the shared intake seam rather than reintroducing a second, isolated
-        # persistence path. Physics/readiness keys are not knowledge evidence, so the
-        # adapter forwards only fields PROMOTION_MAP recognises; on a product with no
-        # promotable evidence this yields a minimal review-required draft rather than a
-        # crash.
+        # imported nowhere, so persist=true raised NameError -> 500 on every call.
+        #
+        # B-586-06: the first repair routed this to the intelligence seam only, which
+        # removed the crash but left persist=true semantically dishonest — the physics and
+        # readiness values were computed, returned, and never written. Persist the governed
+        # product columns for real, then ensure intelligence.
+        # Only NON-EMPTY values. resolve_product_physics returns "" for a product whose
+        # type it cannot classify, and persisting those would blank real stored physics.
+        persistable = {k: v for k, v in payload.items()
+                       if k in _PHYSICS_PERSIST_COLUMNS and str(v or "").strip()}
+        if persistable:
+            await crud.update_product(product["id"], **persistable)
         await _ensure_intake_intelligence(
             product, payload, lane="PRODUCTS_PHYSICS_MAP_PERSIST")
+        payload["persisted_fields"] = sorted(persistable)
     return payload
 
 
