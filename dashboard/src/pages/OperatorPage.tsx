@@ -25,6 +25,7 @@ import CanonicalReferenceBindingControls, {
 } from "../components/workspace/CanonicalReferenceBindingControls";
 import CopySelectionPanel from "../components/workspace/CopySelectionPanel";
 import IMGModule from "../components/workspace/IMGModule";
+import SceneStrategySummary from "../components/workspace/SceneStrategySummary";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import VisualAssetPicker from "../components/workspace/VisualAssetPicker";
 import type {
@@ -1896,21 +1897,264 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				</div>
 			)}
 
-			{/* ── STEP 1: UGC Prompt Compiler Controls (video modes only) ── */}
+			{/* ── STEP 1: Select Product ────────────────────────────────── */}
+			<div
+				data-testid="workflow-step-1"
+				data-state={selectedProduct ? "COMPLETED" : "NOT_READY"}
+				data-selected-product-id={selectedProduct?.id ?? ""}
+				className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4"
+			>
+				<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+					Step 1 — Select Product
+				</div>
+				<div className="mb-4 text-[11px] text-slate-400">
+					Only READY products can generate a{" "}
+					{humanizeWorkspaceMode(mode as WorkspaceMode)} package.
+				</div>
+				{isLoadingProducts && (
+					<div className="mb-3 rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-2 text-[11px] text-slate-400">
+						Loading products...
+					</div>
+				)}
+				{productsError && !isLoadingProducts && (
+					<div className="mb-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-[11px] text-rose-300">
+						Product list failed to load: {productsError}
+					</div>
+				)}
+				<SearchableProductSelect
+					products={products}
+					selectedProduct={selectedProduct}
+					onSelect={setSelectedProduct}
+					readinessByProductId={packageReadiness}
+					isLoadingReadiness={isLoadingAnyReadiness}
+				/>
+				{/* Reference-only product blocker */}
+				{selectedProduct?.reference_only && !selectedReadiness ? (
+					<div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
+						<div className="text-[10px] font-bold uppercase tracking-[0.22em] text-amber-400 mb-2">
+							Reference-Only Product
+						</div>
+						<div className="text-xs text-amber-200 mb-3">
+							REFERENCE_ONLY_PRODUCT —{" "}
+							{selectedProduct.catalog_visibility_reason ||
+								"FastMoss reference is visible for review only. Use Smart Registration to convert it into product truth before package load/generation."}
+						</div>
+						<div className="flex flex-wrap gap-2">
+							<button
+								type="button"
+								onClick={() => navigate("/product-registration?tab=bulk")}
+								title="Convert / Register Product"
+								className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-[11px] font-semibold text-indigo-100"
+							>
+								Open Bulk FastMoss Convert
+							</button>
+						</div>
+					</div>
+				) : selectedReadiness ? (
+					<div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+						<div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+							<div>
+								<div className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">
+									Package Eligibility
+								</div>
+								<div className="mt-2 flex flex-wrap items-center gap-2">
+									<span
+										className={`inline-flex rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] ${
+											selectedReadiness.readiness_status === "READY"
+												? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+												: selectedReadiness.readiness_status ===
+														"PRODUCT_ARCHIVED"
+													? "border-slate-500/30 bg-slate-500/10 text-slate-300"
+													: "border-amber-500/30 bg-amber-500/10 text-amber-100"
+										}`}
+									>
+										{selectedReadiness.readiness_status}
+									</span>
+									<span className="text-xs text-slate-300">
+										{selectedReadiness.detail}
+									</span>
+								</div>
+							</div>
+							<div className="flex flex-wrap gap-2">
+								<button
+									type="button"
+									onClick={() =>
+										navigate(
+											selectedReadiness.quick_actions.smart_registration_path,
+										)
+									}
+									className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-[11px] font-semibold text-indigo-100"
+								>
+									Open Smart Registration / Complete Evidence
+								</button>
+								<button
+									type="button"
+									onClick={() =>
+										navigate(
+											selectedReadiness.quick_actions.approved_packages_path,
+										)
+									}
+									className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] font-semibold text-slate-200"
+								>
+									Open Approved Packages
+								</button>
+								{selectedReadiness.readiness_status ===
+								"CLAIM_SAFE_PACKAGE_NOT_READY" ? (
+									<button
+										type="button"
+										data-testid="fix-claim-safe-package"
+										onClick={() =>
+											navigate(
+												buildClaimSafeFixPath(
+													selectedReadiness.product_id,
+													location.pathname,
+												),
+											)
+										}
+										className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-100"
+									>
+										Fix Claim-Safe Package
+									</button>
+								) : null}
+								{selectedReadiness.readiness_status ===
+									"START_FRAME_REQUIRED" ||
+								selectedReadiness.readiness_status === "SUBJECT_REQUIRED" ? (
+									<button
+										type="button"
+										onClick={() =>
+											navigate(selectedReadiness.quick_actions.products_path)
+										}
+										className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] font-semibold text-emerald-100"
+									>
+										Upload product image (Products page)
+									</button>
+								) : null}
+							</div>
+						</div>
+						<div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+							{selectedReadiness.checklist.map((entry) => (
+								<div
+									key={entry.key}
+									className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-3"
+								>
+									<div className="flex items-center justify-between gap-3">
+										<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+											{entry.label}
+										</div>
+										<span
+											className={`inline-flex rounded-full border px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.16em] ${
+												entry.ready
+													? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+													: "border-amber-500/30 bg-amber-500/10 text-amber-100"
+											}`}
+										>
+											{entry.ready ? "READY" : "BLOCKED"}
+										</span>
+									</div>
+									<div className="mt-2 text-[11px] leading-relaxed text-slate-300">
+										{entry.detail}
+									</div>
+								</div>
+							))}
+						</div>
+						{selectedReadiness.readiness_status !== "READY" ? (
+							<div className="mt-3 text-[11px] text-amber-200">
+								No {humanizeWorkspaceMode(mode as WorkspaceMode)}-ready product
+								will load until this checklist is satisfied.
+							</div>
+						) : null}
+					</div>
+				) : null}
+				{!selectedProduct?.reference_only &&
+				!selectedReadiness &&
+				!selectedReadinessLoading ? (
+					<div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-xs text-slate-400">
+						No {humanizeWorkspaceMode(mode as WorkspaceMode)}-ready products are
+						auto-selected. Choose a product and review its readiness checklist
+						first.
+					</div>
+				) : null}
+			</div>
+
+			{/* ── STEP 2: Creative Direction — Scene Strategy authority + Copy Set/Angle/Hook ── */}
+			{/* Workflow Upgrade V1: copy selection moves INSIDE Creative Direction,
+			    directly after product selection. The Scene Strategy summary renders
+			    the product's EXISTING strategy_taxonomy (catalog-attached) — no new
+			    fetches, no variant selector. */}
+			<div
+				data-testid="workflow-step-2"
+				data-state={
+					!selectedProduct
+						? "NOT_READY"
+						: selectedCopySetId
+							? "COMPLETED"
+							: "READY"
+				}
+				className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4"
+			>
+				<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+					Step 2 — Creative Direction
+				</div>
+				<div className="mb-4 text-[11px] text-slate-400">
+					Review the selected product's Scene Strategy authority, then bind the
+					approved Copy Set / Angle / Hook before configuring generation.
+				</div>
+				<div className="mb-4">
+					<SceneStrategySummary
+						hasProduct={Boolean(selectedProduct)}
+						productName={selectedProduct?.product_display_name ?? null}
+						taxonomy={selectedProduct?.strategy_taxonomy ?? null}
+					/>
+				</div>
+			{/* ── Copywriting readiness (video modes only) ─── */}
 			{mode !== "IMG" && (
-				// RPA Round A: Step 1 is settings-only (no action). Its state reports
+				<div className="mb-4">
+					<CopywritingReadinessCard
+						readiness={copyReadiness}
+						loading={copyReadinessLoading}
+						onPrepare={() =>
+							window.location.assign(
+								selectedProduct
+									? `/products?product_id=${encodeURIComponent(selectedProduct.id)}`
+									: "/products",
+							)
+						}
+						onOpenCopyRegistry={() =>
+							window.location.assign(
+								selectedProduct
+									? `/creative/copy-registry?product_id=${encodeURIComponent(selectedProduct.id)}`
+									: "/creative/copy-registry",
+							)
+						}
+					/>
+				</div>
+			)}
+			{/* ── Copy Selection & Compiler Binding ─── */}
+			<CopySelectionPanel
+				productId={selectedProduct?.id ?? null}
+				productName={selectedProduct?.product_display_name ?? null}
+				selectedCopySetId={selectedCopySetId}
+				onSelect={setSelectedCopySetId}
+				disabled={isLoadingPreview || isLoadingPackage}
+			/>
+			</div>
+
+			{/* ── STEP 3: Generation Setup — UGC Prompt Compiler Controls (video modes only) ── */}
+			{mode !== "IMG" && (
+				// RPA Round A (renumbered by Workflow Upgrade V1): Step 3 is settings-only (no action). Its state reports
 				// whether the EXTEND total-duration prerequisite still blocks Load /
 				// Generate — derived from the existing `extendTotalRequired` gate.
 				<div
-					data-testid="workflow-step-1"
+					data-testid="workflow-step-3"
 					data-state={extendTotalRequired ? "NOT_READY" : "READY"}
 					className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4"
 				>
 					<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-						Step 1 — UGC Prompt Compiler Controls
+						Step 3 — Generation Setup (UGC Prompt Compiler)
 					</div>
 					<div className="mb-4 text-[11px] text-slate-400">
-						Configure all generation parameters first. These settings are
+						Configure all generation parameters for the selected product and
+					creative direction. These settings are
 						compiled into the final prompt when you press Generate.
 					</div>
 					<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -2137,7 +2381,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							</div>
 							<div className="mt-1 text-[11px] text-slate-300">
 								T2V/Hybrid presenter identity and scene background resolve from the
-								live approved Avatar Registry and Scene Registry.
+								live approved Avatar Registry and Scene Registry. The Scene Registry
+								Background is a visual override only — distinct from the product's
+								Scene Strategy authority shown in Step 2.
 							</div>
 							{registryPoolsLoading ? (
 								<div className="mt-2 text-[11px] text-slate-400">Loading registries…</div>
@@ -2361,233 +2607,49 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				</div>
 			)}
 
-			{/* ── STEP 2: Select Product ────────────────────────────────── */}
-			<div
-				data-testid="workflow-step-2"
-				data-state={selectedProduct ? "COMPLETED" : "NOT_READY"}
-				data-selected-product-id={selectedProduct?.id ?? ""}
-				className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4"
-			>
-				<div className="mb-3 rounded-xl border border-indigo-500/20 bg-indigo-500/5 px-3 py-3 text-[11px] text-indigo-100">
-					<div className="text-[10px] font-bold uppercase tracking-[0.2em] text-indigo-300">
-						Approved Package Bridge
-					</div>
-					<div className="mt-1 text-indigo-100/80">
-						{packageBridgeFlowLabelByMode[mode as WorkspaceMode]} stays a
-						two-step bridge here so package preview and saved execution payload
-						never get conflated.
-					</div>
-				</div>
-				<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-					Step 2 — Select Product
-				</div>
-				<div className="mb-4 text-[11px] text-slate-400">
-					Only READY products can generate a{" "}
-					{humanizeWorkspaceMode(mode as WorkspaceMode)} package.
-				</div>
-				{isLoadingProducts && (
-					<div className="mb-3 rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-2 text-[11px] text-slate-400">
-						Loading products...
-					</div>
-				)}
-				{productsError && !isLoadingProducts && (
-					<div className="mb-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-[11px] text-rose-300">
-						Product list failed to load: {productsError}
-					</div>
-				)}
-				<SearchableProductSelect
-					products={products}
-					selectedProduct={selectedProduct}
-					onSelect={setSelectedProduct}
-					readinessByProductId={packageReadiness}
-					isLoadingReadiness={isLoadingAnyReadiness}
-				/>
-				{/* Reference-only product blocker */}
-				{selectedProduct?.reference_only && !selectedReadiness ? (
-					<div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
-						<div className="text-[10px] font-bold uppercase tracking-[0.22em] text-amber-400 mb-2">
-							Reference-Only Product
-						</div>
-						<div className="text-xs text-amber-200 mb-3">
-							REFERENCE_ONLY_PRODUCT —{" "}
-							{selectedProduct.catalog_visibility_reason ||
-								"FastMoss reference is visible for review only. Use Smart Registration to convert it into product truth before package load/generation."}
-						</div>
-						<div className="flex flex-wrap gap-2">
-							<button
-								type="button"
-								onClick={() => navigate("/product-registration?tab=bulk")}
-								title="Convert / Register Product"
-								className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-[11px] font-semibold text-indigo-100"
-							>
-								Open Bulk FastMoss Convert
-							</button>
-						</div>
-					</div>
-				) : selectedReadiness ? (
-					<div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-						<div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-							<div>
-								<div className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">
-									Package Eligibility
-								</div>
-								<div className="mt-2 flex flex-wrap items-center gap-2">
-									<span
-										className={`inline-flex rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] ${
-											selectedReadiness.readiness_status === "READY"
-												? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-												: selectedReadiness.readiness_status ===
-														"PRODUCT_ARCHIVED"
-													? "border-slate-500/30 bg-slate-500/10 text-slate-300"
-													: "border-amber-500/30 bg-amber-500/10 text-amber-100"
-										}`}
-									>
-										{selectedReadiness.readiness_status}
-									</span>
-									<span className="text-xs text-slate-300">
-										{selectedReadiness.detail}
-									</span>
-								</div>
-							</div>
-							<div className="flex flex-wrap gap-2">
-								<button
-									type="button"
-									onClick={() =>
-										navigate(
-											selectedReadiness.quick_actions.smart_registration_path,
-										)
-									}
-									className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-[11px] font-semibold text-indigo-100"
-								>
-									Open Smart Registration / Complete Evidence
-								</button>
-								<button
-									type="button"
-									onClick={() =>
-										navigate(
-											selectedReadiness.quick_actions.approved_packages_path,
-										)
-									}
-									className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] font-semibold text-slate-200"
-								>
-									Open Approved Packages
-								</button>
-								{selectedReadiness.readiness_status ===
-								"CLAIM_SAFE_PACKAGE_NOT_READY" ? (
-									<button
-										type="button"
-										data-testid="fix-claim-safe-package"
-										onClick={() =>
-											navigate(
-												buildClaimSafeFixPath(
-													selectedReadiness.product_id,
-													location.pathname,
-												),
-											)
-										}
-										className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-100"
-									>
-										Fix Claim-Safe Package
-									</button>
-								) : null}
-								{selectedReadiness.readiness_status ===
-									"START_FRAME_REQUIRED" ||
-								selectedReadiness.readiness_status === "SUBJECT_REQUIRED" ? (
-									<button
-										type="button"
-										onClick={() =>
-											navigate(selectedReadiness.quick_actions.products_path)
-										}
-										className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] font-semibold text-emerald-100"
-									>
-										Upload product image (Products page)
-									</button>
-								) : null}
-							</div>
-						</div>
-						<div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-							{selectedReadiness.checklist.map((entry) => (
-								<div
-									key={entry.key}
-									className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-3"
-								>
-									<div className="flex items-center justify-between gap-3">
-										<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-											{entry.label}
-										</div>
-										<span
-											className={`inline-flex rounded-full border px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.16em] ${
-												entry.ready
-													? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-													: "border-amber-500/30 bg-amber-500/10 text-amber-100"
-											}`}
-										>
-											{entry.ready ? "READY" : "BLOCKED"}
-										</span>
-									</div>
-									<div className="mt-2 text-[11px] leading-relaxed text-slate-300">
-										{entry.detail}
-									</div>
-								</div>
-							))}
-						</div>
-						{selectedReadiness.readiness_status !== "READY" ? (
-							<div className="mt-3 text-[11px] text-amber-200">
-								No {humanizeWorkspaceMode(mode as WorkspaceMode)}-ready product
-								will load until this checklist is satisfied.
-							</div>
-						) : null}
-					</div>
-				) : null}
-				{!selectedProduct?.reference_only &&
-				!selectedReadiness &&
-				!selectedReadinessLoading ? (
-					<div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-xs text-slate-400">
-						No {humanizeWorkspaceMode(mode as WorkspaceMode)}-ready products are
-						auto-selected. Choose a product and review its readiness checklist
-						first.
-					</div>
-				) : null}
-			</div>
-
-			{/* ── Copywriting readiness (video modes only) ─── */}
+			{/* ── STEP 4: Compile & Review (video modes only) ── */}
 			{mode !== "IMG" && (
-				<div className="mb-4">
-					<CopywritingReadinessCard
-						readiness={copyReadiness}
-						loading={copyReadinessLoading}
-						onPrepare={() =>
-							window.location.assign(
-								selectedProduct
-									? `/products?product_id=${encodeURIComponent(selectedProduct.id)}`
-									: "/products",
-							)
-						}
-						onOpenCopyRegistry={() =>
-							window.location.assign(
-								selectedProduct
-									? `/creative/copy-registry?product_id=${encodeURIComponent(selectedProduct.id)}`
-									: "/creative/copy-registry",
-							)
-						}
-					/>
-				</div>
-			)}
-			{/* ── Copy Selection & Compiler Binding ─── */}
-			<CopySelectionPanel
-				productId={selectedProduct?.id ?? null}
-				productName={selectedProduct?.product_display_name ?? null}
-				selectedCopySetId={selectedCopySetId}
-				onSelect={setSelectedCopySetId}
-				disabled={isLoadingPreview || isLoadingPackage}
-			/>
-
-			{/* ── STEP 3: Load Package (video modes only) ──────────────── */}
-			{mode !== "IMG" && (
-				// RPA Round A: Step 3 state is DERIVED from the existing gates that
+				// RPA Round A (renumbered by Workflow Upgrade V1): the container keeps the
+				// generate-phase state machine that previously lived on workflow-step-4 —
+				// DERIVED from the existing gates that already drive the buttons' `disabled`
+				// expressions below; no new state. AWAITING_HUMAN_CONFIRMATION (G0
+				// amendment O1) marks the fallback gate: the RPA must STOP there, never
+				// click through it. The load phase reports as workflow-step-4-load.
+				<div
+					data-testid="workflow-step-4"
+					data-state={
+						showFallbackConfirm
+							? "AWAITING_HUMAN_CONFIRMATION"
+							: isLoadingPackage
+								? "RUNNING"
+								: !previewPackage || extendTotalRequired
+									? "NOT_READY"
+									: "READY"
+					}
+					className="mb-6 rounded-2xl border border-blue-500/20 bg-slate-900/40 p-4"
+				>
+					<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+						Step 4 — Compile & Review
+					</div>
+					<div className="mb-4 text-[11px] text-slate-400">
+						Load the approved package preview, review the compiled prompt, then
+						generate and save the final execution prompt.
+					</div>
+					<div className="mb-3 rounded-xl border border-indigo-500/20 bg-indigo-500/5 px-3 py-3 text-[11px] text-indigo-100">
+						<div className="text-[10px] font-bold uppercase tracking-[0.2em] text-indigo-300">
+							Approved Package Bridge
+						</div>
+						<div className="mt-1 text-indigo-100/80">
+							{packageBridgeFlowLabelByMode[mode as WorkspaceMode]} stays a
+							two-step bridge here so package preview and saved execution payload
+							never get conflated.
+						</div>
+					</div>
+					{/* Step 4a — Load Package preview (compile only, no DB save) */}
+				// RPA Round A (renumbered by Workflow Upgrade V1): Step 4a load state is DERIVED from the existing gates that
 				// already drive the button's `disabled` expression below — no new state.
 				<div
-					data-testid="workflow-step-3"
+					data-testid="workflow-step-4-load"
 					data-state={
 						isLoadingPreview
 							? "RUNNING"
@@ -2603,7 +2665,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4"
 				>
 					<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-						Step 3 — Load {mode} Package
+						Step 4a — Load {mode} Package
 					</div>
 					<div className="mb-4 text-[11px] text-slate-400">
 						Fetch and compile the approved package for the selected product
@@ -2765,29 +2827,10 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						</div>
 					) : null}
 				</div>
-			)}
-
-			{/* ── STEP 4: Generate Final Prompt (video modes only) ─────── */}
-			{mode !== "IMG" && (
-				// RPA Round A: Step 4 state is DERIVED from the existing gates that already
-				// drive the button's `disabled` expression below — no new state.
-				// AWAITING_HUMAN_CONFIRMATION (G0 amendment O1) marks the fallback gate:
-				// the RPA must STOP there, never click through it.
-				<div
-					data-testid="workflow-step-4"
-					data-state={
-						showFallbackConfirm
-							? "AWAITING_HUMAN_CONFIRMATION"
-							: isLoadingPackage
-								? "RUNNING"
-								: !previewPackage || extendTotalRequired
-									? "NOT_READY"
-									: "READY"
-					}
-					className="mb-6 rounded-2xl border border-blue-500/20 bg-slate-900/40 p-4"
-				>
+					{/* Step 4b — Generate Final Prompt (compile + save to DB) */}
+				<div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
 					<div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-						Step 4 — Generate Final Prompt
+						Step 4b — Generate Final Prompt
 					</div>
 					<div className="mb-4 text-[11px] text-slate-400">
 						After loading the package above, press this button to compile and
@@ -2981,13 +3024,14 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						</div>
 					) : null}
 				</div>
+				</div>
 			)}
 
 			{/* ── STEP 5: Generate Video (one full video, generated in parts) ──
 			    Presentation-only relocation (2026-07-13 operator UX request): the
-			    SAME NativeExtendPanel that previously rendered inside Step 1 now
-			    sits after Step 4 so the page reads top-to-bottom — settings →
-			    product → copy → load → final prompt → GENERATE VIDEO. Props,
+			    SAME NativeExtendPanel keeps rendering after Compile & Review so the
+			    page reads top-to-bottom — product → creative direction →
+			    generation setup → compile & review → GENERATE VIDEO. Props,
 			    state, and behavior are unchanged. */}
 			{mode !== "IMG" && (
 				// RPA Round A: Step 5 is the LIVE, credit-bearing step. It is tagged for

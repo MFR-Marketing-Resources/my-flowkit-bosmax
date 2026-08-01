@@ -80,12 +80,21 @@ describe("RPA Round A — Hybrid root + step locators", () => {
 		}
 	});
 
-	it("exposes the Step 3 and Step 4 actions by stable id", () => {
+	it("exposes the Step 4a and Step 4b actions by stable id", () => {
 		renderOperator("HYBRID");
 		expect(screen.getByTestId("action-load-hybrid-package")).toBeInTheDocument();
 		expect(
 			screen.getByTestId("action-generate-final-prompt"),
 		).toBeInTheDocument();
+	});
+
+	it("exposes the Step 4 load phase as workflow-step-4-load inside Step 4", () => {
+		// Workflow Upgrade V1: Load Package and Generate Final Prompt merged into
+		// one Compile & Review step. The load phase keeps its own state marker.
+		renderOperator("HYBRID");
+		const load = screen.getByTestId("workflow-step-4-load");
+		expect(load).toBeInTheDocument();
+		expect(screen.getByTestId("workflow-step-4")).toContainElement(load);
 	});
 });
 
@@ -93,21 +102,30 @@ describe("RPA Round A — falsifiable two-state audit (M6)", () => {
 	// The EXTEND total-duration prerequisite is the gate that actually blocks
 	// Load/Generate. Toggling it proves the state markers TRACK reality rather
 	// than being hard-coded strings.
-	it("Step 1 flips READY -> NOT_READY when EXTEND leaves total duration unset", () => {
+	// Workflow Upgrade V1 renumbering: the compiler-controls block (Generation
+	// Setup) is now Step 3; Step 1 is product selection.
+	it("Step 3 flips READY -> NOT_READY when EXTEND leaves total duration unset", () => {
 		renderOperator("HYBRID");
-		const step1 = screen.getByTestId("workflow-step-1");
+		const step3 = screen.getByTestId("workflow-step-3");
 
 		// State 1: SINGLE mode — no EXTEND total required.
-		expect(step1).toHaveAttribute("data-state", "READY");
+		expect(step3).toHaveAttribute("data-state", "READY");
 
 		// State 2: EXTEND with no authorized total — prerequisite unmet.
 		fireEvent.change(screen.getByTestId("setting-generation-mode"), {
 			target: { value: "EXTEND" },
 		});
-		expect(screen.getByTestId("workflow-step-1")).toHaveAttribute(
+		expect(screen.getByTestId("workflow-step-3")).toHaveAttribute(
 			"data-state",
 			"NOT_READY",
 		);
+	});
+
+	it("Step 1 (Select Product) reports NOT_READY and an empty selected id without a product", () => {
+		renderOperator("HYBRID");
+		const step1 = screen.getByTestId("workflow-step-1");
+		expect(step1).toHaveAttribute("data-state", "NOT_READY");
+		expect(step1).toHaveAttribute("data-selected-product-id", "");
 	});
 
 	it("setting-generation-mode exposes its CURRENT value as a readable attribute", () => {
