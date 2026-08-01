@@ -186,6 +186,8 @@ async def product_intelligence_recompute(product_id: str) -> dict:
         recompute_product_intelligence,
     )
 
+    from agent.services.tiktokshop_browser_relay import TikTokRelayError
+
     try:
         return await recompute_product_intelligence(product_id)
     except RecomputeError as exc:
@@ -194,6 +196,19 @@ async def product_intelligence_recompute(product_id: str) -> dict:
         status = 404 if exc.code == ERR_PRODUCT_NOT_FOUND else (
             422 if exc.code == ERR_NO_SOURCE_URL else 502)
         raise HTTPException(status_code=status, detail=str(exc)) from exc
+    except TikTokRelayError as exc:
+        # 409 for the states the operator resolves in their own browser (open the product
+        # tab, clear TikTok's Security Check by hand, reconnect the extension) and 502 for
+        # everything else. Without that split, "go press something in Chrome" is presented
+        # as a backend fault and the operator has no reason to believe a Retry would work.
+        # The code itself is never swallowed — the UI branches on it.
+        status = 409 if exc.operator_actionable else 502
+        raise HTTPException(status_code=status, detail={
+            "code": exc.code,
+            "reason": exc.detail,
+            "product_url": exc.product_url,
+            "operator_actionable": exc.operator_actionable,
+        }) from exc
     except Exception as exc:  # noqa: BLE001
         from agent.services.tiktokshop_extraction_service import (
             TikTokShopExtractionError,

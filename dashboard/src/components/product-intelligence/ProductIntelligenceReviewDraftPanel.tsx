@@ -16,6 +16,7 @@ import {
 	type ClaimSafeRewritePreview,
 	type ProductIntelligenceAIFillResult,
 	type ProductIntelligenceRecomputeResult,
+	type TikTokRelayBlocker,
 } from "../../api/products";
 import type {
 	ProductIntelligenceReviewDraft,
@@ -493,6 +494,132 @@ export function formatReviewDraftError(err: unknown, fallback: string): string {
 	return raw;
 }
 
+/**
+ * Recognise a Recompute that stopped on the authenticated-browser relay.
+ *
+ * The API returns a STRUCTURED detail for these (`{code, reason, product_url,
+ * operator_actionable}`) precisely so the UI does not have to sniff substrings out of an
+ * error string to tell "open your TikTok tab" apart from "the backend broke".
+ */
+export function parseRelayBlocker(err: unknown): TikTokRelayBlocker | null {
+	if (!(err instanceof Error)) return null;
+	const raw = err.message || "";
+	const brace = raw.indexOf("{");
+	if (brace < 0) return null;
+	try {
+		const parsed = JSON.parse(raw.slice(brace)) as { detail?: unknown };
+		const detail = parsed.detail;
+		if (!detail || typeof detail !== "object") return null;
+		const record = detail as Record<string, unknown>;
+		const code = String(record.code ?? "");
+		if (!code.startsWith("TIKTOK_RELAY_")) return null;
+		return {
+			code,
+			reason: String(record.reason ?? ""),
+			product_url: String(record.product_url ?? ""),
+			operator_actionable: record.operator_actionable === true,
+		};
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * The operator-facing meaning of each relay code.
+ *
+ * Every branch ends in the same four physical steps because that IS the fix for all of
+ * them; what differs is WHY the lane stopped, and hiding that would leave someone pressing
+ * Retry against a disconnected extension forever. The backend code is always rendered
+ * alongside this text, never instead of it.
+ */
+export function describeRelayBlocker(blocker: TikTokRelayBlocker): {
+	headline: string;
+	steps: string[];
+	retryable: boolean;
+} {
+	const steps = [
+		"Open the stored TikTok product link.",
+		"Complete TikTok Security Check manually if shown.",
+		"Keep the product tab open.",
+		"Press Retry.",
+	];
+	switch (blocker.code) {
+		case "TIKTOK_RELAY_SECURITY_CHECK_PRESENT":
+			return {
+				headline:
+					"TikTok is still showing its Security Check. Clear it yourself in the tab — this system will never solve it for you.",
+				steps,
+				retryable: true,
+			};
+		case "TIKTOK_RELAY_NO_MATCHING_TAB":
+			return {
+				headline:
+					"No open Chrome tab is showing this product. The listing can only be read from a tab you are already signed in to.",
+				steps,
+				retryable: true,
+			};
+		case "TIKTOK_RELAY_EXTENSION_DISCONNECTED":
+			return {
+				headline:
+					"The BOSMAX Chrome extension is not connected to the local agent, so no tab can be read.",
+				steps: [
+					"Confirm Chrome is running with the BOSMAX extension enabled.",
+					...steps,
+				],
+				retryable: true,
+			};
+		case "TIKTOK_RELAY_CONTENT_SCRIPT_UNREACHABLE":
+			return {
+				headline:
+					"The product tab is open but not reachable yet — it was most likely loaded before the extension was last reloaded.",
+				steps: ["Reload the TikTok product tab.", ...steps],
+				retryable: true,
+			};
+		case "TIKTOK_RELAY_TAB_NAVIGATED_AWAY":
+			return {
+				headline:
+					"The tab moved to a different product while the evidence was being read. Nothing was stored.",
+				steps,
+				retryable: true,
+			};
+		case "TIKTOK_RELAY_TIMEOUT":
+			return {
+				headline:
+					"The product tab did not answer in time. Nothing was stored.",
+				steps,
+				retryable: true,
+			};
+		case "TIKTOK_RELAY_EMPTY_EVIDENCE":
+			return {
+				headline:
+					"The tab was read but the page stated no product title or description. Nothing was stored — an empty read never overwrites saved evidence.",
+				steps: ["Scroll the product page until the listing is fully rendered.", ...steps],
+				retryable: true,
+			};
+		case "TIKTOK_RELAY_URL_MISMATCH":
+			return {
+				headline:
+					"The tab identified itself as a DIFFERENT product, so its evidence was refused. This is the guard that stops one listing's data landing on another product.",
+				steps,
+				retryable: true,
+			};
+		case "TIKTOK_RELAY_HOST_NOT_SUPPORTED":
+			return {
+				headline:
+					"This product's stored link is not on shop.tiktok.com or shop-my.tiktok.com, so the authenticated reader cannot open it. Retrying will not help.",
+				steps: ["Correct the product's stored TikTok link, then Recompute again."],
+				retryable: false,
+			};
+		default:
+			return {
+				headline:
+					"The authenticated read did not complete. Nothing was stored.",
+				steps,
+				retryable: blocker.operator_actionable,
+			};
+	}
+}
+
 // Build a friendly "action needed" notice from the STRUCTURED validate report, so we
 // never even attempt an approve that will fail closed (no raw 409 reaches the operator).
 // Returns null when the draft is actually approvable.
@@ -549,6 +676,10 @@ export default function ProductIntelligenceReviewDraftPanel({
 	const [aiFillResult, setAiFillResult] = useState<ProductIntelligenceAIFillResult | null>(null);
 	const [recomputeResult, setRecomputeResult] =
 		useState<ProductIntelligenceRecomputeResult | null>(null);
+	// A Recompute halted at the authenticated-browser relay. Kept separate from `error`
+	// because it is not a fault — it is a step the operator has to take in Chrome, and it
+	// is the only state that offers a Retry.
+	const [relayBlocker, setRelayBlocker] = useState<TikTokRelayBlocker | null>(null);
 	const [message, setMessage] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	// Amber "action needed" notice for a draft that fails the fail-closed approval
@@ -751,6 +882,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 		setMessage(null);
 		setBlockerNotice(null);
 		setRecomputeResult(null);
+		setRelayBlocker(null);
 		try {
 			const result = await recomputeProductIntelligence(productId);
 			setRecomputeResult(result);
@@ -766,12 +898,20 @@ export default function ProductIntelligenceReviewDraftPanel({
 			setValidation(null);
 			const extracted = Object.keys(result.extracted_fields ?? {}).length;
 			const proposed = result.candidates_persisted?.length ?? 0;
+			const via =
+				result.acquisition_mode === "AUTHENTICATED_BROWSER_RELAY"
+					? "your authenticated TikTok tab"
+					: result.source_url;
 			setMessage(
-				`Acquired ${extracted} field(s) from ${result.source_url} (${(result.evidence_methods ?? []).join("+") || "DOM"}). ` +
+				`Acquired ${extracted} field(s) from ${via} (${(result.evidence_methods ?? []).join("+") || "DOM"}). ` +
 					`${proposed} AI candidate(s) stored as review-required. Nothing was approved.`,
 			);
 		} catch (err) {
-			setError(formatReviewDraftError(err, "Recompute from source failed"));
+			// A relay halt is an operator step, not a system failure — it gets its own
+			// actionable panel with a Retry rather than a red error the operator can only read.
+			const blocker = parseRelayBlocker(err);
+			if (blocker) setRelayBlocker(blocker);
+			else setError(formatReviewDraftError(err, "Recompute from source failed"));
 		} finally {
 			setBusyAction(null);
 		}
@@ -1306,6 +1446,55 @@ export default function ProductIntelligenceReviewDraftPanel({
 										Truth fields only; existing human evidence is never overwritten and
 										nothing is auto-approved.
 									</p>
+									{relayBlocker && (
+										<div
+											data-testid="recompute-relay-blocker"
+											className="mt-3 rounded border border-amber-500/40 bg-amber-500/10 p-3 text-[11px] text-amber-100"
+										>
+											<p className="font-semibold">
+												Authenticated TikTok tab required — nothing was saved.
+											</p>
+											<p className="mt-1">{describeRelayBlocker(relayBlocker).headline}</p>
+											<ol className="mt-2 list-decimal space-y-0.5 pl-4">
+												{describeRelayBlocker(relayBlocker).steps.map((step) => (
+													<li key={step}>{step}</li>
+												))}
+											</ol>
+											{relayBlocker.product_url && (
+												<p className="mt-2 break-all">
+													<a
+														data-testid="relay-product-link"
+														href={relayBlocker.product_url}
+														target="_blank"
+														rel="noreferrer noopener"
+														className="underline decoration-dotted"
+													>
+														{relayBlocker.product_url}
+													</a>
+												</p>
+											)}
+											{/* The raw backend code stays on screen: an operator reporting a
+											    problem must be able to quote what actually failed. */}
+											<p
+												data-testid="relay-blocker-code"
+												className="mt-2 font-mono text-[10px] text-amber-200/80"
+											>
+												{relayBlocker.code}
+												{relayBlocker.reason ? ` · ${relayBlocker.reason}` : ""}
+											</p>
+											{describeRelayBlocker(relayBlocker).retryable && (
+												<button
+													type="button"
+													data-testid="relay-retry-button"
+													onClick={handleRecomputeFromSource}
+													disabled={busyAction !== null}
+													className="mt-2 rounded border border-amber-400/50 bg-amber-400/10 px-3 py-1.5 text-[11px] font-semibold text-amber-50 disabled:cursor-not-allowed disabled:opacity-60"
+												>
+													{busyAction === "RECOMPUTE_SOURCE" ? "Retrying..." : "Retry"}
+												</button>
+											)}
+										</div>
+									)}
 									{recomputeResult && (
 										<div
 											data-testid="recompute-source-result"
@@ -1314,6 +1503,18 @@ export default function ProductIntelligenceReviewDraftPanel({
 											<p className="font-semibold">
 												Source evidence acquired ·{" "}
 												{(recomputeResult.evidence_methods ?? []).join("+") || "DOM"}
+											</p>
+											{/* How the page was reached is reviewable evidence in its own right:
+											    an anonymous fetch and a read of the operator's signed-in tab are
+											    different provenance and must not look identical. */}
+											<p
+												data-testid="recompute-acquisition-mode"
+												className="mt-1 font-mono text-[10px] text-indigo-200/70"
+											>
+												{recomputeResult.acquisition_mode ?? "DIRECT_FETCH"}
+												{(recomputeResult.relay?.dropped_keys ?? []).length > 0
+													? ` · dropped by allowlist: ${recomputeResult.relay?.dropped_keys.join(", ")}`
+													: ""}
 											</p>
 											<p className="mt-1 break-all text-indigo-200/80">
 												{recomputeResult.source_url}

@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import ProductIntelligenceReviewDraftPanel, {
 	describeApprovalBlockers,
 	formatReviewDraftError,
+	parseRelayBlocker,
+	describeRelayBlocker,
 } from "./ProductIntelligenceReviewDraftPanel";
 import type { ProductIntelligenceReviewDraft, ProductIntelligenceReviewDraftValidationResponse } from "../../types";
 import {
@@ -233,6 +235,100 @@ describe("ProductIntelligenceReviewDraftPanel", () => {
 		expect(msg).toContain("source_urls_json");
 		expect(msg).toContain("rawat,penyakit,ubat");
 		expect(msg.toLowerCase()).toContain("belum boleh diluluskan");
+	});
+
+	// ── authenticated TikTok relay ────────────────────────────────────────────
+	const relay409 = (code: string, product_url = "https://shop.tiktok.com/view/product/17") =>
+		new Error(
+			`API 409: ${JSON.stringify({
+				detail: { code, reason: "", product_url, operator_actionable: true },
+			})}`,
+		);
+
+	it("parseRelayBlocker recognises the structured relay detail and ignores everything else", () => {
+		const blocker = parseRelayBlocker(relay409("TIKTOK_RELAY_SECURITY_CHECK_PRESENT"));
+		expect(blocker?.code).toBe("TIKTOK_RELAY_SECURITY_CHECK_PRESENT");
+		expect(blocker?.product_url).toBe("https://shop.tiktok.com/view/product/17");
+		// A plain approval failure is NOT a relay blocker and must keep its own handling.
+		expect(
+			parseRelayBlocker(new Error('API 409: {"detail":"DRAFT_NOT_APPROVABLE:X"}')),
+		).toBeNull();
+		expect(parseRelayBlocker(new Error("network down"))).toBeNull();
+		expect(parseRelayBlocker("not-an-error")).toBeNull();
+	});
+
+	it("describeRelayBlocker gives the four operator steps, and refuses to offer a Retry that cannot work", () => {
+		const captcha = describeRelayBlocker({
+			code: "TIKTOK_RELAY_SECURITY_CHECK_PRESENT",
+			reason: "", product_url: "", operator_actionable: true,
+		});
+		expect(captcha.retryable).toBe(true);
+		expect(captcha.steps).toEqual([
+			"Open the stored TikTok product link.",
+			"Complete TikTok Security Check manually if shown.",
+			"Keep the product tab open.",
+			"Press Retry.",
+		]);
+		// The system never claims it will clear the challenge itself.
+		expect(captcha.headline.toLowerCase()).toContain("never solve it for you");
+
+		// A link on an unsupported host can never be relayed — offering Retry would be a
+		// loop the operator can never escape.
+		const wrongHost = describeRelayBlocker({
+			code: "TIKTOK_RELAY_HOST_NOT_SUPPORTED",
+			reason: "", product_url: "", operator_actionable: false,
+		});
+		expect(wrongHost.retryable).toBe(false);
+	});
+
+	it("[relay] a walled Recompute shows the actionable panel with the raw code and a working Retry", async () => {
+		vi.mocked(recomputeProductIntelligence)
+			.mockRejectedValueOnce(relay409("TIKTOK_RELAY_NO_MATCHING_TAB"))
+			.mockResolvedValueOnce({
+				product_id: "p1", draft_id: "d1",
+				source_url: "https://shop.tiktok.com/view/product/17",
+				intake_outcome: "DRAFT_UPDATED", extracted_fields: { size_or_volume: "25ml" },
+				unresolved: {}, variant: "25ml", variant_resolution: "EXACT_VARIANT_RESOLVED",
+				size_resolution: "EXTRACTED", evidence_methods: ["AUTHENTICATED_DOM"],
+				candidate_status: "REVIEW_REQUIRED", candidates_persisted: [],
+				candidates_skipped: [], provider: "deepseek", model: "deepseek-chat",
+				refused_model_fields: [], acquisition_mode: "AUTHENTICATED_BROWSER_RELAY",
+				relay: {
+					tab_id: 7, matched_tabs: 1, replayed: false,
+					dropped_keys: [], evidence_request_id: "req-1",
+				},
+				approved: false,
+			});
+		vi.mocked(fetchProductIntelligenceReviewDrafts).mockResolvedValue({
+			product_id: "p1", items: [makeDraft()],
+		});
+		vi.mocked(fetchProductIntelligenceReviewDraft).mockResolvedValue(makeDraft());
+
+		render(<ProductIntelligenceReviewDraftPanel productId="p1" onApproved={async () => {}} />);
+		fireEvent.click(await screen.findByTestId("recompute-from-source-button"));
+
+		const panel = await screen.findByTestId("recompute-relay-blocker");
+		expect(panel).toHaveTextContent(/nothing was saved/i);
+		expect(panel).toHaveTextContent("Press Retry.");
+		// The backend code stays on screen — an operator reporting a problem has to be able
+		// to quote what actually failed.
+		expect(await screen.findByTestId("relay-blocker-code")).toHaveTextContent(
+			"TIKTOK_RELAY_NO_MATCHING_TAB",
+		);
+		expect(await screen.findByTestId("relay-product-link")).toHaveAttribute(
+			"href", "https://shop.tiktok.com/view/product/17",
+		);
+
+		// Retry runs the same lane again; the second attempt succeeds via the browser.
+		fireEvent.click(await screen.findByTestId("relay-retry-button"));
+		await waitFor(() =>
+			expect(recomputeProductIntelligence).toHaveBeenCalledTimes(2),
+		);
+		expect(await screen.findByTestId("recompute-acquisition-mode")).toHaveTextContent(
+			"AUTHENTICATED_BROWSER_RELAY",
+		);
+		// the blocker panel is gone once the acquisition succeeds
+		expect(screen.queryByTestId("recompute-relay-blocker")).toBeNull();
 	});
 
 	it("formatReviewDraftError passes a non-approval error through unchanged", () => {

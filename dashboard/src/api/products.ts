@@ -289,7 +289,28 @@ export interface ProductIntelligenceRecomputeResult {
 	provider: string | null;
 	model: string | null;
 	refused_model_fields: string[];
+	/** DIRECT_FETCH, or AUTHENTICATED_BROWSER_RELAY when TikTok's wall forced the browser lane. */
+	acquisition_mode?: string | null;
+	relay?: {
+		tab_id: number | null;
+		matched_tabs: number | null;
+		replayed: boolean | null;
+		/** Keys the backend refused from the extension reply — the allowlist, made visible. */
+		dropped_keys: string[];
+		evidence_request_id: string | null;
+	} | null;
 	approved: boolean;
+}
+
+/**
+ * A Recompute that stopped because the operator has to do something in their own browser.
+ * Carries the backend code VERBATIM — the UI explains it, it never replaces it.
+ */
+export interface TikTokRelayBlocker {
+	code: string;
+	reason: string;
+	product_url: string;
+	operator_actionable: boolean;
 }
 
 /**

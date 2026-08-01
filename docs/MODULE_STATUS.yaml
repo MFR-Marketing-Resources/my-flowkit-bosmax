@@ -1064,6 +1064,23 @@ domains:
       - dashboard/src/api/products.ts
       - dashboard/src/components/product-intelligence/ProductIntelligenceReviewDraftPanel.tsx
       - dashboard/src/components/product-intelligence/ProductIntelligenceReviewDraftPanel.test.tsx
+      # Mission-08A phase B: the transport that closes B-08A-RELAY-01. The server-side
+      # fetcher only ever receives TikTok's Security Check shell (an identical ~5.6KB wall
+      # for every product), so the listing is readable ONLY in a tab the operator has
+      # already authenticated. Direct fetch stays the default; the relay is entered on the
+      # ONE typed failure that means "we were never shown the listing". The content script
+      # emits a closed, allowlisted object of product facts - no cookies, storage, tokens,
+      # account identity or unrelated page content - and the backend re-applies that same
+      # allowlist, so a modified or stale content script still cannot widen what is stored.
+      # The CAPTCHA is reported, never solved: a human clears it and presses Retry.
+      # Relayed evidence runs the SAME normalizer as the direct lane, so the size /
+      # labelled-section / extract-only rules cannot drift between the two.
+      - extension/content-tiktok-evidence.js
+      - extension/manifest.json
+      - extension/background.js
+      - agent/services/tiktokshop_browser_relay.py
+      - tests/unit/test_tiktokshop_browser_relay.py
+      - scripts/test-tiktok-evidence-relay.js
       # Owner-authorized canonical repair for the product groups that already held more
       # than one OPEN draft before B-586-04 could be enforced. Backup + snapshot + plan
       # digest first, then proof that ONLY the review-draft table changed. Deletes

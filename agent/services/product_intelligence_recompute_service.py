@@ -151,14 +151,49 @@ async def _persist_candidates(draft_id: str, product_id: str,
             "provider": provider_id, "model": model_id}
 
 
-async def recompute_product_intelligence(
-    product_id: str, *, propose: bool = True,
-) -> dict[str, Any]:
-    """The whole existing-product lane. Never creates a product."""
+async def acquire_extraction(source_url: str, *, propose: bool,
+                             allow_browser_relay: bool) -> dict[str, Any]:
+    """Direct fetch first; the authenticated browser relay only when TikTok walls us out.
+
+    The order is deliberate. A plain HTTPS GET costs nothing, needs no browser and no
+    operator, and still works for any listing TikTok serves anonymously — so it stays the
+    default. The relay is the EXCEPTION path, entered only on the one typed failure that
+    actually means "we were never shown the listing"
+    (TIKTOKSHOP_AUTHENTICATED_BROWSER_REQUIRED). Any other extraction failure — no
+    evidence, bad content type, a dead link — is a real defect in the source and is raised
+    unchanged; routing those through the browser too would turn every data-quality problem
+    into a demand that the operator go open a tab.
+    """
     import asyncio
 
-    from agent.db import crud
+    from agent.services import tiktokshop_browser_relay as relay
     from agent.services import tiktokshop_extraction_service as tiktok
+
+    try:
+        # Synchronous httpx off the event loop: on this single-process agent an inline fetch
+        # stalls /health for its whole duration (the PR #404 starvation).
+        extraction = await asyncio.to_thread(
+            tiktok.extract_product, source_url, propose=propose)
+        extraction.setdefault("acquisition_mode", "DIRECT_FETCH")
+        return extraction
+    except tiktok.TikTokShopExtractionError as exc:
+        if exc.code != tiktok.ERR_AUTHENTICATED_BROWSER_REQUIRED or not allow_browser_relay:
+            raise
+        if not relay.relay_supports_url(source_url):
+            # Honest refusal rather than "open the tab and retry", which would be advice
+            # that can never succeed: the manifest grants the content script exactly two
+            # TikTok Shop hosts and this link is on neither.
+            raise relay.TikTokRelayError(
+                relay.ERR_HOST_NOT_SUPPORTED, source_url[:200],
+                product_url=source_url) from exc
+        return await relay.extract_product_via_browser(source_url, propose=propose)
+
+
+async def recompute_product_intelligence(
+    product_id: str, *, propose: bool = True, allow_browser_relay: bool = True,
+) -> dict[str, Any]:
+    """The whole existing-product lane. Never creates a product."""
+    from agent.db import crud
     from agent.services.product_intake_service import (
         ensure_product_intelligence,
         evidence_from_product_payload,
@@ -171,10 +206,11 @@ async def recompute_product_intelligence(
     if not source_url:
         raise RecomputeError(ERR_NO_SOURCE_URL, product_id)
 
-    # Synchronous httpx off the event loop: on this single-process agent an inline fetch
-    # stalls /health for its whole duration (the PR #404 starvation).
-    extraction = await asyncio.to_thread(
-        tiktok.extract_product, source_url, propose=propose)
+    # NOTHING is written before this returns. Every acquisition failure — walled, empty,
+    # relay unavailable — raises out of here, so a failed Recompute cannot blank a field,
+    # open a draft or leave a provenance row behind.
+    extraction = await acquire_extraction(
+        source_url, propose=propose, allow_browser_relay=allow_browser_relay)
 
     extracted = dict(extraction.get("fields") or {})
     # raw_product_title / brand / price / currency / image_url are PRODUCT columns, not
@@ -214,6 +250,10 @@ async def recompute_product_intelligence(
         "provider": candidate_result.get("provider"),
         "model": candidate_result.get("model"),
         "refused_model_fields": extraction.get("refused_model_fields") or [],
+        # DIRECT_FETCH or AUTHENTICATED_BROWSER_RELAY — recorded because "where this
+        # evidence came from" is a reviewable fact, not an implementation detail.
+        "acquisition_mode": extraction.get("acquisition_mode") or "DIRECT_FETCH",
+        "relay": extraction.get("relay"),
         # never set here — an approved snapshot is only ever produced by the operator
         "approved": False,
     }
