@@ -57,6 +57,35 @@ export interface PromptReadinessHistogram {
 	not_evaluated: number;
 }
 
+/** Derived preparation stage. The `missing_intelligence` HEADLINE still means
+ * "no approved snapshot" — these stages expose how much of that debt is already
+ * prepared, without redefining the predicate. Ordered worst -> best. */
+export type IntelligenceStage =
+	| "NO_DRAFT"
+	| "CLAIM_BLOCKED"
+	| "CLAIM_REVIEW_REQUIRED"
+	| "DRAFT_INCOMPLETE"
+	| "READY_FOR_REVIEW"
+	| "APPROVED_SNAPSHOT";
+
+export const INTELLIGENCE_STAGES: IntelligenceStage[] = [
+	"NO_DRAFT",
+	"CLAIM_BLOCKED",
+	"CLAIM_REVIEW_REQUIRED",
+	"DRAFT_INCOMPLETE",
+	"READY_FOR_REVIEW",
+	"APPROVED_SNAPSHOT",
+];
+
+export const INTELLIGENCE_STAGE_LABEL: Record<IntelligenceStage, string> = {
+	NO_DRAFT: "No draft",
+	CLAIM_BLOCKED: "Claim blocked",
+	CLAIM_REVIEW_REQUIRED: "Awaiting human review",
+	DRAFT_INCOMPLETE: "Draft incomplete",
+	READY_FOR_REVIEW: "Ready for review",
+	APPROVED_SNAPSHOT: "Approved snapshot",
+};
+
 export interface ExceptionItem {
 	product_id?: string | null;
 	product_display_name?: string | null;
@@ -75,6 +104,22 @@ export interface ExceptionItem {
 	scene_coverage?: string | null;
 	scene_contract_status?: string | null;
 	scene_gap_reasons?: string[] | null;
+	// derived Product-Intelligence stage, evaluated server-side per row
+	intelligence_stage?: IntelligenceStage | null;
+	draft_id?: string | null;
+	draft_status?: string | null;
+	missing_fields?: string[] | null;
+	missing_field_count?: number | null;
+	claim_gate?: string | null;
+	claim_risk_level?: string | null;
+	claim_reasons?: string[] | null;
+	approved_snapshot?: boolean | null;
+	snapshot_id?: string | null;
+	snapshot_status?: string | null;
+	copy_blocked?: boolean | null;
+	source?: string | null;
+	source_url?: string | null;
+	tiktok_product_url?: string | null;
 	// failed_generation rows carry request-telemetry fields instead:
 	request_id?: string | null;
 	mode?: string | null;
@@ -109,6 +154,11 @@ export interface ExceptionList {
 	q?: string | null;
 	sort_by?: string | null;
 	sort_dir?: string;
+	/** whole-cohort progress counts; populated for missing_intelligence */
+	stage_breakdown?: Partial<Record<IntelligenceStage, number>>;
+	intelligence_stage?: IntelligenceStage | null;
+	claim_risk_level?: string | null;
+	copy_blocked?: boolean | null;
 	items: ExceptionItem[];
 }
 
@@ -161,6 +211,9 @@ export interface ExceptionQuery {
 	q?: string;
 	sort_by?: string;
 	sort_dir?: "asc" | "desc";
+	intelligence_stage?: IntelligenceStage | "";
+	claim_risk_level?: string;
+	copy_blocked?: boolean;
 }
 
 /** Paging, search and sorting are all resolved SERVER-side over the whole cohort.
@@ -179,6 +232,13 @@ export const fetchExceptions = (
 			q: query.q || undefined,
 			sort_by: query.sort_by || undefined,
 			sort_dir: query.sort_dir || undefined,
+			intelligence_stage: query.intelligence_stage || undefined,
+			claim_risk_level: query.claim_risk_level || undefined,
+			// the query-string helper serialises strings/numbers only
+			copy_blocked:
+				query.copy_blocked === undefined
+					? undefined
+					: String(query.copy_blocked),
 		})}`,
 	);
 
@@ -263,6 +323,9 @@ export const useExceptionPage = (
 			query.q ?? "",
 			query.sort_by ?? "",
 			query.sort_dir ?? "",
+			query.intelligence_stage ?? "",
+			query.claim_risk_level ?? "",
+			query.copy_blocked === undefined ? "" : String(query.copy_blocked),
 		],
 	);
 

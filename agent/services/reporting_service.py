@@ -14,6 +14,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from agent.db.schema import get_db
+from agent.services.product_intelligence_stage_service import (
+    INTELLIGENCE_STAGES,
+    evaluate_intelligence_stage,
+    stage_sql_case,
+)
 from agent.services.scene_contract_service import (
     evaluate_scene_contract,
     scene_gap_sql_predicate,
@@ -86,7 +91,33 @@ _SORTABLE: dict[str, str] = {
     "updated_at": "p.updated_at",
     "matched_scene_strategy_id": "t.matched_scene_strategy_id",
     "scene_coverage_status": "t.scene_coverage_status",
+    # Valid only against `_PRODUCT_BASE_WITH_INTEL`, which list_exceptions always uses.
+    "claim_risk_level": "d.claim_risk_level",
+    "draft_status": "d.review_status",
+    "intelligence_stage": stage_sql_case("d", "s"),
 }
+
+# Intelligence sidecars for the drill-down.
+#
+# NEITHER table is 1:1 with product — a product can carry up to 7 review drafts and 5
+# snapshots (superseded versions are retained, never deleted). A plain LEFT JOIN would
+# therefore FAN OUT and silently inflate `total` and every applicability count for every
+# exception kind. Each side is collapsed to the single newest row per product first, so
+# the join is provably at most 1:1 and the counts keep their exact previous meaning.
+_LATEST_PER_PRODUCT = (
+    "SELECT * FROM (SELECT *, ROW_NUMBER() OVER ("
+    " PARTITION BY product_id ORDER BY COALESCE(updated_at, created_at) DESC, {key} DESC"
+    ") AS _rn FROM {table}) WHERE _rn = 1"
+)
+_INTELLIGENCE_JOIN = (
+    " LEFT JOIN (" + _LATEST_PER_PRODUCT.format(
+        table="product_intelligence_review_draft", key="draft_id")
+    + ") d ON d.product_id = p.id"
+    " LEFT JOIN (" + _LATEST_PER_PRODUCT.format(
+        table="product_intelligence_snapshot", key="snapshot_id")
+    + ") s ON s.product_id = p.id"
+)
+_PRODUCT_BASE_WITH_INTEL = _PRODUCT_BASE + _INTELLIGENCE_JOIN
 
 
 def _product_filters(
@@ -246,6 +277,9 @@ async def list_exceptions(
     sort_by: Optional[str] = None,
     sort_dir: str = "desc",
     include_test_fixtures: bool = False,
+    intelligence_stage: Optional[str] = None,
+    claim_risk_level: Optional[str] = None,
+    copy_blocked: Optional[bool] = None,
 ) -> dict:
     """Filtered, paginated drill-down list for one exception kind. Raises ValueError
     on an unknown kind (the router maps it to 422)."""
@@ -298,9 +332,30 @@ async def list_exceptions(
     # and the drill-down disagree (the headline counts real products, the table counted
     # products + fixtures). Pass include_test_fixtures=true for the explicit fixture view.
     fixture_sql = "" if include_test_fixtures else f" AND NOT {_TEST_FIXTURE_PREDICATE}"
-    scope = f"{where}{search_sql}{fixture_sql}"
-    scope_params = params + search_params
-    total = await _scalar(db, f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {predicate}{scope}", scope_params)
+
+    # Intelligence-stage seam filters. Applied to the SAME scope that drives `total`, the
+    # applicability split, search and the pager, so a filtered headline can never disagree
+    # with its own table (the B-578-01 failure mode).
+    intel_sql, intel_params = "", []
+    stage_filter = (intelligence_stage or "").strip().upper()
+    if stage_filter:
+        if stage_filter not in INTELLIGENCE_STAGES:
+            raise ValueError(f"UNKNOWN_INTELLIGENCE_STAGE: {intelligence_stage}")
+        intel_sql += f" AND {stage_sql_case('d', 's')} = ?"
+        intel_params.append(stage_filter)
+    risk_filter = (claim_risk_level or "").strip().upper()
+    if risk_filter:
+        intel_sql += " AND UPPER(COALESCE(d.claim_risk_level, '')) = ?"
+        intel_params.append(risk_filter)
+    if copy_blocked is not None:
+        # Copy grounding requires an APPROVED snapshot; without one the copy lane fails
+        # closed. Expressed against the same snapshot relation the KPI predicate uses.
+        intel_sql += (" AND s.product_id IS NULL" if copy_blocked
+                      else " AND s.product_id IS NOT NULL")
+
+    scope = f"{where}{search_sql}{fixture_sql}{intel_sql}"
+    scope_params = params + search_params + intel_params
+    total = await _scalar(db, f"SELECT COUNT(*) {_PRODUCT_BASE_WITH_INTEL} WHERE {predicate}{scope}", scope_params)
 
     # Explicit accounting so the UI never has to infer a headline. `total` keeps its exact
     # previous meaning (every row matching the predicate in the requested scope).
@@ -311,24 +366,24 @@ async def list_exceptions(
     # Real-product split of the REQUESTED scope. Both use `real_scope`, which always
     # excludes fixtures, so active + archived reconciles exactly against the default
     # `total`. Under lifecycle_status=ACTIVE the archived figure is naturally 0.
-    real_scope = f"{where}{search_sql} AND NOT {_TEST_FIXTURE_PREDICATE}"
+    real_scope = f"{where}{search_sql} AND NOT {_TEST_FIXTURE_PREDICATE}{intel_sql}"
     active_missing = await _scalar(
         db,
-        f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {predicate}{real_scope}"
+        f"SELECT COUNT(*) {_PRODUCT_BASE_WITH_INTEL} WHERE {predicate}{real_scope}"
         " AND p.lifecycle_status = 'ACTIVE'",
         scope_params)
     archived_missing = await _scalar(
         db,
-        f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {predicate}{real_scope}"
+        f"SELECT COUNT(*) {_PRODUCT_BASE_WITH_INTEL} WHERE {predicate}{real_scope}"
         " AND p.lifecycle_status <> 'ACTIVE'",
         scope_params)
     # Counted WITHOUT the exclusion, so the quarantined set stays disclosed rather than
     # vanishing once it is filtered out of the operational list.
     fixtures_in_scope = await _scalar(
         db,
-        f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {predicate}{where}{search_sql}"
-        f" AND {_TEST_FIXTURE_PREDICATE}",
-        params + search_params)
+        f"SELECT COUNT(*) {_PRODUCT_BASE_WITH_INTEL} WHERE {predicate}{where}{search_sql}"
+        f" AND {_TEST_FIXTURE_PREDICATE}{intel_sql}",
+        params + search_params + intel_params)
 
     order_col = _SORTABLE.get((sort_by or "").strip(), "p.updated_at")
     direction = "ASC" if str(sort_dir).strip().lower() == "asc" else "DESC"
@@ -343,8 +398,22 @@ async def list_exceptions(
         "t.matched_scene_strategy_id AS matched_scene_strategy_id, "
         "t.scene_coverage_status AS scene_coverage_status, "
         "t.fallback_used AS fallback_used, "
+        "p.source AS source, p.source_url AS source_url, "
+        "p.tiktok_product_url AS tiktok_product_url, "
+        "d.draft_id AS draft_id, d.review_status AS review_status, "
+        "d.claim_gate AS claim_gate, d.claim_risk_level AS claim_risk_level, "
+        "d.blocked_claims_json AS blocked_claims_json, "
+        "d.product_description AS product_description, d.benefits_json AS benefits_json, "
+        "d.usp_json AS usp_json, d.usage_text AS usage_text, "
+        "d.ingredients_text AS ingredients_text, d.warnings_text AS warnings_text, "
+        "d.target_customer_text AS target_customer_text, "
+        "d.allowed_claims_json AS allowed_claims_json, "
+        "d.buyer_persona_snapshot_json AS buyer_persona_snapshot_json, "
+        "d.copy_strategy_summary_json AS copy_strategy_summary_json, "
+        "d.source_urls_json AS source_urls_json, d.image_evidence_json AS image_evidence_json, "
+        "s.snapshot_id AS snapshot_id, s.status AS snapshot_status, "
         f"{_TEST_FIXTURE_PREDICATE} AS is_test_fixture "
-        f"{_PRODUCT_BASE} WHERE {predicate}{scope} "
+        f"{_PRODUCT_BASE_WITH_INTEL} WHERE {predicate}{scope} "
         f"{order_sql} LIMIT ? OFFSET ?",
         scope_params + [limit, offset],
     )
@@ -355,6 +424,24 @@ async def list_exceptions(
     for item in items:
         item.update(evaluate_scene_contract(
             item, fingerprint_stale=str(item.get("product_id") or "") in stale_ids))
+        # Exact per-row stage, including the required-field scan the SQL CASE cannot do.
+        item.update(evaluate_intelligence_stage(
+            item if item.get("draft_id") else None,
+            has_snapshot=bool(item.get("snapshot_id"))))
+
+    # Progress breakdown over the WHOLE filtered cohort, not just the page. This is what
+    # makes preparation visible: the headline is still "no approved snapshot", but the
+    # operator can see how much of that debt is already drafted, rewritten and queued.
+    stage_breakdown: dict[str, int] = {}
+    if kind == "missing_intelligence":
+        cur = await db.execute(
+            f"SELECT {stage_sql_case('d', 's')} AS stage, COUNT(*) AS n "
+            f"{_PRODUCT_BASE_WITH_INTEL} WHERE {predicate}{scope} GROUP BY stage",
+            scope_params)
+        counted = {str(r["stage"]): int(r["n"]) for r in await cur.fetchall()}
+        await cur.close()
+        stage_breakdown = {stage: counted.get(stage, 0) for stage in INTELLIGENCE_STAGES}
+
     return {
         "kind": kind,
         "scope": _scope(lifecycle_status, cluster, product_type_group),
@@ -373,6 +460,10 @@ async def list_exceptions(
             "required_missing": active_missing,
             "documented_na_archived": archived_missing,
         },
+        "stage_breakdown": stage_breakdown,
+        "intelligence_stage": stage_filter or None,
+        "claim_risk_level": risk_filter or None,
+        "copy_blocked": copy_blocked,
         "include_test_fixtures": include_test_fixtures,
         "limit": limit,
         "offset": offset,
