@@ -1,12 +1,15 @@
 """Durable, deterministic Product-to-Treatment Factory orchestration.
 
 The factory coordinates existing authorities. It never approves copy or treatments,
-never calls a provider, and never invokes P6/compiler/scheduler execution.
+never invokes P6/compiler/scheduler execution, and never calls a provider unless
+the caller explicitly enables the review-only AI copy-assist batch path. Media
+generation and credit spend remain permanently disabled.
 """
 
 from __future__ import annotations
 
 import hashlib
+import math
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -14,6 +17,7 @@ from typing import cast
 
 from agent.db import crud
 from agent.db import product_treatment_factory_crud as factory_crud
+from agent.models.copy_set import AICopyAssistBatchRequest
 from agent.models.creative_treatment import AssetBindingRequest, CreateTreatmentRequest
 from agent.models.product_readiness import (
     ProductReadinessEvaluateRequest,
@@ -32,7 +36,9 @@ from agent.models.product_treatment_factory import (
     TreatmentTemplateProjection,
 )
 from agent.services import (
+    ai_copy_assist_service,
     copy_composer_service,
+    copy_rotation_service,
     creative_treatment_service,
     product_readiness_applicability_service,
 )
@@ -42,7 +48,7 @@ from agent.services.product_treatment_template_service import (
 )
 
 
-FACTORY_VERSION = "product-treatment-factory-v1"
+FACTORY_VERSION = "product-treatment-factory-v2"
 TASK_TYPES: tuple[FactoryTaskType, ...] = (
     "PRODUCT_TRUTH_REVIEW",
     "EVIDENCE_REVIEW",
@@ -119,6 +125,82 @@ def _first_string(value: object) -> str | None:
     items = sorted(_string_list(value))
     return items[0] if items else None
 
+
+_NON_MATERIAL_EXECUTION_FIELDS = frozenset(
+    {
+        "workspace_generation_package_id",
+        "item_id",
+        "attempt_id",
+        "request_id",
+        "trace_id",
+        "retry_token",
+        "created_at",
+        "updated_at",
+        "started_at",
+        "completed_at",
+    }
+)
+
+
+def normalize_material_execution_payload(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            str(key): normalize_material_execution_payload(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            if str(key) not in _NON_MATERIAL_EXECUTION_FIELDS
+        }
+    if isinstance(value, (list, tuple)):
+        return [normalize_material_execution_payload(item) for item in value]
+    return value
+
+def material_execution_fingerprint(payload: Mapping[str, object]) -> str:
+    return canonical_sha256(normalize_material_execution_payload(payload))
+
+
+
+def canonical_same_dialogue_reuse_cap() -> int:
+    ordinal_schema = CreateTreatmentRequest.model_json_schema()["properties"][
+        "variation_ordinal"
+    ]
+    candidates: list[int] = []
+    if isinstance(ordinal_schema, Mapping):
+        maximum = ordinal_schema.get("maximum")
+        if isinstance(maximum, int):
+            candidates.append(maximum)
+        for branch in ordinal_schema.get("anyOf", []):
+            if isinstance(branch, Mapping):
+                branch_maximum = branch.get("maximum")
+                if isinstance(branch_maximum, int):
+                    candidates.append(branch_maximum)
+    if not candidates or min(candidates) < 1:
+        raise ProductTreatmentFactoryError("VARIATION_GROUP_REUSE_CAP_UNAVAILABLE")
+    return min(candidates)
+
+def required_dialogue_count(
+    target_video_count: int,
+    reuse_cap: int | None = None,
+) -> int:
+    if target_video_count < 0:
+        raise ProductTreatmentFactoryError("INVALID_TARGET_VIDEO_COUNT")
+    if target_video_count == 0:
+        return 0
+    cap = reuse_cap if reuse_cap is not None else canonical_same_dialogue_reuse_cap()
+    if cap < 1:
+        raise ProductTreatmentFactoryError("VARIATION_GROUP_REUSE_CAP_UNAVAILABLE")
+    return math.ceil(target_video_count / cap)
+
+def _allocated_product_targets(
+    target_video_count: int,
+    contexts: list[FactoryProductContext],
+) -> dict[str, int]:
+    if not contexts:
+        return {}
+    ordered = sorted(contexts, key=lambda context: context.product_id)
+    quotient, remainder = divmod(target_video_count, len(ordered))
+    return {
+        context.product_id: quotient + (index < remainder)
+        for index, context in enumerate(ordered)
+    }
 
 def _task_projection(row: dict[str, object]) -> FactoryTaskProjection:
     return FactoryTaskProjection(
@@ -222,15 +304,39 @@ async def _resolve_contexts(
                 "FACTORY_COHORT_EMPTY",
                 status_code=422,
             )
-        return [
+        contexts = [
             FactoryProductContext(
                 product_id=product_id,
                 **request.defaults.model_dump(),
             )
             for product_id in product_ids
         ]
-    return sorted(request.products, key=lambda item: item.product_id)
+    else:
+        contexts = sorted(request.products, key=lambda item: item.product_id)
+    allocations = _allocated_product_targets(request.target_video_count, contexts)
+    return [
+        context.model_copy(
+            update={"target_video_count": allocations[context.product_id]}
+        )
+        for context in contexts
+    ]
 
+
+async def _eligible_approved_copy_sets(
+    product_id: str,
+) -> list[dict[str, object]]:
+    rows = await copy_rotation_service.list_eligible_copy_sets(product_id)
+    return sorted(
+        [_mapping(row) for row in rows],
+        key=lambda row: str(row.get("copy_set_id") or ""),
+    )
+
+def _approved_copy_set_ids(scan: ProductScan) -> list[str]:
+    preview = scan.copy_preview
+    if "eligible_approved_copy_set_ids" in preview:
+        return _string_list(preview.get("eligible_approved_copy_set_ids"))
+    resolved = scan.resolved
+    return sorted(_string_list(resolved.copy.approved_copy_set_ids) if resolved else [])
 
 async def _scan_product(context: FactoryProductContext) -> ProductScan:
     readiness_request = ProductReadinessEvaluateRequest(
@@ -282,9 +388,19 @@ async def _scan_product(context: FactoryProductContext) -> ProductScan:
             ),
         )
     try:
+        reuse_cap = canonical_same_dialogue_reuse_cap()
+        required_dialogues = required_dialogue_count(
+            context.target_video_count,
+            reuse_cap,
+        )
+        approved_copy_sets = await _eligible_approved_copy_sets(context.product_id)
+        composition_shortfall = max(
+            0,
+            required_dialogues - len(approved_copy_sets),
+        )
         raw_preview = await copy_composer_service.compose_and_persist(
             context.product_id,
-            1,
+            composition_shortfall,
             dry_run=True,
         )
         raw_treatments = await creative_treatment_service.list_treatments(
@@ -293,12 +409,30 @@ async def _scan_product(context: FactoryProductContext) -> ProductScan:
             variation_group_id=None,
             limit=1000,
         )
+        copy_preview = _mapping(raw_preview)
+        copy_preview.update(
+            {
+                "variation_group_reuse_cap": reuse_cap,
+                "target_video_count": context.target_video_count,
+                "required_dialogues": required_dialogues,
+                "eligible_approved_copy_set_ids": [
+                    str(row["copy_set_id"])
+                    for row in approved_copy_sets
+                    if row.get("copy_set_id")
+                ],
+                "eligible_approved_copy_count": len(approved_copy_sets),
+                "composition_shortfall": composition_shortfall,
+                "provider_calls": 0,
+                "media_generation_calls": 0,
+                "credit_spend": 0,
+            }
+        )
         return ProductScan(
             context=context,
             resolved=resolved,
             readiness=readiness,
             template=template,
-            copy_preview=_mapping(raw_preview),
+            copy_preview=copy_preview,
             treatments=[_mapping(item) for item in raw_treatments],
             error_code=None,
         )
@@ -320,6 +454,10 @@ def _task_snapshot(scan: ProductScan) -> dict[str, object]:
     resolved = scan.resolved
     return {
         "factory_version": FACTORY_VERSION,
+        "target_video_count": scan.context.target_video_count,
+        "required_dialogues": required_dialogue_count(scan.context.target_video_count),
+        "variation_group_reuse_cap": canonical_same_dialogue_reuse_cap(),
+        "provider_calls_enabled": bool(scan.copy_preview.get("provider_calls_enabled")),
         "context": scan.context.model_dump(mode="json"),
         "readiness": readiness.model_dump(mode="json") if readiness else {},
         "resolved_authority": (
@@ -368,13 +506,15 @@ def _candidate_ready(scan: ProductScan) -> bool:
         "visual_assets",
         "treatment_template",
     )
+    required_dialogues = required_dialogue_count(scan.context.target_video_count)
+    copy_ready = len(_approved_copy_set_ids(scan)) >= required_dialogues
     return (
         all(str(getattr(layers.get(name), "state", "")) == "READY" for name in required)
         and bool(resolved.product_truth.snapshot_id)
-        and bool(resolved.copy.approved_copy_set_ids)
+        and copy_ready
         and bool(resolved.selection.selection_id)
         and not resolved.assets.missing_roles
-        and bool(resolved.assets.required_roles)
+        and (required_dialogues == 0 or bool(resolved.assets.required_roles))
     )
 
 
@@ -400,6 +540,11 @@ def _task_decision(
 
     readiness = scan.readiness
     resolved = scan.resolved
+    required_dialogues = required_dialogue_count(scan.context.target_video_count)
+    approved_copy_count = len(_approved_copy_set_ids(scan))
+    copy_ready = approved_copy_count >= required_dialogues
+    approved_treatment_count = len(resolved.treatment.approved_treatment_ids)
+    treatment_ready = approved_treatment_count >= required_dialogues
     if task_type == "PRODUCT_TRUTH_REVIEW":
         return _layer_decision(readiness, "product_truth")
     if task_type == "EVIDENCE_REVIEW":
@@ -407,9 +552,12 @@ def _task_decision(
     if task_type == "COPY_GROUNDING":
         return _layer_decision(readiness, "copy_grounding")
     if task_type == "COPY_COMPOSITION":
-        if resolved.copy.approved_copy_set_ids:
+        if copy_ready:
             return "SATISFIED", None, None
-        if int(scan.copy_preview.get("produced") or 0) > 0:
+        if (
+            int(scan.copy_preview.get("produced") or 0) > 0
+            or bool(scan.copy_preview.get("provider_calls_enabled"))
+        ):
             return "READY", None, "MATERIALIZE_REVIEW_REQUIRED_COPY"
         return (
             "REVIEW_REQUIRED",
@@ -417,36 +565,59 @@ def _task_decision(
             "REVIEW_COPY_COMPONENT_SUPPLY",
         )
     if task_type == "COPY_REVIEW":
-        if resolved.copy.approved_copy_set_ids:
+        if copy_ready:
             return "SATISFIED", None, None
+        if (
+            int(scan.copy_preview.get("produced") or 0) > 0
+            or bool(scan.copy_preview.get("provider_calls_enabled"))
+        ):
+            return (
+                "REVIEW_REQUIRED",
+                "COPY_REVIEW_REQUIRED",
+                "REVIEW_COPY_SET",
+            )
         return "REVIEW_REQUIRED", "APPROVED_COPY_SET_REQUIRED", "REVIEW_COPY_SET"
     if task_type == "CREATIVE_SELECTION":
         return _layer_decision(readiness, "creative_selection")
     if task_type == "ASSET_SUPPLY":
         return _layer_decision(readiness, "visual_assets")
     if task_type == "TREATMENT_CANDIDATE":
-        if resolved.treatment.approved_treatment_ids:
+        if treatment_ready:
             return "SATISFIED", None, None
         if _candidate_ready(scan):
             return "READY", None, "MATERIALIZE_REVIEW_REQUIRED_TREATMENT"
+        if not copy_ready:
+            return (
+                "PENDING",
+                "APPROVED_COPY_CAPACITY_SHORTFALL",
+                "APPROVE_REQUIRED_COPY_SETS",
+            )
         return (
             "PENDING",
             "TREATMENT_PREREQUISITES_REQUIRED",
             "RESOLVE_TREATMENT_PREREQUISITES",
         )
     if task_type == "TREATMENT_REVIEW":
-        if resolved.treatment.approved_treatment_ids:
+        if treatment_ready:
             return "SATISFIED", None, None
         if any(
-            str(item.get("status")) in {"DRAFT", "IN_REVIEW"}
+            str(item.get("status")) in {"DRAFT", "IN_REVIEW", "REVIEW_REQUIRED"}
             for item in scan.treatments
         ):
             return "REVIEW_REQUIRED", "TREATMENT_REVIEW_REQUIRED", "REVIEW_TREATMENT"
+        if not copy_ready:
+            return (
+                "PENDING",
+                "APPROVED_COPY_CAPACITY_SHORTFALL",
+                "APPROVE_REQUIRED_COPY_SETS",
+            )
         return "PENDING", "TREATMENT_CANDIDATE_REQUIRED", "CREATE_TREATMENT_CANDIDATE"
     if task_type == "P6_CAPACITY":
-        if resolved.treatment.p6_ready:
+        if resolved.treatment.p6_ready and treatment_ready:
             return "SATISFIED", None, None
-        return "REVIEW_REQUIRED", "P6_CAPACITY_NOT_READY", "RESOLVE_P6_CAPACITY"
+        if not resolved.treatment.p6_ready:
+            return "REVIEW_REQUIRED", "P6_CAPACITY_NOT_READY", "RESOLVE_P6_CAPACITY"
+        return "REVIEW_REQUIRED", "P6_CAPACITY_SHORTFALL", "RESOLVE_TREATMENT_CAPACITY"
     raise ProductTreatmentFactoryError("UNKNOWN_FACTORY_TASK_TYPE")
 
 
@@ -462,26 +633,83 @@ def _capacity_summary(
     scans: list[ProductScan],
     tasks: list[dict[str, object]],
 ) -> dict[str, object]:
+    target_by_product = {
+        scan.context.product_id: scan.context.target_video_count
+        for scan in scans
+    }
+    required_by_product = {
+        scan.context.product_id: required_dialogue_count(
+            scan.context.target_video_count
+        )
+        for scan in scans
+    }
+    approved_copy_by_product = {
+        scan.context.product_id: _approved_copy_set_ids(scan)
+        for scan in scans
+    }
+    approved_treatment_by_product = {
+        scan.context.product_id: sorted(
+            scan.resolved.treatment.approved_treatment_ids
+            if scan.resolved is not None
+            else []
+        )
+        for scan in scans
+    }
+    approved_copy_ids = sorted(
+        {
+            copy_set_id
+            for copy_set_ids in approved_copy_by_product.values()
+            for copy_set_id in copy_set_ids
+        }
+    )
+    approved_master_treatments = sorted(
+        {
+            treatment_id
+            for treatment_ids in approved_treatment_by_product.values()
+            for treatment_id in treatment_ids
+        }
+    )
     p6_ready_products = sorted(
         scan.context.product_id
         for scan in scans
         if scan.resolved is not None and scan.resolved.treatment.p6_ready
     )
-    approved_master_treatments = sorted(
-        {
-            treatment_id
-            for scan in scans
-            if scan.resolved is not None
-            for treatment_id in scan.resolved.treatment.approved_treatment_ids
-        }
+    target_video_count = sum(target_by_product.values())
+    required_dialogues = sum(required_by_product.values())
+    copy_shortfall = sum(
+        max(
+            0,
+            required_by_product[product_id]
+            - len(approved_copy_by_product[product_id]),
+        )
+        for product_id in required_by_product
+    )
+    treatment_shortfall = sum(
+        max(
+            0,
+            required_by_product[product_id]
+            - len(approved_treatment_by_product[product_id]),
+        )
+        for product_id in required_by_product
     )
     return {
         "product_count": len(scans),
         "task_count": len(tasks),
+        "target_video_count": target_video_count,
+        "target_video_count_by_product": target_by_product,
+        "variation_group_reuse_cap": canonical_same_dialogue_reuse_cap(),
+        "required_dialogues": required_dialogues,
+        "required_dialogues_by_product": required_by_product,
+        "approved_copy_set_count": len(approved_copy_ids),
+        "approved_copy_set_ids": approved_copy_ids,
+        "required_copy_set_count": required_dialogues,
+        "copy_shortfall": copy_shortfall,
         "p6_ready_product_count": len(p6_ready_products),
         "p6_ready_product_ids": p6_ready_products,
         "approved_master_treatment_count": len(approved_master_treatments),
         "approved_master_treatment_ids": approved_master_treatments,
+        "required_treatment_count": required_dialogues,
+        "treatment_shortfall": treatment_shortfall,
         "extend_segments_counted": 0,
     }
 
@@ -489,11 +717,14 @@ def _capacity_summary(
 async def create_plan(request: CreateFactoryPlanRequest) -> FactoryPlanProjection:
     contexts = await _resolve_contexts(request)
     scans = [await _scan_product(context) for context in contexts]
+    for scan in scans:
+        scan.copy_preview["provider_calls_enabled"] = request.provider_calls_enabled
     request_snapshot: dict[str, object] = {
         "factory_version": FACTORY_VERSION,
         "products": [context.model_dump(mode="json") for context in contexts],
+        "target_video_count": request.target_video_count,
         "scan_all_active": request.scan_all_active,
-        "provider_calls_enabled": False,
+        "provider_calls_enabled": request.provider_calls_enabled,
         "media_generation_enabled": False,
     }
     cohort_sha256 = canonical_sha256(
@@ -507,6 +738,9 @@ async def create_plan(request: CreateFactoryPlanRequest) -> FactoryPlanProjectio
         "products": [
             {
                 "product_id": scan.context.product_id,
+                "target_video_count": scan.context.target_video_count,
+                "required_dialogues": required_dialogue_count(scan.context.target_video_count),
+                "approved_copy_set_ids": _approved_copy_set_ids(scan),
                 "product_authority_sha256": (
                     scan.readiness.product_authority_sha256
                     if scan.readiness
@@ -566,6 +800,10 @@ async def create_plan(request: CreateFactoryPlanRequest) -> FactoryPlanProjectio
             status, blocker_code, next_action = _task_decision(scan, task_type)
             required_authority_sha256 = canonical_sha256(
                 {
+                    "target_video_count": scan.context.target_video_count,
+                    "required_dialogues": required_dialogue_count(scan.context.target_video_count),
+                    "approved_copy_set_ids": _approved_copy_set_ids(scan),
+                    "variation_group_reuse_cap": canonical_same_dialogue_reuse_cap(),
                     "readiness_sha256": (
                         scan.readiness.readiness_sha256 if scan.readiness else None
                     ),
@@ -663,6 +901,7 @@ def _treatment_request_from_snapshot(
     task: dict[str, object],
     *,
     created_by: str,
+    copy_set_id: str | None = None,
 ) -> CreateTreatmentRequest:
     snapshot = _mapping(task.get("snapshot"))
     resolved = _mapping(snapshot.get("resolved_authority"))
@@ -673,7 +912,7 @@ def _treatment_request_from_snapshot(
     selection = _mapping(resolved.get("selection"))
     assets = _mapping(resolved.get("assets"))
     product_truth_snapshot_id = str(product_truth.get("snapshot_id") or "")
-    copy_set_id = _first_string(copy_authority.get("approved_copy_set_ids"))
+    copy_set_id = copy_set_id or _first_string(copy_authority.get("approved_copy_set_ids"))
     creative_selection_id = str(selection.get("selection_id") or "")
     asset_bindings: list[AssetBindingRequest] = []
     eligible_by_role = _mapping(assets.get("eligible_asset_ids_by_role"))
@@ -718,16 +957,85 @@ def _treatment_request_from_snapshot(
 async def _prepare_copy_task(
     task: dict[str, object],
 ) -> tuple[str, dict[str, object]]:
+    snapshot = _mapping(task.get("snapshot"))
+    preview = _mapping(snapshot.get("copy_preview"))
+    required_dialogues = int(
+        preview.get("required_dialogues")
+        or snapshot.get("required_dialogues")
+        or 1
+    )
+    approved_copy_count = len(
+        _string_list(preview.get("eligible_approved_copy_set_ids"))
+    )
+    shortfall = max(0, required_dialogues - approved_copy_count)
+    provider_enabled = bool(
+        snapshot.get("provider_calls_enabled")
+        or preview.get("provider_calls_enabled")
+    )
+    if shortfall == 0:
+        return "SATISFIED", {
+            "created": 0,
+            "created_count": 0,
+            "requested_count": 0,
+            "remaining_shortfall": 0,
+            "provider_calls": 0,
+            "media_generation_calls": 0,
+            "credit_spend": 0,
+        }
     result = await copy_composer_service.compose_and_persist(
         str(task["product_id"]),
-        1,
+        shortfall,
         dry_run=False,
     )
     normalized = _mapping(result)
-    if int(normalized.get("created") or 0) < 1:
+    composer_created_count = int(
+        normalized.get("created") or normalized.get("created_count") or 0
+    )
+    created_count = composer_created_count
+    remaining = max(0, shortfall - created_count)
+    ai_batches: list[dict[str, object]] = []
+    provider_calls = 0
+    while provider_enabled and remaining >= 3:
+        batch_count = min(10, remaining)
+        ai_result = _mapping(
+            await ai_copy_assist_service.generate_ai_copy_candidates_batch(
+                AICopyAssistBatchRequest(
+                    product_id=str(task["product_id"]),
+                    requested_count=batch_count,
+                    dry_run=False,
+                )
+            )
+        )
+        ai_batches.append(ai_result)
+        provider_calls += 1
+        ai_created_count = int(
+            ai_result.get("created_count") or ai_result.get("created") or 0
+        )
+        created_count += ai_created_count
+        remaining = max(0, shortfall - created_count)
+        if ai_created_count <= 0:
+            break
+    if composer_created_count < 1 and not provider_enabled:
         raise ProductTreatmentFactoryError(
             "COPY_COMPOSITION_NOT_MATERIALIZED",
             details={"task_id": str(task["task_id"])},
+        )
+    normalized.update(
+        {
+            "created_count": created_count,
+            "composer_created_count": composer_created_count,
+            "requested_count": shortfall,
+            "remaining_shortfall": remaining,
+            "ai_batches": ai_batches,
+            "provider_calls": provider_calls,
+            "media_generation_calls": 0,
+            "credit_spend": 0,
+            "review_required": True,
+        }
+    )
+    if remaining:
+        normalized["blocker_code"] = (
+            "AI_BATCH_MINIMUM_SHORTFALL" if provider_enabled else "COPY_CAPACITY_SHORTFALL"
         )
     return "REVIEW_REQUIRED", normalized
 
@@ -737,49 +1045,117 @@ async def _prepare_treatment_task(
     *,
     actor_id: str,
 ) -> tuple[str, dict[str, object]]:
-    request = _treatment_request_from_snapshot(task, created_by=actor_id)
-    request_projection = request.model_dump(mode="json")
-    signature = _candidate_signature(request_projection)
+    snapshot = _mapping(task.get("snapshot"))
+    preview = _mapping(snapshot.get("copy_preview"))
+    required_dialogues = int(
+        preview.get("required_dialogues")
+        or snapshot.get("required_dialogues")
+        or 1
+    )
+    resolved = _mapping(snapshot.get("resolved_authority"))
+    copy_authority = _mapping(resolved.get("copy"))
+    copy_set_ids = sorted(
+        _string_list(preview.get("eligible_approved_copy_set_ids"))
+        or _string_list(copy_authority.get("approved_copy_set_ids"))
+    )
+    if required_dialogues <= 0:
+        return "SATISFIED", {
+            "created": False,
+            "created_count": 0,
+            "reused_count": 0,
+            "treatment_ids": [],
+            "treatment_sha256s": [],
+            "provider_calls": 0,
+            "media_generation_calls": 0,
+            "credit_spend": 0,
+        }
+    if len(copy_set_ids) < required_dialogues:
+        raise ProductTreatmentFactoryError(
+            "APPROVED_COPY_CAPACITY_SHORTFALL",
+            details={
+                "task_id": str(task["task_id"]),
+                "required_dialogues": required_dialogues,
+                "approved_copy_set_count": len(copy_set_ids),
+            },
+        )
+    copy_set_ids = copy_set_ids[:required_dialogues]
+    product_id = str(task["product_id"])
     existing = await creative_treatment_service.list_treatments(
-        product_id=request.product_id,
+        product_id=product_id,
         status=None,
         variation_group_id=None,
         limit=1000,
     )
-    treatment = next(
-        (
-            _mapping(item)
-            for item in existing
-            if _candidate_signature(_mapping(item)) == signature
-        ),
-        None,
-    )
-    created = False
-    if treatment is None:
-        treatment = _mapping(
-            await creative_treatment_service.create_treatment(request)
-        )
-        created = True
-    treatment_id = str(treatment["treatment_id"])
-    treatment_sha256 = str(treatment["treatment_sha256"])
     template_id = cast(str | None, task.get("template_id"))
     template_sha256 = cast(str | None, task.get("template_sha256"))
+    candidates: list[dict[str, object]] = []
+    for copy_set_id in copy_set_ids:
+        request = _treatment_request_from_snapshot(
+            task,
+            created_by=actor_id,
+            copy_set_id=copy_set_id,
+        )
+        request_projection = request.model_dump(mode="json")
+        signature = _candidate_signature(request_projection)
+        treatment = next(
+            (
+                _mapping(item)
+                for item in existing
+                if _candidate_signature(_mapping(item)) == signature
+            ),
+            None,
+        )
+        created = False
+        if treatment is None:
+            treatment = _mapping(
+                await creative_treatment_service.create_treatment(request)
+            )
+            created = True
+            existing.append(treatment)
+        treatment_id = str(treatment["treatment_id"])
+        treatment_sha256 = str(treatment["treatment_sha256"])
+        candidates.append(
+            {
+                "candidate_signature_sha256": signature,
+                "copy_set_id": copy_set_id,
+                "created": created,
+                "treatment_id": treatment_id,
+                "treatment_sha256": treatment_sha256,
+                "status": str(treatment["status"]),
+                "lineage": {
+                    "template_id": template_id,
+                    "template_sha256": template_sha256,
+                    "copy_set_id": copy_set_id,
+                    "treatment_id": treatment_id,
+                    "treatment_sha256": treatment_sha256,
+                },
+            }
+        )
+    first = candidates[0]
+    created_count = sum(1 for candidate in candidates if candidate["created"])
+    first_lineage = {
+        key: value
+        for key, value in _mapping(first["lineage"]).items()
+        if key != "copy_set_id"
+    }
     return (
         "REVIEW_REQUIRED",
         {
-            "candidate_signature_sha256": signature,
-            "created": created,
+            "candidate_signature_sha256": first["candidate_signature_sha256"],
+            "created": created_count == 1 and bool(first["created"]),
+            "created_count": created_count,
+            "reused_count": len(candidates) - created_count,
+            "candidates": candidates,
+            "treatment_ids": [str(item["treatment_id"]) for item in candidates],
+            "treatment_sha256s": [
+                str(item["treatment_sha256"]) for item in candidates
+            ],
             "template_id": template_id,
             "template_sha256": template_sha256,
-            "treatment_id": treatment_id,
-            "treatment_sha256": treatment_sha256,
-            "status": str(treatment["status"]),
-            "lineage": {
-                "template_id": template_id,
-                "template_sha256": template_sha256,
-                "treatment_id": treatment_id,
-                "treatment_sha256": treatment_sha256,
-            },
+            "treatment_id": first["treatment_id"],
+            "treatment_sha256": first["treatment_sha256"],
+            "status": first["status"],
+            "lineage": first_lineage,
             "provider_calls": 0,
             "media_generation_calls": 0,
             "credit_spend": 0,
@@ -813,7 +1189,12 @@ async def _synchronize_treatment_review_task(
         next_action="REVIEW_TREATMENT",
         treatment_id=result["treatment_id"],
         treatment_sha256=result["treatment_sha256"],
-        result_json=factory_crud.encode({"lineage": result["lineage"]}),
+        result_json=factory_crud.encode(
+            {
+                "lineage": result["lineage"],
+                "candidates": result.get("candidates", []),
+            }
+        ),
     )
     await factory_crud.append_event(
         plan_id=str(candidate_task["plan_id"]),
@@ -829,7 +1210,10 @@ async def _synchronize_treatment_review_task(
         action="TREATMENT_REVIEW_REQUESTED",
         source_state=str(review_task["status"]),
         target_state="REVIEW_REQUIRED",
-        evidence={"lineage": result["lineage"]},
+        evidence={
+            "lineage": result["lineage"],
+            "candidates": result.get("candidates", []),
+        },
     )
 
 
@@ -856,18 +1240,28 @@ async def _process_task(
                 "FACTORY_TASK_NOT_MATERIALIZABLE",
                 details={"task_type": task_type},
             )
-        update_fields: dict[str, object] = {
-            "status": target_status,
-            "blocker_code": (
+        default_blocker = (
+            (
                 "COPY_REVIEW_REQUIRED"
                 if task_type == "COPY_COMPOSITION"
                 else "TREATMENT_REVIEW_REQUIRED"
-            ),
-            "next_action": (
+            )
+            if target_status == "REVIEW_REQUIRED"
+            else None
+        )
+        default_next_action = (
+            (
                 "REVIEW_COPY_SET"
                 if task_type == "COPY_COMPOSITION"
                 else "REVIEW_TREATMENT"
-            ),
+            )
+            if target_status == "REVIEW_REQUIRED"
+            else None
+        )
+        update_fields: dict[str, object] = {
+            "status": target_status,
+            "blocker_code": result.get("blocker_code") or default_blocker,
+            "next_action": default_next_action,
             "result_json": factory_crud.encode(result),
         }
         if task_type == "TREATMENT_CANDIDATE":
@@ -979,6 +1373,32 @@ async def prepare_plan(
         },
     )
     tasks = await factory_crud.list_tasks(plan_id)
+    if request.provider_calls_enabled:
+        for task in tasks:
+            if str(task["task_type"]) != "COPY_COMPOSITION":
+                continue
+            snapshot = _mapping(task.get("snapshot"))
+            copy_preview = _mapping(snapshot.get("copy_preview"))
+            snapshot["provider_calls_enabled"] = True
+            copy_preview["provider_calls_enabled"] = True
+            snapshot["copy_preview"] = copy_preview
+            ready_for_provider_assist = (
+                str(task["status"]) == "REVIEW_REQUIRED"
+                and str(task.get("blocker_code"))
+                == "COPY_COMPONENT_SUPPLY_REQUIRED"
+            )
+            await factory_crud.update_task(
+                str(task["task_id"]),
+                status="READY" if ready_for_provider_assist else str(task["status"]),
+                blocker_code=None if ready_for_provider_assist else task.get("blocker_code"),
+                next_action=(
+                    "MATERIALIZE_REVIEW_REQUIRED_COPY"
+                    if ready_for_provider_assist
+                    else task.get("next_action")
+                ),
+                snapshot_json=snapshot,
+            )
+        tasks = await factory_crud.list_tasks(plan_id)
     eligible_types: set[str] = set()
     if request.materialize_copy_composition:
         eligible_types.add("COPY_COMPOSITION")
@@ -1088,6 +1508,74 @@ async def pause_plan(
     return await get_plan(plan_id)
 
 
+async def _refresh_plan_authority(plan: dict[str, object]) -> None:
+    request = _mapping(plan.get("request"))
+    contexts = [
+        FactoryProductContext.model_validate(item)
+        for item in _sequence_of_mappings(request.get("products"))
+    ]
+    if not contexts:
+        return
+    provider_enabled = bool(request.get("provider_calls_enabled"))
+    scans: list[ProductScan] = []
+    for context in contexts:
+        scan = await _scan_product(context)
+        scan.copy_preview["provider_calls_enabled"] = provider_enabled
+        scans.append(scan)
+    tasks = await factory_crud.list_tasks(str(plan["plan_id"]))
+    for scan in scans:
+        snapshot = _task_snapshot(scan)
+        required_authority_sha256 = canonical_sha256(
+            {
+                "target_video_count": scan.context.target_video_count,
+                "required_dialogues": required_dialogue_count(
+                    scan.context.target_video_count
+                ),
+                "approved_copy_set_ids": _approved_copy_set_ids(scan),
+                "variation_group_reuse_cap": canonical_same_dialogue_reuse_cap(),
+                "readiness_sha256": (
+                    scan.readiness.readiness_sha256 if scan.readiness else None
+                ),
+                "template_sha256": (
+                    scan.template.template_sha256 if scan.template else None
+                ),
+                "scan_error_code": scan.error_code,
+            }
+        )
+        for task in tasks:
+            if str(task["product_id"]) != scan.context.product_id:
+                continue
+            task_type = cast(FactoryTaskType, str(task["task_type"]))
+            status, blocker_code, next_action = _task_decision(scan, task_type)
+            await factory_crud.update_task(
+                str(task["task_id"]),
+                status=status,
+                required_authority_sha256=required_authority_sha256,
+                blocker_code=blocker_code,
+                next_action=next_action,
+                template_id=scan.template.template_id if scan.template else None,
+                template_sha256=(
+                    scan.template.template_sha256 if scan.template else None
+                ),
+                snapshot_json=snapshot,
+                error_code=scan.error_code,
+            )
+    refreshed_tasks = await factory_crud.list_tasks(str(plan["plan_id"]))
+    await factory_crud.update_plan(
+        str(plan["plan_id"]),
+        status="SCANNED",
+        readiness_summary_json=factory_crud.encode(
+            _readiness_summary(refreshed_tasks)
+        ),
+        capacity_summary_json=factory_crud.encode(
+            _capacity_summary(scans, refreshed_tasks)
+        ),
+        failure_count=sum(
+            1 for task in refreshed_tasks if str(task["status"]) == "FAILED"
+        ),
+        scanned_at=factory_crud.utc_now(),
+    )
+
 async def resume_plan(
     plan_id: str,
     request: FactoryPlanControlRequest,
@@ -1105,6 +1593,7 @@ async def resume_plan(
         status="SCANNED",
         pause_reason=None,
     )
+    await _refresh_plan_authority(plan)
     await factory_crud.append_event(
         plan_id=plan_id,
         task_id=None,

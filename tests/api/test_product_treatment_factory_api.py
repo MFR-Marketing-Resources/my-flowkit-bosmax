@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 from fastapi import HTTPException
 
 from agent.api import product_treatment_factory as api
@@ -142,3 +143,12 @@ def test_application_registers_exact_factory_routes():
         "/api/product-treatment-factory/plans/{plan_id}/pause",
         "/api/product-treatment-factory/plans/{plan_id}/resume",
     }
+
+
+def test_public_target_video_count_rejects_zero_and_over_capacity():
+    payload = _create_request().model_dump(mode="json")
+    for target_video_count in (0, 201):
+        with pytest.raises(ValidationError):
+            CreateFactoryPlanRequest.model_validate(
+                {**payload, "target_video_count": target_video_count}
+            )

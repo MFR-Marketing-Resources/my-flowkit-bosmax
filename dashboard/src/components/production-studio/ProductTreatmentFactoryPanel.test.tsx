@@ -201,7 +201,19 @@ function plan(status = "SCANNED") {
 		request: {},
 		authority_versions: {},
 		readiness_summary: { SATISFIED: 1, REVIEW_REQUIRED: 1 },
-		capacity_summary: {},
+		capacity_summary: {
+			target_video_count: 1,
+			required_dialogues: 1,
+			variation_group_reuse_cap: 5,
+			approved_copy_set_count: 1,
+			required_copy_set_count: 1,
+			copy_shortfall: 0,
+			approved_master_treatment_count: 1,
+			required_treatment_count: 1,
+			treatment_shortfall: 0,
+			unique_material_count: 1,
+			unique_compiled_payload_count: 1,
+		},
 		failure_count: 0,
 		provider_calls_enabled: false,
 		media_generation_enabled: false,
@@ -244,6 +256,7 @@ describe("ProductTreatmentFactoryPanel", () => {
 		expect(screen.getByTestId("ptf-blocked-state")).toHaveTextContent(
 			"1 product",
 		);
+		expect(screen.getByTestId("ptf-capacity-summary")).toHaveTextContent("Target videos");
 		fireEvent.click(screen.getByText("product-ready"));
 		expect(screen.getByText("VERIFIED_VALUE")).toBeInTheDocument();
 		expect(screen.getByText("ingredients_text · VERIFIED")).toBeInTheDocument();
@@ -268,6 +281,7 @@ describe("ProductTreatmentFactoryPanel", () => {
 		expect(createFactoryPlan).toHaveBeenCalledWith(
 			expect.objectContaining({
 				scan_all_active: false,
+				target_video_count: 1,
 				provider_calls_enabled: false,
 				media_generation_enabled: false,
 				products: [

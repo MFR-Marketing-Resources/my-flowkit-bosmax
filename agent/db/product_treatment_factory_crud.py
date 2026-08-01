@@ -32,6 +32,7 @@ _PLAN_UPDATE_FIELDS = {
 }
 _TASK_UPDATE_FIELDS = {
     "status",
+    "required_authority_sha256",
     "blocker_code",
     "next_action",
     "template_id",

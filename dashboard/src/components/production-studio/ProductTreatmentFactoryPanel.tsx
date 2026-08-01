@@ -602,6 +602,7 @@ export default function ProductTreatmentFactoryPanel() {
 		"ALL_ACTIVE",
 	);
 	const [productIds, setProductIds] = useState("");
+	const [targetVideoCount, setTargetVideoCount] = useState(1);
 	const [operatorId, setOperatorId] = useState("factory-production-operator");
 	const [context, setContext] =
 		useState<FactoryContextDefaults>(DEFAULT_CONTEXT);
@@ -681,6 +682,10 @@ export default function ProductTreatmentFactoryPanel() {
 	}, [loadPlanList, selectedPlanId]);
 
 	const createPlan = useCallback(async () => {
+		if (!Number.isInteger(targetVideoCount) || targetVideoCount < 1 || targetVideoCount > 200) {
+			setError("TARGET_VIDEO_COUNT_MUST_BE_BETWEEN_1_AND_200");
+			return;
+		}
 		const explicitIds = parseProductIds(productIds);
 		if (cohortMode === "EXPLICIT" && explicitIds.length === 0) {
 			setError("EXPLICIT_PRODUCT_IDS_REQUIRED");
@@ -698,6 +703,7 @@ export default function ProductTreatmentFactoryPanel() {
 							}))
 						: [],
 				scan_all_active: cohortMode === "ALL_ACTIVE",
+				target_video_count: targetVideoCount,
 				defaults: context,
 				created_by: operatorId.trim() || "factory-production-operator",
 				provider_calls_enabled: false,
@@ -709,7 +715,7 @@ export default function ProductTreatmentFactoryPanel() {
 		} finally {
 			setBusy("");
 		}
-	}, [cohortMode, context, operatorId, productIds, replacePlan]);
+	}, [cohortMode, context, operatorId, productIds, replacePlan, targetVideoCount]);
 
 	const preparePlan = useCallback(async () => {
 		if (!selectedPlan) return;
@@ -791,6 +797,7 @@ export default function ProductTreatmentFactoryPanel() {
 	const blockedCount = productViews.filter(
 		(item) => item.primaryStatus !== "READY",
 	).length;
+	const capacitySummary = selectedPlan ? asRecord(selectedPlan.capacity_summary) : {};
 
 	return (
 		<section
@@ -869,6 +876,18 @@ export default function ProductTreatmentFactoryPanel() {
 							invented by the dashboard.
 						</div>
 					)}
+					<label className="mt-3 block max-w-xs text-[10px] text-slate-400">
+						Target video count (1–200)
+						<input
+							aria-label="Factory target video count"
+							type="number"
+							min={1}
+							max={200}
+							value={targetVideoCount}
+							onChange={(event) => setTargetVideoCount(Number(event.target.value))}
+							className="mt-1 w-full rounded border border-slate-700 bg-slate-950 p-1.5 text-xs text-white"
+						/>
+					</label>
 					<div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
 						<label className="text-[10px] text-slate-400">
 							Format
@@ -1099,6 +1118,44 @@ export default function ProductTreatmentFactoryPanel() {
 								mono
 							/>
 						</div>
+					</div>
+					<div
+						data-testid="ptf-capacity-summary"
+						className="mt-3 grid gap-3 rounded-xl border border-teal-500/20 bg-teal-950/10 p-3 sm:grid-cols-2 lg:grid-cols-4"
+					>
+						<KeyValue
+							label="Target videos"
+							value={capacitySummary.target_video_count}
+						/>
+						<KeyValue
+							label="Dialogue units required"
+							value={capacitySummary.required_dialogues}
+						/>
+						<KeyValue
+							label="Variation-group reuse cap"
+							value={capacitySummary.variation_group_reuse_cap}
+						/>
+						<KeyValue
+							label="Approved Copy Sets / required"
+							value={`${display(capacitySummary.approved_copy_set_count)} / ${display(capacitySummary.required_copy_set_count)}`}
+						/>
+						<KeyValue label="Copy shortfall" value={capacitySummary.copy_shortfall} />
+						<KeyValue
+							label="Approved treatments / required"
+							value={`${display(capacitySummary.approved_master_treatment_count)} / ${display(capacitySummary.required_treatment_count)}`}
+						/>
+						<KeyValue
+							label="Treatment shortfall"
+							value={capacitySummary.treatment_shortfall}
+						/>
+						<KeyValue
+							label="Material proof"
+							value={capacitySummary.unique_material_count ?? "REHEARSAL_REQUIRED"}
+						/>
+						<KeyValue
+							label="Compiled payload proof"
+							value={capacitySummary.unique_compiled_payload_count ?? "REHEARSAL_REQUIRED"}
+						/>
 					</div>
 
 					{blockedCount > 0 ? (
