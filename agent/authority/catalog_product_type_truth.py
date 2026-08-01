@@ -955,6 +955,28 @@ P58_PRODUCT_TRUTH_OVERRIDES = {
         "sensitive_wellness", "traditional_herbal_preparation",
         "Traditional Herbal Preparation", "SENSITIVE_WELLNESS"
     ),
+    # "Limited Edition Petite Sample Joielle Baby 15g" — the last real-product scene gap.
+    # The title names a sample SIZE, not a substance, and both truth fields are empty, so
+    # it fell to beauty_personal_care_other -> PARTIAL. Its packaging is decisive: a
+    # JOIELLE BABY petite-sample BOX whose printed contents are natural rub 15gm, baby
+    # lotion 15gm, baby cream 15gm, baby bath 15ml, baby oil 15ml, baby shampoo 15ml, top
+    # to toe cleanser 15ml, wonder cream 5g and a VCO set. So it is baby topical care sold
+    # as a trial box, and no single-substance type could describe it honestly.
+    #
+    # BABY_SKINCARE is nevertheless the exact fit rather than a compromise: its grammar is
+    # a pack / label / age-guidance / texture CHECK ("dispense a tiny amount on an adult
+    # hand without applying to a baby"), so it asserts nothing about any one substance's
+    # function, and it already forbids infant application, before-and-after proof and
+    # medical or guaranteed-result claims. That is exactly the safe contract a multi-item
+    # infant sample box needs. The pair is ACTIVE + COVERED with a 1:1 P4 entry, so NO new
+    # registry, P4 or scene-strategy authority is created here.
+    #
+    # This binds the scene contract only. The product keeps its
+    # P58_INSUFFICIENT_PRODUCT_TRUTH_REASONS entry below, so it stays REVIEW_REQUIRED and
+    # outside P4/P6 until an approved Product Truth description exists.
+    "5d298e84-2dc2-4747-9a0b-77499f5c8569": _p07g_mapping(
+        "baby_care", "baby_skincare", "Baby Skincare", "BABY_SKINCARE"
+    ),
     "b4b0f581-f1aa-4677-beaa-54268199c377": _p58_mapping(
         "home_textiles", "bedding", "Bedding", "BEDDING"
     ),
