@@ -271,6 +271,42 @@ export async function aiFillMissingProductIntelligenceReviewDraft(
 	);
 }
 
+export interface ProductIntelligenceRecomputeResult {
+	product_id: string;
+	draft_id: string | null;
+	source_url: string;
+	intake_outcome: string | null;
+	extracted_fields: Record<string, unknown>;
+	/** Fields we LOOKED for and the page does not state — distinct from "not checked". */
+	unresolved: Record<string, string>;
+	variant: string | null;
+	variant_resolution: string | null;
+	size_resolution: string | null;
+	evidence_methods: string[];
+	candidate_status: string | null;
+	candidates_persisted: { field: string; value: unknown }[];
+	candidates_skipped: { field: string; reason: string }[];
+	provider: string | null;
+	model: string | null;
+	refused_model_fields: string[];
+	approved: boolean;
+}
+
+/**
+ * Re-acquire an EXISTING product's evidence from its own stored source link.
+ *
+ * Deliberately NOT `/api/products/import-tiktokshop`: that route creates a product, so
+ * using it to refresh a catalogue item would mint a duplicate row on every press.
+ */
+export async function recomputeProductIntelligence(
+	productId: string,
+): Promise<ProductIntelligenceRecomputeResult> {
+	return fetchAPI<ProductIntelligenceRecomputeResult>(
+		`/api/product-intelligence/${encodeURIComponent(productId)}/recompute`,
+		{ method: "POST", headers: { "Content-Type": "application/json" } },
+	);
+}
+
 export async function createProductIntelligenceReviewDraft(
 	productId: string,
 	payload: ProductIntelligenceReviewDraftMutationRequest,

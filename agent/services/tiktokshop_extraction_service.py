@@ -312,9 +312,55 @@ EXTRACT_ONLY_FIELDS = ("price", "currency", "commission_rate", "commission_amoun
                        "size_or_volume", "ingredients_text", "warnings_text",
                        "image_url")
 # Fields the text_assist lane may DRAFT from extracted text, as review-required.
-PROPOSABLE_FIELDS = ("product_description", "benefits_text", "usage_text",
+# `usp_list` (not `usp_json`) because PROMOTION_MAP maps the SOURCE key `usp_list` onto the
+# `usp_json` column; emitting the column name here would silently drop every USP.
+PROPOSABLE_FIELDS = ("product_description", "benefits_text", "usp_list", "usage_text",
                      "target_customer_text", "package_notes", "product_form_factor",
                      "packaging_description")
+
+# ── deterministic materials / warnings ───────────────────────────────────────
+# Labelled sections only. A model is never asked for these: a fabricated warning or
+# ingredient list is indistinguishable from a real one once stored, and this catalogue
+# feeds product claims. Malay and English labels, because the live catalogue is both.
+_INGREDIENT_LABELS = ("ingredients", "ingredient", "composition", "bahan-bahan", "bahan",
+                      "komposisi", "kandungan", "material", "materials", "components")
+_WARNING_LABELS = ("warning", "warnings", "caution", "cautions", "precaution",
+                   "precautions", "amaran", "perhatian", "awas", "peringatan")
+# Stop at the next labelled section so one block does not swallow the rest of the page.
+_SECTION_STOP = ("ingredients", "ingredient", "composition", "bahan", "komposisi",
+                 "kandungan", "material", "components", "warning", "caution",
+                 "precaution", "amaran", "perhatian", "awas", "peringatan", "usage",
+                 "how to use", "cara guna", "direction", "directions", "storage",
+                 "penyimpanan", "shipping", "delivery", "size", "saiz", "weight",
+                 "expiry", "manufactured", "brand", "description")
+_MAX_SECTION_CHARS = 600
+
+
+def extract_labelled_section(text: str, labels: tuple[str, ...]) -> str | None:
+    """Return the text following `Label:` up to the next known section label.
+
+    Deliberately narrow: it requires an explicit label followed by a separator. Guessing
+    which sentence "looks like" an ingredient list is how invented ingredients get stored.
+    """
+    haystack = _clean(text)
+    if not haystack:
+        return None
+    for label in labels:
+        match = re.search(rf"(?<![A-Za-z]){re.escape(label)}\s*[:：]\s*(.+)",
+                          haystack, re.IGNORECASE)
+        if not match:
+            continue
+        tail = match.group(1)[:_MAX_SECTION_CHARS]
+        cut = len(tail)
+        for stop in _SECTION_STOP:
+            stop_match = re.search(rf"(?<![A-Za-z]){re.escape(stop)}\s*[:：]", tail,
+                                   re.IGNORECASE)
+            if stop_match:
+                cut = min(cut, stop_match.start())
+        value = tail[:cut].strip(" .,;:-–—|/")
+        if len(value) >= 3:
+            return value
+    return None
 
 
 def normalize(raw: dict[str, Any], *, source_url: str) -> dict[str, Any]:
@@ -345,8 +391,29 @@ def normalize(raw: dict[str, Any], *, source_url: str) -> dict[str, Any]:
     if raw.get("images"):
         fields["image_url"] = raw["images"][0]
 
+    # Materials / components and warnings: deterministic, labelled-section only.
+    unresolved: dict[str, str] = {}
+    materials = extract_labelled_section(source_text, _INGREDIENT_LABELS)
+    if materials:
+        fields["materials_text"] = materials
+    else:
+        unresolved["ingredients_text"] = "NOT_STATED_IN_SOURCE"
+    warnings = extract_labelled_section(source_text, _WARNING_LABELS)
+    if warnings:
+        fields["warnings_text"] = warnings
+    else:
+        unresolved["warnings_text"] = "NOT_STATED_IN_SOURCE"
+    if not size:
+        unresolved["size_or_volume"] = size_reason
+    if variant is None:
+        unresolved["variant"] = variant_reason
+
     return {
         "fields": fields,
+        # An explicit "we looked and the page does not say" — distinct from "we never
+        # looked". Without it, an absent warning is indistinguishable from an unchecked
+        # one, and a reviewer cannot tell which fields still need a human.
+        "unresolved": unresolved,
         "images": raw.get("images") or [],
         "variant": variant,
         "variant_resolution": variant_reason,
@@ -434,7 +501,54 @@ def extract_product(url: str, *, page_text: str | None = None,
     result.update(propose_candidates(normalized, raw) if propose
                   else {"candidates": {}, "candidate_status": "SKIPPED"})
     result["provenance"] = build_provenance(result)
+    result["field_provenance_overrides"] = field_provenance_overrides(result)
     return result
+
+
+# Extracted source key -> the review-draft COLUMN that PROMOTION_MAP will write it to.
+# Provenance rows are keyed by target column, so an override map keyed by the source name
+# would never match and the exact method would be silently dropped.
+_SOURCE_KEY_TO_TARGET = {
+    "product_description": "product_description",
+    "size_or_volume": "size_or_volume",
+    "materials_text": "ingredients_text",
+    "warnings_text": "warnings_text",
+    "package_notes": "package_notes",
+    "packaging_description": "packaging_description",
+    "product_form_factor": "product_form_factor",
+    "benefits_text": "benefits_json",
+    "usp_list": "usp_json",
+    "usage_text": "usage_text",
+    "target_customer_text": "target_customer_text",
+}
+
+
+def field_provenance_overrides(result: dict[str, Any]) -> dict[str, dict[str, str]]:
+    """Per-field evidence identity for the intake seam, keyed by target column.
+
+    This is what stops the whole draft collapsing to one lane-wide `TIKTOKSHOP_LINK`
+    label. `price` read from JSON-LD and a description scraped from an OpenGraph tag are
+    different strengths of evidence and a reviewer has to be able to tell them apart.
+    """
+    methods = "+".join(result.get("evidence_methods") or []) or "DOM"
+    overrides: dict[str, dict[str, str]] = {}
+    for source_key in (result.get("fields") or {}):
+        target = _SOURCE_KEY_TO_TARGET.get(source_key)
+        if not target:
+            continue
+        overrides[target] = {
+            "source_type": "IMPORTED_TIKTOKSHOP",
+            "evidence_kind": "IMPORTED_MARKETPLACE_LINK",
+            "extraction_method": f"TIKTOKSHOP_{methods}",
+            "verification_status": "PENDING_REVIEW",
+        }
+    # Materials and warnings are read from an explicitly LABELLED section, which is a
+    # stronger, more auditable claim than "it appeared somewhere on the page".
+    for source_key, target in (("materials_text", "ingredients_text"),
+                               ("warnings_text", "warnings_text")):
+        if source_key in (result.get("fields") or {}):
+            overrides[target]["extraction_method"] = "TIKTOKSHOP_LABELLED_SECTION"
+    return overrides
 
 
 def build_provenance(result: dict[str, Any]) -> list[dict[str, str]]:

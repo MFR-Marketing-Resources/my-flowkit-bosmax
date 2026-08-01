@@ -1199,9 +1199,25 @@ async def import_tiktokshop_product(data: ImportTikTokShopRequest):
     extracted = dict(extraction.get("fields") or {})
     # Operator-supplied values WIN over extraction: the person pasting the link may be
     # correcting a listing they can see and we cannot.
-    draft_title = (data.raw_product_title or extracted.get("raw_product_title")
-                   or data.product_display_name or data.product_short_name
-                   or "TIKTOKSHOP_PENDING_METADATA").strip()
+    operator_identity = (data.raw_product_title or data.product_display_name
+                         or data.product_short_name)
+    draft_title = (operator_identity or extracted.get("raw_product_title") or "").strip()
+    if not draft_title:
+        # FAIL CLOSED. The old behaviour committed a canonical product literally titled
+        # TIKTOKSHOP_PENDING_METADATA whenever extraction failed, so an unreachable link
+        # permanently polluted the catalogue with a nameless row that then had to be found
+        # and archived by hand. Nothing is written unless we know what the product IS.
+        return {
+            "ok": False,
+            "error_code": extraction_error or tiktok.ERR_NO_EVIDENCE,
+            "manual_entry_required": True,
+            "product": None,
+            "extraction": {"fields": {}, "candidates": {},
+                           "candidate_status": extraction.get("candidate_status"),
+                           "provenance": []},
+            "detail": ("No product identity could be extracted and none was supplied. "
+                       "Re-submit with a product title to create it manually."),
+        }
     price = data.price if data.price is not None else extracted.get("price")
     image_url = data.image_url or extracted.get("image_url")
 

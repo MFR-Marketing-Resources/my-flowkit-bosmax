@@ -9,11 +9,13 @@ import {
 	fetchProductIntelligenceReviewDraft,
 	fetchProductIntelligenceReviewDrafts,
 	prepareProductForCopywriting,
+	recomputeProductIntelligence,
 	rejectProductIntelligenceReviewDraft,
 	updateProductIntelligenceReviewDraft,
 	validateProductIntelligenceReviewDraft,
 	type ClaimSafeRewritePreview,
 	type ProductIntelligenceAIFillResult,
+	type ProductIntelligenceRecomputeResult,
 } from "../../api/products";
 import type {
 	ProductIntelligenceReviewDraft,
@@ -541,9 +543,12 @@ export default function ProductIntelligenceReviewDraftPanel({
 	const [validation, setValidation] =
 		useState<ProductIntelligenceReviewDraftValidationResponse | null>(null);
 	const [busyAction, setBusyAction] = useState<
-		"CREATE" | "PREPARE" | "AI_FILL" | "SAVE" | "VALIDATE" | "APPROVE" | "REJECT" | null
+		| "CREATE" | "PREPARE" | "AI_FILL" | "SAVE" | "VALIDATE" | "APPROVE" | "REJECT"
+		| "RECOMPUTE_SOURCE" | null
 	>(null);
 	const [aiFillResult, setAiFillResult] = useState<ProductIntelligenceAIFillResult | null>(null);
+	const [recomputeResult, setRecomputeResult] =
+		useState<ProductIntelligenceRecomputeResult | null>(null);
 	const [message, setMessage] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	// Amber "action needed" notice for a draft that fails the fail-closed approval
@@ -729,6 +734,44 @@ export default function ProductIntelligenceReviewDraftPanel({
 			setError(
 				formatReviewDraftError(err, "Failed to prepare product for copywriting"),
 			);
+		} finally {
+			setBusyAction(null);
+		}
+	};
+
+	/**
+	 * Analyze & Repair for an EXISTING product: re-read its own stored listing.
+	 *
+	 * This does NOT go through the link-import route — that one creates a product, so
+	 * refreshing a catalogue item through it would mint a duplicate row every press.
+	 */
+	const handleRecomputeFromSource = async () => {
+		setBusyAction("RECOMPUTE_SOURCE");
+		setError(null);
+		setMessage(null);
+		setBlockerNotice(null);
+		setRecomputeResult(null);
+		try {
+			const result = await recomputeProductIntelligence(productId);
+			setRecomputeResult(result);
+			// Re-read from the DATABASE so what is shown is what was actually stored,
+			// never the optimistic shape of the response we just received.
+			const refreshedList = await fetchProductIntelligenceReviewDrafts(productId);
+			setDrafts(refreshedList.items);
+			if (result.draft_id) {
+				const refreshed = await fetchProductIntelligenceReviewDraft(result.draft_id);
+				syncDraftInList(refreshed);
+				setSelectedDraftId(result.draft_id);
+			}
+			setValidation(null);
+			const extracted = Object.keys(result.extracted_fields ?? {}).length;
+			const proposed = result.candidates_persisted?.length ?? 0;
+			setMessage(
+				`Acquired ${extracted} field(s) from ${result.source_url} (${(result.evidence_methods ?? []).join("+") || "DOM"}). ` +
+					`${proposed} AI candidate(s) stored as review-required. Nothing was approved.`,
+			);
+		} catch (err) {
+			setError(formatReviewDraftError(err, "Recompute from source failed"));
 		} finally {
 			setBusyAction(null);
 		}
@@ -1219,6 +1262,17 @@ export default function ProductIntelligenceReviewDraftPanel({
 										</button>
 										<button
 											type="button"
+											data-testid="recompute-from-source-button"
+											onClick={handleRecomputeFromSource}
+											disabled={busyAction !== null}
+											className="rounded border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-[11px] font-semibold text-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+										>
+											{busyAction === "RECOMPUTE_SOURCE"
+												? "Acquiring source evidence..."
+												: "Analyze & Repair from source"}
+										</button>
+										<button
+											type="button"
 											data-testid="ai-fill-missing-button"
 											onClick={handleAiFillMissing}
 											disabled={busyAction !== null}
@@ -1252,6 +1306,85 @@ export default function ProductIntelligenceReviewDraftPanel({
 										Truth fields only; existing human evidence is never overwritten and
 										nothing is auto-approved.
 									</p>
+									{recomputeResult && (
+										<div
+											data-testid="recompute-source-result"
+											className="mt-3 rounded border border-indigo-500/30 bg-indigo-500/5 p-3 text-[11px] text-indigo-100"
+										>
+											<p className="font-semibold">
+												Source evidence acquired ·{" "}
+												{(recomputeResult.evidence_methods ?? []).join("+") || "DOM"}
+											</p>
+											<p className="mt-1 break-all text-indigo-200/80">
+												{recomputeResult.source_url}
+											</p>
+											<p className="mt-1 text-indigo-200/80">
+												Variant: {recomputeResult.variant ?? "—"} (
+												{recomputeResult.variant_resolution ?? "—"}) · Size:{" "}
+												{recomputeResult.size_resolution ?? "—"}
+											</p>
+											{Object.keys(recomputeResult.extracted_fields ?? {}).length > 0 && (
+												<ul className="mt-2 list-disc pl-4">
+													{Object.entries(recomputeResult.extracted_fields).map(
+														([field, value]) => (
+															<li key={`extracted-${field}`}>
+																<span className="font-semibold">{field}</span>{" "}
+																<span className="text-indigo-200/70">(from page)</span>:{" "}
+																{String(value).slice(0, 160)}
+															</li>
+														),
+													)}
+												</ul>
+											)}
+											{(recomputeResult.candidates_persisted ?? []).length > 0 && (
+												<div className="mt-2" data-testid="recompute-ai-candidates">
+													<p className="font-semibold">
+														AI candidates stored as review-required — approve or reject each
+														below. Nothing is auto-approved.
+													</p>
+													<ul className="list-disc pl-4">
+														{recomputeResult.candidates_persisted.map((item) => (
+															<li key={`cand-${item.field}`}>
+																<span className="font-semibold">{item.field}</span>{" "}
+																<span className="text-indigo-200/70">(AI_PROPOSED)</span>
+															</li>
+														))}
+													</ul>
+												</div>
+											)}
+											{Object.keys(recomputeResult.unresolved ?? {}).length > 0 && (
+												<div className="mt-2" data-testid="recompute-unresolved">
+													<p className="font-semibold text-amber-200">
+														Unresolved — the page does not state these. Nothing was invented.
+													</p>
+													<ul className="list-disc pl-4 text-amber-100/90">
+														{Object.entries(recomputeResult.unresolved).map(
+															([field, reason]) => (
+																<li key={`unresolved-${field}`}>
+																	{field}: {reason}
+																</li>
+															),
+														)}
+													</ul>
+												</div>
+											)}
+											{(recomputeResult.candidates_skipped ?? []).length > 0 && (
+												<p className="mt-2 text-indigo-200/70">
+													Preserved existing evidence for:{" "}
+													{recomputeResult.candidates_skipped
+														.map((item) => item.field)
+														.join(", ")}
+												</p>
+											)}
+											{(recomputeResult.refused_model_fields ?? []).length > 0 && (
+												<p className="mt-2 text-amber-200">
+													Refused model output for{" "}
+													{recomputeResult.refused_model_fields.join(", ")} — these are read
+													from the page or left absent, never generated.
+												</p>
+											)}
+										</div>
+									)}
 									{aiFillResult && (
 										<div
 											data-testid="ai-fill-result"

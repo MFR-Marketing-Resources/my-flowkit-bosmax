@@ -177,6 +177,17 @@ def build_provenance_inputs(
         lane_evidence_kind = getattr(draft, "provenance_evidence_kind", None)
         lane_extraction = getattr(draft, "provenance_extraction_method", None)
         lane_verification = getattr(draft, "provenance_verification_status", None)
+        # PER-FIELD override. A lane-wide `TIKTOKSHOP_LINK` throws away the one thing a
+        # reviewer needs: HOW this particular field was obtained. `price` read from JSON-LD
+        # and `product_description` scraped from an OpenGraph tag are different strengths
+        # of evidence, and collapsing them to one label makes that difference
+        # unrecoverable. A lane that knows its per-field methods declares them here.
+        override = (getattr(draft, "provenance_field_overrides", None) or {}).get(target, {})
+        if override:
+            lane_source_type = override.get("source_type") or lane_source_type
+            lane_evidence_kind = override.get("evidence_kind") or lane_evidence_kind
+            lane_extraction = override.get("extraction_method") or lane_extraction
+            lane_verification = override.get("verification_status") or lane_verification
         rows.append(ProductIntelligenceReviewFieldProvenanceInput(
             field_name=target,
             declared_value=declared_value,

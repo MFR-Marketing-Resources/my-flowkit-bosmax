@@ -13,6 +13,7 @@ import {
 	fetchClaimSafeRewritePreview,
 	fetchProductIntelligenceReviewDraft,
 	fetchProductIntelligenceReviewDrafts,
+	recomputeProductIntelligence,
 } from "../../api/products";
 
 vi.mock("../../api/products", () => ({
@@ -22,6 +23,7 @@ vi.mock("../../api/products", () => ({
 	fetchProductIntelligenceReviewDraft: vi.fn(),
 	createProductIntelligenceReviewDraft: vi.fn(),
 	prepareProductForCopywriting: vi.fn(),
+	recomputeProductIntelligence: vi.fn(),
 	aiFillMissingProductIntelligenceReviewDraft: vi.fn(),
 	fetchClaimSafeRewritePreview: vi.fn(),
 	approveClaimSafeRewrite: vi.fn(),
@@ -276,5 +278,116 @@ describe("ProductIntelligenceReviewDraftPanel", () => {
 		expect(msg).not.toBeNull();
 		expect(msg as string).toContain("source_urls_json");
 		expect(msg as string).toContain("rawat, penyakit, ubat");
+	});
+});
+
+
+describe("Analyze & Repair from source (existing-product recompute)", () => {
+	afterEach(() => {
+		cleanup();
+		vi.clearAllMocks();
+		vi.mocked(fetchProductIntelligenceReviewDrafts).mockResolvedValue({
+			product_id: "p1",
+			items: [],
+		});
+	});
+
+	function recomputeResult(overrides: Record<string, unknown> = {}) {
+		return {
+			product_id: "p1", draft_id: "d1",
+			source_url: "https://shop.tiktok.com/view/product/1",
+			intake_outcome: "UPDATED_REVIEW_REQUIRED",
+			extracted_fields: { size_or_volume: "25ml", materials_text: "minyak kelapa" },
+			unresolved: { warnings_text: "NOT_STATED_IN_SOURCE" },
+			variant: "25ml", variant_resolution: "EXACT_VARIANT_RESOLVED",
+			size_resolution: "EXTRACTED", evidence_methods: ["JSONLD", "META"],
+			candidate_status: "REVIEW_REQUIRED",
+			candidates_persisted: [{ field: "usp_json", value: ["Formula tradisional"] }],
+			candidates_skipped: [], provider: "deepseek", model: "deepseek-chat",
+			refused_model_fields: ["warnings_text"], approved: false,
+			...overrides,
+		};
+	}
+
+	async function renderWithDraft() {
+		const draft = makeDraft();
+		vi.mocked(fetchProductIntelligenceReviewDrafts).mockResolvedValue({
+			product_id: "p1", items: [draft],
+		});
+		vi.mocked(fetchProductIntelligenceReviewDraft).mockResolvedValue(draft);
+		render(<ProductIntelligenceReviewDraftPanel productId="p1" />);
+		expect(await screen.findByTestId("recompute-from-source-button")).toBeInTheDocument();
+	}
+
+	it("acquires source evidence and re-reads the draft from the database", async () => {
+		await renderWithDraft();
+		vi.mocked(recomputeProductIntelligence).mockResolvedValue(recomputeResult() as never);
+
+		fireEvent.click(screen.getByTestId("recompute-from-source-button"));
+
+		await waitFor(() =>
+			expect(recomputeProductIntelligence).toHaveBeenCalledWith("p1"),
+		);
+		// the panel must re-read persisted state, not trust the response optimistically
+		await waitFor(() =>
+			expect(fetchProductIntelligenceReviewDraft).toHaveBeenCalledWith("d1"),
+		);
+		const panel = await screen.findByTestId("recompute-source-result");
+		expect(panel).toHaveTextContent("JSONLD+META");
+		expect(panel).toHaveTextContent("shop.tiktok.com");
+	});
+
+	it("shows AI candidates as review-required and never as approved", async () => {
+		await renderWithDraft();
+		vi.mocked(recomputeProductIntelligence).mockResolvedValue(recomputeResult() as never);
+
+		fireEvent.click(screen.getByTestId("recompute-from-source-button"));
+
+		const candidates = await screen.findByTestId("recompute-ai-candidates");
+		expect(candidates).toHaveTextContent("usp_json");
+		expect(candidates).toHaveTextContent("AI_PROPOSED");
+		expect(candidates).toHaveTextContent(/Nothing is auto-approved/i);
+	});
+
+	it("shows unresolved fields explicitly instead of leaving them silently blank", async () => {
+		await renderWithDraft();
+		vi.mocked(recomputeProductIntelligence).mockResolvedValue(recomputeResult() as never);
+
+		fireEvent.click(screen.getByTestId("recompute-from-source-button"));
+
+		const unresolved = await screen.findByTestId("recompute-unresolved");
+		expect(unresolved).toHaveTextContent("warnings_text");
+		expect(unresolved).toHaveTextContent("NOT_STATED_IN_SOURCE");
+		expect(unresolved).toHaveTextContent(/Nothing was invented/i);
+	});
+
+	it("surfaces a failure instead of reporting silent success", async () => {
+		await renderWithDraft();
+		vi.mocked(recomputeProductIntelligence).mockRejectedValue(
+			new Error("TIKTOKSHOP_FETCH_FAILED:http_404"),
+		);
+
+		fireEvent.click(screen.getByTestId("recompute-from-source-button"));
+
+		expect(await screen.findByText(/TIKTOKSHOP_FETCH_FAILED/)).toBeInTheDocument();
+		expect(screen.queryByTestId("recompute-source-result")).not.toBeInTheDocument();
+	});
+
+	it("disables the action while it is running so it cannot be double-fired", async () => {
+		await renderWithDraft();
+		let release: (value: unknown) => void = () => {};
+		vi.mocked(recomputeProductIntelligence).mockReturnValue(
+			new Promise((resolve) => {
+				release = resolve;
+			}) as never,
+		);
+
+		const button = screen.getByTestId("recompute-from-source-button");
+		fireEvent.click(button);
+		await waitFor(() => expect(button).toBeDisabled());
+		expect(button).toHaveTextContent(/Acquiring source evidence/i);
+
+		release(recomputeResult());
+		await waitFor(() => expect(button).not.toBeDisabled());
 	});
 });

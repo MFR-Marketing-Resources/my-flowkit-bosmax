@@ -235,14 +235,20 @@ class IntakeEvidence:
     __slots__ = ("declared_evidence_fields", "canonical_candidate_fields",
                  "approval_checklist", "claim_risk_level", "claim_tokens", "source_lane",
                  "provenance_source_type", "provenance_evidence_kind",
-                 "provenance_extraction_method", "provenance_verification_status")
+                 "provenance_extraction_method", "provenance_verification_status",
+                 "provenance_field_overrides")
 
     def __init__(self, fields: Mapping[str, Any], *, lane: str,
                  claim_risk_level: str | None = None,
                  source_type: str | None = None,
                  evidence_kind: str | None = None,
                  extraction_method: str | None = None,
-                 verification_status: str | None = None):
+                 verification_status: str | None = None,
+                 field_overrides: Mapping[str, Mapping[str, str]] | None = None):
+        # Per-field evidence identity, when the lane actually knows it (e.g. TikTok
+        # extraction knows `price` came from JSON-LD and `product_description` from a meta
+        # tag). Without this the whole draft collapses to one lane-wide method label.
+        self.provenance_field_overrides = dict(field_overrides or {})
         self.provenance_verification_status = verification_status or "PENDING_REVIEW"
         self.provenance_source_type = source_type or "REGISTRATION_COMMIT"
         self.provenance_evidence_kind = evidence_kind or "OPERATOR_DECLARED"
@@ -278,13 +284,22 @@ LANE_PROVENANCE: dict[str, dict[str, str]] = {
     "PRODUCTS_TIKTOKSHOP_IMPORT": {"source_type": "IMPORTED_TIKTOKSHOP",
                                    "evidence_kind": "IMPORTED_MARKETPLACE_LINK",
                                    "extraction_method": "TIKTOKSHOP_LINK"},
+    # Re-acquiring an EXISTING product's own stored listing. Same evidence class as the
+    # import, but these lane-wide values are only a fallback: this lane supplies exact
+    # per-field methods (JSONLD / META / LABELLED_SECTION) via field_overrides.
+    "PRODUCTS_TIKTOKSHOP_RECOMPUTE": {"source_type": "IMPORTED_TIKTOKSHOP",
+                                      "evidence_kind": "IMPORTED_MARKETPLACE_LINK",
+                                      "extraction_method": "TIKTOKSHOP_RECOMPUTE"},
     "_DEFAULT": {"source_type": "REGISTRATION_COMMIT",
                  "evidence_kind": "OPERATOR_DECLARED",
                  "extraction_method": "REGISTRATION_PROMOTION"},
 }
 
 
-def evidence_from_product_payload(payload: Mapping[str, Any], *, lane: str) -> IntakeEvidence:
+def evidence_from_product_payload(
+    payload: Mapping[str, Any], *, lane: str,
+    field_overrides: Mapping[str, Mapping[str, str]] | None = None,
+) -> IntakeEvidence:
     """Adapt a product-create/update payload into intake evidence.
 
     Only keys that PROMOTION_MAP already understands are forwarded; identity, taxonomy,
@@ -298,6 +313,7 @@ def evidence_from_product_payload(payload: Mapping[str, Any], *, lane: str) -> I
         {k: v for k, v in dict(payload).items() if k in known},
         lane=lane,
         claim_risk_level=str(payload.get("claim_risk_level") or "") or None,
+        field_overrides=field_overrides,
         **semantics,
     )
 

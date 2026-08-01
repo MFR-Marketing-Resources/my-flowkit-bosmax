@@ -1052,6 +1052,18 @@ domains:
       # the fetcher cannot be used as an SSRF primitive.
       - agent/services/tiktokshop_extraction_service.py
       - tests/unit/test_tiktokshop_extraction_service.py
+      # Mission-08A terminal: Recompute for an EXISTING product. The extractor was only
+      # reachable through /api/products/import-tiktokshop, which CALLS create_product - so
+      # refreshing a catalogue item had no governed path and would have minted a duplicate
+      # row every press. This lane is product-ID scoped, reuses the product's open draft,
+      # persists EXACT per-field provenance (JSONLD / META / LABELLED_SECTION rather than
+      # one lane-wide label), and stores DeepSeek output as AI_PROPOSED review candidates.
+      - agent/services/product_intelligence_recompute_service.py
+      - agent/api/product_intelligence.py
+      - tests/api/test_product_intelligence_recompute.py
+      - dashboard/src/api/products.ts
+      - dashboard/src/components/product-intelligence/ProductIntelligenceReviewDraftPanel.tsx
+      - dashboard/src/components/product-intelligence/ProductIntelligenceReviewDraftPanel.test.tsx
       # Owner-authorized canonical repair for the product groups that already held more
       # than one OPEN draft before B-586-04 could be enforced. Backup + snapshot + plan
       # digest first, then proof that ONLY the review-draft table changed. Deletes
