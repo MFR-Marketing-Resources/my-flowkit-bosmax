@@ -1028,6 +1028,14 @@ domains:
       # discarded - and invisibly, because `excluded_fields` lists only UNAPPROVED
       # candidates. Promotion never approves: no approved_by/approved_at is ever set.
       - agent/services/registration_intelligence_promotion_service.py
+      # Mission-08A: the ONE idempotent intake door. A create-only wrapper was proven
+      # insufficient - agent/api/products.py /import-fastmoss is an UPSERT whose update
+      # branch never reaches crud.create_product, so the 500-row re-import lane bypassed
+      # any create-time hook. Decides on a normalized evidence digest: unchanged evidence
+      # is a no-op, an approved snapshot is never downgraded, replay cannot duplicate
+      # drafts. Deterministic and provider-free.
+      - agent/services/product_intake_service.py
+      - tests/unit/test_product_intake_service.py
       - tests/unit/test_registration_intelligence_promotion.py
       - tests/unit/test_product_intelligence_stage_service.py
       - dashboard/src/components/reporting/IntelligenceStagePanel.tsx

@@ -52,6 +52,10 @@ from agent.services.product_preflight import build_product_preflight
 from agent.services.product_mapping import resolve_product_mapping
 from agent.services.product_physics import resolve_product_physics, evaluate_prompt_readiness
 from agent.services.prompt_pipeline_readiness_service import PromptPipelineReadinessService
+from agent.services.product_intake_service import (
+    ensure_product_intelligence,
+    evidence_from_product_payload,
+)
 from agent.services.claim_safe_rewrite_service import (
     APPROVAL_PHRASE as CLAIM_SAFE_APPROVAL_PHRASE,
     approve_claim_safe_rewrite,
@@ -841,6 +845,24 @@ async def search_products(
     )
 
 
+
+async def _ensure_intake_intelligence(product: dict | None, payload: dict, *, lane: str):
+    """B-08A: every runtime intake ends with a Product Intelligence draft.
+
+    These four routes created products directly, so a product could enter the catalogue
+    with no intelligence row at all. The seam is idempotent on a normalized evidence
+    digest, so the FastMoss upsert can re-import the same rows without manufacturing
+    duplicate review debt. Deterministic and provider-free - no token spend here.
+    """
+    if not product or not product.get("id"):
+        return None
+    return await ensure_product_intelligence(
+        str(product["id"]),
+        evidence_from_product_payload(payload, lane=lane),
+        lane=lane,
+    )
+
+
 @router.post("/map")
 async def map_product(data: ProductMapRequest):
     product = await crud.get_product(data.product_id) if data.product_id else None
@@ -873,6 +895,8 @@ async def map_product(data: ProductMapRequest):
             subcategory=enriched.get("subcategory") or None,
             type=enriched.get("type") or None,
         )
+        await _ensure_intake_intelligence(
+            created, data.model_dump(), lane="PRODUCTS_MAP_PERSIST")
         return await _enrich_product(created, persist=True)
 
     return enriched
@@ -982,7 +1006,15 @@ async def physics_map_product(data: ProductPhysicsRequest):
     payload.update(physics)
     payload.update(readiness)
     if data.persist and product and product.get("id"):
-        await _persist_intelligence(product["id"], payload)
+        # `_persist_intelligence` was called here but defined nowhere in this module and
+        # imported nowhere, so persist=true raised NameError -> 500 on every call. Routed
+        # through the shared intake seam rather than reintroducing a second, isolated
+        # persistence path. Physics/readiness keys are not knowledge evidence, so the
+        # adapter forwards only fields PROMOTION_MAP recognises; on a product with no
+        # promotable evidence this yields a minimal review-required draft rather than a
+        # crash.
+        await _ensure_intake_intelligence(
+            product, payload, lane="PRODUCTS_PHYSICS_MAP_PERSIST")
     return payload
 
 
@@ -1022,6 +1054,8 @@ async def create_manual_product(data: ManualProductRequest):
         image_asset_status="DOWNLOADED" if data.image_base64 else "UNRESOLVED",
         asset_status="DOWNLOADED" if data.image_base64 else "UNRESOLVED",
     )
+    await _ensure_intake_intelligence(
+        created, data.model_dump(), lane="PRODUCTS_MANUAL")
     local_image_path, image_asset_status = await _save_manual_image(created["id"], data.image_base64, data.image_filename)
     if local_image_path:
         created = await crud.update_product(created["id"], local_image_path=local_image_path, asset_status=image_asset_status, image_asset_status=image_asset_status)
@@ -1049,6 +1083,8 @@ async def import_tiktokshop_product(data: ImportTikTokShopRequest):
         mapping_review_status="TIKTOKSHOP_EXTRACTION_NOT_IMPLEMENTED",
         prompt_readiness_status="MISSING_FIELDS",
     )
+    await _ensure_intake_intelligence(
+        created, data.model_dump(), lane="PRODUCTS_TIKTOKSHOP_IMPORT")
     enriched = await _enrich_product(created, persist=True)
     return {
         "ok": False,
@@ -1102,11 +1138,18 @@ async def import_fastmoss_catalog():
             if existing:
                 updated_product = await crud.update_product(existing["id"], **payload)
                 await _enrich_product(updated_product, persist=True)
+                # The UPDATE branch is why a create-only hook was insufficient: a
+                # re-import never reaches create_product. Idempotent on the evidence
+                # digest, so unchanged rows are a no-op.
+                await _ensure_intake_intelligence(
+                    updated_product, payload, lane="PRODUCTS_FASTMOSS_REIMPORT")
                 updated += 1
                 continue
 
             created = await crud.create_product(**payload)
             await _enrich_product(created, persist=True)
+            await _ensure_intake_intelligence(
+                created, payload, lane="PRODUCTS_FASTMOSS_IMPORT")
             imported += 1
         return {"ok": True, "imported": imported, "updated": updated, "total": len(products)}
     except Exception as exc:
