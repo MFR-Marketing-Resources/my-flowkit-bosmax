@@ -530,8 +530,13 @@ async def _write_provenance_or_compensate(
     try:
         return await _write_provenance(draft_id, product_id, draft, payload)
     except Exception:
-        await _delete_provenance_for_draft(str(draft_id))
+        # DO NOT delete provenance here. `_write_provenance` is a single transaction that
+        # rolls back on failure, so this operation has written NOTHING — the only rows
+        # present are ones that existed beforehand. The previous version called
+        # `_delete_provenance_for_draft`, which wiped every provenance row on the draft
+        # including pre-existing evidence: a rollback that destroyed data it never wrote.
         if created_draft:
+            await _delete_provenance_for_draft(str(draft_id))
             await crud.delete_product_intelligence_review_draft(str(draft_id))
         elif prior_row is not None:
             restorable = {k: prior_row.get(k) for k in _DIGEST_TARGETS

@@ -784,3 +784,45 @@ async def test_duplicate_open_drafts_converge_on_the_same_winner_deterministical
     again = await _resolve_duplicate_open_drafts("intake-conv", "aaaa-early")
     assert again == "aaaa-early"
     assert await _open_draft_count("intake-conv") == 1
+
+
+@pytest.mark.asyncio
+async def test_a_failed_update_never_destroys_pre_existing_provenance(monkeypatch):
+    """REGRESSION: the update rollback called _delete_provenance_for_draft, wiping EVERY
+    provenance row on the draft — including evidence written by earlier operations that
+    this request never touched. A rollback must not destroy data it did not write."""
+    from agent.services import product_intake_service as pis
+
+    await _product("intake-noloss")
+    await pis.ensure_product_intelligence(
+        "intake-noloss",
+        _Draft(declared={"product_knowledge_text": "Original.", "usage_text": "wipe"}),
+        lane="PRODUCTS_MANUAL")
+    before = await _prov_rows("intake-noloss")
+    assert before, "precondition: provenance exists"
+
+    # build_provenance_inputs is ALSO used by the coverage check, which runs first. If it
+    # raises there the rollback path is never reached and the test proves nothing, so fail
+    # only on the write call (the 2nd invocation).
+    real = pis.build_provenance_inputs
+    state = {"n": 0}
+
+    def boom(draft, payload):
+        state["n"] += 1
+        if state["n"] >= 2:
+            raise RuntimeError("provenance store offline")
+        return real(draft, payload)
+
+    monkeypatch.setattr(pis, "build_provenance_inputs", boom)
+    with pytest.raises(RuntimeError):
+        await pis.ensure_product_intelligence(
+            "intake-noloss",
+            _Draft(declared={"product_knowledge_text": "Changed text.",
+                             "usage_text": "wipe"}),
+            lane="PRODUCTS_MANUAL")
+    monkeypatch.setattr(pis, "build_provenance_inputs", real)
+    assert state["n"] >= 2, "the write path was never reached; test proves nothing"
+
+    after = await _prov_rows("intake-noloss")
+    assert len(after) == len(before), (
+        f"rollback destroyed pre-existing provenance: {len(before)} -> {len(after)}")
