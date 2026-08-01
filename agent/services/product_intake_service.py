@@ -85,6 +85,57 @@ def _norm(target: str, value: Any) -> Any:
     return text or None
 
 
+# Material evidence: WHERE a value came from. Deliberately separate from the value digest
+# (B-586-02) — the same text backed by a newly acquired marketplace page or OCR is NOT a
+# no-op. Swallowing it would defeat the point of an evidence-closure mission.
+_EVIDENCE_KEYS = ("source_urls_json", "image_evidence_json")
+
+
+def _material_map(payload_or_row: Mapping[str, Any]) -> dict[str, str]:
+    """Flatten every asserted source/image reference to a comparable value set."""
+    out: dict[str, str] = {}
+    for key in _EVIDENCE_KEYS:
+        raw = payload_or_row.get(key)
+        if isinstance(raw, (str, bytes)):
+            try:
+                raw = json.loads(raw)
+            except (ValueError, TypeError):
+                raw = None
+        if isinstance(raw, Mapping):
+            for k, v in raw.items():
+                text = str(v or "").strip()
+                # booleans/ids the service injects are not evidence references
+                if text and text.lower() not in ("true", "false") and "://" in text or (
+                        text and k in ("local_image_path",)):
+                    out[f"{key}.{k}"] = text
+    return out
+
+
+def material_evidence_digest(
+    payload_or_row: Mapping[str, Any], *, lane: str | None = None,
+) -> str:
+    material: dict[str, Any] = dict(_material_map(payload_or_row))
+    if lane:
+        material["lane"] = lane
+    return hashlib.sha256(
+        json.dumps(material, sort_keys=True, separators=(",", ":"),
+                   ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+
+def material_is_covered(stored: Mapping[str, Any], incoming: Mapping[str, Any]) -> bool:
+    """Does the stored row already carry every source/image the incoming payload asserts?
+
+    Equality is the WRONG test here: `create_review_draft` enriches `source_urls_json`
+    itself (it injects source_type / product_id / product_name), so a raw stored-vs-incoming
+    comparison never matches and every re-import would look like changed evidence.
+    Coverage is the right question — "is this source already recorded?" — and it still
+    satisfies B-586-02, because a genuinely NEW or stronger source is not covered.
+    """
+    stored_values = set(_material_map(stored).values())
+    return all(v in stored_values for v in _material_map(incoming).values())
+
+
 def evidence_digest(fields: Mapping[str, Any]) -> str:
     """Stable digest over the promotable evidence only.
 
@@ -170,17 +221,25 @@ async def _latest_open_draft(product_id: str):
     return None, terminal_seen
 
 
-async def _has_approved_snapshot(product_id: str) -> bool:
+async def _approved_snapshot(product_id: str) -> dict | None:
+    """The APPROVED snapshot only.
+
+    B-586-01: the first version selected ANY snapshot row. `SUPERSEDED` is a real stored
+    status (9 rows live today) and `DRAFT` / `REJECTED` / `ARCHIVED` are permitted by the
+    schema, so a superseded snapshot was being treated as ratified Product Truth.
+    """
     from agent.db.schema import get_db
 
     db = await get_db()
     cur = await db.execute(
-        "SELECT 1 FROM product_intelligence_snapshot WHERE product_id=? LIMIT 1",
+        "SELECT * FROM product_intelligence_snapshot WHERE product_id=? "
+        "AND UPPER(COALESCE(status,'')) = 'APPROVED' "
+        "ORDER BY COALESCE(version, 0) DESC, COALESCE(updated_at, created_at) DESC LIMIT 1",
         (product_id,),
     )
     row = await cur.fetchone()
     await cur.close()
-    return row is not None
+    return dict(row) if row else None
 
 
 async def _write_provenance(draft_id: str, product_id: str, draft, payload) -> int:
@@ -228,29 +287,48 @@ async def ensure_product_intelligence(
 
     payload = build_promotion_payload(draft)
     incoming = digest_of_payload(payload)
+    payload_material = {"source_urls_json": payload.get("source_urls_json"),
+                        "image_evidence_json": payload.get("image_evidence_json")}
+    incoming_material = material_evidence_digest(payload_material, lane=None)
+    # A source-only / image-only re-import carries no knowledge field but DOES carry new
+    # material evidence, so it must not be treated as "nothing to do".
     minimal = not payload["fields"]
 
-    # An approved snapshot is human-ratified Product Truth. Re-importing the same evidence
-    # must never disturb it, and this seam never downgrades one.
-    if await _has_approved_snapshot(product_id) and not minimal:
-        existing_open, _terminal = await _latest_open_draft(product_id)
-        if existing_open is None or digest_of_stored_draft(existing_open) == incoming:
+    # B-586-01. An APPROVED snapshot is human-ratified Product Truth, so it is never
+    # modified or downgraded here — but "an approved snapshot exists" must NOT mean
+    # "discard whatever arrived next". The first version returned NOOP whenever there was
+    # no open draft, regardless of the incoming values, so evidence that changed AFTER
+    # approval was silently thrown away. Compare against the snapshot itself instead.
+    approved = await _approved_snapshot(product_id)
+    if approved is not None and not minimal:
+        snapshot_values = digest_of_stored_draft(approved)
+        if snapshot_values == incoming and material_is_covered(approved, payload_material):
+            open_same, _t = await _latest_open_draft(product_id)
             return {"outcome": NOOP_APPROVED_SNAPSHOT, "lane": lane,
                     "product_id": product_id, "evidence_digest": incoming,
-                    "intelligence_draft_id": (existing_open or {}).get("draft_id"),
+                    "material_digest": incoming_material,
+                    "approved_snapshot_id": approved.get("snapshot_id"),
+                    "intelligence_draft_id": (open_same or {}).get("draft_id"),
                     "wrote": False}
+        # values or sources moved on since approval -> that is a new review item, not a
+        # no-op and not an edit of the ratified snapshot.
 
     open_draft, terminal_seen = await _latest_open_draft(product_id)
 
     if open_draft is not None:
-        if digest_of_stored_draft(open_draft) == incoming:
+        same_values = digest_of_stored_draft(open_draft) == incoming
+        same_material = material_is_covered(open_draft, payload_material)
+        # B-586-02: identical text backed by a NEW or stronger source is not a no-op.
+        if same_values and same_material:
             return {"outcome": NOOP_DRAFT_UP_TO_DATE, "lane": lane,
                     "product_id": product_id, "evidence_digest": incoming,
+                    "material_digest": incoming_material,
                     "intelligence_draft_id": open_draft["draft_id"], "wrote": False}
-        if minimal:
+        if minimal and same_material:
             # Nothing new to say; do not blank an existing draft.
             return {"outcome": NOOP_DRAFT_UP_TO_DATE, "lane": lane,
                     "product_id": product_id, "evidence_digest": incoming,
+                    "material_digest": incoming_material,
                     "intelligence_draft_id": open_draft["draft_id"], "wrote": False,
                     "reason": "NO_PROMOTABLE_FIELDS"}
         updated = await svc.update_review_draft(

@@ -141,27 +141,93 @@ async def test_changed_evidence_updates_the_open_draft_review_required():
     assert not row["approved_by"] and not row["approved_at"]
 
 
-@pytest.mark.asyncio
-async def test_an_approved_snapshot_is_never_disturbed_by_reimport():
-    await _product("intake-d")
-    d = _Draft(declared={"product_knowledge_text": "Ratified truth."})
-    await ensure_product_intelligence("intake-d", d, lane="MANUAL")
+async def _snapshot(pid: str, sid: str, *, status: str, **fields) -> None:
     db = await get_db()
+    cols = ["snapshot_id", "product_id", "version", "status", "created_at", "updated_at"]
+    vals = [sid, pid, 1, status, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"]
+    for k, v in fields.items():
+        cols.append(k)
+        vals.append(v)
     await db.execute(
-        "INSERT INTO product_intelligence_snapshot (snapshot_id, product_id, version, "
-        "status, created_at, updated_at) VALUES (?,?,?,?,?,?)",
-        ("snap-d", "intake-d", 1, "APPROVED", "2026-01-01T00:00:00Z",
-         "2026-01-01T00:00:00Z"))
+        f"INSERT INTO product_intelligence_snapshot ({','.join(cols)}) "
+        f"VALUES ({','.join('?' * len(cols))})", vals)
     await db.commit()
 
-    r = await ensure_product_intelligence("intake-d", d, lane="FASTMOSS")
+
+async def _snapshot_status(sid: str) -> str:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT status FROM product_intelligence_snapshot WHERE snapshot_id=?", (sid,))
+    row = dict(await cur.fetchone())
+    await cur.close()
+    return row["status"]
+
+
+@pytest.mark.asyncio
+async def test_approved_snapshot_with_identical_evidence_is_a_noop():
+    await _product("intake-d")
+    await _snapshot("intake-d", "snap-d", status="APPROVED",
+                    product_description="Ratified truth.")
+    r = await ensure_product_intelligence(
+        "intake-d", _Draft(declared={"product_knowledge_text": "Ratified truth."}),
+        lane="FASTMOSS")
     assert r["outcome"] == NOOP_APPROVED_SNAPSHOT
     assert r["wrote"] is False
+    assert await _snapshot_status("snap-d") == "APPROVED"
+    assert await _draft_count("intake-d") == 0
 
-    cur = await db.execute(
-        "SELECT status FROM product_intelligence_snapshot WHERE snapshot_id='snap-d'")
-    assert dict(await cur.fetchone())["status"] == "APPROVED"
-    await cur.close()
+
+@pytest.mark.asyncio
+async def test_evidence_that_changes_after_approval_becomes_a_new_review_item():
+    """B-586-01 REGRESSION: this previously returned NOOP whenever there was no open
+    draft, so evidence arriving AFTER approval was silently discarded."""
+    await _product("intake-d2")
+    await _snapshot("intake-d2", "snap-d2", status="APPROVED",
+                    product_description="Old truth.", usage_text="old usage")
+    r = await ensure_product_intelligence(
+        "intake-d2",
+        _Draft(declared={"product_knowledge_text": "Old truth.",
+                         "usage_text": "NEW usage from marketplace"}),
+        lane="PRODUCTS_FASTMOSS_REIMPORT")
+    assert r["outcome"] != NOOP_APPROVED_SNAPSHOT, "new evidence was thrown away"
+    assert r["wrote"] is True
+    assert await _draft_count("intake-d2") == 1
+    # the ratified snapshot itself is untouched
+    assert await _snapshot_status("snap-d2") == "APPROVED"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["SUPERSEDED", "REJECTED", "DRAFT", "ARCHIVED"])
+async def test_a_non_approved_snapshot_does_not_count_as_approved(status):
+    """9 SUPERSEDED snapshots exist in live data; the first version treated ANY snapshot
+    row as ratified Product Truth."""
+    pid = f"intake-ns-{status.lower()}"
+    await _product(pid)
+    await _snapshot(pid, f"snap-{status.lower()}", status=status,
+                    product_description="Not ratified.")
+    r = await ensure_product_intelligence(
+        pid, _Draft(declared={"product_knowledge_text": "Not ratified."}), lane="MANUAL")
+    assert r["outcome"] != NOOP_APPROVED_SNAPSHOT
+    assert await _draft_count(pid) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_same_value_with_a_new_source_is_not_swallowed():
+    """B-586-02: identical text backed by a newly acquired source must persist that
+    source, otherwise an evidence-closure mission cannot close any evidence."""
+    await _product("intake-src")
+    first = await ensure_product_intelligence(
+        "intake-src", _Draft(declared={"product_knowledge_text": "Same words."}),
+        lane="PRODUCTS_MANUAL")
+    assert first["outcome"] == CREATED
+    second = await ensure_product_intelligence(
+        "intake-src",
+        _Draft(declared={"product_knowledge_text": "Same words.",
+                         "source_url": "https://shop.example/acquired/1"}),
+        lane="PRODUCTS_FASTMOSS_REIMPORT")
+    assert second["outcome"] == UPDATED_REVIEW_REQUIRED, "new source was swallowed"
+    assert second["wrote"] is True
+    assert await _draft_count("intake-src") == 1
 
 
 @pytest.mark.asyncio
