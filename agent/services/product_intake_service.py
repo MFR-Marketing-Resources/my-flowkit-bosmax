@@ -104,9 +104,9 @@ def _material_map(payload_or_row: Mapping[str, Any]) -> dict[str, str]:
         if isinstance(raw, Mapping):
             for k, v in raw.items():
                 text = str(v or "").strip()
-                # booleans/ids the service injects are not evidence references
-                if text and text.lower() not in ("true", "false") and "://" in text or (
-                        text and k in ("local_image_path",)):
+                if not text or text.lower() in ("true", "false"):
+                    continue  # flags/ids the service injects are not evidence refs
+                if "://" in text or k == "local_image_path":
                     out[f"{key}.{k}"] = text
     return out
 
@@ -121,6 +121,52 @@ def material_evidence_digest(
         json.dumps(material, sort_keys=True, separators=(",", ":"),
                    ensure_ascii=False).encode("utf-8")
     ).hexdigest()
+
+
+# Verification strength. Evidence that has been upgraded from imported/unverified to
+# acquired/verified is NEW information even when the text is byte-identical, so it must
+# not be swallowed as a no-op (B-586-02).
+_VERIFICATION_RANK = {
+    "": 0, "NONE": 0,
+    "PENDING_REVIEW": 1,
+    "REVIEWED": 2,
+    "OPERATOR_CONFIRMED": 3,
+    "VERIFIED": 4,
+}
+
+
+def verification_rank(status: Any) -> int:
+    return _VERIFICATION_RANK.get(str(status or "").strip().upper(), 1)
+
+
+def evidence_signature(row: Mapping[str, Any]) -> tuple[str, str, str]:
+    """Identity of ONE piece of material evidence, ignoring its verification strength."""
+    return (
+        str(row.get("source_url") or "").strip(),
+        str(row.get("source_type") or "").strip().upper(),
+        str(row.get("extraction_method") or "").strip().upper(),
+    )
+
+
+def provenance_is_covered(
+    stored_rows, incoming_rows,
+) -> bool:
+    """True only when every incoming evidence claim is ALREADY recorded at >= strength.
+
+    Comparing source URLs alone (the previous behaviour) meant the same URL re-acquired
+    through a stronger lane — imported/PENDING_REVIEW upgraded to acquired/VERIFIED — was
+    reported as a no-op and the upgrade was never persisted.
+    """
+    best: dict[tuple[str, str, str], int] = {}
+    for row in stored_rows or ():
+        sig = evidence_signature(row)
+        rank = verification_rank(row.get("verification_status"))
+        best[sig] = max(best.get(sig, -1), rank)
+    for row in incoming_rows or ():
+        sig = evidence_signature(row)
+        if best.get(sig, -1) < verification_rank(row.get("verification_status")):
+            return False
+    return True
 
 
 def material_is_covered(stored: Mapping[str, Any], incoming: Mapping[str, Any]) -> bool:
@@ -167,15 +213,25 @@ class IntakeEvidence:
     payload into the same shape `build_promotion_payload` already reads, so all lanes share
     one mapping table and one set of drop reasons.
 
-    Everything supplied here counts as DECLARED evidence: it came from an operator action
-    or an imported source row, not from an unreviewed AI proposal.
+    B-586-07: these lanes are NOT all operator-declared. A FastMoss workbook row and a
+    TikTok import are IMPORTED marketplace evidence; labelling them OPERATOR_DECLARED /
+    REGISTRATION_COMMIT asserts a human vouched for them when nobody did. Each lane
+    therefore declares its own source_type and evidence_kind.
     """
 
     __slots__ = ("declared_evidence_fields", "canonical_candidate_fields",
-                 "approval_checklist", "claim_risk_level", "claim_tokens", "source_lane")
+                 "approval_checklist", "claim_risk_level", "claim_tokens", "source_lane",
+                 "provenance_source_type", "provenance_evidence_kind",
+                 "provenance_extraction_method")
 
     def __init__(self, fields: Mapping[str, Any], *, lane: str,
-                 claim_risk_level: str | None = None):
+                 claim_risk_level: str | None = None,
+                 source_type: str | None = None,
+                 evidence_kind: str | None = None,
+                 extraction_method: str | None = None):
+        self.provenance_source_type = source_type or "REGISTRATION_COMMIT"
+        self.provenance_evidence_kind = evidence_kind or "OPERATOR_DECLARED"
+        self.provenance_extraction_method = extraction_method or "REGISTRATION_PROMOTION"
         self.declared_evidence_fields = {k: v for k, v in dict(fields).items()
                                          if v is not None}
         self.canonical_candidate_fields = {}
@@ -183,6 +239,34 @@ class IntakeEvidence:
         self.claim_risk_level = claim_risk_level or "MEDIUM"
         self.claim_tokens = []
         self.source_lane = lane
+
+
+# What each intake lane may truthfully claim about its own evidence.
+LANE_PROVENANCE: dict[str, dict[str, str]] = {
+    # a human typed it into the product form
+    "PRODUCTS_MANUAL": {"source_type": "OPERATOR_MANUAL_ENTRY",
+                        "evidence_kind": "OPERATOR_DECLARED",
+                        "extraction_method": "MANUAL_PRODUCT_FORM"},
+    "PRODUCTS_MAP_PERSIST": {"source_type": "OPERATOR_MANUAL_ENTRY",
+                             "evidence_kind": "OPERATOR_DECLARED",
+                             "extraction_method": "MAPPING_PERSIST"},
+    "PRODUCTS_PHYSICS_MAP_PERSIST": {"source_type": "DERIVED_PHYSICS",
+                                     "evidence_kind": "SYSTEM_DERIVED",
+                                     "extraction_method": "PHYSICS_MAP"},
+    # imported marketplace rows: nobody vouched for these
+    "PRODUCTS_FASTMOSS_IMPORT": {"source_type": "IMPORTED_FASTMOSS",
+                                 "evidence_kind": "IMPORTED_MARKETPLACE_ROW",
+                                 "extraction_method": "FASTMOSS_WORKBOOK"},
+    "PRODUCTS_FASTMOSS_REIMPORT": {"source_type": "IMPORTED_FASTMOSS",
+                                   "evidence_kind": "IMPORTED_MARKETPLACE_ROW",
+                                   "extraction_method": "FASTMOSS_WORKBOOK"},
+    "PRODUCTS_TIKTOKSHOP_IMPORT": {"source_type": "IMPORTED_TIKTOKSHOP",
+                                   "evidence_kind": "IMPORTED_MARKETPLACE_LINK",
+                                   "extraction_method": "TIKTOKSHOP_LINK"},
+    "_DEFAULT": {"source_type": "REGISTRATION_COMMIT",
+                 "evidence_kind": "OPERATOR_DECLARED",
+                 "extraction_method": "REGISTRATION_PROMOTION"},
+}
 
 
 def evidence_from_product_payload(payload: Mapping[str, Any], *, lane: str) -> IntakeEvidence:
@@ -194,10 +278,12 @@ def evidence_from_product_payload(payload: Mapping[str, Any], *, lane: str) -> I
     known: set[str] = {src for _t, sources in PROMOTION_MAP for src in sources}
     known |= {"source_url", "product_url", "tiktok_product_url", "tiktok_shop_url",
               "image_url", "local_image_path"}
+    semantics = LANE_PROVENANCE.get(lane, LANE_PROVENANCE["_DEFAULT"])
     return IntakeEvidence(
         {k: v for k, v in dict(payload).items() if k in known},
         lane=lane,
         claim_risk_level=str(payload.get("claim_risk_level") or "") or None,
+        **semantics,
     )
 
 

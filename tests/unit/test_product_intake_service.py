@@ -283,3 +283,57 @@ async def test_ensure_never_calls_a_paid_provider(monkeypatch):
     await ensure_product_intelligence(
         "intake-h", _Draft(declared={"usage_text": "no tokens please"}), lane="FASTMOSS")
     assert called == []
+
+
+# ── B-586-02 completion + B-586-07 provenance truth ─────────────────────────
+
+def test_verification_upgrade_is_not_covered_by_weaker_stored_evidence():
+    """Same URL re-acquired through a stronger lane is NEW information."""
+    from agent.services.product_intake_service import provenance_is_covered
+    stored = [{"source_url": "https://s/1", "source_type": "IMPORTED_FASTMOSS",
+               "extraction_method": "FASTMOSS_WORKBOOK",
+               "verification_status": "PENDING_REVIEW"}]
+    same = [dict(stored[0])]
+    stronger = [{**stored[0], "verification_status": "VERIFIED"}]
+    assert provenance_is_covered(stored, same) is True
+    assert provenance_is_covered(stored, stronger) is False
+
+
+def test_a_different_source_type_for_the_same_url_is_not_covered():
+    from agent.services.product_intake_service import provenance_is_covered
+    stored = [{"source_url": "https://s/1", "source_type": "IMPORTED_FASTMOSS",
+               "extraction_method": "FASTMOSS_WORKBOOK",
+               "verification_status": "PENDING_REVIEW"}]
+    acquired = [{"source_url": "https://s/1", "source_type": "SOURCE_PAGE",
+                 "extraction_method": "DOM_EXTRACTION",
+                 "verification_status": "PENDING_REVIEW"}]
+    assert provenance_is_covered(stored, acquired) is False
+
+
+def test_imported_lanes_are_not_labelled_operator_declared():
+    """B-586-07: nobody vouched for a FastMoss workbook row or a TikTok link import."""
+    from agent.services.product_intake_service import evidence_from_product_payload
+    from agent.services.registration_intelligence_promotion_service import (
+        build_promotion_payload, build_provenance_inputs)
+    for lane, expect_type, expect_kind in (
+        ("PRODUCTS_FASTMOSS_REIMPORT", "IMPORTED_FASTMOSS", "IMPORTED_MARKETPLACE_ROW"),
+        ("PRODUCTS_TIKTOKSHOP_IMPORT", "IMPORTED_TIKTOKSHOP", "IMPORTED_MARKETPLACE_LINK"),
+    ):
+        ev = evidence_from_product_payload({"usage_text": "wipe it"}, lane=lane)
+        rows = build_provenance_inputs(ev, build_promotion_payload(ev))
+        assert rows, lane
+        assert rows[0].source_type == expect_type
+        assert rows[0].evidence_kind == expect_kind
+        assert rows[0].reviewer_decision is None, "an import is not an operator approval"
+        assert rows[0].verification_status == "PENDING_REVIEW"
+
+
+def test_operator_manual_entry_keeps_operator_semantics():
+    from agent.services.product_intake_service import evidence_from_product_payload
+    from agent.services.registration_intelligence_promotion_service import (
+        build_promotion_payload, build_provenance_inputs)
+    ev = evidence_from_product_payload({"usage_text": "typed by hand"},
+                                       lane="PRODUCTS_MANUAL")
+    rows = build_provenance_inputs(ev, build_promotion_payload(ev))
+    assert rows[0].source_type == "OPERATOR_MANUAL_ENTRY"
+    assert rows[0].evidence_kind == "OPERATOR_DECLARED"

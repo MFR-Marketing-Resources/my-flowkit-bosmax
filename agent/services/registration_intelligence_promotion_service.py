@@ -170,22 +170,30 @@ def build_provenance_inputs(
         target = entry["target"]
         value = payload["fields"].get(target)
         declared_value = ", ".join(value) if isinstance(value, list) else value
+        # B-586-07: a lane may override these. A FastMoss workbook row or a TikTok link
+        # import is IMPORTED marketplace evidence — calling it OPERATOR_DECLARED /
+        # REGISTRATION_COMMIT asserts a human vouched for it when nobody did.
+        lane_source_type = getattr(draft, "provenance_source_type", None)
+        lane_evidence_kind = getattr(draft, "provenance_evidence_kind", None)
+        lane_extraction = getattr(draft, "provenance_extraction_method", None)
         rows.append(ProductIntelligenceReviewFieldProvenanceInput(
             field_name=target,
             declared_value=declared_value,
             normalized_value=declared_value,
-            source_type="REGISTRATION_COMMIT",
+            source_type=lane_source_type or "REGISTRATION_COMMIT",
             source_url=source_url,
             source_lane=str(getattr(draft, "source_lane", "") or "") or None,
-            evidence_kind=("OPERATOR_DECLARED" if entry["origin"] == "DECLARED_EVIDENCE"
-                           else "OPERATOR_APPROVED_CANDIDATE"),
-            extraction_method="REGISTRATION_PROMOTION",
+            evidence_kind=lane_evidence_kind or (
+                "OPERATOR_DECLARED" if entry["origin"] == "DECLARED_EVIDENCE"
+                else "OPERATOR_APPROVED_CANDIDATE"),
+            extraction_method=lane_extraction or "REGISTRATION_PROMOTION",
             # Registration approval approves the VALUE, not Product Truth. The
             # intelligence layer still requires its own review.
             verification_status="PENDING_REVIEW",
             claim_risk_flag=str(getattr(draft, "claim_risk_level", "") or "") or None,
             reviewer_decision=("OPERATOR_APPROVED"
-                               if entry["origin"] == "CANONICAL_CANDIDATE" else None),
+                               if entry["origin"] == "CANONICAL_CANDIDATE"
+                               and lane_evidence_kind is None else None),
             reviewer_note=f"promoted from registration draft field '{entry['source']}'",
         ))
     return rows
