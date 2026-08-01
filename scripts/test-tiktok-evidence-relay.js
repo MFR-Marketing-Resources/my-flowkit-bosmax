@@ -123,9 +123,12 @@ function loadBackgroundRelay() {
 	// vacuously — they would "prove" that no tab ever matches anything.
 	const sandbox = { console, Date, URL };
 	vm.createContext(sandbox);
-	vm.runInContext(`${source.slice(start, end)}\nthis.__relay = {
+	// `chrome` is declared up front so a test can swap in a stub; leaving it undefined
+	// keeps the guard checks honest (reaching chrome at all would throw).
+	vm.runInContext(`let chrome;\n${source.slice(start, end)}\nthis.__relay = {
 		tiktokProductIdentity, tiktokIdentityMatches, readTikTokEvidenceReplay,
 		rememberTikTokEvidenceReply, handleTikTokAcquireProductEvidence,
+		__setChrome: (stub) => { chrome = stub; },
 	};`, sandbox);
 	return sandbox.__relay;
 }
@@ -227,6 +230,29 @@ check("6. a live Security Check is reported and never solved", () => {
 	}
 });
 
+check("6b. a readable product page is NOT called walled just because the captcha SDK loaded", () => {
+	// The first live pilot round failed here: TikTok ships the captcha loader on ordinary
+	// product pages, so matching on <script src> reported SECURITY_CHECK_PRESENT for three
+	// listings the operator had already cleared by hand and left open on screen.
+	const withSdk = LISTING_HTML.replace(
+		"</head>",
+		'<script src="https://sf16.ttwstatic.com/obj/oec-ttweb-captcha/loader/captcha/index.js"></script>' +
+			'<div id="captcha-verify-container" style="display:none"></div></head>',
+	);
+	const reply = collectFrom(withSdk);
+	assert(reply.ok === true,
+		`a readable listing was refused as walled: ${reply.error}`);
+	assert(reply.evidence.title.includes("Minyak"), "evidence was lost");
+});
+
+check("6c. the wall still wins when the page states no product", () => {
+	// The protection that must survive the fix above: a challenge shell carries no title
+	// and no description, so it can never be reported as a successful empty product.
+	const reply = collectFrom(SECURITY_WALL_HTML);
+	assert(reply.ok === false && reply.error === "TIKTOK_SECURITY_CHECK_PRESENT",
+		`expected the wall to be reported, got ${reply.error}`);
+});
+
 check("7. a page with no product facts reports empty rather than inventing", () => {
 	const reply = collectFrom(
 		'<!doctype html><html><head><title>TikTok Shop</title></head><body><main></main></body></html>',
@@ -259,14 +285,27 @@ check("9. a request for one product can never be answered by another product's t
 		),
 		"a DIFFERENT product's tab was accepted",
 	);
+	// TikTok's OWN redirect moves a product between the two authorized Shop hosts, so the
+	// SAME product id must match across them — requiring one host rejected the operator's
+	// own correct tab on the first live pilot round.
 	assert(
-		!relay.tiktokIdentityMatches(
-			wanted,
+		relay.tiktokIdentityMatches(
 			relay.tiktokProductIdentity(
-				"https://shop-my.tiktok.com/view/product/1729543210987654321",
+				"https://shop-my.tiktok.com/pdp/1733784168157316566?source=product_detail",
+			),
+			relay.tiktokProductIdentity(
+				"https://shop.tiktok.com/view/product/1733784168157316566?region=MY",
 			),
 		),
-		"a different host's tab was accepted",
+		"the same product did not match across the two authorized hosts",
+	);
+	// ...but a DIFFERENT product still never matches, on either host.
+	assert(
+		!relay.tiktokIdentityMatches(
+			relay.tiktokProductIdentity("https://shop-my.tiktok.com/pdp/1733784168157316566"),
+			relay.tiktokProductIdentity("https://shop.tiktok.com/view/product/1729547196228863761"),
+		),
+		"a different product matched across hosts",
 	);
 	assert(relay.tiktokProductIdentity("https://www.tiktok.com/@someone") === null,
 		"a non-Shop TikTok URL was treated as a product");
@@ -292,6 +331,56 @@ check("11. a missing correlation id is refused before any tab is touched", async
 		assert(reply.ok === false && reply.error === "TIKTOK_EVIDENCE_REQUEST_ID_MISSING",
 			`expected TIKTOK_EVIDENCE_REQUEST_ID_MISSING, got ${JSON.stringify(reply)}`);
 	});
+});
+
+check("12b. a permission-blind extension says so instead of 'no tab open'", async () => {
+	const relay = loadBackgroundRelay();
+	// Chrome reports the two TikTok origins as NOT granted. Every tab.url would come back
+	// undefined, so the url-filtered query would match nothing and look exactly like an
+	// empty browser — the conflation that cost a live pilot round.
+	relay.__setChrome({
+		permissions: { contains: async () => false },
+		tabs: {
+			query: async () => {
+				throw new Error("tabs.query must not run when the host is not granted");
+			},
+		},
+	});
+	const reply = await relay.handleTikTokAcquireProductEvidence({
+		evidence_request_id: "req-perm",
+		product_url: PRODUCT_URL,
+	});
+	assert(reply.error === "TIKTOK_HOST_PERMISSION_MISSING",
+		`expected TIKTOK_HOST_PERMISSION_MISSING, got ${JSON.stringify(reply)}`);
+});
+
+check("12c. a genuinely empty browser reports counts, never a tab inventory", async () => {
+	const relay = loadBackgroundRelay();
+	relay.__setChrome({
+		permissions: { contains: async () => true },
+		tabs: {
+			query: async (q) =>
+				q && q.url
+					? []
+					: [
+							{ id: 1, url: "https://labs.google/fx/tools/flow" },
+							{ id: 2, url: "https://mail.google.com/inbox" },
+							{ id: 3 },
+						],
+		},
+	});
+	const reply = await relay.handleTikTokAcquireProductEvidence({
+		evidence_request_id: "req-empty",
+		product_url: PRODUCT_URL,
+	});
+	assert(reply.error === "TIKTOK_NO_MATCHING_TAB", `unexpected ${reply.error}`);
+	assert(reply.total_tabs === 3, `total_tabs should be 3, got ${reply.total_tabs}`);
+	assert(reply.tabs_with_readable_url === 2,
+		`tabs_with_readable_url should be 2, got ${reply.tabs_with_readable_url}`);
+	// The operator's other tabs must never travel to the backend.
+	const serialized = JSON.stringify(reply);
+	assert(!serialized.includes("mail.google.com") && !serialized.includes("labs.google"),
+		"the reply leaked the operator's other tab URLs");
 });
 
 check("12. an unsupported host is refused before any tab is touched", async () => {

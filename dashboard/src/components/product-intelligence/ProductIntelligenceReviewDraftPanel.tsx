@@ -558,6 +558,21 @@ export function describeRelayBlocker(blocker: TikTokRelayBlocker): {
 				steps,
 				retryable: true,
 			};
+		case "TIKTOK_RELAY_HOST_PERMISSION_MISSING":
+			return {
+				// The one blocker that looks exactly like "no tab open" but is not: Chrome
+				// is hiding tab URLs from the extension, so it reports zero TikTok tabs
+				// even with the product open on screen. Reopening tabs can never fix it.
+				headline:
+					"Chrome has not granted the BOSMAX extension access to shop.tiktok.com and shop-my.tiktok.com, so it cannot see your product tab at all — even though the tab is open. Opening more tabs will not help.",
+				steps: [
+					"Open chrome://extensions and find the BOSMAX / Flow Kit extension.",
+					"Set its site access to allow shop.tiktok.com and shop-my.tiktok.com (or remove and re-add the unpacked extension to grant the new hosts).",
+					"Keep the product tab open.",
+					"Press Retry.",
+				],
+				retryable: true,
+			};
 		case "TIKTOK_RELAY_EXTENSION_DISCONNECTED":
 			return {
 				headline:

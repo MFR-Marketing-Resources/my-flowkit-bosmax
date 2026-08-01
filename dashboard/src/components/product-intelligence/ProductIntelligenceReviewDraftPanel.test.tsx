@@ -279,6 +279,17 @@ describe("ProductIntelligenceReviewDraftPanel", () => {
 			reason: "", product_url: "", operator_actionable: false,
 		});
 		expect(wrongHost.retryable).toBe(false);
+
+		// A permission-blind extension reports zero tabs even with the product open on
+		// screen. Telling the operator to open a tab would be advice they have already
+		// followed, so this state must send them to chrome://extensions instead.
+		const blind = describeRelayBlocker({
+			code: "TIKTOK_RELAY_HOST_PERMISSION_MISSING",
+			reason: "", product_url: "", operator_actionable: true,
+		});
+		expect(blind.headline).toMatch(/even though the tab is open/i);
+		expect(blind.steps[0]).toMatch(/chrome:\/\/extensions/);
+		expect(blind.steps.join(" ")).not.toMatch(/Open the stored TikTok product link/);
 	});
 
 	it("[relay] a walled Recompute shows the actionable panel with the raw code and a working Retry", async () => {

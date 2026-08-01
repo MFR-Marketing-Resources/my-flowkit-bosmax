@@ -4820,6 +4820,11 @@ const TIKTOK_EVIDENCE_TAB_QUERY = [
 	"https://shop.tiktok.com/*",
 	"https://shop-my.tiktok.com/*",
 ];
+// Same two hosts as an origin list, for the permission probe below.
+const TIKTOK_EVIDENCE_ORIGINS = [
+	"https://shop.tiktok.com/*",
+	"https://shop-my.tiktok.com/*",
+];
 const TIKTOK_EVIDENCE_ALLOWED_HOSTS = new Set([
 	"shop.tiktok.com",
 	"shop-my.tiktok.com",
@@ -4853,13 +4858,25 @@ function tiktokProductIdentity(rawUrl) {
 	};
 }
 
+// The product id is the identity; the host is not.
+//
+// TikTok itself redirects between the two authorized Shop hosts — a stored
+// `shop-my.tiktok.com/pdp/<id>` link opens as `shop.tiktok.com/view/product/<id>`. Demanding
+// the same host therefore rejects the operator's OWN correct tab for the product they are
+// looking at, which is what happened on the first live pilot round. The guarantee that
+// actually prevents cross-contamination is the id comparison: a 19-digit TikTok Shop
+// product id is globally unique, so a different listing can never satisfy it. Both hosts
+// are already permission-gated by the manifest, so widening to "either authorized host,
+// same product id" adds no reach.
+//
+// When neither URL carries an id we fall back to an exact host+path match rather than
+// guessing — an id-less path is not an identity we can trust across hosts.
 function tiktokIdentityMatches(wanted, candidate) {
 	if (!wanted || !candidate) return false;
-	if (wanted.host !== candidate.host) return false;
 	if (wanted.product_id && candidate.product_id) {
 		return wanted.product_id === candidate.product_id;
 	}
-	return wanted.path === candidate.path;
+	return wanted.host === candidate.host && wanted.path === candidate.path;
 }
 
 function readTikTokEvidenceReplay(requestId) {
@@ -4909,6 +4926,30 @@ async function handleTikTokAcquireProductEvidence(params) {
 		});
 	}
 
+	// Chrome does NOT reliably grant newly-added host permissions to an
+	// already-installed unpacked extension on runtime.reload(); the stored per-extension
+	// site-access preference can survive the manifest change. When the host is not granted,
+	// `tab.url` comes back undefined and a url-filtered query silently matches NOTHING —
+	// which is byte-for-byte identical to "the operator never opened the tab". Probing the
+	// permission first is what keeps those two apart; without it the operator is told to
+	// open a tab that is already open, forever.
+	let hostPermissionGranted = null;
+	try {
+		hostPermissionGranted = await chrome.permissions.contains({
+			origins: TIKTOK_EVIDENCE_ORIGINS,
+		});
+	} catch (_) {
+		hostPermissionGranted = null; // unknown — do not claim either way
+	}
+	if (hostPermissionGranted === false) {
+		return {
+			ok: false,
+			error: "TIKTOK_HOST_PERMISSION_MISSING",
+			evidence_request_id: evidenceRequestId,
+			required_origins: TIKTOK_EVIDENCE_ORIGINS,
+		};
+	}
+
 	let openTabs = [];
 	try {
 		openTabs = await chrome.tabs.query({ url: TIKTOK_EVIDENCE_TAB_QUERY });
@@ -4924,6 +4965,30 @@ async function handleTikTokAcquireProductEvidence(params) {
 		tiktokIdentityMatches(wanted, tiktokProductIdentity(tab.url || "")),
 	);
 	if (!matching.length) {
+		// COUNTS ONLY. A tab inventory would ship the operator's browsing history to the
+		// backend, which is exactly the unrelated-page-content this lane refuses to
+		// transmit. `tabs_with_readable_url` is the discriminator: if the browser has many
+		// tabs but few readable urls, the extension is permission-blind rather than
+		// looking at an empty browser.
+		let totalTabs = null;
+		let readableUrls = null;
+		try {
+			const allTabs = await chrome.tabs.query({});
+			totalTabs = allTabs.length;
+			readableUrls = allTabs.filter((tab) => typeof tab.url === "string" && tab.url).length;
+		} catch (_) {
+			/* diagnostics are best-effort; never fail the call over them */
+		}
+		// Which TikTok Shop products ARE open, as host + id only. Scoped to the two
+		// authorized hosts and to identifiers that already exist in our own catalogue —
+		// never full urls, never any other site. Without this the operator is told "no
+		// matching tab" with no way to see that their tab is the right product under a
+		// host the stored link does not use.
+		const visibleProducts = openTabs
+			.map((tab) => tiktokProductIdentity(tab.url || ""))
+			.filter(Boolean)
+			.map((identity) => `${identity.host}:${identity.product_id || "no-id"}`)
+			.slice(0, 10);
 		// NOT cached: the operator's fix for this is to open the tab and press Retry, and a
 		// cached "no tab" would make that Retry answer from the past.
 		return {
@@ -4932,6 +4997,10 @@ async function handleTikTokAcquireProductEvidence(params) {
 			evidence_request_id: evidenceRequestId,
 			open_tiktok_tabs: openTabs.length,
 			wanted_product_id: wanted.product_id,
+			host_permission_granted: hostPermissionGranted,
+			total_tabs: totalTabs,
+			tabs_with_readable_url: readableUrls,
+			visible_products: visibleProducts,
 		};
 	}
 
