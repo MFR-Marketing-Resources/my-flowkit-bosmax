@@ -141,6 +141,16 @@ async def test_changed_evidence_updates_the_open_draft_review_required():
     assert not row["approved_by"] and not row["approved_at"]
 
 
+async def _open_draft_count(pid: str) -> int:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT COUNT(*) FROM product_intelligence_review_draft WHERE product_id=? "
+        "AND UPPER(COALESCE(review_status,'')) NOT IN ('APPROVED','REJECTED')", (pid,))
+    n = (await cur.fetchone())[0]
+    await cur.close()
+    return int(n)
+
+
 async def _snapshot(pid: str, sid: str, *, status: str, **fields) -> None:
     db = await get_db()
     cols = ["snapshot_id", "product_id", "version", "status", "created_at", "updated_at"]
@@ -172,11 +182,18 @@ async def _seed_provenance(pid: str, **row) -> None:
     from agent.db import crud
     db = await get_db()
     draft_id = row.pop("draft_id", f"seed-{pid}")
-    await db.execute(
-        "INSERT INTO product_intelligence_review_draft (draft_id, product_id, "
-        "review_status, created_at, updated_at) VALUES (?,?,?,?,?)",
-        (draft_id, pid, "APPROVED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"))
-    await db.commit()
+    review_status = row.pop("review_status", "APPROVED")
+    cur = await db.execute(
+        "SELECT 1 FROM product_intelligence_review_draft WHERE draft_id=?", (draft_id,))
+    exists = await cur.fetchone()
+    await cur.close()
+    if not exists:
+        await db.execute(
+            "INSERT INTO product_intelligence_review_draft (draft_id, product_id, "
+            "review_status, created_at, updated_at) VALUES (?,?,?,?,?)",
+            (draft_id, pid, review_status, "2026-01-01T00:00:00Z",
+             "2026-01-01T00:00:00Z"))
+        await db.commit()
     await crud.create_product_intelligence_review_field_provenance(
         draft_id=draft_id,
         product_id=pid,
@@ -198,9 +215,10 @@ async def test_approved_snapshot_with_identical_values_and_provenance_is_a_noop(
     an approved snapshot with zero provenance rows, so incoming evidence was genuinely new
     information about where those values came from."""
     await _product("intake-d")
+    await _seed_provenance("intake-d", draft_id="approved-d")
     await _snapshot("intake-d", "snap-d", status="APPROVED",
-                    product_description="Ratified truth.")
-    await _seed_provenance("intake-d")
+                    product_description="Ratified truth.",
+                    created_from_review_draft_id="approved-d")
     r = await ensure_product_intelligence(
         "intake-d", _Draft(declared={"product_knowledge_text": "Ratified truth."}),
         lane="FASTMOSS")
@@ -518,3 +536,87 @@ async def test_C_identical_values_and_identical_provenance_is_a_genuine_noop():
     assert again["outcome"] == NOOP_DRAFT_UP_TO_DATE
     assert again["wrote"] is False
     assert await _draft_count("intake-idn") == 1
+
+
+# ── B-586-02 final: field scoping + snapshot lineage ────────────────────────
+
+@pytest.mark.asyncio
+async def test_one_fields_verified_provenance_cannot_cover_another_field():
+    """VERIFIED product_description must not vouch for PENDING warnings_text from the
+    same page. evidence_signature previously omitted field_name entirely."""
+    await _product("intake-fs")
+    url = "https://shop-my.tiktok.com/pdp/fs"
+    await _seed_provenance("intake-fs", draft_id="fs-draft", field_name="product_description",
+                           source_url=url, source_type="SOURCE_PAGE",
+                           extraction_method="DOM_EXTRACTION",
+                           verification_status="VERIFIED")
+    await _seed_provenance("intake-fs", draft_id="fs-draft", field_name="warnings_text",
+                           source_url=url, source_type="SOURCE_PAGE",
+                           extraction_method="DOM_EXTRACTION",
+                           verification_status="PENDING_REVIEW")
+    from agent.services.product_intake_service import provenance_is_covered
+    stored = await _prov_rows("intake-fs")
+    incoming = [{"field_name": "warnings_text", "source_url": url,
+                 "source_type": "SOURCE_PAGE", "extraction_method": "DOM_EXTRACTION",
+                 "verification_status": "VERIFIED"}]
+    assert provenance_is_covered(stored, incoming) is False, (
+        "product_description's VERIFIED row covered warnings_text")
+
+
+@pytest.mark.asyncio
+async def test_B_approved_terminal_draft_with_zero_open_drafts_opens_a_new_review_draft():
+    """The realistic state: one terminal APPROVED draft + its provenance + an APPROVED
+    snapshot + ZERO open drafts. The earlier Case B left an open draft around, so it only
+    proved an update path."""
+    await _product("intake-b2")
+    url = "https://shop-my.tiktok.com/pdp/b2"
+    await _seed_provenance("intake-b2", draft_id="b2-approved",
+                           field_name="product_description", source_url=url,
+                           source_type="SOURCE_PAGE", extraction_method="DOM_EXTRACTION",
+                           verification_status="PENDING_REVIEW")
+    await _snapshot("intake-b2", "snap-b2", status="APPROVED",
+                    product_description="Ratified.",
+                    created_from_review_draft_id="b2-approved")
+    open_before = await _open_draft_count("intake-b2")
+    assert open_before == 0, "precondition: no open draft"
+
+    r = await ensure_product_intelligence(
+        "intake-b2",
+        _VerifiedDraft({"product_knowledge_text": "Ratified.", "source_url": url},
+                       verification_status="VERIFIED"),
+        lane="PRODUCTS_TIKTOKSHOP_IMPORT")
+
+    assert r["outcome"] != NOOP_APPROVED_SNAPSHOT
+    assert await _snapshot_status("snap-b2") == "APPROVED", "snapshot was disturbed"
+    assert await _open_draft_count("intake-b2") == 1, "exactly one new open draft expected"
+    new_rows = [x for x in await _prov_rows("intake-b2")
+                if x["verification_status"] == "VERIFIED"]
+    assert new_rows, "stronger provenance was not persisted"
+
+
+@pytest.mark.asyncio
+async def test_verified_provenance_from_a_rejected_draft_is_not_snapshot_coverage():
+    """A rejected draft's evidence must never vouch for the current approved snapshot."""
+    await _product("intake-rej")
+    url = "https://shop-my.tiktok.com/pdp/rej"
+    # the snapshot's real lineage carries only weak evidence
+    await _seed_provenance("intake-rej", draft_id="rej-approved",
+                           field_name="product_description", source_url=url,
+                           source_type="SOURCE_PAGE", extraction_method="DOM_EXTRACTION",
+                           verification_status="PENDING_REVIEW")
+    await _snapshot("intake-rej", "snap-rej", status="APPROVED",
+                    product_description="Ratified.",
+                    created_from_review_draft_id="rej-approved")
+    # an unrelated REJECTED draft happens to hold VERIFIED evidence
+    await _seed_provenance("intake-rej", draft_id="rej-bad", review_status="REJECTED",
+                           field_name="product_description", source_url=url,
+                           source_type="SOURCE_PAGE", extraction_method="DOM_EXTRACTION",
+                           verification_status="VERIFIED")
+
+    r = await ensure_product_intelligence(
+        "intake-rej",
+        _VerifiedDraft({"product_knowledge_text": "Ratified.", "source_url": url},
+                       verification_status="VERIFIED"),
+        lane="PRODUCTS_TIKTOKSHOP_IMPORT")
+    assert r["outcome"] != NOOP_APPROVED_SNAPSHOT, (
+        "a rejected draft's VERIFIED row created a false no-op")

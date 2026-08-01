@@ -139,9 +139,15 @@ def verification_rank(status: Any) -> int:
     return _VERIFICATION_RANK.get(str(status or "").strip().upper(), 1)
 
 
-def evidence_signature(row: Mapping[str, Any]) -> tuple[str, str, str]:
-    """Identity of ONE piece of material evidence, ignoring its verification strength."""
+def evidence_signature(row: Mapping[str, Any]) -> tuple[str, str, str, str]:
+    """Identity of ONE piece of material evidence, ignoring its verification strength.
+
+    field_name is part of the identity. Without it, a VERIFIED row for
+    product_description would "cover" a PENDING_REVIEW warnings_text sourced from the same
+    page — one field's verification silently vouching for another field's unverified text.
+    """
     return (
+        str(row.get("field_name") or "").strip(),
         str(row.get("source_url") or "").strip(),
         str(row.get("source_type") or "").strip().upper(),
         str(row.get("extraction_method") or "").strip().upper(),
@@ -335,28 +341,40 @@ async def _stored_provenance(draft_id: str) -> list[dict]:
 
     db = await get_db()
     cur = await db.execute(
-        "SELECT source_url, source_type, extraction_method, verification_status "
-        "FROM product_intelligence_review_field_provenance WHERE draft_id=?", (draft_id,))
+        "SELECT field_name, source_url, source_type, extraction_method, "
+        "verification_status FROM product_intelligence_review_field_provenance "
+        "WHERE draft_id=?", (draft_id,))
     rows = [dict(r) for r in await cur.fetchall()]
     await cur.close()
     return rows
 
 
-async def _product_provenance_covers(product_id: str, draft: Any,
-                                     payload: Mapping[str, Any]) -> bool:
-    """Provenance-strength coverage across ALL of a product's recorded evidence."""
+async def _approved_snapshot_provenance_covers(
+    approved: Mapping[str, Any], draft: Any, payload: Mapping[str, Any],
+) -> bool:
+    """Coverage scoped to the APPROVED SNAPSHOT'S OWN lineage.
+
+    Reading every provenance row the product ever had let evidence from a rejected,
+    archived or superseded draft vouch for the current approved snapshot. The snapshot
+    records `created_from_review_draft_id` (present on 445 of 447 live rows), which is the
+    authoritative lineage — no timestamp guessing. A snapshot WITHOUT lineage cannot prove
+    coverage, so it fails closed and the incoming evidence is captured.
+    """
     from agent.db.schema import get_db
 
+    origin = str(approved.get("created_from_review_draft_id") or "").strip()
+    if not origin:
+        return False
     db = await get_db()
     cur = await db.execute(
-        "SELECT source_url, source_type, extraction_method, verification_status "
-        "FROM product_intelligence_review_field_provenance WHERE product_id=?",
-        (product_id,))
+        "SELECT field_name, source_url, source_type, extraction_method, "
+        "verification_status FROM product_intelligence_review_field_provenance "
+        "WHERE draft_id=?", (origin,))
     stored = [dict(r) for r in await cur.fetchall()]
     await cur.close()
     incoming = [
-        {"source_url": r.source_url, "source_type": r.source_type,
-         "extraction_method": r.extraction_method,
+        {"field_name": r.field_name, "source_url": r.source_url,
+         "source_type": r.source_type, "extraction_method": r.extraction_method,
          "verification_status": r.verification_status}
         for r in build_provenance_inputs(draft, payload)
     ]
@@ -376,8 +394,8 @@ async def _incoming_covered(draft_row: Mapping[str, Any], draft: Any,
         return False
     stored = await _stored_provenance(str(draft_row.get("draft_id") or ""))
     incoming = [
-        {"source_url": r.source_url, "source_type": r.source_type,
-         "extraction_method": r.extraction_method,
+        {"field_name": r.field_name, "source_url": r.source_url,
+         "source_type": r.source_type, "extraction_method": r.extraction_method,
          "verification_status": r.verification_status}
         for r in build_provenance_inputs(draft, payload)
     ]
@@ -452,7 +470,7 @@ async def ensure_product_intelligence(
         # product-wide rows are the right comparison set for a snapshot.
         approved_covered = (
             material_is_covered(approved, payload_material)
-            and await _product_provenance_covers(product_id, draft, payload))
+            and await _approved_snapshot_provenance_covers(approved, draft, payload))
         if snapshot_values == incoming and approved_covered:
             open_same, _t = await _latest_open_draft(product_id)
             return {"outcome": NOOP_APPROVED_SNAPSHOT, "lane": lane,
