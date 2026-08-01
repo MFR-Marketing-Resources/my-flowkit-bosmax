@@ -346,12 +346,17 @@ export default function CopySelectionPanel({
 								}}
 								className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-200 focus:border-fuchsia-500/60 focus:outline-none"
 							>
-								<option value="ALL">All Angles ({copySets.length})</option>
+								{/* Honest counts: "(N)" alone read as "N angles" when N is the
+								    SET count — with an angle monoculture (many sets, one angle)
+								    that overstated variety. Both units are now explicit. */}
+								<option value="ALL">
+									{`All Angles (${uniqueAngles.length} ${uniqueAngles.length === 1 ? "angle" : "angles"} · ${copySets.length} ${copySets.length === 1 ? "set" : "sets"})`}
+								</option>
 								{uniqueAngles.map((angle) => {
 									const count = copySets.filter((cs) => cs.angle === angle).length;
 									return (
 										<option key={angle} value={angle}>
-											{angle} ({count})
+											{`${angle} (${count} ${count === 1 ? "set" : "sets"})`}
 										</option>
 									);
 								})}
@@ -480,6 +485,20 @@ export default function CopySelectionPanel({
 										<span className="text-slate-500">Hook: </span>
 										{cs.hook || "—"}
 									</div>
+
+									{/* Composer variants can share an identical angle AND hook and
+									    differ only by subhook — without this preview two such rows
+									    are indistinguishable until Details is expanded. */}
+									{!isExpanded && cs.subhook ? (
+										<div
+											data-testid="copy-subhook-preview"
+											title={cs.subhook}
+											className="mt-0.5 truncate text-[10px] text-slate-400"
+										>
+											<span className="text-slate-500">Subhook: </span>
+											{cs.subhook}
+										</div>
+									) : null}
 
 									{/* Expandable Details Section */}
 									{isExpanded ? (

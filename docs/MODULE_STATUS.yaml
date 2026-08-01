@@ -65,6 +65,7 @@ domains:
       - tests/api/test_workspace_copy_binding_api.py
       - dashboard/src/api/copySets.ts
       - dashboard/src/components/workspace/CopySelectionPanel.tsx
+      - dashboard/src/components/workspace/CopySelectionPanel.test.tsx
       - docs/COPY_SELECTION_AND_COMPILER_BINDING_FOUNDATION_V1.md
       - docs/COPY_FALLBACK_EXPLICIT_CONFIRMATION_V1.md
       - agent/services/ai_copy_assist_service.py
