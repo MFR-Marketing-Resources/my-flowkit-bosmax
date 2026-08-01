@@ -299,6 +299,13 @@ describe("ProductIntelligenceReviewDraftPanel", () => {
 				product_id: "p1", draft_id: "d1",
 				source_url: "https://shop.tiktok.com/view/product/17",
 				intake_outcome: "DRAFT_UPDATED", extracted_fields: { size_or_volume: "25ml" },
+				// B-08B-D1: a preserved field is REPORTED with the discarded page text —
+				// silent preservation would be indistinguishable from failed extraction.
+				evidence_skipped: [{
+					field: "product_description",
+					reason: "EXISTING_EVIDENCE_PRESERVED",
+					extracted_value_not_stored: "Buy Gift Bag on TikTok Shop. Shop now!",
+				}],
 				unresolved: {}, variant: "25ml", variant_resolution: "EXACT_VARIANT_RESOLVED",
 				size_resolution: "EXTRACTED", evidence_methods: ["AUTHENTICATED_DOM"],
 				candidate_status: "REVIEW_REQUIRED", candidates_persisted: [],
@@ -340,6 +347,11 @@ describe("ProductIntelligenceReviewDraftPanel", () => {
 		);
 		// the blocker panel is gone once the acquisition succeeds
 		expect(screen.queryByTestId("recompute-relay-blocker")).toBeNull();
+		// preservation is visible: which field kept its evidence AND what the page said
+		const preserved = await screen.findByTestId("recompute-evidence-preserved");
+		expect(preserved).toHaveTextContent("product_description");
+		expect(preserved).toHaveTextContent("Buy Gift Bag on TikTok Shop");
+		expect(preserved).toHaveTextContent(/a refresh fills, it never replaces/i);
 	});
 
 	it("formatReviewDraftError passes a non-approval error through unchanged", () => {

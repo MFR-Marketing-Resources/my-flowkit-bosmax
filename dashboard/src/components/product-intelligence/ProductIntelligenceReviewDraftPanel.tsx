@@ -1584,6 +1584,29 @@ export default function ProductIntelligenceReviewDraftPanel({
 													</ul>
 												</div>
 											)}
+											{(recomputeResult.evidence_skipped ?? []).length > 0 && (
+												<div className="mt-2" data-testid="recompute-evidence-preserved">
+													<p className="font-semibold text-emerald-200">
+														Existing evidence preserved — the page stated a different
+														value, and a refresh fills, it never replaces. Adopt any of
+														these deliberately by editing the field below.
+													</p>
+													<ul className="list-disc pl-4 text-emerald-100/80">
+														{(recomputeResult.evidence_skipped ?? []).map((item) => (
+															<li key={`preserved-${item.field}`}>
+																<span className="font-semibold">{item.field}</span>
+																{item.extracted_value_not_stored ? (
+																	<span className="text-emerald-200/60">
+																		{" "}
+																		— page said: “
+																		{item.extracted_value_not_stored.slice(0, 140)}”
+																	</span>
+																) : null}
+															</li>
+														))}
+													</ul>
+												</div>
+											)}
 											{(recomputeResult.candidates_skipped ?? []).length > 0 && (
 												<p className="mt-2 text-indigo-200/70">
 													Preserved existing evidence for:{" "}

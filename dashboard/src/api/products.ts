@@ -277,6 +277,15 @@ export interface ProductIntelligenceRecomputeResult {
 	source_url: string;
 	intake_outcome: string | null;
 	extracted_fields: Record<string, unknown>;
+	/**
+	 * Fields where the page stated a value but the draft's existing evidence was
+	 * preserved. Carries the discarded text so a reviewer can adopt it deliberately.
+	 */
+	evidence_skipped?: {
+		field: string;
+		reason: string;
+		extracted_value_not_stored?: string;
+	}[];
 	/** Fields we LOOKED for and the page does not state — distinct from "not checked". */
 	unresolved: Record<string, string>;
 	variant: string | null;

@@ -179,11 +179,18 @@
 
 		for (const root of candidates) {
 			const clone = root.cloneNode(true);
+			// B-08B-D2: review, rating and feedback regions are removed by SELECTOR here and
+			// their text is additionally fingerprint-stopped server-side
+			// (tiktokshop_extraction_service._REVIEW_MARKER_RES). Both layers exist because
+			// TikTok's class names change and a selector alone silently stops matching —
+			// which is exactly how "Verified purchase" prose reached ingredients_text on
+			// the first live pilot.
 			for (const junk of clone.querySelectorAll(
 				"script,style,noscript,iframe,svg,nav,header,footer,aside," +
 					"[role='navigation'],[role='banner'],[role='contentinfo'],[class*='recommend']," +
-					"[class*='related'],[class*='comment'],[class*='review-list'],[class*='footer']," +
-					"[class*='header'],[class*='nav-']",
+					"[class*='related'],[class*='comment'],[class*='review'],[class*='rating']," +
+					"[class*='feedback'],[class*='evaluation'],[data-e2e*='review']," +
+					"[id*='review'],[class*='footer'],[class*='header'],[class*='nav-']",
 			)) {
 				junk.remove();
 			}

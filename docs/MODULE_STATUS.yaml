@@ -1081,6 +1081,19 @@ domains:
       - agent/services/tiktokshop_browser_relay.py
       - tests/unit/test_tiktokshop_browser_relay.py
       - scripts/test-tiktok-evidence-relay.js
+      # Mission-08B data-quality closure (B-08B-D1/D2/D3), found by the FIRST live pilot:
+      # (D1) TikTok's og:description SEO template overwrote curated descriptions - now a
+      # boilerplate gate in the shared normalizer plus a fill-never-replace rule in the
+      # recompute lane, with preserved divergence REPORTED (evidence_skipped) not silent;
+      # (D2) the customer-review stream leaked into ingredients_text through an unclosed
+      # labelled section - review-fingerprint hard stops server-side plus review-region
+      # exclusion in the content script; (D3) the four provenance rows recording those
+      # rejected values are governed REJECTED (never deleted) by a plan/apply CAS script
+      # with online backup and whole-table count proof, ten legitimate rows untouched.
+      - scripts/mission08b_provenance_cleanup.py
+      - docs/evidence/mission08b_provenance_cleanup/cleanup_plan.20260801T132034Z.json
+      - docs/evidence/mission08b_provenance_cleanup/cleanup_plan.20260801T132038Z.json
+      - docs/evidence/mission08b_provenance_cleanup/cleanup_proof.20260801T132038Z.json
       # Owner-authorized canonical repair for the product groups that already held more
       # than one OPEN draft before B-586-04 could be enforced. Backup + snapshot + plan
       # digest first, then proof that ONLY the review-draft table changed. Deletes

@@ -199,6 +199,24 @@ check("4. account chrome and neighbouring products are not transmitted", () => {
 	assert(text.includes("minyak kelapa"), "this product's own evidence was lost");
 });
 
+check("4b. customer reviews are excluded from the transmitted product text", () => {
+	// B-08B-D2 browser side. On the first live pilot, review prose ("Verified purchase",
+	// masked usernames) travelled inside page_text and the server's labelled-section
+	// parser stored it as a product's ingredients. The review REGION must not be
+	// transmitted at all — the server fingerprint stop is the second, independent layer.
+	const withReviews = LISTING_HTML.replace(
+		"</main>",
+		'<div class="product-review-stream">Customer Reviews (128) C**N ·Verified ' +
+			"purchase 2026-04-21 Bagus sangat! H**d S**r ·Verified purchase Barang ori</div></main>",
+	);
+	const reply = collectFrom(withReviews);
+	assert(reply.ok === true, `read failed: ${reply.error}`);
+	const text = reply.evidence.page_text;
+	assert(!text.includes("Verified purchase"), "review prose was transmitted");
+	assert(!text.includes("C**N"), "a masked reviewer username was transmitted");
+	assert(text.includes("minyak kelapa"), "the product's own evidence was lost");
+});
+
 check("5. only TikTok CDN images are collected", () => {
 	const withAd = LISTING_HTML.replace(
 		"<h1>",

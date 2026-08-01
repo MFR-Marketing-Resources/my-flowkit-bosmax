@@ -1,0 +1,95 @@
+{
+ "stamp": "20260801T132038Z",
+ "changed": [
+  {
+   "id": "cb075f4d-7f45-40cc-8242-fe0aeccf6508",
+   "rows_updated": 1
+  },
+  {
+   "id": "3dfe7408-f31b-4b40-8078-a2ca418b8de5",
+   "rows_updated": 1
+  },
+  {
+   "id": "d307f1e3-019b-4e95-b1b4-1ee2626f0810",
+   "rows_updated": 1
+  },
+  {
+   "id": "930c3fd7-ec80-463e-ab90-463846404e1d",
+   "rows_updated": 1
+  }
+ ],
+ "after": [
+  {
+   "id": "cb075f4d-7f45-40cc-8242-fe0aeccf6508",
+   "verification_status": "REJECTED",
+   "reviewer_decision": "REJECTED",
+   "declared_value_prefix_still": "Buy Teachers Day Gift Bag Cute School Ba"
+  },
+  {
+   "id": "3dfe7408-f31b-4b40-8078-a2ca418b8de5",
+   "verification_status": "REJECTED",
+   "reviewer_decision": "REJECTED",
+   "declared_value_prefix_still": "Buy Nakamichi Rapid Windshield Treatment"
+  },
+  {
+   "id": "d307f1e3-019b-4e95-b1b4-1ee2626f0810",
+   "verification_status": "REJECTED",
+   "reviewer_decision": "REJECTED",
+   "declared_value_prefix_still": "LiquidItem:3 Bottle2026-04-21🇲** C**N **"
+  },
+  {
+   "id": "930c3fd7-ec80-463e-ab90-463846404e1d",
+   "verification_status": "REJECTED",
+   "reviewer_decision": "REJECTED",
+   "declared_value_prefix_still": "Buy Diamond Coating【Quick Coating】Cerami"
+  }
+ ],
+ "keep_after": [
+  {
+   "id": "2c0e9f48-01cc-48f1-ae55-6f584a276a3d",
+   "unchanged": true
+  },
+  {
+   "id": "9338852e-ebd7-46ad-988c-3fdda977b90c",
+   "unchanged": true
+  },
+  {
+   "id": "a4b73865-73cf-4845-adb6-6ccb824ea3a9",
+   "unchanged": true
+  },
+  {
+   "id": "1e06f7bf-d6b3-4127-8bc7-1a377e38b3a6",
+   "unchanged": true
+  },
+  {
+   "id": "3970ec37-12a9-4c89-b8b1-7e8d09a5aa83",
+   "unchanged": true
+  },
+  {
+   "id": "5480cd0c-3649-43f6-ab68-18702b34b846",
+   "unchanged": true
+  },
+  {
+   "id": "6260187b-bd44-40c8-a1f9-e67677ee066a",
+   "unchanged": true
+  },
+  {
+   "id": "0344c00d-b0bb-4023-a123-87e1427efe4e",
+   "unchanged": true
+  },
+  {
+   "id": "7cc0d9f7-2781-4f96-a16c-1ca8836193da",
+   "unchanged": true
+  },
+  {
+   "id": "8ee16288-d4b6-4c68-a5d0-fe0cab79ca42",
+   "unchanged": true
+  }
+ ],
+ "counts_after": {
+  "product": 659,
+  "product_intelligence_review_draft": 476,
+  "product_intelligence_review_field_provenance": 3855,
+  "product_intelligence_snapshot": 447
+ }
+}
