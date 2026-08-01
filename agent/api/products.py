@@ -860,21 +860,62 @@ _PHYSICS_PERSIST_COLUMNS = (
 )
 
 
-async def _ensure_intake_intelligence(product: dict | None, payload: dict, *, lane: str):
+async def _ensure_intake_intelligence(
+    product: dict | None,
+    payload: dict,
+    *,
+    lane: str,
+    created: bool = False,
+    prior: dict | None = None,
+):
     """B-08A: every runtime intake ends with a Product Intelligence draft.
 
-    These four routes created products directly, so a product could enter the catalogue
-    with no intelligence row at all. The seam is idempotent on a normalized evidence
-    digest, so the FastMoss upsert can re-import the same rows without manufacturing
-    duplicate review debt. Deterministic and provider-free - no token spend here.
+    These routes created products directly, so a product could enter the catalogue with no
+    intelligence row at all. The seam is idempotent on a normalized evidence digest, so the
+    FastMoss upsert can re-import the same rows without manufacturing duplicate review
+    debt. Deterministic and provider-free - no token spend here.
+
+    B-586-05 failure semantics. Unlike Smart Registration these lanes had NO compensation,
+    so a failing ensure left a committed product with no intelligence record.
+      * `created=True`  -> the product we just inserted is removed; nothing pre-existed, so
+                           deleting it restores the prior state exactly.
+      * `prior` given   -> an EXISTING product is never deleted. Only the columns this
+                           operation wrote are restored, and only if the row has not been
+                           changed underneath us (CAS on updated_at), so a concurrent
+                           operator edit is never clobbered by our rollback.
     """
     if not product or not product.get("id"):
         return None
-    return await ensure_product_intelligence(
-        str(product["id"]),
-        evidence_from_product_payload(payload, lane=lane),
-        lane=lane,
-    )
+    product_id = str(product["id"])
+    try:
+        return await ensure_product_intelligence(
+            product_id,
+            evidence_from_product_payload(payload, lane=lane),
+            lane=lane,
+        )
+    except Exception as exc:  # noqa: BLE001 - compensating
+        if created:
+            try:
+                await crud.delete_product(product_id)
+            except Exception:  # noqa: BLE001
+                raise HTTPException(
+                    status_code=500,
+                    detail=(f"INTAKE_INTELLIGENCE_FAILED_AND_ORPHAN_REMAINS:{product_id}"
+                            f":{exc}")) from exc
+            raise HTTPException(
+                status_code=500,
+                detail=f"INTAKE_INTELLIGENCE_FAILED_COMPENSATED:{exc}") from exc
+        if prior is not None:
+            current = await crud.get_product(product_id)
+            if current and current.get("updated_at") == product.get("updated_at"):
+                restore = {k: prior.get(k) for k in payload
+                           if k in prior and prior.get(k) != current.get(k)}
+                if restore:
+                    await crud.update_product(product_id, **restore)
+            raise HTTPException(
+                status_code=500,
+                detail=f"INTAKE_INTELLIGENCE_FAILED_RESTORED:{exc}") from exc
+        raise
 
 
 @router.post("/map")
@@ -910,7 +951,7 @@ async def map_product(data: ProductMapRequest):
             type=enriched.get("type") or None,
         )
         await _ensure_intake_intelligence(
-            created, data.model_dump(), lane="PRODUCTS_MAP_PERSIST")
+            created, data.model_dump(), lane="PRODUCTS_MAP_PERSIST", created=True)
         return await _enrich_product(created, persist=True)
 
     return enriched
@@ -1085,7 +1126,7 @@ async def create_manual_product(data: ManualProductRequest):
     if local_image_path:
         evidence_payload["local_image_path"] = local_image_path
     await _ensure_intake_intelligence(
-        created, evidence_payload, lane="PRODUCTS_MANUAL")
+        created, evidence_payload, lane="PRODUCTS_MANUAL", created=True)
     return await _enrich_product(created, persist=True)
 
 
@@ -1111,7 +1152,7 @@ async def import_tiktokshop_product(data: ImportTikTokShopRequest):
         prompt_readiness_status="MISSING_FIELDS",
     )
     await _ensure_intake_intelligence(
-        created, data.model_dump(), lane="PRODUCTS_TIKTOKSHOP_IMPORT")
+        created, data.model_dump(), lane="PRODUCTS_TIKTOKSHOP_IMPORT", created=True)
     enriched = await _enrich_product(created, persist=True)
     return {
         "ok": False,
@@ -1169,14 +1210,15 @@ async def import_fastmoss_catalog():
                 # re-import never reaches create_product. Idempotent on the evidence
                 # digest, so unchanged rows are a no-op.
                 await _ensure_intake_intelligence(
-                    updated_product, payload, lane="PRODUCTS_FASTMOSS_REIMPORT")
+                    updated_product, payload, lane="PRODUCTS_FASTMOSS_REIMPORT",
+                    prior=existing)
                 updated += 1
                 continue
 
             created = await crud.create_product(**payload)
             await _enrich_product(created, persist=True)
             await _ensure_intake_intelligence(
-                created, payload, lane="PRODUCTS_FASTMOSS_IMPORT")
+                created, payload, lane="PRODUCTS_FASTMOSS_IMPORT", created=True)
             imported += 1
         return {"ok": True, "imported": imported, "updated": updated, "total": len(products)}
     except Exception as exc:
