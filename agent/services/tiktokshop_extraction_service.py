@@ -51,6 +51,35 @@ ERR_CONTENT_TYPE = "TIKTOKSHOP_UNSUPPORTED_CONTENT_TYPE"
 ERR_TOO_LARGE = "TIKTOKSHOP_RESPONSE_TOO_LARGE"
 ERR_TOO_MANY_REDIRECTS = "TIKTOKSHOP_TOO_MANY_REDIRECTS"
 ERR_NO_EVIDENCE = "TIKTOKSHOP_NO_EXTRACTABLE_EVIDENCE"
+# The page loaded fine (HTTP 200) but it is a bot wall, not the product. Distinct from
+# NO_EVIDENCE on purpose: "the listing has no description" and "we were never shown the
+# listing" need different operator actions, and conflating them would make an
+# authentication problem look like a data-quality problem forever.
+ERR_AUTHENTICATED_BROWSER_REQUIRED = "TIKTOKSHOP_AUTHENTICATED_BROWSER_REQUIRED"
+
+# Signatures of TikTok's security interstitial. Measured against the live response on
+# 2026-08-01: every product URL returned an identical ~5.6KB shell titled "Security Check"
+# carrying the captcha loader, with zero product data. Identical byte counts across
+# DIFFERENT products is what proves it is a static wall rather than thin content.
+_SECURITY_CHALLENGE_MARKERS = (
+    "<title>security check</title>",
+    "oec-ttweb-captcha",
+    "captcha/index.js",
+    "verify to continue",
+    "drag the puzzle piece",
+    "slide to verify",
+)
+
+
+def looks_like_security_challenge(page_text: str) -> bool:
+    """True when the response is TikTok's bot wall rather than a product page.
+
+    Deliberately NOT treated as evidence. Parsing a challenge page would otherwise
+    "succeed" with an empty product and quietly overwrite good stored evidence with
+    nothing — a silent data-loss path dressed up as a successful refresh.
+    """
+    haystack = (page_text or "").lower()
+    return any(marker in haystack for marker in _SECURITY_CHALLENGE_MARKERS)
 
 # Only TikTok's own hosts. An open fetcher pointed at an arbitrary URL is an SSRF
 # primitive; restricting the host is what stops "import this product" from becoming
@@ -493,6 +522,10 @@ def extract_product(url: str, *, page_text: str | None = None,
         final_url = fetched["final_url"]
     else:
         final_url = str(url or "").strip()
+    # Checked BEFORE parsing: a challenge page must never reach the parser, or an empty
+    # "successful" extraction could overwrite real stored evidence.
+    if looks_like_security_challenge(page_text):
+        raise TikTokShopExtractionError(ERR_AUTHENTICATED_BROWSER_REQUIRED, final_url)
     raw = extract_raw(page_text)
     if not raw.get("title") and not raw.get("description"):
         raise TikTokShopExtractionError(ERR_NO_EVIDENCE, final_url)

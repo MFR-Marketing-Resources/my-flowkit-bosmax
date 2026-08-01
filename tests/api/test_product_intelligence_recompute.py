@@ -33,6 +33,12 @@ LISTING_HTML = """
 """
 
 
+# Captured ONCE, before any monkeypatch. Re-reading `tiktok.extract_product` inside a
+# helper picks up whatever stub is already installed, and re-wrapping that stub passes
+# `page_text` twice.
+_REAL_EXTRACT = tiktok.extract_product
+
+
 async def _client() -> AsyncClient:
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
@@ -51,10 +57,9 @@ def _stub_extraction(monkeypatch, *, html: str = LISTING_HTML, candidates=None):
     monkeypatch.setattr(adapter, "complete_json", fake_complete_json)
     monkeypatch.setattr(adapter, "provider_status",
                         lambda: {"provider_id": "deepseek", "model_id": "deepseek-chat"})
-    real = tiktok.extract_product
     monkeypatch.setattr(
         tiktok, "extract_product",
-        lambda url, **kw: real(url, page_text=html, **kw))
+        lambda url, **kw: _REAL_EXTRACT(url, page_text=html, **kw))
 
 
 async def _draft_row(product_id: str) -> dict | None:
@@ -345,3 +350,70 @@ async def test_failed_link_import_without_operator_identity_creates_no_placehold
     assert not [p for p in after
                 if p.get("raw_product_title") == "TIKTOKSHOP_PENDING_METADATA"]
     assert api  # imported for the monkeypatch target module to be loaded
+
+
+# ── the CURRENT real-world failure, captured from the live response ──────────
+# Verbatim shape of what shop.tiktok.com actually returned on 2026-08-01 for every
+# product URL tried: HTTP 200, ~5.6KB, titled "Security Check", zero product data.
+SECURITY_CHALLENGE_HTML = (
+    '<html><head><meta charset="utf-8"><title>Security Check</title>'
+    '<script nonce="x" charset="utf-8" src="https://sf16-website-login.neutral.'
+    'ttwstatic.com/obj/tiktok_web_login_static/oec-ttweb-captcha/loader/sg/1.0.0.55/'
+    'captcha/index.js"></script></head><body>'
+    '<div class="middle_page_loading"></div></body></html>'
+)
+
+
+def test_the_security_wall_is_detected_and_is_never_treated_as_evidence():
+    """HTTP 200 does not mean "we were shown the product".
+
+    Parsing this page would "succeed" with an empty product, and a Recompute that then
+    wrote that emptiness over good stored evidence would be silent data loss dressed up
+    as a successful refresh.
+    """
+    assert tiktok.looks_like_security_challenge(SECURITY_CHALLENGE_HTML)
+    with pytest.raises(tiktok.TikTokShopExtractionError) as excinfo:
+        tiktok.extract_product("https://shop.tiktok.com/view/product/1",
+                               page_text=SECURITY_CHALLENGE_HTML, propose=False)
+    # NOT the generic no-evidence code: this is an authentication problem, and calling it
+    # a data-quality problem would hide the real fix forever.
+    assert excinfo.value.code == tiktok.ERR_AUTHENTICATED_BROWSER_REQUIRED
+    assert not tiktok.looks_like_security_challenge(LISTING_HTML)
+
+
+@pytest.mark.asyncio
+async def test_recompute_against_the_security_wall_fails_closed_and_corrupts_nothing(
+        monkeypatch):
+    """Phase A fail-closed proof, against the ACTUAL blocker rather than a mock error.
+
+    Must be an explicit source-acquisition error — not an HTTP 500, not a duplicate
+    product, not a wiped draft.
+    """
+    _stub_extraction(monkeypatch)   # first pass: real evidence, real draft
+    product = await _product("Recompute Wall",
+                             tiktok_product_url="https://shop.tiktok.com/view/product/w")
+    async with await _client() as client:
+        good = await client.post(
+            f"/api/product-intelligence/{product['id']}/recompute")
+    assert good.status_code == 200
+    draft_before = await _draft_row(product["id"])
+    prov_before = await _provenance(product["id"])
+    products_before = len(await crud.list_products(limit=5000, include_archived=True))
+
+    # now the wall goes up on the very next refresh
+    monkeypatch.setattr(
+        tiktok, "extract_product",
+        lambda url, **kw: _REAL_EXTRACT(url, page_text=SECURITY_CHALLENGE_HTML, **kw))
+    async with await _client() as client:
+        blocked = await client.post(
+            f"/api/product-intelligence/{product['id']}/recompute")
+
+    assert blocked.status_code == 502, "a bot wall must not surface as a 500"
+    assert tiktok.ERR_AUTHENTICATED_BROWSER_REQUIRED in blocked.json()["detail"]
+
+    assert len(await crud.list_products(limit=5000, include_archived=True)) ==         products_before, "the failed refresh created a product"
+    draft_after = await _draft_row(product["id"])
+    assert draft_after == draft_before, "the failed refresh mutated the draft"
+    assert await _provenance(product["id"]) == prov_before, (
+        "the failed refresh mutated provenance")
+    assert await _draft_row(product["id"]) is not None, "the draft was destroyed"
