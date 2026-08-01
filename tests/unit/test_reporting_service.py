@@ -528,3 +528,123 @@ async def test_structural_and_stale_gaps_deduplicate():
     row = next(i for i in res["items"] if i["product_id"] == "P2")
     assert "STALE_PRODUCT_FINGERPRINT" in row["scene_gap_reasons"]
     assert len(row["scene_gap_reasons"]) >= 2
+
+
+# ── BOSMAX-07H: derived intelligence stage in the drill-down ─────────────────
+# The `missing_intelligence` headline still means "no approved snapshot". These tests pin
+# that the stage columns/breakdown/filters ride along WITHOUT moving that predicate, and
+# that collapsing the (non-unique) draft/snapshot sidecars cannot inflate any count.
+
+async def _add_draft(product_id: str, draft_id: str, *, updated_at: str,
+                     review_status: str = "DRAFT", claim_gate: str = "PASS",
+                     blocked: str = "[]", risk: str = "LOW"):
+    db = await get_db()
+    await db.execute(
+        "INSERT INTO product_intelligence_review_draft "
+        "(draft_id, product_id, review_status, claim_gate, claim_risk_level, "
+        " blocked_claims_json, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+        (draft_id, product_id, review_status, claim_gate, risk, blocked,
+         "2026-01-01T00:00:00Z", updated_at),
+    )
+    await db.commit()
+
+
+async def test_multiple_drafts_and_snapshots_never_inflate_any_kpi():
+    """Regression guard: neither sidecar is 1:1 with product (live data holds up to 7
+    drafts and 5 snapshots for one product). A naive LEFT JOIN fans out and silently
+    inflates `total` for EVERY exception kind."""
+    await _seed()
+    db = await get_db()
+    before = {k: (await svc.list_exceptions(k, lifecycle_status="ALL", limit=1))["total"]
+              for k in ("missing_copy", "missing_intelligence", "mapping_blocked",
+                        "missing_image", "prompt_not_ready")}
+    # P2 has no snapshot (so it is IN the missing_intelligence cohort); give it 3 drafts.
+    for i, ts in enumerate(("2026-02-01T00:00:00Z", "2026-02-02T00:00:00Z",
+                            "2026-02-03T00:00:00Z")):
+        await _add_draft("P2", f"d{i}", updated_at=ts)
+    # P1 already has one snapshot; add two more superseded versions.
+    for i in (2, 3):
+        await db.execute(
+            "INSERT INTO product_intelligence_snapshot (snapshot_id, product_id, version,"
+            " status, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+            (f"sn1v{i}", "P1", i, "APPROVED", "2026-01-01T00:00:00Z",
+             f"2026-02-0{i}T00:00:00Z"))
+    await db.commit()
+
+    after = {k: (await svc.list_exceptions(k, lifecycle_status="ALL", limit=1))["total"]
+             for k in before}
+    assert after == before, f"sidecar fan-out inflated a KPI: {before} -> {after}"
+
+    page = await svc.list_exceptions("missing_intelligence", lifecycle_status="ALL", limit=50)
+    ids = [i["product_id"] for i in page["items"]]
+    assert len(ids) == len(set(ids)), "a product appeared more than once in the drill-down"
+
+
+async def test_latest_draft_wins_for_the_row_stage():
+    await _seed()
+    await _add_draft("P2", "old", updated_at="2026-02-01T00:00:00Z")
+    await _add_draft("P2", "new", updated_at="2026-02-09T00:00:00Z",
+                     review_status="NEEDS_REVISION",
+                     claim_gate="CLAIM_REVIEW_REQUIRED")
+    page = await svc.list_exceptions("missing_intelligence", lifecycle_status="ALL", limit=50)
+    row = next(i for i in page["items"] if i["product_id"] == "P2")
+    assert row["draft_id"] == "new"
+    # the newest draft's GATE decides the stage, not the superseded one
+    assert row["intelligence_stage"] == "CLAIM_REVIEW_REQUIRED"
+
+
+async def test_stage_breakdown_sums_to_total_and_covers_every_stage():
+    await _seed()
+    await _add_draft("P2", "d1", updated_at="2026-02-01T00:00:00Z")
+    page = await svc.list_exceptions("missing_intelligence", lifecycle_status="ALL", limit=50)
+    assert set(page["stage_breakdown"]) == set(svc.INTELLIGENCE_STAGES)
+    assert sum(page["stage_breakdown"].values()) == page["total"]
+
+
+async def test_stage_breakdown_is_absent_for_other_kinds():
+    await _seed()
+    assert (await svc.list_exceptions("missing_copy", lifecycle_status="ALL"))["stage_breakdown"] == {}
+
+
+async def test_creating_a_draft_does_not_move_the_headline():
+    """The whole reason the stage panel exists: preparation is invisible in the KPI."""
+    await _seed()
+    before = (await svc.list_exceptions("missing_intelligence", lifecycle_status="ALL"))["total"]
+    await _add_draft("P2", "d1", updated_at="2026-02-01T00:00:00Z")
+    after = await svc.list_exceptions("missing_intelligence", lifecycle_status="ALL")
+    assert after["total"] == before
+    assert after["stage_breakdown"]["NO_DRAFT"] == before - 1
+
+
+async def test_stage_filter_keeps_headline_and_applicability_reconciled():
+    await _seed()
+    await _add_draft("P2", "d1", updated_at="2026-02-01T00:00:00Z",
+                     blocked='["cures acne"]', claim_gate="BLOCKED")
+    page = await svc.list_exceptions("missing_intelligence", lifecycle_status="ALL",
+                                     limit=50, intelligence_stage="CLAIM_BLOCKED")
+    ap = page["applicability"]
+    assert page["total"] == ap["active_missing"] + ap["archived_missing"]
+    assert [i["product_id"] for i in page["items"]] == ["P2"]
+    assert page["items"][0]["claim_reasons"] == ["cures acne"]
+
+
+async def test_unknown_intelligence_stage_is_rejected():
+    await _seed()
+    try:
+        await svc.list_exceptions("missing_intelligence", intelligence_stage="DROP TABLE")
+    except ValueError as exc:
+        assert "UNKNOWN_INTELLIGENCE_STAGE" in str(exc)
+    else:
+        raise AssertionError("an unknown stage must not reach SQL")
+
+
+async def test_copy_blocked_filter_tracks_the_snapshot_relation():
+    await _seed()
+    blocked = await svc.list_exceptions("missing_intelligence", lifecycle_status="ALL",
+                                        limit=50, copy_blocked=True)
+    assert blocked["total"] == blocked["applicability"]["real_product_missing"]
+    assert all(i["copy_blocked"] for i in blocked["items"])
+    # every missing-intelligence row is copy-blocked by definition, so the inverse is empty
+    unblocked = await svc.list_exceptions("missing_intelligence", lifecycle_status="ALL",
+                                          copy_blocked=False)
+    assert unblocked["total"] == 0

@@ -69,11 +69,22 @@ async def exceptions(
         False,
         description="quarantined harness rows are excluded by default; true = fixture view",
     ),
+    intelligence_stage: Optional[str] = Query(
+        None, description=f"one of: {', '.join(svc.INTELLIGENCE_STAGES)}"),
+    claim_risk_level: Optional[str] = Query(None, description="e.g. LOW / MEDIUM / HIGH"),
+    copy_blocked: Optional[bool] = Query(
+        None, description="true = no approved snapshot, so the copy lane fails closed"),
 ):
     if kind not in svc.EXCEPTION_KINDS:
         raise HTTPException(status_code=422, detail=f"UNKNOWN_EXCEPTION_KIND: {kind}")
-    return await svc.list_exceptions(
-        kind, lifecycle_status, cluster, product_type_group, limit, offset,
-        q=q, sort_by=sort_by, sort_dir=sort_dir,
-        include_test_fixtures=include_test_fixtures,
-    )
+    try:
+        return await svc.list_exceptions(
+            kind, lifecycle_status, cluster, product_type_group, limit, offset,
+            q=q, sort_by=sort_by, sort_dir=sort_dir,
+            include_test_fixtures=include_test_fixtures,
+            intelligence_stage=intelligence_stage,
+            claim_risk_level=claim_risk_level,
+            copy_blocked=copy_blocked,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

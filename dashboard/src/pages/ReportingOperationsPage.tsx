@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Section } from "../components/ui";
 import { KpiCard, type KpiTone } from "../components/reporting/KpiCard";
 import { ExceptionTable } from "../components/reporting/ExceptionTable";
+import { IntelligenceStagePanel } from "../components/reporting/IntelligenceStagePanel";
 import {
 	ReportingFilterProvider,
 	useReportingFilters,
@@ -10,6 +11,7 @@ import {
 import {
 	useExceptions,
 	useExceptionPage,
+	type IntelligenceStage,
 	useFailedGenerations,
 	type ExceptionKind,
 } from "../api/reporting";
@@ -114,11 +116,35 @@ function OperationsInner() {
 	const [q, setQ] = useState("");
 	const [sortBy, setSortBy] = useState("updated_at");
 	const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+	const [stage, setStage] = useState<IntelligenceStage | "">("");
+	const [risk, setRisk] = useState("");
+	const [copyBlocked, setCopyBlocked] = useState("");
 
 	// Any change of cohort or ordering invalidates the current page number.
 	useEffect(() => {
 		setPage(1);
-	}, [selected, f.lifecycle_status, f.cluster, f.product_type_group, q, sortBy, sortDir]);
+	}, [
+		selected,
+		f.lifecycle_status,
+		f.cluster,
+		f.product_type_group,
+		q,
+		sortBy,
+		sortDir,
+		stage,
+		risk,
+		copyBlocked,
+	]);
+
+	// Intelligence-only filters must not silently narrow another bucket's cohort.
+	const isIntel = selected === "missing_intelligence";
+	useEffect(() => {
+		if (!isIntel) {
+			setStage("");
+			setRisk("");
+			setCopyBlocked("");
+		}
+	}, [isIntel]);
 
 	const table = useExceptionPage(selected, asFilters(f), {
 		limit: PAGE_SIZE,
@@ -126,6 +152,9 @@ function OperationsInner() {
 		q,
 		sort_by: sortBy,
 		sort_dir: sortDir,
+		intelligence_stage: isIntel ? stage : "",
+		claim_risk_level: isIntel ? risk : "",
+		copy_blocked: isIntel && copyBlocked ? copyBlocked === "yes" : undefined,
 	});
 	const failed = useFailedGenerations();
 	const selectedLabel =
@@ -178,6 +207,17 @@ function OperationsInner() {
 						: "Loading…"
 				}
 			>
+				{isIntel ? (
+					<IntelligenceStagePanel
+						breakdown={table.data?.stage_breakdown}
+						stage={stage}
+						risk={risk}
+						copyBlocked={copyBlocked}
+						onStage={setStage}
+						onRisk={setRisk}
+						onCopyBlocked={setCopyBlocked}
+					/>
+				) : null}
 				{table.error ? (
 					<p className="text-xs text-red-400">{table.error}</p>
 				) : (
