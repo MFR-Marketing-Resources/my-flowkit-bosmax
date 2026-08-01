@@ -381,13 +381,73 @@ def test_the_security_wall_is_detected_and_is_never_treated_as_evidence():
     assert not tiktok.looks_like_security_challenge(LISTING_HTML)
 
 
-@pytest.mark.asyncio
-async def test_recompute_against_the_security_wall_fails_closed_and_corrupts_nothing(
-        monkeypatch):
-    """Phase A fail-closed proof, against the ACTUAL blocker rather than a mock error.
+def _stub_wall(monkeypatch):
+    """Every direct fetch now hits TikTok's Security Check — the live 2026-08-01 state."""
+    monkeypatch.setattr(
+        tiktok, "extract_product",
+        lambda url, **kw: _REAL_EXTRACT(url, page_text=SECURITY_CHALLENGE_HTML, **kw))
 
-    Must be an explicit source-acquisition error — not an HTTP 500, not a duplicate
-    product, not a wiped draft.
+
+class _FakeExtensionBridge:
+    """The WebSocket bridge, without a browser. Records what the relay actually sent."""
+
+    def __init__(self, reply, *, connected=True):
+        self._reply = reply
+        self.connected = connected
+        self.sent: list[tuple[str, dict]] = []
+
+    async def _send(self, method, params, timeout=0):
+        self.sent.append((method, params))
+        return self._reply(params) if callable(self._reply) else self._reply
+
+
+def _install_bridge(monkeypatch, bridge):
+    from agent.services import flow_client as flow_client_module
+
+    monkeypatch.setattr(flow_client_module, "get_flow_client", lambda: bridge)
+    return bridge
+
+
+# What an authenticated tab actually yields: the SAME listing the anonymous fetcher is
+# walled away from.
+RELAYED_EVIDENCE = {
+    "canonical_url": "https://shop.tiktok.com/view/product/1729543210987654321",
+    "title": "Minyak Warisan Cap Burung 25ml",
+    "description": ("Minyak urut tradisional. Bahan: minyak kelapa, halia, serai. "
+                    "Amaran: Elak kawasan mata."),
+    "brand": "Cap Burung",
+    "price_text": "18.90",
+    "currency": "MYR",
+    "variant_labels": ["25ml"],
+    "images": ["https://p16.tiktokcdn.com/img/minyak.jpg"],
+    "page_text": ("Minyak Warisan Cap Burung 25ml Minyak urut tradisional. "
+                  "Bahan: minyak kelapa, halia, serai. Amaran: Elak kawasan mata."),
+    "evidence_methods": ["JSONLD"],
+}
+RELAY_URL = RELAYED_EVIDENCE["canonical_url"]
+
+
+def _relay_reply(*, ok=True, evidence=None, error=None):
+    def build(params):
+        return {"result": {
+            "ok": ok,
+            "error": error,
+            "evidence_request_id": params["evidence_request_id"],
+            "tab_id": 7,
+            "matched_tabs": 1,
+            "observed_url": RELAY_URL,
+            "evidence": evidence,
+        }}
+    return build
+
+
+@pytest.mark.asyncio
+async def test_the_wall_with_no_extension_fails_closed_and_corrupts_nothing(monkeypatch):
+    """Fail-closed proof against the ACTUAL blocker, with no browser available.
+
+    Must be an explicit, named acquisition failure — not an HTTP 500, not a duplicate
+    product, not a wiped draft. The relay is ATTEMPTED (that is the Phase B change), and
+    when there is no extension to attempt it through, that specific fact is what surfaces.
     """
     _stub_extraction(monkeypatch)   # first pass: real evidence, real draft
     product = await _product("Recompute Wall",
@@ -396,24 +456,210 @@ async def test_recompute_against_the_security_wall_fails_closed_and_corrupts_not
         good = await client.post(
             f"/api/product-intelligence/{product['id']}/recompute")
     assert good.status_code == 200
+    assert good.json()["acquisition_mode"] == "DIRECT_FETCH"
     draft_before = await _draft_row(product["id"])
     prov_before = await _provenance(product["id"])
     products_before = len(await crud.list_products(limit=5000, include_archived=True))
 
-    # now the wall goes up on the very next refresh
-    monkeypatch.setattr(
-        tiktok, "extract_product",
-        lambda url, **kw: _REAL_EXTRACT(url, page_text=SECURITY_CHALLENGE_HTML, **kw))
+    # now the wall goes up on the very next refresh, and no extension is connected
+    _stub_wall(monkeypatch)
+    _install_bridge(monkeypatch, _FakeExtensionBridge({}, connected=False))
     async with await _client() as client:
         blocked = await client.post(
             f"/api/product-intelligence/{product['id']}/recompute")
 
-    assert blocked.status_code == 502, "a bot wall must not surface as a 500"
-    assert tiktok.ERR_AUTHENTICATED_BROWSER_REQUIRED in blocked.json()["detail"]
+    # 409, not 502: the operator fixes this in their own browser. Calling it a server
+    # fault would leave them with no reason to believe a Retry could ever work.
+    assert blocked.status_code == 409, "a bot wall must not surface as a 500"
+    detail = blocked.json()["detail"]
+    assert detail["code"] == "TIKTOK_RELAY_EXTENSION_DISCONNECTED"
+    assert detail["operator_actionable"] is True
 
-    assert len(await crud.list_products(limit=5000, include_archived=True)) ==         products_before, "the failed refresh created a product"
+    assert len(await crud.list_products(limit=5000, include_archived=True)) == \
+        products_before, "the failed refresh created a product"
     draft_after = await _draft_row(product["id"])
     assert draft_after == draft_before, "the failed refresh mutated the draft"
     assert await _provenance(product["id"]) == prov_before, (
         "the failed refresh mutated provenance")
     assert await _draft_row(product["id"]) is not None, "the draft was destroyed"
+
+
+@pytest.mark.asyncio
+async def test_a_still_present_captcha_is_reported_and_never_solved(monkeypatch):
+    """The operator clears TikTok's challenge by hand. Nothing here works around it."""
+    _stub_wall(monkeypatch)
+    bridge = _install_bridge(monkeypatch, _FakeExtensionBridge(
+        _relay_reply(ok=False, error="TIKTOK_SECURITY_CHECK_PRESENT")))
+    product = await _product("Recompute Captcha", tiktok_product_url=RELAY_URL)
+
+    async with await _client() as client:
+        blocked = await client.post(
+            f"/api/product-intelligence/{product['id']}/recompute")
+
+    assert blocked.status_code == 409
+    detail = blocked.json()["detail"]
+    assert detail["code"] == "TIKTOK_RELAY_SECURITY_CHECK_PRESENT"
+    assert detail["product_url"] == RELAY_URL, (
+        "the operator is told to open a link the screen never shows them")
+    # ONE acquisition attempt: no retry loop that could read as challenge-grinding.
+    assert len(bridge.sent) == 1
+    # and absolutely nothing was written
+    assert await _draft_row(product["id"]) is None
+    assert await _provenance(product["id"]) == []
+
+
+@pytest.mark.asyncio
+async def test_no_open_product_tab_is_its_own_actionable_state(monkeypatch):
+    _stub_wall(monkeypatch)
+    _install_bridge(monkeypatch, _FakeExtensionBridge(
+        _relay_reply(ok=False, error="TIKTOK_NO_MATCHING_TAB")))
+    product = await _product("Recompute NoTab", tiktok_product_url=RELAY_URL)
+
+    async with await _client() as client:
+        blocked = await client.post(
+            f"/api/product-intelligence/{product['id']}/recompute")
+
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"]["code"] == "TIKTOK_RELAY_NO_MATCHING_TAB"
+    assert await _draft_row(product["id"]) is None, "a failed acquisition opened a draft"
+
+
+@pytest.mark.asyncio
+async def test_the_authenticated_tab_completes_the_lane_the_wall_was_blocking(monkeypatch):
+    """THE mission: walled server fetch -> authenticated tab -> review-required draft.
+
+    Proves the whole chain in one place — real evidence lands, provenance records that it
+    came from a browser read, DeepSeek output stays unratified, and nothing is approved.
+    """
+    _stub_extraction(monkeypatch)          # wires the provider stubs...
+    _stub_wall(monkeypatch)                # ...then the wall goes up on the direct lane
+    _install_bridge(monkeypatch, _FakeExtensionBridge(
+        _relay_reply(evidence=RELAYED_EVIDENCE)))
+    product = await _product("Recompute Relayed", tiktok_product_url=RELAY_URL)
+
+    async with await _client() as client:
+        response = await client.post(
+            f"/api/product-intelligence/{product['id']}/recompute")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["acquisition_mode"] == "AUTHENTICATED_BROWSER_RELAY"
+    assert body["relay"]["matched_tabs"] == 1
+    assert body["approved"] is False, "recompute approved something"
+
+    # The deterministic rules still hold on relayed evidence — same normalizer.
+    assert body["extracted_fields"]["size_or_volume"] == "25ml"
+    draft = await _draft_row(product["id"])
+    assert draft is not None, "the relayed evidence produced no draft"
+    assert "minyak kelapa" in (draft["ingredients_text"] or "").lower()
+    assert "mata" in (draft["warnings_text"] or "").lower()
+    assert draft["review_status"] != "APPROVED"
+
+    prov = {r["field_name"]: r for r in await _provenance(product["id"])}
+    assert "AUTHENTICATED_DOM" in prov["product_description"]["extraction_method"], (
+        "a browser read is indistinguishable from an anonymous fetch in the evidence table")
+    assert prov["ingredients_text"]["extraction_method"] == "TIKTOKSHOP_LABELLED_SECTION"
+    assert prov["product_description"]["verification_status"] == "PENDING_REVIEW"
+
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT COUNT(*) FROM product_intelligence_snapshot WHERE product_id=?",
+        (product["id"],))
+    assert (await cursor.fetchone())[0] == 0, "the relay produced an approved snapshot"
+    await cursor.close()
+
+
+@pytest.mark.asyncio
+async def test_retrying_the_relay_duplicates_no_draft_and_no_provenance(monkeypatch):
+    """Safe retry. The operator WILL press Retry more than once — that must be free."""
+    _stub_extraction(monkeypatch)
+    _stub_wall(monkeypatch)
+    _install_bridge(monkeypatch, _FakeExtensionBridge(
+        _relay_reply(evidence=RELAYED_EVIDENCE)))
+    product = await _product("Recompute Retry", tiktok_product_url=RELAY_URL)
+
+    async with await _client() as client:
+        first = await client.post(
+            f"/api/product-intelligence/{product['id']}/recompute")
+        after_first = await _provenance(product["id"])
+        second = await client.post(
+            f"/api/product-intelligence/{product['id']}/recompute")
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["draft_id"] == second.json()["draft_id"]
+
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT COUNT(*) FROM product_intelligence_review_draft WHERE product_id=? "
+        "AND review_status NOT IN ('APPROVED','REJECTED','SUPERSEDED')",
+        (product["id"],))
+    assert (await cursor.fetchone())[0] == 1, "Retry opened a second draft"
+    await cursor.close()
+    assert len(await _provenance(product["id"])) == len(after_first), (
+        "Retry duplicated provenance rows")
+
+
+@pytest.mark.asyncio
+async def test_a_plain_data_failure_never_demands_a_browser(monkeypatch):
+    """Only the auth wall routes to the relay.
+
+    A dead link is a defect in the source. Sending those through the browser too would turn
+    every data-quality problem into a demand that the operator go open a tab.
+    """
+    def boom(url, **kw):
+        raise tiktok.TikTokShopExtractionError(tiktok.ERR_FETCH_FAILED, "http_404")
+
+    monkeypatch.setattr(tiktok, "extract_product", boom)
+    bridge = _install_bridge(monkeypatch, _FakeExtensionBridge(
+        _relay_reply(evidence=RELAYED_EVIDENCE)))
+    product = await _product("Recompute DataFail", tiktok_product_url=RELAY_URL)
+
+    async with await _client() as client:
+        response = await client.post(
+            f"/api/product-intelligence/{product['id']}/recompute")
+
+    assert response.status_code == 502
+    assert tiktok.ERR_FETCH_FAILED in response.json()["detail"]
+    assert bridge.sent == [], "a dead link was escalated to the operator's browser"
+
+
+@pytest.mark.asyncio
+async def test_a_working_direct_fetch_never_touches_the_browser(monkeypatch):
+    """The relay is the exception path, not the default. It costs an operator; the plain
+    HTTPS GET costs nothing."""
+    _stub_extraction(monkeypatch)
+    bridge = _install_bridge(monkeypatch, _FakeExtensionBridge(
+        _relay_reply(evidence=RELAYED_EVIDENCE)))
+    product = await _product("Recompute DirectOnly",
+                             tiktok_product_url="https://shop.tiktok.com/view/product/d")
+
+    async with await _client() as client:
+        response = await client.post(
+            f"/api/product-intelligence/{product['id']}/recompute")
+
+    assert response.status_code == 200
+    assert response.json()["acquisition_mode"] == "DIRECT_FETCH"
+    assert bridge.sent == [], "a healthy direct fetch still went through the browser"
+
+
+@pytest.mark.asyncio
+async def test_a_link_the_relay_cannot_open_says_so_instead_of_promising_a_retry(
+        monkeypatch):
+    """The manifest grants exactly two hosts. Anything else must refuse honestly."""
+    _stub_wall(monkeypatch)
+    bridge = _install_bridge(monkeypatch, _FakeExtensionBridge(
+        _relay_reply(evidence=RELAYED_EVIDENCE)))
+    product = await _product(
+        "Recompute WrongHost",
+        tiktok_product_url="https://shop.tiktokglobalshop.com/view/product/5")
+
+    async with await _client() as client:
+        response = await client.post(
+            f"/api/product-intelligence/{product['id']}/recompute")
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert detail["code"] == "TIKTOK_RELAY_HOST_NOT_SUPPORTED"
+    # NOT actionable — no amount of opening tabs fixes a link on an unsupported host.
+    assert detail["operator_actionable"] is False
+    assert bridge.sent == []

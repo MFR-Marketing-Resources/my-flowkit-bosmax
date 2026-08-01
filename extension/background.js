@@ -1538,6 +1538,10 @@ const WS_METHOD_TIMEOUT_MS = {
 	FLOWUI_VERIFY_COMPOSER_ZERO: 45000,
 	FLOWUI_COMPOSER_REFERENCE_STATE: 30000,
 	FLOWUI_SUBMIT_COMPOSER_CREATE: 30000,
+	// Reading a rendered TikTok listing is a DOM walk, not a network round trip. Generous
+	// enough for a heavy product page, short enough that a wedged tab surfaces as a timeout
+	// the operator can act on instead of an apparently-hung Recompute.
+	TIKTOK_ACQUIRE_PRODUCT_EVIDENCE: 30000,
 };
 
 function buildFlowTabSnapshot(flowTab) {
@@ -4803,6 +4807,209 @@ async function handleBootstrapFlowProjectEditor(mode = "F2V") {
 	return await bootstrapFlowProjectEditorForB2A0(mode);
 }
 
+// ─── TikTok Shop authenticated evidence relay ────────────────────────────────
+// Reads product evidence out of a TikTok tab the OPERATOR has already authenticated,
+// because the server-side fetcher only ever receives TikTok's Security Check shell. This
+// lane never solves or bypasses that check: when the wall is up it says so and stops.
+//
+// It deliberately reuses the existing agent WebSocket transport (executeWsMethodAndReply /
+// replyToAgent) rather than opening a second bridge — a parallel channel would need its own
+// correlation, timeout and reconnect handling, all of which already exist here and are
+// proven.
+const TIKTOK_EVIDENCE_TAB_QUERY = [
+	"https://shop.tiktok.com/*",
+	"https://shop-my.tiktok.com/*",
+];
+const TIKTOK_EVIDENCE_ALLOWED_HOSTS = new Set([
+	"shop.tiktok.com",
+	"shop-my.tiktok.com",
+]);
+const TIKTOK_EVIDENCE_REPLAY_TTL_MS = 120000;
+// evidence_request_id -> { at, reply }. In-memory on purpose: an MV3 worker restart empties
+// it, which is safe because a replayed acquisition is a read-only re-read — the duplicate
+// suppression that actually protects the database (one OPEN draft, fill-empty-only) lives
+// in the backend where a restart cannot erase it.
+const tiktokEvidenceReplayCache = new Map();
+
+// Identity of a TikTok product URL: host + the product id when the path carries one.
+// Comparing whole hrefs would fail on tracking query strings that TikTok appends on every
+// in-app navigation, and comparing only the host would let ANY open TikTok tab answer for
+// a completely different product.
+function tiktokProductIdentity(rawUrl) {
+	let parsed;
+	try {
+		parsed = new URL(String(rawUrl || ""));
+	} catch (_) {
+		return null;
+	}
+	if (parsed.protocol !== "https:") return null;
+	if (!TIKTOK_EVIDENCE_ALLOWED_HOSTS.has(parsed.hostname)) return null;
+	const path = parsed.pathname.replace(/\/+$/, "");
+	const idMatch = path.match(/(\d{8,})/);
+	return {
+		host: parsed.hostname,
+		path,
+		product_id: idMatch ? idMatch[1] : null,
+	};
+}
+
+function tiktokIdentityMatches(wanted, candidate) {
+	if (!wanted || !candidate) return false;
+	if (wanted.host !== candidate.host) return false;
+	if (wanted.product_id && candidate.product_id) {
+		return wanted.product_id === candidate.product_id;
+	}
+	return wanted.path === candidate.path;
+}
+
+function readTikTokEvidenceReplay(requestId) {
+	const hit = tiktokEvidenceReplayCache.get(requestId);
+	if (!hit) return null;
+	if (Date.now() - hit.at > TIKTOK_EVIDENCE_REPLAY_TTL_MS) {
+		tiktokEvidenceReplayCache.delete(requestId);
+		return null;
+	}
+	return hit.reply;
+}
+
+function rememberTikTokEvidenceReply(requestId, reply) {
+	tiktokEvidenceReplayCache.set(requestId, { at: Date.now(), reply });
+	for (const [key, value] of tiktokEvidenceReplayCache) {
+		if (Date.now() - value.at > TIKTOK_EVIDENCE_REPLAY_TTL_MS) {
+			tiktokEvidenceReplayCache.delete(key);
+		}
+	}
+	return reply;
+}
+
+async function sendTikTokEvidenceMessage(tabId, evidenceRequestId) {
+	return await chrome.tabs.sendMessage(
+		tabId,
+		{ type: "TIKTOK_COLLECT_PRODUCT_EVIDENCE", evidence_request_id: evidenceRequestId },
+		{ frameId: 0 },
+	);
+}
+
+async function handleTikTokAcquireProductEvidence(params) {
+	const evidenceRequestId = String(params?.evidence_request_id || "");
+	const productUrl = String(params?.product_url || "");
+	if (!evidenceRequestId) {
+		return { ok: false, error: "TIKTOK_EVIDENCE_REQUEST_ID_MISSING" };
+	}
+
+	const replay = readTikTokEvidenceReplay(evidenceRequestId);
+	if (replay) return { ...replay, replayed: true };
+
+	const wanted = tiktokProductIdentity(productUrl);
+	if (!wanted) {
+		return rememberTikTokEvidenceReply(evidenceRequestId, {
+			ok: false,
+			error: "TIKTOK_PRODUCT_URL_INVALID",
+			evidence_request_id: evidenceRequestId,
+		});
+	}
+
+	let openTabs = [];
+	try {
+		openTabs = await chrome.tabs.query({ url: TIKTOK_EVIDENCE_TAB_QUERY });
+	} catch (error) {
+		return {
+			ok: false,
+			error: `TIKTOK_TAB_QUERY_FAILED:${String(error?.message || error).slice(0, 160)}`,
+			evidence_request_id: evidenceRequestId,
+		};
+	}
+
+	const matching = openTabs.filter((tab) =>
+		tiktokIdentityMatches(wanted, tiktokProductIdentity(tab.url || "")),
+	);
+	if (!matching.length) {
+		// NOT cached: the operator's fix for this is to open the tab and press Retry, and a
+		// cached "no tab" would make that Retry answer from the past.
+		return {
+			ok: false,
+			error: "TIKTOK_NO_MATCHING_TAB",
+			evidence_request_id: evidenceRequestId,
+			open_tiktok_tabs: openTabs.length,
+			wanted_product_id: wanted.product_id,
+		};
+	}
+
+	// Several tabs on the SAME product is legitimate (the operator reopened it). Pick
+	// deterministically — active first, then the highest tab id — so two consecutive
+	// acquisitions cannot silently read two different tabs.
+	const tab =
+		matching.find((candidate) => candidate.active) ||
+		matching.slice().sort((a, b) => (b.id || 0) - (a.id || 0))[0];
+
+	let reply;
+	try {
+		reply = await sendTikTokEvidenceMessage(tab.id, evidenceRequestId);
+	} catch (_error) {
+		// A tab loaded BEFORE this extension version was installed has no listener yet.
+		// Inject once and retry; a still-failing send is reported, never guessed at.
+		try {
+			await chrome.scripting.executeScript({
+				target: { tabId: tab.id, allFrames: false },
+				files: ["content-tiktok-evidence.js"],
+			});
+			reply = await sendTikTokEvidenceMessage(tab.id, evidenceRequestId);
+		} catch (retryError) {
+			return {
+				ok: false,
+				error: `TIKTOK_CONTENT_SCRIPT_UNREACHABLE:${String(
+					retryError?.message || retryError,
+				).slice(0, 160)}`,
+				evidence_request_id: evidenceRequestId,
+				tab_id: tab.id,
+			};
+		}
+	}
+
+	if (!reply || typeof reply !== "object") {
+		return rememberTikTokEvidenceReply(evidenceRequestId, {
+			ok: false,
+			error: "TIKTOK_EVIDENCE_MALFORMED_RESPONSE",
+			evidence_request_id: evidenceRequestId,
+			tab_id: tab.id,
+		});
+	}
+	// A reply that does not echo our id belongs to a different request. Accepting it would
+	// attach one product's evidence to another product's draft.
+	if (String(reply.evidence_request_id || "") !== evidenceRequestId) {
+		return {
+			ok: false,
+			error: "TIKTOK_EVIDENCE_CORRELATION_MISMATCH",
+			evidence_request_id: evidenceRequestId,
+			tab_id: tab.id,
+		};
+	}
+	// The SPA can navigate between tab query and reply. Re-check what the page says it was
+	// showing at collection time, not what the tab list said a moment earlier.
+	if (
+		reply.observed_url &&
+		!tiktokIdentityMatches(wanted, tiktokProductIdentity(reply.observed_url))
+	) {
+		return {
+			ok: false,
+			error: "TIKTOK_TAB_NAVIGATED_AWAY",
+			evidence_request_id: evidenceRequestId,
+			tab_id: tab.id,
+			observed_url: reply.observed_url,
+		};
+	}
+
+	return rememberTikTokEvidenceReply(evidenceRequestId, {
+		ok: reply.ok === true,
+		error: reply.error || null,
+		evidence_request_id: evidenceRequestId,
+		tab_id: tab.id,
+		matched_tabs: matching.length,
+		observed_url: reply.observed_url || null,
+		evidence: reply.evidence || null,
+	});
+}
+
 async function handleReloadExtension() {
 	setTimeout(() => {
 		try {
@@ -5132,6 +5339,11 @@ function connectToAgent() {
 			} else if (msg.method === "FLOW_PAGE_STATE_DIAGNOSTIC") {
 				const result = await executeWsMethodAndReply(msg, () =>
 					handleFlowPageStateDiagnostic(msg.params?.mode),
+				);
+				replyToAgent(msg, result);
+			} else if (msg.method === "TIKTOK_ACQUIRE_PRODUCT_EVIDENCE") {
+				const result = await executeWsMethodAndReply(msg, () =>
+					handleTikTokAcquireProductEvidence(msg.params || {}),
 				);
 				replyToAgent(msg, result);
 			} else if (msg.method === "RELOAD_EXTENSION") {
