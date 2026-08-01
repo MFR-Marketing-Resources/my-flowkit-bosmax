@@ -38,6 +38,20 @@ async def coverage_product_intelligence(
     return await svc.product_intelligence_coverage(lifecycle_status, cluster, product_type_group)
 
 
+@router.get("/pi-quality")
+async def pi_quality(
+    lifecycle_status: str = Query("ALL", description="ALL keeps archived debt visible"),
+    cluster: Optional[str] = Query(None),
+    product_type_group: Optional[str] = Query(None),
+):
+    """INTEL QUALITY DEBT authority (Mission-08D): the four mutually-exclusive PI
+    classes (FULLY_COMPLETE / APPROVED_WITH_GOVERNED_ABSENCE /
+    LEGACY_APPROVED_INCOMPLETE / MISSING_APPROVED_INTELLIGENCE), fixture-quarantined,
+    each split ACTIVE vs ARCHIVED. Drill-down = /exceptions with the returned kinds."""
+    return await svc.product_intelligence_quality_summary(
+        lifecycle_status, cluster, product_type_group)
+
+
 @router.get("/coverage/prompt-readiness")
 async def coverage_prompt_readiness(
     lifecycle_status: str = Query("ACTIVE"),

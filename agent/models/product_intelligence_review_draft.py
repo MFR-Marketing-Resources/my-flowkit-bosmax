@@ -62,6 +62,16 @@ ProductIntelligenceClaimGate = Literal[
 ]
 ProductIntelligenceClaimRiskLevel = Literal["LOW", "MEDIUM", "HIGH"]
 
+# Mission-08D. The three governed answers to "this required field is empty and the
+# source does not supply it". Stored as a field-scoped provenance row on the CURRENT
+# draft — never as a placeholder string in the knowledge value column, which would be
+# indistinguishable from real knowledge everywhere downstream.
+FieldAbsenceDisposition = Literal[
+    "NOT_STATED_IN_SOURCE",     # source omits the fact; may satisfy the field blocker
+    "NOT_APPLICABLE",           # fact does not exist for this product type
+    "REQUIRES_EXTERNAL_EVIDENCE",  # documented as unresolved; remains blocking
+]
+
 
 class ProductIntelligenceReviewFieldProvenanceInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -198,6 +208,17 @@ class ProductIntelligenceReviewDraftValidationResponse(BaseModel):
     allowed_claims_json: list[str] = Field(default_factory=list)
     blocked_claims_json: list[str] = Field(default_factory=list)
     approval_blockers: list[str] = Field(default_factory=list)
+    # Mission-08D governed absence. A required field the source does not state can be
+    # RESOLVED (reviewer-attributed, note-backed) instead of deadlocking approval — and
+    # that resolution is reported here as its own category, never folded into "present".
+    # governed_absent_fields: field -> disposition currently satisfying its blocker.
+    governed_absent_fields: dict[str, FieldAbsenceDisposition] = Field(default_factory=dict)
+    # Fields whose only disposition is REQUIRES_EXTERNAL_EVIDENCE — still BLOCKING.
+    unresolved_external_fields: list[str] = Field(default_factory=list)
+    # Which of the still-missing fields MAY be resolved with a disposition, and which
+    # dispositions the category matrix permits for each (the UI disables the rest with
+    # this server-derived truth instead of guessing).
+    disposition_options: dict[str, list[FieldAbsenceDisposition]] = Field(default_factory=dict)
 
 
 class ProductIntelligenceReviewDraftApproveRequest(BaseModel):
@@ -226,3 +247,15 @@ class ProductIntelligenceReviewDraftRejectRequest(BaseModel):
 
     rejected_by: str | None = None
     reviewer_note: str | None = None
+
+
+
+
+class ProductIntelligenceFieldDispositionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field_name: str
+    disposition: FieldAbsenceDisposition
+    # Accountability is the point: no anonymous dispositions and no empty rationales.
+    reviewed_by: str
+    reviewer_note: str

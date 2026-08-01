@@ -378,11 +378,43 @@ export async function validateProductIntelligenceReviewDraft(
 	);
 }
 
+/**
+ * 08D: record one governed absence disposition on the OPEN draft. The server is the
+ * authority on which dispositions are legal per field/category; the response is the
+ * same validation payload /validate returns.
+ */
+export async function setProductIntelligenceFieldDisposition(
+	draftId: string,
+	payload: {
+		field_name: string;
+		disposition:
+			| "NOT_STATED_IN_SOURCE"
+			| "NOT_APPLICABLE"
+			| "REQUIRES_EXTERNAL_EVIDENCE";
+		reviewed_by: string;
+		reviewer_note: string;
+	},
+): Promise<ProductIntelligenceReviewDraftValidationResponse> {
+	return fetchAPI<ProductIntelligenceReviewDraftValidationResponse>(
+		`/api/product-intelligence/review-drafts/${encodeURIComponent(draftId)}/field-dispositions`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload),
+		},
+	);
+}
+
 export async function approveProductIntelligenceReviewDraft(
 	draftId: string,
 	payload: {
 		approved_by?: string | null;
 		approval_note?: string | null;
+		/**
+		 * 08D: records that the approver READ the review-required claim set. Clears
+		 * CLAIM_REVIEW_REQUIRED only — CLAIM_BLOCKED is absolute and has no override.
+		 */
+		claim_review_acknowledged?: boolean;
 	},
 ): Promise<ProductIntelligenceSnapshot> {
 	return fetchAPI<ProductIntelligenceSnapshot>(

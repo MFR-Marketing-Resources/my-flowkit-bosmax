@@ -112,10 +112,13 @@ export default function CopyComponentsPanel({
 				);
 			} else {
 				setPainsText("");
+				// 08D: nothing is auto-approved anymore — say so, or the operator will
+				// wonder why the approved snapshot still shows the old angle set.
 				setSuccess(
-					`${res.added} angle(s) added → ${res.angle_count} total${
+					`${res.added} angle(s) staged → ${res.angle_count} total${
 						res.capped ? ` (max ${MAX_ANGLES})` : ""
-					}. Free. Next: Author components for the new angles.`,
+					}. Free. REVIEW REQUIRED: approve the updated draft in Products → ` +
+						"Intelligence to publish the new angles.",
 				);
 			}
 			await load();

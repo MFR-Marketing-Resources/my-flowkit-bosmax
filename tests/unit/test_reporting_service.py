@@ -655,3 +655,135 @@ async def test_copy_blocked_filter_tracks_the_snapshot_relation():
     unblocked = await svc.list_exceptions("missing_intelligence", lifecycle_status="ALL",
                                           copy_blocked=False)
     assert unblocked["total"] == 0
+
+
+import pytest  # noqa: E402
+from agent.db import crud  # noqa: E402
+
+# ── Mission-08D: PI quality classification ───────────────────────────────────
+from agent.models.product_intelligence_review_draft import (  # noqa: E402
+    ProductIntelligenceFieldDispositionRequest as _DispReq,
+    ProductIntelligenceReviewDraftApproveRequest as _ApproveReq,
+    ProductIntelligenceReviewDraftCreateRequest as _CreateReq,
+)
+from agent.services import product_intelligence_review_draft_service as _draft_svc  # noqa: E402
+
+
+def _pi_request(**kw) -> _CreateReq:
+    base = {
+        "product_description": "Beg hadiah transparent 24cm.",
+        "benefits_json": ["nampak kemas"],
+        "usp_json": ["tingkap depan jernih"],
+        "usage_text": "Isi hadiah dan ikat reben.",
+        "ingredients_text": "PVC + fabrik",
+        "warnings_text": "Jauhkan dari api.",
+        "target_customer_text": "Ibu bapa dan guru.",
+        "allowed_claims_json": ["reka bentuk transparent"],
+        "source_urls_json": {"source_url": "https://example.com/p"},
+        "image_evidence_json": {"image_url": "https://example.com/i.jpg"},
+        "buyer_persona_snapshot_json": {"audience": "ibu bapa", "pains": ["masa suntuk"]},
+        "copy_strategy_summary_json": {"angles": ["praktikal"]},
+        "created_by": "op",
+    }
+    base.update(kw)
+    return _CreateReq(**base)
+
+
+async def _mk(name, category="Stationery & Gifts"):
+    return await crud.create_product(
+        raw_product_title=name, source="MANUAL", product_display_name=name,
+        category=category)
+
+
+@pytest.mark.asyncio
+async def test_pi_quality_summary_partitions_exactly_and_classifies_all_four_ways():
+    # FULLY_COMPLETE: everything present, straight approval
+    full = await _mk("PIQ Full")
+    d1 = await _draft_svc.create_review_draft(full["id"], _pi_request())
+    await _draft_svc.approve_review_draft(d1.draft_id, _ApproveReq(approved_by="op"))
+
+    # APPROVED_WITH_GOVERNED_ABSENCE: knowledge gaps resolved by dispositions
+    governed = await _mk("PIQ Governed")
+    d2 = await _draft_svc.create_review_draft(
+        governed["id"],
+        _pi_request(usage_text="", ingredients_text="", warnings_text=""))
+    for field in ("usage_text", "ingredients_text", "warnings_text"):
+        await _draft_svc.set_field_disposition(
+            d2.draft_id,
+            _DispReq(field_name=field, disposition="NOT_STATED_IN_SOURCE",
+                     reviewed_by="owner", reviewer_note="Sumber tidak menyatakannya."))
+    await _draft_svc.approve_review_draft(d2.draft_id, _ApproveReq(approved_by="owner"))
+
+    # A newer OPEN draft is mutable review state and must never leak into the
+    # immutable approved-snapshot drill-down.
+    mutable = await _draft_svc.create_review_draft(
+        governed["id"],
+        _pi_request(usage_text="", ingredients_text="", warnings_text=""),
+    )
+    await _draft_svc.set_field_disposition(
+        mutable.draft_id,
+        _DispReq(
+            field_name="ingredients_text",
+            disposition="REQUIRES_EXTERNAL_EVIDENCE",
+            reviewed_by="later-reviewer",
+            reviewer_note="Open-draft evidence is still pending.",
+        ),
+    )
+
+
+    # LEGACY_APPROVED_INCOMPLETE: the historical copy-flag shape — incomplete, NO
+    # dispositions, frozen MISSING_REQUIRED_FIELDS
+    legacy = await _mk("PIQ Legacy")
+    d3 = await _draft_svc.create_review_draft(
+        legacy["id"],
+        _pi_request(usage_text="", ingredients_text="", warnings_text=""))
+    await _draft_svc.approve_review_draft(
+        d3.draft_id,
+        _ApproveReq(approved_by="op", allow_incomplete_product_knowledge=True))
+
+    # MISSING_APPROVED_INTELLIGENCE: a product with no snapshot at all
+    await _mk("PIQ Missing")
+    archived_missing = await _mk("PIQ Archived Missing")
+    await crud.update_product(
+        archived_missing["id"], lifecycle_status="ARCHIVED")
+
+    summary = await svc.product_intelligence_quality_summary()
+    classes = summary["classes"]
+    assert sum(c["total"] for c in classes.values()) == summary["total_real_products"]
+    assert classes["FULLY_COMPLETE"]["total"] >= 1
+    assert classes["APPROVED_WITH_GOVERNED_ABSENCE"]["total"] >= 1
+    assert classes["LEGACY_APPROVED_INCOMPLETE"]["total"] >= 1
+    assert classes["MISSING_APPROVED_INTELLIGENCE"]["total"] >= 1
+    assert classes["MISSING_APPROVED_INTELLIGENCE"]["archived"] >= 1
+    assert (
+        classes["MISSING_APPROVED_INTELLIGENCE"]["total"]
+        == classes["MISSING_APPROVED_INTELLIGENCE"]["active"]
+        + classes["MISSING_APPROVED_INTELLIGENCE"]["archived"]
+    )
+
+    # The drill-down agrees with the headline: governed kind returns the governed
+    # product, with its dispositions and per-row class attached.
+    listing = await svc.list_exceptions("pi_governed_absence", lifecycle_status="ALL")
+    ids = {item["product_id"] for item in listing["items"]}
+    assert governed["id"] in ids
+    assert listing["total"] == classes["APPROVED_WITH_GOVERNED_ABSENCE"]["total"]
+    row = next(item for item in listing["items"] if item["product_id"] == governed["id"])
+    assert row["pi_quality"] == "APPROVED_WITH_GOVERNED_ABSENCE"
+    fields = {d["field_name"] for d in row["governed_dispositions"]}
+    assert fields >= {"usage_text", "ingredients_text", "warnings_text"}
+    assert all(d["reviewer_note"] for d in row["governed_dispositions"])
+
+    assert {d["disposition"] for d in row["governed_dispositions"]} == {
+        "NOT_STATED_IN_SOURCE"}
+    assert {d["reviewed_by"] for d in row["governed_dispositions"]} == {"owner"}
+
+
+    # legacy is NEVER relabelled governed
+    legacy_listing = await svc.list_exceptions("pi_legacy_incomplete", lifecycle_status="ALL")
+    legacy_ids = {item["product_id"] for item in legacy_listing["items"]}
+    assert legacy["id"] in legacy_ids
+    assert governed["id"] not in legacy_ids
+    legacy_row = next(item for item in legacy_listing["items"]
+                      if item["product_id"] == legacy["id"])
+    assert legacy_row["pi_quality"] == "LEGACY_APPROVED_INCOMPLETE"
+    assert legacy_row["governed_dispositions"] == []

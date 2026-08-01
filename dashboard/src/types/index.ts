@@ -1625,6 +1625,11 @@ export interface ProductIntelligenceReviewDraftListResponse {
 	items: ProductIntelligenceReviewDraft[];
 }
 
+export type FieldAbsenceDisposition =
+	| "NOT_STATED_IN_SOURCE"
+	| "NOT_APPLICABLE"
+	| "REQUIRES_EXTERNAL_EVIDENCE";
+
 export interface ProductIntelligenceReviewDraftValidationResponse {
 	draft: ProductIntelligenceReviewDraft;
 	missing_required_fields: string[];
@@ -1637,6 +1642,12 @@ export interface ProductIntelligenceReviewDraftValidationResponse {
 	allowed_claims_json: string[];
 	blocked_claims_json: string[];
 	approval_blockers: string[];
+	/** 08D: missing fields currently satisfied by a governed disposition. */
+	governed_absent_fields?: Record<string, FieldAbsenceDisposition>;
+	/** 08D: fields whose only disposition is REQUIRES_EXTERNAL_EVIDENCE — still blocking. */
+	unresolved_external_fields?: string[];
+	/** 08D: server-derived legal dispositions per still-missing eligible field. */
+	disposition_options?: Record<string, FieldAbsenceDisposition[]>;
 }
 
 export interface ProductIntelligenceReviewDraftMutationRequest {

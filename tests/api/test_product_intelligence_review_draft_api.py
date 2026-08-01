@@ -208,3 +208,95 @@ def test_review_draft_reject_preserves_note_without_snapshot():
     )
     assert latest_snapshot_response.status_code == 200
     assert latest_snapshot_response.json()["latest_snapshot"] is None
+
+
+# ── Mission-08D: field-disposition endpoint contract ─────────────────────────
+def _gap_payload():
+    payload = _safe_payload()
+    payload.update({"usage_text": "", "ingredients_text": "", "warnings_text": ""})
+    return payload
+
+
+def _mk_product_and_draft(client, name, category="Automotive"):
+    product = asyncio.run(crud.create_product(
+        raw_product_title=name, source="MANUAL", product_display_name=name,
+        category=category))
+    created = client.post(
+        f"/api/products/{product['id']}/intelligence/review-drafts",
+        json=_gap_payload())
+    assert created.status_code == 200, created.text
+    return product, created.json()["draft_id"]
+
+
+def test_field_disposition_endpoint_upserts_and_returns_validation():
+    client = _client()
+    product, draft_id = _mk_product_and_draft(client, "API Disposition Happy")
+    for field in ("usage_text", "ingredients_text", "warnings_text"):
+        response = client.post(
+            f"/api/product-intelligence/review-drafts/{draft_id}/field-dispositions",
+            json={"field_name": field, "disposition": "NOT_STATED_IN_SOURCE",
+                  "reviewed_by": "owner",
+                  "reviewer_note": "Halaman sumber tidak menyatakan fakta ini."})
+        assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["readiness_status"] == "READY_WITH_GOVERNED_ABSENCE"
+    assert set(body["governed_absent_fields"]) == {
+        "usage_text", "ingredients_text", "warnings_text"}
+    # retry is idempotent at the API layer too
+    retry = client.post(
+        f"/api/product-intelligence/review-drafts/{draft_id}/field-dispositions",
+        json={"field_name": "usage_text", "disposition": "NOT_STATED_IN_SOURCE",
+              "reviewed_by": "owner", "reviewer_note": "Ulangan yang sama."})
+    assert retry.status_code == 200
+    draft = client.get(
+        f"/api/product-intelligence/review-drafts/{draft_id}").json()
+    rows = [p for p in draft["provenance_items"]
+            if p["evidence_kind"] == "FIELD_ABSENCE_DISPOSITION"
+            and p["field_name"] == "usage_text"]
+    assert len(rows) == 1
+
+
+def test_field_disposition_endpoint_maps_refusals_to_statuses():
+    client = _client()
+    _product, draft_id = _mk_product_and_draft(client, "API Disposition Refusals")
+    # 422: NA forbidden for a strict (Automotive) category
+    na = client.post(
+        f"/api/product-intelligence/review-drafts/{draft_id}/field-dispositions",
+        json={"field_name": "ingredients_text", "disposition": "NOT_APPLICABLE",
+              "reviewed_by": "owner", "reviewer_note": "Cubaan tidak sah."})
+    assert na.status_code == 422
+    assert "NOT_APPLICABLE_FORBIDDEN_FOR_CATEGORY" in na.json()["detail"]
+    # 422: ineligible field
+    claims = client.post(
+        f"/api/product-intelligence/review-drafts/{draft_id}/field-dispositions",
+        json={"field_name": "allowed_claims_json",
+              "disposition": "NOT_STATED_IN_SOURCE",
+              "reviewed_by": "owner", "reviewer_note": "Tidak boleh."})
+    assert claims.status_code == 422
+    # 422: empty note
+    note = client.post(
+        f"/api/product-intelligence/review-drafts/{draft_id}/field-dispositions",
+        json={"field_name": "usage_text", "disposition": "NOT_STATED_IN_SOURCE",
+              "reviewed_by": "owner", "reviewer_note": " "})
+    assert note.status_code == 422
+
+    # 422: anonymous dispositions are forbidden
+    reviewer = client.post(
+        f"/api/product-intelligence/review-drafts/{draft_id}/field-dispositions",
+        json={"field_name": "usage_text", "disposition": "NOT_STATED_IN_SOURCE",
+              "reviewed_by": "   ", "reviewer_note": "Nota sah di sini."})
+    assert reviewer.status_code == 422
+    assert "REVIEWER_REQUIRED" in reviewer.json()["detail"]
+
+    # 404: unknown draft
+    missing = client.post(
+        "/api/product-intelligence/review-drafts/nope/field-dispositions",
+        json={"field_name": "usage_text", "disposition": "NOT_STATED_IN_SOURCE",
+              "reviewed_by": "owner", "reviewer_note": "Nota sah di sini."})
+    assert missing.status_code == 404
+    # invalid disposition literal is rejected by the model itself
+    literal = client.post(
+        f"/api/product-intelligence/review-drafts/{draft_id}/field-dispositions",
+        json={"field_name": "usage_text", "disposition": "SKIP_IT",
+              "reviewed_by": "owner", "reviewer_note": "Nota sah di sini."})
+    assert literal.status_code == 422

@@ -106,7 +106,10 @@ describe("CopyComponentsPanel", () => {
 
 	it("add-angle is free: sends the typed use-cases and shows the new count", async () => {
 		primeLoad();
-		mockedAddAngles.mockResolvedValue({ ok: true, angle_count: 4, added: 2 });
+		mockedAddAngles.mockResolvedValue({
+			ok: true, angle_count: 4, added: 2,
+			approved: false, review_required: true, draft_id: "d1",
+		});
 		render(<CopyComponentsPanel productId="p1" onComposed={vi.fn()} />);
 		const box = await screen.findByTestId("cc-pains");
 		fireEvent.change(box, { target: { value: "masuk angin\nsakit belakang" } });
@@ -117,7 +120,10 @@ describe("CopyComponentsPanel", () => {
 				pains: ["masuk angin", "sakit belakang"],
 			}),
 		);
-		expect(await screen.findByTestId("cc-success")).toHaveTextContent(/2 angle\(s\) added/i);
+		// 08D: angles are STAGED review-required — never silently approved.
+		const success = await screen.findByTestId("cc-success");
+		expect(success).toHaveTextContent(/2 angle\(s\) staged/i);
+		expect(success).toHaveTextContent(/REVIEW REQUIRED/i);
 	});
 
 	it("add-angle surfaces a CLAIM_BLOCKED refusal without throwing", async () => {

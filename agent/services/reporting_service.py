@@ -39,6 +39,50 @@ _DISPLAY_NAME = (
 
 # Exception kind -> product-scoped WHERE predicate. `failed_generation` is
 # request-telemetry scoped and handled separately in list_exceptions().
+# ── Mission-08D: Product Intelligence QUALITY classification ─────────────────
+# "Has a snapshot" stopped being the truth the day 318 approvals froze
+# MISSING_REQUIRED_FIELDS inside them. Classification authority is the LATEST APPROVED
+# snapshot's own frozen readiness/completeness (deterministic: max version among
+# APPROVED — never the any-status latest, whose updated_at ordering can surface a
+# SUPERSEDED row):
+#   FULLY_COMPLETE                 completeness 1.0, not governed-absence
+#   APPROVED_WITH_GOVERNED_ABSENCE frozen READY_WITH_GOVERNED_ABSENCE (per-field
+#                                  reviewer dispositions carried in its provenance)
+#   LEGACY_APPROVED_INCOMPLETE     approved incomplete, pre-08D, NO governed
+#                                  dispositions — never relabelled as governed
+#   MISSING_APPROVED_INTELLIGENCE  no approved snapshot at all
+_LATEST_APPROVED_READINESS = (
+    "(SELECT s2.readiness_status FROM product_intelligence_snapshot s2 "
+    "WHERE s2.product_id = p.id AND s2.status = 'APPROVED' "
+    "ORDER BY s2.version DESC LIMIT 1)"
+)
+_LATEST_APPROVED_COMPLETENESS = (
+    "(SELECT s2.completeness_score FROM product_intelligence_snapshot s2 "
+    "WHERE s2.product_id = p.id AND s2.status = 'APPROVED' "
+    "ORDER BY s2.version DESC LIMIT 1)"
+)
+_HAS_APPROVED_SNAPSHOT = (
+    "EXISTS (SELECT 1 FROM product_intelligence_snapshot s2 "
+    "WHERE s2.product_id = p.id AND s2.status = 'APPROVED')"
+)
+PI_QUALITY_PREDICATES: dict[str, str] = {
+    "MISSING_APPROVED_INTELLIGENCE": f"NOT {_HAS_APPROVED_SNAPSHOT}",
+    "APPROVED_WITH_GOVERNED_ABSENCE": (
+        f"({_HAS_APPROVED_SNAPSHOT} "
+        f"AND {_LATEST_APPROVED_READINESS} = 'READY_WITH_GOVERNED_ABSENCE')"
+    ),
+    "FULLY_COMPLETE": (
+        f"({_HAS_APPROVED_SNAPSHOT} "
+        f"AND COALESCE({_LATEST_APPROVED_READINESS}, '') <> 'READY_WITH_GOVERNED_ABSENCE' "
+        f"AND COALESCE({_LATEST_APPROVED_COMPLETENESS}, 0) >= 1.0)"
+    ),
+    "LEGACY_APPROVED_INCOMPLETE": (
+        f"({_HAS_APPROVED_SNAPSHOT} "
+        f"AND COALESCE({_LATEST_APPROVED_READINESS}, '') <> 'READY_WITH_GOVERNED_ABSENCE' "
+        f"AND COALESCE({_LATEST_APPROVED_COMPLETENESS}, 0) < 1.0)"
+    ),
+}
+
 _EXCEPTION_PREDICATES: dict[str, str] = {
     "missing_cluster": "(t.cluster IS NULL OR t.cluster = 'generic_unclassified')",
     "missing_product_type": "(t.product_type_group IS NULL OR t.product_type_group = 'unknown_product_type')",
@@ -51,6 +95,12 @@ _EXCEPTION_PREDICATES: dict[str, str] = {
     # because the authoritative rule also needs the fingerprint-stale id set, which is
     # computed from live data rather than stored columns.
     "scene_strategy_gaps": "1=0",
+    # 08D quality drill-downs — same pagination/search/sort/fixture machinery as every
+    # other kind, so headline totals and pager totals reconcile by construction.
+    "pi_fully_complete": PI_QUALITY_PREDICATES["FULLY_COMPLETE"],
+    "pi_governed_absence": PI_QUALITY_PREDICATES["APPROVED_WITH_GOVERNED_ABSENCE"],
+    "pi_legacy_incomplete": PI_QUALITY_PREDICATES["LEGACY_APPROVED_INCOMPLETE"],
+    "pi_missing_approved": PI_QUALITY_PREDICATES["MISSING_APPROVED_INTELLIGENCE"],
 }
 EXCEPTION_KINDS: tuple[str, ...] = tuple(_EXCEPTION_PREDICATES.keys()) + ("failed_generation",)
 
@@ -237,6 +287,58 @@ async def product_intelligence_coverage(
         "with_snapshot": with_snapshot,
         "missing_snapshot": total - with_snapshot,
         "coverage_pct": round(100.0 * with_snapshot / total, 1) if total else 0.0,
+    }
+
+
+async def product_intelligence_quality_summary(
+    lifecycle_status: str = "ALL",
+    cluster: Optional[str] = None,
+    product_type_group: Optional[str] = None,
+) -> dict:
+    """The INTEL QUALITY DEBT authority (Mission-08D).
+
+    Counts are DISTINCT-product, fixture-quarantined by default, and each class is also
+    split ACTIVE vs ARCHIVED so archived debt stays visible without polluting the live
+    number. The four classes are mutually exclusive and exhaustive by construction, so
+    they must sum to the real-product total — asserted here, because a classification
+    that quietly drops or double-counts a product is exactly the kind of lie this card
+    exists to end.
+    """
+    db = await get_db()
+    where, params = _product_filters(lifecycle_status, cluster, product_type_group)
+    real = f"{where} AND NOT {_TEST_FIXTURE_PREDICATE}"
+
+    total_real = await _scalar(db, f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE 1=1{real}", params)
+    fixtures = await _scalar(
+        db, f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE 1=1{where} AND {_TEST_FIXTURE_PREDICATE}",
+        params)
+
+    classes: dict[str, dict] = {}
+    total_check = 0
+    for name, predicate in PI_QUALITY_PREDICATES.items():
+        count = await _scalar(
+            db, f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {predicate}{real}", params)
+        active = await _scalar(
+            db, f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {predicate}{real} "
+                "AND COALESCE(p.lifecycle_status,'ACTIVE') = 'ACTIVE'", params)
+        classes[name] = {"total": count, "active": active, "archived": count - active}
+        total_check += count
+    if total_check != total_real:
+        raise RuntimeError(
+            f"PI_QUALITY_CLASSES_NOT_PARTITION: {total_check} != {total_real}")
+
+    return {
+        "scope": _scope(lifecycle_status, cluster, product_type_group),
+        "total_real_products": total_real,
+        "test_fixtures_excluded": fixtures,
+        "classes": classes,
+        # drill-down kind per class, so the FE never invents its own mapping
+        "drill_down_kinds": {
+            "FULLY_COMPLETE": "pi_fully_complete",
+            "APPROVED_WITH_GOVERNED_ABSENCE": "pi_governed_absence",
+            "LEGACY_APPROVED_INCOMPLETE": "pi_legacy_incomplete",
+            "MISSING_APPROVED_INTELLIGENCE": "pi_missing_approved",
+        },
     }
 
 
@@ -428,6 +530,53 @@ async def list_exceptions(
         item.update(evaluate_intelligence_stage(
             item if item.get("draft_id") else None,
             has_snapshot=bool(item.get("snapshot_id"))))
+
+    # 08D quality rows: per-row class + the governed dispositions behind it, batched in
+    # ONE query for the page so the drill-down stays server-computed end to end.
+    if kind.startswith("pi_") and items:
+        page_ids = [str(item["product_id"]) for item in items]
+        marks = ",".join("?" for _ in page_ids)
+        cur = await db.execute(
+            f"SELECT p.id AS product_id, "
+            f"{_LATEST_APPROVED_READINESS} AS latest_readiness, "
+            f"{_LATEST_APPROVED_COMPLETENESS} AS latest_completeness, "
+            f"{_HAS_APPROVED_SNAPSHOT} AS has_approved "
+            f"FROM product p WHERE p.id IN ({marks})",
+            page_ids)
+        quality_rows = {str(r["product_id"]): dict(r) for r in await cur.fetchall()}
+        await cur.close()
+        cur = await db.execute(
+            "SELECT fp.product_id, fp.field_name, fp.verification_status, "
+            "fp.reviewer_decision, fp.reviewer_note, fp.updated_at "
+            "FROM product_intelligence_field_provenance fp "
+            f"WHERE fp.evidence_kind = 'FIELD_ABSENCE_DISPOSITION' "
+            f"AND fp.product_id IN ({marks}) "
+            "AND fp.snapshot_id = ("
+            " SELECT s2.snapshot_id FROM product_intelligence_snapshot s2"
+            " WHERE s2.product_id = fp.product_id AND s2.status = 'APPROVED'"
+            " ORDER BY s2.version DESC LIMIT 1"
+            ") ORDER BY fp.updated_at",
+            page_ids)
+        dispositions: dict[str, list[dict]] = {}
+        for r in await cur.fetchall():
+            dispositions.setdefault(str(r["product_id"]), []).append({
+                "field_name": r["field_name"],
+                "disposition": r["verification_status"],
+                "reviewed_by": r["reviewer_decision"],
+                "reviewer_note": r["reviewer_note"],
+                "reviewed_at": r["updated_at"],
+            })
+        for item in items:
+            q = quality_rows.get(str(item["product_id"])) or {}
+            if not q.get("has_approved"):
+                item["pi_quality"] = "MISSING_APPROVED_INTELLIGENCE"
+            elif q.get("latest_readiness") == "READY_WITH_GOVERNED_ABSENCE":
+                item["pi_quality"] = "APPROVED_WITH_GOVERNED_ABSENCE"
+            elif (q.get("latest_completeness") or 0) >= 1.0:
+                item["pi_quality"] = "FULLY_COMPLETE"
+            else:
+                item["pi_quality"] = "LEGACY_APPROVED_INCOMPLETE"
+            item["governed_dispositions"] = dispositions.get(str(item["product_id"]), [])
 
     # Progress breakdown over the WHOLE filtered cohort, not just the page. This is what
     # makes preparation visible: the headline is still "no approved snapshot", but the

@@ -13,7 +13,10 @@ import {
 	useExceptionPage,
 	type IntelligenceStage,
 	useFailedGenerations,
+	usePiQuality,
 	type ExceptionKind,
+	type LifecycleScope,
+	type PiQualityClass,
 } from "../api/reporting";
 import { FailedGenerationsPanel } from "../components/reporting/FailedGenerationsPanel";
 
@@ -108,6 +111,85 @@ function ExceptionKpi({
 	);
 }
 
+// 08D INTEL QUALITY DEBT: "has a snapshot" stopped being the truth the day 318
+// approvals froze MISSING_REQUIRED_FIELDS inside them. Four mutually-exclusive classes,
+// counted by the backend, drill-down through the same exception machinery — no
+// frontend-only counting anywhere.
+const PI_QUALITY_META: {
+	cls: PiQualityClass;
+	label: string;
+	tone: KpiTone;
+}[] = [
+	{ cls: "FULLY_COMPLETE", label: "PI fully complete", tone: "info" },
+	{
+		cls: "APPROVED_WITH_GOVERNED_ABSENCE",
+		label: "Approved · governed absence",
+		tone: "info",
+	},
+	{
+		cls: "LEGACY_APPROVED_INCOMPLETE",
+		label: "Legacy approved incomplete",
+		tone: "warn",
+	},
+	{
+		cls: "MISSING_APPROVED_INTELLIGENCE",
+		label: "Missing approved intel",
+		tone: "danger",
+	},
+];
+
+function IntelQualityDebt({
+	selected,
+	onSelect,
+	lifecycle,
+}: {
+	selected: ExceptionKind;
+	onSelect: (k: ExceptionKind) => void;
+	lifecycle: LifecycleScope;
+}) {
+	const { data, loading, error } = usePiQuality(lifecycle);
+	return (
+		<Section
+			title="Intel quality debt"
+			helper={
+				data
+					? `${data.total_real_products.toLocaleString()} real products — ${data.test_fixtures_excluded.toLocaleString()} test fixtures excluded. Legacy incomplete are historical approvals WITHOUT governed dispositions; they are never relabelled.`
+					: error || "Loading…"
+			}
+		>
+			<div
+				className="grid grid-cols-2 gap-4 md:grid-cols-4"
+				data-testid="intel-quality-debt-card"
+			>
+				{PI_QUALITY_META.map(({ cls, label, tone }) => {
+					const entry = data?.classes?.[cls];
+					const kind = data?.drill_down_kinds?.[cls];
+					return (
+						<KpiCard
+							key={cls}
+							label={label}
+							value={(entry?.total ?? 0).toLocaleString()}
+							tone={
+								cls === "FULLY_COMPLETE"
+									? "success"
+									: (entry?.total ?? 0) === 0
+										? "success"
+										: tone
+							}
+							hint={[
+								`${(entry?.active ?? 0).toLocaleString()} active + ${(entry?.archived ?? 0).toLocaleString()} archived`,
+								kind && selected === kind ? "▾ shown below" : "click to drill",
+							].join(" · ")}
+							loading={loading}
+							onClick={() => kind && onSelect(kind)}
+						/>
+					);
+				})}
+			</div>
+		</Section>
+	);
+}
+
 function OperationsInner() {
 	const f = useReportingFilters();
 	const [selected, setSelected] = useState<ExceptionKind>("missing_copy");
@@ -157,8 +239,16 @@ function OperationsInner() {
 		copy_blocked: isIntel && copyBlocked ? copyBlocked === "yes" : undefined,
 	});
 	const failed = useFailedGenerations();
+	const PI_KIND_LABELS: Record<string, string> = {
+		pi_fully_complete: "PI fully complete",
+		pi_governed_absence: "Approved with governed absence",
+		pi_legacy_incomplete: "Legacy approved incomplete",
+		pi_missing_approved: "Missing approved intelligence",
+	};
 	const selectedLabel =
-		KIND_META.find((m) => m.kind === selected)?.label ?? selected;
+		KIND_META.find((m) => m.kind === selected)?.label ??
+		PI_KIND_LABELS[selected] ??
+		selected;
 
 	return (
 		<div className="space-y-6">
@@ -187,6 +277,12 @@ function OperationsInner() {
 					/>
 				))}
 			</div>
+
+			<IntelQualityDebt
+				selected={selected}
+				onSelect={setSelected}
+				lifecycle={f.lifecycle_status}
+			/>
 
 			<Section
 				title="Failed generations — honest time windows"

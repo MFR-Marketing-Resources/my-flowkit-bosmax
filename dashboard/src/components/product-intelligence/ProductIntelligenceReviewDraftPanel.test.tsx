@@ -12,10 +12,14 @@ import type { ProductIntelligenceReviewDraft, ProductIntelligenceReviewDraftVali
 import {
 	aiFillMissingProductIntelligenceReviewDraft,
 	approveClaimSafeRewrite,
+	approveProductIntelligenceReviewDraft,
 	fetchClaimSafeRewritePreview,
 	fetchProductIntelligenceReviewDraft,
 	fetchProductIntelligenceReviewDrafts,
 	recomputeProductIntelligence,
+	setProductIntelligenceFieldDisposition,
+	updateProductIntelligenceReviewDraft,
+	validateProductIntelligenceReviewDraft,
 } from "../../api/products";
 
 vi.mock("../../api/products", () => ({
@@ -31,6 +35,7 @@ vi.mock("../../api/products", () => ({
 	approveClaimSafeRewrite: vi.fn(),
 	updateProductIntelligenceReviewDraft: vi.fn(),
 	validateProductIntelligenceReviewDraft: vi.fn(),
+	setProductIntelligenceFieldDisposition: vi.fn(),
 	approveProductIntelligenceReviewDraft: vi.fn(),
 	rejectProductIntelligenceReviewDraft: vi.fn(),
 }));
@@ -509,4 +514,376 @@ describe("Analyze & Repair from source (existing-product recompute)", () => {
 		release(recomputeResult());
 		await waitFor(() => expect(button).not.toBeDisabled());
 	});
+
+	// ── Mission-08D: governed absence workflow + claim acknowledgement ────────
+	const gapDraft = (
+		overrides: Partial<ProductIntelligenceReviewDraft> = {},
+	) =>
+		makeDraft({
+			product_description: "Windshield washer concentrate 30ml.",
+			benefits_json: ["clear view"],
+			usp_json: ["compact"],
+			target_customer_text: "Drivers",
+			allowed_claims_json: ["water repellent effect"],
+			source_urls_json: { source_url: "https://example.com/p" },
+			image_evidence_json: { image_url: "https://example.com/i.jpg" },
+			buyer_persona_snapshot_json: { audience: "drivers" },
+			copy_strategy_summary_json: { angles: ["safety"] },
+			reviewed_by: "owner",
+			...overrides,
+		});
+
+	const gapValidation = (over: Partial<ProductIntelligenceReviewDraftValidationResponse> = {}) =>
+		({
+			draft: gapDraft(),
+			missing_required_fields: ["usage_text", "ingredients_text", "warnings_text"],
+			present_required_fields: [],
+			completeness_score: 0.79,
+			readiness_status: "MISSING_REQUIRED_FIELDS",
+			claim_gate: "CLAIM_SAFE",
+			claim_risk_level: "LOW",
+			claim_tokens_json: [],
+			allowed_claims_json: [],
+			blocked_claims_json: [],
+			approval_blockers: [
+				"MISSING_REQUIRED_FIELDS:usage_text,ingredients_text,warnings_text",
+			],
+			governed_absent_fields: {},
+			unresolved_external_fields: [],
+			// Automotive = strict category: server offers NSIS/REE but NOT NA.
+			disposition_options: {
+				usage_text: ["NOT_STATED_IN_SOURCE", "REQUIRES_EXTERNAL_EVIDENCE"],
+				ingredients_text: ["NOT_STATED_IN_SOURCE", "REQUIRES_EXTERNAL_EVIDENCE"],
+				warnings_text: ["NOT_STATED_IN_SOURCE", "REQUIRES_EXTERNAL_EVIDENCE"],
+			},
+			...over,
+		}) as ProductIntelligenceReviewDraftValidationResponse;
+
+	it("[08D] resolve-absence records a disposition with a mandatory note and shows the badge", async () => {
+		const draft = gapDraft();
+		vi.mocked(fetchProductIntelligenceReviewDrafts).mockResolvedValue({
+			product_id: "p1", items: [draft],
+		});
+		vi.mocked(fetchProductIntelligenceReviewDraft).mockResolvedValue(draft);
+		vi.mocked(updateProductIntelligenceReviewDraft).mockResolvedValue(draft);
+		vi.mocked(validateProductIntelligenceReviewDraft).mockResolvedValue(gapValidation());
+		vi.mocked(setProductIntelligenceFieldDisposition).mockResolvedValue(
+			gapValidation({
+				governed_absent_fields: { ingredients_text: "NOT_STATED_IN_SOURCE" },
+				approval_blockers: ["MISSING_REQUIRED_FIELDS:usage_text,warnings_text"],
+			}),
+		);
+
+		render(<ProductIntelligenceReviewDraftPanel productId="p1" onApproved={async () => {}} />);
+		// Validate first so the server-derived options are on screen.
+		fireEvent.click(await screen.findByRole("button", { name: /Recompute \(Validate\)/i }));
+		fireEvent.click(await screen.findByTestId("resolve-absence-ingredients_text"));
+
+		const form = await screen.findByTestId("disposition-form");
+		expect(form).toHaveTextContent(/never writes a placeholder/i);
+		// NA is server-disabled for this strict category, with the reason shown.
+		expect(screen.queryByTestId("disposition-option-NOT_APPLICABLE")).toBeNull();
+		expect(screen.getByTestId("disposition-na-disabled")).toHaveTextContent(/risk-strict/i);
+
+		fireEvent.click(screen.getByTestId("disposition-option-NOT_STATED_IN_SOURCE"));
+		// mandatory note: submit stays disabled until a real note is typed
+		expect(screen.getByTestId("disposition-submit")).toBeDisabled();
+		fireEvent.change(screen.getByTestId("disposition-note"), {
+			target: { value: "Halaman sumber tidak menyatakan bahan." },
+		});
+		expect(screen.getByTestId("disposition-submit")).toBeEnabled();
+		fireEvent.click(screen.getByTestId("disposition-submit"));
+
+		await waitFor(() =>
+			expect(setProductIntelligenceFieldDisposition).toHaveBeenCalledWith("d1", {
+				field_name: "ingredients_text",
+				disposition: "NOT_STATED_IN_SOURCE",
+				reviewed_by: "owner",
+				reviewer_note: "Halaman sumber tidak menyatakan bahan.",
+			}),
+		);
+		expect(await screen.findByTestId("disposition-badge-ingredients_text"))
+			.toHaveTextContent("NOT_STATED_IN_SOURCE");
+	});
+
+
+
+	it("[08D] governed absence cannot be recorded without explicit reviewer identity", async () => {
+		const draft = gapDraft({ reviewed_by: null });
+		vi.mocked(fetchProductIntelligenceReviewDrafts).mockResolvedValue({
+			product_id: "p1",
+			items: [draft],
+		});
+		vi.mocked(fetchProductIntelligenceReviewDraft).mockResolvedValue(draft);
+		vi.mocked(updateProductIntelligenceReviewDraft).mockResolvedValue(draft);
+		vi.mocked(validateProductIntelligenceReviewDraft).mockResolvedValue(
+			gapValidation({ draft }),
+		);
+
+		render(
+			<ProductIntelligenceReviewDraftPanel
+				productId="p1"
+				onApproved={async () => {}}
+			/>,
+		);
+		fireEvent.click(
+			await screen.findByRole("button", { name: /Recompute \(Validate\)/i }),
+		);
+		fireEvent.click(
+			await screen.findByTestId("resolve-absence-ingredients_text"),
+		);
+		fireEvent.click(
+			screen.getByTestId("disposition-option-NOT_STATED_IN_SOURCE"),
+		);
+		fireEvent.change(screen.getByTestId("disposition-note"), {
+			target: { value: "Source does not state the ingredients." },
+		});
+		expect(screen.getByTestId("disposition-reviewer-required")).toBeVisible();
+		expect(screen.getByTestId("disposition-submit")).toBeDisabled();
+
+		fireEvent.change(screen.getByLabelText("Reviewed By"), {
+			target: { value: "owner-08d" },
+		});
+		expect(screen.getByTestId("disposition-submit")).toBeEnabled();
+	});
+
+	it("[08D] persisted disposition badge survives reload before revalidation", async () => {
+		const draft = gapDraft({
+			provenance_items: [
+				{
+					review_provenance_id: "rp-1",
+					field_name: "ingredients_text",
+					evidence_kind: "FIELD_ABSENCE_DISPOSITION",
+					verification_status: "NOT_STATED_IN_SOURCE",
+				} as never,
+			],
+		});
+		vi.mocked(fetchProductIntelligenceReviewDrafts).mockResolvedValue({
+			product_id: "p1",
+			items: [draft],
+		});
+		vi.mocked(fetchProductIntelligenceReviewDraft).mockResolvedValue(draft);
+
+		render(
+			<ProductIntelligenceReviewDraftPanel
+				productId="p1"
+				onApproved={async () => {}}
+			/>,
+		);
+		expect(
+			await screen.findByTestId("disposition-badge-ingredients_text"),
+		).toHaveTextContent("NOT_STATED_IN_SOURCE");
+		expect(validateProductIntelligenceReviewDraft).not.toHaveBeenCalled();
+	});
+
+
+
+	it("[08D] only eligible gaps expose absence controls and external evidence stays blocking", async () => {
+		const draft = gapDraft({ allowed_claims_json: [] });
+		const external = gapValidation({
+			draft,
+			missing_required_fields: ["allowed_claims_json", "ingredients_text"],
+			unresolved_external_fields: ["ingredients_text"],
+			approval_blockers: [
+				"MISSING_REQUIRED_FIELDS:allowed_claims_json",
+				"REQUIRES_EXTERNAL_EVIDENCE:ingredients_text",
+			],
+			disposition_options: {
+				ingredients_text: [
+					"NOT_STATED_IN_SOURCE",
+					"REQUIRES_EXTERNAL_EVIDENCE",
+				],
+			},
+		});
+		vi.mocked(fetchProductIntelligenceReviewDrafts).mockResolvedValue({
+			product_id: "p1",
+			items: [draft],
+		});
+		vi.mocked(fetchProductIntelligenceReviewDraft).mockResolvedValue(draft);
+		vi.mocked(updateProductIntelligenceReviewDraft).mockResolvedValue(draft);
+		vi.mocked(validateProductIntelligenceReviewDraft).mockResolvedValue(external);
+
+		render(
+			<ProductIntelligenceReviewDraftPanel
+				productId="p1"
+				onApproved={async () => {}}
+			/>,
+		);
+		fireEvent.click(
+			await screen.findByRole("button", { name: /Recompute \(Validate\)/i }),
+		);
+		expect(screen.getByTestId("missing-field-allowed_claims_json"))
+			.toHaveTextContent(/no governed absence permitted/i);
+		expect(screen.queryByTestId("resolve-absence-allowed_claims_json")).toBeNull();
+		expect(await screen.findByTestId("disposition-badge-ingredients_text"))
+			.toHaveTextContent(/still blocking/i);
+
+		fireEvent.click(screen.getByRole("button", { name: /Approve Draft/i }));
+		await waitFor(() =>
+			expect(approveProductIntelligenceReviewDraft).not.toHaveBeenCalled(),
+		);
+	});
+
+	it("[08D] NOT_APPLICABLE needs a second confirmation before it is recorded", async () => {
+		const draft = gapDraft();
+		vi.mocked(fetchProductIntelligenceReviewDrafts).mockResolvedValue({
+			product_id: "p1", items: [draft],
+		});
+		vi.mocked(fetchProductIntelligenceReviewDraft).mockResolvedValue(draft);
+		vi.mocked(updateProductIntelligenceReviewDraft).mockResolvedValue(draft);
+		// confirmable category: server offers NA
+		vi.mocked(validateProductIntelligenceReviewDraft).mockResolvedValue(
+			gapValidation({
+				disposition_options: {
+					ingredients_text: [
+						"NOT_STATED_IN_SOURCE", "NOT_APPLICABLE", "REQUIRES_EXTERNAL_EVIDENCE",
+					],
+				},
+			}),
+		);
+		vi.mocked(setProductIntelligenceFieldDisposition).mockResolvedValue(
+			gapValidation({
+				governed_absent_fields: { ingredients_text: "NOT_APPLICABLE" },
+			}),
+		);
+
+		render(<ProductIntelligenceReviewDraftPanel productId="p1" onApproved={async () => {}} />);
+		fireEvent.click(await screen.findByRole("button", { name: /Recompute \(Validate\)/i }));
+		fireEvent.click(await screen.findByTestId("resolve-absence-ingredients_text"));
+		fireEvent.click(await screen.findByTestId("disposition-option-NOT_APPLICABLE"));
+		fireEvent.change(screen.getByTestId("disposition-note"), {
+			target: { value: "Produk tekstil, tiada bahan ramuan." },
+		});
+		// first click ARMS the confirmation — nothing recorded yet
+		fireEvent.click(screen.getByTestId("disposition-submit"));
+		expect(setProductIntelligenceFieldDisposition).not.toHaveBeenCalled();
+		expect(await screen.findByTestId("disposition-na-confirm"))
+			.toHaveTextContent(/DOES NOT APPLY/i);
+		// second click records it
+		fireEvent.click(screen.getByTestId("disposition-submit"));
+		await waitFor(() =>
+			expect(setProductIntelligenceFieldDisposition).toHaveBeenCalledTimes(1),
+		);
+	});
+
+	it("[08D] claim acknowledgement is offered ONLY for review-required and travels with approve", async () => {
+		const draft = gapDraft();
+		vi.mocked(fetchProductIntelligenceReviewDrafts).mockResolvedValue({
+			product_id: "p1", items: [draft],
+		});
+		vi.mocked(fetchProductIntelligenceReviewDraft).mockResolvedValue(draft);
+		vi.mocked(updateProductIntelligenceReviewDraft).mockResolvedValue(draft);
+		const reviewRequired = gapValidation({
+			missing_required_fields: [],
+			readiness_status: "CLAIM_REVIEW_REQUIRED",
+			claim_gate: "CLAIM_REVIEW_REQUIRED",
+			claim_tokens_json: ["treat"],
+			approval_blockers: ["CLAIM_REVIEW_REQUIRED:treat"],
+			disposition_options: {},
+		});
+		vi.mocked(validateProductIntelligenceReviewDraft).mockResolvedValue(reviewRequired);
+		vi.mocked(approveProductIntelligenceReviewDraft).mockResolvedValue({
+			snapshot_id: "snap-1", version: 1,
+		} as never);
+
+		render(<ProductIntelligenceReviewDraftPanel productId="p1" onApproved={async () => {}} />);
+		fireEvent.click(await screen.findByRole("button", { name: /Recompute \(Validate\)/i }));
+
+		const ack = await screen.findByTestId("claim-ack-checkbox");
+		// Without the acknowledgement, Approve fail-closes client-side.
+		fireEvent.click(screen.getByRole("button", { name: /Approve Draft/i }));
+		await waitFor(() =>
+			expect(approveProductIntelligenceReviewDraft).not.toHaveBeenCalled(),
+		);
+		// An edit invalidates the prior validation and acknowledgement.
+		fireEvent.click(ack);
+		fireEvent.change(screen.getByLabelText("Reviewed By"), {
+			target: { value: "owner-08d" },
+		});
+		expect(screen.queryByTestId("claim-ack-checkbox")).toBeNull();
+		fireEvent.click(
+			screen.getByRole("button", { name: /Recompute \(Validate\)/i }),
+		);
+		const resetAck = await screen.findByTestId("claim-ack-checkbox");
+		expect(resetAck).not.toBeChecked();
+		fireEvent.click(resetAck);
+		// Only the fresh acknowledgement travels with approve.
+		fireEvent.click(screen.getByRole("button", { name: /Approve Draft/i }));
+		await waitFor(() =>
+			expect(approveProductIntelligenceReviewDraft).toHaveBeenCalledWith("d1", {
+				approved_by: expect.any(String),
+				approval_note: null,
+				claim_review_acknowledged: true,
+			}),
+		);
+		const updateOrder = vi.mocked(updateProductIntelligenceReviewDraft)
+			.mock.invocationCallOrder.at(-1) ?? 0;
+		const validateOrder = vi.mocked(validateProductIntelligenceReviewDraft)
+			.mock.invocationCallOrder.at(-1) ?? 0;
+		const approveOrder = vi.mocked(approveProductIntelligenceReviewDraft)
+			.mock.invocationCallOrder.at(-1) ?? 0;
+		expect(updateOrder).toBeLessThan(validateOrder);
+		expect(validateOrder).toBeLessThan(approveOrder);
+	});
+
+	it("[08D] CLAIM_BLOCKED shows the absolute-block notice and never an acknowledgement", async () => {
+		const draft = gapDraft();
+		vi.mocked(fetchProductIntelligenceReviewDrafts).mockResolvedValue({
+			product_id: "p1", items: [draft],
+		});
+		vi.mocked(fetchProductIntelligenceReviewDraft).mockResolvedValue(draft);
+		vi.mocked(validateProductIntelligenceReviewDraft).mockResolvedValue(
+			gapValidation({
+				missing_required_fields: [],
+				readiness_status: "CLAIM_BLOCKED",
+				claim_gate: "CLAIM_BLOCKED",
+				claim_tokens_json: ["ubat"],
+				approval_blockers: ["CLAIM_BLOCKED:ubat"],
+				disposition_options: {},
+			}),
+		);
+
+		render(<ProductIntelligenceReviewDraftPanel productId="p1" onApproved={async () => {}} />);
+		fireEvent.click(await screen.findByRole("button", { name: /Recompute \(Validate\)/i }));
+		expect(await screen.findByTestId("claim-blocked-absolute"))
+			.toHaveTextContent(/mutlak/i);
+		expect(screen.queryByTestId("claim-ack-checkbox")).toBeNull();
+	});
+
+	it("[08D] describeApprovalBlockers honours governed absence, external evidence and ack", () => {
+		// governed fields no longer block
+		expect(
+			describeApprovalBlockers(
+				gapValidation({
+					missing_required_fields: ["ingredients_text"],
+					governed_absent_fields: { ingredients_text: "NOT_STATED_IN_SOURCE" },
+					approval_blockers: [],
+				}),
+			),
+		).toBeNull();
+		// REQUIRES_EXTERNAL_EVIDENCE keeps blocking, ack or not
+		const external = gapValidation({
+			missing_required_fields: ["ingredients_text"],
+			unresolved_external_fields: ["ingredients_text"],
+			approval_blockers: ["REQUIRES_EXTERNAL_EVIDENCE:ingredients_text"],
+		});
+		expect(describeApprovalBlockers(external, true)).toMatch(/bukti luaran/);
+		// ack clears ONLY a review-required claim blocker
+		const review = gapValidation({
+			missing_required_fields: [],
+			claim_gate: "CLAIM_REVIEW_REQUIRED",
+			claim_tokens_json: ["treat"],
+			approval_blockers: ["CLAIM_REVIEW_REQUIRED:treat"],
+		});
+		expect(describeApprovalBlockers(review, false)).toMatch(/pengakuan/);
+		expect(describeApprovalBlockers(review, true)).toBeNull();
+		const blocked = gapValidation({
+			missing_required_fields: [],
+			claim_gate: "CLAIM_BLOCKED",
+			claim_tokens_json: ["ubat"],
+			approval_blockers: ["CLAIM_BLOCKED:ubat"],
+		});
+		expect(describeApprovalBlockers(blocked, true)).toMatch(/disekat/);
+	});
+
 });
