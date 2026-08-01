@@ -315,7 +315,7 @@ describe("Analyze & Repair from source (existing-product recompute)", () => {
 			product_id: "p1", items: [draft],
 		});
 		vi.mocked(fetchProductIntelligenceReviewDraft).mockResolvedValue(draft);
-		render(<ProductIntelligenceReviewDraftPanel productId="p1" />);
+		render(<ProductIntelligenceReviewDraftPanel productId="p1" onApproved={async () => {}} />);
 		expect(await screen.findByTestId("recompute-from-source-button")).toBeInTheDocument();
 	}
 
