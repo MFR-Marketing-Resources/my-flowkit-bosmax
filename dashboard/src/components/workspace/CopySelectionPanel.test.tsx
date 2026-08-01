@@ -117,13 +117,18 @@ describe("CopySelectionPanel — Angle Filtering & Pagination & Details Toggle",
 			expect(screen.getByTestId("copy-set-row")).toBeInTheDocument();
 		});
 
-		// Subhook should not be visible before expanding (unless selected)
-		expect(screen.queryByText("Subhook for cs-1")).not.toBeInTheDocument();
+		// Collapsed view shows a one-line subhook PREVIEW (variant disambiguation)
+		// but not the full details (USP/CTA stay behind the toggle).
+		expect(screen.getByTestId("copy-subhook-preview")).toHaveTextContent(
+			"Subhook for cs-1",
+		);
+		expect(screen.queryByText("USP 1 · USP 2")).not.toBeInTheDocument();
 
 		const toggleBtn = screen.getByTestId("toggle-copy-details");
 		fireEvent.click(toggleBtn);
 
-		// Now details are visible
+		// Expanded: the details section owns the subhook; the preview collapses away.
+		expect(screen.queryByTestId("copy-subhook-preview")).not.toBeInTheDocument();
 		expect(screen.getByText("Subhook for cs-1")).toBeInTheDocument();
 		expect(screen.getByText("USP 1 · USP 2")).toBeInTheDocument();
 	});
@@ -156,5 +161,97 @@ describe("CopySelectionPanel — Angle Filtering & Pagination & Details Toggle",
 		// Draft row has Approve button, NOT select button
 		const approveBtn = screen.getByRole("button", { name: "Approve Copy Set" });
 		expect(approveBtn).toBeInTheDocument();
+	});
+});
+
+describe("CopySelectionPanel — honest angle counts (anti-monoculture display)", () => {
+	it("labels the ALL filter with BOTH distinct-angle and set counts for a monoculture", async () => {
+		// Real-world shape (Sambal Nyet 2026-08-02): 3 sets, ONE angle, 2 hooks.
+		const sets = [
+			{ ...makeCopySet("cs-1", "Pedas Berapi"), hook: "Hook A" },
+			{ ...makeCopySet("cs-2", "Pedas Berapi"), hook: "Hook B" },
+			{ ...makeCopySet("cs-3", "Pedas Berapi"), hook: "Hook A" },
+		];
+		listCopySetsForProduct.mockResolvedValue({ items: sets });
+
+		render(
+			<CopySelectionPanel
+				productId="p1"
+				selectedCopySetId={null}
+				onSelect={vi.fn()}
+			/>,
+		);
+
+		await waitFor(() => {
+			expect(screen.getAllByTestId("copy-set-row")).toHaveLength(3);
+		});
+
+		// The old label read "All Angles (3)" here — implying 3 angles. It is 1.
+		expect(
+			screen.getByText("All Angles (1 angle · 3 sets)"),
+		).toBeInTheDocument();
+		expect(screen.getByText("Pedas Berapi (3 sets)")).toBeInTheDocument();
+	});
+
+	it("pluralizes both units when multiple distinct angles exist", async () => {
+		const sets = [
+			makeCopySet("cs-1", "Empathy"),
+			makeCopySet("cs-2", "Empathy"),
+			makeCopySet("cs-3", "Urgency"),
+			makeCopySet("cs-4", "Social Proof"),
+		];
+		listCopySetsForProduct.mockResolvedValue({ items: sets });
+
+		render(
+			<CopySelectionPanel
+				productId="p1"
+				selectedCopySetId={null}
+				onSelect={vi.fn()}
+			/>,
+		);
+
+		await waitFor(() => {
+			expect(screen.getAllByTestId("copy-set-row")).toHaveLength(4);
+		});
+
+		expect(
+			screen.getByText("All Angles (3 angles · 4 sets)"),
+		).toBeInTheDocument();
+		expect(screen.getByText("Empathy (2 sets)")).toBeInTheDocument();
+		expect(screen.getByText("Urgency (1 set)")).toBeInTheDocument();
+	});
+
+	it("distinguishes same-angle same-hook rows by their subhook previews", async () => {
+		const sets = [
+			{
+				...makeCopySet("cs-1", "Pedas Berapi"),
+				hook: "Bosan dengan sambal viral",
+				subhook: "Variant satu: rasa pedas sekadar lalu",
+			},
+			{
+				...makeCopySet("cs-3", "Pedas Berapi"),
+				hook: "Bosan dengan sambal viral",
+				subhook: "Variant dua: tak pernah dapat kick",
+			},
+		];
+		listCopySetsForProduct.mockResolvedValue({ items: sets });
+
+		render(
+			<CopySelectionPanel
+				productId="p1"
+				selectedCopySetId={null}
+				onSelect={vi.fn()}
+			/>,
+		);
+
+		await waitFor(() => {
+			expect(screen.getAllByTestId("copy-set-row")).toHaveLength(2);
+		});
+
+		const previews = screen.getAllByTestId("copy-subhook-preview");
+		expect(previews).toHaveLength(2);
+		expect(previews[0]).toHaveTextContent("Variant satu");
+		expect(previews[1]).toHaveTextContent("Variant dua");
+		expect(previews[0].textContent).not.toEqual(previews[1].textContent);
 	});
 });
