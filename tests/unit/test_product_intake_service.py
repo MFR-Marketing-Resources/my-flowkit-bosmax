@@ -337,3 +337,69 @@ def test_operator_manual_entry_keeps_operator_semantics():
     rows = build_provenance_inputs(ev, build_promotion_payload(ev))
     assert rows[0].source_type == "OPERATOR_MANUAL_ENTRY"
     assert rows[0].evidence_kind == "OPERATOR_DECLARED"
+
+
+# ── B-586-02 PRODUCTION-PATH proof (helper tests are not sufficient) ─────────
+
+class _LaneDraft(_Draft):
+    """Declares truthful lane provenance, like evidence_from_product_payload does."""
+
+    def __init__(self, declared, *, source_type, extraction_method,
+                 verification_status="PENDING_REVIEW", lane="PRODUCTS_TIKTOKSHOP_IMPORT"):
+        super().__init__(declared=declared, source_lane=lane)
+        self.provenance_source_type = source_type
+        self.provenance_evidence_kind = "IMPORTED_MARKETPLACE_LINK"
+        self.provenance_extraction_method = extraction_method
+        self.provenance_verification_status = verification_status
+
+
+async def _prov_rows(pid: str) -> list[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT source_url, source_type, extraction_method, verification_status "
+        "FROM product_intelligence_review_field_provenance WHERE product_id=?", (pid,))
+    rows = [dict(r) for r in await cur.fetchall()]
+    await cur.close()
+    return rows
+
+
+@pytest.mark.asyncio
+async def test_stronger_extraction_for_the_same_url_is_not_a_noop_through_the_real_path():
+    """B-586-02 REGRESSION: provenance_is_covered existed but ensure_product_intelligence
+    never called it, so this upgrade was swallowed in production while the helper's own
+    unit test passed."""
+    await _product("intake-upgrade")
+    url = "https://shop-my.tiktok.com/pdp/123"
+
+    first = await ensure_product_intelligence(
+        "intake-upgrade",
+        _LaneDraft({"product_knowledge_text": "Cotton skirting.", "source_url": url},
+                   source_type="IMPORTED_TIKTOKSHOP",
+                   extraction_method="TIKTOKSHOP_LINK"),
+        lane="PRODUCTS_TIKTOKSHOP_IMPORT")
+    assert first["outcome"] == CREATED
+
+    # identical evidence -> still a no-op
+    repeat = await ensure_product_intelligence(
+        "intake-upgrade",
+        _LaneDraft({"product_knowledge_text": "Cotton skirting.", "source_url": url},
+                   source_type="IMPORTED_TIKTOKSHOP",
+                   extraction_method="TIKTOKSHOP_LINK"),
+        lane="PRODUCTS_TIKTOKSHOP_IMPORT")
+    assert repeat["outcome"] == NOOP_DRAFT_UP_TO_DATE
+
+    # SAME url + SAME text, but genuinely acquired from the page -> must NOT be a no-op
+    upgraded = await ensure_product_intelligence(
+        "intake-upgrade",
+        _LaneDraft({"product_knowledge_text": "Cotton skirting.", "source_url": url},
+                   source_type="SOURCE_PAGE",
+                   extraction_method="DOM_EXTRACTION"),
+        lane="PRODUCTS_TIKTOKSHOP_IMPORT")
+    assert upgraded["outcome"] != NOOP_DRAFT_UP_TO_DATE, (
+        "stronger acquired evidence was swallowed by the production path")
+    assert upgraded["wrote"] is True
+
+    # the stronger provenance is actually persisted, and re-read from the DB
+    methods = {r["extraction_method"] for r in await _prov_rows("intake-upgrade")}
+    assert "DOM_EXTRACTION" in methods, "upgraded provenance never reached the database"
+    assert await _draft_count("intake-upgrade") == 1, "an upgrade must version, not duplicate"

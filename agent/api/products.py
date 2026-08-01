@@ -1075,11 +1075,17 @@ async def create_manual_product(data: ManualProductRequest):
         image_asset_status="DOWNLOADED" if data.image_base64 else "UNRESOLVED",
         asset_status="DOWNLOADED" if data.image_base64 else "UNRESOLVED",
     )
-    await _ensure_intake_intelligence(
-        created, data.model_dump(), lane="PRODUCTS_MANUAL")
+    # B-586-07: the image MUST be cached before intelligence evidence is built. Running
+    # ensure first meant `local_image_path` did not exist yet, so the uploaded image never
+    # reached the draft or its field provenance — the operator's own evidence was dropped.
     local_image_path, image_asset_status = await _save_manual_image(created["id"], data.image_base64, data.image_filename)
     if local_image_path:
         created = await crud.update_product(created["id"], local_image_path=local_image_path, asset_status=image_asset_status, image_asset_status=image_asset_status)
+    evidence_payload = data.model_dump()
+    if local_image_path:
+        evidence_payload["local_image_path"] = local_image_path
+    await _ensure_intake_intelligence(
+        created, evidence_payload, lane="PRODUCTS_MANUAL")
     return await _enrich_product(created, persist=True)
 
 

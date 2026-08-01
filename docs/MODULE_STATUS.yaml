@@ -1037,6 +1037,7 @@ domains:
       - agent/services/product_intake_service.py
       - tests/unit/test_product_intake_service.py
       - tests/api/test_product_physics_map_persist.py
+      - tests/api/test_manual_product_image_provenance.py
       - tests/unit/test_registration_intelligence_promotion.py
       - tests/unit/test_product_intelligence_stage_service.py
       - dashboard/src/components/reporting/IntelligenceStagePanel.tsx

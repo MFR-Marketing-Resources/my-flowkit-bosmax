@@ -328,6 +328,39 @@ async def _approved_snapshot(product_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+async def _stored_provenance(draft_id: str) -> list[dict]:
+    from agent.db.schema import get_db
+
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT source_url, source_type, extraction_method, verification_status "
+        "FROM product_intelligence_review_field_provenance WHERE draft_id=?", (draft_id,))
+    rows = [dict(r) for r in await cur.fetchall()]
+    await cur.close()
+    return rows
+
+
+async def _incoming_covered(draft_row: Mapping[str, Any], draft: Any,
+                            payload: Mapping[str, Any]) -> bool:
+    """Production wiring for B-586-02.
+
+    `material_is_covered` compares source URL / image values only. Verification strength,
+    source type and extraction method live in the provenance table, so an upgrade from
+    imported+PENDING_REVIEW to acquired+VERIFIED on the SAME url looked identical to it.
+    Both checks must pass for a no-op.
+    """
+    if not material_is_covered(draft_row, payload):
+        return False
+    stored = await _stored_provenance(str(draft_row.get("draft_id") or ""))
+    incoming = [
+        {"source_url": r.source_url, "source_type": r.source_type,
+         "extraction_method": r.extraction_method,
+         "verification_status": r.verification_status}
+        for r in build_provenance_inputs(draft, payload)
+    ]
+    return provenance_is_covered(stored, incoming)
+
+
 async def _write_provenance(draft_id: str, product_id: str, draft, payload) -> int:
     from agent.db import crud
 
@@ -375,6 +408,8 @@ async def ensure_product_intelligence(
     incoming = digest_of_payload(payload)
     payload_material = {"source_urls_json": payload.get("source_urls_json"),
                         "image_evidence_json": payload.get("image_evidence_json")}
+    # the full payload is needed for provenance comparison, not just the material keys
+    payload_material_row = payload
     incoming_material = material_evidence_digest(payload_material, lane=None)
     # A source-only / image-only re-import carries no knowledge field but DOES carry new
     # material evidence, so it must not be treated as "nothing to do".
@@ -388,7 +423,8 @@ async def ensure_product_intelligence(
     approved = await _approved_snapshot(product_id)
     if approved is not None and not minimal:
         snapshot_values = digest_of_stored_draft(approved)
-        if snapshot_values == incoming and material_is_covered(approved, payload_material):
+        approved_covered = material_is_covered(approved, payload_material)
+        if snapshot_values == incoming and approved_covered:
             open_same, _t = await _latest_open_draft(product_id)
             return {"outcome": NOOP_APPROVED_SNAPSHOT, "lane": lane,
                     "product_id": product_id, "evidence_digest": incoming,
@@ -403,7 +439,7 @@ async def ensure_product_intelligence(
 
     if open_draft is not None:
         same_values = digest_of_stored_draft(open_draft) == incoming
-        same_material = material_is_covered(open_draft, payload_material)
+        same_material = await _incoming_covered(open_draft, draft, payload_material_row)
         # B-586-02: identical text backed by a NEW or stronger source is not a no-op.
         if same_values and same_material:
             return {"outcome": NOOP_DRAFT_UP_TO_DATE, "lane": lane,
