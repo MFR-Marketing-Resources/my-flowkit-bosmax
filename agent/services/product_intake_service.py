@@ -451,6 +451,41 @@ async def _delete_provenance_for_draft(draft_id: str) -> None:
         await db.commit()
 
 
+async def _resolve_duplicate_open_drafts(product_id: str, mine: str) -> str:
+    """Converge concurrent first-intakes on exactly ONE open draft.
+
+    B-586-04. An in-process asyncio lock cannot serialize two independent connections or
+    processes, and `create_review_draft` commits internally, so a check-then-insert can
+    interleave: both callers see "no open draft" and both create one. A UNIQUE partial
+    index is the textbook fix but 2 products in canonical data ALREADY hold >1 open draft,
+    so adding one would fail the migration; that conflict is reported for an owner ruling
+    rather than silently mutated here.
+
+    Instead every racer applies the SAME deterministic rule — the lexicographically
+    smallest draft_id wins — and deletes its own loser. Both connections independently
+    reach the identical verdict, so the outcome does not depend on who ran last, and the
+    operation is idempotent under replay.
+    """
+    from agent.db import crud
+    from agent.db.schema import _db_lock, get_db
+
+    db = await get_db()
+    async with _db_lock:
+        cur = await db.execute(
+            "SELECT draft_id FROM product_intelligence_review_draft WHERE product_id=? "
+            "AND UPPER(COALESCE(review_status,'')) NOT IN ('APPROVED','REJECTED') "
+            "ORDER BY draft_id ASC", (product_id,))
+        open_ids = [str(r[0]) for r in await cur.fetchall()]
+        await cur.close()
+    if len(open_ids) <= 1:
+        return mine
+    winner = open_ids[0]
+    for loser in open_ids[1:]:
+        await _delete_provenance_for_draft(loser)
+        await crud.delete_product_intelligence_review_draft(loser)
+    return winner
+
+
 async def _draft_ids_for(product_id: str) -> set[str]:
     from agent.db.schema import get_db
 
@@ -613,6 +648,12 @@ async def ensure_product_intelligence(
         draft_id = getattr(created, "draft_id", None)
         provenance_rows = await _write_provenance(
             str(draft_id), product_id, draft, payload) if draft_id else 0
+        if draft_id:
+            winner = await _resolve_duplicate_open_drafts(product_id, str(draft_id))
+            if winner != str(draft_id):
+                # another connection won the race; report the surviving draft
+                draft_id = winner
+                provenance_rows = 0
     except Exception:
         await _compensate_to(product_id, before_ids)
         raise

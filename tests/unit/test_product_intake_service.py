@@ -710,3 +710,77 @@ async def test_an_approved_snapshot_survives_a_failed_provenance_batch(monkeypat
             _Draft(declared={"product_knowledge_text": "Changed after approval."}),
             lane="PRODUCTS_MANUAL")
     assert await _snapshot_status("snap-as") == "APPROVED"
+
+
+# ── B-586-04 concurrency across INDEPENDENT connections ─────────────────────
+
+@pytest.mark.asyncio
+async def test_concurrent_first_intake_yields_exactly_one_open_draft():
+    """Both racers are the same seam, which is the real production shape: two requests
+    for the same product arriving before either has committed a draft."""
+    import asyncio
+
+    from agent.services import product_intake_service as pis
+
+    await _product("intake-race")
+    ev = _Draft(declared={"product_knowledge_text": "Race me.", "usage_text": "wipe"})
+    results = await asyncio.gather(*[
+        pis.ensure_product_intelligence("intake-race", ev, lane="PRODUCTS_MANUAL")
+        for _ in range(4)
+    ])
+    assert await _open_draft_count("intake-race") == 1, (
+        "concurrent first intake produced duplicate open drafts")
+    # every caller is told about the SAME surviving draft
+    ids = {r["intelligence_draft_id"] for r in results if r.get("intelligence_draft_id")}
+    assert len(ids) == 1, f"callers disagreed on the surviving draft: {ids}"
+
+
+@pytest.mark.asyncio
+async def test_a_draft_created_by_another_connection_is_reconciled_not_duplicated():
+    """A second connection commits an open draft mid-flight. The seam must converge on one
+    survivor rather than leaving two."""
+    import sqlite3
+
+    from agent.db.schema import DB_PATH
+    from agent.services import product_intake_service as pis
+
+    await _product("intake-race2")
+    con = sqlite3.connect(str(DB_PATH), timeout=30)
+    con.execute(
+        "INSERT INTO product_intelligence_review_draft (draft_id, product_id, "
+        "review_status, claim_gate, claim_risk_level, created_at, updated_at) "
+        "VALUES (?,?,?,?,?,?,?)",
+        ("aaaa-other-connection", "intake-race2", "DRAFT", "CLAIM_REVIEW_REQUIRED",
+         "MEDIUM", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"))
+    con.commit()
+    con.close()
+
+    await pis.ensure_product_intelligence(
+        "intake-race2",
+        _Draft(declared={"product_knowledge_text": "Mine.", "usage_text": "wipe"}),
+        lane="PRODUCTS_MANUAL")
+    assert await _open_draft_count("intake-race2") == 1
+
+
+@pytest.mark.asyncio
+async def test_duplicate_open_drafts_converge_on_the_same_winner_deterministically():
+    """Both racers must independently pick the same survivor, so the outcome cannot
+    depend on which one finished last."""
+    from agent.services.product_intake_service import _resolve_duplicate_open_drafts
+
+    await _product("intake-conv")
+    db = await get_db()
+    for did in ("zzzz-late", "aaaa-early", "mmmm-mid"):
+        await db.execute(
+            "INSERT INTO product_intelligence_review_draft (draft_id, product_id, "
+            "review_status, created_at, updated_at) VALUES (?,?,?,?,?)",
+            (did, "intake-conv", "DRAFT", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"))
+    await db.commit()
+
+    first = await _resolve_duplicate_open_drafts("intake-conv", "zzzz-late")
+    assert first == "aaaa-early"
+    assert await _open_draft_count("intake-conv") == 1
+    # idempotent under replay
+    again = await _resolve_duplicate_open_drafts("intake-conv", "aaaa-early")
+    assert again == "aaaa-early"
+    assert await _open_draft_count("intake-conv") == 1
