@@ -564,6 +564,15 @@ domains:
       - outputs/mission-pi12/pi13_duplicate_analysis.json
       - outputs/mission-pi12/pi13_twin_verify.py
       - outputs/mission-pi12/pi13_twin_verify.json
+      # PI-13 blocker closures B-01..B-04
+      - outputs/mission-pi12/pi13_backup_manifest.py
+      - outputs/mission-pi12/pi13_backup_manifest.json
+      - outputs/mission-pi12/pi13_canonical_groups.py
+      - outputs/mission-pi12/pi13_canonical_groups.json
+      - outputs/mission-pi12/pi13_twin_qualify.py
+      - outputs/mission-pi12/pi13_twin_qualify.json
+      - outputs/mission-pi12/pi13_stale_copy_map.py
+      - outputs/mission-pi12/pi13_stale_copy_map.json
       - tests/unit/test_pi12_ai_fill_hardening.py
       # provider_receipts.jsonl is written per-attempt by the hardened runner on the NEXT run.
       - agent/services/product_registration_service.py

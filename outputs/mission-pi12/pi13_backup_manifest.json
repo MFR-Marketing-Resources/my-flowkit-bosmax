@@ -1,0 +1,12 @@
+{
+ "live_db_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
+ "live_db_sha256": "035876d62a8b8a41887259ac4f6c4d083db32e027aa9083bcf1cd6a17c5c455b",
+ "backup_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\.ai\\backups\\flow_agent_PRE_PI13_20260802T192007Z.db",
+ "backup_sha256": "035876d62a8b8a41887259ac4f6c4d083db32e027aa9083bcf1cd6a17c5c455b",
+ "file_size_bytes": 298696704,
+ "created_at_mtime_utc": "2026-08-02T19:20:08Z",
+ "backup_method": "cp flow_agent.db .ai/backups/flow_agent_PRE_PI13_20260802T192007Z.db",
+ "restore_command": "1) stop runtime (start-local-agent stop / kill pid) 2) cp .ai/backups/flow_agent_PRE_PI13_20260802T192007Z.db flow_agent.db 3) start-local-agent.ps1 -ForceRestart",
+ "restore_test_status": "PASS (temp restore sha == backup sha)",
+ "backup_equals_live_at_capture": true
+}

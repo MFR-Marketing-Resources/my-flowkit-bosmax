@@ -1,0 +1,3234 @@
+{
+ "summary": {
+  "total_components_with_debt": 63,
+  "debt_products_in_groups": 77,
+  "debt_products_unique_no_group": 39,
+  "groups_with_grounded_canonical": 49,
+  "groups_all_debt_need_research": 14,
+  "EXACT_web_research_burden": 53,
+  "unique_no_group_ids": [
+   "01f3274b-2fc0-4977-b6d5-efaaa2cb2bf7",
+   "040d796c-5fe4-4491-b13d-6d13f2704355",
+   "04a42d8c-755e-409e-8b60-b8b91f599dc7",
+   "13d4a873-08e7-4eb1-b420-db70ba212b16",
+   "19d5518d-975b-4902-98bc-29428e7fe96c",
+   "1c5b5c1a-43d2-4239-b87b-7b0f95c7e58f",
+   "28c1124e-4a70-4e55-9ce5-0ba2516b1c02",
+   "305cc7f1-65f7-423a-ac64-bb4de876c6ec",
+   "33caf58f-5cbd-4068-891c-4d1bae30c729",
+   "3ad2d1bc-432f-427c-8518-e8bbb25e3712",
+   "3be06f47-a156-4d5f-8d8c-91c786e89012",
+   "3bfd5223-abf4-49da-9710-dcc3a1450f50",
+   "49677116-dfc6-42da-ac7d-a25a49167c16",
+   "4faad914-5345-4a34-a5e1-e5fe3e283795",
+   "644b425e-7e39-4558-817a-d403c366f28e",
+   "76561360-d92a-42c5-93fa-f9523a2b55fd",
+   "7852656f-a19d-47d8-90fd-c28c73a7f17a",
+   "7a75fcf1-0f34-487d-bcae-9cf65901f8fe",
+   "822e7269-11d9-4b6c-9a51-59abfe448ff6",
+   "85ddc17a-ba47-4e03-a0a6-bc1e62f46436",
+   "8e75f1a8-ba43-444e-8b40-c71d140c76c5",
+   "904bee4d-864b-4722-bc10-5df2027eb13f",
+   "9b357eeb-f1ff-4c4b-a3a1-4c1d94a6c8b2",
+   "9bac2555-4eec-493d-a1c3-f16712618065",
+   "ad805d7d-e6fa-4a05-ad96-edc8e0295ae8",
+   "b3b3b01b-ecb4-4bb6-8745-1db016b2df60",
+   "c34c9305-35b9-44ab-963f-fa22c9b9e829",
+   "c5341831-8c85-4a13-82be-7b1ae12320d1",
+   "canonical-simba-cat-food",
+   "d2bf2e52-84fa-426f-a6f3-d5f793db41ef",
+   "d2f8fd58-437b-4447-8730-694b782eef17",
+   "d534fc2e-d52d-44f3-98c8-ebdd431421c4",
+   "de3ee6bd-592b-4228-bf96-f2cdcf15e78c",
+   "e06d8afd-44fa-47d7-8d79-d7dc55d52c41",
+   "e3e3819f-c312-4e73-9db8-477471860616",
+   "e9f06816-46b1-421d-8921-3ea183ed4760",
+   "efa576c8-3ffe-4fb9-9ead-6acf196db31a",
+   "efcc1f31-c91b-46fb-acc6-d736a5271884",
+   "fca6771a-5616-4378-9f20-da5b35230396"
+  ]
+ },
+ "groups": [
+  {
+   "duplicate_group_id": "ed23c97d",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "012e9fd6-dea4-4ebc-a4ca-27669b2eaccb",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "SkyPlant Fragrant Multi-Effect Nourish Eye Balm Stick 9g Kor",
+     "sizes": [
+      "9g"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1734066442766091520?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1734066442766091520?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 15,
+      "product_intelligence_review_field_provenance": 31,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 4
+     }
+    },
+    {
+     "product_id": "ed23c97d-4db5-4712-8b8a-135ed8083542",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "SkyPlant Fragrant Multi-Effect Nourish Eye Balm Stick 9g Kor",
+     "sizes": [
+      "9g"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1734066442766091520",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1734066442766091520?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 15,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "ed23c97d-4db5-4712-8b8a-135ed8083542",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "012e9fd6-dea4-4ebc-a4ca-27669b2eaccb"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "e10804b5",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "07b2fcdf-a9ab-4d5d-a10d-15a9b291af62",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "LIMITED STOCK BY HANNAVELLA",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1735105410377549369",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1735105410377549369?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 4,
+      "product_intelligence_review_field_provenance": 14,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    },
+    {
+     "product_id": "e10804b5-5d06-4b2a-9b66-2d32ca35841a",
+     "pi_class": "FC",
+     "in_debt": false,
+     "title": "LIMITED STOCK BY HANNAVELLA",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1735105410377549369?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1735105410377549369?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 6,
+      "product_intelligence_review_field_provenance": 6,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 1
+     }
+    }
+   ],
+   "recommended_canonical_id": "e10804b5-5d06-4b2a-9b66-2d32ca35841a",
+   "canonical_pi_class": "FC",
+   "debt_members": [
+    "07b2fcdf-a9ab-4d5d-a10d-15a9b291af62"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "6836091d",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "0ab23ee4-6947-4966-96b1-906a3cdc98e6",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "Yaya empire vanilla crush | ara johari | mia azahar | Ervan ",
+     "sizes": [
+      "10ml"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729633305342216391?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729633305342216391?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "6836091d-2269-4ade-9f8f-22e0487306b2",
+     "pi_class": "FC",
+     "in_debt": false,
+     "title": "Yaya empire vanilla crush | ara johari | mia azahar | Ervan ",
+     "sizes": [
+      "10ml"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729633305342216391",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729633305342216391?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 6,
+      "product_intelligence_review_field_provenance": 6,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 1
+     }
+    }
+   ],
+   "recommended_canonical_id": "6836091d-2269-4ade-9f8f-22e0487306b2",
+   "canonical_pi_class": "FC",
+   "debt_members": [
+    "0ab23ee4-6947-4966-96b1-906a3cdc98e6"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "5985b3b4",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "0ac2b28f-84d2-461e-9df7-9d5b27745d26",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "[Keto] BOSSBROTHERS Halal Sambal Belacan 270g",
+     "sizes": [
+      "270g"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729581311932335955?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729581311932335955?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 3,
+      "product_intelligence_field_provenance": 24,
+      "product_intelligence_review_field_provenance": 24,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "5985b3b4-a785-4347-a3ec-17e4f99ba928",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "[Keto] BOSSBROTHERS Halal Sambal Belacan 270g",
+     "sizes": [
+      "270g"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729581311932335955",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729581311932335955?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 4,
+      "product_intelligence_review_field_provenance": 14,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "0ac2b28f-84d2-461e-9df7-9d5b27745d26",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "5985b3b4-a785-4347-a3ec-17e4f99ba928"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "b978fd30",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "0b2d2726-42fc-436a-b493-ceca1295f8d9",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "CandyCrum Choco Cup 10oz (Est 90g) - Choco Dessert Cup | Doo",
+     "sizes": [
+      "10oz",
+      "90g"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1730887849711339480",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1730887849711339480?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 15,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    },
+    {
+     "product_id": "b978fd30-a6c3-47fd-8f16-a4eb263c8f3c",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "CandyCrum Choco Cup 10oz (Est 90g) - Choco Dessert Cup | Doo",
+     "sizes": [
+      "10oz",
+      "90g"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1730887849711339480?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1730887849711339480?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "0b2d2726-42fc-436a-b493-ceca1295f8d9",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "b978fd30-a6c3-47fd-8f16-a4eb263c8f3c"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "cd70b493",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "0df5249a-c670-4f44-8ec5-c83f7cb77478",
+     "pi_class": "FC",
+     "in_debt": false,
+     "title": "BUY 1 TAKE 1 | Topeng Rawatan Keratin, 350g, Pembaikan Dalam",
+     "sizes": [
+      "350g"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1732757236215874606",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1732757236215874606?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 6,
+      "product_intelligence_review_field_provenance": 6,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 1
+     }
+    },
+    {
+     "product_id": "cd70b493-990c-4a6f-8bd6-776765d8e04e",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "BUY 1 TAKE 1 | Topeng Rawatan Keratin, 350g, Pembaikan Dalam",
+     "sizes": [
+      "350g"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1732757236215874606?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1732757236215874606?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 23,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "0df5249a-c670-4f44-8ec5-c83f7cb77478",
+   "canonical_pi_class": "FC",
+   "debt_members": [
+    "cd70b493-990c-4a6f-8bd6-776765d8e04e"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "994da37b",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "0eed93fb-504e-44f4-bfe6-fcd620ae2d81",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "MAVERIX FOR SKIN | LIMITED PREMIUM Set (5 Bottles) Body Care",
+     "sizes": [
+      "5Bottles"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1731055701425358442",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731055701425358442?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 4,
+      "product_intelligence_review_field_provenance": 13,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    },
+    {
+     "product_id": "994da37b-298f-453e-a253-f436b50d0006",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "MAVERIX FOR SKIN | LIMITED PREMIUM Set (5 Bottles) Body Care",
+     "sizes": [
+      "5Bottles"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1731055701425358442?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731055701425358442?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "0eed93fb-504e-44f4-bfe6-fcd620ae2d81",
+   "canonical_pi_class": "MISSING",
+   "debt_members": [
+    "0eed93fb-504e-44f4-bfe6-fcd620ae2d81",
+    "994da37b-298f-453e-a253-f436b50d0006"
+   ],
+   "disposition": "MERGE_BOTH_DEBT_then_research_canonical"
+  },
+  {
+   "duplicate_group_id": "b6215416",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "0f6bdfdd-474d-4a30-aa92-400aa0f1ed51",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "[NEW 2026] ANAS Powder Blusher DUO #06",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1734247971700901208?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1734247971700901208?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "b6215416-cc29-4af8-8933-afcf7db1fc14",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "[NEW 2026] ANAS Powder Blusher DUO #06",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1734247971700901208",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1734247971700901208?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 4,
+      "product_intelligence_review_field_provenance": 13,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "0f6bdfdd-474d-4a30-aa92-400aa0f1ed51",
+   "canonical_pi_class": "LEGACY",
+   "debt_members": [
+    "0f6bdfdd-474d-4a30-aa92-400aa0f1ed51",
+    "b6215416-cc29-4af8-8933-afcf7db1fc14"
+   ],
+   "disposition": "MERGE_BOTH_DEBT_then_research_canonical"
+  },
+  {
+   "duplicate_group_id": "82f42b81",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "1042b094-0624-4b62-ba4d-598d6f8ff825",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "SABUN DOBI LIQUID LAUNDRY IMBA DETERGENT REFILL PACK 2KG/ MI",
+     "sizes": [
+      "2KG"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1732194677040710759?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1732194677040710759?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 8,
+      "product_intelligence_review_field_provenance": 17,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "82f42b81-d373-424b-88d7-fddffeb0c807",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "SABUN DOBI LIQUID LAUNDRY IMBA DETERGENT REFILL PACK 2KG/ MI",
+     "sizes": [
+      "2KG"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1732194677040710759",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1732194677040710759?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 15,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "82f42b81-d373-424b-88d7-fddffeb0c807",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "1042b094-0624-4b62-ba4d-598d6f8ff825"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "d9385e4e",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "118bd94c-fd1c-4c4c-b974-dbd6e60b8e0e",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "Sambal Kruk-Kruk Ateen(100GRAM KECIL)",
+     "sizes": [
+      "100GRAM"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729642654721541429?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729642654721541429?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "d9385e4e-7a61-4308-b63e-d165879a9a8a",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "Sambal Kruk-Kruk Ateen(100GRAM KECIL)",
+     "sizes": [
+      "100GRAM"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729642654721541429",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729642654721541429?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 4,
+      "product_intelligence_review_field_provenance": 13,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "118bd94c-fd1c-4c4c-b974-dbd6e60b8e0e",
+   "canonical_pi_class": "LEGACY",
+   "debt_members": [
+    "118bd94c-fd1c-4c4c-b974-dbd6e60b8e0e",
+    "d9385e4e-7a61-4308-b63e-d165879a9a8a"
+   ],
+   "disposition": "MERGE_BOTH_DEBT_then_research_canonical"
+  },
+  {
+   "duplicate_group_id": "5039d290",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "15dae875-292c-4d5f-833e-8cc9c8e01449",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "Bento Wet Cat Food Pouch 50g - 5 Varieties (Chicken Broth, G",
+     "sizes": [
+      "50g"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1732015588716086569",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1732015588716086569?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 15,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    },
+    {
+     "product_id": "5039d290-5932-41fd-bc25-e5ace3c8e744",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "Bento Wet Cat Food Pouch 50g - 5 Varieties (Chicken Broth, G",
+     "sizes": [
+      "50g"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1732015588716086569?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1732015588716086569?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "15dae875-292c-4d5f-833e-8cc9c8e01449",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "5039d290-5932-41fd-bc25-e5ace3c8e744"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "86c1f88d",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "1ae4d866-d534-4ae0-b954-17ae8ad502ef",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "PERFUME PARADISE PEN FOR WOMEN - PACKAGING BARU (10 ML) PARF",
+     "sizes": [
+      "10ML"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729535475451004628?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729535475451004628?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "86c1f88d-dbf8-46f5-bd11-a56f37a6d07c",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "PERFUME PARADISE PEN FOR WOMEN - PACKAGING BARU (10 ML) PARF",
+     "sizes": [
+      "10ML"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729535475451004628",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729535475451004628?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 4,
+      "product_intelligence_review_field_provenance": 14,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "1ae4d866-d534-4ae0-b954-17ae8ad502ef",
+   "canonical_pi_class": "LEGACY",
+   "debt_members": [
+    "1ae4d866-d534-4ae0-b954-17ae8ad502ef",
+    "86c1f88d-dbf8-46f5-bd11-a56f37a6d07c"
+   ],
+   "disposition": "MERGE_BOTH_DEBT_then_research_canonical"
+  },
+  {
+   "duplicate_group_id": "cc94a006",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "1b376d1a-911d-40d4-b8b7-2c71eae951fb",
+     "pi_class": "FC",
+     "in_debt": false,
+     "title": "SAMBAL GARING(bilis+bawang goreng) ((HUMAIRA)) 100g",
+     "sizes": [
+      "100g"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1731760198429934884",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731760198429934884?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 6,
+      "product_intelligence_review_field_provenance": 6,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 1
+     }
+    },
+    {
+     "product_id": "cc94a006-8a77-4a9b-b639-32133fa78095",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "SAMBAL GARING(bilis+bawang goreng) ((HUMAIRA))",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1731760198429934884?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731760198429934884?region=MY&local=en",
+     "title_sim_to_canonical": 0.948,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 24,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "1b376d1a-911d-40d4-b8b7-2c71eae951fb",
+   "canonical_pi_class": "FC",
+   "debt_members": [
+    "cc94a006-8a77-4a9b-b639-32133fa78095"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "231016d5",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "1cbd5dc2-88f7-4540-acc2-7a8fddbbb9f7",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "Dr. Bites Cooked Chicken Breast For Cat And Dog Juicy Kucing",
+     "sizes": [
+      "22g"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729639702298265499?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729639702298265499?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 25,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "231016d5-408f-4c67-b5d7-c5819557fea6",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "Dr. Bites Cooked Chicken Breast For Cat And Dog Juicy Kucing",
+     "sizes": [
+      "22g"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729639702298265499",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729639702298265499?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 4,
+      "product_intelligence_review_field_provenance": 16,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "1cbd5dc2-88f7-4540-acc2-7a8fddbbb9f7",
+   "canonical_pi_class": "LEGACY",
+   "debt_members": [
+    "1cbd5dc2-88f7-4540-acc2-7a8fddbbb9f7",
+    "231016d5-408f-4c67-b5d7-c5819557fea6"
+   ],
+   "disposition": "MERGE_BOTH_DEBT_then_research_canonical"
+  },
+  {
+   "duplicate_group_id": "bd9a10c2",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "2035994f-bac3-4ad8-ad22-7e3d94ddea92",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "[SOCKS HOUSE] RAMADAN PROMOSI 1 Pasang High Quality and Sele",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729650408469530302?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729650408469530302?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "bd9a10c2-2d04-4f35-a529-8278669416ef",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "[SOCKS HOUSE] RAMADAN PROMOSI 1 Pasang High Quality and Sele",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729650408469530302",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729650408469530302?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 15,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "bd9a10c2-2d04-4f35-a529-8278669416ef",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "2035994f-bac3-4ad8-ad22-7e3d94ddea92"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "2f684849",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "230c26e9-cac2-4759-8805-95b8b1f89c34",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "[Amelia's Favourite] [NEW] Pentavite Multivitamin dan Minera",
+     "sizes": [
+      "180Tablets"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729673570298070234?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729673570298070234?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "2f684849-0980-459a-9c5d-25e977994689",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "[Amelia's Favourite] [NEW] Pentavite Multivitamin dan Minera",
+     "sizes": [
+      "180Tablets"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729673570298070234",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729673570298070234?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 15,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "2f684849-0980-459a-9c5d-25e977994689",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "230c26e9-cac2-4759-8805-95b8b1f89c34"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "6f62fe2d",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "244d4e59-dcad-4cee-a6a8-f233e577e5bb",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "READY STOCK Cotton Women Inner Pants/ Muslimah Seluar Dalam ",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729739675925185547",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729739675925185547?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 16,
+      "product_intelligence_review_field_provenance": 16,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    },
+    {
+     "product_id": "6f62fe2d-910b-41b2-b86f-4211921d8b7d",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "READY STOCK Cotton Women Inner Pants/ Muslimah Seluar Dalam ",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729739675925185547?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729739675925185547?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 23,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "244d4e59-dcad-4cee-a6a8-f233e577e5bb",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "6f62fe2d-910b-41b2-b86f-4211921d8b7d"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "31dc461a",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "2556b774-db22-4ee9-9325-e496ed8d21a4",
+     "pi_class": "FC",
+     "in_debt": false,
+     "title": "Original Krim cina kuning Huatuo Baifuling - Krim Kuning Cre",
+     "sizes": [
+      "15g"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1731836030776673389?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731836030776673389?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 6,
+      "product_intelligence_review_field_provenance": 6,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 1
+     }
+    },
+    {
+     "product_id": "31dc461a-8584-4973-b7d4-02724a9a4150",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "Original Krim cina kuning Huatuo Baifuling - Krim Kuning Cre",
+     "sizes": [
+      "15g"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1731836030776673389",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731836030776673389?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 4,
+      "product_intelligence_review_field_provenance": 13,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "2556b774-db22-4ee9-9325-e496ed8d21a4",
+   "canonical_pi_class": "FC",
+   "debt_members": [
+    "31dc461a-8584-4973-b7d4-02724a9a4150"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "f4227b61",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "2f83e17d-1db1-451b-b751-e34bb11e4cdb",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "(HARGA BORONG) ALGITUS UNISEX SCUBA TRAINING PANT ADULT / KI",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1731523389833446470?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731523389833446470?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "f4227b61-0182-4235-ab5d-dde5d58f330f",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "(HARGA BORONG) ALGITUS UNISEX SCUBA TRAINING PANT ADULT / KI",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1731523389833446470",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731523389833446470?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 15,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "f4227b61-0182-4235-ab5d-dde5d58f330f",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "2f83e17d-1db1-451b-b751-e34bb11e4cdb"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "b56d75b7",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "2f8a4981-415e-4cfc-a5ca-fed0774b8ab9",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "Wide leg plaid long pants women casual pants new Korean styl",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729430205593258592",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729430205593258592?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 15,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    },
+    {
+     "product_id": "b56d75b7-0b7c-4534-9e8c-c3740fffe54e",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "Wide leg plaid long pants women casual pants new Korean styl",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729430205593258592?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729430205593258592?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "2f8a4981-415e-4cfc-a5ca-fed0774b8ab9",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "b56d75b7-0b7c-4534-9e8c-c3740fffe54e"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "c4216575",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "31918158-d6e9-47e1-9378-f5ece33f4fad",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "CEMILAN BASRENG Snacks Food",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729543527305872627?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729543527305872627?region=MY&local=en",
+     "title_sim_to_canonical": 0.915,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "c4216575-c02c-4719-9d48-88dc09c8917f",
+     "pi_class": "FC",
+     "in_debt": false,
+     "title": "CEMILAN BASRENG Snacks Food 100g",
+     "sizes": [
+      "100g"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729543527305872627",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729543527305872627?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 6,
+      "product_intelligence_review_field_provenance": 6,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 1
+     }
+    }
+   ],
+   "recommended_canonical_id": "c4216575-c02c-4719-9d48-88dc09c8917f",
+   "canonical_pi_class": "FC",
+   "debt_members": [
+    "31918158-d6e9-47e1-9378-f5ece33f4fad"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "69f37eee",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "3316af51-e998-486d-acdb-b14cf6dc5ecc",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "SUISCO | Syampu + Keratin Rawatan Rambut+ Rawatan Rebonding ",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1730351420535899400?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1730351420535899400?region=MY&local=en",
+     "title_sim_to_canonical": 0.985,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 16,
+      "product_intelligence_review_field_provenance": 25,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "69f37eee-aff0-4084-b8b6-3f64ba87271b",
+     "pi_class": "FC",
+     "in_debt": false,
+     "title": "SUISCO | Syampu + Keratin Rawatan Rambut+ Rawatan Rebonding ",
+     "sizes": [
+      "400ml"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1730351420535899400",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1730351420535899400?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 6,
+      "product_intelligence_review_field_provenance": 6,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 1
+     }
+    }
+   ],
+   "recommended_canonical_id": "69f37eee-aff0-4084-b8b6-3f64ba87271b",
+   "canonical_pi_class": "FC",
+   "debt_members": [
+    "3316af51-e998-486d-acdb-b14cf6dc5ecc"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "8e6587c3",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "349868fc-e1f6-4c79-a5a8-8e4a13fb8469",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "OHSOLAH AIR BOMB Pewangi Kereta Meletop Viral | Car Air Fres",
+     "sizes": [
+      "100g"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1731501201703535823?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731501201703535823?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "workspace_execution_package": 1,
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "8e6587c3-f736-42d1-9005-64c89ad622cf",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "OHSOLAH AIR BOMB Pewangi Kereta Meletop Viral | Car Air Fres",
+     "sizes": [
+      "100g"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1731501201703535823",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731501201703535823?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 4,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "349868fc-e1f6-4c79-a5a8-8e4a13fb8469",
+   "canonical_pi_class": "LEGACY",
+   "debt_members": [
+    "349868fc-e1f6-4c79-a5a8-8e4a13fb8469",
+    "8e6587c3-f736-42d1-9005-64c89ad622cf"
+   ],
+   "disposition": "MERGE_BOTH_DEBT_then_research_canonical"
+  },
+  {
+   "duplicate_group_id": "4bd6342c",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "37a9e9d5-9170-45fc-ae38-4d03734f6895",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "Pleated V Neck Long Sleeve Shirt Blouse Cantik Anti Kedut Ka",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1732861437901964299?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1732861437901964299?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "4bd6342c-aac7-4cc5-a27e-a11d70da42c0",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "Pleated V Neck Long Sleeve Shirt Blouse Cantik Anti Kedut Ka",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1732861437901964299",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1732861437901964299?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 15,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "4bd6342c-aac7-4cc5-a27e-a11d70da42c0",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "37a9e9d5-9170-45fc-ae38-4d03734f6895"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "7379cbac",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "38f8ba4d-14fe-4a20-94b1-2e54e4611d14",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "M-5XL Men Short Pants Sport Shorts Beach Shorts Casual Fashi",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1730745568753911224?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1730745568753911224?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 3,
+      "product_intelligence_field_provenance": 24,
+      "product_intelligence_review_field_provenance": 24,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "7379cbac-9651-4c1c-b097-a4138fe8a3b4",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "M-5XL Men Short Pants Sport Shorts Beach Shorts Casual Fashi",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1730745568753911224",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1730745568753911224?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 4,
+      "product_intelligence_review_field_provenance": 13,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "38f8ba4d-14fe-4a20-94b1-2e54e4611d14",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "7379cbac-9651-4c1c-b097-a4138fe8a3b4"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "b573d840",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "3b56ffdb-e703-4af2-bfc9-3197bc7b14c9",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "[Kombo] Kokojar Balang Saiz 300ml 5 Jenis Cereal Coklat Gela",
+     "sizes": [
+      "300ml"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729491013916788553?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729491013916788553?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "request_telemetry": 2,
+      "workspace_execution_package": 1,
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 24,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "b573d840-4444-4c8e-97a1-96311b6e52ac",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "[Kombo] Kokojar Balang Saiz 300ml 5 Jenis Cereal Coklat Gela",
+     "sizes": [
+      "300ml"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729491013916788553",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729491013916788553?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 4,
+      "product_intelligence_review_field_provenance": 13,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "3b56ffdb-e703-4af2-bfc9-3197bc7b14c9",
+   "canonical_pi_class": "LEGACY",
+   "debt_members": [
+    "3b56ffdb-e703-4af2-bfc9-3197bc7b14c9",
+    "b573d840-4444-4c8e-97a1-96311b6e52ac"
+   ],
+   "disposition": "MERGE_BOTH_DEBT_then_research_canonical"
+  },
+  {
+   "duplicate_group_id": "8d3214de",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "418db1a6-c174-4ed2-9250-f879f197875e",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "JAZNOR TSHIRT BLOUSE FLORA MATERIAL RIBBED KNIT BY HARIKA AI",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1735087224635819539",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1735087224635819539?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 4,
+      "product_intelligence_review_field_provenance": 14,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    },
+    {
+     "product_id": "8d3214de-145a-489a-8da2-d0438b9d1406",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "JAZNOR TSHIRT BLOUSE FLORA MATERIAL RIBBED KNIT BY HARIKA AI",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1735087224635819539?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1735087224635819539?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 3,
+      "product_intelligence_field_provenance": 21,
+      "product_intelligence_review_field_provenance": 21,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "8d3214de-145a-489a-8da2-d0438b9d1406",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "418db1a6-c174-4ed2-9250-f879f197875e"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "a0be58cd",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "42bb1598-29af-4cf1-8049-43adcd90b7b8",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "1 Cup Caramel Popcorn (10oz) - Caramel Popcorn | Popcorn Sed",
+     "sizes": [
+      "10oz"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729507644013840344?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729507644013840344?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 23,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "a0be58cd-9bdb-4f1f-a7dc-91b845e2e591",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "1 Cup Caramel Popcorn (10oz) - Caramel Popcorn | Popcorn Sed",
+     "sizes": [
+      "10oz"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729507644013840344",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729507644013840344?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "workspace_execution_package": 1,
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 4,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "42bb1598-29af-4cf1-8049-43adcd90b7b8",
+   "canonical_pi_class": "LEGACY",
+   "debt_members": [
+    "42bb1598-29af-4cf1-8049-43adcd90b7b8",
+    "a0be58cd-9bdb-4f1f-a7dc-91b845e2e591"
+   ],
+   "disposition": "MERGE_BOTH_DEBT_then_research_canonical"
+  },
+  {
+   "duplicate_group_id": "eaed2125",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "4372fd7e-c8f7-4325-b3d1-8e11d9bf97c8",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "SUPAMO Cotton Comforter Blanket Quilt Selimut Tilam Bedsheet",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729601455020672962?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729601455020672962?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 8,
+      "product_intelligence_review_field_provenance": 18,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "eaed2125-9f0a-4b00-879c-893fad2e3fa8",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "SUPAMO Cotton Comforter Blanket Quilt Selimut Tilam Bedsheet",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729601455020672962",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729601455020672962?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 16,
+      "product_intelligence_review_field_provenance": 16,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "eaed2125-9f0a-4b00-879c-893fad2e3fa8",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "4372fd7e-c8f7-4325-b3d1-8e11d9bf97c8"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "7e963f71",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "499c861a-df9c-41ec-bddc-3e453b56d762",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "ADVO Long Pants Men Polyester Seluar Panjang Lelaki Track Pa",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1730381343351735691",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1730381343351735691?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 16,
+      "product_intelligence_review_field_provenance": 16,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    },
+    {
+     "product_id": "7e963f71-a80c-447d-81cb-99bc51ba5379",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "ADVO Long Pants Men Polyester Seluar Panjang Lelaki Track Pa",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1730381343351735691?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1730381343351735691?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 23,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "499c861a-df9c-41ec-bddc-3e453b56d762",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "7e963f71-a80c-447d-81cb-99bc51ba5379"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "fc2c5a41",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "4ec51256-629e-4d85-b23c-74a213f8842e",
+     "pi_class": "FC",
+     "in_debt": false,
+     "title": "wow spageti dan ramen yes instans ready stock all varian HAL",
+     "sizes": [
+      "2G"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1731113020977743452",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731113020977743452?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 6,
+      "product_intelligence_review_field_provenance": 6,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 1
+     }
+    },
+    {
+     "product_id": "fc2c5a41-ebf5-41bd-8884-4c233801d641",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "wow spageti dan ramen yes instans ready stock all varian HAL",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1731113020977743452?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731113020977743452?region=MY&local=en",
+     "title_sim_to_canonical": 0.969,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "4ec51256-629e-4d85-b23c-74a213f8842e",
+   "canonical_pi_class": "FC",
+   "debt_members": [
+    "fc2c5a41-ebf5-41bd-8884-4c233801d641"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "e6cb7e6d",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "4f856dea-b0f2-41fc-8b97-2c336ebb9c87",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "￼Silvy Original PANJAG & PENDEK Mesir Stokin stoking Muslima",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1730356375538992557?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1730356375538992557?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 3,
+      "product_intelligence_field_provenance": 24,
+      "product_intelligence_review_field_provenance": 24,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "e6cb7e6d-16ab-4926-bef7-a99ff419d1b4",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "￼Silvy Original PANJAG & PENDEK Mesir Stokin stoking Muslima",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1730356375538992557",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1730356375538992557?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 4,
+      "product_intelligence_review_field_provenance": 13,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "4f856dea-b0f2-41fc-8b97-2c336ebb9c87",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "e6cb7e6d-16ab-4926-bef7-a99ff419d1b4"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "cde9d9cc",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "4fbe3e06-9383-4f19-837b-9063a1cb762b",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "(MINIMUM ODER 15 PCS SEKALI ODER) POPCORN CUP 12 OZ GOODIES ",
+     "sizes": [
+      "12OZ",
+      "15PCS"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1731890409497527936?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731890409497527936?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "cde9d9cc-7410-4bae-81d3-250d5d535e26",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "(MINIMUM ODER 15 PCS SEKALI ODER) POPCORN CUP 12 OZ GOODIES ",
+     "sizes": [
+      "12OZ",
+      "15PCS"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1731890409497527936",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731890409497527936?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 15,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "cde9d9cc-7410-4bae-81d3-250d5d535e26",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "4fbe3e06-9383-4f19-837b-9063a1cb762b"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "82dcf45b",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "57104da9-7053-46ba-a001-242e8ed9db7a",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "Kg/1000g 1PCS Sleeping Pillow Viral Bantal Tidur Bantal Hote",
+     "sizes": [
+      "1000g",
+      "1PCS"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729424817337895571?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729424817337895571?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "82dcf45b-e7db-4f5f-8984-f4a43dbbe31f",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "Kg/1000g 1PCS Sleeping Pillow Viral Bantal Tidur Bantal Hote",
+     "sizes": [
+      "1000g",
+      "1PCS"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729424817337895571",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729424817337895571?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 16,
+      "product_intelligence_review_field_provenance": 16,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "82dcf45b-e7db-4f5f-8984-f4a43dbbe31f",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "57104da9-7053-46ba-a001-242e8ed9db7a"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "ad39720e",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "595c29e3-58d1-4f84-8ef4-8e3d8d7024b1",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "PANDA QUEENIE TUDUNG BAWAL PRINTED TUDUNG BAWAL CORAK PRINTE",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1731963595031414611?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731963595031414611?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "ad39720e-2033-4184-9107-f820022a790f",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "PANDA QUEENIE TUDUNG BAWAL PRINTED TUDUNG BAWAL CORAK PRINTE",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1731963595031414611",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731963595031414611?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 16,
+      "product_intelligence_review_field_provenance": 16,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "ad39720e-2033-4184-9107-f820022a790f",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "595c29e3-58d1-4f84-8ef4-8e3d8d7024b1"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "c3449c3f",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "59a0a7cc-3374-4025-951a-9832fe9359e4",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "[JUALAN HANGAT] TIME PHORIA - Altera Blurring Lip Tint 4G | ",
+     "sizes": [
+      "4G"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1733431094640936234?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1733431094640936234?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "c3449c3f-6ff2-4568-bd1e-e3ee030afea5",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "[JUALAN HANGAT] TIME PHORIA - Altera Blurring Lip Tint 4G | ",
+     "sizes": [
+      "4G"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1733431094640936234",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1733431094640936234?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 15,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "c3449c3f-6ff2-4568-bd1e-e3ee030afea5",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "59a0a7cc-3374-4025-951a-9832fe9359e4"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "66bc6983",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "5b1927d1-447a-41f4-8d25-c1efdbe564d9",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "sedekah item MERYEM latte booster sample(1 pack 7 sachet )",
+     "sizes": [
+      "1pack",
+      "7sachet"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729510018116454165",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729510018116454165?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 4,
+      "product_intelligence_review_field_provenance": 13,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    },
+    {
+     "product_id": "66bc6983-eba9-4466-8c46-3a6708cfae42",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "sedekah item MERYEM latte booster sample(1 pack 7 sachet )",
+     "sizes": [
+      "1pack",
+      "7sachet"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729510018116454165?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729510018116454165?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "5b1927d1-447a-41f4-8d25-c1efdbe564d9",
+   "canonical_pi_class": "MISSING",
+   "debt_members": [
+    "5b1927d1-447a-41f4-8d25-c1efdbe564d9",
+    "66bc6983-eba9-4466-8c46-3a6708cfae42"
+   ],
+   "disposition": "MERGE_BOTH_DEBT_then_research_canonical"
+  },
+  {
+   "duplicate_group_id": "91e38d6f",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "5ceca901-c5f1-4f0b-bd75-4641c7ef123c",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "Ringgit Home Shop 3PCS/Set Set Pengisar Sayur Alat Dapur / M",
+     "sizes": [
+      "3PCS"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729621384875901978?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729621384875901978?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 9,
+      "product_intelligence_review_field_provenance": 18,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "91e38d6f-1194-45b6-be60-c898695443b4",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "Ringgit Home Shop 3PCS/Set Set Pengisar Sayur Alat Dapur / M",
+     "sizes": [
+      "3PCS"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729621384875901978",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729621384875901978?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 16,
+      "product_intelligence_review_field_provenance": 16,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "91e38d6f-1194-45b6-be60-c898695443b4",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "5ceca901-c5f1-4f0b-bd75-4641c7ef123c"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "e02ecaf9",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "5d38ca10-81b5-409c-a9a9-800e519cf2da",
+     "pi_class": "FC",
+     "in_debt": false,
+     "title": "Tanamera Brown Formulation Body Soap 125g | Sabun Badan Tana",
+     "sizes": [
+      "125g"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729441959337626513",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729441959337626513?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 6,
+      "product_intelligence_review_field_provenance": 6,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 1
+     }
+    },
+    {
+     "product_id": "e02ecaf9-5d51-4356-8e77-7353a52d1da5",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "Tanamera Brown Formulation Body Soap 125g | Sabun Badan Tana",
+     "sizes": [
+      "125g"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729441959337626513?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729441959337626513?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "5d38ca10-81b5-409c-a9a9-800e519cf2da",
+   "canonical_pi_class": "FC",
+   "debt_members": [
+    "e02ecaf9-5d51-4356-8e77-7353a52d1da5"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "b7364ab6",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "5dd5ec97-1209-4d1f-8e46-cd63b2c0c186",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "[Plus Size BC Cup] Dreamtale Baju Dalam Wanita Dreamtale Wom",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729577818756515325",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729577818756515325?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 16,
+      "product_intelligence_review_field_provenance": 16,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    },
+    {
+     "product_id": "b7364ab6-23ce-424d-aa2b-d247eeeeb931",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "[Plus Size BC Cup] Dreamtale Baju Dalam Wanita Dreamtale Wom",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729577818756515325?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729577818756515325?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "5dd5ec97-1209-4d1f-8e46-cd63b2c0c186",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "b7364ab6-23ce-424d-aa2b-d247eeeeb931"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "cfce055e",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "66087bc7-6d39-435e-9718-69cb4f5b04f5",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "DOUBLE C Sarung Bantal Corak New Modern Design Pillow Case B",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729615934554802606?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729615934554802606?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "cfce055e-31ca-48e6-b5f5-9148cf4c68eb",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "DOUBLE C Sarung Bantal Corak New Modern Design Pillow Case B",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729615934554802606",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729615934554802606?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 15,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "cfce055e-31ca-48e6-b5f5-9148cf4c68eb",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "66087bc7-6d39-435e-9718-69cb4f5b04f5"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "81e40232",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "666ca472-5045-4781-a2a4-c39292a3a617",
+     "pi_class": "FC",
+     "in_debt": false,
+     "title": "[LYSMILEGO] Jalur Pemutih Gigi Jenama Rasmi Untuk Kegunaan H",
+     "sizes": [
+      "7pack"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1731684607938889505",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731684607938889505?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 6,
+      "product_intelligence_review_field_provenance": 6,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 1
+     }
+    },
+    {
+     "product_id": "81e40232-f0f1-4a51-8879-30636619bad9",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "[LYSMILEGO] Jalur Pemutih Gigi Jenama Rasmi Untuk Kegunaan H",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1731684607938889505?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731684607938889505?region=MY&local=en",
+     "title_sim_to_canonical": 0.949,
+     "fk_refs": {
+      "request_telemetry": 1,
+      "workspace_execution_package": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "666ca472-5045-4781-a2a4-c39292a3a617",
+   "canonical_pi_class": "FC",
+   "debt_members": [
+    "81e40232-f0f1-4a51-8879-30636619bad9"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "80463ec2",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "6680d62b-3a1e-459a-ac40-a056929f22a7",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "Purfresh 2026 Baharu Car Air Freshener 185g Minyak Pewangi K",
+     "sizes": [
+      "185g"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1730886578023335516",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1730886578023335516?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 16,
+      "product_intelligence_review_field_provenance": 16,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    },
+    {
+     "product_id": "80463ec2-7b20-4da2-bc45-05667596ee56",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "Purfresh 2026 Baharu Car Air Freshener 185g Minyak Pewangi K",
+     "sizes": [
+      "185g"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1730886578023335516?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1730886578023335516?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "6680d62b-3a1e-459a-ac40-a056929f22a7",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "80463ec2-7b20-4da2-bc45-05667596ee56"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "cc69a4ae",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "6a3e310d-6e62-4ca0-a0bf-fd0495cdbc8e",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "NEW | BeFocusPro+ Bantu Tidur Lena, Lebih Bertenaga & Kekal ",
+     "sizes": [
+      "30tablets"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1730867165493494839?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1730867165493494839?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "request_telemetry": 2,
+      "workspace_execution_package": 1,
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 23,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "cc69a4ae-4ab5-4c7c-93e1-87eb796eeed1",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "NEW | BeFocusPro+ Bantu Tidur Lena, Lebih Bertenaga & Kekal ",
+     "sizes": [
+      "30tablets"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1730867165493494839",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1730867165493494839?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 16,
+      "product_intelligence_review_field_provenance": 16,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "cc69a4ae-4ab5-4c7c-93e1-87eb796eeed1",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "6a3e310d-6e62-4ca0-a0bf-fd0495cdbc8e"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "91cec488",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "6a7806a1-e8ce-4159-8042-1b7d68c2f35b",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "Sukos Lampin Tarik Bayi Saiz S-XXXL 50 Keping: Super Serap A",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1732914947568731425?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1732914947568731425?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "copy_set": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "91cec488-8c69-4df0-af5c-371db70ec384",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "Sukos Lampin Tarik Bayi Saiz S-XXXL 50 Keping: Super Serap A",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1732914947568731425",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1732914947568731425?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 15,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "91cec488-8c69-4df0-af5c-371db70ec384",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "6a7806a1-e8ce-4159-8042-1b7d68c2f35b"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "c70c3ab7",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "6c70428f-3dbd-43e8-ba70-3023e87aee64",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "[KKM] FEREENA GLUTA SOAP 10g",
+     "sizes": [
+      "10g"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1732820937232844740",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1732820937232844740?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 6,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    },
+    {
+     "product_id": "c70c3ab7-6073-499e-bb23-5d6ce331ea3f",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "[KKM] FEREENA GLUTA SOAP 10g",
+     "sizes": [
+      "10g"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1732820937232844740?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1732820937232844740?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "6c70428f-3dbd-43e8-ba70-3023e87aee64",
+   "canonical_pi_class": "MISSING",
+   "debt_members": [
+    "6c70428f-3dbd-43e8-ba70-3023e87aee64",
+    "c70c3ab7-6073-499e-bb23-5d6ce331ea3f"
+   ],
+   "disposition": "MERGE_BOTH_DEBT_then_research_canonical"
+  },
+  {
+   "duplicate_group_id": "fdad0f75",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "6fe5946d-1740-479e-a383-bb2ac319ee22",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "BUY 3 TAKE 2【Tawaran lstimewa】 BAIYAOLANG 20g Salappenjagaan",
+     "sizes": [
+      "20g"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1732782758972523810",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1732782758972523810?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 4,
+      "product_intelligence_review_field_provenance": 13,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    },
+    {
+     "product_id": "fdad0f75-9069-4174-8acd-33a8ee1d3232",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "BUY 3 TAKE 2【Tawaran lstimewa】 BAIYAOLANG 20g Salappenjagaan",
+     "sizes": [
+      "20g"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1732782758972523810?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1732782758972523810?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "6fe5946d-1740-479e-a383-bb2ac319ee22",
+   "canonical_pi_class": "MISSING",
+   "debt_members": [
+    "6fe5946d-1740-479e-a383-bb2ac319ee22",
+    "fdad0f75-9069-4174-8acd-33a8ee1d3232"
+   ],
+   "disposition": "MERGE_BOTH_DEBT_then_research_canonical"
+  },
+  {
+   "duplicate_group_id": "9951446d",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "7326285d-c203-46b8-84ac-09124280123a",
+     "pi_class": "FC",
+     "in_debt": false,
+     "title": "BIOAQUA Centella Collagen Hydrating Moisturizing Refreshing ",
+     "sizes": [
+      "1pcs"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729484971361928411",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729484971361928411?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "workspace_execution_package": 1,
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 6,
+      "product_intelligence_review_field_provenance": 6,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 1
+     }
+    },
+    {
+     "product_id": "9951446d-fc70-4380-b194-7a11d18be130",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "BIOAQUA Centella Collagen Hydrating Moisturizing Refreshing ",
+     "sizes": [
+      "1pcs"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729484971361928411?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729484971361928411?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 23,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "7326285d-c203-46b8-84ac-09124280123a",
+   "canonical_pi_class": "FC",
+   "debt_members": [
+    "9951446d-fc70-4380-b194-7a11d18be130"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "b92e6678",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "74caa194-f831-40f9-a79e-8f2757d83645",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "(QR)Livetined 4 botol pek 30ml serum rambut, aroma manis lim",
+     "sizes": [
+      "30ml"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1731382391849715451?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731382391849715451?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "b92e6678-04e0-4dbe-a2de-5432a0d43dc6",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "(QR)Livetined 4 botol pek 30ml serum rambut, aroma manis lim",
+     "sizes": [
+      "30ml"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1731382391849715451",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731382391849715451?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "workspace_execution_package": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 15,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "b92e6678-04e0-4dbe-a2de-5432a0d43dc6",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "74caa194-f831-40f9-a79e-8f2757d83645"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "ae47b55b",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "7632caf0-ac2c-4814-afdd-afe697438652",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "Original Roach&Ant Umpan Semut, Lipas & Kerengga, Roach & An",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729632335743846564?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729632335743846564?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 23,
+      "product_intelligence_review_field_provenance": 23,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 2
+     }
+    },
+    {
+     "product_id": "ae47b55b-58d4-441e-97d3-0d6c785bb530",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "Original Roach&Ant Umpan Semut, Lipas & Kerengga, Roach & An",
+     "sizes": [
+      "15ml"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729632335743846564",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729632335743846564?region=MY&local=en",
+     "title_sim_to_canonical": 0.98,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 6,
+      "product_intelligence_review_field_provenance": 17,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "7632caf0-ac2c-4814-afdd-afe697438652",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "ae47b55b-58d4-441e-97d3-0d6c785bb530"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "e42c937b",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "8023ab1b-c6d8-4202-b4bb-e7d3baf6c057",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "Crunchy Garlic Chilli Oil [REGULAR] Bottle Pack Food Cooking",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729615243157014889?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729615243157014889?region=MY&local=en",
+     "title_sim_to_canonical": 0.97,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "e42c937b-4236-40e2-b7c4-990d7e9e8b18",
+     "pi_class": "FC",
+     "in_debt": false,
+     "title": "Crunchy Garlic Chilli Oil [REGULAR] Bottle Pack Food Cooking",
+     "sizes": [
+      "150g"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729615243157014889",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729615243157014889?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 6,
+      "product_intelligence_review_field_provenance": 6,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 1
+     }
+    }
+   ],
+   "recommended_canonical_id": "e42c937b-4236-40e2-b7c4-990d7e9e8b18",
+   "canonical_pi_class": "FC",
+   "debt_members": [
+    "8023ab1b-c6d8-4202-b4bb-e7d3baf6c057"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "aaea7d2f",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "849fb822-17e6-49aa-a04d-2b3dfc12716e",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "Set Cetak Kasual Untuk Wanita Dengan Corak Bunga Dan Lengan ",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1733618279728055579",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1733618279728055579?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 15,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    },
+    {
+     "product_id": "aaea7d2f-a66e-483b-92b7-2704a84f810e",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "Set Cetak Kasual Untuk Wanita Dengan Corak Bunga Dan Lengan ",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1733618279728055579?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1733618279728055579?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "request_telemetry": 2,
+      "workspace_execution_package": 1,
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "849fb822-17e6-49aa-a04d-2b3dfc12716e",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "aaea7d2f-a66e-483b-92b7-2704a84f810e"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "f8102fa7",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "84c246ff-17d4-4119-86ee-d7e2f0e9be94",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "【 FREE SHIPPING 】199SPEED X688 Portable Handheld Fan USB Rec",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1732346302006789175",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1732346302006789175?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 15,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    },
+    {
+     "product_id": "f8102fa7-2ab1-4d91-881c-a6823ea8cbe2",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "【 FREE SHIPPING 】199SPEED X688 Portable Handheld Fan USB Rec",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1732346302006789175?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1732346302006789175?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "84c246ff-17d4-4119-86ee-d7e2f0e9be94",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "f8102fa7-2ab1-4d91-881c-a6823ea8cbe2"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "a96edc07",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "8d0278b8-b867-4f07-bb12-c49d1817e97c",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "SEDEKAH SAMPLE MERYEM LİPOBOND ( 5 SACHET )",
+     "sizes": [
+      "5SACHET"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1734446008919951125?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1734446008919951125?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "a96edc07-71fa-4f7f-8edc-cb779b90ae84",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "SEDEKAH SAMPLE MERYEM LİPOBOND ( 5 SACHET )",
+     "sizes": [
+      "5SACHET"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1734446008919951125",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1734446008919951125?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 15,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "a96edc07-71fa-4f7f-8edc-cb779b90ae84",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "8d0278b8-b867-4f07-bb12-c49d1817e97c"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "e3ffa155",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "9311100f-6271-4965-8b26-f6e04e3843a1",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "Numinara Aurelia Body Soap (125g) For Skin-Toning and Anti-I",
+     "sizes": [
+      "125g"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1730879670729540624",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1730879670729540624?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 4,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    },
+    {
+     "product_id": "e3ffa155-669e-4c0d-bceb-0ad7c565885e",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "Numinara Aurelia Body Soap (125g) For Skin-Toning and Anti-I",
+     "sizes": [
+      "125g"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1730879670729540624?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1730879670729540624?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 10,
+      "product_intelligence_review_field_provenance": 14,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "e3ffa155-669e-4c0d-bceb-0ad7c565885e",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "9311100f-6271-4965-8b26-f6e04e3843a1"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "bf865cef",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "95bc6d80-bd01-4b9d-af55-6d921f054312",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "MINYAK Wangi Viral - Perfume Viyouna - 12ML",
+     "sizes": [
+      "12ML"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1730477462190131121?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1730477462190131121?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "bf865cef-b45f-4bdc-abfb-b0745a075d8f",
+     "pi_class": "FC",
+     "in_debt": false,
+     "title": "MINYAK Wangi Viral - Perfume Viyouna - 12ML",
+     "sizes": [
+      "12ML"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1730477462190131121",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1730477462190131121?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 6,
+      "product_intelligence_review_field_provenance": 6,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 1
+     }
+    }
+   ],
+   "recommended_canonical_id": "bf865cef-b45f-4bdc-abfb-b0745a075d8f",
+   "canonical_pi_class": "FC",
+   "debt_members": [
+    "95bc6d80-bd01-4b9d-af55-6d921f054312"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "db2dbbeb",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "9ef257e3-00b1-4f50-b7d9-419b8b2403a7",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "MERYCODE Lip Serum Bibir Warna Termal Adaptif Nutrisi Mendal",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1731911757509002931",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731911757509002931?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 4,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    },
+    {
+     "product_id": "db2dbbeb-79dc-4b78-b1ce-2257257cb7f8",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "MERYCODE Lip Serum Bibir Warna Termal Adaptif Nutrisi Mendal",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1731911757509002931?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1731911757509002931?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 12,
+      "product_intelligence_review_field_provenance": 23,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "9ef257e3-00b1-4f50-b7d9-419b8b2403a7",
+   "canonical_pi_class": "MISSING",
+   "debt_members": [
+    "9ef257e3-00b1-4f50-b7d9-419b8b2403a7",
+    "db2dbbeb-79dc-4b78-b1ce-2257257cb7f8"
+   ],
+   "disposition": "MERGE_BOTH_DEBT_then_research_canonical"
+  },
+  {
+   "duplicate_group_id": "b561c02d",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "a2df36de-02e1-4d19-8138-80ad6e34d1df",
+     "pi_class": "FC",
+     "in_debt": false,
+     "title": "BELLA PARK PERFUME PINK EDITION 30ml",
+     "sizes": [
+      "30ml"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729644732671100397",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729644732671100397?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 6,
+      "product_intelligence_review_field_provenance": 6,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 1
+     }
+    },
+    {
+     "product_id": "b561c02d-9ba1-4e32-95c8-c7d55f790ca5",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "BELLA PARK PERFUME PINK EDITION",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729644732671100397?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729644732671100397?region=MY&local=en",
+     "title_sim_to_canonical": 0.925,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "a2df36de-02e1-4d19-8138-80ad6e34d1df",
+   "canonical_pi_class": "FC",
+   "debt_members": [
+    "b561c02d-9ba1-4e32-95c8-c7d55f790ca5"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "eee2d2b9",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "a6c94806-15dc-460c-b56c-ea674ce662e7",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "[SINGLE ITEM ONLY] KUN AirySoft Plain Color Pillowcase/Bolst",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1732086980306831036?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1732086980306831036?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "eee2d2b9-d07b-42cb-b6a8-8cd5e126ad0d",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "[SINGLE ITEM ONLY] KUN AirySoft Plain Color Pillowcase/Bolst",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1732086980306831036",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1732086980306831036?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 4,
+      "product_intelligence_review_field_provenance": 13,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "a6c94806-15dc-460c-b56c-ea674ce662e7",
+   "canonical_pi_class": "LEGACY",
+   "debt_members": [
+    "a6c94806-15dc-460c-b56c-ea674ce662e7",
+    "eee2d2b9-d07b-42cb-b6a8-8cd5e126ad0d"
+   ],
+   "disposition": "MERGE_BOTH_DEBT_then_research_canonical"
+  },
+  {
+   "duplicate_group_id": "dcf1e83d",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "ae1a57ff-613f-482d-9e4b-8acf8ec301b8",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "Baju Tidur Set Wanita Women Printed Pyjamas Set Wear Short S",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1730737984383124887",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1730737984383124887?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 15,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    },
+    {
+     "product_id": "dcf1e83d-f85d-485e-b6af-367e474d09fe",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "Baju Tidur Set Wanita Women Printed Pyjamas Set Wear Short S",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1730737984383124887?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1730737984383124887?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "ae1a57ff-613f-482d-9e4b-8acf8ec301b8",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "dcf1e83d-f85d-485e-b6af-367e474d09fe"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "ecd367eb",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "b527d024-7d61-4b6f-8828-6367f25469ef",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "PANDAEYES CACABO CORDUROY PANTS (CLO-CNXC0907LP)",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1732075644174566971?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1732075644174566971?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    },
+    {
+     "product_id": "ecd367eb-0a0d-433d-a774-50dfdf088f69",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "PANDAEYES CACABO CORDUROY PANTS (CLO-CNXC0907LP)",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1732075644174566971",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1732075644174566971?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 4,
+      "product_intelligence_review_field_provenance": 14,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "b527d024-7d61-4b6f-8828-6367f25469ef",
+   "canonical_pi_class": "LEGACY",
+   "debt_members": [
+    "b527d024-7d61-4b6f-8828-6367f25469ef",
+    "ecd367eb-0a0d-433d-a774-50dfdf088f69"
+   ],
+   "disposition": "MERGE_BOTH_DEBT_then_research_canonical"
+  },
+  {
+   "duplicate_group_id": "e1803e3e",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "b71be8c5-614a-4c53-8679-01d658b6ea71",
+     "pi_class": "FC",
+     "in_debt": false,
+     "title": "S JODOHLEBARAN SILLA - Tudung BawaLEXC",
+     "sizes": [],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1735130347793909044?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1735130347793909044?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 6,
+      "product_intelligence_review_field_provenance": 6,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 1
+     }
+    },
+    {
+     "product_id": "e1803e3e-4665-441b-be6c-8415cb8c6bed",
+     "pi_class": "MISSING",
+     "in_debt": true,
+     "title": "S JODOHLEBARAN SILLA - Tudung BawaLEXC",
+     "sizes": [],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1735130347793909044",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1735130347793909044?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 1,
+      "product_intelligence_field_provenance": 4,
+      "product_intelligence_review_field_provenance": 13,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    }
+   ],
+   "recommended_canonical_id": "b71be8c5-614a-4c53-8679-01d658b6ea71",
+   "canonical_pi_class": "FC",
+   "debt_members": [
+    "e1803e3e-4665-441b-be6c-8415cb8c6bed"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  },
+  {
+   "duplicate_group_id": "fcc092fa",
+   "size": 2,
+   "members": [
+    {
+     "product_id": "cfefad5e-e96a-498f-8c62-ac488e7b8160",
+     "pi_class": "GA",
+     "in_debt": false,
+     "title": "3 / 5 helai Set seluar dalam fesyen untuk lelaki, peninju be",
+     "sizes": [
+      "5helai"
+     ],
+     "shared_source_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729495889701733545",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729495889701733545?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 15,
+      "product_intelligence_review_field_provenance": 15,
+      "product_strategy_taxonomy": 1,
+      "product_intelligence_review_draft": 2
+     }
+    },
+    {
+     "product_id": "fcc092fa-7f90-42e9-b7d9-267a0acb5db8",
+     "pi_class": "LEGACY",
+     "in_debt": true,
+     "title": "3 / 5 helai Set seluar dalam fesyen untuk lelaki, peninju be",
+     "sizes": [
+      "5helai"
+     ],
+     "shared_source_url": "https://shop.tiktok.com/view/product/1729495889701733545?region=MY&local=en",
+     "shared_tiktok_url": "https://shop.tiktok.com/view/product/1729495889701733545?region=MY&local=en",
+     "title_sim_to_canonical": 1.0,
+     "fk_refs": {
+      "product_intelligence_snapshot": 2,
+      "product_intelligence_field_provenance": 13,
+      "product_intelligence_review_field_provenance": 22,
+      "product_strategy_taxonomy": 1,
+      "product_treatment_factory_task": 10,
+      "product_intelligence_review_draft": 3
+     }
+    }
+   ],
+   "recommended_canonical_id": "cfefad5e-e96a-498f-8c62-ac488e7b8160",
+   "canonical_pi_class": "GA",
+   "debt_members": [
+    "fcc092fa-7f90-42e9-b7d9-267a0acb5db8"
+   ],
+   "disposition": "COPY_FROM_CANONICAL"
+  }
+ ]
+}
