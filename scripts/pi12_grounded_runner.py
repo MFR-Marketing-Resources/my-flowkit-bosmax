@@ -33,7 +33,10 @@ sys.path.insert(0, str(REPO))
 BASE = "http://127.0.0.1:8100/api"
 REVIEWER = "claude-pi12-grounded"
 LEDGER = REPO / "outputs" / "mission-pi12" / "ledger.jsonl"
-CALL_CAP = 530
+# Hard total ceiling is 530 ACTUAL provider calls. The pre-mission SkyPlant probe is call 1/530 and
+# is NOT in the ledger, so the ledger budget is reserved at 529 to keep the true total <= 530.
+PROBE_CALLS = 1
+CALL_CAP = 530 - PROBE_CALLS  # 529 ledger calls + 1 probe = 530 total
 from agent.services.product_intelligence_claim_safety_service import evaluate_claim_safety  # noqa: E402
 
 # generic/placeholder markers that must NEVER survive into an approved product (quality gate)
@@ -162,7 +165,8 @@ def process_one(con, pid, budget):
         call_seq = budget.take()
         st, r = call("POST", f"/product-intelligence/review-drafts/{did}/ai-fill-missing", {}, timeout=240)
         if st != 200:
-            return {"product_id": pid, "result": "FAIL" if st >= 500 or st == 0 else "REFUSED",
+            # 4xx = permanent refusal (terminal, never retried); 5xx/network/0 = transient FAIL (retryable).
+            return {"product_id": pid, "result": ("PERMANENT_REFUSAL" if 400 <= st < 500 else "FAIL"),
                     "stage": "ai_fill", "http": st, "detail": r, "call_seq": call_seq}
 
     # 3. deterministic identity allowed_claims (fingerprinted, claim-safe)
@@ -355,7 +359,9 @@ def main():
     # not unique products, so duplicates still count against the <=530 ceiling.
     raw_ledger = [json.loads(l) for l in LEDGER.read_text(encoding="utf-8").splitlines()] if LEDGER.exists() else []
     budget = Budget(spent=sum(1 for r in raw_ledger if r.get("call_seq") is not None))
-    DONE = {"APPROVED", "CORRECTED"}  # both are terminal-done; never reprocess (avoids duplicate calls)
+    # Every first-pass TERMINAL outcome is provider-processed; a resume must NOT re-call DeepSeek for
+    # them (evidence unchanged). Only transient FAIL (5xx/network) and never-called products are retried.
+    DONE = {"APPROVED", "CORRECTED", "INCOMPLETE", "REVIEW", "PERMANENT_REFUSAL"}
 
     if a.correct:  # corrective vNext pass (no provider calls)
         tally = Counter()
