@@ -1,10 +1,10 @@
 {
  "cohort": 530,
  "processed": 530,
- "closed": 406,
- "residual_total": 124,
+ "closed": 414,
+ "residual_total": 116,
  "incomplete": 105,
- "review": 19,
+ "review": 11,
  "residual_incomplete_ids": [
   "01f3274b-2fc0-4977-b6d5-efaaa2cb2bf7",
   "040d796c-5fe4-4491-b13d-6d13f2704355",
@@ -115,27 +115,19 @@
  "residual_review_ids": [
   "012e9fd6-dea4-4ebc-a4ca-27669b2eaccb",
   "04a42d8c-755e-409e-8b60-b8b91f599dc7",
-  "244d4e59-dcad-4cee-a6a8-f233e577e5bb",
   "3b56ffdb-e703-4af2-bfc9-3197bc7b14c9",
   "49677116-dfc6-42da-ac7d-a25a49167c16",
-  "700334bd-0983-4e7a-8644-3c1d23eb9a18",
-  "7a6d9004-7b86-49d6-9ad5-3cd8598179e6",
-  "8168a131-27d5-4689-97d0-de42d4e3df5e",
-  "849fb822-17e6-49aa-a04d-2b3dfc12716e",
-  "91e38d6f-1194-45b6-be60-c898695443b4",
   "9311100f-6271-4965-8b26-f6e04e3843a1",
   "9ef257e3-00b1-4f50-b7d9-419b8b2403a7",
   "a0be58cd-9bdb-4f1f-a7dc-91b845e2e591",
   "ae47b55b-58d4-441e-97d3-0d6c785bb530",
-  "cd394fff-5e39-4e18-ac1e-f0050bd2c133",
-  "cfefad5e-e96a-498f-8c62-ac488e7b8160",
   "db2dbbeb-79dc-4b78-b1ce-2257257cb7f8",
   "e06d8afd-44fa-47d7-8d79-d7dc55d52c41",
   "efcc1f31-c91b-46fb-acc6-d736a5271884"
  ],
  "status_tally": {
-  "REVIEW": 19,
-  "APPROVED": 405,
+  "REVIEW": 11,
+  "APPROVED": 413,
   "INCOMPLETE": 105,
   "CORRECTED": 1
  },
@@ -160,6 +152,15 @@
    "8e6587c3": "concurrency-window(fixed via lazy-import lock)",
    "8ea29ec2": "concurrency-window(fixed)",
    "8f5b7dca": "concurrency-window(fixed)"
+  }
+ },
+ "post_mission_corrections": {
+  "free_generic_marker_rerun": {
+   "ids": 8,
+   "result": "8 APPROVED",
+   "provider_calls": 0,
+   "evidence": "provider_receipts.jsonl absent; is_generic precision fix (bare everyday-use removed) unmasked 8 products with complete benefits/USP",
+   "closed_delta": "+8 (residual 124 -> 116)"
   }
  }
 }

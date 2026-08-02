@@ -1,7 +1,7 @@
 {
- "source_git_head": "c090f5583f50c77da3633e695118c85ce6c29f54",
+ "source_git_head": "0ad9c413c2420116ca9c9be8f062740b141bb50f",
  "db_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
- "db_file_sha256": "e472025e82abfe2e97b6f005c859a08742dbe5f2fcf1545c452ff46392a1cab8",
+ "db_file_sha256": "e0c53f6e549611661639bb40fdaa5f3aee997297132bb0ea76ffb13515f89dba",
  "product_table_hash": {
   "live": "c25ee92343c5cf324737c25edf69736f5ba887f363e2524776cce3e7c42dfd08",
   "pre_pi12_backup": "c25ee92343c5cf324737c25edf69736f5ba887f363e2524776cce3e7c42dfd08",
@@ -18,13 +18,13 @@
   "field_prov": "SELECT source_type, evidence_kind, COUNT(*) c FROM product_intelligence_review_field_provenance p JOIN product_intelligence_snapshot s ON s.created_from_review_draft_id=p.draft_id WHERE s.approved_by=? AND s.status='APPROVED' GROUP BY source_type, evidence_kind ORDER BY c DESC"
  },
  "pi_quality": {
-  "LEGACY_APPROVED_INCOMPLETE": 84,
-  "APPROVED_WITH_GOVERNED_ABSENCE": 408,
+  "LEGACY_APPROVED_INCOMPLETE": 82,
+  "APPROVED_WITH_GOVERNED_ABSENCE": 416,
   "FULLY_COMPLETE": 119,
-  "MISSING_APPROVED_INTELLIGENCE": 40
+  "MISSING_APPROVED_INTELLIGENCE": 34
  },
  "pi_quality_total": 651,
- "pi12_approved_count": 406,
+ "pi12_approved_count": 414,
  "pi12_approved_snapshot_ids": [
   {
    "product_id": "0133d0bf-a8e7-41d3-908b-75d727bb86f4",
@@ -315,6 +315,11 @@
    "product_id": "2440b42a-c5ba-4a1f-95b4-258de6d595fc",
    "snapshot_id": "f85ca1e5-50f1-4e26-9d69-17a1d2518bca",
    "version": 3
+  },
+  {
+   "product_id": "244d4e59-dcad-4cee-a6a8-f233e577e5bb",
+   "snapshot_id": "17834bf2-d3a6-4bd1-bc85-b0f755c3c477",
+   "version": 2
   },
   {
    "product_id": "2453b3e8-ad60-4ef2-a22b-1c93a698d4f9",
@@ -872,6 +877,11 @@
    "version": 3
   },
   {
+   "product_id": "700334bd-0983-4e7a-8644-3c1d23eb9a18",
+   "snapshot_id": "0f1e0c50-eb69-4060-a3c1-4fad95faed4f",
+   "version": 3
+  },
+  {
    "product_id": "70df6d27-69d7-48d3-b426-adea41a9045b",
    "snapshot_id": "afd9af6b-7156-46e5-a64d-b5ae7878f01e",
    "version": 3
@@ -947,6 +957,11 @@
    "version": 3
   },
   {
+   "product_id": "7a6d9004-7b86-49d6-9ad5-3cd8598179e6",
+   "snapshot_id": "f5f72aa1-1a1e-4ebe-8a48-3697f300a78f",
+   "version": 2
+  },
+  {
    "product_id": "7a88c55d-82a6-4045-88b2-f635f772cd05",
    "snapshot_id": "53a6b1f4-4540-4e1f-a1e6-7f257bdcf2b8",
    "version": 2
@@ -1012,6 +1027,11 @@
    "version": 3
   },
   {
+   "product_id": "8168a131-27d5-4689-97d0-de42d4e3df5e",
+   "snapshot_id": "b75286d6-a6fa-40e7-a324-6b10c01e75d5",
+   "version": 3
+  },
+  {
    "product_id": "81ccca44-006a-4dcf-a5c7-6655048615d6",
    "snapshot_id": "46061b56-529e-4eb6-9f67-428254ad61f4",
    "version": 2
@@ -1055,6 +1075,11 @@
    "product_id": "840c5364-b1f5-409a-aa74-3e4f3a8d1bfc",
    "snapshot_id": "df029b43-ad60-44f5-9485-36181307e408",
    "version": 3
+  },
+  {
+   "product_id": "849fb822-17e6-49aa-a04d-2b3dfc12716e",
+   "snapshot_id": "ceb79c1d-5340-4409-964c-b13d61213d7a",
+   "version": 2
   },
   {
    "product_id": "84c246ff-17d4-4119-86ee-d7e2f0e9be94",
@@ -1199,6 +1224,11 @@
   {
    "product_id": "91cec488-8c69-4df0-af5c-371db70ec384",
    "snapshot_id": "b7579772-bb34-4d19-a30b-b9c5fd8ff442",
+   "version": 2
+  },
+  {
+   "product_id": "91e38d6f-1194-45b6-be60-c898695443b4",
+   "snapshot_id": "1f31a6ab-02bd-4a91-83f0-2a4fb5f1ce2c",
    "version": 2
   },
   {
@@ -1697,6 +1727,11 @@
    "version": 2
   },
   {
+   "product_id": "cd394fff-5e39-4e18-ac1e-f0050bd2c133",
+   "snapshot_id": "cc1710b3-45f6-4e73-bec5-e2d06da498e6",
+   "version": 2
+  },
+  {
    "product_id": "cd5ce8b7-f14d-4919-bcac-6c5cd856c8b1",
    "snapshot_id": "6bef2b0e-1b9b-4781-9eee-21c14ff5065a",
    "version": 3
@@ -1729,6 +1764,11 @@
   {
    "product_id": "cfce055e-31ca-48e6-b5f5-9148cf4c68eb",
    "snapshot_id": "68f76161-4689-4557-9995-1689afe7065c",
+   "version": 2
+  },
+  {
+   "product_id": "cfefad5e-e96a-498f-8c62-ac488e7b8160",
+   "snapshot_id": "6adcfc39-0796-46a9-b0f8-d2295544d6ab",
    "version": 2
   },
   {
@@ -2061,9 +2101,9 @@
  "contamination_rows": [],
  "duplicate_current_approved": [],
  "duplicate_open_drafts": [],
- "distinct_personas": 406,
+ "distinct_personas": 414,
  "identical_persona_groups": [],
- "distinct_strategies": 406,
+ "distinct_strategies": 414,
  "identical_strategy_groups": [],
  "generic_marker_scan": {
   "gate_source": "scripts/pi12_grounded_runner.py::is_generic (the exact gate applied at approval)",
@@ -2077,15 +2117,15 @@
    "buyer_persona_snapshot_json",
    "copy_strategy_summary_json"
   ],
-  "snapshots_scanned": 406,
+  "snapshots_scanned": 414,
   "field_present_counts": {
-   "product_description": 406,
-   "usage_text": 345,
-   "target_customer_text": 406,
-   "benefits_json": 406,
-   "usp_json": 406,
-   "buyer_persona_snapshot_json": 406,
-   "copy_strategy_summary_json": 406
+   "product_description": 414,
+   "usage_text": 352,
+   "target_customer_text": 414,
+   "benefits_json": 414,
+   "usp_json": 414,
+   "buyer_persona_snapshot_json": 414,
+   "copy_strategy_summary_json": 414
   },
   "generic_markers_used": [
    "suitable for everyone",
@@ -2118,7 +2158,7 @@
    "tbd": "placeholder(bare)",
    "todo": "placeholder(bare)"
   },
-  "borderline_substring_hit_count": 7,
+  "borderline_substring_hit_count": 16,
   "borderline_substring_hits": [
    {
     "product_id": "20a935f9-338c-4db6-8ed3-bf11002adfd3",
@@ -2126,6 +2166,13 @@
     "substring": "everyday use",
     "kind": "generic-template(bare)",
     "context": "es\": [\"Softness and comfort for baby\", \"Durability for everyday use\", \"Adorable patterns for style\"], \"market_"
+   },
+   {
+    "product_id": "244d4e59-dcad-4cee-a6a8-f233e577e5bb",
+    "field": "target_customer_text",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "n inner pants or leggings, possibly for modest wear or everyday use."
    },
    {
     "product_id": "5427373d-19de-4a80-bd5f-11799c20aea7",
@@ -2142,6 +2189,41 @@
     "context": "Place food in a vacuum bag, insert the open end into the sealer, and activate the v"
    },
    {
+    "product_id": "700334bd-0983-4e7a-8644-3c1d23eb9a18",
+    "field": "usage_text",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "Wear as casual pants for everyday use."
+   },
+   {
+    "product_id": "7a6d9004-7b86-49d6-9ad5-3cd8598179e6",
+    "field": "target_customer_text",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "uples seeking practical and attractive kitchenware for everyday use, gifting, or household organization."
+   },
+   {
+    "product_id": "8168a131-27d5-4689-97d0-de42d4e3df5e",
+    "field": "product_description",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "ss and easy to wear. It is a casual hijab suitable for everyday use."
+   },
+   {
+    "product_id": "8168a131-27d5-4689-97d0-de42d4e3df5e",
+    "field": "buyer_persona_snapshot_json",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "ing\", \"Soft and comfortable fabric\", \"Casual style for everyday use\"], \"purchase_context\": \"Online purchase of"
+   },
+   {
+    "product_id": "849fb822-17e6-49aa-a04d-2b3dfc12716e",
+    "field": "target_customer_text",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "ual, ready-to-wear outfits with a floral aesthetic for everyday use."
+   },
+   {
     "product_id": "8f5b7dca-94b4-4ed1-acbf-7aee92a55ffc",
     "field": "usage_text",
     "substring": "insert ",
@@ -2149,11 +2231,32 @@
     "context": "Use as bedding: place fitted bedsheet over mattress, insert pillows into pillowcases, insert bolster into bo"
    },
    {
+    "product_id": "91e38d6f-1194-45b6-be60-c898695443b4",
+    "field": "benefits_json",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "ction for durability\", \"Practical kitchen tool set for everyday use\"]"
+   },
+   {
     "product_id": "ab730155-b3c6-4c58-b108-c796564139a3",
     "field": "usage_text",
     "substring": "insert ",
     "kind": "placeholder(bare verb)",
     "context": "fasten shawls on the shoulder or to clip jeans. Simply insert the pin through the fabric and secure the clasp."
+   },
+   {
+    "product_id": "cd394fff-5e39-4e18-ac1e-f0050bd2c133",
+    "field": "usage_text",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "Wear as a regular t-shirt for casual or everyday use."
+   },
+   {
+    "product_id": "cfefad5e-e96a-498f-8c62-ac488e7b8160",
+    "field": "usage_text",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "Wear as regular underwear. The boxers are designed for everyday use."
    },
    {
     "product_id": "e098f5b7-d155-45e2-82a8-2b717acba9a1",
@@ -2176,22 +2279,22 @@
   {
    "source_type": "AI_ENRICHMENT",
    "evidence_kind": "INFERENCE",
-   "c": 1734
+   "c": 1769
   },
   {
    "source_type": "AI_ENRICHMENT",
    "evidence_kind": "FACT",
-   "c": 1183
+   "c": 1208
   },
   {
    "source_type": "REVIEWER_DISPOSITION",
    "evidence_kind": "FIELD_ABSENCE_DISPOSITION",
-   "c": 873
+   "c": 890
   },
   {
    "source_type": "REVIEW_DRAFT",
    "evidence_kind": "JSON",
-   "c": 812
+   "c": 828
   }
  ]
 }

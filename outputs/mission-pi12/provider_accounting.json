@@ -2,7 +2,7 @@
  "AUTHORITATIVE_total_actual_provider_calls": 530,
  "cap": 530,
  "headroom": 0,
- "method": "RECONSTRUCTED \u2014 the runner had no DeepSeek server-side receipt during this run; this total is reconstructed from (a) ledger ai-fill invocations, (b) the 1 pre-mission probe, and (c) retries INFERRED from duplicate AI_ENRICHMENT provenance rows. It is an evidence-based estimate, NOT an exact provider receipt.",
+ "method": "RECONSTRUCTED — the runner had no DeepSeek server-side receipt during this run; this total is reconstructed from (a) ledger ai-fill invocations, (b) the 1 pre-mission probe, and (c) retries INFERRED from duplicate AI_ENRICHMENT provenance rows. It is an evidence-based estimate, NOT an exact provider receipt.",
  "breakdown": {
   "ledger_invocation_receipts": 527,
   "pre_mission_probe": 1,
@@ -19,5 +19,12 @@
   "8e6587c3": "concurrency-window(fixed)",
   "8ea29ec2": "concurrency-window(fixed)",
   "8f5b7dca": "concurrency-window(fixed)"
+ },
+ "post_mission_free_rerun": {
+  "ids": 8,
+  "provider_calls": 0,
+  "total_unchanged": 530,
+  "evidence": "provider_receipts.jsonl absent after re-run; --force re-approval of 8 drafts that already carried AI content (have_ai guard skips ai-fill).",
+  "effect": "residual 124 -> 116; total actual provider calls remains 530/530."
  }
 }

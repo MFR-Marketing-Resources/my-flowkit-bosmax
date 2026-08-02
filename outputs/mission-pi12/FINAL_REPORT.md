@@ -2,25 +2,35 @@
 
 **VERDICT: `PRODUCT_INTELLIGENCE_COMPLETE_EXCEPT_EXACT_HUMAN_REVIEW_IDS`.**
 All 530 real-debt products were processed with grounded, product-specific SUPPORTED_INFERENCE (one
-DeepSeek call each). 406 closed to `APPROVED_WITH_GOVERNED_ABSENCE`; **124 remain honest residual**
+DeepSeek call each). **414 closed** to `APPROVED_WITH_GOVERNED_ABSENCE`; **116 remain honest residual**
 because DeepSeek refused to fabricate benefits/USP or the claim gate held — never gamed to hit a count.
+(406 closed in the bulk run; a later **zero-provider-call** re-run closed **+8** that had been masked
+solely by an over-broad "everyday use" generic marker since corrected — see post-mission note below.)
 
 ## Before / after Operations PI-quality (651 real, 8 fixtures excluded)
-| Class | Before (post-rollback) | After PI-12 |
+| Class | Before (post-rollback) | After PI-12 (+free re-run) |
 |---|---|---|
 | FULLY_COMPLETE | 119 | **119** |
-| APPROVED_WITH_GOVERNED_ABSENCE | 2 | **408** |
-| LEGACY_APPROVED_INCOMPLETE | 318 | **84** |
-| MISSING_APPROVED_INTELLIGENCE | 212 | **40** |
-| **FC + GA** | 121 | **527** |
+| APPROVED_WITH_GOVERNED_ABSENCE | 2 | **416** |
+| LEGACY_APPROVED_INCOMPLETE | 318 | **82** |
+| MISSING_APPROVED_INTELLIGENCE | 212 | **34** |
+| **FC + GA** | 121 | **535** |
 
-**Debt closed: 406.** Residual debt: 124 (84 legacy-incomplete + 40 missing).
+**Debt closed: 414.** Residual debt: 116 (82 legacy-incomplete + 34 missing).
 
 ## 530-product reconciliation
-- Processed: **530 / 530** (0 cap-blocked). Closed **406** (405 APPROVED + 1 CORRECTED).
-- Residual **124**: **105 INCOMPLETE** (DeepSeek returned INSUFFICIENT_EVIDENCE for hard-required
-  benefits/USP on thin/promotional names) + **19 REVIEW** (CLAIM_BLOCKED / CLAIM_REVIEW_REQUIRED —
-  never auto-acknowledged). Exact IDs in `final_reconciliation.json`.
+- Processed: **530 / 530** (0 cap-blocked). Closed **414** (413 APPROVED + 1 CORRECTED).
+- Residual **116**: **105 INCOMPLETE** (DeepSeek returned INSUFFICIENT_EVIDENCE for hard-required
+  benefits/USP on thin/promotional names) + **11 REVIEW** (CLAIM_BLOCKED / CLAIM_REVIEW_REQUIRED —
+  never auto-acknowledged). Exact IDs + per-ID reasons in `final_reconciliation.json` /
+  `residual_reasons.json`.
+
+## Post-mission zero-cost correction (+8)
+The cycle-3 precision fix removed the over-broad bare "everyday use" marker (it false-matched
+product-specific modifiers). 8 REVIEW products had been blocked SOLELY by that marker while carrying
+complete description+benefits+USP. A `--force` re-run of exactly those 8 through the corrected gate
+approved all 8 with **0 provider calls** (`provider_receipts.jsonl` absent; drafts already carried AI
+content). No other products touched; product table hash unchanged. Residual 124 → 116.
 
 ## Provider-call receipt (`provider_accounting.json`) — CORRECTED
 - **Authoritative total actual calls: 530 / 530 (headroom 0)** — RECONSTRUCTED, not a provider
@@ -41,27 +51,27 @@ because DeepSeek refused to fabricate benefits/USP or the claim gate held — ne
   not evidence → governed `SOURCE_UNAVAILABLE`. Allowed claims = deterministic taxonomy identity claim
   (fingerprinted, claim-safe, `allowed_claims_json` only).
 
-## Quality audit (406 approvals) — content-scanned, reproducible
-Backed by the committed read-only `audit_verify.py` -> `audit_verify_output.json` (DB sha256
-`e472025e…`; scans the exact source draft of each snapshot). This is a real content scan, not a
-distinct-string count:
+## Quality audit (414 approvals) — content-scanned, reproducible
+Backed by the committed read-only `audit_verify.py` -> `audit_verify_output.json` (scans the exact
+source draft of each snapshot). This is a real content scan, not a distinct-string count:
 - generic/template **0**, placeholder **0** — over EVERY generated field (present-counts prove real
-  content scanned: product_description 406, usage 345, target_customer 406, benefits/usp/persona/
-  strategy 406 each). **Full disclosure:** the audit also scans 4 over-broad substrings that were
-  DROPPED from the gate and records all **7 hits with context** under `borderline_substring_hits` —
+  content scanned: product_description 414, usage 352, target_customer 414, benefits/usp/persona/
+  strategy 414 each). **Full disclosure:** the audit also scans 4 over-broad substrings that were
+  DROPPED from the gate and records all **16 hits with context** under `borderline_substring_hits` —
   all product-specific (the verb "insert" in usage steps; "everyday use" as a modifier, e.g.
   "Durability for everyday use"), none template filler. The earlier "0/0" was distinct-count only;
   this replaces it with a scanned, adjudicated 0.
 - ingredients/warnings without acquired provenance **0** · duplicate current-approved **0** ·
   duplicate open drafts **0** · integrity_check **ok** · foreign_key_check **0** · product table
-  hash unchanged vs pre-PI-12 backup (`c25ee923…`). distinct personas **406/406**, strategies
-  **406/406**. Field-provenance: AI_ENRICHMENT/INFERENCE 1738, AI_ENRICHMENT/FACT 1186,
-  governed-absence dispositions 873.
+  hash unchanged vs pre-PI-12 backup (`c25ee923…`). distinct personas **414/414**, strategies
+  **414/414**.
 
 Reviewer identity `claude-pi12-grounded` (automated mission decisions, audit-noted — not a fabricated
 human). Contamination found in 3 pilot approvals + 1 placeholder were corrected via vNext (history
 preserved, 0 extra DeepSeek calls).
 
 ## Remaining product-intelligence debt (truthful)
-**124 products** need human/source input: 105 lack groundable benefits/USP, 19 are claim-sensitive.
-Exact IDs listed in `final_reconciliation.json` (`residual_incomplete_ids`, `residual_review_ids`).
+**116 products** need human/source input: 105 lack groundable benefits/USP, 11 are claim-sensitive
+(10 CLAIM_BLOCKED + 1 CLAIM_REVIEW_REQUIRED). Exact IDs + per-ID reasons in `final_reconciliation.json`
+(`residual_incomplete_ids`, `residual_review_ids`) and `residual_reasons.json`. Merge/deploy does NOT
+close these — they require real product facts or claim adjudication, not generation.

@@ -1,5 +1,5 @@
 {
- "source_git_head": "d3ab899fd8bf45ea0d9071daf123766146a95324",
+ "source_git_head": "0ad9c413c2420116ca9c9be8f062740b141bb50f",
  "product_table_total": 659,
  "fixtures": {
   "count": 8,
@@ -13,10 +13,10 @@
  },
  "arithmetic": "659 total - 8 fixtures = 651 real",
  "classification": {
-  "LEGACY_APPROVED_INCOMPLETE": 84,
-  "APPROVED_WITH_GOVERNED_ABSENCE": 408,
+  "LEGACY_APPROVED_INCOMPLETE": 82,
+  "APPROVED_WITH_GOVERNED_ABSENCE": 416,
   "FULLY_COMPLETE": 119,
-  "MISSING_APPROVED_INTELLIGENCE": 40,
+  "MISSING_APPROVED_INTELLIGENCE": 34,
   "total": 651,
   "unclassified": 0
  },
@@ -27,6 +27,7 @@
    "2026-05": 507,
    "2026-07": 144
   },
-  "conclusion": "651 is the SHA-locked, dashboard-agreeing, fully-classified baseline (659-8). No 649 product-count exists in the current contract pack; if a superseded doc used 649 it predates later registrations (144 real products carry a 2026-07 created_at). The truth table correctly uses 651."
+  "conclusion": "651 is the SHA-locked, dashboard-agreeing, fully-classified baseline (659-8). No 649 product-count exists in the current contract pack; if a superseded doc used 649 it predates later registrations (144 real products carry a 2026-07 created_at). The truth table correctly uses 651.",
+  "classification_note": "post free re-run: GA 416, legacy 82, missing 34; residual 116"
  }
 }

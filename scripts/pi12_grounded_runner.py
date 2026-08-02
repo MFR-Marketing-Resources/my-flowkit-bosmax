@@ -461,6 +461,10 @@ def main():
     ap.add_argument("--correct", action="store_true", help="corrective vNext for --ids (no DeepSeek)")
     ap.add_argument("--ids", default="")
     ap.add_argument("--limit", type=int, default=0, help="process at most N products this run (chunking)")
+    ap.add_argument("--force", action="store_true",
+                    help="reprocess the given --ids even if their ledger result is terminal (e.g. re-run "
+                         "products previously blocked by a gate that has since been corrected). Provider "
+                         "calls remain hard-capped: products that already carry AI content make none.")
     a = ap.parse_args()
     acquire_single_writer_lock()  # ONE canonical writer only; a duplicate launch exits immediately
     con = sqlite3.connect(f"file:{(REPO/'flow_agent.db').as_posix()}?mode=ro", uri=True)
@@ -492,7 +496,7 @@ def main():
             print(f"[correct {n}/{len(ids)}] {pid[:8]} -> {row['result']} {row.get('reason') or ''}")
         print("CORRECT SUMMARY:", dict(tally)); con.close(); return
 
-    todo = [i for i in ids if done.get(i, {}).get("result") not in DONE]
+    todo = ids if a.force else [i for i in ids if done.get(i, {}).get("result") not in DONE]
     print(f"cohort={len(ids)} already_done={len(ids)-len(todo)} todo={len(todo)} calls_spent={budget.calls}")
     tally = Counter()
     for n, pid in enumerate(todo, 1):
