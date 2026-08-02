@@ -161,8 +161,13 @@ DISPOSITION_EVIDENCE_KIND = "FIELD_ABSENCE_DISPOSITION"
 DISPOSITION_NOT_STATED = "NOT_STATED_IN_SOURCE"
 DISPOSITION_NOT_APPLICABLE = "NOT_APPLICABLE"
 DISPOSITION_EXTERNAL = "REQUIRES_EXTERNAL_EVIDENCE"
+# PI-11: the live source cannot be acquired at all (TikTok automation externally blocked).
+# A truthful SUPPLY gap that satisfies the field blocker as a governed absence — like
+# NOT_STATED_IN_SOURCE, but it never claims a source was inspected.
+DISPOSITION_SOURCE_UNAVAILABLE = "SOURCE_UNAVAILABLE"
 FIELD_ABSENCE_DISPOSITIONS = (
     DISPOSITION_NOT_STATED, DISPOSITION_NOT_APPLICABLE, DISPOSITION_EXTERNAL,
+    DISPOSITION_SOURCE_UNAVAILABLE,
 )
 # Only product-KNOWLEDGE requirements may be dispositioned. Copy-critical fields stay
 # hard-required (they are what copy grounds on), and `allowed_claims_json` is locked by
@@ -614,6 +619,10 @@ def _evaluate_validation_payload(
         disposition = str(row.get("disposition") or "")
         if disposition == DISPOSITION_NOT_STATED:
             governed_absent_fields[field_name] = disposition
+        elif disposition == DISPOSITION_SOURCE_UNAVAILABLE:
+            # A truthful supply gap satisfies the blocker as a governed absence, exactly like
+            # NOT_STATED — but it does not assert an inspected source.
+            governed_absent_fields[field_name] = disposition
         elif disposition == DISPOSITION_NOT_APPLICABLE and na_allowed_for_category(category):
             governed_absent_fields[field_name] = disposition
         elif disposition == DISPOSITION_EXTERNAL:
@@ -630,7 +639,7 @@ def _evaluate_validation_payload(
         field_name: (
             [DISPOSITION_NOT_STATED]
             + ([DISPOSITION_NOT_APPLICABLE] if na_allowed_for_category(category) else [])
-            + [DISPOSITION_EXTERNAL]
+            + [DISPOSITION_SOURCE_UNAVAILABLE, DISPOSITION_EXTERNAL]
         )
         for field_name in missing_required_fields
         if field_name in DISPOSITION_ELIGIBLE_FIELDS
