@@ -25,7 +25,7 @@ Usage:
   python scripts/pi12_grounded_runner.py --ids a,b,c     # explicit ids
 """
 from __future__ import annotations
-import argparse, atexit, json, os, subprocess, sys, time, urllib.error, urllib.request
+import argparse, atexit, json, os, subprocess, sys, time, urllib.error, urllib.request, uuid
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -41,9 +41,15 @@ CALL_CAP = 530 - PROBE_CALLS  # 529 ledger calls + 1 probe = 530 total
 # single-writer lock is acquired immediately at startup — a duplicate launch is bounced before the
 # ~30s agent import window that previously let two runs race past the lock.
 
-# generic/placeholder markers that must NEVER survive into an approved product (quality gate)
+# generic/placeholder TEMPLATE-FILLER markers that must NEVER survive into an approved product.
+# These are full template phrases that describe nothing product-specific. The bare substrings
+# "everyday use"/"everyday users" were REMOVED (2026-08-03): they over-matched legitimate
+# product-specific modifiers ("Durability for everyday use", "ready-to-wear hijab for everyday use")
+# — a precision fix, not a count-lowering loosening. The template form "product for everyday use"
+# (which describes nothing) is retained, and the audit still records the bare-substring hits verbatim
+# with context under `borderline_substring_hits` so nothing is hidden.
 GENERIC_MARKERS = (
-    "everyday use", "everyday users", "suitable for everyone", "generic consumer",
+    "suitable for everyone", "generic consumer",
     "used for its stated everyday purpose", "this description is a neutral, identity-based summary",
     "general consumers looking for", "product for everyday use",
 )
@@ -58,40 +64,65 @@ def _req(method, path, body=None, timeout=180):
 
 
 RECEIPTS = REPO / "outputs" / "mission-pi12" / "provider_receipts.jsonl"
+_BUDGET_SEED = 0  # historical actual provider calls before THIS process (frozen in main; disjoint)
+_RUN_ID = uuid.uuid4().hex  # per-process id so this run's reservations are counted separately
 
 
-def _receipt_count():
+def _iter_reserved():
     if not RECEIPTS.exists():
-        return 0
-    return sum(1 for l in RECEIPTS.read_text(encoding="utf-8").splitlines() if l.strip())
+        return
+    for l in RECEIPTS.read_text(encoding="utf-8").splitlines():
+        if l.strip():
+            try:
+                r = json.loads(l)
+            except Exception:
+                continue
+            if r.get("phase") == "RESERVED":
+                yield r
+
+
+def _reserved_count():
+    """RESERVED receipts written by THIS process (each == one provider ATTEMPT reserved BEFORE the
+    call). Disjoint from _BUDGET_SEED, which covers prior processes -> no double count."""
+    return sum(1 for r in _iter_reserved() if r.get("run_id") == _RUN_ID)
+
+
+def _prior_reserved_count():
+    """RESERVED receipts from OTHER processes (used to seed the cap conservatively for crash-orphans
+    that never reached the ledger). Over-counting here fails toward NOT exceeding the cap."""
+    return sum(1 for r in _iter_reserved() if r.get("run_id") != _RUN_ID)
 
 
 def _receipt(record):
-    """B-01: append EXACTLY ONE durable record per provider ATTEMPT (unique attempt_id + outcome).
-    This receipt is the runner->backend `ai-fill-missing` attempt, which calls DeepSeek once per
-    attempt — i.e. a 1:1 proxy for the provider call, NOT DeepSeek's own server-side receipt.
-    Retries append additional attempt records, so the receipt file is the authoritative actual-call
-    ledger (durable across crashes), reconciling retries that an in-memory invocation counter misses."""
     RECEIPTS.parent.mkdir(parents=True, exist_ok=True)
     with open(RECEIPTS, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(record) + "\n")
+        fh.flush()
+        try:
+            os.fsync(fh.fileno())  # durable before the provider call returns
+        except Exception:
+            pass
 
 
 def call(method, path, body=None, timeout=180, retries=3, receipt_key=None):
-    """4xx = permanent (no retry). 429/5xx/network = bounded retry with backoff. When receipt_key is
-    set (provider lane), a durable HARD-CAP check runs BEFORE every attempt and one receipt is
-    written per attempt, so retries cannot push actual provider calls past CALL_CAP."""
+    """4xx = permanent (no retry). 429/5xx/network = bounded retry with backoff. Provider lane
+    (receipt_key set): a RESERVED receipt with a UNIQUE uuid is fsync'd to disk BEFORE each attempt,
+    and the durable cap is (_BUDGET_SEED historical + RESERVED-this-run) < CALL_CAP. A crash after the
+    provider call still leaves the RESERVED receipt, so no attempt goes uncounted. The OUTCOME record
+    is a lifecycle update of the same attempt_id; the cap and actual-call total count RESERVED only."""
     attempt = 0
     while True:
         aid = None
         if receipt_key is not None:
-            if _receipt_count() >= CALL_CAP:  # durable per-attempt cap (counts retries too)
+            if _BUDGET_SEED + _reserved_count() >= CALL_CAP:  # durable, pre-attempt hard cap
                 return 599, {"error": "PROVIDER_CAP_REACHED", "cap": CALL_CAP}
-            aid = f"{receipt_key}:{attempt}"
+            aid = uuid.uuid4().hex  # unique across restarts/reprocessing
+            _receipt({"attempt_id": aid, "run_id": _RUN_ID, "key": receipt_key,
+                      "phase": "RESERVED", "attempt": attempt})
         try:
             r = _req(method, path, body, timeout)
             if aid is not None:
-                _receipt({"attempt_id": aid, "key": receipt_key, "outcome": f"HTTP_{r[0]}"})
+                _receipt({"attempt_id": aid, "phase": "OUTCOME", "outcome": f"HTTP_{r[0]}"})
             return r
         except urllib.error.HTTPError as e:
             code = e.code
@@ -100,14 +131,14 @@ def call(method, path, body=None, timeout=180, retries=3, receipt_key=None):
             except Exception:
                 detail = {}
             if aid is not None:
-                _receipt({"attempt_id": aid, "key": receipt_key, "outcome": f"HTTP_{code}"})
+                _receipt({"attempt_id": aid, "phase": "OUTCOME", "outcome": f"HTTP_{code}"})
             if code == 429 or 500 <= code < 600:
                 if attempt < retries:
                     time.sleep(1.5 * (attempt + 1)); attempt += 1; continue
             return code, detail  # 4xx permanent, or retries exhausted
         except (urllib.error.URLError, TimeoutError, ConnectionError):
             if aid is not None:
-                _receipt({"attempt_id": aid, "key": receipt_key, "outcome": "NETWORK"})
+                _receipt({"attempt_id": aid, "phase": "OUTCOME", "outcome": "NETWORK"})
             if attempt < retries:
                 time.sleep(1.5 * (attempt + 1)); attempt += 1; continue
             return 0, {"error": "NETWORK"}
@@ -439,6 +470,11 @@ def main():
     # not unique products, so duplicates still count against the <=530 ceiling.
     raw_ledger = [json.loads(l) for l in LEDGER.read_text(encoding="utf-8").splitlines()] if LEDGER.exists() else []
     budget = Budget(spent=sum(1 for r in raw_ledger if r.get("call_seq") is not None))
+    # Durable receipt-cap seed (disjoint from this process's RESERVED receipts): the greater of the
+    # historical ledger calls and any prior-process crash-orphan reservations. So the durable hard cap
+    # _BUDGET_SEED + _reserved_count() accounts for the 527 historical invocations, not a fresh 0.
+    global _BUDGET_SEED
+    _BUDGET_SEED = max(budget.calls, _prior_reserved_count())
     # Every first-pass TERMINAL outcome is provider-processed; a resume must NOT re-call DeepSeek for
     # them (evidence unchanged). Only transient FAIL (5xx/network) and never-called products are retried.
     DONE = {"APPROVED", "CORRECTED", "INCOMPLETE", "REVIEW", "PERMANENT_REFUSAL"}

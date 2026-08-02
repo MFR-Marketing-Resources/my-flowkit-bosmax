@@ -50,3 +50,14 @@ def test_runner_generic_gate_covers_usp_persona_strategy():
     assert not R.is_generic({"product_description": "SkyPlant Eye Balm Stick 9g Korean formula.",
                              "usp_json": ["9g stick format"], "buyer_persona_snapshot_json": {"audience": "eye-care shoppers"},
                              "copy_strategy_summary_json": {"angles": ["nourishing eye care"]}})
+
+
+def test_runner_generic_gate_precision_no_false_positive_on_modifiers():
+    # PRECISION FIX (2026-08-03): bare "everyday use" as a product-specific modifier must NOT be
+    # flagged — these are grounded phrases, not template filler.
+    assert not R.is_generic({"copy_strategy_summary_json": {"angles": ["Durability for everyday use"]}})
+    assert not R.is_generic({"buyer_persona_snapshot_json": {"purchase_context": "ready-to-wear hijab for everyday use"}})
+    assert not R.is_generic({"usage_text": "Insert the open end into the sealer and activate the vacuum."})
+    # but the full template phrase that describes nothing is STILL caught
+    assert R.is_generic({"product_description": "A product for everyday use."})
+    assert R.is_generic({"product_description": "Suitable for everyone."})

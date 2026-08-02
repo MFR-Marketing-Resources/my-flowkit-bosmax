@@ -1,3 +1,16 @@
-$ python -m pytest tests/unit/test_pi12_ai_fill_hardening.py tests/unit/test_product_intelligence_review_draft_service.py tests/api/test_product_intelligence_api.py -v
-.............................................                            [100%]
-45 passed in 6.22s
+PI-12 audit-hardening regression suite (B-03/B-04 evidence)
+Exact command:
+  python -m pytest tests/unit/test_pi12_ai_fill_hardening.py \
+    tests/unit/test_product_intelligence_review_draft_service.py \
+    tests/unit/test_product_intelligence_review_draft_crud.py \
+    tests/unit/test_product_intelligence_claim_safety_service.py \
+    tests/unit/test_product_intelligence_field_provenance_crud.py -q
+
+Result:
+..........................................................               [100%]
+58 passed in 9.75s
+
+Includes test_pi12_ai_fill_hardening.py (6 tests): object-field schema registration,
+object coercion, persona/strategy schema enforcement, is_generic coverage of
+usp/persona/strategy, and the generic-gate precision fix (bare "everyday use" / "insert"
+no longer false-flag product-specific text; template phrases still caught).

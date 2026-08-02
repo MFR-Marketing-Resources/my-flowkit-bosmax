@@ -41,12 +41,22 @@ because DeepSeek refused to fabricate benefits/USP or the claim gate held — ne
   not evidence → governed `SOURCE_UNAVAILABLE`. Allowed claims = deterministic taxonomy identity claim
   (fingerprinted, claim-safe, `allowed_claims_json` only).
 
-## Quality audit (406 approvals) — all clean
-generic/template **0** · placeholder **0** · CTA/music/hashtag **0** · ingredients/warnings without
-acquired provenance **0** · unsupported size assertions **0** · duplicate current-approved **0** ·
-duplicate open drafts **0** · integrity_check **ok** · foreign_key_check **0** · product table
-unchanged. Field-provenance: AI_ENRICHMENT/INFERENCE 1738, AI_ENRICHMENT/FACT 1186,
-governed-absence dispositions 873.
+## Quality audit (406 approvals) — content-scanned, reproducible
+Backed by the committed read-only `audit_verify.py` -> `audit_verify_output.json` (DB sha256
+`e472025e…`; scans the exact source draft of each snapshot). This is a real content scan, not a
+distinct-string count:
+- generic/template **0**, placeholder **0** — over EVERY generated field (present-counts prove real
+  content scanned: product_description 406, usage 345, target_customer 406, benefits/usp/persona/
+  strategy 406 each). **Full disclosure:** the audit also scans 4 over-broad substrings that were
+  DROPPED from the gate and records all **7 hits with context** under `borderline_substring_hits` —
+  all product-specific (the verb "insert" in usage steps; "everyday use" as a modifier, e.g.
+  "Durability for everyday use"), none template filler. The earlier "0/0" was distinct-count only;
+  this replaces it with a scanned, adjudicated 0.
+- ingredients/warnings without acquired provenance **0** · duplicate current-approved **0** ·
+  duplicate open drafts **0** · integrity_check **ok** · foreign_key_check **0** · product table
+  hash unchanged vs pre-PI-12 backup (`c25ee923…`). distinct personas **406/406**, strategies
+  **406/406**. Field-provenance: AI_ENRICHMENT/INFERENCE 1738, AI_ENRICHMENT/FACT 1186,
+  governed-absence dispositions 873.
 
 Reviewer identity `claude-pi12-grounded` (automated mission decisions, audit-noted — not a fabricated
 human). Contamination found in 3 pilot approvals + 1 placeholder were corrected via vNext (history

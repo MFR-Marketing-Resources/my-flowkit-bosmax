@@ -140,19 +140,20 @@
   "CORRECTED": 1
  },
  "accounting": {
+  "authoritative_total_actual_provider_calls": 530,
+  "headroom": 0,
+  "method": "RECONSTRUCTED",
+  "note": "Single authoritative total, identical to provider_accounting.json. NOT a DeepSeek server-side receipt. probe(1) + ledger ai-fill invocations(527) + transient retries inferred from duplicate AI_ENRICHMENT provenance(2) = 530.",
   "authorized_cap": 530,
-  "probe": 1,
-  "ledger_receipts": 527,
-  "total_actual_calls": 528,
   "reconciliation": {
    "probe": 1,
-   "first_product_calls": 522,
-   "duplicate_reprocessing_calls": 5,
-   "transient_retry_calls": 0,
+   "ledger_ai_fill_invocations": 527,
+   "of_which_first_product_calls": 522,
+   "of_which_duplicate_reprocessing_calls": 5,
+   "transient_retry_calls_inferred": 2,
    "failed_provider_attempts": 0
   },
   "reconcile_ok": true,
-  "headroom": 2,
   "duplicates": {
    "0133d0bf": "resume-skip(fixed)",
    "013b7710": "resume-skip(fixed)",

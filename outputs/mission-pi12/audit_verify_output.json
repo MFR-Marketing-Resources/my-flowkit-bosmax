@@ -1,5 +1,5 @@
 {
- "source_git_head": "f56b50448828d8346ec306a98fb706fa43532f2d",
+ "source_git_head": "c090f5583f50c77da3633e695118c85ce6c29f54",
  "db_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
  "db_file_sha256": "e472025e82abfe2e97b6f005c859a08742dbe5f2fcf1545c452ff46392a1cab8",
  "product_table_hash": {
@@ -2065,6 +2065,113 @@
  "identical_persona_groups": [],
  "distinct_strategies": 406,
  "identical_strategy_groups": [],
+ "generic_marker_scan": {
+  "gate_source": "scripts/pi12_grounded_runner.py::is_generic (the exact gate applied at approval)",
+  "read_from": "source draft per snapshot (created_from_review_draft_id)",
+  "fields_scanned": [
+   "product_description",
+   "usage_text",
+   "target_customer_text",
+   "benefits_json",
+   "usp_json",
+   "buyer_persona_snapshot_json",
+   "copy_strategy_summary_json"
+  ],
+  "snapshots_scanned": 406,
+  "field_present_counts": {
+   "product_description": 406,
+   "usage_text": 345,
+   "target_customer_text": 406,
+   "benefits_json": 406,
+   "usp_json": 406,
+   "buyer_persona_snapshot_json": 406,
+   "copy_strategy_summary_json": 406
+  },
+  "generic_markers_used": [
+   "suitable for everyone",
+   "generic consumer",
+   "used for its stated everyday purpose",
+   "this description is a neutral, identity-based summary",
+   "general consumers looking for",
+   "product for everyday use"
+  ],
+  "generic_count": 0,
+  "generic_offending_rows": [],
+  "placeholder_markers_used": [
+   "lorem ipsum",
+   "placeholder",
+   "coming soon",
+   "sample text",
+   "[insert",
+   "insert product",
+   "insert name",
+   "your product name",
+   "to be determined",
+   "to be confirmed",
+   "xxxx"
+  ],
+  "placeholder_count": 0,
+  "placeholder_offending_rows": [],
+  "borderline_substrings_scanned": {
+   "everyday use": "generic-template(bare)",
+   "insert ": "placeholder(bare verb)",
+   "tbd": "placeholder(bare)",
+   "todo": "placeholder(bare)"
+  },
+  "borderline_substring_hit_count": 7,
+  "borderline_substring_hits": [
+   {
+    "product_id": "20a935f9-338c-4db6-8ed3-bf11002adfd3",
+    "field": "copy_strategy_summary_json",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "es\": [\"Softness and comfort for baby\", \"Durability for everyday use\", \"Adorable patterns for style\"], \"market_"
+   },
+   {
+    "product_id": "5427373d-19de-4a80-bd5f-11799c20aea7",
+    "field": "usage_text",
+    "substring": "insert ",
+    "kind": "placeholder(bare verb)",
+    "context": "Place food in a vacuum seal bag, insert the open end into the sealer, and activate the v"
+   },
+   {
+    "product_id": "6beff631-41c6-458b-803c-8f0b85d8bcc9",
+    "field": "usage_text",
+    "substring": "insert ",
+    "kind": "placeholder(bare verb)",
+    "context": "Place food in a vacuum bag, insert the open end into the sealer, and activate the v"
+   },
+   {
+    "product_id": "8f5b7dca-94b4-4ed1-acbf-7aee92a55ffc",
+    "field": "usage_text",
+    "substring": "insert ",
+    "kind": "placeholder(bare verb)",
+    "context": "Use as bedding: place fitted bedsheet over mattress, insert pillows into pillowcases, insert bolster into bo"
+   },
+   {
+    "product_id": "ab730155-b3c6-4c58-b108-c796564139a3",
+    "field": "usage_text",
+    "substring": "insert ",
+    "kind": "placeholder(bare verb)",
+    "context": "fasten shawls on the shoulder or to clip jeans. Simply insert the pin through the fabric and secure the clasp."
+   },
+   {
+    "product_id": "e098f5b7-d155-45e2-82a8-2b717acba9a1",
+    "field": "buyer_persona_snapshot_json",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "gar\", \"Halal assurance\", \"Convenient liquid format for everyday use\"], \"purchase_context\": \"Grocery shopping f"
+   },
+   {
+    "product_id": "f2490e97-a543-44b6-a4de-28b92440d679",
+    "field": "buyer_persona_snapshot_json",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": " \"purchase_context\": \"Buying a ready-to-wear hijab for everyday use\", \"tone\": \"Practical, modest, and straight"
+   }
+  ],
+  "borderline_note": "Over-broad substrings dropped from the gate, scanned anyway for full disclosure. Inspect `context`: all are product-specific (verb 'insert' in usage steps; 'everyday use' as a modifier), not template filler."
+ },
  "field_provenance_distribution": [
   {
    "source_type": "AI_ENRICHMENT",
