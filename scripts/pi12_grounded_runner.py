@@ -64,8 +64,14 @@ def _req(method, path, body=None, timeout=180):
 
 
 RECEIPTS = REPO / "outputs" / "mission-pi12" / "provider_receipts.jsonl"
-_BUDGET_SEED = 0  # historical actual provider calls before THIS process (frozen in main; disjoint)
-_RUN_ID = uuid.uuid4().hex  # per-process id so this run's reservations are counted separately
+# Reconciled historical NON-PROBE provider calls already spent by THIS mission, accepted by audit as
+# 527 ledger ai-fill invocations + 2 retries inferred from duplicate AI_ENRICHMENT provenance = 529
+# (provider_accounting.json: authoritative total 530 = 529 + 1 probe). The ledger alone is 527 and
+# MISSES the 2 retries, so seeding from budget.calls would wrongly leave headroom for 2 more calls
+# (total 532). This constant is the fail-closed baseline; the mission cap (529 non-probe) is spent.
+MISSION_HISTORICAL_NONPROBE = 529
+_HISTORICAL_BASELINE = 0  # set in main() = max(live ledger calls, MISSION_HISTORICAL_NONPROBE)
+_RUN_ID = uuid.uuid4().hex  # tags this process's receipts (forensics); NOT used to filter the count
 
 
 def _iter_reserved():
@@ -82,15 +88,12 @@ def _iter_reserved():
 
 
 def _reserved_count():
-    """RESERVED receipts written by THIS process (each == one provider ATTEMPT reserved BEFORE the
-    call). Disjoint from _BUDGET_SEED, which covers prior processes -> no double count."""
-    return sum(1 for r in _iter_reserved() if r.get("run_id") == _RUN_ID)
-
-
-def _prior_reserved_count():
-    """RESERVED receipts from OTHER processes (used to seed the cap conservatively for crash-orphans
-    that never reached the ledger). Over-counting here fails toward NOT exceeding the cap."""
-    return sum(1 for r in _iter_reserved() if r.get("run_id") != _RUN_ID)
+    """Total RESERVED receipts across ALL processes — the complete durable record of attempts made
+    under the receipt mechanism. Counts crash-orphans (RESERVED with no OUTCOME) and every retry
+    (each writes its own RESERVED before the request). DISJOINT from MISSION_HISTORICAL_NONPROBE (the
+    old runner wrote no receipts), so baseline + reserved never double-counts and never drops a call.
+    NOT filtered by run_id — a prior process's crash-orphan reservation must still count."""
+    return sum(1 for _ in _iter_reserved())
 
 
 def _receipt(record):
@@ -107,14 +110,15 @@ def _receipt(record):
 def call(method, path, body=None, timeout=180, retries=3, receipt_key=None):
     """4xx = permanent (no retry). 429/5xx/network = bounded retry with backoff. Provider lane
     (receipt_key set): a RESERVED receipt with a UNIQUE uuid is fsync'd to disk BEFORE each attempt,
-    and the durable cap is (_BUDGET_SEED historical + RESERVED-this-run) < CALL_CAP. A crash after the
+    and the durable cap is (_HISTORICAL_BASELINE + ALL RESERVED receipts) < CALL_CAP. A crash after the
     provider call still leaves the RESERVED receipt, so no attempt goes uncounted. The OUTCOME record
-    is a lifecycle update of the same attempt_id; the cap and actual-call total count RESERVED only."""
+    is a lifecycle update of the same attempt_id; the cap and actual-call total count RESERVED only.
+    Baseline and receipts are disjoint (old runner wrote none) -> summed, never max()."""
     attempt = 0
     while True:
         aid = None
         if receipt_key is not None:
-            if _BUDGET_SEED + _reserved_count() >= CALL_CAP:  # durable, pre-attempt hard cap
+            if _HISTORICAL_BASELINE + _reserved_count() >= CALL_CAP:  # durable, pre-attempt hard cap
                 return 599, {"error": "PROVIDER_CAP_REACHED", "cap": CALL_CAP}
             aid = uuid.uuid4().hex  # unique across restarts/reprocessing
             _receipt({"attempt_id": aid, "run_id": _RUN_ID, "key": receipt_key,
@@ -470,11 +474,12 @@ def main():
     # not unique products, so duplicates still count against the <=530 ceiling.
     raw_ledger = [json.loads(l) for l in LEDGER.read_text(encoding="utf-8").splitlines()] if LEDGER.exists() else []
     budget = Budget(spent=sum(1 for r in raw_ledger if r.get("call_seq") is not None))
-    # Durable receipt-cap seed (disjoint from this process's RESERVED receipts): the greater of the
-    # historical ledger calls and any prior-process crash-orphan reservations. So the durable hard cap
-    # _BUDGET_SEED + _reserved_count() accounts for the 527 historical invocations, not a fresh 0.
-    global _BUDGET_SEED
-    _BUDGET_SEED = max(budget.calls, _prior_reserved_count())
+    # Fail-closed durable cap baseline. NOT max(ledger, reservations): the ledger (527) misses the 2
+    # inferred retries, so it is floored by the reconciled non-probe total (529). RESERVED receipts are
+    # a DISJOINT record (old runner wrote none) added on top in call() -> 529 already == CALL_CAP, so
+    # any further provider attempt on this spent mission is rejected before the request.
+    global _HISTORICAL_BASELINE
+    _HISTORICAL_BASELINE = max(budget.calls, MISSION_HISTORICAL_NONPROBE)
     # Every first-pass TERMINAL outcome is provider-processed; a resume must NOT re-call DeepSeek for
     # them (evidence unchanged). Only transient FAIL (5xx/network) and never-called products are retried.
     DONE = {"APPROVED", "CORRECTED", "INCOMPLETE", "REVIEW", "PERMANENT_REFUSAL"}

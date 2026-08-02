@@ -61,3 +61,33 @@ def test_runner_generic_gate_precision_no_false_positive_on_modifiers():
     # but the full template phrase that describes nothing is STILL caught
     assert R.is_generic({"product_description": "A product for everyday use."})
     assert R.is_generic({"product_description": "Suitable for everyone."})
+
+
+def test_historical_baseline_floors_at_reconciled_nonprobe():
+    # B-01: the fail-closed baseline must floor at the reconciled 529 non-probe total, not the ledger
+    # 527 (which misses the 2 inferred retries). max(527, 529) == 529; the mission cap is fully spent.
+    assert R.MISSION_HISTORICAL_NONPROBE == 529 == R.CALL_CAP
+    assert max(527, R.MISSION_HISTORICAL_NONPROBE) == 529
+
+
+def test_cap_rejects_next_attempt_when_baseline_full(tmp_path, monkeypatch):
+    # B-01: with the 529 non-probe baseline spent, the very next provider attempt is rejected BEFORE
+    # any request or reservation is written — no total-532 overshoot.
+    monkeypatch.setattr(R, "RECEIPTS", tmp_path / "receipts.jsonl")
+    monkeypatch.setattr(R, "_HISTORICAL_BASELINE", R.CALL_CAP)
+    st, body = R.call("POST", "/product-intelligence/review-drafts/x/ai-fill-missing", {}, receipt_key="p1")
+    assert st == 599 and body.get("error") == "PROVIDER_CAP_REACHED"
+    assert not (tmp_path / "receipts.jsonl").exists()  # rejected before the call: nothing reserved
+
+
+def test_crash_orphan_reservation_still_counted(tmp_path, monkeypatch):
+    # B-01: a prior process that reserved an attempt then crashed BEFORE the OUTCOME/ledger write must
+    # still count against the cap (not dropped), even though its run_id differs and it has no OUTCOME.
+    rf = tmp_path / "receipts.jsonl"
+    monkeypatch.setattr(R, "RECEIPTS", rf)
+    R._receipt({"attempt_id": "orphan", "run_id": "prior-proc", "key": "p", "phase": "RESERVED"})
+    assert R._reserved_count() == 1
+    # baseline at cap-1 + this 1 orphan == cap -> the next attempt is rejected (no double-spend)
+    monkeypatch.setattr(R, "_HISTORICAL_BASELINE", R.CALL_CAP - 1)
+    st, body = R.call("POST", "/x/ai-fill-missing", {}, receipt_key="p2")
+    assert st == 599 and body.get("error") == "PROVIDER_CAP_REACHED"

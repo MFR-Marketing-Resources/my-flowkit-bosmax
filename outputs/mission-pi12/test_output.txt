@@ -7,10 +7,14 @@ Exact command:
     tests/unit/test_product_intelligence_field_provenance_crud.py -q
 
 Result:
-..........................................................               [100%]
-58 passed in 9.75s
+.............................................................            [100%]
+61 passed in 7.36s
 
-Includes test_pi12_ai_fill_hardening.py (6 tests): object-field schema registration,
+Includes test_pi12_ai_fill_hardening.py (9 tests): object-field schema registration,
 object coercion, persona/strategy schema enforcement, is_generic coverage of
-usp/persona/strategy, and the generic-gate precision fix (bare "everyday use" / "insert"
-no longer false-flag product-specific text; template phrases still caught).
+usp/persona/strategy, the generic-gate precision fix (bare "everyday use" / "insert"
+no longer false-flag product-specific text; template phrases still caught), and the
+B-01 cap-seed fix — fail-closed baseline floors at the reconciled 529 non-probe total
+(not the ledger 527), the next attempt is rejected before any request when the baseline
+is full (no 532 overshoot), and a crash-orphan RESERVED receipt (no OUTCOME, other
+run_id) still counts against the cap.
