@@ -2617,6 +2617,8 @@ export interface RegistrationReviewDraft {
 	image_asset_detail?: string | null;
 	created_at?: string;
 	updated_at?: string;
+	storage_backend?: "UNPERSISTED" | "LEGACY_JSON" | "SQLITE_DATABASE";
+	storage_location?: string | null;
 	fastmoss_reference_id?: string | null;
 }
 

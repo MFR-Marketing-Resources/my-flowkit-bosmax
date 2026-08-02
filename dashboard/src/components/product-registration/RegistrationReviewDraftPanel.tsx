@@ -598,6 +598,9 @@ export default function RegistrationReviewDraftPanel({
 	const [pendingImageFilename, setPendingImageFilename] = useState<string>("");
 	const [pendingImagePreview, setPendingImagePreview] = useState<string>("");
 	const [saveMessage, setSaveMessage] = useState<string>("");
+	const [saveMessageTone, setSaveMessageTone] = useState<
+		"info" | "success" | "warning" | "error"
+	>("info");
 	const [taxonomyRegistry, setTaxonomyRegistry] =
 		useState<ProductStrategyTypeRegistryResponse>({
 			items: [],
@@ -742,6 +745,13 @@ export default function RegistrationReviewDraftPanel({
 		() => buildReviewReasons(draft, evidenceForm, approvals),
 		[approvals, draft, evidenceForm],
 	);
+	const storageBackend = draft.storage_backend || "UNPERSISTED";
+	const storageLabel =
+		storageBackend === "SQLITE_DATABASE"
+			? "SQLite database"
+			: storageBackend === "LEGACY_JSON"
+				? "Legacy local JSON"
+				: "Not persisted";
 	const shouldShowNextAction =
 		draft.review_status !== "COMMITTED" && reviewReasons.length > 0;
 	const hasUnresolvedCandidateReview =
@@ -831,6 +841,7 @@ export default function RegistrationReviewDraftPanel({
 			variantCandidates.length > 1
 				? " Multiple pack variants were found; choose one explicitly below."
 				: "";
+		setSaveMessageTone("info");
 		setSaveMessage(
 			applied.length > 0
 				? `Review-only proposals applied from stored evidence: ${applied.join(", ")}. No field was approved.${ambiguityNote} Save & Recompute to validate.`
@@ -873,15 +884,18 @@ export default function RegistrationReviewDraftPanel({
 			setPendingImageBase64(imageBase64);
 			setPendingImageFilename(file.name);
 			setPendingImagePreview(imageBase64);
+			setSaveMessageTone("info");
 			setSaveMessage(`Draft image queued: ${file.name}`);
 		} catch (err) {
 			console.error("Failed to read selected image:", err);
+			setSaveMessageTone("error");
 			setSaveMessage("Failed to read selected image.");
 		}
 	};
 
 	const handleEvidenceSave = async (recompute: boolean) => {
 		setIsSavingEvidence(true);
+		setSaveMessageTone("info");
 		setSaveMessage("");
 		const payload: RegistrationReviewDraftEvidencePatchRequest = {
 			product_name: trimOrEmpty(evidenceForm.product_name),
@@ -930,21 +944,42 @@ export default function RegistrationReviewDraftPanel({
 				buildEvidenceEditorState(updated),
 				updated.approval_checklist,
 			);
-			setSaveMessage(
-				recompute
-					? updated.missing_required_evidence.length > 0
-						? `Recompute validated current evidence; it will not fill missing evidence. Still missing: ${updated.missing_required_evidence.join(", ")}.`
-						: updated.review_status === "NEEDS_HUMAN_REVIEW" ||
-								updated.review_status === "BLOCKED"
-							? `Evidence saved. Still requires human review because: ${updatedReasons.join(" ")}`
-							: "Evidence saved and recomputed. The draft is ready for explicit candidate review; nothing was auto-approved."
-					: "Draft evidence saved. Recompute is still required before commit.",
+			const textAssistFailed = updated.warnings.some(
+				(code) =>
+					code === "TEXT_ASSIST_INVALID_RESPONSE" ||
+					code === "TEXT_ASSIST_CALL_FAILED",
 			);
+			const textAssistTruncated = updated.warnings.includes(
+				"TEXT_ASSIST_DIAGNOSTIC_TRUNCATED_RESPONSE",
+			);
+			if (recompute && textAssistFailed) {
+				setSaveMessageTone("warning");
+				setSaveMessage(
+					`Draft saved to ${updated.storage_location || "the draft store"}, but Analyze & Repair did not complete: ${
+						textAssistTruncated
+							? "the provider response reached its output limit and was rejected"
+							: "the provider returned an invalid or failed response"
+					}. Existing evidence was preserved; no AI repair proposal was applied.`,
+				);
+			} else {
+				setSaveMessageTone("success");
+				setSaveMessage(
+					recompute
+						? updated.missing_required_evidence.length > 0
+							? `Recompute validated current evidence; it will not fill missing evidence. Still missing: ${updated.missing_required_evidence.join(", ")}.`
+							: updated.review_status === "NEEDS_HUMAN_REVIEW" ||
+									updated.review_status === "BLOCKED"
+								? `Evidence saved. Still requires human review because: ${updatedReasons.join(" ")}`
+								: "Evidence saved and recomputed. The draft is ready for explicit candidate review; nothing was auto-approved."
+						: "Draft evidence saved. Recompute is still required before commit.",
+				);
+			}
 			setPendingImageBase64("");
 			setPendingImageFilename("");
 			setPendingImagePreview("");
 		} catch (err) {
 			console.error("Failed to update draft evidence:", err);
+			setSaveMessageTone("error");
 			setSaveMessage(
 				err instanceof Error ? err.message : "Failed to save draft evidence.",
 			);
@@ -1728,6 +1763,7 @@ export default function RegistrationReviewDraftPanel({
 															...current,
 															size_or_volume: candidate,
 														}));
+														setSaveMessageTone("info");
 														setSaveMessage(
 															`Review-only size proposal selected: ${candidate}. Save & Recompute to validate; no approval was changed.`,
 														);
@@ -2188,6 +2224,25 @@ export default function RegistrationReviewDraftPanel({
 								persist them.
 							</div>
 						) : null}
+						<div
+							data-testid="registration-draft-storage-status"
+							data-storage-backend={storageBackend}
+							className={`rounded-lg border px-3 py-2 ${
+								storageBackend === "SQLITE_DATABASE"
+									? "border-emerald-500/30 bg-emerald-500/5 text-emerald-200"
+									: "border-amber-500/30 bg-amber-500/5 text-amber-200"
+							}`}
+						>
+							<div className="font-semibold">
+								Storage: {storageLabel} ·{" "}
+								{draft.storage_location || "No durable record"}
+							</div>
+							{storageBackend === "LEGACY_JSON" ? (
+								<div className="mt-1 text-[10px] text-amber-300">
+									Save this draft again to move it into SQLite database storage.
+								</div>
+							) : null}
+						</div>
 						<div>
 							Last evidence edit:{" "}
 							<span className="text-slate-200">
@@ -2201,7 +2256,25 @@ export default function RegistrationReviewDraftPanel({
 							</span>
 						</div>
 						{saveMessage ? (
-							<div className="text-indigo-300">{saveMessage}</div>
+							<div
+								data-testid="registration-draft-save-message"
+								role={
+									saveMessageTone === "warning" || saveMessageTone === "error"
+										? "alert"
+										: "status"
+								}
+								className={
+									saveMessageTone === "error"
+										? "text-red-300"
+										: saveMessageTone === "warning"
+											? "text-amber-300"
+											: saveMessageTone === "success"
+												? "text-emerald-300"
+												: "text-indigo-300"
+								}
+							>
+								{saveMessage}
+							</div>
 						) : null}
 					</div>
 					<div className="flex flex-col gap-3 md:flex-row">

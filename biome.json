@@ -35,5 +35,11 @@
 			"extension/popup.js",
 			"extension/side_panel.js"
 		]
+	},
+	"formatter": {
+		"enabled": false
+	},
+	"assist": {
+		"enabled": false
 	}
 }

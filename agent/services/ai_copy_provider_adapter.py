@@ -52,6 +52,9 @@ _ANTHROPIC_VERSION = "2023-06-01"
 _ANTHROPIC_MAX_TOKENS = 1024
 _OPENAI_JSON_MAX_TOKENS = 4096
 _JSON_OUTPUT_PROVIDER_IDS = frozenset({"deepseek", "openai"})
+_DEEPSEEK_THINKING_MODE_MODELS = frozenset(
+    {"deepseek-v4-pro", "deepseek-v4-flash"}
+)
 _DEFAULT_BASE_URLS = {
     "deepseek": "https://api.deepseek.com/v1",
     "openai": "https://api.openai.com/v1",
@@ -437,6 +440,7 @@ def _complete_openai_compatible(
     base_url: str,
     model: str,
     *,
+    provider_id: str,
     json_output_enabled: bool,
 ) -> tuple[str, int | None, dict[str, int | float], str | None]:
     """OpenAI-compatible /chat/completions transport (qwen/openai/gemini/deepseek).
@@ -451,6 +455,11 @@ def _complete_openai_compatible(
     if json_output_enabled:
         payload["response_format"] = {"type": "json_object"}
         payload["max_tokens"] = _OPENAI_JSON_MAX_TOKENS
+        if (
+            provider_id == "deepseek"
+            and model in _DEEPSEEK_THINKING_MODE_MODELS
+        ):
+            payload["thinking"] = {"type": "disabled"}
 
     response = httpx.post(
         f"{base_url}/chat/completions",
@@ -537,6 +546,7 @@ def _complete(
                 api_key,
                 base_url,
                 model,
+                provider_id=provider_id,
                 json_output_enabled=json_output_enabled,
             )
         _finish_provider_call(

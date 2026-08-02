@@ -2646,8 +2646,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						</div>
 					</div>
 					{/* Step 4a — Load Package preview (compile only, no DB save) */}
-				// RPA Round A (renumbered by Workflow Upgrade V1): Step 4a load state is DERIVED from the existing gates that
-				// already drive the button's `disabled` expression below — no new state.
+				{/* RPA Round A (renumbered by Workflow Upgrade V1): Step 4a load state is DERIVED from the existing gates that
+				    already drive the button's `disabled` expression below — no new state. */}
 				<div
 					data-testid="workflow-step-4-load"
 					data-state={

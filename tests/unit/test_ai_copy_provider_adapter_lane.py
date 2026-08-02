@@ -199,6 +199,7 @@ def test_complete_json_uses_deepseek_json_output_and_records_safe_receipt(
     assert captured["json"]["model"] == "deepseek-v4-pro"
     assert captured["json"]["response_format"] == {"type": "json_object"}
     assert captured["json"]["max_tokens"] == 4096
+    assert captured["json"]["thinking"] == {"type": "disabled"}
     receipt = adapter.provider_call_receipt()["last_call"]
     assert receipt["response_status"] == "SUCCEEDED"
     assert receipt["http_status"] == 200
