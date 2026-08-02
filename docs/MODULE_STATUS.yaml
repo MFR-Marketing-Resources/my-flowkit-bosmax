@@ -549,6 +549,12 @@ domains:
       - outputs/mission-pi12/test_output.txt
       - outputs/mission-pi12/residual_reasons.json
       - outputs/mission-pi12/count_reconciliation_651.json
+      # PI-13 exhaustive recovery — identity-locked master workbook + evidence-coverage audit
+      - outputs/mission-pi12/Master_Product_Recovery.xlsx
+      - outputs/mission-pi12/Master_Product_Recovery.sha256
+      - outputs/mission-pi12/build_recovery_workbook.py
+      - outputs/mission-pi12/pi13_evidence_coverage_audit.json
+      - outputs/mission-pi12/pi13_incomplete_searchable.json
       - tests/unit/test_pi12_ai_fill_hardening.py
       # provider_receipts.jsonl is written per-attempt by the hardened runner on the NEXT run.
       - agent/services/product_registration_service.py
