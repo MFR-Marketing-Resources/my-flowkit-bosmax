@@ -1542,6 +1542,10 @@ const WS_METHOD_TIMEOUT_MS = {
 	// enough for a heavy product page, short enough that a wedged tab surfaces as a timeout
 	// the operator can act on instead of an apparently-hung Recompute.
 	TIKTOK_ACQUIRE_PRODUCT_EVIDENCE: 30000,
+	// Navigate the one dedicated evidence tab and wait for it to settle. Longer than a bare
+	// read because it includes a full navigation + load; still bounded so a wedged
+	// navigation surfaces as NAVIGATION_TIMEOUT rather than an apparently-hung bulk.
+	TIKTOK_NAVIGATE_PRODUCT_TAB: 45000,
 };
 
 function buildFlowTabSnapshot(flowTab) {
@@ -4907,6 +4911,137 @@ async function sendTikTokEvidenceMessage(tabId, evidenceRequestId) {
 	);
 }
 
+// ─── TikTok evidence: bounded single-tab navigation seam ─────────────────────
+// The evidence relay above READS a product tab the operator already opened. For an
+// unattended bulk that model does not scale, so this adds the ONE navigation the mission
+// authorises: point a single BOSMAX-dedicated evidence tab at a stored, id-verified TikTok
+// product URL. It is deliberately NOT a generic browser-control verb —
+//   * only the two allowlisted TikTok Shop hosts,
+//   * only when the URL's product id equals the id the backend expects for that product,
+//   * exactly one dedicated tab (created once, reused), never the operator's own tabs,
+//   * it detects a security wall, it never solves, clicks or bypasses it,
+// so it can never navigate anywhere but a specific already-known product listing.
+let bosmaxTikTokEvidenceTabId = null;
+
+async function getOrCreateTikTokEvidenceTab() {
+	if (bosmaxTikTokEvidenceTabId != null) {
+		try {
+			const existing = await chrome.tabs.get(bosmaxTikTokEvidenceTabId);
+			if (existing && existing.id != null) return existing;
+		} catch (_) {
+			// tab was closed by the operator — fall through and mint a fresh one
+			bosmaxTikTokEvidenceTabId = null;
+		}
+	}
+	// Created inactive so the bulk never steals the operator's focus. about:blank keeps the
+	// dedicated tab on a benign origin until the first id-verified navigation.
+	const created = await chrome.tabs.create({ url: "about:blank", active: false });
+	bosmaxTikTokEvidenceTabId = created.id;
+	return created;
+}
+
+async function handleTikTokNavigateProductTab(params) {
+	const productUrl = String(params?.product_url || "");
+	const expectedProductId = String(params?.expected_product_id || "");
+
+	// (1) host allowlist + (2) product-id extraction — tiktokProductIdentity enforces both.
+	const wanted = tiktokProductIdentity(productUrl);
+	if (!wanted) {
+		return { ok: false, outcome: "PRODUCT_ID_MISMATCH",
+			error: "TIKTOK_NAV_URL_NOT_ALLOWED_OR_NO_ID", requested_url_valid: false };
+	}
+	// (3) the URL's id must be the id the backend expects for this canonical product. The
+	// backend derives expected_product_id from the product's OWN stored link, so this is the
+	// cross-product contamination guard at the navigation boundary — a mistyped or swapped
+	// URL can never drive the tab to a different listing.
+	if (!wanted.product_id) {
+		return { ok: false, outcome: "PRODUCT_ID_MISMATCH",
+			error: "TIKTOK_NAV_URL_HAS_NO_PRODUCT_ID" };
+	}
+	if (expectedProductId && wanted.product_id !== expectedProductId) {
+		return { ok: false, outcome: "PRODUCT_ID_MISMATCH",
+			error: "TIKTOK_NAV_REQUESTED_ID_NEQ_EXPECTED",
+			requested_product_id: wanted.product_id, expected_product_id: expectedProductId };
+	}
+
+	// Same host-permission probe the reader uses: a permission-blind extension cannot read
+	// tab.url after navigation, which would look like an endless redirect. Fail it honestly.
+	let hostPermissionGranted = null;
+	try {
+		hostPermissionGranted = await chrome.permissions.contains({ origins: TIKTOK_EVIDENCE_ORIGINS });
+	} catch (_) { hostPermissionGranted = null; }
+	if (hostPermissionGranted === false) {
+		return { ok: false, outcome: "EXTRACTION_FAILED", error: "TIKTOK_HOST_PERMISSION_MISSING",
+			required_origins: TIKTOK_EVIDENCE_ORIGINS };
+	}
+
+	// (4) one dedicated tab, (5) navigate it.
+	let tab;
+	try {
+		tab = await getOrCreateTikTokEvidenceTab();
+	} catch (error) {
+		return { ok: false, outcome: "EXTRACTION_FAILED",
+			error: `TIKTOK_NAV_TAB_CREATE_FAILED:${String(error?.message || error).slice(0, 160)}` };
+	}
+	try {
+		await chrome.tabs.update(tab.id, { url: productUrl });
+	} catch (error) {
+		return { ok: false, outcome: "EXTRACTION_FAILED",
+			error: `TIKTOK_NAV_UPDATE_FAILED:${String(error?.message || error).slice(0, 160)}` };
+	}
+
+	// (6) wait for load completion; a wedged navigation surfaces as NAVIGATION_TIMEOUT.
+	try {
+		await waitForTabComplete(tab.id, 30000);
+	} catch (_) {
+		return { ok: false, outcome: "NAVIGATION_TIMEOUT", tab_id: tab.id };
+	}
+
+	// (7) classify the settled page from its FINAL url identity + a readiness probe.
+	let finalTab;
+	try {
+		finalTab = await chrome.tabs.get(tab.id);
+	} catch (error) {
+		return { ok: false, outcome: "EXTRACTION_FAILED",
+			error: `TIKTOK_NAV_TAB_GONE:${String(error?.message || error).slice(0, 120)}` };
+	}
+	const finalIdentity = tiktokProductIdentity(finalTab.url || "");
+	// A redirect that keeps the same product id (host swap shop-my <-> shop) is fine — the id
+	// is the identity. A redirect to a DIFFERENT product id is contamination and is refused.
+	if (finalIdentity && finalIdentity.product_id && finalIdentity.product_id !== wanted.product_id) {
+		return { ok: false, outcome: "PRODUCT_ID_MISMATCH",
+			observed_product_id: finalIdentity.product_id, expected_product_id: wanted.product_id };
+	}
+
+	// Readiness/security probe reuses the EXISTING content-script verb, so navigation and
+	// reading share one definition of "the page states a product". EVIDENCE FIRST: a wall
+	// carries no product, so it always falls through to the security branch.
+	let probe;
+	try {
+		probe = await sendTikTokEvidenceMessage(tab.id, `nav-${Date.now()}`);
+	} catch (_) {
+		// content script not injected yet / unreachable on the settled page
+		return { ok: false, outcome: "EXTRACTION_FAILED", error: "TIKTOK_CONTENT_SCRIPT_UNREACHABLE",
+			observed_product_id: (finalIdentity && finalIdentity.product_id) || null };
+	}
+	const probeResult = (probe && typeof probe === "object" && probe.result && typeof probe.result === "object")
+		? probe.result : probe;
+	if (probeResult && probeResult.ok === true) {
+		return { ok: true, outcome: "PAGE_READY", tab_id: tab.id,
+			observed_product_id: (finalIdentity && finalIdentity.product_id) || wanted.product_id,
+			observed_url: probeResult.observed_url || (finalIdentity ? `${finalIdentity.host}${finalIdentity.path}` : null) };
+	}
+	const probeError = String((probeResult && probeResult.error) || "");
+	if (probeError.includes("SECURITY_CHECK")) {
+		return { ok: false, outcome: "SECURITY_CHECK_REQUIRES_HUMAN", tab_id: tab.id,
+			observed_url: (probeResult && probeResult.observed_url) || null };
+	}
+	// Page loaded but states no product: delisted / not-found / removed listing.
+	return { ok: false, outcome: "PRODUCT_DELISTED", tab_id: tab.id,
+		observed_product_id: (finalIdentity && finalIdentity.product_id) || null,
+		observed_url: (probeResult && probeResult.observed_url) || null };
+}
+
 async function handleTikTokAcquireProductEvidence(params) {
 	const evidenceRequestId = String(params?.evidence_request_id || "");
 	const productUrl = String(params?.product_url || "");
@@ -5408,6 +5543,11 @@ function connectToAgent() {
 			} else if (msg.method === "FLOW_PAGE_STATE_DIAGNOSTIC") {
 				const result = await executeWsMethodAndReply(msg, () =>
 					handleFlowPageStateDiagnostic(msg.params?.mode),
+				);
+				replyToAgent(msg, result);
+			} else if (msg.method === "TIKTOK_NAVIGATE_PRODUCT_TAB") {
+				const result = await executeWsMethodAndReply(msg, () =>
+					handleTikTokNavigateProductTab(msg.params || {}),
 				);
 				replyToAgent(msg, result);
 			} else if (msg.method === "TIKTOK_ACQUIRE_PRODUCT_EVIDENCE") {

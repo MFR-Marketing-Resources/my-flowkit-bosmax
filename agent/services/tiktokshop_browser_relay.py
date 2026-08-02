@@ -61,6 +61,12 @@ ERR_TAB_NAVIGATED_AWAY = "TIKTOK_RELAY_TAB_NAVIGATED_AWAY"
 # operator has the product open in front of them, so conflating the two would have them
 # reopening tabs forever against a browser that can never see them.
 ERR_HOST_PERMISSION_MISSING = "TIKTOK_RELAY_HOST_PERMISSION_MISSING"
+# The dedicated evidence tab navigated to a DIFFERENT product than the one requested (a
+# redirect that changed the product id). A defect-class contamination guard, never retried.
+ERR_PRODUCT_ID_MISMATCH = "TIKTOK_RELAY_PRODUCT_ID_MISMATCH"
+# The listing loaded but states no product — delisted / removed. Not operator-actionable:
+# reopening the same dead link can never succeed, so it is ledgered and skipped, not retried.
+ERR_PRODUCT_DELISTED = "TIKTOK_RELAY_PRODUCT_DELISTED"
 
 # Every code an operator can personally fix by acting in the browser. The API layer turns
 # these into 409 (act, then retry) instead of 502 (server fault), so "open the tab" never
@@ -358,16 +364,90 @@ async def acquire_evidence(product_url: str, *,
     return clean
 
 
+WS_NAVIGATE_METHOD = "TIKTOK_NAVIGATE_PRODUCT_TAB"
+NAVIGATE_TIMEOUT_SECONDS = 50.0
+
+# Typed navigation outcome -> how the backend treats it. PAGE_READY is the only success;
+# everything else raises a typed relay error the orchestrator ledgers per product.
+_NAV_OUTCOME_TO_ERROR = {
+    "SECURITY_CHECK_REQUIRES_HUMAN": ERR_SECURITY_CHECK_PRESENT,
+    "PRODUCT_DELISTED": ERR_PRODUCT_DELISTED,
+    "PRODUCT_ID_MISMATCH": ERR_PRODUCT_ID_MISMATCH,
+    "NAVIGATION_TIMEOUT": ERR_TIMEOUT,
+    "EXTRACTION_FAILED": ERR_CONTENT_SCRIPT_UNREACHABLE,
+}
+
+
+async def navigate_product_tab(product_url: str, *,
+                               timeout: float = NAVIGATE_TIMEOUT_SECONDS) -> dict[str, Any]:
+    """Drive the ONE dedicated evidence tab to a stored, id-verified product URL.
+
+    The backend derives `expected_product_id` from the product's OWN stored link and hands it
+    to the extension, so the id match is enforced on BOTH sides of the bridge: a swapped or
+    mistyped URL can never move the tab to a different listing. Returns the extension's typed
+    outcome on PAGE_READY; raises the mapped `TikTokRelayError` on every other outcome so a
+    failed navigation is ledgered and skipped, never silently treated as acquired.
+    """
+    from agent.services.flow_client import get_flow_client
+
+    def fail(code: str, detail: str = "") -> "TikTokRelayError":
+        return TikTokRelayError(code, detail, product_url=str(product_url or ""))
+
+    identity = product_identity(product_url)
+    if identity is None:
+        raise fail(ERR_HOST_NOT_SUPPORTED, str(product_url)[:200])
+    expected_product_id = str(identity.get("product_id") or "")
+
+    client = get_flow_client()
+    if not client.connected:
+        raise fail(ERR_EXTENSION_DISCONNECTED,
+                   "BOSMAX Chrome extension is not connected to the agent")
+
+    reply = await client._send(  # noqa: SLF001 - documented shared transport
+        WS_NAVIGATE_METHOD,
+        {"product_url": product_url, "expected_product_id": expected_product_id},
+        timeout=timeout,
+    )
+    if not isinstance(reply, dict):
+        raise fail(ERR_MALFORMED_RESPONSE, type(reply).__name__)
+    transport_error = str(reply.get("error") or "")
+    if transport_error and "Timeout" in transport_error:
+        raise fail(ERR_TIMEOUT, transport_error[:200])
+    if transport_error == "Extension not connected":
+        raise fail(ERR_EXTENSION_DISCONNECTED, transport_error)
+
+    payload = reply.get("result") if isinstance(reply.get("result"), dict) else reply
+    outcome = str(payload.get("outcome") or "")
+    if payload.get("ok") is True and outcome == "PAGE_READY":
+        return {
+            "outcome": outcome,
+            "observed_product_id": payload.get("observed_product_id"),
+            "observed_url": payload.get("observed_url"),
+            "tab_id": payload.get("tab_id"),
+        }
+    mapped = _NAV_OUTCOME_TO_ERROR.get(outcome, ERR_MALFORMED_RESPONSE)
+    detail = str(payload.get("error") or outcome or "unknown_navigation_failure")[:200]
+    raise fail(mapped, detail)
+
+
 async def extract_product_via_browser(product_url: str, *,
-                                      propose: bool = True) -> dict[str, Any]:
+                                      propose: bool = True,
+                                      navigate: bool = False) -> dict[str, Any]:
     """Full result in the SAME shape `tiktokshop_extraction_service.extract_product` returns.
 
     Same keys, same normalizer, same provenance builder — so the recompute service treats a
     relayed acquisition and a direct fetch identically and cannot develop two code paths
     that disagree about what a field means.
+
+    With `navigate=True` (the unattended bulk path) the dedicated evidence tab is driven to
+    the product first, then the EXISTING reader acquires from that now-open tab. With
+    `navigate=False` the historical operator-opened-tab path is preserved unchanged.
     """
     from agent.services import tiktokshop_extraction_service as tiktok
 
+    nav = None
+    if navigate:
+        nav = await navigate_product_tab(product_url)
     clean = await acquire_evidence(product_url)
     raw = _raw_for_extractor(clean)
     source_url = clean.get("canonical_url") or product_url
@@ -385,5 +465,8 @@ async def extract_product_via_browser(product_url: str, *,
         "replayed": clean.get("replayed"),
         "dropped_keys": clean.get("dropped_keys") or [],
         "evidence_request_id": clean.get("evidence_request_id"),
+        "navigated": bool(nav),
+        "navigation_outcome": (nav or {}).get("outcome"),
+        "navigation_observed_product_id": (nav or {}).get("observed_product_id"),
     }
     return result
