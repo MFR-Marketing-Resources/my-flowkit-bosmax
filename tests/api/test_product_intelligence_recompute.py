@@ -814,3 +814,84 @@ async def test_preserve_and_retry_together_stay_idempotent(monkeypatch):
     assert draft["product_description"] == "CURATED KEKAL."
     assert len(await _provenance(product["id"])) == len(prov_after_second), (
         "a preserved-field retry manufactured provenance rows")
+
+
+# ── RELAX THE GATE: NO_EVIDENCE from the anonymous fetch also earns the relay ──
+# TikTok's anti-bot serves the anonymous fetcher a NON-challenge empty page for real,
+# readable products. Treating that as a dead source hid the authenticated tab that CAN read
+# them. The relay now fires on NO_EVIDENCE too — exactly once, everything else unchanged.
+EMPTY_HTML = "<html><head><title></title></head><body><div>loading</div></body></html>"
+
+
+def _stub_empty(monkeypatch):
+    """Every direct fetch returns a NON-challenge empty page -> ERR_NO_EVIDENCE."""
+    monkeypatch.setattr(
+        tiktok, "extract_product",
+        lambda url, **kw: _REAL_EXTRACT(url, page_text=EMPTY_HTML, **kw))
+
+
+@pytest.mark.asyncio
+async def test_no_evidence_direct_fetch_earns_the_authenticated_relay(monkeypatch):
+    """NO_EVIDENCE + relay allowed -> the authenticated tab completes the lane."""
+    _stub_extraction(monkeypatch)   # provider stubs for the relayed proposal
+    _stub_empty(monkeypatch)        # ...then the direct fetch returns an empty page
+    bridge = _install_bridge(monkeypatch, _FakeExtensionBridge(
+        _relay_reply(evidence=RELAYED_EVIDENCE)))
+    product = await _product("Recompute Empty->Relay", tiktok_product_url=RELAY_URL)
+
+    async with await _client() as client:
+        response = await client.post(
+            f"/api/product-intelligence/{product['id']}/recompute")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["acquisition_mode"] == "AUTHENTICATED_BROWSER_RELAY"
+    # exactly one relay attempt: navigate + acquire, no fallback loop
+    methods = [m for (m, _p) in bridge.sent]
+    assert methods.count("TIKTOK_ACQUIRE_PRODUCT_EVIDENCE") == 1
+    assert (await _draft_row(product["id"])) is not None
+
+
+@pytest.mark.asyncio
+async def test_no_evidence_with_relay_disabled_preserves_the_original_error(monkeypatch):
+    """NO_EVIDENCE + relay DISABLED -> the original extraction error is raised unchanged,
+    and the bridge is never touched."""
+    from agent.services.product_intelligence_recompute_service import acquire_extraction
+    _stub_empty(monkeypatch)
+    bridge = _install_bridge(monkeypatch, _FakeExtensionBridge(_relay_reply(evidence=RELAYED_EVIDENCE)))
+    with pytest.raises(tiktok.TikTokShopExtractionError) as excinfo:
+        await acquire_extraction(RELAY_URL, propose=False, allow_browser_relay=False)
+    assert excinfo.value.code == tiktok.ERR_NO_EVIDENCE
+    assert bridge.sent == []
+
+
+@pytest.mark.asyncio
+async def test_an_unrelated_direct_fetch_error_never_reaches_the_relay(monkeypatch):
+    """Only AUTHENTICATED_BROWSER_REQUIRED and NO_EVIDENCE trigger the relay; any other
+    extraction error is a real source defect and is raised unchanged."""
+    from agent.services.product_intelligence_recompute_service import acquire_extraction
+
+    def _boom(url, **kw):
+        raise tiktok.TikTokShopExtractionError("TIKTOKSHOP_BAD_CONTENT_TYPE", url)
+    monkeypatch.setattr(tiktok, "extract_product", _boom)
+    bridge = _install_bridge(monkeypatch, _FakeExtensionBridge(_relay_reply(evidence=RELAYED_EVIDENCE)))
+    with pytest.raises(tiktok.TikTokShopExtractionError) as excinfo:
+        await acquire_extraction(RELAY_URL, propose=False, allow_browser_relay=True)
+    assert excinfo.value.code == "TIKTOKSHOP_BAD_CONTENT_TYPE"
+    assert bridge.sent == [], "an unrelated error must never drive the tab"
+
+
+@pytest.mark.asyncio
+async def test_no_evidence_relay_that_comes_back_empty_mutates_nothing(monkeypatch):
+    """NO_EVIDENCE -> relay -> the tab is also empty: 4xx/5xx and ZERO PI mutation."""
+    _stub_empty(monkeypatch)
+    _install_bridge(monkeypatch, _FakeExtensionBridge(
+        _relay_reply(ok=False, error="TIKTOK_EVIDENCE_EMPTY")))
+    product = await _product("Recompute Empty->EmptyRelay", tiktok_product_url=RELAY_URL)
+
+    async with await _client() as client:
+        blocked = await client.post(
+            f"/api/product-intelligence/{product['id']}/recompute")
+
+    assert blocked.status_code in (409, 502)
+    assert await _draft_row(product["id"]) is None, "a failed relay opened a draft"
+    assert await _provenance(product["id"]) == [], "a failed relay wrote provenance"

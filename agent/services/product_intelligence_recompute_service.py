@@ -163,21 +163,35 @@ async def _persist_candidates(draft_id: str, product_id: str,
 
 async def acquire_extraction(source_url: str, *, propose: bool,
                              allow_browser_relay: bool) -> dict[str, Any]:
-    """Direct fetch first; the authenticated browser relay only when TikTok walls us out.
+    """Direct fetch first; the authenticated browser relay when the anonymous fetch cannot
+    show us the listing.
 
     The order is deliberate. A plain HTTPS GET costs nothing, needs no browser and no
     operator, and still works for any listing TikTok serves anonymously — so it stays the
-    default. The relay is the EXCEPTION path, entered only on the one typed failure that
-    actually means "we were never shown the listing"
-    (TIKTOKSHOP_AUTHENTICATED_BROWSER_REQUIRED). Any other extraction failure — no
-    evidence, bad content type, a dead link — is a real defect in the source and is raised
-    unchanged; routing those through the browser too would turn every data-quality problem
-    into a demand that the operator go open a tab.
+    default. The relay is the EXCEPTION path.
+
+    RELAY_TRIGGER_CODES — the two direct-fetch failures that mean "we were never shown the
+    real listing", both of which the AUTHENTICATED tab can still read:
+      * AUTHENTICATED_BROWSER_REQUIRED — TikTok served the anonymous fetcher a Security
+        Check shell;
+      * NO_EVIDENCE — TikTok served the anonymous fetcher a NON-challenge empty page (its
+        anti-bot does this for real, readable products). Treating that as a dead source
+        wrongly hid readable products behind the anonymous fetch; the authenticated tab
+        reads them. (Live-proven on the PI-10 trust test.)
+    EVERY OTHER direct-fetch error (bad content type, a genuinely dead link, a host we do
+    not support) is a real source defect and is raised UNCHANGED. Only ONE relay attempt is
+    made — no fallback loop. A failed relay acquisition raises out of here before anything is
+    written, so it can never mutate a PI row.
     """
     import asyncio
 
     from agent.services import tiktokshop_browser_relay as relay
     from agent.services import tiktokshop_extraction_service as tiktok
+
+    relay_trigger_codes = {
+        tiktok.ERR_AUTHENTICATED_BROWSER_REQUIRED,
+        tiktok.ERR_NO_EVIDENCE,
+    }
 
     try:
         # Synchronous httpx off the event loop: on this single-process agent an inline fetch
@@ -187,7 +201,7 @@ async def acquire_extraction(source_url: str, *, propose: bool,
         extraction.setdefault("acquisition_mode", "DIRECT_FETCH")
         return extraction
     except tiktok.TikTokShopExtractionError as exc:
-        if exc.code != tiktok.ERR_AUTHENTICATED_BROWSER_REQUIRED or not allow_browser_relay:
+        if exc.code not in relay_trigger_codes or not allow_browser_relay:
             raise
         if not relay.relay_supports_url(source_url):
             # Honest refusal rather than "open the tab and retry", which would be advice
