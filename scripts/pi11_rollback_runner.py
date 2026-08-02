@@ -1,35 +1,55 @@
 #!/usr/bin/env python
-"""PI-11 targeted PRE_PI11 ROLLBACK (owner decision after both corrective projections were rejected).
+"""PI-11 targeted PRE_PI11 ROLLBACK — hardened (owner defects 1-8).
 
-The 530 PI-11 approvals were produced by the rejected runner and must not remain authoritative. This
-runner RETRACTS each bad PI-11 approval and restores the genuine pre-PI-11 authoritative snapshot
-(from the verified PRE_PI11 backup) where one existed, else returns the product truthfully to
-MISSING_APPROVED_INTELLIGENCE. Bad snapshots are RETAINED as immutable audit history (status
-SUPERSEDED); nothing is deleted; `product`/taxonomy/lifecycle/fixtures/copy tables are never touched.
-
-Per product, classify against the PRE_PI11 backup:
-  RESTORE_PRE_PI11               a genuine pre-PI-11 APPROVED snapshot existed -> restore it, retract PI-11
-  RETURN_TO_MISSING             none existed -> retract PI-11, product returns to MISSING
-  SKIP_POST_PI11_LEGITIMATE_CHANGE  a legitimate non-PI-11 snapshot became authoritative AFTER the bad run -> preserve
-  CONFLICT                       CAS mismatch (fail closed, ledgered)
-
-CAS guards (verified again at apply time): exact snapshot id, current status, reviewer prefix,
-version, and content-hash. Any mismatch fails closed for that product.
+Retract the 530 rejected PI-11 approvals (status APPROVED->SUPERSEDED, retained as immutable audit
+history), restore the genuine pre-PI-11 authoritative snapshot from the VERIFIED PRE_PI11 backup, or
+return the product truthfully to MISSING. Status-only; never deletes history; never writes
+product/taxonomy/lifecycle/fixtures/copy. Whole-cohort atomic, CAS-exact, fail-closed.
 
 Modes:
-  --dry-run (DEFAULT): classify the whole cohort vs the backup. WRITES NOTHING.
-  --apply            : perform the status-only rollback transactionally with CAS. HARD-GATED behind
-                       PI11_ROLLBACK_APPLY_APPROVED=1. NOT run in this phase.
+  --dry-run (DEFAULT): verify backups, classify the whole cohort, write the ledger. NO canonical writes.
+  --apply            : one BEGIN IMMEDIATE over all 530; verify backups + cohort digest + 318/212/0/0;
+                       CAS-exact conditional updates (rowcount==1); COMMIT only if every product
+                       passes, else ROLLBACK all. HARD-GATED behind PI11_ROLLBACK_APPLY_APPROVED=1.
 """
 from __future__ import annotations
-import argparse, hashlib, json, os, sqlite3, sys
+import argparse, hashlib, json, os, sqlite3, sys, uuid
+from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-LIVE_DB = str(REPO / "flow_agent.db")
-PRE_PI11_BACKUP = str(REPO / ".ai" / "backups" / "flow_agent_PRE_PI11_20260802T092351Z.db")
+LIVE_DB = (REPO / "flow_agent.db").resolve()
+PRE_PI11_BACKUP = (REPO / ".ai" / "backups" / "flow_agent_PRE_PI11_20260802T092351Z.db").resolve()
+BACKUP_DIR = REPO / ".ai" / "backups"
+AUDIT = REPO / "outputs" / "mission-pi11" / "audit"
 PI11_PREFIX = "claude-owner-delegated-pi11"
 APPLY_ENV = "PI11_ROLLBACK_APPLY_APPROVED"
+
+# defect 1: the previously-verified PRE_PI11 backup fingerprint (from the containment manifest).
+VERIFIED_BACKUP_SHA256 = "2a61093bda0b700e22a37963c59066061dc903438de7cc72937f4571d82bc178"
+VERIFIED_BACKUP_SIZE = 275308544
+
+# defect 4: the frozen, authorized plan shape (dry-run of head bee4027).
+EXPECTED_COUNTS = {"RESTORE_PRE_PI11": 318, "RETURN_TO_MISSING": 212,
+                   "SKIP_POST_PI11_LEGITIMATE_CHANGE": 0, "CONFLICT": 0}
+EXPECTED_COHORT_DIGEST = "4ecc22cdac78ebace299063ddc75bd4c6f03a143bf1836a2ee33c63271bfb07f"
+
+# defect 2: EVERY snapshot column, explicitly classified. STATUS_METADATA is the audited set that
+# legitimately changes on a status transition (empirically: exactly status + updated_at across all
+# 318 pre-PI-11 snapshots). All other columns are SEMANTIC and part of the content hash. If the live
+# schema deviates from KNOWN_SNAPSHOT_COLS the run FAILS CLOSED (a new column must be re-audited).
+STATUS_METADATA_COLS = frozenset({"status", "updated_at"})
+KNOWN_SNAPSHOT_COLS = frozenset({
+    "snapshot_id", "product_id", "version", "status", "product_description", "benefits_json",
+    "usp_json", "usage_text", "ingredients_text", "warnings_text", "target_customer_text",
+    "paste_anything_summary", "source_urls_json", "image_evidence_json", "package_notes",
+    "size_or_volume", "product_form_factor", "packaging_description", "product_truth_lock",
+    "claim_gate", "claim_risk_level", "claim_tokens_json", "allowed_claims_json",
+    "blocked_claims_json", "buyer_persona_snapshot_json", "copy_strategy_summary_json",
+    "confidence_score", "completeness_score", "readiness_status", "created_from_review_draft_id",
+    "created_by", "approved_by", "approved_at", "supersedes_snapshot_id", "created_at", "updated_at",
+})
 
 FIXTURE_SQL = (
     "(LOWER(TRIM(COALESCE(raw_product_title,''))) IN ('test product','test item','fixture product')"
@@ -38,65 +58,129 @@ FIXTURE_SQL = (
     " OR LOWER(COALESCE(id,'')) LIKE 'fixture|_%' ESCAPE '|')"
 )
 
-# immutable CONTENT columns hashed for CAS (excludes volatile status/updated_at metadata)
-CONTENT_COLS = ("snapshot_id", "product_id", "version", "approved_by", "product_description",
-                "benefits_json", "usp_json", "usage_text", "ingredients_text", "warnings_text",
-                "target_customer_text", "allowed_claims_json", "blocked_claims_json",
-                "buyer_persona_snapshot_json", "copy_strategy_summary_json", "source_urls_json",
-                "image_evidence_json", "claim_gate", "claim_risk_level", "readiness_status",
-                "completeness_score")
+
+def _utcnow():
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def semantic_cols(con):
+    """defect 2: derive the semantic-hash columns from the ACTUAL schema; fail closed on any
+    unknown/missing column so a schema change cannot silently weaken the hash."""
+    actual = frozenset(r[1] for r in con.execute("PRAGMA table_info(product_intelligence_snapshot)"))
+    if actual != KNOWN_SNAPSHOT_COLS:
+        raise RuntimeError(f"SCHEMA_FAIL_CLOSED unclassified/missing columns: "
+                           f"{sorted(actual ^ KNOWN_SNAPSHOT_COLS)}")
+    return sorted(actual - STATUS_METADATA_COLS)
+
+
+def content_hash(snap, cols):
+    return hashlib.sha256(json.dumps({c: snap.get(c) for c in cols}, sort_keys=True,
+                                     default=str).encode("utf-8", "replace")).hexdigest()
 
 
 def is_pi11(snap):
     return str((snap or {}).get("approved_by") or "").startswith(PI11_PREFIX)
 
 
-def content_hash(snap):
-    return hashlib.sha256(json.dumps({k: snap.get(k) for k in CONTENT_COLS}, sort_keys=True,
-                                     default=str).encode("utf-8", "replace")).hexdigest()
+# ── DB verification (defect 1) ────────────────────────────────────────────────────────────────
+def verify_db(path, expect_sha=None, expect_size=None):
+    p = Path(path).resolve()
+    if not p.exists():
+        raise RuntimeError(f"DB_MISSING {p}")
+    sha, size = sha256_file(p), p.stat().st_size
+    if expect_sha is not None and sha != expect_sha:
+        raise RuntimeError(f"DB_SHA_MISMATCH {p}: {sha} != {expect_sha}")
+    if expect_size is not None and size != expect_size:
+        raise RuntimeError(f"DB_SIZE_MISMATCH {p}: {size} != {expect_size}")
+    con = sqlite3.connect(f"file:{p.as_posix()}?mode=ro", uri=True)
+    try:
+        integrity = con.execute("PRAGMA integrity_check").fetchone()[0]
+        fk = con.execute("PRAGMA foreign_key_check").fetchall()
+    finally:
+        con.close()
+    if integrity != "ok" or fk:
+        raise RuntimeError(f"DB_INTEGRITY_FAIL {p}: integrity={integrity} fk_violations={len(fk)}")
+    return {"path": str(p), "sha256": sha, "size_bytes": size, "integrity": integrity, "fk_violations": len(fk)}
 
 
-def classify_rollback(live_snaps, backup_snaps):
-    """PURE. Given a product's live and backup snapshots (lists of dicts), return the rollback plan."""
+def snapshot_live_backup():
+    """Fresh consistent online backup of the CURRENT live DB before any mutation (defect 1)."""
+    dst = BACKUP_DIR / f"flow_agent_PRE_ROLLBACK_{_utcnow()}.db"
+    src = sqlite3.connect(f"file:{LIVE_DB.as_posix()}?mode=ro", uri=True)
+    out = sqlite3.connect(str(dst))
+    with out:
+        src.backup(out)
+    out.close(); src.close()
+    return verify_db(dst)
+
+
+# ── classification (defects 3,5) ──────────────────────────────────────────────────────────────
+def _cas(snap):
+    return {"snapshot_id": snap["snapshot_id"], "product_id": snap["product_id"],
+            "version": snap.get("version"), "status": snap.get("status"),
+            "approved_by": snap.get("approved_by")}
+
+
+def classify_rollback(live_snaps, backup_snaps, cols):
+    """PURE. Returns the rollback plan for one product, including idempotence states (defect 5)."""
     live_by_id = {s["snapshot_id"]: s for s in live_snaps}
     live_approved = [s for s in live_snaps if s.get("status") == "APPROVED"]
     cur_auth = max(live_approved, key=lambda s: s.get("version") or 0) if live_approved else None
     backup_approved = [s for s in backup_snaps if s.get("status") == "APPROVED"]
+    backup_approved_ids = {s["snapshot_id"] for s in backup_approved}
     pre = max(backup_approved, key=lambda s: s.get("version") or 0) if backup_approved else None
+    pi11_snaps = [s for s in live_snaps if is_pi11(s)]
+    pi11_approved = [s for s in live_approved if is_pi11(s)]
 
+    def base(dec, reason, before=None, after=None, **extra):
+        d = {"decision": dec, "reason": reason, "before_authoritative": before, "after_authoritative": after}
+        d.update(extra)
+        return d
+
+    # no live APPROVED snapshot
     if cur_auth is None:
-        return {"decision": "CONFLICT", "reason": "NO_LIVE_APPROVED_SNAPSHOT",
-                "before_authoritative": None, "after_authoritative": None}
+        if pi11_snaps and all(s.get("status") == "SUPERSEDED" for s in pi11_snaps) and not backup_approved:
+            return base("SKIPPED_ALREADY_ROLLED_BACK", "RETURN_TO_MISSING_ALREADY_APPLIED")
+        return base("CONFLICT", "NO_LIVE_APPROVED_AND_NOT_A_CLEAN_ROLLBACK")
 
+    # authoritative is a non-PI-11 snapshot
     if not is_pi11(cur_auth):
-        # a legitimate non-PI-11 snapshot is authoritative (created after the bad run) -> preserve
-        return {"decision": "SKIP_POST_PI11_LEGITIMATE_CHANGE",
-                "reason": "AUTHORITATIVE_IS_NON_PI11",
-                "before_authoritative": cur_auth["snapshot_id"],
-                "after_authoritative": cur_auth["snapshot_id"]}
+        pi11_clean = all(s.get("status") == "SUPERSEDED" for s in pi11_snaps) if pi11_snaps else True
+        if cur_auth["snapshot_id"] in backup_approved_ids and pi11_clean:
+            return base("SKIPPED_ALREADY_ROLLED_BACK", "RESTORE_ALREADY_APPLIED",
+                        cur_auth["snapshot_id"], cur_auth["snapshot_id"])
+        if cur_auth["snapshot_id"] not in backup_approved_ids:
+            if not pi11_clean:
+                return base("CONFLICT", "LEGIT_CHANGE_BUT_PI11_STILL_APPROVED",
+                            cur_auth["snapshot_id"], cur_auth["snapshot_id"])
+            return base("SKIP_POST_PI11_LEGITIMATE_CHANGE", "AUTHORITATIVE_IS_NON_PI11",
+                        cur_auth["snapshot_id"], cur_auth["snapshot_id"])
+        return base("CONFLICT", "NON_PI11_AUTHORITATIVE_UNEXPECTED_STATE",
+                    cur_auth["snapshot_id"], cur_auth["snapshot_id"])
 
-    # current authoritative IS a PI-11 snapshot -> rollback required
-    retract = [s for s in live_approved if is_pi11(s)]
-    retract_cas = [{"snapshot_id": s["snapshot_id"], "status": "APPROVED", "version": s.get("version"),
-                    "reviewer_prefix": PI11_PREFIX, "content_hash": content_hash(s)} for s in retract]
-
+    # authoritative IS a PI-11 snapshot -> rollback required
+    retract_cas = [{**_cas(s), "content_hash": content_hash(s, cols)} for s in pi11_approved]
     if pre is not None:
         live_pre = live_by_id.get(pre["snapshot_id"])
         if live_pre is None:
-            return {"decision": "CONFLICT", "reason": "PRE_PI11_SNAPSHOT_ABSENT_IN_LIVE",
-                    "before_authoritative": cur_auth["snapshot_id"], "after_authoritative": None}
-        if content_hash(live_pre) != content_hash(pre):
-            return {"decision": "CONFLICT", "reason": "PRE_PI11_CONTENT_DRIFT",
-                    "before_authoritative": cur_auth["snapshot_id"], "after_authoritative": None}
-        return {"decision": "RESTORE_PRE_PI11", "reason": "PRE_PI11_APPROVED_SNAPSHOT_EXISTS",
-                "before_authoritative": cur_auth["snapshot_id"],
-                "after_authoritative": pre["snapshot_id"],
-                "retract_cas": retract_cas,
-                "restore_cas": {"snapshot_id": live_pre["snapshot_id"], "status": live_pre.get("status"),
-                                "version": live_pre.get("version"), "content_hash": content_hash(live_pre)}}
-    return {"decision": "RETURN_TO_MISSING", "reason": "NO_PRE_PI11_APPROVED_SNAPSHOT",
-            "before_authoritative": cur_auth["snapshot_id"], "after_authoritative": None,
-            "retract_cas": retract_cas, "restore_cas": None}
+            return base("CONFLICT", "PRE_PI11_SNAPSHOT_ABSENT_IN_LIVE", cur_auth["snapshot_id"])
+        if content_hash(live_pre, cols) != content_hash(pre, cols):
+            return base("CONFLICT", "PRE_PI11_CONTENT_DRIFT", cur_auth["snapshot_id"])
+        if live_pre.get("status") != "SUPERSEDED":
+            return base("CONFLICT", f"PRE_PI11_UNEXPECTED_STATUS:{live_pre.get('status')}", cur_auth["snapshot_id"])
+        return base("RESTORE_PRE_PI11", "PRE_PI11_APPROVED_SNAPSHOT_EXISTS",
+                    cur_auth["snapshot_id"], pre["snapshot_id"], retract_cas=retract_cas,
+                    restore_cas={**_cas(live_pre), "content_hash": content_hash(live_pre, cols)})
+    return base("RETURN_TO_MISSING", "NO_PRE_PI11_APPROVED_SNAPSHOT",
+                cur_auth["snapshot_id"], None, retract_cas=retract_cas, restore_cas=None)
 
 
 # ── I/O ──────────────────────────────────────────────────────────────────────────────────────
@@ -110,67 +194,130 @@ def cohort(live):
         "SELECT DISTINCT s.product_id FROM product_intelligence_snapshot s JOIN product p ON p.id=s.product_id "
         f"WHERE s.approved_by LIKE '{PI11_PREFIX}%' AND s.approved_by NOT LIKE '{PI11_PREFIX}-corrective%' "
         f"AND NOT {FIXTURE_SQL}").fetchall()
-    return [r[0] for r in rows]
+    return sorted(r[0] for r in rows)
 
 
-def plan_all(live, backup, ids):
-    out = []
-    for pid in ids:
-        plan = classify_rollback(snapshots(live, pid), snapshots(backup, pid))
-        plan["product_id"] = pid
-        out.append(plan)
-    return out
+def cohort_digest(plans):
+    h = hashlib.sha256()
+    for pid in sorted(plans):
+        p = plans[pid]
+        h.update((pid + ":" + p["decision"] + ":" + str(p.get("after_authoritative")) + "\n").encode())
+    return h.hexdigest()
 
 
-def apply_one_rollback(live, backup, pid, plan=None):
-    """Status-only, transactional, CAS-guarded rollback for ONE product on the given connections.
-    If `plan` is provided (a dry-run plan) it is VERIFIED against live now (CAS catches any drift
-    since the plan was computed); otherwise it is classified fresh. Fail-closed: any CAS drift rolls
-    back the product's transaction, leaving no partial state."""
-    if plan is None:
-        plan = classify_rollback(snapshots(live, pid), snapshots(backup, pid))
-    if plan["decision"] in ("SKIP_POST_PI11_LEGITIMATE_CHANGE", "CONFLICT"):
-        return {"product_id": pid, "result": plan["decision"], "reason": plan.get("reason")}
+def _ledger_row(pid, plan, cas_result, txid, committed):
+    def snap_state(con, sid):
+        if not sid:
+            return None
+        r = con.execute("SELECT version,status FROM product_intelligence_snapshot WHERE snapshot_id=?", (sid,)).fetchone()
+        return {"version": r["version"], "status": r["status"]} if r else None
+    return {"product_id": pid, "decision": plan["decision"], "reason": plan.get("reason"),
+            "bad_snapshot_id": plan.get("before_authoritative"),
+            "restored_snapshot_id": plan.get("after_authoritative"),
+            "retract_cas": plan.get("retract_cas"), "restore_cas": plan.get("restore_cas"),
+            "cas_result": cas_result, "transaction_id": txid, "committed": committed}
+
+
+def plan_all(live, backup, ids, cols):
+    return {pid: {**classify_rollback(snapshots(live, pid), snapshots(backup, pid), cols),
+                  "product_id": pid} for pid in ids}
+
+
+def write_ledger(name, rows):
+    AUDIT.mkdir(parents=True, exist_ok=True)
+    with open(AUDIT / name, "w", encoding="utf-8") as fh:
+        for r in rows:
+            fh.write(json.dumps(r, ensure_ascii=False, default=str) + "\n")
+    return str(AUDIT / name)
+
+
+# ── apply (defects 3,4,6) — HARD-GATED, atomic, CAS-exact ─────────────────────────────────────
+def plan_fingerprint(plan):
+    """Content-sensitive fingerprint: decision + authoritative ids + every CAS semantic content hash.
+    Any semantic-field drift since the authorized dry-run changes this and aborts the rollback."""
+    rc = tuple(sorted((c["snapshot_id"], c["content_hash"]) for c in (plan.get("retract_cas") or [])))
+    restore = plan.get("restore_cas")
+    return (plan["decision"], plan.get("before_authoritative"), plan.get("after_authoritative"),
+            rc, (restore["snapshot_id"], restore["content_hash"]) if restore else None)
+
+
+def execute_cohort(live, backup, cols, ids, frozen_plans, expected_counts, expected_digest, txid):
+    """One BEGIN IMMEDIATE over the WHOLE cohort. Re-reads/reclassifies all, verifies counts + cohort
+    digest + that each product's live fingerprint still matches the AUTHORIZED frozen plan (catches
+    semantic drift), then CAS-exact conditional updates (rowcount==1). COMMIT only if every product
+    passes; one failure ROLLs BACK ALL. Returns (committed, ledger)."""
+    ledger, committed = [], False
     try:
-        live.execute("BEGIN")
-        # re-verify CAS against the live rows NOW (fail closed on any drift)
-        for cas in plan["retract_cas"]:
-            row = live.execute("SELECT * FROM product_intelligence_snapshot WHERE snapshot_id=?",
-                               (cas["snapshot_id"],)).fetchone()
-            if row is None or row["status"] != "APPROVED" or content_hash(dict(row)) != cas["content_hash"] \
-                    or not str(row["approved_by"] or "").startswith(PI11_PREFIX):
-                raise RuntimeError(f"CAS_MISMATCH_RETRACT {cas['snapshot_id']}")
-        if plan["decision"] == "RESTORE_PRE_PI11":
-            rc = plan["restore_cas"]
-            row = live.execute("SELECT * FROM product_intelligence_snapshot WHERE snapshot_id=?",
-                               (rc["snapshot_id"],)).fetchone()
-            if row is None or content_hash(dict(row)) != rc["content_hash"]:
-                raise RuntimeError(f"CAS_MISMATCH_RESTORE {rc['snapshot_id']}")
-        # status-only transitions: retract bad PI-11 -> SUPERSEDED; restore pre-PI-11 -> APPROVED
-        for cas in plan["retract_cas"]:
-            live.execute("UPDATE product_intelligence_snapshot SET status='SUPERSEDED' "
-                         "WHERE snapshot_id=? AND status='APPROVED'", (cas["snapshot_id"],))
-        if plan["decision"] == "RESTORE_PRE_PI11":
-            live.execute("UPDATE product_intelligence_snapshot SET status='APPROVED' WHERE snapshot_id=?",
-                         (plan["restore_cas"]["snapshot_id"],))
+        live.execute("BEGIN IMMEDIATE")
+        plans = plan_all(live, backup, ids, cols)
+        counts = Counter(p["decision"] for p in plans.values())
+        if dict(counts) != expected_counts:
+            raise RuntimeError(f"COUNTS_MISMATCH {dict(counts)} != {expected_counts}")
+        if cohort_digest(plans) != expected_digest:
+            raise RuntimeError("COHORT_DIGEST_MISMATCH")
+        for pid in ids:
+            plan = plans[pid]
+            frozen = frozen_plans.get(pid)
+            if frozen is None or plan_fingerprint(plan) != plan_fingerprint(frozen):
+                raise RuntimeError(f"DRIFT_SINCE_AUTHORIZED_PLAN {pid}")
+            if plan["decision"] in ("SKIP_POST_PI11_LEGITIMATE_CHANGE", "SKIPPED_ALREADY_ROLLED_BACK"):
+                ledger.append(_ledger_row(pid, plan, "SKIP", txid, None)); continue
+            if plan["decision"] == "CONFLICT":
+                raise RuntimeError(f"CONFLICT_IN_COHORT {pid}:{plan['reason']}")
+            for cas in plan["retract_cas"]:
+                row = live.execute("SELECT * FROM product_intelligence_snapshot WHERE snapshot_id=?",
+                                   (cas["snapshot_id"],)).fetchone()
+                if row is None or content_hash(dict(row), cols) != cas["content_hash"]:
+                    raise RuntimeError(f"CAS_HASH_MISMATCH_RETRACT {cas['snapshot_id']}")
+                n = live.execute(
+                    "UPDATE product_intelligence_snapshot SET status='SUPERSEDED' WHERE snapshot_id=? "
+                    "AND product_id=? AND version=? AND status='APPROVED' AND approved_by LIKE ?",
+                    (cas["snapshot_id"], cas["product_id"], cas["version"], PI11_PREFIX + "%")).rowcount
+                if n != 1:
+                    raise RuntimeError(f"CAS_ROWCOUNT_RETRACT {cas['snapshot_id']} n={n}")
+            if plan["decision"] == "RESTORE_PRE_PI11":
+                rc = plan["restore_cas"]
+                row = live.execute("SELECT * FROM product_intelligence_snapshot WHERE snapshot_id=?",
+                                   (rc["snapshot_id"],)).fetchone()
+                if row is None or content_hash(dict(row), cols) != rc["content_hash"]:
+                    raise RuntimeError(f"CAS_HASH_MISMATCH_RESTORE {rc['snapshot_id']}")
+                n = live.execute(
+                    "UPDATE product_intelligence_snapshot SET status='APPROVED' WHERE snapshot_id=? "
+                    "AND product_id=? AND version=? AND status='SUPERSEDED'",
+                    (rc["snapshot_id"], rc["product_id"], rc["version"])).rowcount
+                if n != 1:
+                    raise RuntimeError(f"CAS_ROWCOUNT_RESTORE {rc['snapshot_id']} n={n}")
+            ledger.append(_ledger_row(pid, plan, "APPLIED", txid, None))
         live.execute("COMMIT")
-        return {"product_id": pid, "result": plan["decision"], "after_authoritative": plan["after_authoritative"]}
+        committed = True
     except Exception as exc:
         live.execute("ROLLBACK")
-        return {"product_id": pid, "result": "CONFLICT", "reason": str(exc)}
+        ledger.append({"transaction_id": txid, "committed": False, "aborted": str(exc)})
+    for r in ledger:
+        r["committed"] = committed
+    return committed, ledger
 
 
-def apply_rollback(ids):
-    """Status-only, transactional, CAS-guarded rollback. HARD-GATED. NOT run in the dry-run phase."""
-    backup = sqlite3.connect(f"file:{Path(PRE_PI11_BACKUP).as_posix()}?mode=ro", uri=True)
-    backup.row_factory = sqlite3.Row
-    live = sqlite3.connect(LIVE_DB)
-    live.row_factory = sqlite3.Row
+def apply_rollback():
+    backup_meta = verify_db(PRE_PI11_BACKUP, VERIFIED_BACKUP_SHA256, VERIFIED_BACKUP_SIZE)
+    live_backup_meta = snapshot_live_backup()  # fresh online backup BEFORE mutation
+    txid = "rb-" + uuid.uuid4().hex[:16]
+    live = sqlite3.connect(str(LIVE_DB)); live.row_factory = sqlite3.Row
     live.execute("PRAGMA foreign_keys=ON")
-    results = [apply_one_rollback(live, backup, pid) for pid in ids]
-    live.close()
-    backup.close()
-    return results
+    backup = sqlite3.connect(f"file:{PRE_PI11_BACKUP.as_posix()}?mode=ro", uri=True); backup.row_factory = sqlite3.Row
+    cols = semantic_cols(live)
+    if semantic_cols(backup) != cols:
+        raise RuntimeError("SCHEMA_FAIL_CLOSED live/backup snapshot schema differ")
+    ids = cohort(live)
+    # the AUTHORIZED frozen plan (from the write-free dry-run of this exact head)
+    frozen_raw = json.load(open(AUDIT / "rollback_plan.json", encoding="utf-8"))
+    frozen_plans = {p["product_id"]: p for p in frozen_raw}
+    committed, ledger = execute_cohort(live, backup, cols, ids, frozen_plans,
+                                       EXPECTED_COUNTS, EXPECTED_COHORT_DIGEST, txid)
+    write_ledger("rollback_ledger_apply.jsonl", ledger)
+    live.close(); backup.close()
+    return {"transaction_id": txid, "committed": committed, "backup": backup_meta,
+            "live_backup": live_backup_meta, "counts": dict(Counter(r.get("decision") for r in ledger))}
 
 
 def main():
@@ -183,31 +330,29 @@ def main():
         if os.environ.get(APPLY_ENV) != "1":
             print(f"REFUSED: --apply is hard-gated. Set {APPLY_ENV}=1 only under explicit owner authorization.")
             sys.exit(2)
-        live = sqlite3.connect(f"file:{Path(LIVE_DB).as_posix()}?mode=ro", uri=True)
-        live.row_factory = sqlite3.Row
-        ids = cohort(live)
-        live.close()
-        from collections import Counter
-        res = apply_rollback(ids)
-        print("APPLY results:", dict(Counter(r["result"] for r in res)))
+        res = apply_rollback()
+        print("APPLY:", json.dumps(res, default=str))
         return
 
-    live = sqlite3.connect(f"file:{Path(LIVE_DB).as_posix()}?mode=ro", uri=True)
-    live.row_factory = sqlite3.Row
-    backup = sqlite3.connect(f"file:{Path(PRE_PI11_BACKUP).as_posix()}?mode=ro", uri=True)
-    backup.row_factory = sqlite3.Row
+    # write-free: verify backup, classify, ledger
+    backup_meta = verify_db(PRE_PI11_BACKUP, VERIFIED_BACKUP_SHA256, VERIFIED_BACKUP_SIZE)
+    live = sqlite3.connect(f"file:{LIVE_DB.as_posix()}?mode=ro", uri=True); live.row_factory = sqlite3.Row
+    backup = sqlite3.connect(f"file:{PRE_PI11_BACKUP.as_posix()}?mode=ro", uri=True); backup.row_factory = sqlite3.Row
+    cols = semantic_cols(live)
     ids = cohort(live)
-    res = plan_all(live, backup, ids)
-    live.close()
-    backup.close()
-    out = REPO / "outputs" / "mission-pi11" / "audit" / a.out
-    with open(out, "w", encoding="utf-8") as fh:
-        json.dump(res, fh, indent=1, ensure_ascii=False, default=str)
-    from collections import Counter
-    dec = Counter(r["decision"] for r in res)
-    print("ROLLBACK DRY-RUN (no writes). decisions:", dict(dec), "| total", len(res))
-    print("reconciliation sum:", sum(dec.values()), "== cohort", len(ids))
-    print("report ->", out)
+    plans = plan_all(live, backup, ids, cols)
+    txid = "dry-" + uuid.uuid4().hex[:16]
+    ledger = [_ledger_row(pid, plans[pid], "PLANNED", txid, "DRY_RUN") for pid in ids]
+    write_ledger("rollback_ledger_dryrun.jsonl", ledger)
+    with open(AUDIT / a.out, "w", encoding="utf-8") as fh:
+        json.dump([plans[pid] for pid in ids], fh, indent=1, ensure_ascii=False, default=str)
+    live.close(); backup.close()
+    counts = Counter(p["decision"] for p in plans.values())
+    print("ROLLBACK DRY-RUN (no writes). counts:", dict(counts))
+    print("reconciliation sum:", sum(counts.values()), "== cohort", len(ids))
+    print("cohort_digest:", cohort_digest(plans))
+    print("backup verified:", backup_meta["sha256"][:16], "integrity", backup_meta["integrity"])
+    print("semantic hash columns:", len(cols), "of", len(KNOWN_SNAPSHOT_COLS), "(excl status,updated_at)")
 
 
 if __name__ == "__main__":
