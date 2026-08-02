@@ -548,6 +548,7 @@ domains:
       - outputs/mission-pi12/runtime_api_proof.json
       - outputs/mission-pi12/test_output.txt
       - outputs/mission-pi12/residual_124_reasons.json
+      - outputs/mission-pi12/count_reconciliation_651.json
       - tests/unit/test_pi12_ai_fill_hardening.py
       # provider_receipts.jsonl is written per-attempt by the hardened runner on the NEXT run.
       - agent/services/product_registration_service.py
