@@ -67,9 +67,16 @@ ProductIntelligenceClaimRiskLevel = Literal["LOW", "MEDIUM", "HIGH"]
 # draft — never as a placeholder string in the knowledge value column, which would be
 # indistinguishable from real knowledge everywhere downstream.
 FieldAbsenceDisposition = Literal[
-    "NOT_STATED_IN_SOURCE",     # source omits the fact; may satisfy the field blocker
+    "NOT_STATED_IN_SOURCE",     # a source WAS inspected and omits the fact; satisfies the blocker
     "NOT_APPLICABLE",           # fact does not exist for this product type
-    "REQUIRES_EXTERNAL_EVIDENCE",  # documented as unresolved; remains blocking
+    "REQUIRES_EXTERNAL_EVIDENCE",  # documented as unresolved; remains BLOCKING
+    # PI-11: the live marketplace source cannot be acquired (e.g. TikTok automation is
+    # externally blocked), so the field's absence is a truthful SUPPLY gap, not a claim that
+    # an inspected source omitted it. Distinct from NOT_STATED_IN_SOURCE (which asserts a
+    # source was read) and from REQUIRES_EXTERNAL_EVIDENCE (which stays blocking): a product
+    # can be COPY_GROUNDING_READY with source-unavailable KNOWLEDGE fields, so this SATISFIES
+    # the field blocker as a governed absence — while never being dressed up as evidence.
+    "SOURCE_UNAVAILABLE",
 ]
 
 

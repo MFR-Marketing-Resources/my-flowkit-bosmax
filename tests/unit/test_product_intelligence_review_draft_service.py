@@ -935,3 +935,44 @@ async def test_superseded_draft_is_terminal_for_every_mutation_path():
             draft.draft_id,
             ProductIntelligenceReviewDraftRejectRequest(rejected_by="owner"),
         )
+
+
+@pytest.mark.asyncio
+async def test_source_unavailable_disposition_is_a_governed_absence_not_blocking():
+    """PI-11: SOURCE_UNAVAILABLE (the live source cannot be acquired) satisfies the field
+    blocker as a governed absence — like NOT_STATED — so a product stays COPY_GROUNDING_READY
+    with a supply gap, WITHOUT ever claiming an inspected source omitted the fact, and never
+    lowering completeness to a false 1.0."""
+    product = await _strict_product("Governed SOURCE_UNAVAILABLE")
+    draft = await svc.create_review_draft(product["id"], _knowledge_gap_request())
+
+    for field in ("ingredients_text", "warnings_text", "usage_text"):
+        validation = await svc.set_field_disposition(
+            draft.draft_id,
+            _disposition(field, "SOURCE_UNAVAILABLE",
+                         note="TikTok live source is externally blocked; no source acquired."))
+    assert validation.readiness_status == "READY_WITH_GOVERNED_ABSENCE"
+    assert set(validation.governed_absent_fields) == {
+        "ingredients_text", "warnings_text", "usage_text"}
+    assert all(v == "SOURCE_UNAVAILABLE" for v in validation.governed_absent_fields.values())
+    assert validation.completeness_score < 1.0
+    assert not any(b.startswith("MISSING_REQUIRED_FIELDS") for b in validation.approval_blockers)
+
+    approved = await svc.approve_review_draft(
+        draft.draft_id,
+        ProductIntelligenceReviewDraftApproveRequest(approved_by="claude-owner-delegated-pi11"))
+    assert approved.status == "APPROVED"
+    assert approved.readiness_status == "READY_WITH_GOVERNED_ABSENCE"
+    # absence lives in provenance, never as a fabricated value in the column
+    assert not (approved.ingredients_text or "").strip()
+
+
+@pytest.mark.asyncio
+async def test_source_unavailable_is_offered_as_a_disposition_option():
+    product = await _strict_product("SU Options")
+    draft = await svc.create_review_draft(product["id"], _knowledge_gap_request())
+    validation = await svc.validate_review_draft(draft.draft_id)
+    for field in ("ingredients_text", "warnings_text"):
+        assert "SOURCE_UNAVAILABLE" in validation.disposition_options.get(field, [])
+        # and it never claims a source was inspected
+        assert "NOT_STATED_IN_SOURCE" in validation.disposition_options.get(field, [])
