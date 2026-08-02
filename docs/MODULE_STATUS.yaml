@@ -518,6 +518,11 @@ domains:
       - agent/services/product_intelligence_service.py
       - agent/services/product_intelligence_snapshot_service.py
       - agent/services/product_intelligence_review_draft_service.py
+      # PI-11 stored-evidence bulk-closure driver (one-shot governed mission runner): closes
+      # Product Intelligence for every real product from STORED evidence + conservative
+      # SUPPORTED_INFERENCE + governed SOURCE_UNAVAILABLE dispositions. No live source, no
+      # fabrication; approves under owner-delegated reviewer claude-owner-delegated-pi11.
+      - scripts/pi11_stored_evidence_runner.py
       - agent/services/product_registration_service.py
       - agent/services/registration_commit_service.py
       - agent/services/registration_draft_storage_service.py
