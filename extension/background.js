@@ -4975,7 +4975,7 @@ async function handleTikTokNavigateProductTab(params) {
 			required_origins: TIKTOK_EVIDENCE_ORIGINS };
 	}
 
-	// (4) one dedicated tab, (5) navigate it.
+	// (4) one dedicated tab.
 	let tab;
 	try {
 		tab = await getOrCreateTikTokEvidenceTab();
@@ -4983,36 +4983,56 @@ async function handleTikTokNavigateProductTab(params) {
 		return { ok: false, outcome: "EXTRACTION_FAILED",
 			error: `TIKTOK_NAV_TAB_CREATE_FAILED:${String(error?.message || error).slice(0, 160)}` };
 	}
-	try {
-		await chrome.tabs.update(tab.id, { url: productUrl });
-	} catch (error) {
-		return { ok: false, outcome: "EXTRACTION_FAILED",
-			error: `TIKTOK_NAV_UPDATE_FAILED:${String(error?.message || error).slice(0, 160)}` };
-	}
 
-	// (6) wait for load completion; a wedged navigation surfaces as NAVIGATION_TIMEOUT.
+	// SAME-TARGET NO-RELOAD (option #1): if the dedicated tab is ALREADY on this exact
+	// product, do NOT chrome.tabs.update. Re-navigating reloads the page, and TikTok
+	// challenges the programmatic reload — which would undo a human's just-cleared Security
+	// Check on every retry. Reading the already-open, already-cleared tab in place is what
+	// makes "clear once, then continue" possible. We only navigate when the target differs.
+	let currentIdentity = null;
 	try {
-		await waitForTabComplete(tab.id, 30000);
+		const current = await chrome.tabs.get(tab.id);
+		currentIdentity = tiktokProductIdentity(current.url || "");
 	} catch (_) {
-		return { ok: false, outcome: "NAVIGATION_TIMEOUT", tab_id: tab.id };
+		currentIdentity = null; // unknown current url — treat as needing navigation
+	}
+	const alreadyOnTarget = Boolean(
+		currentIdentity && currentIdentity.product_id
+		&& currentIdentity.product_id === wanted.product_id);
+
+	let finalIdentity = currentIdentity;
+	if (!alreadyOnTarget) {
+		// (5) navigate the dedicated tab to the requested product.
+		try {
+			await chrome.tabs.update(tab.id, { url: productUrl });
+		} catch (error) {
+			return { ok: false, outcome: "EXTRACTION_FAILED",
+				error: `TIKTOK_NAV_UPDATE_FAILED:${String(error?.message || error).slice(0, 160)}` };
+		}
+		// (6) wait for load completion; a wedged navigation surfaces as NAVIGATION_TIMEOUT.
+		try {
+			await waitForTabComplete(tab.id, 30000);
+		} catch (_) {
+			return { ok: false, outcome: "NAVIGATION_TIMEOUT", tab_id: tab.id };
+		}
+		let finalTab;
+		try {
+			finalTab = await chrome.tabs.get(tab.id);
+		} catch (error) {
+			return { ok: false, outcome: "EXTRACTION_FAILED",
+				error: `TIKTOK_NAV_TAB_GONE:${String(error?.message || error).slice(0, 120)}` };
+		}
+		finalIdentity = tiktokProductIdentity(finalTab.url || "");
+		// A redirect that keeps the same product id (host swap shop-my <-> shop) is fine —
+		// the id is the identity. A redirect to a DIFFERENT product id is contamination and
+		// is refused. (When we skipped navigation this cannot happen — the id already matched.)
+		if (finalIdentity && finalIdentity.product_id && finalIdentity.product_id !== wanted.product_id) {
+			return { ok: false, outcome: "PRODUCT_ID_MISMATCH",
+				observed_product_id: finalIdentity.product_id, expected_product_id: wanted.product_id };
+		}
 	}
 
-	// (7) classify the settled page from its FINAL url identity + a readiness probe.
-	let finalTab;
-	try {
-		finalTab = await chrome.tabs.get(tab.id);
-	} catch (error) {
-		return { ok: false, outcome: "EXTRACTION_FAILED",
-			error: `TIKTOK_NAV_TAB_GONE:${String(error?.message || error).slice(0, 120)}` };
-	}
-	const finalIdentity = tiktokProductIdentity(finalTab.url || "");
-	// A redirect that keeps the same product id (host swap shop-my <-> shop) is fine — the id
-	// is the identity. A redirect to a DIFFERENT product id is contamination and is refused.
-	if (finalIdentity && finalIdentity.product_id && finalIdentity.product_id !== wanted.product_id) {
-		return { ok: false, outcome: "PRODUCT_ID_MISMATCH",
-			observed_product_id: finalIdentity.product_id, expected_product_id: wanted.product_id };
-	}
-
+	// (7) classify the settled page from a readiness probe (shared by both paths).
 	// Readiness/security probe reuses the EXISTING content-script verb, so navigation and
 	// reading share one definition of "the page states a product". EVIDENCE FIRST: a wall
 	// carries no product, so it always falls through to the security branch.
@@ -5023,6 +5043,7 @@ async function handleTikTokNavigateProductTab(params) {
 		// content script not injected yet / unreachable on the settled page. This is a page
 		// we could not READ — never proof the listing was removed. B-597-01.
 		return { ok: false, outcome: "EXTRACTION_FAILED", error: "TIKTOK_CONTENT_SCRIPT_UNREACHABLE",
+			navigated: !alreadyOnTarget,
 			observed_product_id: (finalIdentity && finalIdentity.product_id) || null,
 			observed_url: (finalIdentity ? `${finalIdentity.host}${finalIdentity.path}` : null) };
 	}
@@ -5033,6 +5054,8 @@ async function handleTikTokNavigateProductTab(params) {
 		ok: cls.outcome === "PAGE_READY",
 		outcome: cls.outcome,
 		tab_id: tab.id,
+		// navigated=false proves the same-target read did NOT reload over a cleared challenge.
+		navigated: !alreadyOnTarget,
 		error: cls.probe_error || null,
 		observed_product_id: (finalIdentity && finalIdentity.product_id) || wanted.product_id,
 		observed_url: (probeResult && probeResult.observed_url)
