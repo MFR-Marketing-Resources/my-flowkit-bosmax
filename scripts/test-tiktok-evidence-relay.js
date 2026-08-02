@@ -128,6 +128,7 @@ function loadBackgroundRelay() {
 	vm.runInContext(`let chrome;\n${source.slice(start, end)}\nthis.__relay = {
 		tiktokProductIdentity, tiktokIdentityMatches, readTikTokEvidenceReplay,
 		rememberTikTokEvidenceReply, handleTikTokAcquireProductEvidence,
+		handleTikTokNavigateProductTab,
 		__setChrome: (stub) => { chrome = stub; },
 	};`, sandbox);
 	return sandbox.__relay;
@@ -411,6 +412,45 @@ check("12. an unsupported host is refused before any tab is touched", async () =
 		assert(reply.ok === false && reply.error === "TIKTOK_PRODUCT_URL_INVALID",
 			`expected TIKTOK_PRODUCT_URL_INVALID, got ${JSON.stringify(reply)}`);
 	});
+});
+
+// ── navigation seam: the contamination guard is on the extension side too ────
+// These reach handleTikTokNavigateProductTab's early guards, which return BEFORE any
+// chrome.* call — so the security boundary (allowlisted host + exact product id) is proven
+// without a browser. The full outcome mapping is covered by the backend relay tests.
+check("13. navigate refuses a url off the TikTok Shop allowlist before touching a tab", async () => {
+	const relay = loadBackgroundRelay();
+	const reply = await relay.handleTikTokNavigateProductTab({
+		product_url: "https://example.com/view/product/1729543210987654321",
+		expected_product_id: "1729543210987654321",
+	});
+	assert(reply.ok === false && reply.outcome === "PRODUCT_ID_MISMATCH",
+		`expected PRODUCT_ID_MISMATCH for off-allowlist host, got ${JSON.stringify(reply)}`);
+});
+
+check("14. navigate refuses a url whose product id is not the expected one", async () => {
+	const relay = loadBackgroundRelay();
+	const reply = await relay.handleTikTokNavigateProductTab({
+		product_url: "https://shop.tiktok.com/view/product/1729543210987654321",
+		expected_product_id: "9999999999999999999",
+	});
+	assert(reply.ok === false && reply.outcome === "PRODUCT_ID_MISMATCH"
+		&& reply.error === "TIKTOK_NAV_REQUESTED_ID_NEQ_EXPECTED",
+		`expected id-mismatch refusal, got ${JSON.stringify(reply)}`);
+});
+
+check("15. navigate accepts the same product id across the two authorized hosts", async () => {
+	const relay = loadBackgroundRelay();
+	// shop-my link, expected id from the shop link — same product, host swap is allowed.
+	// With no chrome stub, tab creation fails AFTER the id guards; that EXTRACTION_FAILED
+	// (not a PRODUCT_ID_MISMATCH) is the proof the id guards passed and it reached navigation.
+	const reply = await relay.handleTikTokNavigateProductTab({
+		product_url: "https://shop-my.tiktok.com/pdp/1729543210987654321",
+		expected_product_id: "1729543210987654321",
+	});
+	assert(reply.ok === false && reply.outcome === "EXTRACTION_FAILED"
+		&& String(reply.error || "").startsWith("TIKTOK_NAV_TAB_CREATE_FAILED"),
+		`a matching id across authorized hosts must pass the guards and reach navigation, got ${JSON.stringify(reply)}`);
 });
 
 // Async checks resolve after the synchronous run; give them a tick before reporting.
