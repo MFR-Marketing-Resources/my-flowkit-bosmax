@@ -1,0 +1,896 @@
+{
+ "incomplete": [
+  {
+   "product_id": "01f3274b-2fc0-4977-b6d5-efaaa2cb2bf7",
+   "name": "[Amelia's Favourite] [Preorder 25 Days] [Buy 3 Free 1",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "040d796c-5fe4-4491-b13d-6d13f2704355",
+   "name": "[SOCKS HOUSE] RAMADAN PROMOSI- 1 Pasang Kualiti Tinggi Stokin",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "07b2fcdf-a9ab-4d5d-a10d-15a9b291af62",
+   "name": "LIMITED STOCK BY HANNAVELLA",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "0ab23ee4-6947-4966-96b1-906a3cdc98e6",
+   "name": "Yaya empire vanilla crush | ara johari | mia",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "0eed93fb-504e-44f4-bfe6-fcd620ae2d81",
+   "name": "MAVERIX FOR SKIN | LIMITED PREMIUM Set (5 Bottles) Body Care",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "0f6bdfdd-474d-4a30-aa92-400aa0f1ed51",
+   "name": "[NEW 2026] ANAS Powder Blusher DUO #06",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "1042b094-0624-4b62-ba4d-598d6f8ff825",
+   "name": "SABUN DOBI LIQUID LAUNDRY IMBA DETERGENT REFILL PACK 2KG/",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "118bd94c-fd1c-4c4c-b974-dbd6e60b8e0e",
+   "name": "Sambal Kruk-Kruk Ateen(100GRAM KECIL)",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "13d4a873-08e7-4eb1-b420-db70ba212b16",
+   "name": "TBF 2026 Teacher's Day A6 A7 Notebook Coloured Cover",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "19d5518d-975b-4902-98bc-29428e7fe96c",
+   "name": "SZINDORE BBW AROMA PERFUME",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "1ae4d866-d534-4ae0-b954-17ae8ad502ef",
+   "name": "PERFUME PARADISE PEN FOR WOMEN - PACKAGING BARU (10",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "1c5b5c1a-43d2-4239-b87b-7b0f95c7e58f",
+   "name": "UNICO LEMON TTOX ( 10 PAKET)",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "1cbd5dc2-88f7-4540-acc2-7a8fddbbb9f7",
+   "name": "Dr. Bites Cooked Chicken Breast For Cat And Dog",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:allowed_claims_json",
+   "readiness": "CLAIM_BLOCKED"
+  },
+  {
+   "product_id": "2035994f-bac3-4ad8-ad22-7e3d94ddea92",
+   "name": "[SOCKS HOUSE] RAMADAN PROMOSI 1 Pasang High Quality and",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "230c26e9-cac2-4759-8805-95b8b1f89c34",
+   "name": "[Amelia's Favourite] [NEW] Pentavite Multivitamin dan Mineral Wanita, Kesihatan",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "231016d5-408f-4c67-b5d7-c5819557fea6",
+   "name": "Dr. Bites Cooked Chicken Breast For Cat And Dog Juicy Kucing 22g Dada Ayam",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:allowed_claims_json",
+   "readiness": "CLAIM_BLOCKED"
+  },
+  {
+   "product_id": "28c1124e-4a70-4e55-9ce5-0ba2516b1c02",
+   "name": "SALE MESTI MASTI Healthy Pet Snack Chicken Breast Protein",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:allowed_claims_json",
+   "readiness": "CLAIM_BLOCKED"
+  },
+  {
+   "product_id": "2f83e17d-1db1-451b-b751-e34bb11e4cdb",
+   "name": "(HARGA BORONG) ALGITUS UNISEX SCUBA TRAINING PANT ADULT /",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "305cc7f1-65f7-423a-ac64-bb4de876c6ec",
+   "name": "[KKM] FEREENA WHITE SAKURA SOAP 10g Advance Formula",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "31918158-d6e9-47e1-9378-f5ece33f4fad",
+   "name": "CEMILAN BASRENG Snacks Food",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "31dc461a-8584-4973-b7d4-02724a9a4150",
+   "name": "Original Krim cina kuning Huatuo Baifuling - Krim Kuning Cream kuning - Huatuobaifuling Krim herba cina - Sesuai untuk semua kulit - Yellow Cream - Suitable for all skin - Skincare 15g",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "3316af51-e998-486d-acdb-b14cf6dc5ecc",
+   "name": "SUISCO | Syampu + Keratin Rawatan Rambut+ Rawatan Rebonding",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "CLAIM_BLOCKED"
+  },
+  {
+   "product_id": "33caf58f-5cbd-4068-891c-4d1bae30c729",
+   "name": "[Amelia's Favourite] [Preorder 25 Days] Pentavite UPGRADED Multivitamin Lelaki",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "349868fc-e1f6-4c79-a5a8-8e4a13fb8469",
+   "name": "OHSOLAH AIR BOMB Pewangi Kereta Meletop Viral | Car",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "37a9e9d5-9170-45fc-ae38-4d03734f6895",
+   "name": "Pleated V Neck Long Sleeve Shirt Blouse Cantik Anti",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "3ad2d1bc-432f-427c-8518-e8bbb25e3712",
+   "name": "Pishine Lipmatte 7 Hari Mencintai Bibirmu",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:product_description,benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "3be06f47-a156-4d5f-8d8c-91c786e89012",
+   "name": "GULA2 SENDAT makanan herba Food, 25-30biji",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "3bfd5223-abf4-49da-9710-dcc3a1450f50",
+   "name": "PANDAEYES PALAZZO PANTS (CLO-CNNZ01LP)",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "418db1a6-c174-4ed2-9250-f879f197875e",
+   "name": "JAZNOR TSHIRT BLOUSE FLORA MATERIAL RIBBED KNIT BY HARIKA AISHAH STYLE",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "42bb1598-29af-4cf1-8049-43adcd90b7b8",
+   "name": "1 Cup Caramel Popcorn (10oz) - Caramel Popcorn |",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "4372fd7e-c8f7-4325-b3d1-8e11d9bf97c8",
+   "name": "SUPAMO Cotton Comforter Blanket Quilt Selimut Tilam Bedsheet Cadar",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "4faad914-5345-4a34-a5e1-e5fe3e283795",
+   "name": "Mee Kari Opah by Arwaa Food HQ",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "4fbe3e06-9383-4f19-837b-9063a1cb762b",
+   "name": "(MINIMUM ODER 15 PCS SEKALI ODER) POPCORN CUP 12",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "5039d290-5932-41fd-bc25-e5ace3c8e744",
+   "name": "Bento Wet Cat Food Pouch 50g - 5 Varieties",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "57104da9-7053-46ba-a001-242e8ed9db7a",
+   "name": "Kg/1000g 1PCS Sleeping Pillow Viral Bantal Tidur Bantal Hotel",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "595c29e3-58d1-4f84-8ef4-8e3d8d7024b1",
+   "name": "PANDA QUEENIE TUDUNG BAWAL PRINTED TUDUNG BAWAL CORAK PRINTED",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "5985b3b4-a785-4347-a3ec-17e4f99ba928",
+   "name": "[Keto] BOSSBROTHERS Halal Sambal Belacan 270g",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "59a0a7cc-3374-4025-951a-9832fe9359e4",
+   "name": "[JUALAN HANGAT] TIME PHORIA - Altera Blurring Lip Tint",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "5b1927d1-447a-41f4-8d25-c1efdbe564d9",
+   "name": "sedekah item MERYEM latte booster sample(1 pack 7 sachet )",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "5ceca901-c5f1-4f0b-bd75-4641c7ef123c",
+   "name": "Ringgit Home Shop 3PCS/Set Set Pengisar Sayur Alat Dapur",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "644b425e-7e39-4558-817a-d403c366f28e",
+   "name": "INAIYA EASY HERBAL HAIR COLOUR – 400ml | Tutup",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "66087bc7-6d39-435e-9718-69cb4f5b04f5",
+   "name": "DOUBLE C Sarung Bantal Corak New Modern Design Pillow",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "66bc6983-eba9-4466-8c46-3a6708cfae42",
+   "name": "sedekah item MERYEM latte booster sample(1 pack 7 sachet",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "6a3e310d-6e62-4ca0-a0bf-fd0495cdbc8e",
+   "name": "NEW | BeFocusPro+ Bantu Tidur Lena, Lebih Bertenaga &",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "6a7806a1-e8ce-4159-8042-1b7d68c2f35b",
+   "name": "Sukos Lampin Tarik Bayi Saiz S-XXXL 50 Keping: Super",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "6c70428f-3dbd-43e8-ba70-3023e87aee64",
+   "name": "[KKM] FEREENA GLUTA SOAP 10g",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "6f62fe2d-910b-41b2-b86f-4211921d8b7d",
+   "name": "READY STOCK Cotton Women Inner Pants/ Muslimah Seluar Dalam",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "6fe5946d-1740-479e-a383-bb2ac319ee22",
+   "name": "BUY 3 TAKE 2【Tawaran lstimewa】 BAIYAOLANG 20g Salappenjagaan badan",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "7379cbac-9651-4c1c-b097-a4138fe8a3b4",
+   "name": "M-5XL Men Short Pants Sport Shorts Beach Shorts Casual Fashion Men Pants Seluar Pendek Lelaki Men's Pant",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "74caa194-f831-40f9-a79e-8f2757d83645",
+   "name": "(QR)Livetined 4 botol pek 30ml serum rambut, aroma manis",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "76561360-d92a-42c5-93fa-f9523a2b55fd",
+   "name": "(7 IN 1) BARLI Tea / Milk Booster Organic",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "7852656f-a19d-47d8-90fd-c28c73a7f17a",
+   "name": "Maya Soap Whitening Alpha Arbutin Blueberry",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "7a75fcf1-0f34-487d-bcae-9cf65901f8fe",
+   "name": "CUBRE MI LIPMATTE FULL LOCK EDITION PERFECT TO STAY",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "7e963f71-a80c-447d-81cb-99bc51ba5379",
+   "name": "ADVO Long Pants Men Polyester Seluar Panjang Lelaki Track",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "8023ab1b-c6d8-4202-b4bb-e7d3baf6c057",
+   "name": "Crunchy Garlic Chilli Oil [REGULAR] Bottle Pack Food Cooking",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "80463ec2-7b20-4da2-bc45-05667596ee56",
+   "name": "Purfresh 2026 Baharu Car Air Freshener 185g Minyak Pewangi",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "81e40232-f0f1-4a51-8879-30636619bad9",
+   "name": "[LYSMILEGO] Jalur Pemutih Gigi Jenama Rasmi Untuk Kegunaan Harian",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "822e7269-11d9-4b6c-9a51-59abfe448ff6",
+   "name": "sunlight pack travel 92g ready stock",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "85ddc17a-ba47-4e03-a0a6-bc1e62f46436",
+   "name": "PENCUCI PINKY PINKY WASH TULEN ORIGINAL HQ ZINQA",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:product_description,benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "86c1f88d-dbf8-46f5-bd11-a56f37a6d07c",
+   "name": "PERFUME PARADISE PEN FOR WOMEN - PACKAGING BARU (10 ML) PARFUM",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "8d0278b8-b867-4f07-bb12-c49d1817e97c",
+   "name": "SEDEKAH SAMPLE MERYEM LİPOBOND ( 5 SACHET )",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "8e6587c3-f736-42d1-9005-64c89ad622cf",
+   "name": "OHSOLAH AIR BOMB Pewangi Kereta Meletop Viral | Car Air Freshener Wangi Gilar Tahan Lama Fruity Perfume Booster Fibre wick 100g",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:warnings_text",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "8e75f1a8-ba43-444e-8b40-c71d140c76c5",
+   "name": "6pcs Combo Herbal Cream BTFL Organic Yellow Cream",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "904bee4d-864b-4722-bc10-5df2027eb13f",
+   "name": "DHERBS SET JIMAT AURA SERI COMBO 2",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "95bc6d80-bd01-4b9d-af55-6d921f054312",
+   "name": "MINYAK Wangi Viral - Perfume Viyouna - 12ML",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "994da37b-298f-453e-a253-f436b50d0006",
+   "name": "MAVERIX FOR SKIN | LIMITED PREMIUM Set (5 Bottles)",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "9951446d-fc70-4380-b194-7a11d18be130",
+   "name": "BIOAQUA Centella Collagen Hydrating Moisturizing Refreshing Moisturizing Facial Mask",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "9b357eeb-f1ff-4c4b-a3a1-4c1d94a6c8b2",
+   "name": "READYSTOCK MeowMe New Korean Fashion Trending Women Sandal Kasut",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "9bac2555-4eec-493d-a1c3-f16712618065",
+   "name": "SIMBA 1kg Premium Kibbles Makanan Kucing [ Direct Dari",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "a6c94806-15dc-460c-b56c-ea674ce662e7",
+   "name": "[SINGLE ITEM ONLY] KUN AirySoft Plain Color Pillowcase/Bolster case/Bedsheet",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "aaea7d2f-a66e-483b-92b7-2704a84f810e",
+   "name": "Set Cetak Kasual Untuk Wanita Dengan Corak Bunga Dan",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "ad805d7d-e6fa-4a05-ad96-edc8e0295ae8",
+   "name": "BISKUT MAKMUR SUSU - KAMPUNG BITES - MELT IN MOUTH - 330g",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "b3b3b01b-ecb4-4bb6-8745-1db016b2df60",
+   "name": "SOCKS LEGEND Bersedia Hari Raya 1 Pasang Kualiti Tinggi",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "b527d024-7d61-4b6f-8828-6367f25469ef",
+   "name": "PANDAEYES CACABO CORDUROY PANTS (CLO-CNXC0907LP)",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "b561c02d-9ba1-4e32-95c8-c7d55f790ca5",
+   "name": "BELLA PARK PERFUME PINK EDITION",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "b56d75b7-0b7c-4534-9e8c-c3740fffe54e",
+   "name": "Wide leg plaid long pants women casual pants new",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "b573d840-4444-4c8e-97a1-96311b6e52ac",
+   "name": "[Kombo] Kokojar Balang Saiz 300ml 5 Jenis Cereal Coklat Gelap Chocojar Premium Donut Fruity, Cookie Crunch, Koko Ball & Mini Crunch Choco jar",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "b6215416-cc29-4af8-8933-afcf7db1fc14",
+   "name": "[NEW 2026] ANAS Powder Blusher DUO #06",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "b7364ab6-23ce-424d-aa2b-d247eeeeb931",
+   "name": "[Plus Size BC Cup] Dreamtale Baju Dalam Wanita Dreamtale",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "b978fd30-a6c3-47fd-8f16-a4eb263c8f3c",
+   "name": "CandyCrum Choco Cup 10oz (Est 90g) - Choco Dessert",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "c34c9305-35b9-44ab-963f-fa22c9b9e829",
+   "name": "[ BELI 5 FREE 1 ] Jeruk Limau Kasturi",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "c5341831-8c85-4a13-82be-7b1ae12320d1",
+   "name": "[Beli 1 Dapat 2 PERCUMA] Dr.Ritta SP68 Ubat Gigi",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "c70c3ab7-6073-499e-bb23-5d6ce331ea3f",
+   "name": "[KKM] FEREENA GLUTA SOAP 10g",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "canonical-simba-cat-food",
+   "name": "SIMBA 1kg Premium Kibbles Makanan Kucing [ Direct Dari Kilang ]",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "cc94a006-8a77-4a9b-b639-32133fa78095",
+   "name": "SAMBAL GARING(bilis+bawang goreng) ((HUMAIRA))",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "cd70b493-990c-4a6f-8bd6-776765d8e04e",
+   "name": "BUY 1 TAKE 1 | Topeng Rawatan Keratin, 350g,",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json",
+   "readiness": "CLAIM_BLOCKED"
+  },
+  {
+   "product_id": "d2bf2e52-84fa-426f-a6f3-d5f793db41ef",
+   "name": "【Electronic Warranty Card】warrantyafter-sales card solar light sale cardlighting Outdoor",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:product_description,benefits_json,usp_json,target_customer_text,buyer_persona_snapshot_json,copy_strategy_summary_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "d2f8fd58-437b-4447-8730-694b782eef17",
+   "name": "Sambal Nyet Berapi by Khairulaming",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "d534fc2e-d52d-44f3-98c8-ebdd431421c4",
+   "name": "Farm Fresh Full Cream Milk Powder 800g x 1 Pack",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "d9385e4e-7a61-4308-b63e-d165879a9a8a",
+   "name": "Sambal Kruk-Kruk Ateen(100GRAM KECIL)",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "dcf1e83d-f85d-485e-b6af-367e474d09fe",
+   "name": "Baju Tidur Set Wanita Women Printed Pyjamas Set Wear",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "de3ee6bd-592b-4228-bf96-f2cdcf15e78c",
+   "name": "【KKM】7LUME White Tomato（Buy 3 Save RM8）Skin Supplement | Sijil",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "e02ecaf9-5d51-4356-8e77-7353a52d1da5",
+   "name": "Tanamera Brown Formulation Body Soap 125g | Sabun Badan",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "e1803e3e-4665-441b-be6c-8415cb8c6bed",
+   "name": "S JODOHLEBARAN SILLA - Tudung BawaLEXC",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "e3e3819f-c312-4e73-9db8-477471860616",
+   "name": "Dr.Bites Premium Cat Canned Food (Wet Food) 85g",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "e6cb7e6d-16ab-4926-bef7-a99ff419d1b4",
+   "name": "￼Silvy Original PANJAG & PENDEK Mesir Stokin stoking Muslimah socks magic",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "e9f06816-46b1-421d-8921-3ea183ed4760",
+   "name": "JUS SIRIH MADU ORIGINAL 500ML | BELI LEBIH JIMAT",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "ecd367eb-0a0d-433d-a774-50dfdf088f69",
+   "name": "PANDAEYES CACABO CORDUROY PANTS (CLO-CNXC0907LP)",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "eee2d2b9-d07b-42cb-b6a8-8cd5e126ad0d",
+   "name": "[SINGLE ITEM ONLY] KUN AirySoft Plain Color Pillowcase/Bolster case/Bedsheet Queen King",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "efa576c8-3ffe-4fb9-9ead-6acf196db31a",
+   "name": "Mosquito King Coil / Ubat Nyamuk Viral Supplies",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "f8102fa7-2ab1-4d91-881c-a6823ea8cbe2",
+   "name": "【 FREE SHIPPING 】199SPEED X688 Portable Handheld Fan USB",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "fc2c5a41-ebf5-41bd-8884-4c233801d641",
+   "name": "wow spageti dan ramen yes instans ready stock all",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "fca6771a-5616-4378-9f20-da5b35230396",
+   "name": "MINUMAN BERPERISA YOGURT PROTOX STRAWBERRY",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "fcc092fa-7f90-42e9-b7d9-267a0acb5db8",
+   "name": "3 / 5 helai Set seluar dalam fesyen untuk",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  },
+  {
+   "product_id": "fdad0f75-9069-4174-8acd-33a8ee1d3232",
+   "name": "BUY 3 TAKE 2【Tawaran lstimewa】 BAIYAOLANG 20g Salappenjagaan badan",
+   "result": "INCOMPLETE",
+   "reason": "MISSING_REQUIRED_FIELDS:benefits_json,usp_json",
+   "readiness": "MISSING_REQUIRED_FIELDS"
+  }
+ ],
+ "review": [
+  {
+   "product_id": "012e9fd6-dea4-4ebc-a4ca-27669b2eaccb",
+   "name": "SkyPlant Fragrant Multi-Effect Nourish Eye Balm Stick 9g Korean",
+   "result": "REVIEW",
+   "reason": "CLAIM_BLOCKED",
+   "claim_tokens": [
+    "treat"
+   ]
+  },
+  {
+   "product_id": "04a42d8c-755e-409e-8b60-b8b91f599dc7",
+   "name": "Unisex Adult The Best Ever Round Neck Plain Microfiber T-Shirt Jersey T Shirt Anti-Bacteria Baju Jersi Leher Bulat",
+   "result": "REVIEW",
+   "reason": "CLAIM_BLOCKED",
+   "claim_tokens": [
+    "treat"
+   ]
+  },
+  {
+   "product_id": "244d4e59-dcad-4cee-a6a8-f233e577e5bb",
+   "name": "READY STOCK Cotton Women Inner Pants/ Muslimah Seluar Dalam Panjang/ Kain Sejuk Safety Pants / Kain Dalam",
+   "result": "REVIEW",
+   "reason": "GENERIC_TEXT:['everyday use']",
+   "claim_tokens": null
+  },
+  {
+   "product_id": "3b56ffdb-e703-4af2-bfc9-3197bc7b14c9",
+   "name": "[Kombo] Kokojar Balang Saiz 300ml 5 Jenis Cereal Coklat",
+   "result": "REVIEW",
+   "reason": "CLAIM_BLOCKED",
+   "claim_tokens": [
+    "treat"
+   ]
+  },
+  {
+   "product_id": "49677116-dfc6-42da-ac7d-a25a49167c16",
+   "name": "[HOT]Glad2Glow Brightening Lip Serum 7g with 3in1 function Brightening",
+   "result": "REVIEW",
+   "reason": "CLAIM_BLOCKED",
+   "claim_tokens": [
+    "treat"
+   ]
+  },
+  {
+   "product_id": "700334bd-0983-4e7a-8644-3c1d23eb9a18",
+   "name": "ELGINI E16241 Seluar Kasual Potongan Lurus Wanita S-XXL | Women’s Straight-Cut Casual Pants",
+   "result": "REVIEW",
+   "reason": "GENERIC_TEXT:['everyday use']",
+   "claim_tokens": null
+  },
+  {
+   "product_id": "7a6d9004-7b86-49d6-9ad5-3cd8598179e6",
+   "name": "HOMEWORTH 3pcs Ceramic Bowl Set with Air-Tight Lid – Microwave Safe | Wedding Gift | Kitchen Essentials hadiah kahwin set pinggan mangkuk set Kitchen Cutlery Kitchenware Tableware",
+   "result": "REVIEW",
+   "reason": "GENERIC_TEXT:['everyday use']",
+   "claim_tokens": null
+  },
+  {
+   "product_id": "8168a131-27d5-4689-97d0-de42d4e3df5e",
+   "name": "BAWAL LAZY COTTON ( HOT SELLING ) Square Jilbab BAWAL LAZZY INSTANT PERIMIUM COTTON I SOFT COTTON BAWAL | BIDANG 45\" | IRONLESS HIJAB I EASY TO USE | CAUSAL HIJAB -Tudung Sarung “Lazy” COTTON – Dengan Jahitan di Bahagian KepalaSila semak carta saiz sebelu",
+   "result": "REVIEW",
+   "reason": "GENERIC_TEXT:['everyday use']",
+   "claim_tokens": null
+  },
+  {
+   "product_id": "849fb822-17e6-49aa-a04d-2b3dfc12716e",
+   "name": "Set Cetak Kasual Untuk Wanita Dengan Corak Bunga Dan Lengan Panjang Sesuai Untuk Kegunaan Harian",
+   "result": "REVIEW",
+   "reason": "GENERIC_TEXT:['everyday use']",
+   "claim_tokens": null
+  },
+  {
+   "product_id": "91e38d6f-1194-45b6-be60-c898695443b4",
+   "name": "Ringgit Home Shop 3PCS/Set Set Pengisar Sayur Alat Dapur / Multifunctional Stainless Steel Practical Drain Vegetable Grater Set Kitchen Tools 3PCS/Set",
+   "result": "REVIEW",
+   "reason": "GENERIC_TEXT:['everyday use']",
+   "claim_tokens": null
+  },
+  {
+   "product_id": "9311100f-6271-4965-8b26-f6e04e3843a1",
+   "name": "Numinara Aurelia Body Soap (125g) For Skin-Toning and Anti-Inflammatory",
+   "result": "REVIEW",
+   "reason": "CLAIM_REVIEW_REQUIRED",
+   "claim_tokens": [
+    "anti-inflammatory"
+   ]
+  },
+  {
+   "product_id": "9ef257e3-00b1-4f50-b7d9-419b8b2403a7",
+   "name": "MERYCODE Lip Serum Bibir Warna Termal Adaptif Nutrisi Mendalam Semula Jadi Kilau Kaca Transparen Mengurangkan Garis Bibir Treatments Lipstik",
+   "result": "REVIEW",
+   "reason": "CLAIM_BLOCKED",
+   "claim_tokens": [
+    "treat"
+   ]
+  },
+  {
+   "product_id": "a0be58cd-9bdb-4f1f-a7dc-91b845e2e591",
+   "name": "1 Cup Caramel Popcorn (10oz) - Caramel Popcorn | Popcorn Sedap | Doorgift Popcorn | Popcorn Viral | Popcorn Murah Snacks Rangup Food",
+   "result": "REVIEW",
+   "reason": "CLAIM_BLOCKED",
+   "claim_tokens": [
+    "treat"
+   ]
+  },
+  {
+   "product_id": "ae47b55b-58d4-441e-97d3-0d6c785bb530",
+   "name": "Original Roach&Ant Umpan Semut, Lipas & Kerengga, Roach & Ant bait. Menghapuskan Lipas, Semut & Kerengga ubat repellent spray 15ml",
+   "result": "REVIEW",
+   "reason": "CLAIM_BLOCKED",
+   "claim_tokens": [
+    "treat"
+   ]
+  },
+  {
+   "product_id": "cd394fff-5e39-4e18-ac1e-f0050bd2c133",
+   "name": "QAYRAA (P1) Jersey Short Sleeve Microfiber Plain T-Shirt Unisex/ Size: S-5XL /Jersi Kosong Lengan Pendek / Men & Women Wear Tops/Burgundy/Hitam Black/Rich Brown/Maroon/Navy Blue",
+   "result": "REVIEW",
+   "reason": "GENERIC_TEXT:['everyday use']",
+   "claim_tokens": null
+  },
+  {
+   "product_id": "cfefad5e-e96a-498f-8c62-ac488e7b8160",
+   "name": "3 / 5 helai Set seluar dalam fesyen untuk lelaki, peninju bernafas, lembut, selesa, cepat kering murah",
+   "result": "REVIEW",
+   "reason": "GENERIC_TEXT:['everyday use']",
+   "claim_tokens": null
+  },
+  {
+   "product_id": "db2dbbeb-79dc-4b78-b1ce-2257257cb7f8",
+   "name": "MERYCODE Lip Serum Bibir Warna Termal Adaptif Nutrisi Mendalam",
+   "result": "REVIEW",
+   "reason": "CLAIM_BLOCKED",
+   "claim_tokens": [
+    "treat"
+   ]
+  },
+  {
+   "product_id": "e06d8afd-44fa-47d7-8d79-d7dc55d52c41",
+   "name": "Minyak Kastor Asli 100% Castor Oil First Grade Kualiti",
+   "result": "REVIEW",
+   "reason": "CLAIM_BLOCKED",
+   "claim_tokens": [
+    "treat"
+   ]
+  },
+  {
+   "product_id": "efcc1f31-c91b-46fb-acc6-d736a5271884",
+   "name": "[COD] SADOER Coconut Oil Hair Care Set, Anti-Dandruff, Hair Loss Improvement, Softness & Oil Control, Frizz Reduction (Shampoo 500ml + Hair Mask 500ml + Hair Loss Essence 30ml) Conditioner Ginger Haircare Koko",
+   "result": "REVIEW",
+   "reason": "CLAIM_BLOCKED",
+   "claim_tokens": [
+    "treat"
+   ]
+  }
+ ]
+}
