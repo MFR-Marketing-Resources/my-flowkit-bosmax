@@ -35,6 +35,13 @@ EXPECTED_COUNTS = {"RESTORE_PRE_PI11": 318, "RETURN_TO_MISSING": 212,
                    "SKIP_POST_PI11_LEGITIMATE_CHANGE": 0, "CONFLICT": 0}
 EXPECTED_COHORT_DIGEST = "4ecc22cdac78ebace299063ddc75bd4c6f03a143bf1836a2ee33c63271bfb07f"
 
+# Fix 2: the authorized write-free plan is frozen cryptographically (deterministic JSON of head
+# ed903c0+). Apply refuses unless the on-disk plan matches this exact fingerprint AND structure.
+AUTHORIZED_PLAN_PATH = REPO / "outputs" / "mission-pi11" / "audit" / "rollback_plan.json"
+AUTHORIZED_PLAN_SHA256 = "1492b8ab565c57d918d2f9cda928a3db1aff4ad2ac51e376b312c2e0d4644f56"
+AUTHORIZED_PLAN_SIZE = 425129
+EXPECTED_COHORT_SIZE = 530
+
 # defect 2: EVERY snapshot column, explicitly classified. STATUS_METADATA is the audited set that
 # legitimately changes on a status transition (empirically: exactly status + updated_at across all
 # 318 pre-PI-11 snapshots). All other columns are SEMANTIC and part of the content hash. If the live
@@ -86,8 +93,18 @@ def content_hash(snap, cols):
                                      default=str).encode("utf-8", "replace")).hexdigest()
 
 
-def is_pi11(snap):
-    return str((snap or {}).get("approved_by") or "").startswith(PI11_PREFIX)
+# Fix 3: the rejected runner ONLY. A corrective snapshot (…-pi11-corrective) is a DIFFERENT,
+# legitimate reviewer and must never be treated as a bad snapshot anywhere.
+CORRECTIVE_PREFIX = PI11_PREFIX + "-corrective"
+
+
+def is_bad_pi11(snap):
+    by = str((snap or {}).get("approved_by") or "")
+    return by.startswith(PI11_PREFIX) and not by.startswith(CORRECTIVE_PREFIX)
+
+
+# backwards-compatible alias (same exact-bad-reviewer semantics everywhere)
+is_pi11 = is_bad_pi11
 
 
 # ── DB verification (defect 1) ────────────────────────────────────────────────────────────────
@@ -109,6 +126,36 @@ def verify_db(path, expect_sha=None, expect_size=None):
     if integrity != "ok" or fk:
         raise RuntimeError(f"DB_INTEGRITY_FAIL {p}: integrity={integrity} fk_violations={len(fk)}")
     return {"path": str(p), "sha256": sha, "size_bytes": size, "integrity": integrity, "fk_violations": len(fk)}
+
+
+def validate_plan_ids(plans_raw):
+    """Fix 2: structural validation independent of the file fingerprint — exactly 530 UNIQUE product
+    ids and the authorized cohort digest; reject duplicates / unexpected count."""
+    ids = [x["product_id"] for x in plans_raw]
+    if len(ids) != EXPECTED_COHORT_SIZE:
+        raise RuntimeError(f"PLAN_ID_COUNT {len(ids)} != {EXPECTED_COHORT_SIZE}")
+    if len(set(ids)) != EXPECTED_COHORT_SIZE:
+        dupes = [i for i in set(ids) if ids.count(i) > 1]
+        raise RuntimeError(f"PLAN_DUPLICATE_IDS {dupes[:5]}")
+    plans = {x["product_id"]: x for x in plans_raw}
+    if cohort_digest(plans) != EXPECTED_COHORT_DIGEST:
+        raise RuntimeError("PLAN_COHORT_DIGEST_MISMATCH")
+    return plans
+
+
+def verify_plan_file(path=None):
+    """Fix 2: refuse to apply unless the on-disk authorized plan matches the exact SHA-256 + byte
+    size AND passes structural validation. A mutable local plan is never trusted on digest alone."""
+    p = Path(path or AUTHORIZED_PLAN_PATH).resolve()
+    if not p.exists():
+        raise RuntimeError(f"PLAN_MISSING {p}")
+    sha, size = sha256_file(p), p.stat().st_size
+    if sha != AUTHORIZED_PLAN_SHA256:
+        raise RuntimeError(f"PLAN_SHA_MISMATCH {sha} != {AUTHORIZED_PLAN_SHA256}")
+    if size != AUTHORIZED_PLAN_SIZE:
+        raise RuntimeError(f"PLAN_SIZE_MISMATCH {size} != {AUTHORIZED_PLAN_SIZE}")
+    plans = validate_plan_ids(json.load(open(p, encoding="utf-8")))
+    return plans, {"sha256": sha, "size_bytes": size}
 
 
 def snapshot_live_backup():
@@ -232,6 +279,14 @@ def write_ledger(name, rows):
 
 
 # ── apply (defects 3,4,6) — HARD-GATED, atomic, CAS-exact ─────────────────────────────────────
+def normalize_counts(counts, expected):
+    """Fix 1: normalize every expected decision key (incl. zero-value SKIP/CONFLICT) before compare.
+    A raw Counter omits zero keys, so `dict(Counter({RESTORE:318,RETURN:212})) != {…,SKIP:0,CONFLICT:0}`
+    would make the production counts check ALWAYS fail. Also guards against leaked extra decisions."""
+    normalized = {k: counts.get(k, 0) for k in expected}
+    return normalized, (normalized == expected and sum(counts.values()) == sum(expected.values()))
+
+
 def plan_fingerprint(plan):
     """Content-sensitive fingerprint: decision + authoritative ids + every CAS semantic content hash.
     Any semantic-field drift since the authorized dry-run changes this and aborts the rollback."""
@@ -241,18 +296,85 @@ def plan_fingerprint(plan):
             rc, (restore["snapshot_id"], restore["content_hash"]) if restore else None)
 
 
+def _product_fingerprint(live):
+    rows = live.execute("SELECT * FROM product ORDER BY id").fetchall()
+    h = hashlib.sha256()
+    for r in rows:
+        h.update(repr(tuple(r)).encode("utf-8", "replace"))
+    return h.hexdigest()
+
+
+def _in(ids):
+    ids = list(ids)
+    return "(" + ",".join("?" * len(ids)) + ")", ids
+
+
+def verify_postconditions(live, plans, ids, product_fp_before, total_updates):
+    """Fix 4: hard postconditions asserted AFTER all updates, BEFORE COMMIT. Any mismatch raises so
+    the whole transaction rolls back. Expected magnitudes are DERIVED from the plans (so this is
+    correct for the 530 cohort and for tests)."""
+    restore = [p for p in plans.values() if p["decision"] == "RESTORE_PRE_PI11"]
+    ret = [p for p in plans.values() if p["decision"] == "RETURN_TO_MISSING"]
+    n_restore, n_return = len(restore), len(ret)
+    bad_ids = [p["before_authoritative"] for p in (restore + ret)]
+    restored_ids = [p["after_authoritative"] for p in restore]
+    return_pids = [pid for pid, p in plans.items() if p["decision"] == "RETURN_TO_MISSING"]
+
+    def cnt(sql, params=()):
+        return live.execute(sql, params).fetchone()[0]
+
+    # 1. no bad PI-11 snapshot remains APPROVED
+    if bad_ids:
+        ph, pv = _in(bad_ids)
+        if cnt(f"SELECT COUNT(*) FROM product_intelligence_snapshot WHERE status='APPROVED' AND snapshot_id IN {ph}", pv):
+            raise RuntimeError("POSTCOND_BAD_STILL_APPROVED")
+    # 2. every restored pre-PI-11 snapshot is APPROVED
+    if restored_ids:
+        ph, pv = _in(restored_ids)
+        if cnt(f"SELECT COUNT(*) FROM product_intelligence_snapshot WHERE status='APPROVED' AND snapshot_id IN {ph}", pv) != n_restore:
+            raise RuntimeError("POSTCOND_RESTORED_NOT_APPROVED")
+    # 3. every returned product has zero APPROVED snapshot
+    if return_pids:
+        ph, pv = _in(return_pids)
+        if cnt(f"SELECT COUNT(DISTINCT product_id) FROM product_intelligence_snapshot WHERE status='APPROVED' AND product_id IN {ph}", pv):
+            raise RuntimeError("POSTCOND_RETURN_STILL_APPROVED")
+    # 4. affected reconciled + 5. exact status-transition count
+    if n_restore + n_return != len(bad_ids):
+        raise RuntimeError("POSTCOND_RECONCILE")
+    if total_updates != 2 * n_restore + n_return:
+        raise RuntimeError(f"POSTCOND_TRANSITIONS {total_updates} != {2 * n_restore + n_return}")
+    # 6. no duplicate APPROVED within the affected cohort
+    if ids:
+        ph, pv = _in(ids)
+        dup = live.execute(f"SELECT product_id FROM product_intelligence_snapshot WHERE status='APPROVED' "
+                           f"AND product_id IN {ph} GROUP BY product_id HAVING COUNT(*)>1", pv).fetchall()
+        if dup:
+            raise RuntimeError(f"POSTCOND_DUP_APPROVED {len(dup)}")
+        # 7. no fixture id in the affected cohort
+        if cnt(f"SELECT COUNT(*) FROM product p WHERE p.id IN {ph} AND {FIXTURE_SQL}", pv):
+            raise RuntimeError("POSTCOND_FIXTURE_INCLUDED")
+    # 8. product/lifecycle rows unchanged
+    if _product_fingerprint(live) != product_fp_before:
+        raise RuntimeError("POSTCOND_PRODUCT_TABLE_CHANGED")
+    # 9. referential integrity
+    if live.execute("PRAGMA foreign_key_check").fetchall():
+        raise RuntimeError("POSTCOND_FK_VIOLATION")
+
+
 def execute_cohort(live, backup, cols, ids, frozen_plans, expected_counts, expected_digest, txid):
     """One BEGIN IMMEDIATE over the WHOLE cohort. Re-reads/reclassifies all, verifies counts + cohort
     digest + that each product's live fingerprint still matches the AUTHORIZED frozen plan (catches
     semantic drift), then CAS-exact conditional updates (rowcount==1). COMMIT only if every product
     passes; one failure ROLLs BACK ALL. Returns (committed, ledger)."""
-    ledger, committed = [], False
+    ledger, committed, total_updates = [], False, 0
     try:
         live.execute("BEGIN IMMEDIATE")
+        product_fp_before = _product_fingerprint(live)
         plans = plan_all(live, backup, ids, cols)
         counts = Counter(p["decision"] for p in plans.values())
-        if dict(counts) != expected_counts:
-            raise RuntimeError(f"COUNTS_MISMATCH {dict(counts)} != {expected_counts}")
+        normalized, ok = normalize_counts(counts, expected_counts)
+        if not ok:
+            raise RuntimeError(f"COUNTS_MISMATCH {normalized} != {expected_counts} (raw {dict(counts)})")
         if cohort_digest(plans) != expected_digest:
             raise RuntimeError("COHORT_DIGEST_MISMATCH")
         for pid in ids:
@@ -271,10 +393,13 @@ def execute_cohort(live, backup, cols, ids, frozen_plans, expected_counts, expec
                     raise RuntimeError(f"CAS_HASH_MISMATCH_RETRACT {cas['snapshot_id']}")
                 n = live.execute(
                     "UPDATE product_intelligence_snapshot SET status='SUPERSEDED' WHERE snapshot_id=? "
-                    "AND product_id=? AND version=? AND status='APPROVED' AND approved_by LIKE ?",
-                    (cas["snapshot_id"], cas["product_id"], cas["version"], PI11_PREFIX + "%")).rowcount
+                    "AND product_id=? AND version=? AND status='APPROVED' AND approved_by LIKE ? "
+                    "AND approved_by NOT LIKE ?",
+                    (cas["snapshot_id"], cas["product_id"], cas["version"],
+                     PI11_PREFIX + "%", CORRECTIVE_PREFIX + "%")).rowcount
                 if n != 1:
                     raise RuntimeError(f"CAS_ROWCOUNT_RETRACT {cas['snapshot_id']} n={n}")
+                total_updates += n
             if plan["decision"] == "RESTORE_PRE_PI11":
                 rc = plan["restore_cas"]
                 row = live.execute("SELECT * FROM product_intelligence_snapshot WHERE snapshot_id=?",
@@ -287,7 +412,9 @@ def execute_cohort(live, backup, cols, ids, frozen_plans, expected_counts, expec
                     (rc["snapshot_id"], rc["product_id"], rc["version"])).rowcount
                 if n != 1:
                     raise RuntimeError(f"CAS_ROWCOUNT_RESTORE {rc['snapshot_id']} n={n}")
+                total_updates += n
             ledger.append(_ledger_row(pid, plan, "APPLIED", txid, None))
+        verify_postconditions(live, plans, ids, product_fp_before, total_updates)
         live.execute("COMMIT")
         committed = True
     except Exception as exc:
@@ -299,8 +426,9 @@ def execute_cohort(live, backup, cols, ids, frozen_plans, expected_counts, expec
 
 
 def apply_rollback():
-    backup_meta = verify_db(PRE_PI11_BACKUP, VERIFIED_BACKUP_SHA256, VERIFIED_BACKUP_SIZE)
-    live_backup_meta = snapshot_live_backup()  # fresh online backup BEFORE mutation
+    backup_meta = verify_db(PRE_PI11_BACKUP, VERIFIED_BACKUP_SHA256, VERIFIED_BACKUP_SIZE)  # Fix 1
+    frozen_plans, plan_meta = verify_plan_file()  # Fix 2: cryptographically frozen authorized plan
+    live_backup_meta = snapshot_live_backup()  # Fix 1: fresh online backup BEFORE mutation
     txid = "rb-" + uuid.uuid4().hex[:16]
     live = sqlite3.connect(str(LIVE_DB)); live.row_factory = sqlite3.Row
     live.execute("PRAGMA foreign_keys=ON")
@@ -309,15 +437,19 @@ def apply_rollback():
     if semantic_cols(backup) != cols:
         raise RuntimeError("SCHEMA_FAIL_CLOSED live/backup snapshot schema differ")
     ids = cohort(live)
-    # the AUTHORIZED frozen plan (from the write-free dry-run of this exact head)
-    frozen_raw = json.load(open(AUDIT / "rollback_plan.json", encoding="utf-8"))
-    frozen_plans = {p["product_id"]: p for p in frozen_raw}
     committed, ledger = execute_cohort(live, backup, cols, ids, frozen_plans,
                                        EXPECTED_COUNTS, EXPECTED_COHORT_DIGEST, txid)
+    result = {"transaction_id": txid, "committed": committed, "backup": backup_meta,
+              "authorized_plan": plan_meta, "live_backup": live_backup_meta,
+              "counts": dict(Counter(r.get("decision") for r in ledger))}
+    if committed:
+        result["post_integrity"] = live.execute("PRAGMA integrity_check").fetchone()[0]  # Fix 4 post-commit
+        result["post_fk_violations"] = len(live.execute("PRAGMA foreign_key_check").fetchall())
+    else:  # Fix 5: surface the abort reason
+        result["abort_reason"] = next((r.get("aborted") for r in ledger if r.get("aborted")), "UNKNOWN")
     write_ledger("rollback_ledger_apply.jsonl", ledger)
     live.close(); backup.close()
-    return {"transaction_id": txid, "committed": committed, "backup": backup_meta,
-            "live_backup": live_backup_meta, "counts": dict(Counter(r.get("decision") for r in ledger))}
+    return result
 
 
 def main():
@@ -332,6 +464,9 @@ def main():
             sys.exit(2)
         res = apply_rollback()
         print("APPLY:", json.dumps(res, default=str))
+        if not res.get("committed"):  # Fix 5: a rolled-back transaction must exit non-zero
+            print("ABORTED_ROLLED_BACK:", res.get("abort_reason"))
+            sys.exit(1)
         return
 
     # write-free: verify backup, classify, ledger

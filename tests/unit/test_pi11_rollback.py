@@ -281,3 +281,88 @@ def test_schema_fail_closed_on_unknown_column():
             R.semantic_cols(live)
     finally:
         live.close(); os.unlink(lp)
+
+
+# ── Fix 1: production count normalization (zero-value keys) ───────────────────────────────────
+def test_production_counts_normalization_with_zero_keys():
+    counts = Counter({"RESTORE_PRE_PI11": 318, "RETURN_TO_MISSING": 212})  # zero keys omitted
+    normalized, ok = R.normalize_counts(counts, R.EXPECTED_COUNTS)
+    assert ok and normalized == R.EXPECTED_COUNTS == {"RESTORE_PRE_PI11": 318, "RETURN_TO_MISSING": 212,
+                                                      "SKIP_POST_PI11_LEGITIMATE_CHANGE": 0, "CONFLICT": 0}
+
+
+def test_wrong_or_leaked_counts_fail():
+    _, ok_wrong = R.normalize_counts(Counter({"RESTORE_PRE_PI11": 317, "RETURN_TO_MISSING": 212}), R.EXPECTED_COUNTS)
+    _, ok_leak = R.normalize_counts(
+        Counter({"RESTORE_PRE_PI11": 318, "RETURN_TO_MISSING": 212, "SKIPPED_ALREADY_ROLLED_BACK": 5}),
+        R.EXPECTED_COUNTS)
+    assert not ok_wrong and not ok_leak
+
+
+# ── Fix 2: authorized-plan freeze ─────────────────────────────────────────────────────────────
+def test_plan_sha_mismatch_refuses_before_transaction(tmp_path):
+    f = tmp_path / "p.json"; f.write_text("[]")
+    with pytest.raises(RuntimeError, match="PLAN_SHA_MISMATCH|PLAN_SIZE_MISMATCH"):
+        R.verify_plan_file(str(f))
+
+
+def test_duplicate_plan_id_refuses():
+    raw = [{"product_id": f"p{i}", "decision": "RETURN_TO_MISSING",
+            "before_authoritative": f"s{i}", "after_authoritative": None} for i in range(529)]
+    raw.append({"product_id": "p0", "decision": "RETURN_TO_MISSING",
+                "before_authoritative": "sX", "after_authoritative": None})  # 530 total, p0 duplicated
+    with pytest.raises(RuntimeError, match="PLAN_DUPLICATE_IDS"):
+        R.validate_plan_ids(raw)
+
+
+# ── Fix 3: corrective reviewer is never a bad snapshot ────────────────────────────────────────
+def test_is_bad_pi11_excludes_corrective():
+    assert R.is_bad_pi11({"approved_by": "claude-owner-delegated-pi11"}) is True
+    assert R.is_bad_pi11({"approved_by": "claude-owner-delegated-pi11-corrective"}) is False
+
+
+def test_corrective_snapshot_is_never_retracted():
+    lp, live = _mkdb(); bp, bak = _mkdb()
+    try:
+        _ins_product(live, "P")
+        _ins_snap(live, "s1", "P", 1, "SUPERSEDED", "Faris")
+        _ins_snap(live, "s2", "P", 2, "APPROVED", "claude-owner-delegated-pi11-corrective")
+        _ins_snap(bak, "s1", "P", 1, "APPROVED", "Faris")
+        live.commit(); bak.commit()
+        cols = _cols(live)
+        plan = R.classify_rollback(R.snapshots(live, "P"), R.snapshots(bak, "P"), cols)
+        assert plan["decision"] == "SKIP_POST_PI11_LEGITIMATE_CHANGE"  # corrective preserved
+        # and it is excluded from the rollback cohort selection
+        assert "P" not in R.cohort(live)
+        assert _status(live, "s2") == "APPROVED"
+    finally:
+        _cleanup((lp, live), (bp, bak))
+
+
+# ── Fix 4: postcondition failure rolls back all ──────────────────────────────────────────────
+def test_postcondition_failure_rolls_back_all(monkeypatch):
+    (lp, live), (bp, bak) = _restore_pair()
+    try:
+        def _boom(*a, **k):
+            raise RuntimeError("FORCED_POSTCOND_FAIL")
+        monkeypatch.setattr(R, "verify_postconditions", _boom)
+        cols = _cols(live); fz = _frozen(live, bak, cols, ["P"]); ec, ed = _expect(fz)
+        committed, ledger = R.execute_cohort(live, bak, cols, ["P"], fz, ec, ed, "t")
+        assert not committed
+        assert _status(live, "s2") == "APPROVED" and _status(live, "s1") == "SUPERSEDED"  # rolled back
+    finally:
+        _cleanup((lp, live), (bp, bak))
+
+
+# ── Fix 5: an aborted execution is surfaced (drives non-zero exit) ────────────────────────────
+def test_aborted_execution_is_surfaced():
+    (lp, live), (bp, bak) = _restore_pair()
+    try:
+        cols = _cols(live); fz = _frozen(live, bak, cols, ["P"]); ec, ed = _expect(fz)
+        live.execute("UPDATE product_intelligence_snapshot SET product_description='DRIFT' WHERE snapshot_id='s2'")
+        live.commit()
+        committed, ledger = R.execute_cohort(live, bak, cols, ["P"], fz, ec, ed, "t")
+        assert committed is False
+        assert any(r.get("aborted") for r in ledger)  # abort reason surfaced for a non-zero exit
+    finally:
+        _cleanup((lp, live), (bp, bak))
