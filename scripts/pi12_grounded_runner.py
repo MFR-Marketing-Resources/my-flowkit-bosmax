@@ -383,6 +383,7 @@ def main():
     ap.add_argument("--bulk", action="store_true")
     ap.add_argument("--correct", action="store_true", help="corrective vNext for --ids (no DeepSeek)")
     ap.add_argument("--ids", default="")
+    ap.add_argument("--limit", type=int, default=0, help="process at most N products this run (chunking)")
     a = ap.parse_args()
     acquire_single_writer_lock()  # ONE canonical writer only; a duplicate launch exits immediately
     con = sqlite3.connect(f"file:{(REPO/'flow_agent.db').as_posix()}?mode=ro", uri=True)
@@ -412,6 +413,8 @@ def main():
     print(f"cohort={len(ids)} already_done={len(ids)-len(todo)} todo={len(todo)} calls_spent={budget.calls}")
     tally = Counter()
     for n, pid in enumerate(todo, 1):
+        if a.limit and n > a.limit:  # chunk boundary — clean exit, resumable
+            print(f"LIMIT {a.limit} reached -> chunk done"); break
         if STOP_FLAG.exists():  # graceful pause at checkpoint — no in-flight loss, resumable
             print(f"STOP_FLAG present -> graceful pause after {n-1} items"); break
         con.close(); con = sqlite3.connect(f"file:{(REPO/'flow_agent.db').as_posix()}?mode=ro", uri=True); con.row_factory = sqlite3.Row
