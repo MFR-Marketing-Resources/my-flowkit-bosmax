@@ -369,12 +369,15 @@ NAVIGATE_TIMEOUT_SECONDS = 50.0
 
 # Typed navigation outcome -> how the backend treats it. PAGE_READY is the only success;
 # everything else raises a typed relay error the orchestrator ledgers per product.
+# EXTRACTION_FAILED (empty read / not-yet-ready / unknown probe error) maps to the truthful
+# EMPTY_EVIDENCE code — an act-then-retry state — NEVER to a delisted claim (bug B-597-01):
+# a page we could not read is not a page the merchant removed.
 _NAV_OUTCOME_TO_ERROR = {
     "SECURITY_CHECK_REQUIRES_HUMAN": ERR_SECURITY_CHECK_PRESENT,
     "PRODUCT_DELISTED": ERR_PRODUCT_DELISTED,
     "PRODUCT_ID_MISMATCH": ERR_PRODUCT_ID_MISMATCH,
     "NAVIGATION_TIMEOUT": ERR_TIMEOUT,
-    "EXTRACTION_FAILED": ERR_CONTENT_SCRIPT_UNREACHABLE,
+    "EXTRACTION_FAILED": ERR_EMPTY_EVIDENCE,
 }
 
 
