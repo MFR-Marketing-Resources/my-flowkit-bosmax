@@ -1160,3 +1160,4 @@ domains:
       # registry-or-P4-less targets, and hashes the protected tables before AND after.
       - scripts/mission07g_final_scene_gap.py
       - data/products/product_mapping_rules.json
+      - tests/unit/test_product_mapping.py
