@@ -351,7 +351,11 @@ def main():
     ids = ([x.strip() for x in a.ids.split(",") if x.strip()] if a.ids
            else (pilot_ids(con) if a.pilot else frozen["union_530"]))
     done = load_ledger()
-    budget = Budget(spent=sum(1 for r in done.values() if r.get("call_seq")))
+    # budget counts ACTUAL provider calls across all runs (every ledger row with a call_seq),
+    # not unique products, so duplicates still count against the <=530 ceiling.
+    raw_ledger = [json.loads(l) for l in LEDGER.read_text(encoding="utf-8").splitlines()] if LEDGER.exists() else []
+    budget = Budget(spent=sum(1 for r in raw_ledger if r.get("call_seq") is not None))
+    DONE = {"APPROVED", "CORRECTED"}  # both are terminal-done; never reprocess (avoids duplicate calls)
 
     if a.correct:  # corrective vNext pass (no provider calls)
         tally = Counter()
@@ -361,8 +365,8 @@ def main():
             print(f"[correct {n}/{len(ids)}] {pid[:8]} -> {row['result']} {row.get('reason') or ''}")
         print("CORRECT SUMMARY:", dict(tally)); con.close(); return
 
-    todo = [i for i in ids if done.get(i, {}).get("result") != "APPROVED"]
-    print(f"cohort={len(ids)} already_approved={len(ids)-len(todo)} todo={len(todo)} calls_spent={budget.calls}")
+    todo = [i for i in ids if done.get(i, {}).get("result") not in DONE]
+    print(f"cohort={len(ids)} already_done={len(ids)-len(todo)} todo={len(todo)} calls_spent={budget.calls}")
     tally = Counter()
     for n, pid in enumerate(todo, 1):
         if STOP_FLAG.exists():  # graceful pause at checkpoint — no in-flight loss, resumable
