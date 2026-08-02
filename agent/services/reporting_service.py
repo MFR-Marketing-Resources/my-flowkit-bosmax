@@ -125,6 +125,14 @@ _TEST_FIXTURE_PREDICATE = (
     ")"
 )
 
+# PI-13: a MERGED alias is a duplicate-import row folded into its canonical (same globally-unique
+# platform product id). It is kept as lifecycle_status='ARCHIVED' with a distinctive archived_reason
+# marker (the schema CHECK allows only ACTIVE/ARCHIVED). The row + audit history are preserved
+# (never deleted), but it is NOT an independent real product, so — exactly like a test fixture — it
+# is EXCLUDED from real-product totals and the debt classes, and reported separately. Reversible via
+# lifecycle_provenance (unarchive + clear the marker).
+_MERGED_ALIAS_PREDICATE = "UPPER(COALESCE(p.archived_reason,'')) LIKE 'DUPLICATE_MERGED_TO_CANONICAL%'"
+
 # Sortable columns for the drill-down. An allowlist, so a user-supplied value can never
 # reach SQL as an identifier. Every sort gets `p.id` appended as a tie-breaker, otherwise
 # rows with equal sort keys can repeat or vanish across pages.
@@ -306,11 +314,14 @@ async def product_intelligence_quality_summary(
     """
     db = await get_db()
     where, params = _product_filters(lifecycle_status, cluster, product_type_group)
-    real = f"{where} AND NOT {_TEST_FIXTURE_PREDICATE}"
+    real = f"{where} AND NOT {_TEST_FIXTURE_PREDICATE} AND NOT {_MERGED_ALIAS_PREDICATE}"
 
     total_real = await _scalar(db, f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE 1=1{real}", params)
     fixtures = await _scalar(
         db, f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE 1=1{where} AND {_TEST_FIXTURE_PREDICATE}",
+        params)
+    merged_aliases = await _scalar(
+        db, f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE 1=1{where} AND {_MERGED_ALIAS_PREDICATE}",
         params)
 
     classes: dict[str, dict] = {}
@@ -331,6 +342,7 @@ async def product_intelligence_quality_summary(
         "scope": _scope(lifecycle_status, cluster, product_type_group),
         "total_real_products": total_real,
         "test_fixtures_excluded": fixtures,
+        "merged_aliases_excluded": merged_aliases,
         "classes": classes,
         # drill-down kind per class, so the FE never invents its own mapping
         "drill_down_kinds": {
@@ -433,7 +445,9 @@ async def list_exceptions(
     # the operational list, the pager, search results or `total` — otherwise the headline
     # and the drill-down disagree (the headline counts real products, the table counted
     # products + fixtures). Pass include_test_fixtures=true for the explicit fixture view.
-    fixture_sql = "" if include_test_fixtures else f" AND NOT {_TEST_FIXTURE_PREDICATE}"
+    # merged aliases are never real-product debt, regardless of the fixture toggle
+    fixture_sql = (f" AND NOT {_MERGED_ALIAS_PREDICATE}" if include_test_fixtures
+                   else f" AND NOT {_TEST_FIXTURE_PREDICATE} AND NOT {_MERGED_ALIAS_PREDICATE}")
 
     # Intelligence-stage seam filters. Applied to the SAME scope that drives `total`, the
     # applicability split, search and the pager, so a filtered headline can never disagree
@@ -468,7 +482,7 @@ async def list_exceptions(
     # Real-product split of the REQUESTED scope. Both use `real_scope`, which always
     # excludes fixtures, so active + archived reconciles exactly against the default
     # `total`. Under lifecycle_status=ACTIVE the archived figure is naturally 0.
-    real_scope = f"{where}{search_sql} AND NOT {_TEST_FIXTURE_PREDICATE}{intel_sql}"
+    real_scope = f"{where}{search_sql} AND NOT {_TEST_FIXTURE_PREDICATE} AND NOT {_MERGED_ALIAS_PREDICATE}{intel_sql}"
     active_missing = await _scalar(
         db,
         f"SELECT COUNT(*) {_PRODUCT_BASE_WITH_INTEL} WHERE {predicate}{real_scope}"

@@ -1040,6 +1040,10 @@ domains:
       # gaps), recharts as a pure render layer, every KPI drills to the product page.
       - agent/api/reporting.py
       - agent/services/reporting_service.py
+      # PI-13 C3/C5: canonical-merge alias exclusion + COPY_ELIGIBLE fail-closed gate
+      - agent/services/copy_eligibility_service.py
+      - scripts/pi13_canonical_merge.py
+      - tests/unit/test_pi13_copy_eligibility.py
       - tests/unit/test_reporting_service.py
       - tests/api/test_reporting_api.py
       - dashboard/src/api/reporting.ts
