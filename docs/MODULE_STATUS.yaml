@@ -518,6 +518,21 @@ domains:
       - agent/services/product_intelligence_service.py
       - agent/services/product_intelligence_snapshot_service.py
       - agent/services/product_intelligence_review_draft_service.py
+      # PI-11 stored-evidence bulk-closure driver (one-shot governed mission runner): closes
+      # Product Intelligence for every real product from STORED evidence + conservative
+      # SUPPORTED_INFERENCE + governed SOURCE_UNAVAILABLE dispositions. No live source, no
+      # fabrication; approves under owner-delegated reviewer claude-owner-delegated-pi11.
+      - scripts/pi11_stored_evidence_runner.py
+      # PI-11 CORRECTIVE runner (B-604-01..07) — supersedes the rejected runner above. Pure,
+      # testable decision logic: fill-missing-only, provenance-gated carry, per-claim claim
+      # reconciliation, persona/strategy sanitation, semantic-quality gate. --apply is hard-gated.
+      - scripts/pi11_corrective_runner.py
+      - tests/unit/test_pi11_corrective_runner.py
+      - tests/api/test_pi11_corrective_apply.py
+      # PI-11 PRE_PI11 rollback (owner decision): retract bad PI-11 approvals, restore genuine
+      # pre-PI-11 authoritative snapshots or return to MISSING; status-only, CAS-guarded, hard-gated.
+      - scripts/pi11_rollback_runner.py
+      - tests/unit/test_pi11_rollback.py
       - agent/services/product_registration_service.py
       - agent/services/registration_commit_service.py
       - agent/services/registration_draft_storage_service.py
