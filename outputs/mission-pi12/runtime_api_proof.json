@@ -1,0 +1,61 @@
+{
+ "version_proof": {
+  "pid": 12164,
+  "process_started_at": "2026-08-02T14:04:58.550719+00:00",
+  "git_head": "f56b50448828d8346ec306a98fb706fa43532f2d",
+  "git_branch": "codex/pi12-audit-hardening",
+  "route_count": 526,
+  "critical_routes": {
+   "/api/creative-asset-eligibility/audit": true,
+   "/api/creative-assets/eligibility-audit": true,
+   "/api/flow/execute-flow-job": true,
+   "/api/flow/generate": true,
+   "/api/workspace/execution-package": true
+  },
+  "dashboard_bundle": "index-CpASfyQc.js",
+  "source_stale_since_start": true,
+  "stale_source_sample": [
+   "agent\\services\\product_intelligence_review_draft_service.py"
+  ]
+ },
+ "pi_quality_ALL_raw": {
+  "scope": {
+   "lifecycle_status": "ALL",
+   "cluster": null,
+   "product_type_group": null
+  },
+  "total_real_products": 651,
+  "test_fixtures_excluded": 8,
+  "classes": {
+   "MISSING_APPROVED_INTELLIGENCE": {
+    "total": 40,
+    "active": 11,
+    "archived": 29
+   },
+   "APPROVED_WITH_GOVERNED_ABSENCE": {
+    "total": 408,
+    "active": 242,
+    "archived": 166
+   },
+   "FULLY_COMPLETE": {
+    "total": 119,
+    "active": 106,
+    "archived": 13
+   },
+   "LEGACY_APPROVED_INCOMPLETE": {
+    "total": 84,
+    "active": 84,
+    "archived": 0
+   }
+  },
+  "drill_down_kinds": {
+   "FULLY_COMPLETE": "pi_fully_complete",
+   "APPROVED_WITH_GOVERNED_ABSENCE": "pi_governed_absence",
+   "LEGACY_APPROVED_INCOMPLETE": "pi_legacy_incomplete",
+   "MISSING_APPROVED_INTELLIGENCE": "pi_missing_approved"
+  }
+ },
+ "test_command": "python -m pytest tests/unit/test_pi12_ai_fill_hardening.py tests/unit/test_product_intelligence_review_draft_service.py tests/api/test_product_intelligence_api.py",
+ "test_result": "45 passed",
+ "note": "raw runtime + API proof captured live; version_proof.git_head is the deployed SHA, pid the serving process, dashboard_bundle the loaded UI."
+}

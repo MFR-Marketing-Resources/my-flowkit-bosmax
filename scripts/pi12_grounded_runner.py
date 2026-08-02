@@ -25,7 +25,7 @@ Usage:
   python scripts/pi12_grounded_runner.py --ids a,b,c     # explicit ids
 """
 from __future__ import annotations
-import argparse, atexit, json, os, subprocess, sys, time, urllib.error, urllib.request
+import argparse, atexit, json, os, subprocess, sys, time, urllib.error, urllib.request, uuid
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -41,9 +41,15 @@ CALL_CAP = 530 - PROBE_CALLS  # 529 ledger calls + 1 probe = 530 total
 # single-writer lock is acquired immediately at startup — a duplicate launch is bounced before the
 # ~30s agent import window that previously let two runs race past the lock.
 
-# generic/placeholder markers that must NEVER survive into an approved product (quality gate)
+# generic/placeholder TEMPLATE-FILLER markers that must NEVER survive into an approved product.
+# These are full template phrases that describe nothing product-specific. The bare substrings
+# "everyday use"/"everyday users" were REMOVED (2026-08-03): they over-matched legitimate
+# product-specific modifiers ("Durability for everyday use", "ready-to-wear hijab for everyday use")
+# — a precision fix, not a count-lowering loosening. The template form "product for everyday use"
+# (which describes nothing) is retained, and the audit still records the bare-substring hits verbatim
+# with context under `borderline_substring_hits` so nothing is hidden.
 GENERIC_MARKERS = (
-    "everyday use", "everyday users", "suitable for everyone", "generic consumer",
+    "suitable for everyone", "generic consumer",
     "used for its stated everyday purpose", "this description is a neutral, identity-based summary",
     "general consumers looking for", "product for everyday use",
 )
@@ -57,23 +63,86 @@ def _req(method, path, body=None, timeout=180):
         return resp.status, json.loads(resp.read().decode() or "{}")
 
 
-def call(method, path, body=None, timeout=180, retries=3):
-    """4xx = permanent (no retry). 429/5xx/network = bounded retry with backoff."""
+RECEIPTS = REPO / "outputs" / "mission-pi12" / "provider_receipts.jsonl"
+# Reconciled historical NON-PROBE provider calls already spent by THIS mission, accepted by audit as
+# 527 ledger ai-fill invocations + 2 retries inferred from duplicate AI_ENRICHMENT provenance = 529
+# (provider_accounting.json: authoritative total 530 = 529 + 1 probe). The ledger alone is 527 and
+# MISSES the 2 retries, so seeding from budget.calls would wrongly leave headroom for 2 more calls
+# (total 532). This constant is the fail-closed baseline; the mission cap (529 non-probe) is spent.
+MISSION_HISTORICAL_NONPROBE = 529
+_HISTORICAL_BASELINE = 0  # set in main() = max(live ledger calls, MISSION_HISTORICAL_NONPROBE)
+_RUN_ID = uuid.uuid4().hex  # tags this process's receipts (forensics); NOT used to filter the count
+
+
+def _iter_reserved():
+    if not RECEIPTS.exists():
+        return
+    for l in RECEIPTS.read_text(encoding="utf-8").splitlines():
+        if l.strip():
+            try:
+                r = json.loads(l)
+            except Exception:
+                continue
+            if r.get("phase") == "RESERVED":
+                yield r
+
+
+def _reserved_count():
+    """Total RESERVED receipts across ALL processes — the complete durable record of attempts made
+    under the receipt mechanism. Counts crash-orphans (RESERVED with no OUTCOME) and every retry
+    (each writes its own RESERVED before the request). DISJOINT from MISSION_HISTORICAL_NONPROBE (the
+    old runner wrote no receipts), so baseline + reserved never double-counts and never drops a call.
+    NOT filtered by run_id — a prior process's crash-orphan reservation must still count."""
+    return sum(1 for _ in _iter_reserved())
+
+
+def _receipt(record):
+    RECEIPTS.parent.mkdir(parents=True, exist_ok=True)
+    with open(RECEIPTS, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record) + "\n")
+        fh.flush()
+        try:
+            os.fsync(fh.fileno())  # durable before the provider call returns
+        except Exception:
+            pass
+
+
+def call(method, path, body=None, timeout=180, retries=3, receipt_key=None):
+    """4xx = permanent (no retry). 429/5xx/network = bounded retry with backoff. Provider lane
+    (receipt_key set): a RESERVED receipt with a UNIQUE uuid is fsync'd to disk BEFORE each attempt,
+    and the durable cap is (_HISTORICAL_BASELINE + ALL RESERVED receipts) < CALL_CAP. A crash after the
+    provider call still leaves the RESERVED receipt, so no attempt goes uncounted. The OUTCOME record
+    is a lifecycle update of the same attempt_id; the cap and actual-call total count RESERVED only.
+    Baseline and receipts are disjoint (old runner wrote none) -> summed, never max()."""
     attempt = 0
     while True:
+        aid = None
+        if receipt_key is not None:
+            if _HISTORICAL_BASELINE + _reserved_count() >= CALL_CAP:  # durable, pre-attempt hard cap
+                return 599, {"error": "PROVIDER_CAP_REACHED", "cap": CALL_CAP}
+            aid = uuid.uuid4().hex  # unique across restarts/reprocessing
+            _receipt({"attempt_id": aid, "run_id": _RUN_ID, "key": receipt_key,
+                      "phase": "RESERVED", "attempt": attempt})
         try:
-            return _req(method, path, body, timeout)
+            r = _req(method, path, body, timeout)
+            if aid is not None:
+                _receipt({"attempt_id": aid, "phase": "OUTCOME", "outcome": f"HTTP_{r[0]}"})
+            return r
         except urllib.error.HTTPError as e:
             code = e.code
             try:
                 detail = json.loads(e.read().decode() or "{}")
             except Exception:
                 detail = {}
+            if aid is not None:
+                _receipt({"attempt_id": aid, "phase": "OUTCOME", "outcome": f"HTTP_{code}"})
             if code == 429 or 500 <= code < 600:
                 if attempt < retries:
                     time.sleep(1.5 * (attempt + 1)); attempt += 1; continue
             return code, detail  # 4xx permanent, or retries exhausted
         except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if aid is not None:
+                _receipt({"attempt_id": aid, "phase": "OUTCOME", "outcome": "NETWORK"})
             if attempt < retries:
                 time.sleep(1.5 * (attempt + 1)); attempt += 1; continue
             return 0, {"error": "NETWORK"}
@@ -161,9 +230,13 @@ def identity_claim(p):
 
 
 def is_generic(draft):
+    # B-03: cover EVERY generated field, not just description/usage/target/benefits — usp, buyer
+    # persona and copy strategy are checked too so generic/template text in any of them blocks approval.
     blob = " ".join(str(draft.get(f) or "") for f in
                     ("product_description", "usage_text", "target_customer_text")).lower()
-    blob += " " + json.dumps(draft.get("benefits_json") or [], default=str).lower()
+    for f in ("benefits_json", "usp_json", "buyer_persona_snapshot_json", "copy_strategy_summary_json"):
+        blob += " " + json.dumps(draft.get(f) or ("" if f in ("benefits_json", "usp_json") else {}),
+                                 default=str).lower()
     return [m for m in GENERIC_MARKERS if m in blob]
 
 
@@ -202,7 +275,8 @@ def process_one(con, pid, budget):
     call_seq = None
     if not have_ai:
         call_seq = budget.take()
-        st, r = call("POST", f"/product-intelligence/review-drafts/{did}/ai-fill-missing", {}, timeout=240)
+        st, r = call("POST", f"/product-intelligence/review-drafts/{did}/ai-fill-missing", {},
+                     timeout=240, receipt_key=pid)
         if st != 200:
             # 4xx = permanent refusal (terminal, never retried); 5xx/network/0 = transient FAIL (retryable).
             return {"product_id": pid, "result": ("PERMANENT_REFUSAL" if 400 <= st < 500 else "FAIL"),
@@ -387,6 +461,10 @@ def main():
     ap.add_argument("--correct", action="store_true", help="corrective vNext for --ids (no DeepSeek)")
     ap.add_argument("--ids", default="")
     ap.add_argument("--limit", type=int, default=0, help="process at most N products this run (chunking)")
+    ap.add_argument("--force", action="store_true",
+                    help="reprocess the given --ids even if their ledger result is terminal (e.g. re-run "
+                         "products previously blocked by a gate that has since been corrected). Provider "
+                         "calls remain hard-capped: products that already carry AI content make none.")
     a = ap.parse_args()
     acquire_single_writer_lock()  # ONE canonical writer only; a duplicate launch exits immediately
     con = sqlite3.connect(f"file:{(REPO/'flow_agent.db').as_posix()}?mode=ro", uri=True)
@@ -400,6 +478,12 @@ def main():
     # not unique products, so duplicates still count against the <=530 ceiling.
     raw_ledger = [json.loads(l) for l in LEDGER.read_text(encoding="utf-8").splitlines()] if LEDGER.exists() else []
     budget = Budget(spent=sum(1 for r in raw_ledger if r.get("call_seq") is not None))
+    # Fail-closed durable cap baseline. NOT max(ledger, reservations): the ledger (527) misses the 2
+    # inferred retries, so it is floored by the reconciled non-probe total (529). RESERVED receipts are
+    # a DISJOINT record (old runner wrote none) added on top in call() -> 529 already == CALL_CAP, so
+    # any further provider attempt on this spent mission is rejected before the request.
+    global _HISTORICAL_BASELINE
+    _HISTORICAL_BASELINE = max(budget.calls, MISSION_HISTORICAL_NONPROBE)
     # Every first-pass TERMINAL outcome is provider-processed; a resume must NOT re-call DeepSeek for
     # them (evidence unchanged). Only transient FAIL (5xx/network) and never-called products are retried.
     DONE = {"APPROVED", "CORRECTED", "INCOMPLETE", "REVIEW", "PERMANENT_REFUSAL"}
@@ -412,7 +496,7 @@ def main():
             print(f"[correct {n}/{len(ids)}] {pid[:8]} -> {row['result']} {row.get('reason') or ''}")
         print("CORRECT SUMMARY:", dict(tally)); con.close(); return
 
-    todo = [i for i in ids if done.get(i, {}).get("result") not in DONE]
+    todo = ids if a.force else [i for i in ids if done.get(i, {}).get("result") not in DONE]
     print(f"cohort={len(ids)} already_done={len(ids)-len(todo)} todo={len(todo)} calls_spent={budget.calls}")
     tally = Counter()
     for n, pid in enumerate(todo, 1):

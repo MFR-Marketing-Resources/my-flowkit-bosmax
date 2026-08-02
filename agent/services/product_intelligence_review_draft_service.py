@@ -1408,6 +1408,21 @@ def _coerce_ai_fill_value(field: str, value: Any) -> Any:
     return text or None
 
 
+def _ai_fill_object_ok(field: str, obj: Any) -> bool:
+    """Minimal structural schema for persona/strategy objects — reject an arbitrary non-empty dict.
+    Persona needs an audience + at least one need/desire/pain; strategy needs at least one of
+    angles / recommended_formula / market_problem_language."""
+    if not isinstance(obj, dict) or not obj:
+        return False
+    if field == "buyer_persona_snapshot_json":
+        has_audience = bool(str(obj.get("audience") or "").strip())
+        has_need = any(obj.get(k) for k in ("needs", "desires", "pains", "purchase_context"))
+        return has_audience and has_need
+    if field == "copy_strategy_summary_json":
+        return any(obj.get(k) for k in ("angles", "recommended_formula", "market_problem_language"))
+    return True
+
+
 def _build_ai_fill_user_prompt(
     product: dict[str, Any] | None,
     draft: ProductIntelligenceReviewDraft,
@@ -1537,9 +1552,19 @@ async def ai_fill_missing_review_draft(
             continue
         status_value = str(entry.get("status") or "INSUFFICIENT_EVIDENCE").upper()
         coerced = _coerce_ai_fill_value(field, entry.get("value"))
-        if status_value in ("INSUFFICIENT_EVIDENCE", "NOT_APPLICABLE") or coerced is None:
+        # Enforce the status ENUM: ONLY FACT / INFERENCE may fill a field. NOT_APPLICABLE,
+        # INSUFFICIENT_EVIDENCE, or any unrecognised status (defence against a malformed model
+        # response) leaves the field unresolved — never silently accepted.
+        if status_value not in ("FACT", "INFERENCE") or coerced is None:
             unresolved.append({"field": field, "status": status_value, "rationale": str(entry.get("rationale") or "")})
             continue
+        # Persona / strategy are SUPPORTED_INFERENCE by contract — never a FACT — and must carry a
+        # minimal structure (not just any non-empty dict).
+        if field in _AI_FILL_OBJECT_FIELDS:
+            if status_value != "INFERENCE" or not _ai_fill_object_ok(field, coerced):
+                unresolved.append({"field": field, "status": "REJECTED_SCHEMA",
+                                   "rationale": "persona/strategy must be a structured INFERENCE object"})
+                continue
         # Defence-in-depth: never overwrite a non-empty human field unless explicitly selected.
         if field not in selected and _has_value(_ai_fill_field_value(draft, field)):
             unresolved.append({"field": field, "status": "SKIPPED_NON_EMPTY", "rationale": "existing human evidence preserved"})

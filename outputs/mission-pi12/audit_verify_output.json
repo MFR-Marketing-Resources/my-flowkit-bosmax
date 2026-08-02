@@ -1,0 +1,2300 @@
+{
+ "source_git_head": "0ad9c413c2420116ca9c9be8f062740b141bb50f",
+ "db_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
+ "db_file_sha256": "e0c53f6e549611661639bb40fdaa5f3aee997297132bb0ea76ffb13515f89dba",
+ "product_table_hash": {
+  "live": "c25ee92343c5cf324737c25edf69736f5ba887f363e2524776cce3e7c42dfd08",
+  "pre_pi12_backup": "c25ee92343c5cf324737c25edf69736f5ba887f363e2524776cce3e7c42dfd08",
+  "unchanged": true,
+  "procedure": "sha256 over sorted-by-id repr(tuple(row)) of SELECT * FROM product"
+ },
+ "integrity_check": "ok",
+ "foreign_key_check": 0,
+ "sql_used": {
+  "pi_quality_all": "SELECT s.readiness_status, s.completeness_score FROM product_intelligence_snapshot s WHERE s.status='APPROVED' -- classified in-code into FC/GA/LEGACY; MISSING = no APPROVED",
+  "pi12_approved": "SELECT product_id, snapshot_id, version FROM product_intelligence_snapshot WHERE approved_by=? AND status='APPROVED' ORDER BY product_id",
+  "dup_approved": "SELECT product_id, COUNT(*) c FROM product_intelligence_snapshot WHERE status='APPROVED' GROUP BY product_id HAVING c>1",
+  "dup_drafts": "SELECT product_id, COUNT(*) c FROM product_intelligence_review_draft WHERE review_status NOT IN ('APPROVED','REJECTED','SUPERSEDED') GROUP BY product_id HAVING c>1",
+  "field_prov": "SELECT source_type, evidence_kind, COUNT(*) c FROM product_intelligence_review_field_provenance p JOIN product_intelligence_snapshot s ON s.created_from_review_draft_id=p.draft_id WHERE s.approved_by=? AND s.status='APPROVED' GROUP BY source_type, evidence_kind ORDER BY c DESC"
+ },
+ "pi_quality": {
+  "LEGACY_APPROVED_INCOMPLETE": 82,
+  "APPROVED_WITH_GOVERNED_ABSENCE": 416,
+  "FULLY_COMPLETE": 119,
+  "MISSING_APPROVED_INTELLIGENCE": 34
+ },
+ "pi_quality_total": 651,
+ "pi12_approved_count": 414,
+ "pi12_approved_snapshot_ids": [
+  {
+   "product_id": "0133d0bf-a8e7-41d3-908b-75d727bb86f4",
+   "snapshot_id": "50d74d8f-abfa-4473-b7aa-8024a1b22a35",
+   "version": 5
+  },
+  {
+   "product_id": "013b7710-a55e-4053-9224-e1149f052f57",
+   "snapshot_id": "8e1b8e25-f968-4524-a62b-62bdfc5ad6e8",
+   "version": 5
+  },
+  {
+   "product_id": "013c47d4-abfc-4c70-8f1f-4e775b4e3216",
+   "snapshot_id": "aaf1faa1-8d1b-4dc0-acae-93fc0497b167",
+   "version": 2
+  },
+  {
+   "product_id": "02d4ba80-1156-431c-b6a8-b37ecb80c67b",
+   "snapshot_id": "d214e165-0ea5-495d-9b6c-b2cf358d8261",
+   "version": 2
+  },
+  {
+   "product_id": "0327f6f3-e4ed-41b4-aa17-2c0e2049747b",
+   "snapshot_id": "c561a426-cf1d-4431-b58c-f75657077546",
+   "version": 3
+  },
+  {
+   "product_id": "045a2dc8-27a0-4b93-9cf4-2531a803951a",
+   "snapshot_id": "0a5a67e6-f151-470f-ac53-8054ff3be377",
+   "version": 2
+  },
+  {
+   "product_id": "051f619d-be08-4d93-8eb8-8d5cb4cffc38",
+   "snapshot_id": "a373f468-93bb-4f87-b6f3-8db2f4d9e32f",
+   "version": 2
+  },
+  {
+   "product_id": "064bde5e-2153-4f62-811b-6c8858a9325f",
+   "snapshot_id": "fe82685f-d6c6-4a1f-a354-2c3bf0f258ad",
+   "version": 2
+  },
+  {
+   "product_id": "07175d3f-c02b-48c6-87e6-ca07e8cd4445",
+   "snapshot_id": "73f80696-5784-4dec-8ef4-17020a4383d7",
+   "version": 2
+  },
+  {
+   "product_id": "08de4318-c6aa-4665-b2c1-e02dc6cb35c9",
+   "snapshot_id": "04c230a3-168f-453e-ad5f-94e2bb4c8397",
+   "version": 3
+  },
+  {
+   "product_id": "0902af44-1a8f-4576-80ed-0ab963ced392",
+   "snapshot_id": "68d34a8d-655f-4885-9ce2-7fe32fc3f85a",
+   "version": 2
+  },
+  {
+   "product_id": "0a26caf0-1bc6-43a9-a267-7d2a1dbaccab",
+   "snapshot_id": "2e6b07ce-1651-4ab4-a896-4b53c2e6f8a1",
+   "version": 3
+  },
+  {
+   "product_id": "0ac2b28f-84d2-461e-9df7-9d5b27745d26",
+   "snapshot_id": "972f53b3-286f-489c-9793-e495f37bc3ab",
+   "version": 3
+  },
+  {
+   "product_id": "0b2d2726-42fc-436a-b493-ceca1295f8d9",
+   "snapshot_id": "8cf7978e-af6e-46d1-9555-7a57fd6b7def",
+   "version": 2
+  },
+  {
+   "product_id": "0b39a112-a8b2-4c61-bfe2-3cfad07f381c",
+   "snapshot_id": "722148b4-bed1-4d06-b4fb-55456bb0695c",
+   "version": 3
+  },
+  {
+   "product_id": "0b98fca4-ded7-4e70-9452-380e119c79e3",
+   "snapshot_id": "83e1c503-1aeb-4d61-b259-7c93698f051a",
+   "version": 3
+  },
+  {
+   "product_id": "0bce1e68-094d-40d0-ac81-a25565641768",
+   "snapshot_id": "65d87027-9aea-4761-9b67-f77170e21595",
+   "version": 3
+  },
+  {
+   "product_id": "0c8fce95-88a9-444a-a880-6ba87a7a76b2",
+   "snapshot_id": "7467f1ce-62c8-497a-a550-fbd59c33c9bc",
+   "version": 2
+  },
+  {
+   "product_id": "0d58bd3c-b1f9-49d0-a83b-0165fc821bfa",
+   "snapshot_id": "2d934729-ecb5-40e1-a9e1-47af5cb952fb",
+   "version": 2
+  },
+  {
+   "product_id": "0d80b62c-e0d3-4ef6-8ca6-fd0cc49f1fef",
+   "snapshot_id": "a9fe9953-33ef-4807-a178-8391f3d8d5d8",
+   "version": 3
+  },
+  {
+   "product_id": "0dd690d7-e3d5-4155-a354-9a8c1476b9c9",
+   "snapshot_id": "916f36f3-a7b7-4653-9b13-cf7c4c746308",
+   "version": 3
+  },
+  {
+   "product_id": "0ddfd65c-6ffc-43fe-aa3f-8fff0a13a886",
+   "snapshot_id": "2cca21c9-6433-4166-9df0-95726d5532af",
+   "version": 3
+  },
+  {
+   "product_id": "0e792619-5a90-4bb0-86f0-326515908341",
+   "snapshot_id": "b6d24593-1584-4560-acca-ab527fe2b02c",
+   "version": 3
+  },
+  {
+   "product_id": "0eb19156-a97b-4ede-917d-2e808ebc4217",
+   "snapshot_id": "39cbface-5360-4098-89fb-1fa8e8bc9e26",
+   "version": 2
+  },
+  {
+   "product_id": "0edd26d2-b204-498c-b65f-e1016424514e",
+   "snapshot_id": "d1035ede-a9a0-4988-a3d5-345366fdb69f",
+   "version": 2
+  },
+  {
+   "product_id": "0f1a6e14-6980-47df-96b5-693a13b38dbd",
+   "snapshot_id": "b5e554e3-1e1d-4d4e-a320-5c09509bf79d",
+   "version": 3
+  },
+  {
+   "product_id": "0f4bfa0d-ce5e-4629-af3d-bc66b2cb37ee",
+   "snapshot_id": "ec7b4cb2-dda0-42a8-bf05-72562c560706",
+   "version": 2
+  },
+  {
+   "product_id": "0f7f516d-305e-4719-a3bc-b59e524ab019",
+   "snapshot_id": "9dc17577-afcb-49d9-9aeb-a0e6311c78b0",
+   "version": 2
+  },
+  {
+   "product_id": "0fd8abf0-ea0d-47e7-952c-f4e409cb9ac9",
+   "snapshot_id": "ea23c852-75e7-4a40-a2db-fed79a443a65",
+   "version": 3
+  },
+  {
+   "product_id": "1046f269-d865-470d-a9a6-1c065b9bc234",
+   "snapshot_id": "a231d51c-9be7-4f34-aee8-fac5baf44257",
+   "version": 3
+  },
+  {
+   "product_id": "106e2661-8a34-4c7d-9908-51006959f3d4",
+   "snapshot_id": "592f315c-a050-4e6c-a8cf-756f57025f63",
+   "version": 2
+  },
+  {
+   "product_id": "111d4f87-6ba5-4fff-88b2-76039a43fcd5",
+   "snapshot_id": "61402fae-d08c-4de2-9b35-f17b454bf216",
+   "version": 2
+  },
+  {
+   "product_id": "129e569c-73a1-494c-bcf1-4ec0b90b1fbf",
+   "snapshot_id": "e69d872d-ffe0-4055-8905-786cd82ab5f0",
+   "version": 3
+  },
+  {
+   "product_id": "137b2730-f368-4ae0-a772-5313467f0d76",
+   "snapshot_id": "b6981b5e-1b62-446f-a684-679e54958368",
+   "version": 3
+  },
+  {
+   "product_id": "14715165-95f3-4a9f-bf81-4d064dadbe12",
+   "snapshot_id": "f9c11585-b67b-46c9-baaa-a1d15bbf06f7",
+   "version": 2
+  },
+  {
+   "product_id": "14d5c7c2-9b75-48cc-841d-f8b47af8cbc6",
+   "snapshot_id": "79e2910a-990f-41d5-b9d8-2326b7126315",
+   "version": 3
+  },
+  {
+   "product_id": "14e3882d-b688-40a6-93a1-f9c83e10ab59",
+   "snapshot_id": "c2365e32-1396-49e2-8ff8-d3ccffe0420d",
+   "version": 3
+  },
+  {
+   "product_id": "15dae875-292c-4d5f-833e-8cc9c8e01449",
+   "snapshot_id": "956a3d54-fe16-4024-a677-fd4dc5b5a7b9",
+   "version": 2
+  },
+  {
+   "product_id": "18c28ac5-ab61-45f4-9353-1e8d1687cb62",
+   "snapshot_id": "8510cb6c-2770-43fd-a0aa-edf01b72ad40",
+   "version": 3
+  },
+  {
+   "product_id": "1925cb8e-7fed-4bdf-9e1c-e738abe19194",
+   "snapshot_id": "03c338d4-0fd4-4279-b75b-fe762879a513",
+   "version": 3
+  },
+  {
+   "product_id": "19bd4505-875b-44bf-a12b-1c850c9bc11c",
+   "snapshot_id": "ac8d2e63-2138-4a0d-aa13-d5ab94b15c53",
+   "version": 2
+  },
+  {
+   "product_id": "1a2e39e9-5141-4558-aba0-02ec4a2891e0",
+   "snapshot_id": "07914cd9-f6a9-40d1-b2c7-d03994b1e753",
+   "version": 2
+  },
+  {
+   "product_id": "1a5f4257-6711-42e4-8dcf-d61345fda1bd",
+   "snapshot_id": "5b68f9e6-57fc-405c-ac43-1b050acd82e7",
+   "version": 3
+  },
+  {
+   "product_id": "1aa263bd-f751-4f05-a702-c447892af556",
+   "snapshot_id": "7ae83f85-2fec-4a27-897e-928d2e1a632d",
+   "version": 2
+  },
+  {
+   "product_id": "1b6e189f-c054-4326-8acd-b1a6cf1d9d15",
+   "snapshot_id": "a6e6fe65-c2ad-467d-9a1b-3a9e4bdaf61b",
+   "version": 3
+  },
+  {
+   "product_id": "1bac3e65-ee7f-4af0-b6a4-51765969cdc7",
+   "snapshot_id": "49ee9e5e-138e-48ac-b433-7c416028c1e0",
+   "version": 2
+  },
+  {
+   "product_id": "1c85ef90-3ba6-47ee-8e3b-078abed4fb97",
+   "snapshot_id": "327639c0-5da6-4b6c-b5c0-dda073a7facc",
+   "version": 3
+  },
+  {
+   "product_id": "1cc00e24-746b-4057-bf59-c82d6ecf0c56",
+   "snapshot_id": "2a2862ff-3a4c-4e99-a2fd-ed5b6937640b",
+   "version": 2
+  },
+  {
+   "product_id": "1ccd0bb5-5f5b-40fc-8a38-0ff2df3a9571",
+   "snapshot_id": "aa4bc44e-4040-4b81-abc4-d2dc19728cc2",
+   "version": 2
+  },
+  {
+   "product_id": "1d970a08-8477-44c2-b514-35b05011e9c7",
+   "snapshot_id": "60ffb527-30da-4ee6-9e02-c25cf038797f",
+   "version": 3
+  },
+  {
+   "product_id": "1dcf353f-0240-4b87-8fe1-649753119955",
+   "snapshot_id": "968c270b-450a-48ea-972f-9bfbf38875ec",
+   "version": 3
+  },
+  {
+   "product_id": "1f883904-ceb2-4f70-bb88-1b1ba08cb34f",
+   "snapshot_id": "938cd8d1-f4ec-4b25-98b9-d5b47b7da244",
+   "version": 2
+  },
+  {
+   "product_id": "20a935f9-338c-4db6-8ed3-bf11002adfd3",
+   "snapshot_id": "20e73a48-28f3-4eed-83cf-6493f152d15b",
+   "version": 2
+  },
+  {
+   "product_id": "20f2352c-0f62-41c9-b1d9-8ee9c77d887f",
+   "snapshot_id": "45b20fd7-9fc6-4cb6-882d-ad31f9bd95e5",
+   "version": 3
+  },
+  {
+   "product_id": "21dcae04-86de-4af7-9698-eb2a3331614b",
+   "snapshot_id": "23b7f56d-4dc0-4516-8a63-54861625bb40",
+   "version": 3
+  },
+  {
+   "product_id": "231129c1-b889-44b8-ab8c-3390fb3edc42",
+   "snapshot_id": "294ecfad-198d-448d-8a5e-c38b2adaa263",
+   "version": 2
+  },
+  {
+   "product_id": "2313b64c-b15f-4851-a1db-8bade93afbf2",
+   "snapshot_id": "4a176629-12a6-4829-8ec0-d110a7457dcf",
+   "version": 3
+  },
+  {
+   "product_id": "2440b42a-c5ba-4a1f-95b4-258de6d595fc",
+   "snapshot_id": "f85ca1e5-50f1-4e26-9d69-17a1d2518bca",
+   "version": 3
+  },
+  {
+   "product_id": "244d4e59-dcad-4cee-a6a8-f233e577e5bb",
+   "snapshot_id": "17834bf2-d3a6-4bd1-bc85-b0f755c3c477",
+   "version": 2
+  },
+  {
+   "product_id": "2453b3e8-ad60-4ef2-a22b-1c93a698d4f9",
+   "snapshot_id": "71e67c32-d5dd-4014-82f5-6a4dfa622556",
+   "version": 3
+  },
+  {
+   "product_id": "24665407-ef6c-47d9-a7f8-954fb534f2cc",
+   "snapshot_id": "e8261864-bdbc-46d9-9034-76cbe5da7162",
+   "version": 3
+  },
+  {
+   "product_id": "2575188c-097a-4f7c-8e8b-5059068abf74",
+   "snapshot_id": "955b2270-3de9-46a6-a76e-e548e26bb9bb",
+   "version": 3
+  },
+  {
+   "product_id": "25c10995-a53c-4214-ad06-3759764e55d9",
+   "snapshot_id": "ccffd58d-54e8-4db8-96dc-a0922dd9d127",
+   "version": 3
+  },
+  {
+   "product_id": "269dc6de-0db7-41d4-890b-4e30bba9f7db",
+   "snapshot_id": "405d7933-a111-4750-b89d-7bd91c44a3ee",
+   "version": 3
+  },
+  {
+   "product_id": "27090e29-3cd9-48c9-8474-8193830f4a5a",
+   "snapshot_id": "d8bfdee8-1c0f-4091-8c79-a3ef61d27c06",
+   "version": 2
+  },
+  {
+   "product_id": "274a59af-1bb9-4d93-b883-99454aff2297",
+   "snapshot_id": "2fccc508-1b3d-4074-9dfa-c98c82204a69",
+   "version": 2
+  },
+  {
+   "product_id": "2832c73c-efe3-4501-addb-4d0bb7c4e917",
+   "snapshot_id": "e7d45cd9-c4df-4dc2-9780-1e0203bc9fd7",
+   "version": 2
+  },
+  {
+   "product_id": "2937a851-c242-43e4-86cf-1e70971cc294",
+   "snapshot_id": "4c70cd3b-f6b6-49ee-b6d9-0439411da6ef",
+   "version": 2
+  },
+  {
+   "product_id": "29db89c6-c7dd-4f09-8b85-9862253e1152",
+   "snapshot_id": "9b4094b4-3889-4fb8-a0e0-d15a2e825c14",
+   "version": 2
+  },
+  {
+   "product_id": "2a1e670d-a81d-4a42-a182-f9513b05eca4",
+   "snapshot_id": "244bb5f3-7f0e-41c2-9fc8-eb7238223458",
+   "version": 2
+  },
+  {
+   "product_id": "2a3de208-9957-48b5-b399-14c312ba11fb",
+   "snapshot_id": "83cc6284-ba1e-4ce4-8dc4-7bc9f0957878",
+   "version": 3
+  },
+  {
+   "product_id": "2a5f0f58-b438-4773-af4e-b3229742d19d",
+   "snapshot_id": "346ff8cb-a87c-4cd1-9cdd-915f0ee8a50d",
+   "version": 3
+  },
+  {
+   "product_id": "2af04e4c-c731-4e8d-86f4-5e74b8ff3539",
+   "snapshot_id": "f950f66d-eb0b-4513-bcfa-dd046f1756c4",
+   "version": 3
+  },
+  {
+   "product_id": "2be2ffe4-6e43-4789-929a-ad1bd3d6284a",
+   "snapshot_id": "69e10a55-93a0-44cb-8bbc-aa3da977fea2",
+   "version": 3
+  },
+  {
+   "product_id": "2d79b60b-8780-42b7-a3e3-03f83d950198",
+   "snapshot_id": "d5a34890-9c4b-4f0e-bc5b-4b65488e7647",
+   "version": 3
+  },
+  {
+   "product_id": "2d913f77-7810-4595-8874-938c6a7e057d",
+   "snapshot_id": "170b5efb-6d83-49a4-ae31-1c5ad3a613fb",
+   "version": 2
+  },
+  {
+   "product_id": "2dc6eb9d-fd64-4505-89a2-5d1cf2391c9c",
+   "snapshot_id": "f14ad4a0-e589-4f50-932a-00439f624185",
+   "version": 3
+  },
+  {
+   "product_id": "2dc99727-59b8-41b8-9462-6e8ff23c09d6",
+   "snapshot_id": "1ca000b7-1654-4f52-8cf1-16a7f11d4005",
+   "version": 3
+  },
+  {
+   "product_id": "2e251609-5ee6-4ff8-b365-76c2ef274773",
+   "snapshot_id": "910c24b4-19d3-4f69-8c9b-ba9107e06fb9",
+   "version": 2
+  },
+  {
+   "product_id": "2e8e2b1f-25cf-4412-9bc5-c03b57071a9a",
+   "snapshot_id": "763ce5d0-cc52-4dea-8914-d613f8db4bde",
+   "version": 2
+  },
+  {
+   "product_id": "2f4547af-b84d-4d97-a162-a0bd533a3ad8",
+   "snapshot_id": "bd53d912-748b-4351-ad7d-8aa2630c3597",
+   "version": 2
+  },
+  {
+   "product_id": "2f684849-0980-459a-9c5d-25e977994689",
+   "snapshot_id": "5b41ef0e-9228-4af4-8a77-361a1d15aedc",
+   "version": 2
+  },
+  {
+   "product_id": "2f8a4981-415e-4cfc-a5ca-fed0774b8ab9",
+   "snapshot_id": "da082a83-2fd7-4318-a9b3-1f0957b41180",
+   "version": 2
+  },
+  {
+   "product_id": "303f796d-5935-4f18-90f2-47f5e8037f6f",
+   "snapshot_id": "b1f15f51-4c5d-45e1-9811-e567fad50779",
+   "version": 3
+  },
+  {
+   "product_id": "313cd685-c7f0-40d6-be23-e741ed12982c",
+   "snapshot_id": "9ae1a37f-de1c-4756-ae31-25752852ac5e",
+   "version": 3
+  },
+  {
+   "product_id": "3272c10b-2d73-485a-ad50-5fd76c2dfbf8",
+   "snapshot_id": "60a8b0b5-f0fe-4472-950e-9c95c8858300",
+   "version": 2
+  },
+  {
+   "product_id": "329b2a8f-2a1c-4c94-bb58-7402882983ad",
+   "snapshot_id": "081312c9-e0cb-4c93-a99d-109f0ad8b275",
+   "version": 3
+  },
+  {
+   "product_id": "337cb7a6-f0b5-48b4-9844-991bec996cda",
+   "snapshot_id": "036cc4f1-2e35-4990-9f51-773e10a34906",
+   "version": 3
+  },
+  {
+   "product_id": "34b15f50-e311-43c4-bacc-6ca8536cb2c5",
+   "snapshot_id": "207e7fca-8da5-4b98-9067-a3d2eabb1454",
+   "version": 2
+  },
+  {
+   "product_id": "352f1d5b-c160-4c1d-8185-147dc5f5eb65",
+   "snapshot_id": "d2384b0c-ab08-41cd-8b4b-216fbefdb43b",
+   "version": 3
+  },
+  {
+   "product_id": "3567375c-94a9-4e39-8af4-099eb56069b9",
+   "snapshot_id": "1f33d012-323b-438b-8546-286b5b1a2adf",
+   "version": 3
+  },
+  {
+   "product_id": "365138d1-3ff1-4622-9135-c4580dca23df",
+   "snapshot_id": "97dc3ebf-d53d-4153-bf71-af86d1f8e334",
+   "version": 2
+  },
+  {
+   "product_id": "376ca59b-589c-401b-8e2b-d03a267b456b",
+   "snapshot_id": "bbfe1103-99ec-44d2-8e39-bd444ea6a25f",
+   "version": 3
+  },
+  {
+   "product_id": "377a8734-2630-4e27-b009-e4b27adbbe51",
+   "snapshot_id": "772f6659-b992-4a1e-9b26-6598212af3c9",
+   "version": 2
+  },
+  {
+   "product_id": "3829eebe-0155-407d-a7a1-ce534c7e3568",
+   "snapshot_id": "c863b087-3b7a-4806-8213-131945461541",
+   "version": 3
+  },
+  {
+   "product_id": "383b57a7-332d-45a5-aca3-2c71f878d3d7",
+   "snapshot_id": "6c6cf673-77a3-4ee2-813b-cf4caa2a657b",
+   "version": 2
+  },
+  {
+   "product_id": "3862a108-43c6-4767-801f-982a0200b6df",
+   "snapshot_id": "11843200-009e-4ae2-a4e3-a8936feb9ceb",
+   "version": 3
+  },
+  {
+   "product_id": "38f8ba4d-14fe-4a20-94b1-2e54e4611d14",
+   "snapshot_id": "9f28eeba-1e02-474c-ad14-4d3c39cbfdc9",
+   "version": 3
+  },
+  {
+   "product_id": "39a17be6-e0aa-403d-b52c-d6102a874362",
+   "snapshot_id": "d958b124-ff9a-4377-8d24-418844a2390b",
+   "version": 3
+  },
+  {
+   "product_id": "39c5fc1d-dfec-47fb-a259-8b8836764e27",
+   "snapshot_id": "e78d62d2-9235-48f1-b456-d84b982eeea6",
+   "version": 2
+  },
+  {
+   "product_id": "39dea8f0-7354-49f8-aada-91c8666f57ba",
+   "snapshot_id": "14178380-530a-43cf-8e03-1fb9d311e965",
+   "version": 3
+  },
+  {
+   "product_id": "3b3463c7-3394-49ad-940e-bd060d06b662",
+   "snapshot_id": "4604cda9-5e06-422d-bdbf-8a79a8d7b5c7",
+   "version": 2
+  },
+  {
+   "product_id": "3b51d01e-6e59-4b94-83ca-9e10ef611056",
+   "snapshot_id": "9a52d52a-8726-4578-8377-767ea300778c",
+   "version": 4
+  },
+  {
+   "product_id": "3bedd53f-4910-4c5b-945f-4aa7e56d18b4",
+   "snapshot_id": "2705bb53-0241-48a4-8591-29e3f88f6553",
+   "version": 2
+  },
+  {
+   "product_id": "3bee1482-21a2-4795-a490-9b81c7a5d94c",
+   "snapshot_id": "9f251091-3851-496d-9a84-dab2537507c5",
+   "version": 3
+  },
+  {
+   "product_id": "3c34f3a1-ba39-4eb5-903d-815b96bf84e8",
+   "snapshot_id": "cefeba24-dc89-4b4c-8233-fc9785927a16",
+   "version": 3
+  },
+  {
+   "product_id": "3cd29ebf-12ca-4b16-b788-a3720fb9fca0",
+   "snapshot_id": "5f8bae18-b907-43ae-8ba4-e89f1604f4de",
+   "version": 3
+  },
+  {
+   "product_id": "3cedcea6-b2f7-4e74-89a4-fb8e210ddea5",
+   "snapshot_id": "bebb1e26-718f-4368-90ea-01850f3c1064",
+   "version": 3
+  },
+  {
+   "product_id": "3d7389c7-77b9-4bd1-9242-ed172718abcd",
+   "snapshot_id": "4a1be46b-feba-4282-beb3-479922604f44",
+   "version": 3
+  },
+  {
+   "product_id": "3da0be61-1f70-491d-80eb-16fbd61532c0",
+   "snapshot_id": "d899ff0e-0621-4a17-b853-aada5e7abb9d",
+   "version": 2
+  },
+  {
+   "product_id": "3e1a2a3d-1c7f-46e0-a5b3-28438d315087",
+   "snapshot_id": "5d0982d7-f071-4857-a45c-fd4b379d5aa8",
+   "version": 3
+  },
+  {
+   "product_id": "3e7e7411-9b50-4005-acf6-d99d85e4d7e1",
+   "snapshot_id": "11854290-8326-4f98-b20f-b0713b536074",
+   "version": 3
+  },
+  {
+   "product_id": "3ea9ee09-3127-4a2e-a19d-ac19a55381ce",
+   "snapshot_id": "c25a29a7-82b9-421d-b689-00e2b76f55de",
+   "version": 2
+  },
+  {
+   "product_id": "3f0e0206-a21a-4db6-a323-170ce505703f",
+   "snapshot_id": "2ea1f45b-c9d5-4242-8935-d1922c5b6e5c",
+   "version": 3
+  },
+  {
+   "product_id": "3f371b59-d151-40df-a815-2d67fe2a51bc",
+   "snapshot_id": "b6ef2cc9-e6e0-4fce-8a0a-4e405d3e2b82",
+   "version": 3
+  },
+  {
+   "product_id": "3fbf5508-697b-4fb9-b891-868e89186621",
+   "snapshot_id": "bbb7414a-0276-4b2e-becf-e3ee32e98a96",
+   "version": 3
+  },
+  {
+   "product_id": "40655de2-037e-48a0-8708-160831d120b4",
+   "snapshot_id": "e0b6af38-f894-4e00-a30a-d651f3276f7f",
+   "version": 3
+  },
+  {
+   "product_id": "40950632-e61a-4e89-8070-56a28d953fe9",
+   "snapshot_id": "03be596b-39a8-4620-be9a-68f241fe0a34",
+   "version": 2
+  },
+  {
+   "product_id": "4114be36-b432-4e1a-890f-8ecf5ac260a1",
+   "snapshot_id": "326f943c-a911-4945-940f-0fe94235d56b",
+   "version": 3
+  },
+  {
+   "product_id": "41823bac-bc7c-4202-992d-e82150479487",
+   "snapshot_id": "e2c5854a-80a1-4c10-8ae1-eb49eb70cbd6",
+   "version": 3
+  },
+  {
+   "product_id": "421ad1df-22a9-4d91-bff7-0e3b79adb368",
+   "snapshot_id": "7f246182-541b-49ae-a86d-8e28010a259f",
+   "version": 3
+  },
+  {
+   "product_id": "42816007-f8e7-4dcf-b4a8-00172b1c253d",
+   "snapshot_id": "dc4799b4-1b63-4095-ba7d-bb9856054a92",
+   "version": 3
+  },
+  {
+   "product_id": "445066d7-6ff8-4673-b8c3-1000cd4f5eb5",
+   "snapshot_id": "9e436949-51ae-4f51-a636-0b84b7b1febf",
+   "version": 4
+  },
+  {
+   "product_id": "4591673f-301f-4b26-b580-f23263422f7b",
+   "snapshot_id": "5c912741-245a-4eff-ad5f-aab662069bc0",
+   "version": 3
+  },
+  {
+   "product_id": "4601bcd9-f29b-454e-8d64-31f8a9d2ef12",
+   "snapshot_id": "0a32a4b9-d3d4-48fb-89c4-2348f11bc195",
+   "version": 3
+  },
+  {
+   "product_id": "463f7b29-23dc-4662-b089-4f56f6454277",
+   "snapshot_id": "1484a782-fefa-4cc1-804e-a4eac6636dfc",
+   "version": 2
+  },
+  {
+   "product_id": "46c8a0b4-bbae-49e1-9277-41c4519917ae",
+   "snapshot_id": "ae888035-4fed-4c76-90e6-3569dc9effcb",
+   "version": 3
+  },
+  {
+   "product_id": "46cbf1df-da7e-47ac-bc7b-6031689dadc6",
+   "snapshot_id": "1876c8d9-1fb9-4955-b818-23970d0f4881",
+   "version": 3
+  },
+  {
+   "product_id": "47b33809-3d4f-4e88-b5d6-1d4b7f3e5453",
+   "snapshot_id": "86377bb7-f672-4394-92b6-222a19d07e3f",
+   "version": 2
+  },
+  {
+   "product_id": "499c861a-df9c-41ec-bddc-3e453b56d762",
+   "snapshot_id": "8158b539-39aa-4868-a992-ec8a247aa8f0",
+   "version": 2
+  },
+  {
+   "product_id": "4aa3f74b-9007-4929-84bd-4c9c9fe5be75",
+   "snapshot_id": "528c0ab7-e2c1-42c9-98fb-4cd38fb9024d",
+   "version": 3
+  },
+  {
+   "product_id": "4b647657-20a4-496d-a412-f7123a24c837",
+   "snapshot_id": "5aad3a1f-6338-4ed7-96cf-4f6599e08d10",
+   "version": 2
+  },
+  {
+   "product_id": "4bab2b57-da68-482c-9f31-3d700ac0ac6b",
+   "snapshot_id": "81e63300-bdde-48a0-8c24-68f904897e5e",
+   "version": 3
+  },
+  {
+   "product_id": "4bd6342c-aac7-4cc5-a27e-a11d70da42c0",
+   "snapshot_id": "4c22a6bd-4b36-4cbb-b24d-cbbf8f38f8d7",
+   "version": 2
+  },
+  {
+   "product_id": "4c6e5722-9914-49cf-a0fa-204b452c4fe1",
+   "snapshot_id": "4bedbfa0-1689-4521-86d7-291e8223f306",
+   "version": 2
+  },
+  {
+   "product_id": "4e0d386d-af76-49ef-b670-1679056e46c8",
+   "snapshot_id": "b96dd976-61f8-4736-9fdb-727762420167",
+   "version": 2
+  },
+  {
+   "product_id": "4f856dea-b0f2-41fc-8b97-2c336ebb9c87",
+   "snapshot_id": "df7d0984-bc78-4bf8-8077-fb31dbaff3f1",
+   "version": 3
+  },
+  {
+   "product_id": "4fa0fa22-ad84-49d6-b567-6e92a104bf2a",
+   "snapshot_id": "355a58bb-ce2c-4e01-889a-e857020392bb",
+   "version": 2
+  },
+  {
+   "product_id": "4fe668d3-53e3-423c-8515-d5a90a2bca61",
+   "snapshot_id": "8f3231c5-9aca-4eee-a9dc-285d6f5ee948",
+   "version": 3
+  },
+  {
+   "product_id": "5074e792-fde3-4bd6-ab04-b528f793a45e",
+   "snapshot_id": "bd5f87ad-b2aa-4c4d-a772-c0ad9ff3fe1d",
+   "version": 2
+  },
+  {
+   "product_id": "51c07698-616d-4556-9f34-4426b751af5c",
+   "snapshot_id": "7ff4ec49-845c-4d43-a95c-1d12a2c8d8df",
+   "version": 2
+  },
+  {
+   "product_id": "528846ba-838a-43d1-94d7-4be806c20746",
+   "snapshot_id": "3a605ef5-9345-478a-be49-27ce4557e7ed",
+   "version": 2
+  },
+  {
+   "product_id": "530e52c7-96dd-4fff-9217-87e8343eefa7",
+   "snapshot_id": "fbbf6c46-98f2-4243-affb-a47272897950",
+   "version": 3
+  },
+  {
+   "product_id": "5427373d-19de-4a80-bd5f-11799c20aea7",
+   "snapshot_id": "4fc77e7f-9dfb-451e-83a4-ebf55f9b6782",
+   "version": 3
+  },
+  {
+   "product_id": "5492fa7f-8368-4013-872a-918e10f9b6da",
+   "snapshot_id": "e97c0944-8443-41e5-9edc-d58259075e06",
+   "version": 2
+  },
+  {
+   "product_id": "554295fb-c5e2-442d-8d6f-2ee66ac50d65",
+   "snapshot_id": "504dddcd-9367-4764-87d4-9903a27293bf",
+   "version": 3
+  },
+  {
+   "product_id": "597090b1-4169-48d8-9786-42466bf346d0",
+   "snapshot_id": "e12325b3-c909-4b17-a0c2-9d865e6df90d",
+   "version": 3
+  },
+  {
+   "product_id": "5a148537-098d-4c9e-8f1b-1934087b60ab",
+   "snapshot_id": "df2a98c1-45d4-4b9d-a167-ca4c1afe2d9d",
+   "version": 2
+  },
+  {
+   "product_id": "5a9e231f-4245-4b06-aa59-f060926a34ae",
+   "snapshot_id": "1471d41b-0ca5-44be-bc9d-a5e9144e59fd",
+   "version": 2
+  },
+  {
+   "product_id": "5ae8c2cc-859a-4acc-8d35-2d0554e9d9fb",
+   "snapshot_id": "67f599f0-b0dd-4fc7-8a9f-a3621e6f082e",
+   "version": 3
+  },
+  {
+   "product_id": "5beecf4e-255d-4ddd-8255-64750a87e414",
+   "snapshot_id": "6efd3c5f-f2f7-4b76-9beb-16f10b9f1615",
+   "version": 2
+  },
+  {
+   "product_id": "5d62e360-5348-4c60-a05e-071638c852d3",
+   "snapshot_id": "79587c0c-2eb2-41ba-b00d-c207df99b09a",
+   "version": 2
+  },
+  {
+   "product_id": "5dd5ec97-1209-4d1f-8e46-cd63b2c0c186",
+   "snapshot_id": "47225322-8c6c-4c4a-ae2a-40be437cabf9",
+   "version": 2
+  },
+  {
+   "product_id": "5f42cd19-b75f-417c-97ab-9b58319c1c81",
+   "snapshot_id": "7930071e-edbe-4ff3-98a9-ea551cf6f03b",
+   "version": 3
+  },
+  {
+   "product_id": "5f919206-a62d-4507-84a4-24aa42d9f42c",
+   "snapshot_id": "8b034aa7-26c6-4e04-a8fc-33245b90d5f8",
+   "version": 2
+  },
+  {
+   "product_id": "60939813-fe10-4561-b31b-152bba6431ec",
+   "snapshot_id": "c7c8fe39-bf65-41b7-a87e-b861f509adca",
+   "version": 3
+  },
+  {
+   "product_id": "60fd4ca1-768b-45b3-8e0b-4eee8b2c723b",
+   "snapshot_id": "e4e09bec-4a10-431a-9056-d9af6b94e7e0",
+   "version": 3
+  },
+  {
+   "product_id": "6388605e-9bb3-43e2-beef-c07f89500a50",
+   "snapshot_id": "a1b85402-f23b-475c-b238-1d6b4c8d4d8e",
+   "version": 3
+  },
+  {
+   "product_id": "6454948f-b303-4dc9-b836-9998cf91e3ad",
+   "snapshot_id": "eaa2c605-c73d-4b48-98fd-f71ec60d8bf1",
+   "version": 3
+  },
+  {
+   "product_id": "66493189-bd88-4ed8-8942-5ba835d0ff08",
+   "snapshot_id": "91e6aa20-071b-493c-bb71-47a8c71b1d44",
+   "version": 3
+  },
+  {
+   "product_id": "6680d62b-3a1e-459a-ac40-a056929f22a7",
+   "snapshot_id": "889a63d7-2a7e-45b3-9afd-148682aa49e3",
+   "version": 2
+  },
+  {
+   "product_id": "67e92261-2153-4649-988e-fe7e40bfea8b",
+   "snapshot_id": "5c5d6447-739f-4876-ba9e-2a80901a8e42",
+   "version": 3
+  },
+  {
+   "product_id": "6869a834-6fda-442a-8d51-394fccca3267",
+   "snapshot_id": "5da64f65-744b-4c9c-9147-934d51b308ed",
+   "version": 3
+  },
+  {
+   "product_id": "6a5c7e95-12d5-43f5-9f80-479d462a5198",
+   "snapshot_id": "195c2a4f-017d-4329-8af5-b25e37c06ee6",
+   "version": 3
+  },
+  {
+   "product_id": "6a6efac9-63a0-4cb1-a7ec-34cc78030ba7",
+   "snapshot_id": "25b9a77c-203e-442e-988c-7202a4725ea6",
+   "version": 3
+  },
+  {
+   "product_id": "6beff631-41c6-458b-803c-8f0b85d8bcc9",
+   "snapshot_id": "78d58948-1b24-42dd-86ad-f93f52597e22",
+   "version": 2
+  },
+  {
+   "product_id": "6c34369a-4903-4e71-8ebd-e76d01c634e5",
+   "snapshot_id": "0cf9fb43-aa27-456e-8290-ffedf1b0e40c",
+   "version": 2
+  },
+  {
+   "product_id": "6d242ace-4ccb-4d63-9c67-163d96234f81",
+   "snapshot_id": "b3ee8c1f-4bce-4a70-ac9d-bee1efcb9b96",
+   "version": 3
+  },
+  {
+   "product_id": "6ddfea5c-05a2-49cb-98ef-6e424a184d32",
+   "snapshot_id": "45f1d23f-1e1b-4814-be9a-9b3192222802",
+   "version": 3
+  },
+  {
+   "product_id": "6dfc1aa0-75d4-44ea-bc36-6e74f98f5c65",
+   "snapshot_id": "c0f71b57-cd4d-433b-b2e6-bcfb597bc2d6",
+   "version": 3
+  },
+  {
+   "product_id": "700334bd-0983-4e7a-8644-3c1d23eb9a18",
+   "snapshot_id": "0f1e0c50-eb69-4060-a3c1-4fad95faed4f",
+   "version": 3
+  },
+  {
+   "product_id": "70df6d27-69d7-48d3-b426-adea41a9045b",
+   "snapshot_id": "afd9af6b-7156-46e5-a64d-b5ae7878f01e",
+   "version": 3
+  },
+  {
+   "product_id": "724bbe9e-a725-48ca-8673-9a3736ccf39a",
+   "snapshot_id": "aab8f8bb-9f6f-4ae4-ba6f-35fd13b2115f",
+   "version": 3
+  },
+  {
+   "product_id": "7336ec55-65bf-40f2-9754-d5f6b11d0a43",
+   "snapshot_id": "396a203b-697c-49d4-8578-ad60db6490dc",
+   "version": 3
+  },
+  {
+   "product_id": "733aa9ad-1ade-4fb3-a9f2-e4d70a841127",
+   "snapshot_id": "d5b255cd-0f1a-4ae4-9589-22d65fb72be3",
+   "version": 3
+  },
+  {
+   "product_id": "74e8d4e9-98f5-4d81-bec6-1e13f594434f",
+   "snapshot_id": "f9f28f3b-9465-45c8-b057-8dae93f925f3",
+   "version": 3
+  },
+  {
+   "product_id": "753d305a-4133-40db-aa2d-56791f7c1d08",
+   "snapshot_id": "887bc9e6-2523-48e3-bd5f-8cdd30baf755",
+   "version": 3
+  },
+  {
+   "product_id": "7632caf0-ac2c-4814-afdd-afe697438652",
+   "snapshot_id": "b0d1b37c-0097-4ce3-99c4-c44353b551fc",
+   "version": 2
+  },
+  {
+   "product_id": "765fe80e-b98c-47df-b9d4-5524a533c9f0",
+   "snapshot_id": "8dcc967a-f981-4e1b-8626-1b49332187ad",
+   "version": 3
+  },
+  {
+   "product_id": "76986483-c499-45bf-b160-c73a5753df64",
+   "snapshot_id": "106798c3-a0d0-401a-a02c-c19d2b8a5ae8",
+   "version": 2
+  },
+  {
+   "product_id": "7712a709-d9eb-4203-a07f-249bceff9213",
+   "snapshot_id": "1fc1548c-f767-403a-a4dd-d106f6d4f3a1",
+   "version": 3
+  },
+  {
+   "product_id": "778e412b-5a4b-4ced-909b-32eb12d6f2f2",
+   "snapshot_id": "5d924135-a1f2-4b18-b8fe-9beff9c49fc4",
+   "version": 2
+  },
+  {
+   "product_id": "783c6b01-8805-4c84-9fb4-47debb557a9b",
+   "snapshot_id": "8eb594ff-2747-4bbc-b90a-c7c0ac2b35e6",
+   "version": 3
+  },
+  {
+   "product_id": "7857efe5-7ffb-4756-93ff-f46c8fca7521",
+   "snapshot_id": "c7552811-3ed8-4049-800c-43599bf97163",
+   "version": 3
+  },
+  {
+   "product_id": "78e54f77-fcca-4377-9a60-99f1e5a496c7",
+   "snapshot_id": "b2287a3a-34d4-4ec8-829b-ed580444f5fd",
+   "version": 2
+  },
+  {
+   "product_id": "792c16c9-7720-4321-8c48-bdee2c601d0f",
+   "snapshot_id": "06558aee-07f5-4fd5-a657-bcbf5da007d2",
+   "version": 3
+  },
+  {
+   "product_id": "7a6d9004-7b86-49d6-9ad5-3cd8598179e6",
+   "snapshot_id": "f5f72aa1-1a1e-4ebe-8a48-3697f300a78f",
+   "version": 2
+  },
+  {
+   "product_id": "7a88c55d-82a6-4045-88b2-f635f772cd05",
+   "snapshot_id": "53a6b1f4-4540-4e1f-a1e6-7f257bdcf2b8",
+   "version": 2
+  },
+  {
+   "product_id": "7b22f826-243c-4a1e-a1f6-e67bb61b395b",
+   "snapshot_id": "d21eef85-c376-4a87-be70-68d1d095960e",
+   "version": 2
+  },
+  {
+   "product_id": "7be86ad7-d7be-4af3-a939-85340d6fdf53",
+   "snapshot_id": "974ed904-64c1-4800-a149-1770761e4cc4",
+   "version": 2
+  },
+  {
+   "product_id": "7d3a0b5e-c57e-44ad-9a31-c0e5c8b3007e",
+   "snapshot_id": "6b19e438-4d92-443f-a6ac-2d03b59644d6",
+   "version": 3
+  },
+  {
+   "product_id": "7d4b1006-6db3-46a2-9fd0-1ffb23140da4",
+   "snapshot_id": "099b694d-3eab-4556-9c23-adbd02a6a317",
+   "version": 2
+  },
+  {
+   "product_id": "7d95bdf5-9aee-4a11-8d82-4f9974e254ed",
+   "snapshot_id": "cb1b1de0-01c4-4ad3-b85f-c9dce3e4e213",
+   "version": 2
+  },
+  {
+   "product_id": "7e4ea3ee-a37d-4ddd-b460-a6938cbd89e9",
+   "snapshot_id": "24ef86e1-f505-4b05-9061-fcff3560ee8c",
+   "version": 3
+  },
+  {
+   "product_id": "7e6a23d7-8080-4b25-b333-f4b3d91b215b",
+   "snapshot_id": "a5cbd845-3dc9-44fa-986e-68844b244c0f",
+   "version": 2
+  },
+  {
+   "product_id": "7ed3f33e-58a6-41ca-9bca-84997b2b10b0",
+   "snapshot_id": "0eb81978-c1be-4408-9fa4-87c079cffafd",
+   "version": 3
+  },
+  {
+   "product_id": "7ee955e0-694b-4192-a170-1176af87e651",
+   "snapshot_id": "b4842537-efe6-47c7-9900-bd3d467e7134",
+   "version": 3
+  },
+  {
+   "product_id": "7ef105e8-c41d-40cb-b773-34d2e2b4febf",
+   "snapshot_id": "f96d745f-290a-4c56-a76e-0105e82cbb91",
+   "version": 3
+  },
+  {
+   "product_id": "7ef84490-ba71-434e-99c4-52bf4475ee4e",
+   "snapshot_id": "18417e00-3d96-4560-8253-81b8a239306f",
+   "version": 3
+  },
+  {
+   "product_id": "8014da71-6b87-4476-9eb2-a91baf7fc0dd",
+   "snapshot_id": "d9ea1e19-e3a4-43e6-9436-7febf44e3f10",
+   "version": 3
+  },
+  {
+   "product_id": "8168a131-27d5-4689-97d0-de42d4e3df5e",
+   "snapshot_id": "b75286d6-a6fa-40e7-a324-6b10c01e75d5",
+   "version": 3
+  },
+  {
+   "product_id": "81ccca44-006a-4dcf-a5c7-6655048615d6",
+   "snapshot_id": "46061b56-529e-4eb6-9f67-428254ad61f4",
+   "version": 2
+  },
+  {
+   "product_id": "82200fcc-eb74-421b-9f6c-0857dcce005b",
+   "snapshot_id": "0bd8a8ff-8e85-4500-bfd5-cf5a79071aa1",
+   "version": 3
+  },
+  {
+   "product_id": "827820d1-5441-48c8-89d8-eaac9ba984ce",
+   "snapshot_id": "4e95bf3e-a8d5-49a1-a029-b7edc04027aa",
+   "version": 2
+  },
+  {
+   "product_id": "8294ddda-fe7c-4215-a464-00bacd8ab69a",
+   "snapshot_id": "54d2c206-81df-44a2-a503-229aa46de239",
+   "version": 3
+  },
+  {
+   "product_id": "82c54d11-8de3-47a9-bbc6-297056ed0fab",
+   "snapshot_id": "06661810-a3f7-452d-b913-910ee974fa0d",
+   "version": 3
+  },
+  {
+   "product_id": "82dcf45b-e7db-4f5f-8984-f4a43dbbe31f",
+   "snapshot_id": "7dfa829d-0b17-4fe7-9c0a-2984ee5d20d4",
+   "version": 2
+  },
+  {
+   "product_id": "82f42b81-d373-424b-88d7-fddffeb0c807",
+   "snapshot_id": "b18fe276-213f-456c-a4da-0a9227966f8d",
+   "version": 2
+  },
+  {
+   "product_id": "83667ffd-26fd-4c71-a86c-fa9e1ee84d9a",
+   "snapshot_id": "ccc93616-e82d-4c2b-a006-54f5986a8478",
+   "version": 3
+  },
+  {
+   "product_id": "840c5364-b1f5-409a-aa74-3e4f3a8d1bfc",
+   "snapshot_id": "df029b43-ad60-44f5-9485-36181307e408",
+   "version": 3
+  },
+  {
+   "product_id": "849fb822-17e6-49aa-a04d-2b3dfc12716e",
+   "snapshot_id": "ceb79c1d-5340-4409-964c-b13d61213d7a",
+   "version": 2
+  },
+  {
+   "product_id": "84c246ff-17d4-4119-86ee-d7e2f0e9be94",
+   "snapshot_id": "fdb0da6d-63c6-4eac-b040-146533ee8071",
+   "version": 2
+  },
+  {
+   "product_id": "858c8a65-3244-40f9-83da-6c5ab2157ed7",
+   "snapshot_id": "248d117b-8d32-4bcc-9439-ccf32304215a",
+   "version": 3
+  },
+  {
+   "product_id": "866d2a4f-5b88-4097-ab9b-d25795d02714",
+   "snapshot_id": "f7e96c06-aabd-45ef-b493-136bbf594c8c",
+   "version": 3
+  },
+  {
+   "product_id": "867bd162-ef79-46ef-a7aa-97fb2387c058",
+   "snapshot_id": "b7726db4-207f-4719-a4b4-9c33629dcb57",
+   "version": 3
+  },
+  {
+   "product_id": "86e907e5-4635-4333-88da-07149188e6ce",
+   "snapshot_id": "d21e8dcb-c19b-4fdd-b8cb-da7b16896f93",
+   "version": 3
+  },
+  {
+   "product_id": "8718cc60-e000-4514-8267-9f8c3453b55a",
+   "snapshot_id": "d4a14609-f4be-4f44-9591-9fee25201156",
+   "version": 2
+  },
+  {
+   "product_id": "873126e9-b0d5-41c1-afce-43f25f467def",
+   "snapshot_id": "9883a195-9ffa-4722-8620-4c650d0e09d2",
+   "version": 3
+  },
+  {
+   "product_id": "878a09a6-446a-49db-9580-b1e52e0284f8",
+   "snapshot_id": "1a615c7e-d742-4f36-bfa4-08da8f165d51",
+   "version": 3
+  },
+  {
+   "product_id": "888bf009-2c12-4f50-9585-653f20fb6ed8",
+   "snapshot_id": "f006d735-6a85-4a43-affe-591fd8b8a8e0",
+   "version": 2
+  },
+  {
+   "product_id": "8951f8b3-e19e-4566-8187-55829482b8b7",
+   "snapshot_id": "f0071659-143b-4373-b0ee-7aba67a81e84",
+   "version": 3
+  },
+  {
+   "product_id": "898b93a6-6ab6-4c27-ae81-c35ee7ee9dc1",
+   "snapshot_id": "efef1aaa-833e-48e6-963f-248bf239dc10",
+   "version": 2
+  },
+  {
+   "product_id": "89e7c9f4-0814-4822-b3e6-269a6d40b452",
+   "snapshot_id": "e0bfe823-7a29-481b-bc53-f213b8865d04",
+   "version": 2
+  },
+  {
+   "product_id": "8a3182ec-350a-4499-ac4d-42cd244eed75",
+   "snapshot_id": "7d3a1101-d43b-4ddf-a1c1-d0760093bc2d",
+   "version": 3
+  },
+  {
+   "product_id": "8a8e951c-e92f-477b-8c3a-893f88ffe25c",
+   "snapshot_id": "685ba155-ce74-4b08-80ab-0fcbbdad5ad0",
+   "version": 2
+  },
+  {
+   "product_id": "8ae553d2-4810-4d03-926b-5f2f1282c21c",
+   "snapshot_id": "1632cb72-72aa-4ecf-b287-a6b2b6c46cff",
+   "version": 4
+  },
+  {
+   "product_id": "8afbadfa-a958-40ea-9256-c2cbf75a21ef",
+   "snapshot_id": "194d06bb-2798-4fe1-a68b-bc47aa5c7824",
+   "version": 3
+  },
+  {
+   "product_id": "8b5a8aa4-ec1b-456c-9292-f5abac99cf8e",
+   "snapshot_id": "693ceef5-cfab-4be2-b77c-2e95231263ef",
+   "version": 3
+  },
+  {
+   "product_id": "8c19afea-ca9f-4f76-8c30-1f0e150ac07b",
+   "snapshot_id": "06e04710-e871-4c46-b498-2e4b460ad308",
+   "version": 3
+  },
+  {
+   "product_id": "8c46a9e9-6346-43dc-a0b3-d4641332696c",
+   "snapshot_id": "766ba946-604d-496c-a904-8b82cf71dc52",
+   "version": 3
+  },
+  {
+   "product_id": "8c88b3c7-82e3-403e-8fbe-ab515739639e",
+   "snapshot_id": "285a631f-f4ae-459b-86b6-1083929802b5",
+   "version": 2
+  },
+  {
+   "product_id": "8cac00aa-bf86-4554-894c-950e3233f352",
+   "snapshot_id": "38e7b25b-2bd2-4984-af7f-f7aad77ae270",
+   "version": 3
+  },
+  {
+   "product_id": "8cb573bb-8f06-4389-ad07-cf92b0a53450",
+   "snapshot_id": "a37ec6ef-4f08-43e3-be80-d914f6d4407b",
+   "version": 3
+  },
+  {
+   "product_id": "8d3214de-145a-489a-8da2-d0438b9d1406",
+   "snapshot_id": "3f1264c7-0356-4528-adf6-7c6f70aee029",
+   "version": 3
+  },
+  {
+   "product_id": "8d489069-eaf3-4228-a8c0-67527c8a59b0",
+   "snapshot_id": "a953bdc4-5959-4172-8f60-b65515d8083b",
+   "version": 3
+  },
+  {
+   "product_id": "8ea29ec2-3e38-4d35-a5dc-16e0be4bc317",
+   "snapshot_id": "60032ee0-4845-4473-8177-dddc8017bfd6",
+   "version": 4
+  },
+  {
+   "product_id": "8f5b7dca-94b4-4ed1-acbf-7aee92a55ffc",
+   "snapshot_id": "66e47ad3-ac63-4aa5-bd5a-0a961ab7bf3f",
+   "version": 3
+  },
+  {
+   "product_id": "90680fea-accc-4f98-9f6a-c938f7d8912f",
+   "snapshot_id": "bc16af56-75f9-4cf5-bc68-998969aa6f79",
+   "version": 2
+  },
+  {
+   "product_id": "913f23d0-792f-482b-bac5-e19f26ef7343",
+   "snapshot_id": "fa025c3d-cd66-4689-b8ab-6c829b1c3d4d",
+   "version": 2
+  },
+  {
+   "product_id": "91cec488-8c69-4df0-af5c-371db70ec384",
+   "snapshot_id": "b7579772-bb34-4d19-a30b-b9c5fd8ff442",
+   "version": 2
+  },
+  {
+   "product_id": "91e38d6f-1194-45b6-be60-c898695443b4",
+   "snapshot_id": "1f31a6ab-02bd-4a91-83f0-2a4fb5f1ce2c",
+   "version": 2
+  },
+  {
+   "product_id": "91f9d2d1-f50d-40a6-a165-202f8f14db4e",
+   "snapshot_id": "1703124f-fa2e-4a97-a55e-539074aad7e3",
+   "version": 3
+  },
+  {
+   "product_id": "92150166-ebb6-439c-97bb-0c3a8fb1f824",
+   "snapshot_id": "cb43b1a0-e5e0-4577-9335-0a6ed883bf7d",
+   "version": 2
+  },
+  {
+   "product_id": "9248d29c-d95c-4252-aacb-4fac1e6d8af0",
+   "snapshot_id": "9cea5261-63d3-48c0-824f-2d9179a4ed6f",
+   "version": 2
+  },
+  {
+   "product_id": "9283839f-0551-45c9-919d-ef3d2850bc16",
+   "snapshot_id": "fdc3d3cb-2ef8-48c7-bb05-8e13038ff9cf",
+   "version": 2
+  },
+  {
+   "product_id": "930852be-7401-4e21-9536-532c4ac26104",
+   "snapshot_id": "dffa3b35-9f28-413f-9440-37cae7daa5a9",
+   "version": 3
+  },
+  {
+   "product_id": "931829bd-0e0d-40db-9dcf-495a4dcc8329",
+   "snapshot_id": "8bb1b180-27bc-4021-a716-0465f9fbe256",
+   "version": 3
+  },
+  {
+   "product_id": "93922e65-31c4-40ef-b45b-99916cb3e136",
+   "snapshot_id": "0853e54a-bd1e-4e5a-bc2d-e096587c3f67",
+   "version": 2
+  },
+  {
+   "product_id": "939ae510-3de0-4135-8f6c-d1345b767f02",
+   "snapshot_id": "2c935acb-f5a5-4bad-a05b-4f6d4d441fb4",
+   "version": 2
+  },
+  {
+   "product_id": "94116afc-c8f9-421d-af62-8b57e810129a",
+   "snapshot_id": "c95d3e4c-f352-4914-b9cf-90580881d6f9",
+   "version": 2
+  },
+  {
+   "product_id": "951b5f10-f035-4935-89d1-f25c52c35b51",
+   "snapshot_id": "9aab038c-d1f9-4e6d-b7d8-edab0f268ec1",
+   "version": 3
+  },
+  {
+   "product_id": "957888ae-e9e9-49b1-be58-60af7241ce66",
+   "snapshot_id": "828e8330-43fa-42be-bb74-e76cca6bf9a3",
+   "version": 2
+  },
+  {
+   "product_id": "957d9159-0002-414a-b63f-3f2c1e376097",
+   "snapshot_id": "e9792c98-5d7b-4518-9fb5-e7ab0a90a72e",
+   "version": 2
+  },
+  {
+   "product_id": "95e258cd-a4c0-466e-aedb-df4d50600966",
+   "snapshot_id": "c0be08f1-db9b-44e6-aef0-0b756ae68896",
+   "version": 2
+  },
+  {
+   "product_id": "95e80583-2d66-42a0-b0a2-03874e246505",
+   "snapshot_id": "61b9c396-c2d5-494c-9931-43a3498aad14",
+   "version": 3
+  },
+  {
+   "product_id": "97055ac6-b029-49ae-9e20-50212782474b",
+   "snapshot_id": "d8967e9b-ce75-4d68-aa78-d79850bf8753",
+   "version": 3
+  },
+  {
+   "product_id": "981cc17d-b5d8-47a4-992e-3a262ba07157",
+   "snapshot_id": "72c17770-35d4-448c-84bc-e875e8876dc9",
+   "version": 3
+  },
+  {
+   "product_id": "98c04992-a726-4782-8293-7bf17156cdd0",
+   "snapshot_id": "d3951b56-035b-4338-8766-138605d0462e",
+   "version": 3
+  },
+  {
+   "product_id": "98ce82e4-be78-4524-9e10-0caf98420648",
+   "snapshot_id": "1a3d8fb5-4e5d-449f-bcea-0aa60336a963",
+   "version": 2
+  },
+  {
+   "product_id": "99205001-9ea9-4e90-9287-5aab3cb1f3f5",
+   "snapshot_id": "bc53a85d-d561-4698-9dde-36facf7e04b6",
+   "version": 2
+  },
+  {
+   "product_id": "992eee37-93a0-4f24-86b2-391a16893699",
+   "snapshot_id": "7a79a315-c985-43f4-aba1-61f492441769",
+   "version": 3
+  },
+  {
+   "product_id": "9a5d4b6a-1f1b-4ba8-a1bc-86bbab107af9",
+   "snapshot_id": "26d2f1e1-8eaa-4788-ae49-0f163a44256a",
+   "version": 3
+  },
+  {
+   "product_id": "9a7f266d-9abe-47a4-a97f-a3e87b5aad07",
+   "snapshot_id": "e9655d40-8690-4e43-9cb4-adf3d7a09ccd",
+   "version": 2
+  },
+  {
+   "product_id": "9b771ea4-d27f-4b4f-a866-8cbb15e29389",
+   "snapshot_id": "f303573e-9de2-4164-8b19-0b5b583d4c3b",
+   "version": 3
+  },
+  {
+   "product_id": "9bdefb5d-8278-4668-9425-dbed61464c9d",
+   "snapshot_id": "7baeefe4-8927-4eef-9c44-2f6d9550a51f",
+   "version": 3
+  },
+  {
+   "product_id": "9c1a1843-6d1d-48e0-97df-a4b493e12d56",
+   "snapshot_id": "0f47f5bf-c620-40a8-accb-e51f0b6ef2cf",
+   "version": 2
+  },
+  {
+   "product_id": "9c2af744-87d2-4cb0-b60a-e81dbbb761dd",
+   "snapshot_id": "99391cfb-b2b7-46a2-9efb-32b53f6413d6",
+   "version": 3
+  },
+  {
+   "product_id": "9c85cd83-32f1-4d8b-98bb-6a78f681ed1a",
+   "snapshot_id": "93439cad-4062-46e2-b072-1a04299e4b11",
+   "version": 3
+  },
+  {
+   "product_id": "9cf6f636-7878-467c-9fac-65dd0760ccd8",
+   "snapshot_id": "88507835-c801-475c-a941-32bdbe92bb65",
+   "version": 3
+  },
+  {
+   "product_id": "9daaa6b9-39ba-4fd9-92b6-835c1353d7fa",
+   "snapshot_id": "f8ef9adc-9efd-4f4d-8f2b-7dc6ed9e4985",
+   "version": 3
+  },
+  {
+   "product_id": "9e674932-25c8-400e-975b-4111f4399296",
+   "snapshot_id": "519800c7-1006-4d30-a2ff-954589ab45d2",
+   "version": 2
+  },
+  {
+   "product_id": "9f969c7c-ff94-440e-9353-908326c819d8",
+   "snapshot_id": "226c24a1-5023-4362-99a9-de797d94310e",
+   "version": 3
+  },
+  {
+   "product_id": "9fc067da-914f-4d23-a3a2-50bc7c916903",
+   "snapshot_id": "f069cbf7-ba11-4fda-878e-b7610cc83d48",
+   "version": 3
+  },
+  {
+   "product_id": "a034e516-bd8f-42a2-acd8-c33ad6a543b0",
+   "snapshot_id": "509332d3-8778-42c9-b382-bd3080a7bc88",
+   "version": 3
+  },
+  {
+   "product_id": "a14cab39-1f3b-4648-8128-53e2a082e8b8",
+   "snapshot_id": "88e39cf5-8d2e-4065-8fdc-84a080efe27e",
+   "version": 3
+  },
+  {
+   "product_id": "a185ef77-3ff3-4736-93ef-7e47bc03174e",
+   "snapshot_id": "613abffa-df14-4ff0-a8b3-6820da12de78",
+   "version": 3
+  },
+  {
+   "product_id": "a1ca92dc-46bd-4dc3-8d63-21c76f49f836",
+   "snapshot_id": "2ea4e1b6-1a9b-4e49-8a5b-ec0718adcc66",
+   "version": 3
+  },
+  {
+   "product_id": "a1cd39a0-c514-4fad-98b0-2338fd784d01",
+   "snapshot_id": "451badb2-98c1-4e7a-83d5-a3c59032f2b1",
+   "version": 2
+  },
+  {
+   "product_id": "a4da5c7f-d741-42ea-8115-e5bbda89cf3b",
+   "snapshot_id": "2cd7abc7-105b-4aa1-abb4-b23ff5c50269",
+   "version": 3
+  },
+  {
+   "product_id": "a613b967-249d-42e3-8bd0-6cab12be2643",
+   "snapshot_id": "c561bfa5-3c3f-41da-a607-499654059115",
+   "version": 3
+  },
+  {
+   "product_id": "a6cb7bfb-9263-40fd-a77d-6383bd3ff463",
+   "snapshot_id": "c6e9a01b-d3bc-4b39-9564-82dc6f293bca",
+   "version": 2
+  },
+  {
+   "product_id": "a7081c4c-715d-4ebe-99d7-8d6a9f3f45f4",
+   "snapshot_id": "760e1292-523a-4bd4-8f34-c5ba9e5b1233",
+   "version": 3
+  },
+  {
+   "product_id": "a789126c-54da-4aa4-801a-607b6d0c5061",
+   "snapshot_id": "89ef7227-2438-482c-997e-7a022e9e583a",
+   "version": 3
+  },
+  {
+   "product_id": "a960c4f6-b1fe-4111-b33b-51ce5cacaa25",
+   "snapshot_id": "5ef07290-be87-4b7a-a2fc-96c1cda95070",
+   "version": 3
+  },
+  {
+   "product_id": "a96edc07-71fa-4f7f-8edc-cb779b90ae84",
+   "snapshot_id": "716ea0ce-53f6-4a61-a15d-9d34b0b5a758",
+   "version": 2
+  },
+  {
+   "product_id": "a9f99515-355d-45e5-ad6a-1d97a3a96ad4",
+   "snapshot_id": "1ad641fd-0117-409a-93f6-4a60d0fb0f53",
+   "version": 2
+  },
+  {
+   "product_id": "aa6042ad-2048-43b9-b19f-fd2c4f5d8b66",
+   "snapshot_id": "163d7d00-8df7-4b0a-a9f4-b2a9a2d923f7",
+   "version": 3
+  },
+  {
+   "product_id": "aaa1f472-b2d4-4fe3-a095-a8ccf0313360",
+   "snapshot_id": "fbce7222-9b0f-4521-a5f6-7ad946aa1229",
+   "version": 3
+  },
+  {
+   "product_id": "ab5b90b4-db2e-479b-b395-81d7eb2383e4",
+   "snapshot_id": "f9ee6e60-95fd-43a5-8a12-b455f8512b58",
+   "version": 3
+  },
+  {
+   "product_id": "ab730155-b3c6-4c58-b108-c796564139a3",
+   "snapshot_id": "03e42be9-3cb5-4073-b662-f9f7e385d555",
+   "version": 2
+  },
+  {
+   "product_id": "abdb60ba-c8b8-433f-89b4-0b3a2f314f63",
+   "snapshot_id": "a0452705-7084-455a-8025-e82ee26a58a0",
+   "version": 3
+  },
+  {
+   "product_id": "ad39720e-2033-4184-9107-f820022a790f",
+   "snapshot_id": "beb38f3d-4259-4f48-a746-f5a8c23db22f",
+   "version": 2
+  },
+  {
+   "product_id": "ae1a57ff-613f-482d-9e4b-8acf8ec301b8",
+   "snapshot_id": "92877d56-4e9f-4a8f-9500-6a5eca3749ab",
+   "version": 2
+  },
+  {
+   "product_id": "ae2d9b04-c65e-4d62-b390-ecc0f7c0b7df",
+   "snapshot_id": "eb766c71-42a7-4e96-a470-5a2d15d8002f",
+   "version": 2
+  },
+  {
+   "product_id": "af57902f-a69a-4b5e-87ff-02edec363d95",
+   "snapshot_id": "2c64970d-db41-46a2-a0e4-3c058ee4fa25",
+   "version": 3
+  },
+  {
+   "product_id": "afe7674e-6dfd-4f3b-8d05-48dac9885db0",
+   "snapshot_id": "9820e0c9-de30-480d-b3de-0f41a6f666b9",
+   "version": 3
+  },
+  {
+   "product_id": "b0919477-44ed-4518-9cb1-241ad26a4f00",
+   "snapshot_id": "0d55129a-3c65-4134-acc1-110823f1c87c",
+   "version": 3
+  },
+  {
+   "product_id": "b0b8dc89-4e32-46cb-a181-55bfabb1ac0e",
+   "snapshot_id": "874fafbf-6978-4630-8a45-1d4899160598",
+   "version": 2
+  },
+  {
+   "product_id": "b14570e0-35d8-457f-9998-850a73a2b7f8",
+   "snapshot_id": "798240b1-673f-497b-8231-8f595634ef4a",
+   "version": 2
+  },
+  {
+   "product_id": "b2ac8af7-80c2-4082-a222-6a47b92272c2",
+   "snapshot_id": "550988cd-f4e7-47a5-ab14-15b87028ad12",
+   "version": 3
+  },
+  {
+   "product_id": "b36d17a1-4209-431a-b740-c3ceadb7c704",
+   "snapshot_id": "43ed597d-3288-49f8-a247-becf7c9db097",
+   "version": 3
+  },
+  {
+   "product_id": "b38e2c7e-993e-4456-8467-a4c3720cef92",
+   "snapshot_id": "5589a47d-1033-4b7b-a8d4-b3ec33857fdd",
+   "version": 2
+  },
+  {
+   "product_id": "b38f83b7-8950-4dab-811f-4c3a89850194",
+   "snapshot_id": "ba8718be-67c7-47cc-a7e3-862e9974fa1e",
+   "version": 3
+  },
+  {
+   "product_id": "b3e05eb3-8c77-4e37-b163-996dfd4455bf",
+   "snapshot_id": "f8cda307-5c8b-4100-a1c8-33d9c6f7cb04",
+   "version": 2
+  },
+  {
+   "product_id": "b4b0f581-f1aa-4677-beaa-54268199c377",
+   "snapshot_id": "3266d9fc-4ae8-4179-b819-8a3ebb2c3183",
+   "version": 3
+  },
+  {
+   "product_id": "b55d80f1-9a8a-4a18-af99-6f2636dad879",
+   "snapshot_id": "d1e8c7bf-65a3-4d02-b89a-c62af49cf0e6",
+   "version": 2
+  },
+  {
+   "product_id": "b5a5ed44-f983-4c06-9007-d34006318932",
+   "snapshot_id": "d6337498-b4b1-45f1-8161-4e5e42301091",
+   "version": 3
+  },
+  {
+   "product_id": "b5c5785a-d41d-487d-b846-fce410a8beee",
+   "snapshot_id": "7c0435b6-096a-47e8-adc2-5173943be82d",
+   "version": 2
+  },
+  {
+   "product_id": "b60fb472-0a9a-4717-9751-6bf6d6e92344",
+   "snapshot_id": "ae12a8d4-5339-4f69-80ef-0a9754986305",
+   "version": 3
+  },
+  {
+   "product_id": "b6eaa73e-6325-4aa2-b4ce-96e2fe9c7c7d",
+   "snapshot_id": "f3c321eb-1d32-42a5-b255-3a99c238df0f",
+   "version": 3
+  },
+  {
+   "product_id": "b72ac356-c9d2-4a7c-a43e-9038e758969e",
+   "snapshot_id": "42199639-c704-429d-bab9-ce96c8ce2e5c",
+   "version": 2
+  },
+  {
+   "product_id": "b83d97ba-1072-4497-aadf-9f63004b9049",
+   "snapshot_id": "29d5a6f9-2fbb-458e-a90c-48b5ae18ce8e",
+   "version": 3
+  },
+  {
+   "product_id": "b884229a-19cd-449e-808d-2c4bd5a7c4c4",
+   "snapshot_id": "313126de-8478-4a13-84d7-d8c22b2730f9",
+   "version": 2
+  },
+  {
+   "product_id": "b92e6678-04e0-4dbe-a2de-5432a0d43dc6",
+   "snapshot_id": "08fc7eee-1b71-4889-9b40-05bb9eb196de",
+   "version": 2
+  },
+  {
+   "product_id": "ba2022bb-7668-45bd-b9ec-74cf0c5003d0",
+   "snapshot_id": "dd2fe25c-2f34-4197-b9af-7829cb8e72fc",
+   "version": 3
+  },
+  {
+   "product_id": "baf8e9ea-fa91-4257-a980-413384ac5509",
+   "snapshot_id": "371e31a6-12bd-4125-97f3-c758310d7254",
+   "version": 3
+  },
+  {
+   "product_id": "bd1c9005-a9a3-4b01-8528-fd86c9e8840d",
+   "snapshot_id": "a1a973eb-3eed-4a67-a947-f522a368bb65",
+   "version": 2
+  },
+  {
+   "product_id": "bd4f44d0-2a19-46fc-a842-775f1e5e0c1d",
+   "snapshot_id": "2489eb29-15a7-410b-be8c-eaf9f7c15060",
+   "version": 2
+  },
+  {
+   "product_id": "bd96da55-0ad4-494d-afb1-f9fb1b30caa1",
+   "snapshot_id": "10dd429d-1c73-4252-8de4-031edb560adf",
+   "version": 4
+  },
+  {
+   "product_id": "bd9a10c2-2d04-4f35-a529-8278669416ef",
+   "snapshot_id": "6f6088fe-4948-4fa0-b479-0758f238e560",
+   "version": 2
+  },
+  {
+   "product_id": "be01cb61-8b43-4f69-ac13-8116c16a4cb0",
+   "snapshot_id": "5e67c5af-2be3-436e-9962-6c0c222b836d",
+   "version": 3
+  },
+  {
+   "product_id": "bed7a64b-89c7-4c6c-9ca9-50b3179013e1",
+   "snapshot_id": "ab2771b7-d8ec-48dd-99ed-66d1e734767f",
+   "version": 2
+  },
+  {
+   "product_id": "bfc4c9c0-64b1-4104-82ad-8c0409ef8e93",
+   "snapshot_id": "d7b3e6f7-6af3-4139-8a20-851183a066b5",
+   "version": 3
+  },
+  {
+   "product_id": "bff6f9d6-8370-4bcb-a7ee-86d0f4dbf5f1",
+   "snapshot_id": "65188b74-466f-45d4-a7bf-b7165aa3438d",
+   "version": 3
+  },
+  {
+   "product_id": "c3449c3f-6ff2-4568-bd1e-e3ee030afea5",
+   "snapshot_id": "8fa95a71-b59f-4376-bcca-edacce48cb10",
+   "version": 2
+  },
+  {
+   "product_id": "c41ccd1c-aa3d-48f8-a80c-f01414ea221e",
+   "snapshot_id": "8332bf86-87e8-4789-ab30-8b98851c0404",
+   "version": 4
+  },
+  {
+   "product_id": "c46c2a6b-7fc7-4869-ab9f-6e5fecc3250b",
+   "snapshot_id": "6d17baf7-fc28-41b7-a9df-bc83d2dd660b",
+   "version": 3
+  },
+  {
+   "product_id": "c57e9e05-1a80-402b-a469-dbf4ff3f823e",
+   "snapshot_id": "aae71bf3-dc89-4037-8ccf-b25a1b87068c",
+   "version": 3
+  },
+  {
+   "product_id": "c5bc6882-4e17-4c39-8e35-9bb92d52df67",
+   "snapshot_id": "47a987df-6f8c-410e-8d31-3d483678aa60",
+   "version": 3
+  },
+  {
+   "product_id": "c5f7b12c-ca93-4f78-a2b0-227f60ab2f17",
+   "snapshot_id": "50af3d20-369f-4ad5-aaa3-aa3b69cf00ca",
+   "version": 3
+  },
+  {
+   "product_id": "c71ff704-2bc2-4303-9335-632bbb2db9ae",
+   "snapshot_id": "061f0917-2ab5-4898-8a95-543401d497d0",
+   "version": 3
+  },
+  {
+   "product_id": "c7fbce94-fe43-4f64-ba44-57e36a7de3ca",
+   "snapshot_id": "be4e7b16-dd6b-4fd2-8df6-1a29f0a9f541",
+   "version": 3
+  },
+  {
+   "product_id": "c87c02b4-e6be-4e11-a034-39139c95bc75",
+   "snapshot_id": "1bf35299-3869-43c9-92e7-55004670bd79",
+   "version": 3
+  },
+  {
+   "product_id": "c89e6f33-5419-4440-9cd0-a970dd17fc60",
+   "snapshot_id": "1305ba74-7b17-420d-a396-432561f61b38",
+   "version": 3
+  },
+  {
+   "product_id": "c9522a45-05e0-411c-abe3-01e7a19ecaa6",
+   "snapshot_id": "559c39fc-5ed2-4300-9a55-21458e7d3f29",
+   "version": 3
+  },
+  {
+   "product_id": "c9888bd2-2546-4041-935e-aba94fa8a27b",
+   "snapshot_id": "4b555199-a99c-4d94-8878-a6636458ec0f",
+   "version": 3
+  },
+  {
+   "product_id": "canonical-inaiya-hair-colour",
+   "snapshot_id": "9006defd-fc3a-4edd-806b-eae361afff3a",
+   "version": 2
+  },
+  {
+   "product_id": "cc69a4ae-4ab5-4c7c-93e1-87eb796eeed1",
+   "snapshot_id": "1bb1fe8f-c24e-495f-be3c-9285d134e0d0",
+   "version": 2
+  },
+  {
+   "product_id": "cd0c3c88-3c6a-4434-b068-079a9b7ddcdd",
+   "snapshot_id": "2fb8dea5-bb92-4938-9221-efea7edf9e87",
+   "version": 2
+  },
+  {
+   "product_id": "cd336929-5908-4d7e-9fdc-98812018feea",
+   "snapshot_id": "00826b07-66ee-4c78-87e4-ae5112b35ae8",
+   "version": 2
+  },
+  {
+   "product_id": "cd394fff-5e39-4e18-ac1e-f0050bd2c133",
+   "snapshot_id": "cc1710b3-45f6-4e73-bec5-e2d06da498e6",
+   "version": 2
+  },
+  {
+   "product_id": "cd5ce8b7-f14d-4919-bcac-6c5cd856c8b1",
+   "snapshot_id": "6bef2b0e-1b9b-4781-9eee-21c14ff5065a",
+   "version": 3
+  },
+  {
+   "product_id": "cde9d9cc-7410-4bae-81d3-250d5d535e26",
+   "snapshot_id": "d8c3ae65-6443-4279-982a-3405d48d996c",
+   "version": 2
+  },
+  {
+   "product_id": "ce5f75e4-3d36-4292-a588-46aec34ad7fb",
+   "snapshot_id": "ff6fa66d-c4f3-4c52-be55-6cdf5290d57d",
+   "version": 3
+  },
+  {
+   "product_id": "ce61e962-3125-4322-81bc-cd703dc77bc9",
+   "snapshot_id": "95e1e4f1-e682-4a51-a4c3-3dd099fcdfb5",
+   "version": 3
+  },
+  {
+   "product_id": "ced9fcc0-5703-42c8-a653-d2b3b73d6d7b",
+   "snapshot_id": "7acbaf60-03c7-4a5a-8dbf-a2a0424d91e6",
+   "version": 3
+  },
+  {
+   "product_id": "cee8ab1b-7f3d-4481-888f-ad4217760950",
+   "snapshot_id": "c2e19f13-88ce-474b-aa30-642b12f18793",
+   "version": 3
+  },
+  {
+   "product_id": "cfce055e-31ca-48e6-b5f5-9148cf4c68eb",
+   "snapshot_id": "68f76161-4689-4557-9995-1689afe7065c",
+   "version": 2
+  },
+  {
+   "product_id": "cfefad5e-e96a-498f-8c62-ac488e7b8160",
+   "snapshot_id": "6adcfc39-0796-46a9-b0f8-d2295544d6ab",
+   "version": 2
+  },
+  {
+   "product_id": "d024b3f4-6eba-4c41-afa5-59a321947af8",
+   "snapshot_id": "51d8c4f0-d854-4327-93ea-f039219ad5bf",
+   "version": 2
+  },
+  {
+   "product_id": "d23790df-b38b-4978-9ea2-d55def79b17f",
+   "snapshot_id": "1c65e012-072d-4ea4-a2ff-070b349b4f78",
+   "version": 2
+  },
+  {
+   "product_id": "d3830470-9019-490b-8362-87245b24b917",
+   "snapshot_id": "bd3bf5d0-83c8-4802-b9a9-b835819ce484",
+   "version": 3
+  },
+  {
+   "product_id": "d5cfc8c2-d945-4577-a412-219e2f3abcfa",
+   "snapshot_id": "730e65fb-bfef-41ba-a193-31da34914b94",
+   "version": 3
+  },
+  {
+   "product_id": "d69a8d56-51dc-4df0-969f-14ddf7b314f0",
+   "snapshot_id": "7997ebe3-1068-4e09-94f7-c715c86c1ad0",
+   "version": 2
+  },
+  {
+   "product_id": "d6c1de88-f453-4878-b704-5ffe282da6cc",
+   "snapshot_id": "4eff0f10-14fd-48d5-a327-afe5e1622d36",
+   "version": 2
+  },
+  {
+   "product_id": "d7df7ab0-09fe-42b5-9d5c-3211988a75a3",
+   "snapshot_id": "333c772f-cddb-4e69-a0ab-1c8f271bf43d",
+   "version": 3
+  },
+  {
+   "product_id": "d9c7e272-b2f5-4235-8d04-346a5bd3de0d",
+   "snapshot_id": "a3cdf591-812c-4311-a348-6e27fbb5fab1",
+   "version": 3
+  },
+  {
+   "product_id": "dad4692d-f13e-44f9-9f82-cd15eefa96b7",
+   "snapshot_id": "017162fa-6717-45c7-9f1e-3be3a8719b96",
+   "version": 3
+  },
+  {
+   "product_id": "db855f29-fe2f-47be-88d6-91a091f6ed54",
+   "snapshot_id": "53fdac88-10f2-4b32-9606-ac4a89fe5c19",
+   "version": 3
+  },
+  {
+   "product_id": "dc7ff436-ac59-45c4-a5b3-c52782284d32",
+   "snapshot_id": "3bbe8693-7c1b-4d0c-b7ed-bc6b9d667cd0",
+   "version": 2
+  },
+  {
+   "product_id": "dc833ab3-cd2e-4968-b9db-40210aba38dc",
+   "snapshot_id": "7a107847-45c9-426e-b00c-9598d0551552",
+   "version": 2
+  },
+  {
+   "product_id": "dcf0b2a3-b714-4305-a0de-37033f9762a1",
+   "snapshot_id": "d349c902-4069-4da3-993a-df2a67910851",
+   "version": 3
+  },
+  {
+   "product_id": "dd6a3ca8-4478-4611-82a0-15689bee43bb",
+   "snapshot_id": "c1476007-924b-436b-ad14-451358cb657c",
+   "version": 3
+  },
+  {
+   "product_id": "ddee46a2-367d-4fb5-897e-76730804f5a6",
+   "snapshot_id": "1914b23a-c3d0-4abb-ad75-aa132e677524",
+   "version": 3
+  },
+  {
+   "product_id": "deb336f2-885e-437b-b86d-57b79da4dda0",
+   "snapshot_id": "ce090df8-e5ae-475c-ba52-734193a73993",
+   "version": 2
+  },
+  {
+   "product_id": "e0726efa-a606-4818-a927-6c1241fc2a1a",
+   "snapshot_id": "205002ea-bd19-49fc-81fe-26a419f40720",
+   "version": 3
+  },
+  {
+   "product_id": "e098f5b7-d155-45e2-82a8-2b717acba9a1",
+   "snapshot_id": "2602d36f-ff91-4c48-8ca7-9e05407ec78d",
+   "version": 2
+  },
+  {
+   "product_id": "e110ac8f-38e8-453a-a40d-c29cbe6e00f2",
+   "snapshot_id": "fc67fdb2-c25b-46ad-ac3e-17e3302d6472",
+   "version": 3
+  },
+  {
+   "product_id": "e3aeb807-43dd-433d-8a0c-c2756349a7c3",
+   "snapshot_id": "06c2f418-6922-4f3e-8dea-fe92cfd96fcb",
+   "version": 3
+  },
+  {
+   "product_id": "e6f07364-c8e0-4839-b99a-7195578163ac",
+   "snapshot_id": "808a213d-86df-4fc4-8be0-38c303278c2d",
+   "version": 3
+  },
+  {
+   "product_id": "e79642fc-5794-4312-8dcc-11a782ebc653",
+   "snapshot_id": "d7f385f3-565a-4a4f-8e4f-99e4b3fbcf3d",
+   "version": 3
+  },
+  {
+   "product_id": "e7bfc09f-8a05-4420-abca-72b93be72ffa",
+   "snapshot_id": "ae8a137d-5740-4119-acff-8f45f5bcf109",
+   "version": 2
+  },
+  {
+   "product_id": "e905245b-949d-4d6c-a24c-1666eab4de08",
+   "snapshot_id": "2a3fb317-f416-4c94-a393-9534ad449f1d",
+   "version": 2
+  },
+  {
+   "product_id": "ea4f51b0-62fd-4566-a6fa-665faabc2b3e",
+   "snapshot_id": "ccb6fbb4-33e9-4d79-8b99-f4139bc2f2af",
+   "version": 3
+  },
+  {
+   "product_id": "ea87a548-97ee-4207-ae11-16c2fca56b1e",
+   "snapshot_id": "52275e8d-e218-40e4-bbea-7019e8cf54d7",
+   "version": 2
+  },
+  {
+   "product_id": "eabfa9fb-7676-49c6-9d33-ba38f0d835b8",
+   "snapshot_id": "bd943027-1fb1-4ad0-9859-eadccc3a04a5",
+   "version": 2
+  },
+  {
+   "product_id": "eaed2125-9f0a-4b00-879c-893fad2e3fa8",
+   "snapshot_id": "4e648b87-b058-4f3f-b6c6-0f5139371c55",
+   "version": 2
+  },
+  {
+   "product_id": "eb04b6dd-e055-433b-a6b4-54524735d26d",
+   "snapshot_id": "28ec5e00-5d2d-4303-b527-0744e3362ea9",
+   "version": 2
+  },
+  {
+   "product_id": "eb4fe343-904d-45a2-8448-d07f556ce0e3",
+   "snapshot_id": "4aadcf76-f9f9-48a3-8756-3c69a0fdb726",
+   "version": 3
+  },
+  {
+   "product_id": "eb7df37f-d703-456b-8bd4-0338b2715004",
+   "snapshot_id": "bc47b14e-a4a4-4ee3-9701-308642c9e2c5",
+   "version": 2
+  },
+  {
+   "product_id": "ec2c8e7d-bdd4-4df3-88c4-9330fed2a3f7",
+   "snapshot_id": "20f19c53-a42a-4b7c-a48c-fee702a372e7",
+   "version": 2
+  },
+  {
+   "product_id": "ec58c4af-78a8-49ab-9a3f-7ab3bcdf76c4",
+   "snapshot_id": "6a99c55d-7bf8-4ef3-9400-3318d251217e",
+   "version": 3
+  },
+  {
+   "product_id": "ecf837e7-120a-4123-bb74-94a8e80277f5",
+   "snapshot_id": "367ebcae-989e-4b6d-b1c3-296d2635c347",
+   "version": 2
+  },
+  {
+   "product_id": "ed23c97d-4db5-4712-8b8a-135ed8083542",
+   "snapshot_id": "b226a410-1ee1-4072-a53d-c2ad21382879",
+   "version": 2
+  },
+  {
+   "product_id": "ed97e243-9e20-4859-baa6-07c6cc06675a",
+   "snapshot_id": "a08e09e5-102d-4cc5-8dc1-fd391a33cb83",
+   "version": 3
+  },
+  {
+   "product_id": "ee961aba-5ad2-4d5e-8730-2f70bfeca017",
+   "snapshot_id": "c3325c59-bada-42d5-bf1d-4c4ab692d62b",
+   "version": 3
+  },
+  {
+   "product_id": "ef9c117e-7f3e-4df4-8434-d4b6f33d2aef",
+   "snapshot_id": "7bebeea3-fdf7-4f8a-a71d-5c10e9d2682e",
+   "version": 3
+  },
+  {
+   "product_id": "f2490e97-a543-44b6-a4de-28b92440d679",
+   "snapshot_id": "296fc148-7d04-469f-826f-864dd5c2fa33",
+   "version": 3
+  },
+  {
+   "product_id": "f2d33f17-5c40-45c3-bb46-aabf7a1819a2",
+   "snapshot_id": "bbc16a83-fb06-4e65-917b-f665c3638f19",
+   "version": 2
+  },
+  {
+   "product_id": "f34bab64-5488-4b02-811e-064f95d53597",
+   "snapshot_id": "58fee382-54e6-4d75-883d-9bb8efa7f89e",
+   "version": 3
+  },
+  {
+   "product_id": "f3b38817-44a9-4935-a586-fb9939b701d9",
+   "snapshot_id": "79c3f316-3a88-44e4-a61a-ca1f184a936e",
+   "version": 3
+  },
+  {
+   "product_id": "f4227b61-0182-4235-ab5d-dde5d58f330f",
+   "snapshot_id": "d57767ad-7a5b-4b38-9322-6afbbbbb0e5f",
+   "version": 2
+  },
+  {
+   "product_id": "f4432d28-8cf2-4f04-91e7-46316b5afcf2",
+   "snapshot_id": "b29001bd-7014-48b8-b1cb-34b1f4f031fa",
+   "version": 3
+  },
+  {
+   "product_id": "f4981152-6acd-4d01-8f2b-34ed362e537a",
+   "snapshot_id": "6a8e00d6-de18-4adb-a9bf-afcd97c47445",
+   "version": 2
+  },
+  {
+   "product_id": "f4bbef79-217e-4b93-9fce-f7e4a18f01dc",
+   "snapshot_id": "a8d9f420-3ab7-4069-8b22-cc6395383832",
+   "version": 2
+  },
+  {
+   "product_id": "f61639e6-b708-4bd2-aca3-d14a118ed80f",
+   "snapshot_id": "8f819a7b-c728-4057-bd99-1b284a235375",
+   "version": 2
+  },
+  {
+   "product_id": "f6783cb6-861d-4680-983a-eeb104c7679a",
+   "snapshot_id": "7e68b610-fdde-43b1-b666-39aa99941da6",
+   "version": 3
+  },
+  {
+   "product_id": "f6baf0d0-1d52-4397-a4d5-0526e7b11690",
+   "snapshot_id": "f5c39e7a-f01d-4263-b617-fe59e7e44087",
+   "version": 2
+  },
+  {
+   "product_id": "f6f4d27a-1b8b-4ec8-a8b8-c13bef817443",
+   "snapshot_id": "145dd9dc-b038-468e-8bb2-a229bd2e312d",
+   "version": 2
+  },
+  {
+   "product_id": "f79f2c25-07da-4dd8-82e5-95c83d66e080",
+   "snapshot_id": "c8adb627-3644-42bd-9dc0-3afbc8654a10",
+   "version": 3
+  },
+  {
+   "product_id": "f82e8dc4-caf6-4ecf-997f-7454d5c2f0fe",
+   "snapshot_id": "89efe4dc-f6b7-4715-a00b-d88937b86367",
+   "version": 2
+  },
+  {
+   "product_id": "f93df31c-ac2c-4d76-8342-27aef23ca549",
+   "snapshot_id": "71cd4bad-12e7-4e92-a417-f7614e7136cf",
+   "version": 3
+  },
+  {
+   "product_id": "fbf49c09-88ae-459c-90f4-7e3582cab55e",
+   "snapshot_id": "ed3693b1-185d-463e-9d60-8ab4327bd1c8",
+   "version": 2
+  },
+  {
+   "product_id": "fc33b279-9df5-4c6e-b78d-a6ee3ef2744e",
+   "snapshot_id": "04fbabf3-cada-4e90-b5c9-ff676077a2e9",
+   "version": 2
+  },
+  {
+   "product_id": "fcf0fff1-fc18-40da-b14c-ee44d1361413",
+   "snapshot_id": "f8d8b8f2-dae7-4b04-aca3-852c20b1990e",
+   "version": 3
+  },
+  {
+   "product_id": "fd14584e-f603-4872-b6d7-218684dbf691",
+   "snapshot_id": "681888f5-2260-4384-bac2-dd1706209c9f",
+   "version": 2
+  },
+  {
+   "product_id": "fd68bb57-fb3b-4495-b0ba-5a32e931b1fd",
+   "snapshot_id": "b4803aaa-4bde-4ddc-ab29-d2b0993c198e",
+   "version": 3
+  },
+  {
+   "product_id": "fdb9d59b-c971-4f6e-b81c-5a6731e32093",
+   "snapshot_id": "557604da-e6c2-423e-8d64-b72a5a62cd9d",
+   "version": 3
+  },
+  {
+   "product_id": "fe2093e6-04d2-497b-a097-24ba1fc3d63d",
+   "snapshot_id": "6b351098-e96e-4a14-abad-df53c40a3ab0",
+   "version": 3
+  },
+  {
+   "product_id": "fe673c01-e328-4f30-9f19-5eb1142ed442",
+   "snapshot_id": "c2d025e0-1479-47da-b3d2-33b5d9767c36",
+   "version": 3
+  },
+  {
+   "product_id": "fe8f489e-22eb-430f-a394-f38cf5352164",
+   "snapshot_id": "749a97d8-84cb-4f76-87da-14a294fb363a",
+   "version": 3
+  },
+  {
+   "product_id": "fed133a9-cf23-4c30-9309-e1e5334f93b5",
+   "snapshot_id": "2c878799-e2b1-4800-a560-e9c187fa7d43",
+   "version": 2
+  },
+  {
+   "product_id": "feefc2fa-8f16-4128-886b-2eb27b0d1944",
+   "snapshot_id": "a72319d9-5c39-4818-9041-b684a5f97af9",
+   "version": 3
+  },
+  {
+   "product_id": "fef8ebbf-429b-4f17-a858-683ed69af2f8",
+   "snapshot_id": "a7e86e43-1f35-47dd-8ff3-7fc0ea2fe74c",
+   "version": 3
+  }
+ ],
+ "contamination_ingredients_warnings_without_acquired_provenance": 0,
+ "contamination_rows": [],
+ "duplicate_current_approved": [],
+ "duplicate_open_drafts": [],
+ "distinct_personas": 414,
+ "identical_persona_groups": [],
+ "distinct_strategies": 414,
+ "identical_strategy_groups": [],
+ "generic_marker_scan": {
+  "gate_source": "scripts/pi12_grounded_runner.py::is_generic (the exact gate applied at approval)",
+  "read_from": "source draft per snapshot (created_from_review_draft_id)",
+  "fields_scanned": [
+   "product_description",
+   "usage_text",
+   "target_customer_text",
+   "benefits_json",
+   "usp_json",
+   "buyer_persona_snapshot_json",
+   "copy_strategy_summary_json"
+  ],
+  "snapshots_scanned": 414,
+  "field_present_counts": {
+   "product_description": 414,
+   "usage_text": 352,
+   "target_customer_text": 414,
+   "benefits_json": 414,
+   "usp_json": 414,
+   "buyer_persona_snapshot_json": 414,
+   "copy_strategy_summary_json": 414
+  },
+  "generic_markers_used": [
+   "suitable for everyone",
+   "generic consumer",
+   "used for its stated everyday purpose",
+   "this description is a neutral, identity-based summary",
+   "general consumers looking for",
+   "product for everyday use"
+  ],
+  "generic_count": 0,
+  "generic_offending_rows": [],
+  "placeholder_markers_used": [
+   "lorem ipsum",
+   "placeholder",
+   "coming soon",
+   "sample text",
+   "[insert",
+   "insert product",
+   "insert name",
+   "your product name",
+   "to be determined",
+   "to be confirmed",
+   "xxxx"
+  ],
+  "placeholder_count": 0,
+  "placeholder_offending_rows": [],
+  "borderline_substrings_scanned": {
+   "everyday use": "generic-template(bare)",
+   "insert ": "placeholder(bare verb)",
+   "tbd": "placeholder(bare)",
+   "todo": "placeholder(bare)"
+  },
+  "borderline_substring_hit_count": 16,
+  "borderline_substring_hits": [
+   {
+    "product_id": "20a935f9-338c-4db6-8ed3-bf11002adfd3",
+    "field": "copy_strategy_summary_json",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "es\": [\"Softness and comfort for baby\", \"Durability for everyday use\", \"Adorable patterns for style\"], \"market_"
+   },
+   {
+    "product_id": "244d4e59-dcad-4cee-a6a8-f233e577e5bb",
+    "field": "target_customer_text",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "n inner pants or leggings, possibly for modest wear or everyday use."
+   },
+   {
+    "product_id": "5427373d-19de-4a80-bd5f-11799c20aea7",
+    "field": "usage_text",
+    "substring": "insert ",
+    "kind": "placeholder(bare verb)",
+    "context": "Place food in a vacuum seal bag, insert the open end into the sealer, and activate the v"
+   },
+   {
+    "product_id": "6beff631-41c6-458b-803c-8f0b85d8bcc9",
+    "field": "usage_text",
+    "substring": "insert ",
+    "kind": "placeholder(bare verb)",
+    "context": "Place food in a vacuum bag, insert the open end into the sealer, and activate the v"
+   },
+   {
+    "product_id": "700334bd-0983-4e7a-8644-3c1d23eb9a18",
+    "field": "usage_text",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "Wear as casual pants for everyday use."
+   },
+   {
+    "product_id": "7a6d9004-7b86-49d6-9ad5-3cd8598179e6",
+    "field": "target_customer_text",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "uples seeking practical and attractive kitchenware for everyday use, gifting, or household organization."
+   },
+   {
+    "product_id": "8168a131-27d5-4689-97d0-de42d4e3df5e",
+    "field": "product_description",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "ss and easy to wear. It is a casual hijab suitable for everyday use."
+   },
+   {
+    "product_id": "8168a131-27d5-4689-97d0-de42d4e3df5e",
+    "field": "buyer_persona_snapshot_json",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "ing\", \"Soft and comfortable fabric\", \"Casual style for everyday use\"], \"purchase_context\": \"Online purchase of"
+   },
+   {
+    "product_id": "849fb822-17e6-49aa-a04d-2b3dfc12716e",
+    "field": "target_customer_text",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "ual, ready-to-wear outfits with a floral aesthetic for everyday use."
+   },
+   {
+    "product_id": "8f5b7dca-94b4-4ed1-acbf-7aee92a55ffc",
+    "field": "usage_text",
+    "substring": "insert ",
+    "kind": "placeholder(bare verb)",
+    "context": "Use as bedding: place fitted bedsheet over mattress, insert pillows into pillowcases, insert bolster into bo"
+   },
+   {
+    "product_id": "91e38d6f-1194-45b6-be60-c898695443b4",
+    "field": "benefits_json",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "ction for durability\", \"Practical kitchen tool set for everyday use\"]"
+   },
+   {
+    "product_id": "ab730155-b3c6-4c58-b108-c796564139a3",
+    "field": "usage_text",
+    "substring": "insert ",
+    "kind": "placeholder(bare verb)",
+    "context": "fasten shawls on the shoulder or to clip jeans. Simply insert the pin through the fabric and secure the clasp."
+   },
+   {
+    "product_id": "cd394fff-5e39-4e18-ac1e-f0050bd2c133",
+    "field": "usage_text",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "Wear as a regular t-shirt for casual or everyday use."
+   },
+   {
+    "product_id": "cfefad5e-e96a-498f-8c62-ac488e7b8160",
+    "field": "usage_text",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "Wear as regular underwear. The boxers are designed for everyday use."
+   },
+   {
+    "product_id": "e098f5b7-d155-45e2-82a8-2b717acba9a1",
+    "field": "buyer_persona_snapshot_json",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": "gar\", \"Halal assurance\", \"Convenient liquid format for everyday use\"], \"purchase_context\": \"Grocery shopping f"
+   },
+   {
+    "product_id": "f2490e97-a543-44b6-a4de-28b92440d679",
+    "field": "buyer_persona_snapshot_json",
+    "substring": "everyday use",
+    "kind": "generic-template(bare)",
+    "context": " \"purchase_context\": \"Buying a ready-to-wear hijab for everyday use\", \"tone\": \"Practical, modest, and straight"
+   }
+  ],
+  "borderline_note": "Over-broad substrings dropped from the gate, scanned anyway for full disclosure. Inspect `context`: all are product-specific (verb 'insert' in usage steps; 'everyday use' as a modifier), not template filler."
+ },
+ "field_provenance_distribution": [
+  {
+   "source_type": "AI_ENRICHMENT",
+   "evidence_kind": "INFERENCE",
+   "c": 1769
+  },
+  {
+   "source_type": "AI_ENRICHMENT",
+   "evidence_kind": "FACT",
+   "c": 1208
+  },
+  {
+   "source_type": "REVIEWER_DISPOSITION",
+   "evidence_kind": "FIELD_ABSENCE_DISPOSITION",
+   "c": 890
+  },
+  {
+   "source_type": "REVIEW_DRAFT",
+   "evidence_kind": "JSON",
+   "c": 828
+  }
+ ]
+}
