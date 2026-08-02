@@ -37,7 +37,9 @@ LEDGER = REPO / "outputs" / "mission-pi12" / "ledger.jsonl"
 # is NOT in the ledger, so the ledger budget is reserved at 529 to keep the true total <= 530.
 PROBE_CALLS = 1
 CALL_CAP = 530 - PROBE_CALLS  # 529 ledger calls + 1 probe = 530 total
-from agent.services.product_intelligence_claim_safety_service import evaluate_claim_safety  # noqa: E402
+# NOTE: the heavy `agent` import is LAZY (inside identity_claim) so the module loads in <1s and the
+# single-writer lock is acquired immediately at startup — a duplicate launch is bounced before the
+# ~30s agent import window that previously let two runs race past the lock.
 
 # generic/placeholder markers that must NEVER survive into an approved product (quality gate)
 GENERIC_MARKERS = (
@@ -152,6 +154,7 @@ def identity_claim(p):
     fp = hashlib.sha256(json.dumps({"id": p["id"], "category": cat, "subcategory": sub, "type": typ},
                                    sort_keys=True, default=str).encode()).hexdigest()[:16]
     claim = f"Product type: {' / '.join(parts)} (source: product identity; fingerprint {fp})."
+    from agent.services.product_intelligence_claim_safety_service import evaluate_claim_safety
     if evaluate_claim_safety({"allowed_claims_json": [claim]}).get("claim_gate") != "CLAIM_SAFE":
         return None, None
     return claim, fp
