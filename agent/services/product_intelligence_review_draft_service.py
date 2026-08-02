@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib as _hashlib
 import json
 import re
 from copy import deepcopy
@@ -1329,23 +1330,28 @@ async def approve_review_draft(
 # (exclude_unset preserves valid human evidence). Copy Intelligence enters ONLY
 # as APPROVED supporting persona/strategy; hook/CTA never become product facts.
 AI_FILL_TARGET_FIELDS = (
-    "product_description",   # Product Knowledge Text
-    "benefits_json",         # Benefits Text (factual benefits list)
-    "usp_json",              # Unique selling propositions (factual list)
-    "usage_text",            # Usage Text
-    "target_customer_text",  # Target Customer Text
-    "ingredients_text",      # Ingredients Text
-    "warnings_text",         # Warnings Text
+    "product_description",         # Product Knowledge Text
+    "benefits_json",              # Benefits Text (factual benefits list)
+    "usp_json",                   # Unique selling propositions (factual list)
+    "usage_text",                 # Usage Text
+    "target_customer_text",       # Target Customer Text (product-identity supported inference)
+    "buyer_persona_snapshot_json",  # Buyer Persona (product-specific object, supported inference)
+    "copy_strategy_summary_json",   # Copy Strategy (product-specific object, supported inference)
+    "ingredients_text",           # Ingredients Text
+    "warnings_text",              # Warnings Text
 )
 _AI_FILL_LIST_FIELDS = ("benefits_json", "usp_json")
-AI_FILL_PROMPT_VERSION = "product_intel_ai_fill_v1"
+_AI_FILL_OBJECT_FIELDS = ("buyer_persona_snapshot_json", "copy_strategy_summary_json")
+AI_FILL_PROMPT_VERSION = "product_intel_ai_fill_v2"
 
 _AI_FILL_SYSTEM = (
     "You enrich a PRODUCT TRUTH review draft for human approval. You propose "
     "DRAFT values for ONLY the requested fields, grounded strictly in the supplied "
-    "evidence. You NEVER approve anything and NEVER invent facts. When evidence is "
-    "insufficient, you MUST return status INSUFFICIENT_EVIDENCE rather than "
-    "fabricating.\n"
+    "evidence (product identity, taxonomy/product type, stated use, form factor, "
+    "grounded benefits). You NEVER approve anything and NEVER invent facts. When "
+    "evidence is insufficient, you MUST return status INSUFFICIENT_EVIDENCE rather "
+    "than fabricating. Every proposal MUST be PRODUCT-SPECIFIC — never a generic "
+    "template that could apply to any product.\n"
     "Field contracts (fill only requested fields):\n"
     "- product_description: factual product description / supported details.\n"
     "- benefits_json: factual, evidence-supported benefits as an array of short "
@@ -1353,9 +1359,21 @@ _AI_FILL_SYSTEM = (
     "- usp_json: factual unique selling propositions as an array of short strings "
     "(distinctive product attributes). NOT marketing hooks or CTA.\n"
     "- usage_text: how the product is used; INSUFFICIENT_EVIDENCE if unsupported.\n"
-    "- target_customer_text: a grounded audience/customer segment. The supplied "
-    "approved Copy Intelligence avatar MAY support this; do NOT copy a hook or "
-    "promotional sentence.\n"
+    "- target_customer_text: status INFERENCE. A PRODUCT-SPECIFIC audience inferred "
+    "ONLY from product identity, taxonomy/product type, stated use, form factor and "
+    "grounded benefits (e.g. the need the product serves). NEVER assume age, gender, "
+    "income, medical condition, profession, lifestyle, or efficacy expectation. No "
+    "hook/promotional sentence.\n"
+    "- buyer_persona_snapshot_json: status INFERENCE. A PRODUCT-SPECIFIC persona "
+    "OBJECT derived from the grounded target_customer + product type + use + "
+    "benefits, e.g. {\"audience\":..., \"needs\":[...], \"purchase_context\":..., "
+    "\"tone\":..., \"pronoun\":\"you\"}. FORBIDDEN: 'generic consumer', 'everyday "
+    "users', 'suitable for everyone', placeholder personas, or the same persona "
+    "across unrelated products. No demographic assumptions, no efficacy claims.\n"
+    "- copy_strategy_summary_json: status INFERENCE. A PRODUCT-SPECIFIC strategy "
+    "OBJECT derived from product type, use context and grounded benefit/USP, e.g. "
+    "{\"recommended_formula\":..., \"angles\":[...], \"market_problem_language\":"
+    "[...]}. Must differ across unrelated products. No hooks/CTA, no efficacy.\n"
     "- ingredients_text: actual ingredients / materials / components / features, or "
     "NOT_APPLICABLE for the product type. NEVER put CTA or marketing copy here.\n"
     "- warnings_text: real warnings / cautions / restrictions, or "
@@ -1363,9 +1381,10 @@ _AI_FILL_SYSTEM = (
     "Copy Intelligence (avatar/pain/emotion/dream/hook/cta/strategy) is SUPPORTING "
     "persona & angle evidence only — it is NOT product truth. Never turn hook/CTA "
     "text into a product fact. No medical/cure/treatment/guaranteed-result claims. "
-    "Return STRICT JSON only: {\"fields\": {\"<field>\": {\"value\": <string or "
-    "array for benefits_json>, \"status\": \"FACT|INFERENCE|NOT_APPLICABLE|"
-    "INSUFFICIENT_EVIDENCE\", \"confidence\": <0..1>, \"rationale\": <short>}}}."
+    "Return STRICT JSON only: {\"fields\": {\"<field>\": {\"value\": <string, array "
+    "for benefits_json/usp_json, or object for persona/strategy>, \"status\": "
+    "\"FACT|INFERENCE|NOT_APPLICABLE|INSUFFICIENT_EVIDENCE\", \"confidence\": "
+    "<0..1>, \"rationale\": <short>}}}."
 )
 
 
@@ -1375,10 +1394,16 @@ def _ai_fill_field_value(draft: ProductIntelligenceReviewDraft, field: str) -> A
 
 def _coerce_ai_fill_value(field: str, value: Any) -> Any:
     """Coerce a model-proposed value to the field's storage shape (list for
-    benefits_json/usp_json, trimmed string otherwise). Returns None when empty."""
+    benefits_json/usp_json, dict for persona/strategy objects, trimmed string
+    otherwise). Returns None when empty."""
     if field in _AI_FILL_LIST_FIELDS:
         items = _normalize_list(value)
         return items or None
+    if field in _AI_FILL_OBJECT_FIELDS:
+        if isinstance(value, dict):
+            cleaned = {k: v for k, v in value.items() if v not in (None, "", [], {})}
+            return cleaned or None
+        return None
     text = str(value or "").strip()
     return text or None
 
@@ -1529,6 +1554,17 @@ async def ai_fill_missing_review_draft(
         })
 
     if update_fields:
+        # Product/taxonomy identity fingerprint (evidence lineage for the supported inference).
+        _identity = {
+            "product_id": draft.product_id,
+            "category": (product or {}).get("category"),
+            "subcategory": (product or {}).get("subcategory"),
+            "type": (product or {}).get("type") or (product or {}).get("product_type"),
+        }
+        identity_fingerprint = _hashlib.sha256(
+            json.dumps(_identity, sort_keys=True, default=str).encode("utf-8", "replace")
+        ).hexdigest()[:16]
+        product_url = (product or {}).get("tiktok_product_url") or (product or {}).get("source_url")
         request = ProductIntelligenceReviewDraftUpdateRequest(**update_fields)
         await update_review_draft(draft_id, request)  # never yields APPROVED
         for item in proposed:
@@ -1537,6 +1573,7 @@ async def ai_fill_missing_review_draft(
                 product_id=draft.product_id,
                 field_name=item["field"],
                 source_type="AI_ENRICHMENT",
+                source_url=product_url,
                 evidence_kind=item["status"],
                 extraction_method=f"deepseek:{model_id or 'unknown'}",
                 verification_status="AI_PROPOSED",
@@ -1545,8 +1582,10 @@ async def ai_fill_missing_review_draft(
                 source_lane=_prov.LANE,
                 reviewer_note=(
                     f"{AI_FILL_PROMPT_VERSION} | provider={provider_id} model={model_id} "
-                    f"generated_at={generated_at} | previous={item['previous_value']!r} | "
-                    f"rationale={item['rationale']}"
+                    f"generated_at={generated_at} | identity_fingerprint={identity_fingerprint} "
+                    f"| evidence=product:{draft.product_id},taxonomy:{_identity['category']}/"
+                    f"{_identity['subcategory']}/{_identity['type']} | classification={item['status']} "
+                    f"| previous={item['previous_value']!r} | rationale={item['rationale']}"
                 ),
             )
 

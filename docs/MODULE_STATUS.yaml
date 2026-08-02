@@ -533,6 +533,10 @@ domains:
       # pre-PI-11 authoritative snapshots or return to MISSING; status-only, CAS-guarded, hard-gated.
       - scripts/pi11_rollback_runner.py
       - tests/unit/test_pi11_rollback.py
+      # PI-12 grounded closure runner: one DeepSeek ai-fill per product (product-specific
+      # SUPPORTED_INFERENCE) + deterministic identity claim + governed absences -> real validator
+      # + semantic gate -> approve. Never fabricates; ingredients/warnings always governed-absent.
+      - scripts/pi12_grounded_runner.py
       - agent/services/product_registration_service.py
       - agent/services/registration_commit_service.py
       - agent/services/registration_draft_storage_service.py
