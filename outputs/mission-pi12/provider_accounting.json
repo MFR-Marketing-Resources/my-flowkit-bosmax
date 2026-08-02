@@ -1,25 +1,23 @@
 {
- "authorized_cap": 530,
- "probe": 1,
- "ledger_receipts": 527,
- "total_actual_calls": 528,
- "reconciliation": {
-  "probe": 1,
+ "AUTHORITATIVE_total_actual_provider_calls": 530,
+ "cap": 530,
+ "headroom": 0,
+ "method": "RECONSTRUCTED \u2014 the runner had no DeepSeek server-side receipt during this run; this total is reconstructed from (a) ledger ai-fill invocations, (b) the 1 pre-mission probe, and (c) retries INFERRED from duplicate AI_ENRICHMENT provenance rows. It is an evidence-based estimate, NOT an exact provider receipt.",
+ "breakdown": {
+  "ledger_invocation_receipts": 527,
+  "pre_mission_probe": 1,
+  "reconstructed_retries_from_duplicate_provenance": 2,
   "first_product_calls": 522,
   "duplicate_reprocessing_calls": 5,
-  "transient_retry_calls": 0,
   "failed_provider_attempts": 0
  },
- "reconcile_ok": true,
- "headroom": 2,
- "duplicates": {
+ "reconcile_check": true,
+ "future_runs": "the hardened call() now writes one durable receipt per attempt to provider_receipts.jsonl and enforces a durable per-attempt cap, so future totals are receipt-exact rather than reconstructed.",
+ "duplicate_products": {
   "0133d0bf": "resume-skip(fixed)",
   "013b7710": "resume-skip(fixed)",
-  "8e6587c3": "concurrency-window(fixed via lazy-import lock)",
+  "8e6587c3": "concurrency-window(fixed)",
   "8ea29ec2": "concurrency-window(fixed)",
   "8f5b7dca": "concurrency-window(fixed)"
- },
- "CORRECTION_actual_deepseek_calls": 530,
- "CORRECTION_note": "ledger call_seq counts ai-fill INVOCATIONS; 2 retried at call() level (duplicate AI provenance) = +2 actual DeepSeek HTTP calls. Actual total = 527 receipts + 1 probe + 2 retries = 530 (<=530).",
- "retries_detected": 2
+ }
 }

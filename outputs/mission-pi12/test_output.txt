@@ -1,0 +1,3 @@
+$ python -m pytest tests/unit/test_pi12_ai_fill_hardening.py tests/unit/test_product_intelligence_review_draft_service.py tests/api/test_product_intelligence_api.py -v
+.............................................                            [100%]
+45 passed in 6.22s

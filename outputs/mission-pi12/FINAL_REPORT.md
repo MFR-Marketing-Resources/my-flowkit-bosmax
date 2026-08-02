@@ -22,12 +22,16 @@ because DeepSeek refused to fabricate benefits/USP or the claim gate held — ne
   benefits/USP on thin/promotional names) + **19 REVIEW** (CLAIM_BLOCKED / CLAIM_REVIEW_REQUIRED —
   never auto-acknowledged). Exact IDs in `final_reconciliation.json`.
 
-## Provider-call receipt (`provider_accounting.json`)
-- **Total actual calls: 528 / 530** (headroom 2). Reconciliation: probe(1) + first_product_calls(517)
-  + duplicate_reprocessing(5) + transient_retries(0) + failed_attempts(0) = 528. ✓
-- **5 duplicate calls**, all explained: 2 resume-skip (CORRECTED not marked done — fixed) + 3
-  concurrency-window (double-spawn raced the lock during the ~30s agent import — fixed by lazy import
-  so the O_EXCL single-writer lock acquires in <1s).
+## Provider-call receipt (`provider_accounting.json`) — CORRECTED
+- **Authoritative total actual calls: 530 / 530 (headroom 0)** — RECONSTRUCTED, not a provider
+  server-side receipt. = ledger ai-fill invocations (527) + pre-mission probe (1) + retries inferred
+  from duplicate `AI_ENRICHMENT` provenance (2). The earlier "528 / headroom 2" undercounted the 2
+  retries and was a self-contradiction in this report — corrected here and in `provider_accounting.json`.
+- **5 duplicate reprocessing calls** (distinct from the 2 retries): 2 resume-skip (CORRECTED not
+  marked done — fixed) + 3 concurrency-window (double-spawn raced the lock during the ~30s agent
+  import — fixed by lazy import so the O_EXCL single-writer lock acquires in <1s).
+- The hardened `call()` now writes one durable receipt per attempt and enforces a durable per-attempt
+  cap, so future runs are receipt-exact rather than reconstructed.
 
 ## Grounding contract (all enforced)
 - Target Customer / Buyer Persona / Copy Strategy produced in the SAME one DeepSeek call as

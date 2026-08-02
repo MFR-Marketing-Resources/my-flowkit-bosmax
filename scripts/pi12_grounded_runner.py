@@ -60,27 +60,38 @@ def _req(method, path, body=None, timeout=180):
 RECEIPTS = REPO / "outputs" / "mission-pi12" / "provider_receipts.jsonl"
 
 
-def _receipt(receipt_key, attempt, outcome):
-    """B-01: durable per-attempt provider receipt written BEFORE (reserve) and after (outcome) each
-    actual HTTP attempt, so retries and crash-after-call are counted from disk, not only from an
-    in-memory counter. Each line == one real provider attempt."""
+def _receipt_count():
+    if not RECEIPTS.exists():
+        return 0
+    return sum(1 for l in RECEIPTS.read_text(encoding="utf-8").splitlines() if l.strip())
+
+
+def _receipt(record):
+    """B-01: append EXACTLY ONE durable record per provider ATTEMPT (unique attempt_id + outcome).
+    This receipt is the runner->backend `ai-fill-missing` attempt, which calls DeepSeek once per
+    attempt — i.e. a 1:1 proxy for the provider call, NOT DeepSeek's own server-side receipt.
+    Retries append additional attempt records, so the receipt file is the authoritative actual-call
+    ledger (durable across crashes), reconciling retries that an in-memory invocation counter misses."""
     RECEIPTS.parent.mkdir(parents=True, exist_ok=True)
     with open(RECEIPTS, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps({"key": receipt_key, "attempt": attempt, "outcome": outcome}) + "\n")
+        fh.write(json.dumps(record) + "\n")
 
 
 def call(method, path, body=None, timeout=180, retries=3, receipt_key=None):
     """4xx = permanent (no retry). 429/5xx/network = bounded retry with backoff. When receipt_key is
-    set (provider lane), a durable receipt is written for EVERY attempt so the actual-call total
-    reconciles retries."""
+    set (provider lane), a durable HARD-CAP check runs BEFORE every attempt and one receipt is
+    written per attempt, so retries cannot push actual provider calls past CALL_CAP."""
     attempt = 0
     while True:
+        aid = None
         if receipt_key is not None:
-            _receipt(receipt_key, attempt, "RESERVED")
+            if _receipt_count() >= CALL_CAP:  # durable per-attempt cap (counts retries too)
+                return 599, {"error": "PROVIDER_CAP_REACHED", "cap": CALL_CAP}
+            aid = f"{receipt_key}:{attempt}"
         try:
             r = _req(method, path, body, timeout)
-            if receipt_key is not None:
-                _receipt(receipt_key, attempt, f"HTTP_{r[0]}")
+            if aid is not None:
+                _receipt({"attempt_id": aid, "key": receipt_key, "outcome": f"HTTP_{r[0]}"})
             return r
         except urllib.error.HTTPError as e:
             code = e.code
@@ -88,15 +99,15 @@ def call(method, path, body=None, timeout=180, retries=3, receipt_key=None):
                 detail = json.loads(e.read().decode() or "{}")
             except Exception:
                 detail = {}
-            if receipt_key is not None:
-                _receipt(receipt_key, attempt, f"HTTP_{code}")
+            if aid is not None:
+                _receipt({"attempt_id": aid, "key": receipt_key, "outcome": f"HTTP_{code}"})
             if code == 429 or 500 <= code < 600:
                 if attempt < retries:
                     time.sleep(1.5 * (attempt + 1)); attempt += 1; continue
             return code, detail  # 4xx permanent, or retries exhausted
         except (urllib.error.URLError, TimeoutError, ConnectionError):
-            if receipt_key is not None:
-                _receipt(receipt_key, attempt, "NETWORK")
+            if aid is not None:
+                _receipt({"attempt_id": aid, "key": receipt_key, "outcome": "NETWORK"})
             if attempt < retries:
                 time.sleep(1.5 * (attempt + 1)); attempt += 1; continue
             return 0, {"error": "NETWORK"}

@@ -543,6 +543,11 @@ domains:
       - outputs/mission-pi12/final_reconciliation.json
       - outputs/mission-pi12/provider_accounting.json
       - outputs/mission-pi12/FINAL_REPORT.md
+      - outputs/mission-pi12/audit_verify.py
+      - outputs/mission-pi12/audit_verify_output.json
+      - outputs/mission-pi12/runtime_api_proof.json
+      - outputs/mission-pi12/test_output.txt
+      - tests/unit/test_pi12_ai_fill_hardening.py
       # provider_receipts.jsonl is written per-attempt by the hardened runner on the NEXT run.
       - agent/services/product_registration_service.py
       - agent/services/registration_commit_service.py
