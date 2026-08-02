@@ -625,6 +625,20 @@
       "claim_risk_level": "MEDIUM"
     },
     {
+      "_note": "PI-10 owner-authorized L1 for medicated herbal topical creams (BAIFULING and class). Routing fields (product_type/silo/trigger/formula) are the sensitive_wellness cluster's dominant validated profile (n=9: household_or_beauty_mass_01/TRUST_01/PAS), which agrees with the Traditional Herbal Oil sibling on TRUST_01/PAS. claim_risk_level is HIGH (owner: external-use topical from a pharmaceutical manufacturer; cosmetic framing is insufficiently conservative). No ingredients/warnings/therapeutic claims are encoded here; those stay in the governed review-draft workflow.",
+      "match": {
+        "category": "Health & Personal Care",
+        "subcategory": "Traditional Herbal Preparation"
+      },
+      "product_type": "UNIVERSAL",
+      "silo": "household_or_beauty_mass_01",
+      "trigger_id": "TRUST_01",
+      "formula": "PAS",
+      "mode_recommendations": ["Images", "Frames", "Ingredients"],
+      "copywriting_angle": "Trust-led wellness and daily support",
+      "claim_risk_level": "HIGH"
+    },
+    {
       "_note": "Variant catalogue spelling of 'Automotive & Motorcycle'. Same authority values as that rule; added so stored products using this spelling resolve silo/trigger/formula instead of failing mapping closed.",
       "match": {
         "category": "Automotive"

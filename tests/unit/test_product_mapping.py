@@ -196,3 +196,30 @@ async def test_mapping_audit_uses_stored_snapshot_for_before_state():
     assert audit["audit"]["type"]["after"] == "Instant Sarung"
     assert audit["audit"]["mapping_status"]["before"] is None
     assert audit["audit"]["mapping_status"]["after"] == "READY"
+
+def test_herbal_topical_cream_profile_resolves_high_claim_risk():
+    """PI-10: the owner-authorized Traditional Herbal Preparation profile must resolve
+    silo/trigger/formula from existing vocabulary and carry HIGH claim risk, so a
+    medicated herbal topical cream stops failing mapping closed on those fields."""
+    result = resolve_product_mapping(
+        product={
+            "id": "unit-herbal-cream",
+            "raw_product_title": "6pcs Combo Herbal Cream BTFL Organic Yellow Cream",
+            "category": "Health & Personal Care",
+            "subcategory": "Traditional Herbal Preparation",
+            "type": "Herbal Topical Cream",
+        },
+        source_hint="MANUAL",
+    )
+    assert result["category"] == "Health & Personal Care"
+    assert result["subcategory"] == "Traditional Herbal Preparation"
+    assert result["type"] == "Herbal Topical Cream"
+    # routing fields come from the sensitive_wellness cluster's dominant validated profile
+    assert result["silo"] == "household_or_beauty_mass_01"
+    assert result["trigger_id"] == "TRUST_01"
+    assert result["formula"] == "PAS"
+    # owner-supplied conservative claim risk
+    assert result["claim_risk_level"] == "HIGH"
+    # none of the blocking mapping fields remain empty
+    for field in ("silo", "trigger_id", "formula", "claim_risk_level"):
+        assert str(result.get(field) or "").strip(), field
