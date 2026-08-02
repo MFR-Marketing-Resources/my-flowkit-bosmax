@@ -1139,6 +1139,7 @@ def test_legacy_entrypoint_delegates_and_uncaps_blocks():
         product=PRODUCT,
         approved_package={"scene_context": "a bright vanity table"},
         mode="F2V",
+        character_presence="FACELESS",
         target_language="BM_MS",
         generation_mode="SINGLE",
         duration_seconds=8,
@@ -1151,7 +1152,7 @@ def test_legacy_entrypoint_delegates_and_uncaps_blocks():
     assert "one visible creator" not in block["engine_prompt_text"].lower()
     # multi-block beyond 2 via the workbook TOTAL authority (the 2-block cap is dead)
     multi = compile_ugc_video_prompt(
-        product=PRODUCT, approved_package={}, mode="F2V", target_language="BM_MS",
+        product=PRODUCT, approved_package={}, mode="F2V", character_presence="FACELESS", target_language="BM_MS",
         generation_mode="EXTEND", duration_seconds=8, copy_intelligence=COPY,
         engine_duration_target="GOOGLE_FLOW", requested_total_duration_seconds=32,
     )
