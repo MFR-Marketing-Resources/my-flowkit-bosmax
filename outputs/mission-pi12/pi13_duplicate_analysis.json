@@ -1,0 +1,984 @@
+{
+ "disposition_distribution": {
+  "COPY_FROM_GROUNDED_TWIN": 49,
+  "GENUINE_UNIQUE_NEEDS_RESEARCH": 39,
+  "CANONICAL_MERGE_BOTH_DEBT": 28
+ },
+ "collision_detail": [
+  {
+   "product_id": "8d0278b8-b867-4f07-bb12-c49d1817e97c",
+   "name": "SEDEKAH SAMPLE MERYEM LİPOBOND ( 5 SACHE",
+   "shared_url": "https://shop.tiktok.com/view/product/1734446008919951125?region=MY&local=en",
+   "partners": [
+    {
+     "id": "a96edc07-71fa-4f7f-8edc-cb779b90ae84",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "31dc461a-8584-4973-b7d4-02724a9a4150",
+   "name": "Original Krim cina kuning Huatuo Baifuli",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1731836030776673389",
+   "partners": [
+    {
+     "id": "2556b774-db22-4ee9-9325-e496ed8d21a4",
+     "class": "FC",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "db2dbbeb-79dc-4b78-b1ce-2257257cb7f8",
+   "name": "MERYCODE Lip Serum Bibir Warna Termal Ad",
+   "shared_url": "https://shop.tiktok.com/view/product/1731911757509002931?region=MY&local=en",
+   "partners": [
+    {
+     "id": "9ef257e3-00b1-4f50-b7d9-419b8b2403a7",
+     "class": "MISSING",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "81e40232-f0f1-4a51-8879-30636619bad9",
+   "name": "[LYSMILEGO] Jalur Pemutih Gigi Jenama Ra",
+   "shared_url": "https://shop.tiktok.com/view/product/1731684607938889505?region=MY&local=en",
+   "partners": [
+    {
+     "id": "666ca472-5045-4781-a2a4-c39292a3a617",
+     "class": "FC",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "5985b3b4-a785-4347-a3ec-17e4f99ba928",
+   "name": "[Keto] BOSSBROTHERS Halal Sambal Belacan",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729581311932335955",
+   "partners": [
+    {
+     "id": "0ac2b28f-84d2-461e-9df7-9d5b27745d26",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "57104da9-7053-46ba-a001-242e8ed9db7a",
+   "name": "Kg/1000g 1PCS Sleeping Pillow Viral Bant",
+   "shared_url": "https://shop.tiktok.com/view/product/1729424817337895571?region=MY&local=en",
+   "partners": [
+    {
+     "id": "82dcf45b-e7db-4f5f-8984-f4a43dbbe31f",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "5ceca901-c5f1-4f0b-bd75-4641c7ef123c",
+   "name": "Ringgit Home Shop 3PCS/Set Set Pengisar ",
+   "shared_url": "https://shop.tiktok.com/view/product/1729621384875901978?region=MY&local=en",
+   "partners": [
+    {
+     "id": "91e38d6f-1194-45b6-be60-c898695443b4",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "8023ab1b-c6d8-4202-b4bb-e7d3baf6c057",
+   "name": "Crunchy Garlic Chilli Oil [REGULAR] Bott",
+   "shared_url": "https://shop.tiktok.com/view/product/1729615243157014889?region=MY&local=en",
+   "partners": [
+    {
+     "id": "e42c937b-4236-40e2-b7c4-990d7e9e8b18",
+     "class": "FC",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "231016d5-408f-4c67-b5d7-c5819557fea6",
+   "name": "Dr. Bites Cooked Chicken Breast For Cat ",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729639702298265499",
+   "partners": [
+    {
+     "id": "1cbd5dc2-88f7-4540-acc2-7a8fddbbb9f7",
+     "class": "LEGACY",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "6c70428f-3dbd-43e8-ba70-3023e87aee64",
+   "name": "[KKM] FEREENA GLUTA SOAP 10g",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1732820937232844740",
+   "partners": [
+    {
+     "id": "c70c3ab7-6073-499e-bb23-5d6ce331ea3f",
+     "class": "MISSING",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "fc2c5a41-ebf5-41bd-8884-4c233801d641",
+   "name": "wow spageti dan ramen yes instans ready ",
+   "shared_url": "https://shop.tiktok.com/view/product/1731113020977743452?region=MY&local=en",
+   "partners": [
+    {
+     "id": "4ec51256-629e-4d85-b23c-74a213f8842e",
+     "class": "FC",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "230c26e9-cac2-4759-8805-95b8b1f89c34",
+   "name": "[Amelia's Favourite] [NEW] Pentavite Mul",
+   "shared_url": "https://shop.tiktok.com/view/product/1729673570298070234?region=MY&local=en",
+   "partners": [
+    {
+     "id": "2f684849-0980-459a-9c5d-25e977994689",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "86c1f88d-dbf8-46f5-bd11-a56f37a6d07c",
+   "name": "PERFUME PARADISE PEN FOR WOMEN - PACKAGI",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729535475451004628",
+   "partners": [
+    {
+     "id": "1ae4d866-d534-4ae0-b954-17ae8ad502ef",
+     "class": "LEGACY",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "349868fc-e1f6-4c79-a5a8-8e4a13fb8469",
+   "name": "OHSOLAH AIR BOMB Pewangi Kereta Meletop ",
+   "shared_url": "https://shop.tiktok.com/view/product/1731501201703535823?region=MY&local=en",
+   "partners": [
+    {
+     "id": "8e6587c3-f736-42d1-9005-64c89ad622cf",
+     "class": "MISSING",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "37a9e9d5-9170-45fc-ae38-4d03734f6895",
+   "name": "Pleated V Neck Long Sleeve Shirt Blouse ",
+   "shared_url": "https://shop.tiktok.com/view/product/1732861437901964299?region=MY&local=en",
+   "partners": [
+    {
+     "id": "4bd6342c-aac7-4cc5-a27e-a11d70da42c0",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "b573d840-4444-4c8e-97a1-96311b6e52ac",
+   "name": "[Kombo] Kokojar Balang Saiz 300ml 5 Jeni",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729491013916788553",
+   "partners": [
+    {
+     "id": "3b56ffdb-e703-4af2-bfc9-3197bc7b14c9",
+     "class": "LEGACY",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "2035994f-bac3-4ad8-ad22-7e3d94ddea92",
+   "name": "[SOCKS HOUSE] RAMADAN PROMOSI 1 Pasang H",
+   "shared_url": "https://shop.tiktok.com/view/product/1729650408469530302?region=MY&local=en",
+   "partners": [
+    {
+     "id": "bd9a10c2-2d04-4f35-a529-8278669416ef",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "66bc6983-eba9-4466-8c46-3a6708cfae42",
+   "name": "sedekah item MERYEM latte booster sample",
+   "shared_url": "https://shop.tiktok.com/view/product/1729510018116454165?region=MY&local=en",
+   "partners": [
+    {
+     "id": "5b1927d1-447a-41f4-8d25-c1efdbe564d9",
+     "class": "MISSING",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "6fe5946d-1740-479e-a383-bb2ac319ee22",
+   "name": "BUY 3 TAKE 2【Tawaran lstimewa】 BAIYAOLAN",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1732782758972523810",
+   "partners": [
+    {
+     "id": "fdad0f75-9069-4174-8acd-33a8ee1d3232",
+     "class": "MISSING",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "95bc6d80-bd01-4b9d-af55-6d921f054312",
+   "name": "MINYAK Wangi Viral - Perfume Viyouna - 1",
+   "shared_url": "https://shop.tiktok.com/view/product/1730477462190131121?region=MY&local=en",
+   "partners": [
+    {
+     "id": "bf865cef-b45f-4bdc-abfb-b0745a075d8f",
+     "class": "FC",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "eee2d2b9-d07b-42cb-b6a8-8cd5e126ad0d",
+   "name": "[SINGLE ITEM ONLY] KUN AirySoft Plain Co",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1732086980306831036",
+   "partners": [
+    {
+     "id": "a6c94806-15dc-460c-b56c-ea674ce662e7",
+     "class": "LEGACY",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "66087bc7-6d39-435e-9718-69cb4f5b04f5",
+   "name": "DOUBLE C Sarung Bantal Corak New Modern ",
+   "shared_url": "https://shop.tiktok.com/view/product/1729615934554802606?region=MY&local=en",
+   "partners": [
+    {
+     "id": "cfce055e-31ca-48e6-b5f5-9148cf4c68eb",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "0eed93fb-504e-44f4-bfe6-fcd620ae2d81",
+   "name": "MAVERIX FOR SKIN | LIMITED PREMIUM Set (",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1731055701425358442",
+   "partners": [
+    {
+     "id": "994da37b-298f-453e-a253-f436b50d0006",
+     "class": "LEGACY",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "e6cb7e6d-16ab-4926-bef7-a99ff419d1b4",
+   "name": "￼Silvy Original PANJAG & PENDEK Mesir St",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1730356375538992557",
+   "partners": [
+    {
+     "id": "4f856dea-b0f2-41fc-8b97-2c336ebb9c87",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "ae47b55b-58d4-441e-97d3-0d6c785bb530",
+   "name": "Original Roach&Ant Umpan Semut, Lipas & ",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729632335743846564",
+   "partners": [
+    {
+     "id": "7632caf0-ac2c-4814-afdd-afe697438652",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "b561c02d-9ba1-4e32-95c8-c7d55f790ca5",
+   "name": "BELLA PARK PERFUME PINK EDITION",
+   "shared_url": "https://shop.tiktok.com/view/product/1729644732671100397?region=MY&local=en",
+   "partners": [
+    {
+     "id": "a2df36de-02e1-4d19-8138-80ad6e34d1df",
+     "class": "FC",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "b6215416-cc29-4af8-8933-afcf7db1fc14",
+   "name": "[NEW 2026] ANAS Powder Blusher DUO #06",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1734247971700901208",
+   "partners": [
+    {
+     "id": "0f6bdfdd-474d-4a30-aa92-400aa0f1ed51",
+     "class": "LEGACY",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "fdad0f75-9069-4174-8acd-33a8ee1d3232",
+   "name": "BUY 3 TAKE 2【Tawaran lstimewa】 BAIYAOLAN",
+   "shared_url": "https://shop.tiktok.com/view/product/1732782758972523810?region=MY&local=en",
+   "partners": [
+    {
+     "id": "6fe5946d-1740-479e-a383-bb2ac319ee22",
+     "class": "MISSING",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "1ae4d866-d534-4ae0-b954-17ae8ad502ef",
+   "name": "PERFUME PARADISE PEN FOR WOMEN - PACKAGI",
+   "shared_url": "https://shop.tiktok.com/view/product/1729535475451004628?region=MY&local=en",
+   "partners": [
+    {
+     "id": "86c1f88d-dbf8-46f5-bd11-a56f37a6d07c",
+     "class": "MISSING",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "7379cbac-9651-4c1c-b097-a4138fe8a3b4",
+   "name": "M-5XL Men Short Pants Sport Shorts Beach",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1730745568753911224",
+   "partners": [
+    {
+     "id": "38f8ba4d-14fe-4a20-94b1-2e54e4611d14",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "9ef257e3-00b1-4f50-b7d9-419b8b2403a7",
+   "name": "MERYCODE Lip Serum Bibir Warna Termal Ad",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1731911757509002931",
+   "partners": [
+    {
+     "id": "db2dbbeb-79dc-4b78-b1ce-2257257cb7f8",
+     "class": "MISSING",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "118bd94c-fd1c-4c4c-b974-dbd6e60b8e0e",
+   "name": "Sambal Kruk-Kruk Ateen(100GRAM KECIL)",
+   "shared_url": "https://shop.tiktok.com/view/product/1729642654721541429?region=MY&local=en",
+   "partners": [
+    {
+     "id": "d9385e4e-7a61-4308-b63e-d165879a9a8a",
+     "class": "MISSING",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "cd70b493-990c-4a6f-8bd6-776765d8e04e",
+   "name": "BUY 1 TAKE 1 | Topeng Rawatan Keratin, 3",
+   "shared_url": "https://shop.tiktok.com/view/product/1732757236215874606?region=MY&local=en",
+   "partners": [
+    {
+     "id": "0df5249a-c670-4f44-8ec5-c83f7cb77478",
+     "class": "FC",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "4fbe3e06-9383-4f19-837b-9063a1cb762b",
+   "name": "(MINIMUM ODER 15 PCS SEKALI ODER) POPCOR",
+   "shared_url": "https://shop.tiktok.com/view/product/1731890409497527936?region=MY&local=en",
+   "partners": [
+    {
+     "id": "cde9d9cc-7410-4bae-81d3-250d5d535e26",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "3316af51-e998-486d-acdb-b14cf6dc5ecc",
+   "name": "SUISCO | Syampu + Keratin Rawatan Rambut",
+   "shared_url": "https://shop.tiktok.com/view/product/1730351420535899400?region=MY&local=en",
+   "partners": [
+    {
+     "id": "69f37eee-aff0-4084-b8b6-3f64ba87271b",
+     "class": "FC",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "4372fd7e-c8f7-4325-b3d1-8e11d9bf97c8",
+   "name": "SUPAMO Cotton Comforter Blanket Quilt Se",
+   "shared_url": "https://shop.tiktok.com/view/product/1729601455020672962?region=MY&local=en",
+   "partners": [
+    {
+     "id": "eaed2125-9f0a-4b00-879c-893fad2e3fa8",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "9951446d-fc70-4380-b194-7a11d18be130",
+   "name": "BIOAQUA Centella Collagen Hydrating Mois",
+   "shared_url": "https://shop.tiktok.com/view/product/1729484971361928411?region=MY&local=en",
+   "partners": [
+    {
+     "id": "7326285d-c203-46b8-84ac-09124280123a",
+     "class": "FC",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "e02ecaf9-5d51-4356-8e77-7353a52d1da5",
+   "name": "Tanamera Brown Formulation Body Soap 125",
+   "shared_url": "https://shop.tiktok.com/view/product/1729441959337626513?region=MY&local=en",
+   "partners": [
+    {
+     "id": "5d38ca10-81b5-409c-a9a9-800e519cf2da",
+     "class": "FC",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "9311100f-6271-4965-8b26-f6e04e3843a1",
+   "name": "Numinara Aurelia Body Soap (125g) For Sk",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1730879670729540624",
+   "partners": [
+    {
+     "id": "e3ffa155-669e-4c0d-bceb-0ad7c565885e",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "07b2fcdf-a9ab-4d5d-a10d-15a9b291af62",
+   "name": "LIMITED STOCK BY HANNAVELLA",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1735105410377549369",
+   "partners": [
+    {
+     "id": "e10804b5-5d06-4b2a-9b66-2d32ca35841a",
+     "class": "FC",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "5b1927d1-447a-41f4-8d25-c1efdbe564d9",
+   "name": "sedekah item MERYEM latte booster sample",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729510018116454165",
+   "partners": [
+    {
+     "id": "66bc6983-eba9-4466-8c46-3a6708cfae42",
+     "class": "LEGACY",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "1cbd5dc2-88f7-4540-acc2-7a8fddbbb9f7",
+   "name": "Dr. Bites Cooked Chicken Breast For Cat ",
+   "shared_url": "https://shop.tiktok.com/view/product/1729639702298265499?region=MY&local=en",
+   "partners": [
+    {
+     "id": "231016d5-408f-4c67-b5d7-c5819557fea6",
+     "class": "MISSING",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "f8102fa7-2ab1-4d91-881c-a6823ea8cbe2",
+   "name": "【 FREE SHIPPING 】199SPEED X688 Portable ",
+   "shared_url": "https://shop.tiktok.com/view/product/1732346302006789175?region=MY&local=en",
+   "partners": [
+    {
+     "id": "84c246ff-17d4-4119-86ee-d7e2f0e9be94",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "74caa194-f831-40f9-a79e-8f2757d83645",
+   "name": "(QR)Livetined 4 botol pek 30ml serum ram",
+   "shared_url": "https://shop.tiktok.com/view/product/1731382391849715451?region=MY&local=en",
+   "partners": [
+    {
+     "id": "b92e6678-04e0-4dbe-a2de-5432a0d43dc6",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "2f83e17d-1db1-451b-b751-e34bb11e4cdb",
+   "name": "(HARGA BORONG) ALGITUS UNISEX SCUBA TRAI",
+   "shared_url": "https://shop.tiktok.com/view/product/1731523389833446470?region=MY&local=en",
+   "partners": [
+    {
+     "id": "f4227b61-0182-4235-ab5d-dde5d58f330f",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "aaea7d2f-a66e-483b-92b7-2704a84f810e",
+   "name": "Set Cetak Kasual Untuk Wanita Dengan Cor",
+   "shared_url": "https://shop.tiktok.com/view/product/1733618279728055579?region=MY&local=en",
+   "partners": [
+    {
+     "id": "849fb822-17e6-49aa-a04d-2b3dfc12716e",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "fcc092fa-7f90-42e9-b7d9-267a0acb5db8",
+   "name": "3 / 5 helai Set seluar dalam fesyen untu",
+   "shared_url": "https://shop.tiktok.com/view/product/1729495889701733545?region=MY&local=en",
+   "partners": [
+    {
+     "id": "cfefad5e-e96a-498f-8c62-ac488e7b8160",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "7e963f71-a80c-447d-81cb-99bc51ba5379",
+   "name": "ADVO Long Pants Men Polyester Seluar Pan",
+   "shared_url": "https://shop.tiktok.com/view/product/1730381343351735691?region=MY&local=en",
+   "partners": [
+    {
+     "id": "499c861a-df9c-41ec-bddc-3e453b56d762",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "0ab23ee4-6947-4966-96b1-906a3cdc98e6",
+   "name": "Yaya empire vanilla crush | ara johari |",
+   "shared_url": "https://shop.tiktok.com/view/product/1729633305342216391?region=MY&local=en",
+   "partners": [
+    {
+     "id": "6836091d-2269-4ade-9f8f-22e0487306b2",
+     "class": "FC",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "012e9fd6-dea4-4ebc-a4ca-27669b2eaccb",
+   "name": "SkyPlant Fragrant Multi-Effect Nourish E",
+   "shared_url": "https://shop.tiktok.com/view/product/1734066442766091520?region=MY&local=en",
+   "partners": [
+    {
+     "id": "ed23c97d-4db5-4712-8b8a-135ed8083542",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "595c29e3-58d1-4f84-8ef4-8e3d8d7024b1",
+   "name": "PANDA QUEENIE TUDUNG BAWAL PRINTED TUDUN",
+   "shared_url": "https://shop.tiktok.com/view/product/1731963595031414611?region=MY&local=en",
+   "partners": [
+    {
+     "id": "ad39720e-2033-4184-9107-f820022a790f",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "a6c94806-15dc-460c-b56c-ea674ce662e7",
+   "name": "[SINGLE ITEM ONLY] KUN AirySoft Plain Co",
+   "shared_url": "https://shop.tiktok.com/view/product/1732086980306831036?region=MY&local=en",
+   "partners": [
+    {
+     "id": "eee2d2b9-d07b-42cb-b6a8-8cd5e126ad0d",
+     "class": "MISSING",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "6a7806a1-e8ce-4159-8042-1b7d68c2f35b",
+   "name": "Sukos Lampin Tarik Bayi Saiz S-XXXL 50 K",
+   "shared_url": "https://shop.tiktok.com/view/product/1732914947568731425?region=MY&local=en",
+   "partners": [
+    {
+     "id": "91cec488-8c69-4df0-af5c-371db70ec384",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "d9385e4e-7a61-4308-b63e-d165879a9a8a",
+   "name": "Sambal Kruk-Kruk Ateen(100GRAM KECIL)",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729642654721541429",
+   "partners": [
+    {
+     "id": "118bd94c-fd1c-4c4c-b974-dbd6e60b8e0e",
+     "class": "LEGACY",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "b527d024-7d61-4b6f-8828-6367f25469ef",
+   "name": "PANDAEYES CACABO CORDUROY PANTS (CLO-CNX",
+   "shared_url": "https://shop.tiktok.com/view/product/1732075644174566971?region=MY&local=en",
+   "partners": [
+    {
+     "id": "ecd367eb-0a0d-433d-a774-50dfdf088f69",
+     "class": "MISSING",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "5039d290-5932-41fd-bc25-e5ace3c8e744",
+   "name": "Bento Wet Cat Food Pouch 50g - 5 Varieti",
+   "shared_url": "https://shop.tiktok.com/view/product/1732015588716086569?region=MY&local=en",
+   "partners": [
+    {
+     "id": "15dae875-292c-4d5f-833e-8cc9c8e01449",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "a0be58cd-9bdb-4f1f-a7dc-91b845e2e591",
+   "name": "1 Cup Caramel Popcorn (10oz) - Caramel P",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1729507644013840344",
+   "partners": [
+    {
+     "id": "42bb1598-29af-4cf1-8049-43adcd90b7b8",
+     "class": "LEGACY",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "6a3e310d-6e62-4ca0-a0bf-fd0495cdbc8e",
+   "name": "NEW | BeFocusPro+ Bantu Tidur Lena, Lebi",
+   "shared_url": "https://shop.tiktok.com/view/product/1730867165493494839?region=MY&local=en",
+   "partners": [
+    {
+     "id": "cc69a4ae-4ab5-4c7c-93e1-87eb796eeed1",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "dcf1e83d-f85d-485e-b6af-367e474d09fe",
+   "name": "Baju Tidur Set Wanita Women Printed Pyja",
+   "shared_url": "https://shop.tiktok.com/view/product/1730737984383124887?region=MY&local=en",
+   "partners": [
+    {
+     "id": "ae1a57ff-613f-482d-9e4b-8acf8ec301b8",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "8e6587c3-f736-42d1-9005-64c89ad622cf",
+   "name": "OHSOLAH AIR BOMB Pewangi Kereta Meletop ",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1731501201703535823",
+   "partners": [
+    {
+     "id": "349868fc-e1f6-4c79-a5a8-8e4a13fb8469",
+     "class": "LEGACY",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "59a0a7cc-3374-4025-951a-9832fe9359e4",
+   "name": "[JUALAN HANGAT] TIME PHORIA - Altera Blu",
+   "shared_url": "https://shop.tiktok.com/view/product/1733431094640936234?region=MY&local=en",
+   "partners": [
+    {
+     "id": "c3449c3f-6ff2-4568-bd1e-e3ee030afea5",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "1042b094-0624-4b62-ba4d-598d6f8ff825",
+   "name": "SABUN DOBI LIQUID LAUNDRY IMBA DETERGENT",
+   "shared_url": "https://shop.tiktok.com/view/product/1732194677040710759?region=MY&local=en",
+   "partners": [
+    {
+     "id": "82f42b81-d373-424b-88d7-fddffeb0c807",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "418db1a6-c174-4ed2-9250-f879f197875e",
+   "name": "JAZNOR TSHIRT BLOUSE FLORA MATERIAL RIBB",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1735087224635819539",
+   "partners": [
+    {
+     "id": "8d3214de-145a-489a-8da2-d0438b9d1406",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "31918158-d6e9-47e1-9378-f5ece33f4fad",
+   "name": "CEMILAN BASRENG Snacks Food",
+   "shared_url": "https://shop.tiktok.com/view/product/1729543527305872627?region=MY&local=en",
+   "partners": [
+    {
+     "id": "c4216575-c02c-4719-9d48-88dc09c8917f",
+     "class": "FC",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "e1803e3e-4665-441b-be6c-8415cb8c6bed",
+   "name": "S JODOHLEBARAN SILLA - Tudung BawaLEXC",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1735130347793909044",
+   "partners": [
+    {
+     "id": "b71be8c5-614a-4c53-8679-01d658b6ea71",
+     "class": "FC",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "80463ec2-7b20-4da2-bc45-05667596ee56",
+   "name": "Purfresh 2026 Baharu Car Air Freshener 1",
+   "shared_url": "https://shop.tiktok.com/view/product/1730886578023335516?region=MY&local=en",
+   "partners": [
+    {
+     "id": "6680d62b-3a1e-459a-ac40-a056929f22a7",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "6f62fe2d-910b-41b2-b86f-4211921d8b7d",
+   "name": "READY STOCK Cotton Women Inner Pants/ Mu",
+   "shared_url": "https://shop.tiktok.com/view/product/1729739675925185547?region=MY&local=en",
+   "partners": [
+    {
+     "id": "244d4e59-dcad-4cee-a6a8-f233e577e5bb",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "42bb1598-29af-4cf1-8049-43adcd90b7b8",
+   "name": "1 Cup Caramel Popcorn (10oz) - Caramel P",
+   "shared_url": "https://shop.tiktok.com/view/product/1729507644013840344?region=MY&local=en",
+   "partners": [
+    {
+     "id": "a0be58cd-9bdb-4f1f-a7dc-91b845e2e591",
+     "class": "MISSING",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "994da37b-298f-453e-a253-f436b50d0006",
+   "name": "MAVERIX FOR SKIN | LIMITED PREMIUM Set (",
+   "shared_url": "https://shop.tiktok.com/view/product/1731055701425358442?region=MY&local=en",
+   "partners": [
+    {
+     "id": "0eed93fb-504e-44f4-bfe6-fcd620ae2d81",
+     "class": "MISSING",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "b978fd30-a6c3-47fd-8f16-a4eb263c8f3c",
+   "name": "CandyCrum Choco Cup 10oz (Est 90g) - Cho",
+   "shared_url": "https://shop.tiktok.com/view/product/1730887849711339480?region=MY&local=en",
+   "partners": [
+    {
+     "id": "0b2d2726-42fc-436a-b493-ceca1295f8d9",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "cc94a006-8a77-4a9b-b639-32133fa78095",
+   "name": "SAMBAL GARING(bilis+bawang goreng) ((HUM",
+   "shared_url": "https://shop.tiktok.com/view/product/1731760198429934884?region=MY&local=en",
+   "partners": [
+    {
+     "id": "1b376d1a-911d-40d4-b8b7-2c71eae951fb",
+     "class": "FC",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "b7364ab6-23ce-424d-aa2b-d247eeeeb931",
+   "name": "[Plus Size BC Cup] Dreamtale Baju Dalam ",
+   "shared_url": "https://shop.tiktok.com/view/product/1729577818756515325?region=MY&local=en",
+   "partners": [
+    {
+     "id": "5dd5ec97-1209-4d1f-8e46-cd63b2c0c186",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "0f6bdfdd-474d-4a30-aa92-400aa0f1ed51",
+   "name": "[NEW 2026] ANAS Powder Blusher DUO #06",
+   "shared_url": "https://shop.tiktok.com/view/product/1734247971700901208?region=MY&local=en",
+   "partners": [
+    {
+     "id": "b6215416-cc29-4af8-8933-afcf7db1fc14",
+     "class": "MISSING",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "3b56ffdb-e703-4af2-bfc9-3197bc7b14c9",
+   "name": "[Kombo] Kokojar Balang Saiz 300ml 5 Jeni",
+   "shared_url": "https://shop.tiktok.com/view/product/1729491013916788553?region=MY&local=en",
+   "partners": [
+    {
+     "id": "b573d840-4444-4c8e-97a1-96311b6e52ac",
+     "class": "MISSING",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "c70c3ab7-6073-499e-bb23-5d6ce331ea3f",
+   "name": "[KKM] FEREENA GLUTA SOAP 10g",
+   "shared_url": "https://shop.tiktok.com/view/product/1732820937232844740?region=MY&local=en",
+   "partners": [
+    {
+     "id": "6c70428f-3dbd-43e8-ba70-3023e87aee64",
+     "class": "MISSING",
+     "in_debt": true
+    }
+   ]
+  },
+  {
+   "product_id": "b56d75b7-0b7c-4534-9e8c-c3740fffe54e",
+   "name": "Wide leg plaid long pants women casual p",
+   "shared_url": "https://shop.tiktok.com/view/product/1729430205593258592?region=MY&local=en",
+   "partners": [
+    {
+     "id": "2f8a4981-415e-4cfc-a5ca-fed0774b8ab9",
+     "class": "GA",
+     "in_debt": false
+    }
+   ]
+  },
+  {
+   "product_id": "ecd367eb-0a0d-433d-a774-50dfdf088f69",
+   "name": "PANDAEYES CACABO CORDUROY PANTS (CLO-CNX",
+   "shared_url": "https://www.fastmoss.com/zh/e-commerce/detail/1732075644174566971",
+   "partners": [
+    {
+     "id": "b527d024-7d61-4b6f-8828-6367f25469ef",
+     "class": "LEGACY",
+     "in_debt": true
+    }
+   ]
+  }
+ ],
+ "copy_from_grounded_twin_ids": [
+  "8d0278b8-b867-4f07-bb12-c49d1817e97c",
+  "31dc461a-8584-4973-b7d4-02724a9a4150",
+  "81e40232-f0f1-4a51-8879-30636619bad9",
+  "5985b3b4-a785-4347-a3ec-17e4f99ba928",
+  "57104da9-7053-46ba-a001-242e8ed9db7a",
+  "5ceca901-c5f1-4f0b-bd75-4641c7ef123c",
+  "8023ab1b-c6d8-4202-b4bb-e7d3baf6c057",
+  "fc2c5a41-ebf5-41bd-8884-4c233801d641",
+  "230c26e9-cac2-4759-8805-95b8b1f89c34",
+  "37a9e9d5-9170-45fc-ae38-4d03734f6895",
+  "2035994f-bac3-4ad8-ad22-7e3d94ddea92",
+  "95bc6d80-bd01-4b9d-af55-6d921f054312",
+  "66087bc7-6d39-435e-9718-69cb4f5b04f5",
+  "e6cb7e6d-16ab-4926-bef7-a99ff419d1b4",
+  "ae47b55b-58d4-441e-97d3-0d6c785bb530",
+  "b561c02d-9ba1-4e32-95c8-c7d55f790ca5",
+  "7379cbac-9651-4c1c-b097-a4138fe8a3b4",
+  "cd70b493-990c-4a6f-8bd6-776765d8e04e",
+  "4fbe3e06-9383-4f19-837b-9063a1cb762b",
+  "3316af51-e998-486d-acdb-b14cf6dc5ecc",
+  "4372fd7e-c8f7-4325-b3d1-8e11d9bf97c8",
+  "9951446d-fc70-4380-b194-7a11d18be130",
+  "e02ecaf9-5d51-4356-8e77-7353a52d1da5",
+  "9311100f-6271-4965-8b26-f6e04e3843a1",
+  "07b2fcdf-a9ab-4d5d-a10d-15a9b291af62",
+  "f8102fa7-2ab1-4d91-881c-a6823ea8cbe2",
+  "74caa194-f831-40f9-a79e-8f2757d83645",
+  "2f83e17d-1db1-451b-b751-e34bb11e4cdb",
+  "aaea7d2f-a66e-483b-92b7-2704a84f810e",
+  "fcc092fa-7f90-42e9-b7d9-267a0acb5db8",
+  "7e963f71-a80c-447d-81cb-99bc51ba5379",
+  "0ab23ee4-6947-4966-96b1-906a3cdc98e6",
+  "012e9fd6-dea4-4ebc-a4ca-27669b2eaccb",
+  "595c29e3-58d1-4f84-8ef4-8e3d8d7024b1",
+  "6a7806a1-e8ce-4159-8042-1b7d68c2f35b",
+  "5039d290-5932-41fd-bc25-e5ace3c8e744",
+  "6a3e310d-6e62-4ca0-a0bf-fd0495cdbc8e",
+  "dcf1e83d-f85d-485e-b6af-367e474d09fe",
+  "59a0a7cc-3374-4025-951a-9832fe9359e4",
+  "1042b094-0624-4b62-ba4d-598d6f8ff825",
+  "418db1a6-c174-4ed2-9250-f879f197875e",
+  "31918158-d6e9-47e1-9378-f5ece33f4fad",
+  "e1803e3e-4665-441b-be6c-8415cb8c6bed",
+  "80463ec2-7b20-4da2-bc45-05667596ee56",
+  "6f62fe2d-910b-41b2-b86f-4211921d8b7d",
+  "b978fd30-a6c3-47fd-8f16-a4eb263c8f3c",
+  "cc94a006-8a77-4a9b-b639-32133fa78095",
+  "b7364ab6-23ce-424d-aa2b-d247eeeeb931",
+  "b56d75b7-0b7c-4534-9e8c-c3740fffe54e"
+ ]
+}
