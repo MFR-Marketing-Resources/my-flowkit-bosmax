@@ -128,7 +128,7 @@ function loadBackgroundRelay() {
 	vm.runInContext(`let chrome;\n${source.slice(start, end)}\nthis.__relay = {
 		tiktokProductIdentity, tiktokIdentityMatches, readTikTokEvidenceReplay,
 		rememberTikTokEvidenceReply, handleTikTokAcquireProductEvidence,
-		handleTikTokNavigateProductTab,
+		handleTikTokNavigateProductTab, classifyTikTokNavProbe,
 		__setChrome: (stub) => { chrome = stub; },
 	};`, sandbox);
 	return sandbox.__relay;
@@ -451,6 +451,49 @@ check("15. navigate accepts the same product id across the two authorized hosts"
 	assert(reply.ok === false && reply.outcome === "EXTRACTION_FAILED"
 		&& String(reply.error || "").startsWith("TIKTOK_NAV_TAB_CREATE_FAILED"),
 		`a matching id across authorized hosts must pass the guards and reach navigation, got ${JSON.stringify(reply)}`);
+});
+
+// ── B-597-01: a page we could not read is NOT a page the merchant removed ────
+// classifyTikTokNavProbe is the whole fix, isolated so the rule is provable without a
+// browser. PRODUCT_DELISTED must require an EXPLICIT removed marker; every other empty read
+// is EXTRACTION_FAILED carrying the exact probe error.
+check("16. an explicit removed marker classifies as PRODUCT_DELISTED", async () => {
+	const relay = loadBackgroundRelay();
+	const cls = relay.classifyTikTokNavProbe({ ok: false, error: "TIKTOK_PRODUCT_REMOVED" });
+	assert(cls.outcome === "PRODUCT_DELISTED", `got ${JSON.stringify(cls)}`);
+});
+
+check("17. an EMPTY read is EXTRACTION_FAILED, never PRODUCT_DELISTED", async () => {
+	const relay = loadBackgroundRelay();
+	const cls = relay.classifyTikTokNavProbe({ ok: false, error: "TIKTOK_EVIDENCE_EMPTY" });
+	assert(cls.outcome === "EXTRACTION_FAILED" && cls.probe_error === "TIKTOK_EVIDENCE_EMPTY",
+		`an empty read must not be called delisted, got ${JSON.stringify(cls)}`);
+});
+
+check("18. an UNKNOWN probe error is EXTRACTION_FAILED, never PRODUCT_DELISTED", async () => {
+	const relay = loadBackgroundRelay();
+	const cls = relay.classifyTikTokNavProbe({ ok: false, error: "TIKTOK_EVIDENCE_COLLECTION_FAILED:boom" });
+	assert(cls.outcome === "EXTRACTION_FAILED"
+		&& cls.probe_error === "TIKTOK_EVIDENCE_COLLECTION_FAILED:boom",
+		`an unknown failure must not be called delisted, got ${JSON.stringify(cls)}`);
+});
+
+check("18b. an empty/absent probe result is EXTRACTION_FAILED, never PRODUCT_DELISTED", async () => {
+	const relay = loadBackgroundRelay();
+	const cls = relay.classifyTikTokNavProbe(null);
+	assert(cls.outcome === "EXTRACTION_FAILED", `got ${JSON.stringify(cls)}`);
+});
+
+check("19. a security wall classifies as SECURITY_CHECK_REQUIRES_HUMAN", async () => {
+	const relay = loadBackgroundRelay();
+	const cls = relay.classifyTikTokNavProbe({ ok: false, error: "TIKTOK_SECURITY_CHECK_PRESENT" });
+	assert(cls.outcome === "SECURITY_CHECK_REQUIRES_HUMAN", `got ${JSON.stringify(cls)}`);
+});
+
+check("20. a readable product classifies as PAGE_READY", async () => {
+	const relay = loadBackgroundRelay();
+	const cls = relay.classifyTikTokNavProbe({ ok: true, observed_url: "https://shop.tiktok.com/view/product/1" });
+	assert(cls.outcome === "PAGE_READY", `got ${JSON.stringify(cls)}`);
 });
 
 // Async checks resolve after the synchronous run; give them a tick before reporting.

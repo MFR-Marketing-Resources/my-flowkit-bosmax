@@ -74,6 +74,28 @@
 		return false;
 	}
 
+	// EXPLICIT removed / not-found evidence, and ONLY that. A page that merely fails to yield
+	// a title (still rendering, a selector drifted, the content script raced the SPA) is NOT
+	// a removed listing — calling it one would blame the merchant for our own timing. So this
+	// returns true only for TikTok's own not-found markers, in the languages the Shop serves.
+	function isRemovedListing() {
+		const title = (document.title || "").toLowerCase();
+		if (title.includes("not found") || title.includes("page not found")
+			|| title.includes("404")) return true;
+		// Bounded scan of the visible product region only — never the whole DOM, and never
+		// anything transmitted. Kept to unambiguous removed-listing phrases.
+		const text = (productRegionText() || document.body?.innerText || "")
+			.slice(0, 4000).toLowerCase();
+		const markers = [
+			"product not found", "this product is no longer available",
+			"product is no longer available", "no longer available",
+			"item is no longer available", "this listing has been removed",
+			"product has been removed", "currently unavailable",
+			"商品已下架", "商品不存在", "产品已下架", "produk tidak ditemui",
+		];
+		return markers.some((m) => text.includes(m));
+	}
+
 	function jsonBlobs() {
 		const blobs = [];
 		const nodes = document.querySelectorAll(
@@ -313,12 +335,18 @@
 				});
 				return true;
 			}
+			// No product evidence. Distinguish the three no-evidence causes that have
+			// completely different fixes: a wall the human clears, a listing the merchant
+			// removed, and a page we simply could not read yet. Conflating the last two —
+			// blaming the merchant for our own empty read — is exactly bug B-597-01.
 			sendResponse({
 				ok: false,
 				evidence_request_id: requestId,
 				error: isSecurityChallenge()
 					? "TIKTOK_SECURITY_CHECK_PRESENT"
-					: "TIKTOK_EVIDENCE_EMPTY",
+					: isRemovedListing()
+						? "TIKTOK_PRODUCT_REMOVED"
+						: "TIKTOK_EVIDENCE_EMPTY",
 				observed_url: location.origin + location.pathname,
 			});
 		} catch (error) {
