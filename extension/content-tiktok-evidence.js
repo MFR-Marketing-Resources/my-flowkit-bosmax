@@ -304,7 +304,67 @@
 		};
 	}
 
+	// SANITIZED page-state diagnostic. Booleans, counts and lengths ONLY — never page HTML,
+	// never a cookie/token/storage read, never any transmitted text. It exists to tell apart
+	// "the SPA never rendered in a background tab" from "the DOM is there but the extractor
+	// missed it" from "this is a login/region/app gate", without shipping the page anywhere.
+	function collectDiagnostic() {
+		const lower = (s) => String(s || "").toLowerCase();
+		let bodyTextLength = 0;
+		try { bodyTextLength = (document.body?.innerText || "").length; } catch (_) {}
+		const bodyLower = (() => {
+			try { return lower(document.body?.innerText || "").slice(0, 6000); } catch (_) { return ""; }
+		})();
+		const titleLower = lower(document.title);
+		let jsonLdCount = 0;
+		try { jsonLdCount = document.querySelectorAll("script[type='application/ld+json']").length; } catch (_) {}
+		const metaProduct = (() => {
+			try {
+				const t = document.querySelector("meta[property='og:type']")?.getAttribute("content");
+				const hasTitle = Boolean(document.querySelector("meta[property='og:title']"));
+				return Boolean((t && lower(t).includes("product")) || hasTitle);
+			} catch (_) { return false; }
+		})();
+		// "Is a readable product here?" — the same signal the extractor grounds on, so a true
+		// here with an empty extraction is a genuine extractor gap, not a rendering gap.
+		let productRoot = false;
+		try {
+			const ev = collectEvidence();
+			productRoot = Boolean(ev.title || ev.description || (ev.images && ev.images.length));
+		} catch (_) { productRoot = false; }
+		const has = (markers) => markers.some((m) => bodyLower.includes(m) || titleLower.includes(m));
+		return {
+			final_url: location.origin + location.pathname,
+			ready_state: document.readyState,
+			visibility_state: document.visibilityState,
+			body_text_length: bodyTextLength,
+			json_ld_count: jsonLdCount,
+			product_meta_present: metaProduct,
+			product_root_present: productRoot,
+			security_check_marker: (() => { try { return isSecurityChallenge(); } catch (_) { return false; } })(),
+			removed_listing_marker: (() => { try { return isRemovedListing(); } catch (_) { return false; } })(),
+			login_marker: has(["log in", "login", "sign in", "log masuk", "sila log masuk"]),
+			region_gate_marker: has(["select your region", "choose your region", "pilih rantau", "region not supported", "not available in your"]),
+			continue_in_app_marker: has(["continue in app", "open in app", "open in the app", "buka dalam app", "get the app"]),
+			spinner_marker: (() => {
+				try {
+					return Boolean(document.querySelector("[class*='loading'],[class*='spinner'],[class*='skeleton']"))
+						&& bodyTextLength < 200;
+				} catch (_) { return false; }
+			})(),
+		};
+	}
+
 	chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+		if (message && message.type === "TIKTOK_COLLECT_TAB_DIAGNOSTIC") {
+			if (sender?.id && sender.id !== chrome.runtime.id) return undefined;
+			try {
+				sendResponse({ ok: true, diagnostic: collectDiagnostic() });
+			} catch (error) {
+				sendResponse({ ok: false, error: `TIKTOK_DIAGNOSTIC_FAILED:${String(error?.message || error).slice(0, 160)}` });
+			}
+			return true;
+		}
 		if (!message || message.type !== "TIKTOK_COLLECT_PRODUCT_EVIDENCE") return undefined;
 		// Only our own background worker may ask. A page script cannot forge this — but an
 		// explicit check keeps the trust boundary readable rather than implied.

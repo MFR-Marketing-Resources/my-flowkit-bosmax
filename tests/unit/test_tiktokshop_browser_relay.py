@@ -503,3 +503,58 @@ async def test_navigate_only_an_explicit_delisted_outcome_is_delisted(monkeypatc
     with pytest.raises(relay.TikTokRelayError) as excinfo:
         await relay.navigate_product_tab(NAV_URL)
     assert excinfo.value.code == relay.ERR_PRODUCT_DELISTED
+
+
+# ── evidence-tab diagnostic classifier (browserless) ─────────────────────────
+def _diag(*, bg_product=False, act_product=False, ext_ok=False, bg_security=False,
+          act_security=False, act_removed=False, login=False, region=False, app=False):
+    return {
+        "background": {"content": {"product_root_present": bg_product,
+                                   "security_check_marker": bg_security}},
+        "active": {"content": {"product_root_present": act_product,
+                               "security_check_marker": act_security,
+                               "removed_listing_marker": act_removed,
+                               "login_marker": login, "region_gate_marker": region,
+                               "continue_in_app_marker": app}},
+        "extraction": {"ok": ext_ok},
+    }
+
+
+def test_diag_product_only_after_activation_is_background_render_block():
+    assert relay.classify_tab_diagnostic(
+        _diag(bg_product=False, act_product=True, ext_ok=True)
+    ) == relay.DIAG_BACKGROUND_RENDERING_BLOCKED
+
+
+def test_diag_dom_present_but_extractor_empty_is_extractor_defect():
+    assert relay.classify_tab_diagnostic(
+        _diag(bg_product=True, act_product=True, ext_ok=False)
+    ) == relay.DIAG_EXTRACTOR_DEFECT
+
+
+def test_diag_a_gate_is_session_gate_requires_human():
+    assert relay.classify_tab_diagnostic(_diag(app=True)) == relay.DIAG_SESSION_GATE
+    assert relay.classify_tab_diagnostic(_diag(login=True)) == relay.DIAG_SESSION_GATE
+    assert relay.classify_tab_diagnostic(_diag(region=True)) == relay.DIAG_SESSION_GATE
+
+
+def test_diag_nothing_readable_after_activation_is_render_timeout_never_delisted():
+    cls = relay.classify_tab_diagnostic(_diag(bg_product=False, act_product=False, ext_ok=False))
+    assert cls == relay.DIAG_PAGE_RENDER_TIMEOUT
+    assert cls != relay.DIAG_PRODUCT_DELISTED
+
+
+def test_diag_a_wall_beats_everything():
+    assert relay.classify_tab_diagnostic(
+        _diag(act_security=True, act_product=True, ext_ok=True)
+    ) == relay.DIAG_SECURITY_CHECK
+
+
+def test_diag_explicit_removed_marker_is_delisted():
+    assert relay.classify_tab_diagnostic(_diag(act_removed=True)) == relay.DIAG_PRODUCT_DELISTED
+
+
+def test_diag_readable_in_both_states_is_product_readable():
+    assert relay.classify_tab_diagnostic(
+        _diag(bg_product=True, act_product=True, ext_ok=True)
+    ) == relay.DIAG_PRODUCT_READABLE
