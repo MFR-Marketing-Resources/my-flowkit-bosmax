@@ -573,6 +573,10 @@ domains:
       - outputs/mission-pi12/pi13_twin_qualify.json
       - outputs/mission-pi12/pi13_stale_copy_map.py
       - outputs/mission-pi12/pi13_stale_copy_map.json
+      # PI-13 pre-pilot gate corrections (logical restore, honest provenance, strict merge proof)
+      - outputs/mission-pi12/pi13_logical_backup.py
+      - outputs/mission-pi12/pi13_merge_candidates.py
+      - outputs/mission-pi12/pi13_merge_candidates.json
       - tests/unit/test_pi12_ai_fill_hardening.py
       # provider_receipts.jsonl is written per-attempt by the hardened runner on the NEXT run.
       - agent/services/product_registration_service.py
