@@ -23,6 +23,8 @@ const reviewDraft: RegistrationReviewDraft = {
 	review_draft_id: "draft-9cb8ab2d",
 	review_status: "NEEDS_HUMAN_REVIEW",
 	source_lane: "FASTMOSS_PROMOTED",
+	storage_backend: "SQLITE_DATABASE",
+	storage_location: "flow_agent.db:product_registration_review_draft",
 	declared_evidence_fields: {
 		product_name: "Sample capsules, tersedia dalam 30 / 60 / 120 Softgels",
 		product_knowledge_text: "",
@@ -402,6 +404,41 @@ describe("RegistrationReviewDraftPanel next-action guidance", () => {
 			"/api/product-registration/review-drafts/draft-9cb8ab2d/evidence",
 			expect.objectContaining({ recompute: true, size_or_volume: "" }),
 		);
+	});
+
+	it("shows the SQLite record and warns when provider output is truncated", async () => {
+		const truncatedDraft: RegistrationReviewDraft = {
+			...reviewDraft,
+			warnings: [
+				"TEXT_ASSIST_INVALID_RESPONSE",
+				"TEXT_ASSIST_DIAGNOSTIC_TRUNCATED_RESPONSE",
+				"TEXT_ASSIST_FINISH_REASON:length",
+			],
+		};
+		vi.mocked(patchAPI).mockResolvedValue(truncatedDraft);
+		const { onUpdate } = renderPanel();
+
+		const storage = screen.getByTestId("registration-draft-storage-status");
+		expect(storage).toHaveAttribute("data-storage-backend", "SQLITE_DATABASE");
+		expect(storage).toHaveTextContent(
+			"SQLite database · flow_agent.db:product_registration_review_draft",
+		);
+
+		fireEvent.click(
+			screen.getByRole("button", { name: "Analyze & Repair Draft" }),
+		);
+
+		const warning = await screen.findByRole("alert");
+		expect(warning).toHaveTextContent(
+			"Draft saved to flow_agent.db:product_registration_review_draft",
+		);
+		expect(warning).toHaveTextContent(
+			"the provider response reached its output limit and was rejected",
+		);
+		expect(warning).toHaveTextContent(
+			"Existing evidence was preserved; no AI repair proposal was applied.",
+		);
+		expect(onUpdate).toHaveBeenCalledWith(truncatedDraft);
 	});
 
 	it("reports when saved evidence resolves the missing-evidence gate", async () => {
