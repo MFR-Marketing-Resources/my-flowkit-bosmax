@@ -122,6 +122,10 @@ function loadBackgroundRelay() {
 	// and returns null for EVERY url, which would make the routing checks below pass
 	// vacuously — they would "prove" that no tab ever matches anything.
 	const sandbox = { console, Date, URL };
+	// waitForTabComplete lives ABOVE the extracted relay block (it is a generic tab helper),
+	// so inject a resolve-immediately stub: these tests drive the settled url via the chrome
+	// stub's tabs.get, not via a real load event.
+	sandbox.waitForTabComplete = async () => {};
 	vm.createContext(sandbox);
 	// `chrome` is declared up front so a test can swap in a stub; leaving it undefined
 	// keeps the guard checks honest (reaching chrome at all would throw).
@@ -494,6 +498,91 @@ check("20. a readable product classifies as PAGE_READY", async () => {
 	const relay = loadBackgroundRelay();
 	const cls = relay.classifyTikTokNavProbe({ ok: true, observed_url: "https://shop.tiktok.com/view/product/1" });
 	assert(cls.outcome === "PAGE_READY", `got ${JSON.stringify(cls)}`);
+});
+
+// ── same-target no-reload (option #1): read a cleared tab in place, never reload it ──
+// A stateful chrome stub whose tabs.get reflects the last navigation, so the handler's
+// "am I already on this product?" check has something real to read. tabs.update is counted:
+// the whole point is that a same-target retry does NOT reload over a just-cleared challenge.
+function statefulChrome({ startUrl = "about:blank", probeRef, permission = true, redirectTo = null }) {
+	const state = { url: startUrl, updates: [], nextId: 700 };
+	const chrome = {
+		permissions: { contains: async () => permission },
+		tabs: {
+			create: async ({ url }) => { state.url = url || "about:blank"; return { id: state.nextId, url: state.url }; },
+			get: async (id) => ({ id: id || state.nextId, url: state.url }),
+			update: async (id, { url }) => {
+				state.updates.push(url);
+				state.url = redirectTo || url; // simulate a redirect landing elsewhere when asked
+				return { id, url: state.url };
+			},
+			sendMessage: async () => (typeof probeRef.reply === "function" ? probeRef.reply(state) : probeRef.reply),
+		},
+	};
+	return { chrome, state };
+}
+
+const P1 = "https://shop.tiktok.com/view/product/1729543210987654321";
+const P1_ID = "1729543210987654321";
+const P2 = "https://shop.tiktok.com/view/product/1730000000000000002";
+const READABLE = { ok: true, evidence_request_id: "x", observed_url: P1, evidence: { title: "A product" } };
+const WALL = { ok: false, error: "TIKTOK_SECURITY_CHECK_PRESENT", observed_url: P1 };
+
+check("21. same product, readable: the retry does NOT reload the tab", async () => {
+	const relay = loadBackgroundRelay();
+	const probeRef = { reply: READABLE };
+	const { chrome, state } = statefulChrome({ probeRef });
+	relay.__setChrome(chrome);
+	const first = await relay.handleTikTokNavigateProductTab({ product_url: P1, expected_product_id: P1_ID });
+	assert(first.outcome === "PAGE_READY" && first.navigated === true,
+		`first call should navigate, got ${JSON.stringify(first)}`);
+	const updatesAfterFirst = state.updates.length;
+	const second = await relay.handleTikTokNavigateProductTab({ product_url: P1, expected_product_id: P1_ID });
+	assert(second.outcome === "PAGE_READY" && second.navigated === false,
+		`same-target retry must NOT navigate, got ${JSON.stringify(second)}`);
+	assert(state.updates.length === updatesAfterFirst,
+		`same-target retry issued a chrome.tabs.update (reload): ${JSON.stringify(state.updates)}`);
+});
+
+check("22. same product, Security Check: human-required WITHOUT a reload", async () => {
+	const relay = loadBackgroundRelay();
+	const probeRef = { reply: READABLE };
+	const { chrome, state } = statefulChrome({ probeRef });
+	relay.__setChrome(chrome);
+	await relay.handleTikTokNavigateProductTab({ product_url: P1, expected_product_id: P1_ID }); // land on P1
+	const updatesBefore = state.updates.length;
+	probeRef.reply = WALL; // the page now shows a challenge
+	const res = await relay.handleTikTokNavigateProductTab({ product_url: P1, expected_product_id: P1_ID });
+	assert(res.outcome === "SECURITY_CHECK_REQUIRES_HUMAN" && res.navigated === false,
+		`same-target wall must be human-required with no reload, got ${JSON.stringify(res)}`);
+	assert(state.updates.length === updatesBefore,
+		"a same-target Security Check must not reload over the human's clearance attempt");
+});
+
+check("23. different product: exactly one navigation", async () => {
+	const relay = loadBackgroundRelay();
+	const probeRef = { reply: READABLE };
+	const { chrome, state } = statefulChrome({ probeRef });
+	relay.__setChrome(chrome);
+	await relay.handleTikTokNavigateProductTab({ product_url: P1, expected_product_id: P1_ID }); // on P1
+	const before = state.updates.length;
+	probeRef.reply = { ok: true, observed_url: P2, evidence: { title: "B" } };
+	const res = await relay.handleTikTokNavigateProductTab({ product_url: P2, expected_product_id: "1730000000000000002" });
+	assert(res.outcome === "PAGE_READY" && res.navigated === true,
+		`a different product must navigate, got ${JSON.stringify(res)}`);
+	assert(state.updates.length === before + 1,
+		`a different product must issue exactly one update, got ${state.updates.length - before}`);
+});
+
+check("24. a navigation that redirects to a different product id is refused", async () => {
+	const relay = loadBackgroundRelay();
+	const probeRef = { reply: READABLE };
+	// The dedicated tab starts fresh; navigating to P2 redirects the tab to P1's id.
+	const { chrome } = statefulChrome({ probeRef, redirectTo: P1 });
+	relay.__setChrome(chrome);
+	const res = await relay.handleTikTokNavigateProductTab({ product_url: P2, expected_product_id: "1730000000000000002" });
+	assert(res.outcome === "PRODUCT_ID_MISMATCH",
+		`a redirect to another product id must be refused, got ${JSON.stringify(res)}`);
 });
 
 // Async checks resolve after the synchronous run; give them a tick before reporting.
