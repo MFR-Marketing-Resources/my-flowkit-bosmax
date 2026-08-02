@@ -25,7 +25,7 @@ Usage:
   python scripts/pi12_grounded_runner.py --ids a,b,c     # explicit ids
 """
 from __future__ import annotations
-import argparse, json, sys, time, urllib.error, urllib.request
+import argparse, atexit, json, os, subprocess, sys, time, urllib.error, urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -87,6 +87,42 @@ REQUIRED = ("product_description", "benefits_json", "usp_json", "usage_text", "i
             "image_evidence_json")
 DISPOSABLE = ("ingredients_text", "warnings_text", "usage_text")
 STOP_FLAG = REPO / "outputs" / "mission-pi12" / "STOP"
+LOCK = REPO / "outputs" / "mission-pi12" / "bulk.lock"
+
+
+def _pid_alive(pid):
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-Command",
+                            f"[bool](Get-Process -Id {pid} -ErrorAction SilentlyContinue)"],
+                           capture_output=True, text=True, timeout=15)
+        return "True" in r.stdout
+    except Exception:
+        return False
+
+
+def acquire_single_writer_lock():
+    """Guarantee ONE canonical writer. Atomic O_EXCL create; if held by a LIVE pid, exit(3).
+    A stale lock (holder dead) is reclaimed. Released at exit."""
+    LOCK.parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):
+        try:
+            fd = os.open(str(LOCK), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode()); os.close(fd)
+            atexit.register(lambda: LOCK.exists() and LOCK.read_text().strip() == str(os.getpid()) and LOCK.unlink())
+            return
+        except FileExistsError:
+            try:
+                holder = int((LOCK.read_text() or "0").strip() or 0)
+            except Exception:
+                holder = 0
+            if holder and holder != os.getpid() and _pid_alive(holder):
+                print(f"SINGLE_WRITER_LOCK held by live pid {holder}; this instance exits (no concurrency).")
+                sys.exit(3)
+            try:
+                LOCK.unlink()  # stale lock -> reclaim
+            except Exception:
+                pass
+    print("SINGLE_WRITER_LOCK could not be acquired; exiting."); sys.exit(3)
 
 # ingredients/warnings are preserved ONLY with real acquired/operator/verified field provenance tied
 # to the value. AI_ENRICHMENT / AI_PROPOSED / REVIEW_DRAFT / prior AI prose are NOT evidence.
@@ -348,6 +384,7 @@ def main():
     ap.add_argument("--correct", action="store_true", help="corrective vNext for --ids (no DeepSeek)")
     ap.add_argument("--ids", default="")
     a = ap.parse_args()
+    acquire_single_writer_lock()  # ONE canonical writer only; a duplicate launch exits immediately
     con = sqlite3.connect(f"file:{(REPO/'flow_agent.db').as_posix()}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
     frozen = json.loads((REPO / "outputs" / "mission-pi12" / "frozen_cohort.json").read_text())
