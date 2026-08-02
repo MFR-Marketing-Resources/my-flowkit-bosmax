@@ -1546,6 +1546,9 @@ const WS_METHOD_TIMEOUT_MS = {
 	// read because it includes a full navigation + load; still bounded so a wedged
 	// navigation surfaces as NAVIGATION_TIMEOUT rather than an apparently-hung bulk.
 	TIKTOK_NAVIGATE_PRODUCT_TAB: 45000,
+	// Navigate + background diagnostic + activate + bounded settle + active diagnostic +
+	// one extraction retry. The most steps of any evidence verb, so the most generous bound.
+	TIKTOK_DIAGNOSE_EVIDENCE_TAB: 75000,
 };
 
 function buildFlowTabSnapshot(flowTab) {
@@ -5086,6 +5089,118 @@ function classifyTikTokNavProbe(probeResult) {
 		probe_error: probeError || "TIKTOK_PROBE_NO_RESULT" };
 }
 
+// ─── bounded, sanitized evidence-tab diagnostic ──────────────────────────────
+// Tells apart the empty-read causes (background never rendered / DOM present but extractor
+// missed it / login-region-app gate / genuine render timeout) from PROOF, so we never guess
+// or ask the operator what the extension can observe. Booleans/counts/lengths only — no page
+// HTML, no cookie/token/storage read is ever transmitted.
+async function sendTikTokDiagnosticMessage(tabId) {
+	return await chrome.tabs.sendMessage(tabId, { type: "TIKTOK_COLLECT_TAB_DIAGNOSTIC" });
+}
+
+function _unwrapDiagnostic(reply) {
+	const r = (reply && typeof reply === "object" && reply.result && typeof reply.result === "object")
+		? reply.result : reply;
+	if (r && r.ok === true && r.diagnostic) return r.diagnostic;
+	if (r && r.error) return { content_error: String(r.error).slice(0, 160) };
+	return null;
+}
+
+async function collectTabDiagnostic(tabId) {
+	let tab = null;
+	try { tab = await chrome.tabs.get(tabId); } catch (_) { tab = null; }
+	let content = null;
+	try { content = _unwrapDiagnostic(await sendTikTokDiagnosticMessage(tabId)); }
+	catch (e) { content = { content_unreachable: String(e?.message || e).slice(0, 120) }; }
+	return {
+		tab_status: tab ? tab.status : null,
+		tab_active: tab ? Boolean(tab.active) : null,
+		tab_discarded: tab ? Boolean(tab.discarded) : null,
+		tab_title: tab && tab.title ? String(tab.title).slice(0, 200) : null,
+		tab_url_identity: tab ? tiktokProductIdentity(tab.url || "") : null,
+		content,
+	};
+}
+
+// Bounded wait for the SPA to settle: return as soon as a product OR a decisive gate/wall
+// marker appears, or when the body text stops growing, or on timeout. Deterministic; never
+// an unbounded poll.
+async function settleForProduct(tabId, timeoutMs) {
+	const start = Date.now();
+	let lastLen = -1;
+	let stable = 0;
+	while (Date.now() - start < timeoutMs) {
+		let diag = null;
+		try { diag = _unwrapDiagnostic(await sendTikTokDiagnosticMessage(tabId)); } catch (_) { diag = null; }
+		if (diag) {
+			if (diag.product_root_present || diag.security_check_marker || diag.removed_listing_marker
+				|| diag.login_marker || diag.region_gate_marker || diag.continue_in_app_marker) {
+				return { settled: true, reason: "MARKER_OR_PRODUCT", ms: Date.now() - start };
+			}
+			if (diag.body_text_length === lastLen && diag.body_text_length > 0) {
+				stable += 1;
+				if (stable >= 2) return { settled: true, reason: "BODY_STABLE", ms: Date.now() - start };
+			} else { lastLen = diag.body_text_length; stable = 0; }
+		}
+		await new Promise((resolve) => setTimeout(resolve, 700));
+	}
+	return { settled: false, reason: "TIMEOUT", ms: Date.now() - start };
+}
+
+async function handleTikTokDiagnoseEvidenceTab(params) {
+	const productUrl = String(params?.product_url || "");
+	const expectedProductId = String(params?.expected_product_id || "");
+	const wanted = tiktokProductIdentity(productUrl);
+	if (!wanted || !wanted.product_id) return { ok: false, error: "TIKTOK_DIAG_URL_INVALID" };
+	if (expectedProductId && wanted.product_id !== expectedProductId) {
+		return { ok: false, error: "TIKTOK_DIAG_ID_MISMATCH",
+			requested_product_id: wanted.product_id, expected_product_id: expectedProductId };
+	}
+
+	let tab;
+	try { tab = await getOrCreateTikTokEvidenceTab(); }
+	catch (e) { return { ok: false, error: `TIKTOK_DIAG_TAB_CREATE_FAILED:${String(e?.message || e).slice(0, 120)}` }; }
+
+	// same-target-aware navigation: never reload over an already-on-target (cleared) tab.
+	let currentIdentity = null;
+	try { const c = await chrome.tabs.get(tab.id); currentIdentity = tiktokProductIdentity(c.url || ""); }
+	catch (_) { currentIdentity = null; }
+	const alreadyOnTarget = Boolean(currentIdentity && currentIdentity.product_id === wanted.product_id);
+	let navigated = false;
+	if (!alreadyOnTarget) {
+		try { await chrome.tabs.update(tab.id, { url: productUrl }); navigated = true; }
+		catch (e) { return { ok: false, error: `TIKTOK_DIAG_NAV_FAILED:${String(e?.message || e).slice(0, 120)}` }; }
+		try { await waitForTabComplete(tab.id, 30000); }
+		catch (_) { return { ok: false, outcome: "NAVIGATION_TIMEOUT", navigated }; }
+	}
+
+	// (1) diagnostic while the tab is in its normal (background) state.
+	const background = await collectTabDiagnostic(tab.id);
+	// (2) activate + focus its window.
+	try {
+		const t = await chrome.tabs.get(tab.id);
+		if (t.windowId != null) await chrome.windows.update(t.windowId, { focused: true });
+		await chrome.tabs.update(tab.id, { active: true });
+	} catch (_) {}
+	// (3) deterministic settle.
+	const settle = await settleForProduct(tab.id, 8000);
+	// (4) diagnostic after activation + settle.
+	const active = await collectTabDiagnostic(tab.id);
+	// (5) one extraction retry.
+	let extraction;
+	try {
+		const pr = _unwrapEvidence(await sendTikTokEvidenceMessage(tab.id, `diag-${Date.now()}`));
+		extraction = { ok: Boolean(pr && pr.ok), error: (pr && pr.error) || null };
+	} catch (e) { extraction = { ok: false, error: `CONTENT_SCRIPT_UNREACHABLE:${String(e?.message || e).slice(0, 80)}` }; }
+
+	return { ok: true, tab_id: tab.id, navigated, settle, background, active, extraction };
+}
+
+function _unwrapEvidence(reply) {
+	return (reply && typeof reply === "object" && reply.result && typeof reply.result === "object")
+		? reply.result : reply;
+}
+
 async function handleTikTokAcquireProductEvidence(params) {
 	const evidenceRequestId = String(params?.evidence_request_id || "");
 	const productUrl = String(params?.product_url || "");
@@ -5592,6 +5707,11 @@ function connectToAgent() {
 			} else if (msg.method === "TIKTOK_NAVIGATE_PRODUCT_TAB") {
 				const result = await executeWsMethodAndReply(msg, () =>
 					handleTikTokNavigateProductTab(msg.params || {}),
+				);
+				replyToAgent(msg, result);
+			} else if (msg.method === "TIKTOK_DIAGNOSE_EVIDENCE_TAB") {
+				const result = await executeWsMethodAndReply(msg, () =>
+					handleTikTokDiagnoseEvidenceTab(msg.params || {}),
 				);
 				replyToAgent(msg, result);
 			} else if (msg.method === "TIKTOK_ACQUIRE_PRODUCT_EVIDENCE") {

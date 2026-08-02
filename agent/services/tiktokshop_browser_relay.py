@@ -433,6 +433,79 @@ async def navigate_product_tab(product_url: str, *,
     raise fail(mapped, detail)
 
 
+WS_DIAGNOSE_METHOD = "TIKTOK_DIAGNOSE_EVIDENCE_TAB"
+DIAGNOSE_TIMEOUT_SECONDS = 80.0
+
+# Evidence-tab diagnostic classifications. Read-only: naming WHY the tab read empty so the
+# right fix is chosen from proof instead of a guess.
+DIAG_BACKGROUND_RENDERING_BLOCKED = "BACKGROUND_RENDERING_BLOCKED"
+DIAG_EXTRACTOR_DEFECT = "EXTRACTOR_SELECTOR_OR_TIMING_DEFECT"
+DIAG_SESSION_GATE = "SESSION_GATE_REQUIRES_HUMAN"
+DIAG_PAGE_RENDER_TIMEOUT = "PAGE_RENDER_TIMEOUT"
+DIAG_PRODUCT_READABLE = "PRODUCT_READABLE"
+DIAG_SECURITY_CHECK = "SECURITY_CHECK_REQUIRES_HUMAN"
+DIAG_PRODUCT_DELISTED = "PRODUCT_DELISTED"
+
+
+async def diagnose_evidence_tab(product_url: str, *,
+                                timeout: float = DIAGNOSE_TIMEOUT_SECONDS) -> dict[str, Any]:
+    """Ask the extension to self-diagnose the dedicated tab (sanitized). Never raises on a
+    non-ready page — the whole point is to classify WHY it is not ready. No provider call, no
+    PI mutation."""
+    from agent.services.flow_client import get_flow_client
+
+    identity = product_identity(product_url)
+    if identity is None:
+        raise TikTokRelayError(ERR_HOST_NOT_SUPPORTED, str(product_url)[:200],
+                               product_url=str(product_url or ""))
+    client = get_flow_client()
+    if not client.connected:
+        raise TikTokRelayError(ERR_EXTENSION_DISCONNECTED,
+                               "BOSMAX Chrome extension is not connected to the agent",
+                               product_url=str(product_url or ""))
+    reply = await client._send(  # noqa: SLF001 - documented shared transport
+        WS_DIAGNOSE_METHOD,
+        {"product_url": product_url, "expected_product_id": str(identity.get("product_id") or "")},
+        timeout=timeout,
+    )
+    if not isinstance(reply, dict):
+        raise TikTokRelayError(ERR_MALFORMED_RESPONSE, type(reply).__name__,
+                               product_url=str(product_url or ""))
+    payload = reply.get("result") if isinstance(reply.get("result"), dict) else reply
+    return {"classification": classify_tab_diagnostic(payload), "diagnostic": payload}
+
+
+def classify_tab_diagnostic(result: dict[str, Any]) -> str:
+    """PURE classification from the sanitized diagnostic (testable without a browser).
+
+    Decisive markers first (wall / removed / gate), then the background-vs-active comparison:
+    a product that appears ONLY after activation is a background-render block; a product
+    present but unread is an extractor defect; nothing readable after activation + settle is a
+    render timeout — never a delisted claim."""
+    bg = (result.get("background") or {}).get("content") or {}
+    act = (result.get("active") or {}).get("content") or {}
+    extraction = result.get("extraction") or {}
+
+    if bg.get("security_check_marker") or act.get("security_check_marker"):
+        return DIAG_SECURITY_CHECK
+    if act.get("removed_listing_marker"):
+        return DIAG_PRODUCT_DELISTED
+    if act.get("login_marker") or act.get("region_gate_marker") or act.get("continue_in_app_marker"):
+        return DIAG_SESSION_GATE
+
+    bg_product = bool(bg.get("product_root_present"))
+    act_product = bool(act.get("product_root_present"))
+    ext_ok = bool(extraction.get("ok"))
+
+    if act_product and ext_ok and not bg_product:
+        return DIAG_BACKGROUND_RENDERING_BLOCKED
+    if act_product and ext_ok and bg_product:
+        return DIAG_PRODUCT_READABLE
+    if act_product and not ext_ok:
+        return DIAG_EXTRACTOR_DEFECT
+    return DIAG_PAGE_RENDER_TIMEOUT
+
+
 async def extract_product_via_browser(product_url: str, *,
                                       propose: bool = True,
                                       navigate: bool = False) -> dict[str, Any]:

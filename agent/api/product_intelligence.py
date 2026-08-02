@@ -259,6 +259,33 @@ async def product_intelligence_recompute(product_id: str) -> dict:
         raise
 
 
+@router.post("/{product_id}/diagnose-evidence-tab")
+async def product_intelligence_diagnose_evidence_tab(product_id: str) -> dict:
+    """READ-ONLY: ask the extension to self-diagnose the dedicated evidence tab for this
+    product (sanitized background-vs-active comparison). No provider call, no PI mutation —
+    it exists to classify WHY a tab read empty from proof, not to write anything."""
+    from agent.db import crud
+    from agent.services import tiktokshop_browser_relay as relay
+    from agent.services.product_intelligence_recompute_service import (
+        ERR_NO_SOURCE_URL, resolve_source_url,
+    )
+
+    product = await crud.get_product(product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="PRODUCT_NOT_FOUND")
+    source_url = resolve_source_url(product)
+    if not source_url:
+        raise HTTPException(status_code=422, detail=ERR_NO_SOURCE_URL)
+    try:
+        result = await relay.diagnose_evidence_tab(source_url)
+    except relay.TikTokRelayError as exc:
+        status = 409 if exc.operator_actionable else 502
+        raise HTTPException(status_code=status, detail={
+            "code": exc.code, "product_url": exc.product_url,
+            "operator_actionable": exc.operator_actionable}) from exc
+    return {"product_id": product_id, "source_url": source_url, **result}
+
+
 @router.get("/{product_id}")
 async def product_intelligence_detail(product_id: str) -> dict:
     return await get_product_intelligence_by_id(product_id)
