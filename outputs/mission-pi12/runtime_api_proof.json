@@ -1,9 +1,11 @@
 {
- "version_proof": {
-  "pid": 12164,
-  "process_started_at": "2026-08-02T14:04:58.550719+00:00",
-  "git_head": "f56b50448828d8346ec306a98fb706fa43532f2d",
-  "git_branch": "codex/pi12-audit-hardening",
+ "note": "RAW post-restart runtime capture (replaces the pre-deploy stale snapshot). Captured by the runner on the user's machine; the audit cloud cannot reach 127.0.0.1:8100, so the OWNER must re-run the curl commands locally for fully independent confirmation.",
+ "deploy_verification_sha": "21da44bf43dbb1d9d19770a9ad50750e8135e885",
+ "raw_version_proof": {
+  "pid": 16412,
+  "process_started_at": "2026-08-02T18:11:25.603813+00:00",
+  "git_head": "21da44bf43dbb1d9d19770a9ad50750e8135e885",
+  "git_branch": "HEAD",
   "route_count": 526,
   "critical_routes": {
    "/api/creative-asset-eligibility/audit": true,
@@ -13,12 +15,10 @@
    "/api/workspace/execution-package": true
   },
   "dashboard_bundle": "index-CpASfyQc.js",
-  "source_stale_since_start": true,
-  "stale_source_sample": [
-   "agent\\services\\product_intelligence_review_draft_service.py"
-  ]
+  "source_stale_since_start": false,
+  "stale_source_sample": []
  },
- "pi_quality_ALL_raw": {
+ "raw_pi_quality_ALL": {
   "scope": {
    "lifecycle_status": "ALL",
    "cluster": null,
@@ -28,14 +28,14 @@
   "test_fixtures_excluded": 8,
   "classes": {
    "MISSING_APPROVED_INTELLIGENCE": {
-    "total": 40,
+    "total": 34,
     "active": 11,
-    "archived": 29
+    "archived": 23
    },
    "APPROVED_WITH_GOVERNED_ABSENCE": {
-    "total": 408,
-    "active": 242,
-    "archived": 166
+    "total": 416,
+    "active": 244,
+    "archived": 172
    },
    "FULLY_COMPLETE": {
     "total": 119,
@@ -43,8 +43,8 @@
     "archived": 13
    },
    "LEGACY_APPROVED_INCOMPLETE": {
-    "total": 84,
-    "active": 84,
+    "total": 82,
+    "active": 82,
     "archived": 0
    }
   },
@@ -55,7 +55,50 @@
    "MISSING_APPROVED_INTELLIGENCE": "pi_missing_approved"
   }
  },
- "test_command": "python -m pytest tests/unit/test_pi12_ai_fill_hardening.py tests/unit/test_product_intelligence_review_draft_service.py tests/api/test_product_intelligence_api.py",
- "test_result": "45 passed",
- "note": "raw runtime + API proof captured live; version_proof.git_head is the deployed SHA, pid the serving process, dashboard_bundle the loaded UI."
+ "raw_drilldown_legacy_ALL_total": 82,
+ "raw_drilldown_missing_ALL_total": 34,
+ "raw_health": {
+  "status": "ok",
+  "version": "0.2.0",
+  "version_is_build_identity": false,
+  "identity_endpoints": [
+   "/api/local-agent/version-proof",
+   "/api/operator/runtime-storage-status",
+   "/api/flow/bind-check"
+  ],
+  "extension_build_sha": "e8353a4944ee9764b17ddece3cba509347e7afb5",
+  "extension_build_stamped": true,
+  "extension_build_dirty": false,
+  "extension_build_branch": "HEAD",
+  "extension_connected": true,
+  "extension_state": "idle",
+  "flow_key_present": true,
+  "extension_manual_disconnect": false,
+  "extension_metrics": {
+   "requestCount": 586,
+   "successCount": 541,
+   "failedCount": 43,
+   "lastError": null
+  },
+  "extension_status_error": null,
+  "dashboard_serving_mode": "BACKEND_SERVED_STATIC",
+  "dashboard_url": "http://127.0.0.1:8100/operator",
+  "repair_command": ".\\scripts\\install-local-agent.ps1",
+  "registration": {
+   "operator_id": null,
+   "device_id": "38b94591-5ab0-5519-8050-3efdfdb66027",
+   "approval_status": "PENDING_APPROVAL",
+   "license_status": "UNLICENSED",
+   "registered_at": null,
+   "updated_at": "2026-05-08T16:50:52.690560+00:00"
+  },
+  "ws": {
+   "connected": true,
+   "connects": 3,
+   "disconnects": 2,
+   "uptime_s": 934
+  }
+ },
+ "git_head_matches_merge_sha": true,
+ "source_stale_is_false": true
 }
