@@ -196,7 +196,12 @@ async def acquire_extraction(source_url: str, *, propose: bool,
             raise relay.TikTokRelayError(
                 relay.ERR_HOST_NOT_SUPPORTED, source_url[:200],
                 product_url=source_url) from exc
-        return await relay.extract_product_via_browser(source_url, propose=propose)
+        # navigate=True: drive the ONE dedicated evidence tab to this product's stored,
+        # id-verified URL, then read it — so the unattended bulk no longer depends on the
+        # operator opening every tab by hand. The reader path (operator-opened tab) stays
+        # available via navigate=False for anyone who still wants it.
+        return await relay.extract_product_via_browser(
+            source_url, propose=propose, navigate=True)
 
 
 async def recompute_product_intelligence(

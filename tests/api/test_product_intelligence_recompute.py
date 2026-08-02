@@ -389,15 +389,24 @@ def _stub_wall(monkeypatch):
 
 
 class _FakeExtensionBridge:
-    """The WebSocket bridge, without a browser. Records what the relay actually sent."""
+    """The WebSocket bridge, without a browser. Records what the relay actually sent.
 
-    def __init__(self, reply, *, connected=True):
+    Method-aware since the recompute lane now NAVIGATES the dedicated evidence tab before it
+    READS it: TIKTOK_NAVIGATE_PRODUCT_TAB gets `nav_reply` (PAGE_READY by default so the lane
+    proceeds to the read), TIKTOK_ACQUIRE_PRODUCT_EVIDENCE gets the configured `reply`.
+    """
+
+    def __init__(self, reply, *, connected=True, nav_reply=None):
         self._reply = reply
+        self._nav_reply = nav_reply if nav_reply is not None else {
+            "ok": True, "outcome": "PAGE_READY"}
         self.connected = connected
         self.sent: list[tuple[str, dict]] = []
 
     async def _send(self, method, params, timeout=0):
         self.sent.append((method, params))
+        if method == "TIKTOK_NAVIGATE_PRODUCT_TAB":
+            return self._nav_reply(params) if callable(self._nav_reply) else self._nav_reply
         return self._reply(params) if callable(self._reply) else self._reply
 
 
@@ -488,8 +497,12 @@ async def test_the_wall_with_no_extension_fails_closed_and_corrupts_nothing(monk
 async def test_a_still_present_captcha_is_reported_and_never_solved(monkeypatch):
     """The operator clears TikTok's challenge by hand. Nothing here works around it."""
     _stub_wall(monkeypatch)
+    # The wall is detected at NAVIGATION (the readiness probe): a challenge shell states no
+    # product, so it can never be mistaken for a readable listing. One navigation attempt,
+    # never a read, never a solve.
     bridge = _install_bridge(monkeypatch, _FakeExtensionBridge(
-        _relay_reply(ok=False, error="TIKTOK_SECURITY_CHECK_PRESENT")))
+        _relay_reply(evidence=RELAYED_EVIDENCE),
+        nav_reply={"ok": False, "outcome": "SECURITY_CHECK_REQUIRES_HUMAN"}))
     product = await _product("Recompute Captcha", tiktok_product_url=RELAY_URL)
 
     async with await _client() as client:

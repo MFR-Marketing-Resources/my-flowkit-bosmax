@@ -411,3 +411,73 @@ async def test_a_merchandising_label_relayed_from_the_browser_is_still_not_a_pac
     # and nothing was invented for the labelled sections either
     assert result["unresolved"]["ingredients_text"] == "NOT_STATED_IN_SOURCE"
     assert result["unresolved"]["warnings_text"] == "NOT_STATED_IN_SOURCE"
+
+
+# ─── TIKTOK_NAVIGATE_PRODUCT_TAB — the bounded single-tab navigation seam ─────
+# The navigate RPC exists so the bulk does not depend on the operator opening every tab by
+# hand. Its whole safety story is that it can only ever drive ONE dedicated tab to a
+# specific, already-known product listing — so these tests pin exactly that.
+
+NAV_URL = "https://shop.tiktok.com/view/product/1729543210987654321"
+
+
+@pytest.mark.asyncio
+async def test_navigate_sends_the_expected_product_id_derived_from_the_url(monkeypatch):
+    """The id the extension must match is derived from the product's OWN stored link — the
+    cross-product contamination guard lives on both sides of the bridge."""
+    client = install_client(monkeypatch, FakeFlowClient(
+        {"ok": True, "outcome": "PAGE_READY", "observed_product_id": "1729543210987654321"}))
+    result = await relay.navigate_product_tab(NAV_URL)
+    assert result["outcome"] == "PAGE_READY"
+    method, params, _ = client.sent[-1]
+    assert method == relay.WS_NAVIGATE_METHOD
+    assert params["product_url"] == NAV_URL
+    assert params["expected_product_id"] == "1729543210987654321"
+
+
+@pytest.mark.asyncio
+async def test_navigate_refuses_a_url_off_the_allowlist_before_touching_the_bridge(monkeypatch):
+    client = install_client(monkeypatch, FakeFlowClient({"ok": True, "outcome": "PAGE_READY"}))
+    with pytest.raises(relay.TikTokRelayError) as excinfo:
+        await relay.navigate_product_tab("https://example.com/view/product/123456789")
+    assert excinfo.value.code == relay.ERR_HOST_NOT_SUPPORTED
+    assert client.sent == []  # never reached the extension
+
+
+@pytest.mark.asyncio
+async def test_navigate_disconnected_extension_is_named(monkeypatch):
+    install_client(monkeypatch, FakeFlowClient({}, connected=False))
+    with pytest.raises(relay.TikTokRelayError) as excinfo:
+        await relay.navigate_product_tab(NAV_URL)
+    assert excinfo.value.code == relay.ERR_EXTENSION_DISCONNECTED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome,expected", [
+    ("SECURITY_CHECK_REQUIRES_HUMAN", "TIKTOK_RELAY_SECURITY_CHECK_PRESENT"),
+    ("PRODUCT_DELISTED", "TIKTOK_RELAY_PRODUCT_DELISTED"),
+    ("PRODUCT_ID_MISMATCH", "TIKTOK_RELAY_PRODUCT_ID_MISMATCH"),
+    ("NAVIGATION_TIMEOUT", "TIKTOK_RELAY_TIMEOUT"),
+    ("EXTRACTION_FAILED", "TIKTOK_RELAY_CONTENT_SCRIPT_UNREACHABLE"),
+])
+async def test_navigate_every_failure_outcome_maps_to_its_own_code(monkeypatch, outcome, expected):
+    install_client(monkeypatch, FakeFlowClient({"ok": False, "outcome": outcome}))
+    with pytest.raises(relay.TikTokRelayError) as excinfo:
+        await relay.navigate_product_tab(NAV_URL)
+    assert excinfo.value.code == expected
+
+
+@pytest.mark.asyncio
+async def test_navigate_delisted_and_mismatch_are_not_operator_actionable(monkeypatch):
+    """A dead link and a redirect-to-another-product cannot be fixed by opening a tab, so
+    they must NOT be advertised as act-then-retry states."""
+    assert relay.ERR_PRODUCT_DELISTED not in relay.OPERATOR_ACTIONABLE_CODES
+    assert relay.ERR_PRODUCT_ID_MISMATCH not in relay.OPERATOR_ACTIONABLE_CODES
+
+
+@pytest.mark.asyncio
+async def test_navigate_unknown_outcome_is_malformed_not_a_crash(monkeypatch):
+    install_client(monkeypatch, FakeFlowClient({"ok": False, "outcome": "SOMETHING_NEW"}))
+    with pytest.raises(relay.TikTokRelayError) as excinfo:
+        await relay.navigate_product_tab(NAV_URL)
+    assert excinfo.value.code == relay.ERR_MALFORMED_RESPONSE
