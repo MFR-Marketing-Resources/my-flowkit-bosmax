@@ -12,7 +12,12 @@ _spec.loader.exec_module(C)
 
 _PROD = {"id": "p1", "category": "Home & Living", "subcategory": "Decor", "type": "Wall Sticker",
          "claim_risk_level": "LOW"}
-_SUPPORT = {"verification_status": "REVIEWED_APPROVED", "source_url": "https://s/x", "source_type": "REVIEW_DRAFT"}
+# real ACQUISITION provenance (correction 1): acquisition source_type + verified + ref + method
+_SUPPORT = {"source_type": "EXTERNAL_EXTRACTION", "verification_status": "VERIFIED",
+            "source_url": "https://s/x", "extraction_method": "dom_scrape"}
+# REVIEW_DRAFT is a workflow status, NOT acquired evidence — even with a source_url on the prose
+_REVIEW_DRAFT_PROV = {"source_type": "REVIEW_DRAFT", "verification_status": "REVIEWED_APPROVED",
+                      "source_url": "https://s/x", "extraction_method": "review"}
 
 
 def _supported_prior(**over):
@@ -46,6 +51,14 @@ def test_product_specific_prose_without_provenance_is_not_promoted():
     # product-specific but NO provenance row -> not evidence
     v, s = C.restorable_value("product_description", "SkyPlant Eye Balm Stick 9g.", None)
     assert v is None and s == "UNSUPPORTED_NO_PROVENANCE"
+
+
+def test_review_draft_provenance_is_not_acquired_evidence():
+    # correction 1: REVIEWED_APPROVED review-draft prose with a source_url is NOT acquired evidence
+    assert C.provenance_supports(_REVIEW_DRAFT_PROV) is False
+    v, s = C.restorable_value("product_description", "SkyPlant Eye Balm Stick 9g.", dict(_REVIEW_DRAFT_PROV))
+    assert v is None and s == "UNSUPPORTED_NO_PROVENANCE"
+    assert C.provenance_supports(_SUPPORT) is True  # acquisition provenance DOES support
 
 
 def test_generic_or_placeholder_prior_is_rejected_even_if_supported():
@@ -115,6 +128,25 @@ def test_identity_claim_not_added_when_taxonomy_trips_lexicon():
     plan = C.build_correction_plan(pet, None, _supported_prior(), _full_support(), assert_identity_claims=True)
     assert plan["identity_claim_added"] is None  # "Cat Treats" trips the lexicon -> no unsafe assertion
     assert plan["decision"] == "LEAVE_INCOMPLETE"
+
+
+# ── correction 2: CLAIM_REVIEW_REQUIRED is never auto-acknowledged ───────────────────────────
+def test_claim_review_required_is_never_auto_approved():
+    high = dict(_PROD)
+    high["claim_risk_level"] = "HIGH"  # claim floor forces CLAIM_REVIEW_REQUIRED
+    plan = C.build_correction_plan(high, None, _supported_prior(), _full_support(), assert_identity_claims=True)
+    assert plan["claim_gate"] == "CLAIM_REVIEW_REQUIRED"
+    assert plan["decision"] == "LEAVE_INCOMPLETE_HUMAN_REVIEW"  # not RESTORE_APPROVE
+
+
+# ── correction 3: an identity claim satisfies ONLY allowed_claims, never other fields ─────────
+def test_identity_claim_cannot_support_unrelated_fields():
+    # no acquisition provenance -> no copy fields restored; the identity claim (allowed_claims) alone
+    # must NOT make description/benefits/etc. present
+    plan = C.build_correction_plan(_PROD, None, _supported_prior(), {}, assert_identity_claims=True)
+    assert "product_description" not in plan["restored_fields"]
+    assert plan["decision"].startswith("LEAVE_INCOMPLETE")
+    assert any(b.startswith("MISSING_REQUIRED_FIELDS") for b in plan["approval_blockers"])
 
 
 # ── B-604-01: idempotent plan digest ─────────────────────────────────────────────────────────

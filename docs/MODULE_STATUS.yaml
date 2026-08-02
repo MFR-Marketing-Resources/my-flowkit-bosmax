@@ -529,6 +529,10 @@ domains:
       - scripts/pi11_corrective_runner.py
       - tests/unit/test_pi11_corrective_runner.py
       - tests/api/test_pi11_corrective_apply.py
+      # PI-11 PRE_PI11 rollback (owner decision): retract bad PI-11 approvals, restore genuine
+      # pre-PI-11 authoritative snapshots or return to MISSING; status-only, CAS-guarded, hard-gated.
+      - scripts/pi11_rollback_runner.py
+      - tests/unit/test_pi11_rollback.py
       - agent/services/product_registration_service.py
       - agent/services/registration_commit_service.py
       - agent/services/registration_draft_storage_service.py

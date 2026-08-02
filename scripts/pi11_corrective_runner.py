@@ -57,11 +57,14 @@ PLACEHOLDER_RE = re.compile(
     r"(?i)\b(assume[d ]|not provided|not stated|not specified|unknown|n/?a|placeholder|"
     r"tidak dinyatakan|standard\s+\w+\s+base|not intended to diagnose)\b")
 
-# provenance strong enough to treat a prior value as EVIDENCE (not merely product-specific prose)
-SUPPORT_VERIFY = {"REVIEWED_APPROVED", "VERIFIED", "EXTERNALLY_VERIFIED", "OPERATOR_CONFIRMED", "APPROVED"}
-EXTERNAL_SOURCE_TYPES = {"EXTERNAL_EXTRACTION", "EXTERNALLY_EXTRACTED", "OPERATOR_CONFIRMED",
-                         "OPERATOR", "TIKTOK_EXTRACTION", "IMAGE_EXTRACTION", "APPROVED_EVIDENCE",
-                         "REVIEW_DRAFT"}
+# B-604 correction 1: a field is EVIDENCE only when its provenance proves real ACQUISITION —
+# NOT a reviewer/workflow status. REVIEW_DRAFT / AI_PREPARE_LANE are authoring lanes, never
+# acquisition, and a source_url attached to AI/review prose is NOT acquired evidence. Support
+# requires an acquisition source_type AND an approved/verified status AND a source reference AND an
+# extraction method (field-level lineage).
+ACQUISITION_SOURCE_TYPES = {"EXTERNAL_EXTRACTION", "EXTERNALLY_EXTRACTED", "OPERATOR_CONFIRMED",
+                            "OPERATOR", "TIKTOK_EXTRACTION", "IMAGE_EXTRACTION", "APPROVED_EVIDENCE"}
+SUPPORT_VERIFY = {"VERIFIED", "EXTERNALLY_VERIFIED", "OPERATOR_CONFIRMED", "APPROVED"}
 
 # fields the validator hard-requires that we may RESTORE from a supported prior (non-disposition)
 RESTORABLE_REQUIRED = ("product_description", "benefits_json", "usp_json", "target_customer_text",
@@ -98,15 +101,18 @@ def claim_gate_of(field_name, value):
 
 
 def provenance_supports(prov_row):
-    """B-604-03: a field is EVIDENCE only with a supporting field-provenance row — an approved/
-    verified status tied to a real source (source_url or external source_type). Product-specific
-    prose alone is NOT support."""
+    """B-604 correction 1: a field is EVIDENCE only when its field-level provenance proves real
+    acquisition — an ACQUISITION source_type AND an approved/verified status AND a source reference
+    (URL or immutable local evidence ref) AND an extraction method. A REVIEWED_APPROVED status or a
+    source_url on AI/review prose is NOT acquired evidence."""
     if not prov_row:
         return False
-    vs = str(prov_row.get("verification_status") or "").upper()
     st = str(prov_row.get("source_type") or "").upper()
-    has_url = bool(prov_row.get("source_url"))
-    return vs in SUPPORT_VERIFY and (has_url or st in EXTERNAL_SOURCE_TYPES)
+    vs = str(prov_row.get("verification_status") or "").upper()
+    has_ref = bool(prov_row.get("source_url")) or bool(prov_row.get("evidence_ref")) \
+        or bool(prov_row.get("normalized_value"))
+    has_method = bool(prov_row.get("extraction_method"))
+    return st in ACQUISITION_SOURCE_TYPES and vs in SUPPORT_VERIFY and has_ref and has_method
 
 
 def restorable_value(field_name, prior_value, prov_row):
@@ -183,9 +189,12 @@ def sanitize_planning(obj):
 
 
 def author_identity_claim(product):
-    """A single DETERMINISTIC identity claim from the product's OWN taxonomy (not DeepSeek, not
-    prose). Support = the product's verified identity. Returns None if no taxonomy or if the claim
-    is not claim-safe (e.g. a 'Cat Treats' taxonomy would trip the lexicon)."""
+    """DISABLED by owner decision (default off). A single DETERMINISTIC identity claim from the
+    product's OWN taxonomy (not DeepSeek, not prose). It may satisfy ONLY `allowed_claims_json` and
+    NEVER provides support for description/benefits/usp/usage/target/persona/strategy — those come
+    only from acquisition-supported provenance. If ever re-enabled it additionally requires a
+    non-stale taxonomy/registry fingerprint, immutable field provenance on the taxonomy fields, no
+    fallback/generic taxonomy, and a claim-safe result. Returns None if no taxonomy or not safe."""
     parts = [(product or {}).get("category"), (product or {}).get("subcategory"), (product or {}).get("type")]
     ident = " / ".join(x for x in parts if x)
     if not ident:
@@ -248,9 +257,17 @@ def build_correction_plan(product, current_pi11, prior_snap, prior_prov, assert_
     # 5. AUTHORITATIVE validator decides (B-604-05/07) — never a hand-rolled >=1-fact gate
     verdict = _evaluate_validation_payload(dict(payload), product, dispositions)
     blockers = verdict.get("approval_blockers") or []
+    gate = verdict.get("claim_gate")
     hard = [b for b in blockers if str(b).startswith(("MISSING_REQUIRED_FIELDS",
                                                       "REQUIRES_EXTERNAL_EVIDENCE", "CLAIM_BLOCKED"))]
-    decision = "RESTORE_APPROVE" if not hard else "LEAVE_INCOMPLETE"
+    # B-604 correction 2: only CLAIM_SAFE may enter unattended corrective approval. Any
+    # CLAIM_REVIEW_REQUIRED becomes LEAVE_INCOMPLETE_HUMAN_REVIEW — NEVER auto-acknowledged.
+    if hard:
+        decision = "LEAVE_INCOMPLETE"
+    elif gate != "CLAIM_SAFE":
+        decision = "LEAVE_INCOMPLETE_HUMAN_REVIEW"
+    else:
+        decision = "RESTORE_APPROVE"
 
     return {
         "product_id": product.get("id"),
@@ -265,11 +282,13 @@ def build_correction_plan(product, current_pi11, prior_snap, prior_prov, assert_
         "strategy_removed": s_rm,
         "identity_claim_added": identity_claim_added,
         "readiness_status": verdict.get("readiness_status"),
-        "claim_gate": verdict.get("claim_gate"),
+        "claim_gate": gate,
         "completeness_score": verdict.get("completeness_score"),
         "approval_blockers": blockers,
         "governed_absent_fields": verdict.get("governed_absent_fields"),
-        "reason": ("APPROVABLE_VIA_REAL_VALIDATOR" if not hard else "; ".join(hard)),
+        "reason": ("APPROVABLE_CLAIM_SAFE_VIA_REAL_VALIDATOR" if decision == "RESTORE_APPROVE"
+                   else ("CLAIM_REVIEW_REQUIRED:human review (never auto-acknowledged)"
+                         if decision == "LEAVE_INCOMPLETE_HUMAN_REVIEW" else "; ".join(hard))),
         "payload": payload,
         "disposition_map": dispositions,
     }
@@ -414,10 +433,11 @@ def apply_one(client, pid, plan, already_corrected=False):
                     if str(b).startswith(("MISSING_REQUIRED_FIELDS", "REQUIRES_EXTERNAL_EVIDENCE", "CLAIM_BLOCKED"))]
         if blockers:
             raise RuntimeError(f"validator_blocked {blockers}")
+        # B-604 correction 2: NEVER auto-acknowledge a claim review. Only CLAIM_SAFE approves.
+        if v.get("claim_gate") != "CLAIM_SAFE":
+            raise RuntimeError(f"claim_gate_not_safe:{v.get('claim_gate')} -> human review required")
         body = {"approved_by": REVIEWER,
-                "approval_note": "PI-11 restore-only corrective vNext (owner-authorized restore-only)."}
-        if v.get("claim_gate") == "CLAIM_REVIEW_REQUIRED":
-            body["claim_review_acknowledged"] = True
+                "approval_note": "PI-11 restore-only corrective vNext (CLAIM_SAFE, owner-authorized)."}
         st, a = client.request("POST", f"/product-intelligence/review-drafts/{did}/approve", body)
         if st != 200:
             raise RuntimeError(f"approve {st} {a}")

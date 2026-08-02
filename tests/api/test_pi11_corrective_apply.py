@@ -22,7 +22,8 @@ _spec = importlib.util.spec_from_file_location("pi11corr", REPO / "scripts" / "p
 C = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(C)
 
-_SUPPORT = {"verification_status": "REVIEWED_APPROVED", "source_url": "https://s/x", "source_type": "REVIEW_DRAFT"}
+_SUPPORT = {"source_type": "EXTERNAL_EXTRACTION", "verification_status": "VERIFIED",
+            "source_url": "https://s/x", "extraction_method": "dom_scrape"}
 
 
 def _client():
