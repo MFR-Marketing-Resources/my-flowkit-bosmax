@@ -523,6 +523,11 @@ domains:
       # SUPPORTED_INFERENCE + governed SOURCE_UNAVAILABLE dispositions. No live source, no
       # fabrication; approves under owner-delegated reviewer claude-owner-delegated-pi11.
       - scripts/pi11_stored_evidence_runner.py
+      # PI-11 CORRECTIVE runner (B-604-01..07) — supersedes the rejected runner above. Pure,
+      # testable decision logic: fill-missing-only, provenance-gated carry, per-claim claim
+      # reconciliation, persona/strategy sanitation, semantic-quality gate. --apply is hard-gated.
+      - scripts/pi11_corrective_runner.py
+      - tests/unit/test_pi11_corrective_runner.py
       - agent/services/product_registration_service.py
       - agent/services/registration_commit_service.py
       - agent/services/registration_draft_storage_service.py

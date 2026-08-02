@@ -1,5 +1,14 @@
 #!/usr/bin/env python
-"""BOSMAX-PI-11-STORED-EVIDENCE-BULK-CLOSURE — governed stored-evidence PI runner.
+"""!! REJECTED BY OWNER FORENSIC AUDIT (B-604-01..07) — DO NOT RUN --bulk/--ids/--pilot. !!
+
+This runner MANUFACTURES generic identity templates (`neutral_description`, `infer_*`,
+`FUNCTION_MAP`, `author_allowed_claims`) to pass the completeness gate, and bulk-moves SAFE
+historical allowed claims to blocked. Its 651/651 KPI was rejected: 530/530 generic descriptions,
+507 generic-only, 314 degraded. Superseded by `scripts/pi11_corrective_runner.py` (fill-missing
+only, provenance-gated, per-claim reconciliation, semantic-quality gate). Retained ONLY as the
+audited record of what produced the state under correction. Evidence: outputs/mission-pi11/audit/.
+
+BOSMAX-PI-11-STORED-EVIDENCE-BULK-CLOSURE — governed stored-evidence PI runner.
 
 No live TikTok. For each debt product it builds Product Intelligence from STORED evidence +
 conservative SUPPORTED_INFERENCE + explicit governed dispositions, then approves under the
