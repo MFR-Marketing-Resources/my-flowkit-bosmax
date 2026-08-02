@@ -1,5 +1,6 @@
 import os
 import json
+import sqlite3
 import shutil
 import pytest
 from pathlib import Path
@@ -9,8 +10,35 @@ from agent.services.registration_draft_storage_service import RegistrationDraftS
 
 @pytest.fixture
 def temp_draft_dir(tmp_path):
-    with patch("agent.services.registration_draft_storage_service.PRODUCT_REGISTRATION_DRAFTS_DIR", tmp_path):
-        yield tmp_path
+    drafts_dir = tmp_path / "drafts"
+    drafts_dir.mkdir()
+    database_path = tmp_path / "flow_agent.db"
+    with sqlite3.connect(database_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE product_registration_review_draft (
+                draft_id TEXT PRIMARY KEY,
+                review_status TEXT NOT NULL,
+                source_lane TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX idx_product_registration_review_draft_updated
+                ON product_registration_review_draft(updated_at);
+            """
+        )
+    with (
+        patch(
+            "agent.services.registration_draft_storage_service.PRODUCT_REGISTRATION_DRAFTS_DIR",
+            drafts_dir,
+        ),
+        patch(
+            "agent.services.registration_draft_storage_service.DB_PATH",
+            database_path,
+        ),
+    ):
+        yield drafts_dir
 
 def test_save_and_get_draft(temp_draft_dir):
     draft = RegistrationReviewDraft(

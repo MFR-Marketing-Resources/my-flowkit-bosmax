@@ -458,7 +458,8 @@ async def test_navigate_disconnected_extension_is_named(monkeypatch):
     ("PRODUCT_DELISTED", "TIKTOK_RELAY_PRODUCT_DELISTED"),
     ("PRODUCT_ID_MISMATCH", "TIKTOK_RELAY_PRODUCT_ID_MISMATCH"),
     ("NAVIGATION_TIMEOUT", "TIKTOK_RELAY_TIMEOUT"),
-    ("EXTRACTION_FAILED", "TIKTOK_RELAY_CONTENT_SCRIPT_UNREACHABLE"),
+    # B-597-01: an unreadable page is empty evidence (act-then-retry), never delisted.
+    ("EXTRACTION_FAILED", "TIKTOK_RELAY_EMPTY_EVIDENCE"),
 ])
 async def test_navigate_every_failure_outcome_maps_to_its_own_code(monkeypatch, outcome, expected):
     install_client(monkeypatch, FakeFlowClient({"ok": False, "outcome": outcome}))
@@ -481,3 +482,24 @@ async def test_navigate_unknown_outcome_is_malformed_not_a_crash(monkeypatch):
     with pytest.raises(relay.TikTokRelayError) as excinfo:
         await relay.navigate_product_tab(NAV_URL)
     assert excinfo.value.code == relay.ERR_MALFORMED_RESPONSE
+
+
+@pytest.mark.asyncio
+async def test_navigate_extraction_failed_is_empty_evidence_not_delisted(monkeypatch):
+    """B-597-01 backend half: an EXTRACTION_FAILED navigation (an empty/unreadable page)
+    maps to the truthful EMPTY_EVIDENCE code, NEVER to a delisted claim."""
+    install_client(monkeypatch, FakeFlowClient(
+        {"ok": False, "outcome": "EXTRACTION_FAILED", "error": "TIKTOK_EVIDENCE_EMPTY"}))
+    with pytest.raises(relay.TikTokRelayError) as excinfo:
+        await relay.navigate_product_tab(NAV_URL)
+    assert excinfo.value.code == relay.ERR_EMPTY_EVIDENCE
+    assert excinfo.value.code != relay.ERR_PRODUCT_DELISTED
+
+
+@pytest.mark.asyncio
+async def test_navigate_only_an_explicit_delisted_outcome_is_delisted(monkeypatch):
+    """The ONLY path to ERR_PRODUCT_DELISTED is the extension asserting PRODUCT_DELISTED."""
+    install_client(monkeypatch, FakeFlowClient({"ok": False, "outcome": "PRODUCT_DELISTED"}))
+    with pytest.raises(relay.TikTokRelayError) as excinfo:
+        await relay.navigate_product_tab(NAV_URL)
+    assert excinfo.value.code == relay.ERR_PRODUCT_DELISTED

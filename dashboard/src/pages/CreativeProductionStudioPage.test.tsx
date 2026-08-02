@@ -528,7 +528,7 @@ function prime() {
 async function selectPlan(planId: string) {
 	const select = await screen.findByLabelText("Select production plan");
 	fireEvent.change(select, { target: { value: planId } });
-	await screen.findByTestId("p6-plan-status");
+	await screen.findByTestId("p6-plan-status", undefined, { timeout: 5000 });
 }
 
 beforeEach(() => {

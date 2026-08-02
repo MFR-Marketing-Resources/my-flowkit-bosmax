@@ -5020,26 +5020,47 @@ async function handleTikTokNavigateProductTab(params) {
 	try {
 		probe = await sendTikTokEvidenceMessage(tab.id, `nav-${Date.now()}`);
 	} catch (_) {
-		// content script not injected yet / unreachable on the settled page
+		// content script not injected yet / unreachable on the settled page. This is a page
+		// we could not READ — never proof the listing was removed. B-597-01.
 		return { ok: false, outcome: "EXTRACTION_FAILED", error: "TIKTOK_CONTENT_SCRIPT_UNREACHABLE",
-			observed_product_id: (finalIdentity && finalIdentity.product_id) || null };
+			observed_product_id: (finalIdentity && finalIdentity.product_id) || null,
+			observed_url: (finalIdentity ? `${finalIdentity.host}${finalIdentity.path}` : null) };
 	}
 	const probeResult = (probe && typeof probe === "object" && probe.result && typeof probe.result === "object")
 		? probe.result : probe;
+	const cls = classifyTikTokNavProbe(probeResult);
+	return {
+		ok: cls.outcome === "PAGE_READY",
+		outcome: cls.outcome,
+		tab_id: tab.id,
+		error: cls.probe_error || null,
+		observed_product_id: (finalIdentity && finalIdentity.product_id) || wanted.product_id,
+		observed_url: (probeResult && probeResult.observed_url)
+			|| (finalIdentity ? `${finalIdentity.host}${finalIdentity.path}` : null),
+	};
+}
+
+// PURE classification of the content-script probe into a navigation outcome. Split out so
+// the B-597-01 rule — a removed listing is ONLY an explicit removed marker, everything else
+// we could not read is EXTRACTION_FAILED, never a delisted claim — is unit-testable without a
+// browser. Order matters: evidence first, then wall, then removed, then generic empty.
+function classifyTikTokNavProbe(probeResult) {
 	if (probeResult && probeResult.ok === true) {
-		return { ok: true, outcome: "PAGE_READY", tab_id: tab.id,
-			observed_product_id: (finalIdentity && finalIdentity.product_id) || wanted.product_id,
-			observed_url: probeResult.observed_url || (finalIdentity ? `${finalIdentity.host}${finalIdentity.path}` : null) };
+		return { outcome: "PAGE_READY" };
 	}
 	const probeError = String((probeResult && probeResult.error) || "");
 	if (probeError.includes("SECURITY_CHECK")) {
-		return { ok: false, outcome: "SECURITY_CHECK_REQUIRES_HUMAN", tab_id: tab.id,
-			observed_url: (probeResult && probeResult.observed_url) || null };
+		return { outcome: "SECURITY_CHECK_REQUIRES_HUMAN" };
 	}
-	// Page loaded but states no product: delisted / not-found / removed listing.
-	return { ok: false, outcome: "PRODUCT_DELISTED", tab_id: tab.id,
-		observed_product_id: (finalIdentity && finalIdentity.product_id) || null,
-		observed_url: (probeResult && probeResult.observed_url) || null };
+	// PRODUCT_DELISTED ONLY on explicit removed/not-found evidence the content script asserts.
+	if (probeError.includes("PRODUCT_REMOVED") || probeError.includes("PRODUCT_NOT_FOUND")) {
+		return { outcome: "PRODUCT_DELISTED" };
+	}
+	// EVIDENCE_EMPTY, an unknown probe error, a selector miss, a still-rendering SPA, an empty
+	// probe result — all of these are "we could not read a product", NOT "the merchant
+	// removed it". Truthful failure, exact error preserved for retry/parser investigation.
+	return { outcome: "EXTRACTION_FAILED",
+		probe_error: probeError || "TIKTOK_PROBE_NO_RESULT" };
 }
 
 async function handleTikTokAcquireProductEvidence(params) {
