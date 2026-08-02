@@ -146,6 +146,10 @@ class RegistrationReviewDraft(BaseModel):
     
     created_at: str | None = None
     updated_at: str | None = None
+    storage_backend: Literal[
+        "UNPERSISTED", "LEGACY_JSON", "SQLITE_DATABASE"
+    ] = "UNPERSISTED"
+    storage_location: str | None = None
     rejection_checklist: dict[str, bool] = Field(default_factory=dict)
     fastmoss_reference_id: str | None = None
 

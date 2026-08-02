@@ -3082,6 +3082,17 @@ CREATE INDEX IF NOT EXISTS idx_product_intelligence_review_draft_product_status
 CREATE INDEX IF NOT EXISTS idx_product_intelligence_review_draft_product_updated
     ON product_intelligence_review_draft(product_id, updated_at);
 
+CREATE TABLE IF NOT EXISTS product_registration_review_draft (
+    draft_id TEXT PRIMARY KEY,
+    review_status TEXT NOT NULL,
+    source_lane TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_product_registration_review_draft_updated
+    ON product_registration_review_draft(updated_at);
+
 CREATE TABLE IF NOT EXISTS product_intelligence_review_field_provenance (
     review_provenance_id TEXT PRIMARY KEY,
     draft_id TEXT NOT NULL REFERENCES product_intelligence_review_draft(draft_id) ON DELETE CASCADE,
