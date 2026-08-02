@@ -1537,7 +1537,10 @@ async def ai_fill_missing_review_draft(
             continue
         status_value = str(entry.get("status") or "INSUFFICIENT_EVIDENCE").upper()
         coerced = _coerce_ai_fill_value(field, entry.get("value"))
-        if status_value in ("INSUFFICIENT_EVIDENCE", "NOT_APPLICABLE") or coerced is None:
+        # Enforce the status ENUM: ONLY FACT / INFERENCE may fill a field. NOT_APPLICABLE,
+        # INSUFFICIENT_EVIDENCE, or any unrecognised status (defence against a malformed model
+        # response) leaves the field unresolved — never silently accepted.
+        if status_value not in ("FACT", "INFERENCE") or coerced is None:
             unresolved.append({"field": field, "status": status_value, "rationale": str(entry.get("rationale") or "")})
             continue
         # Defence-in-depth: never overwrite a non-empty human field unless explicitly selected.

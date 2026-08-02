@@ -57,23 +57,46 @@ def _req(method, path, body=None, timeout=180):
         return resp.status, json.loads(resp.read().decode() or "{}")
 
 
-def call(method, path, body=None, timeout=180, retries=3):
-    """4xx = permanent (no retry). 429/5xx/network = bounded retry with backoff."""
+RECEIPTS = REPO / "outputs" / "mission-pi12" / "provider_receipts.jsonl"
+
+
+def _receipt(receipt_key, attempt, outcome):
+    """B-01: durable per-attempt provider receipt written BEFORE (reserve) and after (outcome) each
+    actual HTTP attempt, so retries and crash-after-call are counted from disk, not only from an
+    in-memory counter. Each line == one real provider attempt."""
+    RECEIPTS.parent.mkdir(parents=True, exist_ok=True)
+    with open(RECEIPTS, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"key": receipt_key, "attempt": attempt, "outcome": outcome}) + "\n")
+
+
+def call(method, path, body=None, timeout=180, retries=3, receipt_key=None):
+    """4xx = permanent (no retry). 429/5xx/network = bounded retry with backoff. When receipt_key is
+    set (provider lane), a durable receipt is written for EVERY attempt so the actual-call total
+    reconciles retries."""
     attempt = 0
     while True:
+        if receipt_key is not None:
+            _receipt(receipt_key, attempt, "RESERVED")
         try:
-            return _req(method, path, body, timeout)
+            r = _req(method, path, body, timeout)
+            if receipt_key is not None:
+                _receipt(receipt_key, attempt, f"HTTP_{r[0]}")
+            return r
         except urllib.error.HTTPError as e:
             code = e.code
             try:
                 detail = json.loads(e.read().decode() or "{}")
             except Exception:
                 detail = {}
+            if receipt_key is not None:
+                _receipt(receipt_key, attempt, f"HTTP_{code}")
             if code == 429 or 500 <= code < 600:
                 if attempt < retries:
                     time.sleep(1.5 * (attempt + 1)); attempt += 1; continue
             return code, detail  # 4xx permanent, or retries exhausted
         except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if receipt_key is not None:
+                _receipt(receipt_key, attempt, "NETWORK")
             if attempt < retries:
                 time.sleep(1.5 * (attempt + 1)); attempt += 1; continue
             return 0, {"error": "NETWORK"}
@@ -161,9 +184,13 @@ def identity_claim(p):
 
 
 def is_generic(draft):
+    # B-03: cover EVERY generated field, not just description/usage/target/benefits — usp, buyer
+    # persona and copy strategy are checked too so generic/template text in any of them blocks approval.
     blob = " ".join(str(draft.get(f) or "") for f in
                     ("product_description", "usage_text", "target_customer_text")).lower()
-    blob += " " + json.dumps(draft.get("benefits_json") or [], default=str).lower()
+    for f in ("benefits_json", "usp_json", "buyer_persona_snapshot_json", "copy_strategy_summary_json"):
+        blob += " " + json.dumps(draft.get(f) or ("" if f in ("benefits_json", "usp_json") else {}),
+                                 default=str).lower()
     return [m for m in GENERIC_MARKERS if m in blob]
 
 
@@ -202,7 +229,8 @@ def process_one(con, pid, budget):
     call_seq = None
     if not have_ai:
         call_seq = budget.take()
-        st, r = call("POST", f"/product-intelligence/review-drafts/{did}/ai-fill-missing", {}, timeout=240)
+        st, r = call("POST", f"/product-intelligence/review-drafts/{did}/ai-fill-missing", {},
+                     timeout=240, receipt_key=pid)
         if st != 200:
             # 4xx = permanent refusal (terminal, never retried); 5xx/network/0 = transient FAIL (retryable).
             return {"product_id": pid, "result": ("PERMANENT_REFUSAL" if 400 <= st < 500 else "FAIL"),

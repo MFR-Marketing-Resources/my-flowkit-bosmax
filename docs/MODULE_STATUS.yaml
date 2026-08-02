@@ -537,6 +537,13 @@ domains:
       # SUPPORTED_INFERENCE) + deterministic identity claim + governed absences -> real validator
       # + semantic gate -> approve. Never fabricates; ingredients/warnings always governed-absent.
       - scripts/pi12_grounded_runner.py
+      # PI-12 committed audit evidence (self-contained cohort + reconciliation/receipts/report) so a
+      # fresh checkout can run the runner and the numbers are independently auditable from the repo.
+      - outputs/mission-pi12/frozen_cohort.json
+      - outputs/mission-pi12/final_reconciliation.json
+      - outputs/mission-pi12/provider_accounting.json
+      - outputs/mission-pi12/FINAL_REPORT.md
+      # provider_receipts.jsonl is written per-attempt by the hardened runner on the NEXT run.
       - agent/services/product_registration_service.py
       - agent/services/registration_commit_service.py
       - agent/services/registration_draft_storage_service.py
