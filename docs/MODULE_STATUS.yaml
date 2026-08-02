@@ -528,6 +528,7 @@ domains:
       # reconciliation, persona/strategy sanitation, semantic-quality gate. --apply is hard-gated.
       - scripts/pi11_corrective_runner.py
       - tests/unit/test_pi11_corrective_runner.py
+      - tests/api/test_pi11_corrective_apply.py
       - agent/services/product_registration_service.py
       - agent/services/registration_commit_service.py
       - agent/services/registration_draft_storage_service.py
