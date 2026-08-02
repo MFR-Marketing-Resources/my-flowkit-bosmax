@@ -1122,6 +1122,16 @@ domains:
       # plan digest to the exact cohort it applies (the 283-vs-284 mismatch that made the
       # first canonical run abort with PLAN_DIGEST_MISMATCH and repair nothing).
       - scripts/strategy_fingerprint_reconciliation_04c.py
+      # Mission-08E: the same bounded reconciliation for the 2-product incident cohort,
+      # with an explicit FORBIDDEN_IDS guard so the REVIEW_REQUIRED product can never be
+      # reconciled even if it is added to the cohort by mistake.
+      - scripts/strategy_fingerprint_reconciliation_08e.py
+      # Mission-08E: bounded fill-empty-only L1 identity fill for the 2 products whose
+      # mapping failed closed on NULL subcategory/type. `category` is deliberately absent
+      # from WRITABLE_COLUMNS, and the canonical enrichment is used as a PURE calculator
+      # (persist=False) so the ~50-column write-back that froze updated_at is never taken.
+      - scripts/product_l1_identity_bounded_08e.py
+      - tests/unit/test_bounded_recovery_08e_drivers.py
       # Mission-07C: bounded, resumable, serial driver for the governed AI Copy Assist
       # route over the accepted 255-product cohort. Driver only - grounding, claim gating
       # and DRAFT status stay in the existing service; no direct-provider bypass.
