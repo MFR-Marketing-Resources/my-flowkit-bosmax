@@ -21,7 +21,7 @@ SAFE_AI = {
     "angle": "Segar sepanjang hari",
     "hook": "Nak rutin kulit nampak segar sepanjang hari?",
     "subhook": "Rutin ringkas tanpa leceh",
-    "usp_set": ["Sesuai untuk rutin harian", "Mudah digunakan", "Formula ringan"],
+    "usp_set": ["Menyerap cepat untuk kulit kombinasi", "Mudah digunakan", "Formula ringan"],
     "cta": "Cuba masukkan dalam rutin kau hari ni.",
     "formula_family": "HSO",
     "rationale": "Angle harian + hook soalan langsung.",

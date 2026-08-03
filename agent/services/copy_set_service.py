@@ -18,6 +18,7 @@ approvable copy object that the compiler can later consume as copy intelligence
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -98,6 +99,22 @@ _PLACEHOLDER_TOKENS = [
     "todo", "tbd", "xxx",
 ]
 
+# COPY-CORRECTIVE-B03: word-like placeholder tokens must match on token boundaries
+# so real content never mis-flags — e.g. the clothing/home size "6XXXL" / "XXXL"
+# must NOT be read as an unfilled "xxx" placeholder. Symbol tokens stay substring.
+_WORD_PLACEHOLDERS = {"xxx", "todo", "tbd", "placeholder"}
+_SYMBOL_PLACEHOLDERS = [t for t in _PLACEHOLDER_TOKENS if t not in _WORD_PLACEHOLDERS]
+
+
+def _hit_placeholder(hay: str) -> str | None:
+    for t in _SYMBOL_PLACEHOLDERS:
+        if t in hay:
+            return t
+    for t in _WORD_PLACEHOLDERS:
+        if re.search(rf"(?<![0-9a-z]){re.escape(t)}(?![0-9a-z])", hay):
+            return t
+    return None
+
 _METADATA_TOKENS = [
     "claim_safe", "copy_set", "workspace_execution", "prompt_fingerprint",
     "product_id", "```json", '"id":', "debug", "snapshot_id",
@@ -152,7 +169,7 @@ def scan_copy_safety(fields: dict[str, Any], *, product_id: str = "") -> dict[st
         if hit:
             violations.append(code)
             detail[code] = hit.strip()
-    placeholder = next((t for t in _PLACEHOLDER_TOKENS if t in hay), None)
+    placeholder = _hit_placeholder(hay)
     if placeholder:
         violations.append("UNRESOLVED_PLACEHOLDER")
         detail["UNRESOLVED_PLACEHOLDER"] = placeholder
