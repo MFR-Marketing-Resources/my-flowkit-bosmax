@@ -745,11 +745,11 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 		<div className="space-y-5">
 			{/* Stats Bar — Sync Queue is always visible; stats badges appear once loaded */}
 			<div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-				<div className="flex items-center justify-between mb-3">
+				<div className="flex flex-wrap items-center justify-between gap-2 mb-3">
 					<span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
 						Queue Stats
 					</span>
-					<div className="flex items-center gap-2">
+					<div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
 						<button
 							type="button"
 							onClick={handleKalodataImport}
