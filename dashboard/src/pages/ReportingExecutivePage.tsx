@@ -60,10 +60,21 @@ function ExecutiveInner() {
 				.slice(0, 15)
 		: [];
 
+	// COPY-CORRECTIVE-B05: lead with STRICT production-readiness (a valid current
+	// approved Copy Set), NOT raw "has any copy row" — the latter counted generic /
+	// stale / unreviewed copy as covered.
 	const copyDonut: DonutSlice[] = copy.data
 		? [
-				{ label: "Has copy", value: copy.data.products_with_copy, color: "#10b981" },
-				{ label: "Missing", value: copy.data.products_missing_copy, color: "#334155" },
+				{
+					label: "Production-ready",
+					value: copy.data.products_with_valid_approved_copy,
+					color: "#10b981",
+				},
+				{
+					label: "Needs work",
+					value: copy.data.products_without_valid_approved_copy,
+					color: "#334155",
+				},
 			]
 		: [];
 
@@ -94,10 +105,16 @@ function ExecutiveInner() {
 					loading={copy.loading}
 				/>
 				<KpiCard
-					label="Copy coverage"
-					value={`${copy.data?.coverage_pct ?? 0}%`}
-					hint={`${(copy.data?.products_missing_copy ?? 0).toLocaleString()} missing`}
-					tone={(copy.data?.coverage_pct ?? 0) < 50 ? "danger" : "success"}
+					label="Copy production-ready"
+					value={`${copy.data?.valid_approved_coverage_pct ?? 0}%`}
+					hint={`${(copy.data?.products_without_valid_approved_copy ?? 0).toLocaleString()} not strict-valid`}
+					tone={
+						(copy.data?.valid_approved_coverage_pct ?? 0) >= 100
+							? "success"
+							: (copy.data?.valid_approved_coverage_pct ?? 0) < 50
+								? "danger"
+								: "warn"
+					}
 					loading={copy.loading}
 				/>
 				<KpiCard
@@ -145,16 +162,16 @@ function ExecutiveInner() {
 
 			<div className="grid gap-6 lg:grid-cols-2">
 				<Section
-					title="Copywriting coverage"
-					helper="Products with at least one authored copy set, in the current scope."
+					title="Copy production-readiness"
+					helper="Products with a STRICT-VALID approved copy set (grounded, safe, complete, non-generic, reviewed) — not raw row coverage."
 				>
 					{copy.error ? (
 						<p className="text-xs text-red-400">{copy.error}</p>
 					) : (
 						<DonutPanel
 							data={copyDonut}
-							centerValue={`${copy.data?.coverage_pct ?? 0}%`}
-							centerLabel="has copy"
+							centerValue={`${copy.data?.valid_approved_coverage_pct ?? 0}%`}
+							centerLabel="production-ready"
 						/>
 					)}
 				</Section>
