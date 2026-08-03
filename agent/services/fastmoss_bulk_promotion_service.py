@@ -157,11 +157,20 @@ def _computed_metadata_for_row(row: dict[str, Any]) -> tuple[str, str]:
     computed_fingerprint = _clean(row.get("computed_input_fingerprint"))
     computed_ruleset = _clean(row.get("computed_ruleset_version"))
     state = _clean(row.get("recompute_state"))
+    legacy_completed_status = _clean(row.get("promotion_status")) in {
+        "APPROVED",
+        "DUPLICATE_LINKED",
+        "MISSING_REQUIRED_FIELD",
+        "REJECTED",
+    }
     if (
         not computed_fingerprint
         and not computed_ruleset
         and _clean(row.get("recomputed_at"))
-        and state not in {"STALE", "QUEUED", "RECOMPUTING"}
+        and (
+            state not in {"STALE", "QUEUED", "RECOMPUTING"}
+            or legacy_completed_status
+        )
     ):
         computed_fingerprint = _clean(row.get("input_fingerprint"))
         computed_ruleset = _clean(row.get("ruleset_version"))

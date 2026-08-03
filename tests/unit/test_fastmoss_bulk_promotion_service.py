@@ -741,6 +741,46 @@ async def test_reconcile_apply_does_not_mark_stale_row_current(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_reconcile_backfills_legacy_completed_lineage_once(monkeypatch):
+    from agent.db import crud
+    from agent.services import fastmoss_bulk_promotion_service as service
+
+    reference_id = "ref-reconcile-legacy-lineage-001"
+    ref = {
+        "id": reference_id,
+        "raw_product_title": "Legacy approved row",
+        "category": "Home Supplies",
+    }
+    fingerprint = service._reference_fingerprint(ref)
+    await crud.create_bulk_queue_row(
+        reference_id=reference_id,
+        raw_product_title=ref["raw_product_title"],
+        promotion_status="APPROVED",
+        recompute_state="STALE",
+        ruleset_version=_RECOMPUTE_RULESET_VERSION,
+        input_fingerprint=fingerprint,
+        recomputed_at="2026-08-03T00:00:00Z",
+    )
+    monkeypatch.setattr(
+        service,
+        "list_fastmoss_reference_products",
+        AsyncMock(return_value=[ref]),
+    )
+
+    applied = await service.reconcile_queue(dry_run=False)
+
+    assert applied["applied"] >= 1
+    row = await crud.get_bulk_queue_row(reference_id)
+    assert row is not None
+    assert row["recompute_state"] == "UP_TO_DATE"
+    assert row["computed_ruleset_version"] == _RECOMPUTE_RULESET_VERSION
+    assert row["computed_input_fingerprint"] == fingerprint
+
+    readback = await service.reconcile_queue(dry_run=True)
+    assert readback["changed"] == 0
+
+
+@pytest.mark.asyncio
 async def test_authoritative_reference_lookup_includes_rows_after_first_500(monkeypatch):
     from agent.services import fastmoss_bulk_promotion_service as service
 
