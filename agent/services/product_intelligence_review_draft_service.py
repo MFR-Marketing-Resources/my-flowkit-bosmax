@@ -1478,20 +1478,38 @@ async def approve_review_draft(
     snapshot_row = await crud.get_product_intelligence_snapshot(snapshot_id)
     if not snapshot_row:
         raise ValueError("SNAPSHOT_NOT_FOUND")
-    # COPY-FINAL-B02: fail-closed stale-copy containment when a new PI snapshot
-    # becomes APPROVED. Historical approved copy grounded on an older snapshot
-    # is preserved but immediately marked NEEDS_REVALIDATION and cannot rotate,
-    # select, bind, or execute until revalidated against the new authority.
-    try:
-        from agent.services.copy_set_validity_service import mark_stale_copy_sets_for_product
-        await mark_stale_copy_sets_for_product(
-            str(snapshot_row.get("product_id") or draft.product_id),
-            current_snapshot_id=str(snapshot_id),
+    # COPY-CORRECTIVE-B02/B05 (defect #6): a newly APPROVED PI snapshot invalidates
+    # older grounded copy. Historical approved copy is preserved but immediately
+    # marked NEEDS_REVALIDATION so it cannot rotate/select/bind/execute until it is
+    # revalidated against the new authority. This MUST NOT fail silently: the old
+    # `except Exception: pass` is replaced with a bounded retry that, on persistent
+    # failure, logs LOUD + auditable. The PI approval is already committed and valid
+    # (we never roll it back for a copy side-effect); dynamic fail-closed validity
+    # keeps stale copy non-executable even if the durable sweep could not complete.
+    import logging as _logging
+    from agent.services.copy_set_validity_service import mark_stale_copy_sets_for_product
+
+    _pid = str(snapshot_row.get("product_id") or draft.product_id)
+    _swept: int | None = None
+    _last_err: Exception | None = None
+    for _attempt in range(1, 4):
+        try:
+            _swept = await mark_stale_copy_sets_for_product(
+                _pid, current_snapshot_id=str(snapshot_id)
+            )
+            break
+        except Exception as _e:  # noqa: BLE001 — surfaced below, never swallowed
+            _last_err = _e
+            _logging.getLogger(__name__).error(
+                "COPY_STALE_SWEEP attempt %d failed product_id=%s new_snapshot=%s: %r",
+                _attempt, _pid, snapshot_id, _e,
+            )
+    if _swept is None:
+        _logging.getLogger(__name__).error(
+            "COPY_STALE_SWEEP_UNRESOLVED product_id=%s new_snapshot_id=%s err=%r — "
+            "durable re-sweep required; dynamic validity is fail-closing stale copy meanwhile",
+            _pid, snapshot_id, _last_err,
         )
-    except Exception:
-        # Never roll back a successful PI approval because of quarantine side-effects;
-        # the next quarantine sweep / validity evaluation still fail-closes selection.
-        pass
     return _snapshot_from_row(snapshot_row)
 
 
