@@ -659,6 +659,206 @@ async def valid_copy_set_ids_for_product(product_id: str) -> set[str]:
     }
 
 
+# ── Deterministic semantic grounding (COPY-CORRECTIVE-B03/B04, free-first) ─────
+# A NO-PROVIDER proxy for semantic review: copy genuinely derived from the current
+# approved Product Intelligence shares its vocabulary; generic/fabricated copy does
+# not. This revalidates salvageable pre-existing copy WITHOUT spending provider
+# credits — only the residual that fails this deterministic bar goes to paid rewrite.
+_GROUNDING_STOPWORDS = {
+    "yang", "untuk", "dengan", "dalam", "pada", "dari", "dan", "atau", "ini", "itu",
+    "adalah", "akan", "tidak", "juga", "boleh", "kami", "anda", "kau", "hari", "tanpa",
+    "lebih", "satu", "sangat", "semua", "kepada", "secara", "supaya", "agar", "kerana",
+    "serta", "oleh", "buat", "guna", "nak", "dah", "kena", "rasa", "bila", "lagi",
+    "the", "and", "for", "with", "from", "this", "that", "your", "you", "are", "our",
+    "have", "not", "can", "all", "any", "use", "using", "made", "real", "need", "daily",
+    "every", "more", "just", "now", "get", "who", "why", "how", "what", "when",
+}
+
+
+def _content_tokens(text: Any) -> set[str]:
+    if isinstance(text, (list, dict)):
+        text = json.dumps(text, ensure_ascii=False)
+    toks = re.findall(r"[a-zA-ZÀ-ɏ]+", str(text or "").lower())
+    return {t for t in toks if len(t) >= 4 and t not in _GROUNDING_STOPWORDS}
+
+
+_GROUNDING_PI_FIELDS = (
+    ("product_description", "product_description"),
+    ("benefits", "benefits_json"),
+    ("usp", "usp_json"),
+    ("target_customer", "target_customer_text"),
+    ("persona", "buyer_persona_snapshot_json"),
+    ("strategy", "copy_strategy_summary_json"),
+)
+
+
+def assess_semantic_grounding(
+    *,
+    hook: str = "",
+    subhook: str = "",
+    usp_list: list[str] | None = None,
+    cta: str = "",
+    snapshot: dict[str, Any] | Any,
+) -> dict[str, Any]:
+    """Deterministic field-level PI grounding.
+
+    A claim-bearing field is grounded when it shares >=1 significant content token
+    with a current PI field. Fail-closed: no USP, an ungrounded USP, an ungrounded
+    hook, or an empty PI authority all make the set NOT grounded (=> paid rewrite).
+    """
+    usp_list = [u for u in (usp_list or []) if _clean(u)]
+    get = snapshot.get if isinstance(snapshot, dict) else (lambda _k: None)
+    pi_fields: dict[str, set[str]] = {
+        name: _content_tokens(get(col)) for name, col in _GROUNDING_PI_FIELDS
+    }
+    pi_vocab: set[str] = set().union(*pi_fields.values()) if pi_fields else set()
+
+    def _match(text: str) -> tuple[str | None, int]:
+        toks = _content_tokens(text)
+        best_field, best = None, 0
+        for fname, ftoks in pi_fields.items():
+            ov = len(toks & ftoks)
+            if ov > best:
+                best, best_field = ov, fname
+        return best_field, best
+
+    usp_grounding: list[dict[str, Any]] = []
+    all_grounded = True
+    for u in usp_list:
+        fld, ov = _match(u)
+        g = ov >= 1
+        all_grounded = all_grounded and g
+        usp_grounding.append({"usp": u, "grounded": g, "supporting_pi_field": fld, "overlap": ov})
+
+    hook_fld, hook_ov = _match(f"{hook} {subhook}")
+    hook_grounded = hook_ov >= 1
+
+    reasons: list[str] = []
+    if not pi_vocab:
+        reasons.append("EMPTY_PI_AUTHORITY")
+    if not usp_list:
+        reasons.append("NO_USP")
+    if usp_list and not all_grounded:
+        reasons.append("UNGROUNDED_USP")
+    if not hook_grounded:
+        reasons.append("UNGROUNDED_HOOK")
+
+    grounded = bool(pi_vocab) and bool(usp_list) and all_grounded and hook_grounded
+    return {
+        "grounded": grounded,
+        "hook_grounded": hook_grounded,
+        "hook_supporting_pi_field": hook_fld,
+        "usp_grounding": usp_grounding,
+        "reasons": reasons,
+    }
+
+
+async def revalidate_copy_set(
+    copy_set_id: str,
+    *,
+    reviewer: str,
+    rationale: str,
+    usp_grounding: list[dict[str, Any]] | None = None,
+    genericness: dict[str, Any] | None = None,
+    decision: str = "APPROVED",
+) -> dict[str, Any]:
+    """Atomically make an ALREADY-approved set strict-valid: write a semantic-review
+    receipt bound to current PI, stamp lineage, and clear quarantine in ONE write.
+    The caller MUST have confirmed the set passes strict deterministic review first.
+    """
+    db = await get_db()
+    cur = await db.execute("SELECT * FROM copy_set WHERE copy_set_id = ?", (copy_set_id,))
+    row = await cur.fetchone()
+    await cur.close()
+    if not row:
+        raise ValueError("COPY_SET_NOT_FOUND")
+    cs = dict(row)
+    if _clean(cs.get("status")).upper() != STATUS_COPY_APPROVED:
+        raise ValueError("COPY_SET_NOT_APPROVED")
+    snap = await _latest_approved_snapshot(str(cs["product_id"]))
+    if not snap:
+        raise ValueError("NO_APPROVED_PI_SNAPSHOT")
+    digest = pi_authority_digest(snap)
+    now = _now()
+    claim = _parse_json(cs.get("claim_review_json")) or {}
+    if not isinstance(claim, dict):
+        claim = {}
+    claim["semantic_review"] = build_semantic_review_receipt(
+        reviewer=reviewer,
+        decision=decision,
+        rationale=rationale,
+        pi_snapshot_id=str(snap["snapshot_id"]),
+        pi_snapshot_version=int(snap["version"]),
+        authority_digest=digest,
+        platform=_clean(cs.get("platform")),
+        language=_clean(cs.get("language")),
+        route=_clean(cs.get("route_type")),
+        formula=_clean(cs.get("formula_family")),
+        usp_grounding=usp_grounding or [],
+        genericness=genericness or {},
+        reviewed_at=now,
+    )
+    prov = _parse_json(cs.get("provenance_json")) or {}
+    if not isinstance(prov, dict):
+        prov = {}
+    prov["pi_lineage"] = {
+        "snapshot_id": snap["snapshot_id"],
+        "version": snap["version"],
+        "authority_digest": digest,
+        "grounded_at": now,
+        "grounding_source": "APPROVED_PRODUCT_INTELLIGENCE_SNAPSHOT",
+        "revalidated_at": now,
+        "revalidated_by": reviewer,
+        "decision": "REVALIDATED_GROUNDED",
+        "rationale": rationale,
+    }
+    await db.execute(
+        "UPDATE copy_set SET claim_review_json = ?, provenance_json = ?, "
+        "pi_snapshot_id = ?, pi_snapshot_version = ?, pi_grounding_digest = ?, "
+        "grounded_at = ?, revalidated_at = ?, revalidated_by = ?, "
+        "revalidation_decision = ?, pi_eligibility_status = NULL, "
+        "pi_ineligible_reasons = NULL, updated_at = ? WHERE copy_set_id = ?",
+        (
+            json.dumps(claim, ensure_ascii=False),
+            json.dumps(prov, ensure_ascii=False),
+            snap["snapshot_id"],
+            int(snap["version"]),
+            digest,
+            now,
+            now,
+            reviewer,
+            "REVALIDATED",
+            now,
+            copy_set_id,
+        ),
+    )
+    await db.commit()
+    return {
+        "copy_set_id": copy_set_id,
+        "pi_snapshot_id": str(snap["snapshot_id"]),
+        "pi_snapshot_version": int(snap["version"]),
+        "grounded_at": now,
+    }
+
+
+async def quarantine_copy_set(
+    copy_set_id: str,
+    *,
+    reason: str,
+    status: str = NEEDS_REVALIDATION,
+) -> dict[str, Any]:
+    """Durable, auditable containment marking for an invalid asset (never deletes)."""
+    db = await get_db()
+    now = _now()
+    await db.execute(
+        "UPDATE copy_set SET pi_eligibility_status = ?, pi_ineligible_reasons = ?, "
+        "updated_at = ? WHERE copy_set_id = ?",
+        (status, reason, now, copy_set_id),
+    )
+    await db.commit()
+    return {"copy_set_id": copy_set_id, "pi_eligibility_status": status, "reason": reason}
+
+
 def build_semantic_review_receipt(
     *,
     reviewer: str,
