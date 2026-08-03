@@ -626,7 +626,8 @@ CREATE TABLE IF NOT EXISTS fastmoss_bulk_draft_status (
 
 CREATE INDEX IF NOT EXISTS idx_bulk_draft_status ON fastmoss_bulk_draft_status(promotion_status);
 CREATE INDEX IF NOT EXISTS idx_bulk_draft_risk ON fastmoss_bulk_draft_status(claim_risk_level);
-CREATE INDEX IF NOT EXISTS idx_bulk_draft_recompute_state ON fastmoss_bulk_draft_status(recompute_state);
+-- Created after additive migration below so legacy databases without
+-- recompute_state can run this schema script safely.
 
 CREATE TABLE IF NOT EXISTS batch_generation_run (
     batch_run_id      TEXT PRIMARY KEY,

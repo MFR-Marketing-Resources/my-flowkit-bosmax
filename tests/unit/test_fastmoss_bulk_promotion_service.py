@@ -1209,6 +1209,75 @@ async def test_db_migration_creates_fastmoss_bulk_draft_status():
     assert row is not None, "fastmoss_bulk_draft_status table must exist after init_db()"
 
 
+@pytest.mark.asyncio
+async def test_legacy_fastmoss_schema_migration_adds_recompute_columns_and_index(
+    tmp_path, monkeypatch
+):
+    """Legacy queue tables must survive init_db before recompute indexing."""
+    import sqlite3
+
+    from agent.db import schema
+
+    await schema.close_db()
+    legacy_db = tmp_path / "legacy-fastmoss.db"
+    with sqlite3.connect(legacy_db) as legacy:
+        legacy.executescript(
+            """
+            CREATE TABLE fastmoss_bulk_draft_status (
+                reference_id TEXT PRIMARY KEY,
+                raw_product_title TEXT,
+                claim_risk_level TEXT,
+                promotion_status TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            );
+            INSERT INTO fastmoss_bulk_draft_status (
+                reference_id, raw_product_title, claim_risk_level,
+                promotion_status, created_at, updated_at
+            ) VALUES (
+                'legacy-ref-001', 'Legacy Product', 'LOW',
+                'MISSING_REQUIRED_FIELD', '2026-08-03T00:00:00Z',
+                '2026-08-03T00:00:00Z'
+            );
+            """
+        )
+
+    monkeypatch.setattr(schema, "DB_PATH", legacy_db)
+    await schema.init_db()
+    db = await schema.get_db()
+
+    cursor = await db.execute("PRAGMA table_info(fastmoss_bulk_draft_status)")
+    columns = {row[1] for row in await cursor.fetchall()}
+    assert {
+        "ruleset_version",
+        "input_fingerprint",
+        "computed_ruleset_version",
+        "computed_input_fingerprint",
+        "recompute_state",
+        "recompute_reason",
+        "recompute_started_at",
+        "recompute_attempt_count",
+    } <= columns
+
+    cursor = await db.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type='index' AND name='idx_bulk_draft_recompute_state'"
+    )
+    assert await cursor.fetchone() is not None
+
+    cursor = await db.execute(
+        "SELECT raw_product_title, promotion_status, recompute_state "
+        "FROM fastmoss_bulk_draft_status WHERE reference_id=?",
+        ("legacy-ref-001",),
+    )
+    assert tuple(await cursor.fetchone()) == (
+        "Legacy Product",
+        "MISSING_REQUIRED_FIELD",
+        "STALE",
+    )
+    await schema.close_db()
+
+
 # ---------------------------------------------------------------------------
 # CRUD whitelist — fastmoss_bulk_draft_status must be in _VALID_TABLES
 # ---------------------------------------------------------------------------
