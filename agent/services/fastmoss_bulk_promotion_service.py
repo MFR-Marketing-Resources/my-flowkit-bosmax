@@ -668,7 +668,7 @@ def _ref_to_completion_request(ref: dict[str, Any]) -> ProductKnowledgeCompleteR
 
     hub_price = hub.get("price")
 
-    return ProductKnowledgeCompleteRequest(
+    request = ProductKnowledgeCompleteRequest(
         product_name=raw_title,
         source_lane="FASTMOSS_PROMOTED",
         paste_anything_about_product=paste_knowledge,
@@ -697,6 +697,26 @@ def _ref_to_completion_request(ref: dict[str, Any]) -> ProductKnowledgeCompleteR
         ingredients_text=_hub_text("ingredients_text"),
         warnings_text=_hub_text("warnings_text"),
     )
+    # Staged Kalodata HUB copy is frequently TikTok *creative* metadata — hashtags,
+    # background-music names, clip duration, CTA slogans — NOT product evidence
+    # (e.g. a sanitary-napkin ref carrying "#SKINTIFIC #SnailMucin ... / 15-30s /
+    # Hydration music"). Reuse the evidence-quality detector to reject that junk AT
+    # INGESTION so it never lands in declared evidence; the field falls through to
+    # MISSING -> grounded FILL instead. Detector-driven, so it cannot drift; no
+    # fabrication and product-genuine copy is untouched.
+    from agent.services.registration_evidence_quality_service import (
+        audit_registration_evidence,
+    )
+    audit = audit_registration_evidence(request, product_family=None)
+    rejected = {
+        field: None
+        for field in ("benefits_text", "target_customer_text", "ingredients_text")
+        if getattr(request, field, None)
+        and audit.sanitized_fields.get(field) is None
+    }
+    if rejected:
+        request = request.model_copy(update=rejected)
+    return request
 
 
 def _apply_lineage_to_draft(
