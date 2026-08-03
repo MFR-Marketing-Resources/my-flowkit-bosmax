@@ -20,13 +20,35 @@ from agent.services.fastmoss_bulk_promotion_service import (
     _detect_queue_duplicate,
     bulk_approve_drafts,
     recompute_selected,
+    reconcile_queue,
     can_generate_content_for_fastmoss_reference,
     resolve_duplicate_queue_row,
     update_queue_row_status,
     export_missing_as_csv,
     import_enrichment,
+    _RECOMPUTE_RULESET_VERSION,
+    _reference_fingerprint,
+    _row_reference_fallback,
+    _recompute_state_for_row,
+    _current_reference_map,
 )
 from agent.models.product_registration import RegistrationReviewDraft
+
+
+async def _stamp_current_recompute_metadata(reference_id: str):
+    """Mark a fixture row as already reconciled under the active ruleset."""
+    from agent.db import crud
+
+    row = await crud.get_bulk_queue_row(reference_id)
+    assert row is not None
+    await crud.update_bulk_queue_row(
+        reference_id,
+        ruleset_version=_RECOMPUTE_RULESET_VERSION,
+        input_fingerprint=_reference_fingerprint(_row_reference_fallback(row)),
+        computed_ruleset_version=_RECOMPUTE_RULESET_VERSION,
+        computed_input_fingerprint=_reference_fingerprint(_row_reference_fallback(row)),
+        recomputed_at="2026-08-03T00:00:00Z",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +291,7 @@ async def test_bulk_approve_not_in_queue_is_skipped(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_recompute_selected_improved_missing_row_becomes_ready_and_preserves_lineage(
+async def test_recompute_selected_blocks_missing_row_and_routes_to_evidence_review(
     monkeypatch, tmp_path
 ):
     from agent.db import crud
@@ -329,40 +351,29 @@ async def test_recompute_selected_improved_missing_row_becomes_ready_and_preserv
 
     result = await recompute_selected([reference_id])
 
-    assert result["recomputed"] == 1
-    assert result["ready_for_approval"] == 1
+    assert result["recomputed"] == 0
+    assert result["blocked_missing_evidence"] == 1
     assert result["failed"] == 0
-    assert result["skipped"] == 0
+    assert result["skipped"] == 1
     row_result = result["results"][0]
     assert row_result["previous_status"] == "MISSING_REQUIRED_FIELD"
-    assert row_result["new_status"] == "READY_FOR_APPROVAL"
+    assert row_result["new_status"] == "MISSING_REQUIRED_FIELD"
     assert row_result["previous_error_message"] == "MISSING:SIZE_OR_VOLUME_EVIDENCE"
-    assert row_result["new_error_message"] is None
-    assert row_result["outcome"] == "OK"
+    assert row_result["new_error_message"] == "MISSING:SIZE_OR_VOLUME_EVIDENCE"
+    assert row_result["outcome"] == "SKIPPED"
+    assert row_result["error"] == "BLOCKED_MISSING_EVIDENCE_REVIEW_REQUIRED"
 
     row = await crud.get_bulk_queue_row(reference_id)
     assert row is not None
-    assert row["promotion_status"] == "READY_FOR_APPROVAL"
-    assert row["draft_id"] == "draft-recompute-ready-001"
-    assert row["recompute_previous_status"] == "MISSING_REQUIRED_FIELD"
-    assert row["recompute_previous_error"] == "MISSING:SIZE_OR_VOLUME_EVIDENCE"
-    assert row["error_message"] is None
-
-    saved_draft = RegistrationDraftStorageService.get_draft("draft-recompute-ready-001")
-    assert saved_draft is not None
-    assert saved_draft.fastmoss_reference_id == reference_id
-    assert saved_draft.source_lane == "FASTMOSS_PROMOTED"
-    assert any(
-        f"fastmoss_bulk_promotion:reference_id={reference_id}" in p
-        for p in saved_draft.provenance
-    )
+    assert row["promotion_status"] == "MISSING_REQUIRED_FIELD"
+    assert row["recompute_state"] == "STALE"
 
     products_after = len(await crud.list_products(limit=5000))
     assert products_after == products_before, "recompute_selected must not create Product Truth rows"
 
 
 @pytest.mark.asyncio
-async def test_recompute_selected_missing_row_stays_missing_with_error_message(monkeypatch):
+async def test_recompute_selected_missing_row_never_calls_recompute(monkeypatch):
     from agent.db import crud
 
     reference_id = "ref-recompute-missing-001"
@@ -388,20 +399,24 @@ async def test_recompute_selected_missing_row_stays_missing_with_error_message(m
             "promotion_status": "MISSING_REQUIRED_FIELD",
         }
 
-    monkeypatch.setattr("agent.services.fastmoss_bulk_promotion_service.create_draft_from_reference", _fake_recompute)
+    mock = AsyncMock(side_effect=_fake_recompute)
+    monkeypatch.setattr("agent.services.fastmoss_bulk_promotion_service.create_draft_from_reference", mock)
 
     result = await recompute_selected([reference_id])
 
-    assert result["recomputed"] == 1
-    assert result["missing_required_field"] == 1
+    assert result["recomputed"] == 0
+    assert result["blocked_missing_evidence"] == 1
     assert result["failed"] == 0
+    assert result["skipped"] == 1
     assert result["results"][0]["new_status"] == "MISSING_REQUIRED_FIELD"
-    assert result["results"][0]["new_error_message"] == "MISSING:SIZE_OR_VOLUME_EVIDENCE"
+    assert result["results"][0]["new_error_message"] == "MISSING:OLD_FIELD"
+    assert result["results"][0]["error"] == "BLOCKED_MISSING_EVIDENCE_REVIEW_REQUIRED"
+    mock.assert_not_awaited()
 
     row = await crud.get_bulk_queue_row(reference_id)
     assert row is not None
     assert row["promotion_status"] == "MISSING_REQUIRED_FIELD"
-    assert row["error_message"] == "MISSING:SIZE_OR_VOLUME_EVIDENCE"
+    assert row["error_message"] == "MISSING:OLD_FIELD"
 
 
 @pytest.mark.asyncio
@@ -416,7 +431,9 @@ async def test_recompute_selected_skips_claim_risk(monkeypatch):
         image_readiness="IMAGE_PRESENT",
         promotion_status="CLAIM_RISK",
         error_message="CLAIM_RISK:CLAIM_REVIEW_REQUIRED",
+        recompute_state="BLOCKED_REVIEW_REQUIRED",
     )
+    await _stamp_current_recompute_metadata(reference_id)
     mock = AsyncMock()
     monkeypatch.setattr("agent.services.fastmoss_bulk_promotion_service.create_draft_from_reference", mock)
 
@@ -425,7 +442,7 @@ async def test_recompute_selected_skips_claim_risk(monkeypatch):
     assert result["recomputed"] == 0
     assert result["skipped"] == 1
     assert result["results"][0]["outcome"] == "SKIPPED"
-    assert result["results"][0]["error"] == "CLAIM_RISK_RECOMPUTE_BLOCKED"
+    assert result["results"][0]["error"] == "REVIEW_REQUIRED_NOT_RECOMPUTED"
     mock.assert_not_awaited()
 
 
@@ -441,7 +458,9 @@ async def test_recompute_selected_skips_duplicate_suspected(monkeypatch):
         image_readiness="IMAGE_PRESENT",
         promotion_status="DUPLICATE_SUSPECTED",
         error_message="DUPLICATE_MATCH",
+        recompute_state="BLOCKED_REVIEW_REQUIRED",
     )
+    await _stamp_current_recompute_metadata(reference_id)
     mock = AsyncMock()
     monkeypatch.setattr("agent.services.fastmoss_bulk_promotion_service.create_draft_from_reference", mock)
 
@@ -449,7 +468,7 @@ async def test_recompute_selected_skips_duplicate_suspected(monkeypatch):
 
     assert result["recomputed"] == 0
     assert result["skipped"] == 1
-    assert result["results"][0]["error"] == "DUPLICATE_REVIEW_REQUIRED"
+    assert result["results"][0]["error"] == "REVIEW_REQUIRED_NOT_RECOMPUTED"
     mock.assert_not_awaited()
 
 
@@ -473,7 +492,7 @@ async def test_recompute_selected_skips_approved(monkeypatch):
 
     assert result["recomputed"] == 0
     assert result["skipped"] == 1
-    assert result["results"][0]["error"] == "APPROVED_ROWS_CANNOT_RECOMPUTE"
+    assert result["results"][0]["error"] == "ROW_ALREADY_UP_TO_DATE"
     mock.assert_not_awaited()
 
 
@@ -497,7 +516,7 @@ async def test_recompute_selected_skips_rejected(monkeypatch):
 
     assert result["recomputed"] == 0
     assert result["skipped"] == 1
-    assert result["results"][0]["error"] == "REJECTED_ROWS_CANNOT_RECOMPUTE"
+    assert result["results"][0]["error"] == "ROW_ALREADY_UP_TO_DATE"
     mock.assert_not_awaited()
 
 
@@ -510,8 +529,7 @@ async def test_recompute_selected_summary_counts_are_correct(monkeypatch):
         raw_product_title="Ready Candidate",
         claim_risk_level="LOW",
         image_readiness="IMAGE_PRESENT",
-        promotion_status="MISSING_REQUIRED_FIELD",
-        error_message="MISSING:OLD",
+        promotion_status="PENDING_DRAFT",
     )
     await crud.create_bulk_queue_row(
         reference_id="ref-recompute-summary-image",
@@ -527,6 +545,7 @@ async def test_recompute_selected_summary_counts_are_correct(monkeypatch):
         image_readiness="IMAGE_PRESENT",
         promotion_status="CLAIM_RISK",
         error_message="CLAIM_RISK:CLAIM_REVIEW_REQUIRED",
+        recompute_state="BLOCKED_REVIEW_REQUIRED",
     )
     await crud.create_bulk_queue_row(
         reference_id="ref-recompute-summary-dup",
@@ -535,6 +554,7 @@ async def test_recompute_selected_summary_counts_are_correct(monkeypatch):
         image_readiness="IMAGE_PRESENT",
         promotion_status="DUPLICATE_SUSPECTED",
         error_message="DUPLICATE_MATCH",
+        recompute_state="BLOCKED_REVIEW_REQUIRED",
     )
     await crud.create_bulk_queue_row(
         reference_id="ref-recompute-summary-approved",
@@ -543,6 +563,8 @@ async def test_recompute_selected_summary_counts_are_correct(monkeypatch):
         image_readiness="IMAGE_PRESENT",
         promotion_status="APPROVED",
     )
+    await _stamp_current_recompute_metadata("ref-recompute-summary-claim")
+    await _stamp_current_recompute_metadata("ref-recompute-summary-dup")
 
     async def _fake_recompute(ref_id: str):
         if ref_id == "ref-recompute-summary-ready":
@@ -581,6 +603,169 @@ async def test_recompute_selected_summary_counts_are_correct(monkeypatch):
     assert result["duplicate_suspected"] == 0
     assert result["failed"] == 0
     assert result["skipped"] == 3
+
+
+@pytest.mark.asyncio
+async def test_reconcile_queue_dry_run_never_applies_metadata(monkeypatch):
+    from agent.services import fastmoss_bulk_promotion_service as service
+
+    row = {
+        "reference_id": "ref-reconcile-dry-run-001",
+        "raw_product_title": "Dry Run Candle",
+        "promotion_status": "MISSING_REQUIRED_FIELD",
+        "error_message": "MISSING:SIZE_OR_VOLUME_EVIDENCE",
+        "recompute_state": "STALE",
+    }
+    monkeypatch.setattr(service.crud, "list_all_bulk_queue_rows", AsyncMock(return_value=[row]))
+    monkeypatch.setattr(service, "_current_reference_map", AsyncMock(return_value={}))
+    apply_mock = AsyncMock(return_value=1)
+    monkeypatch.setattr(service.crud, "bulk_update_bulk_queue_rows", apply_mock)
+
+    result = await reconcile_queue(dry_run=True)
+
+    assert result["total"] == 1
+    assert result["state_counts"] == {"BLOCKED_MISSING_EVIDENCE": 1}
+    assert result["changed"] == 1
+    assert result["applied"] == 0
+    assert result["product_truth_writes"] == 0
+    assert result["provider_calls"] == 0
+    apply_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_missing_evidence_reopens_stale_after_authoritative_input_changes(monkeypatch):
+    from agent.db import crud
+    from agent.services import fastmoss_bulk_promotion_service as service
+
+    reference_id = "ref-missing-evidence-reopened-001"
+    old_ref = {
+        "id": reference_id,
+        "raw_product_title": "Serum old source",
+        "category": "Beauty",
+    }
+    new_ref = {
+        **old_ref,
+        "raw_product_title": "Serum updated source 30ml",
+    }
+    old_fingerprint = service._reference_fingerprint(old_ref)
+    await crud.create_bulk_queue_row(
+        reference_id=reference_id,
+        raw_product_title=old_ref["raw_product_title"],
+        promotion_status="MISSING_REQUIRED_FIELD",
+        error_message="MISSING:SIZE_OR_VOLUME_EVIDENCE",
+        recompute_state="BLOCKED_MISSING_EVIDENCE",
+        ruleset_version=_RECOMPUTE_RULESET_VERSION,
+        input_fingerprint=old_fingerprint,
+        computed_ruleset_version=_RECOMPUTE_RULESET_VERSION,
+        computed_input_fingerprint=old_fingerprint,
+        recomputed_at="2026-08-03T00:00:00Z",
+    )
+    monkeypatch.setattr(
+        service,
+        "list_fastmoss_reference_products",
+        AsyncMock(return_value=[new_ref]),
+    )
+
+    row = await crud.get_bulk_queue_row(reference_id)
+    assert row is not None
+    assert _recompute_state_for_row(row, old_ref)["recompute_state"] == "BLOCKED_MISSING_EVIDENCE"
+    assert _recompute_state_for_row(row, new_ref)["recompute_state"] == "STALE"
+
+    async def _fake_recompute(ref_id: str):
+        await crud.update_bulk_queue_row(
+            ref_id,
+            promotion_status="READY_FOR_APPROVAL",
+            draft_id="draft-reopened-001",
+            error_message=None,
+        )
+        return {
+            "reference_id": ref_id,
+            "draft_id": "draft-reopened-001",
+            "promotion_status": "READY_FOR_APPROVAL",
+        }
+
+    recompute_mock = AsyncMock(side_effect=_fake_recompute)
+    monkeypatch.setattr(service, "create_draft_from_reference", recompute_mock)
+    result = await service.recompute_selected([reference_id])
+
+    assert result["recomputed"] == 1
+    assert result["blocked_missing_evidence"] == 0
+    recompute_mock.assert_awaited_once_with(reference_id)
+    updated = await crud.get_bulk_queue_row(reference_id)
+    assert updated is not None
+    assert updated["promotion_status"] == "READY_FOR_APPROVAL"
+    assert updated["recompute_state"] == "UP_TO_DATE"
+    assert updated["computed_input_fingerprint"] == service._reference_fingerprint(new_ref)
+
+
+@pytest.mark.asyncio
+async def test_reconcile_apply_does_not_mark_stale_row_current(monkeypatch):
+    from agent.db import crud
+    from agent.services import fastmoss_bulk_promotion_service as service
+
+    reference_id = "ref-reconcile-stays-stale-001"
+    ref = {
+        "id": reference_id,
+        "raw_product_title": "Pending reconciliation row",
+        "category": "Home Supplies",
+    }
+    await crud.create_bulk_queue_row(
+        reference_id=reference_id,
+        raw_product_title=ref["raw_product_title"],
+        promotion_status="PENDING_DRAFT",
+        recompute_state="STALE",
+    )
+    monkeypatch.setattr(
+        service,
+        "list_fastmoss_reference_products",
+        AsyncMock(return_value=[ref]),
+    )
+
+    applied = await service.reconcile_queue(dry_run=False)
+    assert applied["applied"] >= 1
+    assert any(
+        item["reference_id"] == reference_id and item["next_state"] == "STALE"
+        for item in applied["rows"]
+    )
+    row = await crud.get_bulk_queue_row(reference_id)
+    assert row is not None
+    assert row["input_fingerprint"] == service._reference_fingerprint(ref)
+    assert row["ruleset_version"] == _RECOMPUTE_RULESET_VERSION
+    assert row["computed_input_fingerprint"] is None
+    assert row["computed_ruleset_version"] is None
+    assert _recompute_state_for_row(row, ref)["recompute_state"] == "STALE"
+
+    readback = await service.reconcile_queue(dry_run=True)
+    assert readback["state_counts"].get("STALE", 0) >= 1
+    assert reference_id not in {item["reference_id"] for item in readback["rows"]}
+
+
+@pytest.mark.asyncio
+async def test_authoritative_reference_lookup_includes_rows_after_first_500(monkeypatch):
+    from agent.services import fastmoss_bulk_promotion_service as service
+
+    target_id = "ref-authoritative-600"
+    refs = [
+        {
+            "id": f"ref-authoritative-{index}",
+            "raw_product_title": f"Authoritative row {index}",
+        }
+        for index in range(665)
+    ]
+
+    async def _list_refs(limit: int):
+        assert limit >= 665
+        return refs[:limit]
+
+    monkeypatch.setattr(service, "list_fastmoss_reference_products", _list_refs)
+    monkeypatch.setattr(
+        service,
+        "get_fastmoss_reference_product",
+        AsyncMock(return_value=None),
+    )
+
+    mapped = await _current_reference_map(reference_ids=[target_id])
+    assert mapped[target_id]["raw_product_title"] == "Authoritative row 600"
 
 
 # ---------------------------------------------------------------------------
@@ -1237,6 +1422,17 @@ async def test_bulk_create_drafts_returns_success_not_all_error(monkeypatch):
         "image_readiness": "IMAGE_PRESENT",
         "draft": {"review_draft_id": "draft-bc-001"},
     }
+    async def _pending_queue_row(reference_id):
+        return {
+            "reference_id": reference_id,
+            "promotion_status": "PENDING_DRAFT",
+            "recompute_state": "UP_TO_DATE",
+        }
+
+    monkeypatch.setattr(
+        f"{_SVC}.crud.get_bulk_queue_row",
+        _pending_queue_row,
+    )
     monkeypatch.setattr(
         f"{_SVC}.create_draft_from_reference",
         AsyncMock(return_value=success_payload),

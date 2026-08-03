@@ -9,6 +9,7 @@ import type {
 	BulkPromotionStatus,
 	BulkQueuePage,
 	BulkQueueStats,
+	BulkRecomputeState,
 	BulkRecomputeSelectedResult,
 	DuplicateReviewAction,
 	FastmossBulkQueueRow,
@@ -35,6 +36,16 @@ const STATUS_BADGE: Record<string, string> = {
 	REJECTED: "bg-slate-700/40 text-slate-500",
 };
 
+const RECOMPUTE_BADGE: Record<string, string> = {
+	UP_TO_DATE: "bg-emerald-500/20 text-emerald-300",
+	STALE: "bg-indigo-500/20 text-indigo-300",
+	QUEUED: "bg-blue-500/20 text-blue-300",
+	RECOMPUTING: "bg-blue-500/20 text-blue-300",
+	FAILED: "bg-red-500/20 text-red-300",
+	BLOCKED_MISSING_EVIDENCE: "bg-orange-500/20 text-orange-300",
+	BLOCKED_REVIEW_REQUIRED: "bg-amber-500/20 text-amber-300",
+};
+
 const ALL_STATUSES: BulkPromotionStatus[] = [
 	"PENDING_DRAFT",
 	"DRAFT_GENERATED",
@@ -47,11 +58,6 @@ const ALL_STATUSES: BulkPromotionStatus[] = [
 	"DUPLICATE_LINKED",
 	"APPROVED",
 	"REJECTED",
-];
-
-const RECOMPUTE_ELIGIBLE_STATUSES: BulkPromotionStatus[] = [
-	"MISSING_REQUIRED_FIELD",
-	"PENDING_DRAFT",
 ];
 
 const getErrorMessage = (error: unknown, fallback: string) => {
@@ -69,8 +75,8 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 	const [stats, setStats] = useState<BulkQueueStats | null>(null);
 	const [queue, setQueue] = useState<BulkQueuePage | null>(null);
 	const [selected, setSelected] = useState<Set<string>>(new Set());
-	const [selectedStatuses, setSelectedStatuses] = useState<
-		Record<string, BulkPromotionStatus>
+	const [selectedStates, setSelectedStates] = useState<
+		Record<string, BulkRecomputeState | null>
 	>({});
 	const [loading, setLoading] = useState(false);
 	const [syncing, setSyncing] = useState(false);
@@ -159,11 +165,11 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 
 	useEffect(() => {
 		if (!queue) return;
-		setSelectedStatuses((prev) => {
+		setSelectedStates((prev) => {
 			const next = { ...prev };
 			queue.items.forEach((row) => {
 				if (selected.has(row.reference_id)) {
-					next[row.reference_id] = row.promotion_status;
+					next[row.reference_id] = row.recompute_state ?? null;
 				}
 			});
 			return next;
@@ -180,7 +186,7 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 
 	const clearSelection = () => {
 		setSelected(new Set());
-		setSelectedStatuses({});
+		setSelectedStates({});
 	};
 
 	const handleSync = async () => {
@@ -460,18 +466,18 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 		}
 	};
 
-	const toggleRow = (id: string, status: BulkPromotionStatus) => {
+	const toggleRow = (id: string, state: BulkRecomputeState | null) => {
 		setSelected((prev) => {
 			const next = new Set(prev);
 			next.has(id) ? next.delete(id) : next.add(id);
 			return next;
 		});
-		setSelectedStatuses((prev) => {
+		setSelectedStates((prev) => {
 			const next = { ...prev };
 			if (selected.has(id)) {
 				delete next[id];
 			} else {
-				next[id] = status;
+				next[id] = state;
 			}
 			return next;
 		});
@@ -488,7 +494,7 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 				});
 				return next;
 			});
-			setSelectedStatuses((prev) => {
+			setSelectedStates((prev) => {
 				const next = { ...prev };
 				ids.forEach((id) => {
 					delete next[id];
@@ -503,10 +509,10 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 				});
 				return next;
 			});
-			setSelectedStatuses((prev) => {
+			setSelectedStates((prev) => {
 				const next = { ...prev };
 				rows.forEach((row) => {
-					next[row.reference_id] = row.promotion_status;
+					next[row.reference_id] = row.recompute_state ?? null;
 				});
 				return next;
 			});
@@ -526,8 +532,8 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 	const allOnPageSelected = (queue?.items || []).every((r) =>
 		selected.has(r.reference_id),
 	);
-	const recomputeEligibleSelectedCount = Array.from(selected).filter((id) =>
-		RECOMPUTE_ELIGIBLE_STATUSES.includes(selectedStatuses[id]),
+	const recomputeEligibleSelectedCount = Array.from(selected).filter(
+		(id) => selectedStates[id] === "STALE",
 	).length;
 	const duplicateConfirmDisabled =
 		(duplicateAction === "LINK_TO_EXISTING_PRODUCT" &&
@@ -535,7 +541,7 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 		(duplicateAction === "MARK_FALSE_DUPLICATE" &&
 			duplicatePhrase !== "CLEAR_DUPLICATE_FOR_REVIEW");
 
-	const handleRecomputeRow = async (referenceId: string) => {
+	const handleRecomputeRow = async (referenceId: string, retryFailed = false) => {
 		setRowLoading((prev) => ({ ...prev, [referenceId]: true }));
 		setActionMessage(null);
 		setActionError(null);
@@ -543,7 +549,7 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 		try {
 			const result = await postAPI<BulkRecomputeSelectedResult>(
 				"/api/fastmoss-bulk/queue/recompute-selected",
-				{ reference_ids: [referenceId] },
+				{ reference_ids: [referenceId], retry_failed: retryFailed },
 			);
 			const item = result.results?.[0];
 			if (item?.error) {
@@ -576,6 +582,52 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 		} finally {
 			setRowLoading((prev) => ({ ...prev, [referenceId]: false }));
 		}
+	};
+
+	const handleCreateDraftRow = async (referenceId: string) => {
+		setRowLoading((prev) => ({ ...prev, [referenceId]: true }));
+		setActionMessage(null);
+		setActionError(null);
+		setDrawerResult(null);
+		try {
+			const result = await postAPI<{
+				reference_id: string;
+				draft_id?: string | null;
+				error?: string;
+				detail?: string;
+			}>(
+				`/api/fastmoss-bulk/queue/${encodeURIComponent(referenceId)}/create-draft`,
+				{},
+			);
+			if (result.error || !result.draft_id) {
+				const msg = result.detail || result.error || "DRAFT_NOT_CREATED";
+				setActionError(`Draft creation failed: ${msg}`);
+				setDrawerResult({ type: "error", msg });
+				return;
+			}
+			const msg = "Draft created. Evidence remains review-only until saved and recomputed.";
+			setActionMessage(msg);
+			setDrawerResult({ type: "ok", msg });
+			setDetailRow(null);
+			if (onOpenDraft) onOpenDraft(result.draft_id);
+			await fetchStats();
+			await fetchQueue();
+		} catch (error: unknown) {
+			const msg = getErrorMessage(error, "Draft creation failed");
+			setActionError(msg);
+			setDrawerResult({ type: "error", msg });
+		} finally {
+			setRowLoading((prev) => ({ ...prev, [referenceId]: false }));
+		}
+	};
+
+	const handleReviewOrCreateDraft = (row: FastmossBulkQueueRow) => {
+		if (row.draft_id && onOpenDraft) {
+			setDetailRow(null);
+			onOpenDraft(row.draft_id);
+			return;
+		}
+		void handleCreateDraftRow(row.reference_id);
 	};
 
 	const handleSingleApprove = async (referenceId: string) => {
@@ -755,23 +807,40 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 					</div>
 				</div>
 				{stats ? (
-					<div className="flex flex-wrap gap-2">
-						{Object.entries(stats.by_status).map(([status, count]) => (
-							<button
-								type="button"
-								key={status}
-								onClick={() => {
-									setFilterStatus(filterStatus === status ? "" : status);
-									setPage(1);
-								}}
-								className={`px-2 py-0.5 rounded text-[9px] font-bold cursor-pointer transition-all ${STATUS_BADGE[status] || "bg-slate-700/40 text-slate-400"} ${filterStatus === status ? "ring-1 ring-white/20" : ""}`}
-							>
-								{status}: {count}
-							</button>
-						))}
-						<span className="px-2 py-0.5 rounded text-[9px] font-bold bg-slate-700/30 text-slate-400">
-							Total: {stats.total}
-						</span>
+					<div className="space-y-2">
+						<div className="flex flex-wrap gap-2">
+							{Object.entries(stats.by_status).map(([status, count]) => (
+								<button
+									type="button"
+									key={status}
+									onClick={() => {
+										setFilterStatus(filterStatus === status ? "" : status);
+										setPage(1);
+									}}
+									className={`px-2 py-0.5 rounded text-[9px] font-bold cursor-pointer transition-all ${STATUS_BADGE[status] || "bg-slate-700/40 text-slate-400"} ${filterStatus === status ? "ring-1 ring-white/20" : ""}`}
+								>
+									{status}: {count}
+								</button>
+							))}
+							<span className="px-2 py-0.5 rounded text-[9px] font-bold bg-slate-700/30 text-slate-400">
+								Total: {stats.total}
+							</span>
+						</div>
+						{stats.by_recompute_state && (
+							<div className="flex flex-wrap gap-2">
+								<span className="text-[9px] uppercase tracking-widest text-slate-500 self-center">
+									Freshness
+								</span>
+								{Object.entries(stats.by_recompute_state).map(([state, count]) => (
+									<span
+										key={state}
+										className={`px-2 py-0.5 rounded text-[9px] font-bold ${RECOMPUTE_BADGE[state] || "bg-slate-700/40 text-slate-400"}`}
+									>
+										{state.replace(/_/g, " ")}: {count}
+									</span>
+								))}
+							</div>
+						)}
 					</div>
 				) : (
 					<p className="text-[10px] text-slate-600 italic">
@@ -1069,7 +1138,7 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 			>
 				{selected.size > 0 ? (
 					<span className="text-xs font-bold text-indigo-300">
-						{selected.size} selected
+						{selected.size} selected ({recomputeEligibleSelectedCount} stale)
 					</span>
 				) : (
 					<span className="text-[10px] text-slate-500 italic">
@@ -1148,6 +1217,7 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 									<th className="px-3 py-2 w-8">
 										<input
 											type="checkbox"
+											aria-label="Select all visible FastMoss rows"
 											checked={allOnPageSelected}
 											onChange={toggleAll}
 											className="accent-indigo-500"
@@ -1175,6 +1245,9 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 										Status
 									</th>
 									<th className="px-3 py-2 text-left font-semibold text-slate-400 text-[10px] uppercase tracking-widest">
+										Freshness
+									</th>
+									<th className="px-3 py-2 text-left font-semibold text-slate-400 text-[10px] uppercase tracking-widest">
 										Draft
 									</th>
 									<th className="px-3 py-2 text-left font-semibold text-slate-400 text-[10px] uppercase tracking-widest">
@@ -1193,10 +1266,11 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 										<td className="px-3 py-2">
 											<input
 												type="checkbox"
-												checked={selected.has(row.reference_id)}
-												onChange={() =>
-													toggleRow(row.reference_id, row.promotion_status)
-												}
+												aria-label={`Select ${row.raw_product_title}`}
+														checked={selected.has(row.reference_id)}
+														onChange={() =>
+															toggleRow(row.reference_id, row.recompute_state ?? null)
+													}
 												className="accent-indigo-500"
 											/>
 										</td>
@@ -1281,8 +1355,20 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 											<span
 												className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${STATUS_BADGE[row.promotion_status] || "bg-slate-600/20 text-slate-400"}`}
 											>
-												{row.promotion_status.replace(/_/g, " ")}
+														{row.promotion_status.replace(/_/g, " ")}
+													</span>
+											</td>
+										<td className="px-3 py-2">
+											<span
+												className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${RECOMPUTE_BADGE[row.recompute_state || ""] || "bg-slate-600/20 text-slate-400"}`}
+											>
+												{(row.recompute_state || "STALE").replace(/_/g, " ")}
 											</span>
+											{row.recompute_reason && row.recompute_state !== "UP_TO_DATE" && (
+												<div className="text-[9px] text-slate-500 mt-1 max-w-[150px] truncate" title={row.recompute_reason}>
+													{row.recompute_reason}
+												</div>
+											)}
 										</td>
 										<td className="px-3 py-2">
 											{row.draft_id ? (
@@ -1320,7 +1406,17 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 												>
 													Review Duplicate
 												</button>
-											) : row.promotion_status === "MISSING_REQUIRED_FIELD" ? (
+							) : row.recompute_state === "BLOCKED_MISSING_EVIDENCE" ? (
+								<button
+									type="button"
+								aria-label={`Review or add evidence for ${row.raw_product_title}`}
+								data-testid={`review-add-evidence-${row.reference_id}`}
+								onClick={() => handleReviewOrCreateDraft(row)}
+								className="px-2 py-1 rounded-lg bg-orange-600/20 hover:bg-orange-600/40 text-orange-300 text-[9px] font-bold uppercase tracking-widest transition-all"
+							>
+									Review / Add
+												</button>
+											) : row.recompute_state === "STALE" ? (
 												<button
 													type="button"
 													onClick={() => handleRecomputeRow(row.reference_id)}
@@ -1328,7 +1424,40 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 												>
 													↺ Recompute
 												</button>
-											) : row.promotion_status === "READY_FOR_APPROVAL" ? (
+											) : row.recompute_state === "FAILED" ? (
+												<button
+													type="button"
+													onClick={() => handleRecomputeRow(row.reference_id, true)}
+													className="px-2 py-1 rounded-lg bg-red-600/20 hover:bg-red-600/40 text-red-300 text-[9px] font-bold uppercase tracking-widest transition-all"
+												>
+													Retry
+												</button>
+											) : row.recompute_state === "QUEUED" || row.recompute_state === "RECOMPUTING" ? (
+												<span className="text-[9px] text-blue-300 font-bold uppercase tracking-widest animate-pulse">
+													{row.recompute_state === "QUEUED" ? "Queued…" : "Recomputing…"}
+												</span>
+							) : row.recompute_state === "BLOCKED_REVIEW_REQUIRED" ? (
+												<button
+													type="button"
+													onClick={() => {
+														if (row.draft_id && onOpenDraft) onOpenDraft(row.draft_id);
+														else setDetailRow(row);
+													}}
+													className="px-2 py-1 rounded-lg bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 text-[9px] font-bold uppercase tracking-widest transition-all"
+												>
+									Review Required
+								</button>
+							) : row.promotion_status === "PENDING_DRAFT" ? (
+								<button
+									type="button"
+									aria-label={`Generate draft for ${row.raw_product_title}`}
+									data-testid={`generate-draft-${row.reference_id}`}
+									onClick={() => handleReviewOrCreateDraft(row)}
+									className="px-2 py-1 rounded-lg bg-slate-600/20 hover:bg-slate-600/40 text-slate-300 text-[9px] font-bold uppercase tracking-widest transition-all"
+								>
+									Generate Draft
+								</button>
+							) : row.promotion_status === "READY_FOR_APPROVAL" ? (
 												<button
 													type="button"
 													onClick={() => handleSingleApprove(row.reference_id)}
@@ -1336,17 +1465,13 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 												>
 													Approve ✓
 												</button>
-											) : row.promotion_status === "PENDING_DRAFT" ? (
-												<button
-													type="button"
-													onClick={() => handleRecomputeRow(row.reference_id)}
-													className="px-2 py-1 rounded-lg bg-slate-600/20 hover:bg-slate-600/40 text-slate-300 text-[9px] font-bold uppercase tracking-widest transition-all"
-												>
-													↺ Generate
-												</button>
 											) : row.promotion_status === "DUPLICATE_LINKED" ? (
 												<span className="text-[9px] text-cyan-300 font-bold uppercase tracking-widest">
 													Linked
+												</span>
+											) : row.recompute_state === "UP_TO_DATE" ? (
+												<span className="text-[9px] text-emerald-300 font-bold uppercase tracking-widest">
+													Up to date
 												</span>
 											) : (
 												<span className="text-[9px] text-slate-600">—</span>
@@ -1426,6 +1551,11 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 									className={`px-2 py-1 rounded text-[10px] font-bold ${RISK_BADGE[detailRow.claim_risk_level] || "bg-slate-600/20 text-slate-400"}`}
 								>
 									RISK: {detailRow.claim_risk_level}
+								</span>
+								<span
+									className={`px-2 py-1 rounded text-[10px] font-bold ${RECOMPUTE_BADGE[detailRow.recompute_state || ""] || "bg-slate-600/20 text-slate-400"}`}
+								>
+									{(detailRow.recompute_state || "STALE").replace(/_/g, " ")}
 								</span>
 								{detailRow.image_readiness === "IMAGE_MISSING" && (
 									<span className="px-2 py-1 rounded text-[10px] font-bold bg-yellow-500/20 text-yellow-400">
@@ -1550,6 +1680,20 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 								</div>
 							)}
 
+							{detailRow.recompute_reason &&
+								detailRow.recompute_state !== "UP_TO_DATE" && (
+								<div>
+									<p className="text-[9px] font-bold uppercase tracking-widest text-indigo-300 mb-2">
+										Freshness / Review Reason
+									</p>
+									<div className="bg-indigo-950/30 border border-indigo-700/30 rounded-lg px-3 py-2">
+										<p className="text-[10px] text-indigo-200 break-words whitespace-pre-wrap">
+											{detailRow.recompute_reason}
+										</p>
+									</div>
+								</div>
+							)}
+
 							{(detailRow.promotion_status === "DUPLICATE_SUSPECTED" ||
 								detailRow.promotion_status === "DUPLICATE_LINKED") && (
 								<div>
@@ -1637,7 +1781,18 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 							)}
 
 							<div className="flex flex-wrap gap-2">
-								{detailRow.promotion_status === "MISSING_REQUIRED_FIELD" && (
+								{detailRow.recompute_state === "BLOCKED_MISSING_EVIDENCE" && (
+									<button
+										type="button"
+										aria-label="Review or add missing evidence"
+										data-testid="drawer-review-add-evidence"
+										onClick={() => handleReviewOrCreateDraft(detailRow)}
+										className="flex-1 px-3 py-2 rounded-xl bg-orange-600/20 hover:bg-orange-600/40 border border-orange-500/30 text-orange-300 text-[10px] font-bold uppercase tracking-widest transition-all"
+									>
+										Review / Add Evidence
+									</button>
+								)}
+								{detailRow.recompute_state === "STALE" && (
 									<button
 										type="button"
 										disabled={rowLoading[detailRow.reference_id]}
@@ -1647,11 +1802,24 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 										{rowLoading[detailRow.reference_id] ? "…" : "Recompute"}
 									</button>
 								)}
-								{detailRow.promotion_status === "PENDING_DRAFT" && (
+								{detailRow.recompute_state === "FAILED" && (
 									<button
 										type="button"
 										disabled={rowLoading[detailRow.reference_id]}
-										onClick={() => handleRecomputeRow(detailRow.reference_id)}
+										onClick={() => handleRecomputeRow(detailRow.reference_id, true)}
+										className="flex-1 px-3 py-2 rounded-xl bg-red-600/20 hover:bg-red-600/40 border border-red-500/30 text-red-300 text-[10px] font-bold uppercase tracking-widest disabled:opacity-40 transition-all"
+									>
+										{rowLoading[detailRow.reference_id] ? "…" : "Retry"}
+									</button>
+								)}
+								{detailRow.promotion_status === "PENDING_DRAFT" &&
+									detailRow.recompute_state === "UP_TO_DATE" && (
+									<button
+										type="button"
+										disabled={rowLoading[detailRow.reference_id]}
+										aria-label="Generate draft from current FastMoss evidence"
+										data-testid="drawer-generate-draft"
+										onClick={() => handleReviewOrCreateDraft(detailRow)}
 										className="flex-1 px-3 py-2 rounded-xl bg-slate-600/20 hover:bg-slate-600/40 border border-slate-500/30 text-slate-300 text-[10px] font-bold uppercase tracking-widest disabled:opacity-40 transition-all"
 									>
 										{rowLoading[detailRow.reference_id]
@@ -1894,8 +2062,9 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 								Recompute Selected Rows
 							</h3>
 							<p className="text-xs text-slate-400 mt-1">
-								This will re-run smart mapping and classification using the
-								latest rules. It will not approve products.
+								This will re-run smart mapping and classification only for
+								STALE rows using the latest rules. It will not approve products
+								or fill missing evidence.
 							</p>
 						</div>
 
@@ -1904,8 +2073,8 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 							<strong className="text-white">
 								{recomputeEligibleSelectedCount}
 							</strong>
-							. CLAIM_RISK, DUPLICATE_SUSPECTED, APPROVED, and REJECTED rows are
-							skipped.
+							. BLOCKED_MISSING_EVIDENCE, UP_TO_DATE, review-held, and in-progress
+							 rows are skipped.
 						</div>
 
 						<div>

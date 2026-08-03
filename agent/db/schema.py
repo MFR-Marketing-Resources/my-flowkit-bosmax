@@ -611,12 +611,22 @@ CREATE TABLE IF NOT EXISTS fastmoss_bulk_draft_status (
     duplicate_ignore_product_id TEXT,
     error_message       TEXT,
     batch_provenance    TEXT,
+    ruleset_version     TEXT,
+    input_fingerprint   TEXT,
+    computed_ruleset_version TEXT,
+    computed_input_fingerprint TEXT,
+    recompute_state     TEXT NOT NULL DEFAULT 'STALE',
+    recompute_reason    TEXT,
+    review_hold_reason  TEXT,
+    recompute_started_at TEXT,
+    recompute_attempt_count INTEGER NOT NULL DEFAULT 0,
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_bulk_draft_status ON fastmoss_bulk_draft_status(promotion_status);
 CREATE INDEX IF NOT EXISTS idx_bulk_draft_risk ON fastmoss_bulk_draft_status(claim_risk_level);
+CREATE INDEX IF NOT EXISTS idx_bulk_draft_recompute_state ON fastmoss_bulk_draft_status(recompute_state);
 
 CREATE TABLE IF NOT EXISTS batch_generation_run (
     batch_run_id      TEXT PRIMARY KEY,
@@ -1440,12 +1450,22 @@ CREATE TABLE IF NOT EXISTS fastmoss_bulk_draft_status (
     duplicate_ignore_product_id TEXT,
     error_message       TEXT,
     batch_provenance    TEXT,
+    ruleset_version     TEXT,
+    input_fingerprint   TEXT,
+    computed_ruleset_version TEXT,
+    computed_input_fingerprint TEXT,
+    recompute_state     TEXT NOT NULL DEFAULT 'STALE',
+    recompute_reason    TEXT,
+    review_hold_reason  TEXT,
+    recompute_started_at TEXT,
+    recompute_attempt_count INTEGER NOT NULL DEFAULT 0,
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_bulk_draft_status ON fastmoss_bulk_draft_status(promotion_status);
 CREATE INDEX IF NOT EXISTS idx_bulk_draft_risk ON fastmoss_bulk_draft_status(claim_risk_level);
+CREATE INDEX IF NOT EXISTS idx_bulk_draft_recompute_state ON fastmoss_bulk_draft_status(recompute_state);
 """)
             logger.info("Migrated: created batch production tables")
         await db.commit()
@@ -1656,6 +1676,15 @@ CREATE INDEX IF NOT EXISTS idx_scene_context_promotion_activation_at
             "duplicate_resolved_at": "TEXT",
             "duplicate_resolution_note": "TEXT",
             "duplicate_ignore_product_id": "TEXT",
+            "ruleset_version": "TEXT",
+            "input_fingerprint": "TEXT",
+            "computed_ruleset_version": "TEXT",
+            "computed_input_fingerprint": "TEXT",
+            "recompute_state": "TEXT NOT NULL DEFAULT 'STALE'",
+            "recompute_reason": "TEXT",
+            "review_hold_reason": "TEXT",
+            "recompute_started_at": "TEXT",
+            "recompute_attempt_count": "INTEGER NOT NULL DEFAULT 0",
         }
         for _col_name, _col_type in _bulk_audit_cols.items():
             if _col_name not in bulk_cols:
@@ -1665,6 +1694,11 @@ CREATE INDEX IF NOT EXISTS idx_scene_context_promotion_activation_at
                 logger.info(
                     "Migrated: added %s column to fastmoss_bulk_draft_status", _col_name
                 )
+        await db.commit()
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bulk_draft_recompute_state "
+            "ON fastmoss_bulk_draft_status(recompute_state)"
+        )
         await db.commit()
 
         # Migration: add missing columns to creative_asset table

@@ -86,6 +86,48 @@ def test_get_queue_stats(client, monkeypatch):
     assert r.json() == expected
 
 
+def test_reconcile_queue_defaults_to_dry_run(client, monkeypatch):
+    mock = AsyncMock(
+        return_value={
+            "dry_run": True,
+            "total": 665,
+            "changed": 665,
+            "applied": 0,
+            "product_truth_writes": 0,
+            "provider_calls": 0,
+        }
+    )
+    monkeypatch.setattr(f"{_SVC}.reconcile_queue", mock)
+    r = client.post("/fastmoss-bulk/queue/reconcile")
+    assert r.status_code == 200
+    assert r.json()["dry_run"] is True
+    assert r.json()["applied"] == 0
+    mock.assert_awaited_once_with(dry_run=True)
+
+
+def test_reconcile_queue_apply_requires_exact_phrase(client, monkeypatch):
+    mock = AsyncMock(return_value={"dry_run": False, "applied": 665})
+    monkeypatch.setattr(f"{_SVC}.reconcile_queue", mock)
+
+    blocked = client.post(
+        "/fastmoss-bulk/queue/reconcile",
+        json={"dry_run": False, "confirmation_phrase": "WRONG"},
+    )
+    assert blocked.status_code == 403
+    mock.assert_not_awaited()
+
+    applied = client.post(
+        "/fastmoss-bulk/queue/reconcile",
+        json={
+            "dry_run": False,
+            "confirmation_phrase": "APPLY_RECONCILE_METADATA_NO_PRODUCT_WRITES",
+        },
+    )
+    assert applied.status_code == 200
+    assert applied.json()["applied"] == 665
+    mock.assert_awaited_once_with(dry_run=False)
+
+
 # ---------------------------------------------------------------------------
 # GET /fastmoss-bulk/queue/duplicates
 # ---------------------------------------------------------------------------
