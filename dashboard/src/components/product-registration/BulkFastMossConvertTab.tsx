@@ -60,6 +60,16 @@ const ALL_STATUSES: BulkPromotionStatus[] = [
 	"REJECTED",
 ];
 
+const ALL_RECOMPUTE_STATES: BulkRecomputeState[] = [
+	"UP_TO_DATE",
+	"STALE",
+	"QUEUED",
+	"RECOMPUTING",
+	"FAILED",
+	"BLOCKED_MISSING_EVIDENCE",
+	"BLOCKED_REVIEW_REQUIRED",
+];
+
 const getErrorMessage = (error: unknown, fallback: string) => {
 	if (error instanceof Error && error.message) {
 		return error.message;
@@ -106,6 +116,7 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 
 	// Filters
 	const [filterStatus, setFilterStatus] = useState<string>("");
+	const [filterRecomputeState, setFilterRecomputeState] = useState<string>("");
 	const [filterRisk, setFilterRisk] = useState<string>("");
 	const [filterImage, setFilterImage] = useState<string>("");
 	const [filterCategory, setFilterCategory] = useState<string>("");
@@ -141,6 +152,8 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 		try {
 			const params = new URLSearchParams();
 			if (filterStatus) params.set("promotion_status", filterStatus);
+			if (filterRecomputeState)
+				params.set("recompute_state", filterRecomputeState);
 			if (filterRisk) params.set("claim_risk_level", filterRisk);
 			if (filterImage) params.set("image_readiness", filterImage);
 			if (filterCategory) params.set("category", filterCategory);
@@ -156,7 +169,7 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 		} finally {
 			setLoading(false);
 		}
-	}, [filterStatus, filterRisk, filterImage, filterCategory, filterQ, page]);
+	}, [filterStatus, filterRecomputeState, filterRisk, filterImage, filterCategory, filterQ, page]);
 
 	useEffect(() => {
 		fetchStats();
@@ -521,6 +534,7 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 
 	const clearFilters = () => {
 		setFilterStatus("");
+		setFilterRecomputeState("");
 		setFilterRisk("");
 		setFilterImage("");
 		setFilterCategory("");
@@ -1028,6 +1042,30 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 							{ALL_STATUSES.map((s) => (
 								<option key={s} value={s}>
 									{s}
+								</option>
+							))}
+						</select>
+					</div>
+					<div>
+						<label
+							htmlFor="bulk-fastmoss-filter-freshness"
+							className="text-[9px] text-slate-500 uppercase tracking-widest block mb-1"
+						>
+							Freshness
+						</label>
+						<select
+							id="bulk-fastmoss-filter-freshness"
+							value={filterRecomputeState}
+							onChange={(e) => {
+								setFilterRecomputeState(e.target.value);
+								setPage(1);
+							}}
+							className="bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 px-2 py-1"
+						>
+							<option value="">All</option>
+							{ALL_RECOMPUTE_STATES.map((state) => (
+								<option key={state} value={state}>
+									{state}
 								</option>
 							))}
 						</select>

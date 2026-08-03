@@ -144,4 +144,20 @@ describe("BulkFastMossConvertTab evidence and draft actions", () => {
 		expect(actionGroup?.className).toContain("w-full");
 		expect(actionGroup?.className).toContain("flex-wrap");
 	});
+
+	it("filters the queue by freshness state", async () => {
+		const row = makeRow({ recompute_state: "BLOCKED_MISSING_EVIDENCE" });
+		primeQueue(row);
+
+		render(<BulkFastMossConvertTab onOpenDraft={vi.fn()} />);
+		fireEvent.change(await screen.findByLabelText("Freshness"), {
+			target: { value: "BLOCKED_MISSING_EVIDENCE" },
+		});
+
+		await waitFor(() => {
+			expect(getAPI).toHaveBeenCalledWith(
+				"/api/fastmoss-bulk/queue?recompute_state=BLOCKED_MISSING_EVIDENCE&page=1&page_size=50",
+			);
+		});
+	});
 });
