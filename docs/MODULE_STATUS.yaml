@@ -1046,6 +1046,7 @@ domains:
       - scripts/pi13_canonical_merge.py
       - scripts/pi13_grounding.py
       - outputs/mission-pi12/pi13_evidence_batch1.json
+      - outputs/mission-pi12/pi13_evidence_batch2.json
       - outputs/mission-pi12/pi13_grounding_results.json
       - tests/unit/test_pi13_copy_eligibility.py
       - tests/unit/test_reporting_service.py
