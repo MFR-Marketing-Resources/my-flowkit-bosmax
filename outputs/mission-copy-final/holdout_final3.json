@@ -1,0 +1,25 @@
+{
+  "out": [
+    {
+      "product_id": "8ae553d2-4810-4d03-926b-5f2f1282c21c",
+      "ok": true,
+      "after": "APPROVED_COPY_VALID",
+      "copy_set_id": "209780ce-7ff8-4223-ae80-dbe48c440f1c"
+    },
+    {
+      "product_id": "9daaa6b9-39ba-4fd9-92b6-835c1353d7fa",
+      "ok": true,
+      "after": "APPROVED_COPY_VALID",
+      "copy_set_id": "d6d87459-5d9e-4f88-afe2-5b09fe392794"
+    },
+    {
+      "product_id": "c1f000cc-4f91-4986-b487-9e8c0d5e9e7d",
+      "ok": true,
+      "after": "APPROVED_COPY_VALID",
+      "copy_set_id": "c622c39c-89cd-4c70-be21-20bbbc111864"
+    }
+  ],
+  "buckets": {
+    "APPROVED_COPY_VALID": 402
+  }
+}

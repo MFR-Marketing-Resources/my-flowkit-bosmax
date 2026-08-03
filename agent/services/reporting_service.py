@@ -261,16 +261,50 @@ async def copywriting_coverage(
     )
     by_status = {r["status"]: int(r["n"]) for r in await cur.fetchall()}
     await cur.close()
+    # COPY-FINAL-B01/B05: additive validity metrics (do not redefine products_with_copy).
+    # Operational "missing valid approved copy" is computed via the shared validity authority.
+    valid_approved = 0
+    classification_counts = {}
+    try:
+        from agent.services.copy_set_validity_service import product_copy_classification
+        cur2 = await db.execute(
+            f"SELECT p.id AS id {_PRODUCT_BASE} WHERE 1=1{where}",
+            params,
+        )
+        pids = [str(r["id"]) for r in await cur2.fetchall()]
+        await cur2.close()
+        for pid in pids:
+            c = await product_copy_classification(pid)
+            cls = c.get("classification") or "UNKNOWN"
+            classification_counts[cls] = classification_counts.get(cls, 0) + 1
+            if cls == "APPROVED_COPY_VALID":
+                valid_approved += 1
+    except Exception:
+        # Fail open on reporting path only for additive fields; raw coverage still returns.
+        valid_approved = -1
+
     return {
         "scope": _scope(lifecycle_status, cluster, product_type_group),
         "total_products": total,
         "products_with_copy": with_copy,
         "products_missing_copy": total - with_copy,
         "products_with_approved_copy": with_approved,
+        "products_with_valid_approved_copy": valid_approved if valid_approved >= 0 else None,
+        "products_without_valid_approved_copy": (
+            (total - valid_approved) if valid_approved >= 0 else None
+        ),
+        "copy_classification_counts": classification_counts or None,
         "coverage_pct": round(100.0 * with_copy / total, 1) if total else 0.0,
+        "valid_approved_coverage_pct": (
+            round(100.0 * valid_approved / total, 1) if total and valid_approved >= 0 else None
+        ),
         "total_copy_sets": total_sets,
         "avg_sets_per_covered_product": round(total_sets / with_copy, 2) if with_copy else 0.0,
         "copy_set_by_status": by_status,
+        "notes": {
+            "products_with_copy": "raw row coverage (any non-archived copy_set) — NOT production readiness",
+            "products_with_valid_approved_copy": "shared validity authority (COPY-FINAL)",
+        },
     }
 
 

@@ -17,12 +17,17 @@ from agent.services import copy_binding_service as binding
 
 
 async def _make_product(**kw) -> str:
+    from tests.conftest import make_product_copy_eligible
+
     product = await crud.create_product(
         raw_product_title=kw.pop("raw_product_title", "Binding Test Serum 5ML"),
         source="MANUAL",
         **kw,
     )
-    return product["id"]
+    pid = product["id"]
+    # COPY-FINAL: binding requires product COPY_ELIGIBLE + valid lineage on approved sets.
+    await make_product_copy_eligible(pid)
+    return pid
 
 
 async def _make_copy_set(product_id: str, *, status: str, **over) -> str:
@@ -41,10 +46,20 @@ async def _make_copy_set(product_id: str, *, status: str, **over) -> str:
         dedupe_key="dedupe-" + product_id,
         source="COPY_SIGNAL_GENERATOR",
         status=status,
+        claim_review_json=json.dumps(
+            {"completeness": {"complete": True}, "safety": {"safe": True}}
+        ),
     )
     fields.update(over)
     row = await crud.create_copy_set(product_id, **fields)
-    return row["copy_set_id"]
+    cid = row["copy_set_id"]
+    if status == models.STATUS_COPY_APPROVED:
+        from agent.services.copy_set_validity_service import stamp_copy_set_pi_lineage
+
+        await stamp_copy_set_pi_lineage(
+            cid, product_id=product_id, revalidated_by="binding-test"
+        )
+    return cid
 
 
 @pytest.mark.asyncio
@@ -143,4 +158,4 @@ async def test_approved_but_empty_copy_set_fails_binding():
     )
     with pytest.raises(binding.CopyBindingError) as exc:
         await binding.resolve_compiler_copy_intelligence(pid, row["copy_set_id"])
-    assert exc.value.code == binding.ERR_BINDING_FAILED
+    assert exc.value.code in {binding.ERR_BINDING_FAILED, "COPY_SET_INVALID"}

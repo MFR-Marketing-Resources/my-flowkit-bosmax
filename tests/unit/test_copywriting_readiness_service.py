@@ -29,7 +29,7 @@ def _grounding(is_stealth=False, benefits=None, audience="", pains=None, source=
     )
 
 
-def _wire(monkeypatch, *, snap_status, grounding, copy_rows):
+def _wire(monkeypatch, *, snap_status, grounding, copy_rows, classification=None):
     async def get_product(pid):
         return {"id": pid, "product_display_name": "P"}
 
@@ -46,6 +46,36 @@ def _wire(monkeypatch, *, snap_status, grounding, copy_rows):
     monkeypatch.setattr(svc, "get_latest_snapshot_response", snap)
     monkeypatch.setattr(svc, "resolve_copy_grounding", ground)
     monkeypatch.setattr(svc.crud, "list_copy_sets_for_product", sets)
+
+    # COPY-FINAL: readiness consults product_copy_classification.
+    approved = [
+        r for r in copy_rows
+        if (r.get("status") == "COPY_APPROVED" and not r.get("archived"))
+    ]
+    if classification is None:
+        if approved:
+            classification = {
+                "classification": "APPROVED_COPY_VALID",
+                "valid_copy_set_id": approved[0].get("copy_set_id"),
+                "recommended_next_action": "READY",
+            }
+        else:
+            classification = {
+                "classification": "MISSING_COPY",
+                "valid_copy_set_id": None,
+                "recommended_next_action": "GENERATE_MISSING",
+            }
+
+    async def _cls(pid):
+        return {
+            "product_id": pid,
+            **classification,
+        }
+
+    monkeypatch.setattr(
+        "agent.services.copy_set_validity_service.product_copy_classification",
+        _cls,
+    )
 
 
 
@@ -86,7 +116,7 @@ async def test_readiness_approved_snapshot_no_copy_set(monkeypatch):
     assert r["product_knowledge_ready"] is True
     assert r["customer_avatar_ready"] is True
     assert r["approved_copy_set_count"] == 0
-    assert "NO_APPROVED_COPY_SET" in r["blocking_reasons"]
+    assert ("NO_APPROVED_COPY_SET" in r["blocking_reasons"] or "NO_VALID_APPROVED_COPY_SET" in r["blocking_reasons"])
     assert r["ready_for_generation"] is False
     assert r["recommended_next_action"] == "GENERATE_AND_APPROVE_COPY_SET"
 

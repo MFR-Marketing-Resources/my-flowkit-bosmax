@@ -1478,6 +1478,20 @@ async def approve_review_draft(
     snapshot_row = await crud.get_product_intelligence_snapshot(snapshot_id)
     if not snapshot_row:
         raise ValueError("SNAPSHOT_NOT_FOUND")
+    # COPY-FINAL-B02: fail-closed stale-copy containment when a new PI snapshot
+    # becomes APPROVED. Historical approved copy grounded on an older snapshot
+    # is preserved but immediately marked NEEDS_REVALIDATION and cannot rotate,
+    # select, bind, or execute until revalidated against the new authority.
+    try:
+        from agent.services.copy_set_validity_service import mark_stale_copy_sets_for_product
+        await mark_stale_copy_sets_for_product(
+            str(snapshot_row.get("product_id") or draft.product_id),
+            current_snapshot_id=str(snapshot_id),
+        )
+    except Exception:
+        # Never roll back a successful PI approval because of quarantine side-effects;
+        # the next quarantine sweep / validity evaluation still fail-closes selection.
+        pass
     return _snapshot_from_row(snapshot_row)
 
 

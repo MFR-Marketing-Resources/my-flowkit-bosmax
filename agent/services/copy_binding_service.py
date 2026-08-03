@@ -150,6 +150,24 @@ async def resolve_compiler_copy_intelligence(
             status_code=409,
             detail={"copy_set_id": copy_set_id, "status": copy_set.get("status")},
         )
+    # COPY-FINAL-B01/B02: quarantine / stale / invalid lineage cannot bind.
+    try:
+        from agent.services.copy_set_validity_service import evaluate_copy_set_id
+        _v = await evaluate_copy_set_id(copy_set_id)
+        if not _v.get("valid"):
+            raise CopyBindingError(
+                "COPY_SET_INVALID",
+                status_code=409,
+                detail={"copy_set_id": copy_set_id, "reasons": _v.get("reasons")},
+            )
+    except CopyBindingError:
+        raise
+    except Exception as _exc:
+        raise CopyBindingError(
+            "COPY_SET_INVALID",
+            status_code=409,
+            detail={"copy_set_id": copy_set_id, "reasons": [str(_exc)[:200]]},
+        )
 
     copy_intelligence = to_compiler_copy(copy_set)
     # The compiler must know this copy is operator-approved: bound approved copy

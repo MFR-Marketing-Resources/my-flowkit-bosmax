@@ -1,0 +1,66 @@
+{
+  "utc": "2026-08-03T09:27:46.128302+00:00",
+  "live_db_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
+  "live_db_sha256": "07a625d695087732d2ab84ccd0c4b0012c34594f255ceee00428802d0ec39f44",
+  "live_db_bytes": 302641152,
+  "backup_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\outputs\\mission-copy-final\\backups\\flow_agent_pre_copy_final_20260803T092741Z.db",
+  "backup_sha256": "660870e0c13e5ab6a5d28d1ef44ea4ea1aa42897d731c6768bfa0f984522ee02",
+  "backup_bytes": 302641152,
+  "integrity_check": "ok",
+  "foreign_key_check_count": 0,
+  "foreign_key_sample": [],
+  "table_counts": {
+    "product": 659,
+    "copy_set": 2727,
+    "product_intelligence_snapshot": 1500,
+    "product_intelligence_review_draft": 1625
+  },
+  "product_lifecycle": {
+    "ACTIVE": 402,
+    "ARCHIVED": 257
+  },
+  "copy_set_status": {
+    "COPY_APPROVED": 2069,
+    "COPY_REJECTED": 10,
+    "COPY_REVIEW_REQUIRED": 519,
+    "DRAFT_COPY": 129
+  },
+  "copy_set_pi_eligibility": {
+    "NULL": 2709,
+    "PI_INELIGIBLE": 18
+  },
+  "copy_set_columns": [
+    "copy_set_id",
+    "product_id",
+    "angle",
+    "hook",
+    "subhook",
+    "usp_set_json",
+    "cta",
+    "platform",
+    "language",
+    "route_type",
+    "formula_family",
+    "status",
+    "dedupe_key",
+    "source",
+    "provenance_json",
+    "claim_review_json",
+    "reviewer_note",
+    "approved_at",
+    "approved_by",
+    "created_at",
+    "updated_at",
+    "usage_count",
+    "last_used_at",
+    "used_in_modes",
+    "uniqueness_score",
+    "similar_to_copy_set_id",
+    "similarity_score",
+    "archived",
+    "pi_eligibility_status",
+    "pi_ineligible_reasons"
+  ],
+  "restore_method": "sqlite3.connect(backup).backup(live) OR copy file over live after stopping runtime",
+  "restore_test": "backup opened separately; integrity_check=ok; counts readable"
+}

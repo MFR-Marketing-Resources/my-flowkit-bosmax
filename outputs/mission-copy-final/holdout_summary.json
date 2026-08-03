@@ -1,0 +1,11 @@
+{
+  "residual_attempted": 10,
+  "closed_ok": 7,
+  "final_valid": 399,
+  "final_total": 402,
+  "final_without": 3,
+  "buckets": {
+    "COPY_REVIEW_REQUIRED_ONLY": 3,
+    "APPROVED_COPY_VALID": 399
+  }
+}

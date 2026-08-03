@@ -53,7 +53,14 @@ async def get_copywriting_readiness(product_id: str) -> dict[str, Any]:
         _clean(persona.audience) and (persona.pains or persona.desires)
     )
 
-    latest_approved = approved[0] if approved else None
+    # COPY-FINAL-B01: only VALID current approved sets count for readiness.
+    from agent.services.copy_eligibility_service import copy_eligibility
+    from agent.services.copy_set_validity_service import product_copy_classification
+
+    eligibility = await copy_eligibility(product_id)
+    classification = await product_copy_classification(product_id)
+    valid_id = classification.get("valid_copy_set_id")
+    latest_approved = next((s for s in approved if s.get("copy_set_id") == valid_id), None)
     selected_copy_set_id = (
         latest_approved.get("copy_set_id") if latest_approved else None
     )
@@ -85,29 +92,40 @@ async def get_copywriting_readiness(product_id: str) -> dict[str, Any]:
             blocking_reasons.append("PRODUCT_KNOWLEDGE_INCOMPLETE")
         if not customer_avatar_ready:
             blocking_reasons.append("CUSTOMER_AVATAR_INCOMPLETE")
-    if not approved:
-        blocking_reasons.append("NO_APPROVED_COPY_SET")
+    if classification.get("classification") != "APPROVED_COPY_VALID":
+        blocking_reasons.append("NO_VALID_APPROVED_COPY_SET")
+        cls = classification.get("classification")
+        if cls:
+            blocking_reasons.append(str(cls))
 
-    # PI-FINAL-B04: surface the fail-closed COPY_ELIGIBLE verdict so operators
-    # see the exact block reasons BEFORE any generation surface returns 409.
-    from agent.services.copy_eligibility_service import copy_eligibility
-    eligibility = await copy_eligibility(product_id)
     if not eligibility["eligible"]:
         blocking_reasons.extend(
-            f"COPY_INELIGIBLE:{reason}" for reason in eligibility["reasons"])
+            f"COPY_INELIGIBLE:{reason}" for reason in eligibility["reasons"]
+        )
 
     ready_for_generation = (
-        has_approved_snapshot and bool(approved) and eligibility["eligible"]
+        has_approved_snapshot
+        and eligibility["eligible"]
+        and classification.get("classification") == "APPROVED_COPY_VALID"
+        and bool(selected_copy_set_id)
     )
 
+    action_map = {
+        "APPROVED_COPY_VALID": "READY",
+        "APPROVED_COPY_STALE": "REVALIDATE_COPY_SET",
+        "COPY_REVIEW_REQUIRED_ONLY": "REVIEW_COPY_SET",
+        "DRAFT_COPY_ONLY": "REVIEW_COPY_SET",
+        "REJECTED_COPY_ONLY": "GENERATE_AND_APPROVE_COPY_SET",
+        "MISSING_COPY": "GENERATE_AND_APPROVE_COPY_SET",
+        "BLOCKED_WITH_REASON": "BLOCKED",
+    }
     if not has_approved_snapshot:
         recommended_next_action = "PREPARE_PRODUCT_FOR_COPYWRITING"
-    elif not approved:
-        recommended_next_action = "GENERATE_AND_APPROVE_COPY_SET"
-    elif blocking_reasons:
-        recommended_next_action = "COMPLETE_PRODUCT_INTELLIGENCE"
     else:
-        recommended_next_action = "READY"
+        recommended_next_action = action_map.get(
+            classification.get("classification") or "",
+            "GENERATE_AND_APPROVE_COPY_SET",
+        )
 
     return {
         "product_id": product_id,
@@ -118,6 +136,10 @@ async def get_copywriting_readiness(product_id: str) -> dict[str, Any]:
         "recommended_formula": recommended_formula,
         "selected_copy_set_id": selected_copy_set_id,
         "approved_copy_set_count": len(approved),
+        "valid_approved_copy_set_count": (
+            1 if classification.get("classification") == "APPROVED_COPY_VALID" else 0
+        ),
+        "copy_classification": classification.get("classification"),
         "formula_validation_status": formula_validation_status,
         "sales_clarity_status": sales_clarity_status,
         "copy_applicable": True,
