@@ -1,0 +1,20 @@
+{
+  "live_db_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
+  "live_db_bytes": 303681536,
+  "live_db_mtime_utc": "20260803T101600Z",
+  "backup_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\outputs\\mission-copy-corrective\\backups\\flow_agent_pre_corrective_20260803T101600Z.db",
+  "backup_bytes": 303681536,
+  "backup_sha256": "7cd0d74df967974f74861eb794517810036243617ecf818287645fb7156e6757",
+  "integrity_check": "ok",
+  "foreign_key_check_count": 0,
+  "table_counts": {
+    "product": 659,
+    "product_active": 402,
+    "copy_set": 2875,
+    "copy_set_approved": 2459,
+    "copy_set_quarantined": 18,
+    "pi_snapshot": 1500,
+    "pi_snapshot_approved": 645
+  },
+  "restore_method": "stop runtime, copy backup over flow_agent.db; OR sqlite3.connect(backup).backup(live)"
+}

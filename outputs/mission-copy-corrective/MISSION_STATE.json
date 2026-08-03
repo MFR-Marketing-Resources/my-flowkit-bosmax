@@ -53,10 +53,13 @@
   },
   "database": {
     "live_db_path": "C:/Users/USER/Desktop/_ref_flowkit/flow_agent.db",
-    "live_db_status": "ACTIVELY MUTATING (runtime writing; ~303MB, grew during session) — query READ-ONLY only",
-    "backup_pre_copy_final": "outputs/mission-copy-final/backups/flow_agent_pre_copy_final_20260803T092741Z.db",
-    "backup_sha256": "660870e0c13e5ab6a5d28d1ef44ea4ea1aa42897d731c6768bfa0f984522ee02",
-    "backup_integrity": "ok (per database_backup_manifest.json)"
+    "live_db_status": "ACTIVELY MUTATING (runtime writing; ~303MB) — query READ-ONLY only",
+    "backup_pre_copy_final": "outputs/mission-copy-final/backups/flow_agent_pre_copy_final_20260803T092741Z.db (660870e0..)",
+    "fresh_backup_pre_corrective": "outputs/mission-copy-corrective/backups/flow_agent_pre_corrective_20260803T101600Z.db",
+    "fresh_backup_sha256": "7cd0d74df967974f74861eb794517810036243617ecf818287645fb7156e6757",
+    "fresh_backup_integrity": "ok, foreign_key_check=0 (see fresh_backup_manifest.json)",
+    "live_counts_at_backup": {"product": 659, "active": 402, "copy_set": 2875, "approved": 2459, "quarantined": 18, "pi_snapshot_approved": 645},
+    "restore_point_ready": true
   },
   "shared_repo_hazards": {
     "worktrees": "~100 co-tenant worktrees; main checked out in .codex/worktrees/smart-registration-next-action",
