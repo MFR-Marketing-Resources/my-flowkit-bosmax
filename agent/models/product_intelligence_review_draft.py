@@ -96,6 +96,10 @@ class ProductIntelligenceReviewFieldProvenanceInput(BaseModel):
     claim_risk_flag: str | None = None
     reviewer_decision: str | None = None
     reviewer_note: str | None = None
+    # PI-13 revision lineage (nullable): set when cloned into a revision draft
+    inherited_from_draft_id: str | None = None
+    inherited_from_snapshot_id: str | None = None
+    inherited_at: str | None = None
 
 
 class ProductIntelligenceReviewFieldProvenance(
@@ -106,6 +110,10 @@ class ProductIntelligenceReviewFieldProvenance(
     product_id: str
     created_at: str
     updated_at: str
+    # PI-13 revision lineage (nullable): set when this provenance row was cloned into a revision draft
+    inherited_from_draft_id: str | None = None
+    inherited_from_snapshot_id: str | None = None
+    inherited_at: str | None = None
 
 
 class ProductIntelligenceReviewDraft(BaseModel):
@@ -142,6 +150,10 @@ class ProductIntelligenceReviewDraft(BaseModel):
     reviewer_note: str | None = None
     created_by: str | None = None
     reviewed_by: str | None = None
+    # PI-13 revision lineage (nullable)
+    revision_of_draft_id: str | None = None
+    revision_of_snapshot_id: str | None = None
+    revision_reason: str | None = None
     approved_by: str | None = None
     approved_at: str | None = None
     rejected_by: str | None = None

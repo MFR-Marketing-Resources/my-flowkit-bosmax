@@ -79,6 +79,7 @@ from agent.services.product_intelligence_snapshot_service import (
 )
 from agent.services.product_intelligence_review_draft_service import (
     create_review_draft,
+    create_revision_draft,
     list_review_drafts,
 )
 from agent.services.product_strategy_taxonomy_service import (
@@ -1589,6 +1590,26 @@ async def create_product_intelligence_review_draft(
 ) -> dict:
     try:
         return (await create_review_draft(product_id, request)).model_dump()
+    except ValueError as exc:
+        if str(exc) == "PRODUCT_NOT_FOUND":
+            raise HTTPException(status_code=404, detail="PRODUCT_NOT_FOUND") from exc
+        raise
+
+
+@router.post("/{product_id}/intelligence/revision-drafts")
+async def create_product_intelligence_revision_draft(product_id: str, request: dict | None = None) -> dict:
+    """Production-safe revision lifecycle: create a NEW non-terminal draft seeded from the latest
+    approved snapshot (never mutating a terminal draft/snapshot). Idempotent for the single open
+    draft. Approving the returned draft supersedes the prior snapshot via the existing approve flow."""
+    body = request or {}
+    try:
+        draft = await create_revision_draft(
+            product_id,
+            created_by=body.get("created_by"),
+            revision_reason=body.get("revision_reason"),
+            source_snapshot_id=body.get("source_snapshot_id"),
+        )
+        return draft.model_dump()
     except ValueError as exc:
         if str(exc) == "PRODUCT_NOT_FOUND":
             raise HTTPException(status_code=404, detail="PRODUCT_NOT_FOUND") from exc

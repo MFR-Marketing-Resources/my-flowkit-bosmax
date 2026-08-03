@@ -50,25 +50,14 @@ def identity_claim(con, pid):
 def process(con, ev):
     import sqlite3
     pid = ev["product_id"]
-    # 1. draft is one-per-product (UNIQUE) and terminal-locked once APPROVED. Reuse the existing
-    # draft; if it is terminal, REOPEN it to READY_FOR_REVIEW (a valid state) so the subsequent
-    # PATCH + approve run the FULL validator + claim gate and produce a superseding new version.
-    row = con.execute("SELECT draft_id, review_status FROM product_intelligence_review_draft WHERE product_id=? "
-                      "ORDER BY COALESCE(updated_at,created_at) DESC LIMIT 1", (pid,)).fetchone()
-    if row:
-        did = row[0]
-        if str(row[1]).upper() in ("APPROVED", "REJECTED", "SUPERSEDED"):
-            w = __import__("sqlite3").connect(str(REPO / "flow_agent.db"), timeout=30)
-            w.execute("PRAGMA busy_timeout=30000")
-            w.execute("BEGIN IMMEDIATE")
-            w.execute("UPDATE product_intelligence_review_draft SET review_status='READY_FOR_REVIEW', updated_at=? WHERE draft_id=?",
-                      (__import__("datetime").datetime.now(__import__("datetime").timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), did))
-            w.commit(); w.close()
-    else:
-        st, r = req("POST", f"/products/{pid}/intelligence/review-drafts", {})
-        if st != 200:
-            return {"product_id": pid, "result": "FAIL", "stage": "create", "http": st, "detail": r}
-        did = r["draft_id"]
+    # 1. Obtain an editable revision draft via the PRODUCTION-SAFE revision service (never reopen or
+    # mutate a terminal draft). It reuses an existing open draft idempotently, else seeds a fresh
+    # non-terminal draft from the latest approved snapshot and clones provenance with lineage.
+    st, r = req("POST", f"/products/{pid}/intelligence/revision-drafts",
+                {"created_by": REVIEWER, "revision_reason": "PI-13 acquired-evidence recovery"})
+    if st != 200:
+        return {"product_id": pid, "result": "FAIL", "stage": "revision", "http": st, "detail": r}
+    did = r["draft_id"]
 
     # exact stored listing URL for THIS product (never a generic host); prefer the tiktok product URL
     prow = con.execute("SELECT tiktok_product_url, source_url FROM product WHERE id=?", (pid,)).fetchone()
@@ -94,23 +83,8 @@ def process(con, ev):
             "claim_risk_flag": ev.get("claim_risk", "LOW"),
             "reviewer_decision": "ACCEPTED", "reviewer_note": str(note)[:300],
         })
-    # NOTE: allowed_claims_json is a VALIDATOR-COMPUTED / claim-safety-gated field. We do NOT
-    # overwrite it here (doing so cleared the existing safe claims). If the draft lacks any allowed
-    # claim, we add ONE deterministic taxonomy identity claim ONLY when none exist.
-    existing_ac = con.execute("SELECT allowed_claims_json FROM product_intelligence_review_draft WHERE draft_id=?", (did,)).fetchone()[0]
-    try:
-        parsed_ac = json.loads(existing_ac) if existing_ac else []
-    except Exception:
-        parsed_ac = []
-    if parsed_ac:
-        patch["allowed_claims_json"] = parsed_ac  # re-supply existing validated claims so recompute keeps them
-    else:
-        try:
-            claim, fp = identity_claim(con, pid)
-        except Exception:
-            claim = None
-        if claim:
-            patch["allowed_claims_json"] = [claim]
+    # allowed_claims_json is inherited from the seed snapshot on the revision draft; we do NOT touch
+    # it (new evidence may narrow claims later, never broaden). Overlay only the acquired fields.
     patch["provenance_items"] = prov
     if exact_url:
         patch["source_urls_json"] = {"primary_listing": exact_url}
