@@ -167,7 +167,10 @@ async def test_approve_deterministic_no_verdict_still_approves():
     cid = await _make_review_set(pid, formula_validation=None, sales_clarity=None)
     approved = await svc.approve_copy_set(cid, {"approval_phrase": _PHRASE})
     assert approved["status"] == models.STATUS_COPY_APPROVED
-    assert "formula_validation" not in approved["claim_review"]
+    # COPY-CORRECTIVE-B2: a deterministic (non-formula) lane now carries a DURABLE
+    # NOT_APPLICABLE verdict rather than a silent absence that could pass validity.
+    assert approved["claim_review"]["formula_validation"]["applicable"] is False
+    assert approved["claim_review"]["sales_clarity"]["applicable"] is False
 
 
 # ── COPY-CORRECTIVE-B02/B03: atomic grounding + generic gate + fail-closed ────

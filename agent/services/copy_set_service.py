@@ -445,6 +445,8 @@ async def approve_copy_set(copy_set_id: str, request: CopySetApproveRequest | di
     from agent.services.copy_set_validity_service import (
         _latest_approved_snapshot,
         _product_name,
+        assess_semantic_grounding,
+        build_not_applicable_verdict,
         build_semantic_review_receipt,
         detect_generic_copy,
         pi_authority_digest,
@@ -515,6 +517,24 @@ async def approve_copy_set(copy_set_id: str, request: CopySetApproveRequest | di
     now = _now()
     reviewer = _clean(req.approved_by) or "operator"
 
+    # COPY-CORRECTIVE-B1: real field-level PI grounding is MANDATORY at approval.
+    # The receipt is minted from ACTUAL grounding evidence — never from
+    # completeness + safety + genericness + snapshot existence alone.
+    grounding = assess_semantic_grounding(
+        hook=_clean(fields.get("hook")),
+        subhook=_clean(fields.get("subhook")),
+        usp_list=[u for u in (fields.get("usp_set") or []) if _clean(u)],
+        cta=_clean(fields.get("cta")),
+        snapshot=snap,
+        product_title=product_name,
+    )
+    if not grounding.get("grounded"):
+        raise CopySetError(
+            "COPY_SET_UNGROUNDED",
+            status_code=422,
+            detail={"reasons": grounding.get("reasons"), "overlap_count": grounding.get("overlap_count")},
+        )
+
     # Preserve the formula/clarity verdict - approval must NEVER strip it (readiness
     # + provenance read it downstream). Overlay the fresh approval-time gate results
     # and a durable semantic-review receipt bound to the current PI authority.
@@ -544,6 +564,8 @@ async def approve_copy_set(copy_set_id: str, request: CopySetApproveRequest | di
         route=_clean(fields.get("route_type")),
         formula=_clean(fields.get("formula_family")),
         genericness=generic,
+        grounding=grounding,
+        product_title=product_name,
         reviewed_at=now,
     )
     claim_review = {
@@ -562,6 +584,21 @@ async def approve_copy_set(copy_set_id: str, request: CopySetApproveRequest | di
             "by": reviewer,
             "at": now,
         }
+
+    # COPY-CORRECTIVE-B2: a deterministic (non-AI) generation lane that carries no
+    # formula / sales verdict gets a DURABLE NOT_APPLICABLE (route-gated) so a
+    # MISSING verdict never silently passes strict validity downstream.
+    _src = _clean(fields.get("source") or row.get("source"))
+    _route = _src or "UNSPECIFIED_DETERMINISTIC_LANE"
+    if "AI" not in _src.upper():
+        if not claim_review.get("formula_validation"):
+            claim_review["formula_validation"] = build_not_applicable_verdict(
+                reason="non-formula (deterministic) generation lane", route=_route,
+                evaluator=reviewer, evaluated_at=now)
+        if not claim_review.get("sales_clarity"):
+            claim_review["sales_clarity"] = build_not_applicable_verdict(
+                reason="non-formula (deterministic) generation lane", route=_route,
+                evaluator=reviewer, evaluated_at=now)
 
     try:
         prov = json.loads(row["provenance_json"]) if row["provenance_json"] else {}

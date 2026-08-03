@@ -178,6 +178,10 @@ def _finish_provider_call(
         # Always record usage keyed by call_id (concurrency-safe), independent of
         # whether this is still the process-global "last call".
         _usage_by_call_id[call_id] = dict(usage or {})
+        # B3 backstop: bound the map so provider-exception paths that never drain
+        # cannot grow it without limit in a long-running process.
+        while len(_usage_by_call_id) > 512:
+            _usage_by_call_id.pop(next(iter(_usage_by_call_id)))
         if (
             _last_provider_call_receipt is None
             or _last_provider_call_receipt.get("call_id") != call_id
@@ -605,9 +609,14 @@ def generate_candidate(brief: str) -> dict[str, Any]:
     if not is_configured():
         raise AICopyProviderNotConfigured(ERR_NOT_CONFIGURED)
     message_text, finish_reason, call_id = _complete(build_messages(brief))
-    obj = _extract_json_object(message_text, finish_reason=finish_reason)
+    try:
+        obj = _extract_json_object(message_text, finish_reason=finish_reason)
+    except Exception:
+        _pop_usage(call_id)  # B3: drain on parse failure — never leak
+        raise
+    usage = _pop_usage(call_id)
     if isinstance(obj, dict):
-        obj["__usage__"] = _pop_usage(call_id)
+        obj["__usage__"] = usage
     return obj
 
 
@@ -630,6 +639,8 @@ def complete_json(system: str, user: str) -> dict[str, Any]:
             diagnostic_category=exc.diagnostic_category,
             diagnostic_metadata=exc.diagnostic_metadata,
         )
+        _pop_usage(call_id)  # B3: drain on parse failure — never leak
         raise
     _record_json_parse_result(call_id, status="VALID")
+    _pop_usage(call_id)  # B3: drain — complete_json does not surface usage
     return parsed

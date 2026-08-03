@@ -49,9 +49,23 @@ def _receipt(**kw):
         "rationale": "Product-specific angle/hook grounded on current PI; USPs mapped.",
         "pi_snapshot_id": "snap-1",
         "authority_digest": "digest-1",
+        # COPY-CORRECTIVE-B1: real grounding evidence + genericness verdict.
+        "genericness": {"generic": False, "hits": []},
+        "grounding": {
+            "grounded": True,
+            "overlap_count": 3,
+            "hook_grounded": True,
+            "usp_grounding": [{"usp": "x", "grounded": True}],
+        },
     }
     r.update(kw)
     return r
+
+
+def _na(route="TEST_DETERMINISTIC"):
+    """A durable NOT_APPLICABLE formula/sales verdict (B2)."""
+    return {"applicable": False, "reason": "deterministic lane", "route": route,
+            "evaluator": "test", "evaluated_at": _now()}
 
 
 def _base_set(**kw):
@@ -60,6 +74,8 @@ def _base_set(**kw):
         "completeness": {"complete": True},
         "safety": {"safe": True},
         "semantic_review": _receipt(),
+        "formula_validation": _na(),
+        "sales_clarity": _na(),
     }
     if "claim_review" in kw:
         claim = kw.pop("claim_review")
@@ -232,9 +248,9 @@ def _claim_open_formula_sales(**over):
 def test_formula_override_bypasses_formula_only():
     v = _eval(_base_set(claim_review=_claim_open_formula_sales(
         formula_review_overridden=True, reason="operator reviewed", by="faris")))
-    assert "FORMULA_REVIEW_OPEN" not in v["reasons"]
+    assert "FORMULA_MISSING_OR_OPEN" not in v["reasons"]
     # sales gate still open (not overridden)
-    assert "SALES_CLARITY_OPEN" in v["reasons"]
+    assert "SALES_CLARITY_MISSING_OR_OPEN" in v["reasons"]
 
 
 def test_formula_override_does_not_bypass_safety():
@@ -250,21 +266,21 @@ def test_formula_override_does_not_bypass_safety():
 def test_bare_override_object_does_not_bypass_any_gate():
     # A non-empty approval_override that lacks the exact flag / reason / by must NOT bypass.
     v = _eval(_base_set(claim_review=_claim_open_formula_sales(some_unrelated_flag=True)))
-    assert "FORMULA_REVIEW_OPEN" in v["reasons"]
-    assert "SALES_CLARITY_OPEN" in v["reasons"]
+    assert "FORMULA_MISSING_OR_OPEN" in v["reasons"]
+    assert "SALES_CLARITY_MISSING_OR_OPEN" in v["reasons"]
 
 
 def test_override_without_reason_is_rejected():
     v = _eval(_base_set(claim_review=_claim_open_formula_sales(
         formula_review_overridden=True, by="faris")))  # no reason
-    assert "FORMULA_REVIEW_OPEN" in v["reasons"]
+    assert "FORMULA_MISSING_OR_OPEN" in v["reasons"]
 
 
 def test_sales_override_bypasses_sales_only():
     v = _eval(_base_set(claim_review=_claim_open_formula_sales(
         sales_clarity_overridden=True, reason="clear enough", by="faris")))
-    assert "SALES_CLARITY_OPEN" not in v["reasons"]
-    assert "FORMULA_REVIEW_OPEN" in v["reasons"]
+    assert "SALES_CLARITY_MISSING_OR_OPEN" not in v["reasons"]
+    assert "FORMULA_MISSING_OR_OPEN" in v["reasons"]
 
 
 # ── Lineage ──────────────────────────────────────────────────────────────────
@@ -365,3 +381,77 @@ def test_receipt_validator_requires_fields():
         current_snapshot_id="s", current_authority_digest="d",
     )
     assert ok["ok"] is True
+
+
+# ── COPY-CORRECTIVE B1: grounding evidence in the receipt ─────────────────────
+def test_receipt_without_grounding_evidence_fails():
+    v = _eval(_base_set(claim_review={
+        "completeness": {"complete": True}, "safety": {"safe": True},
+        "formula_validation": _na(), "sales_clarity": _na(),
+        "semantic_review": _receipt(grounding={}),
+    }))
+    assert v["valid"] is False
+    assert any("SEMANTIC_REVIEW_NOT_GROUNDED" in r for r in v["reasons"])
+
+
+def test_receipt_genericness_unverified_fails():
+    v = _eval(_base_set(claim_review={
+        "completeness": {"complete": True}, "safety": {"safe": True},
+        "formula_validation": _na(), "sales_clarity": _na(),
+        "semantic_review": _receipt(genericness={}),
+    }))
+    assert v["valid"] is False
+    assert any("GENERICNESS_UNVERIFIED" in r for r in v["reasons"])
+
+
+def test_receipt_validator_requires_grounding_and_genericness():
+    from agent.services.copy_set_validity_service import validate_semantic_review_receipt
+    ok = validate_semantic_review_receipt(
+        _receipt(pi_snapshot_id="s", authority_digest="d"),
+        current_snapshot_id="s", current_authority_digest="d")
+    assert ok["ok"] is True
+    bad = validate_semantic_review_receipt(
+        _receipt(pi_snapshot_id="s", authority_digest="d", grounding={"grounded": False}),
+        current_snapshot_id="s", current_authority_digest="d")
+    assert bad["ok"] is False
+
+
+# ── COPY-CORRECTIVE B2: formula / sales-clarity presence ──────────────────────
+def test_missing_formula_verdict_fails_closed():
+    v = _eval(_base_set(claim_review={
+        "completeness": {"complete": True}, "safety": {"safe": True},
+        "semantic_review": _receipt(), "sales_clarity": _na(),
+    }))
+    assert v["valid"] is False
+    assert "FORMULA_MISSING_OR_OPEN" in v["reasons"]
+
+
+def test_missing_sales_verdict_fails_closed():
+    v = _eval(_base_set(claim_review={
+        "completeness": {"complete": True}, "safety": {"safe": True},
+        "semantic_review": _receipt(), "formula_validation": _na(),
+    }))
+    assert v["valid"] is False
+    assert "SALES_CLARITY_MISSING_OR_OPEN" in v["reasons"]
+
+
+def test_durable_not_applicable_passes_and_passing_verdicts_pass():
+    assert _eval(_base_set())["valid"] is True  # base uses durable NOT_APPLICABLE
+    v = _eval(_base_set(claim_review={
+        "completeness": {"complete": True}, "safety": {"safe": True},
+        "semantic_review": _receipt(),
+        "formula_validation": {"valid": True, "review_required": False},
+        "sales_clarity": {"clear": True, "review_required": False},
+    }))
+    assert v["valid"] is True, v["reasons"]
+
+
+def test_malformed_not_applicable_fails():
+    v = _eval(_base_set(claim_review={
+        "completeness": {"complete": True}, "safety": {"safe": True},
+        "semantic_review": _receipt(),
+        "formula_validation": {"applicable": False},  # missing evaluator/route/reason
+        "sales_clarity": _na(),
+    }))
+    assert v["valid"] is False
+    assert "FORMULA_MISSING_OR_OPEN" in v["reasons"]

@@ -122,7 +122,6 @@ async def test_revalidate_makes_quarantined_approved_set_valid():
         cid,
         reviewer="corrective-revalidation-engine",
         rationale="Deterministically grounded on current approved PI; non-generic; complete; safe.",
-        usp_grounding=[{"usp": "Menyerap dalam 10 saat", "grounded": True}],
     )
 
     after = await evaluate_copy_set_id(cid)

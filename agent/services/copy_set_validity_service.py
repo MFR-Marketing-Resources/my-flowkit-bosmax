@@ -226,6 +226,22 @@ def validate_semantic_review_receipt(
         r_dig = _clean(receipt.get("authority_digest"))
         if current_authority_digest and r_dig and r_dig != _clean(current_authority_digest):
             reasons.append("SEMANTIC_REVIEW_DIGEST_MISMATCH")
+    # COPY-CORRECTIVE-B1: field-level grounding evidence is MANDATORY — a reviewer
+    # name + rationale are not semantic evidence.
+    grounding = receipt.get("grounding")
+    if not isinstance(grounding, dict) or grounding.get("grounded") is not True:
+        reasons.append("SEMANTIC_REVIEW_NOT_GROUNDED")
+    else:
+        usp_g = grounding.get("usp_grounding") or receipt.get("usp_grounding") or []
+        hook_ok = bool(grounding.get("hook_grounded"))
+        usp_ok = any(bool(u.get("grounded")) for u in usp_g if isinstance(u, dict))
+        if not (hook_ok or usp_ok):
+            reasons.append("SEMANTIC_REVIEW_NO_GROUNDED_ATTRIBUTE")
+        if not usp_g:
+            reasons.append("SEMANTIC_REVIEW_NO_USP_GROUNDING")
+    gen = receipt.get("genericness")
+    if not (isinstance(gen, dict) and gen.get("generic") is False):
+        reasons.append("SEMANTIC_REVIEW_GENERICNESS_UNVERIFIED")
     return {"ok": not reasons, "reasons": reasons}
 
 
@@ -241,7 +257,7 @@ def _primary_reason(reasons: list[str]) -> Optional[str]:
             tokens.add("INCOMPLETE")
         elif r.startswith("SEMANTIC_REVIEW"):
             tokens.add("MISSING_REVIEW")
-        elif r.startswith("FORMULA_REVIEW"):
+        elif r.startswith("FORMULA"):
             tokens.add("FORMULA_REVIEW")
         elif r.startswith("SALES_CLARITY"):
             tokens.add("SALES_CLARITY_REVIEW")
@@ -318,14 +334,13 @@ def evaluate_copy_set_validity(
     # exact flag for that exact gate may, and neither ever bypasses safety.
     override = claim.get("approval_override")
     override = override if isinstance(override, dict) else {}
-    fv = claim.get("formula_validation") or {}
-    sc = claim.get("sales_clarity") or {}
-    formula_open = bool(fv) and (not fv.get("valid", False) or bool(fv.get("review_required")))
-    clarity_open = bool(sc) and (not sc.get("clear", False) or bool(sc.get("review_required")))
-    if formula_open and not _valid_override(override, "formula_review_overridden"):
-        reasons.append("FORMULA_REVIEW_OPEN")
-    if clarity_open and not _valid_override(override, "sales_clarity_overridden"):
-        reasons.append("SALES_CLARITY_OPEN")
+    # COPY-CORRECTIVE-B2: a formula / sales-clarity verdict must be PRESENT and be
+    # either passing, a durable NOT_APPLICABLE verdict, or covered by the exact
+    # per-gate override. A MISSING verdict no longer silently passes.
+    if not _verdict_ok(claim.get("formula_validation"), "valid", override, "formula_review_overridden"):
+        reasons.append("FORMULA_MISSING_OR_OPEN")
+    if not _verdict_ok(claim.get("sales_clarity"), "clear", override, "sales_clarity_overridden"):
+        reasons.append("SALES_CLARITY_MISSING_OR_OPEN")
 
     # Generic / synthetic filler.
     gen = detect_generic_copy(
@@ -421,6 +436,33 @@ def _valid_override(override: dict[str, Any], gate_flag: str) -> bool:
     if not override.get(gate_flag):
         return False
     return bool(_clean(override.get("reason")) and _clean(override.get("by")))
+
+
+def _verdict_ok(verdict: Any, pass_key: str, override: dict[str, Any], gate_flag: str) -> bool:
+    """COPY-CORRECTIVE-B2: a formula / sales-clarity gate passes only when a verdict
+    is PRESENT and passing, is a durable NOT_APPLICABLE verdict, or the exact
+    per-gate override is supplied. A MISSING verdict fails closed."""
+    if _valid_override(override, gate_flag):
+        return True
+    if not isinstance(verdict, dict) or not verdict:
+        return False
+    if verdict.get("applicable") is False:
+        return bool(
+            _clean(verdict.get("reason"))
+            and _clean(verdict.get("evaluator"))
+            and _clean(verdict.get("evaluated_at"))
+            and _clean(verdict.get("route") or verdict.get("lane"))
+        )
+    return bool(verdict.get(pass_key)) and not bool(verdict.get("review_required"))
+
+
+def build_not_applicable_verdict(
+    *, reason: str, route: str, evaluator: str, evaluated_at: str | None = None
+) -> dict[str, Any]:
+    """A durable NOT_APPLICABLE formula/sales verdict for an authorized deterministic
+    (non-formula) route — NEVER inferred merely because the object is absent."""
+    return {"applicable": False, "reason": reason, "route": route,
+            "evaluator": evaluator, "evaluated_at": evaluated_at or _now()}
 
 
 def classify_product_copy(
@@ -771,13 +813,16 @@ async def revalidate_copy_set(
     *,
     reviewer: str,
     rationale: str,
-    usp_grounding: list[dict[str, Any]] | None = None,
-    genericness: dict[str, Any] | None = None,
     decision: str = "APPROVED",
 ) -> dict[str, Any]:
-    """Atomically make an ALREADY-approved set strict-valid: write a semantic-review
-    receipt bound to current PI, stamp lineage, and clear quarantine in ONE write.
-    The caller MUST have confirmed the set passes strict deterministic review first.
+    """Atomically RE-STAMP an ALREADY-approved set as strict-valid (no provider).
+
+    Recomputes field-level PI grounding + genericness from the copy itself, writes a
+    receipt carrying that ACTUAL evidence (B1), ensures a formula/sales verdict
+    (preserve existing; a deterministic non-AI lane with none gets a DURABLE
+    NOT_APPLICABLE — route-gated, B2), stamps lineage, clears quarantine — one write.
+    Raises COPY_SET_UNGROUNDED / COPY_SET_GENERIC when the copy genuinely fails, so
+    the caller QUARANTINES instead of re-stamping.
     """
     db = await get_db()
     cur = await db.execute("SELECT * FROM copy_set WHERE copy_set_id = ?", (copy_set_id,))
@@ -791,25 +836,58 @@ async def revalidate_copy_set(
     snap = await _latest_approved_snapshot(str(cs["product_id"]))
     if not snap:
         raise ValueError("NO_APPROVED_PI_SNAPSHOT")
+    title = await _product_name(str(cs["product_id"]))
+    usp = _usp_list(cs)
+    # B1: real grounding evidence, computed from the copy against current PI.
+    gen = detect_generic_copy(
+        angle=_clean(cs.get("angle")), hook=_clean(cs.get("hook")),
+        subhook=_clean(cs.get("subhook")), usp_list=usp, cta=_clean(cs.get("cta")),
+        product_name=title,
+    )
+    if gen["generic"]:
+        raise ValueError("COPY_SET_GENERIC:" + ";".join(gen["hits"])[:120])
+    grounding = assess_semantic_grounding(
+        hook=_clean(cs.get("hook")), subhook=_clean(cs.get("subhook")),
+        usp_list=usp, cta=_clean(cs.get("cta")), snapshot=snap, product_title=title,
+    )
+    if not grounding.get("grounded"):
+        raise ValueError("COPY_SET_UNGROUNDED:" + ",".join(grounding.get("reasons") or []))
     digest = pi_authority_digest(snap)
     now = _now()
     claim = _parse_json(cs.get("claim_review_json")) or {}
     if not isinstance(claim, dict):
         claim = {}
+    # B2: ensure a formula/sales verdict — preserve any existing; a deterministic
+    # (non-AI) generation lane that carries none gets a DURABLE NOT_APPLICABLE.
+    source = _clean(cs.get("source"))
+    is_ai = "AI" in source.upper()
+    route = source or "UNSPECIFIED_DETERMINISTIC_LANE"
+    fv = claim.get("formula_validation")
+    sc = claim.get("sales_clarity")
+    if not (isinstance(fv, dict) and fv) and not is_ai:
+        claim["formula_validation"] = build_not_applicable_verdict(
+            reason="non-formula (deterministic) generation lane", route=route,
+            evaluator=reviewer, evaluated_at=now)
+    if not (isinstance(sc, dict) and sc) and not is_ai:
+        claim["sales_clarity"] = build_not_applicable_verdict(
+            reason="non-formula (deterministic) generation lane", route=route,
+            evaluator=reviewer, evaluated_at=now)
+    # B2: the set must actually PASS the formula / sales gate now — present + passing,
+    # a durable NOT_APPLICABLE, or the exact per-gate override. A legacy formula-lane
+    # set that carries no verdict (and no override) fails here so the caller
+    # QUARANTINES it rather than re-stamping a missing-QA set as valid.
+    _ov = claim.get("approval_override") if isinstance(claim.get("approval_override"), dict) else {}
+    if not _verdict_ok(claim.get("formula_validation"), "valid", _ov, "formula_review_overridden"):
+        raise ValueError("COPY_SET_FORMULA_OPEN")
+    if not _verdict_ok(claim.get("sales_clarity"), "clear", _ov, "sales_clarity_overridden"):
+        raise ValueError("COPY_SET_SALES_OPEN")
     claim["semantic_review"] = build_semantic_review_receipt(
-        reviewer=reviewer,
-        decision=decision,
-        rationale=rationale,
-        pi_snapshot_id=str(snap["snapshot_id"]),
-        pi_snapshot_version=int(snap["version"]),
-        authority_digest=digest,
-        platform=_clean(cs.get("platform")),
-        language=_clean(cs.get("language")),
-        route=_clean(cs.get("route_type")),
-        formula=_clean(cs.get("formula_family")),
-        usp_grounding=usp_grounding or [],
-        genericness=genericness or {},
-        reviewed_at=now,
+        reviewer=reviewer, decision=decision, rationale=rationale,
+        pi_snapshot_id=str(snap["snapshot_id"]), pi_snapshot_version=int(snap["version"]),
+        authority_digest=digest, platform=_clean(cs.get("platform")),
+        language=_clean(cs.get("language")), route=_clean(cs.get("route_type")),
+        formula=_clean(cs.get("formula_family")), grounding=grounding, genericness=gen,
+        product_title=title, reviewed_at=now,
     )
     prov = _parse_json(cs.get("provenance_json")) or {}
     if not isinstance(prov, dict):
@@ -851,6 +929,7 @@ async def revalidate_copy_set(
         "pi_snapshot_id": str(snap["snapshot_id"]),
         "pi_snapshot_version": int(snap["version"]),
         "grounded_at": now,
+        "grounding": grounding,
     }
 
 
@@ -889,9 +968,18 @@ def build_semantic_review_receipt(
     subhook_review: str = "",
     cta_review: str = "",
     genericness: dict[str, Any] | None = None,
+    grounding: dict[str, Any] | None = None,
+    product_title: str = "",
     reviewed_at: str | None = None,
 ) -> dict[str, Any]:
-    """Durable, auditor-readable semantic-review receipt for a Copy Set."""
+    """Durable, auditor-readable semantic-review receipt for a Copy Set.
+
+    COPY-CORRECTIVE-B1: the receipt carries the ACTUAL field-level grounding
+    evidence (overlap tokens/count, hook grounding, per-USP grounding, the PI
+    authority used) — a reviewer name + rationale alone are not semantic evidence.
+    """
+    grounding = grounding or {}
+    usp_g = usp_grounding if usp_grounding is not None else grounding.get("usp_grounding") or []
     return {
         "reviewer": reviewer,
         "reviewed_at": reviewed_at or _now(),
@@ -904,11 +992,22 @@ def build_semantic_review_receipt(
         "language": language,
         "route": route,
         "formula": formula,
-        "usp_grounding": usp_grounding or [],
-        "hook_review": hook_review,
+        "usp_grounding": usp_g,
+        "hook_review": hook_review or (grounding.get("hook_supporting_pi_field") or ""),
         "subhook_review": subhook_review,
         "cta_review": cta_review,
         "genericness": genericness or {},
+        "grounding": {
+            "grounded": bool(grounding.get("grounded")),
+            "overlap_count": grounding.get("overlap_count"),
+            "overlap_tokens": grounding.get("overlap_tokens") or [],
+            "hook_grounded": bool(grounding.get("hook_grounded")),
+            "hook_supporting_pi_field": grounding.get("hook_supporting_pi_field"),
+            "usp_grounding": usp_g,
+            "product_title_used": product_title,
+            "pi_snapshot_id": pi_snapshot_id,
+            "authority_digest": authority_digest,
+        },
     }
 
 

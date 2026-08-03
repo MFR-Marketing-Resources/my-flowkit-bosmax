@@ -38,16 +38,20 @@ async def make_product_copy_eligible(product_id: str) -> str:
     draft = await crud.create_product_intelligence_review_draft(
         product_id=product_id,
         review_status="READY_FOR_REVIEW",
-        product_description="Test-eligible product description for copy grounding.",
-        benefits_json='["Convenient size", "Simple to carry"]',
-        usp_json='["Compact format"]',
-        usage_text="Use as directed on the label.",
+        # COPY-CORRECTIVE-B1: the fixture PI carries a real vocabulary so the
+        # standard skincare test copy (kulit / formula / menyerap / kombinasi /
+        # rutin / segar / ringan) actually GROUNDS at approval, exercising the
+        # grounding gate rather than trivially failing it.
+        product_description="Serum penjagaan kulit yang menyerap cepat, formula ringan untuk kulit kombinasi dan rutin harian; melembapkan kulit sepanjang hari.",
+        benefits_json='["melembapkan kulit sepanjang hari", "menyerap cepat tanpa melekit", "formula ringan untuk kulit kombinasi", "kulit nampak segar"]',
+        usp_json='["untuk kulit kombinasi", "formula ringan menyerap cepat", "rutin harian ringkas"]',
+        usage_text="Sapu pada kulit bersih setiap hari mengikut rutin harian.",
         ingredients_text="As listed on the packaging.",
         warnings_text="Keep away from direct sunlight.",
-        target_customer_text="Everyday shoppers.",
-        allowed_claims_json='["Product type: Test / Fixture"]',
-        buyer_persona_snapshot_json='{"audience": "everyday shoppers", "needs": ["value"]}',
-        copy_strategy_summary_json='{"angles": ["practical value"], "recommended_formula": "FAB"}',
+        target_customer_text="wanita yang mahu kulit segar dan lembap sepanjang hari",
+        allowed_claims_json='["Product type: Skincare / Serum"]',
+        buyer_persona_snapshot_json='{"audience": "wanita penjagaan kulit", "needs": ["kulit segar", "formula ringan"]}',
+        copy_strategy_summary_json='{"angles": ["kulit segar sepanjang hari", "formula ringan menyerap cepat"], "recommended_formula": "FAB"}',
         source_urls_json='{"primary_listing": "https://example.com/listing"}',
         image_evidence_json='{"main": "https://example.com/img.jpg"}',
         claim_gate="CLAIM_SAFE",

@@ -632,12 +632,15 @@
    "product_id": "8ea29ec2-3e38-4d35-a5dc-16e0be4bc317",
    "outcome": "QUARANTINED_AFTER_TWO_ATTEMPTS",
    "attempt_2_failure": [
-    "PROVIDER_ERROR"
+    "AI_COPY_ASSIST_RESPONSE_INVALID"
    ],
    "quarantine_status": "NEEDS_REVALIDATION",
    "quarantine_reason": "COPY_CORRECTIVE_TWO_ATTEMPT_CAP:a1=NONE;a2=PROVIDER_ERROR",
    "quarantined_copy_set_ids": [
     "18ca4b1b-5ef0-4a4b-b868-f184c1adb405"
+   ],
+   "attempt_1_failure": [
+    "GENERIC"
    ]
   },
   {
@@ -656,6 +659,9 @@
    "quarantine_reason": "COPY_CORRECTIVE_TWO_ATTEMPT_CAP:a1=NONE;a2=UNSAFE",
    "quarantined_copy_set_ids": [
     "d6d87459-5d9e-4f88-afe2-5b09fe392794"
+   ],
+   "attempt_1_failure": [
+    "UNSAFE"
    ]
   }
  ]

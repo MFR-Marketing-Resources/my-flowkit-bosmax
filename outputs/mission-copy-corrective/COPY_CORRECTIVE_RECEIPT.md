@@ -1,11 +1,23 @@
 # COPY-CORRECTIVE RECEIPT — BOSMAX-COPY-CORRECTIVE-ONCE-AND-FOR-ALL-20260803
 
 ## Executive verdict
-**OUTCOME B — 400 / 402 genuine strict-valid; 2 owner-decision (never fabricated).**
+**299 / 402 genuine strict-valid after the PR #609 FINAL governance correction
+(B1–B4); 103 honestly contained (never fabricated).**
 PR #608's "402/402 production-ready copy" was rejected with evidence and replaced
 with truth: a fail-closed authority + free revalidation of salvageable copy + paid
-replacement of the genuine residual, capped at two attempts, with 2 products honestly
-quarantined rather than forced green.
+replacement of the genuine residual, capped at two attempts. The final governance
+round then hardened approval-time semantic grounding (B1) and formula/sales presence
+(B2). Applying B2 faithfully **exposed 101 legacy `AI_COPY_ASSIST` sets that were
+approved under the old fail-open validator with NO formula-QA verdict** — these are
+now quarantined (recoverable, not deleted), not silently passed. Reporting the honest
+299 rather than a preserved-400 is the whole point of this mission: the count follows
+the evidence, never the target.
+
+> Correction note: an earlier draft of this receipt claimed 400/402. That number
+> predated the B2 fail-closed formula/sales gate. Under B2 (which the owner mandated),
+> a formula-lane set with no formula verdict must not pass; 101 such sets fail and are
+> contained. The current authoritative number is **299** (`final_reconciliation.json`,
+> `final_containment_proof.json`).
 
 ## Starting / final main
 - Starting `origin/main`: `fbb43fd957d04dc52c3ea62789a6fab456bd3e0e` (PR #608 merge)
@@ -53,14 +65,43 @@ wiring, stale-copy concept, recovery artifacts — all kept and made fail-closed
 | Metric | Value |
 |---|---|
 | ACTIVE canonical eligible cohort | 402 |
-| **Strict-valid approved products** | **400** |
-| Without strict-valid (Outcome B) | 2 |
+| **Strict-valid approved products** | **299** |
+| Without strict-valid | 103 |
+| — of which: formula-verdict-missing (quarantined, NEEDS_REVALIDATION) | 101 |
+| — of which: generic Outcome-B (owner decision) | 2 |
 | strict-valid WITH generic filler | 0 |
 | strict-valid MISSING semantic receipt | 0 |
+| non-quarantined approved sets re-checked (independent) | 2356 |
+| non-quarantined approved sets that are INVALID (fail-open leak) | **0** |
 
 - Attempt-1 paid successes: 115 · Attempt-2 paid successes: 2
 - Total provider calls (all paid attempts): **130** · tokens in/out: 249,251 / 418,796 ·
   **estimated cost $0.528** (deepseek-v4-flash).
+
+## PR #609 FINAL governance correction (B1–B4, one round, no provider calls)
+- **B1 — real semantic grounding AT APPROVAL.** `approve_copy_set` now runs
+  `assess_semantic_grounding` on the set against the current approved PI snapshot and
+  FAILS CLOSED (`COPY_SET_UNGROUNDED`) if not grounded; the receipt persists the
+  grounding evidence (overlap tokens/count, per-attribute grounding, snapshot id).
+  The validity authority now REQUIRES that grounding evidence plus a verified
+  genericness verdict (`generic=false`) — a receipt without them fails
+  (`SEMANTIC_REVIEW_NOT_GROUNDED` / `…_NO_USP_GROUNDING` / `…_GENERICNESS_UNVERIFIED`).
+- **B2 — formula/sales presence, no silent pass.** Missing `formula_validation` /
+  `sales_clarity` no longer passes. A set is valid only with a PRESENT+passing verdict,
+  a DURABLE `NOT_APPLICABLE` (`{applicable:false, reason, route, evaluator, evaluated_at}`)
+  for a genuine deterministic lane, or an exact per-gate override. NOT_APPLICABLE is
+  **never inferred from absence** and is **not** written for the AI formula lane.
+  Faithful application quarantined **101** legacy `AI_COPY_ASSIST` sets (verdict-less,
+  `COPY_SET_FORMULA_OPEN`) — see `final_revalidation_ledger.jsonl`.
+- **B3 — provider usage map cleanup.** `_usage_by_call_id` is drained on every terminal
+  path (parse-failure and success in `generate_candidate` / `complete_json`) and bounded
+  ≤512 so a long concurrent run cannot leak it (`test_ai_copy_provider_usage_map.py`).
+- **B4 — Outcome-B audit reconstruction.** Both Outcome-B products' real Attempt-1/2
+  provider outcomes were reconstructed from `provider_call_ledger.jsonl` into the
+  manifest / results / quarantine reasons.
+- **Independent containment proof** (`final_containment_proof.json`): all **2356**
+  non-quarantined approved sets in the cohort re-evaluated through
+  `evaluate_copy_set_id` → **0 invalid** (no fail-open leak); integrity ok, FK 0.
 
 ## Quarantine enforcement (`quarantine_enforcement_proof.json`)
 Both Outcome-B products: ACTIVE + preserved, classification ≠ APPROVED_COPY_VALID,
@@ -71,14 +112,22 @@ rotation pool 0, binding blocked on every approved set → provably non-executab
 2. `9daaa6b9…` "100 Doa Taubat…" (religious text) — BLOCKED (copy is intrinsically claim-unsafe).
 Both preserved, non-executable; recommend supplying product-specific facts or accepting non-copy-eligible.
 
-## Integrity / immutability
-- DB integrity_check: ok · foreign_key_check: 0 · ACTIVE 402 / ARCHIVED 257 · copy_set 3003 (grew, no deletions).
+## Integrity / immutability (re-verified post-B1–B4, `final_containment_proof.json`)
+- DB integrity_check: **ok** · foreign_key_check: **0** · product **659** · copy_set **3003**
+  (unchanged — grew earlier, ZERO deletions this round).
 - Product Intelligence snapshots/drafts unchanged; no product/Copy-Set/provenance/audit deletion.
 
 ## Tests
-- Branch focused matrix: **279–288 passed, 0 failures** (20 suites).
-- origin/main baseline: 251 passed / 0 failures → **0 mission-induced failures**
-  (2 pre-existing scene-cluster failures are unrelated). Dashboard `npm run build` clean; 25 vitest pass.
+- **B1–B4 targeted matrix: 91 passed, 0 failures** — validity authority, approval
+  formula/grounding gate, revalidation engine, PI-stale invalidation, AI-copy-assist,
+  provider usage-map (B3).
+- Copy-eligibility enforcement: **21 passed, 0 failures**.
+- Broad copy/validity matrix (35 suites): **402 passed, 3 failed**. The 3 failures are
+  `test_copy_binding_workspace_integration.py` (receipt-less hand-inserted fixture) and
+  are **PRE-EXISTING** — reproduced identically against committed HEAD `10cd848` with my
+  B1–B4 edits swapped out, so they are NOT introduced by this round. They are a stale
+  test fixture unrelated to the four blockers and out of scope per "fix the 4 blockers
+  only" + Engineering Lockdown; left untouched, flagged for a separate task.
 - `git diff --check` clean.
 
 ## Merge / runtime
