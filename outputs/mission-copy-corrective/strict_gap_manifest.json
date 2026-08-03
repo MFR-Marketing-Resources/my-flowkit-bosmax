@@ -1,0 +1,3751 @@
+{
+ "summary": {
+  "cohort_active": 402,
+  "approved_sets_reviewed": 2459,
+  "sets_revalidated_free": 2340,
+  "sets_quarantined": 119,
+  "products_closed_free": 283,
+  "products_residual_paid": 119,
+  "residual_product_ids": [
+   "8ae553d2-4810-4d03-926b-5f2f1282c21c",
+   "1c5b5c1a-43d2-4239-b87b-7b0f95c7e58f",
+   "7336ec55-65bf-40f2-9754-d5f6b11d0a43",
+   "b83d97ba-1072-4497-aadf-9f63004b9049",
+   "19d5518d-975b-4902-98bc-29428e7fe96c",
+   "b191e1a5-deed-4482-b35d-0c85049f514e",
+   "981cc17d-b5d8-47a4-992e-3a262ba07157",
+   "82c54d11-8de3-47a9-bbc6-297056ed0fab",
+   "6d242ace-4ccb-4d63-9c67-163d96234f81",
+   "72506493-7cbd-4b1e-8d87-a5672bcbe154",
+   "feefc2fa-8f16-4128-886b-2eb27b0d1944",
+   "a14cab39-1f3b-4648-8128-53e2a082e8b8",
+   "8e465292-79f0-4165-bdc1-9b740655a586",
+   "994da37b-298f-453e-a253-f436b50d0006",
+   "951b5f10-f035-4935-89d1-f25c52c35b51",
+   "ce5f75e4-3d36-4292-a588-46aec34ad7fb",
+   "14d5c7c2-9b75-48cc-841d-f8b47af8cbc6",
+   "4c6e5722-9914-49cf-a0fa-204b452c4fe1",
+   "7ed3f33e-58a6-41ca-9bca-84997b2b10b0",
+   "f34bab64-5488-4b02-811e-064f95d53597",
+   "f79f2c25-07da-4dd8-82e5-95c83d66e080",
+   "8a3182ec-350a-4499-ac4d-42cd244eed75",
+   "18c28ac5-ab61-45f4-9353-1e8d1687cb62",
+   "8c19afea-ca9f-4f76-8c30-1f0e150ac07b",
+   "7632caf0-ac2c-4814-afdd-afe697438652",
+   "a7081c4c-715d-4ebe-99d7-8d6a9f3f45f4",
+   "a6c94806-15dc-460c-b56c-ea674ce662e7",
+   "b36d17a1-4209-431a-b740-c3ceadb7c704",
+   "b527d024-7d61-4b6f-8828-6367f25469ef",
+   "86e907e5-4635-4333-88da-07149188e6ce",
+   "7ee955e0-694b-4192-a170-1176af87e651",
+   "a7421ac4-7423-4262-86d4-d5be6e687c25",
+   "9a5d4b6a-1f1b-4ba8-a1bc-86bbab107af9",
+   "8c46a9e9-6346-43dc-a0b3-d4641332696c",
+   "5a148537-098d-4c9e-8f1b-1934087b60ab",
+   "aa6042ad-2048-43b9-b19f-fd2c4f5d8b66",
+   "8cac00aa-bf86-4554-894c-950e3233f352",
+   "f2490e97-a543-44b6-a4de-28b92440d679",
+   "b5a5ed44-f983-4c06-9007-d34006318932",
+   "9fc067da-914f-4d23-a3a2-50bc7c916903",
+   "ed97e243-9e20-4859-baa6-07c6cc06675a",
+   "c70c3ab7-6073-499e-bb23-5d6ce331ea3f",
+   "9b771ea4-d27f-4b4f-a866-8cbb15e29389",
+   "f2851345-6c82-41b0-a032-7491d36bdd8a",
+   "992eee37-93a0-4f24-86b2-391a16893699",
+   "c9522a45-05e0-411c-abe3-01e7a19ecaa6",
+   "b38f83b7-8950-4dab-811f-4c3a89850194",
+   "fd68bb57-fb3b-4495-b0ba-5a32e931b1fd",
+   "fcf0fff1-fc18-40da-b14c-ee44d1361413",
+   "db169b2c-0611-47b5-9b3f-90a9e7441aea",
+   "c9888bd2-2546-4041-935e-aba94fa8a27b",
+   "70df6d27-69d7-48d3-b426-adea41a9045b",
+   "e3ffa155-669e-4c0d-bceb-0ad7c565885e",
+   "79e56ba2-2b7f-431a-88da-496af82c11fd",
+   "db2dbbeb-79dc-4b78-b1ce-2257257cb7f8",
+   "a960c4f6-b1fe-4111-b33b-51ce5cacaa25",
+   "bc3dac5c-8460-412c-9ae1-836adaddb1e9",
+   "ec298ae7-77d2-427f-b683-c2c9e2c1037b",
+   "fe673c01-e328-4f30-9f19-5eb1142ed442",
+   "f3b38817-44a9-4935-a586-fb9939b701d9",
+   "a789126c-54da-4aa4-801a-607b6d0c5061",
+   "7ef84490-ba71-434e-99c4-52bf4475ee4e",
+   "95e80583-2d66-42a0-b0a2-03874e246505",
+   "fbf49c09-88ae-459c-90f4-7e3582cab55e",
+   "e57cd925-3d3c-4e28-8dd4-a1e4984bb936",
+   "e79642fc-5794-4312-8dcc-11a782ebc653",
+   "d136638e-8e8b-4bc9-9800-68c44c991462",
+   "9daaa6b9-39ba-4fd9-92b6-835c1353d7fa",
+   "e06c7c7b-1c2d-4a39-9aa9-751d4e032d74",
+   "b6eaa73e-6325-4aa2-b4ce-96e2fe9c7c7d",
+   "9cf6f636-7878-467c-9fac-65dd0760ccd8",
+   "8d489069-eaf3-4228-a8c0-67527c8a59b0",
+   "be01cb61-8b43-4f69-ac13-8116c16a4cb0",
+   "c1085efb-6c9a-48eb-8da5-1952cc53bb92",
+   "afe7674e-6dfd-4f3b-8d05-48dac9885db0",
+   "7b66e273-dfbe-47fc-b337-a8bc3b7a15da",
+   "8951f8b3-e19e-4566-8187-55829482b8b7",
+   "7c5318f7-0fad-4d9a-ba03-d8699ddea51e",
+   "0f1a6e14-6980-47df-96b5-693a13b38dbd",
+   "ce61e962-3125-4322-81bc-cd703dc77bc9",
+   "90379666-f96a-40ed-baf2-58298a8522b2",
+   "c46c2a6b-7fc7-4869-ab9f-6e5fecc3250b",
+   "edcbe7c0-c81b-41fd-8d57-39f8ef010397",
+   "91f9d2d1-f50d-40a6-a165-202f8f14db4e",
+   "765fe80e-b98c-47df-b9d4-5524a533c9f0",
+   "8cb573bb-8f06-4389-ad07-cf92b0a53450",
+   "c7fbce94-fe43-4f64-ba44-57e36a7de3ca",
+   "db855f29-fe2f-47be-88d6-91a091f6ed54",
+   "d5c0a63d-06ca-4f58-91e5-de1f7665fb2f",
+   "fef8ebbf-429b-4f17-a858-683ed69af2f8",
+   "fdad0f75-9069-4174-8acd-33a8ee1d3232",
+   "defdd701-2a03-488b-bcbf-bdb09ac14140",
+   "a5ec81fb-373a-4dbf-8e6b-c60bd297ada0",
+   "a034e516-bd8f-42a2-acd8-c33ad6a543b0",
+   "9bdefb5d-8278-4668-9425-dbed61464c9d",
+   "873126e9-b0d5-41c1-afce-43f25f467def",
+   "8b5a8aa4-ec1b-456c-9292-f5abac99cf8e",
+   "8afbadfa-a958-40ea-9256-c2cbf75a21ef",
+   "ba4c941f-8fa3-4c90-82fb-bd54b502a71b",
+   "af57902f-a69a-4b5e-87ff-02edec363d95",
+   "98c04992-a726-4782-8293-7bf17156cdd0",
+   "e10804b5-5d06-4b2a-9b66-2d32ca35841a",
+   "8ea29ec2-3e38-4d35-a5dc-16e0be4bc317",
+   "b71be8c5-614a-4c53-8679-01d658b6ea71",
+   "9f969c7c-ff94-440e-9353-908326c819d8",
+   "8d3214de-145a-489a-8da2-d0438b9d1406",
+   "0a26caf0-1bc6-43a9-a267-7d2a1dbaccab",
+   "c4216575-c02c-4719-9d48-88dc09c8917f",
+   "d3ca6bd0-0da4-4ef8-a115-2e2c85facc1c",
+   "e42c937b-4236-40e2-b7c4-990d7e9e8b18",
+   "aae1b6f9-6d8f-43e3-9723-0d517ae8daec",
+   "96616701-0020-4430-97f0-1d4001c40ae7",
+   "f67305f1-3786-4727-96c4-7e972cf50129",
+   "60c65d01-5d27-465b-8b9b-20d3a8cd8b99",
+   "a2df36de-02e1-4d19-8138-80ad6e34d1df",
+   "c1f000cc-4f91-4986-b487-9e8c0d5e9e7d",
+   "3bfd5223-abf4-49da-9710-dcc3a1450f50",
+   "822e7269-11d9-4b6c-9a51-59abfe448ff6",
+   "2d359cf9-a952-442f-b93f-2b6130debb9f"
+  ]
+ },
+ "products": [
+  {
+   "product_id": "8ae553d2-4810-4d03-926b-5f2f1282c21c",
+   "product_name": "CLASSY 6XXXL Size Karpet Velvet Paling Besar Anti Slip TOP DESIGNS Baldu Living Room Carpet Mats Textiles Non-slip Anti-skid water-absorbing mat karpet cantik KARPET RUANG TAMU",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "bd96da55-0ad4-494d-afb1-f9fb1b30caa1",
+   "product_name": "Elianto Body Spray Fragrance Mist Pewangi Badan (Coconut/ Watermelon/ Bubblegum Scent) Segar Harian | {Elianto Perfumed Body Mist}",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "3b51d01e-6e59-4b94-83ca-9e10ef611056",
+   "product_name": "QAYRAA P1 (S-XL) Jersi Muslimah Labuh Microfiber/Athleisure Sport Quick Dry/Baju Sukan Perempuan Wanita /Size: S-10XL Jersey Labuh Baju Renang/Rich Brown/Burgundy/Green/Purple/NAVY/Lilac/DUSTY ROSE/GREY/Green/KHAKI/Teal Blue/Red Blouses Shirts Tops",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "1c5b5c1a-43d2-4239-b87b-7b0f95c7e58f",
+   "product_name": "UNICO LEMON TTOX ( 10 PAKET)",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "dcf0b2a3-b714-4305-a0de-37033f9762a1",
+   "product_name": "Seluar Tarik Ke Atas, SUMIKKO, 50PCS, Lampin Bayi, Semua Saiz Tersedia, Saiz Besar, Sederhana, L, XL, XXL, Lampin Pita",
+   "approved_sets": 55,
+   "revalidated": 55,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "d2f8fd58-437b-4447-8730-694b782eef17",
+   "product_name": "Sambal Nyet Berapi by Khairulaming",
+   "approved_sets": 3,
+   "revalidated": 3,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "b8a897f9-5482-448a-b05d-dd2025297fc3",
+   "product_name": "Dendeng Nyet Berapi by Khairulaming",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "7336ec55-65bf-40f2-9754-d5f6b11d0a43",
+   "product_name": "Jam Tangan Sukan, Terbaru Smartwatch H9 max, Untuk Lelaki dan Wanita, Skrin Sentuh HD 2.01 \", Terima Panggilan Dail, Muzik Bluetooth, Kalkulator, Jam randik, Serasi dengan Android dan iOS, 2026 Smart watch H9 pro max",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "2313b64c-b15f-4851-a1db-8bade93afbf2",
+   "product_name": "ELGINI E16134 Windbreaker S-XXL | Hooded Water-Resistant Windbreaker",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "ea4f51b0-62fd-4566-a6fa-665faabc2b3e",
+   "product_name": "Primer Penghidratan Cengkaman Baik, SHEGLAM",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "904bee4d-864b-4722-bc10-5df2027eb13f",
+   "product_name": "DHERBS SET JIMAT AURA SERI COMBO 2",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "a4f59882-c1a3-43a3-a67c-87450950feb8",
+   "product_name": "OFVOGUE Seluar Panjang Wanita Bootcut Kain Memeri Sukan Santai Kapas Wide-Leg Comfortable Long Trousers Women Leisure Sport Loose Casual Pants",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "4faad914-5345-4a34-a5e1-e5fe3e283795",
+   "product_name": "Mee Kari Opah by Arwaa Food HQ",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "3fbf5508-697b-4fb9-b891-868e89186621",
+   "product_name": "Kaftan Kejururawatan, Farhah, Saiz Bebas, Zip Halimunan",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "1b61dbfa-45d7-45f1-854d-2c2e5720b0b0",
+   "product_name": "QAYRAA P3 (2XL-7XL) Athleisure Jersi Muslimah PREMIUM Microfiber/Sport Activewear/Baju Sukan Jersey Muslimah Quick Dry Size: S-10XL/Baju Labuh Baju Renang/Rich Brown/Burgundy/Purple/NAVY/Lilac/DUSTY ROSE/GREY/Green/KHAKI/Teal Blue/Red Blouses Tops Shirts",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "08de4318-c6aa-4665-b2c1-e02dc6cb35c9",
+   "product_name": "Amyrahijab Shawl Heavy Chiffon Premium (BUY 5 GET 6)",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "1e8fd714-5718-4b0c-96e8-733cf7d64719",
+   "product_name": "Swiss Thomas White Green Cordless Vacuum Cleaner Portable with Mop Pad Rechargeable Wireless Tanpa Wayar",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "2be2ffe4-6e43-4789-929a-ad1bd3d6284a",
+   "product_name": "Petinju Lelaki, Seluar Dalam Sukan Luar, Selesa dan Bernafas, Set 5PCS, Sesuai untuk Lelaki, 2023 Ketibaan Baru",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "44b61c93-06bd-4857-b046-7e0140807db1",
+   "product_name": "[NEW] SKINTIFIC Cover Glow Perfect Cushion Foundation Full Coverage Instant glowing finish | 10-Hour Long-Lasting Wear",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "6454948f-b303-4dc9-b836-9998cf91e3ad",
+   "product_name": "Sea Makeup Stayput Prime & Set Continuous Setting Spray - Longlasting Makeup Flawless Velvet Matte Finish - Kawalan Minyak, Kalis Air dan Tahan Lama Spray Primer Matte Makeup Kosmetik Wajah",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "b83d97ba-1072-4497-aadf-9f63004b9049",
+   "product_name": "KKBS CURTAIN Canola Langsir 80%+ Blackout Plain Cangkuk & Ring (Canola Curtain Minimalist Hook & Eyelet) Curtains Custom Sliding Fabric Soft Textiles Fabric Soft",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "19d5518d-975b-4902-98bc-29428e7fe96c",
+   "product_name": "SZINDORE BBW AROMA PERFUME",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "0b39a112-a8b2-4c61-bfe2-3cfad07f381c",
+   "product_name": "【Pensijilan Halal】Seaways Multi-Purpose Cleaner for furniture, car, refrigerator, microwave, rice cooker, table, natural plant ingredients, safe formula Cleanser*",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "0b032de2-25f0-4f36-8ab9-38a7ee064708",
+   "product_name": "KUN AirySoft plain Color-Earth Nature Series 02 Pillowcase/ Bolster case/ Fitted Bedsheet/ Quilt Cover ALACART ITEM/ Single/ SuperSingle/ Queen/ King 3in1 Bedsheet Set/ 4in1 Bedsheet set/ 4in1 Quilt Cover set/ 5in1 Quilt Cover set/ 5in1 Bedding set",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "349868fc-e1f6-4c79-a5a8-8e4a13fb8469",
+   "product_name": "OHSOLAH AIR BOMB Pewangi Kereta Meletop Viral | Car Air Freshener Wangi Gilar Tahan Lama Fruity Perfume Booster Fibre wick 100g",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "047369f5-fc83-4118-8691-6c1a62ba4568",
+   "product_name": "[New] SKINTIFIC Radiance Booster Serum Spray 100ml/50ml Give Instant Hydrations Strengthen Skin Barrier Penjagaan Kulit",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "f9e91185-498d-4b1f-87b1-d1114c9541f2",
+   "product_name": "KUN AirySoft plain Color-Earth Nature Series 01 Pillowcase/ Bolster case/ Fitted Bedsheet/ Quilt Cover ALACART ITEM/ Single/ SuperSingle/ Queen/ King 3in1 Bedsheet Set/ 4in1 Bedsheet set/ 4in1 Quilt Cover set/ 5in1 Quilt Cover set/ 5in1 Bedding set",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "fe2093e6-04d2-497b-a097-24ba1fc3d63d",
+   "product_name": "HVC 5 IN 1 COMBO SET Microwave-Safe Food Saver Container Party Serving Tray Set with Ladle",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "5bc3e784-bb4b-439c-b949-93cec313f9c4",
+   "product_name": "KUN AirySoft plain Color-Modern Urban 01 Pillowcase/ Bolster case/ Fitted Bedsheet/ Quilt Cover ALACART ITEM/ Single/ SuperSingle/ Queen/ King 3in1 Bedsheet Set/ 4in1 Bedsheet set/ 4in1 Quilt Cover set/ 5in1 Quilt Cover set/ 5in1 Bedding set",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "14e3882d-b688-40a6-93a1-f9c83e10ab59",
+   "product_name": "[HOMEBLIND] Langsir EROCA Semi Blackout Bercorak / Curtains Hook or Ring / French Pleat & Grommet Top",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "b191e1a5-deed-4482-b35d-0c85049f514e",
+   "product_name": "[LIVE] The Originote High Cover Serum Cushion SPF 35 PA++ | Makeup Tekstur ringan, hasil matte sepanjang hari,Concealer, Foundation, Oil Control, Even Skin Tone, Brightening, Makeup, High Coverage, Poreless Skin, Flawless, Sensitive Skincare",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "4114be36-b432-4e1a-890f-8ecf5ac260a1",
+   "product_name": "(W)UGREEN PD20W Fast Charger Pengecas Pantas, Palam UK, dengan Set Kabel, Serasi dengan iPhone 8-16 Pro Max Samsung S25 Ultra Android Cellphone Mobile Phone Siri, SKU: 70297",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "981cc17d-b5d8-47a4-992e-3a262ba07157",
+   "product_name": "[NEW]Glad2Glow Flawless Blurring Skin Tint 12 Hour Long Lasting Controls Oil Stays Matte All Day Helps Blur Pores and Smooth Texture Perawatan Kulit",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "82c54d11-8de3-47a9-bbc6-297056ed0fab",
+   "product_name": "SKINTIFIC Matte Sunscreen – All-Day Oil Control + SPF50+ PA+++ UV Protection Lightweight Sunscreen & Primer Penjagaan Kulit",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "3b56ffdb-e703-4af2-bfc9-3197bc7b14c9",
+   "product_name": "[Kombo] Kokojar Balang Saiz 300ml 5 Jenis Cereal Coklat Gelap Chocojar Premium Donut Fruity, Cookie Crunch, Koko Ball & Mini Crunch Choco jar",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "9bac2555-4eec-493d-a1c3-f16712618065",
+   "product_name": "SIMBA 1kg Premium Kibbles Makanan Kucing [ Direct Dari Kilang ]",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "644b425e-7e39-4558-817a-d403c366f28e",
+   "product_name": "INAIYA EASY HERBAL HAIR COLOUR – 400ml | Tutup Uban Cepat | No Ammonia | Telus Air | Pewarna Rambut Herba",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "6d242ace-4ccb-4d63-9c67-163d96234f81",
+   "product_name": "SimHome 24L/66L/100L Clothes Storage Box Transparent Foldable Storage Bins With Lids Waterproof Storage Organizer With Steel Frame Kotak Simpanan",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "4d491c01-2c5a-40c0-869e-54c50050d95d",
+   "product_name": "[NEW]Glad2Glow Day & Night Body Serum Set 24-HOUR Body Care Bright & Smooth Skin Smell Fresh & Luscious & Fragrant All Day Perawatan Kulit",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "72506493-7cbd-4b1e-8d87-a5672bcbe154",
+   "product_name": "LAVVA LA LUNA+ Campuran Beri (Mix Berry) - Kesan Cerah Kulit Sihat & Cantik - Meningkatkan Hidrasi Kulit Cerah Berseri",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "24665407-ef6c-47d9-a7f8-954fb534f2cc",
+   "product_name": "Sinocare Mesin Cek Gula Darah GA-3 Blood Glucose Meter Alat Kencing Manis Diabetes Sugar Test Jarum Lancet",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "3cd29ebf-12ca-4b16-b788-a3720fb9fca0",
+   "product_name": "QAYRAA P1 Jersi Muslimah BUDAK Microfiber Quick Dry / Size: 22-32 / Jersey Muslimah Kids/ Baju Sukan Muslimah - DARK KHAKI/ TEAL BLUE/ ARMY GREEN/ BROWN / FOREST GREEN / VIOLET / LILAC /Burgundy/Mustard Gold/ Red Black Purple Clothing",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "0e792619-5a90-4bb0-86f0-326515908341",
+   "product_name": "KAXIER Powder Two Way Cake Pressed Powder High Coverage Oil Control Acne Cover Matte",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "e0726efa-a606-4818-a927-6c1241fc2a1a",
+   "product_name": "Spray Deodoran Semula Jadi GOSMELL Untuk Hilang Bau Ketiak Badan dan Kaki, 90ML go smell deodorant natural semburan deodarant",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "269dc6de-0db7-41d4-890b-4e30bba9f7db",
+   "product_name": "Surat Cinta Dari Tuhan (Sinopsis 30 Juz Quran) by Adnin Roslan",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "67e92261-2153-4649-988e-fe7e40bfea8b",
+   "product_name": "Tudung Sarung Siap AMARA || Kain Moscrepe Korea || Awning Lazy Lipat Hijab Instant",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "feefc2fa-8f16-4128-886b-2eb27b0d1944",
+   "product_name": "Cadar Corak Bedsheet Queen/King (4in1) & Single (2in1) Fitted Bedsheet Getah Tepi Bedding Bolster",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "4f856dea-b0f2-41fc-8b97-2c336ebb9c87",
+   "product_name": "￼Silvy Original PANJAG & PENDEK Mesir Stokin stoking Muslimah socks magic",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "49677116-dfc6-42da-ac7d-a25a49167c16",
+   "product_name": "[HOT]Glad2Glow Brightening Lip Serum 7g with 3in1 function Brightening Hydrating Tinted Lip Care Contains VC VE brighten dark lips and deeply moisturize Perawatan Kulit",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "a14cab39-1f3b-4648-8128-53e2a082e8b8",
+   "product_name": "Maybelline Super Stay Matte Ink 16H Long Wear Liquid Lipstick | Transfer Proof | Best selling matte liquid lipstick",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "445066d7-6ff8-4673-b8c3-1000cd4f5eb5",
+   "product_name": "[Amelia's Favourite] Pentavite Vitamin C Tropika Beri Boleh Kunyah, Halal & Lulus KKM ( 30-180 Tablets for Adult ) | Chewable tablets",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "8e465292-79f0-4165-bdc1-9b740655a586",
+   "product_name": "Fitted Bedsheet 4in1 Queen Size King Single Size Bed Sheet Cadar Cadar Murah Hebat Bedding Soft",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "994da37b-298f-453e-a253-f436b50d0006",
+   "product_name": "MAVERIX FOR SKIN | LIMITED PREMIUM Set (5 Bottles) Body Care",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "951b5f10-f035-4935-89d1-f25c52c35b51",
+   "product_name": "Penbose 50PCS Seluar Tarik Ke Atas | Baby Diaper pants disposable diaper tape diaper pants pull-ups Korea | Ultra-thin and breathable | Lampin Bayi Premium All size:S M L XL XXL XXXL",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "ce5f75e4-3d36-4292-a588-46aec34ad7fb",
+   "product_name": "[New Arrival] Sea Makeup Stayput Glow Fix Setting Spray- Longlasting Makeup Flawless Luminous hydrating weightless Finish - Kawalan Minyak, Kalis Air dan Tahan Lama Spray Primer Matte Makeup Kosmetik Wajah",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "a613b967-249d-42e3-8bd0-6cab12be2643",
+   "product_name": "FAIRY MAGIC DUST WHITENING SOAP - Sabun Pemutih & Pelembap Dengan Sijil KKM & SIRIM - Promosi Harga RM27.90",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "3e1a2a3d-1c7f-46e0-a5b3-28438d315087",
+   "product_name": "【READY STOCK】Mid-High Collar Inner Wear Muslimah Inner Wear Baju Inner Kolar Separuh Tinggi Baju Wanita Baju Perempuan Inner Neck Tutup Leher Outfit Ideas",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "1ae4d866-d534-4ae0-b954-17ae8ad502ef",
+   "product_name": "PERFUME PARADISE PEN FOR WOMEN - PACKAGING BARU (10 ML) PARFUM",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "14d5c7c2-9b75-48cc-841d-f8b47af8cbc6",
+   "product_name": "Myawan Bra Plus-Size B/C FULL CUP 3-Hook ANNAH Wireless Bra 34~52 Baju Dalam Wanita Bra Cup Penuh Tanpa Dawai Pakaian Dalam Wanita B010 ANNAH",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "33caf58f-5cbd-4068-891c-4d1bae30c729",
+   "product_name": "[Amelia's Favourite] [Preorder 25 Days] Pentavite UPGRADED Multivitamin Lelaki Buah & Sayuran, Dinaik taraf dengan 20 Nutrisi Untuk Tenaga, Boleh Kunyah (30-90 Tablets) | Men Multi Fruit & Veggies For Energy, Strength & Daily Health",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "4c6e5722-9914-49cf-a0fa-204b452c4fe1",
+   "product_name": "DHERBS LIPSTICK COLLAGEN + MADU KELULUT",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "60fd4ca1-768b-45b3-8e0b-4eee8b2c723b",
+   "product_name": "Hulmers - 1200ML/900ML Thermos Bottle 316 Stainless Steel Tumbler with Handle and Straw Double Layer Insulation Cup",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "38f8ba4d-14fe-4a20-94b1-2e54e4611d14",
+   "product_name": "M-5XL Men Short Pants Sport Shorts Beach Shorts Casual Fashion Men Pants Seluar Pendek Lelaki Men's Pant",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "0327f6f3-e4ed-41b4-aa17-2c0e2049747b",
+   "product_name": "【Ginger Hair Colour 2.0】ViVid HAIR 400ml Perwarna Rambut Halia untuk Tutup Uban - Chestnut Brown, Dark Brown, Golden Brown, Natural Black, Purple Grape, Red Wine",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "7ed3f33e-58a6-41ca-9bca-84997b2b10b0",
+   "product_name": "ADVO [New Series] Microfiber T-Shirt Men Jersey Round Neck T shirt Short Sleeve Baju Jersi Lelaki Plain Unisex Quick Dry Baju Jersi Lelaki Cepat Kering Bernafas Ringan Lembut Lengan Pendek Leher Bulat",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "6a5c7e95-12d5-43f5-9f80-479d462a5198",
+   "product_name": "Quinnbella Brow Gel Eyebrow Tint Brow Sculpt Lift Eyebrow Styling Long Lasting Waterproof Eyebrow Soap",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "d5cfc8c2-d945-4577-a412-219e2f3abcfa",
+   "product_name": "SIMMO Blender Grinder 350W 1000mL Electric Capsule Chopper Food Blender Mixer Pengisar Daging",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "118bd94c-fd1c-4c4c-b974-dbd6e60b8e0e",
+   "product_name": "Sambal Kruk-Kruk Ateen(100GRAM KECIL)",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "f34bab64-5488-4b02-811e-064f95d53597",
+   "product_name": "SOUK SARUNG MOSCREPE SLIM FIT AWANING LAZY LIPAT KAIN MOSCRAPE PREMIUM SIZE M-L-XL",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "f79f2c25-07da-4dd8-82e5-95c83d66e080",
+   "product_name": "Tudung Bawal Cotton \"PREMIUM\" Lembut Paling Senang Bentuk Bidang 45' READY STOCK Square Jilbab tudung bawalSila semak carta saiz sebelum membuat pesanan.",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "8a3182ec-350a-4499-ac4d-42cd244eed75",
+   "product_name": "MINI SPORT COTTON JASMINE - SML PREMIUM COTTON",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "783c6b01-8805-4c84-9fb4-47debb557a9b",
+   "product_name": "LAVVA YOLLA+ MATCHA - Supplement Untuk Kulit Yang Sihat dan Sihat dengan Prebiotik & Probiotik - Matcha Jepun Asli Tinggi Antioksidan 500G",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "18c28ac5-ab61-45f4-9353-1e8d1687cb62",
+   "product_name": "【1yr Warranty】 MCDODO MALAYSIA Borong Strong SR Nylon Braided USB to iP Type C Micro Data Cable 1 Meter CA 2261 2271 2281 1301 (No cut off function and led) Accessories Fast Charging Phone Metal Charger Mobile",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "8c19afea-ca9f-4f76-8c30-1f0e150ac07b",
+   "product_name": "Tudung Bawal Cotton Bidang 45\" l Tudung Bawal Square Hijab l Bawal Cotton 45",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "1c85ef90-3ba6-47ee-8e3b-078abed4fb97",
+   "product_name": "Pakaian Lengan Puff Gaya Matang Ringan Ikatan Simpul V-leher untuk Wanita Musim Panas Berlian buatan mewah Pinggang-cinching Gaun Panjang Muslim Gaun Panjang",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "c5341831-8c85-4a13-82be-7b1ae12320d1",
+   "product_name": "[Beli 1 Dapat 2 PERCUMA] Dr.Ritta SP68 Ubat Gigi Pemutih 100g - Hilangkan Noda Gigi, Bau Mulut & Gigi Kuning, Mencegah Plak/Karang Gigi, Nafas Segar Tahan Lama [COD]",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "46c8a0b4-bbae-49e1-9277-41c4519917ae",
+   "product_name": "【Promosi Tawaran Istimewa】[Penghantaran percuma] Memeeie tuala wanita jenis seluar wanita adalah seluar pembebasan kebocoran 360 ° yang menyediakan kemampuan bernafas yang baik, melindungi kulit, dan boleh digunakan siang dan malam/wanita hamil",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "7632caf0-ac2c-4814-afdd-afe697438652",
+   "product_name": "Original Roach&Ant Umpan Semut, Lipas & Kerengga, Roach & Ant bait. Menghapuskan Lipas, Semut & Kerengga ubat repellent spray",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "a7081c4c-715d-4ebe-99d7-8d6a9f3f45f4",
+   "product_name": "Kicap Mee Kak Zaidah 650g, Masak Mee, Senang Mudah Dan Ringkas, Mee lazat dan sedap, Bihun/Meehun Goreng, Char Kuey Teow, Mee ladna, Nasi Goreng",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "a6c94806-15dc-460c-b56c-ea674ce662e7",
+   "product_name": "[SINGLE ITEM ONLY] KUN AirySoft Plain Color Pillowcase/Bolster case/Bedsheet Queen King",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "b36d17a1-4209-431a-b740-c3ceadb7c704",
+   "product_name": "80s Tisu Kertas Dapur Pakai Buang Pengganti Mop Lap Pinggan 80s Disposable Disposable Dish Paper Towels Tissue Tisu Mop Replacement Supplies",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "b527d024-7d61-4b6f-8828-6367f25469ef",
+   "product_name": "PANDAEYES CACABO CORDUROY PANTS (CLO-CNXC0907LP)",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "86e907e5-4635-4333-88da-07149188e6ce",
+   "product_name": "ZAYRA LAYLA 2 SAAT KAIN SARUNG MOSCREPE KOREA ADA BELAH DI BAWAH!!!!! DISCLAIMER(. SIZE S UTK BUDAK SAJA)",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "7ee955e0-694b-4192-a170-1176af87e651",
+   "product_name": "[LESSXCOCO]Waterproof Mascara Long LastingNatural Curling Eye Lash Makeup Maskara EyelashBlack",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "e06d8afd-44fa-47d7-8d79-d7dc55d52c41",
+   "product_name": "Minyak Kastor Asli 100% Castor Oil First Grade Kualiti Tinggi Hair Oil Minyak Rambut untuk Tumbuh Rambut Gugur Haircare Minyak Urut Treatments Koko",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "a7421ac4-7423-4262-86d4-d5be6e687c25",
+   "product_name": "Wooden Curtain Rod Batang Langsir Kayu Langsir Murah 28mm (Free Screw & Wall Plug) 4ft - 12ft",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "de3ee6bd-592b-4228-bf96-f2cdcf15e78c",
+   "product_name": "【KKM】7LUME White Tomato（Buy 3 Save RM8）Skin Supplement | Sijil HALAL | Campuran Beri Minuman 9 in1 with Acai Berry Strawberry Blueberry Cherry Raspberry Dragon fruit Cranberry Blackberry, semula jadi, royal berry",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "2453b3e8-ad60-4ef2-a22b-1c93a698d4f9",
+   "product_name": "Panduan Wirid, Zikir & Doa Selepas Solat Bahasa Arab & Rumi",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "52638c50-acf8-4e55-9b38-ccaa2892416e",
+   "product_name": "Amora’s Soft Cookies Ala Carte (Min Purchase 4, 8, 10, 12 cookies) | Amora’s Biskut Lembut Gebu Cair Dimulut (Beli Sekurangnya 4 Biskut)",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "9a5d4b6a-1f1b-4ba8-a1bc-86bbab107af9",
+   "product_name": "BIYA Gel eyeliner pencil 1.7mm - Tahan Lama & Pigmen Tinggi（Kalis air dan peluh）",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "8c46a9e9-6346-43dc-a0b3-d4641332696c",
+   "product_name": "QAYRAA Jersey Long Sleeve (P1) Microfiber Round Neck/ Size: S-5XL / Baju Jersi Lengan Panjang/Women Muslim Wear T-shirt Unisex / PLUS SIZE /Grey/Khaki/D.Rose/L.Green/Black/D.Purple/E.Green/L.Purple/N.Blue/B.Blue/Dsty Purple/B.Turquoise Wanita Muslimah",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "2440b42a-c5ba-4a1f-95b4-258de6d595fc",
+   "product_name": "Women Woven Tie Pants Summer Casual Shorts High Waist Short Sport Ins Tide Student Girl Pants Seluar Pendek Wanita",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "5a148537-098d-4c9e-8f1b-1934087b60ab",
+   "product_name": "INTERSECTION FOREST BIFIDA Serum Pekat Pembaikan & Cahaya Hutan, Mencerahkan, Penjagaan Bintik Gelap, Penghidratan Dalam, Menganjalkan, Tanpa Airdikuasakan, Halal, HCS-CB0919",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "aa6042ad-2048-43b9-b19f-fd2c4f5d8b66",
+   "product_name": "Baju Lengan Panjang High Quality Polyester Cotton Fabric Women Inner Baju Muslimah Inner Perempuan Baju Inner",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "8cac00aa-bf86-4554-894c-950e3233f352",
+   "product_name": "New Arrival Telekung Single Lace Hidaya Renda Cantik Dan Lawa Viscose Lycra Dewasa Muslimah",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "f2490e97-a543-44b6-a4de-28b92440d679",
+   "product_name": "SAUK JOJET HAYDA SCARF XS S M L",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "fca6771a-5616-4378-9f20-da5b35230396",
+   "product_name": "MINUMAN BERPERISA YOGURT PROTOX STRAWBERRY",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "2a3de208-9957-48b5-b399-14c312ba11fb",
+   "product_name": "KAXIER Eyeshadow Two-tone Cream Eyeshadow Stick, Brightener Eyeshadow Pencil Crayon, High Pigmented Eye Shadow Pen, Eye Highlighter Stick, Straight-up Classy Makeup",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "0ac2b28f-84d2-461e-9df7-9d5b27745d26",
+   "product_name": "[Keto] BOSSBROTHERS Halal Sambal Belacan 270g",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "b5a5ed44-f983-4c06-9007-d34006318932",
+   "product_name": "A14 - Alyanaa Baju Kelawar Moden / Baju Tidur Moden Cotton Silk",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "9fc067da-914f-4d23-a3a2-50bc7c916903",
+   "product_name": "AbangS Anak tudung Sarung kapas sejuk pink belacan Hijab",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "50aae071-b519-47ae-925a-67dea1c122da",
+   "product_name": "Sabun Dobi Malaya Combo isi ulang 10 KG (5+5kg/L)",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "ed97e243-9e20-4859-baa6-07c6cc06675a",
+   "product_name": "​Magic Will Bra Tidak Nampak Rekaan Alamiah Tali Lebar Anti Peluh Ventilasi Belakang Selesa​",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "c70c3ab7-6073-499e-bb23-5d6ce331ea3f",
+   "product_name": "[KKM] FEREENA GLUTA SOAP 10g",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "792c16c9-7720-4321-8c48-bdee2c601d0f",
+   "product_name": "Chia Biji Organik | Organic Chia Seed 100g/200g/400g Beans",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "3ffb2570-f77a-456e-bcb9-ffb1e12718ce",
+   "product_name": "PUDING GUMMY LAICI SEDAPDOOH (LYCHEE GUMMY)/HALAL",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "a185ef77-3ff3-4736-93ef-7e47bc03174e",
+   "product_name": "5 LITER/5 KG isi ulang- Sabun Dobi Malaya Liquid detergen- Antibacterial & Pewangi Pakaian - Detergent, Cleaner ,fabric cleaner",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "9b771ea4-d27f-4b4f-a866-8cbb15e29389",
+   "product_name": "MILVUS M13030 Tracksuit Slim-Fit S-XXL | Slim-Fit Tracksuit",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "f2851345-6c82-41b0-a032-7491d36bdd8a",
+   "product_name": "Plus Size Bra Women Size 34-52 Full Cup B/C 3Hook Full Coverage Floral Lace Wireless Bra Baju Dalam Wanita Tanpa Dawai Tanpa Besi Underwear BH Wanita",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "992eee37-93a0-4f24-86b2-391a16893699",
+   "product_name": "【Sudah jual lebih 1M】30x60cm Marble Wall Tile Paper Kitchen Wall Sticker Wall Paper Bathroom Wallpaper Waterproof Tile Sticker Wallpaper Dinding Hiasan Bilik Home Pelekat Ruang Tamu",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "7ef105e8-c41d-40cb-b773-34d2e2b4febf",
+   "product_name": "HAFANA BARLI TANPA GULA PUTIH, EXTRACT KURMA DELIMA MORINGGA GYMNEMA, BUAH MONK",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "5427373d-19de-4a80-bd5f-11799c20aea7",
+   "product_name": "PONY MALL (Free 50pcs Bag) Kitchen Vacuum Food Sealer Commercial Household Food Vacuum Sealing Packaging Machine UK Type Spot Goods",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "1046f269-d865-470d-a9a6-1c065b9bc234",
+   "product_name": "[Penghantaran tempatan,COD] Penghilang noda minyak kelapa asli, minyak kelapa, pewangi yang kaya, sesuai untuk tandas bilik mandi, lantai dan jubin, dan mempunyai kesan menggilap sink.",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "0133d0bf-a8e7-41d3-908b-75d727bb86f4",
+   "product_name": "Sarung souk yashfa cotton premium free size || material cotton viscose premium ironless || soft awning (bole lipat) Hijab Instant",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "c9522a45-05e0-411c-abe3-01e7a19ecaa6",
+   "product_name": "NIUMO - Kabel pengecas USB Type C, fungsi 4 dalam 1, pengecasan pantas maksimum 240W, diperbuat daripada bahan silikon cecair dan aloi aluminium, kabel data",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "b38f83b7-8950-4dab-811f-4c3a89850194",
+   "product_name": "AQUABLANCE Pewangi Kereta & Rumah 200g Balm Fragrance Air Freshener Solid Perfume Aromatherapy untuk Kereta Rumah Bilik Tidur Toilet",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "66bc6983-eba9-4466-8c46-3a6708cfae42",
+   "product_name": "sedekah item MERYEM latte booster sample(1 pack 7 sachet )",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "fd68bb57-fb3b-4495-b0ba-5a32e931b1fd",
+   "product_name": "BShawl Slimfit NOOR | Shawl Curve |Bidang 45-48 dan 50- 55| Material Heavy Chiffon Flowy | Opacity 7/10 Wanita Scarves",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "7712a709-d9eb-4203-a07f-249bceff9213",
+   "product_name": "Save 80% Power！Save MYR 3000 per year！penjimat elektrik original lekatje jimat elektrik save electriciti bill power factor saver electricity power saver electric saver power plug alat jimat elektrik rumah Home alat jimat elektrik rumah",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "fcf0fff1-fc18-40da-b14c-ee44d1361413",
+   "product_name": "[SPEND RM35 FREE LIP POUCH] Hijau Lipstik Blooming Matte @hijau untuk Bibir Cantik - Lipstick lipstik viral Makeup",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "421ad1df-22a9-4d91-bff7-0e3b79adb368",
+   "product_name": "QAYRAA (P1) Jersey Short Sleeve Microfiber Plain T-Shirt Unisex/ Size: S-5XL /Jersi Kosong Lengan Pendek / Men & Women Wear Tops/Burgundy/Hitam Black/Rich Brown/Maroon/Navy Blue",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "0f32693d-992f-4e53-9ecd-d8ff4d41c0ff",
+   "product_name": "MILVUS M13017 Seluar Trek Panjang Kanak-Kanak S-XXL | Kids’ Track Long Pants",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "db169b2c-0611-47b5-9b3f-90a9e7441aea",
+   "product_name": "[NEW] Glad2Glow White Truffle Radiance Glow Serum Spray | Hydrates Soothes Repairs | Instant Glass-Skin Glow In 1 Spray Perawatan Kulit",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "c9888bd2-2546-4041-935e-aba94fa8a27b",
+   "product_name": "HOMEWORTH 17 Pcs Set BPA Free Microwave-safe Multipurpose Food Container /Bekas Kedap Udara",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "7852656f-a19d-47d8-90fd-c28c73a7f17a",
+   "product_name": "Maya Soap Whitening Alpha Arbutin Blueberry",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "313cd685-c7f0-40d6-be23-e741ed12982c",
+   "product_name": "FACERINNA-SERUM SUNSCREEN NIACINAMIDE BRIGHTENING Daily UVA/UVB Defense Evens Skin Tone SPF50+ PA+++ UV Protection Penjagaan Kulit",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "70df6d27-69d7-48d3-b426-adea41a9045b",
+   "product_name": "Korean Women Sleeveless High Neck Singlet Crop Top Shirt Camisole female Korean Tight-fitting All-match Bottoming Singlet for woman Inner Neck Tutup Leher Outfit Ideas",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "597090b1-4169-48d8-9786-42466bf346d0",
+   "product_name": "(PROMO 4.4) SAMBAL GARING MAK (BANYAK FLAVOUR)",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "83667ffd-26fd-4c71-a86c-fa9e1ee84d9a",
+   "product_name": "DOUBLE C Cadar Set Getah Keliling (2in1 Single/ 4in1 Queen) Fitted Bedsheet Set Bedding Soft",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "46cbf1df-da7e-47ac-bc7b-6031689dadc6",
+   "product_name": "UNICO STEVIA pemanis penganti gula (10 mls) Halal",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "e3ffa155-669e-4c0d-bceb-0ad7c565885e",
+   "product_name": "Numinara Aurelia Body Soap (125g) For Skin-Toning and Anti-Inflammatory",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "2575188c-097a-4f7c-8e8b-5059068abf74",
+   "product_name": "HOTOP 360° Rotatable Car Phone Holder For Dashboard And Windshield Suction Cup Cell Phone Mount Mobile Phone Support Compatible With iPhone Huawei Samsung Android Accessories car phone car phone universal custom width",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "d2bf2e52-84fa-426f-a6f3-d5f793db41ef",
+   "product_name": "【Electronic Warranty Card】warrantyafter-sales card solar light sale cardlighting Outdoor",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "ab5b90b4-db2e-479b-b395-81d7eb2383e4",
+   "product_name": "Pemanis Minuman , Magic Water Zero Sweet , Zero Sugar",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "79e56ba2-2b7f-431a-88da-496af82c11fd",
+   "product_name": "SimHome 24L/66L/100L/150L Foldable Storage Box Clothes Storage Bins With Lids Waterproof Storage Organizer With Steel Frame Kotak Simpanan",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "a4da5c7f-d741-42ea-8115-e5bbda89cf3b",
+   "product_name": "[Amelia's Favourite] Pentavite UPGRADED Multivitamin Wanita, Buah-buahan & Sayuran Untuk Wanita Boleh Kunyah (30-180 Tablets For Adult) | Women's Multi Fruits & Veggies Chewable Tablets",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "866d2a4f-5b88-4097-ab9b-d25795d02714",
+   "product_name": "AXIS-Y Dark Spot Correcting Glow Serum Best Seller Brightening and Glowing Skin Face Night Skincare",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "db2dbbeb-79dc-4b78-b1ce-2257257cb7f8",
+   "product_name": "MERYCODE Lip Serum Bibir Warna Termal Adaptif Nutrisi Mendalam Semula Jadi Kilau Kaca Transparen Mengurangkan Garis Bibir Treatments Lipstik",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "038434f0-97ea-4d8d-afcf-52db4d85c434",
+   "product_name": "Stiker Dinding PVC Mewah Dan Elegan 106×300cm Kalis Air Bertekstur 3D Tebal Tahan Calar Tahan Lasak Untuk Hiasan Dinding Rumah Dan Kedai",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "a960c4f6-b1fe-4111-b33b-51ce5cacaa25",
+   "product_name": "CantikBaby Sapu Tangan Bayi 6 Lapis 25x25cm Kain Kapas Lembut Tahan Lasak Tuala Kecil Bayi Baru Lahir l Cute & Various Patterns Baby Handkerchief with 6 layer",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "bc3dac5c-8460-412c-9ae1-836adaddb1e9",
+   "product_name": "TOYO-G 4T Fuel System Cleaner Motorbike (50ml)",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "ec298ae7-77d2-427f-b683-c2c9e2c1037b",
+   "product_name": "[FYC] Yessica’s Waterproof Foundation Cover Girl Air Moisturize Skin Makeup Concealer",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "0f6bdfdd-474d-4a30-aa92-400aa0f1ed51",
+   "product_name": "[NEW 2026] ANAS Powder Blusher DUO #06",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "65c6a406-1751-46c4-88a7-278ccd9cd450",
+   "product_name": "Vilily Minyak Wangian Wanita EDT EDP 100ml Vilily Inspired Perfume Women Perfume EDT EDP 100ml Minyak Wangi Perempuan",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "fe673c01-e328-4f30-9f19-5eb1142ed442",
+   "product_name": "DOUBLE C Premium Bedding Set Single/Queen/King Cute Collection Bedsheet Set Cadar Getah Keliling Sarung Tilam Cadar Viral",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "f3b38817-44a9-4935-a586-fb9939b701d9",
+   "product_name": "K&K 35GRAMS TRIAL THERAPEUTIC KERALA BRIGHTENING HERBAL POWDER MANDIAN HERBA SAFFRON & ROSE 100% ORGANIC Whitening Body Care Glow Natural",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "42816007-f8e7-4dcf-b4a8-00172b1c253d",
+   "product_name": "【 FASHION KAMPUNG 】X688 199Speed Portable Handheld Fan USB Rechargeable Mini Cooling Fan Adjustable Pocket Fan for Outdoor Camping Travel Home Office Fan",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "a789126c-54da-4aa4-801a-607b6d0c5061",
+   "product_name": "PERFUME PARADISE MAJESTIC EDITION - PEN 10ML PARFUM",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "7ef84490-ba71-434e-99c4-52bf4475ee4e",
+   "product_name": "Tuala Hotel KUALITI Baik Saiz 70x140cm / XL 90x160cm / 50x100cm / 35x75cm / 30x30cm / 25x25cm Serap Air Cepat Kering Tak Cabut Bulu Tak Keluar Warna Pilihan banyak",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "95e80583-2d66-42a0-b0a2-03874e246505",
+   "product_name": "[Free 1 pcs] Company Love Adult Diaper Upgrade Strong absorption S/ M/L/XL/XXL (9pcs/1pack) Adult Pull-Up Pants Leak-Pro",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "040d796c-5fe4-4491-b13d-6d13f2704355",
+   "product_name": "[SOCKS HOUSE] RAMADAN PROMOSI- 1 Pasang Kualiti Tinggi Stokin buku lali rendah, stokin pertengahan betis Unisex Warna Hitam, Kelabu, Putih, Selesa Pakai dan Anti- Bau Free Size READY STOCK",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "0dd690d7-e3d5-4155-a354-9a8c1476b9c9",
+   "product_name": "MY Ready Stock 100Pcs Colorful Chenille Stems Pipe Cleaners Assorted Colours Art and Craft",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "fbf49c09-88ae-459c-90f4-7e3582cab55e",
+   "product_name": "Diamond Coating【Quick Coating】Ceramic Car Coating Spray Automotive Shining Coating",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "40532f26-87b5-454b-8766-383d186a80c9",
+   "product_name": "Garbamon High Quality Garbage Bag biodegradable trash bag on roll",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "66493189-bd88-4ed8-8942-5ba835d0ff08",
+   "product_name": "(HARGA BORONG) TRACKSUIT PLAIN ADULT / KIDS SPORT SCHOOL (TRACKSUIT SUKAN SEKOLAH KOPERASI DEWASA / BUDAK) TRCH12",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "e57cd925-3d3c-4e28-8dd4-a1e4984bb936",
+   "product_name": "BIBIK EXPRESS BAHAN KISAR MASAKAN (BAWANG BESAR, BAWANG PUTIH, CILI KERING, CILI PADI , HALIA , KUNYIT) Cooking Food",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "1925cb8e-7fed-4bdf-9e1c-e738abe19194",
+   "product_name": "Propappa - Non-Stick Korean BBQ Grill Pan Camping Grill Pan Griddle Grill Pan | Kuali Pemanggang BBQ Korea Tidak Melekat",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "e79642fc-5794-4312-8dcc-11a782ebc653",
+   "product_name": "TUDUNG SARUNG BAWAL LAYLA MOSCREPE FAEZAH ILAI BIDA - Moscrepe Anti Tembam Anti Pekak dengan Tag SH Hijab Muslimah tudungsarung murah weekend casual hijab segeraSaiz S Mosscrepuntuk kanak-kanak 7–8 tahun, bukan untuk dewasa.Sila semak carta saiz sebelum",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "d136638e-8e8b-4bc9-9800-68c44c991462",
+   "product_name": "ListonX Karpet Lembut Mesra Kulit, Nipis & Tidak Mudah Kotor - Boleh Cuci Mesin & Mudah Bersih | Anti Slip Carpet Velvet 5D",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "4aa3f74b-9007-4929-84bd-4c9c9fe5be75",
+   "product_name": "A4 A3 Magnetic Photo Frame Self-adhesive Picture Display Board Wall Stick Frame Photo Painting Bingkai Magnet Gambar Dinding Certificate Office Adhesive Wall Gambar Magnet Frame",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "bff6f9d6-8370-4bcb-a7ee-86d0f4dbf5f1",
+   "product_name": "CHEEZY GARLIC SPREAD BY AUMM | Halal Produk Bumiputra Variasi Baru",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "9daaa6b9-39ba-4fd9-92b6-835c1353d7fa",
+   "product_name": "100 Doa Taubat Dari al-Quran dan Hadith Nabi Muhammad SAW",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "42bb1598-29af-4cf1-8049-43adcd90b7b8",
+   "product_name": "1 Cup Caramel Popcorn (10oz) - Caramel Popcorn | Popcorn Sedap | Doorgift Popcorn | Popcorn Viral | Popcorn Murah Snacks Rangup Food",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "5b3057a0-98fe-4482-b345-9df480331994",
+   "product_name": "Bodibreze Fragrance & Brightening Body Serum Combo | Assorted Scent Perfume 30ml With Brightening Body Serum For Long Lasting Scented Skin",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "e06c7c7b-1c2d-4a39-9aa9-751d4e032d74",
+   "product_name": "TIME PHORIA -ORBITA Lip And Cheek Blurring Pot | Satu produk, aplikasi tanpa had / Tekstur mud gebu dan baldu / Warna berpigmen tinggi / Solekan tanpa sentuhan ( Dilengkapi aplikator silikon terbina dalam )",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "7a75fcf1-0f34-487d-bcae-9cf65901f8fe",
+   "product_name": "CUBRE MI LIPMATTE FULL LOCK EDITION PERFECT TO STAY",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "b6eaa73e-6325-4aa2-b4ce-96e2fe9c7c7d",
+   "product_name": "Bulu Mata 3D, ANJOSIRMA, dengan Gam Terbina dalam, Tiada Gam Diperlukan, Pembesaran Mata, Tahan Lama, Boleh Digunakan Semula, Sesuai untuk Pemula, Tersedia dalam 60 / 90 / 100 Kluster setiap Kotak",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "9cf6f636-7878-467c-9fac-65dd0760ccd8",
+   "product_name": "SUISCO | Sabun Mandi Penaik Aura Wangi Saiz 500ml Aura Body Wash",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "42a026e6-9e00-4247-a2fb-71c440948690",
+   "product_name": "Downy 400ML Sunrise Fresh Cecair Pelembut Fabrik Pekat / Downy 400ML Sunrise Fresh Concentrated Fabric Conditioner (Fabric Softener)",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "3ad2d1bc-432f-427c-8518-e8bbb25e3712",
+   "product_name": "Pishine Lipmatte 7 Hari Mencintai Bibirmu",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "8d489069-eaf3-4228-a8c0-67527c8a59b0",
+   "product_name": "Tudung Sarung Cotton Hantu Size S M L- Hijab Viscose Instant Awning size -s Saiz S cotton untuk kanak-kanak 7–8 tahun, bukan untuk dewasa. Sila semak carta saiz sebelum membuat pesanan.",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "602e40cc-3f4d-4788-a29a-3922e2181c84",
+   "product_name": "Benang Kait Milk Cotton Yarn 5ply kod warna YA01-YA91 50gram/yarn/benangkait /milkcotton",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "0bce1e68-094d-40d0-ac81-a25565641768",
+   "product_name": "NEW!! REENZA EzyTox Lemon Tea Drink 10g x 10 sachet per box Minuman",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "5f42cd19-b75f-417c-97ab-9b58319c1c81",
+   "product_name": "(Ready Stock) Anti Slip Splicing PVC Bathroom Toilet Kitchen Floor Mat Non Slip Mat Toilet Floor Mat 30*30cm",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "137b2730-f368-4ae0-a772-5313467f0d76",
+   "product_name": "Baby Wipes Newborn Wet Tissue Tisue Basah Non-alcohol Paraben-free Fragrance-free Babies Wipe Tisu Basah Bayi",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "39dea8f0-7354-49f8-aada-91c8666f57ba",
+   "product_name": "Cadar Set Getah Keliling 2in1 Single 4in1 Queen Fitted Bedsheet Set Bedding Soft Mesin Basuh 360 Fully Fitted",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "9b357eeb-f1ff-4c4b-a3a1-4c1d94a6c8b2",
+   "product_name": "READYSTOCK MeowMe New Korean Fashion Trending Women Sandal Kasut Wanita Korean Feksyen Gaya Terbaru 619",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "14b6bb03-fdbe-4a08-9a17-effe04a4d353",
+   "product_name": "Minyak Habbatus Sauda Al Khair",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "be01cb61-8b43-4f69-ac13-8116c16a4cb0",
+   "product_name": "WOW SPAGETTI INSTANT SPAGHETTI 3 Menit Siap Sajian/ Pop Spageti / Mi Sedap Mi Kuah Mi Goreng/Mi Chili Oil",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "dad4692d-f13e-44f9-9f82-cd15eefa96b7",
+   "product_name": "Mother Pregnancy Test Pen HCG Rapid Screen Test",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "554295fb-c5e2-442d-8d6f-2ee66ac50d65",
+   "product_name": "IQAA INSTANT SHAWL PREMIUM CHIFFON FOR WANITA ONLY IKAT BELAKANG",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "530e52c7-96dd-4fff-9217-87e8343eefa7",
+   "product_name": "Round Neck Microfiber Singlet Men Jersey Sleeveless Baju Jersi Lelaki Plain Unisex Quick Dry Baju Sukan Casual Cool Clothing Outdoor Sport",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "c1085efb-6c9a-48eb-8da5-1952cc53bb92",
+   "product_name": "Limited Edition Petite Sample Joielle Baby",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "efa576c8-3ffe-4fb9-9ead-6acf196db31a",
+   "product_name": "Mosquito King Coil / Ubat Nyamuk Viral Supplies",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "3f0e0206-a21a-4db6-a323-170ce505703f",
+   "product_name": "Rempah ayam madu by kakyah kaftan 100gram",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "afe7674e-6dfd-4f3b-8d05-48dac9885db0",
+   "product_name": "HOMEWORTH 3pcs Ceramic Bowl Set with Air-Tight Lid – Microwave Safe | Wedding Gift | Kitchen Essentials hadiah kahwin set pinggan mangkuk set Kitchen Cutlery Kitchenware Tableware",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "7b66e273-dfbe-47fc-b337-a8bc3b7a15da",
+   "product_name": "Ceecile Motion Cargo Pants Wide-Leg Street Fit with Contrast Stitch Lines",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "06d7e1ab-8bb9-4513-8cff-713f100f846b",
+   "product_name": "Elianto (MINI) Tisu Pembersih ALOE VERA/TEH HIJAU (10 Sheets, Makeup Remover, Moisturising, Senang Tanggal) | {Elianto MINI Cleansing Tissue}",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "ee961aba-5ad2-4d5e-8730-2f70bfeca017",
+   "product_name": "3 IN 1 SABUN DOBI+WANGI+PELEMBUT+ANTIBAKTIRIA 500ML LIQUID LAUNDRY DETERGENT HIGHT QUALITY SABUN PENCUCI BAJU FOMULA SOFTENER BELI 5 BAG PENGHANTARAN PERCUMA",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "01f3274b-2fc0-4977-b6d5-efaaa2cb2bf7",
+   "product_name": "[Amelia's Favourite] [Preorder 25 Days] [Buy 3 Free 1 / Buy 4 Free 2] Pentavite UPGRADED Multivitamin Lelaki Buah & Sayuran, Dinaik taraf dengan 20 Nutrisi Untuk Tenaga (30-120 Tablets) | Men Multi Fruit & Veggies For Energy, Strength & Daily Wellness",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "2dc6eb9d-fd64-4505-89a2-5d1cf2391c9c",
+   "product_name": "Mousse Penjagaan, NMB,dengan Niacinamide dan Asid Laktik, untuk Pembersihan Sulit Wanita, Sesuai untuk Wanita, Pembersihan Sulit Harian, Cecair untuk Wanita",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "b3b3b01b-ecb4-4bb6-8745-1db016b2df60",
+   "product_name": "SOCKS LEGEND Bersedia Hari Raya 1 Pasang Kualiti Tinggi Stokin Buku Lali Rendah Pertengahan Betis Unisex Warna Hitam Kelabu Putih Anti-Bau Free Size Ready Stock & Fast Shipping",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "8951f8b3-e19e-4566-8187-55829482b8b7",
+   "product_name": "FISH SKIN SALTED EGG 50G (MINI PACK)",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "7c5318f7-0fad-4d9a-ba03-d8699ddea51e",
+   "product_name": "Bestie Bundle : Beetroot Serum & Beetroot Cleansing Bar (40g) Kulit Mencerahkan Berminyak Facial Jerawat Niacinamide",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "0f1a6e14-6980-47df-96b5-693a13b38dbd",
+   "product_name": "X688 Portable Handheld Fan USB Rechargeable Mini Cooling Fan Adjustable Pocket Fan for Outdoor Camping Travel Home Office Fan",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "ce61e962-3125-4322-81bc-cd703dc77bc9",
+   "product_name": "Seluar Peluh Kaki Lebar Gaya Malas Vintaj Longgar Panjang Lantai Kasual Seluar Panjang Sukan Serba guna Seluar Outfit Baggy Style Casual Outfit Wide Leg Pants Seluar Plus Size",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "c34c9305-35b9-44ab-963f-fa22c9b9e829",
+   "product_name": "[ BELI 5 FREE 1 ] Jeruk Limau Kasturi Madu - Rizqini Oon Mnzz Snack House Jajan Acar Makanan Ringan Snack Pickles",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "90379666-f96a-40ed-baf2-58298a8522b2",
+   "product_name": "Trolley Racks with Wheels 2/3/4/5 Tier Multipurpose Storage Organizer Shelf for Kitchen Office Home Book Baby Toys Rak Troli",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "c46c2a6b-7fc7-4869-ab9f-6e5fecc3250b",
+   "product_name": "MODOFO Kuali Stainless Steel Anti Karat 24-40cm dengan Pegangan Emas untuk Dapur Gas & Alkohol Cookware Kualitas Tinggi",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "edcbe7c0-c81b-41fd-8d57-39f8ef010397",
+   "product_name": "Women Sleeveless Viscose Cotton Floral Night Dress/ Home Wear / Plus Size 2XL-4XL Floral Fabric",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "30517dc6-d97b-4816-aa26-b54147916b41",
+   "product_name": "📢READY STOCK📢 Pelapik Sangkar Pet Cage Floor Mat Plastic Foot Pad Slab Cat Rabbit Pelapik Alas Sangkar Arnab Kucing",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "c5bc6882-4e17-4c39-8e35-9bb92d52df67",
+   "product_name": "SUPAMO 1 Pair Muslimah Stokin Anti Slip Women Stokin Stoking Stocking Socks Sock Stokin Muslimah Aurat Muslimah Health Sock 1 Pair Muslimah Stokin 100% Brand New Anti Slip Women Stokin",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "91f9d2d1-f50d-40a6-a165-202f8f14db4e",
+   "product_name": "(10 pcs) SAMPUL DUIT RAYA BASIC BUNGA BUNGA SAIZ BESAR 2026 Money Packet 24 PILIHAN DESIGN",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "765fe80e-b98c-47df-b9d4-5524a533c9f0",
+   "product_name": "HOMEWORTH 7 in 1 Food Container Set With Lid Bekas Makanan Hadiah Microwave-safe",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "303fb376-ff5a-40ea-9178-5487399676d5",
+   "product_name": "Doorgift Chocojar Size 100ml 30 gram Kokojar Balang Cereal Coklat Gelap Chocojar Premium",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "76561360-d92a-42c5-93fa-f9523a2b55fd",
+   "product_name": "(7 IN 1) BARLI Tea / Milk Booster Organic Premium Milkbooster (Sepeket)",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "28c1124e-4a70-4e55-9ce5-0ba2516b1c02",
+   "product_name": "SALE MESTI MASTI Healthy Pet Snack Chicken Breast Protein Cat Food Dog Food Cat Snack Dada Ayam Makanan Kucing 40G jajan vitaminkucing",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "631ea0c3-1110-48b5-b564-7a13dc0d7840",
+   "product_name": "[SET RAYA COMBO] - 5x KAMBING PERAP + FREE 2x NUGGET TEMPURA CHEESE",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "3bee1482-21a2-4795-a490-9b81c7a5d94c",
+   "product_name": "[ KB HIJABSTA ] Women High Waist Stretch Long Pants / Mini BootCut Auto Slim Design Slack Ironless Trousers MATERIAL PREMIUM SCUBA ( Fit up to 120KG )",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "8cb573bb-8f06-4389-ad07-cf92b0a53450",
+   "product_name": "PERFUME PARADISE CLEAN & LINEN EDITION - PEN 10ML PARFUM",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "0fd0815b-4fc1-4815-b31b-d85d457b6383",
+   "product_name": "Tracksuit Kaki Cekak Unisex Budak / Dewasa Seluar Track Budak Lelaki bawah getah Plain Hitam Dan Biru / Sekolah Dan Sukan Seluar trek budak 771 Premium Thread",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "112232f7-baee-4e21-be77-1578606845a8",
+   "product_name": "cotton tudung sarung/SIZE/S/M/L/XL Cotton",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "6a6efac9-63a0-4cb1-a7ec-34cc78030ba7",
+   "product_name": "Set Jarum Keluli Hidung, Saiz Besar, 34 Keping, untuk Menjahit Pakaian dan Kuilt, Jarum Mata dan Langsing Tradisional, Sesuai untuk Menjahit Pakaian, Set 34 Keping Jahitan",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "c71ff704-2bc2-4303-9335-632bbb2db9ae",
+   "product_name": "Penutup makanan, plastik pakai buang, penutup elastik berwarna cerah, penutup kalis udara, penutup pinggan, beg pembungkusan dapur, beg simpanan",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "0d49e4d9-523b-4109-a77c-b3e705ae4e0b",
+   "product_name": "Shiplap board papan shiplap hiasan dinding wall decoration",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "c7fbce94-fe43-4f64-ba44-57e36a7de3ca",
+   "product_name": "(Buy 5 Pack Free 1 Pack) Hanger Baju (1 Pack= 6pcs) Clothes Hanger Penyangkut Baju Plastik Hanger Non Slip",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "0876eaf5-ac84-4b82-b27c-83a83de115ea",
+   "product_name": "INNAI NUNHA NEELOFA NEW IMPROVED FORMULA - SAH SOLAT, WARNA TAHAN LAMA",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "db855f29-fe2f-47be-88d6-91a091f6ed54",
+   "product_name": "[Boleh ditanggalkan] KUDAN Nail Polish Peel Off Kudan Water-based No-bake Nail Polish 10 ML (2)",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "1cbd5dc2-88f7-4540-acc2-7a8fddbbb9f7",
+   "product_name": "Dr. Bites Cooked Chicken Breast For Cat And Dog Juicy Kucing 22g Dada Ayam",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "d5c0a63d-06ca-4f58-91e5-de1f7665fb2f",
+   "product_name": "[Penghantaran 24 jam] KUDAN Nail Polish Peel Off Kudan Water-based No-bake Nail Polish 10 ML (MZ019)",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "68d0f09c-6469-486b-9233-ac27a6f79c7b",
+   "product_name": "V'ASIA PREBIOTIC WHITENING SOAP-SABUN PENCERAH PREBIOTIC",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "0d80b62c-e0d3-4ef6-8ca6-fd0cc49f1fef",
+   "product_name": "Pemegang telefon magnetik 3 dalam 1 ini menyokong MagSafe, mempunyai tripod berputar 360°, pengait karabina, dan serasi dengan iPhone 17 dan 12.Ia sesuai untuk digunakan pada papan pemuka kereta, gim, dapur, pejabat, dan lokasi lain.",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "fef8ebbf-429b-4f17-a858-683ed69af2f8",
+   "product_name": "Dubai Chewy Cookie Marshmallow Mochi Kunafa Arab Crunchy 50g+-",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "04284d0a-e2d5-4bc0-b0bd-3420bab6fb78",
+   "product_name": "Sabun Dobi 5L Liquid Detergent (Wangi + Pelembut + Antibaktiria) Laundry Detergent 5L",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "6a6e8c1f-88bb-4170-bf7e-c28a22b25184",
+   "product_name": "Pin Berlian Buatan Keselamatan 11 Pins dalam Satu Kotak Gancu Selendang Kerongsang Pin Berlian Pinggang Tetap Klip untuk Seluar Jeans Fesyen tudung besar di bahu Clips/ Tahan Karat/ Bead/ Gelap",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "c57e9e05-1a80-402b-a469-dbf4ff3f823e",
+   "product_name": "Botol Bayi Baru Lahir, Moyuum, Botol PPSU, Mulut Lebar, Botol Anti-kembung, Gaya Sama seperti Moyuum",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "fdad0f75-9069-4174-8acd-33a8ee1d3232",
+   "product_name": "BUY 3 TAKE 2【Tawaran lstimewa】 BAIYAOLANG 20g Salappenjagaan badan",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "defdd701-2a03-488b-bcbf-bdb09ac14140",
+   "product_name": "[BUY 5 FREE 5] [SOCKS MAVEN] Women Stoking 100% Brand New High Quality, stokin wanita bergaya, fesyen, free size READY STOCK & FAST SHIPPING",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "4fe668d3-53e3-423c-8515-d5a90a2bca61",
+   "product_name": "Dr. Bites Fresh Meat Puréed Paté Wet Pouch [50g] with Probiotics & Fish Oil Makanan Basah Kucing Wet Food Cat",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "a5ec81fb-373a-4dbf-8e6b-c60bd297ada0",
+   "product_name": "Nota Melekit Lutsinar Pelekat Diri Kalis Air, 50 Helaian, Sesuai untuk Bekalan Sekolah dan Pejabat",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "0fd8abf0-ea0d-47e7-952c-f4e409cb9ac9",
+   "product_name": "Buku Zikir & Wirid Harian Rasulullah by Ustaz Wadi Annuar",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "a034e516-bd8f-42a2-acd8-c33ad6a543b0",
+   "product_name": "TBF Kawat Bulu DIY Craft Kit Batang Chenille Stems 100pcs 37 Warna Campuran Batang Seni Kraf Tebal Lembut Bunga Flower untuk Crochet Knitting & Hiasan Rumah Tadika",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "2a5f0f58-b438-4773-af4e-b3229742d19d",
+   "product_name": "YAN@YAN Viral Thai Elephant Pants 🐘 Boho Wide Leg Trousers | Elastic Waist Casual Travel Beach Pants | Free Size & Plus Size-8601",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "9bdefb5d-8278-4668-9425-dbed61464c9d",
+   "product_name": "Cute Candy Random Color Cable Protector for all Type Round Cable Earphone Handsfree Protector Pelindung Kabel Silicone Electronic Accessories",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "873126e9-b0d5-41c1-afce-43f25f467def",
+   "product_name": "Mini USB LED Plug Lamp Mobile Power Charging USB Night Light Eye Protection Reading Bulb Indoor Bedroom Sleeping",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "8b5a8aa4-ec1b-456c-9292-f5abac99cf8e",
+   "product_name": "Seluar Cotton Corak Petak (Random Color) | Lembut & Selesa | Unisex (keep the keywords so people searching for pants can still find it)",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "305cc7f1-65f7-423a-ac64-bb4de876c6ec",
+   "product_name": "[KKM] FEREENA WHITE SAKURA SOAP 10g Advance Formula",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "8afbadfa-a958-40ea-9256-c2cbf75a21ef",
+   "product_name": "Candycrum Caramel Popcorn (10oz) - Popcorn | Snek | Popcorn Rangup | Sesuai Doorgift & Majlis | Food | Snacks",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "ba4c941f-8fa3-4c90-82fb-bd54b502a71b",
+   "product_name": "Baja Garam Epsom Salt | Baja Garam Khas untuk Tanaman | Magnesium Sulfate | Baja Vitamin untuk bantu kesuburan pokok | Baja Epsom Salt",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "af57902f-a69a-4b5e-87ff-02edec363d95",
+   "product_name": "Fridge Magnet Hari Guru 55MM 2026 - Hadiah Terbaik untuk Guru Anda!",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "329b2a8f-2a1c-4c94-bb58-7402882983ad",
+   "product_name": "YAYA EMPIRE PERFUME 10ML SAIZ KECIL DARI HQ",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "2aef96c6-dacc-4938-b034-153d66f48c6d",
+   "product_name": "Seluar dalam lelaki cetakan manga-Huruf kreatif peninju lelaki cetakan penuh HELLO tema seluar dalam jenama yang bergaya, peninju mesra kulit bernafas dan lembut",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "98c04992-a726-4782-8293-7bf17156cdd0",
+   "product_name": "【Pin Blink ii】5pcs Kerongsang Blink-blink Comel Pin Hijab Kerongsang Pin Tudung Brooches Kerongsang Gilitter Blink-Blink Brooch Pin Hijab Pin Tudung Peniti Clips",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "5e5b0b16-e997-4b8e-9941-0be4080bb4d8",
+   "product_name": "Bidasari Kurung Cotton Embroidery Cutwork",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "2556b774-db22-4ee9-9325-e496ed8d21a4",
+   "product_name": "Original Krim cina kuning Huatuo Baifuling - Krim Kuning Cream kuning - Huatuobaifuling Krim herba cina - Sesuai untuk semua kulit - Yellow Cream - Suitable for all skin - Skincare 15g",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "e10804b5-5d06-4b2a-9b66-2d32ca35841a",
+   "product_name": "LIMITED STOCK BY HANNAVELLA",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "ced9fcc0-5703-42c8-a653-d2b3b73d6d7b",
+   "product_name": "Fereena GlutaSoap 10G Sabun Muka dengan Glutathione & Niacinamide untuk Melembapkan Kulit Kering Mencerahkan & Membuang Kulit Mati Facial Skincare",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "3d7389c7-77b9-4bd1-9242-ed172718abcd",
+   "product_name": "Lilin Putih Berkualiti Tinggi 6pcs 4.5\"/7\"/9\" / Premium Black Out White Candle / Lilin Putih 6pcs",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "405c7c27-16bd-4cb8-9c1e-07a3bc06b502",
+   "product_name": "Candy glow soap whitening by Shha",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "8ea29ec2-3e38-4d35-a5dc-16e0be4bc317",
+   "product_name": "FATIMA INSTANT SARUNG SYRIA ~ HQ MOSCREPE PREMIUM ~ IRONLESS & STRETCHABLE HIJAB UNTUK WANITA MUSLIMAH BAHAN ELASTIK SESUAI KESELAMAN DAN GAYA",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "478d976b-15b2-4cb6-9a62-00417b033087",
+   "product_name": "SNOW CAP INDONESIA KAIN COTTON 100% Cotton",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "13d4a873-08e7-4eb1-b420-db70ba212b16",
+   "product_name": "TBF 2026 Teacher's Day A6 A7 Notebook Coloured Cover Notebook 80pgs 100pgs Buku Nota Hari Guru Gift Book Hadiah Hari Guru Colourful Corak Stationery Paper White",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "b71be8c5-614a-4c53-8679-01d658b6ea71",
+   "product_name": "S JODOHLEBARAN SILLA - Tudung BawaLEXC",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "9f969c7c-ff94-440e-9353-908326c819d8",
+   "product_name": "Pin Huruf, Reka Bentuk Cinta, dengan Kerongsang Bunga Mutiara Bertatah Berlian, Reka Bentuk Anti-Cahaya, Mampu Milik, Mewah dan Elegan, Aksesori",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "8d3214de-145a-489a-8da2-d0438b9d1406",
+   "product_name": "JAZNOR TSHIRT BLOUSE FLORA MATERIAL RIBBED KNIT BY HARIKA AISHAH STYLE",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "6869a834-6fda-442a-8d51-394fccca3267",
+   "product_name": "Teachers Day Gift Bag Cute School Bag Transparent Design Goodies Thank You Teacher Terima Kasih Cikgu Beg Hadiah Hari Guru Sekolah",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "39a17be6-e0aa-403d-b52c-d6102a874362",
+   "product_name": "Fridge Magnet Hari Guru Berkilat | Hadiah Cikgu Comel & Bermakna | Beli 3 Free 1",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "3bc08dc9-02b8-44d5-bdcd-086a62cbfd34",
+   "product_name": "Sumikko 50PCS Premium Baby Diaper pants disposable diaper tape diaper pants pull-ups Ultra-thin and breathable All size S/M/L/XL/XXL/XXXL",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "90349f8c-9e14-4efe-988e-76ec60ea31f4",
+   "product_name": "Bosmax Herbs 5 ML",
+   "approved_sets": 1001,
+   "revalidated": 1001,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "6483d624-a03d-4933-9bba-6ca2e5f7b6fd",
+   "product_name": "Minyak Warisan Cap Burung 25ml",
+   "approved_sets": 1002,
+   "revalidated": 1002,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "ad805d7d-e6fa-4a05-ad96-edc8e0295ae8",
+   "product_name": "BISKUT MAKMUR SUSU - KAMPUNG BITES - MELT IN MOUTH - 330g",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "ec58c4af-78a8-49ab-9a3f-7ab3bcdf76c4",
+   "product_name": "Penebuk Pintu Tarik Atas, Tanpa Tebuk, Bar Mendatar Gim, Senaman Pintu, Kecergasan, Boleh Laras, 62 cm hingga 100 cm",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "21dcae04-86de-4af7-9698-eb2a3331614b",
+   "product_name": "Alat Dengar Bluetooth Pengaliran Tulang, Wayarles, dengan Paparan Digital LED, Mikrofon dan Pengurangan Bunyi, Penyumbat Telinga Muzik Berkualiti Tinggi HIFI, Sesuai untuk Perniagaan dan Sukan, Reka Bentuk Fesyen",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "1063eec6-976c-415f-95dd-be5c7b53608b",
+   "product_name": "Nakamichi Rapid Windshield Treatment Water Cleaner 30ml Pencuci Cermin Kereta Kompak & Mudah Penggunaan untuk Pembersihan Kuat",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "4591673f-301f-4b26-b580-f23263422f7b",
+   "product_name": "DOCTOR BAI Laundry BAYI 2IN1 WITH SOFTENER 1.5L@dr.bai detergent @baby sabun basuh",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "40655de2-037e-48a0-8708-160831d120b4",
+   "product_name": "【ABIG】200pcs 45x59 Point-off Rubbish Plastic Bag Garbage Bag for Home/Office Use Trash Bag Blue Supplies Plastik Sampah",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "6ddfea5c-05a2-49cb-98ef-6e424a184d32",
+   "product_name": "Drypers Touch Baby Diapers NB80/ S44 (1 Packs)",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "2dc99727-59b8-41b8-9462-6e8ff23c09d6",
+   "product_name": "Tudung Sekolah Awning Scuba TudungSiComel On Point Jaminan 180 Hari Lycra Korea Lembut & Awning Kemas",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "c41ccd1c-aa3d-48f8-a80c-f01414ea221e",
+   "product_name": "JBL PHANTOM P90 True Wireless Bluetooth In-Ear Earbuds: Deep waterproofing, ultra-long battery life, TWS technology, powerful bass, 3D surround sound, intelligent noise reduction, professional-grade gaming experience—ideal for calls, music, and sports.",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "2af04e4c-c731-4e8d-86f4-5e74b8ff3539",
+   "product_name": "Produk baharu: bawal murah\n Voila Scarf / Tudung bawal murah / Skarf bercetak kain voil kapas (saiz 46 inci) / Skarf bercetak bunga kecil / Skarf segi empat bercetak / Tudung coral",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "840c5364-b1f5-409a-aa74-3e4f3a8d1bfc",
+   "product_name": "Kargo Plus Saiz 42-62 Straight Cut Kargo Long Pant 6 colour Berkualiti Ready Stock",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "337cb7a6-f0b5-48b4-9844-991bec996cda",
+   "product_name": "Arabian Kitchen Yemeni Mendhi 1KG Pes Nasi Arab",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "20f2352c-0f62-41c9-b1d9-8ee9c77d887f",
+   "product_name": "PUTEH CICAPLAST GEL MENCERAH 100G - GEL KRIM PENCERAH - Babies Blinks Datin Lyanaz Hassan. Edisi Terhad sementara stok masih ada. #datinlyanaz #babiesblink #putehedition #cicaplast",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "3cedcea6-b2f7-4e74-89a4-fb8e210ddea5",
+   "product_name": "5 Helai RM 21 premium t shirt baby boys n girls",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "724bbe9e-a725-48ca-8673-9a3736ccf39a",
+   "product_name": "Kids Girl Long Pants Bottoms Seluar Panjang Kanak Kanak Budak Perempuan Cotton 6 Months - 6 Years",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "fdb9d59b-c971-4f6e-b81c-5a6731e32093",
+   "product_name": "NEW ARRIVAL JUBAH KAIN Wanita Muslimah PREMIUM CEY IRONLESS 2026",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "0a26caf0-1bc6-43a9-a267-7d2a1dbaccab",
+   "product_name": "Rempah Nasi Khowmok (140g+- / pack)",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "41823bac-bc7c-4202-992d-e82150479487",
+   "product_name": "Women's Bootcut jeans biyaca Women Seluar Denim Bootcut jeans untuk prompuan sale di Malaysia",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "733aa9ad-1ade-4fb3-a9f2-e4d70a841127",
+   "product_name": "DAIWA Reel Pancing FS Spinning Mesin Pancing Metal 30KG Max Drag 5.2:1GR 12+1BB Serbaguna untuk Outdoor Sports",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "867bd162-ef79-46ef-a7aa-97fb2387c058",
+   "product_name": "Buku pelekat 3D babak bandar, siri pelekat bilik corak bandar baharu, termasuk 7 babak seni bina bandar yang berbeza, peminat DIY, permainan menyahmampat, hadiah hebat",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "b60fb472-0a9a-4717-9751-6bf6d6e92344",
+   "product_name": "(MAX 100KG) Sweet Princess Loose Design Plus Size Lingerie Sleepwear Nightwear Pyjamas Baju Tidur SLMS618",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "efcc1f31-c91b-46fb-acc6-d736a5271884",
+   "product_name": "[COD] SADOER Coconut Oil Hair Care Set, Anti-Dandruff, Hair Loss Improvement, Softness & Oil Control, Frizz Reduction (Shampoo 500ml + Hair Mask 500ml + Hair Loss Essence 30ml) Conditioner Ginger Haircare Koko",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "931829bd-0e0d-40db-9dcf-495a4dcc8329",
+   "product_name": "【Hot Sale Promotion】 1000ML Stainless Steel Insulated Bottle, Holiday Gift, Vacuum Sports Water Bottle, Heat-Resistant Thermos, Printed Water Bottle, Large Capacity Cup",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "4bab2b57-da68-482c-9f31-3d700ac0ac6b",
+   "product_name": "Doctor Bai Baby Bottle Cleanser 1.8L @ Orange Extract Botol Bayi Cleaner",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "abdb60ba-c8b8-433f-89b4-0b3a2f314f63",
+   "product_name": "KAXIER Lip Gloss Moisturizing Shine Shimmer Plumping Lip Care Glossy Lipstick",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "f93df31c-ac2c-4d76-8342-27aef23ca549",
+   "product_name": "Epoxy Resin 1kg Hard Type 3:1 Ratio - Plastic Mini Outdoor Toys Self Levelling, UV Resistant, Art, Jewelry, Crafts, and Wood Tables BPA-Free, Non-Toxic, Heat-Resistant, Resin Casting, Sculpture Keychain",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "d534fc2e-d52d-44f3-98c8-ebdd431421c4",
+   "product_name": "Farm Fresh Full Cream Milk Powder 800g x 1 Pack",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "b4b0f581-f1aa-4677-beaa-54268199c377",
+   "product_name": "Adrian’s Cadar 4-in-1 Set Stok tersedia Cadar Ropol KING/QUEEN 16inci tinggi",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "c89e6f33-5419-4440-9cd0-a970dd17fc60",
+   "product_name": "ELGINI E16370 Seluar Palazzo Pinggang Tinggi Wanita S-XXL | Women's High-Waist Palazzo Pants",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "013b7710-a55e-4053-9224-e1149f052f57",
+   "product_name": "Stiker Dinding Berlapis Marmer PVC 30x60CM Tahan Air Mudah Dipotong untuk Ruang Tamu Kamar Mandi Dapur Self Adhesive High Glossy Waterproof Bilik Home Wall Wallpaper",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "82200fcc-eb74-421b-9f6c-0857dcce005b",
+   "product_name": "Mutiara Bulat Berkilat Tinggi, Tidak berliang, Mutiara Tiruan ABS, Warna Monokrom, 3-8mm, Tidak berlubang, Sesuai untuk Hiasan Sarung Telefon DIY, Jepit Rambut, Membuat Aksesori Rambut, [Tiada Lubang], 100-400pcs",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "3e7e7411-9b50-4005-acf6-d99d85e4d7e1",
+   "product_name": "HQ Yara Clarissa - BELI 1 FREE 7 PCS INAI (Total 8 PCS) - Inai Kuku Daun Asli Dark Maroon & Dark Brown - Tak Perlu Buffer, Tahan Lama Tak Jadi Oren.",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "04a42d8c-755e-409e-8b60-b8b91f599dc7",
+   "product_name": "Unisex Adult The Best Ever Round Neck Plain Microfiber T-Shirt Jersey T Shirt Anti-Bacteria Baju Jersi Leher Bulat",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "e3e3819f-c312-4e73-9db8-477471860616",
+   "product_name": "Dr.Bites Premium Cat Canned Food (Wet Food) 85g",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "b0919477-44ed-4518-9cb1-241ad26a4f00",
+   "product_name": "Ready Stock* Singlet Women Baju Perempuan Wanita Baju Inner Singlet for Women Round Neck Singlet Plus Size singlets",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "c87c02b4-e6be-4e11-a034-39139c95bc75",
+   "product_name": "Seluar Jeans Kaki Lebar, Hitam, Berkualiti Tinggi, Longgar, Pinggang Tinggi Wanita, Rekaan Baharu, Pelangsingan Badan, Seluar Peluk Lantai seluar loose pants jeascrf，seluar jeans ribbon belakang，high waisted jean evelyn",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "dd6a3ca8-4478-4611-82a0-15689bee43bb",
+   "product_name": "IBA Premium Perfume - 30ml EDP Unisex ( 5 Scent Variants )",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "85ddc17a-ba47-4e03-a0a6-bc1e62f46436",
+   "product_name": "PENCUCI PINKY PINKY WASH TULEN ORIGINAL HQ ZINQA",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "3be06f47-a156-4d5f-8d8c-91c786e89012",
+   "product_name": "GULA2 SENDAT makanan herba Food, 25-30biji",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "3f371b59-d151-40df-a815-2d67fe2a51bc",
+   "product_name": "CERIA Set Kurung Sederhana, Rekaan Bunga Amina, Lembut dan Elegan, Fabrik Bernafas dan Selesa, 8316",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "7d3a0b5e-c57e-44ad-9a31-c0e5c8b3007e",
+   "product_name": "Seluar Sukan Longgar Gaya Jalanan untuk Senaman, Menari, dan Santai Musim Panas dengan Rekaan Bawah Buku Lali, Pinggang Elastik, dan Tali Serut Kargo untuk Wanita",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "5ae8c2cc-859a-4acc-8d35-2d0554e9d9fb",
+   "product_name": "Pakaian Dalam Wanita, 7/6 Keping, Pakaian Dalam Tanpa Jahitan, Seluar Pendek, Bahan Sutera dan Renda Seksi, Cepat Kering, Warna Merah Jambu Semula Jadi, Saiz Besar, Lembut dan Elastik, Menyerap Kelembapan dan Bernafas",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "ee5f12c2-d249-487a-b3f6-694d26a82356",
+   "product_name": "DAGMARA Water Jet Cordless Car Wash Floor Tiles Cleaner Spray Gun Water Jet Pump Portable Outdoor Wash Car 2L",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "e110ac8f-38e8-453a-a40d-c29cbe6e00f2",
+   "product_name": "ELGINI E16212 Baju-T Kapas Lengan Panjang S-XXL | Long Sleeve Plain Cotton Tee",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "6388605e-9bb3-43e2-beef-c07f89500a50",
+   "product_name": "Radio Retro RX-606AC Radio Klasik 4-Jalur AM, FM, SW1, SW2 Berfungsi dengan elektrik Audio Amplifier radio klasik Inventori Malaysia",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "25c6f610-8360-4b11-9a78-1ed6f16b928d",
+   "product_name": "[New Arrival] Sea Makeup Stayput Glow Fix Setting Spray- Longlasting Makeup Flawless Luminous hydrating weightless Finish - Kawalan Minyak, Kalis Air dan Tahan Lama Spray Primer Matte Makeup Kosmetik Wajah 100ml",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "1b376d1a-911d-40d4-b8b7-2c71eae951fb",
+   "product_name": "SAMBAL GARING(bilis+bawang goreng) ((HUMAIRA)) 100g",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "69f37eee-aff0-4084-b8b6-3f64ba87271b",
+   "product_name": "SUISCO | Syampu + Keratin Rawatan Rambut+ Rawatan Rebonding |Caviar Silky Smooth & Hair Straightener Hair Care Set | Syampu & Rawatan Rambut Keratin Treatment Buat di Rumah Tak perlu Pergi Salon 400ml",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "c4216575-c02c-4719-9d48-88dc09c8917f",
+   "product_name": "CEMILAN BASRENG Snacks Food 100g",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "d3ca6bd0-0da4-4ef8-a115-2e2c85facc1c",
+   "product_name": "[Penghantaran tempatan,COD] Penghilang noda minyak kelapa asli, minyak kelapa, pewangi yang kaya, sesuai untuk tandas bilik mandi, lantai dan jubin, dan mempunyai kesan menggilap sink. 400g",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "e42c937b-4236-40e2-b7c4-990d7e9e8b18",
+   "product_name": "Crunchy Garlic Chilli Oil [REGULAR] Bottle Pack Food Cooking chili Makanan Spicy 150g",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "17a4b3bb-ae4e-49d8-8f09-e51b8e616269",
+   "product_name": "(PROMO 4.4) SAMBAL GARING MAK (BANYAK FLAVOUR) 130 G",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "aae1b6f9-6d8f-43e3-9723-0d517ae8daec",
+   "product_name": "Diamond Coating【Quick Coating】Ceramic Car Coating Spray Automotive Shining Coating 300ML",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "96616701-0020-4430-97f0-1d4001c40ae7",
+   "product_name": "Garbamon High Quality Garbage Bag biodegradable trash bag on roll 120L",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "2238126c-00b3-4976-ac13-248963718cf9",
+   "product_name": "BIBIK EXPRESS BAHAN KISAR MASAKAN (BAWANG BESAR, BAWANG PUTIH, CILI KERING, CILI PADI , HALIA , KUNYIT) Cooking Food 400 ML",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "fcc36a5c-ecb5-4450-8426-56fe03e3b14c",
+   "product_name": "Baby Wipes Newborn Wet Tissue Tisue Basah Non-alcohol Paraben-free Fragrance-free Babies Wipe Tisu Basah Bayi 80pcs",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "f67305f1-3786-4727-96c4-7e972cf50129",
+   "product_name": "Minyak Habbatus Sauda Al Khair 30ml",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "5d298e84-2dc2-4747-9a0b-77499f5c8569",
+   "product_name": "Limited Edition Petite Sample Joielle Baby 15g",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "21cc66dc-6666-45c5-b09f-d0fd50a65612",
+   "product_name": "[SET RAYA COMBO] - 5x KAMBING PERAP + FREE 2x NUGGET TEMPURA CHEESE 400 G",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "4ec51256-629e-4d85-b23c-74a213f8842e",
+   "product_name": "wow spageti dan ramen yes instans ready stock all varian HALAL 2 G",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "60c65d01-5d27-465b-8b9b-20d3a8cd8b99",
+   "product_name": "Teachers Day Gift Bag Cute School Bag Transparent Design Goodies Thank You Teacher Terima Kasih Cikgu Beg Hadiah Hari Guru Sekolah 24CM",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "a2df36de-02e1-4d19-8138-80ad6e34d1df",
+   "product_name": "BELLA PARK PERFUME PINK EDITION 30ml",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "626a87b3-3cc7-4b61-8859-9f976ec9d15c",
+   "product_name": "Sea Makeup Stayput Prime & Set Continuous Setting Spray - Longlasting Makeup Flawless Velvet Matte Finish - Kawalan Minyak, Kalis Air dan Tahan Lama Spray Primer Matte Makeup Kosmetik Wajah 100ml",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "61d52713-af50-4195-8b04-9c2b266ed3ea",
+   "product_name": "SKINTIFIC Matte Sunscreen – All-Day Oil Control + SPF50+ PA+++ UV Protection Lightweight Sunscreen & Primer Penjagaan Kulit 50g",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "666ca472-5045-4781-a2a4-c39292a3a617",
+   "product_name": "[LYSMILEGO] Jalur Pemutih Gigi Jenama Rasmi Untuk Kegunaan Harian 7 pack",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "4897b728-2ee7-406f-949a-1f50d0e7ee97",
+   "product_name": "【Only Live】Versi Dinaik Taraf Pewangi Kereta Meletop Viral | Car Air Freshener Wangi Gilar Tahan Lama Fruity Perfume 10oz",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "8014da71-6b87-4476-9eb2-a91baf7fc0dd",
+   "product_name": "[Waranti 10 Tahun) Lampu Depan Berkuasa Tinggi Outdoor Lampu Depan LED 2200,000W Sangat Terang Boleh Zoom Putih Kuning Biru 3in1 dengan Sensor Gelombang 96 Jam Bateri Sesuai untuk Berkhemah Memancing Menunggang Kuda Berjalan Anjing",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "6dfc1aa0-75d4-44ea-bc36-6e74f98f5c65",
+   "product_name": "Bidang 45 AmyraHijab Bawal Cotton Premium (BUY 5 GET 6) Square",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "0ddfd65c-6ffc-43fe-aa3f-8fff0a13a886",
+   "product_name": "DIY 4 Floors Rose Arch Climbing Garden Flower Pot Stand untuk Rose Frame Ivy Arch Solid Garden Stand Outdoor Climbing Flower Shelf Outdoor Potted Plant Stand Shelf Garden Balcony Plant Support Stick bonsai",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "5fcb8133-d048-4b2d-8493-08aba78ab9e2",
+   "product_name": "Dr.Isla&Preferred Pam Susu Manual Premium MB7 | Saiz Mini & Ringan Mudah Bawa | Teknik Urut Tanpa Sakit | Khas untuk Ibu Menyusu | Food Grade + FREE 2 Beg Simpan Susu | PERCUMA Penghantaran 1 pack",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "3c34f3a1-ba39-4eb5-903d-815b96bf84e8",
+   "product_name": "MAAJUN HOMEMADE CD | 40g | HERBA ASLI TANPA PENGAWET",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "e9f06816-46b1-421d-8921-3ea183ed4760",
+   "product_name": "JUS SIRIH MADU ORIGINAL 500ML | BELI LEBIH JIMAT",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "97055ac6-b029-49ae-9e20-50212782474b",
+   "product_name": "Pangkalan Anti-Gelincir Bawah Cawan Termos, 9cm, untuk Pacco, Keliatan Tebal, Penutup Sarung Pelindung Silikon Air Kitchenware",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "1512b029-ba11-407d-bc87-d2f7990b0315",
+   "product_name": "CUSHION FOUNDATION BROWN 10ML",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "930852be-7401-4e21-9536-532c4ac26104",
+   "product_name": "NEW IRONLESS BELLA BLOUSE - MUSLIM WOMEN WEAR PLUS SIZE WUDHUK/TRAVEL FRIENDLY",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "8294ddda-fe7c-4215-a464-00bacd8ab69a",
+   "product_name": "【READY STOCK 】Cherry Seluar Peluh Kaki Lebar, Gaya Malas Vintaj, Longgar, Panjang Lantai Kasual, Seluar Panjang Sukan Serba guna, Pakaian Wanita Kasual",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "d7df7ab0-09fe-42b5-9d5c-3211988a75a3",
+   "product_name": "【FYP】Pemegang Telefon Kereta Putaran 360 Darjah Sut Penyedutan Kuasa untuk Papan Pemuka Kaca Depan Pejabat Ditingkatkan Pelekap Telefon Y627 T629",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "b2ac8af7-80c2-4082-a222-6a47b92272c2",
+   "product_name": "Breastmilk Feeding Storage Bag ASI Double Lock BPA Free For Bayi Nursing Breast Milk Bags 5oz/8oz CND",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "c1f000cc-4f91-4986-b487-9e8c0d5e9e7d",
+   "product_name": "Penbose Seluar Lampin Bayi Saiz S-XXXL - XL50 Keping Super Serap & Bernafas Lembut!​ Lampin Tarik Bayi Pull-up Pants Korea diaper 2G",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "303f796d-5935-4f18-90f2-47f5e8037f6f",
+   "product_name": "【PET RECORD】Bentonite cat litter 8 scents （2 kg / 6 L per pack）deodorized Pasir Kucing Bentonit Gumpalan Cepat",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "129e569c-73a1-494c-bcf1-4ec0b90b1fbf",
+   "product_name": "2.8M Penyapu Sawang Berus Panjang Boleh Laras & Lipat | Kepala Serat Mikro Fleksibel / Feather Duster Extendable Supplies 2.8M Soft Microfiber Cleaning Duster Extendable Ceiling Feather Duster Washable Convenient Household Cleaning Brush",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "1a5f4257-6711-42e4-8dcf-d61345fda1bd",
+   "product_name": "Bottle Air Tahan Sejuk Panas 900ML 1200ML Thermos Bottle SS316 Stainless Steel Tumbler with Handle and Straw Double Layer Insulation Thermos Cup 900ML/1200ML",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "1b6e189f-c054-4326-8acd-b1a6cf1d9d15",
+   "product_name": "Seluar Sukan, Gaya Retro Longgar, Uniseks, Seluar Trek, Ultra-Bernafas, Sesuai untuk Pakaian Jalanan Musim Panas, Muat sehingga 150kg, 2025 COD",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "2270741c-17ff-4915-86b3-aedde625452d",
+   "product_name": "Selipar santai trend 2026 dengan reka bentuk anti-gelincir yang lembut, sesuai untuk kegunaan dalam rumah dan boleh dipakai di luar, fleksibel serta tahan lama, kasut bergaya untuk keselesaan sepanjang hari 1KG",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "ddee46a2-367d-4fb5-897e-76730804f5a6",
+   "product_name": "SKIN1004 Madagascar Centella Soothing Cream 30ml",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "878a09a6-446a-49db-9580-b1e52e0284f8",
+   "product_name": "JDEN Seluar Pendek Cargo Lelaki - Men Pockets Cargo Shorts Fashion Straight Cut 40-120KG Kain Nylon",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "f6783cb6-861d-4680-983a-eeb104c7679a",
+   "product_name": "Toilet Rack Stainless Steel Toiletries Bathroom Storage Organizer Shelf Shampoo Shelve Rak Bilik Air Tandas",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "a54125d1-385c-4a78-92b5-273bc9aa1cf1",
+   "product_name": "READY STOCK EVA Women's DIY Sandal Women Shoes Kasut Wanita Rubber Shoes l - s",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "eb4fe343-904d-45a2-8448-d07f556ce0e3",
+   "product_name": "SS QUEEN Set 3 Biji Bekas Simpanan Makanan Bulat Lutsinar. Sesuai untuk Peti Sejuk, Kabinet & Simpanan Bijirin - Bekas Gred Makanan",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "7e4ea3ee-a37d-4ddd-b460-a6938cbd89e9",
+   "product_name": "PALAZO SOFT COTTON HIGH QUALITY premium quality fast Delivery (ready stock S - 3XL)",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "2d79b60b-8780-42b7-a3e3-03f83d950198",
+   "product_name": "Rak Bilik Mandi, Rak Tandas, Penyimpanan Bilik Mandi, Penyusun Bilik Mandi, Rak Lekap di Dinding, Rak Sudut, Rak Penyimpanan, untuk Bilik Mandi",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "7857efe5-7ffb-4756-93ff-f46c8fca7521",
+   "product_name": "ALAYNA Inner Lace Turki | Scarf Anak Tudung Sanggul Bertali Skaf Volumnizer Rambut Lace Iner Cepol Tali Ciput Turkey Cotton",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "e3aeb807-43dd-433d-8a0c-c2756349a7c3",
+   "product_name": "Baby'Z Kek Lapis Pelbagai Rasa Food Moist 20 Pilihan Perisa Resepi Rahsia Warisan Sarawak Sedap Moist Dan Lembut 220gm",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "54017efd-5d1c-40b5-9875-ec1bdde88536",
+   "product_name": "Pemerah Pipi Cecair Baldu, lakerain, Tahan Lama, Kalis Air, Kalis Peluh, Tidak Luntur, Pewarna Pipi Alamiah, Pemerah Pipi, Untuk Mekap Muka, Pemerah Pipi Gincu, Pembayang Mata, Pelbagai guna 30x60cm",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "1ed2a06c-d579-4ebd-b227-d414cac6a356",
+   "product_name": "SENSAPHIL Garam Epsom Salts (Magnesium Sulfate) 400g/ 1Kg - Ready Stock, Untuk Relaksasi Tubuh & Menghilangkan Nyeri Otot - Body Car",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "f722256e-ba18-47c9-a2ae-dcb007656775",
+   "product_name": "Dr.lety Advanced Foot Cream (180ml) x 1 bottle",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "352f1d5b-c160-4c1d-8185-147dc5f5eb65",
+   "product_name": "Anti-slip Bathroom Mat Absorbent Quick Dry Floor Mat Carpet Bathroom Non-Slip Pad Coral Fleece Home Decoration Supplies",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "0b98fca4-ded7-4e70-9452-380e119c79e3",
+   "product_name": "PS COLLECTION DRESS DASTER LENGAN 7/8 DAILYWEAR womenswear sleepwear",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "1d74b204-953c-495d-b274-b1e98ac33454",
+   "product_name": "Lelaki & Wanita Uniseks Longgar Kasual Stretch Running Sports Fitness Shorts Seluar 2025 Unisex Men & Women Loose Casual Stretch Running Sports Fitness Shorts Pants P94 l - m",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "f4432d28-8cf2-4f04-91e7-46316b5afcf2",
+   "product_name": "Baju Kedah Opah ( Murah ) Cotton Poly Blouses - Cantik , Buatan Lokal, Leher Butang Kain Shirts",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "858c8a65-3244-40f9-83da-6c5ab2157ed7",
+   "product_name": "Cartoon Sleepwear Casual Sleeping Long Pants Seluar Panjang Baju Tidur Vibrant Colour Pants Soft Pajama LP59 M hingga 2XL Bahan Sejuk dan Lembut",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "baf8e9ea-fa91-4257-a980-413384ac5509",
+   "product_name": "120W Cordless Air Duster Cleaner 12000Pa 4-In-1 Multifunction Rechargeable Handheld Vacuum Cleaner for Keyboard Car Home Cleaning",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "cee8ab1b-7f3d-4481-888f-ad4217760950",
+   "product_name": "【HALAL】Haday Signature Sauce | Sauce For Rice 300g | Mushroom Sauce 300g | Pedas Ringan dengan Aroma yang Harum | Sesuai untuk kanak-kanak",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "25c10995-a53c-4214-ad06-3759764e55d9",
+   "product_name": "【Best Seller】SOLOEVER Sarung Lengan Ais UPF50+ UV Protection, 1 Pair,Seamless & Waterproof, Bernafas, Sesuai untuk Berbasikal, Running & Sukan Luar Outdoor Sleeves agen dan Tangan Gloves Sports Safety",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "60939813-fe10-4561-b31b-152bba6431ec",
+   "product_name": "Farha Sarung Lengan (Handosck Farha by Haseema) (LONG)",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "9c85cd83-32f1-4d8b-98bb-6a78f681ed1a",
+   "product_name": "[Ready Stock] Sambal Serbaguna 200g Food Instant l Makanan Segera Cooking Seasoning Ready to Eat sambal serbaguna kersani  cooking seasoning sambal  serbaguna",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "3bfd5223-abf4-49da-9710-dcc3a1450f50",
+   "product_name": "PANDAEYES PALAZZO PANTS (CLO-CNNZ01LP)",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "4d6f0d3e-8d80-42f6-9210-d30056fef7b2",
+   "product_name": "[Ada stok,20 pasang dapat 5 pasang percuma]Stokin Muslin, Stokin Wanita, Bahan Sutera, Warna Pepejal, 1 Pasang, Sesuai untuk Pakaian Muslim Bidang 45-50",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "4601bcd9-f29b-454e-8d64-31f8a9d2ef12",
+   "product_name": "Kaxier Long Lasting Waterproof Liquid Matte Lipstick (6ml)",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "822e7269-11d9-4b6c-9a51-59abfe448ff6",
+   "product_name": "sunlight pack travel 92g ready stock",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "74e8d4e9-98f5-4d81-bec6-1e13f594434f",
+   "product_name": "Ice Silk Seamless Underwear Middle Waist Panties Women Clothing Seluar Dalam Wanita Fabric",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "a7454684-8471-4f5e-9ef2-b6a03252bc8f",
+   "product_name": "PERFUME YAYA EMPIRE 10 ML SPRAY VIRAL WANGI ORIGINAL HQ-SELLER SAH ADA ID-",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "a1ca92dc-46bd-4dc3-8d63-21c76f49f836",
+   "product_name": "ELGINI E16243 Seluar Latihan Scuba S-XXL | Scuba Training Pants",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "700334bd-0983-4e7a-8644-3c1d23eb9a18",
+   "product_name": "ELGINI E16241 Seluar Kasual Potongan Lurus Wanita S-XXL | Women’s Straight-Cut Casual Pants",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "447debb4-7ed1-4536-aa7b-42719a8b378c",
+   "product_name": "Bekas Penyimpanan Makanan Arkilik Kedap Udara Lut Sinar / Balang Bertutup Mulut Besar / Airtight Transparent Canister 30W",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "753d305a-4133-40db-aa2d-56791f7c1d08",
+   "product_name": "COD BUY 5 GET 15% Langsir/Curtain Rod Tali dawai Panjang dan Pendek Baru Curtain With Ribbon Tassel Door And Window Warna Biru Dengan kain langsir tingkap Motif Pokok Dan Kupu-kupu lace cotton tekstil Soft Textiles",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "1dcf353f-0240-4b87-8fe1-649753119955",
+   "product_name": "[Ada stok,10 pasang dapat 1 pasang percuma]Stokin Muslin, Stokin Wanita, Bahan Sutera, Warna Pepejal, 1 Pasang, Warna Pepejal, Serba guna, Bergaya, Stokin SeliparKasual, Brov",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "bfc4c9c0-64b1-4104-82ad-8c0409ef8e93",
+   "product_name": "MASAKI 40cm Kuali Honeycomb with Golden Handle Upgraded Stainless Steel Korean Honeycomb Etching Coating Black Wok Honey Comb Wok Sudip Besi Pan Wok Kitchenware Cookware",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "3829eebe-0155-407d-a7a1-ce534c7e3568",
+   "product_name": "T-SHIRT BAGGY  STYLISH TANGAN SUKU. MATERIAL : LYCRA MIX POLYESTER BY QQ. ( KOD : L22 )",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "e6f07364-c8e0-4839-b99a-7195578163ac",
+   "product_name": "Wangian Kereta Hutan Gunung KATHWI, No.5, Teh Putih, Balsem Kayu Qud, haruman yang tahan lama dan menyenangkan, wangian kereta mewah terkini 180g",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "cd5ce8b7-f14d-4919-bcac-6c5cd856c8b1",
+   "product_name": "MOTION Premixed Long-Life Coolant Radiator 2L READY TO USE 50/50 RED GREEN BLUE car motorcycle MOTION Premixed Long-Life Coolant Radiator 2L – Sedia Guna (50/50) – Merah / Hijau / Biru",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "ee6b4c2f-5527-439b-8319-3b8d2545b2cb",
+   "product_name": "Serbuk DADIH Borong HALAL Hanya Tambah Air Instant Pudding Powder Marissa READY STOCK S-XXL",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "d3830470-9019-490b-8362-87245b24b917",
+   "product_name": "Soft Bath Towel Coral Fleece Super Absorbent Fast Drying Large size Suitable for Home,Hotel and Travel Supplies Natural 70x140cm Tuala",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "2ccd3036-61d8-4e01-a35b-e9569dace960",
+   "product_name": "Lip Serum Pink Moist - Bella park 2026 m",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "2d359cf9-a952-442f-b93f-2b6130debb9f",
+   "product_name": "【BUY 2 TAKE 1】BAIYAOLANG 20g skin Cream OintmentCream Body Care",
+   "approved_sets": 1,
+   "revalidated": 0,
+   "quarantined": 1,
+   "closed_free": false,
+   "residual_action": "REPLACE_COPY_PAID"
+  },
+  {
+   "product_id": "8168a131-27d5-4689-97d0-de42d4e3df5e",
+   "product_name": "BAWAL LAZY COTTON ( HOT SELLING ) Square Jilbab BAWAL LAZZY INSTANT PERIMIUM COTTON I SOFT COTTON BAWAL | BIDANG 45\" | IRONLESS HIJAB I EASY TO USE | CAUSAL HIJAB -Tudung Sarung “Lazy” COTTON – Dengan Jahitan di Bahagian KepalaSila semak carta saiz sebelu",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "3567375c-94a9-4e39-8af4-099eb56069b9",
+   "product_name": "Storage bag box clothes quilt organizer large capacity foldable double zipper handle waterproof Beg Simpan Baju 120g thicking fabric [Ready Stock]",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "3862a108-43c6-4767-801f-982a0200b6df",
+   "product_name": "ELGINI E16028 Seluar Track Slim-Fit S-XXL | Slim-Fit Track Pants",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "9c2af744-87d2-4cb0-b60a-e81dbbb761dd",
+   "product_name": "Set Baju Kurung Berkerah Kaftan – Reka Bentuk Corak Titik, Kasual dan Selesa",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "c5f7b12c-ca93-4f78-a2b0-227f60ab2f17",
+   "product_name": "Fon Kepala Bluetooth, Jeep JP EW011 TWS, Fon Telinga Tanpa Wayar, Fon Kepala Mudah, Bluetooth 5.3, Fon Telinga dengan Bes Stereo, Dalam Telinga, Mikrofon Pembatalan Bunyi, Kalis Air IPX5, Sesuai untuk Sukan, Main Balik 20 Jam Audio Earphones Amplifier",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "aaa1f472-b2d4-4fe3-a095-a8ccf0313360",
+   "product_name": "Harga special! Kain lap gentian kayu versi upgrade tebal, tak perlu pencuci, bilas air je terus bersih, sesuai untuk dapur, kereta & motosikal Supplies",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "376ca59b-589c-401b-8e2b-d03a267b456b",
+   "product_name": "Oxyelle Gel Penjagaan Kulit｜Formula hangat, urutan lembut & mudah menyerap",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "1d970a08-8477-44c2-b514-35b05011e9c7",
+   "product_name": "Baby Puting Nipple for Wide Neck Bottle  pacifier Replacement Baby Silicone Pacifier Bayi Susu Bottle Nursing Feeding untuk Botol Susu Lebar 1/5pcs",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "ba2022bb-7668-45bd-b9ec-74cf0c5003d0",
+   "product_name": "120w Fast Charger QC5.0 Fast Charging Adapter With Cable For Micro Type-C",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "d9c7e272-b2f5-4235-8d04-346a5bd3de0d",
+   "product_name": "Poppies Artificial Flower Fake Flower Home Decoration Bunga Hiasan Wedding Decor Bunga Tangan Poppy Flower Hand Bouquet",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "b6d3b5b7-b61b-4537-b148-5f00b968e567",
+   "product_name": "PONY MALL Electric Hair Clipper Hair Trimmer barber beard trimmer Shaver Man Trimmer Beard Cutting Mach mesin rambut-Pony Kumis",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "598a4dd3-f1eb-4887-9964-61d121982df2",
+   "product_name": "SZINDORE VIRAL MEN'S PERFUME 15ML FOR MEN",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "5a4b91e4-2f81-4126-83cc-df3faa2a6f90",
+   "product_name": "【COD】CP7 Pink Bloom 30ml | Long-Lasting Floral Amber Perfume for Women | Authentic Malaysia Perfume Gift Box Set Minyak Wangi Fruity Floral",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "4ea83e03-9e04-4da2-828e-5d9b2d78fd5a",
+   "product_name": "TIME PHORIA - Altera Blurring Lip Tint 4G | two-in-one formula · all-day wear · blurs lip lines",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "35f19456-907c-414b-a631-f2d742facb8c",
+   "product_name": "ALLTOU High Speed Hair Dryer 500 Million Neagtive Ions Pengering Rambut 150K RPM Motor Fast drying Pengering Rambut",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "9dbd8102-700c-4b84-bc1d-9d7d6e616918",
+   "product_name": "(Buy 5 Free 1) Mantapp Official Store Malaysia - 20 Pieces Mouth Freshener",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  },
+  {
+   "product_id": "8e75f1a8-ba43-444e-8b40-c71d140c76c5",
+   "product_name": "6pcs Combo Herbal Cream BTFL Organic Yellow Cream",
+   "approved_sets": 1,
+   "revalidated": 1,
+   "quarantined": 0,
+   "closed_free": true,
+   "residual_action": null
+  }
+ ]
+}
