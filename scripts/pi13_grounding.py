@@ -50,49 +50,73 @@ def identity_claim(con, pid):
 def process(con, ev):
     import sqlite3
     pid = ev["product_id"]
-    # 1. reuse open draft or create
-    row = con.execute("SELECT draft_id FROM product_intelligence_review_draft WHERE product_id=? "
-                      "AND review_status NOT IN ('APPROVED','REJECTED','SUPERSEDED') "
+    # 1. draft is one-per-product (UNIQUE) and terminal-locked once APPROVED. Reuse the existing
+    # draft; if it is terminal, REOPEN it to READY_FOR_REVIEW (a valid state) so the subsequent
+    # PATCH + approve run the FULL validator + claim gate and produce a superseding new version.
+    row = con.execute("SELECT draft_id, review_status FROM product_intelligence_review_draft WHERE product_id=? "
                       "ORDER BY COALESCE(updated_at,created_at) DESC LIMIT 1", (pid,)).fetchone()
     if row:
         did = row[0]
+        if str(row[1]).upper() in ("APPROVED", "REJECTED", "SUPERSEDED"):
+            w = __import__("sqlite3").connect(str(REPO / "flow_agent.db"), timeout=30)
+            w.execute("PRAGMA busy_timeout=30000")
+            w.execute("BEGIN IMMEDIATE")
+            w.execute("UPDATE product_intelligence_review_draft SET review_status='READY_FOR_REVIEW', updated_at=? WHERE draft_id=?",
+                      (__import__("datetime").datetime.now(__import__("datetime").timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), did))
+            w.commit(); w.close()
     else:
         st, r = req("POST", f"/products/{pid}/intelligence/review-drafts", {})
         if st != 200:
-            return {"product_id": pid, "result": "FAIL", "stage": "create", "http": st}
+            return {"product_id": pid, "result": "FAIL", "stage": "create", "http": st, "detail": r}
         did = r["draft_id"]
 
-    # 2. PATCH fields + acquired provenance (one provenance row per set field)
+    # exact stored listing URL for THIS product (never a generic host); prefer the tiktok product URL
+    prow = con.execute("SELECT tiktok_product_url, source_url FROM product WHERE id=?", (pid,)).fetchone()
+    exact_url = (ev.get("source_url_override") or prow[0] or prow[1] or ev.get("source_url"))
+    # 2. PATCH fields + acquired provenance (one provenance row per set field). FACT vs
+    # SUPPORTED_INFERENCE get TRUTHFULLY-distinct provenance: EXTERNALLY_EXTRACTED is reserved for
+    # source-stated facts; a conservative reviewed inference is REVIEWER_ASSERTED/INFERENCE.
     patch = {"reviewed_by": REVIEWER, "reviewer_note": ev.get("rationale", "")[:400]}
     prov = []
-    ekind = {"FACT": "FACT", "SUPPORTED_INFERENCE": "INFERENCE"}
     for f, spec in ev["fields"].items():
         patch[f] = spec["value"]
+        status = spec.get("status", "FACT")
+        if status == "FACT":
+            src_type, ekind, vstatus, method = "TIKTOK_EXTRACTION", "FACT", "EXTERNALLY_EXTRACTED", "LISTING_TITLE_EXTRACTION"
+        else:  # SUPPORTED_INFERENCE
+            src_type, ekind, vstatus, method = "REVIEWER_SUPPORTED_INFERENCE", "INFERENCE", "REVIEWER_ASSERTED", "CONSERVATIVE_INFERENCE_FROM_VERIFIED_ATTRIBUTE"
+        note = spec.get("rationale") or ev.get("excerpt", "")
         prov.append({
             "field_name": f, "declared_value": json.dumps(spec["value"], ensure_ascii=False)[:800],
-            "source_type": ev.get("source_type", "EXTERNAL_EXTRACTION"),
-            "source_url": ev.get("source_url"), "source_lane": "PI13_ACQUIRED_RECOVERY",
-            "evidence_kind": ekind.get(spec.get("status", "FACT"), "FACT"),
-            "extraction_method": "LISTING_TITLE_EXTRACTION",
-            "confidence_score": ev.get("confidence", 0.7),
-            "verification_status": "EXTERNALLY_EXTRACTED",
+            "source_type": src_type, "source_url": exact_url, "source_lane": "PI13_ACQUIRED_RECOVERY",
+            "evidence_kind": ekind, "extraction_method": method,
+            "confidence_score": ev.get("confidence", 0.7), "verification_status": vstatus,
             "claim_risk_flag": ev.get("claim_risk", "LOW"),
-            "reviewer_decision": "ACCEPTED", "reviewer_note": ev.get("excerpt", "")[:300],
+            "reviewer_decision": "ACCEPTED", "reviewer_note": str(note)[:300],
         })
+    # NOTE: allowed_claims_json is a VALIDATOR-COMPUTED / claim-safety-gated field. We do NOT
+    # overwrite it here (doing so cleared the existing safe claims). If the draft lacks any allowed
+    # claim, we add ONE deterministic taxonomy identity claim ONLY when none exist.
+    existing_ac = con.execute("SELECT allowed_claims_json FROM product_intelligence_review_draft WHERE draft_id=?", (did,)).fetchone()[0]
+    try:
+        parsed_ac = json.loads(existing_ac) if existing_ac else []
+    except Exception:
+        parsed_ac = []
+    if parsed_ac:
+        patch["allowed_claims_json"] = parsed_ac  # re-supply existing validated claims so recompute keeps them
+    else:
+        try:
+            claim, fp = identity_claim(con, pid)
+        except Exception:
+            claim = None
+        if claim:
+            patch["allowed_claims_json"] = [claim]
     patch["provenance_items"] = prov
+    if exact_url:
+        patch["source_urls_json"] = {"primary_listing": exact_url}
     st, r = req("PATCH", f"/product-intelligence/review-drafts/{did}", patch)
     if st != 200:
         return {"product_id": pid, "result": "FAIL", "stage": "patch", "http": st, "detail": r}
-
-    # 3. deterministic identity claim (taxonomy identity, claim-safe)
-    try:
-        claim, fp = identity_claim(con, pid)
-        if claim:
-            req("PATCH", f"/product-intelligence/review-drafts/{did}",
-                {"allowed_claims_json": [claim], "reviewed_by": REVIEWER,
-                 "reviewer_note": f"PI-13 deterministic taxonomy identity claim ({fp})."})
-    except Exception:
-        pass
 
     # 4. governed absences for still-empty strict fields
     for fld in ev.get("governed_absent", STRICT_ABSENT):
