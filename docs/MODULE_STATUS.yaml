@@ -577,6 +577,7 @@ domains:
       - outputs/mission-pi12/pi13_logical_backup.py
       - outputs/mission-pi12/pi13_merge_candidates.py
       - outputs/mission-pi12/pi13_merge_candidates.json
+      - outputs/mission-pi12/pi13_merge_execution_proof.json
       - tests/unit/test_pi12_ai_fill_hardening.py
       # provider_receipts.jsonl is written per-attempt by the hardened runner on the NEXT run.
       - agent/services/product_registration_service.py
