@@ -584,6 +584,52 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 		}
 	};
 
+	const handleCreateDraftRow = async (referenceId: string) => {
+		setRowLoading((prev) => ({ ...prev, [referenceId]: true }));
+		setActionMessage(null);
+		setActionError(null);
+		setDrawerResult(null);
+		try {
+			const result = await postAPI<{
+				reference_id: string;
+				draft_id?: string | null;
+				error?: string;
+				detail?: string;
+			}>(
+				`/api/fastmoss-bulk/queue/${encodeURIComponent(referenceId)}/create-draft`,
+				{},
+			);
+			if (result.error || !result.draft_id) {
+				const msg = result.detail || result.error || "DRAFT_NOT_CREATED";
+				setActionError(`Draft creation failed: ${msg}`);
+				setDrawerResult({ type: "error", msg });
+				return;
+			}
+			const msg = "Draft created. Evidence remains review-only until saved and recomputed.";
+			setActionMessage(msg);
+			setDrawerResult({ type: "ok", msg });
+			setDetailRow(null);
+			if (onOpenDraft) onOpenDraft(result.draft_id);
+			await fetchStats();
+			await fetchQueue();
+		} catch (error: unknown) {
+			const msg = getErrorMessage(error, "Draft creation failed");
+			setActionError(msg);
+			setDrawerResult({ type: "error", msg });
+		} finally {
+			setRowLoading((prev) => ({ ...prev, [referenceId]: false }));
+		}
+	};
+
+	const handleReviewOrCreateDraft = (row: FastmossBulkQueueRow) => {
+		if (row.draft_id && onOpenDraft) {
+			setDetailRow(null);
+			onOpenDraft(row.draft_id);
+			return;
+		}
+		void handleCreateDraftRow(row.reference_id);
+	};
+
 	const handleSingleApprove = async (referenceId: string) => {
 		const confirmed = window.confirm(
 			`Approve this row and promote to Product Truth?\n\n${referenceId.slice(0, 12)}…`,
@@ -1360,19 +1406,15 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 												>
 													Review Duplicate
 												</button>
-											) : row.recompute_state === "BLOCKED_MISSING_EVIDENCE" ? (
-												<button
-													type="button"
-													onClick={() => {
-													if (row.draft_id && onOpenDraft) {
-														onOpenDraft(row.draft_id);
-													} else {
-														setDetailRow(row);
-													}
-												}}
-													className="px-2 py-1 rounded-lg bg-orange-600/20 hover:bg-orange-600/40 text-orange-300 text-[9px] font-bold uppercase tracking-widest transition-all"
-												>
-													Review / Add
+							) : row.recompute_state === "BLOCKED_MISSING_EVIDENCE" ? (
+								<button
+									type="button"
+								aria-label={`Review or add evidence for ${row.raw_product_title}`}
+								data-testid={`review-add-evidence-${row.reference_id}`}
+								onClick={() => handleReviewOrCreateDraft(row)}
+								className="px-2 py-1 rounded-lg bg-orange-600/20 hover:bg-orange-600/40 text-orange-300 text-[9px] font-bold uppercase tracking-widest transition-all"
+							>
+									Review / Add
 												</button>
 											) : row.recompute_state === "STALE" ? (
 												<button
@@ -1394,7 +1436,7 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 												<span className="text-[9px] text-blue-300 font-bold uppercase tracking-widest animate-pulse">
 													{row.recompute_state === "QUEUED" ? "Queued…" : "Recomputing…"}
 												</span>
-											) : row.recompute_state === "BLOCKED_REVIEW_REQUIRED" ? (
+							) : row.recompute_state === "BLOCKED_REVIEW_REQUIRED" ? (
 												<button
 													type="button"
 													onClick={() => {
@@ -1403,9 +1445,19 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 													}}
 													className="px-2 py-1 rounded-lg bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 text-[9px] font-bold uppercase tracking-widest transition-all"
 												>
-													Review Required
-												</button>
-											) : row.promotion_status === "READY_FOR_APPROVAL" ? (
+									Review Required
+								</button>
+							) : row.promotion_status === "PENDING_DRAFT" ? (
+								<button
+									type="button"
+									aria-label={`Generate draft for ${row.raw_product_title}`}
+									data-testid={`generate-draft-${row.reference_id}`}
+									onClick={() => handleReviewOrCreateDraft(row)}
+									className="px-2 py-1 rounded-lg bg-slate-600/20 hover:bg-slate-600/40 text-slate-300 text-[9px] font-bold uppercase tracking-widest transition-all"
+								>
+									Generate Draft
+								</button>
+							) : row.promotion_status === "READY_FOR_APPROVAL" ? (
 												<button
 													type="button"
 													onClick={() => handleSingleApprove(row.reference_id)}
@@ -1732,10 +1784,9 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 								{detailRow.recompute_state === "BLOCKED_MISSING_EVIDENCE" && (
 									<button
 										type="button"
-										onClick={() => {
-										if (detailRow.draft_id && onOpenDraft) onOpenDraft(detailRow.draft_id);
-										else setDetailRow(detailRow);
-									}}
+										aria-label="Review or add missing evidence"
+										data-testid="drawer-review-add-evidence"
+										onClick={() => handleReviewOrCreateDraft(detailRow)}
 										className="flex-1 px-3 py-2 rounded-xl bg-orange-600/20 hover:bg-orange-600/40 border border-orange-500/30 text-orange-300 text-[10px] font-bold uppercase tracking-widest transition-all"
 									>
 										Review / Add Evidence
@@ -1762,11 +1813,13 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 									</button>
 								)}
 								{detailRow.promotion_status === "PENDING_DRAFT" &&
-									detailRow.recompute_state !== "STALE" && (
+									detailRow.recompute_state === "UP_TO_DATE" && (
 									<button
 										type="button"
 										disabled={rowLoading[detailRow.reference_id]}
-										onClick={() => handleRecomputeRow(detailRow.reference_id)}
+										aria-label="Generate draft from current FastMoss evidence"
+										data-testid="drawer-generate-draft"
+										onClick={() => handleReviewOrCreateDraft(detailRow)}
 										className="flex-1 px-3 py-2 rounded-xl bg-slate-600/20 hover:bg-slate-600/40 border border-slate-500/30 text-slate-300 text-[10px] font-bold uppercase tracking-widest disabled:opacity-40 transition-all"
 									>
 										{rowLoading[detailRow.reference_id]

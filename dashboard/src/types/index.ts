@@ -2886,6 +2886,8 @@ export interface FastmossBulkQueueRow {
 	batch_provenance?: string | null;
 	ruleset_version?: string | null;
 	input_fingerprint?: string | null;
+	computed_ruleset_version?: string | null;
+	computed_input_fingerprint?: string | null;
 	recompute_state?: BulkRecomputeState | null;
 	recompute_reason?: string | null;
 	review_hold_reason?: string | null;

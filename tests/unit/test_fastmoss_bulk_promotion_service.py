@@ -29,6 +29,8 @@ from agent.services.fastmoss_bulk_promotion_service import (
     _RECOMPUTE_RULESET_VERSION,
     _reference_fingerprint,
     _row_reference_fallback,
+    _recompute_state_for_row,
+    _current_reference_map,
 )
 from agent.models.product_registration import RegistrationReviewDraft
 
@@ -43,6 +45,9 @@ async def _stamp_current_recompute_metadata(reference_id: str):
         reference_id,
         ruleset_version=_RECOMPUTE_RULESET_VERSION,
         input_fingerprint=_reference_fingerprint(_row_reference_fallback(row)),
+        computed_ruleset_version=_RECOMPUTE_RULESET_VERSION,
+        computed_input_fingerprint=_reference_fingerprint(_row_reference_fallback(row)),
+        recomputed_at="2026-08-03T00:00:00Z",
     )
 
 
@@ -625,6 +630,142 @@ async def test_reconcile_queue_dry_run_never_applies_metadata(monkeypatch):
     assert result["product_truth_writes"] == 0
     assert result["provider_calls"] == 0
     apply_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_missing_evidence_reopens_stale_after_authoritative_input_changes(monkeypatch):
+    from agent.db import crud
+    from agent.services import fastmoss_bulk_promotion_service as service
+
+    reference_id = "ref-missing-evidence-reopened-001"
+    old_ref = {
+        "id": reference_id,
+        "raw_product_title": "Serum old source",
+        "category": "Beauty",
+    }
+    new_ref = {
+        **old_ref,
+        "raw_product_title": "Serum updated source 30ml",
+    }
+    old_fingerprint = service._reference_fingerprint(old_ref)
+    await crud.create_bulk_queue_row(
+        reference_id=reference_id,
+        raw_product_title=old_ref["raw_product_title"],
+        promotion_status="MISSING_REQUIRED_FIELD",
+        error_message="MISSING:SIZE_OR_VOLUME_EVIDENCE",
+        recompute_state="BLOCKED_MISSING_EVIDENCE",
+        ruleset_version=_RECOMPUTE_RULESET_VERSION,
+        input_fingerprint=old_fingerprint,
+        computed_ruleset_version=_RECOMPUTE_RULESET_VERSION,
+        computed_input_fingerprint=old_fingerprint,
+        recomputed_at="2026-08-03T00:00:00Z",
+    )
+    monkeypatch.setattr(
+        service,
+        "list_fastmoss_reference_products",
+        AsyncMock(return_value=[new_ref]),
+    )
+
+    row = await crud.get_bulk_queue_row(reference_id)
+    assert row is not None
+    assert _recompute_state_for_row(row, old_ref)["recompute_state"] == "BLOCKED_MISSING_EVIDENCE"
+    assert _recompute_state_for_row(row, new_ref)["recompute_state"] == "STALE"
+
+    async def _fake_recompute(ref_id: str):
+        await crud.update_bulk_queue_row(
+            ref_id,
+            promotion_status="READY_FOR_APPROVAL",
+            draft_id="draft-reopened-001",
+            error_message=None,
+        )
+        return {
+            "reference_id": ref_id,
+            "draft_id": "draft-reopened-001",
+            "promotion_status": "READY_FOR_APPROVAL",
+        }
+
+    recompute_mock = AsyncMock(side_effect=_fake_recompute)
+    monkeypatch.setattr(service, "create_draft_from_reference", recompute_mock)
+    result = await service.recompute_selected([reference_id])
+
+    assert result["recomputed"] == 1
+    assert result["blocked_missing_evidence"] == 0
+    recompute_mock.assert_awaited_once_with(reference_id)
+    updated = await crud.get_bulk_queue_row(reference_id)
+    assert updated is not None
+    assert updated["promotion_status"] == "READY_FOR_APPROVAL"
+    assert updated["recompute_state"] == "UP_TO_DATE"
+    assert updated["computed_input_fingerprint"] == service._reference_fingerprint(new_ref)
+
+
+@pytest.mark.asyncio
+async def test_reconcile_apply_does_not_mark_stale_row_current(monkeypatch):
+    from agent.db import crud
+    from agent.services import fastmoss_bulk_promotion_service as service
+
+    reference_id = "ref-reconcile-stays-stale-001"
+    ref = {
+        "id": reference_id,
+        "raw_product_title": "Pending reconciliation row",
+        "category": "Home Supplies",
+    }
+    await crud.create_bulk_queue_row(
+        reference_id=reference_id,
+        raw_product_title=ref["raw_product_title"],
+        promotion_status="PENDING_DRAFT",
+        recompute_state="STALE",
+    )
+    monkeypatch.setattr(
+        service,
+        "list_fastmoss_reference_products",
+        AsyncMock(return_value=[ref]),
+    )
+
+    applied = await service.reconcile_queue(dry_run=False)
+    assert applied["applied"] >= 1
+    assert any(
+        item["reference_id"] == reference_id and item["next_state"] == "STALE"
+        for item in applied["rows"]
+    )
+    row = await crud.get_bulk_queue_row(reference_id)
+    assert row is not None
+    assert row["input_fingerprint"] == service._reference_fingerprint(ref)
+    assert row["ruleset_version"] == _RECOMPUTE_RULESET_VERSION
+    assert row["computed_input_fingerprint"] is None
+    assert row["computed_ruleset_version"] is None
+    assert _recompute_state_for_row(row, ref)["recompute_state"] == "STALE"
+
+    readback = await service.reconcile_queue(dry_run=True)
+    assert readback["state_counts"].get("STALE", 0) >= 1
+    assert reference_id not in {item["reference_id"] for item in readback["rows"]}
+
+
+@pytest.mark.asyncio
+async def test_authoritative_reference_lookup_includes_rows_after_first_500(monkeypatch):
+    from agent.services import fastmoss_bulk_promotion_service as service
+
+    target_id = "ref-authoritative-600"
+    refs = [
+        {
+            "id": f"ref-authoritative-{index}",
+            "raw_product_title": f"Authoritative row {index}",
+        }
+        for index in range(665)
+    ]
+
+    async def _list_refs(limit: int):
+        assert limit >= 665
+        return refs[:limit]
+
+    monkeypatch.setattr(service, "list_fastmoss_reference_products", _list_refs)
+    monkeypatch.setattr(
+        service,
+        "get_fastmoss_reference_product",
+        AsyncMock(return_value=None),
+    )
+
+    mapped = await _current_reference_map(reference_ids=[target_id])
+    assert mapped[target_id]["raw_product_title"] == "Authoritative row 600"
 
 
 # ---------------------------------------------------------------------------
