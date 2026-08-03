@@ -103,6 +103,19 @@ BLOCKED_CLAIM_TOKENS = {
     "fungus treatment",
 }
 
+# PI-RECOMPUTE-20260803-01.  These are deliberately versioned at the queue
+# layer as part of the persisted recompute ruleset.  Keep the names stable:
+# they are operator-facing review reason codes, not provider output.
+UNUSUAL_SPEC_CLAIM_RULES = (
+    ("unusual_wattage", re.compile(r"(?<!\w)(\d[\d,.]*)\s*(?:w|watt|watts)\b", re.IGNORECASE), 10_000),
+    ("unusual_battery_duration", re.compile(r"(?<!\w)(\d[\d,.]*)\s*(?:jam|hours?|hrs?)\b", re.IGNORECASE), 48),
+)
+UNUSUAL_WARRANTY_PATTERN = re.compile(
+    r"(?:(?:waranti|warranty|jaminan)[^0-9]{0,24}(\d[\d,.]*)\s*(?:tahun|years?)\b|"
+    r"(\d[\d,.]*)\s*(?:tahun|years?)[^.;|]{0,24}(?:waranti|warranty|jaminan)\b)",
+    re.IGNORECASE,
+)
+
 
 FAMILY_PROFILES: dict[str, dict[str, str]] = {
     "LAUNDRY_DETERGENT_LIQUID_REFILL": {
@@ -510,6 +523,285 @@ def _contains_any(haystack: str, keywords: list[str]) -> bool:
         for keyword in keywords
         if (normalized_keyword := _normalize_key(keyword))
     )
+
+
+def _claim_body_text(product: dict[str, Any]) -> str:
+    """Return claim-bearing text without treating taxonomy labels as claims.
+
+    Category labels such as ``Health`` and ``Home Supplies`` are context for
+    claim review.  They are not, by themselves, a claim.  The previous bulk
+    path mixed those labels into a substring scan, which made a category label
+    indistinguishable from product copy.
+    """
+    fields = (
+        "raw_product_title",
+        "product_name",
+        "product_display_name",
+        "product_short_name",
+        "brand",
+        "product_knowledge_text",
+        "product_knowledge",
+        "benefits",
+        "benefits_text",
+        "usage",
+        "usage_text",
+        "target_customer",
+        "target_customer_text",
+        "warnings",
+        "warnings_text",
+        "ingredients",
+        "ingredients_text",
+        "package_notes",
+        "paste_anything_about_product",
+    )
+    return " ".join(
+        _normalize_key(product.get(field))
+        for field in fields
+        if product.get(field)
+    )
+
+
+def _claim_taxonomy_text(product: dict[str, Any]) -> str:
+    return " ".join(
+        _normalize_key(product.get(field))
+        for field in ("category", "subcategory", "type", "product_type", "product_type_id")
+        if product.get(field)
+    )
+
+
+def _claim_token_matches(text: str, token: str) -> bool:
+    normalized_token = _normalize_key(token)
+    return bool(
+        normalized_token
+        and re.search(
+            rf"(?<!\w){re.escape(normalized_token)}(?!\w)",
+            text,
+        )
+    )
+
+
+def _claim_context(product: dict[str, Any], family: str | None) -> dict[str, bool]:
+    body = _claim_body_text(product)
+    taxonomy = _claim_taxonomy_text(product)
+    full = f"{body} {taxonomy}".strip()
+    fashion = bool(
+        family
+        and (
+            family.startswith("fashion")
+            or family.startswith("APPAREL")
+        )
+    ) or _contains_any(
+        full,
+        [
+            "fashion",
+            "apparel",
+            "clothing",
+            "garment",
+            "menswear",
+            "womenswear",
+            "underwear",
+            "seluar",
+            "pants",
+            "baju",
+            "leggings",
+            "socks",
+            "stokin",
+            "textile",
+        ],
+    )
+    health_or_beauty = bool(
+        family
+        and family
+        in {
+            "MALE_HEALTH_SENSITIVE",
+            "FEMALE_HEALTH_SENSITIVE",
+            "HEALTH_SUPPLEMENT",
+            "BEAUTY_PERSONAL_CARE",
+            "beauty_fragrance",
+        }
+    ) or _contains_any(
+        taxonomy,
+        [
+            "health",
+            "supplement",
+            "medical",
+            "beauty",
+            "personal care",
+            "cosmetics",
+            "skincare",
+            "oral care",
+        ],
+    )
+    plant_or_pest = _contains_any(
+        full,
+        [
+            "herbicide",
+            "pesticide",
+            "weed killer",
+            "weed",
+            "grass killer",
+            "grass",
+            "rumpai",
+            "racun herba",
+            "racun rumpai",
+            "fertilizer",
+            "baja",
+            "plant growth",
+            "tumbuhan",
+            "garden",
+        ],
+    )
+    neutral_odor = _contains_any(
+        full,
+        [
+            "air freshener",
+            "car perfume",
+            "room perfume",
+            "fragrance",
+            "perfume",
+            "deodorizer",
+            "shoe rack",
+            "socks",
+            "stokin",
+        ],
+    )
+    body_odor_claim = _contains_any(
+        body,
+        [
+            "bau mulut",
+            "bau ketiak",
+            "bau badan",
+            "bau kaki",
+            "bad breath",
+            "underarm",
+            "deodorant",
+            "toothpaste",
+            "tooth cleaning",
+            "mouth spray",
+            "oral",
+            "gigi",
+            "nafas segar",
+        ],
+    )
+    fashion_fit_claim = _contains_any(
+        body,
+        [
+            "kulit",
+            "skin",
+            "payudara",
+            "breast",
+            "estrogen",
+            "intim",
+            "faraj",
+            "vagina",
+        ],
+    )
+    return {
+        "fashion": fashion,
+        "health_or_beauty": health_or_beauty,
+        "plant_or_pest": plant_or_pest,
+        "neutral_odor": neutral_odor,
+        "body_odor_claim": body_odor_claim,
+        "fashion_fit_claim": fashion_fit_claim,
+    }
+
+
+def _parse_claim_number(value: str) -> float | None:
+    try:
+        return float(value.replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _unusual_spec_claim_tokens(product: dict[str, Any]) -> list[str]:
+    raw_text = " ".join(
+        str(product.get(field) or "")
+        for field in (
+            "raw_product_title",
+            "product_name",
+            "product_display_name",
+            "product_short_name",
+            "product_knowledge_text",
+            "product_knowledge",
+            "benefits",
+            "benefits_text",
+            "usage",
+            "usage_text",
+            "package_notes",
+            "paste_anything_about_product",
+        )
+    )
+    tokens: list[str] = []
+    for token, pattern, threshold in UNUSUAL_SPEC_CLAIM_RULES:
+        for match in pattern.finditer(raw_text):
+            value = _parse_claim_number(match.group(1))
+            if value is not None and value >= threshold:
+                tokens.append(token)
+                break
+    for match in UNUSUAL_WARRANTY_PATTERN.finditer(raw_text):
+        value = _parse_claim_number(match.group(1) or match.group(2))
+        if value is not None and value >= 5:
+            tokens.append("unusual_warranty_duration")
+            break
+    return tokens
+
+
+def evaluate_product_claims(
+    product: dict[str, Any],
+    *,
+    family: str | None = None,
+) -> tuple[list[str], list[str], list[str]]:
+    """Evaluate claims with source/category context and explicit boundaries.
+
+    Returns ``(blocked_tokens, review_tokens, warnings)``.  This is the one
+    deterministic matcher used by both Product Intelligence and Smart
+    Registration completion, so queue recompute cannot drift from the review
+    draft classifier.
+    """
+    body = _claim_body_text(product)
+    context = _claim_context(product, family)
+    matched_blocked = sorted(
+        token for token in BLOCKED_CLAIM_TOKENS if _claim_token_matches(body, token)
+    )
+    matched_review: list[str] = []
+    for token in REVIEW_CLAIM_TOKENS:
+        if not _claim_token_matches(body, token):
+            continue
+        if token == "white":
+            # Colour/product-name usage is not a whitening claim.  Explicit
+            # complexion, skin or teeth language remains review-gated.
+            white_claim = bool(
+                re.search(
+                    r"(?:white|putih).{0,42}(?:skin|kulit|teeth|gigi|complexion|mencerah|pencerah|pemutih)|"
+                    r"(?:skin|kulit|teeth|gigi|complexion).{0,42}(?:white|putih)",
+                    body,
+                )
+            )
+            if not white_claim:
+                continue
+        elif token in {"anjal", "ketat", "rapat"}:
+            if context["fashion"] and not context["fashion_fit_claim"]:
+                continue
+        elif token == "growth":
+            if context["plant_or_pest"] and not context["health_or_beauty"]:
+                continue
+        elif token == "bau":
+            if context["neutral_odor"] and not context["body_odor_claim"]:
+                continue
+        matched_review.append(token)
+
+    for token in _unusual_spec_claim_tokens(product):
+        if token not in matched_review:
+            matched_review.append(token)
+
+    warnings: list[str] = []
+    if matched_blocked:
+        warnings.append("claim_context:blocked_claim_text")
+    if matched_review:
+        warnings.append("claim_context:human_review_required")
+    if any(token.startswith("unusual_") for token in matched_review):
+        warnings.append("claim_context:unusual_specification")
+    return matched_blocked, sorted(matched_review), warnings
 
 
 def _first_non_empty(*values: Any) -> str | None:
@@ -1089,22 +1381,10 @@ def _resolve_claim_gate(
     family: str,
     copy_route: str,
 ) -> tuple[str, list[str], list[str]]:
-    haystack = _joined_product_text(product)
-    matched_review = sorted(
-        {
-            token
-            for token in REVIEW_CLAIM_TOKENS
-            if _normalize_key(token) in haystack
-        }
+    matched_blocked, matched_review, warnings = evaluate_product_claims(
+        product,
+        family=family,
     )
-    matched_blocked = sorted(
-        {
-            token
-            for token in BLOCKED_CLAIM_TOKENS
-            if _normalize_key(token) in haystack
-        }
-    )
-    warnings: list[str] = []
     if matched_blocked:
         warnings.append("claim_gate:blocked_tokens_present")
         return "CLAIM_BLOCKED", matched_review + matched_blocked, warnings
@@ -1164,7 +1444,34 @@ def _resolve_family_from_title(product: dict[str, Any]) -> tuple[str | None, str
         return ("MALE_HEALTH_SENSITIVE", "title_evidence:male_health_sensitive_keywords")
     if _contains_any(
         haystack,
-        ["female health", "wanita", "perempuan", "perapat", "ketat", "keputihan", "miss v", "intim wanita", "kewanitaan", "jamu wanita"],
+        [
+            "female health",
+            "wanita",
+            "perempuan",
+            "perapat",
+            "keputihan",
+            "miss v",
+            "intim wanita",
+            "kewanitaan",
+            "jamu wanita",
+        ],
+    ) or (
+        _contains_any(haystack, ["ketat", "rapat"])
+        and not _contains_any(
+            haystack,
+            [
+                "seluar",
+                "pants",
+                "leggings",
+                "baju",
+                "dress",
+                "skirt",
+                "clothing",
+                "apparel",
+                "garment",
+                "sportswear",
+            ],
+        )
     ):
         return ("FEMALE_HEALTH_SENSITIVE", "title_evidence:female_health_sensitive_keywords")
     if _contains_any(

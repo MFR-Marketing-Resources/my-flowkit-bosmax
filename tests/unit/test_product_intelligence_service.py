@@ -6,6 +6,7 @@ from agent.services import product_intelligence_service as intelligence_service
 from agent.services.product_intelligence import enrich_product
 from agent.services.product_intelligence_service import (
     _resolve_sales_metrics,
+    evaluate_product_claims,
     get_product_intelligence_backfill_preview,
     inject_product_intelligence_fields,
     resolve_product_intelligence_profile,
@@ -28,6 +29,77 @@ def _product(**overrides):
     }
     payload.update(overrides)
     return payload
+
+
+@pytest.mark.parametrize(
+    ("title", "category", "expected_absent"),
+    [
+        ("Premium White Candle", "Home Supplies", "white"),
+        ("Seluar pinggang anjal", "Menswear", "anjal"),
+        ("Kill Grass Weed Killer", "Home Supplies", "growth"),
+        ("Air Freshener Menghilangkan Bau", "Home Supplies", "bau"),
+        ("Stokin Anti-Bau", "Menswear", "bau"),
+    ],
+)
+def test_claim_classifier_uses_product_context_for_known_false_positive_terms(
+    title, category, expected_absent
+):
+    blocked, review, warnings = evaluate_product_claims(
+        _product(
+            raw_product_title=title,
+            product_display_name=title,
+            category=category,
+            product_knowledge_text=(
+                "Inhibits weed growth" if "Weed" in title else ""
+            ),
+        )
+    )
+
+    assert blocked == []
+    assert expected_absent not in review
+    assert "claim_context:human_review_required" not in warnings
+
+
+def test_claim_classifier_preserves_body_odor_and_sensitive_claim_review():
+    _, body_odor_review, _ = evaluate_product_claims(
+        _product(
+            raw_product_title="Deodorant Hilang Bau Ketiak",
+            category="Beauty & Personal Care",
+            product_knowledge_text="Untuk bau ketiak sepanjang hari",
+        )
+    )
+    _, sensitive_review, _ = evaluate_product_claims(
+        _product(
+            raw_product_title="Whitening Detox Supplement",
+            category="Health",
+            product_knowledge_text=(
+                "Mencerahkan kulit, membantu detox selepas bersalin untuk penjagaan intim"
+            ),
+        )
+    )
+
+    assert "bau" in body_odor_review
+    assert {"whitening", "detox", "supplement", "mencerahkan"}.issubset(
+        set(sensitive_review)
+    )
+
+
+def test_claim_classifier_flags_unusual_numeric_specifications_for_review():
+    _, review, warnings = evaluate_product_claims(
+        _product(
+            raw_product_title=(
+                "Waranti 10 Tahun LED 2200,000W dengan 96 Jam Bateri"
+            ),
+            category="Sports & Outdoor",
+        )
+    )
+
+    assert {
+        "unusual_wattage",
+        "unusual_battery_duration",
+        "unusual_warranty_duration",
+    }.issubset(set(review))
+    assert "claim_context:unusual_specification" in warnings
 
 
 def test_detergent_resolves_to_laundry_care_direct_and_claim_review_when_antibacterial_token_exists():
