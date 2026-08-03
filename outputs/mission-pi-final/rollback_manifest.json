@@ -1,0 +1,23 @@
+{
+ "live_db": {
+  "path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
+  "size": 298856448
+ },
+ "backup": {
+  "path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\.ai\\backups\\flow_agent_PRE_PIFINAL_20260803T042016Z.db",
+  "size": 296689664,
+  "sha256": "a938df9aee79e01fb4329a599f86bf52dade4852c240b5fdeca7eb23175603d1"
+ },
+ "timestamp": "20260803T042016Z",
+ "method": "sqlite VACUUM INTO (logical snapshot of committed state)",
+ "restore_method": "stop runtime; copy backup over flow_agent.db (delete -wal/-shm); restart runtime",
+ "restore_test": {
+  "integrity_check": "ok",
+  "foreign_key_check_violations": 0,
+  "physical_rows_match": true,
+  "canonical_real_match": true,
+  "alias_match": true,
+  "residual_ids_match": true,
+  "product_hash_match": true
+ }
+}

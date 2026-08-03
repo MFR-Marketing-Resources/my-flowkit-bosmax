@@ -3074,6 +3074,9 @@ CREATE TABLE IF NOT EXISTS product_intelligence_review_draft (
     approved_at TEXT,
     rejected_by TEXT,
     rejected_at TEXT,
+    revision_of_draft_id TEXT,
+    revision_of_snapshot_id TEXT,
+    revision_reason TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -3110,6 +3113,9 @@ CREATE TABLE IF NOT EXISTS product_intelligence_review_field_provenance (
     claim_risk_flag TEXT,
     reviewer_decision TEXT,
     reviewer_note TEXT,
+    inherited_from_draft_id TEXT,
+    inherited_from_snapshot_id TEXT,
+    inherited_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -3728,6 +3734,35 @@ CREATE INDEX IF NOT EXISTS idx_product_treatment_factory_event_plan ON product_t
             f"CREATE UNIQUE INDEX IF NOT EXISTS {UNIQUE_OPEN_DRAFT_INDEX} "
             "ON product_intelligence_review_draft(product_id) "
             "WHERE review_status NOT IN ('APPROVED','REJECTED','SUPERSEDED')")
+        await db.commit()
+
+        # ── PI-FINAL-B01: revision lineage columns are part of the durable schema ──
+        # `create_revision_draft` writes revision_of_draft_id / revision_of_snapshot_id /
+        # revision_reason. They are in the CREATE TABLE DDL for fresh databases; this
+        # idempotent ALTER upgrades any older valid database that predates them, so no
+        # manual SQL is ever required after deployment.
+        draft_cols_cursor = await db.execute(
+            "PRAGMA table_info(product_intelligence_review_draft)")
+        draft_existing_cols = {row[1] for row in await draft_cols_cursor.fetchall()}
+        for lineage_col in ("revision_of_draft_id", "revision_of_snapshot_id", "revision_reason"):
+            if lineage_col not in draft_existing_cols:
+                await db.execute(
+                    "ALTER TABLE product_intelligence_review_draft "
+                    f"ADD COLUMN {lineage_col} TEXT")
+                logger.info(
+                    "Migrated: added %s column to product_intelligence_review_draft",
+                    lineage_col)
+        prov_cols_cursor = await db.execute(
+            "PRAGMA table_info(product_intelligence_review_field_provenance)")
+        prov_existing_cols = {row[1] for row in await prov_cols_cursor.fetchall()}
+        for lineage_col in ("inherited_from_draft_id", "inherited_from_snapshot_id", "inherited_at"):
+            if lineage_col not in prov_existing_cols:
+                await db.execute(
+                    "ALTER TABLE product_intelligence_review_field_provenance "
+                    f"ADD COLUMN {lineage_col} TEXT")
+                logger.info(
+                    "Migrated: added %s column to product_intelligence_review_field_provenance",
+                    lineage_col)
         await db.commit()
 
     logger.info("Database initialized at %s", DB_PATH)

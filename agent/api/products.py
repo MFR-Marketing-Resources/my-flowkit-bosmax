@@ -1611,8 +1611,11 @@ async def create_product_intelligence_revision_draft(product_id: str, request: d
         )
         return draft.model_dump()
     except ValueError as exc:
-        if str(exc) == "PRODUCT_NOT_FOUND":
-            raise HTTPException(status_code=404, detail="PRODUCT_NOT_FOUND") from exc
+        detail = str(exc)
+        if detail in ("PRODUCT_NOT_FOUND", "SOURCE_SNAPSHOT_NOT_FOUND"):
+            raise HTTPException(status_code=404, detail=detail) from exc
+        if detail in ("SOURCE_SNAPSHOT_PRODUCT_MISMATCH", "SOURCE_SNAPSHOT_NOT_APPROVED"):
+            raise HTTPException(status_code=409, detail=detail) from exc
         raise
 
 

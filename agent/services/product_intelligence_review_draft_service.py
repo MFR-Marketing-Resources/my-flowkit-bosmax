@@ -9,7 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 from agent.db import crud
-from agent.db.schema import _db_lock, get_db
+from agent.db.schema import _db_lock, atomic, get_db
 from agent.models.product_intelligence_review_draft import (
     ProductIntelligenceFieldDispositionRequest,
     ProductIntelligenceReviewDraft,
@@ -1104,89 +1104,136 @@ async def create_revision_draft(
 ) -> ProductIntelligenceReviewDraft:
     """Production-safe revision lifecycle: create a NEW non-terminal draft seeded from the latest
     approved snapshot (or latest terminal draft, or the product), cloning provenance with explicit
-    lineage. NEVER mutates a terminal draft or snapshot. Idempotent: reuses the single open draft
-    the partial-unique index permits. The subsequent PATCH + approve run the real validator/claim
-    gate and supersede the prior snapshot version — no immutability is violated."""
-    product = await _get_product_or_raise(product_id)
+    lineage. NEVER mutates a terminal draft or snapshot. Idempotent: retrying with the same
+    revision_reason returns the one open revision draft the partial-unique index permits.
+
+    The ENTIRE operation (product resolution, seed validation, open-draft conflict resolution,
+    draft insertion, lineage, provenance cloning, readback) runs inside ONE atomic() boundary:
+    on any failure nothing is committed — no partial draft, no partial provenance, no orphaned
+    supersession. An unrelated open draft (no revision lineage, or a different revision reason)
+    is never silently reused and never deleted: it is transitioned to SUPERSEDED with an audit
+    note, preserving its content and provenance as history.
+    """
     db = await get_db()
     now = _now_iso()
+    async with atomic():
+        product = await _get_product_or_raise(product_id)
 
-    # idempotent reuse of the one permitted open draft
-    cur = await db.execute(
-        "SELECT * FROM product_intelligence_review_draft WHERE product_id=? "
-        "AND review_status NOT IN ('APPROVED','REJECTED','SUPERSEDED') "
-        "ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 1", (product_id,))
-    open_row = await cur.fetchone(); await cur.close()
-    if open_row:
-        prov = await _load_provenance_for_draft(str(open_row["draft_id"]))
-        return _row_to_draft(dict(open_row), provenance_items=prov)
+        # explicit seed must be validated BEFORE any state is touched — fail closed
+        explicit_seed_row = None
+        if source_snapshot_id:
+            cur = await db.execute(
+                "SELECT * FROM product_intelligence_snapshot WHERE snapshot_id=?",
+                (source_snapshot_id,))
+            explicit_seed_row = await cur.fetchone(); await cur.close()
+            if not explicit_seed_row:
+                raise ValueError("SOURCE_SNAPSHOT_NOT_FOUND")
+            if str(explicit_seed_row["product_id"]) != str(product_id):
+                raise ValueError("SOURCE_SNAPSHOT_PRODUCT_MISMATCH")
+            if str(explicit_seed_row["status"]) != "APPROVED":
+                raise ValueError("SOURCE_SNAPSHOT_NOT_APPROVED")
 
-    # seed authority: latest approved snapshot -> latest terminal draft -> product
-    seed: dict[str, Any] = {}
-    seed_draft_id = None
-    seed_snapshot_id = None
-    if source_snapshot_id:
-        cur = await db.execute("SELECT * FROM product_intelligence_snapshot WHERE snapshot_id=?", (source_snapshot_id,))
-    else:
-        cur = await db.execute(
-            "SELECT * FROM product_intelligence_snapshot WHERE product_id=? AND status='APPROVED' "
-            "ORDER BY version DESC, approved_at DESC LIMIT 1", (product_id,))
-    snap = await cur.fetchone(); await cur.close()
-    if snap:
-        seed = dict(snap); seed_snapshot_id = str(snap["snapshot_id"])
-        seed_draft_id = snap["created_from_review_draft_id"]
-    else:
+        # one open draft may exist (partial unique index). Reuse it ONLY when it is a
+        # valid revision of this recovery (lineage present + same revision reason);
+        # anything else is unrelated debris — supersede it through the governed
+        # lifecycle (audited, preserved), never reuse, never delete.
         cur = await db.execute(
             "SELECT * FROM product_intelligence_review_draft WHERE product_id=? "
+            "AND review_status NOT IN ('APPROVED','REJECTED','SUPERSEDED') "
             "ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 1", (product_id,))
-        term = await cur.fetchone(); await cur.close()
-        if term:
-            seed = dict(term); seed_draft_id = str(term["draft_id"])
-        else:
-            seed = _seed_payload_from_product(product)
-
-    new_id = str(uuid4())
-    cols = ["draft_id", "product_id", "review_status", "reviewer_note", "created_by", "reviewed_by",
-            "revision_of_draft_id", "revision_of_snapshot_id", "revision_reason", "created_at", "updated_at"]
-    vals = [new_id, product_id, "READY_FOR_REVIEW",
-            f"PI-13 revision of snapshot={seed_snapshot_id} draft={seed_draft_id}: {revision_reason or ''}",
-            created_by, created_by, seed_draft_id, seed_snapshot_id, revision_reason, now, now]
-    defaults = {"benefits_json": "[]", "usp_json": "[]", "source_urls_json": "{}", "image_evidence_json": "{}",
-                "claim_tokens_json": "[]", "allowed_claims_json": "[]", "blocked_claims_json": "[]",
-                "buyer_persona_snapshot_json": "{}", "copy_strategy_summary_json": "{}"}
-    for f in _REVISION_COPY_FIELDS:
-        cols.append(f)
-        v = seed.get(f)
-        if v is None and f in defaults:
-            v = defaults[f]
-        vals.append(v)
-    await db.execute(
-        f"INSERT INTO product_intelligence_review_draft ({','.join(cols)}) VALUES ({','.join(['?'] * len(cols))})",
-        vals)
-    # clone provenance from the seed draft into the revision, with inherited lineage
-    if seed_draft_id:
-        srccur = await db.execute(
-            "SELECT * FROM product_intelligence_review_field_provenance WHERE draft_id=?", (seed_draft_id,))
-        for pr in await srccur.fetchall():
-            pr = dict(pr)
+        open_row = await cur.fetchone(); await cur.close()
+        superseded_open_draft_id = None
+        if open_row:
+            open_draft = dict(open_row)
+            has_lineage = bool(open_draft.get("revision_of_snapshot_id")
+                               or open_draft.get("revision_of_draft_id"))
+            same_reason = (revision_reason is None
+                           or (open_draft.get("revision_reason") or "") == revision_reason)
+            if has_lineage and open_draft.get("revision_reason") and same_reason:
+                prov = await _load_provenance_for_draft(str(open_draft["draft_id"]))
+                return _row_to_draft(open_draft, provenance_items=prov)
+            superseded_open_draft_id = str(open_draft["draft_id"])
+            audit_note = (
+                f"[REVISION_LIFECYCLE_SUPERSEDED at {now}: unrelated open draft "
+                f"(lineage={'present' if has_lineage else 'absent'}, "
+                f"reason={open_draft.get('revision_reason')!r}) superseded to make way for "
+                f"revision reason={revision_reason!r} by {created_by or 'operator'}; "
+                f"content and provenance preserved]")
+            existing_note = str(open_draft.get("reviewer_note") or "").strip()
             await db.execute(
-                "INSERT INTO product_intelligence_review_field_provenance (review_provenance_id, draft_id, "
-                "product_id, field_name, declared_value, normalized_value, source_type, source_url, "
-                "source_lane, evidence_kind, extraction_method, confidence_score, verification_status, "
-                "claim_risk_flag, reviewer_decision, reviewer_note, inherited_from_draft_id, "
-                "inherited_from_snapshot_id, inherited_at, created_at, updated_at) VALUES "
-                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (str(uuid4()), new_id, product_id, pr.get("field_name"), pr.get("declared_value"),
-                 pr.get("normalized_value"), pr.get("source_type"), pr.get("source_url"),
-                 pr.get("source_lane"), pr.get("evidence_kind"), pr.get("extraction_method"),
-                 pr.get("confidence_score"), pr.get("verification_status"), pr.get("claim_risk_flag"),
-                 pr.get("reviewer_decision"), pr.get("reviewer_note"), seed_draft_id, seed_snapshot_id,
-                 now, now, now))
-        await srccur.close()
-    await db.commit()
-    cur = await db.execute("SELECT * FROM product_intelligence_review_draft WHERE draft_id=?", (new_id,))
-    row = await cur.fetchone(); await cur.close()
-    prov = await _load_provenance_for_draft(new_id)
+                "UPDATE product_intelligence_review_draft "
+                "SET review_status='SUPERSEDED', reviewer_note=?, updated_at=? "
+                "WHERE draft_id=?",
+                ("\n".join(part for part in (existing_note, audit_note) if part),
+                 now, superseded_open_draft_id))
+
+        # seed authority: explicit validated snapshot -> latest approved snapshot ->
+        # latest terminal draft -> product row
+        seed: dict[str, Any] = {}
+        seed_draft_id = None
+        seed_snapshot_id = None
+        snap = explicit_seed_row
+        if snap is None:
+            cur = await db.execute(
+                "SELECT * FROM product_intelligence_snapshot WHERE product_id=? AND status='APPROVED' "
+                "ORDER BY version DESC, approved_at DESC LIMIT 1", (product_id,))
+            snap = await cur.fetchone(); await cur.close()
+        if snap:
+            seed = dict(snap); seed_snapshot_id = str(snap["snapshot_id"])
+            seed_draft_id = snap["created_from_review_draft_id"]
+        else:
+            cur = await db.execute(
+                "SELECT * FROM product_intelligence_review_draft WHERE product_id=? "
+                f"AND review_status IN ({','.join('?' * len(TERMINAL_STATUSES))}) "
+                "ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 1",
+                (product_id, *TERMINAL_STATUSES))
+            term = await cur.fetchone(); await cur.close()
+            if term:
+                seed = dict(term); seed_draft_id = str(term["draft_id"])
+            else:
+                seed = _seed_payload_from_product(product)
+
+        new_id = str(uuid4())
+        cols = ["draft_id", "product_id", "review_status", "reviewer_note", "created_by", "reviewed_by",
+                "revision_of_draft_id", "revision_of_snapshot_id", "revision_reason", "created_at", "updated_at"]
+        vals = [new_id, product_id, "READY_FOR_REVIEW",
+                f"PI revision of snapshot={seed_snapshot_id} draft={seed_draft_id}: {revision_reason or ''}",
+                created_by, created_by, seed_draft_id, seed_snapshot_id, revision_reason, now, now]
+        defaults = {"benefits_json": "[]", "usp_json": "[]", "source_urls_json": "{}", "image_evidence_json": "{}",
+                    "claim_tokens_json": "[]", "allowed_claims_json": "[]", "blocked_claims_json": "[]",
+                    "buyer_persona_snapshot_json": "{}", "copy_strategy_summary_json": "{}"}
+        for f in _REVISION_COPY_FIELDS:
+            cols.append(f)
+            v = seed.get(f)
+            if v is None and f in defaults:
+                v = defaults[f]
+            vals.append(v)
+        await db.execute(
+            f"INSERT INTO product_intelligence_review_draft ({','.join(cols)}) VALUES ({','.join(['?'] * len(cols))})",
+            vals)
+        # clone provenance from the seed draft into the revision, with inherited lineage
+        if seed_draft_id:
+            srccur = await db.execute(
+                "SELECT * FROM product_intelligence_review_field_provenance WHERE draft_id=?", (seed_draft_id,))
+            for pr in await srccur.fetchall():
+                pr = dict(pr)
+                await db.execute(
+                    "INSERT INTO product_intelligence_review_field_provenance (review_provenance_id, draft_id, "
+                    "product_id, field_name, declared_value, normalized_value, source_type, source_url, "
+                    "source_lane, evidence_kind, extraction_method, confidence_score, verification_status, "
+                    "claim_risk_flag, reviewer_decision, reviewer_note, inherited_from_draft_id, "
+                    "inherited_from_snapshot_id, inherited_at, created_at, updated_at) VALUES "
+                    "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (str(uuid4()), new_id, product_id, pr.get("field_name"), pr.get("declared_value"),
+                     pr.get("normalized_value"), pr.get("source_type"), pr.get("source_url"),
+                     pr.get("source_lane"), pr.get("evidence_kind"), pr.get("extraction_method"),
+                     pr.get("confidence_score"), pr.get("verification_status"), pr.get("claim_risk_flag"),
+                     pr.get("reviewer_decision"), pr.get("reviewer_note"), seed_draft_id, seed_snapshot_id,
+                     now, now, now))
+            await srccur.close()
+        cur = await db.execute("SELECT * FROM product_intelligence_review_draft WHERE draft_id=?", (new_id,))
+        row = await cur.fetchone(); await cur.close()
+        prov = await _load_provenance_for_draft(new_id)
     return _row_to_draft(dict(row), provenance_items=prov)
 
 

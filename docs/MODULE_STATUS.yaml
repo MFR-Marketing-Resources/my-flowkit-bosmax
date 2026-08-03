@@ -1049,6 +1049,16 @@ domains:
       - outputs/mission-pi12/pi13_evidence_batch2.json
       - outputs/mission-pi12/pi13_grounding_results.json
       - tests/unit/test_pi13_copy_eligibility.py
+      # PI-FINAL zero-debt closure: hardened atomic revision lifecycle (B01),
+      # residual-cohort recovery artifacts (B02), claim adjudication (B03),
+      # copy-eligibility enforcement + stale-asset quarantine (B04), final
+      # reconciliation workbook (B05).
+      - tests/unit/test_pi_final_revision_lifecycle.py
+      - outputs/mission-pi-final/phase0_baseline_backup.py
+      - outputs/mission-pi-final/phase0_baseline.json
+      - outputs/mission-pi-final/rollback_manifest.json
+      - outputs/mission-pi-final/build_residual_manifest.py
+      - outputs/mission-pi-final/residual_manifest.json
       - tests/unit/test_reporting_service.py
       - tests/api/test_reporting_api.py
       - dashboard/src/api/reporting.ts
