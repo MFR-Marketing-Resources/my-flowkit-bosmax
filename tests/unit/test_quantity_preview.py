@@ -57,6 +57,15 @@ def _fake_compile(dialogue_by_copy_set, *, extend=False, counter=None):
 
 
 # ── pure fail-closed evaluator ───────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def _b04_eligibility_pass(monkeypatch):
+    """PI-FINAL-B04: non-DB/mocked product paths pass the gate."""
+    async def _ok(product_id: str = '', *a, **k):
+        return {"product_id": product_id, "eligible": True, "reasons": []}
+    monkeypatch.setattr("agent.services.copy_eligibility_service.assert_copy_eligible", _ok)
+    monkeypatch.setattr("agent.services.copy_eligibility_service.copy_eligibility", _ok)
+
 def test_uniqueness_evaluator_passes_distinct():
     items = [
         {"item_index": 0, "dialogue_fingerprint": "a", "dialogue_summary": "one"},

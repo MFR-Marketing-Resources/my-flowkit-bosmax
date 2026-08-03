@@ -26,6 +26,15 @@ from agent.services.poster_deliverable_service import (
 )
 
 
+
+@pytest.fixture(autouse=True)
+def _b04_eligibility_pass(monkeypatch):
+    """PI-FINAL-B04: non-DB/mocked product paths pass the gate."""
+    async def _ok(product_id: str = '', *a, **k):
+        return {"product_id": product_id, "eligible": True, "reasons": []}
+    monkeypatch.setattr("agent.services.copy_eligibility_service.assert_copy_eligible", _ok)
+    monkeypatch.setattr("agent.services.copy_eligibility_service.copy_eligibility", _ok)
+
 @pytest.fixture(autouse=True)
 def _allow_tmp_background(tmp_path, monkeypatch):
     """Whitelist the pytest tmp dir as an allowed background root."""

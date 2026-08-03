@@ -41,7 +41,7 @@ async def _product_with_snapshot(name, pains):
     draft = await draft_svc.create_review_draft(product["id"], _full_request(pains))
     await draft_svc.approve_review_draft(
         draft.draft_id,
-        ProductIntelligenceReviewDraftApproveRequest(approved_by="op"),
+        ProductIntelligenceReviewDraftApproveRequest(approved_by="op", claim_review_acknowledged=True),
     )
     return product["id"]
 
@@ -114,7 +114,7 @@ async def test_suggest_without_snapshot_raises(monkeypatch):
         product_display_name="Suggest No Snap",
     )
     _stub_provider(monkeypatch, {"angles": ["x"]})
-    with pytest.raises(ValueError, match="NO_APPROVED_SNAPSHOT"):
+    with pytest.raises(ValueError, match="COPY_INELIGIBLE|NO_APPROVED_SNAPSHOT|NO_ACCEPTED_SNAPSHOT"):
         await svc.suggest_product_angles(product["id"])
 
 

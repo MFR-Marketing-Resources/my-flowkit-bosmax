@@ -43,6 +43,12 @@ async def execute_next_variant(batch_id: str, dry_run: bool = True, max_variants
     if batch["status"] != "QUEUED":
         return {"error": f"Batch status is {batch['status']}, must be QUEUED to execute."}
 
+    # PI-FINAL-B04 fire-time revalidation.
+    from agent.services.copy_eligibility_service import copy_eligibility
+    _elig = await copy_eligibility(str(batch["product_id"] or ""))
+    if not _elig["eligible"]:
+        return {"error": "COPY_INELIGIBLE:" + ",".join(_elig["reasons"])}
+
     target_status = "QUEUED" if dry_run else "DRY_RUN_VALIDATED"
 
     # Find next variant for the current execution phase.
@@ -87,6 +93,12 @@ async def requeue_variant(batch_id: str, variant_id: str) -> dict[str, Any]:
     variant = await cursor.fetchone()
     if not variant:
         return {"error": "Variant not found"}
+
+    # PI-FINAL-B04: retry may not resurrect an ineligible product's variant.
+    from agent.services.copy_eligibility_service import copy_eligibility
+    _elig = await copy_eligibility(str(batch["product_id"] or ""))
+    if not _elig["eligible"]:
+        return {"error": "COPY_INELIGIBLE:" + ",".join(_elig["reasons"])}
 
     if variant["queue_status"] not in ALLOWED_REQUEUE_STATUSES:
         return {
@@ -236,6 +248,16 @@ async def execute_variant(variant_id: str, dry_run: bool = True) -> dict[str, An
                 f"must be {expected_status}."
             )
         }
+
+    # PI-FINAL-B04 fire-time revalidation via the variant's batch product.
+    _bcur = await db.execute(
+        "SELECT product_id FROM batch WHERE id = ?", (variant["batch_id"],))
+    _brow = await _bcur.fetchone()
+    if _brow is not None:
+        from agent.services.copy_eligibility_service import copy_eligibility
+        _elig = await copy_eligibility(str(_brow["product_id"] or ""))
+        if not _elig["eligible"]:
+            return {"error": "COPY_INELIGIBLE:" + ",".join(_elig["reasons"])}
 
     from agent.db.schema import _db_lock
     async with _db_lock:

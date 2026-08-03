@@ -1,0 +1,52 @@
+[
+ {
+  "product_id": "b3b3b01b-ecb4-4bb6-8745-1db016b2df60",
+  "result": "APPROVED",
+  "readiness": "READY_WITH_GOVERNED_ABSENCE",
+  "completeness": 0.8571
+ },
+ {
+  "product_id": "b527d024-7d61-4b6f-8828-6367f25469ef",
+  "result": "APPROVED",
+  "readiness": "READY_WITH_GOVERNED_ABSENCE",
+  "completeness": 0.7857
+ },
+ {
+  "product_id": "a6c94806-15dc-460c-b56c-ea674ce662e7",
+  "result": "APPROVED",
+  "readiness": "READY_WITH_GOVERNED_ABSENCE",
+  "completeness": 0.8571
+ },
+ {
+  "product_id": "8e6587c3-f736-42d1-9005-64c89ad622cf",
+  "result": "APPROVED",
+  "readiness": "READY_WITH_GOVERNED_ABSENCE",
+  "completeness": 0.8571
+ },
+ {
+  "product_id": "9b357eeb-f1ff-4c4b-a3a1-4c1d94a6c8b2",
+  "result": "APPROVED",
+  "readiness": "READY_WITH_GOVERNED_ABSENCE",
+  "completeness": 0.8571
+ },
+ {
+  "product_id": "d534fc2e-d52d-44f3-98c8-ebdd431421c4",
+  "result": "APPROVED",
+  "readiness": "READY_WITH_GOVERNED_ABSENCE",
+  "completeness": 0.7857
+ },
+ {
+  "product_id": "822e7269-11d9-4b6c-9a51-59abfe448ff6",
+  "result": "APPROVED",
+  "readiness": "READY_WITH_GOVERNED_ABSENCE",
+  "completeness": 0.7857
+ },
+ {
+  "product_id": "ad805d7d-e6fa-4a05-ad96-edc8e0295ae8",
+  "result": "REVIEW",
+  "reason": "CLAIM_BLOCKED",
+  "tokens": [
+   "treat"
+  ]
+ }
+]

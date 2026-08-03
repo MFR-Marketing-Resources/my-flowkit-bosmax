@@ -79,6 +79,10 @@ async def expand_product_angles(
     if not pains_in:
         raise ValueError("NO_PAINS_PROVIDED")
 
+    # PI-FINAL-B04: angle expansion re-approves persona content - COPY_ELIGIBLE only.
+    from agent.services.copy_eligibility_service import assert_copy_eligible
+    await assert_copy_eligible(product_id)
+
     snap = await crud.get_latest_approved_product_intelligence_snapshot(product_id)
     if not snap:
         raise ValueError("NO_APPROVED_SNAPSHOT")

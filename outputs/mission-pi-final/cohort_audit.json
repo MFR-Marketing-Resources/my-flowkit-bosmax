@@ -1,0 +1,55 @@
+{
+ "stats": {
+  "products": 603,
+  "active": 402,
+  "archived": 201,
+  "eligible_active": 402,
+  "pi_complete_archived": 201
+ },
+ "defects": [
+  {
+   "product_id": "6c34369a-4903-4e71-8ebd-e76d01c634e5",
+   "defect": "GENERIC_TEXT",
+   "markers": [
+    "xxx"
+   ]
+  },
+  {
+   "product_id": "8ae553d2-4810-4d03-926b-5f2f1282c21c",
+   "defect": "GENERIC_TEXT",
+   "markers": [
+    "xxx"
+   ]
+  },
+  {
+   "product_id": "91cec488-8c69-4df0-af5c-371db70ec384",
+   "defect": "GENERIC_TEXT",
+   "markers": [
+    "xxx"
+   ]
+  },
+  {
+   "product_id": "c1f000cc-4f91-4986-b487-9e8c0d5e9e7d",
+   "defect": "GENERIC_TEXT",
+   "markers": [
+    "xxx"
+   ]
+  },
+  {
+   "product_id": "dc833ab3-cd2e-4968-b9db-40210aba38dc",
+   "defect": "GENERIC_TEXT",
+   "markers": [
+    "xxx"
+   ]
+  },
+  {
+   "product_id": "eabfa9fb-7676-49c6-9d33-ba38f0d835b8",
+   "defect": "GENERIC_TEXT",
+   "markers": [
+    "xxx"
+   ]
+  }
+ ],
+ "defect_count": 6,
+ "suspicious_duplicate_personas_gt25": []
+}

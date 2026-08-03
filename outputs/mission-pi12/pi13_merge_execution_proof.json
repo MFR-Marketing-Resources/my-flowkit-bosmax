@@ -1,0 +1,359 @@
+{
+ "action": "C3_CANONICAL_MERGE_EXECUTED",
+ "pairs_merged": 48,
+ "before": {
+  "total_real": 651,
+  "residual_debt": 116,
+  "LEGACY": 82,
+  "MISSING": 34
+ },
+ "after": {
+  "total_real": 603,
+  "merged_aliases_excluded": 48,
+  "residual_debt": 68,
+  "LEGACY": 43,
+  "MISSING": 25
+ },
+ "product_table_hash_before": "c25ee92343c5cf324737c25edf69736f5ba887f363e2524776cce3e7c42dfd08",
+ "product_table_hash_after": "c08e6e22c71b58699b7ce64546c237123ab0f830a2dd4b5154929a6c0c165783",
+ "no_deletion": true,
+ "audit_preserved": true,
+ "merged_pairs": [
+  {
+   "duplicate": "012e9fd6-dea4-4ebc-a4ca-27669b2eaccb",
+   "canonical": "ed23c97d-4db5-4712-8b8a-135ed8083542",
+   "platform_id": "1734066442766091520",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:ed23c97d-4db5-4712-8b8a-135ed8083542"
+  },
+  {
+   "duplicate": "07b2fcdf-a9ab-4d5d-a10d-15a9b291af62",
+   "canonical": "e10804b5-5d06-4b2a-9b66-2d32ca35841a",
+   "platform_id": "1735105410377549369",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:e10804b5-5d06-4b2a-9b66-2d32ca35841a"
+  },
+  {
+   "duplicate": "0ab23ee4-6947-4966-96b1-906a3cdc98e6",
+   "canonical": "6836091d-2269-4ade-9f8f-22e0487306b2",
+   "platform_id": "1729633305342216391",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:6836091d-2269-4ade-9f8f-22e0487306b2"
+  },
+  {
+   "duplicate": "5985b3b4-a785-4347-a3ec-17e4f99ba928",
+   "canonical": "0ac2b28f-84d2-461e-9df7-9d5b27745d26",
+   "platform_id": "1729581311932335955",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:0ac2b28f-84d2-461e-9df7-9d5b27745d26"
+  },
+  {
+   "duplicate": "b978fd30-a6c3-47fd-8f16-a4eb263c8f3c",
+   "canonical": "0b2d2726-42fc-436a-b493-ceca1295f8d9",
+   "platform_id": "1730887849711339480",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:0b2d2726-42fc-436a-b493-ceca1295f8d9"
+  },
+  {
+   "duplicate": "cd70b493-990c-4a6f-8bd6-776765d8e04e",
+   "canonical": "0df5249a-c670-4f44-8ec5-c83f7cb77478",
+   "platform_id": "1732757236215874606",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:0df5249a-c670-4f44-8ec5-c83f7cb77478"
+  },
+  {
+   "duplicate": "1042b094-0624-4b62-ba4d-598d6f8ff825",
+   "canonical": "82f42b81-d373-424b-88d7-fddffeb0c807",
+   "platform_id": "1732194677040710759",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:82f42b81-d373-424b-88d7-fddffeb0c807"
+  },
+  {
+   "duplicate": "5039d290-5932-41fd-bc25-e5ace3c8e744",
+   "canonical": "15dae875-292c-4d5f-833e-8cc9c8e01449",
+   "platform_id": "1732015588716086569",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:15dae875-292c-4d5f-833e-8cc9c8e01449"
+  },
+  {
+   "duplicate": "cc94a006-8a77-4a9b-b639-32133fa78095",
+   "canonical": "1b376d1a-911d-40d4-b8b7-2c71eae951fb",
+   "platform_id": "1731760198429934884",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:1b376d1a-911d-40d4-b8b7-2c71eae951fb"
+  },
+  {
+   "duplicate": "2035994f-bac3-4ad8-ad22-7e3d94ddea92",
+   "canonical": "bd9a10c2-2d04-4f35-a529-8278669416ef",
+   "platform_id": "1729650408469530302",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:bd9a10c2-2d04-4f35-a529-8278669416ef"
+  },
+  {
+   "duplicate": "230c26e9-cac2-4759-8805-95b8b1f89c34",
+   "canonical": "2f684849-0980-459a-9c5d-25e977994689",
+   "platform_id": "1729673570298070234",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:2f684849-0980-459a-9c5d-25e977994689"
+  },
+  {
+   "duplicate": "6f62fe2d-910b-41b2-b86f-4211921d8b7d",
+   "canonical": "244d4e59-dcad-4cee-a6a8-f233e577e5bb",
+   "platform_id": "1729739675925185547",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:244d4e59-dcad-4cee-a6a8-f233e577e5bb"
+  },
+  {
+   "duplicate": "31dc461a-8584-4973-b7d4-02724a9a4150",
+   "canonical": "2556b774-db22-4ee9-9325-e496ed8d21a4",
+   "platform_id": "1731836030776673389",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:2556b774-db22-4ee9-9325-e496ed8d21a4"
+  },
+  {
+   "duplicate": "2f83e17d-1db1-451b-b751-e34bb11e4cdb",
+   "canonical": "f4227b61-0182-4235-ab5d-dde5d58f330f",
+   "platform_id": "1731523389833446470",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:f4227b61-0182-4235-ab5d-dde5d58f330f"
+  },
+  {
+   "duplicate": "b56d75b7-0b7c-4534-9e8c-c3740fffe54e",
+   "canonical": "2f8a4981-415e-4cfc-a5ca-fed0774b8ab9",
+   "platform_id": "1729430205593258592",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:2f8a4981-415e-4cfc-a5ca-fed0774b8ab9"
+  },
+  {
+   "duplicate": "31918158-d6e9-47e1-9378-f5ece33f4fad",
+   "canonical": "c4216575-c02c-4719-9d48-88dc09c8917f",
+   "platform_id": "1729543527305872627",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:c4216575-c02c-4719-9d48-88dc09c8917f"
+  },
+  {
+   "duplicate": "3316af51-e998-486d-acdb-b14cf6dc5ecc",
+   "canonical": "69f37eee-aff0-4084-b8b6-3f64ba87271b",
+   "platform_id": "1730351420535899400",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:69f37eee-aff0-4084-b8b6-3f64ba87271b"
+  },
+  {
+   "duplicate": "37a9e9d5-9170-45fc-ae38-4d03734f6895",
+   "canonical": "4bd6342c-aac7-4cc5-a27e-a11d70da42c0",
+   "platform_id": "1732861437901964299",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:4bd6342c-aac7-4cc5-a27e-a11d70da42c0"
+  },
+  {
+   "duplicate": "7379cbac-9651-4c1c-b097-a4138fe8a3b4",
+   "canonical": "38f8ba4d-14fe-4a20-94b1-2e54e4611d14",
+   "platform_id": "1730745568753911224",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:38f8ba4d-14fe-4a20-94b1-2e54e4611d14"
+  },
+  {
+   "duplicate": "418db1a6-c174-4ed2-9250-f879f197875e",
+   "canonical": "8d3214de-145a-489a-8da2-d0438b9d1406",
+   "platform_id": "1735087224635819539",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:8d3214de-145a-489a-8da2-d0438b9d1406"
+  },
+  {
+   "duplicate": "4372fd7e-c8f7-4325-b3d1-8e11d9bf97c8",
+   "canonical": "eaed2125-9f0a-4b00-879c-893fad2e3fa8",
+   "platform_id": "1729601455020672962",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:eaed2125-9f0a-4b00-879c-893fad2e3fa8"
+  },
+  {
+   "duplicate": "7e963f71-a80c-447d-81cb-99bc51ba5379",
+   "canonical": "499c861a-df9c-41ec-bddc-3e453b56d762",
+   "platform_id": "1730381343351735691",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:499c861a-df9c-41ec-bddc-3e453b56d762"
+  },
+  {
+   "duplicate": "fc2c5a41-ebf5-41bd-8884-4c233801d641",
+   "canonical": "4ec51256-629e-4d85-b23c-74a213f8842e",
+   "platform_id": "1731113020977743452",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:4ec51256-629e-4d85-b23c-74a213f8842e"
+  },
+  {
+   "duplicate": "e6cb7e6d-16ab-4926-bef7-a99ff419d1b4",
+   "canonical": "4f856dea-b0f2-41fc-8b97-2c336ebb9c87",
+   "platform_id": "1730356375538992557",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:4f856dea-b0f2-41fc-8b97-2c336ebb9c87"
+  },
+  {
+   "duplicate": "4fbe3e06-9383-4f19-837b-9063a1cb762b",
+   "canonical": "cde9d9cc-7410-4bae-81d3-250d5d535e26",
+   "platform_id": "1731890409497527936",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:cde9d9cc-7410-4bae-81d3-250d5d535e26"
+  },
+  {
+   "duplicate": "57104da9-7053-46ba-a001-242e8ed9db7a",
+   "canonical": "82dcf45b-e7db-4f5f-8984-f4a43dbbe31f",
+   "platform_id": "1729424817337895571",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:82dcf45b-e7db-4f5f-8984-f4a43dbbe31f"
+  },
+  {
+   "duplicate": "595c29e3-58d1-4f84-8ef4-8e3d8d7024b1",
+   "canonical": "ad39720e-2033-4184-9107-f820022a790f",
+   "platform_id": "1731963595031414611",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:ad39720e-2033-4184-9107-f820022a790f"
+  },
+  {
+   "duplicate": "59a0a7cc-3374-4025-951a-9832fe9359e4",
+   "canonical": "c3449c3f-6ff2-4568-bd1e-e3ee030afea5",
+   "platform_id": "1733431094640936234",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:c3449c3f-6ff2-4568-bd1e-e3ee030afea5"
+  },
+  {
+   "duplicate": "5ceca901-c5f1-4f0b-bd75-4641c7ef123c",
+   "canonical": "91e38d6f-1194-45b6-be60-c898695443b4",
+   "platform_id": "1729621384875901978",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:91e38d6f-1194-45b6-be60-c898695443b4"
+  },
+  {
+   "duplicate": "e02ecaf9-5d51-4356-8e77-7353a52d1da5",
+   "canonical": "5d38ca10-81b5-409c-a9a9-800e519cf2da",
+   "platform_id": "1729441959337626513",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:5d38ca10-81b5-409c-a9a9-800e519cf2da"
+  },
+  {
+   "duplicate": "b7364ab6-23ce-424d-aa2b-d247eeeeb931",
+   "canonical": "5dd5ec97-1209-4d1f-8e46-cd63b2c0c186",
+   "platform_id": "1729577818756515325",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:5dd5ec97-1209-4d1f-8e46-cd63b2c0c186"
+  },
+  {
+   "duplicate": "66087bc7-6d39-435e-9718-69cb4f5b04f5",
+   "canonical": "cfce055e-31ca-48e6-b5f5-9148cf4c68eb",
+   "platform_id": "1729615934554802606",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:cfce055e-31ca-48e6-b5f5-9148cf4c68eb"
+  },
+  {
+   "duplicate": "81e40232-f0f1-4a51-8879-30636619bad9",
+   "canonical": "666ca472-5045-4781-a2a4-c39292a3a617",
+   "platform_id": "1731684607938889505",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:666ca472-5045-4781-a2a4-c39292a3a617"
+  },
+  {
+   "duplicate": "80463ec2-7b20-4da2-bc45-05667596ee56",
+   "canonical": "6680d62b-3a1e-459a-ac40-a056929f22a7",
+   "platform_id": "1730886578023335516",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:6680d62b-3a1e-459a-ac40-a056929f22a7"
+  },
+  {
+   "duplicate": "6a3e310d-6e62-4ca0-a0bf-fd0495cdbc8e",
+   "canonical": "cc69a4ae-4ab5-4c7c-93e1-87eb796eeed1",
+   "platform_id": "1730867165493494839",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:cc69a4ae-4ab5-4c7c-93e1-87eb796eeed1"
+  },
+  {
+   "duplicate": "6a7806a1-e8ce-4159-8042-1b7d68c2f35b",
+   "canonical": "91cec488-8c69-4df0-af5c-371db70ec384",
+   "platform_id": "1732914947568731425",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:91cec488-8c69-4df0-af5c-371db70ec384"
+  },
+  {
+   "duplicate": "9951446d-fc70-4380-b194-7a11d18be130",
+   "canonical": "7326285d-c203-46b8-84ac-09124280123a",
+   "platform_id": "1729484971361928411",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:7326285d-c203-46b8-84ac-09124280123a"
+  },
+  {
+   "duplicate": "74caa194-f831-40f9-a79e-8f2757d83645",
+   "canonical": "b92e6678-04e0-4dbe-a2de-5432a0d43dc6",
+   "platform_id": "1731382391849715451",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:b92e6678-04e0-4dbe-a2de-5432a0d43dc6"
+  },
+  {
+   "duplicate": "ae47b55b-58d4-441e-97d3-0d6c785bb530",
+   "canonical": "7632caf0-ac2c-4814-afdd-afe697438652",
+   "platform_id": "1729632335743846564",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:7632caf0-ac2c-4814-afdd-afe697438652"
+  },
+  {
+   "duplicate": "8023ab1b-c6d8-4202-b4bb-e7d3baf6c057",
+   "canonical": "e42c937b-4236-40e2-b7c4-990d7e9e8b18",
+   "platform_id": "1729615243157014889",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:e42c937b-4236-40e2-b7c4-990d7e9e8b18"
+  },
+  {
+   "duplicate": "aaea7d2f-a66e-483b-92b7-2704a84f810e",
+   "canonical": "849fb822-17e6-49aa-a04d-2b3dfc12716e",
+   "platform_id": "1733618279728055579",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:849fb822-17e6-49aa-a04d-2b3dfc12716e"
+  },
+  {
+   "duplicate": "f8102fa7-2ab1-4d91-881c-a6823ea8cbe2",
+   "canonical": "84c246ff-17d4-4119-86ee-d7e2f0e9be94",
+   "platform_id": "1732346302006789175",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:84c246ff-17d4-4119-86ee-d7e2f0e9be94"
+  },
+  {
+   "duplicate": "8d0278b8-b867-4f07-bb12-c49d1817e97c",
+   "canonical": "a96edc07-71fa-4f7f-8edc-cb779b90ae84",
+   "platform_id": "1734446008919951125",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:a96edc07-71fa-4f7f-8edc-cb779b90ae84"
+  },
+  {
+   "duplicate": "95bc6d80-bd01-4b9d-af55-6d921f054312",
+   "canonical": "bf865cef-b45f-4bdc-abfb-b0745a075d8f",
+   "platform_id": "1730477462190131121",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:bf865cef-b45f-4bdc-abfb-b0745a075d8f"
+  },
+  {
+   "duplicate": "b561c02d-9ba1-4e32-95c8-c7d55f790ca5",
+   "canonical": "a2df36de-02e1-4d19-8138-80ad6e34d1df",
+   "platform_id": "1729644732671100397",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:a2df36de-02e1-4d19-8138-80ad6e34d1df"
+  },
+  {
+   "duplicate": "dcf1e83d-f85d-485e-b6af-367e474d09fe",
+   "canonical": "ae1a57ff-613f-482d-9e4b-8acf8ec301b8",
+   "platform_id": "1730737984383124887",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:ae1a57ff-613f-482d-9e4b-8acf8ec301b8"
+  },
+  {
+   "duplicate": "e1803e3e-4665-441b-be6c-8415cb8c6bed",
+   "canonical": "b71be8c5-614a-4c53-8679-01d658b6ea71",
+   "platform_id": "1735130347793909044",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:b71be8c5-614a-4c53-8679-01d658b6ea71"
+  },
+  {
+   "duplicate": "fcc092fa-7f90-42e9-b7d9-267a0acb5db8",
+   "canonical": "cfefad5e-e96a-498f-8c62-ac488e7b8160",
+   "platform_id": "1729495889701733545",
+   "lifecycle": "ARCHIVED",
+   "reason": "DUPLICATE_MERGED_TO_CANONICAL:cfefad5e-e96a-498f-8c62-ac488e7b8160"
+  }
+ ]
+}

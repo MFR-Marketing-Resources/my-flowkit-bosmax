@@ -132,6 +132,11 @@ async def suggest_product_angles(
     if not product:
         raise ValueError("PRODUCT_NOT_FOUND")
 
+    # PI-FINAL-B04: angle suggestion (and bulk_suggest, which routes through here
+    # per product) is a copy lane - COPY_ELIGIBLE only.
+    from agent.services.copy_eligibility_service import assert_copy_eligible
+    await assert_copy_eligible(product_id)
+
     snap = await crud.get_latest_approved_product_intelligence_snapshot(product_id)
     if not snap:
         raise ValueError("NO_APPROVED_SNAPSHOT")

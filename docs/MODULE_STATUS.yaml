@@ -555,6 +555,29 @@ domains:
       - outputs/mission-pi12/build_recovery_workbook.py
       - outputs/mission-pi12/pi13_evidence_coverage_audit.json
       - outputs/mission-pi12/pi13_incomplete_searchable.json
+      # PI-13 Phase 0/1 forensic baseline, identity lock, duplicate/twin analysis
+      - outputs/mission-pi12/pi13_phase0_baseline.py
+      - outputs/mission-pi12/pi13_phase0_baseline.json
+      - outputs/mission-pi12/pi13_identity_lock.py
+      - outputs/mission-pi12/pi13_identity_lock.json
+      - outputs/mission-pi12/pi13_duplicate_analysis.py
+      - outputs/mission-pi12/pi13_duplicate_analysis.json
+      - outputs/mission-pi12/pi13_twin_verify.py
+      - outputs/mission-pi12/pi13_twin_verify.json
+      # PI-13 blocker closures B-01..B-04
+      - outputs/mission-pi12/pi13_backup_manifest.py
+      - outputs/mission-pi12/pi13_backup_manifest.json
+      - outputs/mission-pi12/pi13_canonical_groups.py
+      - outputs/mission-pi12/pi13_canonical_groups.json
+      - outputs/mission-pi12/pi13_twin_qualify.py
+      - outputs/mission-pi12/pi13_twin_qualify.json
+      - outputs/mission-pi12/pi13_stale_copy_map.py
+      - outputs/mission-pi12/pi13_stale_copy_map.json
+      # PI-13 pre-pilot gate corrections (logical restore, honest provenance, strict merge proof)
+      - outputs/mission-pi12/pi13_logical_backup.py
+      - outputs/mission-pi12/pi13_merge_candidates.py
+      - outputs/mission-pi12/pi13_merge_candidates.json
+      - outputs/mission-pi12/pi13_merge_execution_proof.json
       - tests/unit/test_pi12_ai_fill_hardening.py
       # provider_receipts.jsonl is written per-attempt by the hardened runner on the NEXT run.
       - agent/services/product_registration_service.py
@@ -1018,6 +1041,85 @@ domains:
       # gaps), recharts as a pure render layer, every KPI drills to the product page.
       - agent/api/reporting.py
       - agent/services/reporting_service.py
+      # PI-13 C3/C5: canonical-merge alias exclusion + COPY_ELIGIBLE fail-closed gate
+      - agent/services/copy_eligibility_service.py
+      - scripts/pi13_canonical_merge.py
+      - scripts/pi13_grounding.py
+      - outputs/mission-pi12/pi13_evidence_batch1.json
+      - outputs/mission-pi12/pi13_evidence_batch2.json
+      - outputs/mission-pi12/pi13_grounding_results.json
+      - tests/unit/test_pi13_copy_eligibility.py
+      # PI-FINAL zero-debt closure: hardened atomic revision lifecycle (B01),
+      # residual-cohort recovery artifacts (B02), claim adjudication (B03),
+      # copy-eligibility enforcement + stale-asset quarantine (B04), final
+      # reconciliation workbook (B05).
+      - tests/unit/test_pi_final_revision_lifecycle.py
+      - tests/unit/test_pi_final_copy_eligibility_enforcement.py
+      - outputs/mission-pi-final/phase0_baseline_backup.py
+      - outputs/mission-pi-final/phase0_baseline.json
+      - outputs/mission-pi-final/rollback_manifest.json
+      - outputs/mission-pi-final/build_residual_manifest.py
+      - outputs/mission-pi-final/residual_manifest.json
+      - outputs/mission-pi-final/research_batches.json
+      - outputs/mission-pi-final/evidence_all.json
+      - outputs/mission-pi-final/recovery_writer.py
+      - outputs/mission-pi-final/recovery_ledger.jsonl
+      - outputs/mission-pi-final/recovery_results.json
+      - outputs/mission-pi-final/b03_claim_adjudication.py
+      - outputs/mission-pi-final/b03_adjudication_results.json
+      - outputs/mission-pi-final/build_final_workbook.py
+      - outputs/mission-pi-final/Master_Product_Recovery_FINAL.xlsx
+      - outputs/mission-pi-final/Master_Product_Recovery_FINAL.sha256
+      - outputs/mission-pi-final/final_reconciliation.json
+      - outputs/mission-pi-final/quarantine_sweep_result.json
+      - outputs/mission-pi-final/cohort_audit.json
+      - outputs/mission-pi-final/cohort_audit.py
+      - outputs/mission-pi-final/residual_closure.py
+      - outputs/mission-pi-final/residual_closure_results.json
+      - outputs/mission-pi-final/repair_b04_tests.py
+      - outputs/mission-pi-final/repair_groups.json
+      - outputs/mission-pi-final/ZERO_DEBT_RECEIPT.md
+      # PI-FINAL B04 entrypoint wiring + collateral test contract updates
+      - agent/api/copy_signals.py
+      - agent/services/batch_executor.py
+      - agent/services/batch_planner.py
+      - agent/services/batch_queue.py
+      - agent/services/copy_angle_expansion_service.py
+      - agent/services/copy_angle_suggestion_service.py
+      - agent/services/copy_component_author_service.py
+      - agent/services/copy_composer_service.py
+      - agent/services/copy_signal_generator_service.py
+      - agent/services/copywriting_readiness_service.py
+      - agent/services/poster_copy_ai_service.py
+      - agent/services/poster_copy_set_service.py
+      - agent/services/product_intelligence_review_draft_service.py
+      - agent/services/production_queue_service.py
+      - agent/services/social_copy_package_service.py
+      - agent/services/workspace_generation_package_service.py
+      - tests/api/test_batch_prompt_and_production_api.py
+      - tests/api/test_copy_sets_batch_api.py
+      - tests/api/test_poster_copy_sets_api.py
+      - tests/api/test_product_knowledge_completion_api.py
+      - tests/conftest.py
+      - tests/unit/test_approved_product_package_service.py
+      - tests/unit/test_batch_executor.py
+      - tests/unit/test_batch_prompt_run.py
+      - tests/unit/test_batch_queue.py
+      - tests/unit/test_bulk_extend_routing.py
+      - tests/unit/test_copy_angle_expansion_service.py
+      - tests/unit/test_copy_angle_suggestion_service.py
+      - tests/unit/test_copy_component_author.py
+      - tests/unit/test_copy_compose_persist.py
+      - tests/unit/test_copywriting_readiness_service.py
+      - tests/unit/test_poster_clean_scene_prompt.py
+      - tests/unit/test_poster_copy_ai_service.py
+      - tests/unit/test_poster_copy_set_service.py
+      - tests/unit/test_poster_deliverable_service.py
+      - tests/unit/test_production_queue_live_gate_i2v.py
+      - tests/unit/test_production_queue_live_loop_guard.py
+      - tests/unit/test_production_queue_service.py
+      - tests/unit/test_quantity_preview.py
+      - tests/unit/test_workspace_generation_package_service.py
       - tests/unit/test_reporting_service.py
       - tests/api/test_reporting_api.py
       - dashboard/src/api/reporting.ts

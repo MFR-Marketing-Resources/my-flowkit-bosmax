@@ -1,0 +1,60 @@
+{
+ "residual_total": 0,
+ "by_class": {
+  "LEGACY_APPROVED_INCOMPLETE": 0,
+  "MISSING_APPROVED_INTELLIGENCE": 0
+ },
+ "by_lane": {},
+ "claim_queue_latest_approved_unsafe": [
+  {
+   "product_id": "33caf58f-5cbd-4068-891c-4d1bae30c729",
+   "raw_product_title": "[Amelia's Favourite] [Preorder 25 Days] Pentavite UPGRADED Multivitamin Lelaki Buah & Sayuran, Dinaik taraf dengan 20 Nutrisi Untuk Tenaga, Boleh Kunyah (30-90 Tablets) | Men Multi Fruit & Veggies For Energy, Strength & Daily Health",
+   "lifecycle_status": "ACTIVE",
+   "readiness": "CLAIM_REVIEW_REQUIRED",
+   "latest_gate": "CLAIM_REVIEW_REQUIRED",
+   "tokens": "[]"
+  },
+  {
+   "product_id": "01f3274b-2fc0-4977-b6d5-efaaa2cb2bf7",
+   "raw_product_title": "[Amelia's Favourite] [Preorder 25 Days] [Buy 3 Free 1 / Buy 4 Free 2] Pentavite UPGRADED Multivitamin Lelaki Buah & Sayuran, Dinaik taraf dengan 20 Nutrisi Untuk Tenaga (30-120 Tablets) | Men Multi Fruit & Veggies For Energy, Strength & Daily Wellness",
+   "lifecycle_status": "ACTIVE",
+   "readiness": "CLAIM_REVIEW_REQUIRED",
+   "latest_gate": "CLAIM_REVIEW_REQUIRED",
+   "tokens": "[]"
+  },
+  {
+   "product_id": "b460ffbd-7d9d-4f6b-a570-0e9b1056439a",
+   "raw_product_title": "Bosmax Oil 10 ML",
+   "lifecycle_status": "ARCHIVED",
+   "readiness": "CLAIM_REVIEW_REQUIRED",
+   "latest_gate": "CLAIM_REVIEW_REQUIRED",
+   "tokens": "[]"
+  },
+  {
+   "product_id": "90349f8c-9e14-4efe-988e-76ec60ea31f4",
+   "raw_product_title": "Bosmax Herbs 5 ML",
+   "lifecycle_status": "ACTIVE",
+   "readiness": "CLAIM_REVIEW_REQUIRED",
+   "latest_gate": "CLAIM_REVIEW_REQUIRED",
+   "tokens": "[]"
+  },
+  {
+   "product_id": "1063eec6-976c-415f-95dd-be5c7b53608b",
+   "raw_product_title": "Nakamichi Rapid Windshield Treatment Water Cleaner 30ml Pencuci Cermin Kereta Kompak & Mudah Penggunaan untuk Pembersihan Kuat",
+   "lifecycle_status": "ACTIVE",
+   "readiness": "READY_WITH_GOVERNED_ABSENCE",
+   "latest_gate": "CLAIM_REVIEW_REQUIRED",
+   "tokens": "[\"treat\"]"
+  },
+  {
+   "product_id": "8e75f1a8-ba43-444e-8b40-c71d140c76c5",
+   "raw_product_title": "6pcs Combo Herbal Cream BTFL Organic Yellow Cream",
+   "lifecycle_status": "ACTIVE",
+   "readiness": "READY_WITH_GOVERNED_ABSENCE",
+   "latest_gate": "CLAIM_REVIEW_REQUIRED",
+   "tokens": "[]"
+  }
+ ],
+ "open_drafts_unsafe_gate": [],
+ "rows": []
+}

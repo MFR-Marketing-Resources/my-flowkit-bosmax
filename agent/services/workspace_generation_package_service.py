@@ -2946,6 +2946,8 @@ async def start_batch_prompt_run(
 ) -> dict:
     """Batch Prompt Builder entry point. ONE logical mode per batch (mode law).
 
+    PI-FINAL-B04: fails closed when the product is not COPY_ELIGIBLE.
+
     Validates the mode input contract fail-closed, expands Qty N into a
     deterministic variation plan, then generates N polished prompt packages
     into the Prompt Queue. Raises ValueError("MODE_CONTRACT_VIOLATION:…")
@@ -2956,6 +2958,9 @@ async def start_batch_prompt_run(
     logical_mode = str(logical_mode or "").strip().upper()
     variation_strategy = variation_strategy or _planner.DEFAULT_VARIATION_STRATEGY
     product_row = await crud.get_product(product_id)
+
+    from agent.services.copy_eligibility_service import assert_copy_eligible
+    await assert_copy_eligible(str(product_id))
 
     contract_errors = _planner.validate_mode_inputs(
         logical_mode,
@@ -3144,6 +3149,21 @@ async def start_batch_generation(
     import json as _json_mod
 
     all_product_ids = product_ids if product_ids else [product_id]
+
+    # PI-FINAL-B04 fail-closed: a batch (including scheduler-fired and retry runs,
+    # which both route through here) may not START with ANY copy-ineligible
+    # product. Refusing the whole batch is deliberate - a partial batch would
+    # silently under-deliver against the operator's plan.
+    from agent.services.copy_eligibility_service import copy_eligibility
+    _inelig = []
+    for _pid in all_product_ids:
+        _rec = await copy_eligibility(str(_pid))
+        if not _rec["eligible"]:
+            _inelig.append({"product_id": _pid, "reasons": _rec["reasons"]})
+    if _inelig:
+        raise ValueError(
+            "COPY_INELIGIBLE:" + ";".join(
+                f"{e['product_id']}={','.join(e['reasons'])}" for e in _inelig))
     char_slots = character_asset_ids or [None]
     scene_slots = scene_asset_ids or [None]
     style_slots = style_asset_ids or [None]

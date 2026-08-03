@@ -406,6 +406,11 @@ async def upload_copywriting_landbank(product_id: str, request: Request):
     csv_bytes = await request.body()
     if not csv_bytes:
         raise HTTPException(422, "CSV body required")
+    # PI-FINAL-B04: bulk copy import is a copy lane - COPY_ELIGIBLE only.
+    from agent.services.copy_eligibility_service import copy_eligibility
+    _elig = await copy_eligibility(product_id)
+    if not _elig["eligible"]:
+        raise HTTPException(409, "COPY_INELIGIBLE:" + ",".join(_elig["reasons"]))
     from agent.services import copy_landbank_service
     try:
         return copy_landbank_service.save_csv(product_id, csv_bytes)

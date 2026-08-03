@@ -63,6 +63,15 @@ def _norm(v: Any) -> str:
     return str(v or "").strip()
 
 
+async def _assert_poster_copy_eligible(product_id: str) -> None:
+    """PI-FINAL-B04: every poster copy AI lane is gated on COPY_ELIGIBLE."""
+    from agent.services.copy_eligibility_service import copy_eligibility
+    result = await copy_eligibility(_norm(product_id))
+    if not result["eligible"]:
+        raise PosterCopyAIError(
+            "COPY_INELIGIBLE", ",".join(result["reasons"]), status_code=409)
+
+
 def _provenance_model() -> str:
     status = ai_provider.provider_status()
     provider = _norm(status.get("provider_id"))
@@ -226,6 +235,7 @@ async def recommend_objectives(
     product = await crud.get_product(_norm(product_id))
     if not product:
         raise PosterCopyAIError("PRODUCT_NOT_FOUND", status_code=404)
+    await _assert_poster_copy_eligible(product_id)
     base = _deterministic_objective_ranking(dict(product))
     warnings: list[str] = []
     if refresh_ai and ai_provider.is_configured():
@@ -280,6 +290,7 @@ async def recommend_angles(
     product = await crud.get_product(_norm(product_id))
     if not product:
         raise PosterCopyAIError("PRODUCT_NOT_FOUND", status_code=404)
+    await _assert_poster_copy_eligible(product_id)
     contract = archetype_field_contract(_norm(archetype))
     angles: list[dict[str, str]] = [
         {"angle": a, "rationale": "Archetype selling angle (curated).", "source": "RECIPE"}
@@ -441,6 +452,7 @@ async def generate_directions(
     product = await crud.get_product(_norm(product_id))
     if not product:
         raise PosterCopyAIError("PRODUCT_NOT_FOUND", status_code=404)
+    await _assert_poster_copy_eligible(product_id)
     contract = archetype_field_contract(_norm(archetype))
     count = max(1, min(int(count or 3), 5))
     warnings: list[str] = []
@@ -553,6 +565,7 @@ async def regenerate_field(
             "POSTER_FIELD_NOT_REGENERABLE",
             f"field must be one of {AI_COPY_FIELDS}",
         )
+    await _assert_poster_copy_eligible(product_id)
     if not ai_provider.is_configured():
         raise PosterCopyAIError(
             "POSTER_AI_NOT_CONFIGURED",

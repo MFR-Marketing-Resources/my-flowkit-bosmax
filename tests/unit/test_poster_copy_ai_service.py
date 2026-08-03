@@ -14,6 +14,19 @@ async def _seed_product(**kw) -> str:
         category="Traditional",
         **kw,
     )
+    from tests.conftest import make_product_copy_eligible
+    await make_product_copy_eligible(row["id"])
+    return row["id"]
+
+async def _seed_bare_product(**kw) -> str:
+    """Product WITHOUT approved PI — used for no-intelligence fallback assertions."""
+    row = await crud.create_product(
+        kw.pop("title", "Produk Baru XYZ"),
+        source="MANUAL",
+        product_display_name=kw.pop("display", "Produk Baru XYZ"),
+        category="Traditional",
+        **kw,
+    )
     return row["id"]
 
 
@@ -34,7 +47,10 @@ async def test_objective_ranking_is_deterministic_and_signal_aware(monkeypatch):
 @pytest.mark.asyncio
 async def test_high_claim_risk_prioritizes_problem_aware_safe(monkeypatch):
     monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
-    pid = await _seed_product(claim_risk_level="HIGH")
+    # Seed eligible first (approve is claim-safe), then stamp product-level HIGH risk
+    # which the objective ranker reads without reopening the PI gate.
+    pid = await _seed_product()
+    await crud.update_product(pid, claim_risk_level="HIGH")
     out = await svc.recommend_objectives(pid)
     assert out["recommendations"][0]["archetype"] == "PROBLEM_AWARE_SAFE"
 
@@ -231,24 +247,13 @@ _BANNED_FALLBACK_FRAGMENTS = (
 
 @pytest.mark.asyncio
 async def test_fallback_makes_no_unsupported_claims_without_intelligence(monkeypatch):
-    """A product with NO approved intelligence gets neutral copy: zero
-    fabricated factual/social-proof claims and ZERO proof chips."""
+    """PI-FINAL-B04: no accepted intelligence => poster copy AI is COPY_INELIGIBLE.
+    Blind fallback generation is no longer reachable without an eligible product."""
     monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
-    pid = await _seed_product(title="Produk Baru XYZ", display="Produk Baru XYZ")
-    out = await svc.generate_directions(pid, "PRODUCT_HERO", "")
-    assert out["directions"], "fallback must still produce directions"
-    for d in out["directions"]:
-        blob = " ".join(
-            [d["primary_message"], d["support_message"], d["cta"], d["disclaimer"]]
-            + list(d["proof_points"])
-        ).lower()
-        for banned in _BANNED_FALLBACK_FRAGMENTS:
-            assert banned not in blob, (
-                f"fallback fabricated an unsupported claim: {banned!r} in {blob!r}"
-            )
-        # No approved benefits/USPs exist → chips must stay EMPTY.
-        assert d["proof_points"] == []
-        assert all(v == "FALLBACK_TEMPLATE" for v in d["field_provenance"].values())
+    pid = await _seed_bare_product(title="Produk Baru XYZ", display="Produk Baru XYZ")
+    with pytest.raises(svc.PosterCopyAIError) as exc:
+        await svc.generate_directions(pid, "PRODUCT_HERO", "")
+    assert exc.value.code == "COPY_INELIGIBLE"
 
 
 @pytest.mark.asyncio

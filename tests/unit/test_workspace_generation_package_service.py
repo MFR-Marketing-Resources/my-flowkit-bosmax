@@ -99,6 +99,15 @@ FAKE_WGP_ROW = {
 
 # ─── DOM scaffold ─────────────────────────────────────────────
 
+
+@pytest.fixture(autouse=True)
+def _b04_eligibility_pass(monkeypatch):
+    """PI-FINAL-B04: non-DB/mocked product paths pass the gate."""
+    async def _ok(product_id: str = '', *a, **k):
+        return {"product_id": product_id, "eligible": True, "reasons": []}
+    monkeypatch.setattr("agent.services.copy_eligibility_service.assert_copy_eligible", _ok)
+    monkeypatch.setattr("agent.services.copy_eligibility_service.copy_eligibility", _ok)
+
 def test_dom_scaffold_dom_handoff_ready_is_always_false():
     scaffold = _build_dom_scaffold(
         mode="F2V",
@@ -475,10 +484,22 @@ def _stub_handoff_common(monkeypatch, capture: dict):
             capture[key] = json.loads(kw[key])
         return {**FAKE_WGP_ROW, "workspace_generation_package_id": wgp_id}
 
+    # Real compiler path requires Avatar Registry selection for HYBRID/T2V
+    # (AVATAR_REGISTRY_SELECTION_REQUIRED). Inject a known approved avatar.
+    from agent.services.ugc_video_prompt_compiler_service import (
+        compile_ugc_video_prompt as _real_compile,
+    )
+
+    def compile_with_avatar(**kwargs):
+        if not str(kwargs.get("avatar_id") or "").strip():
+            kwargs["avatar_id"] = "BOS_F_ALYA_01"
+        return _real_compile(**kwargs)
+
     P = "agent.services.workspace_generation_package_service."
     monkeypatch.setattr(P + "get_approved_product_package", fake_approved)
     monkeypatch.setattr(P + "resolve_i2v_semantic_slots", fake_resolver)
     monkeypatch.setattr(P + "crud.create_workspace_generation_package", fake_create)
+    monkeypatch.setattr(P + "compile_ugc_video_prompt", compile_with_avatar)
 
 
 @pytest.mark.asyncio
@@ -571,6 +592,7 @@ async def test_handoff_block_plan_parity_with_direct_compiler(monkeypatch):
         mode="F2V", source_mode="HYBRID",
         generation_mode="EXTEND", engine_duration_target="GOOGLE_FLOW",
         requested_total_duration_seconds=32,
+        avatar_id="BOS_F_ALYA_01",
     )
     cap = {}
     _stub_handoff_common(monkeypatch, cap)

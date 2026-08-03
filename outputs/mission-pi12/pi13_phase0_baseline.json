@@ -1,0 +1,35 @@
+{
+ "captured_git_head": "adf9d72bf0c2599ecfe310363ff6f093a9a740dc",
+ "origin_main": "adf9d72bf0c2599ecfe310363ff6f093a9a740dc",
+ "branch": "codex/pi13-exhaustive-recovery",
+ "db_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
+ "db_sha256": "035876d62a8b8a41887259ac4f6c4d083db32e027aa9083bcf1cd6a17c5c455b",
+ "product_table_hash": "c25ee92343c5cf324737c25edf69736f5ba887f363e2524776cce3e7c42dfd08",
+ "integrity_check": "ok",
+ "foreign_key_check": 0,
+ "pi_quality": {
+  "LEGACY_APPROVED_INCOMPLETE": 82,
+  "APPROVED_WITH_GOVERNED_ABSENCE": 416,
+  "FULLY_COMPLETE": 119,
+  "MISSING_APPROVED_INTELLIGENCE": 34
+ },
+ "pi_quality_total": 651,
+ "residual_116": {
+  "total": 116,
+  "unique": 116,
+  "incomplete": 105,
+  "claim": 11,
+  "all_resolve_to_db": true
+ },
+ "copywriting_rows_for_116": {
+  "copy_set": 66,
+  "copy_component": 8,
+  "batch_variant": 0,
+  "workspace_execution_package": 22,
+  "workspace_generation_package": 3,
+  "poster_copy_set": 1,
+  "copy_generation_batch": 0,
+  "batch": 0
+ },
+ "copywriting_rows_for_116_total": 100
+}

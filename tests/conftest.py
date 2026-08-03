@@ -25,6 +25,41 @@ async def db_setup():
     _unlink_db_safe()
 
 
+async def make_product_copy_eligible(product_id: str) -> str:
+    """PI-FINAL-B04 test helper: give a seeded product an accepted, claim-safe,
+    copy-critical-complete Product Intelligence snapshot so it passes the
+    fail-closed COPY_ELIGIBLE gate. Returns the snapshot_id."""
+    from agent.db import crud
+    from agent.models.product_intelligence_review_draft import (
+        ProductIntelligenceReviewDraftApproveRequest,
+    )
+    from agent.services import product_intelligence_review_draft_service as _svc
+
+    draft = await crud.create_product_intelligence_review_draft(
+        product_id=product_id,
+        review_status="READY_FOR_REVIEW",
+        product_description="Test-eligible product description for copy grounding.",
+        benefits_json='["Convenient size", "Simple to carry"]',
+        usp_json='["Compact format"]',
+        usage_text="Use as directed on the label.",
+        ingredients_text="As listed on the packaging.",
+        warnings_text="Keep away from direct sunlight.",
+        target_customer_text="Everyday shoppers.",
+        allowed_claims_json='["Product type: Test / Fixture"]',
+        buyer_persona_snapshot_json='{"audience": "everyday shoppers", "needs": ["value"]}',
+        copy_strategy_summary_json='{"angles": ["practical value"], "recommended_formula": "FAB"}',
+        source_urls_json='{"primary_listing": "https://example.com/listing"}',
+        image_evidence_json='{"main": "https://example.com/img.jpg"}',
+        claim_gate="CLAIM_SAFE",
+        claim_risk_level="LOW",
+    )
+    snapshot = await _svc.approve_review_draft(
+        draft["draft_id"],
+        ProductIntelligenceReviewDraftApproveRequest(approved_by="pytest-eligible", claim_review_acknowledged=True),
+    )
+    return snapshot.snapshot_id
+
+
 @pytest.fixture
 def sample_uuid():
     return "550e8400-e29b-41d4-a716-446655440000"

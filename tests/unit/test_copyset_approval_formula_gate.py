@@ -23,6 +23,8 @@ _GAPS = {"clear": False, "review_required": True, "gaps": ["NO_TRIGGER"]}
 
 async def _make_product() -> str:
     product = await crud.create_product(raw_product_title="Serum Test 5ML", source="MANUAL")
+    from tests.conftest import make_product_copy_eligible
+    await make_product_copy_eligible(product["id"])
     return product["id"]
 
 
@@ -62,6 +64,15 @@ async def _make_review_set(
     )
     return row["copy_set_id"]
 
+
+
+@pytest.fixture(autouse=True)
+def _b04_eligibility_pass(monkeypatch):
+    """PI-FINAL-B04: non-DB/mocked product paths pass the gate."""
+    async def _ok(product_id: str = '', *a, **k):
+        return {"product_id": product_id, "eligible": True, "reasons": []}
+    monkeypatch.setattr("agent.services.copy_eligibility_service.assert_copy_eligible", _ok)
+    monkeypatch.setattr("agent.services.copy_eligibility_service.copy_eligibility", _ok)
 
 @pytest.mark.asyncio
 async def test_approve_allows_formula_pass_and_clarity_clear():

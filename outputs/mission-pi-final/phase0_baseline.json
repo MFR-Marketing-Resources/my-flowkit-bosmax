@@ -1,0 +1,820 @@
+{
+ "captured": "20260803T084655Z",
+ "db_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
+ "physical_rows": 659,
+ "test_fixtures": 8,
+ "merged_aliases": 48,
+ "canonical_real": 603,
+ "lifecycle": {
+  "ACTIVE": 402,
+  "ARCHIVED": 201
+ },
+ "classes": {
+  "MISSING_APPROVED_INTELLIGENCE": {
+   "total": 24,
+   "by_lifecycle": {
+    "ACTIVE": 9,
+    "ARCHIVED": 15
+   }
+  },
+  "APPROVED_WITH_GOVERNED_ABSENCE": {
+   "total": 427,
+   "by_lifecycle": {
+    "ACTIVE": 254,
+    "ARCHIVED": 173
+   }
+  },
+  "FULLY_COMPLETE": {
+   "total": 119,
+   "by_lifecycle": {
+    "ACTIVE": 106,
+    "ARCHIVED": 13
+   }
+  },
+  "LEGACY_APPROVED_INCOMPLETE": {
+   "total": 33,
+   "by_lifecycle": {
+    "ACTIVE": 33
+   }
+  }
+ },
+ "ids_LEGACY_APPROVED_INCOMPLETE": [
+  "01f3274b-2fc0-4977-b6d5-efaaa2cb2bf7",
+  "04a42d8c-755e-409e-8b60-b8b91f599dc7",
+  "0f6bdfdd-474d-4a30-aa92-400aa0f1ed51",
+  "118bd94c-fd1c-4c4c-b974-dbd6e60b8e0e",
+  "19d5518d-975b-4902-98bc-29428e7fe96c",
+  "1ae4d866-d534-4ae0-b954-17ae8ad502ef",
+  "1c5b5c1a-43d2-4239-b87b-7b0f95c7e58f",
+  "1cbd5dc2-88f7-4540-acc2-7a8fddbbb9f7",
+  "28c1124e-4a70-4e55-9ce5-0ba2516b1c02",
+  "349868fc-e1f6-4c79-a5a8-8e4a13fb8469",
+  "3ad2d1bc-432f-427c-8518-e8bbb25e3712",
+  "3b56ffdb-e703-4af2-bfc9-3197bc7b14c9",
+  "3be06f47-a156-4d5f-8d8c-91c786e89012",
+  "49677116-dfc6-42da-ac7d-a25a49167c16",
+  "4faad914-5345-4a34-a5e1-e5fe3e283795",
+  "644b425e-7e39-4558-817a-d403c366f28e",
+  "66bc6983-eba9-4466-8c46-3a6708cfae42",
+  "76561360-d92a-42c5-93fa-f9523a2b55fd",
+  "7852656f-a19d-47d8-90fd-c28c73a7f17a",
+  "7a75fcf1-0f34-487d-bcae-9cf65901f8fe",
+  "85ddc17a-ba47-4e03-a0a6-bc1e62f46436",
+  "904bee4d-864b-4722-bc10-5df2027eb13f",
+  "994da37b-298f-453e-a253-f436b50d0006",
+  "9bac2555-4eec-493d-a1c3-f16712618065",
+  "ad805d7d-e6fa-4a05-ad96-edc8e0295ae8",
+  "c34c9305-35b9-44ab-963f-fa22c9b9e829",
+  "d2bf2e52-84fa-426f-a6f3-d5f793db41ef",
+  "d2f8fd58-437b-4447-8730-694b782eef17",
+  "e06d8afd-44fa-47d7-8d79-d7dc55d52c41",
+  "e3e3819f-c312-4e73-9db8-477471860616",
+  "e9f06816-46b1-421d-8921-3ea183ed4760",
+  "efcc1f31-c91b-46fb-acc6-d736a5271884",
+  "fca6771a-5616-4378-9f20-da5b35230396"
+ ],
+ "ids_MISSING_APPROVED_INTELLIGENCE": [
+  "0eed93fb-504e-44f4-bfe6-fcd620ae2d81",
+  "231016d5-408f-4c67-b5d7-c5819557fea6",
+  "305cc7f1-65f7-423a-ac64-bb4de876c6ec",
+  "33caf58f-5cbd-4068-891c-4d1bae30c729",
+  "5b1927d1-447a-41f4-8d25-c1efdbe564d9",
+  "6c70428f-3dbd-43e8-ba70-3023e87aee64",
+  "6fe5946d-1740-479e-a383-bb2ac319ee22",
+  "86c1f88d-dbf8-46f5-bd11-a56f37a6d07c",
+  "8e75f1a8-ba43-444e-8b40-c71d140c76c5",
+  "9311100f-6271-4965-8b26-f6e04e3843a1",
+  "9ef257e3-00b1-4f50-b7d9-419b8b2403a7",
+  "a0be58cd-9bdb-4f1f-a7dc-91b845e2e591",
+  "b573d840-4444-4c8e-97a1-96311b6e52ac",
+  "b6215416-cc29-4af8-8933-afcf7db1fc14",
+  "c5341831-8c85-4a13-82be-7b1ae12320d1",
+  "c70c3ab7-6073-499e-bb23-5d6ce331ea3f",
+  "canonical-simba-cat-food",
+  "d9385e4e-7a61-4308-b63e-d165879a9a8a",
+  "db2dbbeb-79dc-4b78-b1ce-2257257cb7f8",
+  "de3ee6bd-592b-4228-bf96-f2cdcf15e78c",
+  "ecd367eb-0a0d-433d-a774-50dfdf088f69",
+  "eee2d2b9-d07b-42cb-b6a8-8cd5e126ad0d",
+  "efa576c8-3ffe-4fb9-9ead-6acf196db31a",
+  "fdad0f75-9069-4174-8acd-33a8ee1d3232"
+ ],
+ "draft_status_dist": {
+  "APPROVED": 1426,
+  "DRAFT": 3,
+  "NEEDS_REVISION": 108,
+  "READY_FOR_REVIEW": 2,
+  "REJECTED": 3,
+  "SUPERSEDED": 7
+ },
+ "open_drafts": [
+  {
+   "draft_id": "492ff6f4-71a3-4bd5-99c3-e4285dda599e",
+   "product_id": "012e9fd6-dea4-4ebc-a4ca-27669b2eaccb",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "e486762b-beba-41fc-b710-1758c00ff90f",
+   "product_id": "01f3274b-2fc0-4977-b6d5-efaaa2cb2bf7",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "8799419a-afb3-4124-b656-bfd4cb728d9a",
+   "product_id": "04a42d8c-755e-409e-8b60-b8b91f599dc7",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "4d887168-13af-4c72-9057-4aaa0fcd5332",
+   "product_id": "051be540-b050-4e83-93d7-eb6d1a751355",
+   "review_status": "NEEDS_REVISION",
+   "created_by": "smoke"
+  },
+  {
+   "draft_id": "ada359fa-43d8-4909-b224-006d75af2f11",
+   "product_id": "07b2fcdf-a9ab-4d5d-a10d-15a9b291af62",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "fbd2d38c-19ee-479f-b7ab-0a0d61f30b3a",
+   "product_id": "0ab23ee4-6947-4966-96b1-906a3cdc98e6",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "bda3d087-8597-49d7-baa5-2ecca97cd39d",
+   "product_id": "0eed93fb-504e-44f4-bfe6-fcd620ae2d81",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "7209ffc8-1d4b-4381-8ab2-3552ca7cece0",
+   "product_id": "0f6bdfdd-474d-4a30-aa92-400aa0f1ed51",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "9ac91c0e-7e3e-47ab-9db2-fa7860a131c7",
+   "product_id": "1042b094-0624-4b62-ba4d-598d6f8ff825",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "f8c91681-acd8-4977-a076-1073d957f752",
+   "product_id": "118bd94c-fd1c-4c4c-b974-dbd6e60b8e0e",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "0e218779-a243-4d97-897c-412b5079258b",
+   "product_id": "19d5518d-975b-4902-98bc-29428e7fe96c",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "e2bdfd00-d9af-4ca8-9725-c4540328d0ae",
+   "product_id": "1ae4d866-d534-4ae0-b954-17ae8ad502ef",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "a692b679-82b0-49a4-9178-58e1c7ced1f3",
+   "product_id": "1c5b5c1a-43d2-4239-b87b-7b0f95c7e58f",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "c264ce5d-47a0-4c93-8b4f-19e5bae39e8d",
+   "product_id": "1cbd5dc2-88f7-4540-acc2-7a8fddbbb9f7",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "d14336ed-433e-4912-a67f-da36898b02c1",
+   "product_id": "2035994f-bac3-4ad8-ad22-7e3d94ddea92",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "0045ca1a-ab15-4fe9-875d-c798396e548d",
+   "product_id": "230c26e9-cac2-4759-8805-95b8b1f89c34",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "16bf48ce-7b03-4d9a-a845-dba0823411cc",
+   "product_id": "231016d5-408f-4c67-b5d7-c5819557fea6",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "ae2e031d-3cac-4d81-8144-d3b8a60efe15",
+   "product_id": "2865381c-3859-449f-a0f4-f720ca3428ea",
+   "review_status": "NEEDS_REVISION",
+   "created_by": "operator-ui-smoke"
+  },
+  {
+   "draft_id": "9434a83e-b61d-4bb9-b2f2-41eabdc3ce72",
+   "product_id": "28c1124e-4a70-4e55-9ce5-0ba2516b1c02",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "8b586b39-b772-4104-a452-d5a3a20ce99c",
+   "product_id": "2f83e17d-1db1-451b-b751-e34bb11e4cdb",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "1bc9bde4-af75-4f02-bd44-fd986caa085b",
+   "product_id": "305cc7f1-65f7-423a-ac64-bb4de876c6ec",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "b3f00aa2-5e2f-4615-99dc-9c0898a31479",
+   "product_id": "31918158-d6e9-47e1-9378-f5ece33f4fad",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "1df07fc8-8f56-4a87-82ad-97ef0bec2c0c",
+   "product_id": "31dc461a-8584-4973-b7d4-02724a9a4150",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "3bacbae7-f1b2-489f-bab7-36e1f2034883",
+   "product_id": "3316af51-e998-486d-acdb-b14cf6dc5ecc",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "8839194a-28d0-4c21-a6e0-91aed4caa95d",
+   "product_id": "33caf58f-5cbd-4068-891c-4d1bae30c729",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "e4a9ed7e-9e66-425b-b213-4d2b8e031f01",
+   "product_id": "349868fc-e1f6-4c79-a5a8-8e4a13fb8469",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "51329226-9573-4138-919e-ae119edd0c69",
+   "product_id": "37a9e9d5-9170-45fc-ae38-4d03734f6895",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "61b926e8-f55a-43cc-9540-0b309f476a7f",
+   "product_id": "3ad2d1bc-432f-427c-8518-e8bbb25e3712",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "d52048d5-3cb5-492c-8361-72bfb599f68a",
+   "product_id": "3b56ffdb-e703-4af2-bfc9-3197bc7b14c9",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "f87f2308-0e9a-4977-8ed5-b2cb00b07052",
+   "product_id": "3be06f47-a156-4d5f-8d8c-91c786e89012",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "9a42cec8-2ab5-4b84-a4db-84476fc6439b",
+   "product_id": "418db1a6-c174-4ed2-9250-f879f197875e",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "411d5319-e7cd-40d8-b7b7-970ac2aaf248",
+   "product_id": "4372fd7e-c8f7-4325-b3d1-8e11d9bf97c8",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "67522b87-5a86-4050-b205-041e32826106",
+   "product_id": "454fdd7f-6ee5-45bb-bcc9-64dbfb57a2be",
+   "review_status": "NEEDS_REVISION",
+   "created_by": "smoke"
+  },
+  {
+   "draft_id": "a4fd86a1-408d-4c61-ab9c-7af0ba9fb587",
+   "product_id": "49677116-dfc6-42da-ac7d-a25a49167c16",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "9ee054c0-c2ed-480a-bd0b-7639a173ca3e",
+   "product_id": "4faad914-5345-4a34-a5e1-e5fe3e283795",
+   "review_status": "READY_FOR_REVIEW",
+   "created_by": "pi-final-writer"
+  },
+  {
+   "draft_id": "15e3adf1-8548-4072-b6b5-548dd62aaa90",
+   "product_id": "4fbe3e06-9383-4f19-837b-9063a1cb762b",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "dabb2bbe-d39e-462c-9ff9-0d4e1274e5d1",
+   "product_id": "5039d290-5932-41fd-bc25-e5ace3c8e744",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "8da61c97-2910-4ec1-8cd1-883afb982d4f",
+   "product_id": "56d4f93a-41de-40bd-a11a-46d92811334f",
+   "review_status": "NEEDS_REVISION",
+   "created_by": "smoke-operator"
+  },
+  {
+   "draft_id": "62cd47b4-1e1f-485e-9852-395effd6a4cb",
+   "product_id": "57104da9-7053-46ba-a001-242e8ed9db7a",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "98cd96f0-1762-4689-90c8-b150f387f115",
+   "product_id": "595c29e3-58d1-4f84-8ef4-8e3d8d7024b1",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "de5b899f-e6ea-427e-9d19-8d2a8a9e81cf",
+   "product_id": "5985b3b4-a785-4347-a3ec-17e4f99ba928",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "4ca5025e-f4f0-4fd3-bbfa-904a75ace82f",
+   "product_id": "59a0a7cc-3374-4025-951a-9832fe9359e4",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "2b480b07-ab2e-4e7a-afce-cd3b83ed9a06",
+   "product_id": "5b1927d1-447a-41f4-8d25-c1efdbe564d9",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "dd0ce695-4da1-4fa6-b73c-f91f4765d398",
+   "product_id": "5ceca901-c5f1-4f0b-bd75-4641c7ef123c",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "646acd31-36a9-4cb8-ac1b-5b6d70d32f6d",
+   "product_id": "610f6e46-c91b-42ac-b568-a84f72947a55",
+   "review_status": "DRAFT",
+   "created_by": "operator"
+  },
+  {
+   "draft_id": "51bb053b-09da-4b03-b311-056c0e500b57",
+   "product_id": "644b425e-7e39-4558-817a-d403c366f28e",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "1fb564fa-a020-4fbe-82f6-9bbc5a8e5705",
+   "product_id": "6483d624-a03d-4933-9bba-6ca2e5f7b6fd",
+   "review_status": "DRAFT",
+   "created_by": "operator"
+  },
+  {
+   "draft_id": "2f418c28-5475-42be-9001-cf4a0855f731",
+   "product_id": "66087bc7-6d39-435e-9718-69cb4f5b04f5",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "acd829f2-6bf2-4c25-8851-81e2411fd607",
+   "product_id": "66bc6983-eba9-4466-8c46-3a6708cfae42",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "96dde160-d7ee-43d5-aace-3093c70ed5bd",
+   "product_id": "6a3e310d-6e62-4ca0-a0bf-fd0495cdbc8e",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "7d2a667f-4d8a-4365-9773-a943ac664fbf",
+   "product_id": "6a7806a1-e8ce-4159-8042-1b7d68c2f35b",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "2c53c1e0-5804-49f2-af62-72c5121b6562",
+   "product_id": "6c70428f-3dbd-43e8-ba70-3023e87aee64",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "741794f8-edf6-46f5-9d1d-693001769e88",
+   "product_id": "6f62fe2d-910b-41b2-b86f-4211921d8b7d",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "1532ce75-9ea7-4ea6-b0f4-b144afa00cc6",
+   "product_id": "6fe5946d-1740-479e-a383-bb2ac319ee22",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "44ff72ae-1e51-4984-b091-32120fb8c501",
+   "product_id": "7379cbac-9651-4c1c-b097-a4138fe8a3b4",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "c3b12ee0-ced6-43dc-8ebd-37b414d88768",
+   "product_id": "74caa194-f831-40f9-a79e-8f2757d83645",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "27ca7ca5-3fd5-42b1-ac60-1eca62fb7111",
+   "product_id": "76561360-d92a-42c5-93fa-f9523a2b55fd",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "8d985cbf-b087-4519-b070-55e376954ee1",
+   "product_id": "7852656f-a19d-47d8-90fd-c28c73a7f17a",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "0240857e-6e82-4c67-9aa0-67e55c0de9f7",
+   "product_id": "7a75fcf1-0f34-487d-bcae-9cf65901f8fe",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "437da872-0bad-40b4-ab67-f4a06213b6b1",
+   "product_id": "7e963f71-a80c-447d-81cb-99bc51ba5379",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "6a40870e-da43-4241-95fd-151dadd5e53c",
+   "product_id": "8023ab1b-c6d8-4202-b4bb-e7d3baf6c057",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "d781e9a2-da6a-46a4-b279-d811aae85a4b",
+   "product_id": "80463ec2-7b20-4da2-bc45-05667596ee56",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "aaece2b4-5138-47b2-b9ee-b27874847e86",
+   "product_id": "81e40232-f0f1-4a51-8879-30636619bad9",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "80c1e5d7-23ab-4cbc-b3d3-4cd029ab477f",
+   "product_id": "85ddc17a-ba47-4e03-a0a6-bc1e62f46436",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "97ada1c7-c1b1-44f9-b0dc-3a727621e99b",
+   "product_id": "86c1f88d-dbf8-46f5-bd11-a56f37a6d07c",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "a1c04216-7595-4934-b787-b8e320accfa3",
+   "product_id": "8d0278b8-b867-4f07-bb12-c49d1817e97c",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "7e19e461-02bb-4220-b980-3b1ecf3d0ee2",
+   "product_id": "8e75f1a8-ba43-444e-8b40-c71d140c76c5",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "78777e2a-dc10-4a54-9564-380e9fbd84fe",
+   "product_id": "904bee4d-864b-4722-bc10-5df2027eb13f",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "1bb6b51f-9a99-4c7d-bd7e-80a5515a8678",
+   "product_id": "90680fea-accc-4f98-9f6a-c938f7d8912f",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "b25c685a-0c67-441f-ad46-b4c2a1f82388",
+   "product_id": "9311100f-6271-4965-8b26-f6e04e3843a1",
+   "review_status": "READY_FOR_REVIEW",
+   "created_by": null
+  },
+  {
+   "draft_id": "cdd179a7-b70c-4bb4-877a-e89ea2f13356",
+   "product_id": "95bc6d80-bd01-4b9d-af55-6d921f054312",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "bcf97c14-7e03-4b7a-b9a3-0ee8a53ea223",
+   "product_id": "994da37b-298f-453e-a253-f436b50d0006",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "eb76f6f8-5856-47fb-b907-1b1478ba5893",
+   "product_id": "9951446d-fc70-4380-b194-7a11d18be130",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "899cb7d4-e8e1-45fa-8c61-7f8aa8da1475",
+   "product_id": "9bac2555-4eec-493d-a1c3-f16712618065",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "50953c7b-99df-4103-b3e3-c83d8d5424c6",
+   "product_id": "9ef257e3-00b1-4f50-b7d9-419b8b2403a7",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "48d8469e-756f-477c-bf72-58330b05a2c2",
+   "product_id": "a0be58cd-9bdb-4f1f-a7dc-91b845e2e591",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "740834b2-7940-454a-b08c-c8725588fe45",
+   "product_id": "aaea7d2f-a66e-483b-92b7-2704a84f810e",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "1de76faf-bb1e-43f1-b9dc-300276e63f12",
+   "product_id": "ad805d7d-e6fa-4a05-ad96-edc8e0295ae8",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "df93e2ef-ff62-45ac-bdbb-83b834831ba4",
+   "product_id": "ae47b55b-58d4-441e-97d3-0d6c785bb530",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "6872a899-de6f-4d7a-9ea8-62088053a077",
+   "product_id": "b561c02d-9ba1-4e32-95c8-c7d55f790ca5",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "4ac14974-5647-4d81-a3f8-71b37bfc5e26",
+   "product_id": "b56d75b7-0b7c-4534-9e8c-c3740fffe54e",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "deaae708-7fd0-4947-85d6-a11d82e89ecb",
+   "product_id": "b573d840-4444-4c8e-97a1-96311b6e52ac",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "9800f0a2-8544-4d5c-b239-0a75c4072c7b",
+   "product_id": "b6215416-cc29-4af8-8933-afcf7db1fc14",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "c81f872e-87cc-4cee-9a5c-57f6ec163ee8",
+   "product_id": "b7364ab6-23ce-424d-aa2b-d247eeeeb931",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "646fc79c-9577-4629-9eff-cfe94066abe0",
+   "product_id": "b978fd30-a6c3-47fd-8f16-a4eb263c8f3c",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "ccfad05c-c8ff-42bc-9b14-84048447ce6a",
+   "product_id": "c34c9305-35b9-44ab-963f-fa22c9b9e829",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "b97b01fc-fa50-4d6c-9669-c67c6667ebfd",
+   "product_id": "c5341831-8c85-4a13-82be-7b1ae12320d1",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "93658e03-a802-4576-8e3e-c3be6728ae01",
+   "product_id": "c70c3ab7-6073-499e-bb23-5d6ce331ea3f",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "90807df1-12a5-48ec-90ad-17c3c0f5162b",
+   "product_id": "canonical-simba-cat-food",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "097cb379-4dde-4c95-97a7-5463a7af57dc",
+   "product_id": "cc94a006-8a77-4a9b-b639-32133fa78095",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "817051a1-98a4-460d-8a94-8dd6c81a25f9",
+   "product_id": "cd70b493-990c-4a6f-8bd6-776765d8e04e",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "cde0f6be-71b4-4f89-b512-dd1e003c5d52",
+   "product_id": "d2bf2e52-84fa-426f-a6f3-d5f793db41ef",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "f96171e6-c7e9-48c5-a79e-3ac9ba899636",
+   "product_id": "d2f8fd58-437b-4447-8730-694b782eef17",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "d819bb57-bca9-46be-928d-ac915b2c2164",
+   "product_id": "d9385e4e-7a61-4308-b63e-d165879a9a8a",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "329d06ba-bd8a-49a8-a20b-7252130423c8",
+   "product_id": "db2dbbeb-79dc-4b78-b1ce-2257257cb7f8",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "7ac78c68-c0ef-44bd-aecc-dab93578a7ff",
+   "product_id": "dcf1e83d-f85d-485e-b6af-367e474d09fe",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "ad73ed06-9f82-405b-9eba-6de5f02a97f5",
+   "product_id": "de3ee6bd-592b-4228-bf96-f2cdcf15e78c",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "26dd2ea1-f635-4275-8ec3-68f8d4fb211f",
+   "product_id": "e02ecaf9-5d51-4356-8e77-7353a52d1da5",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "bec24082-c949-42b3-a034-8d27d72d5f61",
+   "product_id": "e06d8afd-44fa-47d7-8d79-d7dc55d52c41",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "4347781a-5e0d-48d5-8b22-4cfe4da06801",
+   "product_id": "e1803e3e-4665-441b-be6c-8415cb8c6bed",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "3328b7da-21d8-47b8-9217-76a09bf2e1d0",
+   "product_id": "e3e3819f-c312-4e73-9db8-477471860616",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "4518fd2e-f733-41f4-bfa8-078137c0d575",
+   "product_id": "e3ffa155-669e-4c0d-bceb-0ad7c565885e",
+   "review_status": "DRAFT",
+   "created_by": null
+  },
+  {
+   "draft_id": "6f69f708-3917-404f-9d3e-786803dd2909",
+   "product_id": "e6cb7e6d-16ab-4926-bef7-a99ff419d1b4",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "c4c94d77-8cd0-406e-a648-3233b0bdb226",
+   "product_id": "e9f06816-46b1-421d-8921-3ea183ed4760",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "6b9c334b-5eb5-4550-afaa-570e0f2b6f02",
+   "product_id": "ecd367eb-0a0d-433d-a774-50dfdf088f69",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "c60be221-3aaa-4131-a2c6-c76ca9606064",
+   "product_id": "eee2d2b9-d07b-42cb-b6a8-8cd5e126ad0d",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "0abddf83-15c7-45c2-af86-c53eae65f10d",
+   "product_id": "efa576c8-3ffe-4fb9-9ead-6acf196db31a",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "bd75829b-5f37-47e6-9a15-16ecc8780f8e",
+   "product_id": "efcc1f31-c91b-46fb-acc6-d736a5271884",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "e6ed177a-8ce0-4ad4-9509-af42fa03cd74",
+   "product_id": "f8102fa7-2ab1-4d91-881c-a6823ea8cbe2",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "4d226e66-5270-4b74-9d30-048f47590091",
+   "product_id": "fc2c5a41-ebf5-41bd-8884-4c233801d641",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "df51cace-4e73-4bf2-9087-f46f4683f319",
+   "product_id": "fca6771a-5616-4378-9f20-da5b35230396",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "15f0d6d2-a0cc-4bf7-b3c8-ff969d7e152b",
+   "product_id": "fcc092fa-7f90-42e9-b7d9-267a0acb5db8",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  },
+  {
+   "draft_id": "fc44fe7e-0856-471d-a2d6-8f020ab69742",
+   "product_id": "fdad0f75-9069-4174-8acd-33a8ee1d3232",
+   "review_status": "NEEDS_REVISION",
+   "created_by": null
+  }
+ ],
+ "snapshot_status_dist": {
+  "APPROVED": 621,
+  "SUPERSEDED": 808
+ },
+ "snapshot_claim_gate_latest_approved": {
+  "CLAIM_BLOCKED": 1,
+  "CLAIM_REVIEW_REQUIRED": 3,
+  "CLAIM_SAFE": 616,
+  "REVIEW_ONLY_APPROVED": 1
+ },
+ "draft_claim_gate_open": {
+  "CLAIM_BLOCKED": 16,
+  "CLAIM_REVIEW_REQUIRED": 8,
+  "CLAIM_SAFE": 89
+ },
+ "copy_sets_on_residual": 40,
+ "copy_set_total": 2727,
+ "hashes": {
+  "product": "62401e5b2d1dd50b5dfaec6554ef0c95782c75284d1aa40d6c478d796775a17f",
+  "product_intelligence_snapshot": "5f9584c83039678322fc69a9abfa4fef13ee1a5c5a57a498587bf6ed427c7bbc",
+  "product_intelligence_review_draft": "f4dadf0ab5ce54c16674a19ec2255808d6d03721fdce0f1e71dc247d9472ccb4"
+ },
+ "table_counts": {
+  "product": 659,
+  "product_intelligence_snapshot": 1429,
+  "product_intelligence_review_draft": 1549,
+  "product_intelligence_review_field_provenance": 11953,
+  "product_intelligence_field_provenance": 10846,
+  "copy_set": 2727
+ }
+}

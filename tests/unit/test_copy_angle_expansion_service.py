@@ -36,7 +36,7 @@ async def _product_with_snapshot(name, pains):
     draft = await draft_svc.create_review_draft(product["id"], _full_request(pains))
     await draft_svc.approve_review_draft(
         draft.draft_id,
-        ProductIntelligenceReviewDraftApproveRequest(approved_by="op"),
+        ProductIntelligenceReviewDraftApproveRequest(approved_by="op", claim_review_acknowledged=True),
     )
     return product["id"]
 
@@ -125,7 +125,7 @@ async def test_expand_without_snapshot_raises():
         raw_product_title="No Snapshot Product", source="MANUAL",
         product_display_name="No Snapshot Product",
     )
-    with pytest.raises(ValueError, match="NO_APPROVED_SNAPSHOT"):
+    with pytest.raises(ValueError, match="COPY_INELIGIBLE|NO_APPROVED_SNAPSHOT|NO_ACCEPTED_SNAPSHOT"):
         await svc.expand_product_angles(product["id"], ["pain baharu"])
 
 

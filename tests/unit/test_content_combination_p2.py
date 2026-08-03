@@ -33,6 +33,15 @@ def _plan(mode="T2V", **kw):
 # ── Fingerprint ───────────────────────────────────────────────────────────
 
 
+
+@pytest.fixture(autouse=True)
+def _b04_eligibility_pass(monkeypatch):
+    """PI-FINAL-B04: non-DB/mocked product paths pass the gate."""
+    async def _ok(product_id: str = '', *a, **k):
+        return {"product_id": product_id, "eligible": True, "reasons": []}
+    monkeypatch.setattr("agent.services.copy_eligibility_service.assert_copy_eligible", _ok)
+    monkeypatch.setattr("agent.services.copy_eligibility_service.copy_eligibility", _ok)
+
 def test_fingerprint_is_deterministic_and_key_order_independent():
     vk = {"avatar_code": "BOS_F_MAYA", "scene_context": "kitchen"}
     a = rot.combination_fingerprint(PID, "T2V", "copy_set:cs_01", vk)

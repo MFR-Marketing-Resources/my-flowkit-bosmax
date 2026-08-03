@@ -48,6 +48,15 @@ def _wire(monkeypatch, *, snap_status, grounding, copy_rows):
     monkeypatch.setattr(svc.crud, "list_copy_sets_for_product", sets)
 
 
+
+@pytest.fixture(autouse=True)
+def _b04_eligibility_pass(monkeypatch):
+    """PI-FINAL-B04: non-DB/mocked product paths pass the gate."""
+    async def _ok(product_id: str = '', *a, **k):
+        return {"product_id": product_id, "eligible": True, "reasons": []}
+    monkeypatch.setattr("agent.services.copy_eligibility_service.assert_copy_eligible", _ok)
+    monkeypatch.setattr("agent.services.copy_eligibility_service.copy_eligibility", _ok)
+
 @pytest.mark.asyncio
 async def test_readiness_no_snapshot(monkeypatch):
     _wire(

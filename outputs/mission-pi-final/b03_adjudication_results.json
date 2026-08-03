@@ -1,0 +1,57 @@
+[
+ {
+  "product_id": "33caf58f-5cbd-4068-891c-4d1bae30c729",
+  "result": "APPROVED",
+  "version": 4,
+  "gate": "CLAIM_REVIEW_REQUIRED",
+  "readiness": "CLAIM_REVIEW_REQUIRED",
+  "prior_gate": "CLAIM_REVIEW_REQUIRED"
+ },
+ {
+  "product_id": "01f3274b-2fc0-4977-b6d5-efaaa2cb2bf7",
+  "result": "APPROVED",
+  "version": 7,
+  "gate": "CLAIM_REVIEW_REQUIRED",
+  "readiness": "CLAIM_REVIEW_REQUIRED",
+  "prior_gate": "CLAIM_REVIEW_REQUIRED"
+ },
+ {
+  "product_id": "b460ffbd-7d9d-4f6b-a570-0e9b1056439a",
+  "result": "APPROVED",
+  "version": 4,
+  "gate": "CLAIM_REVIEW_REQUIRED",
+  "readiness": "CLAIM_REVIEW_REQUIRED",
+  "prior_gate": "CLAIM_REVIEW_REQUIRED"
+ },
+ {
+  "product_id": "90349f8c-9e14-4efe-988e-76ec60ea31f4",
+  "result": "APPROVED",
+  "version": 4,
+  "gate": "CLAIM_REVIEW_REQUIRED",
+  "readiness": "CLAIM_REVIEW_REQUIRED",
+  "prior_gate": "CLAIM_REVIEW_REQUIRED"
+ },
+ {
+  "product_id": "9c358334-0671-42cd-8495-be54190e189c",
+  "result": "FAIL",
+  "stage": "revision",
+  "http": 500,
+  "detail": {}
+ },
+ {
+  "product_id": "1063eec6-976c-415f-95dd-be5c7b53608b",
+  "result": "APPROVED",
+  "version": 4,
+  "gate": "CLAIM_REVIEW_REQUIRED",
+  "readiness": "READY_WITH_GOVERNED_ABSENCE",
+  "prior_gate": "CLAIM_REVIEW_REQUIRED"
+ },
+ {
+  "product_id": "8e75f1a8-ba43-444e-8b40-c71d140c76c5",
+  "result": "APPROVED",
+  "version": 4,
+  "gate": "CLAIM_REVIEW_REQUIRED",
+  "readiness": "READY_WITH_GOVERNED_ABSENCE",
+  "prior_gate": "CLAIM_REVIEW_REQUIRED"
+ }
+]

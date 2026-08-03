@@ -11,12 +11,18 @@ async def queue_batch(batch_id: str) -> dict[str, Any]:
     CRITICAL: Does NOT trigger Google Flow execution in this phase.
     """
     db = await crud.get_db()
-    
+
     # Check batch existence and status
-    cursor = await db.execute("SELECT status FROM batch WHERE id = ?", (batch_id,))
+    cursor = await db.execute("SELECT status, product_id FROM batch WHERE id = ?", (batch_id,))
     row = await cursor.fetchone()
     if not row:
         return {"error": "Batch not found"}
+
+    # PI-FINAL-B04: queue insertion is refused for ineligible products.
+    from agent.services.copy_eligibility_service import copy_eligibility
+    _elig = await copy_eligibility(str(row["product_id"] or ""))
+    if not _elig["eligible"]:
+        return {"error": "COPY_INELIGIBLE:" + ",".join(_elig["reasons"])}
     
     if row["status"] == "DRAFT_BLOCKED":
         return {"error": "Cannot queue a blocked batch. Resolve safety issues first."}

@@ -163,6 +163,16 @@ async def approve_packages(package_ids: list[str]) -> dict:
                 "error": f"NOT_APPROVABLE_STATUS:{row.get('status')}",
             })
             continue
+        # PI-FINAL-B04: an ineligible product's package can never be approved
+        # for production (fail-closed at the approval door).
+        from agent.services.copy_eligibility_service import copy_eligibility as _copy_elig
+        _elig = await _copy_elig(str(row.get("product_id") or ""))
+        if not _elig["eligible"]:
+            results.append({
+                "package_id": wgp_id, "ok": False,
+                "error": "COPY_INELIGIBLE:" + ",".join(_elig["reasons"]),
+            })
+            continue
         current = row.get("production_status") or "NONE"
         if current not in ("NONE", "", "CANCELLED", "FAILED"):
             results.append({
@@ -229,6 +239,15 @@ async def send_to_production(
             refused.append({
                 "package_id": wgp_id,
                 "error": f"NOT_APPROVED:{row.get('production_status') or 'NONE'}",
+            })
+            continue
+        # PI-FINAL-B04: queue insertion is refused for ineligible products.
+        from agent.services.copy_eligibility_service import copy_eligibility as _copy_elig
+        _elig = await _copy_elig(str(row.get("product_id") or ""))
+        if not _elig["eligible"]:
+            refused.append({
+                "package_id": wgp_id,
+                "error": "COPY_INELIGIBLE:" + ",".join(_elig["reasons"]),
             })
             continue
         eligible.append(row)
@@ -647,6 +666,12 @@ async def retry_failed_items(run_id: str) -> dict:
     retried = 0
     for item in items:
         if item.get("production_status") == "FAILED":
+            # PI-FINAL-B04: a FAILED item on a (now-)ineligible product stays
+            # FAILED - retry may not resurrect it.
+            from agent.services.copy_eligibility_service import copy_eligibility as _copy_elig
+            _elig = await _copy_elig(str(item.get("product_id") or ""))
+            if not _elig["eligible"]:
+                continue
             await crud.update_workspace_generation_package(
                 item["workspace_generation_package_id"],
                 production_status="QUEUED", production_error=None,
@@ -1372,6 +1397,24 @@ async def _live_production_loop(run_id: str) -> None:
             break
         item = queued[0]
         wgp_id = item["workspace_generation_package_id"]
+
+        # PI-FINAL-B04 fire-time revalidation: a product that became copy-ineligible
+        # AFTER its package was queued (archived, merged, snapshot revoked, claim
+        # reopened) must not execute. Mark FAILED so the item leaves the QUEUED set.
+        from agent.services.copy_eligibility_service import copy_eligibility as _copy_elig
+        _elig = await _copy_elig(str(item.get("product_id") or ""))
+        if not _elig["eligible"]:
+            failed += 1
+            reason = "COPY_INELIGIBLE:" + ",".join(_elig["reasons"])
+            errors.append(f"{wgp_id}: {reason}")
+            await crud.update_workspace_generation_package(
+                wgp_id, production_status="FAILED", production_error=reason,
+            )
+            await crud.update_production_run(
+                run_id, total_completed=completed, total_failed=failed,
+                error_log_json=_json(errors[-50:]),
+            )
+            continue
 
         # Bulk EXTEND is MULTI-BLOCK and belongs to the durable /video-jobs
         # orchestrator, so it is routed BEFORE build_execution_payload runs. That

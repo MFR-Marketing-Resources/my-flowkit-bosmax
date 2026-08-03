@@ -1,0 +1,67 @@
+{
+ "cohort_116": 116,
+ "direct_copy_artifacts": {
+  "workspace_execution_package": {
+   "col": "product_id",
+   "count": 22,
+   "sample_rowids": [
+    9,
+    11,
+    31,
+    3,
+    6
+   ]
+  },
+  "workspace_generation_package": {
+   "col": "product_id",
+   "count": 3,
+   "sample_rowids": [
+    116,
+    117,
+    118
+   ]
+  },
+  "copy_set": {
+   "col": "product_id",
+   "count": 66,
+   "sample_rowids": [
+    2432,
+    2461,
+    2462,
+    2463,
+    2439
+   ]
+  },
+  "poster_copy_set": {
+   "col": "product_id",
+   "count": 1,
+   "sample_rowids": [
+    7
+   ]
+  },
+  "copy_component": {
+   "col": "product_id",
+   "count": 8,
+   "sample_rowids": [
+    745,
+    746,
+    739,
+    740,
+    741
+   ]
+  }
+ },
+ "direct_total": 100,
+ "indirect_copy_artifacts": {},
+ "fail_close_plan": {
+  "principle": "These assets were generated while PI was incomplete -> STALE. Do NOT delete.",
+  "actions": [
+   "1. Add/confirm a COPY_ELIGIBLE gate: a product is copy-eligible ONLY with an accepted, claim-safe PI snapshot.",
+   "2. Any of the 116 is COPY_INELIGIBLE until its PI recovery is approved.",
+   "3. Existing stale copy rows for the 116 are preserved but flagged (needs_revalidation) and excluded from production selection/queue.",
+   "4. After a product's PI is recovered+approved, its stale copy must be revalidated/regenerated before use.",
+   "5. Prove zero NEW copy rows/jobs/packages created for the 116 during remediation (baseline=100 must not grow)."
+  ],
+  "enforcement": "Phase 7: audit UI/API/bulk/batch/queue/scheduled/retry entrypoints; fail-closed; regression tests."
+ }
+}

@@ -140,6 +140,13 @@ class PosterCopySetService:
         if not product:
             raise PosterCopySetError("PRODUCT_NOT_FOUND", status_code=404)
 
+        # PI-FINAL-B04: poster copy sets may only be created for COPY_ELIGIBLE products.
+        from agent.services.copy_eligibility_service import copy_eligibility
+        _elig = await copy_eligibility(product_id)
+        if not _elig["eligible"]:
+            raise PosterCopySetError(
+                "COPY_INELIGIBLE", ",".join(_elig["reasons"]), status_code=409)
+
         fields = request.model_dump()
         warnings = run_poster_copy_gate(fields, strict=False)
         payload = _row_payload(fields)

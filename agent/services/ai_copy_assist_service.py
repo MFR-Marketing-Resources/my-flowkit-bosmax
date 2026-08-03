@@ -418,6 +418,15 @@ async def generate_ai_copy_candidate(
             detail={"product_id": req.product_id},
         )
 
+    # PI-FINAL-B04: the AI-assist lane is gated on COPY_ELIGIBLE (and this gate,
+    # unlike grounding, has no allow_ungrounded bypass).
+    from agent.services.copy_eligibility_service import copy_eligibility
+    _elig = await copy_eligibility(req.product_id)
+    if not _elig["eligible"]:
+        raise CopySetError(
+            "COPY_INELIGIBLE", status_code=409,
+            detail={"product_id": req.product_id, "reasons": _elig["reasons"]})
+
     # Provider adapter raises AICopyProviderNotConfigured / AICopyProviderError —
     # the router maps them to fail-closed responses.
     grounding = await resolve_copy_grounding(product)
@@ -474,6 +483,14 @@ async def generate_ai_copy_candidates_batch(
             status_code=422,
             detail={"product_id": req.product_id},
         )
+
+    # PI-FINAL-B04: bulk AI generation is gated on COPY_ELIGIBLE.
+    from agent.services.copy_eligibility_service import copy_eligibility
+    _elig = await copy_eligibility(req.product_id)
+    if not _elig["eligible"]:
+        raise CopySetError(
+            "COPY_INELIGIBLE", status_code=409,
+            detail={"product_id": req.product_id, "reasons": _elig["reasons"]})
 
     threshold = 0.80 if req.dedupe_threshold is None else req.dedupe_threshold
     warnings: list[dict[str, Any]] = []
