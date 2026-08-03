@@ -12,7 +12,8 @@
     "PHASE0_preserve (read-only git forensics; branch created; no reset/clean/stash)",
     "PHASE1_partial (backup verified present; live-vs-backup read-only forensic diff done)",
     "PROVE (defects #1-#7 confirmed at file:line + timestamps; #8-#10 pending)",
-    "PHASE3 strict FAIL-CLOSED validity authority — DONE: granular per-gate override (D4), missing completeness/safety/semantic-receipt fail closed (D3), auditable generic/synthetic detector (D1/B03), reason-aware product classifications (D7), VALIDITY_EVALUATION_FAILED fail-closed reporting sentinel (D8). 35/35 unit tests green (tests/unit/test_copy_set_validity_service.py)."
+    "PHASE3 strict FAIL-CLOSED validity authority — DONE: granular per-gate override (D4), missing completeness/safety/semantic-receipt fail closed (D3), auditable generic/synthetic detector (D1/B03), reason-aware product classifications (D7), VALIDITY_EVALUATION_FAILED fail-closed reporting sentinel (D8). 35/35 unit tests green (tests/unit/test_copy_set_validity_service.py).",
+    "PHASE4 ATOMIC approval — DONE: approve_copy_set blocks generic filler at the door (COPY_SET_GENERIC), requires a current APPROVED PI snapshot else fails closed (COPY_SET_NO_PI_SNAPSHOT), writes a durable semantic-review receipt, and grounds status+lineage+quarantine-clear in ONE atomic crud.update_copy_set write — no second-transaction stamp, no except:pass (D5). Binding now accepts only strict-valid copy. 70/70 green across approval/binding/copy-set/validity suites. Durability: branch pushed to origin (bbdca82, 05557cc verified on GitHub)."
   ],
   "phases_pending": [
     "PHASE2 containment (mass DB quarantine on SHARED LIVE DB — owner-gated)",

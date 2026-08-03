@@ -30,7 +30,7 @@ def _fake_signal(**over):
     base = dict(
         copy_signals={
             "hook": "Nak kulit nampak segar sepanjang hari?",
-            "usp_1": "Sesuai untuk rutin harian yang ringkas",
+            "usp_1": "Menyerap dalam 10 saat tanpa melekit",
             "usp_2": "Mudah digunakan tanpa leceh",
             "usp_3": "Formula ringan senang diserap",
             "cta": "Cuba masukkan dalam rutin kau hari ni.",
@@ -70,7 +70,7 @@ async def test_generate_uses_copy_signal_and_persists(monkeypatch):
     assert cs["hook"] == "Nak kulit nampak segar sepanjang hari?"
     assert cs["cta"].endswith("hari ni.")
     assert cs["usp_set"] == [
-        "Sesuai untuk rutin harian yang ringkas",
+        "Menyerap dalam 10 saat tanpa melekit",
         "Mudah digunakan tanpa leceh",
         "Formula ringan senang diserap",
     ]
