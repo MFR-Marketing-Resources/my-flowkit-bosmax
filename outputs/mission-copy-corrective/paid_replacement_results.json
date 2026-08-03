@@ -1,0 +1,668 @@
+{
+ "summary": {
+  "residual_in": 119,
+  "closed_paid": 72,
+  "already_closed": 45,
+  "quarantined_after_two_attempts": 2,
+  "closed_on_attempt_1": 70,
+  "closed_on_attempt_2": 2,
+  "max_attempts_per_product": 2,
+  "provider_calls": 77,
+  "tokens_in": 150258,
+  "tokens_out": 241337,
+  "estimated_cost_usd": 0.306,
+  "rate_note": "deepseek-v4-flash public rate (in=0.27, out=1.10 USD/1M)",
+  "concurrency_final": 10,
+  "provider": {
+   "lane": "text_assist",
+   "configured": true,
+   "provider_id": "deepseek",
+   "model_id": "deepseek-v4-flash",
+   "execution_enabled": true
+  }
+ },
+ "products": [
+  {
+   "product_id": "8ae553d2-4810-4d03-926b-5f2f1282c21c",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "1c5b5c1a-43d2-4239-b87b-7b0f95c7e58f",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "7336ec55-65bf-40f2-9754-d5f6b11d0a43",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "b83d97ba-1072-4497-aadf-9f63004b9049",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "19d5518d-975b-4902-98bc-29428e7fe96c",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "b191e1a5-deed-4482-b35d-0c85049f514e",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "981cc17d-b5d8-47a4-992e-3a262ba07157",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "82c54d11-8de3-47a9-bbc6-297056ed0fab",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "6d242ace-4ccb-4d63-9c67-163d96234f81",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "72506493-7cbd-4b1e-8d87-a5672bcbe154",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "feefc2fa-8f16-4128-886b-2eb27b0d1944",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "a14cab39-1f3b-4648-8128-53e2a082e8b8",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "8e465292-79f0-4165-bdc1-9b740655a586",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "994da37b-298f-453e-a253-f436b50d0006",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "951b5f10-f035-4935-89d1-f25c52c35b51",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "ce5f75e4-3d36-4292-a588-46aec34ad7fb",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "14d5c7c2-9b75-48cc-841d-f8b47af8cbc6",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "4c6e5722-9914-49cf-a0fa-204b452c4fe1",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "7ed3f33e-58a6-41ca-9bca-84997b2b10b0",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "f34bab64-5488-4b02-811e-064f95d53597",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "f79f2c25-07da-4dd8-82e5-95c83d66e080",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "8a3182ec-350a-4499-ac4d-42cd244eed75",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "18c28ac5-ab61-45f4-9353-1e8d1687cb62",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "8c19afea-ca9f-4f76-8c30-1f0e150ac07b",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "7632caf0-ac2c-4814-afdd-afe697438652",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "a7081c4c-715d-4ebe-99d7-8d6a9f3f45f4",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "a6c94806-15dc-460c-b56c-ea674ce662e7",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "b36d17a1-4209-431a-b740-c3ceadb7c704",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "b527d024-7d61-4b6f-8828-6367f25469ef",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "86e907e5-4635-4333-88da-07149188e6ce",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "7ee955e0-694b-4192-a170-1176af87e651",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "a7421ac4-7423-4262-86d4-d5be6e687c25",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "9a5d4b6a-1f1b-4ba8-a1bc-86bbab107af9",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "8c46a9e9-6346-43dc-a0b3-d4641332696c",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "5a148537-098d-4c9e-8f1b-1934087b60ab",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "aa6042ad-2048-43b9-b19f-fd2c4f5d8b66",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "8cac00aa-bf86-4554-894c-950e3233f352",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "f2490e97-a543-44b6-a4de-28b92440d679",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "b5a5ed44-f983-4c06-9007-d34006318932",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "9fc067da-914f-4d23-a3a2-50bc7c916903",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "ed97e243-9e20-4859-baa6-07c6cc06675a",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "c70c3ab7-6073-499e-bb23-5d6ce331ea3f",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "9b771ea4-d27f-4b4f-a866-8cbb15e29389",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "f2851345-6c82-41b0-a032-7491d36bdd8a",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "992eee37-93a0-4f24-86b2-391a16893699",
+   "outcome": "ALREADY_CLOSED"
+  },
+  {
+   "product_id": "db2dbbeb-79dc-4b78-b1ce-2257257cb7f8",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "f42383f7-c36a-4716-9daf-e783369c916e"
+  },
+  {
+   "product_id": "79e56ba2-2b7f-431a-88da-496af82c11fd",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "3166e257-91c6-4466-8173-64774dafd85f"
+  },
+  {
+   "product_id": "70df6d27-69d7-48d3-b426-adea41a9045b",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "b8c5e247-777c-4b59-a177-a93b10d50d83"
+  },
+  {
+   "product_id": "db169b2c-0611-47b5-9b3f-90a9e7441aea",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "4a499eb0-4f64-43b6-a5f8-8353919df374"
+  },
+  {
+   "product_id": "fcf0fff1-fc18-40da-b14c-ee44d1361413",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "d318c8eb-735f-4c09-940f-f0a420746ab2"
+  },
+  {
+   "product_id": "c9522a45-05e0-411c-abe3-01e7a19ecaa6",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "38a5e665-8503-4920-9b47-299825cfdc84"
+  },
+  {
+   "product_id": "c9888bd2-2546-4041-935e-aba94fa8a27b",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "3ac03c20-c22d-41dc-adcf-a3a2540a579c"
+  },
+  {
+   "product_id": "fd68bb57-fb3b-4495-b0ba-5a32e931b1fd",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "39110c3b-5335-4516-8f61-ac6ac6f43f25"
+  },
+  {
+   "product_id": "b38f83b7-8950-4dab-811f-4c3a89850194",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "2cc69ffb-c99c-4f23-8afc-659c4d7d529f"
+  },
+  {
+   "product_id": "e3ffa155-669e-4c0d-bceb-0ad7c565885e",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "be562baf-8fd0-48f9-ba16-4b754d0d2682"
+  },
+  {
+   "product_id": "95e80583-2d66-42a0-b0a2-03874e246505",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "e6b82feb-f0f4-4425-b283-66e04952ea84"
+  },
+  {
+   "product_id": "f3b38817-44a9-4935-a586-fb9939b701d9",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "b9b031db-ca48-4ff1-8719-9186026a9f47"
+  },
+  {
+   "product_id": "e57cd925-3d3c-4e28-8dd4-a1e4984bb936",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "90640a35-0ae1-4c2b-8acd-6b0e3f0185bd"
+  },
+  {
+   "product_id": "fbf49c09-88ae-459c-90f4-7e3582cab55e",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "0f5845b5-1b70-4f53-a2c6-e6ca97b674ee"
+  },
+  {
+   "product_id": "7ef84490-ba71-434e-99c4-52bf4475ee4e",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "87f87579-e037-4bec-9c8a-7ca766692b4a"
+  },
+  {
+   "product_id": "a960c4f6-b1fe-4111-b33b-51ce5cacaa25",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "25aadf57-b5f0-4f88-96b3-6f42b9298fba"
+  },
+  {
+   "product_id": "fe673c01-e328-4f30-9f19-5eb1142ed442",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "3321e78f-d1cb-4cc8-bf54-1cd7a5a1e64b"
+  },
+  {
+   "product_id": "ec298ae7-77d2-427f-b683-c2c9e2c1037b",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "0ed7056c-1c57-4701-95a8-5c9d71aea08e"
+  },
+  {
+   "product_id": "a789126c-54da-4aa4-801a-607b6d0c5061",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "804665a9-08a5-48a4-9a6d-fdec8aa992d4"
+  },
+  {
+   "product_id": "bc3dac5c-8460-412c-9ae1-836adaddb1e9",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "2d2a5d8b-bc4e-46a0-8005-62c3ae30c7a9"
+  },
+  {
+   "product_id": "c1085efb-6c9a-48eb-8da5-1952cc53bb92",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "0188d05a-a524-4e49-8aad-aa151d80daf1"
+  },
+  {
+   "product_id": "e06c7c7b-1c2d-4a39-9aa9-751d4e032d74",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "ee0eb255-05fc-4c6e-8b17-3154bfc502a3"
+  },
+  {
+   "product_id": "8d489069-eaf3-4228-a8c0-67527c8a59b0",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "1ae412c0-a3db-47b1-9dac-07254a47b6bf"
+  },
+  {
+   "product_id": "9cf6f636-7878-467c-9fac-65dd0760ccd8",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "afc77bd6-0b9e-4119-ba54-3f0e7a763419"
+  },
+  {
+   "product_id": "afe7674e-6dfd-4f3b-8d05-48dac9885db0",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "43df1d5a-c730-42e3-9578-43ad07b6c2b7"
+  },
+  {
+   "product_id": "d136638e-8e8b-4bc9-9800-68c44c991462",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "4f28fcb8-9baf-40d9-b528-b4de793a4473"
+  },
+  {
+   "product_id": "be01cb61-8b43-4f69-ac13-8116c16a4cb0",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "7e9aa61e-268b-493c-8a19-635294dde7bb"
+  },
+  {
+   "product_id": "b6eaa73e-6325-4aa2-b4ce-96e2fe9c7c7d",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "412b5565-74f7-4642-9d66-ea306b6f9357"
+  },
+  {
+   "product_id": "91f9d2d1-f50d-40a6-a165-202f8f14db4e",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "08adc089-365a-4bba-8962-7d150a6cef61"
+  },
+  {
+   "product_id": "8951f8b3-e19e-4566-8187-55829482b8b7",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "bfc1dc9d-0f67-49e8-b7b5-c2cb7f921c76"
+  },
+  {
+   "product_id": "7c5318f7-0fad-4d9a-ba03-d8699ddea51e",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "8bd8b20e-fe4f-4125-9239-b121f902d2ce"
+  },
+  {
+   "product_id": "edcbe7c0-c81b-41fd-8d57-39f8ef010397",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "79c8a945-8e04-4c3e-996e-ed0ded91afb3"
+  },
+  {
+   "product_id": "765fe80e-b98c-47df-b9d4-5524a533c9f0",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "d1927690-b0f1-4be0-b211-a31318855ff2"
+  },
+  {
+   "product_id": "c46c2a6b-7fc7-4869-ab9f-6e5fecc3250b",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "65876267-da73-4e60-a0d5-76c2c883b63a"
+  },
+  {
+   "product_id": "90379666-f96a-40ed-baf2-58298a8522b2",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "9afe5a89-779b-4185-a5c8-2b8569804f0f"
+  },
+  {
+   "product_id": "ce61e962-3125-4322-81bc-cd703dc77bc9",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "48b5f122-eae9-4816-8c15-8775886745a6"
+  },
+  {
+   "product_id": "0f1a6e14-6980-47df-96b5-693a13b38dbd",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "2957725d-a370-473a-82de-59d50e143e90"
+  },
+  {
+   "product_id": "7b66e273-dfbe-47fc-b337-a8bc3b7a15da",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "1c62dcb7-84f0-44d1-b0e7-c57676e01584"
+  },
+  {
+   "product_id": "9bdefb5d-8278-4668-9425-dbed61464c9d",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "59016b90-6a6f-4a9c-b010-60156c2b99b8"
+  },
+  {
+   "product_id": "8cb573bb-8f06-4389-ad07-cf92b0a53450",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "4aa40d5f-0031-4440-b61c-008a7e7d381a"
+  },
+  {
+   "product_id": "defdd701-2a03-488b-bcbf-bdb09ac14140",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "4a9fbb10-3f73-4ff8-9dfc-f8bb2029fc95"
+  },
+  {
+   "product_id": "db855f29-fe2f-47be-88d6-91a091f6ed54",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "a5987121-393f-4c9c-ab05-5d3a0eac8f97"
+  },
+  {
+   "product_id": "a5ec81fb-373a-4dbf-8e6b-c60bd297ada0",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "f7931030-3cd1-407b-9457-5ebb79083c65"
+  },
+  {
+   "product_id": "c7fbce94-fe43-4f64-ba44-57e36a7de3ca",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "2d8d80ae-fa14-478e-bced-2a2ac0d89396"
+  },
+  {
+   "product_id": "fdad0f75-9069-4174-8acd-33a8ee1d3232",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "c8dd1ec7-45ba-4a73-835d-b67cfeb28a1f"
+  },
+  {
+   "product_id": "fef8ebbf-429b-4f17-a858-683ed69af2f8",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "a0572be7-5f92-452f-9baf-32b5dbb0a8ab"
+  },
+  {
+   "product_id": "d5c0a63d-06ca-4f58-91e5-de1f7665fb2f",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "dd9ed1a0-d934-48b5-a2b3-31bfb6fac62a"
+  },
+  {
+   "product_id": "a034e516-bd8f-42a2-acd8-c33ad6a543b0",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "b8395ee4-014a-4342-8a07-c4f1a3242aba"
+  },
+  {
+   "product_id": "ba4c941f-8fa3-4c90-82fb-bd54b502a71b",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "5336b9f5-bc56-4d23-b47f-e90f51e97213"
+  },
+  {
+   "product_id": "873126e9-b0d5-41c1-afce-43f25f467def",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "7dac84bd-f095-45af-905d-8680235eccaa"
+  },
+  {
+   "product_id": "8b5a8aa4-ec1b-456c-9292-f5abac99cf8e",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "492f656d-f51d-4778-8705-d949190b6887"
+  },
+  {
+   "product_id": "8afbadfa-a958-40ea-9256-c2cbf75a21ef",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "05931967-bb36-46f1-928f-9761cd768eed"
+  },
+  {
+   "product_id": "9f969c7c-ff94-440e-9353-908326c819d8",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "b96287f8-9604-4dcc-8180-10fefc6c40be"
+  },
+  {
+   "product_id": "af57902f-a69a-4b5e-87ff-02edec363d95",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "45210c75-62b1-494f-87d4-3ed8a2c7b8f0"
+  },
+  {
+   "product_id": "e10804b5-5d06-4b2a-9b66-2d32ca35841a",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "33295796-9466-4bd6-b783-870d8a778646"
+  },
+  {
+   "product_id": "98c04992-a726-4782-8293-7bf17156cdd0",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "4caa2f8d-8b15-4b27-b26d-22cdd2ec0f12"
+  },
+  {
+   "product_id": "0a26caf0-1bc6-43a9-a267-7d2a1dbaccab",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "20f8b973-2db1-47b5-be35-f492ec392240"
+  },
+  {
+   "product_id": "f67305f1-3786-4727-96c4-7e972cf50129",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "77e94057-3874-4700-bba1-abf49736843e"
+  },
+  {
+   "product_id": "a2df36de-02e1-4d19-8138-80ad6e34d1df",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "1e00780e-bb20-4080-9e3b-6f99ae9e8da5"
+  },
+  {
+   "product_id": "60c65d01-5d27-465b-8b9b-20d3a8cd8b99",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "73759924-be94-4f64-80d3-d080cb92e36f"
+  },
+  {
+   "product_id": "c4216575-c02c-4719-9d48-88dc09c8917f",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "114bd881-0cfe-4e1a-9483-ef5e467d6eeb"
+  },
+  {
+   "product_id": "8d3214de-145a-489a-8da2-d0438b9d1406",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "111d156e-b2b8-48d8-a387-a1c844b76d0b"
+  },
+  {
+   "product_id": "aae1b6f9-6d8f-43e3-9723-0d517ae8daec",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "50472f90-9301-490c-ba4e-89588a5ea050"
+  },
+  {
+   "product_id": "d3ca6bd0-0da4-4ef8-a115-2e2c85facc1c",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "20eb855c-f381-47ed-b351-259e0ea36176"
+  },
+  {
+   "product_id": "e42c937b-4236-40e2-b7c4-990d7e9e8b18",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "04ae765c-90e6-4135-9941-ea47abc86b71"
+  },
+  {
+   "product_id": "96616701-0020-4430-97f0-1d4001c40ae7",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "52789c52-e8b2-4fbf-8338-aea80447c626"
+  },
+  {
+   "product_id": "822e7269-11d9-4b6c-9a51-59abfe448ff6",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "c8d9e4d6-415f-415c-b8f4-e672fb832e83"
+  },
+  {
+   "product_id": "c1f000cc-4f91-4986-b487-9e8c0d5e9e7d",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "88586a40-7944-4345-b1a4-df274bac340f"
+  },
+  {
+   "product_id": "2d359cf9-a952-442f-b93f-2b6130debb9f",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "74ac2433-747c-40e7-9dcc-332952787d83"
+  },
+  {
+   "product_id": "3bfd5223-abf4-49da-9710-dcc3a1450f50",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 1,
+   "copy_set_id": "8d55644d-42b5-4934-852f-fdbd574993be"
+  },
+  {
+   "product_id": "b71be8c5-614a-4c53-8679-01d658b6ea71",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 2,
+   "copy_set_id": "6c64f1f0-1660-4c39-9a47-c8bbca763e1b"
+  },
+  {
+   "product_id": "8ea29ec2-3e38-4d35-a5dc-16e0be4bc317",
+   "outcome": "QUARANTINED_AFTER_TWO_ATTEMPTS",
+   "attempt_2_failure": [
+    "AI_COPY_ASSIST_RESPONSE_INVALID"
+   ],
+   "quarantine_status": "NEEDS_REVALIDATION",
+   "quarantine_reason": "COPY_CORRECTIVE_TWO_ATTEMPT_CAP:a1=NONE;a2=PROVIDER_ERROR",
+   "quarantined_copy_set_ids": [
+    "18ca4b1b-5ef0-4a4b-b868-f184c1adb405"
+   ],
+   "attempt_1_failure": [
+    "GENERIC"
+   ]
+  },
+  {
+   "product_id": "e79642fc-5794-4312-8dcc-11a782ebc653",
+   "outcome": "CLOSED_PAID",
+   "closed_on_attempt": 2,
+   "copy_set_id": "1e19a196-848d-4e62-a030-3b208071de95"
+  },
+  {
+   "product_id": "9daaa6b9-39ba-4fd9-92b6-835c1353d7fa",
+   "outcome": "QUARANTINED_AFTER_TWO_ATTEMPTS",
+   "attempt_2_failure": [
+    "UNSAFE"
+   ],
+   "quarantine_status": "BLOCKED",
+   "quarantine_reason": "COPY_CORRECTIVE_TWO_ATTEMPT_CAP:a1=NONE;a2=UNSAFE",
+   "quarantined_copy_set_ids": [
+    "d6d87459-5d9e-4f88-afe2-5b09fe392794"
+   ],
+   "attempt_1_failure": [
+    "UNSAFE"
+   ]
+  }
+ ]
+}

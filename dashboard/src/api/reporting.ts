@@ -51,12 +51,41 @@ export interface PiQualitySummary {
 	drill_down_kinds: Record<PiQualityClass, ExceptionKind>;
 }
 
+/** Reason-aware product-level copy classes from the shared strict validity
+ * authority (agent/services/copy_set_validity_service). APPROVED_COPY_VALID is
+ * the only production-ready state; the rest are the exact blockers. */
+export type CopyClassification =
+	| "APPROVED_COPY_VALID"
+	| "APPROVED_COPY_STALE"
+	| "APPROVED_COPY_UNSAFE"
+	| "APPROVED_COPY_INCOMPLETE"
+	| "APPROVED_COPY_GENERIC"
+	| "APPROVED_COPY_MISSING_REVIEW"
+	| "APPROVED_COPY_FORMULA_REVIEW"
+	| "APPROVED_COPY_SALES_CLARITY_REVIEW"
+	| "APPROVED_COPY_INVALID_LINEAGE"
+	| "COPY_REVIEW_REQUIRED_ONLY"
+	| "DRAFT_COPY_ONLY"
+	| "REJECTED_COPY_ONLY"
+	| "MISSING_COPY"
+	| "BLOCKED_WITH_REASON"
+	| "VALIDITY_EVALUATION_FAILED";
+
 export interface CopywritingCoverage {
 	total_products: number;
 	products_with_copy: number;
 	products_missing_copy: number;
 	products_with_approved_copy: number;
+	/** STRICT production readiness — a valid current approved Copy Set (grounded,
+	 * safe, complete, non-generic, semantically reviewed). NOT raw row coverage. */
+	products_with_valid_approved_copy: number;
+	products_without_valid_approved_copy: number;
+	/** Products whose strict evaluation raised — fail-closed, never counted valid. */
+	validity_evaluation_failed: number;
+	/** Reason-aware breakdown for drill-down (values sum to total_products). */
+	copy_classification_counts: Partial<Record<CopyClassification, number>> | null;
 	coverage_pct: number;
+	valid_approved_coverage_pct: number;
 	total_copy_sets: number;
 	avg_sets_per_covered_product: number;
 	copy_set_by_status: Record<string, number>;

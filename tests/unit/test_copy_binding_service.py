@@ -31,12 +31,21 @@ async def _make_product(**kw) -> str:
 
 
 async def _make_copy_set(product_id: str, *, status: str, **over) -> str:
+    # For the APPROVED case, create as review-required then approve through the
+    # governed path so the set is GENUINELY strict-valid (semantic-review receipt
+    # + current PI lineage) - which is exactly what fail-closed binding now
+    # requires. USPs are product-specific (not the generic filler families).
+    create_status = (
+        models.STATUS_COPY_REVIEW_REQUIRED
+        if status == models.STATUS_COPY_APPROVED
+        else status
+    )
     fields = dict(
         angle="Segar sepanjang hari",
         hook="Nak kulit nampak segar sepanjang hari?",
         subhook="Rutin ringkas tanpa leceh",
         usp_set_json=json.dumps(
-            ["Sesuai untuk rutin harian", "Mudah digunakan", "Formula ringan"]
+            ["Menyerap dalam 10 saat", "Untuk kulit kombinasi", "Tanpa pewangi"]
         ),
         cta="Cuba masukkan dalam rutin kau hari ni.",
         platform="TIKTOK",
@@ -45,7 +54,7 @@ async def _make_copy_set(product_id: str, *, status: str, **over) -> str:
         formula_family="HSO",
         dedupe_key="dedupe-" + product_id,
         source="COPY_SIGNAL_GENERATOR",
-        status=status,
+        status=create_status,
         claim_review_json=json.dumps(
             {"completeness": {"complete": True}, "safety": {"safe": True}}
         ),
@@ -54,10 +63,11 @@ async def _make_copy_set(product_id: str, *, status: str, **over) -> str:
     row = await crud.create_copy_set(product_id, **fields)
     cid = row["copy_set_id"]
     if status == models.STATUS_COPY_APPROVED:
-        from agent.services.copy_set_validity_service import stamp_copy_set_pi_lineage
+        from agent.services.copy_set_service import approve_copy_set
 
-        await stamp_copy_set_pi_lineage(
-            cid, product_id=product_id, revalidated_by="binding-test"
+        await approve_copy_set(
+            cid,
+            {"approval_phrase": models.APPROVAL_PHRASE, "approved_by": "binding-test"},
         )
     return cid
 
@@ -86,7 +96,7 @@ async def test_approved_copy_set_binds_clean_copy_intelligence():
     assert ci is not None
     assert ci["hook"] == "Nak kulit nampak segar sepanjang hari?"
     assert ci["cta"].endswith("hari ni.")
-    assert ci["usps"] == ["Sesuai untuk rutin harian", "Mudah digunakan", "Formula ringan"]
+    assert ci["usps"] == ["Menyerap dalam 10 saat", "Untuk kulit kombinasi", "Tanpa pewangi"]
     # No internal metadata may cross into compiler input.
     for forbidden in ("copy_set_id", "status", "dedupe_key", "provenance", "claim_review"):
         assert forbidden not in ci

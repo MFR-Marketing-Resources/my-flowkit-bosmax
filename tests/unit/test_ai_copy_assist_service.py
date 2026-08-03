@@ -21,7 +21,7 @@ SAFE_AI = {
     "angle": "Segar sepanjang hari",
     "hook": "Nak rutin kulit nampak segar sepanjang hari?",
     "subhook": "Rutin ringkas tanpa leceh",
-    "usp_set": ["Sesuai untuk rutin harian", "Mudah digunakan", "Formula ringan"],
+    "usp_set": ["Menyerap cepat untuk kulit kombinasi", "Mudah digunakan", "Formula ringan"],
     "cta": "Cuba masukkan dalam rutin kau hari ni.",
     "formula_family": "HSO",
     "rationale": "Angle harian + hook soalan langsung.",
@@ -104,27 +104,21 @@ async def test_valid_candidate_is_review_required_not_approved(monkeypatch):
 async def test_candidate_can_be_approved_only_via_existing_gate(monkeypatch):
     pid = await _make_product()
     _mock_provider(monkeypatch, SAFE_AI)
-    cs = (await ai.generate_ai_copy_candidate({"product_id": pid, "allow_ungrounded": True}))["candidates"][0]["copy_set"]
+    cs = (await ai.generate_ai_copy_candidate({"product_id": pid}))["candidates"][0]["copy_set"]
 
     # Wrong phrase is rejected by the SAME approval gate.
     with pytest.raises(copy_svc.CopySetPermissionError):
         await copy_svc.approve_copy_set(cs["copy_set_id"], {"approval_phrase": "WRONG"})
 
-    # The ungrounded SAFE_AI candidate is formula-review-required, so the Formula
-    # Engine gate now blocks a plain approval — it needs an explicit + auditable override.
-    with pytest.raises(copy_svc.CopySetError) as exc:
-        await copy_svc.approve_copy_set(
-            cs["copy_set_id"], {"approval_phrase": models.APPROVAL_PHRASE}
-        )
-    assert exc.value.code == "COPY_SET_FORMULA_REVIEW_REQUIRED"
-
+    # A grounded, non-generic candidate approves ONLY through the governed gate
+    # (the formula-review-required block is covered by test_copyset_approval_formula_gate).
     approved = await copy_svc.approve_copy_set(
         cs["copy_set_id"],
         {
             "approval_phrase": models.APPROVAL_PHRASE,
             "approved_by": "operator",
             "override_formula_review": True,
-            "override_reason": "test: ungrounded candidate accepted for lifecycle check",
+            "override_reason": "test: governed approval",
         },
     )
     assert approved["status"] == models.STATUS_COPY_APPROVED

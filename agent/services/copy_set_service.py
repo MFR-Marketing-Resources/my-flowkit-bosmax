@@ -18,6 +18,7 @@ approvable copy object that the compiler can later consume as copy intelligence
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -98,6 +99,22 @@ _PLACEHOLDER_TOKENS = [
     "todo", "tbd", "xxx",
 ]
 
+# COPY-CORRECTIVE-B03: word-like placeholder tokens must match on token boundaries
+# so real content never mis-flags — e.g. the clothing/home size "6XXXL" / "XXXL"
+# must NOT be read as an unfilled "xxx" placeholder. Symbol tokens stay substring.
+_WORD_PLACEHOLDERS = {"xxx", "todo", "tbd", "placeholder"}
+_SYMBOL_PLACEHOLDERS = [t for t in _PLACEHOLDER_TOKENS if t not in _WORD_PLACEHOLDERS]
+
+
+def _hit_placeholder(hay: str) -> str | None:
+    for t in _SYMBOL_PLACEHOLDERS:
+        if t in hay:
+            return t
+    for t in _WORD_PLACEHOLDERS:
+        if re.search(rf"(?<![0-9a-z]){re.escape(t)}(?![0-9a-z])", hay):
+            return t
+    return None
+
 _METADATA_TOKENS = [
     "claim_safe", "copy_set", "workspace_execution", "prompt_fingerprint",
     "product_id", "```json", '"id":', "debug", "snapshot_id",
@@ -152,7 +169,7 @@ def scan_copy_safety(fields: dict[str, Any], *, product_id: str = "") -> dict[st
         if hit:
             violations.append(code)
             detail[code] = hit.strip()
-    placeholder = next((t for t in _PLACEHOLDER_TOKENS if t in hay), None)
+    placeholder = _hit_placeholder(hay)
     if placeholder:
         violations.append("UNRESOLVED_PLACEHOLDER")
         detail["UNRESOLVED_PLACEHOLDER"] = placeholder
@@ -421,6 +438,31 @@ async def approve_copy_set(copy_set_id: str, request: CopySetApproveRequest | di
     if not safety["safe"]:
         raise CopySetError("COPY_SET_UNSAFE", status_code=422, detail=safety)
 
+    # COPY-CORRECTIVE-B03: generic / synthetic filler can never become approved
+    # copy. The governed approval path is where the strict semantic gate lives -
+    # a set that reads as a template (numbered "Kelebihan", name-only USP, the
+    # holdout filler families) is rejected here, never rubber-stamped.
+    from agent.services.copy_set_validity_service import (
+        _latest_approved_snapshot,
+        _product_name,
+        assess_semantic_grounding,
+        build_not_applicable_verdict,
+        build_semantic_review_receipt,
+        detect_generic_copy,
+        pi_authority_digest,
+    )
+    product_name = await _product_name(str(row["product_id"]))
+    generic = detect_generic_copy(
+        angle=_clean(fields.get("angle")),
+        hook=_clean(fields.get("hook")),
+        subhook=_clean(fields.get("subhook")),
+        usp_list=[u for u in (fields.get("usp_set") or []) if _clean(u)],
+        cta=_clean(fields.get("cta")),
+        product_name=product_name,
+    )
+    if generic["generic"]:
+        raise CopySetError("COPY_SET_GENERIC", status_code=422, detail=generic)
+
     # Formula-Driven Copywriting Engine gate. An AI-lane Copy Set carries its
     # formula-validation + sales-clarity verdict inside claim_review. Enforce it so a
     # set that FAILED formula validation (or is review-required / not sales-clear)
@@ -456,8 +498,46 @@ async def approve_copy_set(copy_set_id: str, request: CopySetApproveRequest | di
             detail={"hint": "override_formula_review=true requires a non-empty override_reason."},
         )
 
-    # Preserve the formula/clarity verdict — approval must NEVER strip it (readiness
-    # + provenance read it downstream). Overlay the fresh approval-time gate results.
+    # COPY-CORRECTIVE-B02: ATOMIC approval. Ground on the CURRENT approved PI
+    # snapshot in the SAME write that flips status. If no approved snapshot
+    # exists the copy cannot be grounded and approval FAILS CLOSED - there is no
+    # second-transaction lineage stamp to swallow, so an approved-without-lineage
+    # row can never be produced.
+    snap = await _latest_approved_snapshot(str(row["product_id"]))
+    if not snap:
+        raise CopySetError(
+            "COPY_SET_NO_PI_SNAPSHOT",
+            status_code=409,
+            detail={
+                "product_id": row["product_id"],
+                "hint": "No APPROVED Product Intelligence snapshot to ground this copy.",
+            },
+        )
+    digest = pi_authority_digest(snap)
+    now = _now()
+    reviewer = _clean(req.approved_by) or "operator"
+
+    # COPY-CORRECTIVE-B1: real field-level PI grounding is MANDATORY at approval.
+    # The receipt is minted from ACTUAL grounding evidence — never from
+    # completeness + safety + genericness + snapshot existence alone.
+    grounding = assess_semantic_grounding(
+        hook=_clean(fields.get("hook")),
+        subhook=_clean(fields.get("subhook")),
+        usp_list=[u for u in (fields.get("usp_set") or []) if _clean(u)],
+        cta=_clean(fields.get("cta")),
+        snapshot=snap,
+        product_title=product_name,
+    )
+    if not grounding.get("grounded"):
+        raise CopySetError(
+            "COPY_SET_UNGROUNDED",
+            status_code=422,
+            detail={"reasons": grounding.get("reasons"), "overlap_count": grounding.get("overlap_count")},
+        )
+
+    # Preserve the formula/clarity verdict - approval must NEVER strip it (readiness
+    # + provenance read it downstream). Overlay the fresh approval-time gate results
+    # and a durable semantic-review receipt bound to the current PI authority.
     preserved = {
         key: prior[key]
         for key in (
@@ -471,43 +551,93 @@ async def approve_copy_set(copy_set_id: str, request: CopySetApproveRequest | di
         )
         if key in prior
     }
+    receipt = build_semantic_review_receipt(
+        reviewer=reviewer,
+        decision="APPROVED",
+        rationale=_clean(req.reviewer_note)
+        or "Approved via governed copy path: completeness + safety + generic gates cleared, grounded on current approved PI.",
+        pi_snapshot_id=str(snap["snapshot_id"]),
+        pi_snapshot_version=int(snap["version"]),
+        authority_digest=digest,
+        platform=_clean(fields.get("platform")),
+        language=_clean(fields.get("language")),
+        route=_clean(fields.get("route_type")),
+        formula=_clean(fields.get("formula_family")),
+        genericness=generic,
+        grounding=grounding,
+        product_title=product_name,
+        reviewed_at=now,
+    )
     claim_review = {
         **preserved,
         "completeness": completeness,
         "safety": safety,
         "route_type": fields["route_type"],
         "approved": True,
+        "semantic_review": receipt,
     }
     if override and (formula_review_required or clarity_review_required):
         claim_review["approval_override"] = {
             "formula_review_overridden": formula_review_required,
             "sales_clarity_overridden": clarity_review_required,
             "reason": _clean(req.override_reason),
-            "by": _clean(req.approved_by) or "operator",
-            "at": _now(),
+            "by": reviewer,
+            "at": now,
         }
+
+    # COPY-CORRECTIVE-B2: a deterministic (non-AI) generation lane that carries no
+    # formula / sales verdict gets a DURABLE NOT_APPLICABLE (route-gated) so a
+    # MISSING verdict never silently passes strict validity downstream.
+    _src = _clean(fields.get("source") or row.get("source"))
+    _route = _src or "UNSPECIFIED_DETERMINISTIC_LANE"
+    if "AI" not in _src.upper():
+        if not claim_review.get("formula_validation"):
+            claim_review["formula_validation"] = build_not_applicable_verdict(
+                reason="non-formula (deterministic) generation lane", route=_route,
+                evaluator=reviewer, evaluated_at=now)
+        if not claim_review.get("sales_clarity"):
+            claim_review["sales_clarity"] = build_not_applicable_verdict(
+                reason="non-formula (deterministic) generation lane", route=_route,
+                evaluator=reviewer, evaluated_at=now)
+
+    try:
+        prov = json.loads(row["provenance_json"]) if row["provenance_json"] else {}
+    except (TypeError, ValueError, KeyError):
+        prov = {}
+    if not isinstance(prov, dict):
+        prov = {}
+    prov["pi_lineage"] = {
+        "snapshot_id": snap["snapshot_id"],
+        "version": snap["version"],
+        "authority_digest": digest,
+        "grounded_at": now,
+        "grounding_source": "APPROVED_PRODUCT_INTELLIGENCE_SNAPSHOT",
+        "revalidated_at": now,
+        "revalidated_by": reviewer,
+        "decision": "APPROVAL_GROUNDED",
+        "rationale": "Stamped atomically at COPY_APPROVED via governed approval path.",
+    }
+
+    # Single atomic write: status flip + approval evidence + PI lineage + quarantine
+    # clear all commit together (crud._update runs one UPDATE under the db lock).
     updated = await crud.update_copy_set(
         copy_set_id,
         status=STATUS_COPY_APPROVED,
-        approved_at=_now(),
-        approved_by=_clean(req.approved_by) or "operator",
+        approved_at=now,
+        approved_by=reviewer,
         reviewer_note=req.reviewer_note if req.reviewer_note is not None else row.get("reviewer_note"),
-        claim_review_json=json.dumps(claim_review),
+        claim_review_json=json.dumps(claim_review, ensure_ascii=False),
+        provenance_json=json.dumps(prov, ensure_ascii=False),
+        pi_snapshot_id=str(snap["snapshot_id"]),
+        pi_snapshot_version=int(snap["version"]),
+        pi_grounding_digest=digest,
+        grounded_at=now,
+        revalidated_at=now,
+        revalidated_by=reviewer,
+        revalidation_decision="APPROVAL_GROUNDED",
+        pi_eligibility_status=None,
+        pi_ineligible_reasons=None,
     )
-    # COPY-FINAL-B02: stamp current PI lineage and clear quarantine on approval.
-    try:
-        from agent.services.copy_set_validity_service import stamp_copy_set_pi_lineage
-        await stamp_copy_set_pi_lineage(
-            copy_set_id,
-            product_id=str(row["product_id"]),
-            revalidated_by=_clean(req.approved_by) or "operator",
-            clear_quarantine=True,
-            decision="APPROVAL_GROUNDED",
-            rationale="Stamped at COPY_APPROVED via governed approval path.",
-        )
-        updated = await crud.get_copy_set(copy_set_id) or updated
-    except Exception:
-        pass
     return serialize_copy_set(updated)
 
 

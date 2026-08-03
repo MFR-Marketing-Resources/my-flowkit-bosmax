@@ -1,0 +1,14 @@
+{
+ "closed_paid": 72,
+ "already_closed": 45,
+ "quarantined": 2,
+ "a1": 70,
+ "a2": 2,
+ "provider_calls": 77,
+ "tok_in": 150258,
+ "tok_out": 241337,
+ "processed": 77,
+ "last_product": "e79642fc-5794-4312-8dcc-11a782ebc653",
+ "estimated_cost_usd": 0.306,
+ "db_integrity": "ok"
+}

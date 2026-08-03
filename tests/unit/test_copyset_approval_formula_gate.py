@@ -167,4 +167,64 @@ async def test_approve_deterministic_no_verdict_still_approves():
     cid = await _make_review_set(pid, formula_validation=None, sales_clarity=None)
     approved = await svc.approve_copy_set(cid, {"approval_phrase": _PHRASE})
     assert approved["status"] == models.STATUS_COPY_APPROVED
-    assert "formula_validation" not in approved["claim_review"]
+    # COPY-CORRECTIVE-B2: a deterministic (non-formula) lane now carries a DURABLE
+    # NOT_APPLICABLE verdict rather than a silent absence that could pass validity.
+    assert approved["claim_review"]["formula_validation"]["applicable"] is False
+    assert approved["claim_review"]["sales_clarity"]["applicable"] is False
+
+
+# ── COPY-CORRECTIVE-B02/B03: atomic grounding + generic gate + fail-closed ────
+@pytest.mark.asyncio
+async def test_approve_writes_semantic_receipt_and_grounds_atomically():
+    pid = await _make_product()
+    cid = await _make_review_set(pid, formula_validation=_PASS, sales_clarity=_CLEAR)
+    approved = await svc.approve_copy_set(
+        cid, {"approval_phrase": _PHRASE, "approved_by": "faris"}
+    )
+    assert approved["status"] == models.STATUS_COPY_APPROVED
+    sr = approved["claim_review"]["semantic_review"]
+    assert sr["decision"] == "APPROVED"
+    assert sr["reviewer"] == "faris"
+    assert sr["pi_snapshot_id"]
+    # The single write also grounded PI lineage on the same row (no second txn).
+    stored = await svc.get_copy_set(cid)
+    assert stored["pi_snapshot_id"] == sr["pi_snapshot_id"]
+    assert stored["grounded_at"]
+    # The strict validity authority now recognises it as valid, end to end.
+    from agent.services.copy_set_validity_service import evaluate_copy_set_id
+
+    v = await evaluate_copy_set_id(cid)
+    assert v["valid"] is True, v["reasons"]
+
+
+@pytest.mark.asyncio
+async def test_approve_blocks_generic_filler():
+    pid = await _make_product()
+    cid = await _make_review_set(pid, formula_validation=_PASS, sales_clarity=_CLEAR)
+    # Inject the exact synthetic-filler family the holdout scripts emitted.
+    await crud.update_copy_set(
+        cid,
+        usp_set_json=json.dumps(["Kelebihan Serum Test #1", "Kelebihan Serum Test #2"]),
+    )
+    with pytest.raises(svc.CopySetError) as exc:
+        await svc.approve_copy_set(cid, {"approval_phrase": _PHRASE, "approved_by": "faris"})
+    assert exc.value.code == "COPY_SET_GENERIC"
+    stored = await svc.get_copy_set(cid)
+    assert stored["status"] != models.STATUS_COPY_APPROVED
+
+
+@pytest.mark.asyncio
+async def test_approve_fails_closed_without_pi_snapshot():
+    # Eligibility is mocked True by the autouse fixture, but atomic approval must
+    # STILL refuse to ground copy when there is no approved PI snapshot - the row
+    # can never reach COPY_APPROVED without lineage.
+    from agent.db import crud as _crud
+
+    product = await _crud.create_product(raw_product_title="No Snapshot 5ML", source="MANUAL")
+    pid = product["id"]
+    cid = await _make_review_set(pid, formula_validation=_PASS, sales_clarity=_CLEAR)
+    with pytest.raises(svc.CopySetError) as exc:
+        await svc.approve_copy_set(cid, {"approval_phrase": _PHRASE, "approved_by": "faris"})
+    assert exc.value.code == "COPY_SET_NO_PI_SNAPSHOT"
+    stored = await svc.get_copy_set(cid)
+    assert stored["status"] != models.STATUS_COPY_APPROVED

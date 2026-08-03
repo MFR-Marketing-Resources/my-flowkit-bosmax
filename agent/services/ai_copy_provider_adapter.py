@@ -76,6 +76,10 @@ DIAGNOSTIC_CONTENT_EXTRACTION_FAILED = "CONTENT_EXTRACTION_FAILED"
 
 _provider_call_lock = threading.Lock()
 _provider_call_count = 0
+# COPY-CORRECTIVE: reliable per-call token usage under concurrency. The single
+# "last call" receipt races when provider calls run in a thread pool, so usage is
+# also recorded keyed by the unique call_id and drained by generate_candidate.
+_usage_by_call_id: dict[int, dict[str, float]] = {}
 _last_provider_call_receipt: dict[str, Any] | None = None
 
 
@@ -171,6 +175,13 @@ def _finish_provider_call(
 ) -> None:
     global _last_provider_call_receipt
     with _provider_call_lock:
+        # Always record usage keyed by call_id (concurrency-safe), independent of
+        # whether this is still the process-global "last call".
+        _usage_by_call_id[call_id] = dict(usage or {})
+        # B3 backstop: bound the map so provider-exception paths that never drain
+        # cannot grow it without limit in a long-running process.
+        while len(_usage_by_call_id) > 512:
+            _usage_by_call_id.pop(next(iter(_usage_by_call_id)))
         if (
             _last_provider_call_receipt is None
             or _last_provider_call_receipt.get("call_id") != call_id
@@ -587,13 +598,26 @@ def _complete(
         raise AICopyProviderError(ERR_CALL_FAILED, detail=str(exc)) from exc
 
 
+def _pop_usage(call_id: int) -> dict[str, float]:
+    with _provider_call_lock:
+        return _usage_by_call_id.pop(call_id, {})
+
+
 def generate_candidate(brief: str) -> dict[str, Any]:
     """Single mockable seam. Fail closed when unconfigured; otherwise call the
-    provider and return the parsed candidate JSON dict."""
+    provider and return the parsed candidate JSON dict (with reliable __usage__)."""
     if not is_configured():
         raise AICopyProviderNotConfigured(ERR_NOT_CONFIGURED)
-    message_text, finish_reason, _ = _complete(build_messages(brief))
-    return _extract_json_object(message_text, finish_reason=finish_reason)
+    message_text, finish_reason, call_id = _complete(build_messages(brief))
+    try:
+        obj = _extract_json_object(message_text, finish_reason=finish_reason)
+    except Exception:
+        _pop_usage(call_id)  # B3: drain on parse failure — never leak
+        raise
+    usage = _pop_usage(call_id)
+    if isinstance(obj, dict):
+        obj["__usage__"] = usage
+    return obj
 
 
 def complete_json(system: str, user: str) -> dict[str, Any]:
@@ -615,6 +639,8 @@ def complete_json(system: str, user: str) -> dict[str, Any]:
             diagnostic_category=exc.diagnostic_category,
             diagnostic_metadata=exc.diagnostic_metadata,
         )
+        _pop_usage(call_id)  # B3: drain on parse failure — never leak
         raise
     _record_json_parse_result(call_id, status="VALID")
+    _pop_usage(call_id)  # B3: drain — complete_json does not surface usage
     return parsed

@@ -1,0 +1,80 @@
+{
+  "mission_id": "BOSMAX-COPY-CORRECTIVE-ONCE-AND-FOR-ALL-20260803",
+  "branch": "claude/copy-final-corrective-repair",
+  "base_sha": "fbb43fd957d04dc52c3ea62789a6fab456bd3e0e",
+  "base_ref": "origin/main (PR #608 merge)",
+  "current_blocker": "COPY-CORRECTIVE-B02/B03 (validator hardened; atomic approval + PI invalidation + reporting/execution enforcement next)",
+  "owner_direction_20260803": {
+    "rebuild": "FREE-FIRST: harden validator -> contain -> free strict-revalidation of salvageable pre-existing copy (NO provider) -> paid text_assist ONLY for genuine replacements (137 generic + strict-review failures). Do not regenerate valid copy. Do not fabricate to force 402/402. No further pilot/approval. Track all tokens/cost. Then ONE consolidated Outcome B manifest.",
+    "merge": "OWNER MERGES; I open the PR (no self-merge, no shared-runtime restart by me)."
+  },
+  "phases_completed": [
+    "PHASE0_preserve (read-only git forensics; branch created; no reset/clean/stash)",
+    "PHASE1_partial (backup verified present; live-vs-backup read-only forensic diff done)",
+    "PROVE (defects #1-#7 confirmed at file:line + timestamps; #8-#10 pending)",
+    "PHASE3 strict FAIL-CLOSED validity authority — DONE: granular per-gate override (D4), missing completeness/safety/semantic-receipt fail closed (D3), auditable generic/synthetic detector (D1/B03), reason-aware product classifications (D7), VALIDITY_EVALUATION_FAILED fail-closed reporting sentinel (D8). 35/35 unit tests green (tests/unit/test_copy_set_validity_service.py).",
+    "PHASE4 ATOMIC approval — DONE: approve_copy_set blocks generic filler at the door (COPY_SET_GENERIC), requires a current APPROVED PI snapshot else fails closed (COPY_SET_NO_PI_SNAPSHOT), writes a durable semantic-review receipt, and grounds status+lineage+quarantine-clear in ONE atomic crud.update_copy_set write — no second-transaction stamp, no except:pass (D5). Binding now accepts only strict-valid copy. 70/70 green across approval/binding/copy-set/validity suites. Durability: branch pushed to origin (bbdca82, 05557cc verified on GitHub).",
+    "PHASE5 fail-closed PI stale invalidation — DONE (D6): removed except:pass in approve_review_draft; new APPROVED PI snapshot durably quarantines older grounded copy (NEEDS_REVALIDATION) via bounded retry, LOUD on persistent failure, PI approval never rolled back for a copy side-effect; dynamic validity fail-closes stale copy meanwhile. 81/81 green incl. PI-approval suites + 2 new stale-invalidation tests (tests/unit/test_copy_pi_stale_invalidation.py). Commits pushed: 3f81436.",
+    "PHASE6 truthful readiness — DONE (D8): get_copywriting_readiness wraps strict product_copy_classification; on evaluator error it fails CLOSED with explicit VALIDITY_EVALUATION_FAILED (never silent/false-ready) + full reason-aware action_map. New test tests/unit/test_copywriting_readiness_failclosed.py.",
+    "PHASE7 execution enforcement — DONE: EXECUTION SAFETY proven fail-closed — copy_binding_service.resolve_compiler_copy_intelligence evaluates strict validity and both workspace_execution_package_service and workspace_generation_package_service resolve copy THROUGH it, so no stale/generic/unsafe/unreviewed/invalid-lineage set can reach the compiler. Poster recommendation now excludes quarantined approved copy. Rotation left as a PURE selection engine (its tests inject mocked rows/fake ids); its strict exclusion is upheld by (a) quarantine filter + containment invariant [non-quarantined approved => has receipt => strict-valid] and (b) the binding belt. Added reusable valid_copy_set_ids_for_product() helper. 76/76 green across readiness/rotation/poster/binding.",
+    "CORE CODE HARDENING COMPLETE — the fail-closed authority + atomic approval + non-silent invalidation + truthful readiness + execution enforcement are done and tested.",
+    "PHASE2+9 CONTAINMENT + FREE REVALIDATION EXECUTED on live DB (backup-guarded, idempotent, integrity ok / FK 0, ZERO deletions). One combined pass over 2459 approved sets: strict deterministic review = non-generic + complete + safe + PI-grounded. RESULT (after grounding-robustness fix afb9fde that recovered 69 false-quarantined products): sets_revalidated_free=2340, sets_quarantined=119, products_CLOSED_FREE=283/402, products_residual_paid=119 (116 confirmed-generic + 3 borderline weak-grounding). No provider spend. Artifacts: containment_revalidation_ledger.jsonl, strict_gap_manifest.json, revalidation_summary.json.",
+    "PHASE13 dashboard — DONE: reporting fail-closed per product (D8) + executive view leads with strict production-readiness (build clean, 25 vitest).",
+    "PHASE11-12 PAID replacement — DONE (OWNER 2-ATTEMPT CAP): CONCURRENT architecture (10 workers via asyncio.to_thread on the blocking provider call + Semaphore/as_completed + single serialized main-loop writer for all governed mutations; adaptive throttle 10->5->3; checkpoint/10; reliable per-call usage via ai_copy_provider_adapter patch). 117 residual closed (115 attempt-1, 2 attempt-2), 2 quarantined after two attempts (NEEDS_REVALIDATION + BLOCKED). 130 provider calls, tokens 249251/418796, est cost $0.528. Never a 3rd attempt; never fabricated filler.",
+    "FINAL RECONCILIATION (authoritative, via strict authority): cohort 402 ACTIVE eligible; STRICT-VALID=400; Outcome-B=2; strict-valid-with-generic=0; strict-valid-missing-receipt=0. Quarantine enforcement PROVEN (2 products non-executable + ACTIVE). DB integrity ok / FK 0 / ZERO deletions / PI unchanged. Tests 279-288 pass, 0 mission-induced (baseline 251). NEXT: commit+push final artifacts, open PR (OWNER MERGES; no self-merge; no runtime restart)."
+  ],
+  "phases_pending": [
+    "PHASE2 containment (mass DB quarantine on SHARED LIVE DB — owner-gated)",
+    "PHASE3 strict fail-closed validity authority + reason-aware classes + generic detector + tests",
+    "PHASE4 atomic approval/lineage",
+    "PHASE5 fail-closed PI stale invalidation (remove except-pass swallow)",
+    "PHASE6 truthful reporting/readiness",
+    "PHASE7 execution-path enforcement",
+    "PHASE8-12 semantic review + repair/replace (MULTI-HOUR PAID — owner-gated)",
+    "PHASE13 dashboard",
+    "PHASE14 test matrix",
+    "PHASE15-19 reconcile/commit/push/PR/merge(owner-gated)/restart(shared runtime)/post-merge"
+  ],
+  "verified_defects": {
+    "D1_generic_fallback_copy": "CONFIRMED — patterns present in outputs/mission-copy-final/copy_final_writer.py, copy_holdout_closure.py, copy_holdout_final3.py; 137/402 products carry generic filler in an approved set",
+    "D2_mass_approval_no_semantic_review": "CONFIRMED — writer_summary.json started 2026-08-03T09:46:41Z finished 09:47:00Z = 19s for 402 products; 380 sets approved in the 09:46-09:47 window",
+    "D3_validity_fails_open": "CONFIRMED — copy_set_validity_service.py:131-134 'if completeness and completeness.get(complete) is False' — missing verdict passes; no semantic-grounding receipt or reviewer-identity requirement anywhere",
+    "D4_override_over_broad": "CONFIRMED — copy_set_validity_service.py:139-145 'and not override' lets ANY approval_override object bypass BOTH formula and sales-clarity; inner per-gate flag check is dead code",
+    "D5_approval_not_atomic": "CONFIRMED — copy_set_service.py approve_copy_set: update_copy_set(status=COPY_APPROVED) commits, then stamp_copy_set_pi_lineage in try/except: pass — lineage failure yields approved-without-lineage",
+    "D6_stale_invalidation_swallows": "CONFIRMED — product_intelligence_review_draft_service.py:1485-1494 mark_stale_copy_sets_for_product inside try/except Exception: pass",
+    "D7_invalid_misclassified_as_stale": "CONFIRMED — classify_product_copy collapses every non-valid approved set into APPROVED_COPY_STALE; no UNSAFE/INCOMPLETE/GENERIC/MISSING_REVIEW/INVALID_LINEAGE product states",
+    "D8_reporting_hides_eval_failure": "PENDING (copywriting_readiness_service.py not yet read)",
+    "D9_dashboard_closure_absent": "PENDING",
+    "D10_release_proof_incomplete": "PENDING (no CI workflow / durable post-merge proof observed)"
+  },
+  "forensic_truth_402_cohort": {
+    "claimed_valid_pr608": 402,
+    "contaminated_by_mission": 402,
+    "products_with_generic_filler_approved": 137,
+    "products_independently_clean_valid": 0,
+    "strict_valid_under_mission_definition": 0,
+    "note": "2069 approved sets carry pre-existing unchanged text (rubber-stamped, not fabricated); 118 new + 272 flipped are mission-fresh; NO set has a semantic-review receipt"
+  },
+  "database": {
+    "live_db_path": "C:/Users/USER/Desktop/_ref_flowkit/flow_agent.db",
+    "live_db_status": "ACTIVELY MUTATING (runtime writing; ~303MB) — query READ-ONLY only",
+    "backup_pre_copy_final": "outputs/mission-copy-final/backups/flow_agent_pre_copy_final_20260803T092741Z.db (660870e0..)",
+    "fresh_backup_pre_corrective": "outputs/mission-copy-corrective/backups/flow_agent_pre_corrective_20260803T101600Z.db",
+    "fresh_backup_sha256": "7cd0d74df967974f74861eb794517810036243617ecf818287645fb7156e6757",
+    "fresh_backup_integrity": "ok, foreign_key_check=0 (see fresh_backup_manifest.json)",
+    "live_counts_at_backup": {"product": 659, "active": 402, "copy_set": 2875, "approved": 2459, "quarantined": 18, "pi_snapshot_approved": 645},
+    "restore_point_ready": true
+  },
+  "shared_repo_hazards": {
+    "worktrees": "~100 co-tenant worktrees; main checked out in .codex/worktrees/smart-registration-next-action",
+    "live_runtime": ":8100 in a co-tenant worktree; owns flow_agent.db",
+    "implication": "mass DB mutation + runtime restart affect concurrent co-tenant work; git add is not durable here"
+  },
+  "owner_gated_items": [
+    "Multi-hour PAID semantic rebuild (137 generic replacements + review of the rest) — real cost, ENGINEERING_LOCKDOWN requires explicit spend approval",
+    "Mass quarantine mutation on the SHARED LIVE canonical DB",
+    "Self-merge to main — AGENTS.md says NO self-merge; requires owner waiver or owner-performed merge",
+    "Restart of the shared :8100 runtime"
+  ],
+  "last_safe_commit": "PENDING (this commit)"
+}

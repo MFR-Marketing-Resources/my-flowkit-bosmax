@@ -1,0 +1,531 @@
+{
+ "cohort_active_eligible": 402,
+ "products_strict_valid": 299,
+ "products_without_strict_valid": 103,
+ "classification_counts": {
+  "APPROVED_COPY_VALID": 299,
+  "APPROVED_COPY_FORMULA_REVIEW": 101,
+  "APPROVED_COPY_GENERIC": 2
+ },
+ "PASS_invariants": {
+  "strict_valid_with_generic_filler": 0,
+  "strict_valid_missing_semantic_receipt": 0
+ },
+ "gap_products": [
+  {
+   "product_id": "3b51d01e-6e59-4b94-83ca-9e10ef611056",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "4faad914-5345-4a34-a5e1-e5fe3e283795",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "3fbf5508-697b-4fb9-b891-868e89186621",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "08de4318-c6aa-4665-b2c1-e02dc6cb35c9",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "1e8fd714-5718-4b0c-96e8-733cf7d64719",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "2be2ffe4-6e43-4789-929a-ad1bd3d6284a",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "44b61c93-06bd-4857-b046-7e0140807db1",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "6454948f-b303-4dc9-b836-9998cf91e3ad",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "349868fc-e1f6-4c79-a5a8-8e4a13fb8469",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "047369f5-fc83-4118-8691-6c1a62ba4568",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "14e3882d-b688-40a6-93a1-f9c83e10ab59",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "4114be36-b432-4e1a-890f-8ecf5ac260a1",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "3b56ffdb-e703-4af2-bfc9-3197bc7b14c9",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "4d491c01-2c5a-40c0-869e-54c50050d95d",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "3cd29ebf-12ca-4b16-b788-a3720fb9fca0",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "269dc6de-0db7-41d4-890b-4e30bba9f7db",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "67e92261-2153-4649-988e-fe7e40bfea8b",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "4f856dea-b0f2-41fc-8b97-2c336ebb9c87",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "3e1a2a3d-1c7f-46e0-a5b3-28438d315087",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "1ae4d866-d534-4ae0-b954-17ae8ad502ef",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "60fd4ca1-768b-45b3-8e0b-4eee8b2c723b",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "38f8ba4d-14fe-4a20-94b1-2e54e4611d14",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "0327f6f3-e4ed-41b4-aa17-2c0e2049747b",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "6a5c7e95-12d5-43f5-9f80-479d462a5198",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "118bd94c-fd1c-4c4c-b974-dbd6e60b8e0e",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "1c85ef90-3ba6-47ee-8e3b-078abed4fb97",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "46c8a0b4-bbae-49e1-9277-41c4519917ae",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "2453b3e8-ad60-4ef2-a22b-1c93a698d4f9",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "52638c50-acf8-4e55-9b38-ccaa2892416e",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "2440b42a-c5ba-4a1f-95b4-258de6d595fc",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "2a3de208-9957-48b5-b399-14c312ba11fb",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "0ac2b28f-84d2-461e-9df7-9d5b27745d26",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "50aae071-b519-47ae-925a-67dea1c122da",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "3ffb2570-f77a-456e-bcb9-ffb1e12718ce",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "5427373d-19de-4a80-bd5f-11799c20aea7",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "1046f269-d865-470d-a9a6-1c065b9bc234",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "0133d0bf-a8e7-41d3-908b-75d727bb86f4",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "66bc6983-eba9-4466-8c46-3a6708cfae42",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "421ad1df-22a9-4d91-bff7-0e3b79adb368",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "0f32693d-992f-4e53-9ecd-d8ff4d41c0ff",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "597090b1-4169-48d8-9786-42466bf346d0",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "46cbf1df-da7e-47ac-bc7b-6031689dadc6",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "2575188c-097a-4f7c-8e8b-5059068abf74",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "038434f0-97ea-4d8d-afcf-52db4d85c434",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "0f6bdfdd-474d-4a30-aa92-400aa0f1ed51",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "65c6a406-1751-46c4-88a7-278ccd9cd450",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "42816007-f8e7-4dcf-b4a8-00172b1c253d",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "0dd690d7-e3d5-4155-a354-9a8c1476b9c9",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "40532f26-87b5-454b-8766-383d186a80c9",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "66493189-bd88-4ed8-8942-5ba835d0ff08",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "1925cb8e-7fed-4bdf-9e1c-e738abe19194",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "4aa3f74b-9007-4929-84bd-4c9c9fe5be75",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "9daaa6b9-39ba-4fd9-92b6-835c1353d7fa",
+   "classification": "APPROVED_COPY_GENERIC",
+   "recommended_next_action": "REPLACE_COPY"
+  },
+  {
+   "product_id": "42bb1598-29af-4cf1-8049-43adcd90b7b8",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "5b3057a0-98fe-4482-b345-9df480331994",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "42a026e6-9e00-4247-a2fb-71c440948690",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "602e40cc-3f4d-4788-a29a-3922e2181c84",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "5f42cd19-b75f-417c-97ab-9b58319c1c81",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "137b2730-f368-4ae0-a772-5313467f0d76",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "39dea8f0-7354-49f8-aada-91c8666f57ba",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "14b6bb03-fdbe-4a08-9a17-effe04a4d353",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "554295fb-c5e2-442d-8d6f-2ee66ac50d65",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "530e52c7-96dd-4fff-9217-87e8343eefa7",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "3f0e0206-a21a-4db6-a323-170ce505703f",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "06d7e1ab-8bb9-4513-8cff-713f100f846b",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "30517dc6-d97b-4816-aa26-b54147916b41",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "303fb376-ff5a-40ea-9178-5487399676d5",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "631ea0c3-1110-48b5-b564-7a13dc0d7840",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "3bee1482-21a2-4795-a490-9b81c7a5d94c",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "0fd0815b-4fc1-4815-b31b-d85d457b6383",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "112232f7-baee-4e21-be77-1578606845a8",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "6a6efac9-63a0-4cb1-a7ec-34cc78030ba7",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "0d49e4d9-523b-4109-a77c-b3e705ae4e0b",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "0876eaf5-ac84-4b82-b27c-83a83de115ea",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "1cbd5dc2-88f7-4540-acc2-7a8fddbbb9f7",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "68d0f09c-6469-486b-9233-ac27a6f79c7b",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "0d80b62c-e0d3-4ef6-8ca6-fd0cc49f1fef",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "04284d0a-e2d5-4bc0-b0bd-3420bab6fb78",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "6a6e8c1f-88bb-4170-bf7e-c28a22b25184",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "4fe668d3-53e3-423c-8515-d5a90a2bca61",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "0fd8abf0-ea0d-47e7-952c-f4e409cb9ac9",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "2a5f0f58-b438-4773-af4e-b3229742d19d",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "329b2a8f-2a1c-4c94-bb58-7402882983ad",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "2aef96c6-dacc-4938-b034-153d66f48c6d",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "5e5b0b16-e997-4b8e-9941-0be4080bb4d8",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "2556b774-db22-4ee9-9325-e496ed8d21a4",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "405c7c27-16bd-4cb8-9c1e-07a3bc06b502",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "8ea29ec2-3e38-4d35-a5dc-16e0be4bc317",
+   "classification": "APPROVED_COPY_GENERIC",
+   "recommended_next_action": "REPLACE_COPY"
+  },
+  {
+   "product_id": "478d976b-15b2-4cb6-9a62-00417b033087",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "13d4a873-08e7-4eb1-b420-db70ba212b16",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "6869a834-6fda-442a-8d51-394fccca3267",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "39a17be6-e0aa-403d-b52c-d6102a874362",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "25c6f610-8360-4b11-9a78-1ed6f16b928d",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "1b376d1a-911d-40d4-b8b7-2c71eae951fb",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "69f37eee-aff0-4084-b8b6-3f64ba87271b",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "17a4b3bb-ae4e-49d8-8f09-e51b8e616269",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "2238126c-00b3-4976-ac13-248963718cf9",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "5d298e84-2dc2-4747-9a0b-77499f5c8569",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "21cc66dc-6666-45c5-b09f-d0fd50a65612",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "4ec51256-629e-4d85-b23c-74a213f8842e",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "626a87b3-3cc7-4b61-8859-9f976ec9d15c",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "61d52713-af50-4195-8b04-9c2b266ed3ea",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  },
+  {
+   "product_id": "666ca472-5045-4781-a2a4-c39292a3a617",
+   "classification": "APPROVED_COPY_FORMULA_REVIEW",
+   "recommended_next_action": "REVIEW_EXISTING"
+  }
+ ]
+}
