@@ -816,6 +816,7 @@ async def list_bulk_queue(
     promotion_status: str | None = None,
     claim_risk_level: str | None = None,
     image_readiness: str | None = None,
+    recompute_state: str | None = None,
     category: str | None = None,
     q: str | None = None,
     page: int = 1,
@@ -825,6 +826,7 @@ async def list_bulk_queue(
         promotion_status=promotion_status,
         claim_risk_level=claim_risk_level,
         image_readiness=image_readiness,
+        recompute_state=recompute_state,
         category=category,
         q=q,
         page=page,
@@ -834,6 +836,7 @@ async def list_bulk_queue(
         promotion_status=promotion_status,
         claim_risk_level=claim_risk_level,
         image_readiness=image_readiness,
+        recompute_state=recompute_state,
         category=category,
         q=q,
     )

@@ -2947,6 +2947,7 @@ async def list_bulk_queue(
     promotion_status: str | None = None,
     claim_risk_level: str | None = None,
     image_readiness: str | None = None,
+    recompute_state: str | None = None,
     category: str | None = None,
     q: str | None = None,
     page: int = 1,
@@ -2960,6 +2961,8 @@ async def list_bulk_queue(
         query += " AND claim_risk_level=?"; params.append(claim_risk_level)
     if image_readiness:
         query += " AND image_readiness=?"; params.append(image_readiness)
+    if recompute_state:
+        query += " AND recompute_state=?"; params.append(recompute_state)
     if category:
         query += " AND category=?"; params.append(category)
     if q:
@@ -3012,6 +3015,7 @@ async def count_bulk_queue(
     promotion_status: str | None = None,
     claim_risk_level: str | None = None,
     image_readiness: str | None = None,
+    recompute_state: str | None = None,
     category: str | None = None,
     q: str | None = None,
 ) -> int:
@@ -3023,6 +3027,8 @@ async def count_bulk_queue(
         query += " AND claim_risk_level=?"; params.append(claim_risk_level)
     if image_readiness:
         query += " AND image_readiness=?"; params.append(image_readiness)
+    if recompute_state:
+        query += " AND recompute_state=?"; params.append(recompute_state)
     if category:
         query += " AND category=?"; params.append(category)
     if q:
