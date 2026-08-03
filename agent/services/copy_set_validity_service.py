@@ -537,7 +537,12 @@ async def _product_name(product_id: str) -> str:
     cur = await db.execute("PRAGMA table_info(product)")
     cols = {r[1] for r in await cur.fetchall()}
     await cur.close()
-    col = "name" if "name" in cols else ("product_name" if "product_name" in cols else None)
+    # Canonical schema exposes the product identity as raw_product_title (there is
+    # no short `name` column); fall back through the known name-bearing columns.
+    col = next(
+        (c for c in ("product_name", "canonical_name", "name", "raw_product_title", "title") if c in cols),
+        None,
+    )
     if not col:
         return ""
     cur = await db.execute(f"SELECT {col} AS n FROM product WHERE id = ?", (product_id,))
@@ -699,54 +704,62 @@ def assess_semantic_grounding(
     usp_list: list[str] | None = None,
     cta: str = "",
     snapshot: dict[str, Any] | Any,
+    product_title: str = "",
+    min_overlap: int = 2,
 ) -> dict[str, Any]:
-    """Deterministic field-level PI grounding.
+    """Deterministic SET-LEVEL PI grounding (cross-language tolerant).
 
-    A claim-bearing field is grounded when it shares >=1 significant content token
-    with a current PI field. Fail-closed: no USP, an ungrounded USP, an ungrounded
-    hook, or an empty PI authority all make the set NOT grounded (=> paid rewrite).
+    Vocabulary = current PI fields + the product title (brand / model / attribute
+    tokens — often the only cross-language anchors when PI is English but the copy
+    is Malay, e.g. microfiber/mikrofiber, viral, tahan-lama, a brand/model name).
+    A set is grounded when the WHOLE copy shares >= ``min_overlap`` significant
+    tokens with that vocabulary. This keeps genuinely product-specific copy
+    (revalidate free) and quarantines generic/off-topic filler (paid rewrite),
+    WITHOUT false-quarantining good copy that mixes attribute USPs with emotional
+    ones. Fail-closed on no USP or an empty authority.
     """
     usp_list = [u for u in (usp_list or []) if _clean(u)]
     get = snapshot.get if isinstance(snapshot, dict) else (lambda _k: None)
-    pi_fields: dict[str, set[str]] = {
-        name: _content_tokens(get(col)) for name, col in _GROUNDING_PI_FIELDS
-    }
-    pi_vocab: set[str] = set().union(*pi_fields.values()) if pi_fields else set()
+    pi_fields: dict[str, set[str]] = {name: _content_tokens(get(col)) for name, col in _GROUNDING_PI_FIELDS}
+    title_tokens = _content_tokens(product_title)
+    vocab: set[str] = (
+        set().union(*pi_fields.values(), title_tokens) if (pi_fields or title_tokens) else set()
+    )
 
     def _match(text: str) -> tuple[str | None, int]:
         toks = _content_tokens(text)
         best_field, best = None, 0
-        for fname, ftoks in pi_fields.items():
+        for fname, ftoks in list(pi_fields.items()) + [("product_title", title_tokens)]:
             ov = len(toks & ftoks)
             if ov > best:
                 best, best_field = ov, fname
         return best_field, best
 
     usp_grounding: list[dict[str, Any]] = []
-    all_grounded = True
     for u in usp_list:
         fld, ov = _match(u)
-        g = ov >= 1
-        all_grounded = all_grounded and g
-        usp_grounding.append({"usp": u, "grounded": g, "supporting_pi_field": fld, "overlap": ov})
+        usp_grounding.append(
+            {"usp": u, "grounded": ov >= 1, "supporting_pi_field": fld, "overlap": ov}
+        )
 
+    combined = _content_tokens(" ".join([hook, subhook, " ".join(usp_list), cta]))
+    overlap = combined & vocab
     hook_fld, hook_ov = _match(f"{hook} {subhook}")
-    hook_grounded = hook_ov >= 1
 
     reasons: list[str] = []
-    if not pi_vocab:
+    if not vocab:
         reasons.append("EMPTY_PI_AUTHORITY")
     if not usp_list:
         reasons.append("NO_USP")
-    if usp_list and not all_grounded:
-        reasons.append("UNGROUNDED_USP")
-    if not hook_grounded:
-        reasons.append("UNGROUNDED_HOOK")
+    if vocab and usp_list and len(overlap) < min_overlap:
+        reasons.append("WEAK_GROUNDING")
 
-    grounded = bool(pi_vocab) and bool(usp_list) and all_grounded and hook_grounded
+    grounded = bool(vocab) and bool(usp_list) and len(overlap) >= min_overlap
     return {
         "grounded": grounded,
-        "hook_grounded": hook_grounded,
+        "overlap_count": len(overlap),
+        "overlap_tokens": sorted(overlap)[:12],
+        "hook_grounded": hook_ov >= 1,
         "hook_supporting_pi_field": hook_fld,
         "usp_grounding": usp_grounding,
         "reasons": reasons,

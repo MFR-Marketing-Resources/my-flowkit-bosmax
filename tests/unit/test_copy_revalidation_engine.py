@@ -24,7 +24,7 @@ _SNAP = {
 }
 
 
-# ── Deterministic grounding (pure) ───────────────────────────────────────────
+# ── Deterministic grounding (pure, set-level, cross-language tolerant) ────────
 def test_grounding_true_when_copy_maps_to_pi():
     g = assess_semantic_grounding(
         hook="Kulit lebih cerah dengan vitamin C",
@@ -33,7 +33,7 @@ def test_grounding_true_when_copy_maps_to_pi():
         snapshot=_SNAP,
     )
     assert g["grounded"] is True
-    assert all(x["grounded"] for x in g["usp_grounding"])
+    assert g["overlap_count"] >= 2
 
 
 def test_grounding_false_for_generic_unmapped_copy():
@@ -44,7 +44,28 @@ def test_grounding_false_for_generic_unmapped_copy():
         snapshot=_SNAP,
     )
     assert g["grounded"] is False
-    assert "UNGROUNDED_USP" in g["reasons"] or "UNGROUNDED_HOOK" in g["reasons"]
+    assert "WEAK_GROUNDING" in g["reasons"]
+
+
+def test_grounding_cross_language_via_title():
+    # PI is ENGLISH, copy is MALAY — grounded through shared + product-title anchors
+    # (the real false-negative class that over-strict token matching produced).
+    snap = {
+        "product_description": "A long Muslimah sport jersey in quick-dry microfiber",
+        "benefits_json": '["Quick-dry fabric", "Long modest cut"]',
+        "usp_json": '["Microfiber quick-dry"]',
+    }
+    g = assess_semantic_grounding(
+        hook="Susah cari baju sukan yang labuh?",
+        usp_list=[
+            "Jersi QAYRAA diperbuat daripada mikrofiber quick dry, ringan dan labuh",
+            "Bersukan dengan tenang dan penuh keyakinan",
+        ],
+        snapshot=snap,
+        product_title="QAYRAA P1 Jersi Muslimah Microfiber Quick Dry Baju Sukan Labuh",
+    )
+    assert g["grounded"] is True
+    assert g["overlap_count"] >= 2
 
 
 def test_grounding_false_when_no_usp_or_empty_pi():
