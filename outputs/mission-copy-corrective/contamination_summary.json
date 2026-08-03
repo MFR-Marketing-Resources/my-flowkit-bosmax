@@ -1,0 +1,28 @@
+{
+  "summary": {
+    "cohort_active_products": 402,
+    "live_copy_set_cols_have_pi": true
+  },
+  "product_buckets": {
+    "claimed_valid_products": 402,
+    "products_with_generic_approved": 137,
+    "products_contaminated_mission": 402,
+    "products_all_approved_are_mission": 398,
+    "products_plausible_nonmission_valid": 0,
+    "products_missing_any_copy": 0,
+    "products_no_approved": 0
+  },
+  "approved_set_stats": {
+    "total_approved_nonarchived": 2459,
+    "approved_by_coord": 390,
+    "revalidated_by_coord": 402,
+    "approved_in_1946_window": 380,
+    "generic_hits": 137,
+    "missing_completeness_verdict": 0,
+    "missing_safety_verdict": 0,
+    "missing_pi_lineage": 2057,
+    "new_mission_generated": 118,
+    "mission_approved_existing": 272,
+    "preexisting_approved_unchanged": 2069
+  }
+}

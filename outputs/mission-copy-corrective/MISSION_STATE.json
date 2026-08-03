@@ -1,0 +1,63 @@
+{
+  "mission_id": "BOSMAX-COPY-CORRECTIVE-ONCE-AND-FOR-ALL-20260803",
+  "branch": "claude/copy-final-corrective-repair",
+  "base_sha": "fbb43fd957d04dc52c3ea62789a6fab456bd3e0e",
+  "base_ref": "origin/main (PR #608 merge)",
+  "current_blocker": "COPY-CORRECTIVE-B01",
+  "phases_completed": [
+    "PHASE0_preserve (read-only git forensics; branch created; no reset/clean/stash)",
+    "PHASE1_partial (backup verified present; live-vs-backup read-only forensic diff done)",
+    "PROVE (defects #1-#7 confirmed at file:line + timestamps; #8-#10 pending)"
+  ],
+  "phases_pending": [
+    "PHASE2 containment (mass DB quarantine on SHARED LIVE DB — owner-gated)",
+    "PHASE3 strict fail-closed validity authority + reason-aware classes + generic detector + tests",
+    "PHASE4 atomic approval/lineage",
+    "PHASE5 fail-closed PI stale invalidation (remove except-pass swallow)",
+    "PHASE6 truthful reporting/readiness",
+    "PHASE7 execution-path enforcement",
+    "PHASE8-12 semantic review + repair/replace (MULTI-HOUR PAID — owner-gated)",
+    "PHASE13 dashboard",
+    "PHASE14 test matrix",
+    "PHASE15-19 reconcile/commit/push/PR/merge(owner-gated)/restart(shared runtime)/post-merge"
+  ],
+  "verified_defects": {
+    "D1_generic_fallback_copy": "CONFIRMED — patterns present in outputs/mission-copy-final/copy_final_writer.py, copy_holdout_closure.py, copy_holdout_final3.py; 137/402 products carry generic filler in an approved set",
+    "D2_mass_approval_no_semantic_review": "CONFIRMED — writer_summary.json started 2026-08-03T09:46:41Z finished 09:47:00Z = 19s for 402 products; 380 sets approved in the 09:46-09:47 window",
+    "D3_validity_fails_open": "CONFIRMED — copy_set_validity_service.py:131-134 'if completeness and completeness.get(complete) is False' — missing verdict passes; no semantic-grounding receipt or reviewer-identity requirement anywhere",
+    "D4_override_over_broad": "CONFIRMED — copy_set_validity_service.py:139-145 'and not override' lets ANY approval_override object bypass BOTH formula and sales-clarity; inner per-gate flag check is dead code",
+    "D5_approval_not_atomic": "CONFIRMED — copy_set_service.py approve_copy_set: update_copy_set(status=COPY_APPROVED) commits, then stamp_copy_set_pi_lineage in try/except: pass — lineage failure yields approved-without-lineage",
+    "D6_stale_invalidation_swallows": "CONFIRMED — product_intelligence_review_draft_service.py:1485-1494 mark_stale_copy_sets_for_product inside try/except Exception: pass",
+    "D7_invalid_misclassified_as_stale": "CONFIRMED — classify_product_copy collapses every non-valid approved set into APPROVED_COPY_STALE; no UNSAFE/INCOMPLETE/GENERIC/MISSING_REVIEW/INVALID_LINEAGE product states",
+    "D8_reporting_hides_eval_failure": "PENDING (copywriting_readiness_service.py not yet read)",
+    "D9_dashboard_closure_absent": "PENDING",
+    "D10_release_proof_incomplete": "PENDING (no CI workflow / durable post-merge proof observed)"
+  },
+  "forensic_truth_402_cohort": {
+    "claimed_valid_pr608": 402,
+    "contaminated_by_mission": 402,
+    "products_with_generic_filler_approved": 137,
+    "products_independently_clean_valid": 0,
+    "strict_valid_under_mission_definition": 0,
+    "note": "2069 approved sets carry pre-existing unchanged text (rubber-stamped, not fabricated); 118 new + 272 flipped are mission-fresh; NO set has a semantic-review receipt"
+  },
+  "database": {
+    "live_db_path": "C:/Users/USER/Desktop/_ref_flowkit/flow_agent.db",
+    "live_db_status": "ACTIVELY MUTATING (runtime writing; ~303MB, grew during session) — query READ-ONLY only",
+    "backup_pre_copy_final": "outputs/mission-copy-final/backups/flow_agent_pre_copy_final_20260803T092741Z.db",
+    "backup_sha256": "660870e0c13e5ab6a5d28d1ef44ea4ea1aa42897d731c6768bfa0f984522ee02",
+    "backup_integrity": "ok (per database_backup_manifest.json)"
+  },
+  "shared_repo_hazards": {
+    "worktrees": "~100 co-tenant worktrees; main checked out in .codex/worktrees/smart-registration-next-action",
+    "live_runtime": ":8100 in a co-tenant worktree; owns flow_agent.db",
+    "implication": "mass DB mutation + runtime restart affect concurrent co-tenant work; git add is not durable here"
+  },
+  "owner_gated_items": [
+    "Multi-hour PAID semantic rebuild (137 generic replacements + review of the rest) — real cost, ENGINEERING_LOCKDOWN requires explicit spend approval",
+    "Mass quarantine mutation on the SHARED LIVE canonical DB",
+    "Self-merge to main — AGENTS.md says NO self-merge; requires owner waiver or owner-performed merge",
+    "Restart of the shared :8100 runtime"
+  ],
+  "last_safe_commit": "PENDING (this commit)"
+}
