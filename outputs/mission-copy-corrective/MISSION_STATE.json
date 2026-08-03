@@ -3,11 +3,16 @@
   "branch": "claude/copy-final-corrective-repair",
   "base_sha": "fbb43fd957d04dc52c3ea62789a6fab456bd3e0e",
   "base_ref": "origin/main (PR #608 merge)",
-  "current_blocker": "COPY-CORRECTIVE-B01",
+  "current_blocker": "COPY-CORRECTIVE-B02/B03 (validator hardened; atomic approval + PI invalidation + reporting/execution enforcement next)",
+  "owner_direction_20260803": {
+    "rebuild": "FREE-FIRST: harden validator -> contain -> free strict-revalidation of salvageable pre-existing copy (NO provider) -> paid text_assist ONLY for genuine replacements (137 generic + strict-review failures). Do not regenerate valid copy. Do not fabricate to force 402/402. No further pilot/approval. Track all tokens/cost. Then ONE consolidated Outcome B manifest.",
+    "merge": "OWNER MERGES; I open the PR (no self-merge, no shared-runtime restart by me)."
+  },
   "phases_completed": [
     "PHASE0_preserve (read-only git forensics; branch created; no reset/clean/stash)",
     "PHASE1_partial (backup verified present; live-vs-backup read-only forensic diff done)",
-    "PROVE (defects #1-#7 confirmed at file:line + timestamps; #8-#10 pending)"
+    "PROVE (defects #1-#7 confirmed at file:line + timestamps; #8-#10 pending)",
+    "PHASE3 strict FAIL-CLOSED validity authority — DONE: granular per-gate override (D4), missing completeness/safety/semantic-receipt fail closed (D3), auditable generic/synthetic detector (D1/B03), reason-aware product classifications (D7), VALIDITY_EVALUATION_FAILED fail-closed reporting sentinel (D8). 35/35 unit tests green (tests/unit/test_copy_set_validity_service.py)."
   ],
   "phases_pending": [
     "PHASE2 containment (mass DB quarantine on SHARED LIVE DB — owner-gated)",

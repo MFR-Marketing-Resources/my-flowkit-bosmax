@@ -1,4 +1,4 @@
-"""COPY-FINAL-B01 — single shared Copy-Set validity authority.
+"""COPY-CORRECTIVE-B02/B03 — single shared, FAIL-CLOSED Copy-Set validity authority.
 
 Product-level COPY_ELIGIBLE (copy_eligibility_service) answers:
   "may this product enter a copy lane at all?"
@@ -8,11 +8,18 @@ Copy-Set-level VALIDITY answers:
 
 Reporting, readiness, rotation, selection, binding, and package creation MUST
 share this predicate. "Has any non-archived copy_set row" is NOT validity.
+
+FAIL-CLOSED CONTRACT (COPY-CORRECTIVE): a Copy Set is valid ONLY when every
+applicable piece of evidence is PRESENT and passes. Missing completeness, missing
+safety, missing semantic-review receipt, missing/mismatched PI lineage, an open
+formula/sales gate, or detectable generic/synthetic filler each fail the set.
+Absence of evidence is NOT success. Overrides are per-gate and never bypass safety.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -25,24 +32,70 @@ from agent.services.copy_eligibility_service import (
     copy_eligibility,
 )
 
-# Product-level classifications (deterministic precedence).
+# ── Product-level classifications (deterministic precedence). ──────────────────
 CLASS_APPROVED_COPY_VALID = "APPROVED_COPY_VALID"
 CLASS_APPROVED_COPY_STALE = "APPROVED_COPY_STALE"
+CLASS_APPROVED_COPY_UNSAFE = "APPROVED_COPY_UNSAFE"
+CLASS_APPROVED_COPY_INCOMPLETE = "APPROVED_COPY_INCOMPLETE"
+CLASS_APPROVED_COPY_GENERIC = "APPROVED_COPY_GENERIC"
+CLASS_APPROVED_COPY_MISSING_REVIEW = "APPROVED_COPY_MISSING_REVIEW"
+CLASS_APPROVED_COPY_FORMULA_REVIEW = "APPROVED_COPY_FORMULA_REVIEW"
+CLASS_APPROVED_COPY_SALES_CLARITY_REVIEW = "APPROVED_COPY_SALES_CLARITY_REVIEW"
+CLASS_APPROVED_COPY_INVALID_LINEAGE = "APPROVED_COPY_INVALID_LINEAGE"
 CLASS_COPY_REVIEW_REQUIRED_ONLY = "COPY_REVIEW_REQUIRED_ONLY"
 CLASS_DRAFT_COPY_ONLY = "DRAFT_COPY_ONLY"
 CLASS_REJECTED_COPY_ONLY = "REJECTED_COPY_ONLY"
 CLASS_MISSING_COPY = "MISSING_COPY"
 CLASS_BLOCKED_WITH_REASON = "BLOCKED_WITH_REASON"
 
+# Explicit signal that the evaluator itself could not run (NEVER report success).
+CLASS_VALIDITY_EVALUATION_FAILED = "VALIDITY_EVALUATION_FAILED"
+
 ACTION_PRESERVE_VALID_APPROVED = "PRESERVE_VALID_APPROVED"
 ACTION_REVALIDATE_APPROVED = "REVALIDATE_APPROVED"
+ACTION_SEMANTIC_REVIEW = "SEMANTIC_REVIEW_REQUIRED"
 ACTION_REVIEW_EXISTING = "REVIEW_EXISTING"
 ACTION_REPAIR_EXISTING = "REPAIR_EXISTING"
+ACTION_REPLACE_COPY = "REPLACE_COPY"
 ACTION_GENERATE_MISSING = "GENERATE_MISSING"
 ACTION_BLOCK_WITH_REASON = "BLOCK_WITH_REASON"
 ACTION_READY = "READY"
 
 QUARANTINE_BAD = {PI_INELIGIBLE, NEEDS_REVALIDATION, BLOCKED, "BLOCKED"}
+
+# Canonical failure tokens ranked by recoverability (lower = closer to valid).
+# Used to pick a product's most-recoverable approved set and to classify by its
+# dominant (worst) blocker without collapsing everything into STALE (defect #7).
+SEV_STALE = 10
+SEV_INVALID_LINEAGE = 15
+SEV_SALES_CLARITY = 20
+SEV_FORMULA = 25
+SEV_MISSING_REVIEW = 30
+SEV_INCOMPLETE = 40
+SEV_GENERIC = 50
+SEV_UNSAFE = 60
+
+_PRIMARY_SEVERITY = {
+    "STALE": SEV_STALE,
+    "INVALID_LINEAGE": SEV_INVALID_LINEAGE,
+    "SALES_CLARITY_REVIEW": SEV_SALES_CLARITY,
+    "FORMULA_REVIEW": SEV_FORMULA,
+    "MISSING_REVIEW": SEV_MISSING_REVIEW,
+    "INCOMPLETE": SEV_INCOMPLETE,
+    "GENERIC": SEV_GENERIC,
+    "UNSAFE": SEV_UNSAFE,
+}
+
+_PRIMARY_TO_CLASS = {
+    "STALE": (CLASS_APPROVED_COPY_STALE, ACTION_REVALIDATE_APPROVED),
+    "INVALID_LINEAGE": (CLASS_APPROVED_COPY_INVALID_LINEAGE, ACTION_REVALIDATE_APPROVED),
+    "SALES_CLARITY_REVIEW": (CLASS_APPROVED_COPY_SALES_CLARITY_REVIEW, ACTION_REVIEW_EXISTING),
+    "FORMULA_REVIEW": (CLASS_APPROVED_COPY_FORMULA_REVIEW, ACTION_REVIEW_EXISTING),
+    "MISSING_REVIEW": (CLASS_APPROVED_COPY_MISSING_REVIEW, ACTION_SEMANTIC_REVIEW),
+    "INCOMPLETE": (CLASS_APPROVED_COPY_INCOMPLETE, ACTION_REPAIR_EXISTING),
+    "GENERIC": (CLASS_APPROVED_COPY_GENERIC, ACTION_REPLACE_COPY),
+    "UNSAFE": (CLASS_APPROVED_COPY_UNSAFE, ACTION_REPLACE_COPY),
+}
 
 
 def _clean(v: Any) -> str:
@@ -83,6 +136,124 @@ def pi_authority_digest(snapshot_row: dict[str, Any] | Any) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
+# ── Generic / synthetic filler detector (auditable). ──────────────────────────
+# COPY-CORRECTIVE-B03. These are the exact families the Cursor Copy-Final holdout
+# scripts emitted to force closure, plus structural name-only USP detection. A hit
+# quarantines the set (GENERIC); it never deletes.
+_GENERIC_PATTERN_SOURCES = [
+    r"kelebihan\b[^\n]{0,40}#\s*\d+",       # "Kelebihan <product> #1"
+    r"kelebihan tersendiri",
+    r"identiti jelas",
+    r"nilai yang mudah difahami",
+    r"rutin harian dengan",
+    r"bukti harian untuk",
+    r"dibina untuk keperluan(?: sebenar)?",
+    r"pilihan praktikal untuk keluarga",
+    r"fokus pada kualiti dan kejelasan nilai",
+    r"sesuai untuk rutin harian",
+    r"cuba sekarang dan rasai bezanya",
+]
+_GENERIC_RX = re.compile("|".join(_GENERIC_PATTERN_SOURCES), re.IGNORECASE)
+# Low-specificity USP: nothing product-specific beyond the product name / a number.
+_TRIVIAL_USP_TAIL = re.compile(r"^[\W\d_]*$")
+
+
+def _usp_list(copy_set: dict[str, Any]) -> list[str]:
+    usp = copy_set.get("usp_set")
+    if usp is None:
+        usp = _parse_json(copy_set.get("usp_set_json"))
+    if isinstance(usp, dict):
+        usp = list(usp.values())
+    if not isinstance(usp, list):
+        return []
+    return [str(u) for u in usp if _clean(u)]
+
+
+def detect_generic_copy(
+    *,
+    angle: str = "",
+    hook: str = "",
+    subhook: str = "",
+    usp_list: list[str] | None = None,
+    cta: str = "",
+    product_name: str = "",
+) -> dict[str, Any]:
+    """Return {'generic': bool, 'hits': [...]} — deterministic, explainable."""
+    usp_list = usp_list or []
+    hits: list[str] = []
+    haystack = "\n".join([angle, hook, subhook, " ".join(usp_list), cta])
+    for m in {m.group(0).strip().lower() for m in _GENERIC_RX.finditer(haystack)}:
+        hits.append(f"FILLER_PATTERN:{m[:48]}")
+    pn = _clean(product_name).lower()
+    for u in usp_list:
+        us = _clean(u).lower()
+        if not us:
+            continue
+        tail = us.replace(pn, "").strip() if pn else us
+        if pn and (us == pn or _TRIVIAL_USP_TAIL.match(tail) or len(tail) <= 3):
+            hits.append(f"USP_NAME_ONLY:{_clean(u)[:48]}")
+    return {"generic": bool(hits), "hits": hits}
+
+
+# ── Semantic review receipt validation (COPY-CORRECTIVE-B03). ─────────────────
+def validate_semantic_review_receipt(
+    receipt: Any,
+    *,
+    current_snapshot_id: str | None,
+    current_authority_digest: str | None,
+) -> dict[str, Any]:
+    """A strict-valid Copy Set must carry a durable semantic-review receipt that
+    an independent auditor can read: an identified reviewer approved THIS copy
+    against the CURRENT PI authority. Missing/short receipt fails closed."""
+    reasons: list[str] = []
+    if not isinstance(receipt, dict) or not receipt:
+        return {"ok": False, "reasons": ["SEMANTIC_REVIEW_MISSING"]}
+    if _clean(receipt.get("decision")).upper() != "APPROVED":
+        reasons.append("SEMANTIC_REVIEW_NOT_APPROVED")
+    if not _clean(receipt.get("reviewer")):
+        reasons.append("SEMANTIC_REVIEW_NO_REVIEWER")
+    if not _clean(receipt.get("reviewed_at")):
+        reasons.append("SEMANTIC_REVIEW_NO_TIMESTAMP")
+    if not _clean(receipt.get("rationale")):
+        reasons.append("SEMANTIC_REVIEW_NO_RATIONALE")
+    # Receipt must be bound to the CURRENT authority (fail-closed on drift).
+    r_snap = _clean(receipt.get("pi_snapshot_id"))
+    if current_snapshot_id:
+        if not r_snap:
+            reasons.append("SEMANTIC_REVIEW_NO_LINEAGE")
+        elif r_snap != _clean(current_snapshot_id):
+            reasons.append("SEMANTIC_REVIEW_STALE_LINEAGE")
+        r_dig = _clean(receipt.get("authority_digest"))
+        if current_authority_digest and r_dig and r_dig != _clean(current_authority_digest):
+            reasons.append("SEMANTIC_REVIEW_DIGEST_MISMATCH")
+    return {"ok": not reasons, "reasons": reasons}
+
+
+def _primary_reason(reasons: list[str]) -> Optional[str]:
+    """Collapse a set's raw reason list into its single worst recoverable token."""
+    tokens: set[str] = set()
+    for r in reasons:
+        if r.startswith("UNSAFE") or r.startswith("SAFETY"):
+            tokens.add("UNSAFE")
+        elif r.startswith("GENERIC"):
+            tokens.add("GENERIC")
+        elif r.startswith("INCOMPLETE") or r.startswith("COMPLETENESS"):
+            tokens.add("INCOMPLETE")
+        elif r.startswith("SEMANTIC_REVIEW"):
+            tokens.add("MISSING_REVIEW")
+        elif r.startswith("FORMULA_REVIEW"):
+            tokens.add("FORMULA_REVIEW")
+        elif r.startswith("SALES_CLARITY"):
+            tokens.add("SALES_CLARITY_REVIEW")
+        elif r == "MISSING_PI_LINEAGE":
+            tokens.add("INVALID_LINEAGE")
+        elif r.startswith("PI_") and r.endswith("MISMATCH"):
+            tokens.add("STALE")
+    if not tokens:
+        return None
+    return max(tokens, key=lambda t: _PRIMARY_SEVERITY.get(t, 0))
+
+
 def evaluate_copy_set_validity(
     *,
     copy_set: dict[str, Any],
@@ -91,17 +262,20 @@ def evaluate_copy_set_validity(
     current_snapshot_id: str | None,
     current_snapshot_version: int | None,
     current_authority_digest: str | None,
+    product_name: str = "",
     require_lineage_match: bool = True,
+    require_semantic_review: bool = True,
 ) -> dict[str, Any]:
-    """Pure asset-level validity. No I/O.
+    """Pure asset-level validity. No I/O. FAIL-CLOSED.
 
     A valid production Copy Set must be:
-    - COPY_APPROVED, not archived
-    - not quarantined (PI_INELIGIBLE / NEEDS_REVALIDATION / BLOCKED)
-    - on a currently COPY_ELIGIBLE product
-    - complete + safe at last review (claim_review)
-    - grounded on the current approved PI authority when lineage is known
-      (missing lineage on approved sets is treated as STALE when require_lineage_match)
+    - COPY_APPROVED, not archived, not quarantined, on a COPY_ELIGIBLE product
+    - complete (completeness verdict PRESENT and complete)
+    - safe (safety verdict PRESENT and safe)
+    - formula-clear (or per-gate override) and sales-clear (or per-gate override)
+    - free of generic/synthetic filler
+    - carrying a semantic-review receipt bound to the current PI authority
+    - grounded on the current approved PI snapshot/version/digest
     """
     reasons: list[str] = []
     status = _clean(copy_set.get("status")).upper()
@@ -116,8 +290,7 @@ def evaluate_copy_set_validity(
         reasons.append(f"QUARANTINED:{quar}")
     if not product_eligible:
         reasons.append(
-            "PRODUCT_INELIGIBLE:"
-            + ",".join(product_eligibility_reasons or ["UNKNOWN"])
+            "PRODUCT_INELIGIBLE:" + ",".join(product_eligibility_reasons or ["UNKNOWN"])
         )
 
     claim = copy_set.get("claim_review")
@@ -126,23 +299,56 @@ def evaluate_copy_set_validity(
     if not isinstance(claim, dict):
         claim = {}
 
-    completeness = claim.get("completeness") or {}
-    safety = claim.get("safety") or {}
-    if completeness and completeness.get("complete") is False:
+    # Completeness — PRESENT and complete (missing verdict fails closed).
+    completeness = claim.get("completeness")
+    if not isinstance(completeness, dict) or "complete" not in completeness:
+        reasons.append("INCOMPLETE:MISSING_COMPLETENESS_VERDICT")
+    elif completeness.get("complete") is not True:
         reasons.append("INCOMPLETE")
-    if safety and safety.get("safe") is False:
+
+    # Safety — PRESENT and safe (missing verdict fails closed).
+    safety = claim.get("safety")
+    if not isinstance(safety, dict) or "safe" not in safety:
+        reasons.append("UNSAFE:MISSING_SAFETY_VERDICT")
+    elif safety.get("safe") is not True:
         reasons.append("UNSAFE")
 
+    # Formula / sales clarity — per-gate override ONLY (defect #4). The mere
+    # existence of an approval_override object must NOT bypass a gate; only the
+    # exact flag for that exact gate may, and neither ever bypasses safety.
+    override = claim.get("approval_override")
+    override = override if isinstance(override, dict) else {}
     fv = claim.get("formula_validation") or {}
     sc = claim.get("sales_clarity") or {}
-    override = claim.get("approval_override") or {}
-    if fv and (not fv.get("valid", False) or fv.get("review_required")) and not override:
-        # Only block when formula verdict exists and was not overridden at approval.
-        if not override.get("formula_review_overridden"):
-            reasons.append("FORMULA_REVIEW_OPEN")
-    if sc and (not sc.get("clear", False) or sc.get("review_required")) and not override:
-        if not override.get("sales_clarity_overridden"):
-            reasons.append("SALES_CLARITY_OPEN")
+    formula_open = bool(fv) and (not fv.get("valid", False) or bool(fv.get("review_required")))
+    clarity_open = bool(sc) and (not sc.get("clear", False) or bool(sc.get("review_required")))
+    if formula_open and not _valid_override(override, "formula_review_overridden"):
+        reasons.append("FORMULA_REVIEW_OPEN")
+    if clarity_open and not _valid_override(override, "sales_clarity_overridden"):
+        reasons.append("SALES_CLARITY_OPEN")
+
+    # Generic / synthetic filler.
+    gen = detect_generic_copy(
+        angle=_clean(copy_set.get("angle")),
+        hook=_clean(copy_set.get("hook")),
+        subhook=_clean(copy_set.get("subhook")),
+        usp_list=_usp_list(copy_set),
+        cta=_clean(copy_set.get("cta")),
+        product_name=product_name,
+    )
+    if gen["generic"]:
+        reasons.append("GENERIC:" + ";".join(gen["hits"])[:120])
+
+    # Semantic review receipt (fail-closed).
+    receipt = claim.get("semantic_review")
+    if require_semantic_review:
+        rr = validate_semantic_review_receipt(
+            receipt,
+            current_snapshot_id=current_snapshot_id,
+            current_authority_digest=current_authority_digest,
+        )
+        if not rr["ok"]:
+            reasons.extend(rr["reasons"])
 
     # Lineage / freshness against current PI authority.
     cs_snap = _clean(copy_set.get("pi_snapshot_id")) or None
@@ -152,7 +358,6 @@ def evaluate_copy_set_validity(
     except (TypeError, ValueError):
         cs_ver_i = None
     cs_digest = _clean(copy_set.get("pi_grounding_digest")) or None
-    # Fall back to provenance_json lineage when dedicated columns empty.
     if not cs_snap or not cs_digest:
         prov = copy_set.get("provenance")
         if prov is None:
@@ -193,6 +398,9 @@ def evaluate_copy_set_validity(
         "valid": valid,
         "stale": stale and not valid,
         "reasons": reasons,
+        "primary_reason": None if valid else _primary_reason(reasons),
+        "generic": gen["generic"],
+        "generic_hits": gen["hits"],
         "copy_set_id": copy_set.get("copy_set_id"),
         "status": status,
         "pi_eligibility_status": quar,
@@ -205,6 +413,16 @@ def evaluate_copy_set_validity(
     }
 
 
+def _valid_override(override: dict[str, Any], gate_flag: str) -> bool:
+    """A gate override is honoured only when the EXACT flag is truthy AND the
+    override carries an auditable reviewer + reason (never a bare object)."""
+    if not isinstance(override, dict):
+        return False
+    if not override.get(gate_flag):
+        return False
+    return bool(_clean(override.get("reason")) and _clean(override.get("by")))
+
+
 def classify_product_copy(
     *,
     product_eligible: bool,
@@ -212,77 +430,88 @@ def classify_product_copy(
     set_verdicts: list[dict[str, Any]],
     raw_sets: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Deterministic product-level classification from per-set verdicts."""
+    """Deterministic, REASON-AWARE product-level classification (defect #7).
+
+    An invalid approved set is classified by its dominant blocker (unsafe /
+    generic / incomplete / missing-review / formula / sales / lineage / stale),
+    never collapsed into STALE. When a product has several invalid approved sets,
+    the most-recoverable one drives the recommended action.
+    """
     if not product_eligible:
         return {
             "classification": CLASS_BLOCKED_WITH_REASON,
             "recommended_next_action": ACTION_BLOCK_WITH_REASON,
             "valid_copy_set_id": None,
             "block_reasons": list(product_eligibility_reasons or []),
+            "invalid_copy_set_ids": [str(v.get("copy_set_id")) for v in set_verdicts],
         }
 
     valid = [v for v in set_verdicts if v.get("valid")]
     if valid:
         return {
             "classification": CLASS_APPROVED_COPY_VALID,
-            "recommended_next_action": ACTION_PRESERVE_VALID_APPROVED
-            if True
-            else ACTION_READY,
+            "recommended_next_action": ACTION_READY,
             "valid_copy_set_id": valid[0].get("copy_set_id"),
             "block_reasons": [],
+            "invalid_copy_set_ids": [],
         }
 
-    # Stale approved (approved but failed only on lineage/quarantine revalidation)
-    approved_raw = [
-        s
+    # Approved-but-invalid sets: classify by the MOST RECOVERABLE dominant blocker.
+    approved_ids = {
+        _clean(s.get("copy_set_id"))
         for s in raw_sets
-        if _clean(s.get("status")).upper() == STATUS_COPY_APPROVED
-        and not bool(s.get("archived"))
-    ]
-    if approved_raw:
+        if _clean(s.get("status")).upper() == STATUS_COPY_APPROVED and not bool(s.get("archived"))
+    }
+    approved_verdicts = [
+        v for v in set_verdicts if _clean(v.get("copy_set_id")) in approved_ids
+    ] or [v for v in set_verdicts if not v.get("valid")]
+    scored: list[tuple[int, str, dict]] = []
+    for v in approved_verdicts:
+        pr = v.get("primary_reason") or _primary_reason(list(v.get("reasons") or []))
+        if pr is None:
+            # Approved set with no decodable blocker but not valid → treat as
+            # missing semantic review (fail-closed, never silently valid).
+            pr = "MISSING_REVIEW"
+        scored.append((_PRIMARY_SEVERITY.get(pr, SEV_MISSING_REVIEW), pr, v))
+
+    if scored and approved_ids:
+        scored.sort(key=lambda t: t[0])  # most recoverable first
+        _, pr, best = scored[0]
+        klass, action = _PRIMARY_TO_CLASS.get(
+            pr, (CLASS_APPROVED_COPY_MISSING_REVIEW, ACTION_SEMANTIC_REVIEW)
+        )
         return {
-            "classification": CLASS_APPROVED_COPY_STALE,
-            "recommended_next_action": ACTION_REVALIDATE_APPROVED,
+            "classification": klass,
+            "recommended_next_action": action,
             "valid_copy_set_id": None,
-            "block_reasons": [],
+            "primary_blocker": pr,
+            "best_recoverable_copy_set_id": best.get("copy_set_id"),
+            "block_reasons": list(best.get("reasons") or []),
+            "invalid_copy_set_ids": sorted(approved_ids),
         }
 
     if any(
-        _clean(s.get("status")).upper() == "COPY_REVIEW_REQUIRED"
-        and not bool(s.get("archived"))
+        _clean(s.get("status")).upper() == "COPY_REVIEW_REQUIRED" and not bool(s.get("archived"))
         for s in raw_sets
     ):
-        return {
-            "classification": CLASS_COPY_REVIEW_REQUIRED_ONLY,
-            "recommended_next_action": ACTION_REVIEW_EXISTING,
-            "valid_copy_set_id": None,
-            "block_reasons": [],
-        }
-
+        return _simple_class(CLASS_COPY_REVIEW_REQUIRED_ONLY, ACTION_REVIEW_EXISTING)
     if any(
         _clean(s.get("status")).upper() == "DRAFT_COPY" and not bool(s.get("archived"))
         for s in raw_sets
     ):
-        return {
-            "classification": CLASS_DRAFT_COPY_ONLY,
-            "recommended_next_action": ACTION_REPAIR_EXISTING,
-            "valid_copy_set_id": None,
-            "block_reasons": [],
-        }
-
+        return _simple_class(CLASS_DRAFT_COPY_ONLY, ACTION_REPAIR_EXISTING)
     if raw_sets:
-        return {
-            "classification": CLASS_REJECTED_COPY_ONLY,
-            "recommended_next_action": ACTION_GENERATE_MISSING,
-            "valid_copy_set_id": None,
-            "block_reasons": [],
-        }
+        return _simple_class(CLASS_REJECTED_COPY_ONLY, ACTION_GENERATE_MISSING)
+    return _simple_class(CLASS_MISSING_COPY, ACTION_GENERATE_MISSING)
 
+
+def _simple_class(klass: str, action: str) -> dict[str, Any]:
     return {
-        "classification": CLASS_MISSING_COPY,
-        "recommended_next_action": ACTION_GENERATE_MISSING,
+        "classification": klass,
+        "recommended_next_action": action,
         "valid_copy_set_id": None,
         "block_reasons": [],
+        "invalid_copy_set_ids": [],
     }
 
 
@@ -303,18 +532,30 @@ async def _latest_approved_snapshot(product_id: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-async def evaluate_copy_set_id(copy_set_id: str) -> dict[str, Any]:
-    """DB-backed validity for one Copy Set."""
+async def _product_name(product_id: str) -> str:
+    db = await get_db()
+    cur = await db.execute("PRAGMA table_info(product)")
+    cols = {r[1] for r in await cur.fetchall()}
+    await cur.close()
+    col = "name" if "name" in cols else ("product_name" if "product_name" in cols else None)
+    if not col:
+        return ""
+    cur = await db.execute(f"SELECT {col} AS n FROM product WHERE id = ?", (product_id,))
+    row = await cur.fetchone()
+    await cur.close()
+    return _clean(row["n"]) if row else ""
+
+
+async def evaluate_copy_set_id(
+    copy_set_id: str, *, require_semantic_review: bool = True
+) -> dict[str, Any]:
+    """DB-backed validity for one Copy Set (FAIL-CLOSED)."""
     db = await get_db()
     cur = await db.execute("SELECT * FROM copy_set WHERE copy_set_id = ?", (copy_set_id,))
     row = await cur.fetchone()
     await cur.close()
     if not row:
-        return {
-            "valid": False,
-            "reasons": ["COPY_SET_NOT_FOUND"],
-            "copy_set_id": copy_set_id,
-        }
+        return {"valid": False, "reasons": ["COPY_SET_NOT_FOUND"], "copy_set_id": copy_set_id}
     cs = dict(row)
     cs["claim_review"] = _parse_json(cs.get("claim_review_json")) or {}
     cs["provenance"] = _parse_json(cs.get("provenance_json")) or {}
@@ -328,14 +569,17 @@ async def evaluate_copy_set_id(copy_set_id: str) -> dict[str, Any]:
         current_snapshot_id=str(snap["snapshot_id"]) if snap else None,
         current_snapshot_version=int(snap["version"]) if snap else None,
         current_authority_digest=digest,
+        product_name=await _product_name(str(cs["product_id"])),
+        require_semantic_review=require_semantic_review,
     )
 
 
 async def product_copy_classification(product_id: str) -> dict[str, Any]:
-    """Full product-level classification + per-set verdicts."""
+    """Full product-level classification + per-set verdicts (FAIL-CLOSED)."""
     elig = await copy_eligibility(product_id)
     snap = await _latest_approved_snapshot(product_id)
     digest = pi_authority_digest(snap) if snap else None
+    pname = await _product_name(product_id)
     db = await get_db()
     cur = await db.execute(
         "SELECT * FROM copy_set WHERE product_id = ? ORDER BY created_at DESC",
@@ -347,24 +591,23 @@ async def product_copy_classification(product_id: str) -> dict[str, Any]:
     for cs in rows:
         cs["claim_review"] = _parse_json(cs.get("claim_review_json")) or {}
         cs["provenance"] = _parse_json(cs.get("provenance_json")) or {}
-        v = evaluate_copy_set_validity(
-            copy_set=cs,
-            product_eligible=bool(elig.get("eligible")),
-            product_eligibility_reasons=list(elig.get("reasons") or []),
-            current_snapshot_id=str(snap["snapshot_id"]) if snap else None,
-            current_snapshot_version=int(snap["version"]) if snap else None,
-            current_authority_digest=digest,
+        verdicts.append(
+            evaluate_copy_set_validity(
+                copy_set=cs,
+                product_eligible=bool(elig.get("eligible")),
+                product_eligibility_reasons=list(elig.get("reasons") or []),
+                current_snapshot_id=str(snap["snapshot_id"]) if snap else None,
+                current_snapshot_version=int(snap["version"]) if snap else None,
+                current_authority_digest=digest,
+                product_name=pname,
+            )
         )
-        verdicts.append(v)
     classified = classify_product_copy(
         product_eligible=bool(elig.get("eligible")),
         product_eligibility_reasons=list(elig.get("reasons") or []),
         set_verdicts=verdicts,
         raw_sets=rows,
     )
-    # READY when valid
-    if classified["classification"] == CLASS_APPROVED_COPY_VALID:
-        classified["recommended_next_action"] = ACTION_READY
     by_status: dict[str, int] = {}
     by_quar: dict[str, int] = {}
     for cs in rows:
@@ -377,6 +620,7 @@ async def product_copy_classification(product_id: str) -> dict[str, Any]:
         by_quar[q] = by_quar.get(q, 0) + 1
     return {
         "product_id": product_id,
+        "product_name": pname,
         "copy_eligible": bool(elig.get("eligible")),
         "copy_eligibility_reasons": list(elig.get("reasons") or []),
         "current_pi_snapshot_id": str(snap["snapshot_id"]) if snap else None,
@@ -395,10 +639,48 @@ async def assert_copy_set_valid(copy_set_id: str) -> dict[str, Any]:
     """Fail-closed guard for selection/binding/execution."""
     v = await evaluate_copy_set_id(copy_set_id)
     if not v.get("valid"):
-        raise ValueError(
-            "COPY_SET_INVALID:" + ",".join(v.get("reasons") or ["UNKNOWN"])
-        )
+        raise ValueError("COPY_SET_INVALID:" + ",".join(v.get("reasons") or ["UNKNOWN"]))
     return v
+
+
+def build_semantic_review_receipt(
+    *,
+    reviewer: str,
+    decision: str,
+    rationale: str,
+    pi_snapshot_id: str | None,
+    pi_snapshot_version: int | None,
+    authority_digest: str | None,
+    platform: str = "",
+    language: str = "",
+    route: str = "",
+    formula: str = "",
+    usp_grounding: list[dict[str, Any]] | None = None,
+    hook_review: str = "",
+    subhook_review: str = "",
+    cta_review: str = "",
+    genericness: dict[str, Any] | None = None,
+    reviewed_at: str | None = None,
+) -> dict[str, Any]:
+    """Durable, auditor-readable semantic-review receipt for a Copy Set."""
+    return {
+        "reviewer": reviewer,
+        "reviewed_at": reviewed_at or _now(),
+        "decision": (decision or "").upper(),
+        "rationale": rationale,
+        "pi_snapshot_id": pi_snapshot_id,
+        "pi_version": pi_snapshot_version,
+        "authority_digest": authority_digest,
+        "platform": platform,
+        "language": language,
+        "route": route,
+        "formula": formula,
+        "usp_grounding": usp_grounding or [],
+        "hook_review": hook_review,
+        "subhook_review": subhook_review,
+        "cta_review": cta_review,
+        "genericness": genericness or {},
+    }
 
 
 async def stamp_copy_set_pi_lineage(
@@ -409,9 +691,16 @@ async def stamp_copy_set_pi_lineage(
     clear_quarantine: bool = True,
     decision: str = "GROUNDED",
     rationale: str = "",
+    db: Any | None = None,
+    commit: bool = True,
 ) -> dict[str, Any]:
-    """Write current PI lineage onto a Copy Set (approval or revalidation)."""
-    db = await get_db()
+    """Write current PI lineage onto a Copy Set (approval or revalidation).
+
+    When ``db`` is supplied the caller owns the transaction (atomic approval);
+    pass ``commit=False`` to defer the commit to the caller.
+    """
+    own_db = db is None
+    db = db or await get_db()
     cur = await db.execute(
         "SELECT product_id, provenance_json FROM copy_set WHERE copy_set_id = ?",
         (copy_set_id,),
@@ -436,12 +725,10 @@ async def stamp_copy_set_pi_lineage(
         "grounded_at": now,
         "grounding_source": "APPROVED_PRODUCT_INTELLIGENCE_SNAPSHOT",
         "revalidated_at": now if revalidated_by else prov.get("pi_lineage", {}).get("revalidated_at"),
-        "revalidated_by": revalidated_by
-        or (prov.get("pi_lineage") or {}).get("revalidated_by"),
+        "revalidated_by": revalidated_by or (prov.get("pi_lineage") or {}).get("revalidated_by"),
         "decision": decision,
         "rationale": rationale or (prov.get("pi_lineage") or {}).get("rationale") or "",
     }
-    # Prefer dedicated columns when present.
     cur = await db.execute("PRAGMA table_info(copy_set)")
     cols = {r[1] for r in await cur.fetchall()}
     await cur.close()
@@ -473,11 +760,9 @@ async def stamp_copy_set_pi_lineage(
         sets.append("pi_eligibility_status = NULL")
         sets.append("pi_ineligible_reasons = NULL")
     params.append(copy_set_id)
-    await db.execute(
-        f"UPDATE copy_set SET {', '.join(sets)} WHERE copy_set_id = ?",
-        params,
-    )
-    await db.commit()
+    await db.execute(f"UPDATE copy_set SET {', '.join(sets)} WHERE copy_set_id = ?", params)
+    if commit and own_db:
+        await db.commit()
     return {
         "copy_set_id": copy_set_id,
         "pi_snapshot_id": snap["snapshot_id"],
@@ -492,9 +777,15 @@ async def mark_stale_copy_sets_for_product(
     *,
     current_snapshot_id: str,
     except_copy_set_ids: set[str] | None = None,
+    db: Any | None = None,
+    commit: bool = True,
 ) -> int:
-    """Fail-closed: approved sets not grounded on current snapshot → NEEDS_REVALIDATION."""
-    db = await get_db()
+    """Fail-closed: approved sets not grounded on current snapshot → NEEDS_REVALIDATION.
+
+    Caller may pass an open ``db`` to make this part of the PI-approval transaction.
+    """
+    own_db = db is None
+    db = db or await get_db()
     except_copy_set_ids = except_copy_set_ids or set()
     cur = await db.execute(
         "SELECT copy_set_id, pi_snapshot_id, provenance_json, status, archived, "
@@ -530,7 +821,7 @@ async def mark_stale_copy_sets_for_product(
             ),
         )
         n += 1
-    if n:
+    if n and commit and own_db:
         await db.commit()
     return n
 
@@ -539,7 +830,11 @@ async def copywriting_validity_coverage(
     *,
     lifecycle_status: str = "ACTIVE",
 ) -> dict[str, Any]:
-    """Cohort rollup for reporting — ACTIVE canonical non-fixture non-alias."""
+    """Cohort rollup for reporting — ACTIVE canonical non-fixture non-alias.
+
+    FAIL-CLOSED: production readiness is driven by strict validity only. Raw row
+    coverage stays available for diagnostics but never substitutes for validity.
+    """
     from agent.services.reporting_service import (
         _MERGED_ALIAS_PREDICATE,
         _PRODUCT_BASE,
@@ -552,25 +847,34 @@ async def copywriting_validity_coverage(
     where, params = _product_filters(lifecycle_status, None, None)
     real = f"{where} AND NOT {_TEST_FIXTURE_PREDICATE} AND NOT {_MERGED_ALIAS_PREDICATE}"
     total = await _scalar(db, f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE 1=1{real}", params)
-    cur = await db.execute(
-        f"SELECT p.id AS id {_PRODUCT_BASE} WHERE 1=1{real}",
-        params,
-    )
+    cur = await db.execute(f"SELECT p.id AS id {_PRODUCT_BASE} WHERE 1=1{real}", params)
     ids = [str(r["id"]) for r in await cur.fetchall()]
     await cur.close()
 
     buckets: dict[str, int] = {
         CLASS_APPROVED_COPY_VALID: 0,
         CLASS_APPROVED_COPY_STALE: 0,
+        CLASS_APPROVED_COPY_UNSAFE: 0,
+        CLASS_APPROVED_COPY_INCOMPLETE: 0,
+        CLASS_APPROVED_COPY_GENERIC: 0,
+        CLASS_APPROVED_COPY_MISSING_REVIEW: 0,
+        CLASS_APPROVED_COPY_FORMULA_REVIEW: 0,
+        CLASS_APPROVED_COPY_SALES_CLARITY_REVIEW: 0,
+        CLASS_APPROVED_COPY_INVALID_LINEAGE: 0,
         CLASS_COPY_REVIEW_REQUIRED_ONLY: 0,
         CLASS_DRAFT_COPY_ONLY: 0,
         CLASS_REJECTED_COPY_ONLY: 0,
         CLASS_MISSING_COPY: 0,
         CLASS_BLOCKED_WITH_REASON: 0,
+        CLASS_VALIDITY_EVALUATION_FAILED: 0,
     }
     for pid in ids:
-        c = await product_copy_classification(pid)
-        buckets[c["classification"]] = buckets.get(c["classification"], 0) + 1
+        try:
+            c = await product_copy_classification(pid)
+            klass = c["classification"]
+        except Exception:
+            klass = CLASS_VALIDITY_EVALUATION_FAILED
+        buckets[klass] = buckets.get(klass, 0) + 1
 
     valid = buckets[CLASS_APPROVED_COPY_VALID]
     return {
