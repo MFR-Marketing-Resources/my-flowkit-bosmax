@@ -2951,8 +2951,14 @@ async def list_bulk_queue(
     category: str | None = None,
     q: str | None = None,
     page: int = 1,
-    page_size: int = 50,
+    page_size: int | None = 50,
 ) -> list[dict]:
+    """List queue rows after SQL filters, optionally without pagination.
+
+    The effective recompute-state filter is evaluated by the service against
+    authoritative source evidence.  It needs the complete SQL-filtered
+    candidate set so it can filter before applying the API page window.
+    """
     db = await get_db()
     query, params = "SELECT * FROM fastmoss_bulk_draft_status WHERE 1=1", []
     if promotion_status:
@@ -2967,8 +2973,10 @@ async def list_bulk_queue(
         query += " AND category=?"; params.append(category)
     if q:
         query += " AND raw_product_title LIKE ?"; params.append(f"%{q}%")
-    query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
-    params.extend([page_size, (page - 1) * page_size])
+    query += " ORDER BY created_at DESC"
+    if page_size is not None:
+        query += " LIMIT ? OFFSET ?"
+        params.extend([page_size, (page - 1) * page_size])
     cur = await db.execute(query, params)
     return [dict(r) for r in await cur.fetchall()]
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
+from httpx import ASGITransport, AsyncClient
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -73,6 +74,64 @@ def test_list_queue_page_size_clamped(client, monkeypatch):
     monkeypatch.setattr(f"{_SVC}.list_bulk_queue", AsyncMock(return_value={}))
     r = client.get("/fastmoss-bulk/queue?page_size=999")
     assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_list_queue_api_returns_effective_freshness_rows_and_count(monkeypatch):
+    from agent.db import crud
+    from agent.services import fastmoss_bulk_promotion_service as service
+
+    reference_id = "ref-api-effective-stale-001"
+    reference = {
+        "id": reference_id,
+        "raw_product_title": "API changed serum source",
+        "category": "Beauty",
+    }
+    await crud.create_bulk_queue_row(
+        reference_id=reference_id,
+        raw_product_title=reference["raw_product_title"],
+        category="Beauty",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        promotion_status="READY_FOR_APPROVAL",
+        recompute_state="UP_TO_DATE",
+        ruleset_version=service._RECOMPUTE_RULESET_VERSION,
+        input_fingerprint="persisted-before-source-change",
+        computed_input_fingerprint="persisted-before-source-change",
+        computed_ruleset_version=service._RECOMPUTE_RULESET_VERSION,
+        recomputed_at="2026-08-03T00:00:00Z",
+    )
+    monkeypatch.setattr(
+        service,
+        "_current_reference_map",
+        AsyncMock(return_value={reference_id: reference}),
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=_build_app()),
+        base_url="http://test",
+    ) as async_client:
+        response = await async_client.get(
+            "/fastmoss-bulk/queue",
+            params={
+                "promotion_status": "READY_FOR_APPROVAL",
+                "claim_risk_level": "LOW",
+                "image_readiness": "IMAGE_PRESENT",
+                "recompute_state": "STALE",
+                "category": "Beauty",
+                "q": "serum",
+                "page": 1,
+                "page_size": 1,
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["page"] == 1
+    assert body["page_size"] == 1
+    assert [row["reference_id"] for row in body["items"]] == [reference_id]
+    assert body["items"][0]["recompute_state"] == "STALE"
 
 
 # ---------------------------------------------------------------------------

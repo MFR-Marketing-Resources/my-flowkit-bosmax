@@ -808,6 +808,148 @@ async def test_authoritative_reference_lookup_includes_rows_after_first_500(monk
     assert mapped[target_id]["raw_product_title"] == "Authoritative row 600"
 
 
+@pytest.mark.asyncio
+async def test_queue_freshness_filter_uses_effective_state_for_count_and_pages(monkeypatch):
+    from agent.db import crud
+    from agent.services import fastmoss_bulk_promotion_service as service
+
+    references = {}
+    for index in range(3):
+        reference_id = f"ref-effective-stale-{index}"
+        reference = {
+            "id": reference_id,
+            "raw_product_title": f"Changed Serum {index}",
+            "category": "Beauty",
+        }
+        references[reference_id] = reference
+        await crud.create_bulk_queue_row(
+            reference_id=reference_id,
+            raw_product_title=reference["raw_product_title"],
+            category="Beauty",
+            claim_risk_level="LOW",
+            image_readiness="IMAGE_PRESENT",
+            promotion_status="READY_FOR_APPROVAL",
+            recompute_state="UP_TO_DATE" if index == 0 else "STALE",
+            ruleset_version=_RECOMPUTE_RULESET_VERSION,
+            input_fingerprint="persisted-before-source-change",
+            computed_input_fingerprint="persisted-before-source-change",
+            computed_ruleset_version=_RECOMPUTE_RULESET_VERSION,
+            recomputed_at="2026-08-03T00:00:00Z",
+        )
+
+    monkeypatch.setattr(
+        service,
+        "_current_reference_map",
+        AsyncMock(return_value=references),
+    )
+
+    request = {
+        "promotion_status": "READY_FOR_APPROVAL",
+        "claim_risk_level": "LOW",
+        "image_readiness": "IMAGE_PRESENT",
+        "recompute_state": "STALE",
+        "category": "Beauty",
+        "q": "Serum",
+        "page_size": 2,
+    }
+    first_page = await service.list_bulk_queue(page=1, **request)
+    second_page = await service.list_bulk_queue(page=2, **request)
+
+    assert first_page["total"] == 3
+    assert second_page["total"] == 3
+    assert len(first_page["items"]) == 2
+    assert len(second_page["items"]) == 1
+    assert all(item["recompute_state"] == "STALE" for item in first_page["items"])
+    assert all(item["recompute_state"] == "STALE" for item in second_page["items"])
+    assert {
+        item["reference_id"] for item in first_page["items"] + second_page["items"]
+    } == set(references)
+
+    current_filter = await service.list_bulk_queue(
+        promotion_status="READY_FOR_APPROVAL",
+        claim_risk_level="LOW",
+        image_readiness="IMAGE_PRESENT",
+        recompute_state="UP_TO_DATE",
+        category="Beauty",
+        q="Serum",
+        page=1,
+        page_size=50,
+    )
+    assert current_filter["total"] == 0
+    assert current_filter["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_queue_freshness_filter_returns_each_effective_state(monkeypatch):
+    from agent.db import crud
+    from agent.services import fastmoss_bulk_promotion_service as service
+
+    references = {}
+    rows = {
+        "up-to-date": ("PENDING_DRAFT", "UP_TO_DATE"),
+        "stale": ("PENDING_DRAFT", "STALE"),
+        "missing": ("MISSING_REQUIRED_FIELD", "BLOCKED_MISSING_EVIDENCE"),
+        "review": ("CLAIM_RISK", "BLOCKED_REVIEW_REQUIRED"),
+        "failed": ("PENDING_DRAFT", "FAILED"),
+    }
+    for suffix, (promotion_status, persisted_state) in rows.items():
+        reference_id = f"ref-effective-state-{suffix}"
+        reference = {
+            "id": reference_id,
+            "raw_product_title": f"Effective state {suffix}",
+            "category": "Beauty",
+        }
+        references[reference_id] = reference
+        current_fingerprint = service._reference_fingerprint(reference)
+        kwargs = {
+            "reference_id": reference_id,
+            "raw_product_title": reference["raw_product_title"],
+            "category": "Beauty",
+            "claim_risk_level": "LOW",
+            "image_readiness": "IMAGE_PRESENT",
+            "promotion_status": promotion_status,
+            "recompute_state": persisted_state,
+            "ruleset_version": _RECOMPUTE_RULESET_VERSION,
+            "input_fingerprint": current_fingerprint,
+            "computed_input_fingerprint": current_fingerprint,
+            "computed_ruleset_version": _RECOMPUTE_RULESET_VERSION,
+        }
+        if suffix == "stale":
+            kwargs["input_fingerprint"] = "old-source-fingerprint"
+            kwargs["computed_input_fingerprint"] = "old-source-fingerprint"
+        if suffix == "failed":
+            kwargs["computed_input_fingerprint"] = None
+            kwargs["computed_ruleset_version"] = None
+        await crud.create_bulk_queue_row(**kwargs)
+
+    monkeypatch.setattr(
+        service,
+        "_current_reference_map",
+        AsyncMock(return_value=references),
+    )
+
+    for expected_state in (
+        "UP_TO_DATE",
+        "STALE",
+        "BLOCKED_MISSING_EVIDENCE",
+        "BLOCKED_REVIEW_REQUIRED",
+        "FAILED",
+    ):
+        result = await service.list_bulk_queue(
+            recompute_state=expected_state,
+            category="Beauty",
+            q="Effective state",
+            page=1,
+            page_size=50,
+        )
+        assert result["total"] == 1, (
+            expected_state,
+            [item["reference_id"] for item in result["items"]],
+        )
+        assert len(result["items"]) == 1
+        assert result["items"][0]["recompute_state"] == expected_state
+
+
 # ---------------------------------------------------------------------------
 # duplicate review lane — governance and content authority
 # ---------------------------------------------------------------------------
