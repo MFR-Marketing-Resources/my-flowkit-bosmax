@@ -1,0 +1,360 @@
+[
+ [
+  {
+   "file": "tests/unit/test_poster_deliverable_service.py",
+   "failing": [
+    "tests/unit/test_poster_deliverable_service.py::test_background_path_outside_roots_rejected",
+    "tests/unit/test_poster_deliverable_service.py::test_background_path_traversal_rejected",
+    "tests/unit/test_poster_deliverable_service.py::test_compose_and_reopen_preserves_server_resolved_creative_direction",
+    "tests/unit/test_poster_deliverable_service.py::test_compose_persists_manifest_qa_and_hash",
+    "tests/unit/test_poster_deliverable_service.py::test_compose_reopen_roundtrip_preserves_canonical_composition_plan",
+    "tests/unit/test_poster_deliverable_service.py::test_creative_library_round_trip_by_asset",
+    "tests/unit/test_poster_deliverable_service.py::test_durable_output_both_missing_fails_honestly",
+    "tests/unit/test_poster_deliverable_service.py::test_durable_output_falls_back_to_creative_library",
+    "tests/unit/test_poster_deliverable_service.py::test_durable_output_hash_mismatch_never_serves",
+    "tests/unit/test_poster_deliverable_service.py::test_durable_output_prefers_original_file",
+    "tests/unit/test_poster_deliverable_service.py::test_legacy_compose_without_mode_has_empty_plan",
+    "tests/unit/test_poster_deliverable_service.py::test_missing_background_fails_closed",
+    "tests/unit/test_poster_deliverable_service.py::test_preview_composition_plan_matches_compose_exactly",
+    "tests/unit/test_poster_deliverable_service.py::test_reconstruction_returns_manifest_copy_and_qa",
+    "tests/unit/test_poster_deliverable_service.py::test_save_blocked_by_qa",
+    "tests/unit/test_poster_deliverable_service.py::test_save_detects_identity_mismatch",
+    "tests/unit/test_poster_deliverable_service.py::test_save_registers_creative_asset_with_poster_governance",
+    "tests/unit/test_poster_deliverable_service.py::test_save_requires_approved_copy_set",
+    "tests/unit/test_poster_deliverable_service.py::test_save_stamps_reference_conditioned_unverified"
+   ]
+  },
+  {
+   "file": "tests/unit/test_production_queue_live_gate_f2v.py",
+   "failing": [
+    "tests/unit/test_production_queue_live_gate_f2v.py::test_authorized_f2v_run_fires_the_f2v_item",
+    "tests/unit/test_production_queue_live_gate_f2v.py::test_authorized_f2v_run_refuses_a_stray_non_f2v_item",
+    "tests/unit/test_production_queue_live_gate_f2v.py::test_authorized_hybrid_run_fires_hybrid_and_refuses_stray_f2v",
+    "tests/unit/test_production_queue_live_gate_f2v.py::test_hybrid_authorization_does_not_admit_f2v",
+    "tests/unit/test_production_queue_live_gate_f2v.py::test_unauthorized_hybrid_still_blocked_in_the_loop",
+    "tests/unit/test_production_queue_live_gate_f2v.py::test_unauthorized_run_still_blocks_f2v_in_the_loop"
+   ]
+  },
+  {
+   "file": "tests/unit/test_product_strategy_taxonomy_service.py",
+   "failing": [
+    "tests/unit/test_product_strategy_taxonomy_service.py::test_backfill_refreshes_auto_derived_binding_when_classifier_changes",
+    "tests/unit/test_product_strategy_taxonomy_service.py::test_new_product_gets_fail_closed_placeholder_then_backfill_readback"
+   ]
+  },
+  {
+   "file": "tests/unit/test_copy_angle_suggestion_service.py",
+   "failing": [
+    "tests/unit/test_copy_angle_suggestion_service.py::test_suggest_without_snapshot_raises"
+   ]
+  },
+  {
+   "file": "tests/unit/test_production_queue_dedupe.py",
+   "failing": [
+    "tests/unit/test_production_queue_dedupe.py::test_retry_failed_items_clears_the_prior_job_id"
+   ]
+  }
+ ],
+ [
+  {
+   "file": "tests/unit/test_poster_copy_ai_service.py",
+   "failing": [
+    "tests/unit/test_poster_copy_ai_service.py::test_ai_directions_are_parsed_gated_and_stamped",
+    "tests/unit/test_poster_copy_ai_service.py::test_angles_come_from_recipe_without_ai",
+    "tests/unit/test_poster_copy_ai_service.py::test_directions_fallback_is_safe_and_poster_native",
+    "tests/unit/test_poster_copy_ai_service.py::test_fallback_chips_come_only_from_approved_grounding",
+    "tests/unit/test_poster_copy_ai_service.py::test_fallback_does_not_inject_operator_angle_verbatim",
+    "tests/unit/test_poster_copy_ai_service.py::test_fallback_implies_no_routine_or_usage_context",
+    "tests/unit/test_poster_copy_ai_service.py::test_fallback_makes_no_unsupported_claims_without_intelligence",
+    "tests/unit/test_poster_copy_ai_service.py::test_fallback_uses_only_product_discovery_ctas",
+    "tests/unit/test_poster_copy_ai_service.py::test_high_claim_risk_prioritizes_problem_aware_safe",
+    "tests/unit/test_poster_copy_ai_service.py::test_objective_ranking_is_deterministic_and_signal_aware",
+    "tests/unit/test_poster_copy_ai_service.py::test_offer_directions_reject_price_claims",
+    "tests/unit/test_poster_copy_ai_service.py::test_provider_failure_uses_neutral_fallback_without_optional_grounding",
+    "tests/unit/test_poster_copy_ai_service.py::test_regenerate_field_fails_closed_when_unconfigured",
+    "tests/unit/test_poster_copy_ai_service.py::test_regenerate_field_locks_other_fields",
+    "tests/unit/test_poster_copy_ai_service.py::test_regenerated_unsafe_value_is_rejected"
+   ]
+  },
+  {
+   "file": "tests/unit/test_production_queue_service.py",
+   "failing": [
+    "tests/unit/test_production_queue_service.py::test_cancel_remaining_marks_queued_items_cancelled",
+    "tests/unit/test_production_queue_service.py::test_dry_run_reports_without_firing_or_mutating_items",
+    "tests/unit/test_production_queue_service.py::test_package_already_in_production_cannot_be_reapproved",
+    "tests/unit/test_production_queue_service.py::test_ready_manual_package_can_be_approved",
+    "tests/unit/test_production_queue_service.py::test_retry_failed_items_requeues_them",
+    "tests/unit/test_production_queue_service.py::test_send_to_production_queues_items_and_creates_dry_run",
+    "tests/unit/test_production_queue_service.py::test_send_to_production_stores_selected_model_on_run"
+   ]
+  },
+  {
+   "file": "tests/unit/test_production_queue_live_gate_i2v.py",
+   "failing": [
+    "tests/unit/test_production_queue_live_gate_i2v.py::test_authorized_i2v_run_fires_i2v",
+    "tests/unit/test_production_queue_live_gate_i2v.py::test_i2v_authorization_does_not_admit_f2v",
+    "tests/unit/test_production_queue_live_gate_i2v.py::test_unauthorized_i2v_still_blocked_in_the_loop"
+   ]
+  },
+  {
+   "file": "tests/unit/test_scene_context_cluster_classification.py",
+   "failing": [
+    "tests/unit/test_scene_context_cluster_classification.py::test_coverage_is_read_only_and_has_exact_authority_totals",
+    "tests/unit/test_scene_context_cluster_classification.py::test_seed_classification_is_complete_and_fail_closed"
+   ]
+  },
+  {
+   "file": "tests/unit/test_copywriting_readiness_service.py",
+   "failing": [
+    "tests/unit/test_copywriting_readiness_service.py::test_readiness_ready_with_approved_formula_copy"
+   ]
+  },
+  {
+   "file": "tests/unit/test_prompt_authority_sovereignty.py",
+   "failing": [
+    "tests/unit/test_prompt_authority_sovereignty.py::test_legacy_9_section_shim_renders_canonical"
+   ]
+  }
+ ],
+ [
+  {
+   "file": "tests/unit/test_copy_set_service.py",
+   "failing": [
+    "tests/unit/test_copy_set_service.py::test_approve_fails_closed_on_incomplete_copy",
+    "tests/unit/test_copy_set_service.py::test_approve_fails_closed_on_unsafe_copy",
+    "tests/unit/test_copy_set_service.py::test_approve_requires_exact_phrase",
+    "tests/unit/test_copy_set_service.py::test_approve_success_sets_approved_metadata",
+    "tests/unit/test_copy_set_service.py::test_copy_set_payload_is_compiler_compatible",
+    "tests/unit/test_copy_set_service.py::test_delete_copy_set_removes_row",
+    "tests/unit/test_copy_set_service.py::test_edit_reverts_prior_approval",
+    "tests/unit/test_copy_set_service.py::test_explicit_overrides_win - age...",
+    "tests/unit/test_copy_set_service.py::test_generate_flags_review_when_incomplete",
+    "tests/unit/test_copy_set_service.py::test_generate_is_idempotent_on_dedupe_key",
+    "tests/unit/test_copy_set_service.py::test_generate_prefers_landbank - ...",
+    "tests/unit/test_copy_set_service.py::test_generate_uses_copy_signal_and_persists",
+    "tests/unit/test_copy_set_service.py::test_regenerate_keeps_id_and_resets_status",
+    "tests/unit/test_copy_set_service.py::test_reject_sets_rejected - agent..."
+   ]
+  },
+  {
+   "file": "tests/unit/test_poster_copy_set_service.py",
+   "failing": [
+    "tests/unit/test_poster_copy_set_service.py::test_approve_requires_phrase_and_strict_quality_gate",
+    "tests/unit/test_poster_copy_set_service.py::test_approved_is_immutable_and_versioning_supersedes",
+    "tests/unit/test_poster_copy_set_service.py::test_create_draft_and_serialize_roundtrip",
+    "tests/unit/test_poster_copy_set_service.py::test_fork_from_historical_clones_without_mutating_parent",
+    "tests/unit/test_poster_copy_set_service.py::test_fork_from_historical_rejects_non_superseded",
+    "tests/unit/test_poster_copy_set_service.py::test_length_limits_fail_closed",
+    "tests/unit/test_poster_copy_set_service.py::test_video_copy_isolation_invariants"
+   ]
+  },
+  {
+   "file": "tests/unit/test_ai_copy_assist_service.py",
+   "failing": [
+    "tests/unit/test_ai_copy_assist_service.py::test_gate_allows_ungrounded_with_explicit_override",
+    "tests/unit/test_ai_copy_assist_service.py::test_gate_batch_blocks_ungrounded_without_override",
+    "tests/unit/test_ai_copy_assist_service.py::test_gate_blocks_ungrounded_generation_without_override"
+   ]
+  },
+  {
+   "file": "tests/api/test_scene_context_cluster_classification_api.py",
+   "failing": [
+    "tests/api/test_scene_context_cluster_classification_api.py::test_classification_api_hides_prompts_and_has_no_side_effect_contract",
+    "tests/api/test_scene_context_cluster_classification_api.py::test_cluster_coverage_api_exposes_deterministic_read_only_contract"
+   ]
+  },
+  {
+   "file": "tests/unit/test_workspace_image_preview_contract_service.py",
+   "failing": [
+    "tests/unit/test_workspace_image_preview_contract_service.py::test_local_cache_product_uses_local_image_endpoint",
+    "tests/unit/test_workspace_image_preview_contract_service.py::test_remote_image_only_product_uses_direct_preview_url"
+   ]
+  },
+  {
+   "file": "tests/unit/test_scene_context_registry.py",
+   "failing": [
+    "tests/unit/test_scene_context_registry.py::test_pool_loads_43_seeded_scenes"
+   ]
+  }
+ ],
+ [
+  {
+   "file": "tests/unit/test_bulk_extend_routing.py",
+   "failing": [
+    "tests/unit/test_bulk_extend_routing.py::test_a_failed_extend_item_does_not_stop_the_next_item",
+    "tests/unit/test_bulk_extend_routing.py::test_already_submitted_extend_package_is_refused",
+    "tests/unit/test_bulk_extend_routing.py::test_completed_extend_marks_generated_and_links_artifacts",
+    "tests/unit/test_bulk_extend_routing.py::test_durable_job_id_is_written_to_production_job_id",
+    "tests/unit/test_bulk_extend_routing.py::test_durable_plan_carries_the_package_authority",
+    "tests/unit/test_bulk_extend_routing.py::test_extend_item_routes_to_the_durable_planner",
+    "tests/unit/test_bulk_extend_routing.py::test_extend_mode_gate_still_applies",
+    "tests/unit/test_bulk_extend_routing.py::test_extend_with_a_single_block_plan_fails_closed",
+    "tests/unit/test_bulk_extend_routing.py::test_extend_without_an_execution_package_fails_closed",
+    "tests/unit/test_bulk_extend_routing.py::test_failing_extend_item_marks_only_itself_failed",
+    "tests/unit/test_bulk_extend_routing.py::test_non_extend_item_still_uses_the_single_shot_door",
+    "tests/unit/test_bulk_extend_routing.py::test_stuck_job_fails_the_item_instead_of_hanging",
+    "tests/unit/test_bulk_extend_routing.py::test_terminal_orchestrator_failure_reports_the_real_reason"
+   ]
+  },
+  {
+   "file": "tests/unit/test_copyset_approval_formula_gate.py",
+   "failing": [
+    "tests/unit/test_copyset_approval_formula_gate.py::test_approve_allows_formula_pass_and_clarity_clear",
+    "tests/unit/test_copyset_approval_formula_gate.py::test_approve_blocks_formula_review_required",
+    "tests/unit/test_copyset_approval_formula_gate.py::test_approve_blocks_sales_clarity_gaps",
+    "tests/unit/test_copyset_approval_formula_gate.py::test_approve_deterministic_no_verdict_still_approves",
+    "tests/unit/test_copyset_approval_formula_gate.py::test_approve_override_allows_and_records_audit",
+    "tests/unit/test_copyset_approval_formula_gate.py::test_approve_override_requires_reason",
+    "tests/unit/test_copyset_approval_formula_gate.py::test_approve_unsafe_precedes_formula_gate"
+   ]
+  },
+  {
+   "file": "tests/api/test_batch_prompt_and_production_api.py",
+   "failing": [
+    "tests/api/test_batch_prompt_and_production_api.py::test_f2v_batch_without_frame_is_422_mode_contract",
+    "tests/api/test_batch_prompt_and_production_api.py::test_hybrid_batch_without_product_anchor_is_422",
+    "tests/api/test_batch_prompt_and_production_api.py::test_i2v_batch_without_role_map_is_422",
+    "tests/api/test_batch_prompt_and_production_api.py::test_t2v_batch_with_image_slots_is_422_mode_contract"
+   ]
+  },
+  {
+   "file": "tests/unit/test_batch_queue.py",
+   "failing": [
+    "tests/unit/test_batch_queue.py::test_cancel_batch_workflow - KeyError:...",
+    "tests/unit/test_batch_queue.py::test_queue_batch_workflow - KeyError: ..."
+   ]
+  },
+  {
+   "file": "tests/api/test_product_knowledge_completion_api.py",
+   "failing": [
+    "tests/api/test_product_knowledge_completion_api.py::test_product_knowledge_complete_api"
+   ]
+  },
+  {
+   "file": "tests/unit/test_creative_avatar_recommendation_service.py",
+   "failing": [
+    "tests/unit/test_creative_avatar_recommendation_service.py::test_crosswalk_is_live_pool_authority_and_deterministically_ranked"
+   ]
+  }
+ ],
+ [
+  {
+   "file": "tests/unit/test_copy_compose_persist.py",
+   "failing": [
+    "tests/unit/test_copy_compose_persist.py::test_coverage_report_is_returned",
+    "tests/unit/test_copy_compose_persist.py::test_dry_run_writes_nothing",
+    "tests/unit/test_copy_compose_persist.py::test_empty_pool_is_safe - Val...",
+    "tests/unit/test_copy_compose_persist.py::test_exclude_is_robust_to_stale_fingerprint_format",
+    "tests/unit/test_copy_compose_persist.py::test_never_auto_approved - Va...",
+    "tests/unit/test_copy_compose_persist.py::test_persists_review_required_copy_sets",
+    "tests/unit/test_copy_compose_persist.py::test_provenance_records_components_and_fingerprint",
+    "tests/unit/test_copy_compose_persist.py::test_rerun_with_different_formula_still_walks_new_ground",
+    "tests/unit/test_copy_compose_persist.py::test_reruns_do_not_re_emit_prior_compositions",
+    "tests/unit/test_copy_compose_persist.py::test_unapproved_components_are_not_composed",
+    "tests/unit/test_copy_compose_persist.py::test_usp_set_is_persisted_as_json_list"
+   ]
+  },
+  {
+   "file": "tests/unit/test_approved_product_package_service.py",
+   "failing": [
+    "tests/unit/test_approved_product_package_service.py::test_approved_product_package_blocks_when_production_approval_missing",
+    "tests/unit/test_approved_product_package_service.py::test_approved_product_package_img_propagates_product_identity_required",
+    "tests/unit/test_approved_product_package_service.py::test_approved_product_package_img_uses_prompt_subject_when_cache_missing[6483d624-a03d-4933-9bba-6ca2e5f7b6fd-Minyak Warisan Tok Cap Burung 25ml]",
+    "tests/unit/test_approved_product_package_service.py::test_approved_product_package_img_uses_prompt_subject_when_cache_missing[90349f8c-9e14-4efe-988e-76ec60ea31f4-Bosmax Herbs 5 ML]",
+    "tests/unit/test_approved_product_package_service.py::test_approved_product_package_img_uses_prompt_subject_when_cache_missing[b460ffbd-7d9d-4f6b-a570-0e9b1056439a-Bosmax Oil 10 ML]",
+    "tests/unit/test_approved_product_package_service.py::test_approved_product_package_returns_f2v_with_cached_start_frame",
+    "tests/unit/test_approved_product_package_service.py::test_approved_product_package_returns_f2v_with_remote_image_preview",
+    "tests/unit/test_approved_product_package_service.py::test_approved_product_package_returns_img_contract",
+    "tests/unit/test_approved_product_package_service.py::test_approved_product_package_returns_t2v_package"
+   ]
+  },
+  {
+   "file": "tests/unit/test_batch_executor.py",
+   "failing": [
+    "tests/unit/test_batch_executor.py::test_live_execution_blocked_when_extension_offline",
+    "tests/unit/test_batch_executor.py::test_live_execution_blocked_when_prompt_missing",
+    "tests/unit/test_batch_executor.py::test_requeue_variant_from_failed_clears_blocked_reason_and_logs_event",
+    "tests/unit/test_batch_executor.py::test_requeue_variant_rejects_when_another_variant_is_running"
+   ]
+  },
+  {
+   "file": "tests/unit/test_content_combination_p2.py",
+   "failing": [
+    "tests/unit/test_content_combination_p2.py::test_batch_resolver_prefers_library_then_claim_safe",
+    "tests/unit/test_content_combination_p2.py::test_library_batch_records_usage_and_refuses_identical_rerun"
+   ]
+  },
+  {
+   "file": "tests/unit/test_canonical_prompt_compiler.py",
+   "failing": [
+    "tests/unit/test_canonical_prompt_compiler.py::test_hybrid_embeds_concrete_presenter_never_generic"
+   ]
+  },
+  {
+   "file": "tests/unit/test_poster_readiness_live_targets.py",
+   "failing": [
+    "tests/unit/test_poster_readiness_live_targets.py::test_live_target_poster_readiness[bosmax_oil-b460ffbd-7d9d-4f6b-a570-0e9b1056439a]"
+   ]
+  }
+ ],
+ [
+  {
+   "file": "tests/unit/test_production_queue_live_loop_guard.py",
+   "failing": [
+    "tests/unit/test_production_queue_live_loop_guard.py::test_blocked_t2v_item_still_refused_by_the_existing_blocker_path",
+    "tests/unit/test_production_queue_live_loop_guard.py::test_extend_item_never_fires_in_the_live_loop",
+    "tests/unit/test_production_queue_live_loop_guard.py::test_non_t2v_item_is_refused_in_the_live_loop[F2V]",
+    "tests/unit/test_production_queue_live_loop_guard.py::test_non_t2v_item_is_refused_in_the_live_loop[HYBRID]",
+    "tests/unit/test_production_queue_live_loop_guard.py::test_non_t2v_item_is_refused_in_the_live_loop[I2V]",
+    "tests/unit/test_production_queue_live_loop_guard.py::test_non_t2v_item_is_refused_in_the_live_loop[IMG]",
+    "tests/unit/test_production_queue_live_loop_guard.py::test_non_t2v_item_is_refused_in_the_live_loop[UNKNOWN]",
+    "tests/unit/test_production_queue_live_loop_guard.py::test_non_t2v_item_is_refused_in_the_live_loop[]",
+    "tests/unit/test_production_queue_live_loop_guard.py::test_non_t2v_refused_but_a_t2v_sibling_in_the_same_run_still_fires",
+    "tests/unit/test_production_queue_live_loop_guard.py::test_single_package_unaffected_by_the_extend_guard",
+    "tests/unit/test_production_queue_live_loop_guard.py::test_t2v_item_still_fires_in_the_live_loop"
+   ]
+  },
+  {
+   "file": "tests/unit/test_batch_prompt_run.py",
+   "failing": [
+    "tests/unit/test_batch_prompt_run.py::test_arbitrary_duration_is_rejected_fail_closed",
+    "tests/unit/test_batch_prompt_run.py::test_f2v_without_finished_frame_is_rejected",
+    "tests/unit/test_batch_prompt_run.py::test_hybrid_without_product_anchor_is_rejected",
+    "tests/unit/test_batch_prompt_run.py::test_i2v_without_avatar_reference_is_rejected",
+    "tests/unit/test_batch_prompt_run.py::test_identical_compiles_are_hard_blocked_not_duplicated",
+    "tests/unit/test_batch_prompt_run.py::test_mixed_or_unknown_mode_is_rejected_fail_closed",
+    "tests/unit/test_batch_prompt_run.py::test_qty_5_creates_5_annotated_prompt_items",
+    "tests/unit/test_batch_prompt_run.py::test_t2v_with_image_slots_is_rejected",
+    "tests/unit/test_batch_prompt_run.py::test_workbook_duration_is_accepted"
+   ]
+  },
+  {
+   "file": "tests/unit/test_copy_component_author.py",
+   "failing": [
+    "tests/unit/test_copy_component_author.py::test_dry_run_never_calls_the_provider_and_never_persists",
+    "tests/unit/test_copy_component_author.py::test_no_approved_snapshot_is_refused_with_actionable_message",
+    "tests/unit/test_copy_component_author.py::test_persona_stored_as_json_string_is_parsed",
+    "tests/unit/test_copy_component_author.py::test_unknown_angle_key_lists_the_available_ones"
+   ]
+  },
+  {
+   "file": "tests/unit/test_poster_clean_scene_prompt.py",
+   "failing": [
+    "tests/unit/test_poster_clean_scene_prompt.py::test_build_draft_consumes_approved_poster_copy_set",
+    "tests/unit/test_poster_clean_scene_prompt.py::test_draft_poster_copy_set_is_review_only"
+   ]
+  },
+  {
+   "file": "tests/unit/test_copy_angle_expansion_service.py",
+   "failing": [
+    "tests/unit/test_copy_angle_expansion_service.py::test_expand_without_snapshot_raises"
+   ]
+  },
+  {
+   "file": "tests/unit/test_product_asset_generator_service.py",
+   "failing": [
+    "tests/unit/test_product_asset_generator_service.py::test_preview_includes_image_analysis_truth_when_provider_is_not_configured"
+   ]
+  }
+ ]
+]

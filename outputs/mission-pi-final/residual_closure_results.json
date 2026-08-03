@@ -1,0 +1,30 @@
+[
+ {
+  "product_id": "1cbd5dc2-88f7-4540-acc2-7a8fddbbb9f7",
+  "result": "APPROVED",
+  "version": 3,
+  "readiness": "READY_WITH_GOVERNED_ABSENCE",
+  "gate": "CLAIM_SAFE"
+ },
+ {
+  "product_id": "28c1124e-4a70-4e55-9ce5-0ba2516b1c02",
+  "result": "APPROVED",
+  "version": 3,
+  "readiness": "READY_WITH_GOVERNED_ABSENCE",
+  "gate": "CLAIM_SAFE"
+ },
+ {
+  "product_id": "231016d5-408f-4c67-b5d7-c5819557fea6",
+  "result": "APPROVED",
+  "version": 2,
+  "readiness": "READY_WITH_GOVERNED_ABSENCE",
+  "gate": "CLAIM_SAFE"
+ },
+ {
+  "product_id": "db2dbbeb-79dc-4b78-b1ce-2257257cb7f8",
+  "result": "APPROVED",
+  "version": 2,
+  "readiness": "READY_WITH_GOVERNED_ABSENCE",
+  "gate": "CLAIM_SAFE"
+ }
+]

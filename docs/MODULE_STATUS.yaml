@@ -1074,6 +1074,11 @@ domains:
       - outputs/mission-pi-final/quarantine_sweep_result.json
       - outputs/mission-pi-final/cohort_audit.json
       - outputs/mission-pi-final/cohort_audit.py
+      - outputs/mission-pi-final/residual_closure.py
+      - outputs/mission-pi-final/residual_closure_results.json
+      - outputs/mission-pi-final/repair_b04_tests.py
+      - outputs/mission-pi-final/repair_groups.json
+      - outputs/mission-pi-final/ZERO_DEBT_RECEIPT.md
       # PI-FINAL B04 entrypoint wiring + collateral test contract updates
       - agent/api/copy_signals.py
       - agent/services/batch_executor.py

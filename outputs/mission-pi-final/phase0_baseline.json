@@ -1,5 +1,5 @@
 {
- "captured": "20260803T042016Z",
+ "captured": "20260803T084655Z",
  "db_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
  "physical_rows": 659,
  "test_fixtures": 8,
@@ -102,10 +102,10 @@
  "draft_status_dist": {
   "APPROVED": 1426,
   "DRAFT": 3,
-  "NEEDS_REVISION": 109,
-  "READY_FOR_REVIEW": 1,
+  "NEEDS_REVISION": 108,
+  "READY_FOR_REVIEW": 2,
   "REJECTED": 3,
-  "SUPERSEDED": 6
+  "SUPERSEDED": 7
  },
  "open_drafts": [
   {
@@ -313,10 +313,10 @@
    "created_by": null
   },
   {
-   "draft_id": "0b50a051-44bb-495d-9e63-96bee002bcbc",
+   "draft_id": "9ee054c0-c2ed-480a-bd0b-7639a173ca3e",
    "product_id": "4faad914-5345-4a34-a5e1-e5fe3e283795",
-   "review_status": "NEEDS_REVISION",
-   "created_by": null
+   "review_status": "READY_FOR_REVIEW",
+   "created_by": "pi-final-writer"
   },
   {
    "draft_id": "15e3adf1-8548-4072-b6b5-548dd62aaa90",
@@ -807,13 +807,13 @@
  "hashes": {
   "product": "62401e5b2d1dd50b5dfaec6554ef0c95782c75284d1aa40d6c478d796775a17f",
   "product_intelligence_snapshot": "5f9584c83039678322fc69a9abfa4fef13ee1a5c5a57a498587bf6ed427c7bbc",
-  "product_intelligence_review_draft": "17845e1edfb75e2405d95270c23cf030979e4a54e4b2364178325905e78684b0"
+  "product_intelligence_review_draft": "f4dadf0ab5ce54c16674a19ec2255808d6d03721fdce0f1e71dc247d9472ccb4"
  },
  "table_counts": {
   "product": 659,
   "product_intelligence_snapshot": 1429,
-  "product_intelligence_review_draft": 1548,
-  "product_intelligence_review_field_provenance": 11947,
+  "product_intelligence_review_draft": 1549,
+  "product_intelligence_review_field_provenance": 11953,
   "product_intelligence_field_provenance": 10846,
   "copy_set": 2727
  }

@@ -1,14 +1,14 @@
 {
  "live_db": {
   "path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
-  "size": 298856448
+  "size": 298872832
  },
  "backup": {
-  "path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\.ai\\backups\\flow_agent_PRE_PIFINAL_20260803T042016Z.db",
-  "size": 296689664,
-  "sha256": "a938df9aee79e01fb4329a599f86bf52dade4852c240b5fdeca7eb23175603d1"
+  "path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\.ai\\backups\\flow_agent_PRE_PIFINAL_20260803T084655Z.db",
+  "size": 296693760,
+  "sha256": "7fa113539332f5988013dde429fdb8cb341353b8a37e3df132d927af9160cec5"
  },
- "timestamp": "20260803T042016Z",
+ "timestamp": "20260803T084655Z",
  "method": "sqlite VACUUM INTO (logical snapshot of committed state)",
  "restore_method": "stop runtime; copy backup over flow_agent.db (delete -wal/-shm); restart runtime",
  "restore_test": {
