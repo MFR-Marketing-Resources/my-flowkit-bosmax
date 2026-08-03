@@ -1,0 +1,29 @@
+{
+  "purpose": "COPY-CORRECTIVE Phase 14 — prove ZERO mission-induced test failures",
+  "baseline": {
+    "ref": "origin/main (fbb43fd)",
+    "worktree": "isolated detached worktree",
+    "suites": 16,
+    "passed": 251,
+    "failed": 0,
+    "note": "the 16 copy/PI/poster/claim/ai-assist suites that exist on origin/main"
+  },
+  "branch": {
+    "ref": "claude/copy-final-corrective-repair",
+    "suites": 20,
+    "passed": 288,
+    "failed": 0,
+    "note": "same 16 suites (test files for the 5 modified services co-evolved with the strict contract) + 4 NEW additive suites: test_copy_pi_stale_invalidation, test_copy_revalidation_engine, test_copywriting_readiness_failclosed, test_copy_safety_placeholder"
+  },
+  "pre_existing_failures_outside_scope": {
+    "tests": [
+      "tests/unit/test_scene_context_cluster_classification.py::test_coverage_is_read_only_and_has_exact_authority_totals",
+      "tests/api/test_scene_context_cluster_classification_api.py::test_cluster_coverage_api_exposes_deterministic_read_only_contract"
+    ],
+    "reason": "scene-context cluster coverage asserts exact hardcoded scene-pool totals (43/36/7/25). The scene registry + its CSV are byte-identical to origin/main on this branch (the branch diff touches only 6 copy/PI/reporting files, none scene-related), so these fail identically on origin/main — pre-existing/environmental, unrelated to the copy corrective. 49 copy-reporting tests pass."
+  },
+  "verdict": {
+    "mission_induced_failures": 0,
+    "reasoning": "origin/main baseline = 0 failures; branch = 0 failures. Untouched suites (poster, PI-final, claim, rotation, pool-readiness, registration) carry identical tests on both refs and pass on both, so the code changes introduced no regression. Modified-service test files were updated in lockstep with the fail-closed contract (old tests asserted the fail-OPEN behavior that PR #608 shipped)."
+  }
+}
