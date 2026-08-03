@@ -160,4 +160,61 @@ describe("BulkFastMossConvertTab evidence and draft actions", () => {
 			);
 		});
 	});
+
+	it("keeps server-side freshness totals and pagination aligned", async () => {
+		const firstPageRow = makeRow({
+			reference_id: "ref-ui-stale-page-1",
+			raw_product_title: "First stale page",
+			recompute_state: "STALE",
+		});
+		const secondPageRow = makeRow({
+			reference_id: "ref-ui-stale-page-2",
+			raw_product_title: "Second stale page",
+			recompute_state: "STALE",
+		});
+		getAPI.mockImplementation((path: string) => {
+			if (path.endsWith("/queue/stats")) {
+				return Promise.resolve({
+					total: 101,
+					by_status: { PENDING_DRAFT: 101 },
+					by_recompute_state: { STALE: 101 },
+				});
+			}
+			if (path.includes("page=2")) {
+				return Promise.resolve({
+					items: [secondPageRow],
+					total: 101,
+					page: 2,
+					page_size: 50,
+				});
+			}
+			return Promise.resolve({
+				items: [firstPageRow],
+				total: 101,
+				page: 1,
+				page_size: 50,
+			});
+		});
+
+		render(<BulkFastMossConvertTab onOpenDraft={vi.fn()} />);
+		fireEvent.change(await screen.findByLabelText("Freshness"), {
+			target: { value: "STALE" },
+		});
+
+		await waitFor(() => {
+			expect(getAPI).toHaveBeenCalledWith(
+				"/api/fastmoss-bulk/queue?recompute_state=STALE&page=1&page_size=50",
+			);
+		});
+		expect(await screen.findByText("101 rows — page 1 of 3")).toBeTruthy();
+		fireEvent.click(screen.getByRole("button", { name: "Next ›" }));
+
+		await waitFor(() => {
+			expect(getAPI).toHaveBeenCalledWith(
+				"/api/fastmoss-bulk/queue?recompute_state=STALE&page=2&page_size=50",
+			);
+		});
+		expect(await screen.findByText("101 rows — page 2 of 3")).toBeTruthy();
+		expect(screen.getByText("Second stale page")).toBeTruthy();
+	});
 });

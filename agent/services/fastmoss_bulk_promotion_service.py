@@ -822,6 +822,44 @@ async def list_bulk_queue(
     page: int = 1,
     page_size: int = 50,
 ) -> dict[str, Any]:
+    if recompute_state:
+        # ``recompute_state`` is derived from the current authoritative
+        # reference evidence below.  SQL can only narrow the candidate set by
+        # the persisted fields; applying its state predicate here would drop
+        # rows whose source changed since the last stored observation.
+        candidate_rows = await crud.list_bulk_queue(
+            promotion_status=promotion_status,
+            claim_risk_level=claim_risk_level,
+            image_readiness=image_readiness,
+            recompute_state=None,
+            category=category,
+            q=q,
+            page=1,
+            page_size=None,
+        )
+        refs_by_id = await _current_reference_map()
+        matching_rows: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        for row in candidate_rows:
+            evaluation = _recompute_state_for_row(
+                row,
+                refs_by_id.get(row.get("reference_id"))
+                or _row_reference_fallback(row),
+            )
+            if evaluation.get("recompute_state") == recompute_state:
+                matching_rows.append((row, evaluation))
+
+        start = (page - 1) * page_size
+        page_rows = matching_rows[start : start + page_size]
+        return {
+            "items": [
+                _attach_duplicate_metadata_to_row(row, evaluation)
+                for row, evaluation in page_rows
+            ],
+            "total": len(matching_rows),
+            "page": page,
+            "page_size": page_size,
+        }
+
     rows = await crud.list_bulk_queue(
         promotion_status=promotion_status,
         claim_risk_level=claim_risk_level,
