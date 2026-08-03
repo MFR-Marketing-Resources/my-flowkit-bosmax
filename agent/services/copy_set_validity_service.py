@@ -643,6 +643,22 @@ async def assert_copy_set_valid(copy_set_id: str) -> dict[str, Any]:
     return v
 
 
+async def valid_copy_set_ids_for_product(product_id: str) -> set[str]:
+    """Strict-valid copy_set_ids for a product right now (single evaluation).
+
+    Selection / rotation / recommendation surfaces filter their approved
+    candidates through this so a stale / generic / unsafe / incomplete /
+    unreviewed / invalid-lineage set is never offered for execution - the same
+    authority that binding enforces at the compiler boundary.
+    """
+    c = await product_copy_classification(product_id)
+    return {
+        str(v.get("copy_set_id"))
+        for v in c.get("set_verdicts", [])
+        if v.get("valid") and v.get("copy_set_id") is not None
+    }
+
+
 def build_semantic_review_receipt(
     *,
     reviewer: str,

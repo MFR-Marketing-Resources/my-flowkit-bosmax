@@ -352,7 +352,15 @@ class PosterCopyRecommendationService:
         rows = await crud.list_copy_sets_for_product(req.product_id)
         for row in rows:
             st = row.get("status")
-            if st == STATUS_COPY_APPROVED and not row.get("archived"):
+            if (
+                st == STATUS_COPY_APPROVED
+                and not row.get("archived")
+                # COPY-CORRECTIVE-B05: a quarantined (stale / contaminated) approved
+                # set is never offered as production-ready copy — it must be
+                # revalidated against current PI first. Consistent with rotation +
+                # the fail-closed binding gate.
+                and not (row.get("pi_eligibility_status") or "").strip()
+            ):
                 kit = _kit_from_copy_row(
                     row,
                     settings=settings,

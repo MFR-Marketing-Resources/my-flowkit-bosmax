@@ -58,7 +58,22 @@ async def get_copywriting_readiness(product_id: str) -> dict[str, Any]:
     from agent.services.copy_set_validity_service import product_copy_classification
 
     eligibility = await copy_eligibility(product_id)
-    classification = await product_copy_classification(product_id)
+    # COPY-CORRECTIVE-B05 (defect #8): strict validity evaluation must fail CLOSED.
+    # A raised evaluator can never surface as "ready" or an ambiguous null — it is
+    # reported explicitly as VALIDITY_EVALUATION_FAILED and blocks generation.
+    try:
+        classification = await product_copy_classification(product_id)
+    except Exception as _e:  # noqa: BLE001 — surfaced explicitly, never silent
+        import logging as _logging
+
+        _logging.getLogger(__name__).error(
+            "COPY_VALIDITY_EVALUATION_FAILED product_id=%s: %r", product_id, _e
+        )
+        classification = {
+            "classification": "VALIDITY_EVALUATION_FAILED",
+            "valid_copy_set_id": None,
+            "recommended_next_action": "BLOCKED",
+        }
     valid_id = classification.get("valid_copy_set_id")
     latest_approved = next((s for s in approved if s.get("copy_set_id") == valid_id), None)
     selected_copy_set_id = (
@@ -113,11 +128,19 @@ async def get_copywriting_readiness(product_id: str) -> dict[str, Any]:
     action_map = {
         "APPROVED_COPY_VALID": "READY",
         "APPROVED_COPY_STALE": "REVALIDATE_COPY_SET",
+        "APPROVED_COPY_INVALID_LINEAGE": "REVALIDATE_COPY_SET",
+        "APPROVED_COPY_MISSING_REVIEW": "SEMANTIC_REVIEW_COPY_SET",
+        "APPROVED_COPY_FORMULA_REVIEW": "REVIEW_COPY_SET",
+        "APPROVED_COPY_SALES_CLARITY_REVIEW": "REVIEW_COPY_SET",
+        "APPROVED_COPY_INCOMPLETE": "REPAIR_OR_REPLACE_COPY_SET",
+        "APPROVED_COPY_GENERIC": "REPLACE_COPY_SET",
+        "APPROVED_COPY_UNSAFE": "REPLACE_COPY_SET",
         "COPY_REVIEW_REQUIRED_ONLY": "REVIEW_COPY_SET",
         "DRAFT_COPY_ONLY": "REVIEW_COPY_SET",
         "REJECTED_COPY_ONLY": "GENERATE_AND_APPROVE_COPY_SET",
         "MISSING_COPY": "GENERATE_AND_APPROVE_COPY_SET",
         "BLOCKED_WITH_REASON": "BLOCKED",
+        "VALIDITY_EVALUATION_FAILED": "BLOCKED",
     }
     if not has_approved_snapshot:
         recommended_next_action = "PREPARE_PRODUCT_FOR_COPYWRITING"
