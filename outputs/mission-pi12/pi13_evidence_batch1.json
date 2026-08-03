@@ -1,0 +1,78 @@
+[
+ {
+  "product_id": "040d796c-5fe4-4491-b13d-6d13f2704355",
+  "risk": "LOW",
+  "source_url": "https://shop.tiktok.com",
+  "source_type": "TIKTOK_EXTRACTION",
+  "excerpt": "1 Pasang Kualiti Tinggi Stokin buku lali rendah, stokin pertengahan",
+  "confidence": 0.75,
+  "claim_risk": "LOW",
+  "rationale": "Descriptive attributes from the listing title (low-cut ankle socks, mid-length option, sold per pair); low-risk apparel, conservative wording, no efficacy claim.",
+  "fields": {
+   "product_description": {"value": "Everyday socks sold per pair; the listing offers a low-cut ankle length and a mid-length option.", "status": "FACT"},
+   "benefits_json": {"value": ["Low-cut ankle length stays hidden in shoes", "Mid-length option available in the same listing"], "status": "FACT"},
+   "usp_json": {"value": ["Two lengths (ankle / mid) offered per listing", "Sold as a pair"], "status": "FACT"},
+   "target_customer_text": {"value": "Everyday shoppers who want discreet low-cut or mid-length socks.", "status": "SUPPORTED_INFERENCE"},
+   "buyer_persona_snapshot_json": {"value": {"audience": "everyday footwear shoppers", "needs": ["socks that stay hidden in shoes", "affordable multipack value"]}, "status": "SUPPORTED_INFERENCE"},
+   "copy_strategy_summary_json": {"value": {"angles": ["Invisible low-cut fit", "Two lengths, one listing"], "recommended_formula": "FAB"}, "status": "SUPPORTED_INFERENCE"}
+  },
+  "governed_absent": ["ingredients_text", "warnings_text", "usage_text"]
+ },
+ {
+  "product_id": "13d4a873-08e7-4eb1-b420-db70ba212b16",
+  "risk": "LOW",
+  "source_url": "https://shop.tiktok.com",
+  "source_type": "TIKTOK_EXTRACTION",
+  "excerpt": "TBF 2026 Teacher's Day A6 A7 Notebook Coloured Cover Notebook 80pgs 100pgs Buku Nota Hari Guru",
+  "confidence": 0.85,
+  "claim_risk": "LOW",
+  "rationale": "All attributes explicitly stated in the listing title (A6/A7 size, coloured cover, 80/100 pages, Teacher's Day theme). FACT-level, low-risk stationery.",
+  "fields": {
+   "product_description": {"value": "A6/A7 pocket notebook with a coloured cover, available in 80-page and 100-page options, themed as a Teacher's Day gift.", "status": "FACT"},
+   "benefits_json": {"value": ["Compact A6/A7 pocket size is easy to carry", "Choice of 80 or 100 pages"], "status": "FACT"},
+   "usp_json": {"value": ["Coloured cover", "Teacher's Day gift theming"], "status": "FACT"},
+   "target_customer_text": {"value": "Students, teachers and gift shoppers wanting a compact themed notebook.", "status": "SUPPORTED_INFERENCE"},
+   "buyer_persona_snapshot_json": {"value": {"audience": "students and gift buyers", "needs": ["portable notebook", "affordable teacher gift"]}, "status": "SUPPORTED_INFERENCE"},
+   "copy_strategy_summary_json": {"value": {"angles": ["Pocket-size portability", "Ready-made Teacher's Day gift"], "recommended_formula": "FAB"}, "status": "SUPPORTED_INFERENCE"}
+  },
+  "governed_absent": ["ingredients_text", "warnings_text", "usage_text"]
+ },
+ {
+  "product_id": "42bb1598-29af-4cf1-8049-43adcd90b7b8",
+  "risk": "LOW",
+  "source_url": "https://shop.tiktok.com",
+  "source_type": "TIKTOK_EXTRACTION",
+  "excerpt": "1 Cup Caramel Popcorn (10oz) - Caramel Popcorn | Popcorn Sedap | Doorgift Popcorn",
+  "confidence": 0.85,
+  "claim_risk": "LOW",
+  "rationale": "Attributes explicit in the listing title (caramel flavour, 10oz cup, doorgift use). Ordinary food, low-risk, no health claim.",
+  "fields": {
+   "product_description": {"value": "Caramel-flavoured popcorn served in a 10oz cup; positioned as a snack and as a doorgift/party favour.", "status": "FACT"},
+   "benefits_json": {"value": ["Sweet caramel-flavoured popcorn", "10oz cup portion"], "status": "FACT"},
+   "usp_json": {"value": ["Cup format suited to doorgifts / party favours"], "status": "FACT"},
+   "target_customer_text": {"value": "Snack buyers and event/party organisers wanting affordable doorgift popcorn.", "status": "SUPPORTED_INFERENCE"},
+   "buyer_persona_snapshot_json": {"value": {"audience": "snack and event shoppers", "needs": ["affordable sweet snack", "shareable doorgift"]}, "status": "SUPPORTED_INFERENCE"},
+   "copy_strategy_summary_json": {"value": {"angles": ["Sweet caramel treat", "Ready doorgift format"], "recommended_formula": "FAB"}, "status": "SUPPORTED_INFERENCE"}
+  },
+  "governed_absent": ["ingredients_text", "warnings_text", "usage_text"]
+ },
+ {
+  "product_id": "3bfd5223-abf4-49da-9710-dcc3a1450f50",
+  "risk": "LOW",
+  "source_url": "https://shop.tiktok.com",
+  "source_type": "TIKTOK_EXTRACTION",
+  "excerpt": "PANDAEYES PALAZZO PANTS (CLO-CNNZ01LP)",
+  "confidence": 0.65,
+  "claim_risk": "LOW",
+  "rationale": "Product is a palazzo trouser (verified from the title); 'palazzo' is an objective wide-leg silhouette. Conservative SUPPORTED_INFERENCE for low-risk apparel only; no performance claim.",
+  "fields": {
+   "product_description": {"value": "Palazzo-style wide-leg pants (model CLO-CNNZ01LP).", "status": "FACT"},
+   "benefits_json": {"value": ["Wide-leg palazzo cut allows relaxed movement", "Loose silhouette for comfort"], "status": "SUPPORTED_INFERENCE"},
+   "usp_json": {"value": ["Palazzo wide-leg silhouette"], "status": "FACT"},
+   "target_customer_text": {"value": "Shoppers seeking relaxed wide-leg palazzo trousers.", "status": "SUPPORTED_INFERENCE"},
+   "buyer_persona_snapshot_json": {"value": {"audience": "casual apparel shoppers", "needs": ["comfortable loose-fit trousers"]}, "status": "SUPPORTED_INFERENCE"},
+   "copy_strategy_summary_json": {"value": {"angles": ["Relaxed wide-leg comfort", "Everyday palazzo style"], "recommended_formula": "FAB"}, "status": "SUPPORTED_INFERENCE"}
+  },
+  "governed_absent": ["ingredients_text", "warnings_text", "usage_text"]
+ }
+]

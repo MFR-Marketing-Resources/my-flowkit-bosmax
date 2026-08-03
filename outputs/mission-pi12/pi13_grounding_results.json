@@ -1,0 +1,26 @@
+[
+ {
+  "product_id": "040d796c-5fe4-4491-b13d-6d13f2704355",
+  "result": "APPROVED",
+  "readiness": "READY_WITH_GOVERNED_ABSENCE",
+  "completeness": 0.8571
+ },
+ {
+  "product_id": "13d4a873-08e7-4eb1-b420-db70ba212b16",
+  "result": "APPROVED",
+  "readiness": "READY_WITH_GOVERNED_ABSENCE",
+  "completeness": 0.8571
+ },
+ {
+  "product_id": "42bb1598-29af-4cf1-8049-43adcd90b7b8",
+  "result": "APPROVED",
+  "readiness": "READY_WITH_GOVERNED_ABSENCE",
+  "completeness": 0.8571
+ },
+ {
+  "product_id": "3bfd5223-abf4-49da-9710-dcc3a1450f50",
+  "result": "APPROVED",
+  "readiness": "READY_WITH_GOVERNED_ABSENCE",
+  "completeness": 0.8571
+ }
+]
