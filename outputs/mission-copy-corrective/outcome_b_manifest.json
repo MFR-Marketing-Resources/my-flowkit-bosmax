@@ -1,0 +1,39 @@
+{
+ "outcome": "OWNER_DECISION_REQUIRED",
+ "count": 2,
+ "policy": "max 2 paid attempts per product (owner cap); no fabrication of filler to force 402/402",
+ "products": [
+  {
+   "product_id": "8ea29ec2-3e38-4d35-a5dc-16e0be4bc317",
+   "product_title": "FATIMA INSTANT SARUNG SYRIA ~ HQ MOSCREPE PREMIUM ~ IRONLESS & STRETCHABLE HIJAB UNTUK WANITA MUSLIMAH BAHAN ELASTIK SESUAI KESELAMAN DAN GA",
+   "lifecycle_status": "ACTIVE",
+   "attempts_made": 2,
+   "attempt_2_failure": [
+    "PROVIDER_ERROR"
+   ],
+   "quarantine_status": "NEEDS_REVALIDATION",
+   "quarantine_reason": "COPY_CORRECTIVE_TWO_ATTEMPT_CAP:a1=NONE;a2=PROVIDER_ERROR",
+   "quarantined_copy_set_ids": [
+    "18ca4b1b-5ef0-4a4b-b868-f184c1adb405"
+   ],
+   "final_state": "ACTIVE product preserved; approved copy quarantined + non-executable; historical + AI-candidate copy retained (never deleted).",
+   "recommended_owner_decision": "Provide product-specific source facts (materials/benefits/differentiators) or accept as non-copy-eligible; deterministic generation cannot produce non-generic grounded copy from the current PI."
+  },
+  {
+   "product_id": "9daaa6b9-39ba-4fd9-92b6-835c1353d7fa",
+   "product_title": "100 Doa Taubat Dari al-Quran dan Hadith Nabi Muhammad SAW",
+   "lifecycle_status": "ACTIVE",
+   "attempts_made": 2,
+   "attempt_2_failure": [
+    "UNSAFE"
+   ],
+   "quarantine_status": "BLOCKED",
+   "quarantine_reason": "COPY_CORRECTIVE_TWO_ATTEMPT_CAP:a1=NONE;a2=UNSAFE",
+   "quarantined_copy_set_ids": [
+    "d6d87459-5d9e-4f88-afe2-5b09fe392794"
+   ],
+   "final_state": "ACTIVE product preserved; approved copy quarantined + non-executable; historical + AI-candidate copy retained (never deleted).",
+   "recommended_owner_decision": "Provide product-specific source facts (materials/benefits/differentiators) or accept as non-copy-eligible; deterministic generation cannot produce non-generic grounded copy from the current PI."
+  }
+ ]
+}

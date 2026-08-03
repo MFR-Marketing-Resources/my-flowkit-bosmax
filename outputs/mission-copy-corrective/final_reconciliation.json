@@ -1,0 +1,25 @@
+{
+ "cohort_active_eligible": 402,
+ "products_strict_valid": 400,
+ "products_without_strict_valid": 2,
+ "classification_counts": {
+  "APPROVED_COPY_VALID": 400,
+  "APPROVED_COPY_GENERIC": 2
+ },
+ "PASS_invariants": {
+  "strict_valid_with_generic_filler": 0,
+  "strict_valid_missing_semantic_receipt": 0
+ },
+ "gap_products": [
+  {
+   "product_id": "9daaa6b9-39ba-4fd9-92b6-835c1353d7fa",
+   "classification": "APPROVED_COPY_GENERIC",
+   "recommended_next_action": "REPLACE_COPY"
+  },
+  {
+   "product_id": "8ea29ec2-3e38-4d35-a5dc-16e0be4bc317",
+   "classification": "APPROVED_COPY_GENERIC",
+   "recommended_next_action": "REPLACE_COPY"
+  }
+ ]
+}

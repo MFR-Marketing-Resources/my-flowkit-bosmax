@@ -76,6 +76,10 @@ DIAGNOSTIC_CONTENT_EXTRACTION_FAILED = "CONTENT_EXTRACTION_FAILED"
 
 _provider_call_lock = threading.Lock()
 _provider_call_count = 0
+# COPY-CORRECTIVE: reliable per-call token usage under concurrency. The single
+# "last call" receipt races when provider calls run in a thread pool, so usage is
+# also recorded keyed by the unique call_id and drained by generate_candidate.
+_usage_by_call_id: dict[int, dict[str, float]] = {}
 _last_provider_call_receipt: dict[str, Any] | None = None
 
 
@@ -171,6 +175,9 @@ def _finish_provider_call(
 ) -> None:
     global _last_provider_call_receipt
     with _provider_call_lock:
+        # Always record usage keyed by call_id (concurrency-safe), independent of
+        # whether this is still the process-global "last call".
+        _usage_by_call_id[call_id] = dict(usage or {})
         if (
             _last_provider_call_receipt is None
             or _last_provider_call_receipt.get("call_id") != call_id
@@ -587,13 +594,21 @@ def _complete(
         raise AICopyProviderError(ERR_CALL_FAILED, detail=str(exc)) from exc
 
 
+def _pop_usage(call_id: int) -> dict[str, float]:
+    with _provider_call_lock:
+        return _usage_by_call_id.pop(call_id, {})
+
+
 def generate_candidate(brief: str) -> dict[str, Any]:
     """Single mockable seam. Fail closed when unconfigured; otherwise call the
-    provider and return the parsed candidate JSON dict."""
+    provider and return the parsed candidate JSON dict (with reliable __usage__)."""
     if not is_configured():
         raise AICopyProviderNotConfigured(ERR_NOT_CONFIGURED)
-    message_text, finish_reason, _ = _complete(build_messages(brief))
-    return _extract_json_object(message_text, finish_reason=finish_reason)
+    message_text, finish_reason, call_id = _complete(build_messages(brief))
+    obj = _extract_json_object(message_text, finish_reason=finish_reason)
+    if isinstance(obj, dict):
+        obj["__usage__"] = _pop_usage(call_id)
+    return obj
 
 
 def complete_json(system: str, user: str) -> dict[str, Any]:

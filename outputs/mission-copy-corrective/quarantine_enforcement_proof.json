@@ -1,0 +1,25 @@
+{
+ "quarantined_products_checked": 2,
+ "all_non_executable_and_active": true,
+ "invariant": "active AND classification!=APPROVED_COPY_VALID AND no valid set AND empty rotation pool AND binding blocked on every approved set",
+ "products": [
+  {
+   "product_id": "8ea29ec2-3e38-4d35-a5dc-16e0be4bc317",
+   "product_active": true,
+   "classification": "APPROVED_COPY_GENERIC",
+   "valid_copy_set_ids": [],
+   "rotation_pool_size": 0,
+   "binding_blocked_all_sets": true,
+   "non_executable_proven": true
+  },
+  {
+   "product_id": "9daaa6b9-39ba-4fd9-92b6-835c1353d7fa",
+   "product_active": true,
+   "classification": "APPROVED_COPY_GENERIC",
+   "valid_copy_set_ids": [],
+   "rotation_pool_size": 0,
+   "binding_blocked_all_sets": true,
+   "non_executable_proven": true
+  }
+ ]
+}
