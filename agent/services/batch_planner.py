@@ -18,7 +18,13 @@ async def create_batch_draft(batch_data: dict[str, Any]) -> dict[str, Any]:
     """
     product_id = batch_data.get("product_id")
     quantity = batch_data.get("quantity", 1)
-    
+
+    # PI-FINAL-B04: batch planning is refused outright for ineligible products.
+    from agent.services.copy_eligibility_service import copy_eligibility
+    _elig = await copy_eligibility(str(product_id or ""))
+    if not _elig["eligible"]:
+        return {"error": "COPY_INELIGIBLE:" + ",".join(_elig["reasons"])}
+
     # 1. Safety Gate
     safety = await validate_batch_safety(batch_data)
     
@@ -94,7 +100,7 @@ async def create_batch_draft(batch_data: dict[str, Any]) -> dict[str, Any]:
                     overlay_strategy, cta_style, google_flow_mode, asset_strategy,
                     diversity_fingerprint, prompt_9_section, prompt_package_snapshot_id,
                     prompt_package_snapshot, prompt_fingerprint, readiness, blocked_reason, queue_status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 v["variant_id"], batch_id, product_id, v["brief_id"], v["variation_index"],
                 v["hook_angle"], v["scene_context"], v["camera_route"], v["copywriting_formula"],

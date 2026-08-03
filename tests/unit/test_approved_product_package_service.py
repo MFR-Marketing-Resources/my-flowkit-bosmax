@@ -6,6 +6,19 @@ from agent.services.approved_product_package_service import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _b04_eligibility_pass(monkeypatch):
+    """PI-FINAL-B04: mocked package tests are not DB-backed; pass the gate."""
+    async def _ok(product_id: str):
+        return {"product_id": product_id, "eligible": True, "reasons": []}
+    monkeypatch.setattr(
+        "agent.services.copy_eligibility_service.assert_copy_eligible", _ok
+    )
+    monkeypatch.setattr(
+        "agent.services.copy_eligibility_service.copy_eligibility", _ok
+    )
+
+
 def _scan_clean(*args, **kwargs):
     return {
         "unsafe_claim_terms_found": False,

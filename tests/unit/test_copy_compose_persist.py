@@ -1,3 +1,4 @@
+import pytest
 """compose_and_persist — pool → COPY_REVIEW_REQUIRED copy_set rows.
 
 The capstone: it must persist composed copy through the SAME lifecycle as
@@ -70,6 +71,15 @@ class FakeCrud:
         return row
 
 
+
+@pytest.fixture(autouse=True)
+def _b04_eligibility_pass(monkeypatch):
+    import agent.services.copy_eligibility_service as ces
+    async def _ok(pid="p1", *a, **k):
+        return {"product_id": pid, "eligible": True, "reasons": []}
+    monkeypatch.setattr(ces, "assert_copy_eligible", _ok)
+    monkeypatch.setattr(ces, "copy_eligibility", _ok)
+
 def _run(pool, count, monkeypatch, **kw):
     fake = FakeCrud(pool)
     import agent.db.crud as real_crud
@@ -80,11 +90,17 @@ def _run(pool, count, monkeypatch, **kw):
         monkeypatch.setattr(real_crud, name, getattr(fake, name))
 
     import agent.services.copy_grounding_service as cgs
+    import agent.services.copy_eligibility_service as ces
 
     async def _grounding(_p):
         return _Grounding()
 
+    async def _eligible(pid):
+        return {"product_id": pid, "eligible": True, "reasons": []}
+
     monkeypatch.setattr(cgs, "resolve_copy_grounding", _grounding)
+    monkeypatch.setattr(ces, "assert_copy_eligible", _eligible)
+    monkeypatch.setattr(ces, "copy_eligibility", _eligible)
     out = asyncio.run(svc.compose_and_persist("p1", count, **kw))
     return out, fake
 

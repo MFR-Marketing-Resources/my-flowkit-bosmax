@@ -1054,11 +1054,67 @@ domains:
       # copy-eligibility enforcement + stale-asset quarantine (B04), final
       # reconciliation workbook (B05).
       - tests/unit/test_pi_final_revision_lifecycle.py
+      - tests/unit/test_pi_final_copy_eligibility_enforcement.py
       - outputs/mission-pi-final/phase0_baseline_backup.py
       - outputs/mission-pi-final/phase0_baseline.json
       - outputs/mission-pi-final/rollback_manifest.json
       - outputs/mission-pi-final/build_residual_manifest.py
       - outputs/mission-pi-final/residual_manifest.json
+      - outputs/mission-pi-final/research_batches.json
+      - outputs/mission-pi-final/evidence_all.json
+      - outputs/mission-pi-final/recovery_writer.py
+      - outputs/mission-pi-final/recovery_ledger.jsonl
+      - outputs/mission-pi-final/recovery_results.json
+      - outputs/mission-pi-final/b03_claim_adjudication.py
+      - outputs/mission-pi-final/b03_adjudication_results.json
+      - outputs/mission-pi-final/build_final_workbook.py
+      - outputs/mission-pi-final/Master_Product_Recovery_FINAL.xlsx
+      - outputs/mission-pi-final/Master_Product_Recovery_FINAL.sha256
+      - outputs/mission-pi-final/final_reconciliation.json
+      - outputs/mission-pi-final/quarantine_sweep_result.json
+      - outputs/mission-pi-final/cohort_audit.json
+      - outputs/mission-pi-final/cohort_audit.py
+      # PI-FINAL B04 entrypoint wiring + collateral test contract updates
+      - agent/api/copy_signals.py
+      - agent/services/batch_executor.py
+      - agent/services/batch_planner.py
+      - agent/services/batch_queue.py
+      - agent/services/copy_angle_expansion_service.py
+      - agent/services/copy_angle_suggestion_service.py
+      - agent/services/copy_component_author_service.py
+      - agent/services/copy_composer_service.py
+      - agent/services/copy_signal_generator_service.py
+      - agent/services/copywriting_readiness_service.py
+      - agent/services/poster_copy_ai_service.py
+      - agent/services/poster_copy_set_service.py
+      - agent/services/product_intelligence_review_draft_service.py
+      - agent/services/production_queue_service.py
+      - agent/services/social_copy_package_service.py
+      - agent/services/workspace_generation_package_service.py
+      - tests/api/test_batch_prompt_and_production_api.py
+      - tests/api/test_copy_sets_batch_api.py
+      - tests/api/test_poster_copy_sets_api.py
+      - tests/api/test_product_knowledge_completion_api.py
+      - tests/conftest.py
+      - tests/unit/test_approved_product_package_service.py
+      - tests/unit/test_batch_executor.py
+      - tests/unit/test_batch_prompt_run.py
+      - tests/unit/test_batch_queue.py
+      - tests/unit/test_bulk_extend_routing.py
+      - tests/unit/test_copy_angle_expansion_service.py
+      - tests/unit/test_copy_angle_suggestion_service.py
+      - tests/unit/test_copy_component_author.py
+      - tests/unit/test_copy_compose_persist.py
+      - tests/unit/test_copywriting_readiness_service.py
+      - tests/unit/test_poster_clean_scene_prompt.py
+      - tests/unit/test_poster_copy_ai_service.py
+      - tests/unit/test_poster_copy_set_service.py
+      - tests/unit/test_poster_deliverable_service.py
+      - tests/unit/test_production_queue_live_gate_i2v.py
+      - tests/unit/test_production_queue_live_loop_guard.py
+      - tests/unit/test_production_queue_service.py
+      - tests/unit/test_quantity_preview.py
+      - tests/unit/test_workspace_generation_package_service.py
       - tests/unit/test_reporting_service.py
       - tests/api/test_reporting_api.py
       - dashboard/src/api/reporting.ts

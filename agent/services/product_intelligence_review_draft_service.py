@@ -740,6 +740,12 @@ async def _replace_draft_provenance(
             claim_risk_flag=item.claim_risk_flag,
             reviewer_decision=item.reviewer_decision,
             reviewer_note=item.reviewer_note,
+            # PI-FINAL-B01: inherited lineage must survive a provenance round-trip,
+            # otherwise every PATCH with provenance_items silently strips the
+            # revision ancestry off untouched fields.
+            inherited_from_draft_id=item.inherited_from_draft_id,
+            inherited_from_snapshot_id=item.inherited_from_snapshot_id,
+            inherited_at=item.inherited_at,
         )
 
 

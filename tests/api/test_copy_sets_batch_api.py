@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from agent.api.copy_sets import router
 from agent.db import crud
+from tests.conftest import make_product_copy_eligible
 from agent.services import ai_copy_assist_service as ai_svc
 from agent.services import ai_copy_provider_adapter as ai_provider
 from agent.services import copy_set_service as svc
@@ -132,6 +133,7 @@ async def test_behavioral_batch_creates_ledger_and_copy_sets(monkeypatch):
         source="MANUAL", raw_product_title="Batch Behavioral Product",
         product_display_name="Batch Behavioral", product_short_name="Batch Behavioral",
     )
+    await make_product_copy_eligible(product["id"])
     # 2. Mock provider
     fake_out = _make_fake_provider_output(angle="Value Angle", hook="Value Hook", cta="Value CTA")
     calls_b1 = [0]
@@ -181,6 +183,7 @@ async def test_behavioral_batch_id_matches_persisted_ledger(monkeypatch):
         source="MANUAL", raw_product_title="Batch ID Test",
         product_display_name="Batch ID Test", product_short_name="Batch ID Test",
     )
+    await make_product_copy_eligible(product["id"])
     fake_out = _make_fake_provider_output()
     monkeypatch.setattr(ai_provider, "is_configured", lambda: True)
     monkeypatch.setattr(ai_provider, "generate_candidate", lambda brief: fake_out)
@@ -206,6 +209,7 @@ async def test_behavioral_angle_hook_override(monkeypatch):
         source="MANUAL", raw_product_title="Override Test",
         product_display_name="Override Test", product_short_name="Override Test",
     )
+    await make_product_copy_eligible(product["id"])
     # Provider returns generic values
     fake_out = _make_fake_provider_output(angle="Provider Angle", hook="Provider Hook")
     monkeypatch.setattr(ai_provider, "is_configured", lambda: True)
@@ -233,6 +237,7 @@ async def test_behavioral_dry_run_persists_nothing(monkeypatch):
         source="MANUAL", raw_product_title="Dry Run Test",
         product_display_name="Dry Run Test", product_short_name="Dry Run Test",
     )
+    await make_product_copy_eligible(product["id"])
     # Provider shouldn't be called in dry_run
     monkeypatch.setattr(ai_provider, "is_configured", lambda: True)
     monkeypatch.setattr(ai_provider, "provider_status",
@@ -261,6 +266,7 @@ async def test_behavioral_exact_duplicate_increments_deduped(monkeypatch):
         source="MANUAL", raw_product_title="Dedup Test",
         product_display_name="Dedup Test", product_short_name="Dedup Test",
     )
+    await make_product_copy_eligible(product["id"])
     # Same output every time → first is created, rest are exact dupes
     def fake_dedup(brief):
         return _make_fake_provider_output(angle="Dedup Angle", hook="Dedup Hook")
@@ -286,6 +292,7 @@ async def test_behavioral_similarity_metadata_populated(monkeypatch):
         source="MANUAL", raw_product_title="Similarity Test",
         product_display_name="Similarity Test", product_short_name="Similarity Test",
     )
+    await make_product_copy_eligible(product["id"])
     # Provider returns very similar hooks (1 char/word differs, rest identical)
     # so combined_similarity > 0.80 on the second candidate vs the first.
     calls = [0]
@@ -342,6 +349,7 @@ async def test_behavioral_no_live_provider_calls(monkeypatch):
         source="MANUAL", raw_product_title="No Live Call Test",
         product_display_name="No Live Call Test", product_short_name="No Live Call Test",
     )
+    await make_product_copy_eligible(product["id"])
 
     from agent.models.copy_set import AICopyAssistBatchRequest
     result = await ai_svc.generate_ai_copy_candidates_batch(
@@ -357,6 +365,7 @@ async def test_behavioral_dedupe_threshold_zero_is_honored(monkeypatch):
         source="MANUAL", raw_product_title="Threshold Zero Test",
         product_display_name="Threshold Zero Test", product_short_name="Threshold Zero Test",
     )
+    await make_product_copy_eligible(product["id"])
     captured_threshold = []
 
     # Wrap find_nearest to capture the threshold argument

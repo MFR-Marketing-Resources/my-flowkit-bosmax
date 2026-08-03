@@ -565,6 +565,13 @@ async def get_approved_product_package(product_id: str, mode: str) -> dict[str, 
     if _clean(enriched.get("lifecycle_status")) == "ARCHIVED":
         raise ValueError("PRODUCT_ARCHIVED")
 
+    # PI-FINAL-B04: no execution/generation package for a product that is not
+    # COPY_ELIGIBLE (fails closed; raises COPY_INELIGIBLE:<reasons>). This one
+    # authority covers workspace execution packages and every generation-package
+    # mode, because they all resolve the approved product package first.
+    from agent.services.copy_eligibility_service import assert_copy_eligible
+    await assert_copy_eligible(product_id)
+
     safe_package = await _resolved_safe_package(product_id)
     claim_safe_rewrite = _clean(safe_package.get("safe_claim_rewrite"))
     safe_hooks = safe_package.get("safe_hook_angles") or ["Discreet masculine wellness positioning only."]

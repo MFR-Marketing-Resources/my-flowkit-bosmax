@@ -292,6 +292,14 @@ async def generate_copy_set(request: CopySetGenerateRequest | dict) -> dict[str,
     if not product:
         raise CopySetError("PRODUCT_NOT_FOUND", status_code=404, detail={"product_id": req.product_id})
 
+    # PI-FINAL-B04: copy sets may only be generated for COPY_ELIGIBLE products.
+    from agent.services.copy_eligibility_service import copy_eligibility
+    _elig = await copy_eligibility(req.product_id)
+    if not _elig["eligible"]:
+        raise CopySetError(
+            "COPY_INELIGIBLE", status_code=409,
+            detail={"product_id": req.product_id, "reasons": _elig["reasons"]})
+
     base, source, provenance = await _resolve_base_copy(req, product)
     fields = _apply_overrides(base, req)
     dedupe_key = _dedupe_key_for(req.product_id, fields)
@@ -396,6 +404,15 @@ async def approve_copy_set(copy_set_id: str, request: CopySetApproveRequest | di
     if not row:
         raise CopySetError("COPY_SET_NOT_FOUND", status_code=404)
     fields = serialize_copy_set(row)
+
+    # PI-FINAL-B04: approval is the door to production binding - an ineligible
+    # product's copy can never become COPY_APPROVED.
+    from agent.services.copy_eligibility_service import copy_eligibility
+    _elig = await copy_eligibility(str(row["product_id"]))
+    if not _elig["eligible"]:
+        raise CopySetError(
+            "COPY_INELIGIBLE", status_code=409,
+            detail={"product_id": row["product_id"], "reasons": _elig["reasons"]})
 
     completeness = assess_copy_completeness(fields)
     if not completeness["complete"]:

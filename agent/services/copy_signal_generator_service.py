@@ -1123,6 +1123,12 @@ async def generate_copy_signal_response(
         if isinstance(request_input, CopySignalGenerateRequest)
         else CopySignalGenerateRequest.model_validate(request_input)
     )
+    # PI-FINAL-B04: a DB-identified product must be COPY_ELIGIBLE before any
+    # copy signal is generated for it (ad-hoc product_payload has no identity
+    # to gate on and stays review-routed by _build_route).
+    if request.product_id:
+        from agent.services.copy_eligibility_service import assert_copy_eligible
+        await assert_copy_eligible(str(request.product_id))
     product_seed, error = await _load_product_seed(request)
     if error == "PRODUCT_NOT_FOUND":
         return CopySignalGenerateResponse(

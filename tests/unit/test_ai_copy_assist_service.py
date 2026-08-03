@@ -35,8 +35,22 @@ UNSAFE_AI = {
 
 
 async def _make_product(**kw) -> str:
+    from tests.conftest import make_product_copy_eligible
+
     product = await crud.create_product(
         raw_product_title=kw.pop("raw_product_title", "AI Assist Serum 5ML"),
+        source="MANUAL",
+        **kw,
+    )
+    # PI-FINAL-B04: the assist lane is gated on COPY_ELIGIBLE; these tests
+    # exercise behaviour past that gate.
+    await make_product_copy_eligible(product["id"])
+    return product["id"]
+
+async def _make_bare_product(**kw) -> str:
+    """Product without PI snapshot — assert fail-closed B04 gate."""
+    product = await crud.create_product(
+        raw_product_title=kw.pop("raw_product_title", "AI Assist Bare 5ML"),
         source="MANUAL",
         **kw,
     )
@@ -315,40 +329,36 @@ def test_provider_system_prompt_is_stealth_and_route_aware():
 
 @pytest.mark.asyncio
 async def test_gate_blocks_ungrounded_generation_without_override(monkeypatch):
-    """No approved snapshot + no override => fail closed, do NOT generate blind copy."""
-    pid = await _make_product()
+    """No accepted PI snapshot => COPY_INELIGIBLE (B04 supersedes grounding-only gate)."""
+    pid = await _make_bare_product()
     _mock_provider(monkeypatch, SAFE_AI)
     with pytest.raises(copy_svc.CopySetError) as exc:
         await ai.generate_ai_copy_candidate({"product_id": pid})
-    assert exc.value.code == "COPY_GROUNDING_INSUFFICIENT"
-    assert exc.value.detail["grounding_source"] != "APPROVED_SNAPSHOT"
-    assert exc.value.detail["recommended_next_action"]
+    assert exc.value.code == "COPY_INELIGIBLE"
+    assert "NO_ACCEPTED_SNAPSHOT" in ",".join(exc.value.detail.get("reasons") or [])
 
 
 @pytest.mark.asyncio
 async def test_gate_batch_blocks_ungrounded_without_override(monkeypatch):
-    pid = await _make_product()
+    pid = await _make_bare_product()
     _mock_provider(monkeypatch, SAFE_AI)
     with pytest.raises(copy_svc.CopySetError) as exc:
         await ai.generate_ai_copy_candidates_batch(
             {"product_id": pid, "requested_count": 3}
         )
-    assert exc.value.code == "COPY_GROUNDING_INSUFFICIENT"
+    assert exc.value.code == "COPY_INELIGIBLE"
 
 
 @pytest.mark.asyncio
 async def test_gate_allows_ungrounded_with_explicit_override(monkeypatch):
-    pid = await _make_product()
+    """allow_ungrounded bypasses grounding only — B04 eligibility still fail-closed."""
+    pid = await _make_bare_product()
     _mock_provider(monkeypatch, SAFE_AI)
-    result = await ai.generate_ai_copy_candidate(
-        {"product_id": pid, "allow_ungrounded": True}
-    )
-    assert result["grounding"]["source"] != "APPROVED_SNAPSHOT"
-    assert len(result["candidates"]) == 1
-    assert (
-        result["candidates"][0]["copy_set"]["status"]
-        == models.STATUS_COPY_REVIEW_REQUIRED
-    )
+    with pytest.raises(copy_svc.CopySetError) as exc:
+        await ai.generate_ai_copy_candidate(
+            {"product_id": pid, "allow_ungrounded": True}
+        )
+    assert exc.value.code == "COPY_INELIGIBLE"
 
 
 @pytest.mark.asyncio

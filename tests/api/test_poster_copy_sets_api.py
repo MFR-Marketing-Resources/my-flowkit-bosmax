@@ -18,10 +18,12 @@ def _client() -> TestClient:
 
 @pytest.fixture
 async def product_id():
+    from tests.conftest import make_product_copy_eligible
     row = await crud.create_product(
         "Minyak Warisan Tok 25ml", source="MANUAL",
         product_display_name="Minyak Warisan Tok", category="Traditional",
     )
+    await make_product_copy_eligible(row["id"])
     return row["id"]
 
 

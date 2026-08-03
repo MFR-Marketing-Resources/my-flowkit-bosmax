@@ -180,6 +180,20 @@ async def generate_social_copy_package(
     if not artifact:
         raise SocialCopyError("ARTIFACT_NOT_FOUND")
 
+    # PI-FINAL-B04: when the artifact traces to a product (via its generation
+    # package), social captioning is a copy lane and the product must be
+    # COPY_ELIGIBLE. Artifacts with no product linkage are not product copy.
+    wgp_id = artifact.get("workspace_generation_package_id")
+    if wgp_id:
+        package = await crud.get_workspace_generation_package(str(wgp_id))
+        linked_product_id = str((package or {}).get("product_id") or "")
+        if linked_product_id:
+            from agent.services.copy_eligibility_service import copy_eligibility
+            _elig = await copy_eligibility(linked_product_id)
+            if not _elig["eligible"]:
+                raise SocialCopyError(
+                    "COPY_INELIGIBLE:" + ",".join(_elig["reasons"]))
+
     caption = _normalize(caption)
     first_comment = _normalize(first_comment)
     call_to_action = _normalize(call_to_action)

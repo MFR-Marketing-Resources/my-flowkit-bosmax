@@ -25,6 +25,8 @@ async def _seed_product() -> str:
         product_display_name="Minyak Warisan Tok",
         category="Traditional",
     )
+    from tests.conftest import make_product_copy_eligible
+    await make_product_copy_eligible(row["id"])
     return row["id"]
 
 
@@ -44,6 +46,15 @@ def _create_request(product_id: str, **overrides) -> PosterCopySetCreateRequest:
     base.update(overrides)
     return PosterCopySetCreateRequest(**base)
 
+
+
+@pytest.fixture(autouse=True)
+def _b04_eligibility_pass(monkeypatch):
+    """PI-FINAL-B04: non-DB/mocked product paths pass the gate."""
+    async def _ok(product_id: str = '', *a, **k):
+        return {"product_id": product_id, "eligible": True, "reasons": []}
+    monkeypatch.setattr("agent.services.copy_eligibility_service.assert_copy_eligible", _ok)
+    monkeypatch.setattr("agent.services.copy_eligibility_service.copy_eligibility", _ok)
 
 @pytest.mark.asyncio
 async def test_create_draft_and_serialize_roundtrip():

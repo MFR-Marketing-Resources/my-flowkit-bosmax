@@ -2251,6 +2251,13 @@ CREATE INDEX IF NOT EXISTS idx_copy_set_dedupe ON copy_set(dedupe_key);
             ("similar_to_copy_set_id", "TEXT"),
             ("similarity_score", "REAL"),
             ("archived", "INTEGER NOT NULL DEFAULT 0"),
+            # PI-FINAL-B04 stale-asset containment: nullable quarantine state
+            # (PI_INELIGIBLE / NEEDS_REVALIDATION / BLOCKED; NULL = clear) plus the
+            # eligibility reasons frozen at quarantine time. Additive on purpose -
+            # the status CHECK constraint is never altered and the approval state
+            # machine is untouched.
+            ("pi_eligibility_status", "TEXT"),
+            ("pi_ineligible_reasons", "TEXT"),
         ]:
             if col not in copy_set_columns:
                 await db.execute(f"ALTER TABLE copy_set ADD COLUMN {col} {typedef}")

@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from agent.models.copy_signal_generator import (
     CopySignalGenerateRequest,
@@ -23,4 +23,9 @@ async def copy_signal_routes() -> CopySignalRoutesResponse:
 async def copy_signal_generate(
     request: CopySignalGenerateRequest,
 ) -> CopySignalGenerateResponse:
-    return await generate_copy_signal_response(request)
+    try:
+        return await generate_copy_signal_response(request)
+    except ValueError as exc:
+        if str(exc).startswith("COPY_INELIGIBLE"):
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise

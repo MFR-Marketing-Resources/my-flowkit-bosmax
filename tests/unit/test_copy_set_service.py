@@ -16,11 +16,13 @@ from agent.services.canonical_prompt_compiler import normalize_copy_intelligence
 
 
 async def _make_product(**kw) -> str:
+    from tests.conftest import make_product_copy_eligible
     product = await crud.create_product(
         raw_product_title=kw.pop("raw_product_title", "Test Serum 5ML"),
         source="MANUAL",
         **kw,
     )
+    await make_product_copy_eligible(product["id"])
     return product["id"]
 
 

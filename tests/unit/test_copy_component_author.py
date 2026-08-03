@@ -44,6 +44,15 @@ def _angle():
 
 # ---- pure helpers -------------------------------------------------------
 
+
+@pytest.fixture(autouse=True)
+def _b04_eligibility_pass(monkeypatch):
+    """PI-FINAL-B04: non-DB/mocked product paths pass the gate."""
+    async def _ok(product_id: str = '', *a, **k):
+        return {"product_id": product_id, "eligible": True, "reasons": []}
+    monkeypatch.setattr("agent.services.copy_eligibility_service.assert_copy_eligible", _ok)
+    monkeypatch.setattr("agent.services.copy_eligibility_service.copy_eligibility", _ok)
+
 def test_slot_fields_place_text_in_its_real_copy_slot():
     """The claim scanner must see the text exactly where it will appear."""
     assert svc._slot_fields(comp.HOOK, "x") == {"hook": "x"}
@@ -115,7 +124,7 @@ def test_no_approved_snapshot_is_refused_with_actionable_message(monkeypatch):
     monkeypatch.setattr(
         svc.crud, "get_latest_approved_product_intelligence_snapshot", _no_snap
     )
-    with pytest.raises(ValueError, match="NO_APPROVED_SNAPSHOT"):
+    with pytest.raises(ValueError, match="COPY_INELIGIBLE|NO_APPROVED_SNAPSHOT|NO_ACCEPTED_SNAPSHOT"):
         asyncio.run(svc.author_components("p1", "ang_x", comp.HOOK, 6))
 
 

@@ -88,7 +88,17 @@ async def get_copywriting_readiness(product_id: str) -> dict[str, Any]:
     if not approved:
         blocking_reasons.append("NO_APPROVED_COPY_SET")
 
-    ready_for_generation = has_approved_snapshot and bool(approved)
+    # PI-FINAL-B04: surface the fail-closed COPY_ELIGIBLE verdict so operators
+    # see the exact block reasons BEFORE any generation surface returns 409.
+    from agent.services.copy_eligibility_service import copy_eligibility
+    eligibility = await copy_eligibility(product_id)
+    if not eligibility["eligible"]:
+        blocking_reasons.extend(
+            f"COPY_INELIGIBLE:{reason}" for reason in eligibility["reasons"])
+
+    ready_for_generation = (
+        has_approved_snapshot and bool(approved) and eligibility["eligible"]
+    )
 
     if not has_approved_snapshot:
         recommended_next_action = "PREPARE_PRODUCT_FOR_COPYWRITING"
@@ -111,6 +121,8 @@ async def get_copywriting_readiness(product_id: str) -> dict[str, Any]:
         "formula_validation_status": formula_validation_status,
         "sales_clarity_status": sales_clarity_status,
         "copy_applicable": True,
+        "copy_eligible": eligibility["eligible"],
+        "copy_eligibility_reasons": eligibility["reasons"],
         "ready_for_generation": ready_for_generation,
         "blocking_reasons": blocking_reasons,
         "recommended_next_action": recommended_next_action,

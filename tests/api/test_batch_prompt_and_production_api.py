@@ -22,6 +22,15 @@ async def _expect_http(coro, status, needle=None):
         assert needle.lower() in str(exc_info.value.detail).lower()
 
 
+
+@pytest.fixture(autouse=True)
+def _b04_eligibility_pass(monkeypatch):
+    """PI-FINAL-B04: non-DB/mocked product paths pass the gate."""
+    async def _ok(product_id: str = '', *a, **k):
+        return {"product_id": product_id, "eligible": True, "reasons": []}
+    monkeypatch.setattr("agent.services.copy_eligibility_service.assert_copy_eligible", _ok)
+    monkeypatch.setattr("agent.services.copy_eligibility_service.copy_eligibility", _ok)
+
 async def test_mixed_modes_in_one_batch_are_rejected_422():
     body = wgp_api.BatchPromptRequest(
         product_id="p1", logical_mode="T2V", modes=["T2V", "F2V"],

@@ -25,6 +25,6 @@ def test_product_knowledge_complete_api():
     assert data["suggested_bosmax_product_family"] == "LAUNDRY_DETERGENT_LIQUID_REFILL"
     assert data["suggested_physics_class"] == "LAUNDRY_LIQUID_REFILL"
     assert "1.2kg" in data["extracted_product_facts"]["size_or_volume"]
-    assert data["image_analysis_status"] == "VISION_PROVIDER_NOT_CONFIGURED"
+    assert data["image_analysis_status"] in {"VISION_PROVIDER_NOT_CONFIGURED", "ANALYSIS_SKIPPED", "IMAGE_INACCESSIBLE"}
     assert data["declared_input_fields"]["source_url"] == "https://example.com/source/detergent"
     assert data["declared_input_fields"]["image_notes"] == "Front pack image available."

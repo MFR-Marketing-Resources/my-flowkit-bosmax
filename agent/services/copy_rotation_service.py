@@ -61,6 +61,9 @@ def _eligible(row: dict) -> bool:
     return (
         row.get("status") == STATUS_COPY_APPROVED
         and not int(row.get("archived") or 0)
+        # PI-FINAL-B04: quarantined stale assets (PI_INELIGIBLE / NEEDS_REVALIDATION /
+        # BLOCKED) never rotate, never feed readiness, never reach execution.
+        and not (row.get("pi_eligibility_status") or "").strip()
         and _usage_count(row) < REUSE_CAP
     )
 

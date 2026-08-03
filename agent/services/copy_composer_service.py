@@ -323,6 +323,10 @@ async def compose_and_persist(
     if not product:
         raise ValueError("PRODUCT_NOT_FOUND")
 
+    # PI-FINAL-B04: composing copy sets from the component pool is a copy lane.
+    from agent.services.copy_eligibility_service import assert_copy_eligible
+    await assert_copy_eligible(product_id)
+
     pool = await crud.list_copy_components_for_product(product_id)
     approved = [c for c in pool if str(c.get("status")) == STATUS_APPROVED]
     angles = _angles_from_pool(approved)
