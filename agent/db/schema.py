@@ -2258,6 +2258,14 @@ CREATE INDEX IF NOT EXISTS idx_copy_set_dedupe ON copy_set(dedupe_key);
             # machine is untouched.
             ("pi_eligibility_status", "TEXT"),
             ("pi_ineligible_reasons", "TEXT"),
+            # COPY-FINAL-B02 durable PI snapshot lineage on Copy Sets.
+            ("pi_snapshot_id", "TEXT"),
+            ("pi_snapshot_version", "INTEGER"),
+            ("pi_grounding_digest", "TEXT"),
+            ("grounded_at", "TEXT"),
+            ("revalidated_at", "TEXT"),
+            ("revalidated_by", "TEXT"),
+            ("revalidation_decision", "TEXT"),
         ]:
             if col not in copy_set_columns:
                 await db.execute(f"ALTER TABLE copy_set ADD COLUMN {col} {typedef}")

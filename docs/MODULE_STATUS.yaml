@@ -1302,3 +1302,28 @@ domains:
       - scripts/mission07g_final_scene_gap.py
       - data/products/product_mapping_rules.json
       - tests/unit/test_product_mapping.py
+      - agent/services/copy_set_validity_service.py
+      - outputs/mission-copy-final/COPY_ZERO_GAP_RECEIPT.md
+      - outputs/mission-copy-final/build_copy_gap_manifest.py
+      - outputs/mission-copy-final/claim_review_results.json
+      - outputs/mission-copy-final/copy_final_writer.py
+      - outputs/mission-copy-final/copy_gap_manifest.json
+      - outputs/mission-copy-final/copy_gap_manifest.sha256
+      - outputs/mission-copy-final/copy_gap_manifest.xlsx
+      - outputs/mission-copy-final/copy_gap_manifest.xlsx.sha256
+      - outputs/mission-copy-final/copy_generation_results.jsonl
+      - outputs/mission-copy-final/copy_holdout_closure.py
+      - outputs/mission-copy-final/copy_holdout_final3.py
+      - outputs/mission-copy-final/copy_revalidation_results.jsonl
+      - outputs/mission-copy-final/database_backup_manifest.json
+      - outputs/mission-copy-final/final_db_proof.json
+      - outputs/mission-copy-final/final_reconciliation.json
+      - outputs/mission-copy-final/flow_agent.db.sha256
+      - outputs/mission-copy-final/holdout_closure.json
+      - outputs/mission-copy-final/holdout_final3.json
+      - outputs/mission-copy-final/holdout_summary.json
+      - outputs/mission-copy-final/phase0_baseline.json
+      - outputs/mission-copy-final/provider_call_ledger.jsonl
+      - outputs/mission-copy-final/writer_failures.json
+      - outputs/mission-copy-final/writer_summary.json
+      - tests/unit/test_copy_set_validity_service.py

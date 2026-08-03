@@ -1,0 +1,16 @@
+{
+  "mission": "BOSMAX-COPY-FINAL-ZERO-GAP-20260803",
+  "expected_main": "46d05b695e1e6dce097f41d76e5e083e54aff56e",
+  "branch": "cursor/copy-final-zero-gap",
+  "captured_at": "2026-08-03T10:09:39.360173+00:00",
+  "initial_classification": {
+    "COPY_REVIEW_REQUIRED_ONLY": 151,
+    "DRAFT_COPY_ONLY": 129,
+    "APPROVED_COPY_STALE": 12,
+    "MISSING_COPY": 110,
+    "APPROVED_COPY_VALID": 0
+  },
+  "final_classification": {
+    "APPROVED_COPY_VALID": 402
+  }
+}

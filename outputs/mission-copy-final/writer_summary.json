@@ -1,0 +1,20 @@
+{
+  "started_at": "2026-08-03T09:46:41Z",
+  "cohort": 402,
+  "ok": 392,
+  "fail": 10,
+  "preserve": 0,
+  "revalidate": 12,
+  "approve_existing": 272,
+  "generate": 108,
+  "blocked": 0,
+  "overrides": 0,
+  "finished_at": "2026-08-03T09:47:00Z",
+  "final_buckets": {
+    "APPROVED_COPY_VALID": 392,
+    "COPY_REVIEW_REQUIRED_ONLY": 10
+  },
+  "products_with_valid_approved_copy": 392,
+  "products_without_valid_approved_copy": 10,
+  "failure_count": 10
+}

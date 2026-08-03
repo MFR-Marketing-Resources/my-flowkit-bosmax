@@ -1,0 +1,12 @@
+{
+  "at": "2026-08-03T10:09:39.362173+00:00",
+  "active_cohort": 402,
+  "products_with_valid_approved_copy": 402,
+  "products_without_valid_approved_copy": 0,
+  "ready_target": "every product APPROVED_COPY_VALID",
+  "pi_mutated": false,
+  "product_identity_mutated": false,
+  "deletions": 0,
+  "manifest_sha256": "8119143c1e0d40fe2746813fe0a74f1a10d78df3a2d9f5e09a56a4dde9b76d12",
+  "db_sha256": "d0f7c5ee2345f70c1b3d7d7f3a8495de960ea531e029d0b637b39204120834bc"
+}

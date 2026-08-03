@@ -322,4 +322,13 @@ def serialize_copy_set(row: dict[str, Any]) -> dict[str, Any]:
         "similar_to_copy_set_id": row.get("similar_to_copy_set_id"),
         "similarity_score": row.get("similarity_score"),
         "archived": row.get("archived") or 0,
+        "pi_eligibility_status": row.get("pi_eligibility_status"),
+        "pi_ineligible_reasons": row.get("pi_ineligible_reasons"),
+        "pi_snapshot_id": row.get("pi_snapshot_id"),
+        "pi_snapshot_version": row.get("pi_snapshot_version"),
+        "pi_grounding_digest": row.get("pi_grounding_digest"),
+        "grounded_at": row.get("grounded_at"),
+        "revalidated_at": row.get("revalidated_at"),
+        "revalidated_by": row.get("revalidated_by"),
+        "revalidation_decision": row.get("revalidation_decision"),
     }

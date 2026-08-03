@@ -1,0 +1,128 @@
+[
+  {
+    "product_id": "1063eec6-976c-415f-95dd-be5c7b53608b",
+    "ok": true,
+    "action": "HOLDOUT_CLOSED",
+    "copy_set_id": "524c28b9-922a-421a-b1ba-cb00fa5d05de",
+    "before": "COPY_REVIEW_REQUIRED_ONLY",
+    "after": "APPROVED_COPY_VALID",
+    "name": "Nakamichi Rapid Windshield Water Cleaner 30ml Pencuci Cermin Kereta Kompak & Mudah Penggunaan untuk Pembersihan Kuat"
+  },
+  {
+    "product_id": "792c16c9-7720-4321-8c48-bdee2c601d0f",
+    "ok": true,
+    "action": "HOLDOUT_CLOSED",
+    "copy_set_id": "528d009d-b7f9-456a-8d9d-781cf96bf1e6",
+    "before": "COPY_REVIEW_REQUIRED_ONLY",
+    "after": "APPROVED_COPY_VALID",
+    "name": "Chia Biji Organik | Organic Chia Seed 100g/200g/400g Beans"
+  },
+  {
+    "product_id": "83667ffd-26fd-4c71-a86c-fa9e1ee84d9a",
+    "ok": true,
+    "action": "HOLDOUT_CLOSED",
+    "copy_set_id": "e5de2193-b218-4c44-9007-d2f6ec21c1d1",
+    "before": "COPY_REVIEW_REQUIRED_ONLY",
+    "after": "APPROVED_COPY_VALID",
+    "name": "DOUBLE C Cadar Set Getah Keliling (2in1 Single/ 4in1"
+  },
+  {
+    "product_id": "8ae553d2-4810-4d03-926b-5f2f1282c21c",
+    "ok": false,
+    "error": "STILL_UNSAFE:{'safe': False, 'violations': ['UNRESOLVED_PLACEHOLDER'], 'detail': {'UNRESOLVED_PLACEHOLDER': 'xxx'}}:{'complete': True, 'missing_fields': []}",
+    "fields": {
+      "angle": "Fokus produk CLASSY 6XXXL Size Karpet Velvet Paling Besar Anti Slip",
+      "hook": "Temui CLASSY 6XXXL Size Karpet Velvet Paling Besar Anti Slip hari ini",
+      "subhook": "Maklumat jelas tentang CLASSY 6XXXL Size Karpet Velvet Paling Besar Anti Slip untuk keputusan bijak",
+      "usp_set": [
+        "Produk CLASSY 6XXXL Size Karpet Velvet Paling Besar Anti Slip dengan identiti tersendiri",
+        "Sesuai untuk pengguna CLASSY 6XXXL Size Karpet Velvet Paling Besar Anti Slip",
+        "Penerangan ringkas tentang CLASSY 6XXXL Size Karpet Velvet Paling Besar Anti Slip"
+      ],
+      "cta": "Lihat produk sekarang",
+      "platform": "TIKTOK",
+      "language": "BM_MS",
+      "route_type": "DIRECT",
+      "formula_family": "HSO",
+      "product_id": "8ae553d2-4810-4d03-926b-5f2f1282c21c"
+    }
+  },
+  {
+    "product_id": "904bee4d-864b-4722-bc10-5df2027eb13f",
+    "ok": true,
+    "action": "HOLDOUT_CLOSED",
+    "copy_set_id": "ea9f0d9d-5172-4523-b0ad-98b3a895e9fb",
+    "before": "COPY_REVIEW_REQUIRED_ONLY",
+    "after": "APPROVED_COPY_VALID",
+    "name": "DHERBS SET JIMAT AURA SERI COMBO 2"
+  },
+  {
+    "product_id": "9daaa6b9-39ba-4fd9-92b6-835c1353d7fa",
+    "ok": false,
+    "error": "STILL_UNSAFE:{'safe': False, 'violations': ['MEDICAL_CLAIM'], 'detail': {'MEDICAL_CLAIM': 'ubat'}}:{'complete': True, 'missing_fields': []}",
+    "fields": {
+      "angle": "Fokus produk 100 Doa Taubat Dari al-Quran dan Hadith Nabi Muhammad",
+      "hook": "Temui 100 Doa Taubat Dari al-Quran dan Hadith Nabi Muhammad hari ini",
+      "subhook": "Maklumat jelas tentang 100 Doa Taubat Dari al-Quran dan Hadith Nabi Muhammad untuk keputusan bijak",
+      "usp_set": [
+        "Produk 100 Doa Taubat Dari al-Quran dan Hadith Nabi Muhammad dengan identiti tersendiri",
+        "Sesuai untuk pengguna 100 Doa Taubat Dari al-Quran dan Hadith Nabi Muhammad",
+        "Penerangan ringkas tentang 100 Doa Taubat Dari al-Quran dan Hadith Nabi Muhammad"
+      ],
+      "cta": "Lihat produk sekarang",
+      "platform": "TIKTOK",
+      "language": "BM_MS",
+      "route_type": "DIRECT",
+      "formula_family": "HSO",
+      "product_id": "9daaa6b9-39ba-4fd9-92b6-835c1353d7fa"
+    }
+  },
+  {
+    "product_id": "c1f000cc-4f91-4986-b487-9e8c0d5e9e7d",
+    "ok": false,
+    "error": "STILL_UNSAFE:{'safe': False, 'violations': ['UNRESOLVED_PLACEHOLDER'], 'detail': {'UNRESOLVED_PLACEHOLDER': 'xxx'}}:{'complete': True, 'missing_fields': []}",
+    "fields": {
+      "angle": "Fokus produk Penbose Seluar Lampin Bayi Saiz S-XXXL - XL50 Keping Super Serap & Bernafas Lembut!​ Lampin Tarik Bayi Pull-up Pants Korea diaper 2G",
+      "hook": "Temui Penbose Seluar Lampin Bayi Saiz S-XXXL - XL50 Keping Super Serap & Bernafas Lembut!​ Lampin Tarik Bayi Pull-up Pants Korea diaper 2G hari ini",
+      "subhook": "Maklumat jelas tentang Penbose Seluar Lampin Bayi Saiz S-XXXL - XL50 Keping Super Serap & Bernafas Lembut!​ Lampin Tarik Bayi Pull-up Pants Korea diaper 2G untuk keputusan bijak",
+      "usp_set": [
+        "Produk Penbose Seluar Lampin Bayi Saiz S-XXXL - XL50 Keping Super Serap & Bernafas Lembut!​ Lampin Tarik Bayi Pull-up Pants Korea diaper 2G dengan identiti tersendiri",
+        "Sesuai untuk pengguna Penbose Seluar Lampin Bayi Saiz S-XXXL - XL50 Keping Super Serap & Bernafas Lembut!​ Lampin Tarik Bayi Pull-up Pants Korea diaper 2G",
+        "Penerangan ringkas tentang Penbose Seluar Lampin Bayi Saiz S-XXXL - XL50 Keping Super Serap & Bernafas Lembut!​ Lampin Tarik Bayi Pull-up Pants Korea diaper 2G"
+      ],
+      "cta": "Lihat produk sekarang",
+      "platform": "TIKTOK",
+      "language": "BM_MS",
+      "route_type": "DIRECT",
+      "formula_family": "HSO",
+      "product_id": "c1f000cc-4f91-4986-b487-9e8c0d5e9e7d"
+    }
+  },
+  {
+    "product_id": "c5341831-8c85-4a13-82be-7b1ae12320d1",
+    "ok": true,
+    "action": "HOLDOUT_CLOSED",
+    "copy_set_id": "2bc2429b-cea0-4aad-becf-75b0b3c88e85",
+    "before": "COPY_REVIEW_REQUIRED_ONLY",
+    "after": "APPROVED_COPY_VALID",
+    "name": "[Beli 1 Dapat 2 PERCUMA] Dr.Ritta SP68 Gigi"
+  },
+  {
+    "product_id": "c71ff704-2bc2-4303-9335-632bbb2db9ae",
+    "ok": true,
+    "action": "HOLDOUT_CLOSED",
+    "copy_set_id": "b3183613-b78a-4c80-8833-cb3623f4f086",
+    "before": "COPY_REVIEW_REQUIRED_ONLY",
+    "after": "APPROVED_COPY_VALID",
+    "name": "Penutup makanan, plastik pakai buang, penutup elastik berwarna cerah"
+  },
+  {
+    "product_id": "efa576c8-3ffe-4fb9-9ead-6acf196db31a",
+    "ok": true,
+    "action": "HOLDOUT_CLOSED",
+    "copy_set_id": "08235347-394d-47b6-91f5-a7140886ba0c",
+    "before": "COPY_REVIEW_REQUIRED_ONLY",
+    "after": "APPROVED_COPY_VALID",
+    "name": "Mosquito King Coil / Nyamuk Viral Supplies"
+  }
+]

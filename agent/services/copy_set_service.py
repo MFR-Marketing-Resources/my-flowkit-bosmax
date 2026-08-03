@@ -494,6 +494,20 @@ async def approve_copy_set(copy_set_id: str, request: CopySetApproveRequest | di
         reviewer_note=req.reviewer_note if req.reviewer_note is not None else row.get("reviewer_note"),
         claim_review_json=json.dumps(claim_review),
     )
+    # COPY-FINAL-B02: stamp current PI lineage and clear quarantine on approval.
+    try:
+        from agent.services.copy_set_validity_service import stamp_copy_set_pi_lineage
+        await stamp_copy_set_pi_lineage(
+            copy_set_id,
+            product_id=str(row["product_id"]),
+            revalidated_by=_clean(req.approved_by) or "operator",
+            clear_quarantine=True,
+            decision="APPROVAL_GROUNDED",
+            rationale="Stamped at COPY_APPROVED via governed approval path.",
+        )
+        updated = await crud.get_copy_set(copy_set_id) or updated
+    except Exception:
+        pass
     return serialize_copy_set(updated)
 
 
