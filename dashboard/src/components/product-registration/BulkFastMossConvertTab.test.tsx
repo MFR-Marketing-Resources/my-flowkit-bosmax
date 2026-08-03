@@ -133,4 +133,15 @@ describe("BulkFastMossConvertTab evidence and draft actions", () => {
 			expect.anything(),
 		);
 	});
+
+	it("wraps queue actions for compact layouts", () => {
+		primeQueue(makeRow());
+
+		render(<BulkFastMossConvertTab onOpenDraft={vi.fn()} />);
+
+		const actionGroup = screen.getByRole("button", { name: "Sync Queue" })
+			.parentElement;
+		expect(actionGroup?.className).toContain("w-full");
+		expect(actionGroup?.className).toContain("flex-wrap");
+	});
 });
