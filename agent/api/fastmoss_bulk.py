@@ -33,6 +33,12 @@ class BulkApproveDraftsRequest(BaseModel):
 
 class RecomputeSelectedRequest(BaseModel):
     reference_ids: list[str]
+    retry_failed: bool = False
+
+
+class ReconcileQueueRequest(BaseModel):
+    dry_run: bool = True
+    confirmation_phrase: str | None = None
 
 
 class UpdateQueueRowStatusRequest(BaseModel):
@@ -75,6 +81,14 @@ async def list_queue(
 @router.get("/queue/stats")
 async def get_queue_stats() -> dict[str, Any]:
     return await _svc.get_queue_stats()
+
+
+@router.post("/queue/reconcile")
+async def reconcile_queue(body: ReconcileQueueRequest | None = None) -> dict[str, Any]:
+    request = body or ReconcileQueueRequest()
+    if not request.dry_run and request.confirmation_phrase != _svc._RECOMPUTE_APPLY_PHRASE:
+        raise HTTPException(status_code=403, detail="INVALID_RECONCILE_CONFIRMATION_PHRASE")
+    return await _svc.reconcile_queue(dry_run=request.dry_run)
 
 
 @router.get("/queue/duplicates")
@@ -131,6 +145,8 @@ async def bulk_approve_drafts(body: BulkApproveDraftsRequest) -> dict[str, Any]:
 async def recompute_selected(body: RecomputeSelectedRequest) -> dict[str, Any]:
     if not body.reference_ids:
         raise HTTPException(status_code=422, detail="reference_ids must not be empty")
+    if body.retry_failed:
+        return await _svc.recompute_selected(body.reference_ids, retry_failed=True)
     return await _svc.recompute_selected(body.reference_ids)
 
 

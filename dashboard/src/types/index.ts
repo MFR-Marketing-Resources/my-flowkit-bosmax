@@ -2846,6 +2846,14 @@ export type BulkPromotionStatus =
 
 export type BulkClaimRisk = "LOW" | "MEDIUM" | "HIGH" | "UNKNOWN";
 export type BulkImageReadiness = "IMAGE_PRESENT" | "IMAGE_MISSING";
+export type BulkRecomputeState =
+	| "UP_TO_DATE"
+	| "STALE"
+	| "QUEUED"
+	| "RECOMPUTING"
+	| "FAILED"
+	| "BLOCKED_MISSING_EVIDENCE"
+	| "BLOCKED_REVIEW_REQUIRED";
 
 export interface FastmossBulkQueueRow {
 	reference_id: string;
@@ -2876,6 +2884,16 @@ export interface FastmossBulkQueueRow {
 	duplicate_ignore_product_id?: string | null;
 	error_message?: string | null;
 	batch_provenance?: string | null;
+	ruleset_version?: string | null;
+	input_fingerprint?: string | null;
+	recompute_state?: BulkRecomputeState | null;
+	recompute_reason?: string | null;
+	review_hold_reason?: string | null;
+	recompute_started_at?: string | null;
+	recompute_attempt_count?: number | null;
+	recomputed_at?: string | null;
+	current_claim_risk_level?: BulkClaimRisk | null;
+	current_claim_tokens?: string[];
 	duplicate_candidate?: {
 		product_id: string;
 		title?: string | null;
@@ -2901,6 +2919,9 @@ export interface BulkQueueStats {
 	total: number;
 	by_status: Record<string, number>;
 	by_risk: Record<string, number>;
+	ruleset_version?: string;
+	by_recompute_state?: Record<string, number>;
+	review_hold_count?: number;
 }
 
 export interface BulkCreateDraftsResult {
@@ -2932,6 +2953,7 @@ export interface BulkRecomputeSelectedResult {
 	recomputed: number;
 	ready_for_approval: number;
 	missing_required_field: number;
+	blocked_missing_evidence?: number;
 	claim_risk: number;
 	duplicate_suspected: number;
 	image_missing: number;

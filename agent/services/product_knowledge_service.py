@@ -21,8 +21,7 @@ from agent.models.product_registration import EvidenceCompletionFieldMetadata
 from agent.models.product_strategy_taxonomy import ProductStrategyCoverageStatus
 from agent.services.bosmax_product_family import derive_bosmax_product_family
 from agent.services.product_intelligence_service import (
-    BLOCKED_CLAIM_TOKENS,
-    REVIEW_CLAIM_TOKENS,
+    evaluate_product_claims,
     resolve_product_intelligence_profile,
 )
 from agent.services.product_physics import resolve_product_physics
@@ -1626,19 +1625,23 @@ def _evaluate_completion_status(
 
 
 def _analyze_claims(request: ProductKnowledgeCompleteRequest, facts: dict[str, Any]) -> tuple[str, list[str], str, str]:
-    combined_text = normalize_mapping_text(" ".join(filter(None, [
-        request.product_name,
-        request.product_knowledge_text,
-        request.benefits_text,
-        request.usage_text,
-        request.target_customer_text,
-        request.ingredients_text,
-        request.warnings_text,
-        request.paste_anything_about_product
-    ])))
-    
-    found_blocked = [token for token in BLOCKED_CLAIM_TOKENS if token in combined_text]
-    found_review = [token for token in REVIEW_CLAIM_TOKENS if token in combined_text]
+    found_blocked, found_review, _warnings = evaluate_product_claims(
+        {
+            "product_name": request.product_name,
+            "product_knowledge_text": request.product_knowledge_text,
+            "benefits_text": request.benefits_text,
+            "usage_text": request.usage_text,
+            "target_customer_text": request.target_customer_text,
+            "ingredients_text": request.ingredients_text,
+            "warnings_text": request.warnings_text,
+            "package_notes": request.package_notes,
+            "paste_anything_about_product": request.paste_anything_about_product,
+            "category": request.category,
+            "subcategory": request.subcategory,
+            "type": request.type,
+            "product_type": request.product_type,
+        }
+    )
     
     all_tokens = list(set(found_blocked + found_review))
     
