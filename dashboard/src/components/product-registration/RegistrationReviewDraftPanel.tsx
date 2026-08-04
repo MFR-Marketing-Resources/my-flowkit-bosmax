@@ -2280,20 +2280,15 @@ export default function RegistrationReviewDraftPanel({
 					<div className="flex flex-col gap-3 md:flex-row">
 						<button
 							type="button"
-							onClick={() => handleEvidenceSave(false)}
-							disabled={isSavingEvidence || draft.review_status === "COMMITTED"}
-							className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-xs font-bold uppercase tracking-widest text-slate-200 transition-all hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-50"
-						>
-							{isSavingEvidence ? "Saving..." : "Save Draft Only"}
-						</button>
-						<button
-							type="button"
 							onClick={() => handleEvidenceSave(true)}
 							disabled={isSavingEvidence || draft.review_status === "COMMITTED"}
-							className="rounded-xl border border-indigo-500/40 bg-indigo-500 px-4 py-2 text-xs font-bold uppercase tracking-widest text-white transition-all hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
+							className="rounded-xl border border-indigo-500/40 bg-indigo-500 px-5 py-2 text-xs font-bold uppercase tracking-widest text-white transition-all hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
 						>
-							{isSavingEvidence ? "Analyzing..." : "Analyze & Repair Draft"}
+							{isSavingEvidence ? "Saving & checking..." : "Save & Check"}
 						</button>
+						<span className="self-center text-[11px] text-slate-500">
+							Saves your edits and re-validates the draft — required before commit.
+						</span>
 					</div>
 				</div>
 			</section>

@@ -392,7 +392,7 @@ describe("RegistrationReviewDraftPanel next-action guidance", () => {
 		renderPanel();
 
 		fireEvent.click(
-			screen.getByRole("button", { name: "Analyze & Repair Draft" }),
+			screen.getByRole("button", { name: "Save & Check" }),
 		);
 
 		await waitFor(() =>
@@ -425,7 +425,7 @@ describe("RegistrationReviewDraftPanel next-action guidance", () => {
 		);
 
 		fireEvent.click(
-			screen.getByRole("button", { name: "Analyze & Repair Draft" }),
+			screen.getByRole("button", { name: "Save & Check" }),
 		);
 
 		const warning = await screen.findByRole("alert");
@@ -459,7 +459,7 @@ describe("RegistrationReviewDraftPanel next-action guidance", () => {
 			target: { value: "30 softgels" },
 		});
 		fireEvent.click(
-			screen.getByRole("button", { name: "Analyze & Repair Draft" }),
+			screen.getByRole("button", { name: "Save & Check" }),
 		);
 
 		await waitFor(() =>
@@ -586,7 +586,7 @@ describe("RegistrationReviewDraftPanel next-action guidance", () => {
 			"e.g. 120 × 45 cm",
 		);
 		expect(
-			screen.getByRole("button", { name: "Analyze & Repair Draft" }),
+			screen.getByRole("button", { name: "Save & Check" }),
 		).toBeInTheDocument();
 		const decisions = screen.getByTestId(
 			"registration-evidence-quality-decisions",
