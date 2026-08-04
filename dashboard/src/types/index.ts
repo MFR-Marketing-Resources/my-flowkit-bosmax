@@ -2652,6 +2652,8 @@ export interface RegistrationReviewDraftEvidencePatchRequest {
 	local_image_path?: string;
 	image_base64?: string;
 	image_filename?: string;
+	pain_points?: string;
+	usp_text?: string;
 	hook_angles?: string[];
 	cta_angles?: string[];
 	recompute?: boolean;
