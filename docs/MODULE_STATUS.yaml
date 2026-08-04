@@ -1182,6 +1182,12 @@ domains:
       # is a no-op, an approved snapshot is never downgraded, replay cannot duplicate
       # drafts. Deterministic and provider-free.
       - agent/services/product_intake_service.py
+      # SSOT Phase A: persist bosmax_product_family + copy seeds (hook/cta/pain) that
+      # previously dropped at commit or were re-derived every read. Additive columns +
+      # promotion targets; the deterministic backfill fills the family for the existing
+      # catalogue (no provider, zero credit cost).
+      - scripts/backfill_phase_a_ssot.py
+      - tests/unit/test_phase_a_ssot_persistence.py
       # Mission-08A / B-586-04: ONE canonical answer to "is this draft still open?",
       # shared by the runtime queries AND by the database's partial UNIQUE index. The
       # predicate used to be hand-written in four places with two CONTRADICTORY

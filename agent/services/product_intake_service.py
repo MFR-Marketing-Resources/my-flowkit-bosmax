@@ -66,7 +66,13 @@ SKIPPED_TERMINAL_DRAFT = "SKIPPED_TERMINAL_DRAFT"
 # database constraint, so the reader, the deduplicator and the UNIQUE index cannot disagree.
 _TERMINAL = TERMINAL_REVIEW_STATUSES
 _DIGEST_TARGETS = tuple(target for target, _sources in PROMOTION_MAP)
-_LIST_TARGETS = {"benefits_json", "usp_json"}
+_LIST_TARGETS = {
+    "benefits_json",
+    "usp_json",
+    "hook_angles_json",
+    "cta_angles_json",
+    "pain_points_json",
+}
 
 
 def _norm(target: str, value: Any) -> Any:

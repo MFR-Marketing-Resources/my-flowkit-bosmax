@@ -454,6 +454,7 @@ CREATE TABLE IF NOT EXISTS product (
     formula             TEXT,
     copywriting_angle   TEXT,
     claim_risk_level    TEXT,
+    bosmax_product_family TEXT,
     mode_recommendations TEXT,
     physics_class       TEXT,
     product_scale       TEXT,
@@ -870,6 +871,7 @@ CREATE TABLE IF NOT EXISTS product (
     formula             TEXT,
     copywriting_angle   TEXT,
     claim_risk_level    TEXT,
+    bosmax_product_family TEXT,
     mode_recommendations TEXT,
     physics_class       TEXT,
     product_scale       TEXT,
@@ -1020,6 +1022,9 @@ FROM _product_old
         if "production_prompt_approval_provenance" not in product_columns:
             await db.execute("ALTER TABLE product ADD COLUMN production_prompt_approval_provenance TEXT")
             logger.info("Migrated: added production_prompt_approval_provenance column to product table")
+        if "bosmax_product_family" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN bosmax_product_family TEXT")
+            logger.info("Migrated: added bosmax_product_family column to product table")
 
         cursor = await db.execute("SELECT sql FROM sqlite_master WHERE name='batch' AND type='table'")
         batch_sql_row = await cursor.fetchone()
@@ -3023,6 +3028,9 @@ CREATE TABLE IF NOT EXISTS product_intelligence_snapshot (
     product_description TEXT,
     benefits_json TEXT NOT NULL DEFAULT '[]',
     usp_json TEXT NOT NULL DEFAULT '[]',
+    hook_angles_json TEXT NOT NULL DEFAULT '[]',
+    cta_angles_json TEXT NOT NULL DEFAULT '[]',
+    pain_points_json TEXT NOT NULL DEFAULT '[]',
     usage_text TEXT,
     ingredients_text TEXT,
     warnings_text TEXT,
@@ -3095,6 +3103,9 @@ CREATE TABLE IF NOT EXISTS product_intelligence_review_draft (
     product_description TEXT,
     benefits_json TEXT NOT NULL DEFAULT '[]',
     usp_json TEXT NOT NULL DEFAULT '[]',
+    hook_angles_json TEXT NOT NULL DEFAULT '[]',
+    cta_angles_json TEXT NOT NULL DEFAULT '[]',
+    pain_points_json TEXT NOT NULL DEFAULT '[]',
     usage_text TEXT,
     ingredients_text TEXT,
     warnings_text TEXT,
@@ -3176,6 +3187,30 @@ CREATE INDEX IF NOT EXISTS idx_product_intelligence_review_field_provenance_prod
 CREATE INDEX IF NOT EXISTS idx_product_intelligence_review_field_provenance_draft_field
     ON product_intelligence_review_field_provenance(draft_id, field_name);
 """)
+        await db.commit()
+
+        # SSOT Phase A: durable homes for copy seeds (hook/cta/pain) that
+        # previously dropped at commit. Existing DBs already have these
+        # intelligence tables, so the CREATE ... IF NOT EXISTS above only helps
+        # fresh DBs — add the columns idempotently for existing ones.
+        for _pi_table in (
+            "product_intelligence_snapshot",
+            "product_intelligence_review_draft",
+        ):
+            _pi_cursor = await db.execute(f"PRAGMA table_info({_pi_table})")
+            _pi_columns = {row[1] for row in await _pi_cursor.fetchall()}
+            for _pi_new_col in (
+                "hook_angles_json",
+                "cta_angles_json",
+                "pain_points_json",
+            ):
+                if _pi_new_col not in _pi_columns:
+                    await db.execute(
+                        f"ALTER TABLE {_pi_table} ADD COLUMN {_pi_new_col} TEXT NOT NULL DEFAULT '[]'"
+                    )
+                    logger.info(
+                        "Migrated: added %s column to %s", _pi_new_col, _pi_table
+                    )
         await db.commit()
 
         # Google Flow bulk generation orchestrator (V1): persistent runs + items.

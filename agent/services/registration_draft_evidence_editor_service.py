@@ -23,6 +23,7 @@ EDITABLE_EVIDENCE_FIELDS = (
     "target_customer_text",
     "ingredients_text",
     "warnings_text",
+    "pain_points",
     "paste_anything_about_product",
     "price",
     "currency",

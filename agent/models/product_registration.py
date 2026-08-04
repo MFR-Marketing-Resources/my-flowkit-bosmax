@@ -188,6 +188,8 @@ class RegistrationReviewDraftEvidencePatchRequest(BaseModel):
     image_base64: str | None = None
     image_filename: str | None = None
 
+    pain_points: str | None = None
+
     hook_angles: list[str] | None = None
     cta_angles: list[str] | None = None
     recompute: bool = True

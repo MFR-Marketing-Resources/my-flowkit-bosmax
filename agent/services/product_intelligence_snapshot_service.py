@@ -70,6 +70,24 @@ def _row_to_snapshot(row: dict[str, Any]) -> ProductIntelligenceSnapshot:
         expected_type=list,
         field_name="usp_json",
     )
+    payload["hook_angles_json"] = _parse_json_field(
+        payload.get("hook_angles_json"),
+        default=[],
+        expected_type=list,
+        field_name="hook_angles_json",
+    )
+    payload["cta_angles_json"] = _parse_json_field(
+        payload.get("cta_angles_json"),
+        default=[],
+        expected_type=list,
+        field_name="cta_angles_json",
+    )
+    payload["pain_points_json"] = _parse_json_field(
+        payload.get("pain_points_json"),
+        default=[],
+        expected_type=list,
+        field_name="pain_points_json",
+    )
     payload["source_urls_json"] = _parse_json_field(
         payload.get("source_urls_json"),
         default={},
@@ -127,6 +145,9 @@ async def create_snapshot(
     product_description: str | None = None,
     benefits_json: list[str] | None = None,
     usp_json: list[str] | None = None,
+    hook_angles_json: list[str] | None = None,
+    cta_angles_json: list[str] | None = None,
+    pain_points_json: list[str] | None = None,
     usage_text: str | None = None,
     ingredients_text: str | None = None,
     warnings_text: str | None = None,
@@ -162,6 +183,9 @@ async def create_snapshot(
         product_description=product_description,
         benefits_json=json.dumps(benefits_json or []),
         usp_json=json.dumps(usp_json or []),
+        hook_angles_json=json.dumps(hook_angles_json or []),
+        cta_angles_json=json.dumps(cta_angles_json or []),
+        pain_points_json=json.dumps(pain_points_json or []),
         usage_text=usage_text,
         ingredients_text=ingredients_text,
         warnings_text=warnings_text,
