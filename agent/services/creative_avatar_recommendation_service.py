@@ -324,8 +324,15 @@ async def audit_product_cluster_coverage() -> dict[str, Any]:
     receive an unsuitable avatar plan.
     """
     from agent.db import crud
+    from agent.services.reporting_service import is_non_product_row
 
-    products = await crud.list_products(limit=5000)
+    # Quarantine test fixtures + merged-alias duplicates (non-products), exactly as
+    # the reporting coverage/exception authorities do — otherwise archived smoke
+    # fixtures (blank category) inflate UNKNOWN_REVIEW_REQUIRED and the Executive
+    # "Uncategorised" KPI reads non-zero when the real catalogue is fully clustered.
+    products = [
+        p for p in await crud.list_products(limit=5000) if not is_non_product_row(p)
+    ]
     cluster_counts: dict[str, int] = {cluster: 0 for cluster in canonical_clusters()}
     unknown_samples: list[dict[str, str]] = []
     raw_categories: dict[str, int] = {}

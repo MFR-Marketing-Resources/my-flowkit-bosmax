@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from agent.db.schema import get_db
+from agent.services.product_intelligence import is_test_product
 from agent.services.product_intelligence_stage_service import (
     INTELLIGENCE_STAGES,
     evaluate_intelligence_stage,
@@ -133,6 +134,22 @@ _TEST_FIXTURE_PREDICATE = (
 # lifecycle_provenance (unarchive + clear the marker).
 _MERGED_ALIAS_PREDICATE = "UPPER(COALESCE(p.archived_reason,'')) LIKE 'DUPLICATE_MERGED_TO_CANONICAL%'"
 
+
+def is_non_product_row(product: dict) -> bool:
+    """Python mirror of ``_TEST_FIXTURE_PREDICATE`` + ``_MERGED_ALIAS_PREDICATE``.
+
+    For list-based audits that iterate product dicts instead of running SQL (e.g.
+    the creative cluster-coverage audit) — a test fixture or a merged-alias
+    duplicate is NOT an independent real product and must be quarantined out of
+    coverage/debt counts, exactly as the two SQL predicates do. KEEP IN SYNC with
+    both predicates above; ``is_test_product`` is the shared fixture authority.
+    """
+    if is_test_product(product):
+        return True
+    return str(product.get("archived_reason") or "").upper().startswith(
+        "DUPLICATE_MERGED_TO_CANONICAL"
+    )
+
 # Sortable columns for the drill-down. An allowlist, so a user-supplied value can never
 # reach SQL as an identifier. Every sort gets `p.id` appended as a tie-breaker, otherwise
 # rows with equal sort keys can repeat or vanish across pages.
@@ -182,11 +199,15 @@ def _product_filters(
     lifecycle_status: Optional[str],
     cluster: Optional[str],
     product_type_group: Optional[str],
+    *,
+    real_only: bool = False,
 ) -> tuple[str, list]:
     """Return an ' AND ...'-prefixed SQL fragment + params for the seam filters.
 
     lifecycle_status defaults to ACTIVE (management KPIs care about live products);
-    pass 'ALL' to include archived.
+    pass 'ALL' to include archived. real_only=True also excludes test fixtures +
+    merged-alias duplicates (non-products) so a coverage denominator counts only
+    real catalogue — matching the pi-quality / exceptions authorities.
     """
     frags: list[str] = []
     params: list = []
@@ -200,6 +221,9 @@ def _product_filters(
     if product_type_group:
         frags.append("t.product_type_group = ?")
         params.append(product_type_group)
+    if real_only:
+        frags.append(f"NOT {_TEST_FIXTURE_PREDICATE}")
+        frags.append(f"NOT {_MERGED_ALIAS_PREDICATE}")
     where = "" if not frags else " AND " + " AND ".join(frags)
     return where, params
 
@@ -230,7 +254,7 @@ async def copywriting_coverage(
     catalog-coverage endpoint (P4-support / P6-launch readiness, not authored copy).
     """
     db = await get_db()
-    where, params = _product_filters(lifecycle_status, cluster, product_type_group)
+    where, params = _product_filters(lifecycle_status, cluster, product_type_group, real_only=True)
     total = await _scalar(db, f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE 1=1{where}", params)
     with_copy = await _scalar(
         db,
@@ -364,7 +388,7 @@ async def product_intelligence_coverage(
 ) -> dict:
     """Product-intelligence snapshot coverage: in-scope products with >=1 snapshot."""
     db = await get_db()
-    where, params = _product_filters(lifecycle_status, cluster, product_type_group)
+    where, params = _product_filters(lifecycle_status, cluster, product_type_group, real_only=True)
     total = await _scalar(db, f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE 1=1{where}", params)
     with_snapshot = await _scalar(
         db,
@@ -445,7 +469,7 @@ async def prompt_readiness_histogram(
     """Prompt-readiness histogram. NULL is surfaced honestly as 'not_evaluated'
     (most products are not yet evaluated), never hidden."""
     db = await get_db()
-    where, params = _product_filters(lifecycle_status, cluster, product_type_group)
+    where, params = _product_filters(lifecycle_status, cluster, product_type_group, real_only=True)
     cur = await db.execute(
         "SELECT COALESCE(p.prompt_readiness_status, 'not_evaluated') AS status, COUNT(*) AS n "
         f"{_PRODUCT_BASE} WHERE 1=1{where} GROUP BY p.prompt_readiness_status",

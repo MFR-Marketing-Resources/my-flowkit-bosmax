@@ -313,6 +313,66 @@ async def test_exceptions_active_and_all_each_reconcile_independently():
         assert "F1" not in {i["product_id"] for i in res["items"]}, lifecycle
 
 
+async def _seed_fixture_and_alias():
+    """P1/P2/P3 real + F1 harness fixture + M1 merged-alias duplicate.
+
+    M1 carries a REAL-looking title (so only the archived_reason marker, not the
+    fixture title heuristic, excludes it) — it exercises the merged-alias arm.
+    """
+    await _seed_fixture_and_bulk()  # adds F1
+    db = await get_db()
+    await db.execute(
+        "INSERT INTO product (id, raw_product_title, product_display_name, product_short_name,"
+        " lifecycle_status, archived_reason, mapping_status, prompt_readiness_status, asset_status,"
+        " created_at, updated_at)"
+        " VALUES ('M1','Minyak Warisan Dup','Minyak Warisan Dup','Minyak Warisan Dup',"
+        "'ARCHIVED','DUPLICATE_MERGED_TO_CANONICAL:P1','READY','READY','DOWNLOADED',"
+        "'2026-01-01T00:00:00Z','2026-01-01T00:00:10Z')")
+    await db.commit()
+
+
+async def test_coverage_denominator_excludes_fixtures_and_merged_aliases():
+    """Fix B: a coverage denominator counts only real catalogue — test fixtures
+    (F1) and merged-alias duplicates (M1) are quarantined, exactly as the
+    pi-quality / exceptions authorities do. Otherwise total_products at
+    lifecycle=ALL overstates the real catalogue and every % reads low."""
+    await _seed_fixture_and_alias()
+
+    cov = await svc.copywriting_coverage("ALL")
+    assert cov["total_products"] == 3          # P1, P2, P3 — NOT F1, NOT M1
+
+    pic = await svc.product_intelligence_coverage("ALL")
+    assert pic["total_products"] == 3
+
+    prh = await svc.prompt_readiness_histogram("ALL")
+    # F1 is MISSING_FIELDS and M1 is READY — neither may leak into the histogram.
+    assert prh["READY"] == 1                    # P1 only
+    assert prh["MISSING_FIELDS"] == 1           # P2 only
+    assert prh["not_evaluated"] == 1            # P3 (null) only
+
+
+async def test_coverage_active_default_is_unchanged_by_the_quarantine():
+    """The real-only quarantine must not perturb the ACTIVE-default headline that
+    operators see (F1 and M1 are both ARCHIVED, already outside ACTIVE)."""
+    await _seed_fixture_and_alias()
+    active = await svc.copywriting_coverage("ACTIVE")
+    assert active["total_products"] == 2        # P1, P2
+    assert active["coverage_pct"] == 50.0
+
+
+def test_is_non_product_row_matches_fixtures_and_aliases():
+    """Python mirror stays in lockstep with the two SQL predicates."""
+    assert svc.is_non_product_row({"raw_product_title": "PR223 Smoke Approve 20260706"})
+    assert svc.is_non_product_row({"id": "test_abc123"})
+    assert svc.is_non_product_row({"archived_reason": "DUPLICATE_MERGED_TO_CANONICAL:P1"})
+    # marker is case-insensitive (SQL uses UPPER(...))
+    assert svc.is_non_product_row({"archived_reason": "duplicate_merged_to_canonical:xyz"})
+    # a genuine product with a real title / a non-duplicate archive reason is kept
+    assert not svc.is_non_product_row({"raw_product_title": "Minyak Warisan Cap Burung"})
+    assert not svc.is_non_product_row({"archived_reason": "DISCONTINUED"})
+    assert not svc.is_non_product_row({})
+
+
 # ── scene-strategy contract observability ────────────────────────────────────
 from agent.services import scene_contract_service as scs  # noqa: E402
 
