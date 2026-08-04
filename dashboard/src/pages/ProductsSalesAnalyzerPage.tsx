@@ -39,6 +39,16 @@ import {
 type ManualFormState = Partial<Product> & {
 	image_base64?: string | null;
 	image_filename?: string | null;
+	// Evidence / product-knowledge intake — parity with FastMoss/Kalodata. All
+	// optional; a manually-registered product can now carry the same knowledge.
+	product_knowledge_text?: string;
+	benefits_text?: string;
+	usage_text?: string;
+	target_customer_text?: string;
+	ingredients_text?: string;
+	warnings_text?: string;
+	size_or_volume?: string;
+	package_notes?: string;
 };
 
 type TikTokFormState = {
@@ -188,6 +198,14 @@ function emptyManualForm(): ManualFormState {
 		section_5_product_physics_prompt: "",
 		image_base64: null,
 		image_filename: null,
+		product_knowledge_text: "",
+		benefits_text: "",
+		usage_text: "",
+		target_customer_text: "",
+		ingredients_text: "",
+		warnings_text: "",
+		size_or_volume: "",
+		package_notes: "",
 	};
 }
 
@@ -4675,6 +4693,57 @@ export default function ProductsSalesAnalyzerPage() {
 													</span>
 												</div>
 											)}
+										</div>
+									</div>
+									<div className="pt-3 mt-1 border-t border-slate-700">
+										<p className="text-[11px] font-semibold text-slate-300 mb-2">
+											Product Knowledge{" "}
+											<span className="font-normal text-slate-500">
+												(optional — same fields as FastMoss/Kalodata;
+												leave blank if unknown, never invent)
+											</span>
+										</p>
+										<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+											{(
+												[
+													["product_knowledge_text", "Product Description / Knowledge"],
+													["benefits_text", "Benefits / USP"],
+													["usage_text", "Usage / Cara Guna"],
+													["target_customer_text", "Target Customer"],
+													["ingredients_text", "Ingredients / Materials"],
+													["warnings_text", "Warnings / Pantang"],
+													["size_or_volume", "Size / Volume"],
+													["package_notes", "Package Notes"],
+												] as const
+											).map(([key, labelText]) => (
+												<div
+													key={key}
+													className={
+														key === "product_knowledge_text"
+															? "sm:col-span-2"
+															: ""
+													}
+												>
+													<label
+														htmlFor={`manual-${key}`}
+														className="block text-[11px] mb-1 text-slate-400"
+													>
+														{labelText}
+													</label>
+													<textarea
+														id={`manual-${key}`}
+														rows={2}
+														className="w-full bg-slate-900 border border-slate-700 text-xs p-2 rounded text-slate-200"
+														value={(manualForm[key] as string) || ""}
+														onChange={(e) =>
+															setManualForm((f) => ({
+																...f,
+																[key]: e.target.value,
+															}))
+														}
+													/>
+												</div>
+											))}
 										</div>
 									</div>
 									<div className="pt-2 flex justify-end">

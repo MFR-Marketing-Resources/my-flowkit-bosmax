@@ -2908,6 +2908,17 @@ async def get_bulk_queue_row(reference_id: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
+async def get_bulk_queue_row_by_draft_id(draft_id: str) -> Optional[dict]:
+    """The queue row linked to a registration review draft (queue.draft_id), so an
+    operator's draft edit can re-sync its list status without a HUB rebuild."""
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM fastmoss_bulk_draft_status WHERE draft_id=? LIMIT 1", [draft_id]
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
 async def update_bulk_queue_row(reference_id: str, **kw) -> Optional[dict]:
     return await _update("fastmoss_bulk_draft_status", "reference_id", reference_id, **kw)
 

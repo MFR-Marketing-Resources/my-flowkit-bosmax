@@ -154,9 +154,27 @@ class ManualProductRequest(BaseModel):
     commission_rate: str | None = None
     image_url: str | None = None
     source_url: str | None = None
+    product_url: str | None = None
     tiktok_product_url: str | None = None
+    tiktok_shop_url: str | None = None
     image_base64: str | None = None
     image_filename: str | None = None
+    # Evidence / product-knowledge intake — so a MANUALLY registered product can
+    # carry the SAME fields as a FastMoss/Kalodata product. These flow, unchanged,
+    # through create_manual_product's data.model_dump() -> _ensure_intake_intelligence
+    # -> evidence_from_product_payload -> PROMOTION_MAP, exactly as the FastMoss lane.
+    # The five source/URL fields above stay optional (nothing requires them); the only
+    # real difference between manual and FastMoss intake is that those URLs are blank.
+    product_knowledge_text: str | None = None
+    benefits_text: str | None = None
+    usage_text: str | None = None
+    target_customer_text: str | None = None
+    ingredients_text: str | None = None
+    warnings_text: str | None = None
+    materials_text: str | None = None
+    size_or_volume: str | None = None
+    package_notes: str | None = None
+    paste_anything_about_product: str | None = None
 
 
 class ProductPatchRequest(BaseModel):
