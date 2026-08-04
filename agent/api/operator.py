@@ -232,10 +232,11 @@ def _row_mapping(headers: list[str], values: list[Any]) -> dict[str, Any]:
 def _parse_commission_amount(price_value: Any, commission_rate: str | None) -> float | None:
     if price_value in {None, ""} or not commission_rate:
         return None
-    try:
-        rate = float(str(commission_rate).replace('%', '').strip()) / 100.0
-    except ValueError:
+    from agent.services.product_intelligence import normalize_commission_rate
+    frac = normalize_commission_rate(commission_rate)
+    if frac is None:
         return None
+    rate = float(frac)
     price_text = str(price_value).replace('RM', '').strip()
     if '-' in price_text:
         price_text = price_text.split('-', 1)[0].strip()

@@ -49,7 +49,8 @@ EXPECTED_COHORT_SIZE = 530
 STATUS_METADATA_COLS = frozenset({"status", "updated_at"})
 KNOWN_SNAPSHOT_COLS = frozenset({
     "snapshot_id", "product_id", "version", "status", "product_description", "benefits_json",
-    "usp_json", "usage_text", "ingredients_text", "warnings_text", "target_customer_text",
+    "usp_json", "hook_angles_json", "cta_angles_json", "pain_points_json", "subhook_json",
+    "usage_text", "ingredients_text", "warnings_text", "target_customer_text",
     "paste_anything_summary", "source_urls_json", "image_evidence_json", "package_notes",
     "size_or_volume", "product_form_factor", "packaging_description", "product_truth_lock",
     "claim_gate", "claim_risk_level", "claim_tokens_json", "allowed_claims_json",
