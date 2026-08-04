@@ -216,6 +216,35 @@ async def test_audit_counts_blank_and_unknown_as_review_required():
     assert None not in audit["cluster_counts"]  # never a None-keyed cluster
 
 
+@pytest.mark.asyncio
+async def test_audit_excludes_smoke_fixtures_from_review_required():
+    """Fix A: an archived smoke-test fixture (blank category) is NOT a real product
+    and must never inflate unknown_review_required — that is what made the Executive
+    'Uncategorised' KPI read non-zero while the real catalogue was fully clustered."""
+    before = await svc.audit_product_cluster_coverage()
+
+    # a harness fixture row (smoke title) with a blank category
+    await crud.create_product(
+        source="MANUAL", raw_product_title="PR223 Smoke Approve 20260706",
+        product_display_name="PR223 Smoke Approve", product_short_name="PR223 Smoke Approve",
+        category="",
+    )
+    after_fixture = await svc.audit_product_cluster_coverage()
+    # the fixture is quarantined: neither the total nor the review counter moves
+    assert after_fixture["unknown_review_required"] == before["unknown_review_required"]
+    assert after_fixture["product_total"] == before["product_total"]
+
+    # contrast: a GENUINE blank-category product still increments (counter alive)
+    await crud.create_product(
+        source="MANUAL", raw_product_title="Genuine Mystery Item",
+        product_display_name="Genuine Mystery Item", product_short_name="Genuine",
+        category="",
+    )
+    after_real = await svc.audit_product_cluster_coverage()
+    assert after_real["unknown_review_required"] == before["unknown_review_required"] + 1
+    assert after_real["product_total"] == before["product_total"] + 1
+
+
 def test_invariant_generation_services_do_not_reference_creative_recommendation():
     from pathlib import Path
 
