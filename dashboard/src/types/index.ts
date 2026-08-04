@@ -2654,6 +2654,7 @@ export interface RegistrationReviewDraftEvidencePatchRequest {
 	image_filename?: string;
 	pain_points?: string;
 	usp_text?: string;
+	subhook?: string;
 	hook_angles?: string[];
 	cta_angles?: string[];
 	recompute?: boolean;

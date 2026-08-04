@@ -190,6 +190,7 @@ class RegistrationReviewDraftEvidencePatchRequest(BaseModel):
 
     pain_points: str | None = None
     usp_text: str | None = None
+    subhook: str | None = None
 
     hook_angles: list[str] | None = None
     cta_angles: list[str] | None = None

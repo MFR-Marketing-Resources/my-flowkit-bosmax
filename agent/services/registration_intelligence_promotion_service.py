@@ -62,6 +62,7 @@ PROMOTION_MAP: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("hook_angles_json", ("hook_angles",)),
     ("cta_angles_json", ("cta_angles",)),
     ("pain_points_json", ("pain_points",)),
+    ("subhook_json", ("subhook",)),
 )
 
 # Columns that hold a list rather than free text.
@@ -71,6 +72,7 @@ _LIST_TARGETS = {
     "hook_angles_json",
     "cta_angles_json",
     "pain_points_json",
+    "subhook_json",
 }
 
 _SOURCE_URL_KEYS = ("source_url", "product_url", "tiktok_product_url",
