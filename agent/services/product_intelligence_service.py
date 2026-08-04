@@ -779,8 +779,13 @@ def evaluate_product_claims(
             )
             if not white_claim:
                 continue
-        elif token in {"anjal", "ketat", "rapat"}:
-            if context["fashion"] and not context["fashion_fit_claim"]:
+        elif token in {"anjal", "ketat", "rapat", "ketegangan"}:
+            # Generic tightness / tension / elasticity words only carry a
+            # sensitive-health meaning inside a health, beauty, or intimate
+            # context.  A tight braided fishing line, a snug seal, a taut
+            # rope, or a fitted (non-intimate) garment uses these words
+            # literally and must not be gated into sensitive claim review.
+            if not context["health_or_beauty"] and not context["fashion_fit_claim"]:
                 continue
         elif token == "growth":
             if context["plant_or_pest"] and not context["health_or_beauty"]:
@@ -1456,20 +1461,27 @@ def _resolve_family_from_title(product: dict[str, Any]) -> tuple[str | None, str
             "jamu wanita",
         ],
     ) or (
+        # "ketat"/"rapat" (tight/close) are generic physical descriptors — a
+        # tight fishing line, a tight seal, a snug fit.  They only resolve to
+        # intimate female health when corroborated by an actual feminine /
+        # intimate cue, never on their own.
         _contains_any(haystack, ["ketat", "rapat"])
-        and not _contains_any(
+        and _contains_any(
             haystack,
             [
-                "seluar",
-                "pants",
-                "leggings",
-                "baju",
-                "dress",
-                "skirt",
-                "clothing",
-                "apparel",
-                "garment",
-                "sportswear",
+                "intim",
+                "faraj",
+                "vagina",
+                "miss v",
+                "kewanitaan",
+                "keputihan",
+                "kegel",
+                "postpartum",
+                "selepas bersalin",
+                "bersalin",
+                "merapat",
+                "kesegaran wanita",
+                "feminine",
             ],
         )
     ):
