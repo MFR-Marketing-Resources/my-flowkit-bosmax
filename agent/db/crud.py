@@ -2960,6 +2960,8 @@ async def list_bulk_queue(
     image_readiness: str | None = None,
     recompute_state: str | None = None,
     category: str | None = None,
+    cluster: str | None = None,
+    product_type_group: str | None = None,
     q: str | None = None,
     page: int = 1,
     page_size: int | None = 50,
@@ -2982,6 +2984,12 @@ async def list_bulk_queue(
         query += " AND recompute_state=?"; params.append(recompute_state)
     if category:
         query += " AND category=?"; params.append(category)
+    if cluster == "__UNCLASSIFIED__":
+        query += " AND (cluster IS NULL OR cluster='')"
+    elif cluster:
+        query += " AND cluster=?"; params.append(cluster)
+    if product_type_group:
+        query += " AND product_type_group=?"; params.append(product_type_group)
     if q:
         query += " AND raw_product_title LIKE ?"; params.append(f"%{q}%")
     query += " ORDER BY created_at DESC"
@@ -3036,6 +3044,8 @@ async def count_bulk_queue(
     image_readiness: str | None = None,
     recompute_state: str | None = None,
     category: str | None = None,
+    cluster: str | None = None,
+    product_type_group: str | None = None,
     q: str | None = None,
 ) -> int:
     db = await get_db()
@@ -3050,6 +3060,12 @@ async def count_bulk_queue(
         query += " AND recompute_state=?"; params.append(recompute_state)
     if category:
         query += " AND category=?"; params.append(category)
+    if cluster == "__UNCLASSIFIED__":
+        query += " AND (cluster IS NULL OR cluster='')"
+    elif cluster:
+        query += " AND cluster=?"; params.append(cluster)
+    if product_type_group:
+        query += " AND product_type_group=?"; params.append(product_type_group)
     if q:
         query += " AND raw_product_title LIKE ?"; params.append(f"%{q}%")
     cur = await db.execute(query, params)
