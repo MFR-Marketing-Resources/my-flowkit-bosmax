@@ -2220,7 +2220,7 @@ export default function RegistrationReviewDraftPanel({
 								className="font-semibold text-amber-300"
 							>
 								Unsaved evidence changes are protected while you review
-								candidates. Use Save Draft Only or Analyze &amp; Repair Draft to
+								candidates. Use Save &amp; Check to
 								persist them.
 							</div>
 						) : null}
