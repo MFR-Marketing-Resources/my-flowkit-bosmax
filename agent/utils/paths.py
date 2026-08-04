@@ -52,3 +52,19 @@ def product_image_path(product_id: str, ext: str = "jpg") -> Path:
     p = BASE_DIR / "data" / "products" / "images" / f"{product_id}.{ext}"
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def registration_media_dir() -> Path:
+    """Root dir for operator-uploaded Smart Registration source media (additive to
+    the primary product image lane)."""
+    from agent.config import BASE_DIR
+    return BASE_DIR / "data" / "product_registration" / "intake_media"
+
+
+def registration_media_path(draft_id: str, media_id: str, ext: str) -> Path:
+    """Local path for one operator-uploaded registration source media file, grouped
+    per draft. draft_id is sanitized defensively (path-traversal guard)."""
+    safe_draft = "".join(c for c in str(draft_id) if c.isalnum() or c in "-_")[:80] or "unknown"
+    p = registration_media_dir() / safe_draft / f"{media_id}.{ext}"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p

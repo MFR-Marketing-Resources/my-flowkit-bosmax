@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { patchAPI, postAPI } from "../../api/client";
+import DraftMediaSection from "./DraftMediaSection";
 import {
 	fetchProductStrategyTypeRegistry,
 	registerProductStrategyType,
@@ -2235,6 +2236,11 @@ export default function RegistrationReviewDraftPanel({
 								</div>
 							</div>
 						</div>
+
+						<DraftMediaSection
+							draftId={draft.review_draft_id}
+							disabled={draft.review_status === "COMMITTED"}
+						/>
 
 						<div className="grid grid-cols-1 gap-4 md:grid-cols-3">
 							<EvidenceTextarea

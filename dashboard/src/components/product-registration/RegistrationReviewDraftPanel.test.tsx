@@ -17,6 +17,10 @@ vi.mock("../../api/client", () => ({
 	fetchAPI: vi.fn(),
 	patchAPI: vi.fn(),
 	postAPI: vi.fn(),
+	// DraftMediaSection loads its listing on mount; give it an empty one.
+	getAPI: vi.fn().mockResolvedValue({ images: [], videos: [], limits: {} }),
+	deleteAPI: vi.fn().mockResolvedValue(undefined),
+	postMultipartAPI: vi.fn(),
 }));
 
 const reviewDraft: RegistrationReviewDraft = {

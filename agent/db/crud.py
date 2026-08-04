@@ -11,7 +11,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_component", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "content_combination", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "creative_product_selection", "product_strategy_taxonomy", "poster_copy_set", "poster_deliverable", "extend_lineage"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_component", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "content_combination", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "creative_product_selection", "product_strategy_taxonomy", "poster_copy_set", "poster_deliverable", "extend_lineage", "product_source_media"})
 
 
 def _validate_table(table: str) -> None:
@@ -20,6 +20,7 @@ def _validate_table(table: str) -> None:
 
 # Column whitelists per table — prevents SQL injection via kwargs keys
 _COLUMNS = {
+    "product_source_media": {"draft_id", "product_id", "kind", "ordinal", "local_path", "remote_url", "filename", "mime", "bytes", "width", "height", "duration_sec", "status", "updated_at"},
     "character": {"name", "slug", "entity_type", "description", "image_prompt", "voice_description", "reference_image_url", "media_id", "updated_at"},
     "project": {"name", "description", "story", "thumbnail_url", "language", "status", "user_paygate_tier", "narrator_voice", "narrator_ref_audio", "material", "allow_music", "allow_voice", "updated_at"},
     "video": {"title", "description", "display_order", "status", "orientation", "vertical_url", "horizontal_url",
@@ -2917,6 +2918,87 @@ async def get_bulk_queue_row_by_draft_id(draft_id: str) -> Optional[dict]:
     )
     row = await cur.fetchone()
     return dict(row) if row else None
+
+
+# --- Operator-uploaded source media (Smart Registration; additive to primary image) ---
+async def create_product_source_media(draft_id: str, kind: str, *, media_id: Optional[str] = None, **kw) -> dict:
+    """Insert one operator-uploaded source media row (image|video) for a draft.
+    Columns are gated by the _COLUMNS allowlist; media_id (caller may supply one so
+    the on-disk filename matches) and created_at are minted here if absent."""
+    db = await get_db()
+    media_id, now = (media_id or _uuid()), _now()
+    cols = ["media_id", "draft_id", "kind", "created_at", "updated_at"]
+    vals = [media_id, draft_id, kind, now, now]
+    allowed = _COLUMNS["product_source_media"]
+    for k, v in kw.items():
+        if k in allowed and k not in cols:
+            cols.append(k)
+            vals.append(v)
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO product_source_media ({','.join(cols)}) VALUES ({','.join(['?'] * len(cols))})",
+            vals,
+        )
+        await db.commit()
+    return await _get_with_db(db, "product_source_media", "media_id", media_id)
+
+
+async def get_product_source_media(media_id: str) -> Optional[dict]:
+    db = await get_db()
+    cur = await db.execute("SELECT * FROM product_source_media WHERE media_id=?", [media_id])
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def list_product_source_media(
+    *, draft_id: Optional[str] = None, product_id: Optional[str] = None
+) -> list[dict]:
+    """Media for a draft (pre-commit) or a product (post-commit), ordered kind then ordinal."""
+    db = await get_db()
+    if draft_id is not None:
+        key, val = "draft_id", draft_id
+    elif product_id is not None:
+        key, val = "product_id", product_id
+    else:
+        return []
+    cur = await db.execute(
+        f"SELECT * FROM product_source_media WHERE {key}=? ORDER BY kind, ordinal, created_at",
+        [val],
+    )
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def count_product_source_media_by_draft(draft_id: str) -> dict:
+    """{'image': n, 'video': m} for a draft — feeds the queue Image/Video unit columns."""
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT kind, COUNT(*) AS c FROM product_source_media WHERE draft_id=? GROUP BY kind",
+        [draft_id],
+    )
+    out = {"image": 0, "video": 0}
+    for r in await cur.fetchall():
+        out[r["kind"]] = r["c"]
+    return out
+
+
+async def delete_product_source_media(media_id: str) -> bool:
+    db = await get_db()
+    async with _db_lock:
+        cur = await db.execute("DELETE FROM product_source_media WHERE media_id=?", [media_id])
+        await db.commit()
+    return cur.rowcount > 0
+
+
+async def link_draft_media_to_product(draft_id: str, product_id: str) -> int:
+    """Back-fill product_id onto a draft's media rows at commit (updated in place)."""
+    db = await get_db()
+    async with _db_lock:
+        cur = await db.execute(
+            "UPDATE product_source_media SET product_id=?, updated_at=? WHERE draft_id=?",
+            [product_id, _now(), draft_id],
+        )
+        await db.commit()
+    return cur.rowcount
 
 
 async def update_bulk_queue_row(reference_id: str, **kw) -> Optional[dict]:

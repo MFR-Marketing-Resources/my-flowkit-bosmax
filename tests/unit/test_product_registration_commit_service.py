@@ -34,6 +34,7 @@ def mock_crud():
         mock.create_product = AsyncMock(return_value={"id": "prod-123"})
         mock.list_products = AsyncMock(return_value=[])
         mock.update_product = AsyncMock(return_value={"id": "prod-123"})
+        mock.link_draft_media_to_product = AsyncMock(return_value=0)
         yield mock
 
 @pytest.mark.asyncio
