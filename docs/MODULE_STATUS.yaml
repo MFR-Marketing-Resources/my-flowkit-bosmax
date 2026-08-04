@@ -196,6 +196,10 @@ domains:
 
       # Creative Intelligence Round 1 — avatar recommendation (read-only, non-generative)
       - agent/authority/creative_category_cluster_map.json
+      # B+ SSOT cluster grouping: strategy(40) -> creative(12) crosswalk + resolve-on-read accessor (zero AI)
+      - agent/authority/creative_cluster_crosswalk.json
+      - agent/services/product_cluster_grouping.py
+      - tests/unit/test_creative_cluster_crosswalk.py
       - agent/authority/creative_avatar_cluster_crosswalk.json
       - agent/services/creative_avatar_recommendation_service.py
       - agent/services/avatar_fit_service.py
