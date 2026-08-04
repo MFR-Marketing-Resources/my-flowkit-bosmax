@@ -121,9 +121,29 @@ def parse_percentage(value: str | None) -> Decimal | None:
         return None
     return percentage / Decimal("100")
 
+def normalize_commission_rate(value: str | None) -> Decimal | None:
+    """Commission rate as a Decimal FRACTION, tolerant of both stored forms:
+    a percent string ('5%', or a bare '5') AND an already-decimal fraction
+    ('0.05'). A '%' or a bare value >= 1 is a percent; a bare value < 1 is already
+    a fraction. Fixes Kalodata rates stored as '0.05' being divided by 100 again
+    (which made commission amounts ~100x too small)."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text == "-":
+        return None
+    had_pct = "%" in text
+    try:
+        num = Decimal(text.replace("%", "").strip())
+    except (InvalidOperation, ValueError):
+        return None
+    if had_pct or num >= 1:
+        return num / Decimal("100")
+    return num
+
 def derive_commission_amount(price: Any, commission_rate: str | None) -> float | None:
     normalized_price = _parse_decimal(price)
-    rate = parse_percentage(commission_rate)
+    rate = normalize_commission_rate(commission_rate)
     if normalized_price is None or rate is None:
         return None
     commission_amount = normalized_price * rate

@@ -525,6 +525,7 @@ domains:
       - agent/models/product_intelligence_snapshot.py
       - agent/models/product_intelligence_review_draft.py
       - agent/services/product_intelligence.py
+      - tests/unit/test_commission_rate_normalization.py
       - agent/services/product_intelligence_claim_safety_service.py
       - agent/services/product_intelligence_service.py
       - agent/services/product_intelligence_snapshot_service.py
