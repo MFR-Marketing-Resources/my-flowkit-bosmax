@@ -3055,7 +3055,17 @@ async def list_bulk_queue(
     candidate set so it can filter before applying the API page window.
     """
     db = await get_db()
-    query, params = "SELECT * FROM fastmoss_bulk_draft_status WHERE 1=1", []
+    # Live per-draft media counts (operator uploads) — derived, so computed here
+    # rather than denormalized; product_source_media is indexed on draft_id.
+    query = (
+        "SELECT *, "
+        "(SELECT COUNT(*) FROM product_source_media m "
+        "WHERE m.draft_id = fastmoss_bulk_draft_status.draft_id AND m.kind='image') AS user_image_count, "
+        "(SELECT COUNT(*) FROM product_source_media m "
+        "WHERE m.draft_id = fastmoss_bulk_draft_status.draft_id AND m.kind='video') AS user_video_count "
+        "FROM fastmoss_bulk_draft_status WHERE 1=1"
+    )
+    params: list = []
     if promotion_status:
         query += " AND promotion_status=?"; params.append(promotion_status)
     if claim_risk_level:

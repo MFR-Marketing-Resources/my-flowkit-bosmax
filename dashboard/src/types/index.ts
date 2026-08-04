@@ -2875,6 +2875,8 @@ export interface FastmossBulkQueueRow {
 	commission_rate?: string | null;
 	sell_price?: number | null;
 	commission_amount?: number | null;
+	user_image_count?: number | null;
+	user_video_count?: number | null;
 	promotion_status: BulkPromotionStatus;
 	draft_id?: string | null;
 	committed_product_id?: string | null;
