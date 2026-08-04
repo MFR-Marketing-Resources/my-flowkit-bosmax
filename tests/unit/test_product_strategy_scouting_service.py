@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from agent.services.product_cluster_grouping import crosswalk_domain
 from agent.services.product_strategy_scouting_service import (
     SCOUTING_CLUSTER_ORDER,
+    _TIKTOK_CATEGORY_FALLBACK,
+    _TIKTOK_CATEGORY_FALLBACK_RAW,
+    _normalize,
     build_product_strategy_scouting_report,
     classify_product_strategy_tag,
     product_strategy_type_registry_seed_entries,
@@ -448,3 +452,110 @@ def test_traditional_wellness_rules_do_not_auto_classify_products() -> None:
 
     assert tag["cluster"] == "generic_unclassified"
     assert tag["product_type_group"] == "unknown_product_type"
+
+
+# --- Category-aware last-resort layer (TikTok category coverage) -------------
+# These products carry a real TikTok category but a TITLE with no proven-rule
+# keyword, so before this layer they fell through to generic_unclassified.
+
+def _bare(category: str, title: str = "Assorted Item ZZ") -> dict[str, object]:
+    """A product whose title/type carry NO proven-rule keyword, so only the
+    category-aware last-resort layer can classify it."""
+    return _product(
+        f"cat-{abs(hash((category, title))) % 100000}",
+        title,
+        category=category,
+        product_type="Misc",
+    )
+
+
+def test_category_fallback_maps_known_categories_to_real_clusters() -> None:
+    # the unambiguous mappings — a neutral title falls to the coarse category map
+    expected = {
+        "Pet Supplies": "pet_care",
+        "Baby & Maternity": "baby_care",
+        "Textiles & Soft Furnishings": "home_textiles",
+        "Books, Magazines & Audio": "books_media",
+        "Home Improvement": "home_improvement",
+        "Tools & Hardware": "home_improvement",
+        # "Home Supplies" is intentionally omitted: a fully-neutral title is
+        # intercepted by the proven household default before the category layer;
+        # its real titles (wall hooks) DO reach the layer (see the 57-draft run).
+        "Automotive & Motorcycle": "automotive_accessory",
+        "Sports & Outdoor": "outdoor_equipment",
+        "Luggage & Bags": "fashion_accessory",
+        "Computers & Office Equipment": "stationery",
+        "Collectibles": "stationery",
+    }
+    for category, cluster in expected.items():
+        tag = classify_product_strategy_tag(_bare(category))
+        assert tag["cluster"] == cluster, (category, tag["cluster"])
+        assert tag["product_type_group"] != "unknown_product_type", category
+
+
+def test_every_category_fallback_cluster_is_a_real_strategy_cluster() -> None:
+    """No fallback may invent a cluster outside the 40-cluster domain."""
+    domain = crosswalk_domain()
+    for cluster, product_type_group in _TIKTOK_CATEGORY_FALLBACK.values():
+        assert cluster in domain, cluster
+        assert product_type_group and product_type_group != "unknown_product_type"
+
+
+def test_precise_title_keyword_wins_over_a_noisy_category() -> None:
+    """A wardrobe dehumidifier / a raincoat mis-filed under Automotive must map
+    to what the TITLE says, not to the noisy category."""
+    dehum = classify_product_strategy_tag(
+        _bare("Automotive & Motorcycle", "Dehumidifier Box Almari Pakaian Moisture Absorber")
+    )
+    assert dehum["cluster"] == "home_equipment"
+    assert dehum["product_type_group"] == "dehumidifier"
+
+    rain = classify_product_strategy_tag(
+        _bare("Automotive & Motorcycle", "FOXDRY Raincoat Baju Hujan Waterproof")
+    )
+    assert rain["cluster"] == "fashion_apparel"
+
+    # a genuine car item in the same category still gets the automotive cluster
+    car = classify_product_strategy_tag(_bare("Automotive & Motorcycle", "Universal Car Cover Waterproof"))
+    assert car["cluster"] == "automotive_accessory"
+
+
+def test_supplement_and_fishing_titles_map_by_keyword() -> None:
+    supp = classify_product_strategy_tag(_bare("Health", "Glutathione 6000mg Whitening Kapsul"))
+    assert supp["cluster"] == "traditional_wellness"
+    assert supp["product_type_group"] == "wellness_supplement"
+
+    reel = classify_product_strategy_tag(_bare("Sports & Outdoor", "DAIWA Spinning Reel Pancing"))
+    assert reel["cluster"] == "outdoor_equipment"
+    assert reel["product_type_group"] == "fishing_gear"
+
+
+def test_aromatherapy_oil_is_fragrance_not_flagship_wellness() -> None:
+    """De-pollute the flagship: a scent oil filed under Health must map to
+    fragrance, never traditional_wellness (adversarial review)."""
+    tag = classify_product_strategy_tag(_bare("Health", "Aromatherapy Oil Jungle Girl 10 ML"))
+    assert tag["cluster"] == "fragrance"
+
+
+def test_blank_category_without_keyword_stays_generic() -> None:
+    """The layer must NOT over-reach: no category signal + no keyword => honest
+    generic_unclassified (never a guessed cluster)."""
+    tag = classify_product_strategy_tag(_bare("", "Panadol Regular Coated"))
+    assert tag["cluster"] == "generic_unclassified"
+    assert tag["product_type_group"] == "unknown_product_type"
+
+
+def test_proven_rule_is_unchanged_by_the_category_layer() -> None:
+    """A product a proven rule already classifies must be byte-identical — the
+    new layer is only reached AFTER every proven rule has missed."""
+    lip = classify_product_strategy_tag(
+        _product("lip-x", "Velvet Matte Lipstick", category="Automotive & Motorcycle", product_type="Lipstick")
+    )
+    assert lip["cluster"] == "beauty_makeup"          # NOT automotive
+    assert lip["product_type_group"] == "lipstick_lip_tint"
+
+
+def test_raw_and_normalized_category_fallback_maps_never_drift() -> None:
+    assert _TIKTOK_CATEGORY_FALLBACK == {
+        _normalize(raw): value for raw, value in _TIKTOK_CATEGORY_FALLBACK_RAW.items()
+    }

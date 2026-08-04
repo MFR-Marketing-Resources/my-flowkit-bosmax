@@ -597,6 +597,156 @@ _STRATEGY_FALLBACK_TAGS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Category-aware LAST-RESORT layer (BOSMAX category coverage).
+#
+# The proven rules above key off PRODUCT-TYPE keywords + family, never the
+# TikTok `category`. Bulk-imported products whose TITLE uses a term not yet in a
+# rule (fishing "pancing", curtains "langsir", supplements, pet food) therefore
+# fall through to generic_unclassified even though their category maps cleanly to
+# a real cluster. The two structures below add a last-resort layer that runs ONLY
+# after every proven rule has missed, so nothing that already classifies is
+# affected (provably no regression to proven classifications).
+#
+# `product_type_group` reuses the existing free-form vocabulary where one fits;
+# new labels are accurate categorisation FROM THE TITLE, never invented product
+# facts. Every cluster below is a member of the 40 strategy clusters.
+
+# 1) Precise TITLE-keyword rules — these WIN over the coarse category map, so a
+#    mis-categorised item (e.g. a wardrobe "dehumidifier" listed under
+#    Automotive, or a "raincoat" under Automotive) maps to what its TITLE says,
+#    not to its noisy category.
+_CATEGORY_KEYWORD_RULES: tuple[_ScoutingRule, ...] = (
+    # noise corrections first (items commonly mis-filed under a wrong category)
+    _ScoutingRule(
+        "home_equipment", "dehumidifier",
+        terms=("dehumidifier", "moisture absorber", "penyerap lembapan"),
+    ),
+    _ScoutingRule(
+        "fashion_apparel", "outerwear",
+        terms=("raincoat", "rainsuit", "baju hujan", "windbreaker"),
+    ),
+    # fishing gear (dominates Sports & Outdoor)
+    _ScoutingRule(
+        "outdoor_equipment", "fishing_gear",
+        terms=(
+            "pancing", "memancing", "kekili", "baitcasting", "spinning reel",
+            "fishing reel", "fishing line", "fishing rod",
+        ),
+    ),
+    _ScoutingRule(
+        "fashion_apparel", "sportswear",
+        terms=("sports bra", "baju sukan", "jersey"),
+    ),
+    # curtains / blankets (Textiles & Soft Furnishings)
+    _ScoutingRule(
+        "home_textiles", "curtain",
+        terms=("langsir", "curtain", "blackout"),
+    ),
+    _ScoutingRule(
+        "home_textiles", "bedding",
+        terms=("selimut", "blanket", "bedsheet", "cadar", "comforter"),
+    ),
+    # aromatherapy / scent oils are fragrance, NOT wellness — keeps foreign scent
+    # products out of BOSMAX's flagship traditional_wellness cluster.
+    _ScoutingRule(
+        "fragrance", "fragrance",
+        terms=("aromatherapy", "essential oil", "minyak wangi"),
+    ),
+    # wellness supplements (Health). auto_classification_enabled=False so a
+    # THIRD-PARTY nutraceutical folded here for grouping never auto-activates
+    # generation under the flagship cluster (adversarial review, flagship gate).
+    _ScoutingRule(
+        "traditional_wellness", "wellness_supplement",
+        terms=(
+            "supplement", "suplemen", "kapsul", "capsule", "vitamin",
+            "glutathione", "astaxanthin", "gummies", "collagen", "kolagen",
+        ),
+        auto_classification_enabled=False,
+    ),
+    # pet
+    _ScoutingRule(
+        "pet_care", "pet_food",
+        terms=("cat food", "makanan kucing", "makanan anjing", "kibbles"),
+    ),
+    _ScoutingRule(
+        "pet_care", "pet_supply",
+        terms=("cat litter", "tandas kucing", "mainan kucing", "kucing"),
+    ),
+    # baby (runs before the generic towel rule so a "baby bath towel" stays baby)
+    _ScoutingRule(
+        "baby_care", "baby_care_item",
+        terms=("pacifier", "puting", "swaddle", "baby bath", "baby towel", "stroller"),
+    ),
+    # plain towels are home textiles
+    _ScoutingRule(
+        "home_textiles", "towel",
+        terms=("bath towel", "tuala mandi", "towel", "tuala"),
+    ),
+    # garden (fertiliser / lawn tools that land under Home Improvement / Tools)
+    _ScoutingRule(
+        "garden_care", "garden_supply",
+        terms=("baja", "fertilizer", "pupuk", "lawn mower", "mesin rumput"),
+    ),
+    # bags / wallets (Luggage & Bags)
+    _ScoutingRule(
+        "fashion_accessory", "bag_wallet",
+        terms=("wallet", "dompet", "sling bag", "beg silang", "backpack", "luggage"),
+    ),
+    # books
+    _ScoutingRule(
+        "books_media", "book",
+        terms=("buku", "skema jawapan", "magazine", "majalah"),
+    ),
+)
+
+# 2) Coarse category -> (cluster, product_type_group). Fires only if NO keyword
+#    rule (proven OR category) matched. Every cluster is one of the 40. Keys are
+#    the _normalize()d form of the TikTok category (casefold, non-alphanumerics
+#    collapsed to single spaces) so the lookup in _category_aware_rule matches;
+#    _TIKTOK_CATEGORY_FALLBACK_RAW is the human-readable source, asserted equal by
+#    test so the two never drift.
+_TIKTOK_CATEGORY_FALLBACK_RAW: dict[str, tuple[str, str]] = {
+    "Sports & Outdoor": ("outdoor_equipment", "sports_outdoor_gear"),
+    "Health": ("traditional_wellness", "wellness_supplement"),
+    "Pet Supplies": ("pet_care", "pet_supply"),
+    "Home Improvement": ("home_improvement", "home_improvement_supply"),
+    "Textiles & Soft Furnishings": ("home_textiles", "home_textile"),
+    "Automotive & Motorcycle": ("automotive_accessory", "automotive_accessory"),
+    "Toys & Hobbies": ("craft_hobby", "toy_hobby"),
+    "Baby & Maternity": ("baby_care", "baby_care_item"),
+    "Luggage & Bags": ("fashion_accessory", "bag_wallet"),
+    "Tools & Hardware": ("home_improvement", "hardware_tool"),
+    # Home Supplies residual is dominated by organisers/hooks -> home_storage
+    # (adversarial review: home_equipment mislabelled the wall-hook organiser).
+    "Home Supplies": ("home_storage", "storage_organizer"),
+    "Books, Magazines & Audio": ("books_media", "book"),
+    # The lone item is a book-shaped savings box / the lone collectible is a set
+    # of Raya money envelopes — both paper/desk goods, not electronics/craft
+    # (adversarial review).
+    "Computers & Office Equipment": ("stationery", "office_supply"),
+    "Collectibles": ("stationery", "gift_stationery"),
+}
+# Built below _normalize() is defined, so use the same collapse here (inline) to
+# avoid a forward reference at module load.
+_TIKTOK_CATEGORY_FALLBACK: dict[str, tuple[str, str]] = {
+    re.sub(r"[^a-z0-9]+", " ", raw.casefold()).strip(): value
+    for raw, value in _TIKTOK_CATEGORY_FALLBACK_RAW.items()
+}
+
+
+def _category_aware_rule(product: Mapping[str, object], haystack: str) -> _ScoutingRule | None:
+    """Last-resort category layer. Returns None so the caller keeps its final
+    generic behaviour when neither a keyword rule nor the category map matches."""
+    for rule in _CATEGORY_KEYWORD_RULES:
+        if any(_contains_term(haystack, term) for term in rule.terms):
+            return rule
+    coarse = _TIKTOK_CATEGORY_FALLBACK.get(_normalize(product.get("category")))
+    if coarse:
+        return _ScoutingRule(coarse[0], coarse[1], auto_classification_enabled=False)
+    return None
+
+
 _GROUP_ORDER = {
     (rule.cluster, rule.product_type_group): index
     for index, rule in enumerate(_SCOUTING_RULES)
@@ -703,6 +853,12 @@ def _matched_rule(
             product_type_group,
             specific_strategy_ids=strategy_ids,
         )
+
+    # Last resort: use the TikTok category (a known, real signal) before giving
+    # up. Only reached when every proven rule above has already missed.
+    category_rule = _category_aware_rule(product, haystack)
+    if category_rule is not None:
+        return category_rule
 
     return _ScoutingRule("generic_unclassified", "unknown_product_type")
 
