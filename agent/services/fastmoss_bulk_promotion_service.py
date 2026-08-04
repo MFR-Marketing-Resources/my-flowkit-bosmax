@@ -771,6 +771,44 @@ def _resolve_ref_sold_count(ref: dict[str, Any]) -> int | None:
         return None
 
 
+def _normalize_commission_rate(raw: Any) -> float | None:
+    """Commission rate as a fraction. Handles BOTH stored forms: FastMoss keeps a
+    percent string ("5%", "14%") while Kalodata keeps a decimal string ("0.05").
+    A bare number >= 1 is read as a percent ("5" -> 0.05); "-"/blank -> None."""
+    s = str(raw or "").strip()
+    if not s or s == "-":
+        return None
+    had_pct = "%" in s
+    s = s.replace("%", "").strip()
+    try:
+        v = float(s)
+    except ValueError:
+        return None
+    if had_pct or v >= 1:
+        return v / 100.0
+    return v
+
+
+def _resolve_ref_sell_price(ref: dict[str, Any]) -> float | None:
+    """Selling price (MYR) from the enriched reference — `price` survives enrich."""
+    raw = ref.get("price")
+    try:
+        return round(float(raw), 2) if raw is not None and str(raw).strip() != "" else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _queue_commission_amount(price: float | None, rate_raw: Any) -> float | None:
+    """Commission in currency = sell price x normalized rate. Computed here so the
+    value is self-consistent with the displayed Sell price + Comm% and truthful
+    for both sources. (The shared enrich derive_commission_amount double-divides
+    Kalodata decimal rates, so it is NOT reused.)"""
+    frac = _normalize_commission_rate(rate_raw)
+    if price is None or frac is None:
+        return None
+    return round(price * frac, 2)
+
+
 async def sync_bulk_queue(batch_id: str | None = None) -> dict[str, Any]:
     """
     Load FastMoss reference rows and upsert into fastmoss_bulk_draft_status.
@@ -813,6 +851,8 @@ async def sync_bulk_queue(batch_id: str | None = None) -> dict[str, Any]:
         sold_count = _resolve_ref_sold_count(ref)
 
         commission_rate = str(ref.get("commission_rate") or "") or None
+        sell_price = _resolve_ref_sell_price(ref)
+        commission_amount = _queue_commission_amount(sell_price, commission_rate)
 
         try:
             await crud.create_bulk_queue_row(
@@ -827,6 +867,8 @@ async def sync_bulk_queue(batch_id: str | None = None) -> dict[str, Any]:
                 image_readiness=image_readiness,
                 sold_count=sold_count,
                 commission_rate=commission_rate,
+                sell_price=sell_price,
+                commission_amount=commission_amount,
                 promotion_status="PENDING_DRAFT",
                 batch_provenance=batch_id or _clean(ref.get("fastmoss_source_file")),
                 recompute_state="STALE",
