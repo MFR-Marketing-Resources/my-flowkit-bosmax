@@ -590,6 +590,8 @@ CREATE TABLE IF NOT EXISTS fastmoss_bulk_draft_status (
     tiktok_product_url  TEXT,
     image_url           TEXT,
     category            TEXT,
+    cluster             TEXT,
+    product_type_group  TEXT,
     claim_risk_level    TEXT NOT NULL DEFAULT 'HIGH',
     mapping_confidence  REAL,
     image_readiness     TEXT NOT NULL DEFAULT 'IMAGE_MISSING',
@@ -1434,6 +1436,8 @@ CREATE TABLE IF NOT EXISTS fastmoss_bulk_draft_status (
     tiktok_product_url  TEXT,
     image_url           TEXT,
     category            TEXT,
+    cluster             TEXT,
+    product_type_group  TEXT,
     claim_risk_level    TEXT NOT NULL DEFAULT 'HIGH',
     mapping_confidence  REAL,
     image_readiness     TEXT NOT NULL DEFAULT 'IMAGE_MISSING',
@@ -1668,6 +1672,8 @@ CREATE INDEX IF NOT EXISTS idx_scene_context_promotion_activation_at
         cursor = await db.execute("PRAGMA table_info(fastmoss_bulk_draft_status)")
         bulk_cols = {row[1] for row in await cursor.fetchall()}
         _bulk_audit_cols = {
+            "cluster": "TEXT",
+            "product_type_group": "TEXT",
             "recomputed_at": "TEXT",
             "recompute_previous_status": "TEXT",
             "recompute_previous_error": "TEXT",

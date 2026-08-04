@@ -2862,6 +2862,8 @@ export interface FastmossBulkQueueRow {
 	tiktok_product_url?: string | null;
 	image_url?: string | null;
 	category?: string | null;
+	cluster?: string | null;
+	product_type_group?: string | null;
 	claim_risk_level: BulkClaimRisk;
 	mapping_confidence?: number | null;
 	image_readiness: BulkImageReadiness;
