@@ -446,6 +446,7 @@ function EvidenceInput({
 	placeholder,
 	type = "text",
 	guidance,
+	helper,
 }: {
 	id?: string;
 	label: string;
@@ -454,6 +455,7 @@ function EvidenceInput({
 	placeholder?: string;
 	type?: "text" | "number" | "url";
 	guidance?: EvidenceFieldGuidance;
+	helper?: string;
 }) {
 	const descriptionId = id && guidance ? `${id}-guidance` : undefined;
 	return (
@@ -471,6 +473,9 @@ function EvidenceInput({
 					</span>
 				) : null}
 			</div>
+			{helper ? (
+				<p className="text-[11px] leading-relaxed text-slate-500">{helper}</p>
+			) : null}
 			<input
 				id={id}
 				type={type}
@@ -504,6 +509,7 @@ function EvidenceTextarea({
 	placeholder,
 	rows = 4,
 	guidance,
+	helper,
 }: {
 	id?: string;
 	label: string;
@@ -512,6 +518,7 @@ function EvidenceTextarea({
 	placeholder?: string;
 	rows?: number;
 	guidance?: EvidenceFieldGuidance;
+	helper?: string;
 }) {
 	const descriptionId = id && guidance ? `${id}-guidance` : undefined;
 	return (
@@ -529,6 +536,9 @@ function EvidenceTextarea({
 					</span>
 				) : null}
 			</div>
+			{helper ? (
+				<p className="text-[11px] leading-relaxed text-slate-500">{helper}</p>
+			) : null}
 			<textarea
 				id={id}
 				value={value}
@@ -1875,6 +1885,7 @@ export default function RegistrationReviewDraftPanel({
 					<div className="space-y-4">
 						<EvidenceInput
 							label="Product Name"
+							helper="The product's full name as it appears on the listing or packaging."
 							value={evidenceForm.product_name}
 							onChange={(value) =>
 								setEvidenceForm((current) => ({
@@ -1887,6 +1898,7 @@ export default function RegistrationReviewDraftPanel({
 						<EvidenceTextarea
 							id={EVIDENCE_FIELD_IDS.product_knowledge_text}
 							label="Product Knowledge Text"
+							helper="Core facts — what it is, what it's made of, and how it works."
 							value={evidenceForm.product_knowledge_text}
 							onChange={(value) =>
 								setEvidenceForm((current) => ({
@@ -1900,6 +1912,7 @@ export default function RegistrationReviewDraftPanel({
 						<EvidenceTextarea
 							id={EVIDENCE_FIELD_IDS.benefits_text}
 							label="Benefits Text"
+							helper="Benefits and outcomes for the buyer — one per line."
 							value={evidenceForm.benefits_text}
 							onChange={(value) =>
 								setEvidenceForm((current) => ({
@@ -1912,6 +1925,7 @@ export default function RegistrationReviewDraftPanel({
 						/>
 						<EvidenceTextarea
 							label="Usage Text"
+							helper="How to use it — steps, dosage, or how often."
 							value={evidenceForm.usage_text}
 							onChange={(value) =>
 								setEvidenceForm((current) => ({
@@ -1923,6 +1937,7 @@ export default function RegistrationReviewDraftPanel({
 						/>
 						<EvidenceTextarea
 							label="Target Customer Text"
+							helper="Who the ideal buyer is — age, gender, problem, lifestyle."
 							value={evidenceForm.target_customer_text}
 							onChange={(value) =>
 								setEvidenceForm((current) => ({
@@ -1935,6 +1950,7 @@ export default function RegistrationReviewDraftPanel({
 						/>
 						<EvidenceTextarea
 							label="Pain Points"
+							helper="The frustrations or problems this product solves — one per line."
 							value={evidenceForm.pain_points}
 							onChange={(value) =>
 								setEvidenceForm((current) => ({
@@ -1947,6 +1963,7 @@ export default function RegistrationReviewDraftPanel({
 						/>
 						<EvidenceTextarea
 							label="USP"
+							helper="What makes this product different or better than rivals — one per line."
 							value={evidenceForm.usp_text}
 							onChange={(value) =>
 								setEvidenceForm((current) => ({
@@ -1960,6 +1977,7 @@ export default function RegistrationReviewDraftPanel({
 						<EvidenceTextarea
 							id={EVIDENCE_FIELD_IDS.ingredients_text}
 							label={`${ingredientsFieldLabel} Text`}
+							helper="Ingredients or key components (for food, health, or beauty)."
 							value={evidenceForm.ingredients_text}
 							onChange={(value) =>
 								setEvidenceForm((current) => ({
@@ -1978,6 +1996,7 @@ export default function RegistrationReviewDraftPanel({
 						<EvidenceTextarea
 							id={EVIDENCE_FIELD_IDS.warnings_text}
 							label="Warnings Text"
+							helper="Warnings, contraindications, or safety notes."
 							value={evidenceForm.warnings_text}
 							onChange={(value) =>
 								setEvidenceForm((current) => ({
@@ -1991,6 +2010,7 @@ export default function RegistrationReviewDraftPanel({
 						/>
 						<EvidenceTextarea
 							label="Paste Anything About Product"
+							helper="Paste any raw notes or copied text — we extract what's useful."
 							value={evidenceForm.paste_anything_about_product}
 							onChange={(value) =>
 								setEvidenceForm((current) => ({
@@ -2007,6 +2027,7 @@ export default function RegistrationReviewDraftPanel({
 						<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
 							<EvidenceInput
 								label="Price"
+								helper="The product's selling price."
 								type="number"
 								value={evidenceForm.price}
 								onChange={(value) =>
@@ -2016,6 +2037,7 @@ export default function RegistrationReviewDraftPanel({
 							/>
 							<EvidenceInput
 								label="Currency"
+								helper="Currency code (e.g. MYR)."
 								value={evidenceForm.currency}
 								onChange={(value) =>
 									setEvidenceForm((current) => ({
@@ -2051,6 +2073,7 @@ export default function RegistrationReviewDraftPanel({
 							<EvidenceInput
 								id={EVIDENCE_FIELD_IDS.size_or_volume}
 								label={sizeFieldLabel}
+								helper="Size, weight, or volume (e.g. 100ml, 250g, 30 capsules)."
 								value={evidenceForm.size_or_volume}
 								onChange={(value) =>
 									setEvidenceForm((current) => ({
@@ -2064,6 +2087,7 @@ export default function RegistrationReviewDraftPanel({
 							<EvidenceInput
 								id={EVIDENCE_FIELD_IDS.package_notes}
 								label="Package Notes"
+								helper="What's included in the package and packaging details."
 								value={evidenceForm.package_notes}
 								onChange={(value) =>
 									setEvidenceForm((current) => ({
@@ -2215,6 +2239,7 @@ export default function RegistrationReviewDraftPanel({
 						<div className="grid grid-cols-1 gap-4 md:grid-cols-3">
 							<EvidenceTextarea
 								label="Hook Angles"
+								helper="Attention-grabbing opening lines — one per line."
 								value={evidenceForm.hook_angles}
 								onChange={(value) =>
 									setEvidenceForm((current) => ({
@@ -2227,6 +2252,7 @@ export default function RegistrationReviewDraftPanel({
 							/>
 							<EvidenceTextarea
 								label="Subhook"
+								helper="A supporting line that reinforces the hook — one per line."
 								value={evidenceForm.subhook}
 								onChange={(value) =>
 									setEvidenceForm((current) => ({
@@ -2239,6 +2265,7 @@ export default function RegistrationReviewDraftPanel({
 							/>
 							<EvidenceTextarea
 								label="CTA Angles"
+								helper="The call to action — what the buyer should do next — one per line."
 								value={evidenceForm.cta_angles}
 								onChange={(value) =>
 									setEvidenceForm((current) => ({
