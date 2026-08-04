@@ -753,6 +753,24 @@ def _apply_lineage_to_draft(
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _resolve_ref_sold_count(ref: dict[str, Any]) -> int | None:
+    """Units-sold for a reference row, coerced to int.
+
+    Kalodata rows carry the real value under `kalodata_meta.sold_count`: the
+    top-level `sold_count` is nulled by `enrich_product` (it recomputes it from a
+    sales-metrics profile that finds nothing for reference rows), while
+    `kalodata_meta` passes through untouched. Prefer the top level when present,
+    fall back to the meta so the value is not stranded (was: 335/367 NULL -> "—").
+    """
+    raw = ref.get("sold_count")
+    if raw is None:
+        raw = (ref.get("kalodata_meta") or {}).get("sold_count")
+    try:
+        return int(raw) if raw is not None and str(raw).strip() != "" else None
+    except (TypeError, ValueError):
+        return None
+
+
 async def sync_bulk_queue(batch_id: str | None = None) -> dict[str, Any]:
     """
     Load FastMoss reference rows and upsert into fastmoss_bulk_draft_status.
@@ -792,12 +810,7 @@ async def sync_bulk_queue(batch_id: str | None = None) -> dict[str, Any]:
         except (TypeError, ValueError):
             pass
 
-        sold_count_raw = ref.get("sold_count")
-        sold_count: int | None = None
-        try:
-            sold_count = int(sold_count_raw) if sold_count_raw is not None else None
-        except (TypeError, ValueError):
-            pass
+        sold_count = _resolve_ref_sold_count(ref)
 
         commission_rate = str(ref.get("commission_rate") or "") or None
 

@@ -179,6 +179,9 @@ domains:
       - agent/services/kalodata_import_service.py
       - tests/unit/test_kalodata_import_service.py
       - tests/api/test_kalodata_import_api.py
+      # SOLD fix: lift Kalodata units-sold to the queue (writer fallback + backfill), zero AI spend
+      - scripts/backfill_kalodata_sold_count.py
+      - tests/unit/test_kalodata_sold_count_lift.py
       # COPYWRITING HUB -> multi-angle review-draft bulk importer (additive, never auto-approves)
       - agent/services/copy_intelligence_bulk_importer.py
       - tests/unit/test_copy_intelligence_bulk_importer.py
