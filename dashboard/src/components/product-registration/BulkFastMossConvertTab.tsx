@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getAPI, patchAPI, postAPI } from "../../api/client";
+import { fetchProductStrategyTypeRegistry } from "../../api/products";
 import type {
 	BulkApproveResult,
 	BulkClaimRisk,
@@ -13,6 +14,7 @@ import type {
 	BulkRecomputeSelectedResult,
 	DuplicateReviewAction,
 	FastmossBulkQueueRow,
+	ProductStrategyTypeRegistryResponse,
 } from "../../types";
 
 const RISK_BADGE: Record<string, string> = {
@@ -119,10 +121,52 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 	const [filterRecomputeState, setFilterRecomputeState] = useState<string>("");
 	const [filterRisk, setFilterRisk] = useState<string>("");
 	const [filterImage, setFilterImage] = useState<string>("");
-	const [filterCategory, setFilterCategory] = useState<string>("");
+	const [filterCluster, setFilterCluster] = useState<string>("");
+	const [filterProductType, setFilterProductType] = useState<string>("");
 	const [filterQ, setFilterQ] = useState<string>("");
 	const [page, setPage] = useState(1);
 	const PAGE_SIZE = 50;
+
+	// Cascading filter source: the SAME product-strategy registry the draft
+	// panel edits, so the filter options match what a product can actually be.
+	const [taxonomyRegistry, setTaxonomyRegistry] =
+		useState<ProductStrategyTypeRegistryResponse>({
+			items: [],
+			clusters: [],
+			scene_strategy_ids: [],
+		});
+	useEffect(() => {
+		let cancelled = false;
+		fetchProductStrategyTypeRegistry()
+			.then((r) => {
+				if (!cancelled) setTaxonomyRegistry(r);
+			})
+			.catch(() => {
+				/* non-fatal — dropdowns just stay empty */
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	// Product-type options depend on the chosen cluster (never make the operator
+	// scroll every product type in the catalogue).
+	const UNCLASSIFIED = "__UNCLASSIFIED__";
+	const productTypeOptions = useMemo(() => {
+		if (!filterCluster || filterCluster === UNCLASSIFIED) return [];
+		const seen = new Set<string>();
+		const out: { value: string; label: string }[] = [];
+		for (const item of taxonomyRegistry.items) {
+			if (item.cluster !== filterCluster) continue;
+			if (seen.has(item.product_type_group)) continue;
+			seen.add(item.product_type_group);
+			out.push({
+				value: item.product_type_group,
+				label: item.display_name || item.product_type_group,
+			});
+		}
+		return out.sort((a, b) => a.label.localeCompare(b.label));
+	}, [filterCluster, taxonomyRegistry.items]);
 
 	// Approval modal
 	const [showApproveModal, setShowApproveModal] = useState(false);
@@ -156,7 +200,9 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 				params.set("recompute_state", filterRecomputeState);
 			if (filterRisk) params.set("claim_risk_level", filterRisk);
 			if (filterImage) params.set("image_readiness", filterImage);
-			if (filterCategory) params.set("category", filterCategory);
+			if (filterCluster) params.set("cluster", filterCluster);
+			if (filterProductType)
+				params.set("product_type_group", filterProductType);
 			if (filterQ) params.set("q", filterQ);
 			params.set("page", String(page));
 			params.set("page_size", String(PAGE_SIZE));
@@ -169,7 +215,7 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 		} finally {
 			setLoading(false);
 		}
-	}, [filterStatus, filterRecomputeState, filterRisk, filterImage, filterCategory, filterQ, page]);
+	}, [filterStatus, filterRecomputeState, filterRisk, filterImage, filterCluster, filterProductType, filterQ, page]);
 
 	useEffect(() => {
 		fetchStats();
@@ -537,7 +583,8 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 		setFilterRecomputeState("");
 		setFilterRisk("");
 		setFilterImage("");
-		setFilterCategory("");
+		setFilterCluster("");
+		setFilterProductType("");
 		setFilterQ("");
 		setPage(1);
 	};
@@ -1124,22 +1171,58 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 					</div>
 					<div>
 						<label
-							htmlFor="bulk-fastmoss-filter-category"
+							htmlFor="bulk-fastmoss-filter-cluster"
 							className="text-[9px] text-slate-500 uppercase tracking-widest block mb-1"
 						>
-							Source Category
+							Cluster
 						</label>
-						<input
-							id="bulk-fastmoss-filter-category"
-							type="text"
-							value={filterCategory}
+						<select
+							id="bulk-fastmoss-filter-cluster"
+							value={filterCluster}
 							onChange={(e) => {
-								setFilterCategory(e.target.value);
+								setFilterCluster(e.target.value);
+								setFilterProductType("");
 								setPage(1);
 							}}
-							placeholder="category…"
-							className="bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 px-2 py-1 w-28"
-						/>
+							className="bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 px-2 py-1 w-40"
+						>
+							<option value="">All</option>
+							{taxonomyRegistry.clusters.map((c) => (
+								<option key={c} value={c}>
+									{c}
+								</option>
+							))}
+							<option value={UNCLASSIFIED}>— Unclassified —</option>
+						</select>
+					</div>
+					<div>
+						<label
+							htmlFor="bulk-fastmoss-filter-product-type"
+							className="text-[9px] text-slate-500 uppercase tracking-widest block mb-1"
+						>
+							Product Type
+						</label>
+						<select
+							id="bulk-fastmoss-filter-product-type"
+							value={filterProductType}
+							disabled={!filterCluster || filterCluster === UNCLASSIFIED}
+							onChange={(e) => {
+								setFilterProductType(e.target.value);
+								setPage(1);
+							}}
+							className="bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 px-2 py-1 w-44 disabled:opacity-40 disabled:cursor-not-allowed"
+						>
+							<option value="">
+								{filterCluster && filterCluster !== UNCLASSIFIED
+									? "All types"
+									: "Pick a cluster first"}
+							</option>
+							{productTypeOptions.map((o) => (
+								<option key={o.value} value={o.value}>
+									{o.label}
+								</option>
+							))}
+						</select>
 					</div>
 					<div>
 						<label
