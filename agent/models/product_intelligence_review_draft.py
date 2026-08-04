@@ -128,6 +128,7 @@ class ProductIntelligenceReviewDraft(BaseModel):
     hook_angles_json: list[str] = Field(default_factory=list)
     cta_angles_json: list[str] = Field(default_factory=list)
     pain_points_json: list[str] = Field(default_factory=list)
+    subhook_json: list[str] = Field(default_factory=list)
     usage_text: str | None = None
     ingredients_text: str | None = None
     warnings_text: str | None = None
@@ -177,6 +178,7 @@ class ProductIntelligenceReviewDraftMutation(BaseModel):
     hook_angles_json: list[str] | None = None
     cta_angles_json: list[str] | None = None
     pain_points_json: list[str] | None = None
+    subhook_json: list[str] | None = None
     usage_text: str | None = None
     ingredients_text: str | None = None
     warnings_text: str | None = None

@@ -71,6 +71,7 @@ interface EvidenceEditorState {
 	tiktok_shop_url: string;
 	image_url: string;
 	hook_angles: string;
+	subhook: string;
 	cta_angles: string;
 }
 
@@ -423,6 +424,7 @@ function buildEvidenceEditorState(
 		tiktok_shop_url: toText(evidence.tiktok_shop_url),
 		image_url: toText(evidence.image_url),
 		hook_angles: toText(evidence.hook_angles || candidates.hook_angles),
+		subhook: toText(evidence.subhook || candidates.subhook),
 		cta_angles: toText(evidence.cta_angles || candidates.cta_angles),
 	};
 }
@@ -929,6 +931,7 @@ export default function RegistrationReviewDraftPanel({
 			tiktok_shop_url: trimOrEmpty(evidenceForm.tiktok_shop_url),
 			image_url: trimOrEmpty(evidenceForm.image_url),
 			hook_angles: splitLines(evidenceForm.hook_angles),
+			subhook: trimOrEmpty(evidenceForm.subhook),
 			cta_angles: splitLines(evidenceForm.cta_angles),
 			recompute,
 		};
@@ -2209,7 +2212,7 @@ export default function RegistrationReviewDraftPanel({
 							</div>
 						</div>
 
-						<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+						<div className="grid grid-cols-1 gap-4 md:grid-cols-3">
 							<EvidenceTextarea
 								label="Hook Angles"
 								value={evidenceForm.hook_angles}
@@ -2220,6 +2223,18 @@ export default function RegistrationReviewDraftPanel({
 									}))
 								}
 								placeholder="One hook angle per line."
+								rows={6}
+							/>
+							<EvidenceTextarea
+								label="Subhook"
+								value={evidenceForm.subhook}
+								onChange={(value) =>
+									setEvidenceForm((current) => ({
+										...current,
+										subhook: value,
+									}))
+								}
+								placeholder="Supporting line under the hook — one per line."
 								rows={6}
 							/>
 							<EvidenceTextarea

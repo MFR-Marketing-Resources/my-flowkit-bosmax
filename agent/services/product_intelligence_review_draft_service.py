@@ -345,6 +345,11 @@ def _row_to_draft(
         default=[],
         expected_type=list,
     )
+    payload["subhook_json"] = _parse_json_field(
+        payload.get("subhook_json"),
+        default=[],
+        expected_type=list,
+    )
     payload["source_urls_json"] = _parse_json_field(
         payload.get("source_urls_json"),
         default={},
@@ -796,6 +801,7 @@ async def create_review_draft(
         hook_angles_json=_serialize_json(payload.get("hook_angles_json"), []),
         cta_angles_json=_serialize_json(payload.get("cta_angles_json"), []),
         pain_points_json=_serialize_json(payload.get("pain_points_json"), []),
+        subhook_json=_serialize_json(payload.get("subhook_json"), []),
         usage_text=payload.get("usage_text"),
         ingredients_text=payload.get("ingredients_text"),
         warnings_text=payload.get("warnings_text"),
@@ -892,6 +898,7 @@ async def update_review_draft(
         hook_angles_json=_serialize_json(payload.get("hook_angles_json"), []),
         cta_angles_json=_serialize_json(payload.get("cta_angles_json"), []),
         pain_points_json=_serialize_json(payload.get("pain_points_json"), []),
+        subhook_json=_serialize_json(payload.get("subhook_json"), []),
         usage_text=payload.get("usage_text"),
         ingredients_text=payload.get("ingredients_text"),
         warnings_text=payload.get("warnings_text"),
@@ -1095,6 +1102,7 @@ def _snapshot_from_row(row: dict[str, Any]) -> ProductIntelligenceSnapshot:
     payload["hook_angles_json"] = _parse_json_field(payload.get("hook_angles_json"), default=[], expected_type=list)
     payload["cta_angles_json"] = _parse_json_field(payload.get("cta_angles_json"), default=[], expected_type=list)
     payload["pain_points_json"] = _parse_json_field(payload.get("pain_points_json"), default=[], expected_type=list)
+    payload["subhook_json"] = _parse_json_field(payload.get("subhook_json"), default=[], expected_type=list)
     payload["source_urls_json"] = _parse_json_field(payload.get("source_urls_json"), default={}, expected_type=dict)
     payload["image_evidence_json"] = _parse_json_field(payload.get("image_evidence_json"), default={}, expected_type=dict)
     payload["claim_tokens_json"] = _parse_json_field(payload.get("claim_tokens_json"), default=[], expected_type=list)
@@ -1378,7 +1386,7 @@ async def approve_review_draft(
             """
             INSERT INTO product_intelligence_snapshot (
                 snapshot_id, product_id, version, status, product_description, benefits_json,
-                usp_json, hook_angles_json, cta_angles_json, pain_points_json,
+                usp_json, hook_angles_json, cta_angles_json, pain_points_json, subhook_json,
                 usage_text, ingredients_text, warnings_text, target_customer_text,
                 paste_anything_summary, source_urls_json, image_evidence_json, package_notes,
                 size_or_volume, product_form_factor, packaging_description, product_truth_lock,
@@ -1386,7 +1394,7 @@ async def approve_review_draft(
                 blocked_claims_json, buyer_persona_snapshot_json, copy_strategy_summary_json,
                 confidence_score, completeness_score, readiness_status, created_from_review_draft_id,
                 created_by, approved_by, approved_at, supersedes_snapshot_id, created_at, updated_at
-            ) VALUES (?, ?, ?, 'APPROVED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, 'APPROVED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 snapshot_id,
@@ -1398,6 +1406,7 @@ async def approve_review_draft(
                 json.dumps(draft.hook_angles_json),
                 json.dumps(draft.cta_angles_json),
                 json.dumps(draft.pain_points_json),
+                json.dumps(draft.subhook_json),
                 draft.usage_text,
                 draft.ingredients_text,
                 draft.warnings_text,

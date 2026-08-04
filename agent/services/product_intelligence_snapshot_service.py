@@ -88,6 +88,12 @@ def _row_to_snapshot(row: dict[str, Any]) -> ProductIntelligenceSnapshot:
         expected_type=list,
         field_name="pain_points_json",
     )
+    payload["subhook_json"] = _parse_json_field(
+        payload.get("subhook_json"),
+        default=[],
+        expected_type=list,
+        field_name="subhook_json",
+    )
     payload["source_urls_json"] = _parse_json_field(
         payload.get("source_urls_json"),
         default={},
@@ -148,6 +154,7 @@ async def create_snapshot(
     hook_angles_json: list[str] | None = None,
     cta_angles_json: list[str] | None = None,
     pain_points_json: list[str] | None = None,
+    subhook_json: list[str] | None = None,
     usage_text: str | None = None,
     ingredients_text: str | None = None,
     warnings_text: str | None = None,
@@ -186,6 +193,7 @@ async def create_snapshot(
         hook_angles_json=json.dumps(hook_angles_json or []),
         cta_angles_json=json.dumps(cta_angles_json or []),
         pain_points_json=json.dumps(pain_points_json or []),
+        subhook_json=json.dumps(subhook_json or []),
         usage_text=usage_text,
         ingredients_text=ingredients_text,
         warnings_text=warnings_text,

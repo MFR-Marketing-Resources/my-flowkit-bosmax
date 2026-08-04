@@ -66,6 +66,25 @@ def test_usp_text_promotes_to_usp_json():
         "Waterproof", "Ultra-light 8-strand braid"]
 
 
+def test_subhook_promotes_to_subhook_json():
+    """Phase C part 2: Subhook is a durable copy seed like hook/cta (multi-line
+    declared text becomes a list)."""
+    payload = build_promotion_payload(_Draft(declared={
+        "subhook": "The one pros trust\nNever snaps mid-fight",
+    }))
+    assert payload["fields"]["subhook_json"] == [
+        "The one pros trust", "Never snaps mid-fight"]
+    assert "subhook" not in {d["source"] for d in payload["dropped_fields"]}
+
+
+def test_subhook_is_in_the_promotion_map_and_list_targets():
+    from agent.services.registration_intelligence_promotion_service import (
+        _LIST_TARGETS,
+    )
+    assert "subhook_json" in {t for t, _ in PROMOTION_MAP}
+    assert "subhook_json" in _LIST_TARGETS
+
+
 # ── intelligence round-trip (real DB) ─────────────────────────────────────────
 async def _make_product(pid: str, **cols) -> None:
     db = await get_db()
@@ -104,6 +123,7 @@ async def test_copy_seeds_survive_promotion_and_reload():
             "hook_angles": ["Big fish? No problem."],
             "cta_angles": ["Get yours today."],
             "pain_points": "Line snaps on big catches\nTangles easily",
+            "subhook": "Trusted by pros\nRated for 40lb",
         }),
     )
     assert receipt["minimal_draft"] is False
@@ -112,6 +132,7 @@ async def test_copy_seeds_survive_promotion_and_reload():
     assert json.loads(row["cta_angles_json"]) == ["Get yours today."]
     assert json.loads(row["pain_points_json"]) == [
         "Line snaps on big catches", "Tangles easily"]
+    assert json.loads(row["subhook_json"]) == ["Trusted by pros", "Rated for 40lb"]
 
 
 @pytest.mark.asyncio
@@ -124,6 +145,7 @@ async def test_no_copy_seeds_leaves_empty_lists_not_null():
     row = await _draft_row("phase-a-empty-seeds")
     assert json.loads(row["hook_angles_json"]) == []
     assert json.loads(row["pain_points_json"]) == []
+    assert json.loads(row["subhook_json"]) == []
 
 
 # ── product family persistence (real DB) ──────────────────────────────────────

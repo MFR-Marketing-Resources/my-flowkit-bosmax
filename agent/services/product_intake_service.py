@@ -72,6 +72,7 @@ _LIST_TARGETS = {
     "hook_angles_json",
     "cta_angles_json",
     "pain_points_json",
+    "subhook_json",
 }
 
 

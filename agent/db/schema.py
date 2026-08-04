@@ -3037,6 +3037,7 @@ CREATE TABLE IF NOT EXISTS product_intelligence_snapshot (
     hook_angles_json TEXT NOT NULL DEFAULT '[]',
     cta_angles_json TEXT NOT NULL DEFAULT '[]',
     pain_points_json TEXT NOT NULL DEFAULT '[]',
+    subhook_json TEXT NOT NULL DEFAULT '[]',
     usage_text TEXT,
     ingredients_text TEXT,
     warnings_text TEXT,
@@ -3112,6 +3113,7 @@ CREATE TABLE IF NOT EXISTS product_intelligence_review_draft (
     hook_angles_json TEXT NOT NULL DEFAULT '[]',
     cta_angles_json TEXT NOT NULL DEFAULT '[]',
     pain_points_json TEXT NOT NULL DEFAULT '[]',
+    subhook_json TEXT NOT NULL DEFAULT '[]',
     usage_text TEXT,
     ingredients_text TEXT,
     warnings_text TEXT,
@@ -3209,6 +3211,7 @@ CREATE INDEX IF NOT EXISTS idx_product_intelligence_review_field_provenance_draf
                 "hook_angles_json",
                 "cta_angles_json",
                 "pain_points_json",
+                "subhook_json",
             ):
                 if _pi_new_col not in _pi_columns:
                     await db.execute(

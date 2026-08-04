@@ -25,6 +25,7 @@ EDITABLE_EVIDENCE_FIELDS = (
     "warnings_text",
     "pain_points",
     "usp_text",
+    "subhook",
     "paste_anything_about_product",
     "price",
     "currency",
