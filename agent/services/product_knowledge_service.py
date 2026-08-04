@@ -1561,9 +1561,19 @@ def _resolve_taxonomy_candidate(
         "female_health_sensitive",
     }
     owned_lane = _normalize_source_lane(request.source_lane) in {"OWNED", "MANUAL"}
+    # Generic physical words (tight/tension/snug/elastic/smell/itch) must not
+    # force a sensitive health lane from raw text alone — a fishing line whose
+    # usage/warning says "ketat"/"ketegangan"/cut-the-"kulit" is not a
+    # male-health supplement. They only count when promoted into claim_tokens,
+    # which is context-gated in evaluate_product_claims.
+    generic_sensitive_tokens = {"ketegangan", "ketat", "rapat", "anjal", "bau", "gatal"}
     if owned_lane and (
         any(token in male_health_tokens for token in claim_tokens)
-        or any(token in combined_text for token in male_health_tokens if token != "male_health_sensitive")
+        or any(
+            token in combined_text
+            for token in male_health_tokens
+            if token != "male_health_sensitive" and token not in generic_sensitive_tokens
+        )
     ):
         candidate.update(
             {
@@ -1576,7 +1586,11 @@ def _resolve_taxonomy_candidate(
         )
     elif owned_lane and (
         any(token in female_health_tokens for token in claim_tokens)
-        or any(token in combined_text for token in female_health_tokens if token != "female_health_sensitive")
+        or any(
+            token in combined_text
+            for token in female_health_tokens
+            if token != "female_health_sensitive" and token not in generic_sensitive_tokens
+        )
     ):
         candidate.update(
             {

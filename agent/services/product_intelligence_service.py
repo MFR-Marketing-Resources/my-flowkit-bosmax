@@ -696,6 +696,25 @@ def _claim_context(product: dict[str, Any], family: str | None) -> dict[str, boo
             "vagina",
         ],
     )
+    # Genuinely intimate/sensitive body cues — deliberately EXCLUDES the generic
+    # "kulit"/"skin", which appears in innocuous safety text ("boleh memotong
+    # kulit" on a fishing line) and must not gate a product into sensitive review.
+    intimate_body_claim = _contains_any(
+        body,
+        [
+            "payudara",
+            "breast",
+            "estrogen",
+            "intim",
+            "faraj",
+            "vagina",
+            "miss v",
+            "kewanitaan",
+            "keputihan",
+            "kegel",
+            "postpartum",
+        ],
+    )
     return {
         "fashion": fashion,
         "health_or_beauty": health_or_beauty,
@@ -703,6 +722,7 @@ def _claim_context(product: dict[str, Any], family: str | None) -> dict[str, boo
         "neutral_odor": neutral_odor,
         "body_odor_claim": body_odor_claim,
         "fashion_fit_claim": fashion_fit_claim,
+        "intimate_body_claim": intimate_body_claim,
     }
 
 
@@ -781,11 +801,12 @@ def evaluate_product_claims(
                 continue
         elif token in {"anjal", "ketat", "rapat", "ketegangan"}:
             # Generic tightness / tension / elasticity words only carry a
-            # sensitive-health meaning inside a health, beauty, or intimate
-            # context.  A tight braided fishing line, a snug seal, a taut
-            # rope, or a fitted (non-intimate) garment uses these words
-            # literally and must not be gated into sensitive claim review.
-            if not context["health_or_beauty"] and not context["fashion_fit_claim"]:
+            # sensitive-health meaning inside a health, beauty, or genuinely
+            # intimate context.  A tight braided fishing line, a snug seal, a
+            # taut rope, or a fitted garment (whose warning says it can cut the
+            # "kulit") uses these words literally and must not be gated into
+            # sensitive claim review.
+            if not context["health_or_beauty"] and not context["intimate_body_claim"]:
                 continue
         elif token == "growth":
             if context["plant_or_pest"] and not context["health_or_beauty"]:
