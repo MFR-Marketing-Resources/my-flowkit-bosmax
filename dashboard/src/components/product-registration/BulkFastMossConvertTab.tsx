@@ -1360,7 +1360,13 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 										Sold
 									</th>
 									<th className="px-3 py-2 text-left font-semibold text-slate-400 text-[10px] uppercase tracking-widest">
+										Sell price
+									</th>
+									<th className="px-3 py-2 text-left font-semibold text-slate-400 text-[10px] uppercase tracking-widest">
 										Comm%
+									</th>
+									<th className="px-3 py-2 text-left font-semibold text-slate-400 text-[10px] uppercase tracking-widest">
+										Comm amt
 									</th>
 									<th className="px-3 py-2 text-left font-semibold text-slate-400 text-[10px] uppercase tracking-widest">
 										Status
@@ -1472,7 +1478,13 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 											{row.sold_count ?? "—"}
 										</td>
 										<td className="px-3 py-2 text-slate-400">
+											{row.sell_price != null ? `RM${row.sell_price.toFixed(2)}` : "—"}
+										</td>
+										<td className="px-3 py-2 text-slate-400">
 											{row.commission_rate ?? "—"}
+										</td>
+										<td className="px-3 py-2 text-slate-400">
+											{row.commission_amount != null ? `RM${row.commission_amount.toFixed(2)}` : "—"}
 										</td>
 										<td className="px-3 py-2">
 											<span
@@ -1718,9 +1730,21 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 										</p>
 									</div>
 									<div>
+										<span className="text-slate-500">Sell price</span>
+										<p className="text-white font-medium mt-0.5">
+											{detailRow.sell_price != null ? `RM${detailRow.sell_price.toFixed(2)}` : "—"}
+										</p>
+									</div>
+									<div>
 										<span className="text-slate-500">Commission</span>
 										<p className="text-white font-medium mt-0.5">
 											{detailRow.commission_rate ?? "—"}
+										</p>
+									</div>
+									<div>
+										<span className="text-slate-500">Comm amt</span>
+										<p className="text-white font-medium mt-0.5">
+											{detailRow.commission_amount != null ? `RM${detailRow.commission_amount.toFixed(2)}` : "—"}
 										</p>
 									</div>
 									<div>
