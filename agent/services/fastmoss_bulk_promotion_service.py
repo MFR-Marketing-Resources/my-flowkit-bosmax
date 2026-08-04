@@ -1913,3 +1913,71 @@ async def update_queue_row_status(reference_id: str, promotion_status: str) -> d
         updated_at=_now(),
     )
     return updated or {"reference_id": reference_id, "promotion_status": promotion_status}
+
+
+async def sync_queue_row_from_draft(draft: Any) -> dict[str, Any] | None:
+    """Re-evaluate the linked FastMoss queue row's status FROM A SAVED DRAFT.
+
+    When an operator edits a draft's evidence (review/add, save-draft, analyze &
+    repair), the draft is persisted but the queue row the list renders is written
+    only by the HUB promotion/recompute path — so the row went stale and kept
+    showing e.g. ``MISSING:SIZE_OR_VOLUME_EVIDENCE`` after the field was filled, and
+    a routine recompute would REBUILD the draft from HUB and clobber the edit.
+
+    This syncs the row from the *saved draft itself* using the same classifier the
+    recompute uses (``_classify_promotion_status`` / ``_state_after_recompute``) —
+    never a HUB rebuild — so filling a field clears the list warning immediately and
+    the operator edit is authoritative. Returns the updated row, or None when the
+    draft has no linked queue row (non-FastMoss lane). Best-effort: callers should
+    not fail the save if this raises.
+    """
+    draft_id = _clean(getattr(draft, "review_draft_id", ""))
+    if not draft_id:
+        return None
+    row = await crud.get_bulk_queue_row_by_draft_id(draft_id)
+    if not row:
+        return None
+    ref_id = _clean(row.get("reference_id"))
+    dec = getattr(draft, "declared_evidence_fields", None) or {}
+    claim_risk = _clean(getattr(draft, "claim_risk_level", "")) or "HIGH"
+    missing = list(getattr(draft, "missing_required_evidence", None) or [])
+    image_readiness = _derive_image_readiness(dec.get("image_url"))
+    duplicate_candidate = await _detect_queue_duplicate_candidate(
+        ref_id,
+        _clean(dec.get("product_name")) or _clean(row.get("raw_product_title")),
+        dec.get("tiktok_product_url"),
+        ignore_product_id=_clean(row.get("duplicate_ignore_product_id")) or None,
+    )
+    promotion_status = _classify_promotion_status(
+        claim_risk, image_readiness, missing, duplicate_candidate is not None
+    )
+    error_message: str | None = None
+    if promotion_status == "MISSING_REQUIRED_FIELD" and missing:
+        error_message = "MISSING:" + ",".join(missing[:10])
+    elif promotion_status == "DUPLICATE_SUSPECTED" and duplicate_candidate:
+        error_message = (
+            "DUPLICATE_CANDIDATE:"
+            f"{duplicate_candidate.get('id')}:{duplicate_candidate.get('match_reason')}"
+        )
+    elif promotion_status == "CLAIM_RISK":
+        tokens = ",".join((getattr(draft, "claim_tokens", None) or [])[:5])
+        error_message = f"CLAIM_RISK:{_clean(getattr(draft, 'claim_gate', ''))}"
+        if tokens:
+            error_message += f":{tokens}"
+    recompute_state, recompute_reason = _state_after_recompute(promotion_status, error_message)
+    now = _now()
+    updated = await crud.update_bulk_queue_row(
+        ref_id,
+        promotion_status=promotion_status,
+        claim_risk_level=claim_risk,
+        image_readiness=image_readiness,
+        error_message=error_message,
+        recompute_state=recompute_state,
+        recompute_reason=recompute_reason,
+        review_hold_reason=(
+            recompute_reason if recompute_state == "BLOCKED_REVIEW_REQUIRED" else None
+        ),
+        recomputed_at=now,
+        updated_at=now,
+    )
+    return updated

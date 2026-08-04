@@ -25,7 +25,28 @@ from agent.services.registration_draft_evidence_editor_service import (
 from agent.services import product_strategy_taxonomy_service as _strategy_taxonomy
 
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/product-registration", tags=["product-registration"])
+
+
+async def _sync_queue_row_after_edit(draft) -> None:
+    """After an operator edits a draft, re-sync the linked FastMoss queue row's list
+    status FROM THE SAVED DRAFT so the queue UI reflects the edit immediately (a
+    filled field clears its MISSING warning; the edit is not clobbered by a HUB
+    rebuild). Best-effort — never fail the save on a display-sync error."""
+    if not draft:
+        return
+    try:
+        from agent.services.fastmoss_bulk_promotion_service import (
+            sync_queue_row_from_draft,
+        )
+
+        await sync_queue_row_from_draft(draft)
+    except Exception:  # noqa: BLE001 — display sync must not break the save
+        logger.warning("queue-row sync after draft edit failed", exc_info=True)
 
 
 @router.post("/evaluate", response_model=ProductRegistrationEvaluateResponse)
@@ -87,6 +108,7 @@ async def update_draft_field_decisions(
     draft = RegistrationDraftStorageService.update_field_decisions(draft_id, decisions)
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
+    await _sync_queue_row_after_edit(draft)
     return draft
 
 
@@ -101,6 +123,7 @@ async def update_draft_evidence(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
+    await _sync_queue_row_after_edit(draft)
     return draft
 
 
