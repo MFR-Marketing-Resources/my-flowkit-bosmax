@@ -238,6 +238,7 @@ domains:
       - agent/models/product_strategy_taxonomy.py
       - agent/services/product_strategy_taxonomy_service.py
       - tests/unit/test_product_strategy_taxonomy_service.py
+      - tests/unit/test_registry_cluster_40_domain.py
       - tests/api/test_product_strategy_taxonomy_api.py
       - tests/api/test_product_registration_review_api.py
       - tests/ui/test_product_strategy_taxonomy_ui_contract.py

@@ -330,13 +330,25 @@ def _row_to_registry_entry(
     )
 
 
+def _registry_clusters() -> list[str]:
+    """All 40 strategy clusters in a stable display order: the curated
+    SCOUTING_CLUSTER_ORDER first, then the remaining catalog-truth / P58 clusters
+    (previously rejected as INVALID_STRATEGY_CLUSTER and hidden from the FastMoss
+    filter) alphabetically. Domain == the SSOT crosswalk domain (invariant-tested)."""
+    from agent.services.product_cluster_grouping import crosswalk_domain
+
+    scouting = list(SCOUTING_CLUSTER_ORDER)
+    extra = sorted(crosswalk_domain() - set(scouting))
+    return scouting + extra
+
+
 async def list_product_strategy_type_registry(
     cluster: str | None = None,
 ) -> ProductStrategyTypeRegistryListResponse:
     rows = await crud.list_product_strategy_type_registry(cluster)
     return ProductStrategyTypeRegistryListResponse(
         items=[_row_to_registry_entry(row) for row in rows],
-        clusters=list(SCOUTING_CLUSTER_ORDER),
+        clusters=_registry_clusters(),
         scene_strategy_ids=sorted(SCENE_STRATEGIES),
     )
 
@@ -349,7 +361,8 @@ def _validate_registry_binding(
     scene_coverage_status: str,
     registry_status: str,
 ) -> None:
-    if cluster not in SCOUTING_CLUSTER_ORDER:
+    from agent.services.product_cluster_grouping import crosswalk_domain
+    if cluster not in crosswalk_domain():
         raise ProductStrategyTaxonomyError("INVALID_STRATEGY_CLUSTER")
     if matched_scene_strategy_id not in SCENE_STRATEGIES:
         raise ProductStrategyTaxonomyError("INVALID_SCENE_STRATEGY_ID")
