@@ -10,6 +10,7 @@ import {
 } from "../components/reporting/ReportingFilterContext";
 import {
 	useExceptions,
+	useRegistrationQueueCoverage,
 	useExceptionPage,
 	type IntelligenceStage,
 	useFailedGenerations,
@@ -190,6 +191,52 @@ function IntelQualityDebt({
 	);
 }
 
+// Pre-commit registration-queue backlog. SEPARATE from the product KPIs above so
+// "Missing cluster = 0" (committed products) reads unambiguously next to the drafts
+// that still await a cluster. Not exception-drill-downs — a different data source.
+function RegistrationQueueBacklog() {
+	const { data, loading } = useRegistrationQueueCoverage();
+	const pending = data?.pending_drafts ?? 0;
+	const missingCluster = data?.pending_missing_cluster ?? 0;
+	const missingType = data?.pending_missing_product_type ?? 0;
+	return (
+		<div className="mt-2">
+			<div className="mb-2 flex flex-wrap items-baseline gap-2">
+				<h3 className="text-sm font-semibold text-slate-200">
+					Registration queue (pre-commit)
+				</h3>
+				<span className="text-[11px] text-slate-500">
+					Drafts not yet committed to products — the product KPIs above cannot see
+					these. A draft is assigned its cluster at recompute/commit.
+				</span>
+			</div>
+			<div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+				<KpiCard
+					label="Queue · pending drafts"
+					value={pending.toLocaleString()}
+					tone="neutral"
+					loading={loading}
+					hint="uncommitted"
+				/>
+				<KpiCard
+					label="Queue · missing cluster"
+					value={missingCluster.toLocaleString()}
+					tone={missingCluster === 0 ? "success" : "warn"}
+					loading={loading}
+					hint="pending drafts with no cluster"
+				/>
+				<KpiCard
+					label="Queue · missing product type"
+					value={missingType.toLocaleString()}
+					tone={missingType === 0 ? "success" : "warn"}
+					loading={loading}
+					hint="pending drafts with no product type"
+				/>
+			</div>
+		</div>
+	);
+}
+
 function OperationsInner() {
 	const f = useReportingFilters();
 	const [selected, setSelected] = useState<ExceptionKind>("missing_copy");
@@ -277,6 +324,8 @@ function OperationsInner() {
 					/>
 				))}
 			</div>
+
+			<RegistrationQueueBacklog />
 
 			<IntelQualityDebt
 				selected={selected}
