@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from typing import List
 
@@ -23,6 +23,8 @@ from agent.services.registration_draft_evidence_editor_service import (
     patch_registration_draft_evidence,
 )
 from agent.services import product_strategy_taxonomy_service as _strategy_taxonomy
+from agent.services import registration_media_service
+from agent.db import crud
 
 
 import logging
@@ -139,6 +141,43 @@ async def get_review_draft_image(draft_id: str):
     if not image_path.exists():
         raise HTTPException(status_code=404, detail="Draft image path missing on disk")
     return FileResponse(image_path)
+
+
+# --- Operator-uploaded source media (additive to the primary image above) ---
+@router.post("/review-drafts/{draft_id}/media")
+async def upload_review_draft_media(
+    draft_id: str,
+    kind: str = Form(...),
+    files: List[UploadFile] = File(...),
+):
+    if not RegistrationDraftStorageService.get_draft(draft_id):
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return await registration_media_service.add_media_to_draft(draft_id, kind, files)
+
+
+@router.get("/review-drafts/{draft_id}/media")
+async def list_review_draft_media(draft_id: str):
+    if not RegistrationDraftStorageService.get_draft(draft_id):
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return await registration_media_service.list_draft_media(draft_id)
+
+
+@router.get("/review-drafts/{draft_id}/media/{media_id}/file")
+async def get_review_draft_media_file(draft_id: str, media_id: str):
+    row = await crud.get_product_source_media(media_id)
+    if not row or row.get("draft_id") != draft_id:
+        raise HTTPException(status_code=404, detail="Media not found")
+    path = registration_media_service.resolve_media_file(row)
+    if not path:
+        raise HTTPException(status_code=404, detail="Media file missing on disk")
+    return FileResponse(path, media_type=row.get("mime") or None, filename=row.get("filename") or None)
+
+
+@router.delete("/review-drafts/{draft_id}/media/{media_id}")
+async def delete_review_draft_media(draft_id: str, media_id: str):
+    if not RegistrationDraftStorageService.get_draft(draft_id):
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return await registration_media_service.delete_draft_media(draft_id, media_id)
 
 
 @router.delete("/review-drafts/{draft_id}", status_code=204)

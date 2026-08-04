@@ -583,6 +583,30 @@ CREATE INDEX IF NOT EXISTS idx_batch_product ON batch(product_id);
 CREATE INDEX IF NOT EXISTS idx_batch_variant_batch ON batch_variant(batch_id);
 CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_status);
 
+-- Operator-uploaded source media for Smart Registration (ADDITIVE — separate from
+-- the single primary image_url/local_image_path lane, which is untouched). Holds
+-- up to 10 extra images + 3 videos per draft; product_id is back-filled at commit.
+CREATE TABLE IF NOT EXISTS product_source_media (
+    media_id      TEXT PRIMARY KEY,
+    draft_id      TEXT NOT NULL,
+    product_id    TEXT REFERENCES product(id) ON DELETE CASCADE,
+    kind          TEXT NOT NULL CHECK(kind IN ('image','video')),
+    ordinal       INTEGER NOT NULL DEFAULT 0,
+    local_path    TEXT,
+    remote_url    TEXT,
+    filename      TEXT,
+    mime          TEXT,
+    bytes         INTEGER,
+    width         INTEGER,
+    height        INTEGER,
+    duration_sec  REAL,
+    status        TEXT NOT NULL DEFAULT 'STORED',
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_product_source_media_draft ON product_source_media(draft_id);
+CREATE INDEX IF NOT EXISTS idx_product_source_media_product ON product_source_media(product_id, kind);
+
 CREATE TABLE IF NOT EXISTS fastmoss_bulk_draft_status (
     reference_id        TEXT PRIMARY KEY,
     raw_product_title   TEXT NOT NULL,

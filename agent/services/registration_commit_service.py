@@ -295,6 +295,8 @@ class RegistrationCommitService:
                     _shutil.copyfile(src, dest)
                     await crud.update_product(product["id"], local_image_path=str(dest),
                                               asset_status="DOWNLOADED", image_asset_status="DOWNLOADED")
+            # Carry operator-uploaded source media (additive) from draft to product.
+            await crud.link_draft_media_to_product(request.draft_id, product["id"])
             materialized_taxonomy = await _materialize_manual_taxonomy(
                 product,
                 draft,
@@ -513,6 +515,8 @@ class RegistrationCommitService:
                         asset_status="DOWNLOADED",
                         image_asset_status="DOWNLOADED",
                     )
+            # Carry operator-uploaded source media (additive) from draft to product.
+            await crud.link_draft_media_to_product(request.draft_id, product["id"])
             materialized_taxonomy = await _materialize_manual_taxonomy(
                 product,
                 draft,

@@ -85,6 +85,11 @@ domains:
       - tests/unit/test_vision_provider_adapter.py
       - docs/MULTI_PROVIDER_VISION_LANE_ADAPTERS_V1.md
       - agent/api/product_registration.py
+      # Operator-uploaded source media (images + videos) for Smart Registration; local-only, zero AI spend
+      - agent/services/registration_media_service.py
+      - tests/unit/test_registration_media_service.py
+      - dashboard/src/components/product-registration/DraftMediaSection.tsx
+      - agent/utils/paths.py
       - agent/api/fastmoss_bulk.py
       - agent/api/operator.py
       - agent/api/telemetry.py
