@@ -115,6 +115,25 @@ async def test_size_cap_enforced_and_file_removed(draft_id, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_queue_row_reports_live_media_counts(draft_id):
+    ref = "test-ref-" + uuid.uuid4().hex[:10]
+    title = "ZZMediaCount " + uuid.uuid4().hex[:8]
+    await crud.create_bulk_queue_row(
+        ref, title, draft_id=draft_id, claim_risk_level="LOW", promotion_status="PENDING_DRAFT",
+    )
+    await media.add_media_to_draft(
+        draft_id, "image", [_FakeUpload("a.jpg", JPG), _FakeUpload("b.png", PNG)],
+    )
+    await media.add_media_to_draft(draft_id, "video", [_FakeUpload("v.mp4", MP4)])
+
+    rows = await crud.list_bulk_queue(q=title, page_size=None)
+    mine = [r for r in rows if r["reference_id"] == ref]
+    assert len(mine) == 1
+    assert mine[0]["user_image_count"] == 2
+    assert mine[0]["user_video_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_commit_carry_links_media_to_product(draft_id):
     await media.add_media_to_draft(draft_id, "image", [_FakeUpload("a.jpg", JPG)])
     product = await crud.create_product("Media Carry Fixture", source="MANUAL")

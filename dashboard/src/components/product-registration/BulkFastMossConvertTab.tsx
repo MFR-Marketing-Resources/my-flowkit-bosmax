@@ -1369,6 +1369,12 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 										Comm amt
 									</th>
 									<th className="px-3 py-2 text-left font-semibold text-slate-400 text-[10px] uppercase tracking-widest">
+										Image (unit)
+									</th>
+									<th className="px-3 py-2 text-left font-semibold text-slate-400 text-[10px] uppercase tracking-widest">
+										Video (unit)
+									</th>
+									<th className="px-3 py-2 text-left font-semibold text-slate-400 text-[10px] uppercase tracking-widest">
 										Status
 									</th>
 									<th className="px-3 py-2 text-left font-semibold text-slate-400 text-[10px] uppercase tracking-widest">
@@ -1485,6 +1491,12 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 										</td>
 										<td className="px-3 py-2 text-slate-400">
 											{row.commission_amount != null ? `RM${row.commission_amount.toFixed(2)}` : "—"}
+										</td>
+										<td className="px-3 py-2 text-slate-400">
+											{row.user_image_count ?? 0}
+										</td>
+										<td className="px-3 py-2 text-slate-400">
+											{row.user_video_count ?? 0}
 										</td>
 										<td className="px-3 py-2">
 											<span
@@ -1745,6 +1757,18 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 										<span className="text-slate-500">Comm amt</span>
 										<p className="text-white font-medium mt-0.5">
 											{detailRow.commission_amount != null ? `RM${detailRow.commission_amount.toFixed(2)}` : "—"}
+										</p>
+									</div>
+									<div>
+										<span className="text-slate-500">Images (unit)</span>
+										<p className="text-white font-medium mt-0.5">
+											{detailRow.user_image_count ?? 0}
+										</p>
+									</div>
+									<div>
+										<span className="text-slate-500">Videos (unit)</span>
+										<p className="text-white font-medium mt-0.5">
+											{detailRow.user_video_count ?? 0}
 										</p>
 									</div>
 									<div>
