@@ -38,6 +38,13 @@ async def coverage_product_intelligence(
     return await svc.product_intelligence_coverage(lifecycle_status, cluster, product_type_group)
 
 
+@router.get("/coverage/registration-queue")
+async def coverage_registration_queue():
+    """Pre-commit registration-queue backlog (cluster / product-type) — the drafts
+    the committed-product KPIs cannot see. Makes '0 missing cluster' unambiguous."""
+    return await svc.registration_queue_coverage()
+
+
 @router.get("/pi-quality")
 async def pi_quality(
     lifecycle_status: str = Query("ALL", description="ALL keeps archived debt visible"),

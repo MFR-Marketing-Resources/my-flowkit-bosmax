@@ -312,6 +312,47 @@ async def copywriting_coverage(
     }
 
 
+async def registration_queue_coverage() -> dict:
+    """Cluster / product-type backlog in the FastMoss registration QUEUE
+    (fastmoss_bulk_draft_status) — the PRE-COMMIT stage.
+
+    This is deliberately SEPARATE from the product coverage KPIs: those count
+    committed products (all of which have a cluster), so they cannot see the
+    pending drafts that still lack one. A queue row is assigned its cluster at
+    recompute/commit, so a 'pending' draft with an empty cluster is real
+    registration debt. Read-only, zero cost.
+    """
+    db = await get_db()
+    total = await _scalar(db, "SELECT COUNT(*) FROM fastmoss_bulk_draft_status", [])
+    committed = await _scalar(
+        db,
+        "SELECT COUNT(*) FROM fastmoss_bulk_draft_status "
+        "WHERE committed_product_id IS NOT NULL AND TRIM(committed_product_id) <> ''",
+        [],
+    )
+    _PENDING = "(committed_product_id IS NULL OR TRIM(committed_product_id) = '')"
+    missing_cluster = await _scalar(
+        db,
+        f"SELECT COUNT(*) FROM fastmoss_bulk_draft_status WHERE {_PENDING} "
+        "AND (cluster IS NULL OR TRIM(cluster) = '')",
+        [],
+    )
+    missing_product_type = await _scalar(
+        db,
+        f"SELECT COUNT(*) FROM fastmoss_bulk_draft_status WHERE {_PENDING} "
+        "AND (product_type_group IS NULL OR TRIM(product_type_group) = '')",
+        [],
+    )
+    return {
+        "source": "fastmoss_bulk_draft_status",
+        "total_queue_rows": total,
+        "committed": committed,
+        "pending_drafts": total - committed,
+        "pending_missing_cluster": missing_cluster,
+        "pending_missing_product_type": missing_product_type,
+    }
+
+
 async def product_intelligence_coverage(
     lifecycle_status: str = "ACTIVE",
     cluster: Optional[str] = None,

@@ -258,6 +258,23 @@ export const fetchProductIntelligenceCoverage = (f: ReportingFilters) =>
 		`/api/reporting/coverage/product-intelligence?${qs(f)}`,
 	);
 
+export interface RegistrationQueueCoverage {
+	source: string;
+	total_queue_rows: number;
+	committed: number;
+	pending_drafts: number;
+	pending_missing_cluster: number;
+	pending_missing_product_type: number;
+}
+
+/** Pre-commit registration-queue backlog — distinct from the committed-product
+ * KPIs, so "0 missing cluster" (products) reads unambiguously next to the drafts
+ * that still await a cluster. No filters: the queue is one global pipeline stage. */
+export const fetchRegistrationQueueCoverage = () =>
+	getAPI<RegistrationQueueCoverage>(
+		"/api/reporting/coverage/registration-queue",
+	);
+
 export const fetchPromptReadiness = (f: ReportingFilters) =>
 	getAPI<PromptReadinessHistogram>(
 		`/api/reporting/coverage/prompt-readiness?${qs(f)}`,
@@ -353,6 +370,9 @@ export const useCopywritingCoverage = (f: ReportingFilters) =>
 
 export const useProductIntelligenceCoverage = (f: ReportingFilters) =>
 	useAsync(() => fetchProductIntelligenceCoverage(f), fkey(f));
+
+export const useRegistrationQueueCoverage = () =>
+	useAsync(fetchRegistrationQueueCoverage, []);
 
 export const usePromptReadiness = (f: ReportingFilters) =>
 	useAsync(() => fetchPromptReadiness(f), fkey(f));

@@ -14,6 +14,7 @@ import {
 import {
 	useClusterAudit,
 	useCopywritingCoverage,
+	useRegistrationQueueCoverage,
 	useMappingSummary,
 	useProductIntelligenceCoverage,
 	usePromptReadiness,
@@ -52,6 +53,7 @@ function ExecutiveInner() {
 	const prompt = usePromptReadiness(filters);
 	const clusters = useClusterAudit();
 	const mapping = useMappingSummary();
+	const queue = useRegistrationQueueCoverage();
 
 	const clusterData: BarDatum[] = clusters.data
 		? Object.entries(clusters.data.cluster_counts)
@@ -133,9 +135,16 @@ function ExecutiveInner() {
 				<KpiCard
 					label="Uncategorised"
 					value={(clusters.data?.unknown_review_required ?? 0).toLocaleString()}
-					hint="need cluster review"
+					hint="products · need cluster review"
 					tone={(clusters.data?.unknown_review_required ?? 0) > 0 ? "warn" : "success"}
 					loading={clusters.loading}
+				/>
+				<KpiCard
+					label="Queue · missing cluster"
+					value={(queue.data?.pending_missing_cluster ?? 0).toLocaleString()}
+					hint="pre-commit drafts awaiting a cluster"
+					tone={(queue.data?.pending_missing_cluster ?? 0) > 0 ? "warn" : "success"}
+					loading={queue.loading}
 				/>
 				<KpiCard
 					label="Prompt ready"
