@@ -81,10 +81,17 @@ def _build_completion_request_from_draft(
     return ProductKnowledgeCompleteRequest.model_validate(payload)
 
 
-def recompute_review_draft(draft: RegistrationReviewDraft) -> RegistrationReviewDraft:
+def recompute_review_draft(
+    draft: RegistrationReviewDraft,
+    *,
+    enable_text_assist: bool = True,
+) -> RegistrationReviewDraft:
+    """Recompute a draft. `enable_text_assist=False` is the ZERO-COST path: the
+    deterministic mapping / strategy-taxonomy (cluster + product_type_group) still
+    derives, but no paid copy text_assist provider call is made."""
     completion = complete_product_knowledge(
         _build_completion_request_from_draft(draft),
-        enable_text_assist=True,
+        enable_text_assist=enable_text_assist,
     )
     refreshed = create_registration_review_draft(completion)
 

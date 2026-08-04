@@ -331,16 +331,20 @@ async def registration_queue_coverage() -> dict:
         [],
     )
     _PENDING = "(committed_product_id IS NULL OR TRIM(committed_product_id) = '')"
+    # Empty OR the sentinel both mean "not usefully classified" — matches the product
+    # missing_cluster predicate, so a draft recomputed to generic_unclassified stays
+    # in the backlog instead of silently dropping off it.
     missing_cluster = await _scalar(
         db,
         f"SELECT COUNT(*) FROM fastmoss_bulk_draft_status WHERE {_PENDING} "
-        "AND (cluster IS NULL OR TRIM(cluster) = '')",
+        "AND (cluster IS NULL OR TRIM(cluster) = '' OR cluster = 'generic_unclassified')",
         [],
     )
     missing_product_type = await _scalar(
         db,
         f"SELECT COUNT(*) FROM fastmoss_bulk_draft_status WHERE {_PENDING} "
-        "AND (product_type_group IS NULL OR TRIM(product_type_group) = '')",
+        "AND (product_type_group IS NULL OR TRIM(product_type_group) = '' "
+        "OR product_type_group = 'unknown_product_type')",
         [],
     )
     return {

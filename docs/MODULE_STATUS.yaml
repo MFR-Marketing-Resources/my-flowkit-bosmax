@@ -602,6 +602,8 @@ domains:
       - agent/services/registration_draft_storage_service.py
       - agent/services/registration_draft_evidence_editor_service.py
       - agent/services/registration_draft_recompute_service.py
+      # Zero-cost deterministic mapping of pending queue drafts missing a cluster
+      - scripts/map_pending_draft_clusters.py
       - agent/services/registration_evidence_quality_service.py
       - agent/services/registration_consistency_service.py
       - agent/services/registration_authority_fingerprint_service.py
