@@ -1265,7 +1265,7 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 										Product
 									</th>
 									<th className="px-3 py-2 text-left font-semibold text-slate-400 text-[10px] uppercase tracking-widest">
-										Source Category
+										Cluster · Type
 									</th>
 									<th className="px-3 py-2 text-left font-semibold text-slate-400 text-[10px] uppercase tracking-widest">
 										Risk
@@ -1350,8 +1350,10 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 													</div>
 												)}
 										</td>
-										<td className="px-3 py-2 text-slate-400 truncate max-w-[100px]">
-											{row.category || "—"}
+										<td className="px-3 py-2 text-slate-300 truncate max-w-[150px]">
+											{[row.cluster, row.product_type_group]
+												.filter(Boolean)
+												.join(" · ") || "—"}
 										</td>
 										<td className="px-3 py-2">
 											<span

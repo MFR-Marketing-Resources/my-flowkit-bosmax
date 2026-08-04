@@ -1110,6 +1110,17 @@ async def create_draft_from_reference(reference_id: str) -> dict[str, Any]:
 
     recompute_state, recompute_reason = _state_after_recompute(promo_status, err_msg)
 
+    # Phase B: carry the draft's already-derived creative taxonomy onto the row.
+    _rc_strategy = getattr(saved_draft, "strategy_taxonomy", None)
+    _rc_taxonomy: dict[str, str] = {}
+    if _rc_strategy is not None:
+        _rc_cluster = _clean(getattr(_rc_strategy, "cluster", None))
+        _rc_ptg = _clean(getattr(_rc_strategy, "product_type_group", None))
+        if _rc_cluster:
+            _rc_taxonomy["cluster"] = _rc_cluster
+        if _rc_ptg:
+            _rc_taxonomy["product_type_group"] = _rc_ptg
+
     await crud.update_bulk_queue_row(
         reference_id,
         promotion_status=promo_status,
@@ -1131,6 +1142,7 @@ async def create_draft_from_reference(reference_id: str) -> dict[str, Any]:
         recompute_reason=recompute_reason,
         review_hold_reason=recompute_reason if recompute_state == "BLOCKED_REVIEW_REQUIRED" else None,
         updated_at=_now(),
+        **_rc_taxonomy,
     )
 
     return {
@@ -1977,6 +1989,18 @@ async def sync_queue_row_from_draft(draft: Any) -> dict[str, Any] | None:
         if tokens:
             error_message += f":{tokens}"
     recompute_state, recompute_reason = _state_after_recompute(promotion_status, error_message)
+    # Phase B: surface the draft's already-derived creative taxonomy on the queue
+    # row. Only write when present so a draft without strategy_taxonomy never
+    # wipes a value the ingestion/backfill already set.
+    _strategy = getattr(draft, "strategy_taxonomy", None)
+    _taxonomy_updates: dict[str, str] = {}
+    if _strategy is not None:
+        _cluster = _clean(getattr(_strategy, "cluster", None))
+        _ptg = _clean(getattr(_strategy, "product_type_group", None))
+        if _cluster:
+            _taxonomy_updates["cluster"] = _cluster
+        if _ptg:
+            _taxonomy_updates["product_type_group"] = _ptg
     now = _now()
     updated = await crud.update_bulk_queue_row(
         ref_id,
@@ -1991,5 +2015,6 @@ async def sync_queue_row_from_draft(draft: Any) -> dict[str, Any] | None:
         ),
         recomputed_at=now,
         updated_at=now,
+        **_taxonomy_updates,
     )
     return updated

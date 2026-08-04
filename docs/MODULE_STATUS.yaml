@@ -1188,6 +1188,12 @@ domains:
       # catalogue (no provider, zero credit cost).
       - scripts/backfill_phase_a_ssot.py
       - tests/unit/test_phase_a_ssot_persistence.py
+      # SSOT Phase B: surface the already-derived creative taxonomy (cluster +
+      # product_type_group) on the FastMoss queue row so the list shows what drives
+      # copy, not just the commerce category. Denormalized like category/copy_route;
+      # populated on recompute + save-sync; backfilled from draft/product taxonomy.
+      - scripts/backfill_phase_b_queue_taxonomy.py
+      - tests/unit/test_phase_b_queue_cluster.py
       # Mission-08A / B-586-04: ONE canonical answer to "is this draft still open?",
       # shared by the runtime queries AND by the database's partial UNIQUE index. The
       # predicate used to be hand-written in four places with two CONTRADICTORY
