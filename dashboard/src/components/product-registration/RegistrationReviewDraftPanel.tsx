@@ -54,6 +54,8 @@ interface EvidenceEditorState {
 	benefits_text: string;
 	usage_text: string;
 	target_customer_text: string;
+	pain_points: string;
+	usp_text: string;
 	ingredients_text: string;
 	warnings_text: string;
 	paste_anything_about_product: string;
@@ -402,6 +404,8 @@ function buildEvidenceEditorState(
 		target_customer_text: toText(
 			evidence.target_customer_text || candidates.target_customer,
 		),
+		pain_points: toText(evidence.pain_points),
+		usp_text: toText(evidence.usp_text || candidates.usp_list),
 		ingredients_text: toText(evidence.ingredients_text),
 		warnings_text: toText(evidence.warnings_text),
 		paste_anything_about_product: toText(evidence.paste_anything_about_product),
@@ -580,6 +584,9 @@ export default function RegistrationReviewDraftPanel({
 	const [approvals, setApprovals] = useState<Record<string, boolean>>(
 		draft.approval_checklist,
 	);
+	// Phase C: only the fields the backend flagged for human review are shown by
+	// default; everything else the machine derived is collapsed behind a toggle.
+	const [showAllCandidates, setShowAllCandidates] = useState(false);
 	const [evidenceForm, setEvidenceForm] = useState<EvidenceEditorState>(() =>
 		buildEvidenceEditorState(draft),
 	);
@@ -903,6 +910,8 @@ export default function RegistrationReviewDraftPanel({
 			benefits_text: trimOrEmpty(evidenceForm.benefits_text),
 			usage_text: trimOrEmpty(evidenceForm.usage_text),
 			target_customer_text: trimOrEmpty(evidenceForm.target_customer_text),
+			pain_points: trimOrEmpty(evidenceForm.pain_points),
+			usp_text: trimOrEmpty(evidenceForm.usp_text),
 			ingredients_text: trimOrEmpty(evidenceForm.ingredients_text),
 			warnings_text: trimOrEmpty(evidenceForm.warnings_text),
 			paste_anything_about_product: trimOrEmpty(
@@ -1173,7 +1182,10 @@ export default function RegistrationReviewDraftPanel({
 		draft.claim_gate !== "CLAIM_BLOCKED" &&
 		isFresh &&
 		draft.missing_required_evidence.length === 0 &&
-		approvals.normalized_name === true &&
+		// A confident, non-sensitive draft (nothing flagged for human review) does
+		// not force a manual name-confirm click — the operator commits in one step.
+		(approvals.normalized_name === true ||
+			draft.human_review_fields.length === 0) &&
 		unresolvedReviewFields.length === 0;
 
 	return (
@@ -1892,7 +1904,7 @@ export default function RegistrationReviewDraftPanel({
 									benefits_text: value,
 								}))
 							}
-							placeholder="Benefits and USP from the seller or product owner."
+							placeholder="Benefits and outcomes from the seller or product owner."
 							guidance={guidanceByField.get("benefits_text")}
 						/>
 						<EvidenceTextarea
@@ -1916,6 +1928,30 @@ export default function RegistrationReviewDraftPanel({
 								}))
 							}
 							placeholder="Who this product is for."
+							rows={3}
+						/>
+						<EvidenceTextarea
+							label="Pain Points"
+							value={evidenceForm.pain_points}
+							onChange={(value) =>
+								setEvidenceForm((current) => ({
+									...current,
+									pain_points: value,
+								}))
+							}
+							placeholder="Problems / frustrations this product solves — one per line. Feeds the copy hooks."
+							rows={3}
+						/>
+						<EvidenceTextarea
+							label="USP"
+							value={evidenceForm.usp_text}
+							onChange={(value) =>
+								setEvidenceForm((current) => ({
+									...current,
+									usp_text: value,
+								}))
+							}
+							placeholder="Unique selling points / differentiators — one per line."
 							rows={3}
 						/>
 						<EvidenceTextarea
@@ -2403,12 +2439,48 @@ export default function RegistrationReviewDraftPanel({
 							<span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
 							Canonical Candidates
 						</h4>
+						<div className="mb-3 flex items-center justify-between gap-2">
+							{draft.human_review_fields.length > 0 ? (
+								<span className="text-[11px] font-medium text-amber-300">
+									{draft.human_review_fields.length} field
+									{draft.human_review_fields.length > 1 ? "s" : ""} need your
+									confirmation below.
+								</span>
+							) : (
+								<span className="text-[11px] font-medium text-emerald-300">
+									✓ Auto-classified — nothing needs your review.
+								</span>
+							)}
+							<button
+								type="button"
+								onClick={() => setShowAllCandidates((v) => !v)}
+								className="shrink-0 text-[10px] font-bold uppercase tracking-widest text-slate-400 transition-colors hover:text-slate-200"
+							>
+								{showAllCandidates
+									? "Hide derived fields"
+									: `Show all ${
+											Object.keys(draft.canonical_candidate_fields).length
+										} derived fields`}
+							</button>
+						</div>
 						<div className="space-y-3">
 							{Object.entries(draft.canonical_candidate_fields).map(
 								([key, value]) => {
 									const isReviewRequired =
 										draft.human_review_fields.includes(key);
 									const evidenceMetadata = evidenceFieldStatus?.[key];
+									// Collapse only the UNTOUCHED derived noise: always keep the
+									// product name, anything flagged for review, and anything the
+									// operator already approved/rejected visible.
+									if (
+										!showAllCandidates &&
+										!isReviewRequired &&
+										key !== "normalized_name" &&
+										!approvals[key] &&
+										!draft.rejection_checklist[key]
+									) {
+										return null;
+									}
 									if (
 										(value === null ||
 											value === undefined ||

@@ -57,6 +57,15 @@ def test_new_targets_are_in_the_promotion_map():
     assert {"hook_angles_json", "cta_angles_json", "pain_points_json"} <= targets
 
 
+def test_usp_text_promotes_to_usp_json():
+    """Phase C: USP is its own declared field now (was lumped into Benefits)."""
+    payload = build_promotion_payload(_Draft(declared={
+        "usp_text": "Waterproof\nUltra-light 8-strand braid",
+    }))
+    assert payload["fields"]["usp_json"] == [
+        "Waterproof", "Ultra-light 8-strand braid"]
+
+
 # ── intelligence round-trip (real DB) ─────────────────────────────────────────
 async def _make_product(pid: str, **cols) -> None:
     db = await get_db()

@@ -332,7 +332,7 @@ describe("RegistrationReviewDraftPanel next-action guidance", () => {
 		expect(nextAction).toHaveTextContent("Warnings (Missing)");
 
 		const benefitsField = screen.getByPlaceholderText(
-			"Benefits and USP from the seller or product owner.",
+			"Benefits and outcomes from the seller or product owner.",
 		);
 		fireEvent.click(screen.getByRole("button", { name: "Jump to Benefits" }));
 		expect(benefitsField).toHaveFocus();

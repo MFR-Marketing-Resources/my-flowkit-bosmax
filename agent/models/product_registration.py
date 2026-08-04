@@ -189,6 +189,7 @@ class RegistrationReviewDraftEvidencePatchRequest(BaseModel):
     image_filename: str | None = None
 
     pain_points: str | None = None
+    usp_text: str | None = None
 
     hook_angles: list[str] | None = None
     cta_angles: list[str] | None = None
