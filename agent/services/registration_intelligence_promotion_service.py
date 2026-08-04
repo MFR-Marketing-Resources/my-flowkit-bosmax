@@ -58,10 +58,20 @@ PROMOTION_MAP: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("package_notes", ("package_notes",)),
     ("packaging_description", ("packaging_description",)),
     ("product_form_factor", ("product_form_factor",)),
+    # SSOT Phase A: copy seeds + pain points now persist instead of dropping.
+    ("hook_angles_json", ("hook_angles",)),
+    ("cta_angles_json", ("cta_angles",)),
+    ("pain_points_json", ("pain_points",)),
 )
 
 # Columns that hold a list rather than free text.
-_LIST_TARGETS = {"benefits_json", "usp_json"}
+_LIST_TARGETS = {
+    "benefits_json",
+    "usp_json",
+    "hook_angles_json",
+    "cta_angles_json",
+    "pain_points_json",
+}
 
 _SOURCE_URL_KEYS = ("source_url", "product_url", "tiktok_product_url",
                     "tiktok_shop_url")

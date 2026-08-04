@@ -1127,7 +1127,7 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 							htmlFor="bulk-fastmoss-filter-category"
 							className="text-[9px] text-slate-500 uppercase tracking-widest block mb-1"
 						>
-							Category
+							Source Category
 						</label>
 						<input
 							id="bulk-fastmoss-filter-category"
@@ -1265,7 +1265,7 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 										Product
 									</th>
 									<th className="px-3 py-2 text-left font-semibold text-slate-400 text-[10px] uppercase tracking-widest">
-										Category
+										Source Category
 									</th>
 									<th className="px-3 py-2 text-left font-semibold text-slate-400 text-[10px] uppercase tracking-widest">
 										Risk
@@ -1621,7 +1621,7 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 								</p>
 								<div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
 									<div>
-										<span className="text-slate-500">Category</span>
+										<span className="text-slate-500">Source Category</span>
 										<p className="text-white font-medium mt-0.5">
 											{detailRow.category || "—"}
 										</p>
