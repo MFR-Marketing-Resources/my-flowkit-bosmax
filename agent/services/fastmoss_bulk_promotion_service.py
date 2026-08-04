@@ -1083,7 +1083,11 @@ async def create_draft_from_reference(reference_id: str) -> dict[str, Any]:
         reference_id,
         draft.declared_evidence_fields.get("product_name") or row["raw_product_title"],
         draft.declared_evidence_fields.get("tiktok_product_url"),
-        ignore_product_id=_clean(row.get("duplicate_ignore_product_id")) or None,
+        ignore_product_id=(
+            _clean(row.get("committed_product_id"))
+            or _clean(row.get("duplicate_ignore_product_id"))
+            or None
+        ),
     )
     promo_status = _classify_promotion_status(
         claim_risk,
@@ -1665,7 +1669,11 @@ async def import_enrichment(items: list[dict[str, Any]]) -> dict[str, Any]:
                 reference_id,
                 draft.declared_evidence_fields.get("product_name") or raw_title,
                 draft.declared_evidence_fields.get("tiktok_product_url"),
-                ignore_product_id=_clean(row.get("duplicate_ignore_product_id")) or None,
+                ignore_product_id=(
+            _clean(row.get("committed_product_id"))
+            or _clean(row.get("duplicate_ignore_product_id"))
+            or None
+        ),
             )
             promotion_status = _classify_promotion_status(
                 claim_risk,
@@ -1946,7 +1954,11 @@ async def sync_queue_row_from_draft(draft: Any) -> dict[str, Any] | None:
         ref_id,
         _clean(dec.get("product_name")) or _clean(row.get("raw_product_title")),
         dec.get("tiktok_product_url"),
-        ignore_product_id=_clean(row.get("duplicate_ignore_product_id")) or None,
+        ignore_product_id=(
+            _clean(row.get("committed_product_id"))
+            or _clean(row.get("duplicate_ignore_product_id"))
+            or None
+        ),
     )
     promotion_status = _classify_promotion_status(
         claim_risk, image_readiness, missing, duplicate_candidate is not None
