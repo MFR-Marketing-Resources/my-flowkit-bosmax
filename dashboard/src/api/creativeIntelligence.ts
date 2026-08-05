@@ -10,6 +10,14 @@ export interface RecommendedAvatar {
 	suitability_notes?: string | null;
 }
 
+export interface AvatarLibraryItem {
+	avatar_code: string;
+	character_name?: string;
+	gender?: string;
+	age_band?: string;
+	recommended?: boolean;
+}
+
 export interface AvatarRecommendation {
 	product_id?: string;
 	product_name?: string | null;
@@ -407,6 +415,7 @@ export interface CreativeSetup {
 	cluster_source: string;
 	review_required?: boolean;
 	recommended_avatars: RecommendedAvatar[];
+	avatar_library?: AvatarLibraryItem[];
 	recommended_scene_templates: ScenePromptTemplate[];
 	camera_block_recommendations: CameraBlockRecommendation[];
 	camera_library: CameraPresetRecommendation["library"];

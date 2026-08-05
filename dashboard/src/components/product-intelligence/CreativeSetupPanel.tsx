@@ -181,9 +181,14 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 							label="Avatars"
 							testid="creative-setup-avatar"
 							selected={avatars}
-							options={setup.recommended_avatars.map((a) => ({
+							options={(setup.avatar_library?.length
+								? setup.avatar_library
+								: setup.recommended_avatars
+							).map((a) => ({
 								code: a.avatar_code,
-								label: `${a.avatar_code}${a.character_name ? ` · ${a.character_name}` : ""}`,
+								label:
+									`${a.avatar_code}${a.character_name ? ` · ${a.character_name}` : ""}` +
+									("recommended" in a && a.recommended ? " ★" : ""),
 							}))}
 							onToggle={(code) => toggle(avatars, setAvatars, code)}
 						/>

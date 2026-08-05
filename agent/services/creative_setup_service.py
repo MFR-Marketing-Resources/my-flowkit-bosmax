@@ -20,6 +20,7 @@ preview.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from agent.services import avatar_registry
@@ -29,6 +30,39 @@ from agent.services import creative_camera_preset_service as _camera
 
 PROVENANCE_SOURCE = "CREATIVE_SETUP_v1"
 _VALID_STATUS = ("DRAFT", "APPROVED", "REJECTED")
+
+_VARIANT_SUFFIX = re.compile(r"_\d+$")
+_MINOR_AGE_BANDS = {"child (6-12)", "teen (13-17)"}
+
+
+def _full_avatar_roster(recommended_codes: set[str]) -> list[dict[str, Any]]:
+    """The full pickable avatar roster — one entry per distinct persona (not every
+    pose-variant), adults only, with the cluster's recommended picks flagged and
+    sorted first. This is what lets the operator choose from the WHOLE registry
+    instead of only the 3-4 avatars the cluster crosswalk recommends.
+    """
+    recommended_bases = {_VARIANT_SUFFIX.sub("", str(c)) for c in recommended_codes}
+    seen: dict[str, dict[str, Any]] = {}
+    for prof in avatar_registry.list_pool():
+        code = str(prof.get("avatar_code") or "").strip()
+        if not code:
+            continue
+        base = _VARIANT_SUFFIX.sub("", code)
+        if base in seen:
+            continue
+        if str(prof.get("age_band") or "").strip().casefold() in _MINOR_AGE_BANDS:
+            continue
+        upper = code.upper()
+        seen[base] = {
+            "avatar_code": code,
+            "character_name": prof.get("character_name") or "",
+            "gender": "F" if "_F_" in upper else ("M" if "_M_" in upper else ""),
+            "age_band": prof.get("age_band") or "",
+            "recommended": code in recommended_codes or base in recommended_bases,
+        }
+    roster = list(seen.values())
+    roster.sort(key=lambda x: (not x["recommended"], x["avatar_code"]))
+    return roster
 
 
 def _avatar_index() -> dict[str, dict[str, Any]]:
@@ -122,6 +156,7 @@ async def resolve_creative_setup(product_id: str) -> dict[str, Any]:
             "cluster_source": avatars["cluster_source"],
             "review_required": True,
             "recommended_avatars": [],
+            "avatar_library": [],
             "recommended_scene_templates": [],
             "camera_block_recommendations": [],
             "camera_library": {
@@ -133,6 +168,9 @@ async def resolve_creative_setup(product_id: str) -> dict[str, Any]:
 
     scenes = await _scene.recommend_scene_prompts_for_category(category)
     cameras = await _camera.recommend_camera_presets_for_category(category)
+    avatar_library = _full_avatar_roster(
+        {a.get("avatar_code") for a in avatars["avatars"]}
+    )
 
     return {
         "product_id": product_id,
@@ -142,6 +180,7 @@ async def resolve_creative_setup(product_id: str) -> dict[str, Any]:
         "cluster_source": avatars["cluster_source"],
         "review_required": False,
         "recommended_avatars": avatars["avatars"],
+        "avatar_library": avatar_library,
         "recommended_scene_templates": scenes["templates"],
         "camera_block_recommendations": cameras["block_recommendations"],
         "camera_library": cameras["library"],
