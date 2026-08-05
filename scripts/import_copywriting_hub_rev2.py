@@ -1270,6 +1270,175 @@ async def sanitize_copy(b, apply, limit):
 
 
 # --------------------------------------------------------------------------- #
+# SOFTEN-CLAIMS — compliance hardening pass over LIVE approved copy. The token
+# scanner (scan_copy_safety) only catches explicit tokens as substrings; it does
+# NOT catch IMPLIED medical/condition claims (disease names, cure verbs, detox /
+# antibacterial / immunity physiological claims). This phase lints the whole live
+# corpus for those, then softens ONLY genuine claims in generated copy to a
+# claim-neutral equivalent that keeps the selling point. EXCLUDES: the 3 killer
+# products (owner's protected copy — flagged, never touched) and 3 factual
+# false-positives (glucose meter that MONITORS diabetes; a "tanpa jantung
+# berdebar" reassurance; a plant fertiliser's "subur"). Re-verifies both the
+# token scan (stays safe) and the implied-claim lint (drops to 0). Credit-free.
+# --------------------------------------------------------------------------- #
+_IMPLIED_VERIFY = re.compile("|".join([
+    r"\b(diabetes|kencing manis|darah tinggi|kolesterol|asma|buasir|gout|migrain|eczema|psoriasis|kudis|kanser|jantung berdebar)\b",
+    r"\b(sembuh\w*|pulih\w*|penawar|mujarab)\b",
+    r"(hilangkan|hapuskan|atasi|legakan)\s+\w*(sakit|penyakit|simptom|radang|kuman|virus)",
+    r"\b(buang\s+toksin|detox|bunuh\s+(kuman|bakteria|virus)|tingkatkan\s+imun|lancarkan\s+peredaran)\b",
+    r"\b(keputihan|senggugut|kesuburan|subur\w*)\b",
+]), re.I)
+# BESPOKE claim-neutral rewrites, keyed by copy_set_id. Each entry overrides only
+# the fields carrying an implied claim; every rewrite drops the medical/condition/
+# physiological claim while KEEPING the product's selling point, and reads as
+# natural Malay (a blunt phrase-map produced collisions like "Segar segar" and
+# "mudah ditelan untuk mudah ditelan", so these are hand-authored). "usp" (when
+# present) is the COMPLETE replacement list.
+_CLAIM_REWRITE = {
+    # Kukupi coffee — disease name -> "paras gula darah" (keeps low-sugar framing)
+    "e69966bf-8b74-4f07-9d49-9d515a432072": {
+        "angle": "Nak minum kopi hari-hari tapi risau kandungan gula tinggi boleh potong diet atau naikkan paras gula darah.",
+    },
+    # MAAJUN Sari Kasih — drop "keputihan" + "rawat" -> feminine comfort/care
+    "73c62816-f009-4d75-b7b5-377479f02df5": {
+        "angle": "Rasa kurang selesa dan kurang yakin, badan pula cepat lesu setiap hari.",
+        "hook": "Nak rasa lebih selesa dan yakin sepanjang hari?",
+        "subhook": "Jom ikhtiar dengan Maajun Sari Kasih ni. Herba tradisi untuk penjagaan dalaman wanita.",
+    },
+    # Sabun Penyubur — hair "subur" -> refresh/strengthen appearance
+    "ac4ca48e-4d53-40bf-8383-b43e0a679c0c": {
+        "cta": "Segarkan semula rambut korang secara natural. Grab Sabun Syampu Herba ni kat beg kuning!",
+        "usp": ["Syampu berbentuk sabun bar 3-dalam-1 tanpa botol plastik. Diperkaya dengan herba semula jadi untuk menyegarkan kulit kepala dan menguatkan rambut."],
+    },
+    # Clenz99 — drop buasir/sembelit/legakan treatment claims -> comfort/gentle
+    "b423b1bb-3610-445b-a9a0-4d4fe1fd6d19": {
+        "angle": "Duduk serba tak kena dan rasa tak selesa. Perut kembung berhari-hari sampai mood pun swing teruk.",
+        "hook": "Tiap kali masuk toilet je rasa tak selesa? Duduk lama pun serba salah?",
+        "subhook": "Tak payah tahan rasa tak selesa lagi, sapu je Minyak Clenz99 ni. Herba tradisional yang lembut di kulit tanpa rasa pijar atau panas.",
+        "usp": ["Rumusan herba Nusantara semulajadi yang cepat meresap, tak panas, dan lembut di kulit tanpa bahan kimia bahaya."],
+    },
+    # Minyak Kastor — hair-growth "galak tumbuh/subur" -> appearance
+    "181ece73-c5c3-46ee-8a5d-ac8563115fd3": {
+        "hook": "Nak rambut, bulu mata dan kening nampak lebih lebat? Minyak kastor tulen seratus peratus, sesuai untuk rutin harian. Satu botol serba guna!",
+        "subhook": "Rambut nampak lebih lebat. Bulu mata dan kening seratus peratus semula jadi. Serba guna.",
+        "cta": "Nampak lebih lebat secara semula jadi, add to cart!",
+    },
+    # REENZA — detox/buang toksin -> lightness/refresh
+    "add32a8b-ee68-45ed-884b-c92d1703e7c5": {
+        "hook": "Badan rasa berat, kembung dan kurang segar? REENZA EzyTox Lemon Tea bantu kurangkan kembung dan buat badan rasa lebih ringan. Segar dan sihat, sedap diminum!",
+        "subhook": "Lemon segar. Badan lebih ringan. Sedap dan mudah.",
+        "usp": ["Minuman lemon EzyTox sepuluh sachet", "Packaged in single-serving 10g sachets for portability", "Lemon tea flavor"],
+    },
+    # Panadol — registered drug; drop therapeutic-relief claim -> factual (coated/easy-swallow)
+    "149601b8-812d-4850-baee-efb0ca3ace1c": {
+        "subhook": "Standby Panadol Regular Coated ni siap-siap. Jenis coated ni senang sikit nak telan.",
+        "usp": ["Tablet bersalut (coated) yang lebih mudah ditelan."],
+    },
+    # Poomsoft baby wipes — "bunuh kuman"/"anti-bakteria" -> hygiene
+    "33998010-52ee-4b4b-b2e5-32f3a7308f10": {
+        "subhook": "Korang borong terus tisu Poomsoft 10 pek ni! Memang jimat gila, bebas alkohol, siap ada teknologi Nanosilver untuk lebih higienik lagi.",
+        "usp": ["Pek ekonomi 800 keping dengan teknologi Nanosilver dan Vitamin E yang melembapkan kulit bayi tanpa bahan kimia keras."],
+    },
+    # UNICO #1 — detox -> refresh
+    "8641c4e7-541d-4dfd-a60d-ff7e702e5592": {
+        "angle": "Rasa kembung, perut tak selesa dan badan kurang segar",
+        "hook": "Rasa kembung dan badan kurang segar? UNICO Lemon TTOX, lemon segar bantu penghadaman dan buat badan rasa lebih ringan. Segar dan sihat dari dalam!",
+        "subhook": "Lemon segar. Bantu penghadaman. Badan lebih segar. Mudah disediakan.",
+        "cta": "Badan segar, add to cart!",
+        "usp": ["Minuman lemon UNICO 10 paket", "Kelebihan UNICO LEMON TTOX ( 10 PAKET) #2", "Kelebihan UNICO LEMON TTOX ( 10 PAKET) #3"],
+    },
+    # UNICO #2 — detox (usp only)
+    "5d30fa73-8e4f-46c4-a4ce-35656775dcc6": {
+        "usp": ["UNICO LEMON TTOX — 10 paket minuman lemon yang mudah dibancuh untuk rutin harian anda.", "Membantu penghadaman dan menyegarkan badan dengan kesegaran lemon.", "Praktikal dan ringkas — cukup bancuh dan nikmati, sesuai untuk anda yang sibuk."],
+    },
+    # Pentavite — immunity claim -> nutrition support
+    "a23dfae2-061a-4a74-80c2-2bce3509079d": {
+        "angle": "Anak kerap demam dan selesema, nak lengkapkan pemakanan harian",
+        "hook": "Anak kerap demam dan selesema? Pentavite Vitamin C Kunyah, lengkapkan pemakanan harian anak dengan perisa beri sedap. Halal, diluluskan dan anak suka makan!",
+        "subhook": "Vitamin C harian. Boleh kunyah sedap. Perisa beri tropika. Halal dan diluluskan.",
+        "cta": "Pemakanan anak lengkap, add to cart!",
+        "usp": ["Vitamin C kunyah Pentavite perisa beri, halal", "Chewable vitamin C with tropical berry flavor", "Kelebihan [Amelia's Favourite] Pentavite Vitamin C Tropika Beri Boleh Kunyah, #3"],
+    },
+}
+# Factual false-positives to LEAVE ALONE + killer prefix (protected).
+_CLAIM_KEEP_IDS = {
+    "24665407-ef6c-47d9-a7f8-954fb534f2cc",  # Sinocare glucose meter — monitors, not treats
+    "5b1927d1-447a-41f4-8d25-c1efdbe564d9",  # MERYEM latte — "tanpa jantung berdebar" reassurance
+    "e0e89615-6aef-4eee-b223-603288b25210",  # BAJA fertiliser — "subur" = plant growth
+}
+_CLAIM_KILLER_PREFIX = ("6483d624", "90349f8c", "b460ffbd")
+
+
+async def soften_claims(b, apply, limit):
+    import sqlite3
+    import json as _json
+    from agent.services.copy_set_service import scan_copy_safety
+    from agent.db import crud
+
+    con = sqlite3.connect(f"file:{DB.as_posix()}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    rows = con.execute(
+        "SELECT c.copy_set_id, c.product_id, p.product_display_name nm, c.angle, c.hook, "
+        "c.subhook, c.cta, c.usp_set_json FROM copy_set c JOIN product p ON p.id=c.product_id "
+        "WHERE c.status='COPY_APPROVED' AND COALESCE(c.archived,0)=0 "
+        "AND p.lifecycle_status='ACTIVE'").fetchall()
+    con.close()
+
+    FIELDS = ("angle", "hook", "subhook", "cta")
+    killer_flag = {}
+    fixed_cs = 0
+    fixed_prod = set()
+    residual = []
+    unhandled = []
+    for r in rows:
+        try:
+            usp = _json.loads(r["usp_set_json"] or "[]")
+        except Exception:
+            usp = []
+        blob = " ".join(str(r[f] or "") for f in FIELDS) + " " + " ".join(usp)
+        if not _IMPLIED_VERIFY.search(blob):
+            continue
+        pid = r["product_id"]
+        if pid.startswith(_CLAIM_KILLER_PREFIX):
+            killer_flag[r["nm"][:40]] = sorted(set(m.group(0).lower() for m in _IMPLIED_VERIFY.finditer(blob)))
+            continue
+        if pid in _CLAIM_KEEP_IDS:
+            continue
+        rw = _CLAIM_REWRITE.get(r["copy_set_id"])
+        if not rw:
+            # flagged but no hand-authored rewrite — never blunt-edit, surface it
+            unhandled.append((r["nm"][:38], r["copy_set_id"][:8]))
+            continue
+        patch = {f: rw[f] for f in FIELDS if f in rw}
+        new_usp = rw["usp"] if "usp" in rw else usp
+        # re-verify: token scan safe + implied lint clean
+        chk = {f: patch.get(f, r[f]) for f in FIELDS}
+        chk["usp_set"] = new_usp
+        safe = scan_copy_safety(chk, product_id=pid)["safe"]
+        clean = not _IMPLIED_VERIFY.search(" ".join(str(chk[f] or "") for f in FIELDS) + " " + " ".join(new_usp))
+        if not (safe and clean):
+            residual.append((r["nm"][:38], safe, clean))
+            continue
+        if apply:
+            if patch:
+                await crud.update_copy_set(r["copy_set_id"], **patch)
+            if "usp" in rw:
+                await crud.update_copy_set(
+                    r["copy_set_id"], usp_set_json=_json.dumps(new_usp, ensure_ascii=False))
+        fixed_cs += 1
+        fixed_prod.add(pid)
+    verb = "SOFTENED" if apply else "would soften"
+    print(f"SOFTEN-CLAIMS {verb}: copy_sets={fixed_cs} products={len(fixed_prod)} "
+          f"residual_unclean={len(residual)} unhandled={len(unhandled)}")
+    if unhandled:
+        print(f"  UNHANDLED (flagged, no bespoke rewrite authored): {unhandled}")
+    if residual:
+        print(f"  RESIDUAL (still flagged after rewrite): {residual}")
+    if killer_flag:
+        print(f"  KILLER (protected — owner decision, NOT modified): {killer_flag}")
+
+
+# --------------------------------------------------------------------------- #
 # IMAGES — materialize (download) image_url for products with asset_status=UNRESOLVED
 # --------------------------------------------------------------------------- #
 async def images(b, apply, limit):
@@ -1418,6 +1587,8 @@ async def run(phase, apply, limit):
             await approve_copy(b, apply, limit)
         elif phase == "sanitize-copy":
             await sanitize_copy(b, apply, limit)
+        elif phase == "soften-claims":
+            await soften_claims(b, apply, limit)
         else:
             print(f"phase {phase} not implemented in this file yet")
     finally:
@@ -1431,7 +1602,7 @@ def main():
                     choices=["1", "2", "3", "archive", "unarchive", "images",
                              "restore-cluster", "reclassify", "register-pairs", "cover-pairs",
                              "sanitize-approve", "sanitize-medical", "reject-stale-queue",
-                             "gen-copy", "approve-copy", "sanitize-copy"])
+                             "gen-copy", "approve-copy", "sanitize-copy", "soften-claims"])
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
