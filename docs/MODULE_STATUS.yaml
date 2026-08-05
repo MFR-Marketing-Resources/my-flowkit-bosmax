@@ -654,6 +654,7 @@ domains:
       - dashboard/src/components/product-asset-generator/presets.ts
       - dashboard/src/pages/ProductsSalesAnalyzerPage.tsx
       - dashboard/src/pages/ProductsSalesAnalyzerPage.sourceFilter.test.ts
+      - dashboard/src/pages/ProductDetailPage.tsx
       - dashboard/src/components/product-registration/ProductKnowledgeResultPanel.tsx
       - dashboard/src/pages/WorkspaceJobsPage.tsx
       - dashboard/src/pages/WorkspaceGenerationPackagesPage.tsx

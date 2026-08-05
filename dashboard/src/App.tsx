@@ -64,6 +64,7 @@ import RpaQueueControlPage from "./pages/RpaQueueControlPage";
 import ProductRegistrationPage from "./pages/ProductRegistrationPage";
 import ProductTypeRegistryPage from "./pages/ProductTypeRegistryPage";
 import ProductsSalesAnalyzerPage from "./pages/ProductsSalesAnalyzerPage";
+import ProductDetailPage from "./pages/ProductDetailPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import PromptPreviewPage from "./pages/PromptPreviewPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -609,6 +610,7 @@ function Layout() {
 							element={<CopyIntelligencePage />}
 						/>
 						<Route path="/products" element={<ProductsSalesAnalyzerPage />} />
+						<Route path="/product/:id" element={<ProductDetailPage />} />
 						<Route path="/projects" element={<ProjectsPage />} />
 						<Route path="/projects/:id" element={<ProjectsPage />} />
 						<Route path="/gallery" element={<GalleryPage />} />
