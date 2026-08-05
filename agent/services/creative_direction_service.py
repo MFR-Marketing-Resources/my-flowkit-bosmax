@@ -56,11 +56,12 @@ def resolve_creative_direction(
     if not isinstance(entry, dict):
         raise CreativeDirectionError("CREATIVE_DIRECTION_AUTHORITY_INVALID")
     category = resolve_category_adapt(product)
-    # Legacy generation lane: intentionally keeps the deterministic Home & Living
-    # fallback for a blank/unknown category (opt-in). The product-first Avatar
-    # Registry flow uses the fail-closed default instead.
-    cluster = creative_avatar.resolve_cluster(
-        (product or {}).get("category"), allow_fallback=True
+    # Product-first SSOT: a VERIFIED strategy taxonomy projects the creative cluster
+    # via the crosswalk. When it is not verified, this LEGACY generation lane keeps
+    # its long-standing opt-in Home & Living fallback for a blank/unknown category
+    # (allow_fallback=True) so the poster/img consumers see unchanged behaviour.
+    cluster = creative_avatar.resolve_product_cluster_sync(
+        product or {}, (product or {}).get("category"), allow_fallback=True
     )
     scene_templates = creative_scene.templates_for_cluster(cluster["cluster"], limit=3)
     truth = ProductTruthService.build_computed_profile(product or {})
@@ -81,7 +82,7 @@ def resolve_creative_direction(
             negative_rules=list(entry["negative_rules"]),
             malaysian_localisation_cues=list(entry["malaysian_localisation_cues"]),
             category_context={k: str(v) for k, v in category.items()},
-            canonical_cluster=str(cluster["cluster"]),
+            canonical_cluster=str(cluster["cluster"] or ""),
             cluster_source=str(cluster["cluster_source"]),
             scene_template_ids=[str(row.get("template_id")) for row in scene_templates if row.get("template_id")],
             avatar_vocabulary_source="avatar_registry_vocab.json" if avatar_registry.load_vocab() else "",

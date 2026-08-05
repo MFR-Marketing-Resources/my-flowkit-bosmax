@@ -200,6 +200,9 @@ domains:
       - agent/authority/creative_cluster_crosswalk.json
       - agent/services/product_cluster_grouping.py
       - tests/unit/test_creative_cluster_crosswalk.py
+      # PR-3: product-first dual-source resolver + cross-surface SSOT invariant
+      - tests/unit/test_creative_cluster_dual_source.py
+      - tests/unit/test_mwcb_cross_surface_cluster.py
       - agent/authority/creative_avatar_cluster_crosswalk.json
       - agent/services/creative_avatar_recommendation_service.py
       - agent/services/avatar_fit_service.py

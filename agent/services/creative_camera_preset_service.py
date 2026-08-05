@@ -154,7 +154,8 @@ async def seed_camera_presets(*, dry_run: bool = True) -> dict[str, Any]:
 
 
 async def recommend_camera_presets_for_category(
-    category: str | None, block: str | None = None, content_type: str | None = None
+    category: str | None, block: str | None = None, content_type: str | None = None,
+    *, _resolved: dict[str, str | None] | None = None,
 ) -> dict[str, Any]:
     """Read-only camera/video preset recommendation for a raw category.
 
@@ -162,7 +163,8 @@ async def recommend_camera_presets_for_category(
     context), then returns the universal block-content preset guidance. Never
     mutates; never writes product camera columns; never calls generation.
     """
-    resolved = _avatar.resolve_cluster(category)
+    # _resolved: product-first dual-source bypass passed by the _for_product wrapper.
+    resolved = _resolved or _avatar.resolve_cluster(category)
     if resolved["cluster"] is None:
         # Fail-closed: no camera plan for a review-required (un-categorised /
         # unresolved) product.
@@ -209,8 +211,9 @@ async def recommend_camera_presets_for_product(
     product = await crud.get_product(product_id)
     if not product:
         raise ValueError("PRODUCT_NOT_FOUND")
+    resolved = await _avatar.resolve_product_cluster(product_id, product.get("category"))
     result = await recommend_camera_presets_for_category(
-        product.get("category"), block=block, content_type=content_type
+        product.get("category"), block=block, content_type=content_type, _resolved=resolved
     )
     result["product_id"] = product_id
     result["product_name"] = (

@@ -658,6 +658,84 @@ async def require_verified_product_strategy_taxonomy(
     return taxonomy
 
 
+def _read_taxonomy_row_sync(
+    product_id: str,
+    *,
+    db_path: Path | None = None,
+) -> dict[str, object] | None:
+    """Read one product's raw strategy-taxonomy row synchronously (RO), mirroring
+    the connection idiom of ``lookup_product_strategy_type_registry_entry``."""
+
+    resolved_path = Path(db_path or DB_PATH).resolve()
+    if not resolved_path.is_file() or not product_id:
+        return None
+    try:
+        with sqlite3.connect(
+            f"{resolved_path.as_uri()}?mode=ro",
+            uri=True,
+        ) as connection:
+            connection.row_factory = sqlite3.Row
+            row = connection.execute(
+                "SELECT * FROM product_strategy_taxonomy WHERE product_id=?",
+                (str(product_id),),
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    return dict(row) if row else None
+
+
+def read_verified_product_strategy_taxonomy_sync(
+    product: Mapping[str, object],
+    *,
+    db_path: Path | None = None,
+) -> ProductStrategyTaxonomy | None:
+    """Synchronous, fail-closed twin of
+    ``require_verified_product_strategy_taxonomy``.
+
+    Returns the read-model ONLY when the taxonomy is fully verified
+    (MATERIALIZED + VERIFIED + READY + not stale) and its
+    (cluster, product_type_group) pair is an ACTIVE registry entry; returns
+    ``None`` for anything less and NEVER raises, so the sync caller
+    (``creative_direction``) can fall back to legacy category derivation. The
+    gate mirrors the async version field-for-field, substituting the sync
+    registry read for ``validate_product_strategy_assignment``.
+    """
+
+    product_id = str(product.get("id") or product.get("product_id") or "")
+    if not product_id:
+        return None
+    row = _read_taxonomy_row_sync(product_id, db_path=db_path)
+    # Fast reject on the RAW row BEFORE building the read-model. A missing or
+    # non-verified row can never be trusted, and _read_model_from_row(product, None)
+    # would run the full strategy classifier (build_product_strategy_taxonomy_candidate)
+    # purely as a side effect for a result we discard — heavy, and it perturbs shared
+    # caches that unrelated callers depend on. Only a MATERIALIZED + VERIFIED + READY
+    # row is worth building (for the staleness check) and registry-validating.
+    if (
+        not row
+        or row.get("materialization_status") != "MATERIALIZED"
+        or row.get("review_status") != "VERIFIED"
+        or row.get("consumer_status") != "READY"
+    ):
+        return None
+    taxonomy = _read_model_from_row(product, row)
+    if (
+        taxonomy.materialization_status != "MATERIALIZED"
+        or taxonomy.review_status != "VERIFIED"
+        or taxonomy.consumer_status != "READY"
+        or taxonomy.is_stale
+    ):
+        return None
+    registry = lookup_product_strategy_type_registry_entry(
+        taxonomy.cluster,
+        taxonomy.product_type_group,
+        db_path=db_path,
+    )
+    if not registry or str(registry.get("registry_status")) != "ACTIVE":
+        return None
+    return taxonomy
+
+
 async def attach_product_strategy_taxonomies(
     products: list[dict[str, object]],
 ) -> list[dict[str, object]]:

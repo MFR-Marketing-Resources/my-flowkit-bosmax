@@ -115,7 +115,8 @@ async def seed_scene_prompts(*, dry_run: bool = True) -> dict[str, Any]:
 
 
 async def recommend_scene_prompts_for_category(
-    category: str | None, limit: int = 50
+    category: str | None, limit: int = 50,
+    *, _resolved: dict[str, str | None] | None = None,
 ) -> dict[str, Any]:
     """Read-only scene/image-prompt recommendation for a raw category.
 
@@ -123,7 +124,8 @@ async def recommend_scene_prompts_for_category(
     that cluster's templates from the committed library. Never mutates; never
     resolves ``[AVATAR]``/``[PRODUCT]``; never calls generation.
     """
-    resolved = _avatar.resolve_cluster(category)
+    # _resolved: product-first dual-source bypass passed by the _for_product wrapper.
+    resolved = _resolved or _avatar.resolve_cluster(category)
     cluster = resolved["cluster"]
     if cluster is None:
         # Fail-closed: no scene plan for a review-required (un-categorised /
@@ -161,7 +163,10 @@ async def recommend_scene_prompts_for_product(
     product = await crud.get_product(product_id)
     if not product:
         raise ValueError("PRODUCT_NOT_FOUND")
-    result = await recommend_scene_prompts_for_category(product.get("category"), limit=limit)
+    resolved = await _avatar.resolve_product_cluster(product_id, product.get("category"))
+    result = await recommend_scene_prompts_for_category(
+        product.get("category"), limit=limit, _resolved=resolved
+    )
     result["product_id"] = product_id
     result["product_name"] = (
         product.get("product_display_name") or product.get("raw_product_title")

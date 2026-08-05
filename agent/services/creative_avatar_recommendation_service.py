@@ -103,6 +103,82 @@ def resolve_cluster(
     return {"cluster": None, "cluster_source": "REVIEW_REQUIRED_UNKNOWN_CATEGORY"}
 
 
+def _project_dual_source(
+    verified_taxonomy: Any, category: str | None, *, allow_fallback: bool = False
+) -> dict[str, str | None]:
+    """Project a product's creative cluster from its stored, VERIFIED strategy
+    taxonomy (the authority) when available, else fall back to the legacy
+    category derivation — tagged, never silent.
+
+    ``verified_taxonomy`` is a ``ProductStrategyTaxonomy`` ONLY when it has passed
+    the full VERIFIED gate; otherwise ``None``. Returns the ``resolve_cluster``
+    shape plus an additive ``cluster_provenance`` marker, so downstream consumers
+    (which read only ``cluster`` / ``cluster_source``) are unchanged.
+    """
+    from agent.services.product_cluster_grouping import resolve_creative_cluster
+
+    if verified_taxonomy is not None:
+        creative = resolve_creative_cluster(verified_taxonomy.cluster)
+        if creative is not None:
+            return {
+                "cluster": creative,
+                "cluster_source": "STRATEGY_CLUSTER_VERIFIED",
+                "cluster_provenance": "STRATEGY_CLUSTER_VERIFIED",
+            }
+        # Verified, but the stored cluster has no crosswalk bucket (unreachable via
+        # the legit review flow, which refuses generic/unmapped clusters). Fail
+        # closed — NEVER silently revert a verified product to category derivation.
+        return {
+            "cluster": None,
+            "cluster_source": "STRATEGY_CLUSTER_UNMAPPED",
+            "cluster_provenance": "STRATEGY_CLUSTER_VERIFIED",
+        }
+
+    # allow_fallback lets a LEGACY lane (creative_direction) keep its long-standing
+    # opt-in Home & Living fallback for a blank/unknown category; product-first
+    # surfaces stay fail-closed (the default).
+    legacy = resolve_cluster(category, allow_fallback=allow_fallback)
+    return {**legacy, "cluster_provenance": "LEGACY_CATEGORY_DERIVATION"}
+
+
+async def resolve_product_cluster(
+    product_id: str | None, category: str | None
+) -> dict[str, str | None]:
+    """Async dual-source resolver for product-bearing creative surfaces.
+
+    Projects the product's VERIFIED strategy taxonomy via the SSOT crosswalk when
+    present; otherwise the tagged legacy category derivation. A missing
+    ``product_id`` or an unverified taxonomy both take the legacy path.
+    """
+    from agent.services.product_strategy_taxonomy_service import (
+        ProductStrategyTaxonomyError,
+        require_verified_product_strategy_taxonomy,
+    )
+
+    verified = None
+    if product_id:
+        try:
+            verified = await require_verified_product_strategy_taxonomy(str(product_id))
+        except ProductStrategyTaxonomyError:
+            verified = None
+    return _project_dual_source(verified, category)
+
+
+def resolve_product_cluster_sync(
+    product: dict[str, Any] | None, category: str | None, *, allow_fallback: bool = False
+) -> dict[str, str | None]:
+    """Sync twin of ``resolve_product_cluster`` for the synchronous
+    ``creative_direction`` lane. Reads the VERIFIED taxonomy without an event
+    loop; any unverified / absent / stale taxonomy falls through to tagged legacy.
+    """
+    from agent.services.product_strategy_taxonomy_service import (
+        read_verified_product_strategy_taxonomy_sync,
+    )
+
+    verified = read_verified_product_strategy_taxonomy_sync(product or {})
+    return _project_dual_source(verified, category, allow_fallback=allow_fallback)
+
+
 def _live_avatar_codes() -> set[str]:
     return {str(a.get("avatar_code")) for a in avatar_registry.list_pool()}
 
@@ -270,14 +346,17 @@ async def reconcile_avatar_product_fit(*, dry_run: bool = True) -> dict[str, Any
     }
 
 
-async def recommend_avatars_for_category(category: str | None) -> dict[str, Any]:
+async def recommend_avatars_for_category(
+    category: str | None, *, _resolved: dict[str, str | None] | None = None
+) -> dict[str, Any]:
     """Read-only avatar recommendation for a raw category. Never mutates.
 
     Fail-closed: a blank or unresolved category returns no recommendation and
     ``review_required=True`` with ``cluster=None``, so the product-first flow
     never auto-plans or auto-links an avatar for an un-categorised product.
     """
-    resolved = resolve_cluster(category)
+    # _resolved: product-first dual-source bypass passed by the _for_product wrapper.
+    resolved = _resolved or resolve_cluster(category)
     cluster = resolved["cluster"]
     if cluster is None:
         return {
@@ -308,7 +387,10 @@ async def recommend_avatars_for_product(product_id: str) -> dict[str, Any]:
     product = await crud.get_product(product_id)
     if not product:
         raise ValueError("PRODUCT_NOT_FOUND")
-    result = await recommend_avatars_for_category(product.get("category"))
+    resolved = await resolve_product_cluster(product_id, product.get("category"))
+    result = await recommend_avatars_for_category(
+        product.get("category"), _resolved=resolved
+    )
     result["product_id"] = product_id
     result["product_name"] = (
         product.get("product_display_name") or product.get("raw_product_title")
@@ -324,6 +406,10 @@ async def audit_product_cluster_coverage() -> dict[str, Any]:
     receive an unsuitable avatar plan.
     """
     from agent.db import crud
+    from agent.services.product_cluster_grouping import resolve_creative_cluster
+    from agent.services.product_strategy_taxonomy_service import (
+        attach_product_strategy_taxonomies,
+    )
     from agent.services.reporting_service import is_non_product_row
 
     # Quarantine test fixtures + merged-alias duplicates (non-products), exactly as
@@ -333,20 +419,35 @@ async def audit_product_cluster_coverage() -> dict[str, Any]:
     products = [
         p for p in await crud.list_products(limit=5000) if not is_non_product_row(p)
     ]
+    # SSOT: a product with a VERIFIED strategy taxonomy is counted under its stored
+    # cluster (projected via the crosswalk); only unverified rows fall back to the
+    # legacy category derivation. One bulk sidecar read attaches the taxonomies.
+    products = await attach_product_strategy_taxonomies(products)
     cluster_counts: dict[str, int] = {cluster: 0 for cluster in canonical_clusters()}
     unknown_samples: list[dict[str, str]] = []
     raw_categories: dict[str, int] = {}
     unknown_count = 0
     for product in products:
         raw_category = str(product.get("category") or "").strip()
-        resolved_cluster = (
-            resolve_cluster(raw_category)["cluster"] if raw_category else None
+        tax = product.get("strategy_taxonomy") or {}
+        verified = (
+            tax.get("materialization_status") == "MATERIALIZED"
+            and tax.get("review_status") == "VERIFIED"
+            and tax.get("consumer_status") == "READY"
+            and not tax.get("is_stale")
         )
-        if raw_category and resolved_cluster is not None:
+        if verified:
+            resolved_cluster = resolve_creative_cluster(tax.get("cluster"))
+        else:
+            resolved_cluster = (
+                resolve_cluster(raw_category)["cluster"] if raw_category else None
+            )
+        if resolved_cluster is not None:
             cluster_counts[resolved_cluster] = cluster_counts.get(resolved_cluster, 0) + 1
-            raw_categories[raw_category] = raw_categories.get(raw_category, 0) + 1
+            if raw_category:
+                raw_categories[raw_category] = raw_categories.get(raw_category, 0) + 1
             continue
-        # blank OR non-blank-but-unresolved -> review required, never auto-planned
+        # blank / unresolved / unverified-unmapped -> review required, never auto-planned
         unknown_count += 1
         if len(unknown_samples) < 25:
             unknown_samples.append({
