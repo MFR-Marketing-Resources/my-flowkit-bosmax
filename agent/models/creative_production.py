@@ -12,9 +12,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # P6_READY set (old ~211 FastMoss rows archived out, 235 Rev2 products qualified in;
 # net 438 -> 453). Owner-approved acceptance of the current catalog as the certified
 # P6 launch cohort.
-P58_COHORT_COUNT = 453
+# Re-pinned again 2026-08-05: owner purged the registered pharmaceutical "Panadol
+# Regular Coated" (paracetamol) from the marketing/generation catalog (archived,
+# reversible). It was a cohort member, so the certified set drops 453 -> 452.
+P58_COHORT_COUNT = 452
 P58_COHORT_SHA256 = (
-    "bd8a28f2ad96c6c6026110ac2b4ea3ad6fbe11e337f4030b2d62463a93ba0639"
+    "cfb3ed6441f4b0623bb0a07550d893694a4f6bac66aefc148b5afe7bb72e580d"
 )
 P6_LIVE_CONFIRMATION = "AUTHORIZE_P6_LIVE_CREDIT_SPEND"
 
