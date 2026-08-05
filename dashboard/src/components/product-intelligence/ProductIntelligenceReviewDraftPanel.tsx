@@ -2130,6 +2130,11 @@ export default function ProductIntelligenceReviewDraftPanel({
 										value={form.size_or_volume}
 										onChange={(value) => updateFormField("size_or_volume", value)}
 									/>
+									<details className="xl:col-span-2 rounded border border-slate-800 bg-slate-950/40 p-3">
+										<summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+											System fields — managed automatically, you rarely need to touch these
+										</summary>
+										<div className="mt-3 grid gap-4 xl:grid-cols-2">
 									<TextInput
 										label="Product Form Factor"
 										value={form.product_form_factor}
@@ -2215,6 +2220,8 @@ export default function ProductIntelligenceReviewDraftPanel({
 											rows={6}
 										/>
 									</div>
+										</div>
+									</details>
 									<div className="xl:col-span-2 space-y-3 rounded border border-slate-800 bg-slate-950/40 p-3">
 										<SectionHeading
 											title="Customer Avatar (buyer persona)"
@@ -2289,7 +2296,8 @@ export default function ProductIntelligenceReviewDraftPanel({
 								</div>
 							</div>
 
-							<div className="rounded border border-slate-800 bg-slate-900/50 p-3">
+							<details className="rounded border border-slate-800 bg-slate-900/50 p-3">
+								<summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Field provenance / audit trail — filled automatically on approval, you rarely need this</summary>
 								<div className="mb-4 flex flex-wrap items-center justify-between gap-3">
 									<SectionHeading
 										title="Field Provenance Editor"
@@ -2463,7 +2471,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 										</div>
 									))}
 								</div>
-							</div>
+							</details>
 						</>
 					)}
 				</div>

@@ -87,6 +87,58 @@ async def test_prepare_persists_knowledge_avatar_formula_never_approved(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_prepare_preserves_verified_claim_critical_fields(monkeypatch):
+    """Part A accuracy: the AI must NOT overwrite verified product truth. The latest
+    APPROVED snapshot's ingredients/usage/warnings/description are preserved verbatim;
+    the AI's (possibly wrong) guesses are ignored while it still builds persona/copy."""
+    from agent.services import product_intelligence_snapshot_service as snapshot_svc
+
+    pid = await _make_product()
+    await snapshot_svc.create_snapshot(
+        product_id=pid,
+        version=1,
+        status="APPROVED",
+        product_description="Sambal sebenar",
+        ingredients_text="Cili padi, bawang merah, minyak masak, belacan",
+        usage_text="Gaul dengan nasi panas",
+        warnings_text="Sangat pedas",
+        approved_at="2026-07-05T10:00:00Z",
+        created_by="legacy",
+    )
+    # _PREPARE_AI proposes DIFFERENT ingredients/usage/warnings — verified truth wins.
+    _mock_complete(monkeypatch, _PREPARE_AI)
+    result = await prep.prepare_product_for_copywriting(pid)
+    draft = result["draft"]
+    assert draft["ingredients_text"] == "Cili padi, bawang merah, minyak masak, belacan"
+    assert draft["usage_text"] == "Gaul dengan nasi panas"
+    assert draft["warnings_text"] == "Sangat pedas"
+    assert draft["product_description"] == "Sambal sebenar"
+    # ...but the AI still builds the fresh copy foundation.
+    assert draft["copy_strategy_summary_json"]["recommended_formula"] == "PAS"
+    assert draft["buyer_persona_snapshot_json"]["tone"] == "mesra keibuan"
+
+
+@pytest.mark.asyncio
+async def test_prepare_fills_empty_verified_field_from_ai(monkeypatch):
+    """Fill-if-empty: when the approved snapshot leaves ingredients empty, the AI value
+    fills the gap (nothing verified to preserve)."""
+    from agent.services import product_intelligence_snapshot_service as snapshot_svc
+
+    pid = await _make_product()
+    await snapshot_svc.create_snapshot(
+        product_id=pid,
+        version=1,
+        status="APPROVED",
+        product_description="Ada desc, takde ingredients",
+        approved_at="2026-07-05T10:00:00Z",
+        created_by="legacy",
+    )
+    _mock_complete(monkeypatch, _PREPARE_AI)
+    result = await prep.prepare_product_for_copywriting(pid)
+    assert result["draft"]["ingredients_text"] == "Campuran herba tradisional."
+
+
+@pytest.mark.asyncio
 async def test_prepare_normalizes_formula_label(monkeypatch):
     pid = await _make_product()
     _mock_complete(monkeypatch, {**_PREPARE_AI, "recommended_formula": "SAVAGE_HPAS"})

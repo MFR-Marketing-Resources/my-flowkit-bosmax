@@ -178,8 +178,18 @@ def _sanitize_claims(
     return safe_allowed, blocked
 
 
+def _snap_list(value: Any) -> list[str]:
+    """Deserialize a snapshot JSON-list column (stored as TEXT) into a clean list."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except Exception:
+            return []
+    return _list(value)
+
+
 def _to_create_request(
-    ai: dict[str, Any], grounding: Any
+    ai: dict[str, Any], grounding: Any, verified: dict[str, Any] | None = None
 ) -> tuple[ProductIntelligenceReviewDraftCreateRequest, str]:
     pk = ai.get("product_knowledge") or {}
     avatar = ai.get("customer_avatar") or {}
@@ -217,14 +227,19 @@ def _to_create_request(
         for field in _AI_PROVENANCE_FIELDS
     ]
 
+    # ACCURACY: never let the AI overwrite verified product truth. Prefer the latest
+    # APPROVED snapshot's non-empty product knowledge; the AI only fills fields the
+    # approved truth leaves EMPTY. Ingredients/usage/warnings are claim-critical — the
+    # AI guessed "cili kering / gula" for a product whose real list is "cili padi …".
+    v = verified or {}
     request = ProductIntelligenceReviewDraftCreateRequest(
-        product_description=_s(pk.get("description")) or None,
-        benefits_json=_list(pk.get("benefits")),
-        usp_json=_list(pk.get("usps")),
-        usage_text=_s(pk.get("usage")) or None,
-        ingredients_text=_s(pk.get("ingredients")) or None,
-        warnings_text=_s(pk.get("warnings")) or None,
-        target_customer_text=_s(pk.get("target_customer")) or _s(avatar.get("audience")) or None,
+        product_description=_s(v.get("product_description")) or _s(pk.get("description")) or None,
+        benefits_json=_snap_list(v.get("benefits_json")) or _list(pk.get("benefits")),
+        usp_json=_snap_list(v.get("usp_json")) or _list(pk.get("usps")),
+        usage_text=_s(v.get("usage_text")) or _s(pk.get("usage")) or None,
+        ingredients_text=_s(v.get("ingredients_text")) or _s(pk.get("ingredients")) or None,
+        warnings_text=_s(v.get("warnings_text")) or _s(pk.get("warnings")) or None,
+        target_customer_text=_s(v.get("target_customer_text")) or _s(pk.get("target_customer")) or _s(avatar.get("audience")) or None,
         allowed_claims_json=safe_allowed,
         blocked_claims_json=blocked_claims,
         buyer_persona_snapshot_json=persona,
@@ -249,7 +264,8 @@ async def prepare_product_for_copywriting(product_id: str) -> dict[str, Any]:
     if not isinstance(ai, dict) or not ai:
         raise provider.AICopyProviderError(provider.ERR_RESPONSE_INVALID)
 
-    request, recommended = _to_create_request(ai, grounding)
+    verified = await crud.get_latest_approved_product_intelligence_snapshot(product_id) or {}
+    request, recommended = _to_create_request(ai, grounding, verified)
     # A product may already hold one open review draft (single-open-draft partial
     # unique index). Supersede it (content preserved) so this fresh AI draft inserts
     # instead of colliding — matches the revision lifecycle. Without this,
