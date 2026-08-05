@@ -1104,6 +1104,46 @@ async def gen_copy(b, apply, limit):
 
 
 # --------------------------------------------------------------------------- #
+# APPROVE-COPY — run the GOVERNED approve_copy_set gate on the new copy_sets.
+# The gate FAILS CLOSED on unsafe / incomplete / generic / ungrounded copy, so
+# only genuinely safe+grounded copy goes live; the rest stay drafts for review.
+# No overrides used. Credit-free.
+# --------------------------------------------------------------------------- #
+async def approve_copy(b, apply, limit):
+    import sqlite3
+    from collections import Counter
+    from agent.services.copy_set_service import approve_copy_set
+    from agent.models.copy_set import CopySetApproveRequest, APPROVAL_PHRASE
+
+    con = sqlite3.connect(f"file:{DB.as_posix()}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    ids = [r["copy_set_id"] for r in con.execute(
+        "SELECT copy_set_id FROM copy_set WHERE source='COPY_SIGNAL_GENERATOR' "
+        "AND date(created_at) >= '2026-08-05' AND status<>'COPY_APPROVED' "
+        "AND COALESCE(archived,0)=0")]
+    con.close()
+    if limit:
+        ids = ids[:limit]
+    _CODES = ("COPY_SET_UNSAFE", "COPY_SET_GENERIC", "COPY_SET_UNGROUNDED",
+              "COPY_SET_INCOMPLETE", "COPY_INELIGIBLE", "COPY_SET_FORMULA_REVIEW_REQUIRED",
+              "COPY_SET_NO_PI_SNAPSHOT")
+    ok = 0
+    held = Counter()
+    for cid in ids:
+        try:
+            if apply:
+                await approve_copy_set(cid, CopySetApproveRequest(
+                    approval_phrase=APPROVAL_PHRASE, approved_by="owner",
+                    reviewer_note="Governed bulk approve — Copywriting Hub-Rev2 deterministic copy grounded on approved PI"))
+            ok += 1
+        except Exception as exc:
+            code = next((c for c in _CODES if c in str(exc)), None) or str(exc)[:30]
+            held[code] += 1
+    verb = "APPROVED" if apply else "would approve"
+    print(f"APPROVE-COPY {verb}: approved={ok} held={dict(held)}")
+
+
+# --------------------------------------------------------------------------- #
 # IMAGES — materialize (download) image_url for products with asset_status=UNRESOLVED
 # --------------------------------------------------------------------------- #
 async def images(b, apply, limit):
@@ -1248,6 +1288,8 @@ async def run(phase, apply, limit):
             await reject_stale_queue(b, apply, limit)
         elif phase == "gen-copy":
             await gen_copy(b, apply, limit)
+        elif phase == "approve-copy":
+            await approve_copy(b, apply, limit)
         else:
             print(f"phase {phase} not implemented in this file yet")
     finally:
@@ -1261,7 +1303,7 @@ def main():
                     choices=["1", "2", "3", "archive", "unarchive", "images",
                              "restore-cluster", "reclassify", "register-pairs", "cover-pairs",
                              "sanitize-approve", "sanitize-medical", "reject-stale-queue",
-                             "gen-copy"])
+                             "gen-copy", "approve-copy"])
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
