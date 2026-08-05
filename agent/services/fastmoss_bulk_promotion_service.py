@@ -600,6 +600,10 @@ def _attach_duplicate_metadata_to_row(
     payload["content_generation_allowed"] = policy["content_generation_allowed"]
     payload["resolved_product_id"] = policy["resolved_product_id"]
     payload["content_generation_reason"] = policy["reason"]
+    # Resolve-on-read SSOT projection: stored strategy cluster -> creative bucket.
+    # No DB column, no SQL filter — pure crosswalk projection of the fetched value.
+    from agent.services.product_cluster_grouping import resolve_creative_cluster
+    payload["creative_cluster"] = resolve_creative_cluster(payload.get("cluster"))
     return payload
 
 

@@ -2866,6 +2866,7 @@ export interface FastmossBulkQueueRow {
 	image_url?: string | null;
 	category?: string | null;
 	cluster?: string | null;
+	creative_cluster?: string | null;
 	product_type_group?: string | null;
 	claim_risk_level: BulkClaimRisk;
 	mapping_confidence?: number | null;

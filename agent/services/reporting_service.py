@@ -644,6 +644,7 @@ async def list_exceptions(
     await cur.close()
     # Per-row scene contract. Evaluated in Python for the page only (<= `limit` rows), so
     # the row detail is exact while the KPI count stays a single SQL COUNT.
+    from agent.services.product_cluster_grouping import resolve_creative_cluster
     for item in items:
         item.update(evaluate_scene_contract(
             item, fingerprint_stale=str(item.get("product_id") or "") in stale_ids))
@@ -651,6 +652,8 @@ async def list_exceptions(
         item.update(evaluate_intelligence_stage(
             item if item.get("draft_id") else None,
             has_snapshot=bool(item.get("snapshot_id"))))
+        # Resolve-on-read SSOT projection: stored strategy cluster -> creative bucket.
+        item["creative_cluster"] = resolve_creative_cluster(item.get("cluster"))
 
     # 08D quality rows: per-row class + the governed dispositions behind it, batched in
     # ONE query for the page so the drill-down stays server-computed end to end.

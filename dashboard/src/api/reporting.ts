@@ -141,6 +141,7 @@ export interface ExceptionItem {
 	category?: string | null;
 	product_type?: string | null;
 	cluster?: string | null;
+	creative_cluster?: string | null;
 	product_type_group?: string | null;
 	mapping_status?: string | null;
 	prompt_readiness_status?: string | null;

@@ -1449,6 +1449,11 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 											{[row.cluster, row.product_type_group]
 												.filter(Boolean)
 												.join(" · ") || "—"}
+											{row.creative_cluster && (
+												<div className="text-[9px] text-slate-500 truncate">
+													{row.creative_cluster}
+												</div>
+											)}
 										</td>
 										<td className="px-3 py-2">
 											<span

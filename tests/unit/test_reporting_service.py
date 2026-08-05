@@ -128,6 +128,20 @@ async def test_exceptions_product_kinds():
         assert got == expected_ids, (kind, lifecycle, got)
 
 
+async def test_exceptions_items_carry_creative_cluster_projection():
+    """PR-4: every drill-down row projects its stored strategy cluster to the
+    creative bucket (resolve-on-read) so reporting can show both."""
+    from agent.services.product_cluster_grouping import resolve_creative_cluster
+
+    await _seed()
+    res = await svc.list_exceptions("missing_copy", lifecycle_status="ALL")  # P2 + P3
+    by_id = {item["product_id"]: item for item in res["items"]}
+    for item in res["items"]:
+        assert item["creative_cluster"] == resolve_creative_cluster(item.get("cluster"))
+    assert by_id["P3"]["creative_cluster"] == resolve_creative_cluster("home_textiles")
+    assert by_id["P2"]["creative_cluster"] is None  # generic_unclassified is unmapped
+
+
 async def test_exceptions_failed_generation():
     await _seed()
     res = await svc.list_exceptions("failed_generation")

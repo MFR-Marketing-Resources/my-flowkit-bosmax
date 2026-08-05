@@ -29,6 +29,12 @@ const PRODUCT_COLS: DataTableColumn<ExceptionItem>[] = [
 		sortValue: (r) => r.cluster ?? "",
 	},
 	{
+		key: "creative_cluster",
+		header: "Creative",
+		render: (r) => r.creative_cluster ?? "—",
+		sortValue: (r) => r.creative_cluster ?? "",
+	},
+	{
 		key: "type",
 		header: "Product Type",
 		render: (r) => r.product_type_group ?? "—",
