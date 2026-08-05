@@ -169,6 +169,10 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 		setError(null);
 		try {
 			const result = await fetchProductRegistry({
+				// All Products = the committed catalog. Read-only FastMoss reference rows
+				// have no product record (opening one 404s the detail panels), so keep
+				// them out — they live in Import FastMoss until converted.
+				excludeReference: true,
 				q: debouncedSearch.trim() || undefined,
 				cluster: cluster || undefined,
 				productTypeGroup: productType || undefined,
