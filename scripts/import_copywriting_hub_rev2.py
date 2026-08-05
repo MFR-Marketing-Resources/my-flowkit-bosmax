@@ -714,6 +714,70 @@ async def register_pairs(b, apply, limit):
 
 
 # --------------------------------------------------------------------------- #
+# COVER-PAIRS — owner-approved: give the 5 new pairs scene coverage by reusing
+# their FAMILY's complete scene strategy, promote to ACTIVE, re-bind 9 as VERIFIED.
+# (Reuses existing complete scene strategies — no new scene content invented.)
+# --------------------------------------------------------------------------- #
+_PAIR_SCENE = {
+    ("fashion_accessory", "bag"): "FASHION_ACCESSORY",
+    ("beauty_skincare", "medicated_patch"): "FACE_MASK",
+    ("home_decor", "artificial_plant"): "HOME_DECOR",
+    ("home_improvement", "bathroom_fixture"): "WALL_COVERING",
+    ("stationery", "sticker"): "STATIONERY",
+}
+
+
+async def cover_pairs(b, apply, limit):
+    import sqlite3
+    from agent.services.product_strategy_taxonomy_service import (
+        product_strategy_fingerprint,
+        lookup_product_strategy_type_registry_entry,
+        review_product_strategy_taxonomy,
+    )
+    from agent.models.product_strategy_taxonomy import ProductStrategyTaxonomyReviewRequest
+
+    now = _now()
+    if apply:
+        w = sqlite3.connect(str(DB), timeout=30)
+        for (cl, ty), sid in _PAIR_SCENE.items():
+            w.execute(
+                "UPDATE product_strategy_type_registry SET matched_scene_strategy_id=?, "
+                "scene_coverage_status='COVERED', registry_status='ACTIVE', reviewed_at=?, updated_at=? "
+                "WHERE cluster=? AND product_type_group=?", (sid, now, now, cl, ty))
+        w.commit()
+        w.close()
+        print(f"promoted {len(_PAIR_SCENE)} registry pairs -> ACTIVE + COVERED (family scene)")
+    cur = sqlite3.connect(f"file:{DB.as_posix()}?mode=ro", uri=True)
+    cur.row_factory = sqlite3.Row
+    pairset = set(_PAIR_SCENE)
+    prods = [r for r in cur.execute(
+        "SELECT p.id, t.cluster cl, t.product_type_group ptg FROM product p "
+        "JOIN product_strategy_taxonomy t ON t.product_id=p.id WHERE p.lifecycle_status='ACTIVE'")
+        if (r["cl"], r["ptg"]) in pairset]
+    bound = failed = 0
+    for r in prods:
+        try:
+            entry = lookup_product_strategy_type_registry_entry(r["cl"], r["ptg"])
+            prod = dict(cur.execute("SELECT * FROM product WHERE id=?", (r["id"],)).fetchone())
+            fp = product_strategy_fingerprint(prod)
+            req = ProductStrategyTaxonomyReviewRequest(
+                expected_product_fingerprint=fp, cluster=r["cl"], product_type_group=r["ptg"],
+                matched_scene_strategy_id=str(entry.get("matched_scene_strategy_id")),
+                scene_coverage_status=entry.get("scene_coverage_status"),
+                review_status="VERIFIED", reviewer_id=REVIEWER_ID,
+                reviewer_note="Scene coverage assigned via family scene strategy (owner-approved)")
+            if apply:
+                await review_product_strategy_taxonomy(r["id"], req)
+            bound += 1
+        except Exception as exc:
+            failed += 1
+            print(f"  COVER BIND FAIL {r['id'][:10]}: {str(exc)[:90]}")
+    cur.close()
+    verb = "DONE" if apply else "dry-run"
+    print(f"COVER-PAIRS {verb}: pairs_promoted={len(_PAIR_SCENE)} products_rebound={bound} failed={failed}")
+
+
+# --------------------------------------------------------------------------- #
 # IMAGES — materialize (download) image_url for products with asset_status=UNRESOLVED
 # --------------------------------------------------------------------------- #
 async def images(b, apply, limit):
@@ -848,6 +912,8 @@ async def run(phase, apply, limit):
             await reclassify(b, apply, limit)
         elif phase == "register-pairs":
             await register_pairs(b, apply, limit)
+        elif phase == "cover-pairs":
+            await cover_pairs(b, apply, limit)
         else:
             print(f"phase {phase} not implemented in this file yet")
     finally:
@@ -859,7 +925,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--phase", required=True,
                     choices=["1", "2", "3", "archive", "unarchive", "images",
-                             "restore-cluster", "reclassify", "register-pairs"])
+                             "restore-cluster", "reclassify", "register-pairs", "cover-pairs"])
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
