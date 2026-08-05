@@ -38,10 +38,18 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 				if (!active) return;
 				setSetup(res);
 				const sel = res.saved_selection;
+				// Pre-configure from the saved selection if one exists, else from the
+				// live smart default (auto-derived from the cluster mapping) so EVERY
+				// product opens ready without the operator hand-picking.
+				const def = res.default_selection;
 				setSaved(sel);
-				setAvatars(sel?.selected_avatar_codes ?? []);
-				setScenes(sel?.selected_scene_template_ids ?? []);
-				setCameras(sel?.selected_camera_preset_codes ?? []);
+				setAvatars(sel?.selected_avatar_codes ?? def?.selected_avatar_codes ?? []);
+				setScenes(
+					sel?.selected_scene_template_ids ?? def?.selected_scene_template_ids ?? [],
+				);
+				setCameras(
+					sel?.selected_camera_preset_codes ?? def?.selected_camera_preset_codes ?? [],
+				);
 				setNotes(sel?.notes ?? "");
 			})
 			.catch((cause) => {

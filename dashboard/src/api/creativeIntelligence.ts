@@ -407,6 +407,13 @@ export interface SavedCreativeSelection {
 	} | null;
 }
 
+export interface DefaultCreativeSelection {
+	selected_avatar_codes: string[];
+	selected_scene_template_ids: string[];
+	selected_camera_preset_codes: string[];
+	source?: string;
+}
+
 export interface CreativeSetup {
 	product_id: string;
 	product_name?: string | null;
@@ -416,6 +423,7 @@ export interface CreativeSetup {
 	review_required?: boolean;
 	recommended_avatars: RecommendedAvatar[];
 	avatar_library?: AvatarLibraryItem[];
+	default_selection?: DefaultCreativeSelection | null;
 	recommended_scene_templates: ScenePromptTemplate[];
 	camera_block_recommendations: CameraBlockRecommendation[];
 	camera_library: CameraPresetRecommendation["library"];

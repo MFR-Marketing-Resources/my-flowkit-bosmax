@@ -157,6 +157,7 @@ async def resolve_creative_setup(product_id: str) -> dict[str, Any]:
             "review_required": True,
             "recommended_avatars": [],
             "avatar_library": [],
+            "default_selection": None,
             "recommended_scene_templates": [],
             "camera_block_recommendations": [],
             "camera_library": {
@@ -171,6 +172,26 @@ async def resolve_creative_setup(product_id: str) -> dict[str, Any]:
     avatar_library = _full_avatar_roster(
         {a.get("avatar_code") for a in avatars["avatars"]}
     )
+    # Live-derived smart default so EVERY product is pre-configured without the
+    # operator hand-picking. Recomputed from the current cluster mapping on every
+    # read → it auto-updates when avatars / scene templates / camera presets change.
+    # A saved selection (if any) OVERRIDES this. Diverse-by-design (all recommended
+    # avatars + all cluster scenes + all cluster camera presets) so mass production
+    # can rotate combinations without repeating the same avatar/scene/camera.
+    default_selection = {
+        "selected_avatar_codes": [
+            a["avatar_code"] for a in avatars["avatars"] if a.get("avatar_code")
+        ],
+        "selected_scene_template_ids": [
+            t["template_id"] for t in scenes["templates"] if t.get("template_id")
+        ],
+        "selected_camera_preset_codes": [
+            p["preset_code"]
+            for p in cameras["library"]["named_presets"]
+            if p.get("preset_code")
+        ],
+        "source": "AUTO_DEFAULT_FROM_CLUSTER_MAPPING",
+    }
 
     return {
         "product_id": product_id,
@@ -181,6 +202,7 @@ async def resolve_creative_setup(product_id: str) -> dict[str, Any]:
         "review_required": False,
         "recommended_avatars": avatars["avatars"],
         "avatar_library": avatar_library,
+        "default_selection": default_selection,
         "recommended_scene_templates": scenes["templates"],
         "camera_block_recommendations": cameras["block_recommendations"],
         "camera_library": cameras["library"],
