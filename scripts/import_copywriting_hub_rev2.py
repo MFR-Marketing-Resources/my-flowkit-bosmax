@@ -1025,6 +1025,85 @@ async def reject_stale_queue(b, apply, limit):
 
 
 # --------------------------------------------------------------------------- #
+# GEN-COPY — CREDIT-FREE: materialize each missing-copywriting product's imported
+# Hub copy (from its approved PI snapshot) into a copy_set via generate_copy_set
+# (no provider). angle<-pain, hook<-hook_angles, subhook, cta<-cta_angles, usp<-usp.
+# Result: copy_set at COPY_REVIEW_REQUIRED (needs a later free approve pass).
+# --------------------------------------------------------------------------- #
+async def gen_copy(b, apply, limit):
+    import json as _json
+    import sqlite3
+    from agent.services.copy_set_service import generate_copy_set
+
+    con = sqlite3.connect(f"file:{DB.as_posix()}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    missing = [r["id"] for r in con.execute(
+        "SELECT p.id FROM product p WHERE p.lifecycle_status='ACTIVE' "
+        "AND NOT EXISTS(SELECT 1 FROM copy_set c WHERE c.product_id=p.id AND COALESCE(c.archived,0)=0)")]
+
+    def _first(j):
+        try:
+            arr = _json.loads(j or "[]")
+        except Exception:
+            return (j or "").strip() or None
+        if isinstance(arr, list):
+            for x in arr:
+                if isinstance(x, str) and x.strip():
+                    return x.strip()
+            return None
+        return str(arr).strip() or None
+
+    def _lst(j, cap=3):
+        try:
+            arr = _json.loads(j or "[]")
+        except Exception:
+            return None
+        if isinstance(arr, list):
+            out = [x.strip() for x in arr if isinstance(x, str) and x.strip()]
+            return out[:cap] or None
+        return None
+
+    targets = missing[:limit] if limit else missing
+    ok = ineligible = no_snap = failed = 0
+    for pid in targets:
+        s = con.execute(
+            "SELECT hook_angles_json,cta_angles_json,pain_points_json,subhook_json,usp_json "
+            "FROM product_intelligence_snapshot WHERE product_id=? AND status='APPROVED' "
+            "ORDER BY version DESC LIMIT 1", (pid,)).fetchone()
+        if not s:
+            no_snap += 1
+            continue
+        payload = {
+            "product_id": pid,
+            "angle": _first(s["pain_points_json"]),
+            "hook": _first(s["hook_angles_json"]),
+            "subhook": _first(s["subhook_json"]),
+            "usp_set": _lst(s["usp_json"]),
+            "cta": _first(s["cta_angles_json"]),
+            "platform": "TIKTOK",
+            "language": "BM_MS",
+        }
+        try:
+            if apply:
+                res = await generate_copy_set(payload)
+                if (res.get("copy_set") or {}).get("copy_set_id"):
+                    ok += 1
+                else:
+                    failed += 1
+            else:
+                ok += 1
+        except Exception as exc:
+            if "COPY_INELIGIBLE" in str(exc):
+                ineligible += 1
+            else:
+                failed += 1
+                print(f"  GEN FAIL {pid[:10]}: {str(exc)[:100]}")
+    con.close()
+    verb = "GENERATED" if apply else "would generate"
+    print(f"GEN-COPY {verb}: ok={ok} ineligible={ineligible} no_snapshot={no_snap} failed={failed}")
+
+
+# --------------------------------------------------------------------------- #
 # IMAGES — materialize (download) image_url for products with asset_status=UNRESOLVED
 # --------------------------------------------------------------------------- #
 async def images(b, apply, limit):
@@ -1167,6 +1246,8 @@ async def run(phase, apply, limit):
             await sanitize_medical(b, apply, limit)
         elif phase == "reject-stale-queue":
             await reject_stale_queue(b, apply, limit)
+        elif phase == "gen-copy":
+            await gen_copy(b, apply, limit)
         else:
             print(f"phase {phase} not implemented in this file yet")
     finally:
@@ -1179,7 +1260,8 @@ def main():
     ap.add_argument("--phase", required=True,
                     choices=["1", "2", "3", "archive", "unarchive", "images",
                              "restore-cluster", "reclassify", "register-pairs", "cover-pairs",
-                             "sanitize-approve", "sanitize-medical", "reject-stale-queue"])
+                             "sanitize-approve", "sanitize-medical", "reject-stale-queue",
+                             "gen-copy"])
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
