@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { getAPI, postAPI } from "../api/client";
 import AIFormPack from "../components/product-registration/AIFormPack";
+import AllProductsTab from "../components/product-registration/AllProductsTab";
 import BulkFastMossConvertTab from "../components/product-registration/BulkFastMossConvertTab";
 import ProductKnowledgeIntakeForm from "../components/product-registration/ProductKnowledgeIntakeForm";
 import ProductKnowledgeResultPanel from "../components/product-registration/ProductKnowledgeResultPanel";
@@ -11,14 +12,22 @@ import type {
 	RegistrationReviewDraft,
 } from "../types";
 
-type ActiveTab = "single" | "bulk";
+type ActiveTab = "single" | "all" | "fastmoss";
 
 const PAGE_SIZE_DRAFTS = 10;
 
+const resolveInitialTab = (tab: string | null): ActiveTab => {
+	if (tab === "all") return "all";
+	// `bulk` is the legacy param for the FastMoss import queue.
+	if (tab === "fastmoss" || tab === "bulk") return "fastmoss";
+	return "single";
+};
+
 export default function ProductRegistrationPage() {
+	const navigate = useNavigate();
 	const [searchParams, setSearchParams] = useSearchParams();
 	const [activeTab, setActiveTab] = useState<ActiveTab>(
-		searchParams.get("tab") === "bulk" ? "bulk" : "single",
+		resolveInitialTab(searchParams.get("tab")),
 	);
 	const [result, setResult] = useState<ProductKnowledgeCompleteResponse | null>(
 		null,
@@ -93,6 +102,15 @@ export default function ProductRegistrationPage() {
 		}
 	};
 
+	// Open a committed product's Product Intelligence panel. Reuses the same
+	// deep-link bridge the "Open Product Intelligence" button uses; `?product=<id>`
+	// preselects the row on the /products surface.
+	const handleOpenProduct = (productId: string) => {
+		navigate(
+			`/products?tab=INTELLIGENCE&product=${encodeURIComponent(productId)}`,
+		);
+	};
+
 	const handleDeleteDraft = async (draftId: string) => {
 		if (!window.confirm("Delete this draft permanently?")) return;
 		try {
@@ -148,8 +166,8 @@ export default function ProductRegistrationPage() {
 						<button
 							type="button"
 							onClick={() => {
-								setActiveTab("bulk");
-								setSearchParams("tab=bulk");
+								setActiveTab("fastmoss");
+								setSearchParams("tab=fastmoss");
 							}}
 							className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold uppercase tracking-widest transition-all shadow-lg shadow-indigo-600/20"
 						>
@@ -230,20 +248,38 @@ export default function ProductRegistrationPage() {
 				<button
 					type="button"
 					onClick={() => {
-						setActiveTab("bulk");
-						setSearchParams("tab=bulk");
+						setActiveTab("all");
+						setSearchParams("tab=all");
 					}}
 					className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all ${
-						activeTab === "bulk"
+						activeTab === "all"
 							? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/20"
 							: "text-slate-400 hover:text-white"
 					}`}
 				>
-					Bulk FastMoss Convert
+					Semua Produk
+				</button>
+				<button
+					type="button"
+					onClick={() => {
+						setActiveTab("fastmoss");
+						setSearchParams("tab=fastmoss");
+					}}
+					className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all ${
+						activeTab === "fastmoss"
+							? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/20"
+							: "text-slate-400 hover:text-white"
+					}`}
+				>
+					Import FastMoss
 				</button>
 			</div>
 
-			{activeTab === "bulk" && (
+			{activeTab === "all" && (
+				<AllProductsTab onOpenProduct={handleOpenProduct} />
+			)}
+
+			{activeTab === "fastmoss" && (
 				<BulkFastMossConvertTab onOpenDraft={handleOpenDraftById} />
 			)}
 

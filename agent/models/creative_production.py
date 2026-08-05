@@ -8,9 +8,13 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-P58_COHORT_COUNT = 438
+# Re-pinned 2026-08-05 after the Copywriting Hub-Rev2 catalog import re-derived the
+# P6_READY set (old ~211 FastMoss rows archived out, 235 Rev2 products qualified in;
+# net 438 -> 453). Owner-approved acceptance of the current catalog as the certified
+# P6 launch cohort.
+P58_COHORT_COUNT = 453
 P58_COHORT_SHA256 = (
-    "15b7e2aff4ede06b1a28805b111f9993b2208040e40bcee76693abc2a6ddbe7f"
+    "bd8a28f2ad96c6c6026110ac2b4ea3ad6fbe11e337f4030b2d62463a93ba0639"
 )
 P6_LIVE_CONFIRMATION = "AUTHORIZE_P6_LIVE_CREDIT_SPEND"
 
