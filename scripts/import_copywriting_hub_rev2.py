@@ -546,6 +546,99 @@ async def unarchive(b, apply, limit):
     print(f"UNARCHIVE {verb}: {done} | kept DUPLICATE_MERGED archived: {kept_dup} | failed={failed}")
 
 
+# --------------------------------------------------------------------------- #
+# IMAGES — materialize (download) image_url for products with asset_status=UNRESOLVED
+# --------------------------------------------------------------------------- #
+async def images(b, apply, limit):
+    import sqlite3
+    from agent.api.products import cache_product_image
+    con = sqlite3.connect(f"file:{DB.as_posix()}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    rows = con.execute(
+        "SELECT id FROM product WHERE lifecycle_status='ACTIVE' AND asset_status='UNRESOLVED' "
+        "AND image_url IS NOT NULL AND image_url<>''").fetchall()
+    con.close()
+    targets = [r["id"] for r in rows]
+    if limit:
+        targets = targets[:limit]
+    ok = fail = 0
+    for pid in targets:
+        try:
+            if apply:
+                res = await cache_product_image(pid)
+                if (res or {}).get("status") == "success":
+                    ok += 1
+                else:
+                    fail += 1
+            else:
+                ok += 1
+        except Exception as exc:
+            fail += 1
+            print(f"  IMG FAIL {pid[:10]}: {str(exc)[:90]}")
+    verb = "CACHED" if apply else "would cache"
+    print(f"IMAGES {verb}: ok={ok} fail={fail} (of {len(targets)})")
+
+
+# --------------------------------------------------------------------------- #
+# RESTORE-CLUSTER — undo file-wins downgrades: products the file marked
+# "Generic / Unclassified" that had a REAL cluster pre-import -> restore from backup
+# --------------------------------------------------------------------------- #
+BACKUP_DB = REPO / "flow_agent.db.precopyhub-20260805T090450Z"
+
+
+async def restore_cluster(b, apply, limit):
+    import sqlite3
+    from agent.services.product_strategy_taxonomy_service import (
+        product_strategy_fingerprint,
+        lookup_product_strategy_type_registry_entry,
+        review_product_strategy_taxonomy,
+    )
+    from agent.models.product_strategy_taxonomy import ProductStrategyTaxonomyReviewRequest
+
+    cur = sqlite3.connect(f"file:{DB.as_posix()}?mode=ro", uri=True)
+    cur.row_factory = sqlite3.Row
+    bak = sqlite3.connect(f"file:{BACKUP_DB.as_posix()}?mode=ro", uri=True)
+    bak.row_factory = sqlite3.Row
+    bakclu = {r["product_id"]: (r["cluster"], r["product_type_group"])
+              for r in bak.execute("SELECT product_id,cluster,product_type_group FROM product_strategy_taxonomy")}
+    gen = cur.execute(
+        "SELECT p.id FROM product p JOIN product_strategy_taxonomy t ON t.product_id=p.id "
+        "WHERE p.lifecycle_status='ACTIVE' AND (t.cluster IS NULL OR t.cluster='generic_unclassified')").fetchall()
+    targets = []
+    for r in gen:
+        bc = bakclu.get(r["id"])
+        if bc and bc[0] and bc[0] != "generic_unclassified":
+            targets.append((r["id"], bc[0], bc[1]))
+    if limit:
+        targets = targets[:limit]
+    done = skip = failed = 0
+    for pid, cl, ty in targets:
+        try:
+            entry = lookup_product_strategy_type_registry_entry(cl, ty)
+            if not entry:
+                skip += 1
+                continue
+            prod = dict(cur.execute("SELECT * FROM product WHERE id=?", (pid,)).fetchone())
+            fp = product_strategy_fingerprint(prod)
+            rstatus = "VERIFIED" if entry.get("registry_status") == "ACTIVE" else "REVIEW_REQUIRED"
+            req = ProductStrategyTaxonomyReviewRequest(
+                expected_product_fingerprint=fp, cluster=cl, product_type_group=ty,
+                matched_scene_strategy_id=str(entry.get("matched_scene_strategy_id")),
+                scene_coverage_status=entry.get("scene_coverage_status"),
+                review_status=rstatus, reviewer_id=REVIEWER_ID,
+                reviewer_note="Restore cluster downgraded by file-wins generic (pre-import backup)")
+            if apply:
+                await review_product_strategy_taxonomy(pid, req)
+            done += 1
+        except Exception as exc:
+            failed += 1
+            print(f"  RESTORE FAIL {pid[:10]}: {str(exc)[:90]}")
+    cur.close()
+    bak.close()
+    verb = "RESTORED" if apply else "would restore"
+    print(f"RESTORE-CLUSTER {verb}: {done} skip={skip} failed={failed}")
+
+
 def _print_buckets(b):
     print(f"file rows: update={len(b['update'])} create={len(b['create'])} "
           f"hold={len(b['hold'])} no-id={len(b['noid'])}")
@@ -580,6 +673,10 @@ async def run(phase, apply, limit):
             await archive(b, apply, limit)
         elif phase == "unarchive":
             await unarchive(b, apply, limit)
+        elif phase == "images":
+            await images(b, apply, limit)
+        elif phase == "restore-cluster":
+            await restore_cluster(b, apply, limit)
         else:
             print(f"phase {phase} not implemented in this file yet")
     finally:
@@ -589,7 +686,8 @@ async def run(phase, apply, limit):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--phase", required=True, choices=["1", "2", "3", "archive", "unarchive"])
+    ap.add_argument("--phase", required=True,
+                    choices=["1", "2", "3", "archive", "unarchive", "images", "restore-cluster"])
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
