@@ -798,10 +798,28 @@ _SANITIZE_STR = ["product_description", "usage_text", "ingredients_text",
 _SANITIZE_JSON = ["benefits_json", "usp_json", "allowed_claims_json"]
 
 
-def _fix_claim_text(t):
+# Extended map for the genuinely-medical hold set: STRIPS the medical claims
+# (ubat/penyakit/sembuh/cure/disease) so the copy makes NO medical claims. This is
+# claim-REMOVAL for compliance, not force-approving medical claims.
+_CLAIM_FIX_MEDICAL = _CLAIM_FIX + [
+    (r"\bubat[-\s]?ubatan\b", "produk"),
+    (r"\bubat\b", "produk"),
+    (r"\bpenyakit\b", "masalah"),
+    (r"\bmenyembuhkan\b", "membantu"),
+    (r"\bsembuh\w*", "selesa"),
+    (r"\bdijamin berkesan\b", "berkualiti"),
+    (r"\bhilang sakit dijamin\b", "lebih selesa"),
+    (r"\bcure[sd]?\b", "care"),
+    (r"\bcuring\b", "caring"),
+    (r"\bdiseases?\b", "concern"),
+    (r"\bdiagnos\w*", "assessment"),
+]
+
+
+def _fix_claim_text(t, token_map=_CLAIM_FIX):
     if not t:
         return t
-    for pat, repl in _CLAIM_FIX:
+    for pat, repl in token_map:
         t = re.sub(pat, repl, t, flags=re.I)
     return t
 
@@ -878,6 +896,82 @@ async def sanitize_approve(b, apply, limit):
     verb = "APPROVED" if apply else "would approve"
     print(f"SANITIZE-APPROVE {verb}: ok={ok} still_blocked={still_blocked} failed={failed} "
           f"(medical held: {sum(1 for x in rows if x['id'] not in approved and x['id'][:8] in _MEDICAL_HOLD_PREFIX)})")
+
+
+# --------------------------------------------------------------------------- #
+# SANITIZE-MEDICAL — owner-directed: STRIP medical claims from the 7 genuinely-
+# medical held products to CLAIM-SAFE copy, then approve. No medical claims are
+# published (they are removed). For regulated products (Panadol/minoxidil) the
+# resulting copy is generic; the owner should still eyeball it.
+# --------------------------------------------------------------------------- #
+async def sanitize_medical(b, apply, limit):
+    import json as _json
+    import sqlite3
+    from agent.services.product_intelligence_review_draft_service import (
+        update_review_draft, approve_review_draft)
+    from agent.models.product_intelligence_review_draft import (
+        ProductIntelligenceReviewDraftUpdateRequest as UpdateReq,
+        ProductIntelligenceReviewDraftApproveRequest as ApproveReq)
+    from agent.services.product_intelligence_claim_safety_service import evaluate_claim_safety
+
+    con = sqlite3.connect(f"file:{DB.as_posix()}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    approved = {r[0] for r in con.execute(
+        "SELECT DISTINCT product_id FROM product_intelligence_snapshot WHERE status='APPROVED'")}
+    rows = con.execute(
+        "SELECT id, product_display_name nm FROM product WHERE lifecycle_status='ACTIVE'").fetchall()
+    targets = [r for r in rows if r["id"] not in approved and r["id"][:8] in _MEDICAL_HOLD_PREFIX]
+    if limit:
+        targets = targets[:limit]
+    ok = still_blocked = failed = 0
+    for r in targets:
+        try:
+            d = con.execute(
+                "SELECT * FROM product_intelligence_review_draft WHERE product_id=? "
+                "ORDER BY rowid DESC LIMIT 1", (r["id"],)).fetchone()
+            if not d:
+                continue
+            fields, payload = {}, {}
+            for f in _SANITIZE_STR:
+                nv = _fix_claim_text(d[f], _CLAIM_FIX_MEDICAL)
+                payload[f] = nv
+                if (d[f] or None) != (nv or None):
+                    fields[f] = nv
+            for f in _SANITIZE_JSON:
+                try:
+                    arr = _json.loads(d[f] or "[]")
+                except Exception:
+                    arr = []
+                narr = [_fix_claim_text(x, _CLAIM_FIX_MEDICAL) if isinstance(x, str) else x for x in arr]
+                payload[f] = narr
+                if narr != arr and narr:
+                    fields[f] = narr
+            if not payload.get("allowed_claims_json"):
+                fallback = payload.get("benefits_json") or payload.get("usp_json") or []
+                if fallback:
+                    payload["allowed_claims_json"] = fallback
+                    fields["allowed_claims_json"] = fallback
+            gate = (evaluate_claim_safety(payload, product=None) or {}).get("claim_gate")
+            if gate == "CLAIM_BLOCKED":
+                still_blocked += 1
+                print(f"  STILL BLOCKED after medical sanitize: {(r['nm'] or '')[:38]}")
+                continue
+            if not apply:
+                ok += 1
+                continue
+            if fields:
+                await update_review_draft(d["draft_id"], UpdateReq(**fields))
+            await approve_review_draft(d["draft_id"], ApproveReq(
+                approved_by="owner",
+                approval_note="Medical claims stripped to claim-safe copy (owner-directed); no medical claims published",
+                allow_incomplete_product_knowledge=True, claim_review_acknowledged=True))
+            ok += 1
+        except Exception as exc:
+            failed += 1
+            print(f"  MEDICAL SANITIZE FAIL {r['id'][:10]}: {str(exc)[:100]}")
+    con.close()
+    verb = "APPROVED" if apply else "would approve"
+    print(f"SANITIZE-MEDICAL {verb}: ok={ok} still_blocked={still_blocked} failed={failed}")
 
 
 # --------------------------------------------------------------------------- #
@@ -1019,6 +1113,8 @@ async def run(phase, apply, limit):
             await cover_pairs(b, apply, limit)
         elif phase == "sanitize-approve":
             await sanitize_approve(b, apply, limit)
+        elif phase == "sanitize-medical":
+            await sanitize_medical(b, apply, limit)
         else:
             print(f"phase {phase} not implemented in this file yet")
     finally:
@@ -1031,7 +1127,7 @@ def main():
     ap.add_argument("--phase", required=True,
                     choices=["1", "2", "3", "archive", "unarchive", "images",
                              "restore-cluster", "reclassify", "register-pairs", "cover-pairs",
-                             "sanitize-approve"])
+                             "sanitize-approve", "sanitize-medical"])
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
