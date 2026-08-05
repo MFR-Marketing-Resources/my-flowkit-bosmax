@@ -39,6 +39,16 @@ export async function fetchProductRegistry(params: {
 	source?: "MANUAL" | "TIKTOKSHOP" | "FASTMOSS" | "IMPORTED";
 	q?: string;
 	includeArchived?: boolean;
+	/** Exact taxonomy cluster (e.g. "food_cooking"). */
+	cluster?: string;
+	/** Exact product_type_group; usually paired with a cluster (its dependency). */
+	productTypeGroup?: string;
+	/** Product Intelligence state: READY / NEEDS_REVIEW / MISSING. */
+	intelligenceStatus?: string;
+	/** Claim risk tier: LOW / MEDIUM / HIGH. */
+	claimRiskLevel?: string;
+	/** Restrict to one lifecycle (ACTIVE / ARCHIVED). ARCHIVED implies archived rows. */
+	lifecycleStatus?: string;
 	limit?: number;
 	offset?: number;
 }): Promise<ProductCatalogResponse> {
@@ -46,6 +56,15 @@ export async function fetchProductRegistry(params: {
 	if (params.source) query.set("source", params.source);
 	if (params.q) query.set("q", params.q);
 	if (params.includeArchived) query.set("include_archived", "true");
+	if (params.cluster) query.set("cluster", params.cluster);
+	if (params.productTypeGroup)
+		query.set("product_type_group", params.productTypeGroup);
+	if (params.intelligenceStatus)
+		query.set("intelligence_status", params.intelligenceStatus);
+	if (params.claimRiskLevel)
+		query.set("claim_risk_level", params.claimRiskLevel);
+	if (params.lifecycleStatus)
+		query.set("lifecycle_status", params.lifecycleStatus);
 	query.set("limit", String(params.limit ?? 50));
 	query.set("offset", String(params.offset ?? 0));
 	return fetchAPI<ProductCatalogResponse>(`/api/products?${query.toString()}`);

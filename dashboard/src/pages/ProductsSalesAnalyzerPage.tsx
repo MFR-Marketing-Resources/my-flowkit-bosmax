@@ -654,9 +654,13 @@ export default function ProductsSalesAnalyzerPage() {
 	const [products, setProducts] = useState<Product[]>([]);
 	const [searchParams] = useSearchParams();
 	const guidedClaimSafe = searchParams.get("claimSafeFix") === "1";
-	const guidedProductId = guidedClaimSafe
-		? searchParams.get("product")?.trim() || null
-		: null;
+	// A deep-link that names a product must LOAD + SELECT it so its editable
+	// Product Intelligence opens — even when the product sorts beyond the initial
+	// catalog window (MANUAL / imported rows tail-sort after FastMoss, past
+	// limit=500). This covers BOTH the claim-safe fix link AND the Smart
+	// Registration "Buka PI" deep-link (?product=<id> with no claimSafeFix); the
+	// claim-safe-only UI stays gated on `guidedClaimSafe` above.
+	const guidedProductId = searchParams.get("product")?.trim() || null;
 	const claimSafeReturnPath = resolveClaimSafeReturnPath(
 		searchParams.get("returnTo"),
 	);
