@@ -28,6 +28,7 @@ vi.mock("../../api/products", () => ({
 		.mockResolvedValue({ product_id: "p1", items: [] }),
 	fetchProductIntelligenceReviewDraft: vi.fn(),
 	createProductIntelligenceReviewDraft: vi.fn(),
+	createProductIntelligenceRevisionDraft: vi.fn(),
 	prepareProductForCopywriting: vi.fn(),
 	recomputeProductIntelligence: vi.fn(),
 	aiFillMissingProductIntelligenceReviewDraft: vi.fn(),
