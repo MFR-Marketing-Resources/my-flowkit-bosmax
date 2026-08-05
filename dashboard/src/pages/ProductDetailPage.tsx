@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import {
+	useCallback,
+	useEffect,
+	useMemo,
+	useState,
+	type FormEvent,
+	type ReactNode,
+} from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { fetchAPI, patchAPI } from "../api/client";
@@ -337,6 +344,38 @@ export default function ProductDetailPage() {
 						))}
 					</div>
 
+					{/* Per-tab helper: what this tab does + how to fill / where to save. */}
+					<div className="mb-5 rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-3 text-[11px] leading-relaxed text-slate-400">
+						{tab === "EDIT" && (
+							<>
+								Edit this product's identity, price / commission, and cluster / type.
+								Each card saves on its own — <Hl>Save Changes</Hl> writes the identity
+								&amp; commerce fields; <Hl>Save Cluster / Type</Hl> updates the taxonomy
+								(cluster → its product type).
+							</>
+						)}
+						{tab === "INTELLIGENCE" && (
+							<>
+								Product Truth — description, benefits, usage, ingredients, warnings, and
+								buyer persona. Some fields are intentionally blank (claim-critical ones
+								are never auto-invented). To fill them: press{" "}
+								<Hl>AI Fill Missing (DeepSeek)</Hl> — it proposes values for empty fields
+								only, review-only, never overwrites your text (spends DeepSeek tokens) —
+								or type them in. Then <Hl>Save Draft</Hl> → <Hl>Approve Draft</Hl>.{" "}
+								<Hl>Recompute (Validate)</Hl> re-checks readiness deterministically (no
+								AI, free).
+							</>
+						)}
+						{tab === "CREATIVE" && (
+							<>
+								Plan the creative set — tick one or MORE avatars, scene templates, and
+								camera presets, or press <Hl>⚡ Auto-fill top pick</Hl>. Then{" "}
+								<Hl>Save Selection</Hl> and <Hl>Approve</Hl>. Planning only — nothing is
+								generated here.
+							</>
+						)}
+					</div>
+
 					{tab === "EDIT" && (
 						<div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
 							{/* Identity & Commerce */}
@@ -478,4 +517,9 @@ export default function ProductDetailPage() {
 			)}
 		</div>
 	);
+}
+
+// Inline highlight for the per-tab helper — points the eye at the exact button.
+function Hl({ children }: { children: ReactNode }) {
+	return <span className="font-semibold text-slate-200">{children}</span>;
 }
