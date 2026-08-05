@@ -159,7 +159,7 @@ async def save_creative_selection(
     if selected_camera_preset_code and selected_camera_preset_code not in _camera_index():
         raise ValueError("INVALID_CAMERA_PRESET_CODE")
 
-    resolved = _avatar.resolve_cluster(product.get("category"))
+    resolved = await _avatar.resolve_product_cluster(product_id, product.get("category"))
     if resolved["cluster"] is None:
         # Fail-closed: never persist a creative selection for a review-required
         # (un-categorised / unresolved) product. A real category must be set
@@ -232,7 +232,7 @@ async def update_creative_selection_avatar(
     if not code or code not in _avatar_index():
         raise ValueError("INVALID_AVATAR_CODE")
 
-    resolved = _avatar.resolve_cluster(product.get("category"))
+    resolved = await _avatar.resolve_product_cluster(product_id, product.get("category"))
     if resolved["cluster"] is None:
         raise ValueError("PRODUCT_CATEGORY_REVIEW_REQUIRED")
 

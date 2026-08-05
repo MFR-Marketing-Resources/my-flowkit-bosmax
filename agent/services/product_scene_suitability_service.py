@@ -42,7 +42,8 @@ def _recommendation(template: dict[str, Any], cluster: str) -> dict[str, Any]:
 
 
 async def recommend_scene_suitability_for_category(
-    category: str | None, *, limit: int = 50
+    category: str | None, *, limit: int = 50,
+    _resolved: dict[str, str | None] | None = None,
 ) -> dict[str, Any]:
     """Return read-only scene suitability recommendations for ``category``.
 
@@ -51,7 +52,8 @@ async def recommend_scene_suitability_for_category(
     a visual cluster.  ``[AVATAR]`` and ``[PRODUCT]`` stay verbatim in every
     returned template.
     """
-    resolved = _avatar.resolve_cluster(category)
+    # _resolved: product-first dual-source bypass passed by the _for_product wrapper.
+    resolved = _resolved or _avatar.resolve_cluster(category)
     cluster = resolved["cluster"]
     if cluster is None:
         return {
@@ -89,8 +91,9 @@ async def recommend_scene_suitability_for_product(
     if not product:
         raise ValueError("PRODUCT_NOT_FOUND")
 
+    resolved = await _avatar.resolve_product_cluster(product_id, product.get("category"))
     result = await recommend_scene_suitability_for_category(
-        product.get("category"), limit=limit
+        product.get("category"), limit=limit, _resolved=resolved
     )
     result["product_id"] = product_id
     result["product_name"] = (
