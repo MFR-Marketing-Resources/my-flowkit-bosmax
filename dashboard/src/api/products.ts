@@ -29,6 +29,29 @@ export async function fetchProductCatalog(
 }
 
 /**
+ * List the FULL committed product catalog across every source (MANUAL,
+ * TIKTOKSHOP, FASTMOSS, IMPORTED). Deliberately omits `purpose` — unlike
+ * {@link fetchProductCatalog}, passing no purpose keeps reference-only rows in
+ * the result, so the "Semua Produk" tab shows everything, not just the
+ * generation-eligible subset. Omit `source` to include all sources.
+ */
+export async function fetchProductRegistry(params: {
+	source?: "MANUAL" | "TIKTOKSHOP" | "FASTMOSS" | "IMPORTED";
+	q?: string;
+	includeArchived?: boolean;
+	limit?: number;
+	offset?: number;
+}): Promise<ProductCatalogResponse> {
+	const query = new URLSearchParams();
+	if (params.source) query.set("source", params.source);
+	if (params.q) query.set("q", params.q);
+	if (params.includeArchived) query.set("include_archived", "true");
+	query.set("limit", String(params.limit ?? 50));
+	query.set("offset", String(params.offset ?? 0));
+	return fetchAPI<ProductCatalogResponse>(`/api/products?${query.toString()}`);
+}
+
+/**
  * Load one authoritative product row after an operator selects it from the
  * catalog.  The Cockpit grounding gate consumes image_url/local_image_path,
  * so it must not rely on a picker projection when binding the generation
