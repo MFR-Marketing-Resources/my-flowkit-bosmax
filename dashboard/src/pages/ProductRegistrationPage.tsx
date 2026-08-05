@@ -17,10 +17,11 @@ type ActiveTab = "single" | "all" | "fastmoss";
 const PAGE_SIZE_DRAFTS = 10;
 
 const resolveInitialTab = (tab: string | null): ActiveTab => {
-	if (tab === "all") return "all";
-	// `bulk` is the legacy param for the FastMoss import queue.
+	// "All Products" is the default unified view. The intake ("single") and the
+	// FastMoss import queue ("fastmoss"; legacy "bulk") are reachable via buttons.
+	if (tab === "single") return "single";
 	if (tab === "fastmoss" || tab === "bulk") return "fastmoss";
-	return "single";
+	return "all";
 };
 
 export default function ProductRegistrationPage() {
@@ -162,32 +163,6 @@ export default function ProductRegistrationPage() {
 					<div className="px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-[10px] font-bold uppercase tracking-widest">
 						Phase 4: Controlled Registration Authority
 					</div>
-					{activeTab === "single" && (
-						<button
-							type="button"
-							onClick={() => {
-								setActiveTab("fastmoss");
-								setSearchParams("tab=fastmoss");
-							}}
-							className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold uppercase tracking-widest transition-all shadow-lg shadow-indigo-600/20"
-						>
-							<svg
-								aria-hidden="true"
-								className="w-3.5 h-3.5 shrink-0"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke="currentColor"
-								strokeWidth={2}
-							>
-								<path
-									strokeLinecap="round"
-									strokeLinejoin="round"
-									d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-								/>
-							</svg>
-							Open Bulk FastMoss Convert
-						</button>
-					)}
 				</div>
 			</div>
 
@@ -230,49 +205,49 @@ export default function ProductRegistrationPage() {
 				</p>
 			</div>
 
-			<div className="mb-6 flex gap-1 rounded-xl bg-slate-900/60 border border-slate-800 p-1 w-fit">
-				<button
-					type="button"
-					onClick={() => {
-						setActiveTab("single");
-						setSearchParams({});
-					}}
-					className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all ${
-						activeTab === "single"
-							? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/20"
-							: "text-slate-400 hover:text-white"
-					}`}
-				>
-					Single Product
-				</button>
-				<button
-					type="button"
-					onClick={() => {
-						setActiveTab("all");
-						setSearchParams("tab=all");
-					}}
-					className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all ${
-						activeTab === "all"
-							? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/20"
-							: "text-slate-400 hover:text-white"
-					}`}
-				>
-					Semua Produk
-				</button>
-				<button
-					type="button"
-					onClick={() => {
-						setActiveTab("fastmoss");
-						setSearchParams("tab=fastmoss");
-					}}
-					className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all ${
-						activeTab === "fastmoss"
-							? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/20"
-							: "text-slate-400 hover:text-white"
-					}`}
-				>
-					Import FastMoss
-				</button>
+			{/* One unified view. "All Products" is home; New Product (intake) and
+			    Import FastMoss are actions reachable from it, not separate tabs. */}
+			<div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+				{activeTab === "all" ? (
+					<>
+						<h3 className="text-xs font-bold uppercase tracking-widest text-slate-500">
+							All Products
+						</h3>
+						<div className="flex gap-2">
+							<button
+								type="button"
+								onClick={() => {
+									setActiveTab("single");
+									setSearchParams("tab=single");
+								}}
+								className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold uppercase tracking-widest transition-all shadow-lg shadow-indigo-600/20"
+							>
+								+ New Product
+							</button>
+							<button
+								type="button"
+								onClick={() => {
+									setActiveTab("fastmoss");
+									setSearchParams("tab=fastmoss");
+								}}
+								className="px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 hover:border-slate-600 text-slate-300 hover:text-white text-[11px] font-bold uppercase tracking-widest transition-all"
+							>
+								Import FastMoss
+							</button>
+						</div>
+					</>
+				) : (
+					<button
+						type="button"
+						onClick={() => {
+							setActiveTab("all");
+							setSearchParams("tab=all");
+						}}
+						className="px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 hover:border-slate-600 text-slate-300 hover:text-white text-[11px] font-bold uppercase tracking-widest transition-all"
+					>
+						← All Products
+					</button>
+				)}
 			</div>
 
 			{activeTab === "all" && (

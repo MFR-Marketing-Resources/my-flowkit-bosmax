@@ -2981,6 +2981,56 @@ async def count_product_source_media_by_draft(draft_id: str) -> dict:
     return out
 
 
+async def count_source_media_by_products(product_ids: list[str]) -> dict[str, dict[str, int]]:
+    """Batched {product_id: {'image': n, 'video': m}} for committed products — feeds the
+    All Products Image(u)/Video(u) unit columns. One grouped query over the id list."""
+    db = await get_db()
+    resolved = [str(v) for v in product_ids if str(v).strip()]
+    if not resolved:
+        return {}
+    placeholders = ",".join("?" for _ in resolved)
+    cur = await db.execute(
+        f"SELECT product_id, kind, COUNT(*) AS c FROM product_source_media "
+        f"WHERE product_id IN ({placeholders}) GROUP BY product_id, kind",
+        resolved,
+    )
+    out: dict[str, dict[str, int]] = {}
+    for row in await cur.fetchall():
+        pid = str(row["product_id"])
+        bucket = out.setdefault(pid, {"image": 0, "video": 0})
+        bucket[str(row["kind"])] = int(row["c"])
+    return out
+
+
+async def latest_open_review_drafts_by_products(product_ids: list[str]) -> dict[str, dict]:
+    """Batched {product_id: {'draft_id','review_status','updated_at'}} for the MOST RECENT
+    NON-committed review draft per product — feeds the All Products Draft column. 'Open' =
+    review_status != 'COMMITTED'; products with only committed drafts are omitted."""
+    db = await get_db()
+    resolved = [str(v) for v in product_ids if str(v).strip()]
+    if not resolved:
+        return {}
+    placeholders = ",".join("?" for _ in resolved)
+    cur = await db.execute(
+        f"SELECT draft_id, product_id, review_status, updated_at "
+        f"FROM product_intelligence_review_draft "
+        f"WHERE product_id IN ({placeholders}) AND review_status != 'COMMITTED' "
+        f"ORDER BY updated_at DESC",
+        resolved,
+    )
+    out: dict[str, dict] = {}
+    for row in await cur.fetchall():
+        pid = str(row["product_id"])
+        if pid in out:  # ORDER BY updated_at DESC -> first seen is the most recent
+            continue
+        out[pid] = {
+            "draft_id": row["draft_id"],
+            "review_status": row["review_status"],
+            "updated_at": row["updated_at"],
+        }
+    return out
+
+
 async def delete_product_source_media(media_id: str) -> bool:
     db = await get_db()
     async with _db_lock:

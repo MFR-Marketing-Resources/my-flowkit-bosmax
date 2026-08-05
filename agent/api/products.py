@@ -602,6 +602,8 @@ async def _list_products_response(
     product_type_group: str | None = None,
     intelligence_status: str | None = None,
     claim_risk_level: str | None = None,
+    freshness: str | None = None,
+    image: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ):
@@ -641,7 +643,7 @@ async def _list_products_response(
     # intelligence_status / claim_risk_level. cluster+type read the taxonomy sidecar
     # (batched, so attach once over the whole filtered set), status+risk live on the
     # enriched row. Applied PRE-pagination so total_count and pages reflect the facet.
-    if any((cluster, product_type_group, intelligence_status, claim_risk_level)):
+    if any((cluster, product_type_group, intelligence_status, claim_risk_level, freshness, image)):
         if cluster or product_type_group:
             filtered_all = await attach_product_strategy_taxonomies(filtered_all)
         filtered_all = _apply_catalog_facets(
@@ -650,6 +652,8 @@ async def _list_products_response(
             product_type_group=product_type_group,
             intelligence_status=intelligence_status,
             claim_risk_level=claim_risk_level,
+            freshness=freshness,
+            image=image,
         )
     total = len(filtered_all)
     enriched = []
@@ -673,6 +677,19 @@ async def _list_products_response(
         item["catalog_state"] = derive_catalog_state(item)
 
     enriched = await attach_product_strategy_taxonomies(enriched)
+
+    # All Products display columns (batched over just this page): freshness roll-up,
+    # source-media unit counts (Image(u)/Video(u)), and any open review draft (Draft).
+    page_ids = [str(item.get("id") or "") for item in enriched if item.get("id")]
+    media_counts = await crud.count_source_media_by_products(page_ids)
+    open_drafts = await crud.latest_open_review_drafts_by_products(page_ids)
+    for item in enriched:
+        pid = str(item.get("id") or "")
+        item["freshness"] = _freshness_of(item)
+        counts = media_counts.get(pid) or {}
+        item["source_media_image_count"] = int(counts.get("image", 0) or 0)
+        item["source_media_video_count"] = int(counts.get("video", 0) or 0)
+        item["open_review_draft"] = open_drafts.get(pid)
 
     return {
         "total_count": total,
@@ -805,6 +822,28 @@ async def _merge_catalog_products(
     return merged
 
 
+def _freshness_of(product: dict[str, Any]) -> str:
+    """FRESH / STALE / UNKNOWN roll-up of a committed product's intelligence readiness —
+    the All Products analogue of the FastMoss queue's recompute_state."""
+    status = str(product.get("intelligence_status") or "").strip().upper()
+    if status == "READY":
+        return "FRESH"
+    if status in {"NEEDS_REVIEW", "MISSING"}:
+        return "STALE"
+    return "UNKNOWN"
+
+
+def _image_state_of(product: dict[str, Any]) -> str:
+    """READY when the product has a browser-usable image (cached or a remote URL),
+    MISSING otherwise — feeds the All Products Image filter."""
+    status = str(product.get("image_readiness_status") or "").strip().upper()
+    if status in {"IMAGE_READY", "IMAGE_CACHE_READY"}:
+        return "READY"
+    if str(product.get("image_url") or "").strip():
+        return "READY"
+    return "MISSING"
+
+
 def _apply_catalog_facets(
     products: list[dict[str, Any]],
     *,
@@ -812,10 +851,13 @@ def _apply_catalog_facets(
     product_type_group: str | None,
     intelligence_status: str | None,
     claim_risk_level: str | None,
+    freshness: str | None = None,
+    image: str | None = None,
 ) -> list[dict[str, Any]]:
     """Catalog-browser facet filters. Each is an exact case-insensitive match; a
     blank/None value is a no-op. cluster/product_type_group read the attached
-    strategy_taxonomy sidecar; intelligence_status/claim_risk_level live on the row."""
+    strategy_taxonomy sidecar; intelligence_status/claim_risk_level live on the row;
+    freshness/image are derived roll-ups (see _freshness_of / _image_state_of)."""
 
     def _n(value: Any) -> str:
         return str(value or "").strip().lower()
@@ -824,6 +866,8 @@ def _apply_catalog_facets(
     want_type = _n(product_type_group)
     want_intel = _n(intelligence_status)
     want_risk = _n(claim_risk_level)
+    want_fresh = _n(freshness)
+    want_image = _n(image)
     result = products
     if want_cluster:
         result = [
@@ -841,6 +885,10 @@ def _apply_catalog_facets(
         result = [product for product in result if _n(product.get("intelligence_status")) == want_intel]
     if want_risk:
         result = [product for product in result if _n(product.get("claim_risk_level")) == want_risk]
+    if want_fresh:
+        result = [product for product in result if _freshness_of(product).lower() == want_fresh]
+    if want_image:
+        result = [product for product in result if _image_state_of(product).lower() == want_image]
     return result
 
 
@@ -886,6 +934,8 @@ async def list_products(
     product_type_group: str | None = Query(default=None),
     intelligence_status: str | None = Query(default=None),
     claim_risk_level: str | None = Query(default=None),
+    freshness: str | None = Query(default=None),
+    image: str | None = Query(default=None),
     limit: int = Query(default=50),
     offset: int = Query(default=0),
 ):
@@ -901,6 +951,8 @@ async def list_products(
         product_type_group=product_type_group,
         intelligence_status=intelligence_status,
         claim_risk_level=claim_risk_level,
+        freshness=freshness,
+        image=image,
         limit=limit,
         offset=offset,
     )
