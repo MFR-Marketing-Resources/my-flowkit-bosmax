@@ -2619,7 +2619,12 @@ CREATE TABLE IF NOT EXISTS creative_product_selection (
     reviewer_note               TEXT,
     created_at                  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     updated_at                  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-    reviewed_at                 TEXT
+    reviewed_at                 TEXT,
+    -- Multi-select: the FULL chosen set as JSON arrays. The singular selected_*
+    -- columns above remain the backward-compatible PRIMARY (=first of each list).
+    selected_avatar_codes_json         TEXT,
+    selected_scene_template_ids_json   TEXT,
+    selected_camera_preset_codes_json  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_creative_product_selection_status
     ON creative_product_selection(status);
@@ -3887,6 +3892,23 @@ CREATE INDEX IF NOT EXISTS idx_product_treatment_factory_event_plan ON product_t
                 logger.info(
                     "Migrated: added %s column to product_intelligence_review_field_provenance",
                     lineage_col)
+        # Multi-select creative setup: JSON-array columns holding the FULL chosen
+        # set. The singular selected_* columns stay as the backward-compatible
+        # PRIMARY (=first of each list) that the generation pipeline still reads.
+        sel_cols_cursor = await db.execute(
+            "PRAGMA table_info(creative_product_selection)")
+        sel_existing_cols = {row[1] for row in await sel_cols_cursor.fetchall()}
+        for multi_col in (
+            "selected_avatar_codes_json",
+            "selected_scene_template_ids_json",
+            "selected_camera_preset_codes_json",
+        ):
+            if multi_col not in sel_existing_cols:
+                await db.execute(
+                    "ALTER TABLE creative_product_selection "
+                    f"ADD COLUMN {multi_col} TEXT")
+                logger.info(
+                    "Migrated: added %s column to creative_product_selection", multi_col)
         await db.commit()
 
     logger.info("Database initialized at %s", DB_PATH)

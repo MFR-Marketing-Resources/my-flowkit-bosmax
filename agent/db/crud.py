@@ -60,7 +60,7 @@ _COLUMNS = {
     "avatar_product_fit": {"avatar_code", "product_category", "fit_score", "suitability_notes", "updated_at"},
     "creative_scene_prompt": {"template_id", "cluster", "source_category", "cluster_source", "main_action", "setting", "full_prompt_template", "base_prompt", "combined_prompt_suggestion", "negative_prompt", "variant", "notes", "provenance", "updated_at"},
     "creative_camera_preset": {"preset_code", "preset_name", "shot_type", "distance_angle", "movement", "block_group", "provenance", "updated_at"},
-    "creative_product_selection": {"product_id", "selection_id", "cluster", "cluster_source", "selected_avatar_code", "selected_scene_template_id", "selected_camera_preset_code", "selected_block_purpose", "selected_content_type", "notes", "preview_json", "provenance_json", "status", "reviewer_note", "created_at", "updated_at", "reviewed_at"},
+    "creative_product_selection": {"product_id", "selection_id", "cluster", "cluster_source", "selected_avatar_code", "selected_scene_template_id", "selected_camera_preset_code", "selected_block_purpose", "selected_content_type", "notes", "preview_json", "provenance_json", "status", "reviewer_note", "created_at", "updated_at", "reviewed_at", "selected_avatar_codes_json", "selected_scene_template_ids_json", "selected_camera_preset_codes_json"},
     "product_strategy_taxonomy": {"taxonomy_version", "product_fingerprint", "cluster", "product_type_group", "matched_scene_strategy_id", "scene_coverage_status", "fallback_used", "specific_strategy", "classification_confidence", "review_status", "consumer_status", "authority_source", "materialization_status", "review_reasons_json", "reviewer_id", "reviewer_note", "derived_at", "reviewed_at", "created_at", "updated_at"},
     "product_intelligence_review_field_provenance": {"draft_id", "product_id", "field_name", "declared_value", "normalized_value", "source_type", "source_url", "source_lane", "evidence_kind", "extraction_method", "confidence_score", "verification_status", "claim_risk_flag", "reviewer_decision", "reviewer_note", "inherited_from_draft_id", "inherited_from_snapshot_id", "inherited_at", "updated_at"},
     "extend_lineage": {"workspace_generation_package_id", "project_id", "scene_id", "block_index", "block_position", "parent_operation_id", "parent_primary_media_id", "child_operation_id", "child_primary_media_id", "child_workflow_id", "batch_id", "model_key", "aspect_ratio", "start_frame_index", "end_frame_index", "continuation_prompt_hash", "idempotency_key", "polling_state", "retry_attempt", "output_url", "error_code", "error_message", "updated_at", "completed_at"},
@@ -1263,6 +1263,8 @@ _SELECTION_MUTABLE = (
     "cluster", "cluster_source", "selected_avatar_code", "selected_scene_template_id",
     "selected_camera_preset_code", "selected_block_purpose", "selected_content_type",
     "notes", "preview_json", "provenance_json", "status",
+    "selected_avatar_codes_json", "selected_scene_template_ids_json",
+    "selected_camera_preset_codes_json",
 )
 
 

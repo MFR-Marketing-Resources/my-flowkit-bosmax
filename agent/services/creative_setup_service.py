@@ -73,6 +73,25 @@ def _hydrate_selection(row: dict[str, Any] | None) -> dict[str, Any] | None:
                 out[jf.replace("_json", "")] = json.loads(raw)
             except (ValueError, TypeError):
                 out[jf.replace("_json", "")] = None
+    # Multi-select lists. Parse the JSON arrays; fall back to [primary] so old
+    # single-select rows still expose a one-item list to the client.
+    for jf, key, primary in (
+        ("selected_avatar_codes_json", "selected_avatar_codes", "selected_avatar_code"),
+        ("selected_scene_template_ids_json", "selected_scene_template_ids", "selected_scene_template_id"),
+        ("selected_camera_preset_codes_json", "selected_camera_preset_codes", "selected_camera_preset_code"),
+    ):
+        parsed: list[str] = []
+        raw = out.get(jf)
+        if isinstance(raw, str) and raw:
+            try:
+                loaded = json.loads(raw)
+                if isinstance(loaded, list):
+                    parsed = [str(c) for c in loaded if str(c or "").strip()]
+            except (ValueError, TypeError):
+                parsed = []
+        if not parsed and out.get(primary):
+            parsed = [str(out[primary])]
+        out[key] = parsed
     return out
 
 
@@ -130,21 +149,38 @@ async def resolve_creative_setup(product_id: str) -> dict[str, Any]:
     }
 
 
+def _dedup(codes: list[str] | None, single: str | None) -> list[str]:
+    """Normalise a multi-select input: prefer the list, else wrap the singular;
+    strip blanks, dedup, preserve order."""
+    source = codes if codes is not None else ([single] if single else [])
+    out: list[str] = []
+    for code in source:
+        clean = str(code or "").strip()
+        if clean and clean not in out:
+            out.append(clean)
+    return out
+
+
 async def save_creative_selection(
     product_id: str,
     *,
     selected_avatar_code: str | None = None,
     selected_scene_template_id: str | None = None,
     selected_camera_preset_code: str | None = None,
+    selected_avatar_codes: list[str] | None = None,
+    selected_scene_template_ids: list[str] | None = None,
+    selected_camera_preset_codes: list[str] | None = None,
     selected_block_purpose: str | None = None,
     selected_content_type: str | None = None,
     notes: str | None = None,
 ) -> dict[str, Any]:
     """Create/update the product's saved creative selection (status DRAFT).
 
-    Validates each selected id against the live pool/library. Raises
-    ``ValueError`` with a specific code on bad input. Only writes the
-    ``creative_product_selection`` table — never product rows or generation.
+    Multi-select: pass ``selected_*_codes`` LISTS (the singular ``selected_*_code``
+    kwargs stay for backward compatibility and are treated as a one-item list).
+    The first of each list becomes the backward-compatible PRIMARY that the
+    generation pipeline reads. Validates every id against the live pool/library.
+    Only writes the ``creative_product_selection`` table — never generation.
     """
     from agent.db import crud
 
@@ -152,12 +188,23 @@ async def save_creative_selection(
     if not product:
         raise ValueError("PRODUCT_NOT_FOUND")
 
-    if selected_avatar_code and selected_avatar_code not in _avatar_index():
+    avatar_codes = _dedup(selected_avatar_codes, selected_avatar_code)
+    scene_ids = _dedup(selected_scene_template_ids, selected_scene_template_id)
+    camera_codes = _dedup(selected_camera_preset_codes, selected_camera_preset_code)
+
+    avatar_index, scene_index, camera_index = _avatar_index(), _scene_index(), _camera_index()
+    if any(code not in avatar_index for code in avatar_codes):
         raise ValueError("INVALID_AVATAR_CODE")
-    if selected_scene_template_id and selected_scene_template_id not in _scene_index():
+    if any(sid not in scene_index for sid in scene_ids):
         raise ValueError("INVALID_SCENE_TEMPLATE_ID")
-    if selected_camera_preset_code and selected_camera_preset_code not in _camera_index():
+    if any(code not in camera_index for code in camera_codes):
         raise ValueError("INVALID_CAMERA_PRESET_CODE")
+
+    # Primary = first of each list (feeds the existing single-value preview + the
+    # generation pipeline, which is unchanged).
+    primary_avatar = avatar_codes[0] if avatar_codes else None
+    primary_scene = scene_ids[0] if scene_ids else None
+    primary_camera = camera_codes[0] if camera_codes else None
 
     resolved = await _avatar.resolve_product_cluster(product_id, product.get("category"))
     if resolved["cluster"] is None:
@@ -167,24 +214,32 @@ async def save_creative_selection(
         raise ValueError("PRODUCT_CATEGORY_REVIEW_REQUIRED")
     row_for_preview = {
         "cluster": resolved["cluster"], "cluster_source": resolved["cluster_source"],
-        "selected_avatar_code": selected_avatar_code,
-        "selected_scene_template_id": selected_scene_template_id,
-        "selected_camera_preset_code": selected_camera_preset_code,
+        "selected_avatar_code": primary_avatar,
+        "selected_scene_template_id": primary_scene,
+        "selected_camera_preset_code": primary_camera,
     }
     preview = _build_preview(row_for_preview)
     provenance = {
         "source": PROVENANCE_SOURCE,
         "resolved_cluster": resolved["cluster"],
         "cluster_source": resolved["cluster_source"],
+        "selected_counts": {
+            "avatars": len(avatar_codes),
+            "scenes": len(scene_ids),
+            "cameras": len(camera_codes),
+        },
     }
 
     saved = await crud.upsert_creative_product_selection(
         product_id=product_id,
         cluster=resolved["cluster"],
         cluster_source=resolved["cluster_source"],
-        selected_avatar_code=selected_avatar_code,
-        selected_scene_template_id=selected_scene_template_id,
-        selected_camera_preset_code=selected_camera_preset_code,
+        selected_avatar_code=primary_avatar,
+        selected_scene_template_id=primary_scene,
+        selected_camera_preset_code=primary_camera,
+        selected_avatar_codes_json=json.dumps(avatar_codes, ensure_ascii=False),
+        selected_scene_template_ids_json=json.dumps(scene_ids, ensure_ascii=False),
+        selected_camera_preset_codes_json=json.dumps(camera_codes, ensure_ascii=False),
         selected_block_purpose=selected_block_purpose,
         selected_content_type=selected_content_type,
         notes=notes,
@@ -193,6 +248,82 @@ async def save_creative_selection(
         status="DRAFT",
     )
     return _hydrate_selection(saved)
+
+
+async def bulk_auto_setup(
+    *,
+    product_ids: list[str] | None = None,
+    approve: bool = True,
+    dry_run: bool = True,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    """Auto-fill each eligible product's creative selection from its TOP-scored
+    recommendation (avatar #1 + scene #1 + camera #1) and, when ``approve``,
+    move it straight to APPROVED. Idempotent + fail-closed:
+      * products already APPROVED are left untouched;
+      * review-required (un-categorised) or no-recommendation products are skipped.
+    Planning only — writes ``creative_product_selection`` rows, never generation.
+    """
+    from agent.db import crud
+
+    if product_ids is None:
+        rows = await crud.list_products(include_archived=False)
+        product_ids = [str(row.get("id")) for row in rows if row.get("id")]
+    if limit:
+        product_ids = product_ids[:limit]
+
+    done = skipped = failed = 0
+    reasons: dict[str, int] = {"already_approved": 0, "review_required": 0, "no_avatar": 0}
+    errors: list[dict[str, str]] = []
+    for product_id in product_ids:
+        try:
+            existing = await get_creative_selection(product_id)
+            if existing and existing.get("status") == "APPROVED":
+                reasons["already_approved"] += 1
+                skipped += 1
+                continue
+            setup = await resolve_creative_setup(product_id)
+            if setup.get("review_required"):
+                reasons["review_required"] += 1
+                skipped += 1
+                continue
+            avatars = setup.get("recommended_avatars") or []
+            scenes = setup.get("recommended_scene_templates") or []
+            cameras = (setup.get("camera_library") or {}).get("named_presets") or []
+            if not avatars:
+                reasons["no_avatar"] += 1
+                skipped += 1
+                continue
+            top_avatar = avatars[0].get("avatar_code")
+            top_scene = scenes[0].get("template_id") if scenes else None
+            top_camera = cameras[0].get("preset_code") if cameras else None
+            if dry_run:
+                done += 1
+                continue
+            await save_creative_selection(
+                product_id,
+                selected_avatar_codes=[top_avatar] if top_avatar else [],
+                selected_scene_template_ids=[top_scene] if top_scene else [],
+                selected_camera_preset_codes=[top_camera] if top_camera else [],
+                notes="Auto-setup: top-scored recommendation",
+            )
+            if approve:
+                await review_creative_selection(product_id, "APPROVE", "Bulk auto-setup")
+            done += 1
+        except Exception as exc:  # noqa: BLE001 — report, never abort the batch
+            failed += 1
+            if len(errors) < 20:
+                errors.append({"product_id": product_id, "error": str(exc)[:80]})
+    return {
+        "targets": len(product_ids),
+        "done": done,
+        "skipped": skipped,
+        "failed": failed,
+        "reasons": reasons,
+        "errors": errors,
+        "approved": approve and not dry_run,
+        "applied": not dry_run,
+    }
 
 
 async def get_creative_selection(product_id: str) -> dict[str, Any] | None:

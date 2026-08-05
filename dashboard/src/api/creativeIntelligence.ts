@@ -375,6 +375,11 @@ export interface SavedCreativeSelection {
 	selected_avatar_code?: string | null;
 	selected_scene_template_id?: string | null;
 	selected_camera_preset_code?: string | null;
+	// Multi-select: the full chosen set (primary = first). Server always returns
+	// these, deriving a one-item list from the primary for legacy single rows.
+	selected_avatar_codes?: string[];
+	selected_scene_template_ids?: string[];
+	selected_camera_preset_codes?: string[];
 	selected_block_purpose?: string | null;
 	selected_content_type?: string | null;
 	notes?: string | null;
@@ -413,9 +418,23 @@ export interface SaveCreativeSelectionPayload {
 	selected_avatar_code?: string | null;
 	selected_scene_template_id?: string | null;
 	selected_camera_preset_code?: string | null;
+	selected_avatar_codes?: string[] | null;
+	selected_scene_template_ids?: string[] | null;
+	selected_camera_preset_codes?: string[] | null;
 	selected_block_purpose?: string | null;
 	selected_content_type?: string | null;
 	notes?: string | null;
+}
+
+export interface BulkAutoSetupResult {
+	targets: number;
+	done: number;
+	skipped: number;
+	failed: number;
+	reasons: Record<string, number>;
+	errors: { product_id: string; error: string }[];
+	approved: boolean;
+	applied: boolean;
 }
 
 export function getCreativeSetupForProduct(productId: string) {
@@ -426,6 +445,23 @@ export function getCreativeSetupForProduct(productId: string) {
 
 export function saveCreativeSelection(payload: SaveCreativeSelectionPayload) {
 	return postAPI<SavedCreativeSelection>("/api/creative-intelligence/creative-selection", payload);
+}
+
+/**
+ * Bulk auto-fill each eligible product's creative selection from its top-scored
+ * recommendation, optionally APPROVING it. `dry_run` defaults true on the server;
+ * pass `dry_run: false` to actually write.
+ */
+export function bulkAutoSetupCreativeSelection(payload: {
+	product_ids?: string[] | null;
+	approve?: boolean;
+	dry_run?: boolean;
+	limit?: number | null;
+}) {
+	return postAPI<BulkAutoSetupResult>(
+		"/api/creative-intelligence/creative-selection/bulk-auto-setup",
+		payload,
+	);
 }
 
 /** Avatar-only partial update — preserves scene/camera/block/content/notes server-side. */

@@ -53,12 +53,26 @@ router = APIRouter(prefix="/creative-intelligence", tags=["creative-intelligence
 
 class CreativeSelectionSaveRequest(BaseModel):
     product_id: str
+    # Singular fields kept for backward compatibility (treated as a one-item list).
     selected_avatar_code: str | None = None
     selected_scene_template_id: str | None = None
     selected_camera_preset_code: str | None = None
+    # Multi-select: the FULL chosen set. When present these win; the first of each
+    # becomes the backward-compatible primary.
+    selected_avatar_codes: list[str] | None = None
+    selected_scene_template_ids: list[str] | None = None
+    selected_camera_preset_codes: list[str] | None = None
     selected_block_purpose: str | None = None
     selected_content_type: str | None = None
     notes: str | None = None
+
+
+class CreativeSelectionBulkAutoSetupRequest(BaseModel):
+    """Bulk auto-fill each eligible product from its top-scored recommendation."""
+    product_ids: list[str] | None = None
+    approve: bool = True
+    dry_run: bool = True
+    limit: int | None = None
 
 
 class CreativeSelectionAvatarPatchRequest(BaseModel):
@@ -796,12 +810,32 @@ async def creative_selection_save(req: CreativeSelectionSaveRequest) -> dict:
             selected_avatar_code=req.selected_avatar_code,
             selected_scene_template_id=req.selected_scene_template_id,
             selected_camera_preset_code=req.selected_camera_preset_code,
+            selected_avatar_codes=req.selected_avatar_codes,
+            selected_scene_template_ids=req.selected_scene_template_ids,
+            selected_camera_preset_codes=req.selected_camera_preset_codes,
             selected_block_purpose=req.selected_block_purpose,
             selected_content_type=req.selected_content_type,
             notes=req.notes,
         )
     except ValueError as exc:
         _raise_setup_error(exc)
+
+
+@router.post("/creative-selection/bulk-auto-setup")
+async def creative_selection_bulk_auto_setup(
+    req: CreativeSelectionBulkAutoSetupRequest,
+) -> dict:
+    """Auto-fill every eligible product's creative selection from its top-scored
+    recommendation (avatar #1 + scene #1 + camera #1), optionally APPROVING it.
+    Idempotent (already-APPROVED left alone) and fail-closed (review-required /
+    no-recommendation skipped). ``dry_run`` defaults true — nothing writes until
+    an explicit ``dry_run: false``. Planning only; no generation effect."""
+    return await _setup.bulk_auto_setup(
+        product_ids=req.product_ids,
+        approve=req.approve,
+        dry_run=req.dry_run,
+        limit=req.limit,
+    )
 
 
 @router.patch("/creative-selection/avatar")
