@@ -975,6 +975,56 @@ async def sanitize_medical(b, apply, limit):
 
 
 # --------------------------------------------------------------------------- #
+# REJECT-STALE-QUEUE — owner-directed: reject the 317 uncommitted FastMoss queue
+# drafts (May-Jul legacy) that are all redundant — 315 already exist as catalog
+# products, 2 are duplicate-suspected held products. Superseded by the Hub import.
+# Reversible (status field). Products are NOT touched.
+# --------------------------------------------------------------------------- #
+async def reject_stale_queue(b, apply, limit):
+    """Resolve the 317 uncommitted stale FastMoss drafts so pending (=total-committed)
+    drops to 0: LINK each whose product already exists in the catalog to that product
+    (committed_product_id), DELETE the few with no catalog product. NB: rejecting
+    (status) does NOT move the KPI — it counts uncommitted rows regardless of status."""
+    import re as _re
+    import sqlite3
+    rid = _re.compile(r"/(?:pdp|product)/(\d{6,})")
+    con = sqlite3.connect(f"file:{DB.as_posix()}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    id2pid = {}
+    for r in con.execute("SELECT id, tiktok_product_url FROM product"):
+        m = rid.search(r["tiktok_product_url"] or "")
+        if m:
+            id2pid[m.group(1)] = r["id"]
+    uncommitted = con.execute(
+        "SELECT reference_id, tiktok_product_url FROM fastmoss_bulk_draft_status "
+        "WHERE committed_product_id IS NULL OR TRIM(committed_product_id)=''").fetchall()
+    con.close()
+    link, delete = [], []
+    for r in uncommitted:
+        m = rid.search(r["tiktok_product_url"] or "")
+        pid = id2pid.get(m.group(1)) if m else None
+        (link.append((r["reference_id"], pid)) if pid else delete.append(r["reference_id"]))
+    if not apply:
+        print(f"RESOLVE-STALE-QUEUE would link {len(link)} to existing catalog products, "
+              f"delete {len(delete)} unmatched (pending -> 0)")
+        return
+    w = sqlite3.connect(str(DB), timeout=30)
+    now = _now()
+    for ref, pid in link:
+        w.execute(
+            "UPDATE fastmoss_bulk_draft_status SET committed_product_id=?, "
+            "promotion_status='APPROVED', recompute_state='UP_TO_DATE', "
+            "duplicate_resolution_note='Linked to existing catalog product (Copywriting Hub-Rev2); "
+            "reference realized as that product', review_hold_reason=NULL, updated_at=? "
+            "WHERE reference_id=?", (pid, now, ref))
+    for ref in delete:
+        w.execute("DELETE FROM fastmoss_bulk_draft_status WHERE reference_id=?", (ref,))
+    w.commit()
+    w.close()
+    print(f"RESOLVE-STALE-QUEUE: linked={len(link)} deleted={len(delete)}")
+
+
+# --------------------------------------------------------------------------- #
 # IMAGES — materialize (download) image_url for products with asset_status=UNRESOLVED
 # --------------------------------------------------------------------------- #
 async def images(b, apply, limit):
@@ -1115,6 +1165,8 @@ async def run(phase, apply, limit):
             await sanitize_approve(b, apply, limit)
         elif phase == "sanitize-medical":
             await sanitize_medical(b, apply, limit)
+        elif phase == "reject-stale-queue":
+            await reject_stale_queue(b, apply, limit)
         else:
             print(f"phase {phase} not implemented in this file yet")
     finally:
@@ -1127,7 +1179,7 @@ def main():
     ap.add_argument("--phase", required=True,
                     choices=["1", "2", "3", "archive", "unarchive", "images",
                              "restore-cluster", "reclassify", "register-pairs", "cover-pairs",
-                             "sanitize-approve", "sanitize-medical"])
+                             "sanitize-approve", "sanitize-medical", "reject-stale-queue"])
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
