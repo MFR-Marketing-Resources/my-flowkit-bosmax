@@ -596,6 +596,7 @@ async def _list_products_response(
     source_lane: str | None = None,
     readiness: str | None = None,
     purpose: str | None = None,
+    exclude_reference: bool = False,
     include_archived: bool = False,
     lifecycle_status: str | None = None,
     cluster: str | None = None,
@@ -623,7 +624,10 @@ async def _list_products_response(
         requested_source=requested_source,
         requested_source_lane=requested_source_lane,
     )
-    if (purpose or "").strip().upper() == "GENERATION":
+    if exclude_reference or (purpose or "").strip().upper() == "GENERATION":
+        # Drop read-only FastMoss reference rows. They have no `product` record, so
+        # opening one only 404s the detail/intelligence surfaces — they belong in
+        # Import FastMoss, not the committed All Products catalog.
         merged_products = [
             product
             for product in merged_products
@@ -928,6 +932,7 @@ async def list_products(
     source_lane: str | None = Query(default=None),
     readiness: str | None = Query(default=None),
     purpose: str | None = Query(default=None),
+    exclude_reference: bool = Query(default=False),
     include_archived: bool = Query(default=False),
     lifecycle_status: str | None = Query(default=None),
     cluster: str | None = Query(default=None),
@@ -945,6 +950,7 @@ async def list_products(
         source_lane=source_lane,
         readiness=readiness,
         purpose=purpose,
+        exclude_reference=exclude_reference,
         include_archived=include_archived,
         lifecycle_status=lifecycle_status,
         cluster=cluster,

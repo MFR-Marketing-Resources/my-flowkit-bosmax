@@ -3200,7 +3200,24 @@ export default function ProductsSalesAnalyzerPage() {
 									</>
 								)}
 
-								{activeTab === "INTELLIGENCE" && (
+								{activeTab === "INTELLIGENCE" && selectedProduct && isReferenceOnlyProduct(selectedProduct) && (
+									<div className="space-y-6">
+										<div className="rounded border border-amber-500/30 bg-amber-500/5 p-4">
+											<div className="text-sm font-bold text-amber-200">
+												FastMoss reference — not a registered product yet
+											</div>
+											<p className="mt-1 text-xs leading-relaxed text-amber-100/80">
+												This row is read-only FastMoss <strong>reference</strong> data with no{" "}
+												<code>product</code> record, so it has no Product Intelligence, creative
+												setup, or review draft — every panel below would 404. Convert it via{" "}
+												<strong>Smart Registration / Import FastMoss</strong> to register it as
+												product truth first, then it becomes fully editable here.
+											</p>
+										</div>
+									</div>
+								)}
+								{activeTab === "INTELLIGENCE" &&
+									!(selectedProduct && isReferenceOnlyProduct(selectedProduct)) && (
 									<div className="space-y-6">
 										{selectedProduct ? (
 											<RecommendedAvatarsCard productId={selectedProduct.id} />

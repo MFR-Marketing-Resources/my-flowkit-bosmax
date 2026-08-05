@@ -53,6 +53,8 @@ export async function fetchProductRegistry(params: {
 	image?: string;
 	/** Restrict to one lifecycle (ACTIVE / ARCHIVED). ARCHIVED implies archived rows. */
 	lifecycleStatus?: string;
+	/** Drop read-only FastMoss reference rows (no product record) from the result. */
+	excludeReference?: boolean;
 	limit?: number;
 	offset?: number;
 }): Promise<ProductCatalogResponse> {
@@ -60,6 +62,7 @@ export async function fetchProductRegistry(params: {
 	if (params.source) query.set("source", params.source);
 	if (params.q) query.set("q", params.q);
 	if (params.includeArchived) query.set("include_archived", "true");
+	if (params.excludeReference) query.set("exclude_reference", "true");
 	if (params.cluster) query.set("cluster", params.cluster);
 	if (params.productTypeGroup)
 		query.set("product_type_group", params.productTypeGroup);
