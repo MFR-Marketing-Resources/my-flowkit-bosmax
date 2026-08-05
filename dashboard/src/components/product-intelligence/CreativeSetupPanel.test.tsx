@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import CreativeSetupPanel from "./CreativeSetupPanel";
@@ -38,47 +38,67 @@ describe("CreativeSetupPanel", () => {
 		vi.resetAllMocks();
 	});
 
-	it("renders recommendations and saves a selection (no generate control)", async () => {
+	it("renders recommendations and saves a MULTI selection (no generate control)", async () => {
 		mockedGet.mockResolvedValue(structuredClone(setup));
 		mockedSave.mockResolvedValue({
 			product_id: "p1", selection_id: "sel-1", status: "DRAFT",
-			selected_avatar_code: "BOS_F_FARAH_02", selected_scene_template_id: "SCN-0001",
-			selected_camera_preset_code: "HOOK_A",
-			preview: {
-				not_for_generation: true,
-				avatar: { avatar_code: "BOS_F_FARAH_02", character_name: "Farah" },
-				scene_template: { template_id: "SCN-0001", cluster: "Home & Living", main_action: "holds [PRODUCT]" },
-				camera_preset: { preset_code: "HOOK_A", shot_type: "PAIN", distance_angle: "MCU + EYE", movement: "STATIC" },
-			},
+			selected_avatar_code: "BOS_F_FARAH_02",
+			selected_avatar_codes: ["BOS_F_FARAH_02"],
+			selected_scene_template_ids: ["SCN-0001"],
+			selected_camera_preset_codes: ["HOOK_A"],
+			preview: { not_for_generation: true },
 		});
 
 		render(<CreativeSetupPanel productId="p1" />);
 		await screen.findByTestId("creative-setup-panel");
 
-		// recommendations populate the selects
+		// recommendations populate the multi-select lists
 		expect(screen.getByTestId("creative-setup-avatar")).toHaveTextContent("BOS_F_FARAH_02");
 		expect(screen.getByTestId("creative-setup-scene")).toHaveTextContent("SCN-0001");
 		expect(screen.getByTestId("creative-setup-camera")).toHaveTextContent("HOOK_A");
 
-		fireEvent.change(screen.getByTestId("creative-setup-avatar"), { target: { value: "BOS_F_FARAH_02" } });
-		fireEvent.change(screen.getByTestId("creative-setup-scene"), { target: { value: "SCN-0001" } });
-		fireEvent.change(screen.getByTestId("creative-setup-camera"), { target: { value: "HOOK_A" } });
+		// tick one of each (multi-select checkboxes)
+		fireEvent.click(within(screen.getByTestId("creative-setup-avatar")).getByRole("checkbox"));
+		fireEvent.click(within(screen.getByTestId("creative-setup-scene")).getByRole("checkbox"));
+		fireEvent.click(within(screen.getByTestId("creative-setup-camera")).getByRole("checkbox"));
 		fireEvent.click(screen.getByTestId("creative-setup-save"));
 
 		await waitFor(() => expect(mockedSave).toHaveBeenCalledWith(expect.objectContaining({
-			product_id: "p1", selected_avatar_code: "BOS_F_FARAH_02",
-			selected_scene_template_id: "SCN-0001", selected_camera_preset_code: "HOOK_A",
+			product_id: "p1",
+			selected_avatar_codes: ["BOS_F_FARAH_02"],
+			selected_scene_template_ids: ["SCN-0001"],
+			selected_camera_preset_codes: ["HOOK_A"],
 		})));
 
-		// saved status + preview appear
+		// saved status appears
 		expect(await screen.findByTestId("creative-setup-status")).toHaveTextContent("DRAFT");
-		const preview = await screen.findByTestId("creative-setup-preview");
-		expect(preview).toHaveTextContent("BOS_F_FARAH_02");
-		expect(preview).toHaveTextContent("SCN-0001");
-		expect(preview).toHaveTextContent("HOOK_A");
 
 		// planning only: no generation / asset-creation control
 		expect(screen.queryByRole("button", { name: /generate|create asset|render|produce/i })).not.toBeInTheDocument();
+	});
+
+	it("auto-fills the top pick and approves in one click", async () => {
+		mockedGet.mockResolvedValue(structuredClone(setup));
+		mockedSave.mockResolvedValue({
+			product_id: "p1", selection_id: "sel-1", status: "DRAFT",
+			selected_avatar_codes: ["BOS_F_FARAH_02"],
+		});
+		mockedReview.mockResolvedValue({
+			product_id: "p1", selection_id: "sel-1", status: "APPROVED",
+			selected_avatar_codes: ["BOS_F_FARAH_02"],
+		});
+
+		render(<CreativeSetupPanel productId="p1" />);
+		fireEvent.click(await screen.findByTestId("creative-setup-autofill"));
+
+		await waitFor(() => expect(mockedSave).toHaveBeenCalledWith(expect.objectContaining({
+			product_id: "p1",
+			selected_avatar_codes: ["BOS_F_FARAH_02"],
+			selected_scene_template_ids: ["SCN-0001"],
+			selected_camera_preset_codes: ["HOOK_A"],
+		})));
+		await waitFor(() => expect(mockedReview).toHaveBeenCalledWith("p1", "APPROVE"));
+		expect(await screen.findByTestId("creative-setup-status")).toHaveTextContent("APPROVED");
 	});
 
 	it("shows approve/reject on a DRAFT and transitions on approve", async () => {

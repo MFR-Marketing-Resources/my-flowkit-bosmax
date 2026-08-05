@@ -11,17 +11,18 @@ import {
 /**
  * Creative Setup / Saved Selection panel (Creative Intelligence — Round 4).
  * Composes the Round 1 avatar, Round 2 scene template, and Round 3 camera preset
- * recommendations into one product-level planning artifact. The user picks a
- * setup and saves it (review-gated DRAFT), then a reviewer may APPROVE/REJECT.
- * PLANNING ONLY — no generate/create-asset control, nothing is sent to
- * generation, and [AVATAR]/[PRODUCT] stay unresolved.
+ * recommendations into a product-level planning artifact. Now MULTI-SELECT: tick
+ * multiple avatars / scenes / cameras (the chosen SET); the first of each is the
+ * backward-compatible primary. "Auto-fill top pick" sets + approves the #1 of each
+ * in one click. PLANNING ONLY — nothing is generated or sent to generation, and
+ * [AVATAR]/[PRODUCT] stay unresolved.
  */
 export default function CreativeSetupPanel({ productId }: { productId: string }) {
 	const [setup, setSetup] = useState<CreativeSetup | null>(null);
 	const [saved, setSaved] = useState<SavedCreativeSelection | null>(null);
-	const [avatar, setAvatar] = useState("");
-	const [scene, setScene] = useState("");
-	const [camera, setCamera] = useState("");
+	const [avatars, setAvatars] = useState<string[]>([]);
+	const [scenes, setScenes] = useState<string[]>([]);
+	const [cameras, setCameras] = useState<string[]>([]);
 	const [notes, setNotes] = useState("");
 	const [loading, setLoading] = useState(true);
 	const [busy, setBusy] = useState(false);
@@ -38,9 +39,9 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 				setSetup(res);
 				const sel = res.saved_selection;
 				setSaved(sel);
-				setAvatar(sel?.selected_avatar_code ?? "");
-				setScene(sel?.selected_scene_template_id ?? "");
-				setCamera(sel?.selected_camera_preset_code ?? "");
+				setAvatars(sel?.selected_avatar_codes ?? []);
+				setScenes(sel?.selected_scene_template_ids ?? []);
+				setCameras(sel?.selected_camera_preset_codes ?? []);
 				setNotes(sel?.notes ?? "");
 			})
 			.catch((cause) => {
@@ -54,20 +55,61 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 		};
 	}, [productId]);
 
+	const toggle = (
+		list: string[],
+		setList: (next: string[]) => void,
+		code: string,
+	) => {
+		setList(list.includes(code) ? list.filter((c) => c !== code) : [...list, code]);
+	};
+
 	async function handleSave() {
 		setBusy(true);
 		setError("");
 		try {
 			const result = await saveCreativeSelection({
 				product_id: productId,
-				selected_avatar_code: avatar || null,
-				selected_scene_template_id: scene || null,
-				selected_camera_preset_code: camera || null,
+				selected_avatar_codes: avatars,
+				selected_scene_template_ids: scenes,
+				selected_camera_preset_codes: cameras,
 				notes: notes || null,
 			});
 			setSaved(result);
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : "Failed to save selection.");
+		} finally {
+			setBusy(false);
+		}
+	}
+
+	async function handleAutoFill() {
+		if (!setup) return;
+		const topAvatar = setup.recommended_avatars[0]?.avatar_code;
+		const topScene = setup.recommended_scene_templates[0]?.template_id;
+		const topCamera = setup.camera_library.named_presets[0]?.preset_code;
+		if (!topAvatar) {
+			setError("No recommended avatar to auto-fill for this product.");
+			return;
+		}
+		const a = [topAvatar];
+		const s = topScene ? [topScene] : [];
+		const c = topCamera ? [topCamera] : [];
+		setBusy(true);
+		setError("");
+		try {
+			await saveCreativeSelection({
+				product_id: productId,
+				selected_avatar_codes: a,
+				selected_scene_template_ids: s,
+				selected_camera_preset_codes: c,
+				notes: "Auto-fill: top-scored recommendation",
+			});
+			setAvatars(a);
+			setScenes(s);
+			setCameras(c);
+			setSaved(await reviewCreativeSelection(productId, "APPROVE"));
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : "Failed to auto-fill selection.");
 		} finally {
 			setBusy(false);
 		}
@@ -85,7 +127,6 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 		}
 	}
 
-	const preview = saved?.preview;
 	const statusColor =
 		saved?.status === "APPROVED" ? "text-emerald-300"
 			: saved?.status === "REJECTED" ? "text-red-300" : "text-amber-300";
@@ -104,8 +145,9 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 				)}
 			</div>
 			<p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-				Compose a saved creative plan (avatar + scene template + camera preset) for this
-				product. Planning only — nothing is generated or sent to generation, and the{" "}
+				Compose a saved creative plan for this product — tick one or MORE avatars,
+				scene templates, and camera presets. Planning only — nothing is generated or
+				sent to generation, and the{" "}
 				<code className="text-teal-200">[AVATAR]</code>/<code className="text-teal-200">[PRODUCT]</code>{" "}
 				placeholders stay unresolved.
 			</p>
@@ -118,58 +160,53 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 				</p>
 			) : setup ? (
 				<>
-					<div className="mt-2 text-[10px] uppercase tracking-wide text-slate-500">
-						cluster: {setup.cluster} · {setup.cluster_source}
+					<div className="mt-2 flex items-center justify-between gap-2">
+						<div className="text-[10px] uppercase tracking-wide text-slate-500">
+							cluster: {setup.cluster} · {setup.cluster_source}
+						</div>
+						<button
+							type="button"
+							data-testid="creative-setup-autofill"
+							disabled={busy}
+							onClick={handleAutoFill}
+							title="Set the top-scored avatar + scene + camera and approve, in one click"
+							className="rounded bg-indigo-600 px-2 py-1 text-[10px] font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+						>
+							⚡ Auto-fill top pick
+						</button>
 					</div>
-					<div className="mt-3 grid gap-2">
-						<label className="text-xs text-slate-300">
-							Avatar
-							<select
-								data-testid="creative-setup-avatar"
-								className="mt-1 w-full rounded bg-slate-900 p-1 text-xs text-slate-100"
-								value={avatar}
-								onChange={(e) => setAvatar(e.target.value)}
-							>
-								<option value="">— none —</option>
-								{setup.recommended_avatars.map((a) => (
-									<option key={a.avatar_code} value={a.avatar_code}>
-										{a.avatar_code} {a.character_name ? `· ${a.character_name}` : ""}
-									</option>
-								))}
-							</select>
-						</label>
-						<label className="text-xs text-slate-300">
-							Scene template
-							<select
-								data-testid="creative-setup-scene"
-								className="mt-1 w-full rounded bg-slate-900 p-1 text-xs text-slate-100"
-								value={scene}
-								onChange={(e) => setScene(e.target.value)}
-							>
-								<option value="">— none —</option>
-								{setup.recommended_scene_templates.map((t) => (
-									<option key={t.template_id} value={t.template_id}>
-										{t.template_id} {t.variant ? `· ${t.variant}` : ""}
-									</option>
-								))}
-							</select>
-						</label>
-						<label className="text-xs text-slate-300">
-							Camera preset
-							<select
-								data-testid="creative-setup-camera"
-								className="mt-1 w-full rounded bg-slate-900 p-1 text-xs text-slate-100"
-								value={camera}
-								onChange={(e) => setCamera(e.target.value)}
-							>
-								<option value="">— none —</option>
-								{setup.camera_library.named_presets.map((p) => (
-									<option key={p.preset_code} value={p.preset_code}>
-										{p.preset_code} {p.preset_name ? `· ${p.preset_name}` : ""}
-									</option>
-								))}
-							</select>
-						</label>
+
+					<div className="mt-3 grid gap-3">
+						<MultiPickList
+							label="Avatars"
+							testid="creative-setup-avatar"
+							selected={avatars}
+							options={setup.recommended_avatars.map((a) => ({
+								code: a.avatar_code,
+								label: `${a.avatar_code}${a.character_name ? ` · ${a.character_name}` : ""}`,
+							}))}
+							onToggle={(code) => toggle(avatars, setAvatars, code)}
+						/>
+						<MultiPickList
+							label="Scene templates"
+							testid="creative-setup-scene"
+							selected={scenes}
+							options={setup.recommended_scene_templates.map((t) => ({
+								code: t.template_id,
+								label: `${t.template_id}${t.variant ? ` · ${t.variant}` : ""}`,
+							}))}
+							onToggle={(code) => toggle(scenes, setScenes, code)}
+						/>
+						<MultiPickList
+							label="Camera presets"
+							testid="creative-setup-camera"
+							selected={cameras}
+							options={setup.camera_library.named_presets.map((p) => ({
+								code: p.preset_code,
+								label: `${p.preset_code}${p.preset_name ? ` · ${p.preset_name}` : ""}`,
+							}))}
+							onToggle={(code) => toggle(cameras, setCameras, code)}
+						/>
 					</div>
 
 					<div className="mt-3 flex flex-wrap items-center gap-2">
@@ -204,6 +241,9 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 								</button>
 							</>
 						)}
+						<span className="text-[10px] text-slate-500">
+							{avatars.length} avatar · {scenes.length} scene · {cameras.length} camera
+						</span>
 					</div>
 
 					{error && (
@@ -211,26 +251,56 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 							{error}
 						</p>
 					)}
-
-					{preview && (
-						<div data-testid="creative-setup-preview" className="mt-3 space-y-1 border-t border-slate-700/50 pt-2 text-[11px] text-slate-300">
-							<div className="text-[10px] uppercase tracking-wide text-slate-500">Preview (not sent to generation)</div>
-							<div>
-								Avatar: <span className="font-mono text-teal-200">{saved?.selected_avatar_code || "—"}</span>{" "}
-								{preview.avatar ? `· ${String((preview.avatar as { character_name?: string }).character_name ?? "")}` : ""}
-							</div>
-							<div>
-								Scene: <span className="font-mono text-teal-200">{saved?.selected_scene_template_id || "—"}</span>{" "}
-								{preview.scene_template?.main_action ? `· ${preview.scene_template.main_action}` : ""}
-							</div>
-							<div>
-								Camera: <span className="font-mono text-teal-200">{saved?.selected_camera_preset_code || "—"}</span>{" "}
-								{preview.camera_preset ? `· ${preview.camera_preset.shot_type ?? ""} · ${preview.camera_preset.distance_angle ?? ""} · ${preview.camera_preset.movement ?? ""}` : ""}
-							</div>
-						</div>
-					)}
 				</>
 			) : null}
+		</div>
+	);
+}
+
+function MultiPickList({
+	label,
+	testid,
+	selected,
+	options,
+	onToggle,
+}: {
+	label: string;
+	testid: string;
+	selected: string[];
+	options: { code: string; label: string }[];
+	onToggle: (code: string) => void;
+}) {
+	return (
+		<div>
+			<div className="mb-1 flex items-center justify-between">
+				<span className="text-xs text-slate-300">{label}</span>
+				<span className="text-[10px] text-slate-500">{selected.length} selected</span>
+			</div>
+			{options.length === 0 ? (
+				<p className="rounded bg-slate-900 px-2 py-1 text-[10px] text-slate-500">
+					No recommendations for this product.
+				</p>
+			) : (
+				<div
+					data-testid={testid}
+					className="max-h-32 space-y-0.5 overflow-y-auto rounded bg-slate-900 p-1"
+				>
+					{options.map((o) => (
+						<label
+							key={o.code}
+							className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-[11px] text-slate-200 hover:bg-slate-800"
+						>
+							<input
+								type="checkbox"
+								className="accent-teal-500"
+								checked={selected.includes(o.code)}
+								onChange={() => onToggle(o.code)}
+							/>
+							<span className="truncate">{o.label}</span>
+						</label>
+					))}
+				</div>
+			)}
 		</div>
 	);
 }
