@@ -1300,6 +1300,18 @@ export interface Product {
 	intelligence_status?: string | null;
 	intelligence_warnings?: string[];
 	intelligence_provenance?: string[];
+	// All Products annotations (server-computed on the list page).
+	/** FRESH / STALE / UNKNOWN roll-up of intelligence readiness. */
+	freshness?: string | null;
+	/** Count of uploaded source images / videos (product_source_media). */
+	source_media_image_count?: number | null;
+	source_media_video_count?: number | null;
+	/** The most recent NON-committed review draft, if any (feeds the Draft column). */
+	open_review_draft?: {
+		draft_id: string;
+		review_status: string;
+		updated_at?: string | null;
+	} | null;
 	taxonomy_conflict?: boolean;
 	taxonomy_conflict_reason?: string | null;
 	strategy_taxonomy?: ProductStrategyTaxonomy | null;

@@ -47,6 +47,10 @@ export async function fetchProductRegistry(params: {
 	intelligenceStatus?: string;
 	/** Claim risk tier: LOW / MEDIUM / HIGH. */
 	claimRiskLevel?: string;
+	/** Intelligence freshness roll-up: FRESH / STALE / UNKNOWN. */
+	freshness?: string;
+	/** Image availability: READY / MISSING. */
+	image?: string;
 	/** Restrict to one lifecycle (ACTIVE / ARCHIVED). ARCHIVED implies archived rows. */
 	lifecycleStatus?: string;
 	limit?: number;
@@ -63,6 +67,8 @@ export async function fetchProductRegistry(params: {
 		query.set("intelligence_status", params.intelligenceStatus);
 	if (params.claimRiskLevel)
 		query.set("claim_risk_level", params.claimRiskLevel);
+	if (params.freshness) query.set("freshness", params.freshness);
+	if (params.image) query.set("image", params.image);
 	if (params.lifecycleStatus)
 		query.set("lifecycle_status", params.lifecycleStatus);
 	query.set("limit", String(params.limit ?? 50));
