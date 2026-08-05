@@ -8,7 +8,10 @@ from types import SimpleNamespace
 import pytest
 
 from agent.db import crud
-from agent.services.fastmoss_bulk_promotion_service import sync_queue_row_from_draft
+from agent.services.fastmoss_bulk_promotion_service import (
+    _attach_duplicate_metadata_to_row,
+    sync_queue_row_from_draft,
+)
 
 
 def _draft(did, title, *, cluster=None, product_type_group=None):
@@ -92,3 +95,20 @@ async def test_list_bulk_queue_filters_by_cluster_and_product_type():
     unclassified = await crud.list_bulk_queue(cluster="__UNCLASSIFIED__", page_size=None)
     refs = {r["reference_id"] for r in unclassified}
     assert "filt-un" in refs and "filt-a1" not in refs
+
+
+def test_queue_row_projects_creative_cluster_from_strategy_cluster():
+    """PR-4: the queue row carries a resolve-on-read creative bucket projected
+    from the stored strategy cluster, alongside the untouched strategy cluster."""
+    out = _attach_duplicate_metadata_to_row(
+        {"cluster": "beauty_makeup", "product_type_group": "lipstick_lip_tint"}
+    )
+    assert out["cluster"] == "beauty_makeup"
+    assert out["creative_cluster"] == "Beauty"
+
+
+def test_queue_row_creative_cluster_none_when_unmapped_or_absent():
+    assert _attach_duplicate_metadata_to_row(
+        {"cluster": "generic_unclassified"}
+    )["creative_cluster"] is None
+    assert _attach_duplicate_metadata_to_row({})["creative_cluster"] is None
