@@ -194,6 +194,33 @@ async def test_approve_review_draft_creates_snapshot_supersedes_previous_and_cop
 
 
 @pytest.mark.asyncio
+async def test_supersede_open_then_create_does_not_violate_unique():
+    """Regression: a product may already hold one open draft (single-open-draft
+    partial unique index). Superseding it first lets a fresh INSERT succeed instead
+    of raising IntegrityError -> HTTP 500 (the Prepare-with-AI crash)."""
+    product = await crud.create_product(
+        raw_product_title="Bosmax Open Draft Collision",
+        source="MANUAL",
+        product_display_name="Bosmax Open Draft Collision",
+        product_short_name="Bosmax Open Draft Collision",
+    )
+    first = await svc.create_review_draft(product["id"], _safe_request())
+    assert first.review_status not in ("APPROVED", "REJECTED", "SUPERSEDED")
+
+    superseded_count = await svc.supersede_open_review_drafts(
+        product["id"], reason="regen", actor="test"
+    )
+    assert superseded_count == 1
+
+    second = await svc.create_review_draft(product["id"], _safe_request())
+    assert second.draft_id != first.draft_id
+
+    first_after = await svc.get_review_draft_by_id(first.draft_id)
+    assert first_after is not None
+    assert first_after.review_status == "SUPERSEDED"
+
+
+@pytest.mark.asyncio
 async def test_reject_review_draft_does_not_create_snapshot():
     product = await crud.create_product(
         raw_product_title="Bosmax Review Draft Reject",

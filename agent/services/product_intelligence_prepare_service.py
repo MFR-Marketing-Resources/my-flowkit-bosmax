@@ -34,7 +34,10 @@ from agent.models.product_intelligence_review_draft import (
 from agent.services import ai_copy_provider_adapter as provider
 from agent.services.copy_grounding_service import resolve_copy_grounding
 from agent.services.copy_set_service import CopySetError
-from agent.services.product_intelligence_review_draft_service import create_review_draft
+from agent.services.product_intelligence_review_draft_service import (
+    create_review_draft,
+    supersede_open_review_drafts,
+)
 
 _PERSONA_KEYS = ("audience", "desires", "fears", "pains", "objections", "triggers", "tone", "pronoun")
 
@@ -87,7 +90,13 @@ def _build_prompt(product: dict[str, Any], grounding: Any) -> tuple[str, str]:
         "customer's real problem language so a buyer instantly understands what "
         "the product is for. Control ONLY overclaim — no cure/treat/guarantee/"
         "100%/clinical/certification claims, and for sensitive products never name "
-        "explicit anatomy. Do not invent certifications or clinical proof."
+        "explicit anatomy. Do not invent certifications or clinical proof. "
+        "LANGUAGE: write EVERY output value (product_knowledge, customer_avatar, "
+        "market_problem_language, situation/desire/objection/trigger/use_context, "
+        "formula_breakdown — all of it) in the SAME language the product uses. These "
+        "are Malaysian TikTok Shop products, so write in natural Bahasa Melayu "
+        "(Malaysian Malay / rojak as a real seller writes), NOT English. Only the "
+        "JSON keys stay in English."
     )
     seed_avatar = {
         "family": getattr(grounding, "family", ""),
@@ -241,6 +250,15 @@ async def prepare_product_for_copywriting(product_id: str) -> dict[str, Any]:
         raise provider.AICopyProviderError(provider.ERR_RESPONSE_INVALID)
 
     request, recommended = _to_create_request(ai, grounding)
+    # A product may already hold one open review draft (single-open-draft partial
+    # unique index). Supersede it (content preserved) so this fresh AI draft inserts
+    # instead of colliding — matches the revision lifecycle. Without this,
+    # create_review_draft raised IntegrityError -> HTTP 500 whenever a draft was open.
+    await supersede_open_review_drafts(
+        product_id,
+        reason="Superseded by Prepare-with-AI regeneration",
+        actor="operator",
+    )
     draft = await create_review_draft(product_id, request)
     boundary_report = claim_boundary.assess_claim_boundary(
         json.dumps(ai, ensure_ascii=True), is_stealth=getattr(grounding, "is_stealth", False)

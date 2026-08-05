@@ -1133,6 +1133,51 @@ _REVISION_COPY_FIELDS = (
 _TERMINAL = ("APPROVED", "REJECTED", "SUPERSEDED")
 
 
+async def supersede_open_review_drafts(
+    product_id: str,
+    *,
+    reason: str,
+    actor: str | None = None,
+) -> int:
+    """Mark any existing NON-TERMINAL review draft for the product as SUPERSEDED
+    (content + provenance preserved as history) so a fresh draft can be inserted.
+
+    A partial unique index permits only ONE open draft per product. Callers that
+    INSERT a new draft (create_review_draft, and thus Prepare-with-AI) otherwise hit
+    `IntegrityError: UNIQUE constraint failed` -> HTTP 500 whenever a draft is already
+    open. Superseding first (never deleting) is the same governed move
+    create_revision_draft makes. Idempotent; returns the number superseded.
+    """
+    db = await get_db()
+    now = _now_iso()
+    cur = await db.execute(
+        "SELECT draft_id, reviewer_note FROM product_intelligence_review_draft "
+        "WHERE product_id=? AND review_status NOT IN ('APPROVED','REJECTED','SUPERSEDED')",
+        (product_id,),
+    )
+    rows = await cur.fetchall()
+    await cur.close()
+    superseded = 0
+    for row in rows:
+        rec = dict(row)
+        existing_note = str(rec.get("reviewer_note") or "").strip()
+        audit_note = (
+            f"[SUPERSEDED at {now}: {reason} by {actor or 'operator'}; "
+            "content and provenance preserved]"
+        )
+        await db.execute(
+            "UPDATE product_intelligence_review_draft "
+            "SET review_status='SUPERSEDED', reviewer_note=?, updated_at=? WHERE draft_id=?",
+            (
+                "\n".join(part for part in (existing_note, audit_note) if part),
+                now,
+                str(rec["draft_id"]),
+            ),
+        )
+        superseded += 1
+    return superseded
+
+
 async def create_revision_draft(
     product_id: str,
     *,
