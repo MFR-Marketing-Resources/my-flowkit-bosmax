@@ -547,6 +547,173 @@ async def unarchive(b, apply, limit):
 
 
 # --------------------------------------------------------------------------- #
+# RECLASSIFY — owner-approved: re-home the 25 file-generic / home_appliance-catchall
+# products to their correct ACTIVE registry pair (by product name keywords)
+# --------------------------------------------------------------------------- #
+_RECLASS_RULES = [
+    (r"bedak|compact powder", "beauty_makeup", "face_powder"),
+    (r"tonic rambut|rambut uban|rambut gugur|minoxidil|foligrowth|hair.?growth|greyvive",
+     "beauty_personal_care", "hair_treatment"),
+    (r"hair remov|remover|pencukur|shaver|trimmer|removal device",
+     "beauty_personal_care", "personal_care_device"),
+    (r"toner", "beauty_skincare", "facial_cleanser"),
+    (r"ubat acne|acne treatment|song ren", "sensitive_wellness", "traditional_herbal_preparation"),
+    (r"bekas|food container|food saver|penutup makanan|microwave.?safe|food.*bowl|multipurpose",
+     "kitchen_storage", "food_cover"),
+    (r"aircon cleaner|penghilang noda|stain remover|sunlight|dishwash|pencuci|cleaner",
+     "household_cleaning", "household_cleaner"),
+    (r"\bmop\b|penyapu|sawang|broom|spin mop", "household_cleaning", "cleaning_tool"),
+    (r"tisu|tissue|kitchen paper|kertas dapur", "household_cleaning", "cleaning_cloth"),
+    (r"wallsticker|wall sticker|marble sticker|floor.*30|self adhesive.*marble|lantai",
+     "home_improvement", "wall_covering"),
+    (r"usb port|extension|extended sleeve", "electronics_accessory", "electronics_accessory"),
+]
+
+
+async def reclassify(b, apply, limit):
+    import re as _re
+    import sqlite3
+    from agent.services.product_strategy_taxonomy_service import (
+        product_strategy_fingerprint,
+        lookup_product_strategy_type_registry_entry,
+        review_product_strategy_taxonomy,
+    )
+    from agent.models.product_strategy_taxonomy import ProductStrategyTaxonomyReviewRequest
+
+    cur = sqlite3.connect(f"file:{DB.as_posix()}?mode=ro", uri=True)
+    cur.row_factory = sqlite3.Row
+    prods = cur.execute(
+        "SELECT p.id, p.product_display_name nm FROM product p "
+        "JOIN product_strategy_taxonomy t ON t.product_id=p.id "
+        "WHERE p.lifecycle_status='ACTIVE' AND (t.cluster='generic_unclassified' "
+        "OR (t.cluster='home_equipment' AND t.product_type_group='home_appliance'))").fetchall()
+    targets = []
+    for r in prods:
+        low = (r["nm"] or "").lower()
+        for pat, cl, ty in _RECLASS_RULES:
+            if _re.search(pat, low):
+                targets.append((r["id"], cl, ty))
+                break
+    if limit:
+        targets = targets[:limit]
+    done = skip = failed = 0
+    for pid, cl, ty in targets:
+        try:
+            entry = lookup_product_strategy_type_registry_entry(cl, ty)
+            if not entry or entry.get("registry_status") != "ACTIVE":
+                skip += 1
+                print(f"  SKIP no-active-pair {cl}/{ty}")
+                continue
+            prod = dict(cur.execute("SELECT * FROM product WHERE id=?", (pid,)).fetchone())
+            fp = product_strategy_fingerprint(prod)
+            req = ProductStrategyTaxonomyReviewRequest(
+                expected_product_fingerprint=fp, cluster=cl, product_type_group=ty,
+                matched_scene_strategy_id=str(entry.get("matched_scene_strategy_id")),
+                scene_coverage_status=entry.get("scene_coverage_status"),
+                review_status="VERIFIED", reviewer_id=REVIEWER_ID,
+                reviewer_note="Reclassify file-generic / home_appliance catch-all by name (owner-approved)")
+            if apply:
+                await review_product_strategy_taxonomy(pid, req)
+            done += 1
+        except Exception as exc:
+            failed += 1
+            print(f"  RECLASS FAIL {pid[:10]}: {str(exc)[:90]}")
+    cur.close()
+    verb = "RECLASSIFIED" if apply else "would reclassify"
+    print(f"RECLASSIFY {verb}: {done} skip={skip} failed={failed}")
+
+
+# --------------------------------------------------------------------------- #
+# REGISTER-PAIRS — owner-approved: create taxonomy pairs for 9 file-uncovered
+# products (fallback scene coverage), then bind them. Cluster/type become correct;
+# scene coverage stays pending (FALLBACK) until a scene strategy is built.
+# --------------------------------------------------------------------------- #
+_NEW_PAIRS = [
+    ("fashion_accessory", "bag", "Bag & Wallet"),
+    ("beauty_skincare", "medicated_patch", "Medicated Patch"),
+    ("home_decor", "artificial_plant", "Artificial Plant"),
+    ("home_improvement", "bathroom_fixture", "Bathroom Fixture"),
+    ("stationery", "sticker", "Sticker"),
+]
+_NEWPAIR_RULES = [
+    (r"\bbeg\b|dompet|silang badan|beg pinggang|mini bag|\bbag\b|wallet", "fashion_accessory", "bag"),
+    (r"plaster|ketuat|hydrocolloid|jagung kaki|corn", "beauty_skincare", "medicated_patch"),
+    (r"artificial flower|fake flower|poppies", "home_decor", "artificial_plant"),
+    (r"bidet", "home_improvement", "bathroom_fixture"),
+    (r"pelekat 3d|buku pelekat|sticker book", "stationery", "sticker"),
+]
+
+
+async def register_pairs(b, apply, limit):
+    import re as _re
+    import sqlite3
+    from agent.services.product_strategy_taxonomy_service import (
+        register_product_strategy_type,
+        product_strategy_fingerprint,
+        lookup_product_strategy_type_registry_entry,
+        review_product_strategy_taxonomy,
+    )
+    from agent.models.product_strategy_taxonomy import (
+        ProductStrategyTypeRegistrationRequest,
+        ProductStrategyTaxonomyReviewRequest,
+    )
+    reg_done = reg_exist = reg_fail = 0
+    for cl, ty, dn in _NEW_PAIRS:
+        try:
+            if apply:
+                await register_product_strategy_type(ProductStrategyTypeRegistrationRequest(
+                    cluster=cl, product_type_group=ty, display_name=dn,
+                    matched_scene_strategy_id="GENERIC_FALLBACK",
+                    scene_coverage_status="FALLBACK_ONLY", registry_status="REVIEW_REQUIRED",
+                    auto_classification_enabled=False, reviewer_id=REVIEWER_ID,
+                    reviewer_note="New taxonomy pair for file-uncovered category (owner-approved)"))
+            reg_done += 1
+        except Exception as exc:
+            if "ALREADY_REGISTERED" in str(exc):
+                reg_exist += 1
+            else:
+                reg_fail += 1
+                print(f"  REGISTER FAIL {cl}/{ty}: {str(exc)[:90]}")
+    cur = sqlite3.connect(f"file:{DB.as_posix()}?mode=ro", uri=True)
+    cur.row_factory = sqlite3.Row
+    prods = cur.execute(
+        "SELECT p.id, p.product_display_name nm FROM product p "
+        "JOIN product_strategy_taxonomy t ON t.product_id=p.id "
+        "WHERE p.lifecycle_status='ACTIVE' AND (t.cluster='generic_unclassified' "
+        "OR (t.cluster='home_equipment' AND t.product_type_group='home_appliance'))").fetchall()
+    bound = failed = 0
+    for r in prods:
+        low = (r["nm"] or "").lower()
+        pair = next(((c, t) for pat, c, t in _NEWPAIR_RULES if _re.search(pat, low)), None)
+        if not pair:
+            continue
+        try:
+            entry = lookup_product_strategy_type_registry_entry(*pair)
+            if not entry:
+                if apply:
+                    print(f"  no registry entry for {pair} (register first)")
+                continue
+            prod = dict(cur.execute("SELECT * FROM product WHERE id=?", (r["id"],)).fetchone())
+            fp = product_strategy_fingerprint(prod)
+            req = ProductStrategyTaxonomyReviewRequest(
+                expected_product_fingerprint=fp, cluster=pair[0], product_type_group=pair[1],
+                matched_scene_strategy_id=str(entry.get("matched_scene_strategy_id")),
+                scene_coverage_status=entry.get("scene_coverage_status"),
+                review_status="REVIEW_REQUIRED", reviewer_id=REVIEWER_ID,
+                reviewer_note="Bind to new taxonomy pair (owner-approved; scene coverage pending)")
+            if apply:
+                await review_product_strategy_taxonomy(r["id"], req)
+            bound += 1
+        except Exception as exc:
+            failed += 1
+            print(f"  BIND FAIL {r['id'][:10]}: {str(exc)[:90]}")
+    cur.close()
+    verb = "DONE" if apply else "dry-run"
+    print(f"REGISTER-PAIRS {verb}: pairs_registered={reg_done} already={reg_exist} "
+          f"reg_failed={reg_fail} products_bound={bound} bind_failed={failed}")
+
+
+# --------------------------------------------------------------------------- #
 # IMAGES — materialize (download) image_url for products with asset_status=UNRESOLVED
 # --------------------------------------------------------------------------- #
 async def images(b, apply, limit):
@@ -677,6 +844,10 @@ async def run(phase, apply, limit):
             await images(b, apply, limit)
         elif phase == "restore-cluster":
             await restore_cluster(b, apply, limit)
+        elif phase == "reclassify":
+            await reclassify(b, apply, limit)
+        elif phase == "register-pairs":
+            await register_pairs(b, apply, limit)
         else:
             print(f"phase {phase} not implemented in this file yet")
     finally:
@@ -687,7 +858,8 @@ async def run(phase, apply, limit):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--phase", required=True,
-                    choices=["1", "2", "3", "archive", "unarchive", "images", "restore-cluster"])
+                    choices=["1", "2", "3", "archive", "unarchive", "images",
+                             "restore-cluster", "reclassify", "register-pairs"])
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
