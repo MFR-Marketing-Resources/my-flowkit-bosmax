@@ -1,5 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
-import { fetchProductRegistry } from "../../api/products";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+	fetchProductRegistry,
+	fetchProductStrategyTypeRegistry,
+} from "../../api/products";
 import type { Product, ProductCatalogResponse } from "../../types";
 
 const SOURCE_BADGE: Record<string, string> = {
@@ -31,6 +34,12 @@ const SOURCE_FILTERS: { value: SourceFilter; label: string }[] = [
 	{ value: "FASTMOSS", label: "FastMoss" },
 ];
 
+// PI state + risk are stable server enums; lifecycle maps to include-archived / a
+// specific lifecycle_status (see fetchRows). Empty value = no filter.
+const PI_STATUS_OPTIONS = ["READY", "NEEDS_REVIEW", "MISSING"];
+const RISK_OPTIONS = ["LOW", "MEDIUM", "HIGH"];
+type LifecycleFilter = "ACTIVE" | "ARCHIVED" | "ALL";
+
 const PAGE_SIZE = 50;
 
 const getErrorMessage = (error: unknown, fallback: string) => {
@@ -50,6 +59,11 @@ const resolveThumb = (product: Product): string | null =>
 	product.image_analysis?.image_url ||
 	null;
 
+const SELECT_CLASS =
+	"bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 px-2 py-1.5 focus:outline-none focus:border-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed";
+const LABEL_CLASS =
+	"text-[9px] font-bold uppercase tracking-widest text-slate-500 mb-1";
+
 interface Props {
 	onOpenProduct?: (productId: string) => void;
 }
@@ -58,11 +72,87 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 	const [sourceFilter, setSourceFilter] = useState<SourceFilter>("ALL");
 	const [search, setSearch] = useState("");
 	const [debouncedSearch, setDebouncedSearch] = useState("");
-	const [includeArchived, setIncludeArchived] = useState(false);
+	const [cluster, setCluster] = useState("");
+	const [productType, setProductType] = useState("");
+	const [intelligenceStatus, setIntelligenceStatus] = useState("");
+	const [risk, setRisk] = useState("");
+	const [lifecycle, setLifecycle] = useState<LifecycleFilter>("ACTIVE");
 	const [offset, setOffset] = useState(0);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [data, setData] = useState<ProductCatalogResponse | null>(null);
+
+	// Cluster list + the cluster → product_type_group map that powers the
+	// dependent Product Type dropdown. Loaded once from the strategy-type registry.
+	const [clusters, setClusters] = useState<string[]>([]);
+	const [clusterToTypes, setClusterToTypes] = useState<
+		Record<string, string[]>
+	>({});
+
+	useEffect(() => {
+		let cancelled = false;
+		void (async () => {
+			try {
+				const registry = await fetchProductStrategyTypeRegistry();
+				if (cancelled) return;
+				const byCluster: Record<string, Set<string>> = {};
+				for (const entry of registry.items) {
+					(byCluster[entry.cluster] ??= new Set()).add(
+						entry.product_type_group,
+					);
+				}
+				const map: Record<string, string[]> = {};
+				for (const [c, set] of Object.entries(byCluster)) {
+					map[c] = Array.from(set).sort();
+				}
+				setClusterToTypes(map);
+				setClusters(
+					(registry.clusters?.length
+						? registry.clusters
+						: Object.keys(map)
+					)
+						.slice()
+						.sort(),
+				);
+			} catch {
+				// Non-fatal: the cluster/type dropdowns simply stay empty; the rest of
+				// the catalog browser (source/search/status/risk) still works.
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	// Product Type options depend on the selected cluster. With no cluster chosen,
+	// offer every registered type (filter-by-type-alone stays possible).
+	const productTypeOptions = useMemo(() => {
+		if (cluster) return clusterToTypes[cluster] ?? [];
+		const all = new Set<string>();
+		for (const list of Object.values(clusterToTypes))
+			for (const t of list) all.add(t);
+		return Array.from(all).sort();
+	}, [cluster, clusterToTypes]);
+
+	const activeFilterCount =
+		(sourceFilter !== "ALL" ? 1 : 0) +
+		(cluster ? 1 : 0) +
+		(productType ? 1 : 0) +
+		(intelligenceStatus ? 1 : 0) +
+		(risk ? 1 : 0) +
+		(lifecycle !== "ACTIVE" ? 1 : 0) +
+		(debouncedSearch.trim() ? 1 : 0);
+
+	const resetFilters = () => {
+		setSourceFilter("ALL");
+		setSearch("");
+		setCluster("");
+		setProductType("");
+		setIntelligenceStatus("");
+		setRisk("");
+		setLifecycle("ACTIVE");
+		setOffset(0);
+	};
 
 	// Debounce the search box so typing does not fire a request per keystroke.
 	// A new search always returns to the first page.
@@ -81,7 +171,14 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 			const result = await fetchProductRegistry({
 				source: sourceFilter === "ALL" ? undefined : sourceFilter,
 				q: debouncedSearch.trim() || undefined,
-				includeArchived,
+				cluster: cluster || undefined,
+				productTypeGroup: productType || undefined,
+				intelligenceStatus: intelligenceStatus || undefined,
+				claimRiskLevel: risk || undefined,
+				// "Active" simply excludes archived (matches the old default); the other
+				// two are explicit lifecycle views.
+				includeArchived: lifecycle === "ALL",
+				lifecycleStatus: lifecycle === "ARCHIVED" ? "ARCHIVED" : undefined,
 				limit: PAGE_SIZE,
 				offset,
 			});
@@ -91,7 +188,16 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 		} finally {
 			setLoading(false);
 		}
-	}, [sourceFilter, debouncedSearch, includeArchived, offset]);
+	}, [
+		sourceFilter,
+		debouncedSearch,
+		cluster,
+		productType,
+		intelligenceStatus,
+		risk,
+		lifecycle,
+		offset,
+	]);
 
 	useEffect(() => {
 		void fetchRows();
@@ -116,7 +222,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 							<span className="font-semibold text-slate-200">
 								{total.toLocaleString()}
 							</span>{" "}
-							produk · semua source: Manual / TikTok / FastMoss.
+							produk (padan penapis) · semua source: Manual / TikTok / FastMoss.
 						</p>
 					</div>
 					<span className="px-2 py-0.5 rounded text-[9px] font-bold bg-slate-700/30 text-slate-400">
@@ -140,7 +246,8 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 			)}
 
 			{/* Filter row */}
-			<div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+			<div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
+				{/* Source pills + search + reset */}
 				<div className="flex flex-wrap items-center gap-3">
 					<div className="flex gap-1 rounded-xl bg-slate-900/60 border border-slate-800 p-1 w-fit">
 						{SOURCE_FILTERS.map((option) => (
@@ -166,20 +273,114 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 						value={search}
 						onChange={(e) => setSearch(e.target.value)}
 						placeholder="cari nama produk…"
-						className="bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 px-2 py-1.5 w-52"
+						className="bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 px-2 py-1.5 w-52 focus:outline-none focus:border-indigo-500"
 					/>
-					<label className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-slate-400 cursor-pointer">
-						<input
-							type="checkbox"
-							checked={includeArchived}
+					{activeFilterCount > 0 && (
+						<button
+							type="button"
+							onClick={resetFilters}
+							className="px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 hover:text-white text-[10px] font-bold uppercase tracking-widest transition-colors"
+						>
+							Reset ({activeFilterCount})
+						</button>
+					)}
+				</div>
+
+				{/* Dropdown facets: cluster → dependent type, PI status, risk, lifecycle */}
+				<div className="flex flex-wrap items-end gap-3">
+					<div className="flex flex-col">
+						<span className={LABEL_CLASS}>Cluster</span>
+						<select
+							value={cluster}
 							onChange={(e) => {
-								setIncludeArchived(e.target.checked);
+								setCluster(e.target.value);
+								setProductType(""); // dependency: type resets with its cluster
 								setOffset(0);
 							}}
-							className="accent-indigo-500"
-						/>
-						Include archived
-					</label>
+							className={`${SELECT_CLASS} w-44`}
+						>
+							<option value="">Semua cluster</option>
+							{clusters.map((c) => (
+								<option key={c} value={c}>
+									{c}
+								</option>
+							))}
+						</select>
+					</div>
+					<div className="flex flex-col">
+						<span className={LABEL_CLASS}>
+							Product Type{cluster ? ` · ${cluster}` : ""}
+						</span>
+						<select
+							value={productType}
+							onChange={(e) => {
+								setProductType(e.target.value);
+								setOffset(0);
+							}}
+							disabled={productTypeOptions.length === 0}
+							className={`${SELECT_CLASS} w-44`}
+						>
+							<option value="">
+								{cluster ? "Semua type (cluster ini)" : "Semua type"}
+							</option>
+							{productTypeOptions.map((t) => (
+								<option key={t} value={t}>
+									{t}
+								</option>
+							))}
+						</select>
+					</div>
+					<div className="flex flex-col">
+						<span className={LABEL_CLASS}>PI Status</span>
+						<select
+							value={intelligenceStatus}
+							onChange={(e) => {
+								setIntelligenceStatus(e.target.value);
+								setOffset(0);
+							}}
+							className={`${SELECT_CLASS} w-36`}
+						>
+							<option value="">Semua</option>
+							{PI_STATUS_OPTIONS.map((s) => (
+								<option key={s} value={s}>
+									{s.replace(/_/g, " ")}
+								</option>
+							))}
+						</select>
+					</div>
+					<div className="flex flex-col">
+						<span className={LABEL_CLASS}>Risk</span>
+						<select
+							value={risk}
+							onChange={(e) => {
+								setRisk(e.target.value);
+								setOffset(0);
+							}}
+							className={`${SELECT_CLASS} w-28`}
+						>
+							<option value="">Semua</option>
+							{RISK_OPTIONS.map((r) => (
+								<option key={r} value={r}>
+									{r}
+								</option>
+							))}
+						</select>
+					</div>
+					<div className="flex flex-col">
+						<span className={LABEL_CLASS}>Lifecycle</span>
+						<select
+							value={lifecycle}
+							onChange={(e) => {
+								setLifecycle(e.target.value as LifecycleFilter);
+								setOffset(0);
+							}}
+							className={`${SELECT_CLASS} w-32`}
+						>
+							<option value="ACTIVE">Aktif</option>
+							<option value="ARCHIVED">Arkib</option>
+							<option value="ALL">Semua</option>
+						</select>
+					</div>
 				</div>
 			</div>
 
@@ -189,7 +390,8 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 					<div className="p-8 text-center text-slate-500 text-xs">Loading…</div>
 				) : rows.length === 0 ? (
 					<div className="p-8 text-center text-slate-500 text-xs">
-						No products found. Try adjusting the source filter or search.
+						Tiada produk padan penapis. Cuba longgarkan cluster / type / status
+						atau reset penapis.
 					</div>
 				) : (
 					<div className="overflow-x-auto">
@@ -225,17 +427,22 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 							<tbody>
 								{rows.map((product) => {
 									const thumb = resolveThumb(product);
-									const risk = (product.claim_risk_level || "").toUpperCase();
-									const cluster = product.strategy_taxonomy?.cluster;
-									const productType =
+									const riskLevel = (product.claim_risk_level || "").toUpperCase();
+									const rowCluster = product.strategy_taxonomy?.cluster;
+									const rowType =
 										product.strategy_taxonomy?.product_type_group;
 									const clusterType =
-										[cluster, productType].filter(Boolean).join(" · ") || "—";
-									const lifecycle = product.lifecycle_status || null;
+										[rowCluster, rowType].filter(Boolean).join(" · ") || "—";
+									const lifecycleStatus = product.lifecycle_status || null;
 									return (
 										<tr
 											key={product.id}
-											className="border-b border-slate-800/50 hover:bg-slate-800/30 transition-colors"
+											onClick={() => onOpenProduct?.(product.id)}
+											className={`border-b border-slate-800/50 transition-colors ${
+												onOpenProduct
+													? "cursor-pointer hover:bg-slate-800/40"
+													: ""
+											}`}
 										>
 											<td className="px-3 py-2">
 												{thumb ? (
@@ -275,14 +482,14 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 												{clusterType}
 											</td>
 											<td className="px-3 py-2">
-												{risk ? (
+												{riskLevel ? (
 													<span
 														className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
-															RISK_BADGE[risk] ||
+															RISK_BADGE[riskLevel] ||
 															"bg-slate-600/20 text-slate-400"
 														}`}
 													>
-														{risk}
+														{riskLevel}
 													</span>
 												) : (
 													<span className="text-[9px] text-slate-600">—</span>
@@ -298,14 +505,14 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 												)}
 											</td>
 											<td className="px-3 py-2">
-												{lifecycle ? (
+												{lifecycleStatus ? (
 													<span
 														className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
-															LIFECYCLE_BADGE[lifecycle] ||
+															LIFECYCLE_BADGE[lifecycleStatus] ||
 															"bg-slate-600/20 text-slate-400"
 														}`}
 													>
-														{lifecycle.replace(/_/g, " ")}
+														{lifecycleStatus.replace(/_/g, " ")}
 													</span>
 												) : (
 													<span className="text-[9px] text-slate-600">—</span>
@@ -314,7 +521,10 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 											<td className="px-3 py-2">
 												<button
 													type="button"
-													onClick={() => onOpenProduct?.(product.id)}
+													onClick={(e) => {
+														e.stopPropagation();
+														onOpenProduct?.(product.id);
+													}}
 													disabled={!onOpenProduct}
 													className="px-2 py-1 rounded-lg bg-sky-600/20 hover:bg-sky-600/40 disabled:opacity-40 disabled:cursor-not-allowed text-sky-300 text-[9px] font-bold uppercase tracking-widest transition-all"
 												>

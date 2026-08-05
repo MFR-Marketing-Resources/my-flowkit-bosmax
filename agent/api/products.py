@@ -598,6 +598,10 @@ async def _list_products_response(
     purpose: str | None = None,
     include_archived: bool = False,
     lifecycle_status: str | None = None,
+    cluster: str | None = None,
+    product_type_group: str | None = None,
+    intelligence_status: str | None = None,
+    claim_risk_level: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ):
@@ -633,6 +637,20 @@ async def _list_products_response(
         include_archived=db_include_archived,
         lifecycle_status=requested_lifecycle,
     )
+    # Catalog-browser facets (SEMUA PRODUK tab): cluster / product_type_group /
+    # intelligence_status / claim_risk_level. cluster+type read the taxonomy sidecar
+    # (batched, so attach once over the whole filtered set), status+risk live on the
+    # enriched row. Applied PRE-pagination so total_count and pages reflect the facet.
+    if any((cluster, product_type_group, intelligence_status, claim_risk_level)):
+        if cluster or product_type_group:
+            filtered_all = await attach_product_strategy_taxonomies(filtered_all)
+        filtered_all = _apply_catalog_facets(
+            filtered_all,
+            cluster=cluster,
+            product_type_group=product_type_group,
+            intelligence_status=intelligence_status,
+            claim_risk_level=claim_risk_level,
+        )
     total = len(filtered_all)
     enriched = []
     for product in filtered_all[offset:offset + limit]:
@@ -787,6 +805,45 @@ async def _merge_catalog_products(
     return merged
 
 
+def _apply_catalog_facets(
+    products: list[dict[str, Any]],
+    *,
+    cluster: str | None,
+    product_type_group: str | None,
+    intelligence_status: str | None,
+    claim_risk_level: str | None,
+) -> list[dict[str, Any]]:
+    """Catalog-browser facet filters. Each is an exact case-insensitive match; a
+    blank/None value is a no-op. cluster/product_type_group read the attached
+    strategy_taxonomy sidecar; intelligence_status/claim_risk_level live on the row."""
+
+    def _n(value: Any) -> str:
+        return str(value or "").strip().lower()
+
+    want_cluster = _n(cluster)
+    want_type = _n(product_type_group)
+    want_intel = _n(intelligence_status)
+    want_risk = _n(claim_risk_level)
+    result = products
+    if want_cluster:
+        result = [
+            product
+            for product in result
+            if _n((product.get("strategy_taxonomy") or {}).get("cluster")) == want_cluster
+        ]
+    if want_type:
+        result = [
+            product
+            for product in result
+            if _n((product.get("strategy_taxonomy") or {}).get("product_type_group")) == want_type
+        ]
+    if want_intel:
+        result = [product for product in result if _n(product.get("intelligence_status")) == want_intel]
+    if want_risk:
+        result = [product for product in result if _n(product.get("claim_risk_level")) == want_risk]
+    return result
+
+
 def _filter_products_for_catalog(
     products: list[dict[str, Any]],
     *,
@@ -825,6 +882,10 @@ async def list_products(
     purpose: str | None = Query(default=None),
     include_archived: bool = Query(default=False),
     lifecycle_status: str | None = Query(default=None),
+    cluster: str | None = Query(default=None),
+    product_type_group: str | None = Query(default=None),
+    intelligence_status: str | None = Query(default=None),
+    claim_risk_level: str | None = Query(default=None),
     limit: int = Query(default=50),
     offset: int = Query(default=0),
 ):
@@ -836,6 +897,10 @@ async def list_products(
         purpose=purpose,
         include_archived=include_archived,
         lifecycle_status=lifecycle_status,
+        cluster=cluster,
+        product_type_group=product_type_group,
+        intelligence_status=intelligence_status,
+        claim_risk_level=claim_risk_level,
         limit=limit,
         offset=offset,
     )
