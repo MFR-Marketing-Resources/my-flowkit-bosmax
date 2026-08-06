@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { archiveCreativeAsset, fetchCreativeAssets } from "../api/creativeAssets";
+import { getCreativeSetupForProduct } from "../api/creativeIntelligence";
 import {
 	compileImgFastlanePromptPreview,
 	type ImageArtifact,
@@ -218,6 +219,8 @@ export default function ImgFastlanePage() {
 			scene_name: string;
 			image_generated: boolean;
 			generated_asset_id?: string | null;
+			primary_cluster?: string | null;
+			compatible_clusters?: string[];
 		}[]
 	>([]);
 	const [sceneContextCode, setSceneContextCode] = useState("");
@@ -307,6 +310,33 @@ export default function ImgFastlanePage() {
 		const scene = sceneRegistry.find((s) => s.scene_code === code);
 		setSceneAssetId(scene?.generated_asset_id ?? "");
 	};
+
+	// Knowledge-driven scene pre-fill: on product-select, seed a cluster-appropriate
+	// scene context (background) from the creative setup so the operator starts from
+	// the right scene instead of empty. No cluster match leaves the manual pick.
+	useEffect(() => {
+		const pid = selectedProduct?.id;
+		if (!pid) return;
+		let active = true;
+		void getCreativeSetupForProduct(pid)
+			.then((setup) => {
+				if (!active) return;
+				const cluster = String(setup.cluster || "").trim().toLowerCase();
+				if (!cluster) return;
+				const match = sceneRegistry.find((s) => {
+					const pc = String(s.primary_cluster || "").trim().toLowerCase();
+					const compat = (s.compatible_clusters || []).map((c) =>
+						String(c).trim().toLowerCase(),
+					);
+					return pc === cluster || compat.includes(cluster);
+				});
+				if (match?.scene_code) handlePickSceneContext(match.scene_code);
+			})
+			.catch(() => {});
+		return () => {
+			active = false;
+		};
+	}, [selectedProduct?.id]);
 
 	useEffect(() => {
 		void fetchImgAssetLanes()
