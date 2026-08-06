@@ -4,7 +4,6 @@ import pytest
 from agent.db import crud
 from agent.services import avatar_registry
 from agent.services import creative_scene_prompt_service as _scene
-from agent.services import creative_camera_preset_service as _camera
 from agent.services import creative_setup_service as _setup
 from agent.services import creative_handoff_service as svc
 
@@ -16,10 +15,15 @@ async def _count(table):
 
 
 def _valid_ids():
+    from agent.services import creative_recipe_service as _recipe
+
+    tpl = _scene.library_templates()[0]
     return (
         avatar_registry.list_pool()[0]["avatar_code"],
-        _scene.library_templates()[0]["template_id"],
-        _camera.named_presets()[0]["preset_code"],
+        tpl["template_id"],
+        # Camera FOLLOWS the scene (derived via the bridge) — the value the service
+        # now persists, replacing the old independent named-preset pick.
+        _recipe.camera_for_variant(tpl.get("variant")),
     )
 
 

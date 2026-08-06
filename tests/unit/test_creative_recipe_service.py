@@ -32,6 +32,19 @@ def test_camera_follows_scene_via_real_bridge():
     assert recipe.camera_for_variation(7, bridge, index)["camera_preset_code"] == "CTA_B"
 
 
+def test_camera_for_variant_public_helper_derives_from_variant_label():
+    """The public server-side entry point (used by save_creative_selection to derive
+    the coherent camera per scene): a scene's variant label -> shot-coherent code."""
+    assert recipe.camera_for_variant("Variation 1 - Holding & Presenting") == "BODY_A"
+    assert recipe.camera_for_variant("Variation 5 - Close-up Product Details") == "BODY_B"
+    assert recipe.camera_for_variant("Variation 7 - Demonstrating Benefits") == "CTA_B"
+    # unknown / blank / None variant fails soft to the bridge fallback — always a valid
+    # camera code, never "" (so a derived plan never persists an empty camera).
+    assert recipe.camera_for_variant("no variation") == "BODY_A"
+    assert recipe.camera_for_variant("") == "BODY_A"
+    assert recipe.camera_for_variant(None) == "BODY_A"
+
+
 def test_build_recipes_is_a_coherent_grid_with_scene_derived_camera():
     bridge = recipe.load_bridge()
     mapping = recipe.load_camera_mapping()

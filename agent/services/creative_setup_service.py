@@ -317,8 +317,11 @@ async def save_creative_selection(
     Multi-select: pass ``selected_*_codes`` LISTS (the singular ``selected_*_code``
     kwargs stay for backward compatibility and are treated as a one-item list).
     The first of each list becomes the backward-compatible PRIMARY that the
-    generation pipeline reads. Validates every id against the live pool/library.
-    Only writes the ``creative_product_selection`` table — never generation.
+    generation pipeline reads. Validates avatar + scene ids against the live
+    pool/library. The CAMERA is DERIVED from the chosen scenes (camera-follows-scene
+    bridge) — any caller-supplied camera code is ignored, so a saved plan can never
+    carry a camera that contradicts its scene. Only writes the
+    ``creative_product_selection`` table — never generation.
     """
     from agent.db import crud
 
@@ -328,15 +331,23 @@ async def save_creative_selection(
 
     avatar_codes = _dedup(selected_avatar_codes, selected_avatar_code)
     scene_ids = _dedup(selected_scene_template_ids, selected_scene_template_id)
-    camera_codes = _dedup(selected_camera_preset_codes, selected_camera_preset_code)
 
     avatar_index, scene_index, camera_index = _avatar_index(), _scene_index(), _camera_index()
     if any(code not in avatar_index for code in avatar_codes):
         raise ValueError("INVALID_AVATAR_CODE")
     if any(sid not in scene_index for sid in scene_ids):
         raise ValueError("INVALID_SCENE_TEMPLATE_ID")
-    if any(code not in camera_index for code in camera_codes):
-        raise ValueError("INVALID_CAMERA_PRESET_CODE")
+    # Camera FOLLOWS the scene — it is NEVER an independent axis. Derive the coherent
+    # camera for each chosen scene via the scene->variation->camera bridge and IGNORE
+    # any caller-supplied camera code, so a saved plan can never carry a camera that
+    # contradicts its scene (enforced server-side; the UI already shows it read-only).
+    from agent.services import creative_recipe_service as _recipe
+
+    camera_codes: list[str] = []
+    for sid in scene_ids:
+        code = _recipe.camera_for_variant((scene_index.get(sid) or {}).get("variant"))
+        if code and code in camera_index and code not in camera_codes:
+            camera_codes.append(code)
 
     # Primary = first of each list (kept for the single-value preview + as the
     # backward-compatible column). NOTE: as of the linkage audit, the saved selection

@@ -212,6 +212,19 @@ def load_camera_mapping() -> list[dict]:
     return _load_json(_CAMERA_FILE).get("block_content_mapping", [])
 
 
+def camera_for_variant(variant: str | None) -> str:
+    """Camera-follows-scene: the shot-coherent camera preset code for a scene
+    template's free-text Variation label (e.g. 'Variation 1 - ...'), via the SSOT
+    scene->variation->camera bridge. Returns "" when the variant maps to no camera.
+    Deterministic; no AI, no credits — the one server-side entry point callers use
+    to derive a scene's camera without an independent pick."""
+    variation = variation_of(str(variant or ""))
+    cam = camera_for_variation(
+        variation, load_bridge(), _camera_index(load_camera_mapping())
+    )
+    return str(cam.get("camera_preset_code") or "").strip()
+
+
 def recipes_from_setup(
     setup: dict[str, Any], *, honor_saved: bool = True
 ) -> dict[str, list[CreativeRecipe]]:

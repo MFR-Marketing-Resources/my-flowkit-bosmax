@@ -23,9 +23,14 @@ async def _selection_rows_for(product_id):
 
 
 def _valid_ids():
+    from agent.services import creative_recipe_service as _recipe
+
     avatar = avatar_registry.list_pool()[0]["avatar_code"]
-    scene = _scene.library_templates()[0]["template_id"]
-    camera = _camera.named_presets()[0]["preset_code"]
+    tpl = _scene.library_templates()[0]
+    scene = tpl["template_id"]
+    # Camera now FOLLOWS the scene (derived via the scene->variation->camera bridge)
+    # — the value the service persists, replacing the old independent preset pick.
+    camera = _recipe.camera_for_variant(tpl.get("variant"))
     return avatar, scene, camera
 
 
@@ -87,8 +92,13 @@ async def test_save_selection_rejects_invalid_ids():
         await svc.save_creative_selection(product["id"], selected_avatar_code="NOPE_XX")
     with pytest.raises(ValueError, match="INVALID_SCENE_TEMPLATE_ID"):
         await svc.save_creative_selection(product["id"], selected_scene_template_id="SCN-9999")
-    with pytest.raises(ValueError, match="INVALID_CAMERA_PRESET_CODE"):
-        await svc.save_creative_selection(product["id"], selected_camera_preset_code="ZZZ_9")
+    # Camera FOLLOWS the scene now (never a free input): a bad camera code is IGNORED
+    # (the camera is derived from the chosen scene), not a validation error.
+    ignored = await svc.save_creative_selection(
+        product["id"], selected_scene_template_id=scene,
+        selected_camera_preset_code="ZZZ_9",
+    )
+    assert ignored["selected_camera_preset_code"] == camera
     with pytest.raises(ValueError, match="PRODUCT_NOT_FOUND"):
         await svc.save_creative_selection("nope", selected_avatar_code=avatar)
 
