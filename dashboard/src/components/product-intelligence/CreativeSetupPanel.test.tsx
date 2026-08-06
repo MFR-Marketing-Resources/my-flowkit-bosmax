@@ -41,36 +41,54 @@ describe("CreativeSetupPanel", () => {
 		vi.resetAllMocks();
 	});
 
-	it("renders recommendations and saves a MULTI selection (no generate control)", async () => {
+	it("renders recommendations and saves a coherent selection (camera follows scene)", async () => {
 		mockedGet.mockResolvedValue(structuredClone(setup));
+		// Recipes supply the deterministic scene→camera binding, shown read-only.
+		mockedRecipes.mockResolvedValue({
+			product_id: "p1", cluster: "Home & Living", cluster_source: "EXACT",
+			review_required: false, recipes: [],
+			recommended_pretick: [
+				{
+					avatar_code: "BOS_F_FARAH_02", scene_template_id: "SCN-0001",
+					scene_variant: "Variation 1 - X", variation: 1,
+					camera_preset_code: "BODY_A", camera_alts: [],
+					block_purpose: "Body Block", content_type: "Product Demo", rationale: "x",
+				},
+			],
+			counts: { avatars: 1, scenes: 1, recipes: 1, pretick: 1 },
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		} as any);
 		mockedSave.mockResolvedValue({
 			product_id: "p1", selection_id: "sel-1", status: "DRAFT",
 			selected_avatar_code: "BOS_F_FARAH_02",
 			selected_avatar_codes: ["BOS_F_FARAH_02"],
 			selected_scene_template_ids: ["SCN-0001"],
-			selected_camera_preset_codes: ["HOOK_A"],
+			selected_camera_preset_codes: ["BODY_A"],
 			preview: { not_for_generation: true },
 		});
 
 		render(<CreativeSetupPanel productId="p1" />);
 		await screen.findByTestId("creative-setup-panel");
 
-		// recommendations populate the multi-select lists
+		// avatar + scene lists populate; camera is NOT a separate pick list
 		expect(screen.getByTestId("creative-setup-avatar")).toHaveTextContent("BOS_F_FARAH_02");
 		expect(screen.getByTestId("creative-setup-scene")).toHaveTextContent("SCN-0001");
-		expect(screen.getByTestId("creative-setup-camera")).toHaveTextContent("HOOK_A");
+		// the camera shows read-only next to its scene (derived from the bridge)
+		await waitFor(() =>
+			expect(screen.getByTestId("creative-setup-scene")).toHaveTextContent("BODY_A"),
+		);
+		expect(screen.queryByTestId("creative-setup-camera")).not.toBeInTheDocument();
 
-		// tick one of each (multi-select checkboxes)
+		// tick avatar + scene (the camera is derived, never ticked)
 		fireEvent.click(within(screen.getByTestId("creative-setup-avatar")).getByRole("checkbox"));
 		fireEvent.click(within(screen.getByTestId("creative-setup-scene")).getByRole("checkbox"));
-		fireEvent.click(within(screen.getByTestId("creative-setup-camera")).getByRole("checkbox"));
 		fireEvent.click(screen.getByTestId("creative-setup-save"));
 
 		await waitFor(() => expect(mockedSave).toHaveBeenCalledWith(expect.objectContaining({
 			product_id: "p1",
 			selected_avatar_codes: ["BOS_F_FARAH_02"],
 			selected_scene_template_ids: ["SCN-0001"],
-			selected_camera_preset_codes: ["HOOK_A"],
+			selected_camera_preset_codes: ["BODY_A"],
 		})));
 
 		// saved status appears
