@@ -191,7 +191,13 @@ async def resolve_creative_setup(product_id: str) -> dict[str, Any]:
         raise ValueError("PRODUCT_NOT_FOUND")
     category = product.get("category")
 
-    avatars = await _avatar.recommend_avatars_for_category(category)
+    # SSOT: resolve the cluster PRODUCT-FIRST — the product's VERIFIED strategy taxonomy
+    # (projected via the crosswalk) wins, falling back to the legacy category derivation.
+    # A product whose commerce `category` is empty but whose strategy taxonomy is VERIFIED
+    # (the 241 classified-but-uncategorised products) now resolves instead of being wrongly
+    # flagged REVIEW_REQUIRED by a category-only lookup.
+    resolved = await _avatar.resolve_product_cluster(product_id, category)
+    avatars = await _avatar.recommend_avatars_for_category(category, _resolved=resolved)
     saved = _hydrate_selection(await crud.get_creative_product_selection(product_id))
 
     # Fail-closed: an un-categorised / unresolved product is REVIEW_REQUIRED. No
@@ -218,8 +224,10 @@ async def resolve_creative_setup(product_id: str) -> dict[str, Any]:
             "saved_selection": saved,
         }
 
-    scenes = await _scene.recommend_scene_prompts_for_category(category)
-    cameras = await _camera.recommend_camera_presets_for_category(category)
+    # Scene + camera lookups use the SAME product-first resolved cluster, so an empty
+    # `category` with a VERIFIED taxonomy cluster still gets its cluster's scenes/cameras.
+    scenes = await _scene.recommend_scene_prompts_for_category(category, _resolved=resolved)
+    cameras = await _camera.recommend_camera_presets_for_category(category, _resolved=resolved)
     # GENDER-APPROPRIATE smart default: read the product identity + approved
     # intelligence to keep ONLY avatars of the product's target gender, so a women's
     # tudung never ticks a male presenter (the Fashion crosswalk mixes genders). Scenes
