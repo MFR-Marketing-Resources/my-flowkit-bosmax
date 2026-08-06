@@ -14,6 +14,7 @@ raw prompt/response never enters the copy fields; only the clean copy crosses in
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from agent.db import crud
@@ -39,6 +40,45 @@ from agent.authority import claim_boundary
 from agent.authority.copy_formula_registry import get_formula, recommend_formula
 from agent.services.formula_validator_service import validate_formula_copy
 from agent.services.sales_clarity_qa_service import assess_sales_clarity
+
+# Presenter-gender signal — SELF-CONTAINED (this generation service must NOT import the
+# creative_setup / creative_recommendation planning services; see the architecture
+# invariant tests). These product-name token sets mirror the creative-setup resolver so
+# the spoken first-person copy voice matches the on-screen presenter (a women's tudung is
+# delivered by a female presenter). Fail-open to neutral so ANY presenter fits.
+_COPY_FEMALE_TOKENS = re.compile(
+    r"\b(tudung|hijab|muslimah|wanita|perempuan|women|woman|female|ladies|lady|girl|"
+    r"kurung|jubah|abaya|telekung|kebaya|gaun|dress|blouse|skirt|maxi|labuh|lingerie|"
+    r"bra|kosmetik|lipstik|lipstick|makeup|mekap|serkup)\b",
+    re.IGNORECASE,
+)
+_COPY_MALE_TOKENS = re.compile(
+    r"\b(lelaki|men|man|male|boy|songkok|kopiah|jersi\s+lelaki|seluar\s+lelaki|"
+    r"baju\s+melayu|kemeja\s+lelaki|misai|janggut)\b",
+    re.IGNORECASE,
+)
+
+
+def _copy_presenter_gender(product: dict[str, Any], *extra_texts: str) -> str:
+    """'female' / 'male' / 'neutral' from product identity + persona text. Fail-open to
+    neutral (so any rotated presenter fits) when the signal is unclear or unisex."""
+    parts = [
+        str(product.get("product_display_name") or ""),
+        str(product.get("raw_product_title") or ""),
+        str(product.get("product_short_name") or ""),
+        str(product.get("type") or ""),
+        str(product.get("category") or ""),
+        *[str(t or "") for t in extra_texts],
+    ]
+    text = " ".join(p for p in parts if p)
+    female = bool(_COPY_FEMALE_TOKENS.search(text))
+    male = bool(_COPY_MALE_TOKENS.search(text))
+    if female and not male:
+        return "female"
+    if male and not female:
+        return "male"
+    return "neutral"
+
 
 # Privacy-sensitive strategy, sourced from the concepts in
 # agent/authority/COPYWRITING_FRAMEWORK_UNIVERSAL.yaml (stealth_mode /
@@ -177,33 +217,29 @@ def _build_brief(
             "framing). Keep USPs generic and non-factual, or empty. Never state a "
             "product claim. Obey banned_terms and claim_gate."
         )
-    # Creative cluster (from the category taxonomy) so the copy brief carries the full
-    # product knowledge the owner requires — identity/commerce + cluster + product_type
-    # + intelligence. Best-effort; never blocks copy generation.
+    # Creative cluster so the copy brief carries the full product knowledge the owner
+    # requires — identity/commerce + cluster + product_type + intelligence. Read from the
+    # product's VERIFIED strategy taxonomy (product knowledge — NOT a creative-planning
+    # service, so the generation-purity invariant holds), falling back to the product's
+    # category. Best-effort; never blocks copy generation.
     try:
-        from agent.services.creative_avatar_recommendation_service import resolve_cluster
-
-        creative_cluster = _clean(
-            (resolve_cluster(_clean(product.get("category"))) or {}).get("cluster")
+        from agent.services.product_strategy_taxonomy_service import (
+            read_verified_product_strategy_taxonomy_sync,
         )
-    except Exception:
-        creative_cluster = ""
-    # Presenter gender — so the SPOKEN first-person delivery voice matches the on-screen
-    # creative-setup presenter (a women's tudung is delivered by a female presenter, so
-    # the script voice is feminine). Reuses the shared gender-resolution SSOT. Neutral
-    # products stay gender-neutral so ANY rotated presenter fits (mass production). Lazy
-    # import (mirrors resolve_cluster above) to avoid an import cycle; never blocks copy.
-    try:
-        from agent.services.creative_setup_service import _resolve_product_target_gender
 
-        _pseudo_snapshot = {
-            "target_customer_text": pk.target_customer,
-            "buyer_persona_snapshot_json": json.dumps({"audience": persona.audience}),
-        }
-        _presenter_g = _resolve_product_target_gender(product, _pseudo_snapshot)
+        _tax = read_verified_product_strategy_taxonomy_sync(product)
+        creative_cluster = _clean(
+            getattr(_tax, "cluster", "") if _tax else ""
+        ) or _clean(product.get("category"))
     except Exception:
-        _presenter_g = "ANY"
-    presenter_gender = {"F": "female", "M": "male"}.get(_presenter_g, "neutral")
+        creative_cluster = _clean(product.get("category"))
+    # Presenter gender — so the SPOKEN first-person delivery voice matches the on-screen
+    # presenter (a women's tudung is delivered by a female presenter). Self-contained
+    # product-name signal (no creative-service import). Neutral products stay gender-
+    # neutral so ANY rotated presenter fits (mass production). Never blocks copy.
+    presenter_gender = _copy_presenter_gender(
+        product, pk.target_customer, persona.audience
+    )
     presenter_voice_directive = (
         f"Write the spoken first-person delivery in a {presenter_gender} voice"
         + (
