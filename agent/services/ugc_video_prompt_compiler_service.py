@@ -778,6 +778,12 @@ def compile_ugc_video_prompt(
     route: str | None = None,
     allow_manual_block_plan: bool = False,
     creative_treatment: dict[str, Any] | None = None,
+    # ADDITIVE, opt-in recipe descriptors (Step F). Absent for every existing caller —
+    # the compiled prompt and its fingerprint stay byte-identical. When present (a
+    # coherent recipe: avatar × scene, camera follows scene), they SHARPEN the scene +
+    # camera sections without replacing the product's scene-strategy authority.
+    scene_template: dict[str, Any] | None = None,
+    camera_preset: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized_mode = str(mode or "").strip().upper()
     if normalized_mode not in SUPPORTED_MODES:
@@ -955,6 +961,38 @@ def compile_ugc_video_prompt(
     # demonstration.
     _scene_override = _clean(scene_context_override)
     _base_scene_context = _scene_override or _clean(approved_package.get("scene_context"))
+    # ADDITIVE recipe scene-template enrichment: a picked recipe's concrete action +
+    # setting sharpen the base scene context. Absent → _base_scene_context unchanged.
+    if scene_template:
+        _scene_bits = "; ".join(
+            bit
+            for bit in (
+                _clean(scene_template.get("main_action")),
+                _clean(scene_template.get("setting")),
+            )
+            if bit
+        )
+        if _scene_bits:
+            _base_scene_context = (
+                f"{_base_scene_context}. {_scene_bits}"
+                if _base_scene_context
+                else _scene_bits
+            )
+    # ADDITIVE recipe camera-preset enrichment: the preset's framing (distance/angle +
+    # movement) is appended to the per-block camera_notes below. Absent → empty suffix.
+    _camera_preset_note = ""
+    if camera_preset:
+        _preset_bits = " ".join(
+            bit
+            for bit in (
+                _clean(camera_preset.get("preset_name")),
+                _clean(camera_preset.get("distance_angle")),
+                _clean(camera_preset.get("movement")),
+            )
+            if bit
+        )
+        if _preset_bits:
+            _camera_preset_note = f" Shot framing: {_preset_bits}."
     if resolved_source_mode != "IMAGES":
         approved_package = {
             **approved_package,
@@ -1099,7 +1137,7 @@ def compile_ugc_video_prompt(
             wps_mode=wps_mode,
             overlay_allowed=bool(overlay_enabled),
             overlay_text=_compact_overlay(resolved_copy.get("cta") or "") if overlay_enabled else None,
-            camera_notes=f"{_camera['style_line']} {_camera['lens_line']}",
+            camera_notes=f"{_camera['style_line']} {_camera['lens_line']}{_camera_preset_note}",
             handling_notes=_handling_line(product, normalized_mode),
             shot_count_hint=_shot_policy["recommended"],
             allocation=allocation,

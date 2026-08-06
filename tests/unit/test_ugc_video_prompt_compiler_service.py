@@ -400,3 +400,64 @@ def test_unpinned_f2v_defaults_to_documented_hybrid_anchor():
 def test_invalid_source_mode_fails_closed():
     with pytest.raises(ValueError, match="SOURCE_MODE_INVALID:FRAME"):
         compile_ugc_video_prompt(**_compile_kwargs(source_mode="FRAME"))
+
+
+# ── Step F: recipe scene-template + camera-preset enrichment (additive, opt-in) ──
+
+
+def _recipe_kwargs(**overrides):
+    kwargs = dict(
+        product=_product(),
+        approved_package=_approved_package(),
+        avatar_id="BOS_F_AINA_01",
+        mode="T2V",
+        generation_mode="SINGLE",
+        duration_seconds=8,
+        camera_style="UGC_IPHONE_RAW",
+        target_language="BM_MS",
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+def test_recipe_scene_template_and_camera_preset_sharpen_the_prompt():
+    base = compile_ugc_video_prompt(**_recipe_kwargs())
+    enriched = compile_ugc_video_prompt(
+        **_recipe_kwargs(
+            scene_template={
+                "main_action": "Pouring the sauce over steaming rice",
+                "setting": "bright home kitchen with soft window light",
+            },
+            camera_preset={
+                "preset_name": "Body - Ingredient Focus",
+                "distance_angle": "ECU + TOPDOWN",
+                "movement": "ZOOM_IN",
+            },
+        )
+    )
+    text = enriched["final_compiled_prompt_text"]
+    # scene template's concrete action + setting reach the compiled prompt
+    assert "Pouring the sauce over steaming rice" in text
+    assert "bright home kitchen with soft window light" in text
+    # camera preset framing reaches the compiled prompt
+    assert "ECU + TOPDOWN" in text
+    assert "ZOOM_IN" in text
+    # and the enrichment actually changed the prompt vs the descriptor-free baseline
+    assert enriched["final_compiled_prompt_text"] != base["final_compiled_prompt_text"]
+
+
+def test_recipe_descriptors_absent_keeps_prompt_and_fingerprint_byte_stable():
+    # Backward-compat: every existing caller passes neither param. The compiled prompt
+    # AND its fingerprint must be identical whether the params are omitted or None.
+    omitted = compile_ugc_video_prompt(**_recipe_kwargs())
+    explicit_none = compile_ugc_video_prompt(
+        **_recipe_kwargs(scene_template=None, camera_preset=None)
+    )
+    assert (
+        omitted["final_compiled_prompt_text"]
+        == explicit_none["final_compiled_prompt_text"]
+    )
+    assert (
+        omitted["rendered_prompt_fingerprint"]
+        == explicit_none["rendered_prompt_fingerprint"]
+    )
