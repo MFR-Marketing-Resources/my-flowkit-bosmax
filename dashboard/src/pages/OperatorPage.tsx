@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { fetchAPI } from "../api/client";
 import { useCopywritingReadiness } from "../api/copywritingReadiness";
 import { fetchCreativeAssetEligibilityAudit } from "../api/creativeAssets";
+import { getCreativeSetupForProduct } from "../api/creativeIntelligence";
 import { fetchProductCatalog } from "../api/products";
 import {
 	createF2VGenerationPackage,
@@ -809,6 +810,27 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	useEffect(() => {
 		setSelectedCopySetId(null);
 		setShowFallbackConfirm(false);
+		// Knowledge-driven pre-fill: seed the avatar picker from the product's creative
+		// setup (gender/cluster-correct saved selection, else the smart default) so the
+		// operator starts from the RIGHT avatar instead of free-picking a mismatched one.
+		// Manual override stays free. Scene stays manual until the scene-template ->
+		// scene-context mapping is wired (different registries).
+		const pid = selectedProduct?.id;
+		if (!pid) return;
+		let active = true;
+		void getCreativeSetupForProduct(pid)
+			.then((setup) => {
+				if (!active) return;
+				const avatar =
+					setup.saved_selection?.selected_avatar_codes?.[0] ||
+					setup.default_selection?.selected_avatar_codes?.[0] ||
+					"";
+				if (avatar) setRegistryAvatarId(avatar);
+			})
+			.catch(() => {});
+		return () => {
+			active = false;
+		};
 	}, [selectedProduct?.id]);
 
 	useEffect(() => {
