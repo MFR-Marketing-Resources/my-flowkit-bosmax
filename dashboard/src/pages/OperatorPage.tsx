@@ -3,7 +3,11 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { fetchAPI } from "../api/client";
 import { useCopywritingReadiness } from "../api/copywritingReadiness";
 import { fetchCreativeAssetEligibilityAudit } from "../api/creativeAssets";
-import { getCreativeSetupForProduct } from "../api/creativeIntelligence";
+import {
+	getCreativeSetupForProduct,
+	getProductRecipes,
+	type CreativeRecipe,
+} from "../api/creativeIntelligence";
 import { fetchProductCatalog } from "../api/products";
 import {
 	createF2VGenerationPackage,
@@ -30,6 +34,17 @@ import CreativeDirectionSection, {
 	EMPTY_CREATIVE_DIRECTION,
 } from "../components/workspace/CreativeDirectionSection";
 import IMGModule from "../components/workspace/IMGModule";
+import {
+	OperatorCockpit,
+	QueueRow,
+	ResolvedChip,
+	StoryboardStrip,
+	WorkflowStep,
+} from "../components/workflow";
+import type {
+	CockpitPlanRow,
+	WorkflowStepStatus,
+} from "../components/workflow";
 import SceneStrategySummary from "../components/workspace/SceneStrategySummary";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import VisualAssetPicker from "../components/workspace/VisualAssetPicker";
@@ -392,6 +407,38 @@ function workspaceSurfaceLabel(mode: WorkspaceMode) {
 	if (mode === "I2V") return "Ingredients";
 	if (mode === "IMG") return "Image Generation";
 	return "Text to Video";
+}
+
+// ── V4 workflow shell helpers ──────────────────────────────────────────────
+// Derive the backward-compatible CreativeDirection from a set of coherent
+// recipes. Mirrors CreativeDirectionSection.directionFromRecipes so the
+// presenter-first V4 flow produces the SAME payload shape (recipes[0] feeds
+// scene_template_id + camera_preset_code) without importing its internals.
+function buildCreativeDirectionFromRecipes(
+	recipes: CreativeRecipe[],
+): CreativeDirection {
+	const uniq = (values: string[]) =>
+		Array.from(new Set(values.filter(Boolean)));
+	return {
+		avatarCodes: uniq(recipes.map((r) => r.avatar_code)),
+		sceneTemplateIds: uniq(recipes.map((r) => r.scene_template_id)),
+		cameraPresetCodes: uniq(recipes.map((r) => r.camera_preset_code)),
+		recipes,
+	};
+}
+
+function v4GenderTag(code: string): string {
+	if (code.includes("_F_")) return "♀";
+	if (code.includes("_M_")) return "♂";
+	return "";
+}
+
+function v4SceneText(recipe: CreativeRecipe): string {
+	const variant = recipe.scene_variant
+		.replace(/^Variation\s*\d+\s*[-:]\s*/i, "")
+		.trim();
+	const varTag = recipe.variation != null ? `Var${recipe.variation}` : "scene";
+	return variant ? `${varTag} · ${variant}` : varTag;
 }
 
 // Canonical source-mode (ADR-008): PINNED by the operator surface — HYBRID and
@@ -792,6 +839,81 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// jobMode; the surface identity stays HYBRID.
 	const jobMode: "T2V" | "F2V" | "I2V" | "IMG" =
 		mode === "HYBRID" ? "F2V" : mode;
+
+	// ── V4 workflow shell (guided single-page redesign) ──────────────────────
+	// DEFAULT for the T2V lane; the classic render stays reachable at ?classic=1
+	// as a transitional fallback (not a nav item, deleted once V4 is proven in
+	// daily use). When ?classic=1 is present every V4 hook guard-returns and the
+	// classic render below is byte-identical. It reuses the SAME state + handlers,
+	// so the Step-F payload (recipes[0] → scene_template_id/camera_preset_code)
+	// is preserved by construction.
+	const useV4 =
+		new URLSearchParams(location.search).get("classic") !== "1";
+	const [v4Pool, setV4Pool] = useState<CreativeRecipe[]>([]);
+	const [v4Pretick, setV4Pretick] = useState<CreativeRecipe[]>([]);
+	const [v4RecipesLoading, setV4RecipesLoading] = useState(false);
+	// Per-step manual open/collapse overrides; default = the active step is open.
+	const [v4Open, setV4Open] = useState<Record<number, boolean>>({});
+	const v4IsOpen = (index: number, status: WorkflowStepStatus) =>
+		v4Open[index] ?? status === "active";
+	const v4Toggle = (index: number, currentOpen: boolean) =>
+		setV4Open((prev) => ({ ...prev, [index]: !currentOpen }));
+	// Resolve the presenter AND its coherent scene→camera recipe together, so the
+	// avatar (avatar_id) and the recipe (scene/camera) never disagree.
+	const applyV4Presenter = useCallback(
+		(avatar: string, pool: CreativeRecipe[], pretick: CreativeRecipe[]) => {
+			// Single-select: ONE coherent recipe for the presenter (the knowledge
+			// base's top pick) becomes recipes[0] → scene_template_id + camera_preset.
+			const chosen =
+				pretick.find((r) => r.avatar_code === avatar) ??
+				pool.find((r) => r.avatar_code === avatar) ??
+				null;
+			handleCreativeDirectionChange(
+				buildCreativeDirectionFromRecipes(chosen ? [chosen] : []),
+			);
+		},
+		[handleCreativeDirectionChange],
+	);
+	// Load the product's coherent recipe pool for the V4 T2V lane; auto-pick a
+	// default presenter from the knowledge base only when none is set yet.
+	useEffect(() => {
+		if (!useV4 || mode !== "T2V" || !selectedProduct?.id) return;
+		let active = true;
+		setV4RecipesLoading(true);
+		void getProductRecipes(selectedProduct.id)
+			.then((res) => {
+				if (!active) return;
+				setV4Pool(res.recipes);
+				setV4Pretick(res.recommended_pretick);
+				if (!registryAvatarId) {
+					const autoAvatar =
+						res.recommended_pretick[0]?.avatar_code ??
+						res.recipes[0]?.avatar_code ??
+						"";
+					if (autoAvatar)
+						applyV4Presenter(autoAvatar, res.recipes, res.recommended_pretick);
+				}
+			})
+			.catch(() => {})
+			.finally(() => {
+				if (active) setV4RecipesLoading(false);
+			});
+		return () => {
+			active = false;
+		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [useV4, mode, selectedProduct?.id]);
+	// Keep the scene→camera recipe coherent with whoever set the presenter
+	// (creative-setup seed, manual pick). Idempotent: no-op when already in sync,
+	// when the avatar is not in this product's pool, or when the recipe is empty.
+	useEffect(() => {
+		if (!useV4 || mode !== "T2V" || !registryAvatarId || v4Pool.length === 0)
+			return;
+		if (creativeDirection.recipes[0]?.avatar_code === registryAvatarId) return;
+		if (!v4Pool.some((r) => r.avatar_code === registryAvatarId)) return;
+		applyV4Presenter(registryAvatarId, v4Pool, v4Pretick);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [useV4, mode, registryAvatarId, v4Pool]);
 	// Stale-reference law: a mode or product switch invalidates every prior
 	// reference selection (the server's WRONG_PRODUCT / per-mode contract checks
 	// stay the authority; this keeps the UI from carrying another product's or
@@ -1909,6 +2031,795 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				);
 		}
 	};
+
+	// ── V4 guided single-page shell (T2V reference lane, behind ?v4=1) ──────────
+	if (useV4 && mode === "T2V") {
+		const productReady = selectedReadiness?.readiness_status === "READY";
+		const v4Avatars = Array.from(
+			new Set(v4Pool.map((r) => r.avatar_code)),
+		).filter(Boolean);
+		const primaryRecipe = creativeDirection.recipes[0] ?? null;
+		// Single-select scene list for the chosen presenter (backend-configured
+		// recipes only — nothing invented).
+		const v4PresenterRecipes = registryAvatarId
+			? v4Pool.filter((r) => r.avatar_code === registryAvatarId)
+			: [];
+		const applyV4Recipe = (recipe: CreativeRecipe) =>
+			handleCreativeDirectionChange(
+				buildCreativeDirectionFromRecipes([recipe]),
+			);
+		const avatarName = (code: string) =>
+			avatarRegistryPool.find(
+				(a) => String(a.avatar_code || a.AvatarCode || "") === code,
+			)?.display_name || code;
+		const presenterLabel = registryAvatarId
+			? `${avatarName(registryAvatarId)} ${v4GenderTag(registryAvatarId)}`.trim()
+			: v4RecipesLoading
+				? "Resolving…"
+				: "Auto from knowledge base";
+		const sceneCameraLabel = primaryRecipe
+			? `${v4SceneText(primaryRecipe)} · 🎥 ${primaryRecipe.camera_preset_code || "—"}`
+			: "Auto from knowledge base";
+		const lengthLabel = isExtendMode
+			? `${requestedTotalDuration ?? "—"}s · Extended`
+			: `${videoDurationSeconds}s · Single`;
+		const copyBound = Boolean(selectedCopySetId);
+		const storyboardShots = (previewPackage?.prompt_blocks ?? []).map(
+			(block, i) => ({
+				id: String(block.block_index ?? i),
+				label: block.block_role
+					? String(block.block_role)
+					: `Block ${block.block_index ?? i + 1}`,
+				sub: block.duration_seconds
+					? `${block.duration_seconds}s`
+					: undefined,
+			}),
+		);
+		const cockpitState: "idle" | "online" | "running" | "done" =
+			isLoadingPreview || isLoadingPackage
+				? "running"
+				: workspacePackage
+					? "done"
+					: selectedProduct
+						? "online"
+						: "idle";
+		const plan: CockpitPlanRow[] = [
+			{
+				k: "Angle",
+				v: copyBound ? "Copy set bound" : "Fallback copy",
+				tone: copyBound ? "good" : "muted",
+			},
+			{ k: "Presenter", v: presenterLabel },
+			{ k: "Scene → camera", v: sceneCameraLabel, mono: true },
+			{ k: "Length", v: lengthLabel },
+			{
+				k: "Engine · model",
+				v: `${currentEngine?.label ?? selectedEngineId} · ${videoModel}`,
+			},
+		];
+		// Free prepare flow only — the live, credit-bearing fire stays in the
+		// NativeExtendPanel below (unchanged gates). The cockpit never spends credits.
+		const cockpitGenerate = !productReady
+			? {
+					label: "Select a ready product",
+					disabled: true,
+					onClick: () => {},
+					note: "pick a READY product to begin",
+				}
+			: extendTotalRequired
+				? {
+						label: "Set length first",
+						disabled: true,
+						onClick: () => {},
+						note: "Extended video needs a total duration",
+					}
+				: !previewPackage
+					? {
+							label: isLoadingPreview ? "Compiling…" : "Compile preview",
+							loading: isLoadingPreview,
+							disabled: backendRuntimeStale,
+							onClick: () => void handleLoadPreview(),
+							note: "compiles the prompt · no credits",
+						}
+					: !workspacePackage
+						? {
+								label: isLoadingPackage
+									? "Preparing…"
+									: "Prepare final prompt",
+								loading: isLoadingPackage,
+								disabled: showFallbackConfirm || backendRuntimeStale,
+								onClick: () => void handleGeneratePackage(),
+								note: "saves the execution package · no credits",
+							}
+						: {
+								label: "Prepared ✓ — generate below",
+								disabled: true,
+								onClick: () => {},
+								note: "credits only when you press Generate video",
+							};
+
+		const s1: WorkflowStepStatus = selectedProduct
+			? productReady
+				? "done"
+				: "active"
+			: "active";
+		const s2: WorkflowStepStatus = !selectedProduct
+			? "upcoming"
+			: copyBound
+				? "done"
+				: "active";
+		const s3: WorkflowStepStatus = !selectedProduct
+			? "upcoming"
+			: registryAvatarId
+				? "done"
+				: "active";
+		const s4: WorkflowStepStatus = !selectedProduct
+			? "upcoming"
+			: extendTotalRequired
+				? "active"
+				: "done";
+		const s5: WorkflowStepStatus = !selectedProduct
+			? "upcoming"
+			: primaryRecipe
+				? "done"
+				: "active";
+		const s6: WorkflowStepStatus = previewPackage ? "done" : "active";
+		const s7: WorkflowStepStatus =
+			workspacePackage && extendAuthority ? "active" : "upcoming";
+
+		const selectClass =
+			"w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100";
+		const labelClass =
+			"text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500";
+
+		return (
+			<div
+				data-testid="hybrid-workflow"
+				data-variant="v4"
+				data-mode={mode}
+				className="flex h-full flex-col bg-slate-950 px-4 py-4 md:px-8 md:py-6"
+			>
+				<div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+					<div>
+						<div className="flex items-center gap-2">
+							<h2 className="text-xl font-bold tracking-tight text-white md:text-2xl">
+								Text to Video
+							</h2>
+							<span className="rounded-full border border-v4-accent/40 bg-v4-accent/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.16em] text-v4-accent-ink">
+								V4
+							</span>
+						</div>
+						<p className="text-sm text-slate-400">
+							Pick a product, message and presenter — the knowledge base
+							resolves the rest.
+						</p>
+					</div>
+					<a
+						href={`${location.pathname}?classic=1`}
+						className="text-[11px] text-slate-500 underline decoration-dotted hover:text-slate-300"
+					>
+						Switch to classic view
+					</a>
+				</div>
+
+				<div className="mb-4">
+					<BackendVersionBanner onRuntimeStaleChange={setBackendRuntimeStale} />
+				</div>
+
+				<div className="flex min-h-0 flex-1 flex-col gap-5 xl:flex-row">
+					<main className="min-w-0 flex-1 space-y-3 overflow-y-auto pb-6 xl:pr-1">
+						{/* Step 1 — Product */}
+						<WorkflowStep
+							index={1}
+							title="Product"
+							status={s1}
+							open={v4IsOpen(1, s1)}
+							onToggleOpen={() => v4Toggle(1, v4IsOpen(1, s1))}
+							summary={
+								selectedProduct
+									? `${selectedProduct.product_display_name}${productReady ? "" : " · not ready"}`
+									: undefined
+							}
+							helper="Only READY products can generate."
+						>
+							<div className="space-y-3">
+								<SearchableProductSelect
+									products={products}
+									selectedProduct={selectedProduct}
+									onSelect={setSelectedProduct}
+									readinessByProductId={packageReadiness}
+									isLoadingReadiness={isLoadingAnyReadiness}
+								/>
+								{selectedReadiness && !productReady ? (
+									<div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-100">
+										{selectedReadiness.readiness_status} —{" "}
+										{selectedReadiness.detail}
+									</div>
+								) : null}
+							</div>
+						</WorkflowStep>
+
+						{/* Step 2 — Message & angle */}
+						<WorkflowStep
+							index={2}
+							title="Message & angle"
+							status={s2}
+							open={v4IsOpen(2, s2)}
+							onToggleOpen={() => v4Toggle(2, v4IsOpen(2, s2))}
+							summary={copyBound ? "Approved copy set bound" : "Fallback copy"}
+							helper="Bind an approved copy set, or continue on fallback."
+						>
+							<div className="space-y-3">
+								<SceneStrategySummary
+									hasProduct={Boolean(selectedProduct)}
+									productName={selectedProduct?.product_display_name ?? null}
+									taxonomy={selectedProduct?.strategy_taxonomy ?? null}
+								/>
+								<CopywritingReadinessCard
+									readiness={copyReadiness}
+									loading={copyReadinessLoading}
+									onPrepare={() =>
+										window.location.assign(
+											selectedProduct
+												? `/products?product_id=${encodeURIComponent(selectedProduct.id)}`
+												: "/products",
+										)
+									}
+									onOpenCopyRegistry={() =>
+										window.location.assign(
+											selectedProduct
+												? `/creative/copy-registry?product_id=${encodeURIComponent(selectedProduct.id)}`
+												: "/creative/copy-registry",
+										)
+									}
+								/>
+								<CopySelectionPanel
+									productId={selectedProduct?.id ?? null}
+									productName={selectedProduct?.product_display_name ?? null}
+									selectedCopySetId={selectedCopySetId}
+									onSelect={setSelectedCopySetId}
+									disabled={isLoadingPreview || isLoadingPackage}
+								/>
+							</div>
+						</WorkflowStep>
+
+						{/* Step 3 — Presenter */}
+						<WorkflowStep
+							index={3}
+							title="Presenter"
+							status={s3}
+							open={v4IsOpen(3, s3)}
+							onToggleOpen={() => v4Toggle(3, v4IsOpen(3, s3))}
+							summary={presenterLabel}
+							helper="The face in the video — auto-picked for the product; change it if you like."
+						>
+							<div className="space-y-2">
+								<ResolvedChip
+									label="Presenter"
+									value={presenterLabel}
+									icon="🎭"
+									auto={!v4IsOpen(3, s3) || !registryAvatarId}
+								/>
+								{v4RecipesLoading ? (
+									<p className="text-[11px] text-slate-500">
+										Resolving presenters…
+									</p>
+								) : v4Avatars.length ? (
+									<div className="flex flex-wrap gap-2">
+										{v4Avatars.map((code) => {
+											const active = code === registryAvatarId;
+											return (
+												<button
+													key={code}
+													type="button"
+													onClick={() =>
+														applyV4Presenter(code, v4Pool, v4Pretick)
+													}
+													className={`rounded-xl border px-3 py-2 text-[11px] font-semibold transition-colors ${active ? "border-v4-accent bg-v4-accent/10 text-v4-accent-ink" : "border-slate-700 text-slate-300 hover:border-slate-500"}`}
+												>
+													{v4GenderTag(code)} {avatarName(code)}
+												</button>
+											);
+										})}
+									</div>
+								) : (
+									<p className="text-[11px] text-slate-500">
+										Select a product to load presenters.
+									</p>
+								)}
+							</div>
+						</WorkflowStep>
+
+						{/* Step 4 — Length */}
+						<WorkflowStep
+							index={4}
+							title="Length"
+							status={s4}
+							open={v4IsOpen(4, s4)}
+							onToggleOpen={() => v4Toggle(4, v4IsOpen(4, s4))}
+							summary={lengthLabel}
+							helper="How long the video runs."
+						>
+							<div className="space-y-3">
+								<div className="grid gap-3 sm:grid-cols-2">
+									<label className="space-y-1">
+										<span className={labelClass}>Type</span>
+										<select
+											value={generationMode}
+											onChange={(e) =>
+												handleGenerationModeChange(
+													e.target.value as PromptGenerationMode,
+												)
+											}
+											className={selectClass}
+											title="Generation type"
+										>
+											<option value="SINGLE">Single clip</option>
+											<option value="EXTEND">Extended video</option>
+										</select>
+									</label>
+									{isExtendMode ? (
+										<label className="space-y-1">
+											<span className={labelClass}>Total duration</span>
+											<select
+												value={
+													requestedTotalDuration === null
+														? ""
+														: String(requestedTotalDuration)
+												}
+												onChange={(e) =>
+													handleExtendTotalDurationChange(
+														e.target.value === ""
+															? null
+															: Number(e.target.value),
+													)
+												}
+												className={selectClass}
+												title="Total video duration"
+											>
+												<option value="">Select total…</option>
+												{extendTotalOptions.map((total) => (
+													<option key={total} value={total}>
+														{total}s
+													</option>
+												))}
+											</select>
+										</label>
+									) : (
+										<label className="space-y-1">
+											<span className={labelClass}>Duration</span>
+											<select
+												value={String(videoDurationSeconds)}
+												onChange={(e) =>
+													handleSingleDurationChange(Number(e.target.value))
+												}
+												className={selectClass}
+												title="Video duration"
+											>
+												{singleDurationOptions.map((duration) => (
+													<option key={duration} value={duration}>
+														{duration}s
+													</option>
+												))}
+											</select>
+										</label>
+									)}
+								</div>
+								{extendTotalRequired ? (
+									<p className="text-[11px] text-amber-200">
+										Pick a total duration to enable compile.
+									</p>
+								) : null}
+								<details className="rounded-xl border border-dashed border-slate-800">
+									<summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-semibold text-slate-400">
+										Advanced settings ▸{" "}
+										<span className="text-slate-600">
+											engine · model · language · look
+										</span>
+									</summary>
+									<div className="grid gap-3 border-t border-slate-800 p-3 sm:grid-cols-2">
+										<label className="space-y-1">
+											<span className={labelClass}>Engine</span>
+											<select
+												value={selectedEngineId}
+												onChange={(e) => handleEngineChange(e.target.value)}
+												className={selectClass}
+												title="Engine"
+											>
+												{(capabilityMatrix?.engines ?? []).map((engine) => (
+													<option
+														key={engine.id}
+														value={engine.id}
+														disabled={!engine.supported}
+													>
+														{engine.label}
+													</option>
+												))}
+											</select>
+										</label>
+										<label className="space-y-1">
+											<span className={labelClass}>Video model</span>
+											<select
+												value={videoModel}
+												onChange={(e) => handleVideoModelChange(e.target.value)}
+												className={selectClass}
+												title="Video model"
+											>
+												{modelSelectOptions.map((m) => (
+													<option key={m.key} value={m.ui_label}>
+														{m.ui_label}
+													</option>
+												))}
+												{!singleModelValid && !isExtendMode ? (
+													<option value={videoModel}>
+														{videoModel} (unsupported)
+													</option>
+												) : null}
+											</select>
+										</label>
+										<label className="space-y-1">
+											<span className={labelClass}>Language</span>
+											<select
+												value={targetLanguage}
+												onChange={(e) =>
+													setTargetLanguage(e.target.value as PromptTargetLanguage)
+												}
+												className={selectClass}
+												title="Language"
+											>
+												{languageOptions.map((language) => (
+													<option key={language} value={language}>
+														{language}
+													</option>
+												))}
+											</select>
+										</label>
+										<label className="space-y-1">
+											<span className={labelClass}>Camera style</span>
+											<select
+												value={cameraStyle}
+												onChange={(e) =>
+													setCameraStyle(e.target.value as PromptCameraStyle)
+												}
+												className={selectClass}
+												title="Camera style"
+											>
+												<option value="UGC_IPHONE_RAW">UGC iPhone Raw</option>
+												<option value="CINEMATIC_PRO">Cinematic Pro</option>
+											</select>
+										</label>
+										<label className="space-y-1">
+											<span className={labelClass}>Character presence</span>
+											<select
+												value={characterPresence}
+												onChange={(e) =>
+													setCharacterPresence(
+														e.target.value as PromptCharacterPresence,
+													)
+												}
+												className={selectClass}
+												title="Character presence"
+											>
+												<option value="VISIBLE_CREATOR">Visible Creator</option>
+												<option value="FACELESS">Faceless</option>
+											</select>
+										</label>
+									</div>
+								</details>
+								{modelAdjustmentNote ? (
+									<p className="text-[11px] text-amber-200">
+										{modelAdjustmentNote}
+									</p>
+								) : null}
+								{legacyPackageWarning ? (
+									<p className="text-[11px] text-amber-200">
+										{legacyPackageWarning}
+									</p>
+								) : null}
+							</div>
+						</WorkflowStep>
+
+						{/* Step 5 — Creative direction */}
+						<WorkflowStep
+							index={5}
+							title="Creative direction"
+							status={s5}
+							open={v4IsOpen(5, s5)}
+							onToggleOpen={() => v4Toggle(5, v4IsOpen(5, s5))}
+							summary={sceneCameraLabel}
+							helper="Scene and camera follow the presenter automatically — tweak only if you want."
+						>
+							<div className="space-y-3">
+								<ResolvedChip
+									label="Scene → camera"
+									value={sceneCameraLabel}
+									icon="🎬"
+									auto={!v4IsOpen(5, s5) || !primaryRecipe}
+								/>
+								<div className="rounded-xl border border-slate-800 bg-slate-950/40 p-2">
+									<p className="mb-2 px-1 text-[11px] text-slate-400">
+										Pick one scene — the camera follows it automatically.
+									</p>
+									{v4RecipesLoading ? (
+										<p className="px-1 text-[11px] text-slate-500">
+											Loading scenes…
+										</p>
+									) : v4PresenterRecipes.length ? (
+										<div className="space-y-1">
+											{v4PresenterRecipes.map((recipe) => {
+												const selected =
+													primaryRecipe?.scene_template_id ===
+													recipe.scene_template_id;
+												return (
+													<button
+														key={recipe.scene_template_id}
+														type="button"
+														onClick={() => applyV4Recipe(recipe)}
+														className={`flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-[12px] transition-colors ${selected ? "border-v4-accent bg-v4-accent/10" : "border-slate-800 hover:border-slate-600"}`}
+													>
+														<span
+															className={`grid h-4 w-4 flex-none place-items-center rounded-full border ${selected ? "border-v4-accent" : "border-slate-600"}`}
+														>
+															{selected ? (
+																<span className="h-2 w-2 rounded-full bg-v4-accent" />
+															) : null}
+														</span>
+														<span className="flex-1 text-slate-200">
+															{v4SceneText(recipe)}
+														</span>
+														<span className="text-[10px] text-v4-accent-ink">
+															🎥 {recipe.camera_preset_code || "—"}
+														</span>
+													</button>
+												);
+											})}
+										</div>
+									) : (
+										<p className="px-1 text-[11px] text-slate-500">
+											No scenes configured for this presenter yet.
+										</p>
+									)}
+								</div>
+							</div>
+						</WorkflowStep>
+
+						{/* Step 6 — Storyboard */}
+						<WorkflowStep
+							index={6}
+							title="Storyboard"
+							status={s6}
+							collapsible={false}
+							helper="See the shots before you generate."
+						>
+							<div className="space-y-3">
+								<StoryboardStrip shots={storyboardShots} />
+								<button
+									type="button"
+									onClick={() => void handleLoadPreview()}
+									disabled={
+										!productReady ||
+										isLoadingPreview ||
+										extendTotalRequired ||
+										backendRuntimeStale
+									}
+									className="rounded-xl border border-slate-700 bg-slate-800/40 px-4 py-2 text-[12px] font-semibold text-slate-100 hover:bg-slate-800/70 disabled:opacity-40"
+								>
+									{isLoadingPreview
+										? "Compiling…"
+										: previewPackage
+											? "Reload preview"
+											: "Compile preview"}
+								</button>
+							</div>
+						</WorkflowStep>
+
+						{/* Step 7 — Generate video (credit-bearing; unchanged gates) */}
+						<WorkflowStep
+							index={7}
+							title="Generate video"
+							status={s7}
+							collapsible={false}
+							helper="Credits are spent only here."
+						>
+							{extendAuthority ? (
+								<NativeExtendPanel
+									backendRuntimeStale={backendRuntimeStale}
+									totalDurationSeconds={requestedTotalDuration}
+									productId={selectedProduct?.id ?? null}
+									productName={selectedProduct?.product_display_name ?? null}
+									executionPackageId={
+										workspacePackage?.workspace_execution_package_id ?? null
+									}
+									plannedBlocks={extendAuthority.plan
+										.slice(1)
+										.map((_blockDuration, i) => ({
+											block_index: i + 2,
+											position: i + 1,
+											prompt: `Native Extend continuation block ${i + 2}`,
+											is_final: i === extendAuthority.plan.length - 2,
+										}))}
+								/>
+							) : (
+								<div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-100">
+									Canonical video needs Extended + a total duration. Set length
+									to “Extended video” above.
+								</div>
+							)}
+						</WorkflowStep>
+
+						{/* Fallback-copy confirmation gate (backend also enforces) */}
+						{showFallbackConfirm ? (
+							<div
+								data-testid="workflow-fallback-confirm"
+								data-state="AWAITING_HUMAN_CONFIRMATION"
+								data-rpa-stop="true"
+								className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 text-[12px] text-amber-100"
+							>
+								<div className="mb-2 font-bold uppercase tracking-[0.15em] text-amber-300">
+									Confirm fallback copy
+								</div>
+								<p className="mb-3">
+									No approved copy set selected. Continue with fallback copy from
+									product landbank / claim-safe angles?
+								</p>
+								<div className="flex flex-wrap gap-2">
+									<button
+										type="button"
+										onClick={() => void runGeneratePackage(true)}
+										disabled={isLoadingPackage || backendRuntimeStale}
+										className="rounded-lg border border-amber-500/50 bg-amber-500/20 px-3 py-2 text-[11px] font-semibold text-amber-100 hover:bg-amber-500/30 disabled:opacity-50"
+									>
+										{isLoadingPackage
+											? "Preparing…"
+											: "Confirm fallback and continue"}
+									</button>
+									<button
+										type="button"
+										onClick={() => setShowFallbackConfirm(false)}
+										disabled={isLoadingPackage}
+										className="rounded-lg border border-slate-600/40 bg-slate-700/30 px-3 py-2 text-[11px] font-semibold text-slate-100 hover:bg-slate-700/50 disabled:opacity-50"
+									>
+										Cancel
+									</button>
+								</div>
+							</div>
+						) : null}
+
+						{/* Shared workflow notice */}
+						<div
+							data-testid="workflow-notice"
+							data-notice-tone={notice.tone}
+							className={`rounded-2xl border px-4 py-3 text-sm ${notice.tone === "error" ? "border-red-500/40 bg-red-500/10 text-red-200" : notice.tone === "success" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200" : notice.tone === "info" ? "border-blue-500/40 bg-blue-500/10 text-blue-200" : notice.tone === "warning" ? "border-amber-500/40 bg-amber-500/10 text-amber-200" : "border-slate-800 bg-slate-900/40 text-slate-300"}`}
+						>
+							<div className="font-semibold tracking-wide">{notice.title}</div>
+							<div className="mt-1 text-xs opacity-90">{notice.detail}</div>
+						</div>
+
+						{/* Caption authoring for the finished artifact (the video itself is
+						    reviewed in the cockpit rail). */}
+						{completedArtifact ? (
+							<SocialCopyPackagePanel
+								mediaId={completedArtifact.mediaId}
+								sourceMode={mode}
+								productName={selectedProduct?.product_display_name ?? null}
+							/>
+						) : null}
+					</main>
+
+					{/* Operator cockpit rail — also the video review screen once a job
+					    completes (a quick look here without leaving for the Library). */}
+					<div className="w-full xl:w-80 xl:flex-none">
+						<div className="space-y-4 xl:sticky xl:top-4">
+							{completedArtifact ? (
+								<div className="overflow-hidden rounded-2xl border border-emerald-500/40 bg-emerald-500/10 shadow-lg shadow-black/20">
+									<div className="flex items-center justify-between gap-2 border-b border-emerald-500/20 px-3 py-2">
+										<div className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-200">
+											{completedArtifact.kind === "video" ? "🎬 Review" : "🖼 Review"}
+											{completedArtifact.sizeMb
+												? ` · ${completedArtifact.sizeMb}MB`
+												: ""}
+										</div>
+										<div className="flex items-center gap-2">
+											<a
+												href={completedArtifact.url}
+												download={`${completedArtifact.mediaId}.${completedArtifact.kind === "video" ? "mp4" : "jpg"}`}
+												className="rounded-md border border-emerald-500/40 px-2 py-0.5 text-[10px] font-semibold text-emerald-200 hover:bg-emerald-500/20"
+											>
+												Download
+											</a>
+											<button
+												type="button"
+												onClick={() => setCompletedArtifact(null)}
+												className="text-[12px] text-emerald-200/70 hover:text-emerald-200"
+												title="Dismiss"
+											>
+												✕
+											</button>
+										</div>
+									</div>
+									<div className="p-2">
+										{completedArtifact.kind === "video" ? (
+											// biome-ignore lint/a11y/useMediaCaption: generated previews have no caption track
+											<video
+												src={completedArtifact.url}
+												controls
+												playsInline
+												className="max-h-[60vh] w-full rounded-lg border border-emerald-500/20"
+											/>
+										) : (
+											<img
+												src={completedArtifact.url}
+												alt="Generated artifact"
+												className="max-h-[60vh] w-full rounded-lg border border-emerald-500/20"
+											/>
+										)}
+									</div>
+									<div className="border-t border-emerald-500/20 px-3 py-2 text-[10px] text-emerald-200/60">
+										Also saved to the Video Library (48h) · media{" "}
+										{completedArtifact.mediaId}
+									</div>
+								</div>
+							) : null}
+							<OperatorCockpit
+								laneLabel="Text to Video"
+								status={{
+									label:
+										cockpitState === "running"
+											? "Working"
+											: cockpitState === "done"
+												? "Prepared"
+												: cockpitState === "online"
+													? "Ready"
+													: "Idle",
+									state: cockpitState,
+								}}
+								product={
+									selectedProduct
+										? {
+												name: selectedProduct.product_display_name,
+												sub:
+													selectedProduct.strategy_taxonomy?.cluster ??
+													undefined,
+											}
+										: undefined
+								}
+								plan={selectedProduct ? plan : undefined}
+								queueTitle="Storyboard"
+								generate={cockpitGenerate}
+								debug={
+									<div className="space-y-1">
+										<div>
+											mode {mode} · {isExtendMode ? "EXTEND" : "SINGLE"}
+										</div>
+										{workspacePackage ? (
+											<div className="break-all">
+												pkg {workspacePackage.workspace_execution_package_id}
+											</div>
+										) : null}
+									</div>
+								}
+							>
+								{storyboardShots.length ? (
+									storyboardShots.slice(0, 4).map((shot) => (
+										<QueueRow
+											key={shot.id}
+											title={shot.label}
+											sub={shot.sub}
+											status={workspacePackage ? "ready" : "queued"}
+										/>
+									))
+								) : (
+									<p className="text-[11px] text-slate-500">
+										Compile a preview to see the shot list.
+									</p>
+								)}
+							</OperatorCockpit>
+						</div>
+					</div>
+				</div>
+			</div>
+		);
+	}
 
 	return (
 		// RPA Round A (selector/state normalization): stable root + mode marker so a
