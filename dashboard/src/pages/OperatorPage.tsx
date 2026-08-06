@@ -678,6 +678,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			generated_asset_id?: string | null;
 			background_prompt?: string;
 			image_generated?: boolean;
+			primary_cluster?: string | null;
+			compatible_clusters?: string[];
 		}>
 	>([]);
 	const [registryPoolsLoading, setRegistryPoolsLoading] = useState(false);
@@ -826,6 +828,22 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					setup.default_selection?.selected_avatar_codes?.[0] ||
 					"";
 				if (avatar) setRegistryAvatarId(avatar);
+				// Scene pre-fill: the saved scene TEMPLATES (SCN-xxxx strategy) are a
+				// different layer from the generation scene CONTEXTS (backgrounds), so
+				// pick a cluster-appropriate scene context from the registry instead of
+				// mapping template ids. No match (e.g. cluster has no scene yet) → leave
+				// the operator's manual pick.
+				const cluster = String(setup.cluster || "").trim().toLowerCase();
+				if (cluster) {
+					const match = sceneRegistryPool.find((s) => {
+						const pc = String(s.primary_cluster || "").trim().toLowerCase();
+						const compat = (s.compatible_clusters || []).map((c) =>
+							String(c).trim().toLowerCase(),
+						);
+						return pc === cluster || compat.includes(cluster);
+					});
+					if (match?.scene_code) setRegistrySceneCode(match.scene_code);
+				}
 			})
 			.catch(() => {});
 		return () => {
