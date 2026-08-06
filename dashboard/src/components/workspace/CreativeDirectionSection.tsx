@@ -205,9 +205,11 @@ export default function CreativeDirectionSection({
 				</span>
 			</div>
 			<p className="text-[10px] leading-relaxed text-slate-400">
-				Text descriptors that shape the generated prompt (presenter, scene strategy,
-				camera framing) — pre-filled from this product's knowledge. These are NOT image
-				pickers; image references (I2V/F2V/Hybrid) live in their own section.
+				This product's creative direction — presenter, scene strategy, and camera
+				framing — pre-filled from its knowledge base. Text descriptors, not image
+				pickers; image references (I2V/F2V/Hybrid) live in their own section. The
+				presenter drives the generated prompt today; scene-strategy and camera
+				consumption is being wired into the compiler.
 			</p>
 			{loading ? (
 				<p className="text-[11px] text-slate-400">Loading creative direction…</p>
