@@ -13,7 +13,7 @@
  *  - Image REFERENCES (for I2V/F2V/HYBRID) are a SEPARATE, opt-in sub-section rendered by
  *    those lanes — never here.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
 	getCreativeSetupForProduct,
@@ -98,6 +98,11 @@ export default function CreativeDirectionSection({
 }) {
 	const [setup, setSetup] = useState<CreativeSetup | null>(null);
 	const [loading, setLoading] = useState(false);
+	// Tracks which product the current selection was seeded for, so a genuine
+	// product SWITCH always re-seeds from the new product's default (the old
+	// selection belonged to the old product) while a caller-provided initial
+	// value is respected on first mount.
+	const seededProductId = useRef<string | null>(null);
 
 	useEffect(() => {
 		if (!productId) {
@@ -110,28 +115,31 @@ export default function CreativeDirectionSection({
 			.then((s) => {
 				if (!active) return;
 				setSetup(s);
-				// Pre-fill the descriptor selection from the saved selection, else the
-				// smart (gender/cluster-correct) default — only when the caller has none.
 				const isEmpty =
 					value.avatarCodes.length === 0 &&
 					value.sceneTemplateIds.length === 0 &&
 					value.cameraPresetCodes.length === 0;
-				if (isEmpty) {
-					const sel = s.saved_selection;
-					const def = s.default_selection;
-					onChange({
-						avatarCodes:
-							sel?.selected_avatar_codes ?? def?.selected_avatar_codes ?? [],
-						sceneTemplateIds:
-							sel?.selected_scene_template_ids ??
-							def?.selected_scene_template_ids ??
-							[],
-						cameraPresetCodes:
-							sel?.selected_camera_preset_codes ??
-							def?.selected_camera_preset_codes ??
-							[],
-					});
-				}
+				const firstSeed = seededProductId.current === null;
+				seededProductId.current = productId;
+				// On the very first mount, respect a caller-provided selection (e.g. a
+				// restored draft). On a product switch, always re-seed from the new
+				// product's saved selection, else the smart (gender/cluster-correct)
+				// default.
+				if (firstSeed && !isEmpty) return;
+				const sel = s.saved_selection;
+				const def = s.default_selection;
+				onChange({
+					avatarCodes:
+						sel?.selected_avatar_codes ?? def?.selected_avatar_codes ?? [],
+					sceneTemplateIds:
+						sel?.selected_scene_template_ids ??
+						def?.selected_scene_template_ids ??
+						[],
+					cameraPresetCodes:
+						sel?.selected_camera_preset_codes ??
+						def?.selected_camera_preset_codes ??
+						[],
+				});
 			})
 			.catch(() => {})
 			.finally(() => {

@@ -25,6 +25,10 @@ import CanonicalReferenceBindingControls, {
 	EMPTY_BINDING,
 } from "../components/workspace/CanonicalReferenceBindingControls";
 import CopySelectionPanel from "../components/workspace/CopySelectionPanel";
+import CreativeDirectionSection, {
+	type CreativeDirection,
+	EMPTY_CREATIVE_DIRECTION,
+} from "../components/workspace/CreativeDirectionSection";
 import IMGModule from "../components/workspace/IMGModule";
 import SceneStrategySummary from "../components/workspace/SceneStrategySummary";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
@@ -658,6 +662,21 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// Registry; no persona-composer or legacy persona fallback reaches production.
 	const [registryAvatarId, setRegistryAvatarId] = useState("");
 	const [registrySceneCode, setRegistrySceneCode] = useState("");
+	// T2V descriptor-based creative direction (no image pickers). The primary
+	// avatar drives the load-bearing `avatar_id` generation input via
+	// `registryAvatarId`; scene-strategy / camera descriptors shape the prompt.
+	const [creativeDirection, setCreativeDirection] = useState<CreativeDirection>(
+		EMPTY_CREATIVE_DIRECTION,
+	);
+	const handleCreativeDirectionChange = useCallback(
+		(next: CreativeDirection) => {
+			setCreativeDirection(next);
+			// Keep the presenter authority in sync so T2V generation still resolves
+			// an avatar (avatar_id) exactly as the old registry picker did.
+			setRegistryAvatarId(next.avatarCodes[0] ?? "");
+		},
+		[],
+	);
 	const [avatarRegistryPool, setAvatarRegistryPool] = useState<
 		Array<{
 			avatar_code?: string;
@@ -2411,7 +2430,15 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							) : null}
 						</div>
 					</div>
-					{mode === "T2V" || mode === "HYBRID" ? (
+					{mode === "T2V" ? (
+						<div className="mt-4" data-testid="operator-creative-direction-t2v">
+							<CreativeDirectionSection
+								productId={selectedProduct?.id ?? null}
+								value={creativeDirection}
+								onChange={handleCreativeDirectionChange}
+							/>
+						</div>
+					) : mode === "HYBRID" ? (
 						<div
 							data-testid="operator-registry-authority"
 							className="mt-4 rounded-lg border border-cyan-500/25 bg-cyan-500/5 p-3"
@@ -2420,10 +2447,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								Registry Authority (Avatar + Scene)
 							</div>
 							<div className="mt-1 text-[11px] text-slate-300">
-								T2V/Hybrid presenter identity and scene background resolve from the
-								live approved Avatar Registry and Scene Registry. The Scene Registry
+								Hybrid presenter identity and scene background resolve from the live
+								approved Avatar Registry and Scene Registry. The Scene Registry
 								Background is a visual override only — distinct from the product's
-								Scene Strategy authority shown in Step 2.
+								Scene Strategy authority shown in Step 2. (T2V is text-only and uses
+								the descriptor-based Creative Direction above — no image pickers.)
 							</div>
 							{registryPoolsLoading ? (
 								<div className="mt-2 text-[11px] text-slate-400">Loading registries…</div>
