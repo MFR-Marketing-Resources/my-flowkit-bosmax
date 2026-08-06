@@ -1745,6 +1745,23 @@ async def get_plan_detail(plan_id: str) -> ProductionPlanDetailResponse:
     )
 
 
+def _selection_avatar_codes(selection: dict[str, Any] | None) -> list[str]:
+    """The product's diverse avatar picks (multi-select list) with a single-pick
+    fallback, so the production plan can rotate presenters instead of repeating one.
+    """
+    if not selection:
+        return []
+    codes = [
+        str(c).strip()
+        for c in (_loads(selection.get("selected_avatar_codes_json"), []) or [])
+        if str(c or "").strip()
+    ]
+    if not codes:
+        single = str(selection.get("selected_avatar_code") or "").strip()
+        codes = [single] if single else []
+    return _unique(codes)
+
+
 async def _load_approved_pools(plan: dict[str, Any]) -> dict[str, Any]:
     pool = _loads(plan.get("pool_snapshot_json"), {})
     product_ids = _loads(plan.get("product_scope_json"), [])
@@ -1862,23 +1879,19 @@ async def _load_approved_pools(plan: dict[str, Any]) -> dict[str, Any]:
     approved_codes: set[str] = set()
     for product_id in products:
         selection = creative_selections.get(product_id)
-        selected_code = str(
-            (selection or {}).get("selected_avatar_code") or ""
-        ).strip()
-        profile = avatar_index.get(selected_code)
+        selection_approved = (
+            selection is not None and selection.get("status") == "APPROVED"
+        )
+        # Rotate presenters: admit the product's WHOLE diverse avatar selection
+        # (multi-select list, single-pick fallback) that is in this plan's pool, so
+        # the plan varies the avatar instead of repeating one. Each code stays gated
+        # on adult + resolvable profile + APPROVED selection.
+        selected_codes = _selection_avatar_codes(selection)
         avatar_required = (
             target_video_count > 0 and logical_mode in {"T2V", "HYBRID", "I2V"}
             and not treatment_authority_active
         )
-        if (
-            avatar_required
-            and (
-                selection is None
-                or selection.get("status") != "APPROVED"
-                or not selected_code
-                or profile is None
-            )
-        ):
+        if avatar_required and (not selection_approved or not selected_codes):
             blockers.append(
                 {
                     "code": "APPROVED_PRODUCT_AVATAR_SELECTION_REQUIRED",
@@ -1886,37 +1899,44 @@ async def _load_approved_pools(plan: dict[str, Any]) -> dict[str, Any]:
                 }
             )
             continue
-        if not selected_code or profile is None:
+        if not selection_approved or not selected_codes:
             continue
-        if selected_code not in requested_avatar_codes:
-            if avatar_required:
+        admitted_here = 0
+        for selected_code in selected_codes:
+            profile = avatar_index.get(selected_code)
+            if not selected_code or profile is None:
+                continue
+            if selected_code not in requested_avatar_codes:
+                continue
+            age_band = str(profile.get("age_band") or "").lower()
+            if "child" in age_band or "teen" in age_band:
                 blockers.append(
                     {
-                        "code": "APPROVED_PRODUCT_AVATAR_NOT_IN_PLAN_POOL",
+                        "code": "MINOR_AVATAR_NOT_PERMITTED_IN_P6_AUTOMATION",
                         "product_id": product_id,
                         "avatar_code": selected_code,
+                        "age_band": profile.get("age_band"),
                     }
                 )
-            continue
-        age_band = str(profile.get("age_band") or "").lower()
-        if "child" in age_band or "teen" in age_band:
+                continue
+            approved_codes.add(selected_code)
+            avatar_profiles[product_id].append(
+                {
+                    **profile,
+                    "selection_id": str(selection.get("selection_id") or ""),
+                    "selection_status": "APPROVED",
+                }
+            )
+            admitted_here += 1
+        if avatar_required and admitted_here == 0:
             blockers.append(
                 {
-                    "code": "MINOR_AVATAR_NOT_PERMITTED_IN_P6_AUTOMATION",
+                    "code": "APPROVED_PRODUCT_AVATAR_NOT_IN_PLAN_POOL",
                     "product_id": product_id,
-                    "avatar_code": selected_code,
-                    "age_band": profile.get("age_band"),
+                    "avatar_code": selected_codes[0] if selected_codes else None,
                 }
             )
             continue
-        approved_codes.add(selected_code)
-        avatar_profiles[product_id].append(
-            {
-                **profile,
-                "selection_id": str(selection.get("selection_id") or ""),
-                "selection_status": "APPROVED",
-            }
-        )
     for avatar_code in requested_avatar_codes:
         if avatar_code not in approved_codes:
             blockers.append(
