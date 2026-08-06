@@ -261,8 +261,12 @@ async def save_creative_selection(
     if any(code not in camera_index for code in camera_codes):
         raise ValueError("INVALID_CAMERA_PRESET_CODE")
 
-    # Primary = first of each list (feeds the existing single-value preview + the
-    # generation pipeline, which is unchanged).
+    # Primary = first of each list (kept for the single-value preview + as the
+    # backward-compatible column). NOTE: as of the linkage audit, the saved selection
+    # is consumed by the P6 plan builder for AVATARS only (via the multi-select list,
+    # intersected against the plan pool) — the manual T2V/F2V/HYBRID/I2V, IMG, and
+    # Poster lanes do NOT yet read it, and scene/camera never reach P6. Wiring those is
+    # the pending program; do not claim this "feeds the generation pipeline" wholesale.
     primary_avatar = avatar_codes[0] if avatar_codes else None
     primary_scene = scene_ids[0] if scene_ids else None
     primary_camera = camera_codes[0] if camera_codes else None

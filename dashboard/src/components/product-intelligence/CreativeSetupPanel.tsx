@@ -13,7 +13,7 @@ import {
  * Composes the Round 1 avatar, Round 2 scene template, and Round 3 camera preset
  * recommendations into a product-level planning artifact. Now MULTI-SELECT: tick
  * multiple avatars / scenes / cameras (the chosen SET); the first of each is the
- * backward-compatible primary. "Auto-fill top pick" sets + approves the #1 of each
+ * backward-compatible primary. "Smart suggest (fill all)" sets + approves the full
  * in one click. PLANNING ONLY — nothing is generated or sent to generation, and
  * [AVATAR]/[PRODUCT] stay unresolved.
  */
@@ -92,16 +92,25 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 
 	async function handleAutoFill() {
 		if (!setup) return;
-		const topAvatar = setup.recommended_avatars[0]?.avatar_code;
-		const topScene = setup.recommended_scene_templates[0]?.template_id;
-		const topCamera = setup.camera_library.named_presets[0]?.preset_code;
-		if (!topAvatar) {
+		// Smart suggest: multi-tick the MAX diverse plan (all recommended avatars +
+		// all cluster scene templates + all camera presets) from the live default, so
+		// the operator just presses one button per product and gets a plan wide enough
+		// for mass production to rotate without repeating. Falls back to the
+		// recommendation lists if the live default is absent.
+		const def = setup.default_selection;
+		const a = def?.selected_avatar_codes?.length
+			? def.selected_avatar_codes
+			: setup.recommended_avatars.map((x) => x.avatar_code).filter(Boolean);
+		const s = def?.selected_scene_template_ids?.length
+			? def.selected_scene_template_ids
+			: setup.recommended_scene_templates.map((x) => x.template_id).filter(Boolean);
+		const c = def?.selected_camera_preset_codes?.length
+			? def.selected_camera_preset_codes
+			: setup.camera_library.named_presets.map((x) => x.preset_code).filter(Boolean);
+		if (!a.length) {
 			setError("No recommended avatar to auto-fill for this product.");
 			return;
 		}
-		const a = [topAvatar];
-		const s = topScene ? [topScene] : [];
-		const c = topCamera ? [topCamera] : [];
 		setBusy(true);
 		setError("");
 		try {
@@ -110,7 +119,7 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 				selected_avatar_codes: a,
 				selected_scene_template_ids: s,
 				selected_camera_preset_codes: c,
-				notes: "Auto-fill: top-scored recommendation",
+				notes: "Smart suggest: max diverse plan (all avatars / scenes / cameras)",
 			});
 			setAvatars(a);
 			setScenes(s);
@@ -177,10 +186,10 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 							data-testid="creative-setup-autofill"
 							disabled={busy}
 							onClick={handleAutoFill}
-							title="Set the top-scored avatar + scene + camera and approve, in one click"
+							title="Smart suggest: tick the full diverse plan (all recommended avatars + all scenes + all camera presets) and approve, in one click — wide enough for mass production to rotate without repeating"
 							className="rounded bg-indigo-600 px-2 py-1 text-[10px] font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
 						>
-							⚡ Auto-fill top pick
+							⚡ Smart suggest (fill all)
 						</button>
 					</div>
 
