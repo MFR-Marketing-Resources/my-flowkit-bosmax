@@ -65,6 +65,57 @@ def _full_avatar_roster(recommended_codes: set[str]) -> list[dict[str, Any]]:
     return roster
 
 
+_FEMALE_TOKENS = re.compile(
+    r"\b(tudung|hijab|muslimah|wanita|perempuan|women|woman|female|ladies|lady|girl|"
+    r"kurung|jubah|abaya|telekung|kebaya|gaun|dress|blouse|skirt|maxi|labuh|lingerie|"
+    r"bra|kosmetik|lipstik|lipstick|makeup|mekap|serkup)\b",
+    re.IGNORECASE,
+)
+_MALE_TOKENS = re.compile(
+    r"\b(lelaki|men|man|male|boy|songkok|kopiah|jersi\s+lelaki|seluar\s+lelaki|"
+    r"baju\s+melayu|kemeja\s+lelaki|misai|janggut)\b",
+    re.IGNORECASE,
+)
+
+
+def _code_gender(code: str) -> str:
+    up = str(code or "").upper()
+    return "F" if "_F_" in up else ("M" if "_M_" in up else "")
+
+
+def _resolve_product_target_gender(
+    product: dict[str, Any], snapshot: dict[str, Any] | None
+) -> str:
+    """Best-effort target gender ('F' / 'M' / 'ANY') from product identity + approved
+    intelligence, so the smart default only ticks gender-appropriate avatars — a women's
+    tudung must never get a male presenter. Fail-OPEN to 'ANY' (keep all recommended)
+    when the signal is unclear or unisex, so we never wrongly narrow a general product.
+    """
+    parts = [
+        str(product.get("product_display_name") or ""),
+        str(product.get("raw_product_title") or ""),
+        str(product.get("product_short_name") or ""),
+        str(product.get("type") or ""),
+        str(product.get("category") or ""),
+    ]
+    if snapshot:
+        parts.append(str(snapshot.get("target_customer_text") or ""))
+        try:
+            persona = json.loads(snapshot.get("buyer_persona_snapshot_json") or "{}")
+            if isinstance(persona, dict):
+                parts.append(str(persona.get("audience") or ""))
+        except Exception:
+            pass
+    text = " ".join(p for p in parts if p)
+    female = bool(_FEMALE_TOKENS.search(text))
+    male = bool(_MALE_TOKENS.search(text))
+    if female and not male:
+        return "F"
+    if male and not female:
+        return "M"
+    return "ANY"
+
+
 def _avatar_index() -> dict[str, dict[str, Any]]:
     return {a["avatar_code"]: a for a in avatar_registry.list_pool()}
 
@@ -169,19 +220,36 @@ async def resolve_creative_setup(product_id: str) -> dict[str, Any]:
 
     scenes = await _scene.recommend_scene_prompts_for_category(category)
     cameras = await _camera.recommend_camera_presets_for_category(category)
-    avatar_library = _full_avatar_roster(
-        {a.get("avatar_code") for a in avatars["avatars"]}
-    )
-    # Live-derived smart default so EVERY product is pre-configured without the
-    # operator hand-picking. Recomputed from the current cluster mapping on every
-    # read → it auto-updates when avatars / scene templates / camera presets change.
-    # A saved selection (if any) OVERRIDES this. Diverse-by-design (all recommended
-    # avatars + all cluster scenes + all cluster camera presets) so mass production
-    # can rotate combinations without repeating the same avatar/scene/camera.
+    # GENDER-APPROPRIATE smart default: read the product identity + approved
+    # intelligence to keep ONLY avatars of the product's target gender, so a women's
+    # tudung never ticks a male presenter (the Fashion crosswalk mixes genders). Scenes
+    # and camera presets stay cluster-scoped (already product-type-appropriate).
+    snapshot = await crud.get_latest_approved_product_intelligence_snapshot(product_id)
+    target_gender = _resolve_product_target_gender(product, snapshot)
+    recommended_codes = [
+        a["avatar_code"] for a in avatars["avatars"] if a.get("avatar_code")
+    ]
+    if target_gender in ("F", "M"):
+        gender_avatars = [c for c in recommended_codes if _code_gender(c) == target_gender]
+        if not gender_avatars:
+            # cluster crosswalk had no avatar of the product's gender — pull from the
+            # full roster so a gendered product still gets gender-correct presenters.
+            gender_avatars = [
+                a["avatar_code"]
+                for a in _full_avatar_roster(set())
+                if a["gender"] == target_gender
+            ][:4]
+    else:
+        gender_avatars = recommended_codes
+
+    # avatar_library flags the gender-appropriate recommended set (★) but still lists
+    # every avatar so the operator can manually override.
+    avatar_library = _full_avatar_roster(set(gender_avatars))
+    # Live-derived, recomputed every read → auto-updates when avatars / scene templates
+    # / camera presets change. A saved selection (if any) OVERRIDES this. Diverse-by-
+    # design so mass production can rotate combinations without repeating.
     default_selection = {
-        "selected_avatar_codes": [
-            a["avatar_code"] for a in avatars["avatars"] if a.get("avatar_code")
-        ],
+        "selected_avatar_codes": gender_avatars,
         "selected_scene_template_ids": [
             t["template_id"] for t in scenes["templates"] if t.get("template_id")
         ],
@@ -191,6 +259,7 @@ async def resolve_creative_setup(product_id: str) -> dict[str, Any]:
             if p.get("preset_code")
         ],
         "source": "AUTO_DEFAULT_FROM_CLUSTER_MAPPING",
+        "target_gender": target_gender,
     }
 
     return {
