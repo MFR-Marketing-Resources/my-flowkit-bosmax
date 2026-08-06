@@ -27,6 +27,7 @@ from agent.services.fastmoss_product_reference_service import (
     is_fastmoss_reference_product_id,
 )
 from agent.services.ugc_video_prompt_compiler_service import compile_ugc_video_prompt
+from agent.services import creative_recipe_service as _recipe
 from agent.services.i2v_semantic_slot_resolver_service import resolve_i2v_semantic_slots
 from agent.models.i2v_semantic_slot_resolver import I2VSemanticSlotResolverRequest
 
@@ -774,6 +775,9 @@ async def create_t2v_generation_package(
     copy_set_id: str | None = None,
     scene_context_override: str | None = None,
     creative_treatment: dict | None = None,
+    # Selected recipe descriptors (Step F). Optional/opt-in: absent -> compiler unchanged.
+    scene_template_id: str | None = None,
+    camera_preset_code: str | None = None,
 ) -> dict:
     """Create a durable T2V workspace generation package (text-only, no frame uploads)."""
     mode = "T2V"
@@ -811,6 +815,8 @@ async def create_t2v_generation_package(
         avatar_id=avatar_id,
         copy_intelligence=copy_intelligence,
         creative_treatment=creative_treatment,
+        scene_template=_recipe.resolve_scene_template(scene_template_id),
+        camera_preset=_recipe.resolve_camera_preset(camera_preset_code),
     )
 
     final_prompt_text: str = compiler_result.get("final_compiled_prompt_text", "")

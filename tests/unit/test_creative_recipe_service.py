@@ -144,3 +144,17 @@ def test_pretick_is_diverse_and_capped():
         assert min(variations) == 1
         assert max(variations) == 6
     assert len(pretick) == 8
+
+
+def test_resolve_recipe_descriptors_from_real_registries():
+    out = recipe.resolve_recipe_descriptors("SCN-0008", "BODY_B")
+    assert out["scene_template"] and out["scene_template"]["main_action"]
+    assert out["camera_preset"]["distance_angle"] == "ECU + TOPDOWN"
+    assert out["camera_preset"]["movement"] == "ZOOM_IN"
+
+
+def test_resolve_recipe_descriptors_blank_or_unknown_yield_none():
+    blank = recipe.resolve_recipe_descriptors(None, "")
+    assert blank["scene_template"] is None and blank["camera_preset"] is None
+    unknown = recipe.resolve_recipe_descriptors("SCN-NOPE", "NOPE")
+    assert unknown["scene_template"] is None and unknown["camera_preset"] is None

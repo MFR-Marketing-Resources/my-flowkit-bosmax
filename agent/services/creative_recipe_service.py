@@ -250,6 +250,59 @@ def recipes_from_setup(
     return {"recipes": recipes, "pretick": pretick}
 
 
+def resolve_recipe_descriptors(
+    scene_template_id: str | None, camera_preset_code: str | None
+) -> dict[str, Any]:
+    """Resolve a picked recipe's scene-template id + camera-preset code to the DESCRIPTOR
+    dicts the canonical compiler consumes: {"scene_template", "camera_preset"}.
+
+    Read-only registry lookups (scene-prompt + camera-preset libraries). A blank/unknown
+    id yields None for that slot, so the compiler behaves EXACTLY as before (its enrichment
+    is opt-in). Lazy imports keep this free of the creative-planning services."""
+    scene_template: dict[str, Any] | None = None
+    camera_preset: dict[str, Any] | None = None
+    sid = str(scene_template_id or "").strip()
+    if sid:
+        try:
+            from agent.services import creative_scene_prompt_service as _scene
+
+            for template in _scene.library_templates():
+                if str(template.get("template_id")) == sid:
+                    scene_template = {
+                        "main_action": template.get("main_action"),
+                        "setting": template.get("setting"),
+                    }
+                    break
+        except Exception:
+            scene_template = None
+    code = str(camera_preset_code or "").strip()
+    if code:
+        try:
+            from agent.services import creative_camera_preset_service as _camera
+
+            for preset in _camera.named_presets():
+                if str(preset.get("preset_code")) == code:
+                    camera_preset = {
+                        "preset_name": preset.get("preset_name"),
+                        "distance_angle": preset.get("distance_angle"),
+                        "movement": preset.get("movement"),
+                    }
+                    break
+        except Exception:
+            camera_preset = None
+    return {"scene_template": scene_template, "camera_preset": camera_preset}
+
+
+def resolve_scene_template(scene_template_id: str | None) -> dict[str, Any] | None:
+    """Scene-template descriptor dict (or None) for the canonical compiler."""
+    return resolve_recipe_descriptors(scene_template_id, None)["scene_template"]
+
+
+def resolve_camera_preset(camera_preset_code: str | None) -> dict[str, Any] | None:
+    """Camera-preset framing dict (or None) for the canonical compiler."""
+    return resolve_recipe_descriptors(None, camera_preset_code)["camera_preset"]
+
+
 async def generate_product_recipes(product_id: str) -> dict[str, Any]:
     """Async wrapper: reuse resolve_creative_setup for cluster/gender/scene eligibility,
     then build coherent recipes (honouring a saved plan). Returns the FULL pool (mass
