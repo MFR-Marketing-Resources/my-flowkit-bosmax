@@ -26,6 +26,7 @@ def test_compiler_generates_single_block_final_prompt():
     result = compile_ugc_video_prompt(
         product=_product(),
         approved_package=_approved_package(),
+        avatar_id="BOS_F_AINA_01",
         mode="F2V",
         generation_mode="SINGLE",
         duration_seconds=8,
@@ -66,6 +67,7 @@ def test_workspace_entrypoint_uses_sweet_wps_by_default():
     result = compile_ugc_video_prompt(
         product=_product(),
         approved_package=_approved_package(),
+        avatar_id="BOS_F_AINA_01",
         mode="F2V",
         generation_mode="SINGLE",
         duration_seconds=8,
@@ -82,6 +84,7 @@ def test_compiler_generates_extend_continuation_lineage():
     result = compile_ugc_video_prompt(
         product=_product(),
         approved_package=_approved_package(),
+        avatar_id="BOS_F_AINA_01",
         mode="F2V",
         generation_mode="EXTEND",
         duration_seconds=8,
@@ -125,6 +128,7 @@ def test_engine_prompt_has_no_internal_process_leakage():
     result = compile_ugc_video_prompt(
         product=_product(),
         approved_package=_approved_package(),
+        avatar_id="BOS_F_AINA_01",
         mode="F2V",
         generation_mode="SINGLE",
         duration_seconds=8,
@@ -147,6 +151,7 @@ def test_engine_prompt_no_dialog_duplication():
     result = compile_ugc_video_prompt(
         product=_product(),
         approved_package=_approved_package(),
+        avatar_id="BOS_F_AINA_01",
         mode="F2V",
         generation_mode="SINGLE",
         duration_seconds=8,
@@ -168,6 +173,7 @@ def test_overlay_is_compact_not_verbatim_cta():
     result = compile_ugc_video_prompt(
         product=_product(),
         approved_package=_approved_package(),
+        avatar_id="BOS_F_AINA_01",
         mode="F2V",
         generation_mode="SINGLE",
         duration_seconds=8,
@@ -190,6 +196,7 @@ def test_overlay_omitted_when_cta_too_short_to_truncate():
     result = compile_ugc_video_prompt(
         product=_product(),
         approved_package=_approved_package(),
+        avatar_id="BOS_F_AINA_01",
         mode="F2V",
         generation_mode="SINGLE",
         duration_seconds=8,
@@ -204,6 +211,7 @@ def test_overlay_omitted_when_overlay_disabled():
     result = compile_ugc_video_prompt(
         product=_product(),
         approved_package=_approved_package(),
+        avatar_id="BOS_F_AINA_01",
         mode="F2V",
         generation_mode="SINGLE",
         duration_seconds=8,
@@ -254,6 +262,7 @@ def test_camera_directives_ugc_are_specific():
     result = compile_ugc_video_prompt(
         product=_product(),
         approved_package=_approved_package(),
+        avatar_id="BOS_F_AINA_01",
         mode="T2V",
         generation_mode="SINGLE",
         duration_seconds=8,
@@ -272,6 +281,7 @@ def test_camera_directives_cinematic_are_specific():
     result = compile_ugc_video_prompt(
         product=_product(),
         approved_package=_approved_package(),
+        avatar_id="BOS_F_AINA_01",
         mode="T2V",
         generation_mode="SINGLE",
         duration_seconds=8,
@@ -282,7 +292,8 @@ def test_camera_directives_cinematic_are_specific():
     assert "cinematic commercial look" in final
     assert any(term in final for term in ("stabilized", "controlled lighting", "premium"))
     assert "cinematic commercial look" not in compile_ugc_video_prompt(
-        product=_product(), approved_package=_approved_package(), mode="T2V",
+        product=_product(), approved_package=_approved_package(), avatar_id="BOS_F_AINA_01",
+        mode="T2V",
         generation_mode="SINGLE", duration_seconds=8, camera_style="UGC_IPHONE_RAW",
     )["final_compiled_prompt_text"], "UGC and cinematic must render differently"
 
@@ -321,6 +332,7 @@ def test_engine_prompt_no_parenthesis_in_product_name():
     result = compile_ugc_video_prompt(
         product=product,
         approved_package=_approved_package(),
+        avatar_id="BOS_F_AINA_01",
         mode="F2V",
         generation_mode="SINGLE",
         duration_seconds=8,
@@ -338,6 +350,7 @@ def _compile_kwargs(**overrides):
     kwargs = dict(
         product=_product(),
         approved_package=_approved_package(),
+        avatar_id="BOS_F_AINA_01",
         mode="F2V",
         generation_mode="SINGLE",
         duration_seconds=8,
