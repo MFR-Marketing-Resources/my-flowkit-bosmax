@@ -158,3 +158,13 @@ def test_resolve_recipe_descriptors_blank_or_unknown_yield_none():
     assert blank["scene_template"] is None and blank["camera_preset"] is None
     unknown = recipe.resolve_recipe_descriptors("SCN-NOPE", "NOPE")
     assert unknown["scene_template"] is None and unknown["camera_preset"] is None
+
+
+def test_recipes_from_setup_drifted_saved_scenes_fall_back_not_fill_all():
+    # A saved plan whose scene ids have all drifted OUT of the current cluster must NOT
+    # silently expand to A1 x every cluster scene (fill-all) — it falls back to the
+    # computed arc-spread over the default avatars (A1+A2), review finding #3.
+    saved = {"selected_avatar_codes": ["A1"], "selected_scene_template_ids": ["SCN-DRIFTED-GONE"]}
+    out = recipe.recipes_from_setup(_setup(saved))
+    avatars = {r.avatar_code for r in out["pretick"]}
+    assert avatars == {"A1", "A2"}, "must fall back to computed default, not saved-A1 × all scenes"

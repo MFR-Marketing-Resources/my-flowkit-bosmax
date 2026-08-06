@@ -239,12 +239,19 @@ def recipes_from_setup(
             str(s.get("template_id")): s for s in all_scenes if s.get("template_id")
         }
         saved_scenes = [scene_by_id[sid] for sid in saved_scene_ids if sid in scene_by_id]
-        pretick = build_recipes(
-            saved_avatars or default_avatars,
-            saved_scenes or all_scenes,
-            bridge,
-            camera_mapping,
-        )
+        if saved_scene_ids and not saved_scenes:
+            # The saved plan's scenes have ALL drifted out of the product's CURRENT
+            # cluster (reassignment / template removal / id rename). Do NOT silently
+            # expand to every cluster scene — that re-introduces the fill-all this module
+            # exists to prevent. Fall back to the computed arc-spread default instead.
+            pretick = pretick_recipes(recipes)
+        else:
+            pretick = build_recipes(
+                saved_avatars or default_avatars,
+                saved_scenes or all_scenes,
+                bridge,
+                camera_mapping,
+            )
     else:
         pretick = pretick_recipes(recipes)
     return {"recipes": recipes, "pretick": pretick}
@@ -333,7 +340,9 @@ async def generate_product_recipes(product_id: str) -> dict[str, Any]:
         "recipes": [asdict(recipe) for recipe in recipes],
         "recommended_pretick": [asdict(recipe) for recipe in pretick],
         "counts": {
-            "avatars": len(list((setup.get("default_selection") or {}).get("selected_avatar_codes") or [])),
+            # distinct avatars actually present in `recipes` (the pool unions default +
+            # saved), so the summary never understates what the payload contains.
+            "avatars": len({recipe.avatar_code for recipe in recipes}),
             "scenes": len(list(setup.get("recommended_scene_templates") or [])),
             "recipes": len(recipes),
             "pretick": len(pretick),
