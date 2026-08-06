@@ -79,6 +79,9 @@ export async function createWorkspaceExecutionPackage(input: {
 	avatar_id?: string | null;
 	scene_context_override?: string | null;
 	scene_context_code?: string | null;
+	// Recipe descriptors (Step F): selected recipe's scene template + camera preset ids.
+	scene_template_id?: string | null;
+	camera_preset_code?: string | null;
 }): Promise<WorkspaceExecutionPackage> {
 	const request = applyDurationAuthorityDefaults({
 		duration_seconds: 8,
@@ -101,6 +104,8 @@ export async function createWorkspaceExecutionPackage(input: {
 		avatar_id: null,
 		scene_context_override: null,
 		scene_context_code: null,
+		scene_template_id: null,
+		camera_preset_code: null,
 		blocks: [],
 		...input,
 	});

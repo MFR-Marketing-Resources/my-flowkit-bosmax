@@ -1726,6 +1726,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				avatar_id: registryAvatarId || null,
 				scene_context_override: selectedSceneBackground || null,
 				scene_context_code: registrySceneCode || null,
+				// Recipe descriptors (Step F): the primary selected recipe's scene template
+				// + camera preset so the compiled prompt uses the coherent combination.
+				// Only T2V populates recipes; other modes send null (compiler unchanged).
+				scene_template_id: creativeDirection.recipes[0]?.scene_template_id ?? null,
+				camera_preset_code: creativeDirection.recipes[0]?.camera_preset_code ?? null,
 				// Per-mode reference payload hygiene: only the selected mode's
 				// binding fields are ever sent — a stale pick from another mode
 				// must never reach the server-side binding contract.

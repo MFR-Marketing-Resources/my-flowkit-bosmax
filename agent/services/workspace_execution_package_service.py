@@ -293,6 +293,10 @@ async def create_workspace_execution_package(
     scene_context_override: str | None = None,
     scene_context_code: str | None = None,
     creative_treatment: dict[str, Any] | None = None,
+    # Recipe descriptors (Step F), pre-resolved by the route to keep this file free of
+    # any creative-service import. Absent -> compiler unchanged.
+    scene_template: dict[str, Any] | None = None,
+    camera_preset: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     # Explicit-Fallback-Confirmation V1 (FINAL generation only — preview stays
     # warning-only): producing a saved execution package with NO approved Copy
@@ -338,6 +342,8 @@ async def create_workspace_execution_package(
         scene_context_override=scene_context_override,
         copy_set_id=copy_set_id,
         creative_treatment=creative_treatment,
+        scene_template=scene_template,
+        camera_preset=camera_preset,
     )
     copy_binding_lineage = compiler_result.get("copy_binding")
     # Explicit-Fallback-Confirmation V1: when the operator confirmed fallback
@@ -650,6 +656,11 @@ async def compile_workspace_prompt_preview(
     avatar_id: str | None = None,
     scene_context_override: str | None = None,
     creative_treatment: dict[str, Any] | None = None,
+    # Recipe descriptors (Step F), pre-resolved by the CALLER (keeps this generation-
+    # purity-scoped service free of any creative-service import). Absent -> compiler
+    # unchanged.
+    scene_template: dict[str, Any] | None = None,
+    camera_preset: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized_mode = normalize_mode(mode)
     # Source-lineage law (2026-07-09 corrective audit): a caller that names a
@@ -706,6 +717,8 @@ async def compile_workspace_prompt_preview(
             scene_context_override=scene_context_override,
             copy_intelligence=copy_binding["copy_intelligence"],
             creative_treatment=creative_treatment,
+            scene_template=scene_template,
+            camera_preset=camera_preset,
         )
     prompt_scan = scan_prompt_text(
         compiler_result["final_compiled_prompt_text"],
