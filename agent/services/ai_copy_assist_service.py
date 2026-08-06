@@ -188,6 +188,30 @@ def _build_brief(
         )
     except Exception:
         creative_cluster = ""
+    # Presenter gender — so the SPOKEN first-person delivery voice matches the on-screen
+    # creative-setup presenter (a women's tudung is delivered by a female presenter, so
+    # the script voice is feminine). Reuses the shared gender-resolution SSOT. Neutral
+    # products stay gender-neutral so ANY rotated presenter fits (mass production). Lazy
+    # import (mirrors resolve_cluster above) to avoid an import cycle; never blocks copy.
+    try:
+        from agent.services.creative_setup_service import _resolve_product_target_gender
+
+        _pseudo_snapshot = {
+            "target_customer_text": pk.target_customer,
+            "buyer_persona_snapshot_json": json.dumps({"audience": persona.audience}),
+        }
+        _presenter_g = _resolve_product_target_gender(product, _pseudo_snapshot)
+    except Exception:
+        _presenter_g = "ANY"
+    presenter_gender = {"F": "female", "M": "male"}.get(_presenter_g, "neutral")
+    presenter_voice_directive = (
+        f"Write the spoken first-person delivery in a {presenter_gender} voice"
+        + (
+            " — keep any self-reference gender-neutral so any presenter fits."
+            if presenter_gender == "neutral"
+            else " to match the on-screen presenter."
+        )
+    )
     brief = {
         "product_name": _product_truth(product),
         "category": _clean(product.get("category")),
@@ -205,6 +229,9 @@ def _build_brief(
         "avatar_triggers": persona.triggers,
         "tone": persona.tone,
         "pronoun": persona.pronoun,
+        # ── presenter (on-screen creative-setup avatar) — shapes the delivery VOICE ──
+        "presenter_gender": presenter_gender,
+        "presenter_voice_directive": presenter_voice_directive,
         # ── product knowledge — real facts only (empty until an approved snapshot) ──
         "product_description": pk.description,
         "product_benefits": pk.benefits,
