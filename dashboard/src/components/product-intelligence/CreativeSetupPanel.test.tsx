@@ -5,17 +5,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import CreativeSetupPanel from "./CreativeSetupPanel";
 import {
 	getCreativeSetupForProduct,
+	getProductRecipes,
 	saveCreativeSelection,
 	reviewCreativeSelection,
 } from "../../api/creativeIntelligence";
 
 vi.mock("../../api/creativeIntelligence", () => ({
 	getCreativeSetupForProduct: vi.fn(),
+	getProductRecipes: vi.fn(),
 	saveCreativeSelection: vi.fn(),
 	reviewCreativeSelection: vi.fn(),
 }));
 
 const mockedGet = vi.mocked(getCreativeSetupForProduct);
+const mockedRecipes = vi.mocked(getProductRecipes);
 const mockedSave = vi.mocked(saveCreativeSelection);
 const mockedReview = vi.mocked(reviewCreativeSelection);
 
@@ -77,8 +80,25 @@ describe("CreativeSetupPanel", () => {
 		expect(screen.queryByRole("button", { name: /generate|create asset|render|produce/i })).not.toBeInTheDocument();
 	});
 
-	it("auto-fills the top pick and approves in one click", async () => {
+	it("auto-fills a COHERENT recipe plan (camera follows scene) and approves in one click", async () => {
 		mockedGet.mockResolvedValue(structuredClone(setup));
+		// Smart suggest now sources a coherent recipe pretick; the saved avatar/scene/
+		// camera lists are DERIVED from those tuples (camera never independent).
+		mockedRecipes.mockResolvedValue({
+			product_id: "p1", cluster: "Home & Living", cluster_source: "EXACT",
+			review_required: false,
+			recipes: [],
+			recommended_pretick: [
+				{
+					avatar_code: "BOS_F_FARAH_02", scene_template_id: "SCN-0001",
+					scene_variant: "Variation 1 - X", variation: 1,
+					camera_preset_code: "BODY_A", camera_alts: [],
+					block_purpose: "Body Block", content_type: "Product Demo", rationale: "x",
+				},
+			],
+			counts: { avatars: 1, scenes: 1, recipes: 1, pretick: 1 },
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		} as any);
 		mockedSave.mockResolvedValue({
 			product_id: "p1", selection_id: "sel-1", status: "DRAFT",
 			selected_avatar_codes: ["BOS_F_FARAH_02"],
@@ -95,7 +115,7 @@ describe("CreativeSetupPanel", () => {
 			product_id: "p1",
 			selected_avatar_codes: ["BOS_F_FARAH_02"],
 			selected_scene_template_ids: ["SCN-0001"],
-			selected_camera_preset_codes: ["HOOK_A"],
+			selected_camera_preset_codes: ["BODY_A"],
 		})));
 		await waitFor(() => expect(mockedReview).toHaveBeenCalledWith("p1", "APPROVE"));
 		expect(await screen.findByTestId("creative-setup-status")).toHaveTextContent("APPROVED");

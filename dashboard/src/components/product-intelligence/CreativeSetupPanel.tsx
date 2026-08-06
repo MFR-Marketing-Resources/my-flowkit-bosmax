@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import {
 	getCreativeSetupForProduct,
+	getProductRecipes,
 	saveCreativeSelection,
 	reviewCreativeSelection,
 	type CreativeSetup,
@@ -92,34 +93,34 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 
 	async function handleAutoFill() {
 		if (!setup) return;
-		// Smart suggest: multi-tick the MAX diverse plan (all recommended avatars +
-		// all cluster scene templates + all camera presets) from the live default, so
-		// the operator just presses one button per product and gets a plan wide enough
-		// for mass production to rotate without repeating. Falls back to the
-		// recommendation lists if the live default is absent.
-		const def = setup.default_selection;
-		const a = def?.selected_avatar_codes?.length
-			? def.selected_avatar_codes
-			: setup.recommended_avatars.map((x) => x.avatar_code).filter(Boolean);
-		const s = def?.selected_scene_template_ids?.length
-			? def.selected_scene_template_ids
-			: setup.recommended_scene_templates.map((x) => x.template_id).filter(Boolean);
-		const c = def?.selected_camera_preset_codes?.length
-			? def.selected_camera_preset_codes
-			: setup.camera_library.named_presets.map((x) => x.preset_code).filter(Boolean);
-		if (!a.length) {
-			setError("No recommended avatar to auto-fill for this product.");
-			return;
-		}
+		// Smart suggest: build a COHERENT recipe plan (avatar × scene where the camera
+		// FOLLOWS the scene) and tick the capped, arc-spread recommended set — NOT the
+		// old fill-all (all avatars × all scenes × all 17 cameras) that produced
+		// incoherent combos. The camera list is derived from the picked recipes so it can
+		// never include a camera that does not match a chosen scene.
 		setBusy(true);
 		setError("");
 		try {
+			const plan = await getProductRecipes(productId);
+			const chosen = plan.recommended_pretick;
+			if (!chosen.length) {
+				setError(
+					plan.review_required
+						? "This product needs a verified cluster before recipes can be built."
+						: "No coherent recipe to auto-fill for this product.",
+				);
+				return;
+			}
+			const dedupe = (xs: string[]) => Array.from(new Set(xs.filter(Boolean)));
+			const a = dedupe(chosen.map((r) => r.avatar_code));
+			const s = dedupe(chosen.map((r) => r.scene_template_id));
+			const c = dedupe(chosen.map((r) => r.camera_preset_code));
 			await saveCreativeSelection({
 				product_id: productId,
 				selected_avatar_codes: a,
 				selected_scene_template_ids: s,
 				selected_camera_preset_codes: c,
-				notes: "Smart suggest: max diverse plan (all avatars / scenes / cameras)",
+				notes: "Smart suggest: coherent recipe plan (camera follows scene)",
 			});
 			setAvatars(a);
 			setScenes(s);
@@ -186,10 +187,10 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 							data-testid="creative-setup-autofill"
 							disabled={busy}
 							onClick={handleAutoFill}
-							title="Smart suggest: tick the full diverse plan (all recommended avatars + all scenes + all camera presets) and approve, in one click — wide enough for mass production to rotate without repeating"
+							title="Smart suggest: build a COHERENT recipe plan (avatar × scene, camera follows scene) and tick the capped arc-spread set (intro → body → detail → benefit), then approve — no incoherent combos"
 							className="rounded bg-indigo-600 px-2 py-1 text-[10px] font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
 						>
-							⚡ Smart suggest (fill all)
+							⚡ Smart suggest (coherent recipes)
 						</button>
 					</div>
 

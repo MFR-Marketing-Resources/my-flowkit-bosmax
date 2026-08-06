@@ -6,32 +6,41 @@ import CreativeDirectionSection, {
 	EMPTY_CREATIVE_DIRECTION,
 	type CreativeDirection,
 } from "./CreativeDirectionSection";
-import { getCreativeSetupForProduct } from "../../api/creativeIntelligence";
+import { getProductRecipes } from "../../api/creativeIntelligence";
 
 vi.mock("../../api/creativeIntelligence", () => ({
-	getCreativeSetupForProduct: vi.fn(),
+	getProductRecipes: vi.fn(),
 }));
 
-const SETUP = {
+function recipe(avatar: string, scene: string, variation: number, camera: string) {
+	return {
+		avatar_code: avatar,
+		scene_template_id: scene,
+		scene_variant: `Variation ${variation} - Sample`,
+		variation,
+		camera_preset_code: camera,
+		camera_alts: [],
+		block_purpose: "Body Block",
+		content_type: "Product Demo",
+		rationale: `${avatar} x ${scene} -> ${camera}`,
+	};
+}
+
+const POOL = [
+	recipe("BOS_F_AINA_01", "SCN-01", 1, "BODY_A"),
+	recipe("BOS_F_AINA_01", "SCN-05", 5, "BODY_B"),
+	recipe("BOS_M_AMIR_01", "SCN-01", 1, "BODY_A"),
+];
+const PRETICK = [POOL[0], POOL[1]];
+
+const RESPONSE = {
 	product_id: "p1",
 	cluster: "Food & Beverage",
 	cluster_source: "EXACT",
-	recommended_avatars: [],
-	avatar_library: [
-		{ avatar_code: "BOS_F_FARAH_01", character_name: "Farah", recommended: true },
-		{ avatar_code: "BOS_F_AINA_01", character_name: "Aina", recommended: false },
-	],
-	default_selection: {
-		selected_avatar_codes: ["BOS_F_FARAH_01"],
-		selected_scene_template_ids: ["SCN-0078"],
-		selected_camera_preset_codes: ["HOOK_A"],
-	},
-	recommended_scene_templates: [{ template_id: "SCN-0078", variant: "Variation 1" }],
-	camera_block_recommendations: [],
-	camera_library: {
-		named_presets: [{ preset_code: "HOOK_A", preset_name: "Hook - Pain Question" }],
-	},
-	saved_selection: null,
+	review_required: false,
+	recipes: POOL,
+	recommended_pretick: PRETICK,
+	counts: { avatars: 2, scenes: 2, recipes: 3, pretick: 2 },
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 } as any;
 
@@ -40,9 +49,9 @@ afterEach(() => {
 	vi.clearAllMocks();
 });
 
-describe("CreativeDirectionSection", () => {
-	it("renders the 3 descriptor dropdowns and pre-fills from the smart default", async () => {
-		vi.mocked(getCreativeSetupForProduct).mockResolvedValue(SETUP);
+describe("CreativeDirectionSection (recipe rows)", () => {
+	it("renders coherent recipe rows and pre-fills the smart-suggest pretick", async () => {
+		vi.mocked(getProductRecipes).mockResolvedValue(RESPONSE);
 		const onChange = vi.fn();
 		render(
 			<CreativeDirectionSection
@@ -52,24 +61,26 @@ describe("CreativeDirectionSection", () => {
 			/>,
 		);
 		await waitFor(() =>
-			expect(screen.getByTestId("creative-direction-avatar")).toBeInTheDocument(),
+			expect(screen.getByTestId("creative-direction-section")).toBeInTheDocument(),
 		);
-		expect(screen.getByTestId("creative-direction-scene")).toBeInTheDocument();
-		expect(screen.getByTestId("creative-direction-camera")).toBeInTheDocument();
-		expect(screen.getByText(/BOS_F_FARAH_01 · Farah/)).toBeInTheDocument();
+		// one row per pool recipe (camera shown = follows scene)
+		expect(screen.getAllByTestId("creative-direction-recipe")).toHaveLength(3);
+		expect(screen.getByTestId("creative-direction-smart-suggest")).toBeInTheDocument();
+		// pre-fills the pretick, deriving the backward-compatible 3 lists
 		await waitFor(() =>
 			expect(onChange).toHaveBeenCalledWith(
 				expect.objectContaining<Partial<CreativeDirection>>({
-					avatarCodes: ["BOS_F_FARAH_01"],
-					sceneTemplateIds: ["SCN-0078"],
-					cameraPresetCodes: ["HOOK_A"],
+					recipes: PRETICK,
+					avatarCodes: ["BOS_F_AINA_01"],
+					sceneTemplateIds: ["SCN-01", "SCN-05"],
+					cameraPresetCodes: ["BODY_A", "BODY_B"],
 				}),
 			),
 		);
 	});
 
 	it("is descriptor-only — never renders image thumbnails", async () => {
-		vi.mocked(getCreativeSetupForProduct).mockResolvedValue(SETUP);
+		vi.mocked(getProductRecipes).mockResolvedValue(RESPONSE);
 		render(
 			<CreativeDirectionSection
 				productId="p1"
