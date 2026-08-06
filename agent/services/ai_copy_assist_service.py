@@ -177,9 +177,21 @@ def _build_brief(
             "framing). Keep USPs generic and non-factual, or empty. Never state a "
             "product claim. Obey banned_terms and claim_gate."
         )
+    # Creative cluster (from the category taxonomy) so the copy brief carries the full
+    # product knowledge the owner requires — identity/commerce + cluster + product_type
+    # + intelligence. Best-effort; never blocks copy generation.
+    try:
+        from agent.services.creative_avatar_recommendation_service import resolve_cluster
+
+        creative_cluster = _clean(
+            (resolve_cluster(_clean(product.get("category"))) or {}).get("cluster")
+        )
+    except Exception:
+        creative_cluster = ""
     brief = {
         "product_name": _product_truth(product),
         "category": _clean(product.get("category")),
+        "creative_cluster": creative_cluster,
         "product_class": _clean(product.get("type")),
         "grounding_source": g.source,
         "family": g.family,
