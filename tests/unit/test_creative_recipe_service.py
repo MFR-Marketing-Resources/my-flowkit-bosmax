@@ -81,6 +81,50 @@ def test_blank_avatar_or_scene_is_skipped():
     assert recipes[0].scene_template_id == "SCN-A-01"
 
 
+def _setup(saved=None):
+    return {
+        "recommended_scene_templates": [
+            {"template_id": "SCN-01", "variant": "Variation 1 - Present"},
+            {"template_id": "SCN-05", "variant": "Variation 5 - Close-up"},
+            {"template_id": "SCN-07", "variant": "Variation 7 - Benefit"},
+        ],
+        "default_selection": {"selected_avatar_codes": ["A1", "A2"]},
+        "saved_selection": saved,
+    }
+
+
+def test_recipes_from_setup_computed_pretick_when_no_saved():
+    out = recipe.recipes_from_setup(_setup())
+    assert len(out["recipes"]) == 6  # 2 avatars x 3 scenes
+    assert out["pretick"]  # arc-spread default
+    assert all(r.camera_preset_code for r in out["pretick"])
+
+
+def test_recipes_from_setup_honors_saved_plan():
+    saved = {
+        "selected_avatar_codes": ["A1"],
+        "selected_scene_template_ids": ["SCN-05"],
+    }
+    out = recipe.recipes_from_setup(_setup(saved))
+    # pretick reconstructs the SAVED plan exactly (A1 × SCN-05), camera derived (Var5→BODY_B)
+    assert len(out["pretick"]) == 1
+    only = out["pretick"][0]
+    assert only.avatar_code == "A1"
+    assert only.scene_template_id == "SCN-05"
+    assert only.camera_preset_code == "BODY_B"
+    # the full pool still lists both avatars for manual override
+    assert {r.avatar_code for r in out["recipes"]} == {"A1", "A2"}
+
+
+def test_recipes_from_setup_ignores_saved_when_honor_saved_false():
+    # a stale top-1 saved plan must NOT collapse the regenerated pretick (backfill case)
+    saved = {"selected_avatar_codes": ["A1"], "selected_scene_template_ids": ["SCN-01"]}
+    out = recipe.recipes_from_setup(_setup(saved), honor_saved=False)
+    # fresh arc-spread over BOTH default avatars, not the single saved tuple
+    assert len(out["pretick"]) > 1
+    assert {r.avatar_code for r in out["pretick"]} == {"A1", "A2"}
+
+
 def test_pretick_is_diverse_and_capped():
     bridge = recipe.load_bridge()
     mapping = recipe.load_camera_mapping()

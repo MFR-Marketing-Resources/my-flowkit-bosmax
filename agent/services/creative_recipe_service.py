@@ -32,8 +32,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from agent.services import creative_setup_service
-
 _AUTHORITY = Path(__file__).resolve().parent.parent / "authority"
 _BRIDGE_FILE = _AUTHORITY / "creative_scene_variation_camera_bridge.json"
 _CAMERA_FILE = _AUTHORITY / "creative_camera_preset_library.json"
@@ -214,10 +212,50 @@ def load_camera_mapping() -> list[dict]:
     return _load_json(_CAMERA_FILE).get("block_content_mapping", [])
 
 
+def recipes_from_setup(
+    setup: dict[str, Any], *, honor_saved: bool = True
+) -> dict[str, list[CreativeRecipe]]:
+    """Build coherent recipes from an ALREADY-RESOLVED creative setup dict, so callers
+    that already hold one (e.g. the bulk backfill) avoid a second resolve.
+
+    Returns {'recipes': full pool, 'pretick': recommended default}. When ``honor_saved``
+    and the product has a SAVED selection, the pretick reconstructs THAT durable plan
+    (saved avatars × saved scenes, camera derived); otherwise it is the freshly COMPUTED
+    arc-spread default. The backfill passes honor_saved=False so it regenerates rather
+    than re-deriving a stale top-1 plan."""
+    bridge = load_bridge()
+    camera_mapping = load_camera_mapping()
+    all_scenes = list(setup.get("recommended_scene_templates") or [])
+    default = setup.get("default_selection") or {}
+    saved = setup.get("saved_selection") or {} if honor_saved else {}
+    default_avatars = list(default.get("selected_avatar_codes") or [])
+    saved_avatars = list(saved.get("selected_avatar_codes") or [])
+    # The pool includes any saved avatar so the saved plan is always representable.
+    pool_avatars = list(dict.fromkeys([*default_avatars, *saved_avatars]))
+    recipes = build_recipes(pool_avatars, all_scenes, bridge, camera_mapping)
+    saved_scene_ids = list(saved.get("selected_scene_template_ids") or [])
+    if saved_avatars or saved_scene_ids:
+        scene_by_id = {
+            str(s.get("template_id")): s for s in all_scenes if s.get("template_id")
+        }
+        saved_scenes = [scene_by_id[sid] for sid in saved_scene_ids if sid in scene_by_id]
+        pretick = build_recipes(
+            saved_avatars or default_avatars,
+            saved_scenes or all_scenes,
+            bridge,
+            camera_mapping,
+        )
+    else:
+        pretick = pretick_recipes(recipes)
+    return {"recipes": recipes, "pretick": pretick}
+
+
 async def generate_product_recipes(product_id: str) -> dict[str, Any]:
     """Async wrapper: reuse resolve_creative_setup for cluster/gender/scene eligibility,
-    then build coherent recipes. Returns the FULL pool (mass rotation) plus a capped,
-    diverse `recommended_pretick` (manual default). Deterministic; no AI; no credits."""
+    then build coherent recipes (honouring a saved plan). Returns the FULL pool (mass
+    rotation) plus a capped `recommended_pretick`. Deterministic; no AI; no credits."""
+    from agent.services import creative_setup_service  # lazy: avoid import cycle
+
     setup = await creative_setup_service.resolve_creative_setup(product_id)
     if setup.get("review_required") or not setup.get("default_selection"):
         return {
@@ -229,23 +267,21 @@ async def generate_product_recipes(product_id: str) -> dict[str, Any]:
             "recommended_pretick": [],
             "counts": {"avatars": 0, "scenes": 0, "recipes": 0, "pretick": 0},
         }
-    avatars = list(setup["default_selection"].get("selected_avatar_codes") or [])
-    scenes = list(setup.get("recommended_scene_templates") or [])
-    bridge = load_bridge()
-    camera_mapping = load_camera_mapping()
-    recipes = build_recipes(avatars, scenes, bridge, camera_mapping)
-    pretick = pretick_recipes(recipes)
+    built = recipes_from_setup(setup)
+    recipes = built["recipes"]
+    pretick = built["pretick"]
     return {
         "product_id": product_id,
         "product_name": setup.get("product_name"),
         "cluster": setup.get("cluster"),
         "cluster_source": setup.get("cluster_source"),
         "review_required": False,
+        "saved": bool(setup.get("saved_selection")),
         "recipes": [asdict(recipe) for recipe in recipes],
         "recommended_pretick": [asdict(recipe) for recipe in pretick],
         "counts": {
-            "avatars": len(avatars),
-            "scenes": len(scenes),
+            "avatars": len(list((setup.get("default_selection") or {}).get("selected_avatar_codes") or [])),
+            "scenes": len(list(setup.get("recommended_scene_templates") or [])),
             "recipes": len(recipes),
             "pretick": len(pretick),
         },

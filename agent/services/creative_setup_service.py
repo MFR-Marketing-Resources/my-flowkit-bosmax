@@ -390,15 +390,17 @@ async def bulk_auto_setup(
     approve: bool = True,
     dry_run: bool = True,
     limit: int | None = None,
+    refresh_auto: bool = False,
 ) -> dict[str, Any]:
-    """Auto-fill each eligible product's creative selection from its TOP-scored
-    recommendation (avatar #1 + scene #1 + camera #1) and, when ``approve``,
-    move it straight to APPROVED. Idempotent + fail-closed:
+    """Auto-fill each eligible product's creative selection from its COHERENT recipe
+    pretick (avatar × scene, camera follows scene — arc-spread across intro/body/detail/
+    benefit) and, when ``approve``, move it straight to APPROVED. Idempotent + fail-closed:
       * products already APPROVED are left untouched;
       * review-required (un-categorised) or no-recommendation products are skipped.
     Planning only — writes ``creative_product_selection`` rows, never generation.
     """
     from agent.db import crud
+    from agent.services import creative_recipe_service as _recipe
 
     if product_ids is None:
         rows = await crud.list_products(include_archived=False)
@@ -407,39 +409,51 @@ async def bulk_auto_setup(
         product_ids = product_ids[:limit]
 
     done = skipped = failed = 0
-    reasons: dict[str, int] = {"already_approved": 0, "review_required": 0, "no_avatar": 0}
+    reasons: dict[str, int] = {
+        "already_approved": 0, "review_required": 0, "no_avatar": 0, "refreshed_auto": 0,
+    }
     errors: list[dict[str, str]] = []
     for product_id in product_ids:
         try:
             existing = await get_creative_selection(product_id)
             if existing and existing.get("status") == "APPROVED":
-                reasons["already_approved"] += 1
-                skipped += 1
-                continue
+                # refresh_auto upgrades ONLY machine-authored plans to the new coherent
+                # recipe pretick — the "Auto-setup" top-1 plans AND the legacy fill-all
+                # ("max diverse") plans. Hand-curated selections are never touched.
+                notes = str(existing.get("notes") or "")
+                is_machine = notes.startswith("Auto-setup") or "max diverse" in notes
+                if not (refresh_auto and is_machine):
+                    reasons["already_approved"] += 1
+                    skipped += 1
+                    continue
+                reasons["refreshed_auto"] += 1
             setup = await resolve_creative_setup(product_id)
             if setup.get("review_required"):
                 reasons["review_required"] += 1
                 skipped += 1
                 continue
-            avatars = setup.get("recommended_avatars") or []
-            scenes = setup.get("recommended_scene_templates") or []
-            cameras = (setup.get("camera_library") or {}).get("named_presets") or []
-            if not avatars:
+            # Coherent recipe pretick (avatar × scene, camera follows scene) — replaces
+            # the old top-1 pick, so every backfilled product gets an arc-spread plan
+            # (intro → body → detail → benefit) rather than one shot. Deterministic.
+            # honor_saved=False: regenerate the fresh arc-spread, never re-derive the
+            # stale top-1 saved plan we are replacing.
+            pretick = _recipe.recipes_from_setup(setup, honor_saved=False)["pretick"]
+            if not pretick:
                 reasons["no_avatar"] += 1
                 skipped += 1
                 continue
-            top_avatar = avatars[0].get("avatar_code")
-            top_scene = scenes[0].get("template_id") if scenes else None
-            top_camera = cameras[0].get("preset_code") if cameras else None
+            a = _dedup([r.avatar_code for r in pretick], None)
+            s = _dedup([r.scene_template_id for r in pretick], None)
+            c = _dedup([r.camera_preset_code for r in pretick], None)
             if dry_run:
                 done += 1
                 continue
             await save_creative_selection(
                 product_id,
-                selected_avatar_codes=[top_avatar] if top_avatar else [],
-                selected_scene_template_ids=[top_scene] if top_scene else [],
-                selected_camera_preset_codes=[top_camera] if top_camera else [],
-                notes="Auto-setup: top-scored recommendation",
+                selected_avatar_codes=a,
+                selected_scene_template_ids=s,
+                selected_camera_preset_codes=c,
+                notes="Auto-setup: coherent recipe pretick (camera follows scene)",
             )
             if approve:
                 await review_creative_selection(product_id, "APPROVE", "Bulk auto-setup")
