@@ -2064,6 +2064,10 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			? `${requestedTotalDuration ?? "—"}s · Extended`
 			: `${videoDurationSeconds}s · Single`;
 		const copyBound = Boolean(selectedCopySetId);
+		// SINGLE-clip generation: the compiled single-block prompt from the prepared
+		// execution package. Fired through the LIVE one-door lane (/api/flow/generate),
+		// the same proven lane IMG uses — NOT the retired DOM lane (ADR-007 compliant).
+		const singleClipPrompt = workspacePackage?.prompt_text || "";
 		const storyboardShots = (previewPackage?.prompt_blocks ?? []).map(
 			(block, i) => ({
 				id: String(block.block_index ?? i),
@@ -2165,7 +2169,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				: "active";
 		const s6: WorkflowStepStatus = previewPackage ? "done" : "active";
 		const s7: WorkflowStepStatus =
-			workspacePackage && extendAuthority ? "active" : "upcoming";
+			singleClipPrompt || (workspacePackage && extendAuthority)
+				? "active"
+				: "upcoming";
 
 		const selectClass =
 			"w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100";
@@ -2640,9 +2646,39 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										}))}
 								/>
 							) : (
-								<div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-100">
-									Canonical video needs Extended + a total duration. Set length
-									to “Extended video” above.
+								// SINGLE clip: one video via the LIVE one-door lane
+								// (/api/flow/generate). The operator presses this — it spends
+								// credits — never auto-fired.
+								<div className="space-y-2">
+									<button
+										type="button"
+										onClick={() =>
+											void handleExecute({
+												mode: jobMode,
+												prompt: singleClipPrompt,
+												aspectRatio: "9:16",
+												product_id: selectedProduct?.id ?? null,
+												workspace_execution_package_id:
+													workspacePackage?.workspace_execution_package_id ??
+													null,
+												prompt_fingerprint:
+													workspacePackage?.prompt_fingerprint ?? null,
+											})
+										}
+										disabled={
+											!singleClipPrompt || isExecuting || backendRuntimeStale
+										}
+										className="w-full rounded-xl bg-gradient-to-br from-v4-accent to-v4-auto px-4 py-3 text-[13px] font-bold text-slate-950 shadow-lg shadow-v4-accent/20 transition-opacity hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-40"
+									>
+										{isExecuting
+											? "Generating…"
+											: `▶ Generate 1 clip · ${videoDurationSeconds}s`}
+									</button>
+									<p className="text-[11px] text-slate-500">
+										{singleClipPrompt
+											? "Fires one video through Google Flow — spends credits. Needs an open, warmed-up Flow editor tab. For a longer joined video, switch Length to “Extended video”."
+											: "Compile preview → Prepare final prompt (cockpit) first."}
+									</p>
 								</div>
 							)}
 						</WorkflowStep>
