@@ -841,14 +841,14 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		mode === "HYBRID" ? "F2V" : mode;
 
 	// ── V4 workflow shell (guided single-page redesign) ──────────────────────
-	// DEFAULT for the T2V lane; the classic render stays reachable at ?classic=1
-	// as a transitional fallback (not a nav item, deleted once V4 is proven in
-	// daily use). When ?classic=1 is present every V4 hook guard-returns and the
-	// classic render below is byte-identical. It reuses the SAME state + handlers,
-	// so the Step-F payload (recipes[0] → scene_template_id/camera_preset_code)
-	// is preserved by construction.
+	// T2V is the proven V4 default. Bucket-1 lanes are opt-in via ?v4=1 until
+	// each lane has live free-step verification; ?classic=1 always wins and keeps
+	// the existing render reachable as the transitional fallback. Both paths
+	// reuse the same state + handlers, so Step-F payload wiring stays intact.
+	const query = new URLSearchParams(location.search);
 	const useV4 =
-		new URLSearchParams(location.search).get("classic") !== "1";
+		query.get("classic") !== "1" &&
+		(mode === "T2V" || query.get("v4") === "1");
 	const [v4Pool, setV4Pool] = useState<CreativeRecipe[]>([]);
 	const [v4Pretick, setV4Pretick] = useState<CreativeRecipe[]>([]);
 	const [v4RecipesLoading, setV4RecipesLoading] = useState(false);
@@ -876,8 +876,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	);
 	// Load the product's coherent recipe pool for the V4 T2V lane; auto-pick a
 	// default presenter from the knowledge base only when none is set yet.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the pool loads on product changes; a manual registry pick must not refetch it
 	useEffect(() => {
-		if (!useV4 || mode !== "T2V" || !selectedProduct?.id) return;
+		if (!useV4 || mode === "IMG" || !selectedProduct?.id) return;
 		let active = true;
 		setV4RecipesLoading(true);
 		void getProductRecipes(selectedProduct.id)
@@ -907,13 +908,21 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// (creative-setup seed, manual pick). Idempotent: no-op when already in sync,
 	// when the avatar is not in this product's pool, or when the recipe is empty.
 	useEffect(() => {
-		if (!useV4 || mode !== "T2V" || !registryAvatarId || v4Pool.length === 0)
+		if (!useV4 || mode === "IMG" || !registryAvatarId || v4Pool.length === 0)
 			return;
 		if (creativeDirection.recipes[0]?.avatar_code === registryAvatarId) return;
 		if (!v4Pool.some((r) => r.avatar_code === registryAvatarId)) return;
 		applyV4Presenter(registryAvatarId, v4Pool, v4Pretick);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [useV4, mode, registryAvatarId, v4Pool]);
+	}, [
+		useV4,
+		mode,
+		registryAvatarId,
+		v4Pool,
+		v4Pretick,
+		creativeDirection.recipes[0]?.avatar_code,
+		applyV4Presenter,
+	]);
 	// Stale-reference law: a mode or product switch invalidates every prior
 	// reference selection (the server's WRONG_PRODUCT / per-mode contract checks
 	// stay the authority; this keeps the UI from carrying another product's or
@@ -2032,8 +2041,29 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		}
 	};
 
-	// ── V4 guided single-page shell (T2V reference lane, behind ?v4=1) ──────────
-	if (useV4 && mode === "T2V") {
+	// ── V4 guided single-page shell (T2V reference + Bucket-1 lanes) ───────────
+	if (
+		useV4 &&
+		(mode === "T2V" || mode === "F2V" || mode === "HYBRID" || mode === "I2V" || mode === "IMG")
+	) {
+		const isImageMode = mode === "IMG";
+		const hasReferenceStep = !isImageMode && mode !== "T2V";
+		const creativeStepIndex = hasReferenceStep ? 6 : 5;
+		const storyboardStepIndex = hasReferenceStep ? 7 : 6;
+		const generateStepIndex = hasReferenceStep ? 8 : 7;
+		const laneTitle =
+			mode === "T2V"
+				? "Text to Video"
+				: mode === "HYBRID"
+					? "Hybrid"
+					: mode === "F2V"
+						? "Frames to Video"
+						: mode === "I2V"
+							? "Ingredients to Video"
+							: "Image Generation";
+		const laneDescription = isImageMode
+			? "Choose a product or upload references, then shape the image before the operator gate."
+			: "Pick a product, message and presenter — references and camera resolve by lane.";
 		const productReady = selectedReadiness?.readiness_status === "READY";
 		const v4Avatars = Array.from(
 			new Set(v4Pool.map((r) => r.avatar_code)),
@@ -2060,6 +2090,20 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		const sceneCameraLabel = primaryRecipe
 			? `${v4SceneText(primaryRecipe)} · 🎥 ${primaryRecipe.camera_preset_code || "—"}`
 			: "Auto from knowledge base";
+		const referenceBlocker = hasReferenceStep
+			? referenceBindingBlocker(mode, referenceBinding)
+			: null;
+		const referenceLabel =
+			mode === "F2V"
+				? referenceBinding.startFrameAssetId
+					? `Start frame bound${referenceBinding.endFrameAssetId ? " · end frame bound" : ""}`
+					: "Start frame required"
+				: mode === "I2V"
+					? referenceBinding.characterReferenceAssetId &&
+						referenceBinding.sceneContextReferenceAssetId
+						? `Character + scene bound${referenceBinding.styleReferenceAssetId ? " · style bound" : ""}`
+						: "Character + scene required"
+					: "Product anchor auto · optional override";
 		const lengthLabel = isExtendMode
 			? `${requestedTotalDuration ?? "—"}s · Extended`
 			: `${videoDurationSeconds}s · Single`;
@@ -2067,7 +2111,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		// SINGLE-clip generation: the compiled single-block prompt from the prepared
 		// execution package. Fired through the LIVE one-door lane (/api/flow/generate),
 		// the same proven lane IMG uses — NOT the retired DOM lane (ADR-007 compliant).
-		const singleClipPrompt = workspacePackage?.prompt_text || "";
+		const singleClipPrompt =
+			mode === "T2V" ? workspacePackage?.prompt_text || "" : "";
 		const storyboardShots = (previewPackage?.prompt_blocks ?? []).map(
 			(block, i) => ({
 				id: String(block.block_index ?? i),
@@ -2087,23 +2132,38 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					: selectedProduct
 						? "online"
 						: "idle";
-		const plan: CockpitPlanRow[] = [
-			{
-				k: "Angle",
-				v: copyBound ? "Copy set bound" : "Fallback copy",
-				tone: copyBound ? "good" : "muted",
-			},
-			{ k: "Presenter", v: presenterLabel },
-			{ k: "Scene → camera", v: sceneCameraLabel, mono: true },
-			{ k: "Length", v: lengthLabel },
-			{
-				k: "Engine · model",
-				v: `${currentEngine?.label ?? selectedEngineId} · ${videoModel}`,
-			},
-		];
+		const plan: CockpitPlanRow[] = isImageMode
+			? [
+					{ k: "Lane", v: "IMG", mono: true },
+					{
+						k: "Product",
+						v: selectedProduct?.product_display_name ?? "Manual reference",
+					},
+				  ]
+			: [
+					{
+						k: "Angle",
+						v: copyBound ? "Copy set bound" : "Fallback copy",
+						tone: copyBound ? "good" : "muted",
+					},
+					{ k: "Presenter", v: presenterLabel },
+					{ k: "Scene → camera", v: sceneCameraLabel, mono: true },
+					{ k: "Length", v: lengthLabel },
+					{
+						k: "Engine · model",
+						v: `${currentEngine?.label ?? selectedEngineId} · ${videoModel}`,
+					},
+			  ];
 		// Free prepare flow only — the live, credit-bearing fire stays in the
 		// NativeExtendPanel below (unchanged gates). The cockpit never spends credits.
-		const cockpitGenerate = !productReady
+		const cockpitGenerate = isImageMode
+			? {
+					label: "Use Image setup below",
+					disabled: true,
+					onClick: () => {},
+					note: "the IMG control remains the operator gate",
+			  }
+			: !productReady
 			? {
 					label: "Select a ready product",
 					disabled: true,
@@ -2167,8 +2227,13 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			: primaryRecipe
 				? "done"
 				: "active";
-		const s6: WorkflowStepStatus = previewPackage ? "done" : "active";
-		const s7: WorkflowStepStatus =
+		const sReference: WorkflowStepStatus = !selectedProduct
+			? "upcoming"
+			: referenceBlocker
+				? "active"
+				: "done";
+		const sStoryboard: WorkflowStepStatus = previewPackage ? "done" : "active";
+		const sGenerate: WorkflowStepStatus =
 			singleClipPrompt || (workspacePackage && extendAuthority)
 				? "active"
 				: "upcoming";
@@ -2189,16 +2254,13 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					<div>
 						<div className="flex items-center gap-2">
 							<h2 className="text-xl font-bold tracking-tight text-white md:text-2xl">
-								Text to Video
+								{laneTitle}
 							</h2>
 							<span className="rounded-full border border-v4-accent/40 bg-v4-accent/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.16em] text-v4-accent-ink">
 								V4
 							</span>
 						</div>
-						<p className="text-sm text-slate-400">
-							Pick a product, message and presenter — the knowledge base
-							resolves the rest.
-						</p>
+						<p className="text-sm text-slate-400">{laneDescription}</p>
 					</div>
 					<a
 						href={`${location.pathname}?classic=1`}
@@ -2244,6 +2306,26 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								) : null}
 							</div>
 						</WorkflowStep>
+
+						{isImageMode ? (
+							<WorkflowStep
+								index={2}
+								title="Image setup"
+								status="active"
+								collapsible={false}
+								helper="References, prompt and image settings stay together in the existing IMG lane."
+							>
+								<IMGModule
+									onExecute={handleExecute}
+									isExecuting={isExecuting}
+									compact
+									workspacePackage={workspacePackage}
+									previewPackage={previewPackage}
+									selectedProduct={selectedProduct}
+								/>
+							</WorkflowStep>
+						) : (
+							<>
 
 						{/* Step 2 — Message & angle */}
 						<WorkflowStep
@@ -2306,7 +2388,122 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									icon="🎭"
 									auto={!v4IsOpen(3, s3) || !registryAvatarId}
 								/>
-								{v4RecipesLoading ? (
+								{mode === "HYBRID" ? (
+									<div
+										data-testid="operator-registry-authority"
+										className="space-y-3 rounded-xl border border-cyan-500/25 bg-cyan-500/5 p-3"
+									>
+										<div>
+											<div className="text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-200">
+												Registry authority
+											</div>
+											<p className="mt-1 text-[11px] text-slate-300">
+												Hybrid keeps the approved Avatar Registry presenter and
+												Scene Registry context together; the product image remains
+												the automatic reference anchor.
+											</p>
+										</div>
+										{registryPoolsLoading ? (
+											<p className="text-[11px] text-slate-400">Loading registries…</p>
+										) : null}
+										<label className="block space-y-1 text-xs text-slate-200">
+											<span>Avatar registry</span>
+											<select
+												id="operator-avatar-registry"
+												data-testid="operator-avatar-registry"
+												value={registryAvatarId}
+												onChange={(e) => setRegistryAvatarId(e.target.value)}
+												className={selectClass}
+											>
+												<option value="">
+													{avatarRegistryPool.length
+														? "— product-seeded registry pick —"
+														: "No avatar registry rows"}
+												</option>
+												{avatarRegistryPool.map((row) => {
+													const code = String(
+														row.avatar_code || row.AvatarCode || "",
+													).trim();
+													if (!code) return null;
+													const label =
+														row.display_name || row.Name || row.name || row.Variant || code;
+													return (
+														<option key={code} value={code}>
+															{label} — {code}
+														</option>
+													);
+												})}
+											</select>
+										</label>
+										<VisualAssetPicker
+											label="Avatar registry visual picker"
+											value={registryAvatarId}
+											onChange={setRegistryAvatarId}
+											items={avatarRegistryPool
+												.map((row) => ({
+													value: String(row.avatar_code || row.AvatarCode || ""),
+													title: String(
+														row.character_name ||
+															row.display_name ||
+															row.Name ||
+															row.name ||
+															row.avatar_code ||
+															"Avatar",
+														),
+													subtitle: String(row.avatar_code || row.AvatarCode || ""),
+													previewUrl:
+														registryPreviewUrls[String(row.generated_asset_id || "")] || null,
+													status: "APPROVED",
+												}))
+												.filter((row) => Boolean(row.value))}
+										/>
+										<label className="block space-y-1 text-xs text-slate-200">
+											<span>Scene registry</span>
+											<select
+												id="operator-scene-registry"
+												data-testid="operator-scene-registry"
+												value={registrySceneCode}
+												onChange={(e) => setRegistrySceneCode(e.target.value)}
+												className={selectClass}
+											>
+												<option value="">
+													{sceneRegistryPool.length
+														? "— product package scene (no override) —"
+														: "No scene registry rows"}
+												</option>
+												{sceneRegistryPool.map((row) => (
+													<option key={row.scene_code} value={row.scene_code}>
+														{row.scene_name || row.scene_code}
+														{row.image_generated ? " · img" : ""}
+													</option>
+												))}
+											</select>
+										</label>
+										<VisualAssetPicker
+											label="Scene registry visual picker"
+											value={registrySceneCode}
+											onChange={setRegistrySceneCode}
+											items={sceneRegistryPool.map((row) => ({
+												value: row.scene_code,
+												title: row.scene_name || row.scene_code,
+												subtitle: row.scene_code,
+												previewUrl:
+													registryPreviewUrls[String(row.generated_asset_id || "")] || null,
+												status: "APPROVED",
+											}))}
+										/>
+										{registryAvatarId ? (
+											<div className="text-[11px] text-cyan-100">
+												Avatar lock: {registryAvatarId}
+											</div>
+										) : null}
+										{registrySceneCode ? (
+											<div className="text-[11px] text-cyan-100">
+												Scene lock: {registrySceneCode}
+											</div>
+										) : null}
+									</div>
+								) : v4RecipesLoading ? (
 									<p className="text-[11px] text-slate-500">
 										Resolving presenters…
 									</p>
@@ -2525,13 +2722,42 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							</div>
 						</WorkflowStep>
 
+						{hasReferenceStep ? (
+							<WorkflowStep
+								index={5}
+								title="Reference"
+								status={sReference}
+								open={v4IsOpen(5, sReference)}
+								onToggleOpen={() => v4Toggle(5, v4IsOpen(5, sReference))}
+								summary={referenceLabel}
+								helper="Bind only the references this lane accepts; empty optional slots stay automatic."
+							>
+								<div className="space-y-2">
+									<ResolvedChip
+										label="Reference binding"
+										value={referenceLabel}
+										icon="🧷"
+										auto={!referenceBlocker}
+									/>
+									<CanonicalReferenceBindingControls
+										mode={mode}
+										productId={selectedProduct?.id ?? null}
+										binding={referenceBinding}
+										onChange={setReferenceBinding}
+									/>
+								</div>
+							</WorkflowStep>
+						) : null}
+
 						{/* Step 5 — Creative direction */}
 						<WorkflowStep
-							index={5}
+							index={creativeStepIndex}
 							title="Creative direction"
 							status={s5}
-							open={v4IsOpen(5, s5)}
-							onToggleOpen={() => v4Toggle(5, v4IsOpen(5, s5))}
+							open={v4IsOpen(creativeStepIndex, s5)}
+							onToggleOpen={() =>
+								v4Toggle(creativeStepIndex, v4IsOpen(creativeStepIndex, s5))
+							}
 							summary={sceneCameraLabel}
 							helper="Scene and camera follow the presenter automatically — tweak only if you want."
 						>
@@ -2540,7 +2766,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									label="Scene → camera"
 									value={sceneCameraLabel}
 									icon="🎬"
-									auto={!v4IsOpen(5, s5) || !primaryRecipe}
+									auto={!v4IsOpen(creativeStepIndex, s5) || !primaryRecipe}
 								/>
 								<div className="rounded-xl border border-slate-800 bg-slate-950/40 p-2">
 									<p className="mb-2 px-1 text-[11px] text-slate-400">
@@ -2589,11 +2815,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							</div>
 						</WorkflowStep>
 
-						{/* Step 6 — Storyboard */}
-						<WorkflowStep
-							index={6}
-							title="Storyboard"
-							status={s6}
+		{/* Storyboard */}
+		<WorkflowStep
+			index={storyboardStepIndex}
+			title="Storyboard"
+			status={sStoryboard}
 							collapsible={false}
 							helper="See the shots before you generate."
 						>
@@ -2619,11 +2845,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							</div>
 						</WorkflowStep>
 
-						{/* Step 7 — Generate video (credit-bearing; unchanged gates) */}
-						<WorkflowStep
-							index={7}
-							title="Generate video"
-							status={s7}
+		{/* Generate video (credit-bearing; unchanged gates) */}
+		<WorkflowStep
+			index={generateStepIndex}
+			title="Generate video"
+			status={sGenerate}
 							collapsible={false}
 							helper="Credits are spent only here."
 						>
@@ -2645,7 +2871,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 											is_final: i === extendAuthority.plan.length - 2,
 										}))}
 								/>
-							) : (
+							) : mode === "T2V" ? (
 								// SINGLE clip: one video via the LIVE one-door lane
 								// (/api/flow/generate). The operator presses this — it spends
 								// credits — never auto-fired.
@@ -2680,8 +2906,15 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 											: "Compile preview → Prepare final prompt (cockpit) first."}
 									</p>
 								</div>
+							) : (
+								<div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-100">
+									{mode} keeps the existing reference-aware production gate. Select
+									EXTEND with a total duration to open the durable Generate control.
+								</div>
 							)}
 						</WorkflowStep>
+							</>
+						)}
 
 						{/* Fallback-copy confirmation gate (backend also enforces) */}
 						{showFallbackConfirm ? (
@@ -2797,7 +3030,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								</div>
 							) : null}
 							<OperatorCockpit
-								laneLabel="Text to Video"
+								laneLabel={laneTitle}
 								status={{
 									label:
 										cockpitState === "running"
@@ -2825,7 +3058,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								debug={
 									<div className="space-y-1">
 										<div>
-											mode {mode} · {isExtendMode ? "EXTEND" : "SINGLE"}
+										mode {mode} · {isImageMode ? "IMAGE" : isExtendMode ? "EXTEND" : "SINGLE"}
 										</div>
 										{workspacePackage ? (
 											<div className="break-all">

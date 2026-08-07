@@ -59,7 +59,9 @@ afterEach(() => cleanup());
 
 function renderOperator(mode: "HYBRID" | "T2V" | "I2V" | "F2V") {
 	render(
-		<MemoryRouter initialEntries={[{ pathname: `/operator/${mode}` }]}>
+		<MemoryRouter
+			initialEntries={[{ pathname: `/operator/${mode}`, search: "?classic=1" }]}
+		>
 			<OperatorPage mode={mode} />
 		</MemoryRouter>,
 	);
