@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -57,3 +58,25 @@ def test_select_recipe_tuple_fails_closed_for_missing_avatar_or_scene() -> None:
     )
     assert tuple_value is None
     assert reason == "SELECTION_TUPLE_INCOMPLETE"
+
+
+def test_dry_run_report_omits_internal_recipe_rows_before_json_serialization(
+    monkeypatch,
+    capsys,
+) -> None:
+    snapshot = {
+        "eligible_products": ["product-1"],
+        "target_rows": [{"recipe": RecipeTuple("AVATAR_A", "SCN-01", "BODY_A")}],
+        "treatments": {"total": 0},
+    }
+    snapshots = iter([snapshot.copy(), snapshot.copy()])
+    monkeypatch.setattr(_MODULE, "read_snapshot", lambda _path: next(snapshots))
+    monkeypatch.setattr(sys, "argv", ["b3-creative-config-backfill.py"])
+
+    _MODULE.main()
+
+    report = json.loads(capsys.readouterr().out)
+    assert "eligible_products" not in report["before"]
+    assert "target_rows" not in report["before"]
+    assert "eligible_products" not in report["after"]
+    assert "target_rows" not in report["after"]

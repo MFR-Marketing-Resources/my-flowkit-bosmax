@@ -347,6 +347,13 @@ async def _materialize(products: list[str]) -> None:
         )
 
 
+def _report_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    report = dict(snapshot)
+    report.pop("eligible_products", None)
+    report.pop("target_rows", None)
+    return report
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", type=Path, default=Path("flow_agent.db"))
@@ -368,9 +375,11 @@ def main() -> None:
         after["treatments"]["already_present"] = (
             before["treatments"]["target_tuple_already_present"]
         )
-    after.pop("eligible_products", None)
-    after.pop("target_rows", None)
-    print(json.dumps({"mode": "apply" if args.apply else "dry_run", "before": before, "after": after}, sort_keys=True, separators=(",", ":")))
+    print(json.dumps({
+        "mode": "apply" if args.apply else "dry_run",
+        "before": _report_snapshot(before),
+        "after": _report_snapshot(after),
+    }, sort_keys=True, separators=(",", ":")))
 
 
 if __name__ == "__main__":
