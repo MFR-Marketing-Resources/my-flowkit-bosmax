@@ -20,8 +20,9 @@ def test_legacy_studio_route_remains_compatible_but_not_primary():
     app = _read("dashboard/src/App.tsx")
     page = _read("dashboard/src/pages/CreativeProductionStudioPage.tsx")
     assert 'path="/rpa-production-studio"' in app
-    assert "compatibility surfaces only" in page
-    assert "legacy schema is not deleted" in page
+    assert 'path="/production-studio"' in app
+    assert 'studioMode === "LEGACY_INCOMPLETE_PLAN"' in page
+    assert "This legacy plan is missing" in page
 
 
 def test_ui_exposes_every_truthful_orchestrator_control_surface():
@@ -73,6 +74,22 @@ def test_p6_v4_frame_is_opt_in_and_preserves_batch_matrix_ia():
     assert "p6-qa-list" in page
     assert 'href="/production-studio?classic=1"' in page
     assert 'label: "Start production · gated"' in page
+
+
+def test_p6_v4_guided_flow_progressively_discloses_advanced_metadata():
+    page = _read("dashboard/src/pages/CreativeProductionStudioPage.tsx")
+    for contract in (
+        'data-testid="p6-guided-flow"',
+        'data-testid="p6-nine-pack-guidance"',
+        'data-testid="p6-advanced-workspace"',
+        'data-testid="p6-open-advanced-workspace"',
+        'data-testid={`p6-recipe-${recipe.id}`}',
+        "8s × 3, 16s × 3, and 24s × 3.",
+        "Product authority needs reconciliation before a new plan can be created.",
+    ):
+        assert contract in page
+    assert "Compile and dry-run are" in page
+    assert "Advanced workspace · factory, matrix, history and diagnostics" in page
 
 
 def test_poster_v4_frame_is_opt_in_and_preserves_bespoke_modes():

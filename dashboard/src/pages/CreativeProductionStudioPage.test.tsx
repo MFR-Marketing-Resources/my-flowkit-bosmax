@@ -545,6 +545,34 @@ afterEach(() => {
 });
 
 describe("P6.3-R2 production plan state isolation", () => {
+	it("renders the guided nine-video pack without opening technical metadata", async () => {
+		window.history.replaceState({}, "", "/production-studio?v4=1");
+		render(<CreativeProductionStudioPage />);
+		await screen.findByTestId("p6-guided-flow");
+		expect(screen.getByTestId("p6-nine-pack-guidance")).toHaveTextContent(
+			"8s × 3, 16s × 3, and 24s × 3",
+		);
+		expect(screen.getByTestId("p6-advanced-workspace")).not.toHaveAttribute(
+			"open",
+		);
+		fireEvent.click(screen.getByTestId("p6-open-advanced-workspace"));
+		await waitFor(() =>
+			expect(screen.getByTestId("p6-advanced-workspace")).toHaveAttribute(
+				"open",
+			),
+		);
+	});
+
+	it("uses the guided recipe shortcuts for the governed duration selector", async () => {
+		window.history.replaceState({}, "", "/production-studio?v4=1");
+		render(<CreativeProductionStudioPage />);
+		await screen.findByTestId("p6-recipe-single-8");
+		fireEvent.click(screen.getByTestId("p6-recipe-extend-24"));
+		expect(screen.getByLabelText("Governed video duration")).toHaveValue("24");
+		fireEvent.click(screen.getByTestId("p6-recipe-extend-16"));
+		expect(screen.getByLabelText("Governed video duration")).toHaveValue("16");
+	});
+
 	it("opens in NEW_DRAFT without auto-selecting history or rendering old plan data", async () => {
 		render(<CreativeProductionStudioPage />);
 		await screen.findByText(
