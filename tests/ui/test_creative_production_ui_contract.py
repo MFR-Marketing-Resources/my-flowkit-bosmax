@@ -59,6 +59,44 @@ def test_live_and_dry_run_are_visibly_separate():
     assert "live_media_authorization_granted" not in page
 
 
+def test_p6_v4_frame_is_opt_in_and_preserves_batch_matrix_ia():
+    page = _read("dashboard/src/pages/CreativeProductionStudioPage.tsx")
+    assert 'searchParams.get("v4") === "1"' in page
+    assert 'searchParams.get("classic") !== "1"' in page
+    assert '"p6-v4-shell"' in page
+    assert '"p6-v4-header"' in page
+    assert "WorkflowStep" in page
+    assert "OperatorCockpit" in page
+    assert "Batch, matrix, waves, QA, and live confirmation remain the P6 IA" in page
+    assert "p6-content-matrix" in page
+    assert "p6-attempt-list" in page
+    assert "p6-qa-list" in page
+    assert 'href="/production-studio?classic=1"' in page
+    assert 'label: "Start production · gated"' in page
+
+
+def test_poster_v4_frame_is_opt_in_and_preserves_bespoke_modes():
+    page = _read("dashboard/src/pages/PosterBuilderPage.tsx")
+    assert 'searchParams.get("v4") === "1"' in page
+    assert 'searchParams.get("classic") !== "1"' in page
+    assert 'data-testid="poster-builder-v4-shell"' in page
+    assert 'data-variant="v4"' in page
+    assert "WorkflowStep" in page
+    assert "OperatorCockpit" in page
+    assert "Auto, Guided, and Controlled modes preserved" in page
+    assert "Auto · Guided · Controlled remain available" in page
+    assert 'href="/creative/poster-builder?classic=1"' in page
+    assert 'label: "Generate poster · gated"' in page
+
+
+def test_poster_v4_links_to_adjacent_governed_surfaces():
+    page = _read("dashboard/src/pages/PosterBuilderPage.tsx")
+    assert 'href="/assets/img-cockpit"' in page
+    assert 'href="/creative/copy-registry"' in page
+    assert 'data-testid="poster-advanced-diagnostics"' in page
+    assert "PosterBuilderLegacyPanel" in page
+
+
 def test_p6_uses_visual_multi_product_allocation_and_governed_video_controls():
     page = _read("dashboard/src/pages/CreativeProductionStudioPage.tsx")
     picker = _read(

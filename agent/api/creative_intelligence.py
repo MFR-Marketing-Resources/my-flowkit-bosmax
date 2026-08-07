@@ -45,6 +45,7 @@ from agent.services import scene_context_promotion_review_service as _scene_revi
 from agent.services import scene_context_promotion_activation_service as _scene_activation
 from agent.services import creative_camera_preset_service as _camera
 from agent.services import creative_setup_service as _setup
+from agent.services import creative_recipe_service as _recipe
 from agent.services import creative_handoff_service as _handoff
 from agent.services import product_strategy_taxonomy_service as _strategy_taxonomy
 
@@ -786,6 +787,21 @@ async def creative_setup(product_id: str | None = None) -> dict:
         raise HTTPException(status_code=422, detail="product_id is required")
     try:
         return await _setup.resolve_creative_setup(product_id)
+    except ValueError as exc:
+        _raise_setup_error(exc)
+
+
+@router.get("/creative-recipes")
+async def creative_recipes(product_id: str | None = None) -> dict:
+    """Coherent (avatar x scene -> camera-derived) recipes for a product. The camera
+    FOLLOWS the scene (via the scene->variation->camera bridge), so every recipe is
+    shot-coherent. Returns the full pool (mass rotation) + a capped, arc-spread
+    `recommended_pretick` (the manual smart-suggest default). Deterministic, read-only,
+    never generates."""
+    if not product_id:
+        raise HTTPException(status_code=422, detail="product_id is required")
+    try:
+        return await _recipe.generate_product_recipes(product_id)
     except ValueError as exc:
         _raise_setup_error(exc)
 

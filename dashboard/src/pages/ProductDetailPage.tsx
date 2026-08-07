@@ -37,6 +37,10 @@ const EDIT_FIELDS: { key: string; label: string }[] = [
 	{ key: "category", label: "Category" },
 	{ key: "subcategory", label: "Subcategory" },
 	{ key: "type", label: "Type" },
+];
+
+// System / taxonomy plumbing — set by the pipeline, rarely edited by hand.
+const EDIT_FIELDS_ADVANCED: { key: string; label: string }[] = [
 	{ key: "physics_class", label: "Physics Class" },
 	{ key: "silo", label: "Silo" },
 	{ key: "trigger_id", label: "Trigger ID" },
@@ -400,6 +404,25 @@ export default function ProductDetailPage() {
 										</div>
 									))}
 								</div>
+								<details className="mt-4 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+									<summary className="cursor-pointer text-[10px] font-bold uppercase tracking-widest text-slate-500">
+										Advanced taxonomy — set automatically, rarely edited
+									</summary>
+									<div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+										{EDIT_FIELDS_ADVANCED.map((f) => (
+											<div key={f.key} className="space-y-1.5">
+												<label className={LABEL}>{f.label}</label>
+												<input
+													className={INPUT}
+													value={editForm[f.key] ?? ""}
+													onChange={(e) =>
+														setEditForm((prev) => ({ ...prev, [f.key]: e.target.value }))
+													}
+												/>
+											</div>
+										))}
+									</div>
+								</details>
 								<div className="mt-4 space-y-1.5">
 									<label className={LABEL}>Copywriting Angle</label>
 									<textarea

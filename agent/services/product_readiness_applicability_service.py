@@ -100,8 +100,11 @@ _SELECTION_FIELDS = (
     "product_id",
     "cluster",
     "selected_avatar_code",
+    "selected_avatar_codes_json",
     "selected_scene_template_id",
+    "selected_scene_template_ids_json",
     "selected_camera_preset_code",
+    "selected_camera_preset_codes_json",
     "selected_block_purpose",
     "selected_content_type",
     "status",
@@ -1073,12 +1076,27 @@ async def _resolve_selection(
         selected_avatar_code=(
             _clean_string(selection.get("selected_avatar_code")) or None
         ),
+        selected_avatar_codes=[
+            str(value).strip()
+            for value in (selection.get("selected_avatar_codes") or [])
+            if str(value or "").strip()
+        ],
         selected_scene_template_id=(
             _clean_string(selection.get("selected_scene_template_id")) or None
         ),
+        selected_scene_template_ids=[
+            str(value).strip()
+            for value in (selection.get("selected_scene_template_ids") or [])
+            if str(value or "").strip()
+        ],
         selected_camera_preset_code=(
             _clean_string(selection.get("selected_camera_preset_code")) or None
         ),
+        selected_camera_preset_codes=[
+            str(value).strip()
+            for value in (selection.get("selected_camera_preset_codes") or [])
+            if str(value or "").strip()
+        ],
         selection_sha256=canonical_sha256(projection),
     )
 

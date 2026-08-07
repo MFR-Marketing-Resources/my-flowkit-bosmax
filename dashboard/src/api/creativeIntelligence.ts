@@ -10,6 +10,14 @@ export interface RecommendedAvatar {
 	suitability_notes?: string | null;
 }
 
+export interface AvatarLibraryItem {
+	avatar_code: string;
+	character_name?: string;
+	gender?: string;
+	age_band?: string;
+	recommended?: boolean;
+}
+
 export interface AvatarRecommendation {
 	product_id?: string;
 	product_name?: string | null;
@@ -399,6 +407,13 @@ export interface SavedCreativeSelection {
 	} | null;
 }
 
+export interface DefaultCreativeSelection {
+	selected_avatar_codes: string[];
+	selected_scene_template_ids: string[];
+	selected_camera_preset_codes: string[];
+	source?: string;
+}
+
 export interface CreativeSetup {
 	product_id: string;
 	product_name?: string | null;
@@ -407,6 +422,8 @@ export interface CreativeSetup {
 	cluster_source: string;
 	review_required?: boolean;
 	recommended_avatars: RecommendedAvatar[];
+	avatar_library?: AvatarLibraryItem[];
+	default_selection?: DefaultCreativeSelection | null;
 	recommended_scene_templates: ScenePromptTemplate[];
 	camera_block_recommendations: CameraBlockRecommendation[];
 	camera_library: CameraPresetRecommendation["library"];
@@ -440,6 +457,37 @@ export interface BulkAutoSetupResult {
 export function getCreativeSetupForProduct(productId: string) {
 	return getAPI<CreativeSetup>(
 		`/api/creative-intelligence/creative-setup?product_id=${encodeURIComponent(productId)}`,
+	);
+}
+
+/** One coherent (avatar, scene, camera) recipe — camera is DERIVED from the scene. */
+export interface CreativeRecipe {
+	avatar_code: string;
+	scene_template_id: string;
+	scene_variant: string;
+	variation: number | null;
+	camera_preset_code: string;
+	camera_alts: string[];
+	block_purpose: string;
+	content_type: string;
+	rationale: string;
+}
+
+export interface ProductRecipesResponse {
+	product_id: string;
+	product_name?: string | null;
+	cluster: string | null;
+	cluster_source?: string | null;
+	review_required: boolean;
+	recipes: CreativeRecipe[];
+	recommended_pretick: CreativeRecipe[];
+	counts: { avatars: number; scenes: number; recipes: number; pretick: number };
+}
+
+/** Coherent recipe pool for a product (camera follows scene). Read-only, no credits. */
+export function getProductRecipes(productId: string) {
+	return getAPI<ProductRecipesResponse>(
+		`/api/creative-intelligence/creative-recipes?product_id=${encodeURIComponent(productId)}`,
 	);
 }
 

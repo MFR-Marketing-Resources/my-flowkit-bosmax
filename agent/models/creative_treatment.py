@@ -99,6 +99,11 @@ class CreateTreatmentRequest(BaseModel):
     shot_grammar: list[TreatmentShot] = Field(min_length=1)
     compatibility_profile: TreatmentCompatibilityProfile
     asset_bindings: list[AssetBindingRequest] = Field(default_factory=list)
+    # Optional per-treatment tuple overrides. The factory supplies these from the
+    # APPROVED creative-selection recipe grid; omitted values retain the primary
+    # single-select behavior for existing API callers and stored treatments.
+    avatar_code: str | None = Field(default=None, min_length=1)
+    scene_template_id: str | None = Field(default=None, min_length=1)
     variation_group_id: str | None = None
     variation_ordinal: int | None = Field(default=None, ge=1, le=5)
     supersedes_treatment_id: str | None = None

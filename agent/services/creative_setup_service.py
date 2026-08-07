@@ -20,6 +20,7 @@ preview.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from agent.services import avatar_registry
@@ -29,6 +30,90 @@ from agent.services import creative_camera_preset_service as _camera
 
 PROVENANCE_SOURCE = "CREATIVE_SETUP_v1"
 _VALID_STATUS = ("DRAFT", "APPROVED", "REJECTED")
+
+_VARIANT_SUFFIX = re.compile(r"_\d+$")
+_MINOR_AGE_BANDS = {"child (6-12)", "teen (13-17)"}
+
+
+def _full_avatar_roster(recommended_codes: set[str]) -> list[dict[str, Any]]:
+    """The full pickable avatar roster — one entry per distinct persona (not every
+    pose-variant), adults only, with the cluster's recommended picks flagged and
+    sorted first. This is what lets the operator choose from the WHOLE registry
+    instead of only the 3-4 avatars the cluster crosswalk recommends.
+    """
+    recommended_bases = {_VARIANT_SUFFIX.sub("", str(c)) for c in recommended_codes}
+    seen: dict[str, dict[str, Any]] = {}
+    for prof in avatar_registry.list_pool():
+        code = str(prof.get("avatar_code") or "").strip()
+        if not code:
+            continue
+        base = _VARIANT_SUFFIX.sub("", code)
+        if base in seen:
+            continue
+        if str(prof.get("age_band") or "").strip().casefold() in _MINOR_AGE_BANDS:
+            continue
+        upper = code.upper()
+        seen[base] = {
+            "avatar_code": code,
+            "character_name": prof.get("character_name") or "",
+            "gender": "F" if "_F_" in upper else ("M" if "_M_" in upper else ""),
+            "age_band": prof.get("age_band") or "",
+            "recommended": code in recommended_codes or base in recommended_bases,
+        }
+    roster = list(seen.values())
+    roster.sort(key=lambda x: (not x["recommended"], x["avatar_code"]))
+    return roster
+
+
+_FEMALE_TOKENS = re.compile(
+    r"\b(tudung|hijab|muslimah|wanita|perempuan|women|woman|female|ladies|lady|girl|"
+    r"kurung|jubah|abaya|telekung|kebaya|gaun|dress|blouse|skirt|maxi|labuh|lingerie|"
+    r"bra|kosmetik|lipstik|lipstick|makeup|mekap|serkup)\b",
+    re.IGNORECASE,
+)
+_MALE_TOKENS = re.compile(
+    r"\b(lelaki|men|man|male|boy|songkok|kopiah|jersi\s+lelaki|seluar\s+lelaki|"
+    r"baju\s+melayu|kemeja\s+lelaki|misai|janggut)\b",
+    re.IGNORECASE,
+)
+
+
+def _code_gender(code: str) -> str:
+    up = str(code or "").upper()
+    return "F" if "_F_" in up else ("M" if "_M_" in up else "")
+
+
+def _resolve_product_target_gender(
+    product: dict[str, Any], snapshot: dict[str, Any] | None
+) -> str:
+    """Best-effort target gender ('F' / 'M' / 'ANY') from product identity + approved
+    intelligence, so the smart default only ticks gender-appropriate avatars — a women's
+    tudung must never get a male presenter. Fail-OPEN to 'ANY' (keep all recommended)
+    when the signal is unclear or unisex, so we never wrongly narrow a general product.
+    """
+    parts = [
+        str(product.get("product_display_name") or ""),
+        str(product.get("raw_product_title") or ""),
+        str(product.get("product_short_name") or ""),
+        str(product.get("type") or ""),
+        str(product.get("category") or ""),
+    ]
+    if snapshot:
+        parts.append(str(snapshot.get("target_customer_text") or ""))
+        try:
+            persona = json.loads(snapshot.get("buyer_persona_snapshot_json") or "{}")
+            if isinstance(persona, dict):
+                parts.append(str(persona.get("audience") or ""))
+        except Exception:
+            pass
+    text = " ".join(p for p in parts if p)
+    female = bool(_FEMALE_TOKENS.search(text))
+    male = bool(_MALE_TOKENS.search(text))
+    if female and not male:
+        return "F"
+    if male and not female:
+        return "M"
+    return "ANY"
 
 
 def _avatar_index() -> dict[str, dict[str, Any]]:
@@ -106,7 +191,13 @@ async def resolve_creative_setup(product_id: str) -> dict[str, Any]:
         raise ValueError("PRODUCT_NOT_FOUND")
     category = product.get("category")
 
-    avatars = await _avatar.recommend_avatars_for_category(category)
+    # SSOT: resolve the cluster PRODUCT-FIRST — the product's VERIFIED strategy taxonomy
+    # (projected via the crosswalk) wins, falling back to the legacy category derivation.
+    # A product whose commerce `category` is empty but whose strategy taxonomy is VERIFIED
+    # (the 241 classified-but-uncategorised products) now resolves instead of being wrongly
+    # flagged REVIEW_REQUIRED by a category-only lookup.
+    resolved = await _avatar.resolve_product_cluster(product_id, category)
+    avatars = await _avatar.recommend_avatars_for_category(category, _resolved=resolved)
     saved = _hydrate_selection(await crud.get_creative_product_selection(product_id))
 
     # Fail-closed: an un-categorised / unresolved product is REVIEW_REQUIRED. No
@@ -122,6 +213,8 @@ async def resolve_creative_setup(product_id: str) -> dict[str, Any]:
             "cluster_source": avatars["cluster_source"],
             "review_required": True,
             "recommended_avatars": [],
+            "avatar_library": [],
+            "default_selection": None,
             "recommended_scene_templates": [],
             "camera_block_recommendations": [],
             "camera_library": {
@@ -131,8 +224,51 @@ async def resolve_creative_setup(product_id: str) -> dict[str, Any]:
             "saved_selection": saved,
         }
 
-    scenes = await _scene.recommend_scene_prompts_for_category(category)
-    cameras = await _camera.recommend_camera_presets_for_category(category)
+    # Scene + camera lookups use the SAME product-first resolved cluster, so an empty
+    # `category` with a VERIFIED taxonomy cluster still gets its cluster's scenes/cameras.
+    scenes = await _scene.recommend_scene_prompts_for_category(category, _resolved=resolved)
+    cameras = await _camera.recommend_camera_presets_for_category(category, _resolved=resolved)
+    # GENDER-APPROPRIATE smart default: read the product identity + approved
+    # intelligence to keep ONLY avatars of the product's target gender, so a women's
+    # tudung never ticks a male presenter (the Fashion crosswalk mixes genders). Scenes
+    # and camera presets stay cluster-scoped (already product-type-appropriate).
+    snapshot = await crud.get_latest_approved_product_intelligence_snapshot(product_id)
+    target_gender = _resolve_product_target_gender(product, snapshot)
+    recommended_codes = [
+        a["avatar_code"] for a in avatars["avatars"] if a.get("avatar_code")
+    ]
+    if target_gender in ("F", "M"):
+        gender_avatars = [c for c in recommended_codes if _code_gender(c) == target_gender]
+        if not gender_avatars:
+            # cluster crosswalk had no avatar of the product's gender — pull from the
+            # full roster so a gendered product still gets gender-correct presenters.
+            gender_avatars = [
+                a["avatar_code"]
+                for a in _full_avatar_roster(set())
+                if a["gender"] == target_gender
+            ][:4]
+    else:
+        gender_avatars = recommended_codes
+
+    # avatar_library flags the gender-appropriate recommended set (★) but still lists
+    # every avatar so the operator can manually override.
+    avatar_library = _full_avatar_roster(set(gender_avatars))
+    # Live-derived, recomputed every read → auto-updates when avatars / scene templates
+    # / camera presets change. A saved selection (if any) OVERRIDES this. Diverse-by-
+    # design so mass production can rotate combinations without repeating.
+    default_selection = {
+        "selected_avatar_codes": gender_avatars,
+        "selected_scene_template_ids": [
+            t["template_id"] for t in scenes["templates"] if t.get("template_id")
+        ],
+        "selected_camera_preset_codes": [
+            p["preset_code"]
+            for p in cameras["library"]["named_presets"]
+            if p.get("preset_code")
+        ],
+        "source": "AUTO_DEFAULT_FROM_CLUSTER_MAPPING",
+        "target_gender": target_gender,
+    }
 
     return {
         "product_id": product_id,
@@ -142,6 +278,8 @@ async def resolve_creative_setup(product_id: str) -> dict[str, Any]:
         "cluster_source": avatars["cluster_source"],
         "review_required": False,
         "recommended_avatars": avatars["avatars"],
+        "avatar_library": avatar_library,
+        "default_selection": default_selection,
         "recommended_scene_templates": scenes["templates"],
         "camera_block_recommendations": cameras["block_recommendations"],
         "camera_library": cameras["library"],
@@ -179,8 +317,11 @@ async def save_creative_selection(
     Multi-select: pass ``selected_*_codes`` LISTS (the singular ``selected_*_code``
     kwargs stay for backward compatibility and are treated as a one-item list).
     The first of each list becomes the backward-compatible PRIMARY that the
-    generation pipeline reads. Validates every id against the live pool/library.
-    Only writes the ``creative_product_selection`` table — never generation.
+    generation pipeline reads. Validates avatar + scene ids against the live
+    pool/library. The CAMERA is DERIVED from the chosen scenes (camera-follows-scene
+    bridge) — any caller-supplied camera code is ignored, so a saved plan can never
+    carry a camera that contradicts its scene. Only writes the
+    ``creative_product_selection`` table — never generation.
     """
     from agent.db import crud
 
@@ -190,18 +331,30 @@ async def save_creative_selection(
 
     avatar_codes = _dedup(selected_avatar_codes, selected_avatar_code)
     scene_ids = _dedup(selected_scene_template_ids, selected_scene_template_id)
-    camera_codes = _dedup(selected_camera_preset_codes, selected_camera_preset_code)
 
     avatar_index, scene_index, camera_index = _avatar_index(), _scene_index(), _camera_index()
     if any(code not in avatar_index for code in avatar_codes):
         raise ValueError("INVALID_AVATAR_CODE")
     if any(sid not in scene_index for sid in scene_ids):
         raise ValueError("INVALID_SCENE_TEMPLATE_ID")
-    if any(code not in camera_index for code in camera_codes):
-        raise ValueError("INVALID_CAMERA_PRESET_CODE")
+    # Camera FOLLOWS the scene — it is NEVER an independent axis. Derive the coherent
+    # camera for each chosen scene via the scene->variation->camera bridge and IGNORE
+    # any caller-supplied camera code, so a saved plan can never carry a camera that
+    # contradicts its scene (enforced server-side; the UI already shows it read-only).
+    from agent.services import creative_recipe_service as _recipe
 
-    # Primary = first of each list (feeds the existing single-value preview + the
-    # generation pipeline, which is unchanged).
+    camera_codes: list[str] = []
+    for sid in scene_ids:
+        code = _recipe.camera_for_variant((scene_index.get(sid) or {}).get("variant"))
+        if code and code in camera_index and code not in camera_codes:
+            camera_codes.append(code)
+
+    # Primary = first of each list (kept for the single-value preview + as the
+    # backward-compatible column). NOTE: as of the linkage audit, the saved selection
+    # is consumed by the P6 plan builder for AVATARS only (via the multi-select list,
+    # intersected against the plan pool) — the manual T2V/F2V/HYBRID/I2V, IMG, and
+    # Poster lanes do NOT yet read it, and scene/camera never reach P6. Wiring those is
+    # the pending program; do not claim this "feeds the generation pipeline" wholesale.
     primary_avatar = avatar_codes[0] if avatar_codes else None
     primary_scene = scene_ids[0] if scene_ids else None
     primary_camera = camera_codes[0] if camera_codes else None
@@ -256,15 +409,17 @@ async def bulk_auto_setup(
     approve: bool = True,
     dry_run: bool = True,
     limit: int | None = None,
+    refresh_auto: bool = False,
 ) -> dict[str, Any]:
-    """Auto-fill each eligible product's creative selection from its TOP-scored
-    recommendation (avatar #1 + scene #1 + camera #1) and, when ``approve``,
-    move it straight to APPROVED. Idempotent + fail-closed:
+    """Auto-fill each eligible product's creative selection from its COHERENT recipe
+    pretick (avatar × scene, camera follows scene — arc-spread across intro/body/detail/
+    benefit) and, when ``approve``, move it straight to APPROVED. Idempotent + fail-closed:
       * products already APPROVED are left untouched;
       * review-required (un-categorised) or no-recommendation products are skipped.
     Planning only — writes ``creative_product_selection`` rows, never generation.
     """
     from agent.db import crud
+    from agent.services import creative_recipe_service as _recipe
 
     if product_ids is None:
         rows = await crud.list_products(include_archived=False)
@@ -273,39 +428,51 @@ async def bulk_auto_setup(
         product_ids = product_ids[:limit]
 
     done = skipped = failed = 0
-    reasons: dict[str, int] = {"already_approved": 0, "review_required": 0, "no_avatar": 0}
+    reasons: dict[str, int] = {
+        "already_approved": 0, "review_required": 0, "no_avatar": 0, "refreshed_auto": 0,
+    }
     errors: list[dict[str, str]] = []
     for product_id in product_ids:
         try:
             existing = await get_creative_selection(product_id)
             if existing and existing.get("status") == "APPROVED":
-                reasons["already_approved"] += 1
-                skipped += 1
-                continue
+                # refresh_auto upgrades ONLY machine-authored plans to the new coherent
+                # recipe pretick — the "Auto-setup" top-1 plans AND the legacy fill-all
+                # ("max diverse") plans. Hand-curated selections are never touched.
+                notes = str(existing.get("notes") or "")
+                is_machine = notes.startswith("Auto-setup") or "max diverse" in notes
+                if not (refresh_auto and is_machine):
+                    reasons["already_approved"] += 1
+                    skipped += 1
+                    continue
+                reasons["refreshed_auto"] += 1
             setup = await resolve_creative_setup(product_id)
             if setup.get("review_required"):
                 reasons["review_required"] += 1
                 skipped += 1
                 continue
-            avatars = setup.get("recommended_avatars") or []
-            scenes = setup.get("recommended_scene_templates") or []
-            cameras = (setup.get("camera_library") or {}).get("named_presets") or []
-            if not avatars:
+            # Coherent recipe pretick (avatar × scene, camera follows scene) — replaces
+            # the old top-1 pick, so every backfilled product gets an arc-spread plan
+            # (intro → body → detail → benefit) rather than one shot. Deterministic.
+            # honor_saved=False: regenerate the fresh arc-spread, never re-derive the
+            # stale top-1 saved plan we are replacing.
+            pretick = _recipe.recipes_from_setup(setup, honor_saved=False)["pretick"]
+            if not pretick:
                 reasons["no_avatar"] += 1
                 skipped += 1
                 continue
-            top_avatar = avatars[0].get("avatar_code")
-            top_scene = scenes[0].get("template_id") if scenes else None
-            top_camera = cameras[0].get("preset_code") if cameras else None
+            a = _dedup([r.avatar_code for r in pretick], None)
+            s = _dedup([r.scene_template_id for r in pretick], None)
+            c = _dedup([r.camera_preset_code for r in pretick], None)
             if dry_run:
                 done += 1
                 continue
             await save_creative_selection(
                 product_id,
-                selected_avatar_codes=[top_avatar] if top_avatar else [],
-                selected_scene_template_ids=[top_scene] if top_scene else [],
-                selected_camera_preset_codes=[top_camera] if top_camera else [],
-                notes="Auto-setup: top-scored recommendation",
+                selected_avatar_codes=a,
+                selected_scene_template_ids=s,
+                selected_camera_preset_codes=c,
+                notes="Auto-setup: coherent recipe pretick (camera follows scene)",
             )
             if approve:
                 await review_creative_selection(product_id, "APPROVE", "Bulk auto-setup")

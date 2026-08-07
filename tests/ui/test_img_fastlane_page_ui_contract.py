@@ -213,6 +213,17 @@ def test_fastlane_section_has_no_backdrop_blur_stacking_trap():
     assert "shadow-black/10 backdrop-blur-md" not in page
 
 
+def test_fastlane_v4_shell_is_opt_in_and_keeps_classic_rollback():
+    page = _read("dashboard/src/pages/ImgFastlanePage.tsx")
+    assert "WorkflowStep" in page
+    assert "OperatorCockpit" in page
+    assert 'data-variant="v4"' in page
+    assert 'const useV4 = searchParams.get("classic") !== "1";' in page
+    assert 'searchParams.get("classic") !== "1"' in page
+    assert "Switch to classic view" in page
+    assert "Images use count" in page
+
+
 def test_avatar_registry_back_link_is_context_aware():
     """Avatar Registry "Back" must return to the referrer (?from=...) rather than
     a hardcoded page. Regression guard: opening the registry from IMG Fastlane and

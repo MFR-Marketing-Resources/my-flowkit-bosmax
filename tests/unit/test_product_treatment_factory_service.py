@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 import pytest_asyncio
 
@@ -15,6 +17,8 @@ from agent.models.product_treatment_factory import (
     PrepareFactoryPlanRequest,
 )
 from agent.services import product_treatment_factory_service as service
+from agent.services import avatar_registry
+from agent.services import creative_scene_prompt_service
 from agent.services.product_treatment_template_service import resolve_treatment_template
 
 
@@ -33,12 +37,16 @@ async def _clean_factory_tables():
     await db.commit()
 
 
-def _context(product_id: str) -> FactoryProductContext:
+def _context(
+    product_id: str,
+    *,
+    logical_mode: str = "HYBRID",
+) -> FactoryProductContext:
     return FactoryProductContext(
         product_id=product_id,
         selected_action_index=0,
         format="PGC",
-        logical_mode="HYBRID",
+        logical_mode=logical_mode,
         generation_mode="SINGLE",
         model_key="veo_3_1_fast",
         duration_seconds=8,
@@ -51,8 +59,9 @@ def _scan(
     approved_copy: bool = False,
     approved_treatment: bool = False,
     error_code: str | None = None,
+    logical_mode: str = "HYBRID",
 ) -> service.ProductScan:
-    context = _context(product_id)
+    context = _context(product_id, logical_mode=logical_mode)
     if error_code:
         return service.ProductScan(
             context=context,
@@ -68,13 +77,16 @@ def _scan(
         product_id=product_id,
         allowed_action_index=0,
         creative_format="PGC",
-        logical_mode="HYBRID",
+        logical_mode=logical_mode,
         generation_mode="SINGLE",
         model_key="veo_3_1_fast",
         duration_seconds=8,
     )
     copy_ids = ["copy-approved"] if approved_copy else []
     treatment_ids = ["treatment-approved"] if approved_treatment else []
+    required_roles = list(
+        profile.required_asset_roles_by_mode.get(logical_mode, [])
+    )
     resolved = ResolvedProductReadinessInput.model_validate(
         {
             "context": readiness_context.model_dump(mode="json"),
@@ -98,9 +110,10 @@ def _scan(
                 "selection_sha256": "c" * 64,
             },
             "assets": {
-                "required_roles": ["PRODUCT_REFERENCE"],
+                "required_roles": required_roles,
                 "eligible_asset_ids_by_role": {
-                    "PRODUCT_REFERENCE": ["asset-approved"],
+                    role: [f"asset-{role.lower()}" for role in required_roles]
+                    for role in required_roles
                 },
                 "missing_roles": [],
                 "authority_sha256": "d" * 64,
@@ -140,7 +153,9 @@ def _scan(
             {
                 "layer": name,
                 "state": (
-                    "READY"
+                    "NOT_APPLICABLE"
+                    if name == "visual_assets" and not required_roles
+                    else "READY"
                     if name
                     not in {
                         "copy_set" if not approved_copy else "",
@@ -172,6 +187,128 @@ def _scan(
         treatments=[],
         error_code=None,
     )
+
+
+def _with_visual_asset_blocker(scan: service.ProductScan) -> service.ProductScan:
+    assert scan.resolved is not None
+    assert scan.readiness is not None
+    resolved = scan.resolved.model_copy(
+        update={
+            "assets": scan.resolved.assets.model_copy(
+                update={
+                    "eligible_asset_ids_by_role": {},
+                    "missing_roles": list(scan.resolved.assets.required_roles),
+                }
+            )
+        }
+    )
+    readiness = scan.readiness.model_copy(
+        update={
+            "readiness_layers": [
+                layer.model_copy(
+                    update={"state": "BLOCKED", "blocker_codes": ["ASSET_REQUIRED"]}
+                )
+                if layer.layer == "visual_assets"
+                else layer
+                for layer in scan.readiness.readiness_layers
+            ]
+        }
+    )
+    return replace(scan, resolved=resolved, readiness=readiness)
+
+
+@pytest.mark.parametrize(
+    ("logical_mode", "expected_roles"),
+    [
+        ("F2V", ["COMPOSITE_FRAME_REFERENCE"]),
+        ("I2V", ["PRODUCT_REFERENCE", "SCENE_CONTEXT_REFERENCE"]),
+    ],
+)
+def test_reference_modes_still_require_canonical_visual_roles(
+    logical_mode,
+    expected_roles,
+) -> None:
+    scan = _scan(
+        f"{logical_mode.lower()}-product",
+        approved_copy=True,
+        logical_mode=logical_mode,
+    )
+
+    assert scan.resolved is not None
+    assert scan.resolved.assets.required_roles == expected_roles
+    assert service._candidate_ready(scan) is True
+    assert service._candidate_ready(_with_visual_asset_blocker(scan)) is False
+
+
+def test_t2v_candidate_guard_accepts_not_applicable_visual_layer_and_zero_roles() -> None:
+    scan = _scan("t2v-product", approved_copy=True, logical_mode="T2V")
+
+    assert scan.resolved is not None
+    assert scan.readiness is not None
+    assert scan.resolved.assets.required_roles == []
+    visual_layer = next(
+        layer for layer in scan.readiness.readiness_layers
+        if layer.layer == "visual_assets"
+    )
+    assert visual_layer.state == "NOT_APPLICABLE"
+    assert service._candidate_ready(scan) is True
+
+
+def test_selection_recipe_grid_is_avatar_scene_coherent_and_scene_derived():
+    avatars = [
+        row["avatar_code"] for row in avatar_registry.list_pool()[:2]
+    ]
+    scenes = creative_scene_prompt_service.library_templates()[:2]
+    recipes = service._selection_recipe_grid(
+        {
+            "selected_avatar_codes": avatars,
+            "selected_scene_template_ids": [
+                scene["template_id"] for scene in scenes
+            ],
+        }
+    )
+
+    assert len(recipes) == 4
+    assert [recipe.avatar_code for recipe in recipes[:2]] == [avatars[0]] * 2
+    assert [recipe.scene_template_id for recipe in recipes[:2]] == [
+        scenes[0]["template_id"],
+        scenes[1]["template_id"],
+    ]
+    assert all(recipe.camera_preset_code for recipe in recipes)
+
+
+def test_treatment_request_carries_the_selected_recipe_tuple():
+    scan = _scan("product-a", approved_copy=True)
+    snapshot = service._task_snapshot(scan)
+    snapshot["treatment_template"]["format"] = "CINEMATIC"
+    snapshot["resolved_authority"]["selection"] = {
+        "selection_id": "selection-approved",
+        "status": "APPROVED",
+        "selected_avatar_codes": [
+            row["avatar_code"] for row in avatar_registry.list_pool()[:2]
+        ],
+        "selected_scene_template_ids": [
+            row["template_id"]
+            for row in creative_scene_prompt_service.library_templates()[:2]
+        ],
+    }
+    task = {
+        "task_id": "recipe-task",
+        "product_id": "product-a",
+        "snapshot": snapshot,
+    }
+    recipe = service._selection_recipe_grid(
+        snapshot["resolved_authority"]["selection"]
+    )[1]
+
+    request = service._treatment_request_from_snapshot(
+        task,
+        created_by="factory-test",
+        recipe=recipe,
+    )
+
+    assert request.avatar_code == recipe.avatar_code
+    assert request.scene_template_id == recipe.scene_template_id
 
 def test_target_capacity_uses_schema_derived_variation_group_cap():
     reuse_cap = service.canonical_same_dialogue_reuse_cap()

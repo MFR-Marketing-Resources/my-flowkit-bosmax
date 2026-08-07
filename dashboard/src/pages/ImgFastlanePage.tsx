@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { archiveCreativeAsset, fetchCreativeAssets } from "../api/creativeAssets";
+import { getCreativeSetupForProduct } from "../api/creativeIntelligence";
 import {
 	compileImgFastlanePromptPreview,
 	type ImageArtifact,
@@ -28,6 +29,13 @@ import {
 } from "../api/productVisualGrounding";
 import { fetchProductCatalog } from "../api/products";
 import ApproveAssetModal from "../components/creative-library/ApproveAssetModal";
+import {
+	OperatorCockpit,
+	QueueRow,
+	ResolvedChip,
+	WorkflowStep,
+} from "../components/workflow";
+import type { WorkflowStepStatus } from "../components/workflow";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import VisualAssetPicker from "../components/workspace/VisualAssetPicker";
 import type { CreativeAsset, Product } from "../types";
@@ -218,6 +226,8 @@ export default function ImgFastlanePage() {
 			scene_name: string;
 			image_generated: boolean;
 			generated_asset_id?: string | null;
+			primary_cluster?: string | null;
+			compatible_clusters?: string[];
 		}[]
 	>([]);
 	const [sceneContextCode, setSceneContextCode] = useState("");
@@ -307,6 +317,33 @@ export default function ImgFastlanePage() {
 		const scene = sceneRegistry.find((s) => s.scene_code === code);
 		setSceneAssetId(scene?.generated_asset_id ?? "");
 	};
+
+	// Knowledge-driven scene pre-fill: on product-select, seed a cluster-appropriate
+	// scene context (background) from the creative setup so the operator starts from
+	// the right scene instead of empty. No cluster match leaves the manual pick.
+	useEffect(() => {
+		const pid = selectedProduct?.id;
+		if (!pid) return;
+		let active = true;
+		void getCreativeSetupForProduct(pid)
+			.then((setup) => {
+				if (!active) return;
+				const cluster = String(setup.cluster || "").trim().toLowerCase();
+				if (!cluster) return;
+				const match = sceneRegistry.find((s) => {
+					const pc = String(s.primary_cluster || "").trim().toLowerCase();
+					const compat = (s.compatible_clusters || []).map((c) =>
+						String(c).trim().toLowerCase(),
+					);
+					return pc === cluster || compat.includes(cluster);
+				});
+				if (match?.scene_code) handlePickSceneContext(match.scene_code);
+			})
+			.catch(() => {});
+		return () => {
+			active = false;
+		};
+	}, [selectedProduct?.id]);
 
 	useEffect(() => {
 		void fetchImgAssetLanes()
@@ -731,6 +768,502 @@ export default function ImgFastlanePage() {
 			setSaving(false);
 		}
 	};
+
+	// V4 is the default for this standalone IMG lane. ?classic=1 is the
+	// explicit rollback path while the classic branch remains available.
+	const useV4 = searchParams.get("classic") !== "1";
+
+	if (useV4) {
+		const productStatus: WorkflowStepStatus = selectedProduct
+			? productResolvable
+				? "done"
+				: "active"
+			: "active";
+		const referenceCount = [approvedCharacter, approvedScene, approvedStyle].filter(
+			(Boolean),
+		).length;
+		const referenceStatus: WorkflowStepStatus = !selectedProduct
+			? "upcoming"
+			: characterMissing
+				? "active"
+				: "done";
+		const promptStatus: WorkflowStepStatus = !selectedProduct
+			? "upcoming"
+			: prompt.trim()
+				? "done"
+				: "active";
+		const setupStatus: WorkflowStepStatus = prompt.trim() ? "active" : "upcoming";
+		const generateStatus: WorkflowStepStatus = genJob?.status === "DONE"
+			? "done"
+			: !generationBlocked
+				? "active"
+				: "upcoming";
+		const outputStatus: WorkflowStepStatus = hasRealOutput ? "done" : "upcoming";
+		const reviewStatus: WorkflowStepStatus = savedAsset
+			? "done"
+			: hasRealOutput
+				? "active"
+				: "upcoming";
+		const saveStatus: WorkflowStepStatus = savedAsset
+			? "done"
+			: canSave
+				? "active"
+				: "upcoming";
+		const approvedAsset =
+			savedAsset?.review_status === "APPROVED" ? savedAsset : null;
+
+		return (
+			<>
+				<div
+					data-testid="img-fastlane-workflow"
+					data-variant="v4"
+					className="flex min-h-full min-w-0 flex-col bg-slate-950 px-4 py-4 md:px-8 md:py-6"
+				>
+					<div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+						<div>
+							<div className="flex items-center gap-2">
+								<h2 className="text-xl font-bold tracking-tight text-white md:text-2xl">
+									IMG Fastlane
+								</h2>
+								<span className="rounded-full border border-v4-accent/40 bg-v4-accent/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.16em] text-v4-accent-ink">
+									V4
+								</span>
+							</div>
+							<p className="text-sm text-slate-400">
+								Guided image setup for clean F2V start-frame assets.
+							</p>
+						</div>
+						<a
+							href={`${location.pathname}?classic=1`}
+							className="text-[11px] text-slate-500 underline decoration-dotted hover:text-slate-300"
+						>
+							Switch to classic view
+						</a>
+					</div>
+
+					{error ? (
+						<div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-200">
+							{error}
+						</div>
+					) : null}
+
+					<div className="flex min-h-0 flex-1 flex-col gap-5 xl:flex-row">
+						<main className="min-w-0 flex-1 space-y-3 overflow-y-auto pb-6 xl:pr-1">
+							<WorkflowStep
+								index={1}
+								title="Product"
+								status={productStatus}
+								summary={
+									selectedProduct
+										? `${selectedProduct.product_display_name}${productResolvable ? "" : " · visual reference missing"}`
+										: undefined
+								}
+								helper="Choose the database product that anchors the frame and its visual truth."
+							>
+								<div className="space-y-3">
+									<SearchableProductSelect
+										products={products}
+										selectedProduct={selectedProduct}
+										onSelect={setSelectedProduct}
+									/>
+									{productMissing ? (
+										<p className="text-[11px] text-amber-300/80">
+											A product is required before the image gate can open.
+										</p>
+									) : null}
+									{selectedProduct && !productResolvable ? (
+										<div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">
+											<strong>No Product Visual Reference.</strong> The selected row has
+											no media_id, image_url, or local_image_path.
+										</div>
+									) : null}
+								</div>
+							</WorkflowStep>
+
+							<WorkflowStep
+								index={2}
+								title="References"
+								status={referenceStatus}
+								summary={`${referenceCount} approved reference${referenceCount === 1 ? "" : "s"}`}
+								helper="Bind approved avatar and optional scene context; unresolved references stay visible."
+							>
+								<div className="space-y-4">
+									<ResolvedChip
+										label="Reference binding"
+										value={`${referenceCount} approved · avatar ${approvedCharacter ? "ready" : "required"}`}
+										icon="🧷"
+										auto={referenceCount === 0}
+									/>
+									<ReferenceField
+										label="Select Existing Reference — Avatar"
+										noun="avatar"
+										assets={characterAssets}
+										value={characterAssetId}
+										onChange={setCharacterAssetId}
+										emptyHint="No avatars yet — open the Avatar Registry to add one"
+										requiredMissing={characterMissing}
+										onApprove={handleApproveAsset}
+										approvingId={approveTarget?.asset_id ?? null}
+									/>
+									<div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+										<label className="block space-y-1 text-[11px] text-slate-300">
+											<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
+												Scene Context Library · {sceneRegistry.length} scenes
+											</span>
+											<select
+												value={sceneContextCode}
+												onChange={(e) => handlePickSceneContext(e.target.value)}
+												className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-200"
+											>
+												<option value="">None (optional)</option>
+												{sceneRegistry.map((scene) => (
+													<option key={scene.scene_code} value={scene.scene_code}>
+														{scene.scene_name}
+														{scene.image_generated ? " · image ready" : " · text"}
+													</option>
+												))}
+											</select>
+										</label>
+										<ReferenceField
+											label="Generated scene image (optional)"
+											noun="scene reference"
+											assets={sceneAssets}
+											value={sceneAssetId}
+											onChange={setSceneAssetId}
+											emptyHint="No generated scene images yet — optional"
+											requiredMissing={sceneMissing}
+											onApprove={handleApproveAsset}
+											approvingId={approveTarget?.asset_id ?? null}
+										/>
+										<p className="text-[10px] text-slate-500">
+											Scene context is prompt input; it never silently blocks this
+											universal avatar + product frame flow.
+										</p>
+									</div>
+								</div>
+							</WorkflowStep>
+
+							<WorkflowStep
+								index={3}
+								title="Prompt"
+								status={promptStatus}
+								summary={compiledPreview?.preset_id ?? (prompt.trim() ? "Compiled brief" : undefined)}
+								helper="The governed Fastlane compiler produces the portable engine brief."
+							>
+								<div className="space-y-3">
+									<div className="grid gap-3 md:grid-cols-2">
+										<label className="space-y-1 text-[11px] text-slate-300">
+											<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
+												Creative direction
+											</span>
+											<select
+												value={creativeMode}
+												onChange={(e) => setCreativeMode(e.target.value)}
+												className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-200"
+											>
+												<option value="">No governed mode</option>
+												<option value="PGC_CAMPAIGN">PGC Campaign</option>
+												<option value="UGC_AUTHENTIC">UGC Authentic</option>
+												<option value="MODEL_AMBASSADOR">Model Ambassador</option>
+												<option value="CLEAN_STUDIO_CATALOGUE">Clean Studio / Catalogue</option>
+												<option value="LIFESTYLE_EDITORIAL">Lifestyle Editorial</option>
+											</select>
+										</label>
+										<label className="space-y-1 text-[11px] text-slate-300">
+											<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
+												Override notes
+											</span>
+											<textarea
+												value={advancedOverrideNotes}
+												onChange={(e) => setAdvancedOverrideNotes(e.target.value)}
+												className="h-20 w-full rounded-lg border border-slate-800 bg-slate-900 p-2 text-xs text-slate-200"
+												placeholder="Optional compiler notes"
+											/>
+										</label>
+									</div>
+									<div className="flex items-center justify-between gap-2">
+										<span className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
+											{compiling ? "Compiling preview…" : "Prompt preview auto-build is active."}
+										</span>
+										<button
+											type="button"
+											onClick={handleCopyPrompt}
+											disabled={!prompt.trim()}
+											className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1 text-[11px] font-semibold text-slate-200 disabled:opacity-40"
+										>
+											{promptCopied ? "Copied ✓" : "Copy"}
+										</button>
+									</div>
+									<textarea
+										value={prompt}
+										readOnly
+										className="h-44 w-full rounded-xl border border-slate-800 bg-slate-950 p-3 font-mono text-xs leading-relaxed text-slate-200"
+										placeholder="Select a product and references to compile the portable prompt."
+									/>
+									{compiledPreview?.prompt_text ? (
+										<details className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-[11px] text-slate-400">
+											<summary className="cursor-pointer font-semibold uppercase tracking-[0.14em] text-slate-500">
+												Structured breakdown
+											</summary>
+											<pre className="mt-2 whitespace-pre-wrap font-mono text-[11px] leading-relaxed">
+												{compiledPreview.prompt_text}
+											</pre>
+										</details>
+									) : null}
+									{compiledPreview?.reference_map?.length ? (
+										<div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-[11px] text-slate-400">
+											<div className="mb-1 font-semibold uppercase tracking-[0.14em] text-slate-500">
+												Reference map
+											</div>
+											{compiledPreview.reference_map.map((line) => (
+												<div key={line}>{line}</div>
+											))}
+										</div>
+									) : null}
+									{hardBlockers.length ? (
+										<div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] text-amber-100">
+											<strong>Fastlane blockers</strong>
+											{hardBlockers.map((blocker) => (
+												<div key={blocker}>{blocker}</div>
+											))}
+										</div>
+									) : null}
+								</div>
+							</WorkflowStep>
+
+							<WorkflowStep
+								index={4}
+								title="Image setup"
+								status={setupStatus}
+								summary={`${aspect} · ${quantity} image${quantity === 1 ? "" : "s"} · ${imageModel}`}
+								helper="Images use count; the selected aspect and model stay in the prepared payload."
+							>
+								<div className="space-y-3">
+									<div className="grid gap-3 sm:grid-cols-3">
+										<label className="space-y-1 text-[11px] text-slate-300">
+											<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">Aspect</span>
+											<select
+												value={aspect}
+												onChange={(e) => setAspect(e.target.value)}
+												className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-200"
+											>
+												{imgGen.aspect_options.map((option) => (
+													<option key={option} value={option}>{option}</option>
+												))}
+											</select>
+										</label>
+										<label className="space-y-1 text-[11px] text-slate-300">
+											<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">Count</span>
+											<input
+												type="number"
+												min="1"
+												max="4"
+												value={quantity}
+												onChange={(e) => setQuantity(Math.max(1, Math.min(4, parseInt(e.target.value) || 1)))}
+												className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-200"
+											/>
+										</label>
+										<label className="space-y-1 text-[11px] text-slate-300">
+											<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">Image model</span>
+											<select
+												value={imageModel}
+												onChange={(e) => setImageModel(e.target.value)}
+												className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-200"
+											>
+												{imgGen.models.map((model) => (
+													<option key={model.label} value={model.label}>
+														{model.label}{model.pending ? " (id pending)" : ""}
+													</option>
+												))}
+											</select>
+										</label>
+									</div>
+									<pre className="max-h-48 overflow-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 font-mono text-[10px] text-slate-400">
+										{JSON.stringify({ aspect, count: quantity, image_model: imageModel, refs: resolvedRefsPayload }, null, 2)}
+									</pre>
+								</div>
+							</WorkflowStep>
+
+							<WorkflowStep
+								index={5}
+								title="Generate image"
+								status={generateStatus}
+								summary={genJob?.status ?? "Manual confirmation required"}
+								helper="This is the credit-bearing external action; it never fires without explicit confirmation."
+							>
+								<div className="space-y-3">
+									<div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
+										Live generation is still behind the human confirmation gate. Build
+										status: <strong>{GEN_NOT_FIRED}</strong> · <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.
+									</div>
+									<button
+										type="button"
+										onClick={() => setShowGenConfirm(true)}
+										disabled={!prompt.trim() || generating || generationBlocked}
+										className="w-full rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-[12px] font-bold text-rose-100 disabled:opacity-40"
+									>
+										{generating ? "Generating image…" : "Generate image · gated"}
+									</button>
+								</div>
+							</WorkflowStep>
+
+							<WorkflowStep
+								index={6}
+								title="Register output"
+								status={outputStatus}
+								summary={hasRealOutput ? "Output selected" : "No output selected"}
+								helper="Attach a finished artifact or upload for review without firing generation."
+							>
+								<div className="space-y-3">
+									<div className="flex gap-1 rounded-xl border border-slate-800 bg-slate-950 p-0.5 text-[10px] font-bold uppercase tracking-[0.14em]">
+										<button type="button" onClick={() => setOutputMode("artifact")} className={`flex-1 rounded-lg px-3 py-1.5 ${outputMode === "artifact" ? "bg-v4-accent text-slate-950" : "text-slate-400"}`}>
+											Finished artifact
+										</button>
+										<button type="button" onClick={() => setOutputMode("upload")} className={`flex-1 rounded-lg px-3 py-1.5 ${outputMode === "upload" ? "bg-v4-accent text-slate-950" : "text-slate-400"}`}>
+											Upload file
+										</button>
+									</div>
+									{outputMode === "artifact" ? (
+										<div className="space-y-2">
+											<select value={artifactMediaId} onChange={(e) => setArtifactMediaId(e.target.value)} className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-200">
+												<option value="">{artifacts.length ? "Select a finished image artifact…" : "No finished image artifacts yet"}</option>
+												{artifacts.map((artifact) => <option key={artifact.media_id} value={artifact.media_id}>{artifact.media_id}</option>)}
+											</select>
+											<VisualAssetPicker
+												emptyMessage="No finished image artifacts yet."
+												items={artifacts.map((artifact) => ({ value: artifact.media_id, title: artifact.mode || "Generated image", subtitle: artifact.media_id, previewUrl: `/api/flow/retrieved/${encodeURIComponent(artifact.media_id)}`, status: "FINISHED" }))}
+												label="Finished artifact"
+												onChange={setArtifactMediaId}
+												placeholder="Select a finished image artifact"
+												value={artifactMediaId}
+											/>
+										</div>
+									) : (
+										<input type="file" accept="image/*" onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)} className="w-full text-[11px] text-slate-400 file:mr-3 file:rounded-md file:border-0 file:bg-slate-800 file:px-3 file:py-1.5 file:text-slate-200" />
+									)}
+								</div>
+							</WorkflowStep>
+
+							<WorkflowStep
+								index={7}
+								title="Review & approval"
+								status={reviewStatus}
+								summary={reviewDecision}
+								helper="All truth checks and the scale guard must pass before APPROVED can be saved."
+							>
+								<div className="space-y-3">
+									{selectedProduct ? (
+										<div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+											<div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Product scale truth guard</div>
+											{([
+												["Product is realistic handheld/small scale", checklistOversized, setChecklistOversized],
+												["Label, cap, and body are preserved", checklistPreserved, setChecklistPreserved],
+												["Product scale matches hand/body context", checklistContext, setChecklistContext],
+												["No misleading claims or text added", checklistClaims, setChecklistClaims],
+												["Suitable as a clean F2V start frame", checklistSuitable, setChecklistSuitable],
+											] as const).map(([label, checked, setChecked]) => (
+												<label key={String(label)} className="flex items-start gap-2 text-[11px] text-slate-300">
+													<input type="checkbox" checked={Boolean(checked)} onChange={(e) => (setChecked as (value: boolean) => void)(e.target.checked)} className="mt-0.5" />
+													<span>{label}</span>
+												</label>
+											))}
+										</div>
+									) : null}
+									<div className="grid gap-3 sm:grid-cols-3">
+										{([["Identity", identityStatus, setIdentityStatus], ["Scale", scaleStatus, setScaleStatus], ["Claims", claimStatus, setClaimStatus]] as const).map(([label, value, setValue]) => (
+											<label key={label} className="space-y-1 text-[11px] text-slate-300">
+												<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</span>
+												<select value={value} onChange={(e) => setValue(e.target.value as TruthStatus)} className="w-full rounded-lg border border-slate-800 bg-slate-900 px-2 py-2 text-xs text-slate-200">
+													<option value="UNVERIFIED">UNVERIFIED</option><option value="PASS">PASS</option><option value="FAIL">FAIL</option>
+												</select>
+											</label>
+										))}
+									</div>
+									<div className="flex flex-wrap gap-2">
+										{(["PENDING_REVIEW", "APPROVED", "REJECTED"] as const).map((decision) => (
+											<button key={decision} type="button" onClick={() => setReviewDecision(decision)} className={`rounded-lg border px-3 py-1.5 text-[11px] font-semibold ${reviewDecision === decision ? "border-v4-accent bg-v4-accent/10 text-v4-accent-ink" : "border-slate-700 text-slate-400"}`}>
+												{decision}
+											</button>
+										))}
+									</div>
+									{approvalBlocked ? <p className="text-[11px] text-amber-300/80">APPROVED is blocked until all truth checks and the scale checklist pass.</p> : null}
+								</div>
+							</WorkflowStep>
+
+							<WorkflowStep
+								index={8}
+								title="Save to Creative Library"
+								status={saveStatus}
+								summary={savedAsset?.display_name ?? (canSave ? "Ready to save" : "Waiting for approved output")}
+								helper="Persist the reviewed asset and expose its approved reuse modes."
+							>
+								<div className="space-y-3">
+									<input value={displayName} onChange={(e) => setDisplayName(e.target.value)} className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-200" placeholder="e.g. Product + Avatar · Start Frame A" />
+									<button type="button" onClick={() => void handleSave()} disabled={!canSave} className="w-full rounded-xl bg-gradient-to-br from-v4-accent to-v4-auto px-4 py-3 text-[12px] font-bold text-slate-950 disabled:opacity-40">
+										{saving ? "Saving…" : "Save approved asset"}
+									</button>
+									{savedAsset ? <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-100">Saved <strong>{savedAsset.display_name}</strong> · {savedAsset.review_status}</div> : null}
+								</div>
+							</WorkflowStep>
+						</main>
+
+						<aside className="w-full xl:w-80 xl:flex-none">
+							<div className="xl:sticky xl:top-4">
+								<OperatorCockpit
+									laneLabel="IMG Fastlane · Composite Frames"
+									status={{
+										label: generating ? "Working" : approvedAsset ? "Approved" : selectedProduct ? "Ready" : "Idle",
+										state: generating ? "running" : approvedAsset ? "done" : selectedProduct ? "online" : "idle",
+									}}
+									product={selectedProduct ? { name: selectedProduct.product_display_name, sub: selectedProduct.product_short_name } : undefined}
+									plan={[
+										{ k: "Mode", v: "IMG", mono: true },
+										{ k: "Aspect", v: aspect, mono: true },
+										{ k: "Count", v: quantity, mono: true },
+										{ k: "References", v: `${referenceCount} approved`, tone: referenceCount ? "good" : "muted" },
+										{ k: "Review", v: approvedAsset ? "Approved asset" : "Pending approval", tone: approvedAsset ? "good" : "muted" },
+									]}
+									queueTitle="Output queue"
+									generate={{
+										label: "Generate image · gated",
+										disabled: !prompt.trim() || generating || generationBlocked,
+										loading: generating,
+										onClick: () => setShowGenConfirm(true),
+										note: "manual confirmation required · no auto-fire",
+									}}
+									debugLabel="IMG Fastlane diagnostics"
+									debug={<div className="space-y-1"><div>lane {lane?.lane_id ?? "—"}</div><div>refs {referenceCount} approved</div><div>{GEN_NOT_FIRED} · {GEN_RUNTIME_UNVERIFIED}</div></div>}
+								>
+									<QueueRow title="Image output" sub={`${quantity} image${quantity === 1 ? "" : "s"} · ${aspect}`} status={genJob?.status === "DONE" ? "done" : "queued"} />
+									<QueueRow title="Approved asset" sub={approvedAsset?.display_name ?? "Review after registration"} status={approvedAsset ? "done" : "queued"} />
+								</OperatorCockpit>
+							</div>
+						</aside>
+					</div>
+				</div>
+
+				<ApproveAssetModal
+					asset={approveTarget}
+					open={approveTarget !== null}
+					onCancel={() => setApproveTarget(null)}
+					onApproved={() => {
+						setApproveTarget(null);
+						void loadReferences();
+					}}
+				/>
+
+				{showGenConfirm ? (
+					<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-[2px]">
+						<div className="max-w-md w-full rounded-2xl border border-rose-500/40 bg-slate-950 p-6 space-y-4 shadow-2xl">
+							<div className="text-sm font-bold text-rose-100 uppercase tracking-wider">Confirm Image Generation</div>
+							<div className="text-xs text-slate-300 space-y-2"><p>This fires the real image generation lane. It stays behind this explicit confirmation and is not auto-fired.</p><p>Build status: <strong>{GEN_NOT_FIRED}</strong> · <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.</p></div>
+							<div className="flex justify-end gap-3 pt-2"><button type="button" onClick={() => setShowGenConfirm(false)} className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-xs font-semibold text-slate-300">Cancel</button><button type="button" onClick={() => void handleConfirmedGenerate()} className="rounded-xl border border-rose-500/40 bg-rose-500/20 px-4 py-2 text-xs font-bold text-rose-100">Confirm &amp; Generate</button></div>
+						</div>
+					</div>
+				) : null}
+			</>
+		);
+	}
 
 	return (
 		<div className="flex min-w-0 flex-col gap-6 p-4 md:p-6 max-w-6xl mx-auto">

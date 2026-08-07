@@ -640,6 +640,16 @@ describe("PosterGuidedShell closure", () => {
 			),
 		);
 		expect(await screen.findByTestId("poster-scene-empty")).toBeInTheDocument();
+		const imgLink = screen.getByTestId("poster-scene-open-img");
+		expect(imgLink).toHaveAttribute(
+			"href",
+			"/assets/img-fastlane?product_id=prod-1",
+		);
+		expect(screen.getByTestId("poster-scene-refresh")).toBeInTheDocument();
+		expect(
+			(screen.getByTestId("poster-guided-continue") as HTMLButtonElement)
+				.disabled,
+		).toBe(true);
 		// Failure → visible error + retry re-fetches.
 		vi.mocked(fetchImageArtifacts).mockRejectedValueOnce(new Error("boom"));
 		fireEvent.click(screen.getByTestId("poster-guided-step-visual"));

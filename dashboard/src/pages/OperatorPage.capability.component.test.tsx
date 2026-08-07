@@ -93,7 +93,9 @@ afterEach(() => cleanup());
 
 function renderOperator(mode: "T2V" | "HYBRID" | "F2V" | "I2V") {
 	render(
-		<MemoryRouter initialEntries={[`/operator/${mode}`]}>
+		// These assertions target the classic capability/duration controls, which
+		// now live behind ?classic=1 (T2V defaults to the V4 guided shell).
+		<MemoryRouter initialEntries={[`/operator/${mode}?classic=1`]}>
 			<OperatorPage mode={mode} />
 		</MemoryRouter>,
 	);

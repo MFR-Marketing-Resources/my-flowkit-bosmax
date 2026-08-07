@@ -3,6 +3,11 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { fetchAPI } from "../api/client";
 import { useCopywritingReadiness } from "../api/copywritingReadiness";
 import { fetchCreativeAssetEligibilityAudit } from "../api/creativeAssets";
+import {
+	getCreativeSetupForProduct,
+	getProductRecipes,
+	type CreativeRecipe,
+} from "../api/creativeIntelligence";
 import { fetchProductCatalog } from "../api/products";
 import {
 	createF2VGenerationPackage,
@@ -24,7 +29,22 @@ import CanonicalReferenceBindingControls, {
 	EMPTY_BINDING,
 } from "../components/workspace/CanonicalReferenceBindingControls";
 import CopySelectionPanel from "../components/workspace/CopySelectionPanel";
+import CreativeDirectionSection, {
+	type CreativeDirection,
+	EMPTY_CREATIVE_DIRECTION,
+} from "../components/workspace/CreativeDirectionSection";
 import IMGModule from "../components/workspace/IMGModule";
+import {
+	OperatorCockpit,
+	QueueRow,
+	ResolvedChip,
+	StoryboardStrip,
+	WorkflowStep,
+} from "../components/workflow";
+import type {
+	CockpitPlanRow,
+	WorkflowStepStatus,
+} from "../components/workflow";
 import SceneStrategySummary from "../components/workspace/SceneStrategySummary";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import VisualAssetPicker from "../components/workspace/VisualAssetPicker";
@@ -389,6 +409,38 @@ function workspaceSurfaceLabel(mode: WorkspaceMode) {
 	return "Text to Video";
 }
 
+// ── V4 workflow shell helpers ──────────────────────────────────────────────
+// Derive the backward-compatible CreativeDirection from a set of coherent
+// recipes. Mirrors CreativeDirectionSection.directionFromRecipes so the
+// presenter-first V4 flow produces the SAME payload shape (recipes[0] feeds
+// scene_template_id + camera_preset_code) without importing its internals.
+function buildCreativeDirectionFromRecipes(
+	recipes: CreativeRecipe[],
+): CreativeDirection {
+	const uniq = (values: string[]) =>
+		Array.from(new Set(values.filter(Boolean)));
+	return {
+		avatarCodes: uniq(recipes.map((r) => r.avatar_code)),
+		sceneTemplateIds: uniq(recipes.map((r) => r.scene_template_id)),
+		cameraPresetCodes: uniq(recipes.map((r) => r.camera_preset_code)),
+		recipes,
+	};
+}
+
+function v4GenderTag(code: string): string {
+	if (code.includes("_F_")) return "♀";
+	if (code.includes("_M_")) return "♂";
+	return "";
+}
+
+function v4SceneText(recipe: CreativeRecipe): string {
+	const variant = recipe.scene_variant
+		.replace(/^Variation\s*\d+\s*[-:]\s*/i, "")
+		.trim();
+	const varTag = recipe.variation != null ? `Var${recipe.variation}` : "scene";
+	return variant ? `${varTag} · ${variant}` : varTag;
+}
+
 // Canonical source-mode (ADR-008): PINNED by the operator surface — HYBRID and
 // FRAMES are separate first-class pages, never an ambiguous toggle. Hoisted to a
 // pure module-scope export so the mapping is unit-testable without rendering the
@@ -657,6 +709,21 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// Registry; no persona-composer or legacy persona fallback reaches production.
 	const [registryAvatarId, setRegistryAvatarId] = useState("");
 	const [registrySceneCode, setRegistrySceneCode] = useState("");
+	// T2V descriptor-based creative direction (no image pickers). The primary
+	// avatar drives the load-bearing `avatar_id` generation input via
+	// `registryAvatarId`; scene-strategy / camera descriptors shape the prompt.
+	const [creativeDirection, setCreativeDirection] = useState<CreativeDirection>(
+		EMPTY_CREATIVE_DIRECTION,
+	);
+	const handleCreativeDirectionChange = useCallback(
+		(next: CreativeDirection) => {
+			setCreativeDirection(next);
+			// Keep the presenter authority in sync so T2V generation still resolves
+			// an avatar (avatar_id) exactly as the old registry picker did.
+			setRegistryAvatarId(next.avatarCodes[0] ?? "");
+		},
+		[],
+	);
 	const [avatarRegistryPool, setAvatarRegistryPool] = useState<
 		Array<{
 			avatar_code?: string;
@@ -677,6 +744,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			generated_asset_id?: string | null;
 			background_prompt?: string;
 			image_generated?: boolean;
+			primary_cluster?: string | null;
+			compatible_clusters?: string[];
 		}>
 	>([]);
 	const [registryPoolsLoading, setRegistryPoolsLoading] = useState(false);
@@ -770,6 +839,88 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// jobMode; the surface identity stays HYBRID.
 	const jobMode: "T2V" | "F2V" | "I2V" | "IMG" =
 		mode === "HYBRID" ? "F2V" : mode;
+
+	// ── V4 workflow shell (guided single-page redesign) ──────────────────────
+	// V4 is the default for every OperatorPage lane. ?classic=1 always wins and
+	// keeps the existing render reachable as the transitional rollback path.
+	// Both paths reuse the same state + handlers, so Step-F payload wiring stays
+	// intact while the classic branch remains available for recovery.
+	const query = new URLSearchParams(location.search);
+	const useV4 = query.get("classic") !== "1";
+	const [v4Pool, setV4Pool] = useState<CreativeRecipe[]>([]);
+	const [v4Pretick, setV4Pretick] = useState<CreativeRecipe[]>([]);
+	const [v4RecipesLoading, setV4RecipesLoading] = useState(false);
+	// Per-step manual open/collapse overrides; default = the active step is open.
+	const [v4Open, setV4Open] = useState<Record<number, boolean>>({});
+	const v4IsOpen = (index: number, status: WorkflowStepStatus) =>
+		v4Open[index] ?? status === "active";
+	const v4Toggle = (index: number, currentOpen: boolean) =>
+		setV4Open((prev) => ({ ...prev, [index]: !currentOpen }));
+	// Resolve the presenter AND its coherent scene→camera recipe together, so the
+	// avatar (avatar_id) and the recipe (scene/camera) never disagree.
+	const applyV4Presenter = useCallback(
+		(avatar: string, pool: CreativeRecipe[], pretick: CreativeRecipe[]) => {
+			// Single-select: ONE coherent recipe for the presenter (the knowledge
+			// base's top pick) becomes recipes[0] → scene_template_id + camera_preset.
+			const chosen =
+				pretick.find((r) => r.avatar_code === avatar) ??
+				pool.find((r) => r.avatar_code === avatar) ??
+				null;
+			handleCreativeDirectionChange(
+				buildCreativeDirectionFromRecipes(chosen ? [chosen] : []),
+			);
+		},
+		[handleCreativeDirectionChange],
+	);
+	// Load the product's coherent recipe pool for the V4 T2V lane; auto-pick a
+	// default presenter from the knowledge base only when none is set yet.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the pool loads on product changes; a manual registry pick must not refetch it
+	useEffect(() => {
+		if (!useV4 || mode === "IMG" || !selectedProduct?.id) return;
+		let active = true;
+		setV4RecipesLoading(true);
+		void getProductRecipes(selectedProduct.id)
+			.then((res) => {
+				if (!active) return;
+				setV4Pool(res.recipes);
+				setV4Pretick(res.recommended_pretick);
+				if (!registryAvatarId) {
+					const autoAvatar =
+						res.recommended_pretick[0]?.avatar_code ??
+						res.recipes[0]?.avatar_code ??
+						"";
+					if (autoAvatar)
+						applyV4Presenter(autoAvatar, res.recipes, res.recommended_pretick);
+				}
+			})
+			.catch(() => {})
+			.finally(() => {
+				if (active) setV4RecipesLoading(false);
+			});
+		return () => {
+			active = false;
+		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [useV4, mode, selectedProduct?.id]);
+	// Keep the scene→camera recipe coherent with whoever set the presenter
+	// (creative-setup seed, manual pick). Idempotent: no-op when already in sync,
+	// when the avatar is not in this product's pool, or when the recipe is empty.
+	useEffect(() => {
+		if (!useV4 || mode === "IMG" || !registryAvatarId || v4Pool.length === 0)
+			return;
+		if (creativeDirection.recipes[0]?.avatar_code === registryAvatarId) return;
+		if (!v4Pool.some((r) => r.avatar_code === registryAvatarId)) return;
+		applyV4Presenter(registryAvatarId, v4Pool, v4Pretick);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [
+		useV4,
+		mode,
+		registryAvatarId,
+		v4Pool,
+		v4Pretick,
+		creativeDirection.recipes[0]?.avatar_code,
+		applyV4Presenter,
+	]);
 	// Stale-reference law: a mode or product switch invalidates every prior
 	// reference selection (the server's WRONG_PRODUCT / per-mode contract checks
 	// stay the authority; this keeps the UI from carrying another product's or
@@ -809,6 +960,43 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	useEffect(() => {
 		setSelectedCopySetId(null);
 		setShowFallbackConfirm(false);
+		// Knowledge-driven pre-fill: seed the avatar picker from the product's creative
+		// setup (gender/cluster-correct saved selection, else the smart default) so the
+		// operator starts from the RIGHT avatar instead of free-picking a mismatched one.
+		// Manual override stays free. Scene stays manual until the scene-template ->
+		// scene-context mapping is wired (different registries).
+		const pid = selectedProduct?.id;
+		if (!pid) return;
+		let active = true;
+		void getCreativeSetupForProduct(pid)
+			.then((setup) => {
+				if (!active) return;
+				const avatar =
+					setup.saved_selection?.selected_avatar_codes?.[0] ||
+					setup.default_selection?.selected_avatar_codes?.[0] ||
+					"";
+				if (avatar) setRegistryAvatarId(avatar);
+				// Scene pre-fill: the saved scene TEMPLATES (SCN-xxxx strategy) are a
+				// different layer from the generation scene CONTEXTS (backgrounds), so
+				// pick a cluster-appropriate scene context from the registry instead of
+				// mapping template ids. No match (e.g. cluster has no scene yet) → leave
+				// the operator's manual pick.
+				const cluster = String(setup.cluster || "").trim().toLowerCase();
+				if (cluster) {
+					const match = sceneRegistryPool.find((s) => {
+						const pc = String(s.primary_cluster || "").trim().toLowerCase();
+						const compat = (s.compatible_clusters || []).map((c) =>
+							String(c).trim().toLowerCase(),
+						);
+						return pc === cluster || compat.includes(cluster);
+					});
+					if (match?.scene_code) setRegistrySceneCode(match.scene_code);
+				}
+			})
+			.catch(() => {});
+		return () => {
+			active = false;
+		};
 	}, [selectedProduct?.id]);
 
 	useEffect(() => {
@@ -1667,6 +1855,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				avatar_id: registryAvatarId || null,
 				scene_context_override: selectedSceneBackground || null,
 				scene_context_code: registrySceneCode || null,
+				// Recipe descriptors (Step F): the primary selected recipe's scene template
+				// + camera preset so the compiled prompt uses the coherent combination.
+				// Only T2V populates recipes; other modes send null (compiler unchanged).
+				scene_template_id: creativeDirection.recipes[0]?.scene_template_id ?? null,
+				camera_preset_code: creativeDirection.recipes[0]?.camera_preset_code ?? null,
 				// Per-mode reference payload hygiene: only the selected mode's
 				// binding fields are ever sent — a stale pick from another mode
 				// must never reach the server-side binding contract.
@@ -1845,6 +2038,1055 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				);
 		}
 	};
+
+	// ── V4 guided single-page shell (T2V reference + Bucket-1 lanes) ───────────
+	if (
+		useV4 &&
+		(mode === "T2V" || mode === "F2V" || mode === "HYBRID" || mode === "I2V" || mode === "IMG")
+	) {
+		const isImageMode = mode === "IMG";
+		const hasReferenceStep = !isImageMode && mode !== "T2V";
+		const creativeStepIndex = hasReferenceStep ? 6 : 5;
+		const storyboardStepIndex = hasReferenceStep ? 7 : 6;
+		const generateStepIndex = hasReferenceStep ? 8 : 7;
+		const laneTitle =
+			mode === "T2V"
+				? "Text to Video"
+				: mode === "HYBRID"
+					? "Hybrid"
+					: mode === "F2V"
+						? "Frames to Video"
+						: mode === "I2V"
+							? "Ingredients to Video"
+							: "Image Generation";
+		const laneDescription = isImageMode
+			? "Choose a product or upload references, then shape the image before the operator gate."
+			: "Pick a product, message and presenter — references and camera resolve by lane.";
+		const productReady = selectedReadiness?.readiness_status === "READY";
+		const v4Avatars = Array.from(
+			new Set(v4Pool.map((r) => r.avatar_code)),
+		).filter(Boolean);
+		const primaryRecipe = creativeDirection.recipes[0] ?? null;
+		// Single-select scene list for the chosen presenter (backend-configured
+		// recipes only — nothing invented).
+		const v4PresenterRecipes = registryAvatarId
+			? v4Pool.filter((r) => r.avatar_code === registryAvatarId)
+			: [];
+		const applyV4Recipe = (recipe: CreativeRecipe) =>
+			handleCreativeDirectionChange(
+				buildCreativeDirectionFromRecipes([recipe]),
+			);
+		const avatarName = (code: string) =>
+			avatarRegistryPool.find(
+				(a) => String(a.avatar_code || a.AvatarCode || "") === code,
+			)?.display_name || code;
+		const presenterLabel = registryAvatarId
+			? `${avatarName(registryAvatarId)} ${v4GenderTag(registryAvatarId)}`.trim()
+			: v4RecipesLoading
+				? "Resolving…"
+				: "Auto from knowledge base";
+		const sceneCameraLabel = primaryRecipe
+			? `${v4SceneText(primaryRecipe)} · 🎥 ${primaryRecipe.camera_preset_code || "—"}`
+			: "Auto from knowledge base";
+		const referenceBlocker = hasReferenceStep
+			? referenceBindingBlocker(mode, referenceBinding)
+			: null;
+		const referenceLabel =
+			mode === "F2V"
+				? referenceBinding.startFrameAssetId
+					? `Start frame bound${referenceBinding.endFrameAssetId ? " · end frame bound" : ""}`
+					: "Start frame required"
+				: mode === "I2V"
+					? referenceBinding.characterReferenceAssetId &&
+						referenceBinding.sceneContextReferenceAssetId
+						? `Character + scene bound${referenceBinding.styleReferenceAssetId ? " · style bound" : ""}`
+						: "Character + scene required"
+					: "Product anchor auto · optional override";
+		const lengthLabel = isExtendMode
+			? `${requestedTotalDuration ?? "—"}s · Extended`
+			: `${videoDurationSeconds}s · Single`;
+		const copyBound = Boolean(selectedCopySetId);
+		// SINGLE-clip generation: the compiled single-block prompt from the prepared
+		// execution package. Fired through the LIVE one-door lane (/api/flow/generate),
+		// the same proven lane IMG uses — NOT the retired DOM lane (ADR-007 compliant).
+		const singleClipPrompt =
+			mode === "T2V" ? workspacePackage?.prompt_text || "" : "";
+		const storyboardShots = (previewPackage?.prompt_blocks ?? []).map(
+			(block, i) => ({
+				id: String(block.block_index ?? i),
+				label: block.block_role
+					? String(block.block_role)
+					: `Block ${block.block_index ?? i + 1}`,
+				sub: block.duration_seconds
+					? `${block.duration_seconds}s`
+					: undefined,
+			}),
+		);
+		const cockpitState: "idle" | "online" | "running" | "done" =
+			isLoadingPreview || isLoadingPackage
+				? "running"
+				: workspacePackage
+					? "done"
+					: selectedProduct
+						? "online"
+						: "idle";
+		const plan: CockpitPlanRow[] = isImageMode
+			? [
+					{ k: "Lane", v: "IMG", mono: true },
+					{
+						k: "Product",
+						v: selectedProduct?.product_display_name ?? "Manual reference",
+					},
+				  ]
+			: [
+					{
+						k: "Angle",
+						v: copyBound ? "Copy set bound" : "Fallback copy",
+						tone: copyBound ? "good" : "muted",
+					},
+					{ k: "Presenter", v: presenterLabel },
+					{ k: "Scene → camera", v: sceneCameraLabel, mono: true },
+					{ k: "Length", v: lengthLabel },
+					{
+						k: "Engine · model",
+						v: `${currentEngine?.label ?? selectedEngineId} · ${videoModel}`,
+					},
+			  ];
+		// Free prepare flow only — the live, credit-bearing fire stays in the
+		// NativeExtendPanel below (unchanged gates). The cockpit never spends credits.
+		const cockpitGenerate = isImageMode
+			? {
+					label: "Use Image setup below",
+					disabled: true,
+					onClick: () => {},
+					note: "the IMG control remains the operator gate",
+			  }
+			: !productReady
+			? {
+					label: "Select a ready product",
+					disabled: true,
+					onClick: () => {},
+					note: "pick a READY product to begin",
+				}
+			: extendTotalRequired
+				? {
+						label: "Set length first",
+						disabled: true,
+						onClick: () => {},
+						note: "Extended video needs a total duration",
+					}
+				: !previewPackage
+					? {
+							label: isLoadingPreview ? "Compiling…" : "Compile preview",
+							loading: isLoadingPreview,
+							disabled: backendRuntimeStale,
+							onClick: () => void handleLoadPreview(),
+							note: "compiles the prompt · no credits",
+						}
+					: !workspacePackage
+						? {
+								label: isLoadingPackage
+									? "Preparing…"
+									: "Prepare final prompt",
+								loading: isLoadingPackage,
+								disabled: showFallbackConfirm || backendRuntimeStale,
+								onClick: () => void handleGeneratePackage(),
+								note: "saves the execution package · no credits",
+							}
+						: {
+								label: "Prepared ✓ — generate below",
+								disabled: true,
+								onClick: () => {},
+								note: "credits only when you press Generate video",
+							};
+
+		const s1: WorkflowStepStatus = selectedProduct
+			? productReady
+				? "done"
+				: "active"
+			: "active";
+		const s2: WorkflowStepStatus = !selectedProduct
+			? "upcoming"
+			: copyBound
+				? "done"
+				: "active";
+		const s3: WorkflowStepStatus = !selectedProduct
+			? "upcoming"
+			: registryAvatarId
+				? "done"
+				: "active";
+		const s4: WorkflowStepStatus = !selectedProduct
+			? "upcoming"
+			: extendTotalRequired
+				? "active"
+				: "done";
+		const s5: WorkflowStepStatus = !selectedProduct
+			? "upcoming"
+			: primaryRecipe
+				? "done"
+				: "active";
+		const sReference: WorkflowStepStatus = !selectedProduct
+			? "upcoming"
+			: referenceBlocker
+				? "active"
+				: "done";
+		const sStoryboard: WorkflowStepStatus = previewPackage ? "done" : "active";
+		const sGenerate: WorkflowStepStatus =
+			singleClipPrompt || (workspacePackage && extendAuthority)
+				? "active"
+				: "upcoming";
+
+		const selectClass =
+			"w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100";
+		const labelClass =
+			"text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500";
+
+		return (
+			<div
+				data-testid="hybrid-workflow"
+				data-variant="v4"
+				data-mode={mode}
+				className="flex h-full flex-col bg-slate-950 px-4 py-4 md:px-8 md:py-6"
+			>
+				<div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+					<div>
+						<div className="flex items-center gap-2">
+							<h2 className="text-xl font-bold tracking-tight text-white md:text-2xl">
+								{laneTitle}
+							</h2>
+							<span className="rounded-full border border-v4-accent/40 bg-v4-accent/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.16em] text-v4-accent-ink">
+								V4
+							</span>
+						</div>
+						<p className="text-sm text-slate-400">{laneDescription}</p>
+					</div>
+					<a
+						href={`${location.pathname}?classic=1`}
+						className="text-[11px] text-slate-500 underline decoration-dotted hover:text-slate-300"
+					>
+						Switch to classic view
+					</a>
+				</div>
+
+				<div className="mb-4">
+					<BackendVersionBanner onRuntimeStaleChange={setBackendRuntimeStale} />
+				</div>
+
+				<div className="flex min-h-0 flex-1 flex-col gap-5 xl:flex-row">
+					<main className="min-w-0 flex-1 space-y-3 overflow-y-auto pb-6 xl:pr-1">
+						{/* Step 1 — Product */}
+						<WorkflowStep
+							index={1}
+							title="Product"
+							status={s1}
+							open={v4IsOpen(1, s1)}
+							onToggleOpen={() => v4Toggle(1, v4IsOpen(1, s1))}
+							summary={
+								selectedProduct
+									? `${selectedProduct.product_display_name}${productReady ? "" : " · not ready"}`
+									: undefined
+							}
+							helper="Only READY products can generate."
+						>
+							<div className="space-y-3">
+								<SearchableProductSelect
+									products={products}
+									selectedProduct={selectedProduct}
+									onSelect={setSelectedProduct}
+									readinessByProductId={packageReadiness}
+									isLoadingReadiness={isLoadingAnyReadiness}
+								/>
+								{selectedReadiness && !productReady ? (
+									<div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-100">
+										{selectedReadiness.readiness_status} —{" "}
+										{selectedReadiness.detail}
+									</div>
+								) : null}
+							</div>
+						</WorkflowStep>
+
+						{isImageMode ? (
+							<WorkflowStep
+								index={2}
+								title="Image setup"
+								status="active"
+								collapsible={false}
+								helper="References, prompt and image settings stay together in the existing IMG lane."
+							>
+								<IMGModule
+									onExecute={handleExecute}
+									isExecuting={isExecuting}
+									compact
+									workspacePackage={workspacePackage}
+									previewPackage={previewPackage}
+									selectedProduct={selectedProduct}
+								/>
+							</WorkflowStep>
+						) : (
+							<>
+
+						{/* Step 2 — Message & angle */}
+						<WorkflowStep
+							index={2}
+							title="Message & angle"
+							status={s2}
+							open={v4IsOpen(2, s2)}
+							onToggleOpen={() => v4Toggle(2, v4IsOpen(2, s2))}
+							summary={copyBound ? "Approved copy set bound" : "Fallback copy"}
+							helper="Bind an approved copy set, or continue on fallback."
+						>
+							<div className="space-y-3">
+								<SceneStrategySummary
+									hasProduct={Boolean(selectedProduct)}
+									productName={selectedProduct?.product_display_name ?? null}
+									taxonomy={selectedProduct?.strategy_taxonomy ?? null}
+								/>
+								<CopywritingReadinessCard
+									readiness={copyReadiness}
+									loading={copyReadinessLoading}
+									onPrepare={() =>
+										window.location.assign(
+											selectedProduct
+												? `/products?product_id=${encodeURIComponent(selectedProduct.id)}`
+												: "/products",
+										)
+									}
+									onOpenCopyRegistry={() =>
+										window.location.assign(
+											selectedProduct
+												? `/creative/copy-registry?product_id=${encodeURIComponent(selectedProduct.id)}`
+												: "/creative/copy-registry",
+										)
+									}
+								/>
+								<CopySelectionPanel
+									productId={selectedProduct?.id ?? null}
+									productName={selectedProduct?.product_display_name ?? null}
+									selectedCopySetId={selectedCopySetId}
+									onSelect={setSelectedCopySetId}
+									disabled={isLoadingPreview || isLoadingPackage}
+								/>
+							</div>
+						</WorkflowStep>
+
+						{/* Step 3 — Presenter */}
+						<WorkflowStep
+							index={3}
+							title="Presenter"
+							status={s3}
+							open={v4IsOpen(3, s3)}
+							onToggleOpen={() => v4Toggle(3, v4IsOpen(3, s3))}
+							summary={presenterLabel}
+							helper="The face in the video — auto-picked for the product; change it if you like."
+						>
+							<div className="space-y-2">
+								<ResolvedChip
+									label="Presenter"
+									value={presenterLabel}
+									icon="🎭"
+									auto={!v4IsOpen(3, s3) || !registryAvatarId}
+								/>
+								{mode === "HYBRID" ? (
+									<div
+										data-testid="operator-registry-authority"
+										className="space-y-3 rounded-xl border border-cyan-500/25 bg-cyan-500/5 p-3"
+									>
+										<div>
+											<div className="text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-200">
+												Registry authority
+											</div>
+											<p className="mt-1 text-[11px] text-slate-300">
+												Hybrid keeps the approved Avatar Registry presenter and
+												Scene Registry context together; the product image remains
+												the automatic reference anchor.
+											</p>
+										</div>
+										{registryPoolsLoading ? (
+											<p className="text-[11px] text-slate-400">Loading registries…</p>
+										) : null}
+										<label className="block space-y-1 text-xs text-slate-200">
+											<span>Avatar registry</span>
+											<select
+												id="operator-avatar-registry"
+												data-testid="operator-avatar-registry"
+												value={registryAvatarId}
+												onChange={(e) => setRegistryAvatarId(e.target.value)}
+												className={selectClass}
+											>
+												<option value="">
+													{avatarRegistryPool.length
+														? "— product-seeded registry pick —"
+														: "No avatar registry rows"}
+												</option>
+												{avatarRegistryPool.map((row) => {
+													const code = String(
+														row.avatar_code || row.AvatarCode || "",
+													).trim();
+													if (!code) return null;
+													const label =
+														row.display_name || row.Name || row.name || row.Variant || code;
+													return (
+														<option key={code} value={code}>
+															{label} — {code}
+														</option>
+													);
+												})}
+											</select>
+										</label>
+										<VisualAssetPicker
+											label="Avatar registry visual picker"
+											value={registryAvatarId}
+											onChange={setRegistryAvatarId}
+											items={avatarRegistryPool
+												.map((row) => ({
+													value: String(row.avatar_code || row.AvatarCode || ""),
+													title: String(
+														row.character_name ||
+															row.display_name ||
+															row.Name ||
+															row.name ||
+															row.avatar_code ||
+															"Avatar",
+														),
+													subtitle: String(row.avatar_code || row.AvatarCode || ""),
+													previewUrl:
+														registryPreviewUrls[String(row.generated_asset_id || "")] || null,
+													status: "APPROVED",
+												}))
+												.filter((row) => Boolean(row.value))}
+										/>
+										<label className="block space-y-1 text-xs text-slate-200">
+											<span>Scene registry</span>
+											<select
+												id="operator-scene-registry"
+												data-testid="operator-scene-registry"
+												value={registrySceneCode}
+												onChange={(e) => setRegistrySceneCode(e.target.value)}
+												className={selectClass}
+											>
+												<option value="">
+													{sceneRegistryPool.length
+														? "— product package scene (no override) —"
+														: "No scene registry rows"}
+												</option>
+												{sceneRegistryPool.map((row) => (
+													<option key={row.scene_code} value={row.scene_code}>
+														{row.scene_name || row.scene_code}
+														{row.image_generated ? " · img" : ""}
+													</option>
+												))}
+											</select>
+										</label>
+										<VisualAssetPicker
+											label="Scene registry visual picker"
+											value={registrySceneCode}
+											onChange={setRegistrySceneCode}
+											items={sceneRegistryPool.map((row) => ({
+												value: row.scene_code,
+												title: row.scene_name || row.scene_code,
+												subtitle: row.scene_code,
+												previewUrl:
+													registryPreviewUrls[String(row.generated_asset_id || "")] || null,
+												status: "APPROVED",
+											}))}
+										/>
+										{registryAvatarId ? (
+											<div className="text-[11px] text-cyan-100">
+												Avatar lock: {registryAvatarId}
+											</div>
+										) : null}
+										{registrySceneCode ? (
+											<div className="text-[11px] text-cyan-100">
+												Scene lock: {registrySceneCode}
+											</div>
+										) : null}
+									</div>
+								) : v4RecipesLoading ? (
+									<p className="text-[11px] text-slate-500">
+										Resolving presenters…
+									</p>
+								) : v4Avatars.length ? (
+									<div className="flex flex-wrap gap-2">
+										{v4Avatars.map((code) => {
+											const active = code === registryAvatarId;
+											return (
+												<button
+													key={code}
+													type="button"
+													onClick={() =>
+														applyV4Presenter(code, v4Pool, v4Pretick)
+													}
+													className={`rounded-xl border px-3 py-2 text-[11px] font-semibold transition-colors ${active ? "border-v4-accent bg-v4-accent/10 text-v4-accent-ink" : "border-slate-700 text-slate-300 hover:border-slate-500"}`}
+												>
+													{v4GenderTag(code)} {avatarName(code)}
+												</button>
+											);
+										})}
+									</div>
+								) : (
+									<p className="text-[11px] text-slate-500">
+										Select a product to load presenters.
+									</p>
+								)}
+							</div>
+						</WorkflowStep>
+
+						{/* Step 4 — Length */}
+						<WorkflowStep
+							index={4}
+							title="Length"
+							status={s4}
+							open={v4IsOpen(4, s4)}
+							onToggleOpen={() => v4Toggle(4, v4IsOpen(4, s4))}
+							summary={lengthLabel}
+							helper="How long the video runs."
+						>
+							<div className="space-y-3">
+								<div className="grid gap-3 sm:grid-cols-2">
+									<label className="space-y-1">
+										<span className={labelClass}>Type</span>
+										<select
+											value={generationMode}
+											onChange={(e) =>
+												handleGenerationModeChange(
+													e.target.value as PromptGenerationMode,
+												)
+											}
+											className={selectClass}
+											title="Generation type"
+										>
+											<option value="SINGLE">Single clip</option>
+											<option value="EXTEND">Extended video</option>
+										</select>
+									</label>
+									{isExtendMode ? (
+										<label className="space-y-1">
+											<span className={labelClass}>Total duration</span>
+											<select
+												value={
+													requestedTotalDuration === null
+														? ""
+														: String(requestedTotalDuration)
+												}
+												onChange={(e) =>
+													handleExtendTotalDurationChange(
+														e.target.value === ""
+															? null
+															: Number(e.target.value),
+													)
+												}
+												className={selectClass}
+												title="Total video duration"
+											>
+												<option value="">Select total…</option>
+												{extendTotalOptions.map((total) => (
+													<option key={total} value={total}>
+														{total}s
+													</option>
+												))}
+											</select>
+										</label>
+									) : (
+										<label className="space-y-1">
+											<span className={labelClass}>Duration</span>
+											<select
+												value={String(videoDurationSeconds)}
+												onChange={(e) =>
+													handleSingleDurationChange(Number(e.target.value))
+												}
+												className={selectClass}
+												title="Video duration"
+											>
+												{singleDurationOptions.map((duration) => (
+													<option key={duration} value={duration}>
+														{duration}s
+													</option>
+												))}
+											</select>
+										</label>
+									)}
+								</div>
+								{extendTotalRequired ? (
+									<p className="text-[11px] text-amber-200">
+										Pick a total duration to enable compile.
+									</p>
+								) : null}
+								<details className="rounded-xl border border-dashed border-slate-800">
+									<summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-semibold text-slate-400">
+										Advanced settings ▸{" "}
+										<span className="text-slate-600">
+											engine · model · language · look
+										</span>
+									</summary>
+									<div className="grid gap-3 border-t border-slate-800 p-3 sm:grid-cols-2">
+										<label className="space-y-1">
+											<span className={labelClass}>Engine</span>
+											<select
+												value={selectedEngineId}
+												onChange={(e) => handleEngineChange(e.target.value)}
+												className={selectClass}
+												title="Engine"
+											>
+												{(capabilityMatrix?.engines ?? []).map((engine) => (
+													<option
+														key={engine.id}
+														value={engine.id}
+														disabled={!engine.supported}
+													>
+														{engine.label}
+													</option>
+												))}
+											</select>
+										</label>
+										<label className="space-y-1">
+											<span className={labelClass}>Video model</span>
+											<select
+												value={videoModel}
+												onChange={(e) => handleVideoModelChange(e.target.value)}
+												className={selectClass}
+												title="Video model"
+											>
+												{modelSelectOptions.map((m) => (
+													<option key={m.key} value={m.ui_label}>
+														{m.ui_label}
+													</option>
+												))}
+												{!singleModelValid && !isExtendMode ? (
+													<option value={videoModel}>
+														{videoModel} (unsupported)
+													</option>
+												) : null}
+											</select>
+										</label>
+										<label className="space-y-1">
+											<span className={labelClass}>Language</span>
+											<select
+												value={targetLanguage}
+												onChange={(e) =>
+													setTargetLanguage(e.target.value as PromptTargetLanguage)
+												}
+												className={selectClass}
+												title="Language"
+											>
+												{languageOptions.map((language) => (
+													<option key={language} value={language}>
+														{language}
+													</option>
+												))}
+											</select>
+										</label>
+										<label className="space-y-1">
+											<span className={labelClass}>Camera style</span>
+											<select
+												value={cameraStyle}
+												onChange={(e) =>
+													setCameraStyle(e.target.value as PromptCameraStyle)
+												}
+												className={selectClass}
+												title="Camera style"
+											>
+												<option value="UGC_IPHONE_RAW">UGC iPhone Raw</option>
+												<option value="CINEMATIC_PRO">Cinematic Pro</option>
+											</select>
+										</label>
+										<label className="space-y-1">
+											<span className={labelClass}>Character presence</span>
+											<select
+												value={characterPresence}
+												onChange={(e) =>
+													setCharacterPresence(
+														e.target.value as PromptCharacterPresence,
+													)
+												}
+												className={selectClass}
+												title="Character presence"
+											>
+												<option value="VISIBLE_CREATOR">Visible Creator</option>
+												<option value="FACELESS">Faceless</option>
+											</select>
+										</label>
+									</div>
+								</details>
+								{modelAdjustmentNote ? (
+									<p className="text-[11px] text-amber-200">
+										{modelAdjustmentNote}
+									</p>
+								) : null}
+								{legacyPackageWarning ? (
+									<p className="text-[11px] text-amber-200">
+										{legacyPackageWarning}
+									</p>
+								) : null}
+							</div>
+						</WorkflowStep>
+
+						{hasReferenceStep ? (
+							<WorkflowStep
+								index={5}
+								title="Reference"
+								status={sReference}
+								open={v4IsOpen(5, sReference)}
+								onToggleOpen={() => v4Toggle(5, v4IsOpen(5, sReference))}
+								summary={referenceLabel}
+								helper="Bind only the references this lane accepts; empty optional slots stay automatic."
+							>
+								<div className="space-y-2">
+									<ResolvedChip
+										label="Reference binding"
+										value={referenceLabel}
+										icon="🧷"
+										auto={!referenceBlocker}
+									/>
+									<CanonicalReferenceBindingControls
+										mode={mode}
+										productId={selectedProduct?.id ?? null}
+										binding={referenceBinding}
+										onChange={setReferenceBinding}
+									/>
+								</div>
+							</WorkflowStep>
+						) : null}
+
+						{/* Step 5 — Creative direction */}
+						<WorkflowStep
+							index={creativeStepIndex}
+							title="Creative direction"
+							status={s5}
+							open={v4IsOpen(creativeStepIndex, s5)}
+							onToggleOpen={() =>
+								v4Toggle(creativeStepIndex, v4IsOpen(creativeStepIndex, s5))
+							}
+							summary={sceneCameraLabel}
+							helper="Scene and camera follow the presenter automatically — tweak only if you want."
+						>
+							<div className="space-y-3">
+								<ResolvedChip
+									label="Scene → camera"
+									value={sceneCameraLabel}
+									icon="🎬"
+									auto={!v4IsOpen(creativeStepIndex, s5) || !primaryRecipe}
+								/>
+								<div className="rounded-xl border border-slate-800 bg-slate-950/40 p-2">
+									<p className="mb-2 px-1 text-[11px] text-slate-400">
+										Pick one scene — the camera follows it automatically.
+									</p>
+									{v4RecipesLoading ? (
+										<p className="px-1 text-[11px] text-slate-500">
+											Loading scenes…
+										</p>
+									) : v4PresenterRecipes.length ? (
+										<div className="space-y-1">
+											{v4PresenterRecipes.map((recipe) => {
+												const selected =
+													primaryRecipe?.scene_template_id ===
+													recipe.scene_template_id;
+												return (
+													<button
+														key={recipe.scene_template_id}
+														type="button"
+														onClick={() => applyV4Recipe(recipe)}
+														className={`flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-[12px] transition-colors ${selected ? "border-v4-accent bg-v4-accent/10" : "border-slate-800 hover:border-slate-600"}`}
+													>
+														<span
+															className={`grid h-4 w-4 flex-none place-items-center rounded-full border ${selected ? "border-v4-accent" : "border-slate-600"}`}
+														>
+															{selected ? (
+																<span className="h-2 w-2 rounded-full bg-v4-accent" />
+															) : null}
+														</span>
+														<span className="flex-1 text-slate-200">
+															{v4SceneText(recipe)}
+														</span>
+														<span className="text-[10px] text-v4-accent-ink">
+															🎥 {recipe.camera_preset_code || "—"}
+														</span>
+													</button>
+												);
+											})}
+										</div>
+									) : (
+										<p className="px-1 text-[11px] text-slate-500">
+											No scenes configured for this presenter yet.
+										</p>
+									)}
+								</div>
+							</div>
+						</WorkflowStep>
+
+		{/* Storyboard */}
+		<WorkflowStep
+			index={storyboardStepIndex}
+			title="Storyboard"
+			status={sStoryboard}
+							collapsible={false}
+							helper="See the shots before you generate."
+						>
+							<div className="space-y-3">
+								<StoryboardStrip shots={storyboardShots} />
+								<button
+									type="button"
+									onClick={() => void handleLoadPreview()}
+									disabled={
+										!productReady ||
+										isLoadingPreview ||
+										extendTotalRequired ||
+										backendRuntimeStale
+									}
+									className="rounded-xl border border-slate-700 bg-slate-800/40 px-4 py-2 text-[12px] font-semibold text-slate-100 hover:bg-slate-800/70 disabled:opacity-40"
+								>
+									{isLoadingPreview
+										? "Compiling…"
+										: previewPackage
+											? "Reload preview"
+											: "Compile preview"}
+								</button>
+							</div>
+						</WorkflowStep>
+
+		{/* Generate video (credit-bearing; unchanged gates) */}
+		<WorkflowStep
+			index={generateStepIndex}
+			title="Generate video"
+			status={sGenerate}
+							collapsible={false}
+							helper="Credits are spent only here."
+						>
+							{extendAuthority ? (
+								<NativeExtendPanel
+									backendRuntimeStale={backendRuntimeStale}
+									totalDurationSeconds={requestedTotalDuration}
+									productId={selectedProduct?.id ?? null}
+									productName={selectedProduct?.product_display_name ?? null}
+									executionPackageId={
+										workspacePackage?.workspace_execution_package_id ?? null
+									}
+									plannedBlocks={extendAuthority.plan
+										.slice(1)
+										.map((_blockDuration, i) => ({
+											block_index: i + 2,
+											position: i + 1,
+											prompt: `Native Extend continuation block ${i + 2}`,
+											is_final: i === extendAuthority.plan.length - 2,
+										}))}
+								/>
+							) : mode === "T2V" ? (
+								// SINGLE clip: one video via the LIVE one-door lane
+								// (/api/flow/generate). The operator presses this — it spends
+								// credits — never auto-fired.
+								<div className="space-y-2">
+									<button
+										type="button"
+										onClick={() =>
+											void handleExecute({
+												mode: jobMode,
+												prompt: singleClipPrompt,
+												aspectRatio: "9:16",
+												product_id: selectedProduct?.id ?? null,
+												workspace_execution_package_id:
+													workspacePackage?.workspace_execution_package_id ??
+													null,
+												prompt_fingerprint:
+													workspacePackage?.prompt_fingerprint ?? null,
+											})
+										}
+										disabled={
+											!singleClipPrompt || isExecuting || backendRuntimeStale
+										}
+										className="w-full rounded-xl bg-gradient-to-br from-v4-accent to-v4-auto px-4 py-3 text-[13px] font-bold text-slate-950 shadow-lg shadow-v4-accent/20 transition-opacity hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-40"
+									>
+										{isExecuting
+											? "Generating…"
+											: `▶ Generate 1 clip · ${videoDurationSeconds}s`}
+									</button>
+									<p className="text-[11px] text-slate-500">
+										{singleClipPrompt
+											? "Fires one video through Google Flow — spends credits. Needs an open, warmed-up Flow editor tab. For a longer joined video, switch Length to “Extended video”."
+											: "Compile preview → Prepare final prompt (cockpit) first."}
+									</p>
+								</div>
+							) : (
+								<div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-100">
+									{mode} keeps the existing reference-aware production gate. Select
+									EXTEND with a total duration to open the durable Generate control.
+								</div>
+							)}
+						</WorkflowStep>
+							</>
+						)}
+
+						{/* Fallback-copy confirmation gate (backend also enforces) */}
+						{showFallbackConfirm ? (
+							<div
+								data-testid="workflow-fallback-confirm"
+								data-state="AWAITING_HUMAN_CONFIRMATION"
+								data-rpa-stop="true"
+								className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 text-[12px] text-amber-100"
+							>
+								<div className="mb-2 font-bold uppercase tracking-[0.15em] text-amber-300">
+									Confirm fallback copy
+								</div>
+								<p className="mb-3">
+									No approved copy set selected. Continue with fallback copy from
+									product landbank / claim-safe angles?
+								</p>
+								<div className="flex flex-wrap gap-2">
+									<button
+										type="button"
+										onClick={() => void runGeneratePackage(true)}
+										disabled={isLoadingPackage || backendRuntimeStale}
+										className="rounded-lg border border-amber-500/50 bg-amber-500/20 px-3 py-2 text-[11px] font-semibold text-amber-100 hover:bg-amber-500/30 disabled:opacity-50"
+									>
+										{isLoadingPackage
+											? "Preparing…"
+											: "Confirm fallback and continue"}
+									</button>
+									<button
+										type="button"
+										onClick={() => setShowFallbackConfirm(false)}
+										disabled={isLoadingPackage}
+										className="rounded-lg border border-slate-600/40 bg-slate-700/30 px-3 py-2 text-[11px] font-semibold text-slate-100 hover:bg-slate-700/50 disabled:opacity-50"
+									>
+										Cancel
+									</button>
+								</div>
+							</div>
+						) : null}
+
+						{/* Shared workflow notice */}
+						<div
+							data-testid="workflow-notice"
+							data-notice-tone={notice.tone}
+							className={`rounded-2xl border px-4 py-3 text-sm ${notice.tone === "error" ? "border-red-500/40 bg-red-500/10 text-red-200" : notice.tone === "success" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200" : notice.tone === "info" ? "border-blue-500/40 bg-blue-500/10 text-blue-200" : notice.tone === "warning" ? "border-amber-500/40 bg-amber-500/10 text-amber-200" : "border-slate-800 bg-slate-900/40 text-slate-300"}`}
+						>
+							<div className="font-semibold tracking-wide">{notice.title}</div>
+							<div className="mt-1 text-xs opacity-90">{notice.detail}</div>
+						</div>
+
+						{/* Caption authoring for the finished artifact (the video itself is
+						    reviewed in the cockpit rail). */}
+						{completedArtifact ? (
+							<SocialCopyPackagePanel
+								mediaId={completedArtifact.mediaId}
+								sourceMode={mode}
+								productName={selectedProduct?.product_display_name ?? null}
+							/>
+						) : null}
+					</main>
+
+					{/* Operator cockpit rail — also the video review screen once a job
+					    completes (a quick look here without leaving for the Library). */}
+					<div className="w-full xl:w-80 xl:flex-none">
+						<div className="space-y-4 xl:sticky xl:top-4">
+							{completedArtifact ? (
+								<div className="overflow-hidden rounded-2xl border border-emerald-500/40 bg-emerald-500/10 shadow-lg shadow-black/20">
+									<div className="flex items-center justify-between gap-2 border-b border-emerald-500/20 px-3 py-2">
+										<div className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-200">
+											{completedArtifact.kind === "video" ? "🎬 Review" : "🖼 Review"}
+											{completedArtifact.sizeMb
+												? ` · ${completedArtifact.sizeMb}MB`
+												: ""}
+										</div>
+										<div className="flex items-center gap-2">
+											<a
+												href={completedArtifact.url}
+												download={`${completedArtifact.mediaId}.${completedArtifact.kind === "video" ? "mp4" : "jpg"}`}
+												className="rounded-md border border-emerald-500/40 px-2 py-0.5 text-[10px] font-semibold text-emerald-200 hover:bg-emerald-500/20"
+											>
+												Download
+											</a>
+											<button
+												type="button"
+												onClick={() => setCompletedArtifact(null)}
+												className="text-[12px] text-emerald-200/70 hover:text-emerald-200"
+												title="Dismiss"
+											>
+												✕
+											</button>
+										</div>
+									</div>
+									<div className="p-2">
+										{completedArtifact.kind === "video" ? (
+											// biome-ignore lint/a11y/useMediaCaption: generated previews have no caption track
+											<video
+												src={completedArtifact.url}
+												controls
+												playsInline
+												className="max-h-[60vh] w-full rounded-lg border border-emerald-500/20"
+											/>
+										) : (
+											<img
+												src={completedArtifact.url}
+												alt="Generated artifact"
+												className="max-h-[60vh] w-full rounded-lg border border-emerald-500/20"
+											/>
+										)}
+									</div>
+									<div className="border-t border-emerald-500/20 px-3 py-2 text-[10px] text-emerald-200/60">
+										Also saved to the Video Library (48h) · media{" "}
+										{completedArtifact.mediaId}
+									</div>
+								</div>
+							) : null}
+							<OperatorCockpit
+								laneLabel={laneTitle}
+								status={{
+									label:
+										cockpitState === "running"
+											? "Working"
+											: cockpitState === "done"
+												? "Prepared"
+												: cockpitState === "online"
+													? "Ready"
+													: "Idle",
+									state: cockpitState,
+								}}
+								product={
+									selectedProduct
+										? {
+												name: selectedProduct.product_display_name,
+												sub:
+													selectedProduct.strategy_taxonomy?.cluster ??
+													undefined,
+											}
+										: undefined
+								}
+								plan={selectedProduct ? plan : undefined}
+								queueTitle="Storyboard"
+								generate={cockpitGenerate}
+								debug={
+									<div className="space-y-1">
+										<div>
+										mode {mode} · {isImageMode ? "IMAGE" : isExtendMode ? "EXTEND" : "SINGLE"}
+										</div>
+										{workspacePackage ? (
+											<div className="break-all">
+												pkg {workspacePackage.workspace_execution_package_id}
+											</div>
+										) : null}
+									</div>
+								}
+							>
+								{storyboardShots.length ? (
+									storyboardShots.slice(0, 4).map((shot) => (
+										<QueueRow
+											key={shot.id}
+											title={shot.label}
+											sub={shot.sub}
+											status={workspacePackage ? "ready" : "queued"}
+										/>
+									))
+								) : (
+									<p className="text-[11px] text-slate-500">
+										Compile a preview to see the shot list.
+									</p>
+								)}
+							</OperatorCockpit>
+						</div>
+					</div>
+				</div>
+			</div>
+		);
+	}
 
 	return (
 		// RPA Round A (selector/state normalization): stable root + mode marker so a
@@ -2371,7 +3613,15 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							) : null}
 						</div>
 					</div>
-					{mode === "T2V" || mode === "HYBRID" ? (
+					{mode === "T2V" ? (
+						<div className="mt-4" data-testid="operator-creative-direction-t2v">
+							<CreativeDirectionSection
+								productId={selectedProduct?.id ?? null}
+								value={creativeDirection}
+								onChange={handleCreativeDirectionChange}
+							/>
+						</div>
+					) : mode === "HYBRID" ? (
 						<div
 							data-testid="operator-registry-authority"
 							className="mt-4 rounded-lg border border-cyan-500/25 bg-cyan-500/5 p-3"
@@ -2380,10 +3630,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								Registry Authority (Avatar + Scene)
 							</div>
 							<div className="mt-1 text-[11px] text-slate-300">
-								T2V/Hybrid presenter identity and scene background resolve from the
-								live approved Avatar Registry and Scene Registry. The Scene Registry
+								Hybrid presenter identity and scene background resolve from the live
+								approved Avatar Registry and Scene Registry. The Scene Registry
 								Background is a visual override only — distinct from the product's
-								Scene Strategy authority shown in Step 2.
+								Scene Strategy authority shown in Step 2. (T2V is text-only and uses
+								the descriptor-based Creative Direction above — no image pickers.)
 							</div>
 							{registryPoolsLoading ? (
 								<div className="mt-2 text-[11px] text-slate-400">Loading registries…</div>

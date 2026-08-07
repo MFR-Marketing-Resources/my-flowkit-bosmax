@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import {
 	getCreativeSetupForProduct,
+	getProductRecipes,
 	saveCreativeSelection,
 	reviewCreativeSelection,
 	type CreativeSetup,
@@ -9,20 +10,24 @@ import {
 } from "../../api/creativeIntelligence";
 
 /**
- * Creative Setup / Saved Selection panel (Creative Intelligence — Round 4).
- * Composes the Round 1 avatar, Round 2 scene template, and Round 3 camera preset
- * recommendations into a product-level planning artifact. Now MULTI-SELECT: tick
- * multiple avatars / scenes / cameras (the chosen SET); the first of each is the
- * backward-compatible primary. "Auto-fill top pick" sets + approves the #1 of each
- * in one click. PLANNING ONLY — nothing is generated or sent to generation, and
- * [AVATAR]/[PRODUCT] stay unresolved.
+ * Creative Setup / Saved Selection panel.
+ * Composes the avatar + scene recommendations into a product-level planning
+ * artifact. RECIPE-COHERENT: the config is avatar × scene; the CAMERA is NOT an
+ * independent axis — it FOLLOWS the scene via the scene→variation→camera bridge,
+ * so it is shown read-only per scene and derived on save. This removes the only
+ * source of incoherent combos (a camera that contradicts its scene). "Smart
+ * suggest (coherent recipes)" ticks + approves the arc-spread set in one click.
+ * PLANNING ONLY — nothing is generated or sent to generation.
  */
 export default function CreativeSetupPanel({ productId }: { productId: string }) {
 	const [setup, setSetup] = useState<CreativeSetup | null>(null);
 	const [saved, setSaved] = useState<SavedCreativeSelection | null>(null);
 	const [avatars, setAvatars] = useState<string[]>([]);
 	const [scenes, setScenes] = useState<string[]>([]);
-	const [cameras, setCameras] = useState<string[]>([]);
+	// scene_template_id -> camera_preset_code (camera follows scene; avatar-independent).
+	const [sceneCameraMap, setSceneCameraMap] = useState<Record<string, string>>(
+		{},
+	);
 	const [notes, setNotes] = useState("");
 	const [loading, setLoading] = useState(true);
 	const [busy, setBusy] = useState(false);
@@ -33,19 +38,39 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 		setLoading(true);
 		setError("");
 		setSetup(null);
-		void getCreativeSetupForProduct(productId)
-			.then((res) => {
+		Promise.all([
+			getCreativeSetupForProduct(productId),
+			// Recipes give the deterministic scene→camera binding (the bridge). Failure
+			// here must not block the panel — camera is a read-only enrichment.
+			Promise.resolve(getProductRecipes(productId)).catch(() => null),
+		])
+			.then(([res, recipes]) => {
 				if (!active) return;
 				setSetup(res);
 				const sel = res.saved_selection;
+				// Pre-configure from the saved selection if one exists, else from the
+				// live smart default (auto-derived from the cluster mapping) so EVERY
+				// product opens ready without the operator hand-picking.
+				const def = res.default_selection;
 				setSaved(sel);
-				setAvatars(sel?.selected_avatar_codes ?? []);
-				setScenes(sel?.selected_scene_template_ids ?? []);
-				setCameras(sel?.selected_camera_preset_codes ?? []);
+				setAvatars(
+					sel?.selected_avatar_codes ?? def?.selected_avatar_codes ?? [],
+				);
+				setScenes(
+					sel?.selected_scene_template_ids ??
+						def?.selected_scene_template_ids ??
+						[],
+				);
 				setNotes(sel?.notes ?? "");
+				setSceneCameraMap(buildSceneCameraMap(recipes));
 			})
 			.catch((cause) => {
-				if (active) setError(cause instanceof Error ? cause.message : "Failed to load creative setup.");
+				if (active)
+					setError(
+						cause instanceof Error
+							? cause.message
+							: "Failed to load creative setup.",
+					);
 			})
 			.finally(() => {
 				if (active) setLoading(false);
@@ -60,8 +85,16 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 		setList: (next: string[]) => void,
 		code: string,
 	) => {
-		setList(list.includes(code) ? list.filter((c) => c !== code) : [...list, code]);
+		setList(
+			list.includes(code) ? list.filter((c) => c !== code) : [...list, code],
+		);
 	};
+
+	// Camera is derived from the chosen scenes (never independently picked), so the
+	// saved plan can never carry a camera that contradicts its scene.
+	const derivedCameras = Array.from(
+		new Set(scenes.map((s) => sceneCameraMap[s]).filter(Boolean)),
+	);
 
 	async function handleSave() {
 		setBusy(true);
@@ -71,12 +104,14 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 				product_id: productId,
 				selected_avatar_codes: avatars,
 				selected_scene_template_ids: scenes,
-				selected_camera_preset_codes: cameras,
+				selected_camera_preset_codes: derivedCameras,
 				notes: notes || null,
 			});
 			setSaved(result);
 		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : "Failed to save selection.");
+			setError(
+				cause instanceof Error ? cause.message : "Failed to save selection.",
+			);
 		} finally {
 			setBusy(false);
 		}
@@ -84,32 +119,42 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 
 	async function handleAutoFill() {
 		if (!setup) return;
-		const topAvatar = setup.recommended_avatars[0]?.avatar_code;
-		const topScene = setup.recommended_scene_templates[0]?.template_id;
-		const topCamera = setup.camera_library.named_presets[0]?.preset_code;
-		if (!topAvatar) {
-			setError("No recommended avatar to auto-fill for this product.");
-			return;
-		}
-		const a = [topAvatar];
-		const s = topScene ? [topScene] : [];
-		const c = topCamera ? [topCamera] : [];
+		// Smart suggest: build a COHERENT recipe plan (avatar × scene where the camera
+		// FOLLOWS the scene) and tick the capped, arc-spread recommended set. The camera
+		// list is derived from the picked recipes so it can never include a camera that
+		// does not match a chosen scene.
 		setBusy(true);
 		setError("");
 		try {
+			const plan = await getProductRecipes(productId);
+			const chosen = plan.recommended_pretick;
+			if (!chosen.length) {
+				setError(
+					plan.review_required
+						? "This product needs a verified cluster before recipes can be built."
+						: "No coherent recipe to auto-fill for this product.",
+				);
+				return;
+			}
+			const dedupe = (xs: string[]) => Array.from(new Set(xs.filter(Boolean)));
+			const a = dedupe(chosen.map((r) => r.avatar_code));
+			const s = dedupe(chosen.map((r) => r.scene_template_id));
+			const c = dedupe(chosen.map((r) => r.camera_preset_code));
 			await saveCreativeSelection({
 				product_id: productId,
 				selected_avatar_codes: a,
 				selected_scene_template_ids: s,
 				selected_camera_preset_codes: c,
-				notes: "Auto-fill: top-scored recommendation",
+				notes: "Smart suggest: coherent recipe plan (camera follows scene)",
 			});
 			setAvatars(a);
 			setScenes(s);
-			setCameras(c);
+			setSceneCameraMap((prev) => ({ ...prev, ...buildSceneCameraMap(plan) }));
 			setSaved(await reviewCreativeSelection(productId, "APPROVE"));
 		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : "Failed to auto-fill selection.");
+			setError(
+				cause instanceof Error ? cause.message : "Failed to auto-fill selection.",
+			);
 		} finally {
 			setBusy(false);
 		}
@@ -121,15 +166,20 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 		try {
 			setSaved(await reviewCreativeSelection(productId, action));
 		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : "Failed to review selection.");
+			setError(
+				cause instanceof Error ? cause.message : "Failed to review selection.",
+			);
 		} finally {
 			setBusy(false);
 		}
 	}
 
 	const statusColor =
-		saved?.status === "APPROVED" ? "text-emerald-300"
-			: saved?.status === "REJECTED" ? "text-red-300" : "text-amber-300";
+		saved?.status === "APPROVED"
+			? "text-emerald-300"
+			: saved?.status === "REJECTED"
+				? "text-red-300"
+				: "text-amber-300";
 
 	return (
 		<div
@@ -137,19 +187,24 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 			className="rounded border border-teal-500/30 bg-teal-500/5 p-3"
 		>
 			<div className="flex items-center justify-between gap-2">
-				<div className="text-sm font-bold text-teal-100">Creative Setup / Saved Selection</div>
+				<div className="text-sm font-bold text-teal-100">
+					Creative Setup / Saved Selection
+				</div>
 				{saved && (
-					<span data-testid="creative-setup-status" className={`rounded bg-slate-800 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${statusColor}`}>
+					<span
+						data-testid="creative-setup-status"
+						className={`rounded bg-slate-800 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${statusColor}`}
+					>
 						{saved.status}
 					</span>
 				)}
 			</div>
 			<p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-				Compose a saved creative plan for this product — tick one or MORE avatars,
-				scene templates, and camera presets. Planning only — nothing is generated or
-				sent to generation, and the{" "}
-				<code className="text-teal-200">[AVATAR]</code>/<code className="text-teal-200">[PRODUCT]</code>{" "}
-				placeholders stay unresolved.
+				Compose a saved creative plan for this product — tick one or MORE avatars
+				and scene templates. The <span className="text-teal-200">camera follows
+				each scene automatically</span> (never picked separately), so no
+				incoherent combos. Planning only — nothing is generated or sent to
+				generation.
 			</p>
 
 			{loading ? (
@@ -169,10 +224,10 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 							data-testid="creative-setup-autofill"
 							disabled={busy}
 							onClick={handleAutoFill}
-							title="Set the top-scored avatar + scene + camera and approve, in one click"
+							title="Smart suggest: build a COHERENT recipe plan (avatar × scene, camera follows scene) and tick the capped arc-spread set (intro → body → detail → benefit), then approve — no incoherent combos"
 							className="rounded bg-indigo-600 px-2 py-1 text-[10px] font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
 						>
-							⚡ Auto-fill top pick
+							⚡ Smart suggest (coherent recipes)
 						</button>
 					</div>
 
@@ -181,31 +236,30 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 							label="Avatars"
 							testid="creative-setup-avatar"
 							selected={avatars}
-							options={setup.recommended_avatars.map((a) => ({
+							options={(setup.avatar_library?.length
+								? setup.avatar_library
+								: setup.recommended_avatars
+							).map((a) => ({
 								code: a.avatar_code,
-								label: `${a.avatar_code}${a.character_name ? ` · ${a.character_name}` : ""}`,
+								label:
+									`${a.avatar_code}${a.character_name ? ` · ${a.character_name}` : ""}` +
+									("recommended" in a && a.recommended ? " ★" : ""),
 							}))}
 							onToggle={(code) => toggle(avatars, setAvatars, code)}
 						/>
 						<MultiPickList
-							label="Scene templates"
+							label="Scene templates → camera"
 							testid="creative-setup-scene"
 							selected={scenes}
 							options={setup.recommended_scene_templates.map((t) => ({
 								code: t.template_id,
-								label: `${t.template_id}${t.variant ? ` · ${t.variant}` : ""}`,
+								label:
+									`${t.template_id}${t.variant ? ` · ${t.variant}` : ""}` +
+									(sceneCameraMap[t.template_id]
+										? ` · 🎥 ${sceneCameraMap[t.template_id]}`
+										: ""),
 							}))}
 							onToggle={(code) => toggle(scenes, setScenes, code)}
-						/>
-						<MultiPickList
-							label="Camera presets"
-							testid="creative-setup-camera"
-							selected={cameras}
-							options={setup.camera_library.named_presets.map((p) => ({
-								code: p.preset_code,
-								label: `${p.preset_code}${p.preset_name ? ` · ${p.preset_name}` : ""}`,
-							}))}
-							onToggle={(code) => toggle(cameras, setCameras, code)}
 						/>
 					</div>
 
@@ -242,7 +296,8 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 							</>
 						)}
 						<span className="text-[10px] text-slate-500">
-							{avatars.length} avatar · {scenes.length} scene · {cameras.length} camera
+							{avatars.length} avatar · {scenes.length} scene ·{" "}
+							{derivedCameras.length} camera (auto)
 						</span>
 					</div>
 
@@ -255,6 +310,36 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 			) : null}
 		</div>
 	);
+}
+
+/** Build scene_template_id → camera_preset_code from a recipe response (camera
+ * follows the scene, so any recipe touching a scene gives its camera). */
+function buildSceneCameraMap(
+	recipes:
+		| {
+				recipes?: Array<{
+					scene_template_id?: string;
+					camera_preset_code?: string;
+				}>;
+				recommended_pretick?: Array<{
+					scene_template_id?: string;
+					camera_preset_code?: string;
+				}>;
+		  }
+		| null
+		| undefined,
+): Record<string, string> {
+	const map: Record<string, string> = {};
+	const all = [
+		...(recipes?.recipes ?? []),
+		...(recipes?.recommended_pretick ?? []),
+	];
+	for (const r of all) {
+		if (r.scene_template_id && r.camera_preset_code && !map[r.scene_template_id]) {
+			map[r.scene_template_id] = r.camera_preset_code;
+		}
+	}
+	return map;
 }
 
 function MultiPickList({
@@ -274,7 +359,9 @@ function MultiPickList({
 		<div>
 			<div className="mb-1 flex items-center justify-between">
 				<span className="text-xs text-slate-300">{label}</span>
-				<span className="text-[10px] text-slate-500">{selected.length} selected</span>
+				<span className="text-[10px] text-slate-500">
+					{selected.length} selected
+				</span>
 			</div>
 			{options.length === 0 ? (
 				<p className="rounded bg-slate-900 px-2 py-1 text-[10px] text-slate-500">

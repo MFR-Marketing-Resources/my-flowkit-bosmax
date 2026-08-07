@@ -133,8 +133,11 @@ class SelectionReadinessAuthority(BaseModel):
     selection_id: str | None = None
     status: str | None = None
     selected_avatar_code: str | None = None
+    selected_avatar_codes: list[str] = Field(default_factory=list)
     selected_scene_template_id: str | None = None
+    selected_scene_template_ids: list[str] = Field(default_factory=list)
     selected_camera_preset_code: str | None = None
+    selected_camera_preset_codes: list[str] = Field(default_factory=list)
     selection_sha256: str | None = None
 
 

@@ -14,6 +14,7 @@ from agent.models.creative_treatment import (
     ReviewVariationGroupRequest,
 )
 from agent.services import creative_treatment_service as service
+from agent.services import creative_scene_prompt_service
 from agent.services.scene_strategy_library import SCENE_STRATEGIES
 
 
@@ -223,6 +224,26 @@ def _request(
         supersedes_treatment_id=supersedes_treatment_id,
         created_by=created_by,
     )
+
+
+def test_selection_handoff_derives_camera_from_the_per_treatment_scene():
+    scene = creative_scene_prompt_service.library_templates()[1]
+    expected_camera = service.creative_recipe_service.camera_for_variant(
+        scene.get("variant")
+    )
+
+    handoff = service._resolve_selection_handoff(
+        {
+            "selected_scene_template_id": creative_scene_prompt_service.library_templates()[0][
+                "template_id"
+            ],
+            "selected_camera_preset_code": "NOT_THE_SCENE_CAMERA",
+        },
+        scene_template_id=scene["template_id"],
+    )
+
+    assert handoff["scene_template"]["template_id"] == scene["template_id"]
+    assert handoff["camera_preset"]["preset_code"] == expected_camera
 
 
 def test_empty_asset_bindings_require_an_empty_compatibility_role_set() -> None:

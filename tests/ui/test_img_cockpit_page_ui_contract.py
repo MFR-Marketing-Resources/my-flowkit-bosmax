@@ -79,7 +79,8 @@ def test_cockpit_generate_sends_selected_refs():
     # Selected references are resolved into image_media_ids and actually sent to
     # generation — not ignored.
     assert "resolveGenerationInputs" in page
-    assert "image_media_ids: genResolution.mediaIds" in page
+    assert "buildImgGenerationRequest" in page
+    assert "resolution: genResolution" in page
     # Generate is blocked when the lane's required visual truth cannot resolve.
     assert "genResolution.blocked" in page
     assert "Generate payload preview" in page
@@ -136,6 +137,31 @@ def test_cockpit_poster_lane_is_copy_governed():
     # the operator explicitly confirms fallback — never silent generic marketing copy.
     assert "posterCopyGateBlocked" in page
     assert "if (posterCopyGateBlocked) return;" in page  # defense in depth
+
+
+def test_cockpit_v4_preserves_the_poster_copy_binding_gate():
+    page = _read("dashboard/src/pages/ImgCockpitPage.tsx")
+    v4 = page.split("if (useV4)", 1)[1].split(
+        '\n\treturn (\n\t\t<div className="flex min-w-0 flex-col gap-5 p-4 md:p-6">',
+        1,
+    )[0]
+    assert "posterCopyApplicable ?" in v4
+    assert "CopywritingReadinessCard" in v4
+    assert "CopyBindingGate" in v4
+    assert "posterCopyGateBlocked" in v4
+    assert "onToggleFallback={setCopyFallbackConfirmed}" in v4
+
+
+def test_cockpit_v4_shell_is_opt_in_and_reviews_approved_asset():
+    page = _read("dashboard/src/pages/ImgCockpitPage.tsx")
+    assert "WorkflowStep" in page
+    assert "OperatorCockpit" in page
+    assert 'data-variant="v4"' in page
+    assert 'const useV4 = searchParams.get("classic") !== "1";' in page
+    assert 'searchParams.get("classic") !== "1"' in page
+    assert "Switch to classic view" in page
+    assert 'title="Review · approved asset"' in page
+    assert "Images use count, not duration" in page
 
 
 def test_img_factory_client_wires_gated_generation():

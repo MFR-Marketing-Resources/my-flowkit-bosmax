@@ -21,7 +21,7 @@ def _package():
 def test_single_mode_uses_one_block_and_deterministic_shot_policy():
     result = compile_ugc_video_prompt(
         product=_product(),
-        approved_package=_package(),
+        approved_package=_package(), avatar_id="BOS_F_AINA_01",
         mode="F2V",
         generation_mode="SINGLE",
         duration_seconds=12,
@@ -41,7 +41,7 @@ def test_extend_manual_block_plan_blocked_in_production():
     with pytest.raises(ValueError) as exc:
         compile_ugc_video_prompt(
             product=_product(),
-            approved_package=_package(),
+            approved_package=_package(), avatar_id="BOS_F_AINA_01",
             mode="F2V",
             generation_mode="EXTEND",
             duration_seconds=8,
@@ -58,7 +58,7 @@ def test_extend_manual_block_plan_allowed_under_dev_override():
     # DEV/ADVANCED ONLY: an explicit override honors a raw per-block plan.
     result = compile_ugc_video_prompt(
         product=_product(),
-        approved_package=_package(),
+        approved_package=_package(), avatar_id="BOS_F_AINA_01",
         mode="F2V",
         generation_mode="EXTEND",
         duration_seconds=8,
@@ -80,7 +80,7 @@ def test_extend_manual_block_plan_allowed_under_dev_override():
 def _extend_total(total: int):
     return compile_ugc_video_prompt(
         product=_product(),
-        approved_package=_package(),
+        approved_package=_package(), avatar_id="BOS_F_AINA_01",
         mode="F2V",
         generation_mode="EXTEND",
         engine_duration_target="GOOGLE_FLOW",
@@ -120,7 +120,7 @@ def test_requested_total_overrides_raw_blocks():
     # (this is exactly the cap-at-2-blocks bug: the UI always sent 2 raw blocks).
     result = compile_ugc_video_prompt(
         product=_product(),
-        approved_package=_package(),
+        approved_package=_package(), avatar_id="BOS_F_AINA_01",
         mode="F2V",
         generation_mode="EXTEND",
         engine_duration_target="GOOGLE_FLOW",
@@ -142,7 +142,7 @@ def test_extend_route_missing_authority_fails_closed():
     with pytest.raises(ValueError) as exc:
         compile_ugc_video_prompt(
             product=_product(),
-            approved_package=_package(),
+            approved_package=_package(), avatar_id="BOS_F_AINA_01",
             mode="F2V",
             generation_mode="EXTEND",
             route="GOOGLE_FLOW_VEO_EXTEND",
@@ -163,7 +163,7 @@ def test_all_video_modes_share_route_planner_total_16(mode, source_mode):
     # authority-backed plan from the SAME route planner.
     result = compile_ugc_video_prompt(
         product=_product(),
-        approved_package=_package(),
+        approved_package=_package(), avatar_id="BOS_F_AINA_01",
         mode=mode,
         source_mode=source_mode,
         generation_mode="EXTEND",

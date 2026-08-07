@@ -28,6 +28,7 @@ from agent.models.creative_treatment import (
 from agent.services import (
     avatar_registry,
     creative_handoff_service,
+    creative_recipe_service,
     full_storyboard_extend_planner,
     video_models,
 )
@@ -647,8 +648,32 @@ async def _resolve_assets(
     return sorted(assets, key=lambda item: (item["role"], item["asset_id"]))
 
 
-def _resolve_selection_handoff(selection: dict[str, Any]) -> dict[str, Any]:
-    scene_id = selection.get("selected_scene_template_id")
+def _selection_values(
+    selection: dict[str, Any],
+    *,
+    json_field: str,
+    primary_field: str,
+) -> list[str]:
+    values = _parse_json(selection.get(json_field), [])
+    if not isinstance(values, list):
+        values = []
+    normalized = [
+        str(value).strip()
+        for value in values
+        if str(value or "").strip()
+    ]
+    if not normalized:
+        primary = str(selection.get(primary_field) or "").strip()
+        normalized = [primary] if primary else []
+    return list(dict.fromkeys(normalized))
+
+
+def _resolve_selection_handoff(
+    selection: dict[str, Any],
+    *,
+    scene_template_id: str | None = None,
+) -> dict[str, Any]:
+    scene_id = scene_template_id or selection.get("selected_scene_template_id")
     camera_code = selection.get("selected_camera_preset_code")
     scene = (
         creative_handoff_service._scene_index().get(scene_id) if scene_id else None
@@ -657,6 +682,12 @@ def _resolve_selection_handoff(selection: dict[str, Any]) -> dict[str, Any]:
         raise CreativeTreatmentError(
             "INVALID_SCENE_TEMPLATE_ID",
             status_code=422,
+        )
+    # B0/A.2: a concrete scene owns its camera. The selected camera column is
+    # retained only for legacy rows that have no scene to derive from.
+    if scene is not None:
+        camera_code = creative_recipe_service.camera_for_variant(
+            scene.get("variant")
         )
     camera = (
         creative_handoff_service._camera_index().get(camera_code)
@@ -739,7 +770,31 @@ async def _resolve_authority(
     consumes_selected_avatar = body.format == "UGC" or (
         body.format == "CINEMATIC" and "PRESENTER" in actor_roles
     )
-    handoff = _resolve_selection_handoff(selection)
+    selected_avatar_codes = _selection_values(
+        selection,
+        json_field="selected_avatar_codes_json",
+        primary_field="selected_avatar_code",
+    )
+    selected_scene_template_ids = _selection_values(
+        selection,
+        json_field="selected_scene_template_ids_json",
+        primary_field="selected_scene_template_id",
+    )
+    if body.avatar_code and body.avatar_code not in selected_avatar_codes:
+        raise CreativeTreatmentError(
+            "CREATIVE_SELECTION_AVATAR_TUPLE_NOT_APPROVED",
+            status_code=422,
+        )
+    if body.scene_template_id and body.scene_template_id not in selected_scene_template_ids:
+        raise CreativeTreatmentError(
+            "CREATIVE_SELECTION_SCENE_TUPLE_NOT_APPROVED",
+            status_code=422,
+        )
+    scene_id = body.scene_template_id or selection.get("selected_scene_template_id")
+    handoff = _resolve_selection_handoff(
+        selection,
+        scene_template_id=scene_id,
+    )
 
     try:
         taxonomy_model = await require_verified_product_strategy_taxonomy(
@@ -774,7 +829,7 @@ async def _resolve_authority(
         "taxonomy": taxonomy,
     }
 
-    avatar_code = selection.get("selected_avatar_code")
+    avatar_code = body.avatar_code or selection.get("selected_avatar_code")
     avatar_profile: dict[str, Any] | None = None
     if consumes_selected_avatar and avatar_code:
         try:
@@ -944,6 +999,8 @@ def _stored_request(row: dict[str, Any]) -> CreateTreatmentRequest:
             {"role": item["role"], "asset_id": item["asset_id"]}
             for item in _parse_json(row["asset_bindings_json"], [])
         ],
+        avatar_code=row.get("avatar_code"),
+        scene_template_id=row.get("scene_template_id"),
         variation_group_id=row.get("variation_group_id"),
         variation_ordinal=row.get("variation_ordinal"),
         supersedes_treatment_id=row.get("supersedes_treatment_id"),

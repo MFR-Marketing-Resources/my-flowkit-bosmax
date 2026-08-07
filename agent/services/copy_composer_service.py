@@ -159,7 +159,9 @@ def compose(
     if not want or not angles:
         return {
             "items": [], "requested": want, "produced": 0, "shortfall": want,
-            "blocked_angles": [a["angle_key"] for a in angles], "warnings": [],
+            "blocked_angles": [a["angle_key"] for a in angles],
+            "coverage": None,
+            "warnings": [],
         }
 
     warnings: list[str] = []

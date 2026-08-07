@@ -11,6 +11,14 @@
   --color-green: #22c55e;
   --color-red: #ef4444;
   --color-yellow: #eab308;
+
+  /* --- V4 workflow identity (additive; used only by components/workflow) ---
+   * teal = the V4 accent; violet = "auto, resolved by the knowledge base".
+   * These do not touch the existing slate/blue app palette. Generates
+   * utilities: bg/text/border/ring-v4-accent, -v4-accent-ink, -v4-auto. */
+  --color-v4-accent: #2dd4bf;
+  --color-v4-accent-ink: #7ff0e3;
+  --color-v4-auto: #8f81f8;
 }
 
 @layer base {

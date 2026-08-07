@@ -11,7 +11,7 @@
  * Rendered-DOM contract only: no business logic, no generate clicks.
  */
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -20,6 +20,18 @@ vi.mock("../api/client", () => ({
 }));
 vi.mock("../api/copywritingReadiness", () => ({
 	useCopywritingReadiness: () => ({ readiness: null, loading: false }),
+}));
+vi.mock("../api/creativeAssets", () => ({
+	fetchCreativeAssetEligibilityAudit: vi
+		.fn()
+		.mockResolvedValue({ eligible_assets: [] }),
+}));
+vi.mock("../api/creativeIntelligence", () => ({
+	getCreativeSetupForProduct: vi.fn().mockResolvedValue({}),
+	getProductRecipes: vi.fn().mockResolvedValue({
+		recipes: [],
+		recommended_pretick: [],
+	}),
 }));
 vi.mock("../api/products", () => ({
 	fetchProductCatalog: vi.fn().mockResolvedValue({ items: [] }),
@@ -35,6 +47,7 @@ vi.mock("../api/workspaceGenerationPackages", () => ({
 	createI2VGenerationPackage: vi.fn(),
 }));
 vi.mock("../components/BackendVersionBanner", () => ({ default: () => null }));
+vi.mock("../components/NativeExtendPanel", () => ({ default: () => null }));
 vi.mock("../components/copywriting/CopywritingReadinessCard", () => ({
 	default: () => <div data-testid="copywriting-readiness-mock" />,
 }));
@@ -45,11 +58,29 @@ vi.mock("../components/SocialCopyPackagePanel", () => ({ default: () => null }))
 vi.mock("../components/workspace/CopySelectionPanel", () => ({
 	default: () => <div data-testid="copy-selection-panel-mock" />,
 }));
+vi.mock("../components/workspace/CanonicalReferenceBindingControls", () => ({
+	default: ({ mode }: { mode: string }) => (
+		<div data-testid="v4-reference-binding">{mode} reference controls</div>
+	),
+	EMPTY_BINDING: {
+		productReferenceAssetId: null,
+		startFrameAssetId: null,
+		endFrameAssetId: null,
+		characterReferenceAssetId: null,
+		sceneContextReferenceAssetId: null,
+		styleReferenceAssetId: null,
+	},
+}));
 vi.mock("../components/workspace/F2VModule", () => ({ default: () => null }));
 vi.mock("../components/workspace/I2VModule", () => ({ default: () => null }));
-vi.mock("../components/workspace/IMGModule", () => ({ default: () => null }));
+vi.mock("../components/workspace/IMGModule", () => ({
+	default: () => <div data-testid="v4-img-module">IMG module</div>,
+}));
 vi.mock("../components/workspace/SearchableProductSelect", () => ({
 	default: () => <div data-testid="product-select-mock" />,
+}));
+vi.mock("../components/workspace/VisualAssetPicker", () => ({
+	default: () => null,
 }));
 vi.mock("../components/workspace/T2VModule", () => ({ default: () => null }));
 
@@ -57,9 +88,14 @@ import OperatorPage from "./OperatorPage";
 
 afterEach(() => cleanup());
 
-function renderOperator(mode: "HYBRID" | "T2V" | "I2V" | "F2V" | "IMG") {
+function renderOperator(
+	mode: "HYBRID" | "T2V" | "I2V" | "F2V" | "IMG",
+	search = "?classic=1",
+) {
 	render(
-		<MemoryRouter initialEntries={[{ pathname: `/operator/${mode}` }]}>
+		<MemoryRouter
+			initialEntries={[{ pathname: `/operator/${mode}`, search }]}
+		>
 			<OperatorPage mode={mode} />
 		</MemoryRouter>,
 	);
@@ -143,5 +179,52 @@ describe("Workflow Upgrade V1 — five-step order", () => {
 		expect(screen.queryByTestId("workflow-step-3")).toBeNull();
 		expect(screen.queryByTestId("workflow-step-4")).toBeNull();
 		expect(screen.queryByTestId("workflow-step-5")).toBeNull();
+	});
+});
+
+describe("OperatorPage V4 Bucket 1 rollout", () => {
+	it.each(["F2V", "HYBRID", "I2V"] as const)(
+		"renders the shared V4 shell and per-mode Reference step for %s",
+		(mode) => {
+			renderOperator(mode, "?v4=1");
+			const root = screen.getByTestId("hybrid-workflow");
+			const referenceStep = screen.getByRole("button", {
+				name: /^Reference/,
+			});
+
+			expect(root).toHaveAttribute("data-variant", "v4");
+			expect(referenceStep).toBeInTheDocument();
+
+			fireEvent.click(referenceStep);
+			expect(screen.getByTestId("v4-reference-binding")).toHaveTextContent(
+				`${mode} reference controls`,
+			);
+		},
+	);
+
+	it("keeps IMGModule inside the V4 Image setup step", () => {
+		renderOperator("IMG", "?v4=1");
+		const root = screen.getByTestId("hybrid-workflow");
+
+		expect(root).toHaveAttribute("data-variant", "v4");
+		expect(screen.getByText("Image setup")).toBeInTheDocument();
+		expect(screen.getByTestId("v4-img-module")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /^Reference/ })).toBeNull();
+	});
+
+	it("keeps non-T2V classic as the default until the lane is live-verified", () => {
+		renderOperator("HYBRID");
+		const root = screen.getByTestId("hybrid-workflow");
+
+		expect(root).not.toHaveAttribute("data-variant", "v4");
+		expect(screen.getByTestId("workflow-step-1")).toBeInTheDocument();
+	});
+
+	it("lets classic=1 override the V4 opt-in", () => {
+		renderOperator("F2V", "?v4=1&classic=1");
+		const root = screen.getByTestId("hybrid-workflow");
+
+		expect(root).not.toHaveAttribute("data-variant", "v4");
+		expect(screen.getByTestId("workflow-step-1")).toBeInTheDocument();
 	});
 });

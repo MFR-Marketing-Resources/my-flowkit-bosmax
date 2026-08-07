@@ -1,0 +1,16 @@
+{
+  "bridge_version": "SCENE_VARIATION_CAMERA_BRIDGE_v1",
+  "description": "Maps each scene-template Variation archetype (1-7, consistent across ALL clusters: 24 templates per Variation x 7 = 168) to the script block_purpose + content_type it represents. The camera is then resolved by the EXISTING camera block_content_mapping (creative_camera_preset_library.json) — camera FOLLOWS scene, it is never an independent pick. This is the ONLY new authoring needed to make avatar x scene recipes shot-coherent for every product; no per-product data and no AI.",
+  "provenance": "Authored 2026-08-06 from creative_scene_prompt_library.json variant analysis: Variation 1..7 carry consistent semantics across clusters (Var1=Holding&Presenting, Var2=Placing/Applying, Var3=Using&Demonstrating, Var4=Lifestyle, Var5=Close-up Details, Var6=Setup&Routine, Var7=Demonstrating Benefits).",
+  "note": "block_purpose + content_type MUST match keys present in creative_camera_preset_library.json block_content_mapping, otherwise the camera falls back. Tunable by the owner without any code change.",
+  "variation_map": {
+    "1": { "archetype": "Holding & Presenting (hero intro)", "block_purpose": "Body Block", "content_type": "Product Demo" },
+    "2": { "archetype": "Placing / Applying (first use)", "block_purpose": "Body Block", "content_type": "Product Demo" },
+    "3": { "archetype": "Using & Demonstrating", "block_purpose": "Body Block", "content_type": "Product Demo" },
+    "4": { "archetype": "Lifestyle Daily Use", "block_purpose": "Body Block", "content_type": "Testimonial/Story" },
+    "5": { "archetype": "Close-up Product Details (macro)", "block_purpose": "Body Block", "content_type": "Ingredient Highlight" },
+    "6": { "archetype": "Setup & Routine", "block_purpose": "Body Block", "content_type": "USP Explanation" },
+    "7": { "archetype": "Demonstrating Benefits (proof)", "block_purpose": "CTA Block", "content_type": "Result Showcase" }
+  },
+  "fallback": { "archetype": "Product demonstration (default)", "block_purpose": "Body Block", "content_type": "Product Demo" }
+}

@@ -7,6 +7,7 @@ from agent.services.prompt_compiler_runtime_config_service import (
     get_runtime_config,
 )
 from agent.services.copy_binding_service import CopyBindingError
+from agent.services import creative_recipe_service as _recipe
 from agent.services.workspace_generation_package_service import (
     QUANTITY_PREVIEW_MAX,
     bind_bulk_manual_fire_result,
@@ -78,6 +79,9 @@ class WorkspaceExecutionPackageRequest(BaseModel):
     avatar_id: str | None = None
     scene_context_override: str | None = None
     scene_context_code: str | None = None
+    # Recipe descriptors (Step F): selected recipe's scene template + camera preset ids.
+    scene_template_id: str | None = None
+    camera_preset_code: str | None = None
 
 class WorkspacePromptCompileRequest(BaseModel):
     product_id: str
@@ -98,6 +102,9 @@ class WorkspacePromptCompileRequest(BaseModel):
     copy_set_id: str | None = None
     avatar_id: str | None = None
     scene_context_override: str | None = None
+    # Recipe descriptors (Step F): selected recipe's scene template + camera preset ids.
+    scene_template_id: str | None = None
+    camera_preset_code: str | None = None
 
 class WorkspacePackageReadinessRequest(BaseModel):
     mode: str
@@ -121,6 +128,9 @@ class QuantityPreviewRequest(BaseModel):
 @router.post("/execution-package")
 async def post_workspace_execution_package(request: WorkspaceExecutionPackageRequest):
     try:
+        _rd = _recipe.resolve_recipe_descriptors(
+            request.scene_template_id, request.camera_preset_code
+        )
         return await create_workspace_execution_package(
             product_id=request.product_id,
             mode=request.mode,
@@ -151,6 +161,8 @@ async def post_workspace_execution_package(request: WorkspaceExecutionPackageReq
             avatar_id=request.avatar_id,
             scene_context_override=request.scene_context_override,
             scene_context_code=request.scene_context_code,
+            scene_template=_rd["scene_template"],
+            camera_preset=_rd["camera_preset"],
         )
     except CopyBindingError as exc:
         raise HTTPException(
@@ -201,6 +213,9 @@ async def get_workspace_prompt_compiler_config():
 @router.post("/ugc-video-prompt-compile")
 async def post_workspace_prompt_compile(request: WorkspacePromptCompileRequest):
     try:
+        _rd = _recipe.resolve_recipe_descriptors(
+            request.scene_template_id, request.camera_preset_code
+        )
         return await compile_workspace_prompt_preview(
             product_id=request.product_id,
             mode=request.mode,
@@ -219,6 +234,8 @@ async def post_workspace_prompt_compile(request: WorkspacePromptCompileRequest):
             copy_set_id=request.copy_set_id,
             avatar_id=request.avatar_id,
             scene_context_override=request.scene_context_override,
+            scene_template=_rd["scene_template"],
+            camera_preset=_rd["camera_preset"],
         )
     except CopyBindingError as exc:
         raise HTTPException(

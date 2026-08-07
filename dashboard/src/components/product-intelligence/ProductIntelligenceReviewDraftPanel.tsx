@@ -4,7 +4,7 @@ import {
 	aiFillMissingProductIntelligenceReviewDraft,
 	approveClaimSafeRewrite,
 	approveProductIntelligenceReviewDraft,
-	createProductIntelligenceReviewDraft,
+	createProductIntelligenceRevisionDraft,
 	fetchClaimSafeRewritePreview,
 	fetchProductIntelligenceReviewDraft,
 	fetchProductIntelligenceReviewDrafts,
@@ -175,7 +175,10 @@ function formToPersona(form: DraftFormState): Record<string, unknown> {
 	putText("audience", form.persona_audience);
 	putList("desires", form.persona_desires);
 	putList("fears", form.persona_fears);
-	putList("pains", form.persona_pains);
+	// Canonical key is `pain_points` (hub import + prepare lane + copy-grounding
+	// resolver all read it). Writing `pains` here orphaned the value on round-trip;
+	// personaToForm already reads either spelling.
+	putList("pain_points", form.persona_pains);
 	putList("objections", form.persona_objections);
 	putList("triggers", form.persona_triggers);
 	putText("tone", form.persona_tone);
@@ -185,14 +188,27 @@ function formToPersona(form: DraftFormState): Record<string, unknown> {
 
 function strategyToForm(value: unknown) {
 	const s = asObject(value);
-	const angles = Array.isArray(s.angles)
+	let angles = Array.isArray(s.angles)
 		? s.angles
 		: typeof s.angle === "string" && s.angle.trim()
 			? [s.angle]
 			: [];
+	// Fallback: other lanes (hub import / copy intelligence) store this product's
+	// angle lines under hook_angles / cta_angles, not `angles`. Surface them so the
+	// editor shows the existing copy strategy instead of a misleading blank field.
+	if (angles.length === 0) {
+		angles = [
+			...(Array.isArray(s.hook_angles) ? s.hook_angles : []),
+			...(Array.isArray(s.cta_angles) ? s.cta_angles : []),
+		];
+	}
+	// Strategy summary is freeform; fall back to a stored subhook line if present.
+	const summary =
+		jsonToText(s.summary ?? s.strategy) ||
+		(Array.isArray(s.subhook) ? jsonToLines(s.subhook) : jsonToText(s.subhook));
 	return {
 		strategy_angles: jsonToLines(angles),
-		strategy_summary: jsonToText(s.summary ?? s.strategy),
+		strategy_summary: summary,
 	};
 }
 
@@ -407,6 +423,7 @@ function TextArea({
 function buildMutationPayload(
 	form: DraftFormState,
 	provenanceRows: DraftProvenanceFormRow[],
+	existing?: ProductIntelligenceReviewDraft | null,
 ): ProductIntelligenceReviewDraftMutationRequest {
 	return {
 		product_description: form.product_description.trim() || null,
@@ -429,8 +446,18 @@ function buildMutationPayload(
 		product_truth_lock: form.product_truth_lock.trim() || null,
 		allowed_claims_json: linesToList(form.allowed_claims_json),
 		blocked_claims_json: linesToList(form.blocked_claims_json),
-		buyer_persona_snapshot_json: formToPersona(form),
-		copy_strategy_summary_json: formToStrategy(form),
+		// MERGE over the loaded draft's existing objects (not full-replace) so keys
+		// authored by other lanes (hook_angles / cta_angles / subhook / usp / pain_points
+		// and prepare-lane persona sub-keys) survive Save + Approve. The editor only owns
+		// the friendly sub-fields it renders; everything else is preserved verbatim.
+		buyer_persona_snapshot_json: {
+			...asObject(existing?.buyer_persona_snapshot_json),
+			...formToPersona(form),
+		},
+		copy_strategy_summary_json: {
+			...asObject(existing?.copy_strategy_summary_json),
+			...formToStrategy(form),
+		},
 		confidence_score: parseOptionalNumber(
 			form.confidence_score,
 			"Confidence score",
@@ -913,12 +940,16 @@ export default function ProductIntelligenceReviewDraftPanel({
 		setMessage(null);
 		setBlockerNotice(null);
 		try {
-			const draft = await createProductIntelligenceReviewDraft(productId, {
+			// Seed the new draft from the product's latest APPROVED snapshot
+			// (fill-if-empty, keep-if-exists) so the editor opens on current truth
+			// instead of blank fields. Falls back to product-only seed when the
+			// product has never been approved.
+			const draft = await createProductIntelligenceRevisionDraft(productId, {
 				created_by: "operator",
 			});
 			syncDraftInList(draft);
 			setValidation(null);
-			setMessage("Review draft created.");
+			setMessage("Review draft created from the latest approved truth.");
 		} catch (err) {
 			setError(
 				err instanceof Error
@@ -1056,7 +1087,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 
 	const saveDraft = async () => {
 		if (!activeDraft || !form) return null;
-		const payload = buildMutationPayload(form, provenanceRows);
+		const payload = buildMutationPayload(form, provenanceRows, activeDraft);
 		const updated = await updateProductIntelligenceReviewDraft(
 			activeDraft.draft_id,
 			payload,
@@ -2099,6 +2130,11 @@ export default function ProductIntelligenceReviewDraftPanel({
 										value={form.size_or_volume}
 										onChange={(value) => updateFormField("size_or_volume", value)}
 									/>
+									<details className="xl:col-span-2 rounded border border-slate-800 bg-slate-950/40 p-3">
+										<summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+											System fields — managed automatically, you rarely need to touch these
+										</summary>
+										<div className="mt-3 grid gap-4 xl:grid-cols-2">
 									<TextInput
 										label="Product Form Factor"
 										value={form.product_form_factor}
@@ -2184,6 +2220,8 @@ export default function ProductIntelligenceReviewDraftPanel({
 											rows={6}
 										/>
 									</div>
+										</div>
+									</details>
 									<div className="xl:col-span-2 space-y-3 rounded border border-slate-800 bg-slate-950/40 p-3">
 										<SectionHeading
 											title="Customer Avatar (buyer persona)"
@@ -2258,7 +2296,8 @@ export default function ProductIntelligenceReviewDraftPanel({
 								</div>
 							</div>
 
-							<div className="rounded border border-slate-800 bg-slate-900/50 p-3">
+							<details className="rounded border border-slate-800 bg-slate-900/50 p-3">
+								<summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Field provenance / audit trail — filled automatically on approval, you rarely need this</summary>
 								<div className="mb-4 flex flex-wrap items-center justify-between gap-3">
 									<SectionHeading
 										title="Field Provenance Editor"
@@ -2432,7 +2471,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 										</div>
 									))}
 								</div>
-							</div>
+							</details>
 						</>
 					)}
 				</div>

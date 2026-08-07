@@ -29,6 +29,8 @@ from agent.models.creative_production import (
 )
 from agent.services import avatar_registry
 from agent.services import copy_rotation_service
+from agent.services import creative_recipe_service
+from agent.services import creative_scene_prompt_service
 from agent.services import creative_treatment_service as treatment_service
 from agent.services import poster_recipe_service
 from agent.services import video_models
@@ -1745,6 +1747,40 @@ async def get_plan_detail(plan_id: str) -> ProductionPlanDetailResponse:
     )
 
 
+def _selection_avatar_codes(selection: dict[str, Any] | None) -> list[str]:
+    """The product's diverse avatar picks (multi-select list) with a single-pick
+    fallback, so the production plan can rotate presenters instead of repeating one.
+    """
+    if not selection:
+        return []
+    codes = [
+        str(c).strip()
+        for c in (_loads(selection.get("selected_avatar_codes_json"), []) or [])
+        if str(c or "").strip()
+    ]
+    if not codes:
+        single = str(selection.get("selected_avatar_code") or "").strip()
+        codes = [single] if single else []
+    return _unique(codes)
+
+
+def _selection_scene_template_ids(selection: dict[str, Any] | None) -> list[str]:
+    """The product's diverse scene picks with a single-pick fallback."""
+    if not selection:
+        return []
+    scene_ids = [
+        str(value).strip()
+        for value in (
+            _loads(selection.get("selected_scene_template_ids_json"), []) or []
+        )
+        if str(value or "").strip()
+    ]
+    if not scene_ids:
+        single = str(selection.get("selected_scene_template_id") or "").strip()
+        scene_ids = [single] if single else []
+    return _unique(scene_ids)
+
+
 async def _load_approved_pools(plan: dict[str, Any]) -> dict[str, Any]:
     pool = _loads(plan.get("pool_snapshot_json"), {})
     product_ids = _loads(plan.get("product_scope_json"), [])
@@ -1862,23 +1898,19 @@ async def _load_approved_pools(plan: dict[str, Any]) -> dict[str, Any]:
     approved_codes: set[str] = set()
     for product_id in products:
         selection = creative_selections.get(product_id)
-        selected_code = str(
-            (selection or {}).get("selected_avatar_code") or ""
-        ).strip()
-        profile = avatar_index.get(selected_code)
+        selection_approved = (
+            selection is not None and selection.get("status") == "APPROVED"
+        )
+        # Rotate presenters: admit the product's WHOLE diverse avatar selection
+        # (multi-select list, single-pick fallback) that is in this plan's pool, so
+        # the plan varies the avatar instead of repeating one. Each code stays gated
+        # on adult + resolvable profile + APPROVED selection.
+        selected_codes = _selection_avatar_codes(selection)
         avatar_required = (
             target_video_count > 0 and logical_mode in {"T2V", "HYBRID", "I2V"}
             and not treatment_authority_active
         )
-        if (
-            avatar_required
-            and (
-                selection is None
-                or selection.get("status") != "APPROVED"
-                or not selected_code
-                or profile is None
-            )
-        ):
+        if avatar_required and (not selection_approved or not selected_codes):
             blockers.append(
                 {
                     "code": "APPROVED_PRODUCT_AVATAR_SELECTION_REQUIRED",
@@ -1886,37 +1918,44 @@ async def _load_approved_pools(plan: dict[str, Any]) -> dict[str, Any]:
                 }
             )
             continue
-        if not selected_code or profile is None:
+        if not selection_approved or not selected_codes:
             continue
-        if selected_code not in requested_avatar_codes:
-            if avatar_required:
+        admitted_here = 0
+        for selected_code in selected_codes:
+            profile = avatar_index.get(selected_code)
+            if not selected_code or profile is None:
+                continue
+            if selected_code not in requested_avatar_codes:
+                continue
+            age_band = str(profile.get("age_band") or "").lower()
+            if "child" in age_band or "teen" in age_band:
                 blockers.append(
                     {
-                        "code": "APPROVED_PRODUCT_AVATAR_NOT_IN_PLAN_POOL",
+                        "code": "MINOR_AVATAR_NOT_PERMITTED_IN_P6_AUTOMATION",
                         "product_id": product_id,
                         "avatar_code": selected_code,
+                        "age_band": profile.get("age_band"),
                     }
                 )
-            continue
-        age_band = str(profile.get("age_band") or "").lower()
-        if "child" in age_band or "teen" in age_band:
+                continue
+            approved_codes.add(selected_code)
+            avatar_profiles[product_id].append(
+                {
+                    **profile,
+                    "selection_id": str(selection.get("selection_id") or ""),
+                    "selection_status": "APPROVED",
+                }
+            )
+            admitted_here += 1
+        if avatar_required and admitted_here == 0:
             blockers.append(
                 {
-                    "code": "MINOR_AVATAR_NOT_PERMITTED_IN_P6_AUTOMATION",
+                    "code": "APPROVED_PRODUCT_AVATAR_NOT_IN_PLAN_POOL",
                     "product_id": product_id,
-                    "avatar_code": selected_code,
-                    "age_band": profile.get("age_band"),
+                    "avatar_code": selected_codes[0] if selected_codes else None,
                 }
             )
             continue
-        approved_codes.add(selected_code)
-        avatar_profiles[product_id].append(
-            {
-                **profile,
-                "selection_id": str(selection.get("selection_id") or ""),
-                "selection_status": "APPROVED",
-            }
-        )
     for avatar_code in requested_avatar_codes:
         if avatar_code not in approved_codes:
             blockers.append(
@@ -2136,6 +2175,38 @@ def _scene_variants(
                 ),
             }
         )
+    selection = approved["creative_selections"].get(product_id)
+    selected_scene_ids = _selection_scene_template_ids(selection)
+    if not selected_scene_ids:
+        return variants
+    templates_by_id = {
+        str(template.get("template_id")): template
+        for template in creative_scene_prompt_service.library_templates()
+        if template.get("template_id")
+    }
+    selected_templates = [
+        templates_by_id[scene_id]
+        for scene_id in selected_scene_ids
+        if scene_id in templates_by_id
+    ]
+    if not selected_templates:
+        # Keep the existing strategy authority if an approved selection's scene
+        # ids have drifted out of the current library; the recipe service applies
+        # the same fail-soft policy for a drifted saved plan.
+        return variants
+    rotated: list[dict[str, str]] = []
+    for index, template in enumerate(selected_templates):
+        base = dict(variants[index % len(variants)])
+        rotated.append(
+            {
+                **base,
+                "scene_template_id": str(template["template_id"]),
+                "camera_preset_code": creative_recipe_service.camera_for_variant(
+                    template.get("variant")
+                ),
+            }
+        )
+    return rotated
     return variants
 
 
@@ -2161,6 +2232,8 @@ def _creative_dna_payload(dimensions: dict[str, str]) -> dict[str, str]:
         "scene_family",
         "scene_strategy",
         "scene_context",
+        "scene_template_id",
+        "camera_preset_code",
         "style_asset_id",
         "layout_id",
         "camera_composition",
@@ -2328,6 +2401,8 @@ def _product_dimension_rows(
                     "scene_family": treatment["scene_strategy_id"],
                     "scene_strategy": treatment["scene_strategy_id"],
                     "scene_context": treatment["scene_template_id"],
+                    "scene_template_id": treatment["scene_template_id"],
+                    "camera_preset_code": treatment["camera_preset_code"],
                     "product_interaction": _stable_json(
                         treatment["action_sequence"]
                     ),

@@ -402,6 +402,27 @@ export async function createProductIntelligenceReviewDraft(
 	);
 }
 
+/**
+ * Create a review draft SEEDED from the product's latest APPROVED snapshot
+ * (fill-if-empty, keep-if-exists), instead of a blank/product-only draft. Used by
+ * the "Create Review Draft" action so the editor opens on the current approved
+ * truth rather than empty fields. Idempotent for the single open draft; unrelated
+ * open drafts are superseded (content preserved) by the backend revision lifecycle.
+ */
+export async function createProductIntelligenceRevisionDraft(
+	productId: string,
+	options?: { created_by?: string; revision_reason?: string },
+): Promise<ProductIntelligenceReviewDraft> {
+	return fetchAPI<ProductIntelligenceReviewDraft>(
+		`/api/products/${encodeURIComponent(productId)}/intelligence/revision-drafts`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(options ?? {}),
+		},
+	);
+}
+
 export async function updateProductIntelligenceReviewDraft(
 	draftId: string,
 	payload: ProductIntelligenceReviewDraftMutationRequest,

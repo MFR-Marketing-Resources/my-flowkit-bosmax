@@ -52,7 +52,12 @@ function renderOperator(
 	state?: unknown,
 ) {
 	render(
-		<MemoryRouter initialEntries={[{ pathname: `/operator/${mode}`, state }]}>
+		// Classic duration-authority UI target (T2V defaults to the V4 guided shell).
+		<MemoryRouter
+			initialEntries={[
+				{ pathname: `/operator/${mode}`, search: "?classic=1", state },
+			]}
+		>
 			<OperatorPage mode={mode} />
 		</MemoryRouter>,
 	);
