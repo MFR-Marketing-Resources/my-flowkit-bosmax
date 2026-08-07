@@ -1010,6 +1010,16 @@ P58_PRODUCT_TRUTH_OVERRIDES = {
         "Automotive Phone Mount",
         "AUTOMOTIVE_ACCESSORY",
     ),
+    # "3 Layers PVC + Cotton ... Universal Car Cover" was imported with a
+    # stale car-care-fluid override.  The title identifies a physical vehicle
+    # cover, not a fluid; bind this exact product to its own accessory type so
+    # the reusable phone-mount contract is never reused for the wrong object.
+    "0ff37782-a1d7-49db-9d33-575f2e7ae351": _p58_mapping(
+        "automotive_accessory",
+        "car_cover",
+        "Car Cover",
+        "AUTOMOTIVE_ACCESSORY",
+    ),
     "21dcae04-86de-4af7-9698-eb2a3331614b": _p58_mapping(
         "consumer_audio", "wireless_earbuds", "Wireless Earbuds", "AUDIO_DEVICE"
     ),

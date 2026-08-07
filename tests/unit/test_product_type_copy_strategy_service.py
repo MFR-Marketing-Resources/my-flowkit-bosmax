@@ -19,6 +19,7 @@ from agent.services import product_strategy_taxonomy_service as taxonomy_service
 
 LIP_KEY = ("beauty_makeup", "lipstick_lip_tint", "LIP_COLOR")
 REMPAH_KEY = ("food_cooking", "rempah_seasoning", "SPICE_SEASONING")
+CAR_COVER_KEY = ("automotive_accessory", "car_cover", "AUTOMOTIVE_ACCESSORY")
 EXPANDED_KEYS = {
     ("baby_care", "baby_diaper", "BABY_DIAPER"),
     (
@@ -499,6 +500,30 @@ def test_p4_registry_templates_fit_duration_budgets_after_substitution():
                 product_id=str(product["id"]),
                 duration_seconds=duration,
             ) == []
+
+
+def test_car_cover_dialogue_uses_duration_sweet_spot_and_reaches_cta():
+    entry = PRODUCT_TYPE_COPY_STRATEGY_REGISTRY[CAR_COVER_KEY]
+    product = _product("car-cover-dialogue-test", key=CAR_COVER_KEY)
+    facts = service._resolve_product_facts(product, CAR_COVER_KEY)
+
+    slots = [
+        service._render_script_slot(entry, duration, facts)
+        for duration in (8, 10, 16)
+    ]
+
+    assert [service._spoken_word_count(slot) for slot in slots] == [18, 24, 36]
+    assert [slot["cta_line"] for slot in slots] == [
+        "Padankan saiz kenderaan.",
+        "Padankan saiz dengan kenderaan pilihan.",
+        "Padankan saiz dengan kenderaan dan semak arahan sebelum beli.",
+    ]
+    for duration, slot in zip((8, 10, 16), slots):
+        assert service._copy_blocked_reasons(
+            slot,
+            product_id=str(product["id"]),
+            duration_seconds=duration,
+        ) == []
 
 
 @pytest.mark.asyncio
