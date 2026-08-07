@@ -17,6 +17,7 @@ import {
 	XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
 	approveProductionPlan,
 	assignProductionWaves,
@@ -53,6 +54,11 @@ import { fetchVideoModels, type VideoModelInfo } from "../api/productionQueue";
 import CreativeSupplyFactoryPanel from "../components/CreativeSupplyFactoryPanel";
 import ProductAllocationPicker from "../components/production-studio/ProductAllocationPicker";
 import ProductTreatmentFactoryPanel from "../components/production-studio/ProductTreatmentFactoryPanel";
+import {
+	OperatorCockpit,
+	QueueRow,
+	WorkflowStep,
+} from "../components/workflow";
 
 const splitValues = (value: string) =>
 	value
@@ -145,6 +151,9 @@ type StudioMode =
 	| "LEGACY_INCOMPLETE_PLAN";
 
 export default function CreativeProductionStudioPage() {
+	const searchParams = new URLSearchParams(window.location.search);
+	const useV4 =
+		searchParams.get("v4") === "1" && searchParams.get("classic") !== "1";
 	const [cohort, setCohort] = useState<CohortAuthority | null>(null);
 	const [plans, setPlans] = useState<ProductionPlan[]>([]);
 	const [selectedPlanId, setSelectedPlanId] = useState("");
@@ -1013,9 +1022,80 @@ export default function CreativeProductionStudioPage() {
 			);
 		});
 	}, [plans, primaryPlans, historySearch, historyStatus]);
+	const p6V4ProductCount =
+		selectedSnapshot?.product_allocations.length ?? allocations.length;
+	const p6V4TargetCount = selectedSnapshot?.target_video_count ?? totalVideoCount;
+	const p6V4PlanStatus = selectedPlan?.status ?? (studioMode === "NEW_DRAFT" ? "DRAFT" : studioMode);
+	const p6V4Surface = (surface: ReactNode) =>
+		useV4 ? (
+			<WorkflowStep
+				index={1}
+				title="P6 batch production workspace"
+				status={selectedPlan ? "done" : allocations.length ? "active" : "upcoming"}
+				summary={`${p6V4TargetCount} video${p6V4TargetCount === 1 ? "" : "s"} · ${p6V4PlanStatus}`}
+				helper="Batch, matrix, waves, QA, and live confirmation remain the P6 IA; this frame only adds the V4 visual language."
+				collapsible={false}
+			>
+				{surface}
+			</WorkflowStep>
+		) : (
+			surface
+		);
 
 	return (
-		<div className="mx-auto max-w-[1680px] space-y-4 p-4 text-slate-100">
+		<div
+			data-testid={useV4 ? "p6-v4-shell" : undefined}
+			data-variant={useV4 ? "v4" : undefined}
+			className={
+				useV4
+					? "min-h-full bg-slate-950 p-4 text-slate-100 md:p-6"
+					: "mx-auto max-w-[1680px] p-4 text-slate-100"
+			}
+		>
+			{useV4 ? (
+				<header
+					data-testid="p6-v4-header"
+					className="mb-5 flex flex-wrap items-start justify-between gap-4 rounded-2xl border border-cyan-500/30 bg-gradient-to-br from-slate-950 via-slate-950 to-violet-950/30 p-5 shadow-2xl"
+				>
+					<div>
+						<div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em] text-cyan-300">
+							<ShieldCheck size={15} /> Production Studio · P6 · V4
+						</div>
+						<h1 className="mt-2 text-2xl font-bold tracking-tight text-slate-100">
+							Batch production control plane
+						</h1>
+						<p className="mt-2 max-w-3xl text-sm text-slate-400">
+							The bespoke batch and matrix orchestration stays intact; the V4
+							frame adds guided visual hierarchy and a cockpit summary rail.
+						</p>
+					</div>
+					<nav className="flex flex-wrap items-center gap-2 text-[11px] font-semibold">
+						<a
+							href="/operator/t2v"
+							className="rounded-lg border border-v4-accent/30 bg-v4-accent/10 px-3 py-1.5 text-v4-accent-ink"
+						>
+							Operator shell ↗
+						</a>
+						<a
+							href="/assets/scene-context-registry"
+							className="rounded-lg border border-slate-700 px-3 py-1.5 text-slate-300"
+						>
+							Scene Registry ↗
+						</a>
+						<a
+							href="/production-studio?classic=1"
+							className="rounded-lg border border-slate-700 px-3 py-1.5 text-slate-400"
+						>
+							Switch to classic view
+						</a>
+					</nav>
+				</header>
+			) : null}
+
+			<div className={useV4 ? "grid gap-5 2xl:grid-cols-[minmax(0,1fr)_20rem]" : "contents"}>
+				<div className={useV4 ? "min-w-0" : "contents"}>
+					{p6V4Surface(
+						<div className="mx-auto max-w-[1680px] space-y-4 p-4 text-slate-100">
 			<header className="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-950 via-slate-950 to-cyan-950/30 p-5 shadow-2xl">
 				<div className="flex flex-wrap items-start justify-between gap-4">
 					<div>
@@ -2642,7 +2722,61 @@ export default function CreativeProductionStudioPage() {
 						Capacity is an estimate, not a guarantee. One verified video lane
 						handles one job at a time.
 					</div>
-				</main>
+					</main>
+				</div>
+				</div>,
+					)}
+				</div>
+
+				{useV4 ? (
+					<aside className="w-full 2xl:w-80 2xl:flex-none">
+						<div className="2xl:sticky 2xl:top-4">
+							<OperatorCockpit
+								laneLabel="Production Studio · P6"
+								status={{
+									label: busy ? "Working" : p6V4PlanStatus,
+									state: busy ? "running" : selectedPlan ? "online" : "idle",
+								}}
+								planTitle="Batch plan"
+								plan={[
+									{ k: "Products", v: p6V4ProductCount, tone: "default" },
+									{ k: "Video target", v: p6V4TargetCount, tone: "default" },
+									{ k: "Mode", v: selectedSnapshot?.logical_mode ?? form.logicalMode, tone: "default" },
+									{ k: "Compile / dry run", v: "0 credits", tone: "good" },
+								]}
+								queueTitle="Execution state"
+								generate={{
+									label: "Start production · gated",
+									disabled: true,
+									note: "P6 live dispatch remains behind its exact human confirmation phrase.",
+								}}
+								debugLabel="P6 diagnostics"
+								debug={
+									<div className="space-y-1">
+										<div>studio mode {studioMode}</div>
+										<div>live gate {liveEnabled ? "ready" : "blocked"}</div>
+									</div>
+								}
+							>
+								<QueueRow
+									title="Matrix & compile"
+									sub="Canonical DNA preparation · 0 credits"
+									status={selectedSnapshot ? "done" : "queued"}
+								/>
+								<QueueRow
+									title="Waves &amp; dry run"
+									sub="Review before live dispatch"
+									status={hasDryRunProof ? "done" : "queued"}
+								/>
+								<QueueRow
+									title="Live dispatch"
+									sub={liveEnabled ? "Ready after explicit confirmation" : liveDisabledReason}
+									status="queued"
+								/>
+							</OperatorCockpit>
+						</div>
+					</aside>
+				) : null}
 			</div>
 		</div>
 	);

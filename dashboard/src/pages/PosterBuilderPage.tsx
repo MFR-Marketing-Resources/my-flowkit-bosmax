@@ -58,6 +58,11 @@ import PosterPromptPackagePreview from "../components/poster/PosterPromptPackage
 import PosterReadinessStatusCard from "../components/poster/PosterReadinessStatusCard";
 import PosterRepairActionCenter from "../components/poster/PosterRepairActionCenter";
 import PosterWorkingModeSelector from "../components/poster/PosterWorkingModeSelector";
+import {
+	OperatorCockpit,
+	QueueRow,
+	WorkflowStep,
+} from "../components/workflow";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import CopywritingReadinessCard from "../components/copywriting/CopywritingReadinessCard";
 import { useCopywritingReadiness } from "../api/copywritingReadiness";
@@ -1524,26 +1529,132 @@ export function PosterBuilderLegacyPanel() {
 // data-fetching effects never run in the normal flow).
 export default function PosterBuilderPage() {
 	const [advancedOpen, setAdvancedOpen] = useState(false);
+	const [searchParams] = useSearchParams();
+	const useV4 =
+		searchParams.get("v4") === "1" && searchParams.get("classic") !== "1";
+	const advancedDiagnostics = (
+		<details
+			className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4"
+			data-testid="poster-advanced-diagnostics"
+			onToggle={(e) => setAdvancedOpen((e.currentTarget as HTMLDetailsElement).open)}
+		>
+			<summary className="cursor-pointer text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
+				Advanced Diagnostics / Legacy Compatibility
+			</summary>
+			<p className="mt-2 text-[11px] text-amber-300/80">
+				Untuk penyelesaian masalah dan kawalan lanjutan sahaja — tidak
+				diperlukan untuk penciptaan poster biasa.
+			</p>
+			<div className="mt-4 border-t border-slate-800 pt-4">
+				{advancedOpen ? <PosterBuilderLegacyPanel /> : null}
+			</div>
+		</details>
+	);
+
+	if (useV4) {
+		return (
+			<div
+				data-testid="poster-builder-v4-shell"
+				data-variant="v4"
+				className="min-h-full bg-slate-950 px-4 py-4 text-slate-100 md:px-8 md:py-6"
+			>
+				<header className="mb-5 flex flex-wrap items-start justify-between gap-4 rounded-2xl border border-violet-500/30 bg-gradient-to-br from-slate-950 via-slate-950 to-violet-950/30 p-5 shadow-2xl">
+					<div>
+						<div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em] text-violet-300">
+							<ImageIcon size={15} /> Creative · V4
+						</div>
+						<h1 className="mt-2 text-2xl font-bold tracking-tight text-slate-100">
+							Poster Builder
+						</h1>
+						<p className="mt-2 max-w-3xl text-sm text-slate-400">
+							Bespoke poster orchestration with the existing guided journey and
+							advanced Auto, Guided, and Controlled modes preserved.
+						</p>
+					</div>
+					<nav className="flex flex-wrap items-center gap-2 text-[11px] font-semibold">
+						<a
+							href="/assets/img-cockpit"
+							className="rounded-lg border border-v4-accent/30 bg-v4-accent/10 px-3 py-1.5 text-v4-accent-ink"
+						>
+							IMG Cockpit ↗
+						</a>
+						<a
+							href="/creative/copy-registry"
+							className="rounded-lg border border-slate-700 px-3 py-1.5 text-slate-300"
+						>
+							Copy Registry ↗
+						</a>
+						<a
+							href="/creative/poster-builder?classic=1"
+							className="rounded-lg border border-slate-700 px-3 py-1.5 text-slate-400"
+						>
+							Switch to classic view
+						</a>
+					</nav>
+				</header>
+
+				<div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_20rem]">
+					<main className="min-w-0 space-y-4">
+						<WorkflowStep
+							index={1}
+							title="Poster production workspace"
+							status="active"
+							helper="The poster-native journey remains multi-step; this V4 frame does not collapse its creative modes into a single-shot lane."
+							collapsible={false}
+						>
+							<PosterGuidedShell />
+						</WorkflowStep>
+						{advancedDiagnostics}
+					</main>
+
+					<aside className="w-full xl:w-80 xl:flex-none">
+						<div className="xl:sticky xl:top-4">
+							<OperatorCockpit
+								laneLabel="Poster Builder · Bespoke"
+								status={{ label: "Guided", state: "online" }}
+								planTitle="Poster plan"
+								plan={[
+									{ k: "Journey", v: "Poster-native", tone: "default" },
+									{ k: "Modes", v: "Auto · Guided · Controlled", tone: "default" },
+									{ k: "Output", v: "Poster + Copy Set", tone: "good" },
+									{ k: "Credit gate", v: "Explicit confirmation", tone: "good" },
+								]}
+								queueTitle="Handoff"
+								generate={{
+									label: "Generate poster · gated",
+									disabled: true,
+									note: "The bespoke page owns human confirmation; no auto-fire.",
+								}}
+								debugLabel="Poster Builder diagnostics"
+								debug={
+									<div className="space-y-1">
+										<div>guided journey preserved</div>
+										<div>Auto · Guided · Controlled remain available</div>
+									</div>
+								}
+							>
+								<QueueRow
+									title="Copy + visual review"
+									sub="Poster-native composition"
+									status="queued"
+								/>
+								<QueueRow
+									title="Creative Library"
+									sub="Approved save / reuse"
+									status="queued"
+								/>
+							</OperatorCockpit>
+						</div>
+					</aside>
+				</div>
+			</div>
+		);
+	}
+
 	return (
 		<div className="mx-auto max-w-6xl space-y-6 p-4 sm:p-6" data-testid="poster-builder-page">
 			<PosterGuidedShell />
-
-			<details
-				className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4"
-				data-testid="poster-advanced-diagnostics"
-				onToggle={(e) => setAdvancedOpen((e.currentTarget as HTMLDetailsElement).open)}
-			>
-				<summary className="cursor-pointer text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
-					Advanced Diagnostics / Legacy Compatibility
-				</summary>
-				<p className="mt-2 text-[11px] text-amber-300/80">
-					Untuk penyelesaian masalah dan kawalan lanjutan sahaja — tidak
-					diperlukan untuk penciptaan poster biasa.
-				</p>
-				<div className="mt-4 border-t border-slate-800 pt-4">
-					{advancedOpen ? <PosterBuilderLegacyPanel /> : null}
-				</div>
-			</details>
+			{advancedDiagnostics}
 		</div>
 	);
 }
