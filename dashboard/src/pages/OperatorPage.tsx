@@ -841,14 +841,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		mode === "HYBRID" ? "F2V" : mode;
 
 	// ── V4 workflow shell (guided single-page redesign) ──────────────────────
-	// T2V is the proven V4 default. Bucket-1 lanes are opt-in via ?v4=1 until
-	// each lane has live free-step verification; ?classic=1 always wins and keeps
-	// the existing render reachable as the transitional fallback. Both paths
-	// reuse the same state + handlers, so Step-F payload wiring stays intact.
+	// V4 is the default for every OperatorPage lane. ?classic=1 always wins and
+	// keeps the existing render reachable as the transitional rollback path.
+	// Both paths reuse the same state + handlers, so Step-F payload wiring stays
+	// intact while the classic branch remains available for recovery.
 	const query = new URLSearchParams(location.search);
-	const useV4 =
-		query.get("classic") !== "1" &&
-		(mode === "T2V" || query.get("v4") === "1");
+	const useV4 = query.get("classic") !== "1";
 	const [v4Pool, setV4Pool] = useState<CreativeRecipe[]>([]);
 	const [v4Pretick, setV4Pretick] = useState<CreativeRecipe[]>([]);
 	const [v4RecipesLoading, setV4RecipesLoading] = useState(false);
