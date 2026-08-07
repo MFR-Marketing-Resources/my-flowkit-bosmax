@@ -60,7 +60,10 @@ def test_cockpit_generate_is_gated_and_honestly_labeled():
     assert "setShowGenConfirm(true)" in page
     assert "handleConfirmedGenerate" in page
     assert "Confirm & Generate (live)" in page or "Confirm &amp; Generate (live)" in page
-    assert "spends credits" in page
+    assert "img-cockpit-credit-confirm-checkbox" in page
+    assert "disabled={!imgGenConfirmed}" in page
+    assert "Saya faham tindakan ini menghantar satu kerja IMG" in page
+    assert "spends credits" not in page
     # The one place that calls the real generation lane is the confirmed handler.
     assert "startImgGeneration" in page
 
