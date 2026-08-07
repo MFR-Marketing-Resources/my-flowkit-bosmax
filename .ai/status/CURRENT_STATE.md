@@ -1,12 +1,26 @@
 # CURRENT_STATE
 
-Last updated: 2026-07-02 (post PR #167). This file is the FIRST thing every
+Last updated: 2026-08-07 (post PR #653 merge and V4 closeout). This file is the FIRST thing every
 agent reads. If anything here conflicts with an older doc, THIS FILE and
 ADR-007 win.
 
 ## Current Repo Head
 - Verify live from Git (`git rev-parse HEAD` / `origin/main`); this file never
   self-declares a current SHA.
+
+## V4 WORKSTREAM CLOSEOUT (MERGED — 2026-08-07)
+- **PR #653 is merged** (`wip/v4-workflow-shell` → `main`; merge commit
+  `0ff6f2b669c629866b416c7dbca48701fc80d9ce`). The V4 guided-shell UI rollout
+  is merged for the operator lanes, with `?classic=1` retained as rollback.
+- **Delivered:** camera follows scene (UI + server); single-clip T2V Generate
+  is live through the API-first one-door lane; config → generation wiring is
+  complete for B0/A.2, B1, and B2; B2 preserves `camera_composition` as the
+  compiler authority while carrying scene lineage fields.
+- **T2V readiness:** 234/583 products are bulk-ready for a coherent T2V plan.
+- **Deferred next workstream (owner-gated):** 344 products remain on legitimate
+  gates — 220 evidence/claim-safe and 124 unsupported-product taxonomy. Separate
+  copy follow-ups remain for 5 copy-capacity and 13 stale-copy products. Poster
+  Builder / Production Studio P6 default flip remains pending owner review.
 
 ## VIDEO_EXTENSION_FINAL_SEAL (CLOSED — do not reopen)
 - **Status: CLOSED.** All four modes (T2V / HYBRID / F2V / I2V) are live-proven
