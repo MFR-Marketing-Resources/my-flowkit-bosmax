@@ -234,6 +234,14 @@ def test_empty_pool_is_safe(monkeypatch):
     assert fake.created == []
 
 
+def test_zero_shortfall_dry_run_returns_safe_coverage_default(monkeypatch):
+    out, fake = _run(FULL, 0, monkeypatch, dry_run=True)
+
+    assert out["created"] == 0
+    assert out["coverage"] is None
+    assert fake.created == []
+
+
 def test_unapproved_components_are_not_composed(monkeypatch):
     pool = _pool(A1, "colic") + [
         _c("bad", comp.HOOK, A1, "UNREVIEWED", status="COMPONENT_REVIEW_REQUIRED")

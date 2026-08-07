@@ -15,6 +15,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast
 
+from agent.authority import product_readiness_applicability_registry as applicability_registry
 from agent.db import crud
 from agent.db import product_treatment_factory_crud as factory_crud
 from agent.models.copy_set import AICopyAssistBatchRequest
@@ -379,6 +380,20 @@ def _approved_copy_set_ids(scan: ProductScan) -> list[str]:
     resolved = scan.resolved
     return sorted(_string_list(resolved.copy.approved_copy_set_ids) if resolved else [])
 
+
+def _canonical_required_asset_roles(scan: ProductScan) -> tuple[str, ...]:
+    if scan.resolved is None:
+        return ()
+    logical_mode = str(scan.context.logical_mode or "").strip().upper()
+    profile = applicability_registry.resolve_applicability_profile(
+        scan.resolved.taxonomy.matched_scene_strategy_id
+    )
+    return tuple(
+        str(role)
+        for role in profile.required_asset_roles_by_mode.get(logical_mode, [])
+    )
+
+
 async def _scan_product(context: FactoryProductContext) -> ProductScan:
     readiness_request = ProductReadinessEvaluateRequest(
         product_id=context.product_id,
@@ -544,18 +559,30 @@ def _candidate_ready(scan: ProductScan) -> bool:
         "product_truth",
         "copy_set",
         "creative_selection",
-        "visual_assets",
         "treatment_template",
+    )
+    logical_mode = str(scan.context.logical_mode or "").strip().upper()
+    canonical_required_roles = _canonical_required_asset_roles(scan)
+    t2v_zero_role_mode = logical_mode == "T2V" and not canonical_required_roles
+    visual_layer = layers.get("visual_assets")
+    visual_ready = str(getattr(visual_layer, "state", "")) == "READY" or (
+        t2v_zero_role_mode
+        and str(getattr(visual_layer, "state", "")) == "NOT_APPLICABLE"
     )
     required_dialogues = required_dialogue_count(scan.context.target_video_count)
     copy_ready = len(_approved_copy_set_ids(scan)) >= required_dialogues
     return (
         all(str(getattr(layers.get(name), "state", "")) == "READY" for name in required)
+        and visual_ready
         and bool(resolved.product_truth.snapshot_id)
         and copy_ready
         and bool(resolved.selection.selection_id)
         and not resolved.assets.missing_roles
-        and (required_dialogues == 0 or bool(resolved.assets.required_roles))
+        and (
+            required_dialogues == 0
+            or t2v_zero_role_mode
+            or bool(resolved.assets.required_roles)
+        )
     )
 
 
