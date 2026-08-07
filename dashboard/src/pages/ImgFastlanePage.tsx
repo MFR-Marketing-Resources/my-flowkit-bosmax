@@ -769,8 +769,9 @@ export default function ImgFastlanePage() {
 		}
 	};
 
-	const useV4 =
-		searchParams.get("v4") === "1" && searchParams.get("classic") !== "1";
+	// V4 is the default for this standalone IMG lane. ?classic=1 is the
+	// explicit rollback path while the classic branch remains available.
+	const useV4 = searchParams.get("classic") !== "1";
 
 	if (useV4) {
 		const productStatus: WorkflowStepStatus = selectedProduct

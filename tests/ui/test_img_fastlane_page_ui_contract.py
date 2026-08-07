@@ -218,7 +218,7 @@ def test_fastlane_v4_shell_is_opt_in_and_keeps_classic_rollback():
     assert "WorkflowStep" in page
     assert "OperatorCockpit" in page
     assert 'data-variant="v4"' in page
-    assert 'searchParams.get("v4") === "1"' in page
+    assert 'const useV4 = searchParams.get("classic") !== "1";' in page
     assert 'searchParams.get("classic") !== "1"' in page
     assert "Switch to classic view" in page
     assert "Images use count" in page
