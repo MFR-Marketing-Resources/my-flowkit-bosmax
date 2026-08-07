@@ -132,8 +132,9 @@ export function PosterBuilderLegacyPanel() {
 	// changes after a check the signature diverges → the report is stale → the
 	// generate gate re-arms (mandatory recheck before generation).
 	const [posterQualityKey, setPosterQualityKey] = useState<string | null>(null);
-	// Poster image generation (gated, credit-spending — reuses the one-door IMG lane).
+	// Poster image generation (gated IMG submission; no Google Flow video credits).
 	const [posterGenConfirm, setPosterGenConfirm] = useState(false);
+	const [posterImgConfirmed, setPosterImgConfirmed] = useState(false);
 	const [posterGenLoading, setPosterGenLoading] = useState(false);
 	const [posterGenStage, setPosterGenStage] = useState<string>("");
 	const [exactPolicy, setExactPolicy] = useState<ExactProductPolicy | null>(null);
@@ -240,6 +241,7 @@ export function PosterBuilderLegacyPanel() {
 			setPosterGenResult(null);
 			setPosterGenError("");
 			setPosterGenConfirm(false);
+			setPosterImgConfirmed(false);
 			setApprovedCopySet(null);
 			setObjectiveRecs([]);
 		}
@@ -715,10 +717,11 @@ export function PosterBuilderLegacyPanel() {
 		}
 	};
 
-	// GATED, credit-spending: only after explicit confirm.
+	// GATED IMG submission: only after explicit confirm.
 	// Exact-policy products: scene-only Flow plate + deterministic cutout composite.
 	// Non-exact: reference-conditioned one-door IMG path (unchanged).
 	const handleConfirmedGeneratePoster = async () => {
+		if (!posterImgConfirmed) return;
 		const pkg = promptPackage;
 		if (!pkg?.poster_prompt) return;
 		const subjectAsset = productSubjectAsset(selectedProduct);
@@ -1406,7 +1409,10 @@ export function PosterBuilderLegacyPanel() {
 										!readiness.generation_allowed ||
 										!productReferenceReady
 									}
-									onClick={() => setPosterGenConfirm(true)}
+									onClick={() => {
+										setPosterImgConfirmed(false);
+										setPosterGenConfirm(true);
+									}}
 									className="mt-3 rounded-xl border border-rose-500/40 bg-rose-600/20 px-4 py-2 text-xs font-bold uppercase text-rose-100 disabled:opacity-40"
 								>
 									{posterGenLoading
@@ -1494,13 +1500,23 @@ export function PosterBuilderLegacyPanel() {
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
 					<div className="max-w-md space-y-3 rounded-2xl border border-rose-500/40 bg-slate-950 p-5">
 						<div className="text-sm font-bold text-rose-100">
-							Sahkan penjanaan poster (guna kredit)
+							Sahkan penghantaran kerja IMG poster
 						</div>
 						<div className="text-[11px] text-slate-300">
-							Ini memanggil lane imej live (<code>POST /api/flow/generate</code>{" "}
-							mode:IMG) dan <strong>membelanjakan kredit</strong>. Ia tidak akan
-							jalan tanpa pengesahan ini.
+							Sahkan sekali lagi untuk menghantar satu kerja IMG. Penjanaan
+							imej/poster tidak menggunakan kredit video Google Flow; hanya kerja
+							video menggunakan kredit. Tiada kerja akan dihantar sebelum pengesahan ini.
 						</div>
+						<label className="flex items-start gap-2 text-[11px] text-slate-200">
+							<input
+								type="checkbox"
+								data-testid="poster-img-credit-confirm-checkbox"
+								checked={posterImgConfirmed}
+								onChange={(event) => setPosterImgConfirmed(event.target.checked)}
+								className="mt-0.5"
+							/>
+							<span>Saya faham tindakan ini menghantar satu kerja IMG dan tidak menggunakan kredit video Google Flow.</span>
+						</label>
 						<div className="flex justify-end gap-2">
 							<button
 								type="button"
@@ -1512,6 +1528,7 @@ export function PosterBuilderLegacyPanel() {
 							<button
 								type="button"
 								data-testid="poster-gen-confirm"
+								disabled={!posterImgConfirmed}
 								onClick={() => void handleConfirmedGeneratePoster()}
 								className="rounded-lg border border-rose-500/40 bg-rose-500/20 px-3 py-1.5 text-[11px] font-bold text-rose-100"
 							>

@@ -50,7 +50,7 @@ def test_fastlane_uses_database_driven_preset_compiler():
 def test_fastlane_surfaces_reference_and_product_wiring():
     page = _read("dashboard/src/pages/ImgFastlanePage.tsx")
 
-    assert "Select Existing Reference — Avatar" in page
+    assert "Avatar Registry — Approved Presenter" in page
     # Scene is now selectable from the Scene Context Library (all 20 registry scenes,
     # text-injectable immediately) — its background feeds the compiled prompt.
     assert "Scene Context Library" in page
@@ -95,6 +95,9 @@ def test_fastlane_generate_and_approval_guards_remain_honest():
     assert "setShowGenConfirm(true)" in page
     assert "handleConfirmedGenerate" in page
     assert "Confirm &amp; Generate" in page
+    assert "img-fastlane-credit-confirm-checkbox" in page
+    assert "disabled={!imgGenConfirmed}" in page
+    assert "Saya faham tindakan ini menghantar satu kerja IMG" in page
     assert "startImgGeneration" in page
     assert "generationBlocked" in page
     assert "approvalBlocked" in page

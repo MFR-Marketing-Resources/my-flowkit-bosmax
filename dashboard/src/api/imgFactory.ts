@@ -140,11 +140,12 @@ export async function saveImgOutputToLibrary(
 	return postAPI<CreativeAsset>("/api/img-factory/save", input);
 }
 
-// ── Gated live generation (credit-spending) ───────────────────────────────────
+// ── Gated live IMG generation ─────────────────────────────────────────────────
 // These call the SAME proven one-door lane OperatorPage uses. They are wired for
-// the cockpit but MUST only ever run behind an explicit operator credit-spend
-// confirmation — never auto-fire. Live generation is NOT fired or verified in the
-// build session; the register-output/review/save path below is credit-free.
+// the cockpit but MUST only ever run behind an explicit operator confirmation —
+// never auto-fire. IMG does not use Google Flow video credits. Live generation is
+// NOT fired or verified in the build session; the register-output/review/save path
+// below is credit-free.
 
 export interface StartImgGenerationInput {
 	prompt: string;
@@ -183,8 +184,8 @@ export interface ImageArtifact {
 }
 
 /**
- * Start a REAL, credit-spending IMG generation via the proven one-door lane.
- * Call ONLY after an explicit operator credit-spend confirmation.
+ * Start a REAL IMG generation via the proven one-door lane.
+ * Call ONLY after an explicit operator confirmation.
  */
 export async function startImgGeneration(
 	input: StartImgGenerationInput,

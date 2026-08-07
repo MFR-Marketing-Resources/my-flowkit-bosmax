@@ -907,12 +907,18 @@ async def generate(body: GenerateRequest):
             raise HTTPException(503, "Extension not connected")
 
     # Resolve visual assets from refs / startAsset to live Flow media IDs, in the
-    # canonical slot order (startAsset, subject, scene, style, image).
-    resolved_ids = list(body.image_media_ids or [])
+    # canonical slot order (startAsset, subject, scene, style, image). IMG keeps
+    # product truth ahead of legacy explicit IDs; video preserves its proven
+    # explicit-ID-first contract and is intentionally outside this repair.
+    resolved_ids = [] if mode == "IMG" else list(body.image_media_ids or [])
     for slot_label, ref_asset in ordered_ref_slots(body.startAsset, body.refs):
         media_id = await _resolve_asset_to_media_id(client, ref_asset, slot_label)
         if media_id and media_id not in resolved_ids:
             resolved_ids.append(media_id)
+    if mode == "IMG":
+        for media_id in body.image_media_ids or []:
+            if media_id and media_id not in resolved_ids:
+                resolved_ids.append(media_id)
 
     tier = "PAYGATE_TIER_ONE"
     if mode in ("T2V", "I2V", "F2V"):  # video modes need Pro/Ultra
