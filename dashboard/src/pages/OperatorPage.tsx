@@ -1521,6 +1521,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				body: JSON.stringify({
 					mode: data.mode,
 					prompt: data.prompt,
+					product_id: data.mode === "IMG" ? data.product_id : undefined,
+					visual_lane_id:
+						data.mode === "IMG"
+							? data.visual_lane_id ?? data.lane
+							: undefined,
 					image_media_ids: refs,
 					aspect,
 					model: data.mode === "IMG" ? data.model : videoModel,

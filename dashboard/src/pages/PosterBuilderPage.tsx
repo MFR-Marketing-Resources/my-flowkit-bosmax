@@ -727,7 +727,10 @@ export function PosterBuilderLegacyPanel() {
 		const subjectAsset = productSubjectAsset(selectedProduct);
 		const productId = selectedProduct?.id ?? "";
 		// Fail-closed: never assume non-exact when policy cannot be resolved.
-		const gate = await resolveExactGenerationGate(productId);
+		const gate = await resolveExactGenerationGate(productId, undefined, {
+			laneId: "POSTER_BUILDER",
+			isPoster: true,
+		});
 		if (gate.mode === "blocked") {
 			setPosterGenConfirm(false);
 			setPosterGenError(gate.message);
@@ -795,6 +798,8 @@ export function PosterBuilderLegacyPanel() {
 
 			const { job_id } = await startImgGeneration({
 				prompt,
+				product_id: productId || undefined,
+				visual_lane_id: "POSTER_BUILDER",
 				aspect: flowMirror.aspect_ratio,
 				count: flowMirror.count,
 				image_model: flowMirror.image_model,

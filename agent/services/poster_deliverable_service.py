@@ -43,6 +43,7 @@ from agent.services.poster_composition_service import (
 )
 from agent.services.poster_copy_quality_service import evaluate_poster_copy
 from agent.services.product_truth_service import ProductTruthService
+from agent.services import product_truth_lock_service as truth_lock_service
 from agent.services.creative_asset_service import (
     CREATIVE_ASSET_UPLOAD_DIR,
     create_creative_asset,
@@ -98,6 +99,83 @@ def derive_poster_truth_status(
     ):
         return "DETERMINISTIC_COMPOSITE_VERIFIED"
     return base
+
+
+def _verify_exact_poster_lineage(
+    *, manifest_json: str, product_id: str, output_sha256: str
+) -> dict[str, Any]:
+    """Validate the persisted exact-composite attestation before library save.
+
+    A strategy name or a client review flag is not evidence. The manifest must
+    retain the approved Product Truth Lock lineage and the compositor must have
+    attested that the alpha-aware canonical region survived the write. This is
+    deliberately read-only and revalidates the lock bytes on every save.
+    """
+    try:
+        manifest = json.loads(manifest_json or "{}")
+    except json.JSONDecodeError as exc:
+        raise PosterDeliverableError(
+            "POSTER_PRODUCT_TRUTH_LINEAGE_INVALID",
+            "Saved poster manifest is not valid JSON.",
+            status_code=409,
+        ) from exc
+    layer = manifest.get("product_layer")
+    if not isinstance(layer, dict) or layer.get("strategy") != "DETERMINISTIC_COMPOSITE":
+        raise PosterDeliverableError(
+            "POSTER_PRODUCT_TRUTH_EXACT_COMPOSITE_REQUIRED",
+            "Only an exact deterministic product composite may be saved as a product poster.",
+            status_code=409,
+        )
+
+    try:
+        lock = truth_lock_service.resolve_approved_product_truth_lock(product_id)
+    except truth_lock_service.ProductTruthLockError as exc:
+        raise PosterDeliverableError(exc.code, exc.message, status_code=exc.status_code) from exc
+
+    expected = {
+        "product_id": product_id,
+        "canonical_media_id": lock.canonical_media_id,
+        "canonical_cutout_media_id": lock.canonical_cutout_media_id,
+        "source_sha256": lock.canonical_sha256,
+        "cutout_sha256": lock.canonical_cutout_sha256,
+        "alpha_mask_sha256": lock.alpha_mask_sha256,
+        "truth_lock_schema_version": lock.schema_version,
+    }
+    for key, value in expected.items():
+        if str(layer.get(key) or "") != str(value):
+            raise PosterDeliverableError(
+                "POSTER_PRODUCT_TRUTH_LINEAGE_INVALID",
+                f"Poster manifest {key} does not match the approved Product Truth Lock.",
+                status_code=409,
+            )
+    if Path(str(layer.get("asset_ref") or "")).resolve() != Path(
+        lock.canonical_cutout_path
+    ).resolve():
+        raise PosterDeliverableError(
+            "POSTER_PRODUCT_TRUTH_LINEAGE_INVALID",
+            "Poster manifest cutout path is not the server-approved cutout.",
+            status_code=409,
+        )
+
+    integrity = layer.get("integrity")
+    required = ("composition_ok", "write_verified", "product_region_match", "attestation")
+    if not isinstance(integrity, dict) or not all(integrity.get(key) for key in required):
+        raise PosterDeliverableError(
+            "POSTER_EXACT_COMPOSITE_ATTESTATION_REQUIRED",
+            "Poster output has no complete alpha-aware deterministic-compositor attestation.",
+            status_code=409,
+        )
+    return {
+        "approved_product_asset_id": lock.canonical_media_id,
+        "product_asset_sha256": lock.canonical_sha256,
+        "composition_ok": True,
+        "attestation": integrity.get("attestation"),
+        "output_sha256": output_sha256,
+        "canonical_cutout_media_id": lock.canonical_cutout_media_id,
+        "canonical_cutout_sha256": lock.canonical_cutout_sha256,
+        "alpha_mask_sha256": lock.alpha_mask_sha256,
+        "truth_lock_schema_version": lock.schema_version,
+    }
 
 
 class PosterDeliverableError(Exception):
@@ -518,9 +596,17 @@ class PosterDeliverableService:
                 status_code=409,
             )
 
-        product = await crud.get_product(_norm(row.get("product_id"))) or {}
+        product_id = _norm(row.get("product_id"))
+        product = await crud.get_product(product_id) or {}
+        verification = _verify_exact_poster_lineage(
+            manifest_json=str(row.get("render_manifest_json") or ""),
+            product_id=product_id,
+            output_sha256=sha,
+        )
         governance = derive_asset_governance("PRODUCT_POSTER")
-        truth_status = derive_poster_truth_status(row.get("composition_strategy"))
+        truth_status = derive_poster_truth_status(
+            row.get("composition_strategy"), verification=verification
+        )
         copy_set = serialize_poster_copy_set(pcs_row)
         display = (
             f"Poster — {_norm(product.get('product_display_name')) or _norm(row.get('product_id'))}"
@@ -533,12 +619,12 @@ class PosterDeliverableService:
                 f"Deterministic poster (compositor). angle={copy_set.get('angle')}; "
                 f"copy_set={copy_set.get('poster_copy_set_id')} v{copy_set.get('version')}; "
                 f"deliverable={row.get('poster_deliverable_id')}; "
-                f"product truth: {truth_status} — reference-conditioned scene; "
-                "product identity/label/scale need human review"
+                f"product truth: {truth_status}; "
+                "scene/background is separate from the immutable canonical product composite"
             ),
             source_type="GENERATED_IMAGE",
             storage_kind="LOCAL_FILE",
-            product_id=_norm(row.get("product_id")),
+            product_id=product_id,
             category=_norm(product.get("category")) or None,
             silo=_norm(product.get("silo")) or None,
             product_type=_norm(product.get("type")) or None,

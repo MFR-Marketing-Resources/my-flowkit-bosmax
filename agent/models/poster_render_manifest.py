@@ -46,6 +46,15 @@ class ManifestZone(BaseModel):
 class ProductLayer(BaseModel):
     strategy: str = COMPOSITION_REFERENCE_CONDITIONED
     safe_region: ManifestRect
+    # Product Truth Lock lineage is part of the manifest, not an inferred label.
+    # Pydantic's default extra-ignore behaviour previously discarded these keys
+    # when the exact layer was assembled, making a saved poster impossible to
+    # audit back to the immutable product bytes.
+    product_id: str = ""
+    canonical_media_id: str = ""
+    canonical_cutout_media_id: str = ""
+    alpha_mask_sha256: str = ""
+    truth_lock_schema_version: str = ""
     asset_ref: str = ""
     source_sha256: str = ""
     cutout_sha256: str = ""

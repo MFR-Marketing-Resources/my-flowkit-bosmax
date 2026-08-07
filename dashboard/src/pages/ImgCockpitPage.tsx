@@ -418,13 +418,16 @@ export default function ImgCockpitPage() {
 		setError(null);
 		try {
 			const productId = selectedProduct?.id ?? "";
-			const gate = await resolveExactGenerationGate(productId);
+			const isProductOnlyLane = lane?.lane_id === "PRODUCT_ONLY_HERO" || lane?.lane_id === "PRODUCT_ONLY";
+			const hasAvatar = Boolean(characterAssetId);
+			const gate = await resolveExactGenerationGate(productId, undefined, {
+				laneId: lane?.lane_id,
+				hasAvatar,
+				isProductOnly: isProductOnlyLane,
+			});
 			if (gate.mode === "blocked") {
 				throw new Error(gate.message);
 			}
-
-			const isProductOnlyLane = lane?.lane_id === "PRODUCT_ONLY_HERO" || lane?.lane_id === "PRODUCT_ONLY";
-			const hasAvatar = Boolean(characterAssetId || sceneAssetId);
 
 			let scenePrompt = prompt;
 			let useExactComposite = false;
@@ -451,6 +454,8 @@ export default function ImgCockpitPage() {
 			let payload = useExactComposite
 				? {
 						prompt: scenePrompt,
+						product_id: productId || undefined,
+						visual_lane_id: lane?.lane_id,
 						aspect,
 						count,
 						image_model: imageModel,
@@ -462,7 +467,9 @@ export default function ImgCockpitPage() {
 						aspect,
 						count,
 						imageModel,
-				  });
+						productId: productId || undefined,
+						visualLaneId: lane?.lane_id,
+					});
 
 			if (!useExactComposite && groundedProdAsset) {
 				payload = {

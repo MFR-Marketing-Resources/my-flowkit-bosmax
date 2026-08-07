@@ -15,6 +15,13 @@ import { getAPI, postAPI } from "./client";
 
 export const EXACT_PRODUCT_POLICY_UNAVAILABLE = "EXACT_PRODUCT_POLICY_UNAVAILABLE";
 
+export interface ExactProductPolicyContext {
+	laneId?: string;
+	hasAvatar?: boolean;
+	isProductOnly?: boolean;
+	isPoster?: boolean;
+}
+
 export interface ExactProductPolicy {
 	product_id: string;
 	product_display_name?: string | null;
@@ -73,14 +80,16 @@ export async function resolveExactGenerationGate(
 	productId: string | null | undefined,
 	fetchPolicy: (
 		id: string,
+		context?: ExactProductPolicyContext,
 	) => Promise<ExactProductPolicy> = fetchExactProductPolicy,
+	context: ExactProductPolicyContext = {},
 ): Promise<ExactGenerationGate> {
 	const id = (productId ?? "").trim();
 	if (!id) {
 		return { mode: "no_product" };
 	}
 	try {
-		const policy = await fetchPolicy(id);
+		const policy = await fetchPolicy(id, context);
 		if (policy.exact_product_composite_required === true) {
 			if (policy.canonical_valid === false) {
 				return {
@@ -118,8 +127,17 @@ export async function resolveExactGenerationGate(
 
 export async function fetchExactProductPolicy(
 	productId: string,
+	context: ExactProductPolicyContext = {},
 ): Promise<ExactProductPolicy> {
-	return getAPI<ExactProductPolicy>(`/api/exact-product/policy/${productId}`);
+	const params = new URLSearchParams();
+	if (context.laneId) params.set("lane_id", context.laneId);
+	if (context.hasAvatar) params.set("has_avatar", "true");
+	if (context.isProductOnly) params.set("is_product_only", "true");
+	if (context.isPoster) params.set("is_poster", "true");
+	const query = params.toString();
+	return getAPI<ExactProductPolicy>(
+		`/api/exact-product/policy/${productId}${query ? `?${query}` : ""}`,
+	);
 }
 
 export async function validateExactProduct(

@@ -34,6 +34,7 @@ from agent.services.product_lock_builder import (
     build_product_lock,
     resolve_schema_entry,
 )
+from agent.services import product_truth_lock_service as truth_lock_service
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,15 @@ logger = logging.getLogger(__name__)
 class ProductVisualReferenceRequiredError(ValueError):
     """Raised when a selected product has no valid, readable visual image reference."""
     pass
+
+
+class ProductTruthLockRequiredError(ValueError):
+    """Raised before provider submission when an exact lane lacks an approved lock."""
+
+    def __init__(self, code: str, message: str = ""):
+        super().__init__(message or code)
+        self.code = code
+        self.message = message or code
 
 
 STRATEGY_REFERENCE_CONDITIONED_HUMAN_INTERACTION = "REFERENCE_CONDITIONED_HUMAN_INTERACTION"
@@ -79,6 +89,9 @@ class ProductVisualGroundingBundle:
     grounding_source: str
     grounding_confidence: str
     field_provenance: dict[str, Any]
+    product_truth_status: str = "NON_DETERMINISTIC_REFERENCE_CONDITIONED"
+    product_truth_lock: dict[str, Any] | None = None
+    selected_strategy: str = STRATEGY_REFERENCE_CONDITIONED_HUMAN_INTERACTION
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -187,6 +200,38 @@ def _find_linked_approved_creative_asset(product_id: str) -> dict[str, Any] | No
 def resolve_product_reference_image(product: dict[str, Any]) -> ProductReferenceInfo:
     """Resolve the authoritative product reference image in priority order."""
     product_id = str(product.get("id") or product.get("product_id") or "")
+
+    # An approved Product Truth Lock outranks every URL/cache/creative-asset
+    # fallback.  Pending or invalid locks remain review-only for the standard
+    # reference-conditioned route; exact lanes reject them in the strategy gate.
+    try:
+        persisted_lock = truth_lock_service.load_product_truth_lock(product_id)
+    except truth_lock_service.ProductTruthLockError:
+        persisted_lock = None
+    if persisted_lock is not None and persisted_lock.review_status == "APPROVED":
+        try:
+            resolved = truth_lock_service.resolve_approved_product_truth_lock(product_id)
+            source_path = Path(resolved.canonical_source_path)
+            meta = _inspect_image_file(source_path)
+            if meta and meta[3] == resolved.canonical_sha256:
+                w, h, mime, sha = meta
+                return ProductReferenceInfo(
+                    source_type="PRODUCT_TRUTH_LOCK",
+                    media_id=resolved.canonical_media_id,
+                    local_path=str(source_path),
+                    image_url=product.get("image_url"),
+                    mime_type=mime,
+                    sha256=sha,
+                    width=w,
+                    height=h,
+                    provenance="PRODUCT_VISUAL_TRUTH_LOCK",
+                    validation_status="VALIDATED",
+                )
+        except truth_lock_service.ProductTruthLockError:
+            # The exact strategy gate below will surface the stable blocker.
+            # Standard output may continue as explicitly non-deterministic and
+            # therefore remains PENDING_REVIEW.
+            pass
     
     # Priority 0: Handcrafted Schema Canonical Source (e.g. MWCB canonical photo)
     schema_entry = resolve_schema_entry(product)
@@ -353,6 +398,10 @@ def resolve_product_visual_grounding(
     product_id_or_row: str | dict[str, Any],
     *,
     is_video: bool = False,
+    lane_id: str | None = None,
+    has_avatar: bool = False,
+    is_product_only: bool = False,
+    is_poster: bool = False,
 ) -> ProductVisualGroundingBundle:
     """Resolve a selected product into one universal ProductVisualGroundingBundle."""
     if isinstance(product_id_or_row, str):
@@ -394,6 +443,23 @@ def resolve_product_visual_grounding(
         or "Product"
     ).strip()
 
+    strategy = resolve_generation_strategy(
+        lane_id=lane_id,
+        product_id=product_id,
+        has_avatar=has_avatar,
+        is_product_only=is_product_only,
+        is_poster=is_poster,
+    )
+    truth_status = truth_lock_service.inspect_product_truth_lock(product_id)
+    if strategy in (
+        STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE,
+        STRATEGY_FIXED_HERO_POSTER,
+    ) and not truth_status.get("exact_allowed"):
+        raise ProductTruthLockRequiredError(
+            str(truth_status.get("failure_state") or "PRODUCT_TRUTH_LOCK_REQUIRED"),
+            "Exact IMG lane is blocked until the server-side Product Truth Lock is approved and byte-valid.",
+        )
+
     ref_info = resolve_product_reference_image(product)
     locks = build_product_lock(product, is_video=is_video, has_product_reference=True)
 
@@ -430,7 +496,22 @@ def resolve_product_visual_grounding(
             "has_schema_override": bool(schema_entry),
             "ref_source": ref_info.source_type,
             "ref_sha256": ref_info.sha256,
+            "product_truth_status": truth_status.get("product_truth_status"),
+            "canonical_media_id": truth_status.get("canonical_media_id"),
+            "canonical_sha256": truth_status.get("canonical_sha256"),
+            "canonical_cutout_media_id": truth_status.get("canonical_cutout_media_id"),
+            "canonical_cutout_sha256": truth_status.get("canonical_cutout_sha256"),
         },
+        product_truth_status=(
+            "PRODUCT_TRUTH_PRESERVED_EXACT_COMPOSITE"
+            if truth_status.get("exact_allowed") and strategy in (
+                STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE,
+                STRATEGY_FIXED_HERO_POSTER,
+            )
+            else "NON_DETERMINISTIC_REFERENCE_CONDITIONED"
+        ),
+        product_truth_lock=truth_status,
+        selected_strategy=strategy,
     )
 
 
@@ -504,10 +585,16 @@ def get_grounded_generation_payload(
     is_poster: bool = False,
 ) -> dict[str, Any]:
     """Unified Grounding Contract: Resolves bundle, strategy, product reference, and concise reference-first prompt."""
-    bundle = resolve_product_visual_grounding(product_id)
     strategy = resolve_generation_strategy(
         lane_id=lane_id,
         product_id=product_id,
+        has_avatar=has_avatar,
+        is_product_only=is_product_only,
+        is_poster=is_poster,
+    )
+    bundle = resolve_product_visual_grounding(
+        product_id,
+        lane_id=lane_id,
         has_avatar=has_avatar,
         is_product_only=is_product_only,
         is_poster=is_poster,
@@ -517,7 +604,23 @@ def get_grounded_generation_payload(
     concise_contract = build_concise_engine_product_contract(product_row, is_clean_frame=not is_poster)
 
     cleaned_base = clean_provider_prompt_text(base_prompt, is_clean_frame=not is_poster)
-    full_prompt = f"{cleaned_base}\n\n[PRODUCT CONTRACT]\n{concise_contract}" if cleaned_base else concise_contract
+    standard_truth_notice = (
+        "NON_DETERMINISTIC_REFERENCE_CONDITIONED — exact label/logo/geometry/scale "
+        "not guaranteed; human review required."
+    )
+    full_prompt = (
+        f"{cleaned_base}\n\n[PRODUCT TRUTH STATUS]\n{standard_truth_notice}"
+        f"\n\n[PRODUCT CONTRACT]\n{concise_contract}"
+        if cleaned_base
+        else f"[PRODUCT TRUTH STATUS]\n{standard_truth_notice}\n\n{concise_contract}"
+    )
+    if strategy in (
+        STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE,
+        STRATEGY_FIXED_HERO_POSTER,
+    ):
+        from agent.services.exact_product_compositor_service import augment_prompt_scene_only
+
+        full_prompt = augment_prompt_scene_only(cleaned_base)
 
     ref = bundle.product_reference or {}
     product_reference_asset = {
@@ -534,6 +637,12 @@ def get_grounded_generation_payload(
         "selected_strategy": strategy,
         "product_reference": bundle.product_reference,
         "product_reference_asset": product_reference_asset,
+        "product_truth": {
+            "status": bundle.product_truth_status,
+            "review_status": (bundle.product_truth_lock or {}).get("review_status"),
+            "exact_allowed": bool((bundle.product_truth_lock or {}).get("exact_allowed")),
+            "failure_state": (bundle.product_truth_lock or {}).get("failure_state", ""),
+        },
         "grounding_locks": {
             "identity_lock": bundle.identity_lock,
             "geometry_lock": bundle.geometry_lock,

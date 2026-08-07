@@ -16,6 +16,8 @@ Library. It:
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
 from pathlib import Path
 import re
 
@@ -39,6 +41,7 @@ from agent.services.img_asset_lane_config import (
 )
 from agent.services.product_lock_builder import build_product_lock
 from agent.services.exact_product_compositor_service import exact_product_policy
+from agent.services import product_truth_lock_service as truth_lock_service
 from agent.services.creative_direction_service import (
     resolve_creative_direction,
     select_creative_direction_directives,
@@ -352,6 +355,9 @@ def _build_engine_prompt(
     refs = [r for r in reference_map if r]
     if refs:
         blocks.append("REFERENCES:\n" + "\n".join(f"- {r}" for r in refs))
+    locks = [line for line in product_lock_lines if line]
+    if locks:
+        blocks.append("PRODUCT TRUTH LOCK:\n" + "\n".join(f"- {line}" for line in locks))
     # Drop operator-facing workflow meta ("System composes the prompt ...") — it is
     # not visual direction and only clutters a portable cross-engine brief.
     comp = [d for d in directives if d and "system composes the prompt" not in d.lower()]
@@ -654,7 +660,11 @@ async def compile_img_fastlane_prompt_preview(
         is_video=request.route == "FRAMES"
         or request.preset_id == "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS",
     )
-    if product and exact_product_policy(dict(product)):
+    exact_preview_lane = any(
+        token in str(preset.get("lane_id") or "").upper()
+        for token in ("PRODUCT_ONLY", "POSTER")
+    )
+    if product and exact_preview_lane and exact_product_policy(dict(product)):
         # Exact-policy products: Flow draws scene only. Final pixels come from
         # exact_product_final_output_service.compose_final_for_product.
         from agent.services.exact_product_compositor_service import SCENE_ONLY_PROMPT_LINES
@@ -863,6 +873,50 @@ async def _lineage_blocker(
     return None
 
 
+async def _is_verified_exact_product_artifact(
+    artifact_id: str | None,
+    product_id: str | None,
+) -> bool:
+    """Verify exact-composite lineage before allowing an asset to claim truth."""
+    if not artifact_id or not product_id:
+        return False
+    artifact = await crud.get_generated_artifact(artifact_id)
+    if not artifact or str(artifact.get("mode") or "") != "IMG_EXACT_COMPOSITE":
+        return False
+    local_path = Path(str(artifact.get("local_path") or ""))
+    lineage_path = local_path.with_suffix(".lineage.json")
+    if not local_path.is_file() or not lineage_path.is_file():
+        return False
+    try:
+        lineage = json.loads(lineage_path.read_text(encoding="utf-8"))
+        if lineage.get("product_id") != product_id:
+            return False
+        if lineage.get("final_media_id") != artifact_id:
+            return False
+        if lineage.get("truth_status") != "PRODUCT_TRUTH_PRESERVED_EXACT_COMPOSITE":
+            return False
+        if lineage.get("raw_plate_approvable") is not False:
+            return False
+        if lineage.get("final_approvable") is not True:
+            return False
+        if not (lineage.get("qa") or {}).get("product_region_match"):
+            return False
+        output_sha = hashlib.sha256(local_path.read_bytes()).hexdigest()
+        if output_sha != lineage.get("final_output_sha256"):
+            return False
+        lock = truth_lock_service.resolve_approved_product_truth_lock(product_id)
+        return (
+            lineage.get("canonical_media_id") == lock.canonical_media_id
+            and lineage.get("canonical_cutout_media_id") == lock.canonical_cutout_media_id
+            and lineage.get("canonical_source_sha256") == lock.canonical_sha256
+            and lineage.get("cutout_sha256") == lock.canonical_cutout_sha256
+            and lineage.get("alpha_mask_sha256") == lock.alpha_mask_sha256
+            and lineage.get("truth_lock_schema_version") == lock.schema_version
+        )
+    except (OSError, ValueError, json.JSONDecodeError, truth_lock_service.ProductTruthLockError):
+        return False
+
+
 async def save_img_output_to_library(request: SaveImgOutputRequest) -> CreativeAssetRecord:
     # Lane must exist (fail closed on unknown lane).
     governance = derive_asset_governance(request.lane_id)
@@ -924,17 +978,35 @@ async def save_img_output_to_library(request: SaveImgOutputRequest) -> CreativeA
             if reused is not None:
                 return reused
 
-    # Product truth is derived, not operator-set: PRESERVED only when a product
-    # is actually bound to the asset; otherwise NOT_APPLICABLE.
-    product_truth_status = "PRESERVED" if request.product_id else "NOT_APPLICABLE"
-    identity_lock_status = request.identity_lock_status or "UNVERIFIED"
-    scale_truth_status = request.scale_truth_status or "UNVERIFIED"
+    # Product truth is derived from server-side exact lineage.  A client cannot
+    # turn a reference-conditioned output into an exact/approved asset by
+    # posting PASS flags or review_status=APPROVED.
+    exact_verified = await _is_verified_exact_product_artifact(artifact_id, request.product_id)
+    if request.product_id:
+        if exact_verified:
+            product_truth_status = "PRODUCT_TRUTH_PRESERVED_EXACT_COMPOSITE"
+            identity_lock_status = "PASS"
+            scale_truth_status = "PASS"
+        else:
+            product_truth_status = "NON_DETERMINISTIC_REFERENCE_CONDITIONED"
+            identity_lock_status = "UNVERIFIED"
+            scale_truth_status = "UNVERIFIED"
+    else:
+        product_truth_status = "NOT_APPLICABLE"
+        identity_lock_status = request.identity_lock_status or "UNVERIFIED"
+        scale_truth_status = request.scale_truth_status or "UNVERIFIED"
     claim_safety_status = request.claim_safety_status or "UNVERIFIED"
+
+    effective_review_status = request.review_status
+    if request.product_id and not exact_verified:
+        if request.review_status == "APPROVED":
+            raise ValueError("PRODUCT_TRUTH_EXACT_COMPOSITE_REQUIRED_FOR_APPROVAL")
+        effective_review_status = "PENDING_REVIEW"
 
     # An asset may be APPROVED only when EVERY truth/safety gate explicitly PASSes.
     # Any UNVERIFIED or FAIL status blocks approval — an APPROVED asset is later
     # the only kind reusable downstream (validate_selectable_asset require_approved).
-    if request.review_status == "APPROVED" and not all(
+    if effective_review_status == "APPROVED" and not all(
         status == "PASS"
         for status in (identity_lock_status, scale_truth_status, claim_safety_status)
     ):
@@ -973,7 +1045,7 @@ async def save_img_output_to_library(request: SaveImgOutputRequest) -> CreativeA
         identity_lock_status=identity_lock_status,
         scale_truth_status=scale_truth_status,
         claim_safety_status=claim_safety_status,
-        review_status=request.review_status,
+        review_status=effective_review_status,
         mode_a_metadata_handoff=(
             {
                 "generated_artifact": {"media_id": artifact_id},

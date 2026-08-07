@@ -1,6 +1,16 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from agent.db import crud
+from agent.models.product_truth_lock import (
+    ProductTruthLockApprovalRequest,
+    ProductTruthLockOnboardingRequest,
+)
 from agent.services.product_truth_service import ProductTruthService
+from agent.services.product_truth_lock_service import (
+    ProductTruthLockError,
+    approve_product_truth_lock,
+    create_pending_product_truth_lock,
+    inspect_product_truth_lock,
+)
 
 router = APIRouter(prefix="/product-truth", tags=["product-truth"])
 
@@ -38,3 +48,40 @@ async def get_fastmoss_taxonomy_audit(sample_limit: int = Query(default=20, ge=1
     from agent.services.fastmoss_taxonomy_reconciliation_service import FastMossTaxonomyReconciliationService
     report = await FastMossTaxonomyReconciliationService.perform_full_fastmoss_audit(limit=sample_limit)
     return report
+
+
+@router.get("/{product_id}/visual-lock")
+async def get_visual_product_truth_lock(product_id: str):
+    """Read-only exact-IMG preflight; never creates or approves a lock."""
+    return inspect_product_truth_lock(product_id)
+
+
+def _truth_lock_http_error(exc: ProductTruthLockError) -> HTTPException:
+    return HTTPException(
+        status_code=exc.status_code,
+        detail={"code": exc.code, "message": exc.message},
+    )
+
+
+@router.post("/{product_id}/visual-lock/onboard")
+async def onboard_visual_product_truth_lock(
+    product_id: str,
+    request: ProductTruthLockOnboardingRequest,
+):
+    """Persist a cutout-backed lock as PENDING_REVIEW; never auto-approves."""
+    try:
+        return await create_pending_product_truth_lock(product_id, request)
+    except ProductTruthLockError as exc:
+        raise _truth_lock_http_error(exc) from exc
+
+
+@router.post("/{product_id}/visual-lock/approve")
+async def approve_visual_product_truth_lock(
+    product_id: str,
+    request: ProductTruthLockApprovalRequest,
+):
+    """Separate explicit human approval gate for exact product output."""
+    try:
+        return await approve_product_truth_lock(product_id, request)
+    except ProductTruthLockError as exc:
+        raise _truth_lock_http_error(exc) from exc

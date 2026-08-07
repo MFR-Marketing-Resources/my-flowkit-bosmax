@@ -628,13 +628,16 @@ export default function ImgFastlanePage() {
 		setError(null);
 		try {
 			const productId = selectedProduct?.id ?? "";
-			const gate = await resolveExactGenerationGate(productId);
+			const hasAvatar = Boolean(characterAssetId);
+			const isProductOnly = !hasAvatar && Boolean(framePresetId?.includes("PRODUCT_ONLY") || framePresetId?.includes("HERO"));
+			const gate = await resolveExactGenerationGate(productId, undefined, {
+				laneId: framePresetId || undefined,
+				hasAvatar,
+				isProductOnly,
+			});
 			if (gate.mode === "blocked") {
 				throw new Error(gate.message);
 			}
-
-			const hasAvatar = Boolean(characterAssetId || sceneAssetId);
-			const isProductOnly = !hasAvatar && Boolean(framePresetId?.includes("PRODUCT_ONLY") || framePresetId?.includes("HERO"));
 
 			let scenePrompt = prompt;
 			let groundedProdAsset: ReturnType<typeof buildProviderProductReferenceAsset> = null;
@@ -665,6 +668,8 @@ export default function ImgFastlanePage() {
 				aspect,
 				quantity,
 				imageModel,
+				productId: productId || undefined,
+				visualLaneId: framePresetId || undefined,
 			});
 
 			const { job_id } = await startImgGeneration(genInput);

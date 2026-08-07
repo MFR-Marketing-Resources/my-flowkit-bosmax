@@ -149,6 +149,10 @@ export async function saveImgOutputToLibrary(
 
 export interface StartImgGenerationInput {
 	prompt: string;
+	/** Server-side product lineage key; client never supplies truth bytes/status. */
+	product_id?: string;
+	/** Route context used only to select the server strategy; lock validation stays server-owned. */
+	visual_lane_id?: string;
 	image_media_ids?: string[];
 	aspect?: string;
 	model?: string;
@@ -193,6 +197,8 @@ export async function startImgGeneration(
 	return postAPI<StartImgGenerationResult>("/api/flow/generate", {
 		mode: "IMG",
 		prompt: input.prompt,
+		product_id: input.product_id,
+		visual_lane_id: input.visual_lane_id,
 		image_media_ids: input.image_media_ids ?? [],
 		aspect: input.aspect ?? "9:16",
 		model: input.model,

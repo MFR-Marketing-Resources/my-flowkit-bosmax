@@ -12,7 +12,7 @@ from uuid import uuid4
 import aiohttp
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
-from typing import Optional
+from typing import Any, Optional
 from agent.services.flow_client import get_flow_client
 from agent.db import crud
 
@@ -771,6 +771,10 @@ class GenerateRequest(BaseModel):
     mode: str                                  # IMG | T2V | I2V | F2V
     prompt: str
     project_id: Optional[str] = None
+    # Product identity is resolved server-side.  It is a lineage key, never a
+    # client-authorized image path/hash or truth status.
+    product_id: Optional[str] = None
+    visual_lane_id: Optional[str] = None
     image_media_ids: Optional[list] = None     # existing/uploaded refs (I2V/F2V)
     image_prompt: Optional[str] = None         # auto start-frame if no refs (I2V/F2V)
     aspect: str = "9:16"
@@ -857,6 +861,118 @@ def _is_multi_block_prompt(prompt: str) -> bool:
     return (prompt or "").count(_BLOCK_HEADER_MARKER) > 1
 
 
+async def _apply_img_product_truth_gate(
+    *, product_id: str, visual_lane_id: str | None, prompt: str,
+    request_refs: dict[str, Any], start_asset: object = None,
+) -> tuple[str, dict[str, Any], bool]:
+    """Apply the server product resolver to every API-first IMG entry point.
+
+    ``/generate`` and the workspace compatibility wrapper both feed the same
+    provider lane. Keeping this gate at the shared seam prevents the workspace
+    path from silently uploading a stale/client-selected product reference.
+    """
+    from agent.services.exact_product_compositor_service import (
+        ExactProductCompositeError,
+        augment_prompt_scene_only,
+        validate_canonical_or_raise,
+    )
+    from agent.services.product_visual_grounding_resolver import (
+        ProductTruthLockRequiredError,
+        ProductVisualReferenceRequiredError,
+        resolve_generation_strategy,
+        resolve_product_visual_grounding,
+    )
+
+    product = await crud.get_product(product_id)
+    if not product:
+        raise HTTPException(404, f"PRODUCT_NOT_FOUND: {product_id}")
+    refs = dict(request_refs or {})
+    lane = (visual_lane_id or "").upper()
+    has_avatar = bool(
+        refs.get("characterAsset")
+        or refs.get("avatarAsset")
+        or any(token in lane for token in ("AVATAR", "UGC", "MODEL", "HYBRID"))
+    )
+    is_poster = "POSTER" in lane
+    is_product_only = "PRODUCT_ONLY" in lane or ("HERO" in lane and not has_avatar)
+    strategy = resolve_generation_strategy(
+        lane_id=visual_lane_id,
+        product_id=product_id,
+        has_avatar=has_avatar,
+        is_product_only=is_product_only,
+        is_poster=is_poster,
+    )
+    exact_strategy = strategy in (
+        "PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE",
+        "FIXED_HERO_POSTER",
+    )
+
+    def _is_product_reference(asset: object, slot_key: str = "") -> bool:
+        if slot_key.lower() in {"productasset", "productreference"}:
+            return True
+        if not isinstance(asset, dict):
+            return False
+        asset_product_id = str(asset.get("productId") or asset.get("product_id") or "")
+        role = str(asset.get("semanticRole") or asset.get("semantic_role") or "").upper()
+        source = str(asset.get("assetSource") or asset.get("asset_source") or "").upper()
+        return (
+            asset_product_id == product_id
+            or role == "PRODUCT_REFERENCE"
+            or source == "PRODUCT_IMAGE_URL"
+        )
+
+    if exact_strategy:
+        exact_product = dict(product)
+        exact_product["_exact_product_required"] = True
+        try:
+            validate_canonical_or_raise(exact_product)
+        except ExactProductCompositeError as exc:
+            raise HTTPException(exc.status_code, f"{exc.code}: {exc.message}") from exc
+        if any(
+            _is_product_reference(asset, slot_key)
+            for slot_key, asset in refs.items()
+        ) or _is_product_reference(start_asset, "startAsset"):
+            raise HTTPException(
+                422,
+                "PRODUCT_REFERENCE_FORBIDDEN_EXACT_MODE: exact IMG sends a scene-only plate; the immutable product is inserted after Flow.",
+            )
+        return augment_prompt_scene_only(prompt), refs, True
+
+    try:
+        grounded = resolve_product_visual_grounding(
+            product_id,
+            lane_id=visual_lane_id,
+            has_avatar=has_avatar,
+            is_product_only=is_product_only,
+            is_poster=is_poster,
+        )
+    except (ProductVisualReferenceRequiredError, ProductTruthLockRequiredError) as exc:
+        code = getattr(exc, "code", "PRODUCT_VISUAL_REFERENCE_REQUIRED")
+        raise HTTPException(422, f"{code}: {exc}") from exc
+
+    # Remove every client-selected product asset, then bind the resolver's
+    # server-owned bytes in the canonical product slot. Human/avatar lanes stay
+    # reference-conditioned and therefore remain PENDING_REVIEW downstream.
+    refs = {
+        key: asset
+        for key, asset in refs.items()
+        if not _is_product_reference(asset, key)
+    }
+    product_ref = grounded.product_reference
+    refs["productAsset"] = {
+        "productId": product_id,
+        "mediaId": product_ref.get("media_id"),
+        "localFilePath": product_ref.get("local_path"),
+        "downloadUrl": product_ref.get("image_url"),
+        "fileName": f"{product_id}_product_reference",
+        "semanticRole": "PRODUCT_REFERENCE",
+        "assetSource": "PRODUCT_TRUTH_LOCK"
+        if product_ref.get("source_type") == "PRODUCT_TRUTH_LOCK"
+        else "PRODUCT_DATABASE_RECORD",
+    }
+    return prompt, refs, False
+
+
 @router.post("/generate")
 async def generate(body: GenerateRequest):
     """THE one door for all four modes. mode = IMG | T2V | I2V | F2V → job_id.
@@ -871,6 +987,20 @@ async def generate(body: GenerateRequest):
         raise HTTPException(
             422, "MULTI_BLOCK_PROMPT_REJECTED: one generation carries ONE block's "
             "prompt; block 2+ text belongs to the Extend step on the finished video")
+
+    generation_prompt = body.prompt
+    request_refs = dict(body.refs or {})
+    if mode == "IMG" and body.product_id:
+        # Product-aware IMG requests pass this server gate before extension
+        # connectivity or provider work. The workspace wrapper calls the same
+        # helper so both routes have identical product-byte authority.
+        generation_prompt, request_refs, _ = await _apply_img_product_truth_gate(
+            product_id=body.product_id,
+            visual_lane_id=body.visual_lane_id,
+            prompt=body.prompt,
+            request_refs=request_refs,
+            start_asset=body.startAsset,
+        )
     # Validate model+duration BEFORE connectivity so 422 stays deterministic (patch I2a);
     # always resolve against the EFFECTIVE model (defaults to Lite) so a bad duration_s with
     # no model (e.g. 10s on default Lite) is caught here, not late inside the job.
@@ -911,7 +1041,7 @@ async def generate(body: GenerateRequest):
     # product truth ahead of legacy explicit IDs; video preserves its proven
     # explicit-ID-first contract and is intentionally outside this repair.
     resolved_ids = [] if mode == "IMG" else list(body.image_media_ids or [])
-    for slot_label, ref_asset in ordered_ref_slots(body.startAsset, body.refs):
+    for slot_label, ref_asset in ordered_ref_slots(body.startAsset, request_refs):
         media_id = await _resolve_asset_to_media_id(client, ref_asset, slot_label)
         if media_id and media_id not in resolved_ids:
             resolved_ids.append(media_id)
@@ -927,7 +1057,7 @@ async def generate(body: GenerateRequest):
         if tier not in ("PAYGATE_TIER_ONE", "PAYGATE_TIER_TWO"):
             raise HTTPException(500, f"Account tier '{tier}' cannot generate video — needs Pro/Ultra")
     result = await _mv.start_generate(
-        mode, body.prompt, project_id=body.project_id,
+        mode, generation_prompt, project_id=body.project_id,
         image_media_ids=resolved_ids, image_prompt=body.image_prompt,
         aspect=body.aspect, tier=tier, model=body.model, duration_s=body.duration_s,
         num_videos=body.count, image_model=body.image_model)
@@ -950,6 +1080,7 @@ async def generate_job(job_id: str):
 async def get_product_visual_grounding_endpoint(product_id: str):
     from agent.services.product_visual_grounding_resolver import (
         resolve_product_visual_grounding,
+        ProductTruthLockRequiredError,
         ProductVisualReferenceRequiredError,
     )
     try:
@@ -957,6 +1088,8 @@ async def get_product_visual_grounding_endpoint(product_id: str):
         return bundle.to_dict()
     except ProductVisualReferenceRequiredError as e:
         raise HTTPException(422, str(e))
+    except ProductTruthLockRequiredError as e:
+        raise HTTPException(422, f"{e.code}: {e.message}")
     except Exception as e:
         raise HTTPException(500, f"Error resolving visual grounding: {str(e)}")
 
@@ -973,6 +1106,7 @@ class GroundedPayloadRequest(BaseModel):
 async def get_grounded_payload_endpoint(product_id: str, body: GroundedPayloadRequest):
     from agent.services.product_visual_grounding_resolver import (
         get_grounded_generation_payload,
+        ProductTruthLockRequiredError,
         ProductVisualReferenceRequiredError,
     )
     try:
@@ -987,6 +1121,8 @@ async def get_grounded_payload_endpoint(product_id: str, body: GroundedPayloadRe
         return payload
     except ProductVisualReferenceRequiredError as e:
         raise HTTPException(422, str(e))
+    except ProductTruthLockRequiredError as e:
+        raise HTTPException(422, f"{e.code}: {e.message}")
     except Exception as e:
         raise HTTPException(500, f"Error building grounded payload: {str(e)}")
 
@@ -2608,6 +2744,17 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
             request_id, "API_LANE_REJECTED",
             "prompt carries more than one compiled block — submit block 1 only; "
             "block 2+ belongs to the Extend step", "ERR_MULTI_BLOCK_PROMPT")
+
+    if mode == "IMG" and body.get("product_id"):
+        prompt, gated_refs, _ = await _apply_img_product_truth_gate(
+            product_id=str(body["product_id"]),
+            visual_lane_id=body.get("visual_lane_id") or body.get("lane"),
+            prompt=prompt,
+            request_refs=dict(body.get("refs") or {}),
+            start_asset=start_asset,
+        )
+        body["prompt"] = prompt
+        body["refs"] = gated_refs
 
     # Collect EVERY image the dashboard sent: F2V uses startAsset (+ optional
     # endAsset — previously materialized then silently DROPPED here, losing the

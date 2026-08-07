@@ -11,7 +11,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_component", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "content_combination", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "creative_product_selection", "product_strategy_taxonomy", "poster_copy_set", "poster_deliverable", "extend_lineage", "product_source_media"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "product_visual_truth_lock", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_component", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "content_combination", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "creative_product_selection", "product_strategy_taxonomy", "poster_copy_set", "poster_deliverable", "extend_lineage", "product_source_media"})
 
 
 def _validate_table(table: str) -> None:
@@ -36,6 +36,7 @@ _COLUMNS = {
               "trim_start", "trim_end", "duration", "display_order", "source", "transition_prompt", "narrator_text", "updated_at"},
     "request": {"status", "request_id", "media_id", "output_url", "error_message", "retry_count", "next_retry_at", "source_media_id", "updated_at", "automation_report"},
     "product": {"source", "source_url", "brand", "raw_product_title", "product_display_name", "product_short_name", "category", "subcategory", "type", "shop_name", "price", "currency", "commission_amount", "commission_rate", "price_min", "price_max", "commission", "image_url", "tiktok_product_url", "fastmoss_source_file", "image_asset_status", "image_failure_detail", "product_type", "product_type_id", "silo", "trigger_id", "formula", "copywriting_angle", "claim_risk_level", "bosmax_product_family", "mode_recommendations", "physics_class", "product_scale", "hand_object_interaction", "recommended_grip", "handling_notes", "air_gap_rule", "material_behavior", "surface_behavior", "fragility_level", "camera_handling_notes", "scene_context", "camera_style", "camera_behavior", "camera_shot", "unsafe_handling_rules", "section_4_hint", "section_5_product_physics_prompt", "section_5_physics_hint", "section_6_copy_hint", "section_9_overlay_hint", "mapping_source", "mapping_confidence", "mapping_review_status", "mapping_status", "mapping_missing_fields", "prompt_readiness_status", "prompt_missing_fields", "claim_safe_copy_status", "claim_safe_copy_payload", "claim_safe_copy_updated_at", "production_prompt_approval_status", "production_prompt_approved_modes", "production_prompt_approved_at", "production_prompt_approval_note", "production_prompt_approval_provenance", "lifecycle_status", "archived_at", "archived_reason", "archived_by", "unarchived_at", "unarchived_reason", "lifecycle_provenance", "asset_status", "media_id", "local_image_path", "updated_at", "fastmoss_reference_id"},
+    "product_visual_truth_lock": {"canonical_media_id", "canonical_sha256", "source_width", "source_height", "canonical_source_path", "canonical_cutout_media_id", "canonical_cutout_sha256", "canonical_cutout_path", "alpha_mask_json", "anchor_point_json", "min_scale", "max_scale", "allowed_bbox_json", "allowed_rotation", "allowed_perspective", "identity_lock", "geometry_lock", "label_lock", "logo_lock", "colour_lock", "scale_lock", "review_status", "failure_state", "provenance_json", "schema_version", "updated_at"},
     "request_telemetry": {"project_id", "video_id", "scene_id", "product_id", "request_type", "mode", "prompt_package_snapshot_id", "workspace_execution_package_id", "workspace_generation_package_id", "prompt_fingerprint", "asset_fingerprints", "request_lineage_payload", "git_sha", "background_build_id", "content_build_id", "last_checkpoint", "runtime_ready", "build_match", "status", "google_flow_stage", "extension_stage", "worker_stage", "queued_at", "started_at", "last_heartbeat_at", "completed_at", "failed_at", "duration_seconds", "idle_seconds", "processing_seconds", "error_code", "error_message", "provider", "engine", "model_label", "credits_spent", "estimated_credits", "estimated_cost", "actual_cost"},
     "request_stage_event": {"request_id", "timestamp", "checkpoint", "stage", "status", "message", "git_sha", "background_build_id", "content_build_id", "runtime_ready", "build_match", "selector_used", "evidence_pointer", "fail_code", "first_fail_stage", "source"},
     "workspace_execution_package": {"product_id", "mode", "duration_seconds", "aspect_ratio", "model", "manual_override", "prompt_text", "prompt_fingerprint", "prompt_package_snapshot_id", "asset_slots", "resolved_assets", "readiness", "execution_allowed", "production_generation_allowed", "manual_fallback", "blockers", "request_lineage_payload", "source_of_truth_notes", "updated_at"},
@@ -404,6 +405,38 @@ async def create_product(raw_product_title: str, source: str = "FASTMOSS", produ
     return await _get_with_db(db, "product", "id", pid)
 
 async def get_product(pid: str): return await _get("product", "id", pid)
+
+async def get_product_truth_lock(product_id: str):
+    return await _get("product_visual_truth_lock", "product_id", product_id)
+
+async def upsert_product_truth_lock(product_id: str, **kwargs) -> dict | None:
+    """Persist a reviewed contract without changing its review authority.
+
+    Callers must explicitly supply review_status/lock fields.  Generation never
+    calls this writer; it only consumes the read-only validation service.
+    """
+    _validate_table("product_visual_truth_lock")
+    allowed = _COLUMNS["product_visual_truth_lock"]
+    values = {key: value for key, value in kwargs.items() if key in allowed}
+    values["updated_at"] = _now()
+    db = await get_db()
+    async with _db_lock:
+        existing = await _get_with_db(db, "product_visual_truth_lock", "product_id", product_id)
+        if existing is None:
+            columns = ["product_id", *values.keys()]
+            placeholders = ",".join("?" for _ in columns)
+            await db.execute(
+                f"INSERT INTO product_visual_truth_lock ({','.join(columns)}) VALUES ({placeholders})",
+                [product_id, *values.values()],
+            )
+        else:
+            sets = ",".join(f"{key}=?" for key in values)
+            await db.execute(
+                f"UPDATE product_visual_truth_lock SET {sets} WHERE product_id=?",
+                [*values.values(), product_id],
+            )
+        await db.commit()
+    return await _get("product_visual_truth_lock", "product_id", product_id)
 async def get_product_by_fastmoss_reference_id(reference_id: str):
     """Return the canonical product row committed from a FastMoss reference, if
     any. Enables reference_id -> canonical fallback when a queue row is missing
