@@ -620,6 +620,8 @@ domains:
       - agent/services/video_reviewer.py
       - dashboard/src/App.tsx
       - dashboard/src/api/assets.ts
+      - dashboard/src/api/avatarRegistry.ts
+      - dashboard/src/api/avatarRegistry.test.ts
       - dashboard/src/api/client.ts
       - dashboard/src/api/creativeAssets.ts
       - dashboard/src/api/creativeAssets.test.ts

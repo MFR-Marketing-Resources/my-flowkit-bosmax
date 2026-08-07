@@ -2,6 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { archiveCreativeAsset, fetchCreativeAssets } from "../api/creativeAssets";
 import {
+	buildAvatarRegistryReferenceAssets,
+	fetchAvatarRegistryPool,
+	type AvatarRegistryPoolRow,
+} from "../api/avatarRegistry";
+import {
 	type ImageArtifact,
 	type ImgAssetLane,
 	type ImgGenerationJob,
@@ -192,6 +197,9 @@ export default function ImgCockpitPage() {
 	const [copyFallbackConfirmed, setCopyFallbackConfirmed] = useState(false);
 	const [products, setProducts] = useState<Product[]>([]);
 	const [characterAssets, setCharacterAssets] = useState<CreativeAsset[]>([]);
+	const [avatarRegistryPool, setAvatarRegistryPool] = useState<
+		AvatarRegistryPoolRow[]
+	>([]);
 	const [sceneAssets, setSceneAssets] = useState<CreativeAsset[]>([]);
 	const [styleAssets, setStyleAssets] = useState<CreativeAsset[]>([]);
 	const [characterAssetId, setCharacterAssetId] = useState("");
@@ -237,12 +245,14 @@ export default function ImgCockpitPage() {
 			fetchCreativeAssets({ semantic_role: "SCENE_CONTEXT_REFERENCE", status: "ACTIVE", limit: 100 }),
 			fetchCreativeAssets({ semantic_role: "STYLE_REFERENCE", status: "ACTIVE", limit: 100 }),
 			fetchImageArtifacts(50),
+			fetchAvatarRegistryPool(),
 		]);
-		const [chars, scenes, styles, arts] = results;
+		const [chars, scenes, styles, arts, avatarPool] = results;
 		if (chars.status === "fulfilled") setCharacterAssets(chars.value.items);
 		if (scenes.status === "fulfilled") setSceneAssets(scenes.value.items);
 		if (styles.status === "fulfilled") setStyleAssets(styles.value.items);
 		if (arts.status === "fulfilled") setArtifacts(arts.value);
+		if (avatarPool.status === "fulfilled") setAvatarRegistryPool(avatarPool.value);
 		if (results.some((r) => r.status === "rejected")) {
 			setError("Failed to load one or more Library reference lists.");
 		}
@@ -308,10 +318,22 @@ export default function ImgCockpitPage() {
 
 	// Selected references (any ACTIVE asset) and the approved-only subset that may
 	// actually feed generation / lineage.
-	const selectedCharacter = useMemo(
-		() => characterAssets.find((a) => a.asset_id === characterAssetId) ?? null,
-		[characterAssets, characterAssetId],
+	const avatarRegistryAssets = useMemo(
+		() => buildAvatarRegistryReferenceAssets(avatarRegistryPool, characterAssets),
+		[avatarRegistryPool, characterAssets],
 	);
+	const selectedCharacter = useMemo(
+		() => avatarRegistryAssets.find((a) => a.asset_id === characterAssetId) ?? null,
+		[avatarRegistryAssets, characterAssetId],
+	);
+	useEffect(() => {
+		if (
+			characterAssetId &&
+			!avatarRegistryAssets.some((asset) => asset.asset_id === characterAssetId)
+		) {
+			setCharacterAssetId("");
+		}
+	}, [avatarRegistryAssets, characterAssetId]);
 	const selectedScene = useMemo(
 		() => sceneAssets.find((a) => a.asset_id === sceneAssetId) ?? null,
 		[sceneAssets, sceneAssetId],
@@ -634,8 +656,8 @@ export default function ImgCockpitPage() {
 
 					{error ? <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-200">{error}</div> : null}
 
-					<div className="flex min-h-0 flex-1 flex-col gap-5 xl:flex-row">
-						<main className="min-w-0 flex-1 space-y-3 overflow-y-auto pb-6 xl:pr-1">
+					<div className="flex min-h-0 flex-1 flex-col gap-5 lg:flex-row">
+						<main className="min-w-0 space-y-3 pb-6 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1">
 							<WorkflowStep index={1} title="IMG lane" status={laneStatus} summary={lane?.label ?? "Select a lane"} helper="Choose the registry lane before binding product and reference requirements.">
 								<div className="space-y-3">
 									<select value={laneId} onChange={(e) => setLaneId(e.target.value)} className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-200">
@@ -656,7 +678,7 @@ export default function ImgCockpitPage() {
 							<WorkflowStep index={3} title="References" status={referenceStatus} summary={`${referenceCount} approved reference${referenceCount === 1 ? "" : "s"}`} helper="Only APPROVED, ACTIVE references are eligible for generation and lineage.">
 								<div className="space-y-4">
 									<ResolvedChip label="Reference binding" value={`${referenceCount} approved · ${requirementsMissing ? "requirements pending" : "ready"}`} icon="🧷" auto={!referenceCount} />
-									<ReferenceField label="Avatar (CHARACTER_REFERENCE)" noun="avatar" assets={characterAssets} value={characterAssetId} onChange={setCharacterAssetId} emptyHint="No avatars in Library — generate one, then approve it here" requiredMissing={characterMissing} onApprove={handleApproveAsset} approvingId={approveTarget?.asset_id ?? null} />
+											<ReferenceField label="Avatar Registry — Approved Presenter" noun="avatar" assets={avatarRegistryAssets} value={characterAssetId} onChange={setCharacterAssetId} emptyHint="No approved Avatar Registry presenter assets" requiredMissing={characterMissing} onApprove={handleApproveAsset} approvingId={approveTarget?.asset_id ?? null} />
 									<a href="/assets/avatar-registry" target="_blank" rel="noopener noreferrer" className="inline-block rounded-lg border border-v4-accent/30 bg-v4-accent/10 px-3 py-1.5 text-[11px] font-semibold text-v4-accent-ink">Open Avatar Registry ↗</a>
 									<div className="grid gap-3 md:grid-cols-2">
 										<ReferenceField label="Scene (SCENE_CONTEXT_REFERENCE)" noun="scene reference" assets={sceneAssets} value={sceneAssetId} onChange={setSceneAssetId} emptyHint="No scene references in Library" requiredMissing={sceneMissing} onApprove={handleApproveAsset} approvingId={approveTarget?.asset_id ?? null} />
@@ -712,7 +734,7 @@ export default function ImgCockpitPage() {
 							</WorkflowStep>
 						</main>
 
-						<aside className="w-full xl:w-80 xl:flex-none"><div className="xl:sticky xl:top-4"><OperatorCockpit
+						<aside className="w-full lg:w-80 lg:flex-none"><div className="lg:sticky lg:top-4"><OperatorCockpit
 							laneLabel="IMG Cockpit"
 							status={{ label: generating ? "Working" : approvedAsset ? "Approved" : selectedProduct ? "Ready" : "Idle", state: generating ? "running" : approvedAsset ? "done" : selectedProduct ? "online" : "idle" }}
 							product={selectedProduct ? { name: selectedProduct.product_display_name, sub: lane?.label } : undefined}
@@ -860,12 +882,12 @@ export default function ImgCockpitPage() {
 			{/* 3 — Avatar */}
 			<Section step="3" title="Generate / select avatar (character reference)">
 				<ReferenceField
-					label="Avatar (CHARACTER_REFERENCE)"
+					label="Avatar Registry — Approved Presenter"
 					noun="avatar"
-					assets={characterAssets}
+					assets={avatarRegistryAssets}
 					value={characterAssetId}
 					onChange={setCharacterAssetId}
-					emptyHint="No avatars in Library — generate one, then approve it here"
+					emptyHint="No approved Avatar Registry presenter assets"
 					requiredMissing={characterMissing}
 					onApprove={handleApproveAsset}
 					approvingId={approveTarget?.asset_id ?? null}

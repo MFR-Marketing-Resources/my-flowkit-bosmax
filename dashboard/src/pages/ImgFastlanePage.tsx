@@ -3,6 +3,11 @@ import { useSearchParams } from "react-router-dom";
 import { archiveCreativeAsset, fetchCreativeAssets } from "../api/creativeAssets";
 import { getCreativeSetupForProduct } from "../api/creativeIntelligence";
 import {
+	buildAvatarRegistryReferenceAssets,
+	fetchAvatarRegistryPool,
+	type AvatarRegistryPoolRow,
+} from "../api/avatarRegistry";
+import {
 	compileImgFastlanePromptPreview,
 	type ImageArtifact,
 	type ImgAssetLane,
@@ -212,6 +217,9 @@ export default function ImgFastlanePage() {
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const [products, setProducts] = useState<Product[]>([]);
 	const [characterAssets, setCharacterAssets] = useState<CreativeAsset[]>([]);
+	const [avatarRegistryPool, setAvatarRegistryPool] = useState<
+		AvatarRegistryPoolRow[]
+	>([]);
 	const [sceneAssets, setSceneAssets] = useState<CreativeAsset[]>([]);
 	const [styleAssets, setStyleAssets] = useState<CreativeAsset[]>([]);
 
@@ -296,14 +304,16 @@ export default function ImgFastlanePage() {
 			}),
 			fetchImageArtifacts(50),
 			fetch("/api/workspace/scene-context-registry/pool").then((r) => r.json()),
+			fetchAvatarRegistryPool(),
 		]);
-		const [chars, scenes, styles, arts, scenePool] = results;
+		const [chars, scenes, styles, arts, scenePool, avatarPool] = results;
 		if (chars.status === "fulfilled") setCharacterAssets(chars.value.items);
 		if (scenes.status === "fulfilled") setSceneAssets(scenes.value.items);
 		if (styles.status === "fulfilled") setStyleAssets(styles.value.items);
 		if (arts.status === "fulfilled") setArtifacts(arts.value);
 		if (scenePool.status === "fulfilled")
 			setSceneRegistry(scenePool.value?.scenes ?? []);
+		if (avatarPool.status === "fulfilled") setAvatarRegistryPool(avatarPool.value);
 		if (results.some((r) => r.status === "rejected")) {
 			setError("Failed to load reference assets from Library.");
 		}
@@ -381,11 +391,24 @@ export default function ImgFastlanePage() {
 		const laneId = sceneAssetId ? "AVATAR_PRODUCT_SCENE_COMPOSITE" : "AVATAR_PRODUCT_COMPOSITE";
 		return lanes.find((l) => l.lane_id === laneId) ?? null;
 	}, [lanes, compiledPreview?.lane_id, sceneAssetId]);
+	const avatarRegistryAssets = useMemo(
+		() => buildAvatarRegistryReferenceAssets(avatarRegistryPool, characterAssets),
+		[avatarRegistryPool, characterAssets],
+	);
 
 	const selectedCharacter = useMemo(
-		() => characterAssets.find((a) => a.asset_id === characterAssetId) ?? null,
-		[characterAssets, characterAssetId],
+		() =>
+			avatarRegistryAssets.find((a) => a.asset_id === characterAssetId) ?? null,
+		[avatarRegistryAssets, characterAssetId],
 	);
+	useEffect(() => {
+		if (
+			characterAssetId &&
+			!avatarRegistryAssets.some((asset) => asset.asset_id === characterAssetId)
+		) {
+			setCharacterAssetId("");
+		}
+	}, [avatarRegistryAssets, characterAssetId]);
 	const selectedScene = useMemo(
 		() => sceneAssets.find((a) => a.asset_id === sceneAssetId) ?? null,
 		[sceneAssets, sceneAssetId],
@@ -847,8 +870,8 @@ export default function ImgFastlanePage() {
 						</div>
 					) : null}
 
-					<div className="flex min-h-0 flex-1 flex-col gap-5 xl:flex-row">
-						<main className="min-w-0 flex-1 space-y-3 overflow-y-auto pb-6 xl:pr-1">
+					<div className="flex min-h-0 flex-1 flex-col gap-5 lg:flex-row">
+						<main className="min-w-0 space-y-3 pb-6 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1">
 							<WorkflowStep
 								index={1}
 								title="Product"
@@ -895,12 +918,12 @@ export default function ImgFastlanePage() {
 										auto={referenceCount === 0}
 									/>
 									<ReferenceField
-										label="Select Existing Reference — Avatar"
-										noun="avatar"
-										assets={characterAssets}
+											label="Avatar Registry — Approved Presenter"
+											noun="avatar"
+											assets={avatarRegistryAssets}
 										value={characterAssetId}
 										onChange={setCharacterAssetId}
-										emptyHint="No avatars yet — open the Avatar Registry to add one"
+											emptyHint="No approved Avatar Registry presenter assets"
 										requiredMissing={characterMissing}
 										onApprove={handleApproveAsset}
 										approvingId={approveTarget?.asset_id ?? null}
@@ -1207,8 +1230,8 @@ export default function ImgFastlanePage() {
 							</WorkflowStep>
 						</main>
 
-						<aside className="w-full xl:w-80 xl:flex-none">
-							<div className="xl:sticky xl:top-4">
+						<aside className="w-full lg:w-80 lg:flex-none">
+							<div className="lg:sticky lg:top-4">
 								<OperatorCockpit
 									laneLabel="IMG Fastlane · Composite Frames"
 									status={{
@@ -1339,12 +1362,12 @@ export default function ImgFastlanePage() {
 								    a dead/misleading field. Style stays optional and is simply not
 								    surfaced until a real style library exists. */}
 								<ReferenceField
-									label="Select Existing Reference — Avatar"
+									label="Avatar Registry — Approved Presenter"
 									noun="avatar"
-									assets={characterAssets}
+									assets={avatarRegistryAssets}
 									value={characterAssetId}
 									onChange={setCharacterAssetId}
-									emptyHint="No avatars yet — open the Avatar Registry to add one"
+									emptyHint="No approved Avatar Registry presenter assets"
 									requiredMissing={characterMissing}
 									onApprove={handleApproveAsset}
 									approvingId={approveTarget?.asset_id ?? null}
