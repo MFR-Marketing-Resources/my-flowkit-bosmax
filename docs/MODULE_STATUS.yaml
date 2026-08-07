@@ -29,6 +29,13 @@ domains:
       - agent/api/flow.py
       - agent/services/product_lock_builder.py
       - agent/services/product_visual_grounding_resolver.py
+      # BOSMAX universal product-truth lock — immutable canonical product
+      # identity/geometry/label/scale authority shared by IMG and Poster lanes.
+      - agent/models/product_truth_lock.py
+      - agent/services/product_truth_lock_service.py
+      - agent/api/product_truth.py
+      - tests/unit/test_product_truth_lock_service.py
+      - tests/api/test_product_truth_lock_flow_gate.py
       - dashboard/src/pages/ImgFastlanePage.tsx
       - dashboard/src/pages/imgCockpitLogic.ts
       - dashboard/src/pages/imgCockpitLogic.test.ts

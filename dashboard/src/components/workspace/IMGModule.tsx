@@ -311,6 +311,7 @@ export default function IMGModule({
 				styleAsset: styleAsset,
 			},
 			product_id: workspacePackage?.product_id ?? selectedProduct?.id,
+			visual_lane_id: "IMG_WORKSPACE",
 			prompt_package_snapshot_id: workspacePackage?.prompt_package_snapshot_id,
 			workspace_execution_package_id:
 				workspacePackage?.workspace_execution_package_id,

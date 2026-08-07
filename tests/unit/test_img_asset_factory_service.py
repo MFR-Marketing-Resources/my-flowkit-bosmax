@@ -90,11 +90,61 @@ def test_save_from_generated_artifact_image(tmp_path, monkeypatch):
         assert rec.source_type == "GENERATED_IMAGE"
         assert rec.semantic_role == "PRODUCT_REFERENCE"
         assert rec.generation_recipe_id == "PRODUCT_ONLY_HERO"
-        assert rec.product_truth_status == "PRESERVED"
+        assert rec.product_truth_status == "NON_DETERMINISTIC_REFERENCE_CONDITIONED"
         # A freshly-saved asset is PENDING_REVIEW, never silently APPROVED.
         assert rec.review_status == "PENDING_REVIEW"
         assert "I2V" in rec.allowed_modes
         assert "F2V" not in rec.allowed_modes  # PRODUCT_ONLY_HERO is not an F2V frame
+
+    _run_db(scenario)
+
+
+def test_product_reference_output_cannot_be_client_approved(tmp_path, monkeypatch):
+    monkeypatch.setattr(creative_asset_service, "CREATIVE_ASSET_UPLOAD_DIR", tmp_path)
+
+    async def scenario():
+        with pytest.raises(ValueError, match="PRODUCT_TRUTH_EXACT_COMPOSITE_REQUIRED_FOR_APPROVAL"):
+            await save_img_output_to_library(
+                SaveImgOutputRequest(
+                    lane_id="PRODUCT_ONLY_HERO",
+                    display_name="Client claims exact",
+                    image_base64="aGVsbG8=",
+                    product_id="prod-1",
+                    review_status="APPROVED",
+                    identity_lock_status="PASS",
+                    scale_truth_status="PASS",
+                    claim_safety_status="PASS",
+                )
+            )
+
+    _run_db(scenario)
+
+
+def test_verified_exact_lineage_derives_product_truth_and_identity(tmp_path, monkeypatch):
+    monkeypatch.setattr(creative_asset_service, "CREATIVE_ASSET_UPLOAD_DIR", tmp_path)
+    monkeypatch.setattr(
+        "agent.services.img_asset_factory_service._is_verified_exact_product_artifact",
+        lambda *args, **kwargs: _async_true(),
+    )
+
+    async def scenario():
+        rec = await save_img_output_to_library(
+            SaveImgOutputRequest(
+                lane_id="PRODUCT_ONLY_HERO",
+                display_name="Verified exact",
+                image_base64="aGVsbG8=",
+                product_id="prod-1",
+                review_status="APPROVED",
+                claim_safety_status="PASS",
+            )
+        )
+        assert rec.product_truth_status == "PRODUCT_TRUTH_PRESERVED_EXACT_COMPOSITE"
+        assert rec.identity_lock_status == "PASS"
+        assert rec.scale_truth_status == "PASS"
+        assert rec.review_status == "APPROVED"
+
+    async def _async_true():
+        return True
 
     _run_db(scenario)
 

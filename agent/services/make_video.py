@@ -708,7 +708,9 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             path.write_bytes(data)
             job.update(status="DONE", stage="done", media_id=mid, local_path=str(path),
                        size_mb=round(len(data) / 1024 / 1024, 2), artifact="image", url=url)
-            _stamp_credit(job, CREDIT_MAY_HAVE_SPENT)
+            # The direct image API does not consume Google Flow video credits.
+            # Keep the explicit IMG verdict separate from the paid video lane.
+            _stamp_credit(job, CREDIT_NOT_SPENT)
             await _record_artifacts(job, mode, [{
                 "media_id": mid, "local_path": str(path),
                 "size_mb": job["size_mb"]}])

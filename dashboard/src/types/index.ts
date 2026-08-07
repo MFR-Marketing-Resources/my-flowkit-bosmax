@@ -340,6 +340,8 @@ export interface WorkspaceExecutePayload {
 		styleAsset?: UploadedAsset | null;
 	};
 	product_id?: string | null;
+	/** Server-side IMG strategy context; product bytes remain resolver-owned. */
+	visual_lane_id?: string | null;
 	prompt_package_snapshot_id?: string | null;
 	workspace_execution_package_id?: string | null;
 	prompt_fingerprint?: string | null;

@@ -95,6 +95,9 @@ def test_fastlane_generate_and_approval_guards_remain_honest():
     assert "setShowGenConfirm(true)" in page
     assert "handleConfirmedGenerate" in page
     assert "Confirm &amp; Generate" in page
+    assert "img-fastlane-credit-confirm-checkbox" in page
+    assert "disabled={!imgGenConfirmed}" in page
+    assert "Saya faham tindakan ini menghantar satu kerja IMG" in page
     assert "startImgGeneration" in page
     assert "generationBlocked" in page
     assert "approvalBlocked" in page

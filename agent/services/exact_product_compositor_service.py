@@ -19,6 +19,7 @@ from PIL import Image, ImageChops, ImageFilter, ImageStat
 
 from agent.config import BASE_DIR, OUTPUT_DIR
 from agent.services.product_lock_builder import resolve_schema_entry
+from agent.services import product_truth_lock_service as truth_lock_service
 
 # Lane-aware product occupancy (% of canvas). Deterministic — never model-chosen.
 LANE_SAFE_REGIONS: dict[str, dict[str, float]] = {
@@ -31,11 +32,8 @@ LANE_SAFE_REGIONS: dict[str, dict[str, float]] = {
 SAFE_REGION_FILL = 0.72
 
 SCENE_ONLY_PROMPT_LINES = (
-    "EXACT_PRODUCT_COMPOSITE_REQUIRED: Generate a clean scene-only plate.",
-    "Do not render, redraw, invent, type, stylize, or include any product, bottle, packaging, label, cap, logo, or brand mark.",
-    "Reserve a clear empty product-safe region in the lower-middle / center for later deterministic product insertion.",
-    "Provide a realistic surface or contact-shadow receiver under the empty product region.",
-    "No duplicate products. No floating bottles. No marketing typography overlay.",
+    "SCENE-ONLY PLATE. Do not generate, render, redraw, imitate, restyle, type, or include the product, packaging, bottle, label, logo, brand mark, or replacement object. The verified product will be inserted later by a deterministic compositor. Reserve the declared placement bounding box as a clear unobstructed region, provide a physically plausible contact surface and compatible scene lighting, and do not place foreground objects, hands, text, shadows, reflections, or props across that region.",
+    "EXACT_PRODUCT_COMPOSITE_REQUIRED: the final product bytes come only from the approved Product Truth Lock.",
 )
 
 SCENE_ONLY_NEGATIVE = (
@@ -73,13 +71,28 @@ def durable_canonical_source_path(schema_key: str) -> Path:
 
 
 def exact_product_policy(product: dict[str, Any]) -> dict[str, Any] | None:
-    """Return canonical_product_photo dict when exact composite is required."""
+    """Return the exact lane policy, never a synthetic canonical asset.
+
+    Schema flags remain a strategy hint for legacy fixed-hero products.  New
+    callers may set the server-derived ``_exact_product_required`` marker for a
+    product-only/poster lane.  Neither path makes the schema photo authoritative;
+    the persisted ProductTruthLock is checked by ``validate_canonical_or_raise``.
+    """
     entry = resolve_schema_entry(product)
     flags = (entry or {}).get("on_the_fly_flags") or {}
     photo = (entry or {}).get("canonical_product_photo") or {}
-    if not flags.get("exact_product_composite_required") or not photo:
+    required = bool(
+        flags.get("exact_product_composite_required")
+        or product.get("_exact_product_required") is True
+    )
+    if not required:
         return None
-    return photo
+    # A schema flag without a canonical photo is not enough to replace the
+    # standard reference-conditioned prompt.  Exact lanes set the explicit
+    # server marker and then fail closed on the missing ProductTruthLock.
+    if not photo and product.get("_exact_product_required") is not True:
+        return None
+    return photo or {"exact_product_composite_required": True}
 
 
 def requires_exact_composite(product: dict[str, Any] | None) -> bool:
@@ -109,7 +122,7 @@ def augment_prompt_scene_only(prompt: str) -> str:
     ]
     cleaned = "\n".join(lines).strip()
     block = "\n".join(SCENE_ONLY_PROMPT_LINES)
-    if "EXACT_PRODUCT_COMPOSITE_REQUIRED" in cleaned:
+    if "SCENE-ONLY PLATE." in cleaned and "deterministic compositor" in cleaned:
         return cleaned
     return f"{cleaned}\n\n{block}".strip()
 
@@ -136,66 +149,55 @@ def resolve_canonical_source(photo: dict[str, Any], *, schema_key: str = "") -> 
 
 
 def ensure_durable_canonical_copy(product: dict[str, Any]) -> dict[str, Any]:
-    """Copy verified physical source into BASE_DIR/data/exact-product/..."""
-    entry = resolve_schema_entry(product)
-    photo = exact_product_policy(product)
-    if not photo:
-        raise ExactProductCompositeError(
-            "EXACT_POLICY_NOT_REQUIRED",
-            "Product is not under exact-product composite policy.",
-            status_code=400,
-        )
-    key = _schema_key(entry)
-    expected = str(photo["sha256"])
-    source = resolve_canonical_source(photo, schema_key=key)
-    dest_dir = durable_canonical_dir(key)
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = durable_canonical_source_path(key)
-    if not dest.exists() or _sha(dest) != expected:
-        shutil.copy2(source, dest)
-    if _sha(dest) != expected:
-        raise ExactProductCompositeError(
-            "CANONICAL_PRODUCT_SOURCE_INVALID",
-            "Durable canonical copy failed hash verification.",
-            status_code=422,
-        )
-    meta = {
-        "schema_key": key,
-        "source_sha256": expected,
-        "durable_path": str(dest),
-        "dimensions": str(photo.get("dimensions") or ""),
+    """Return verified server-owned files; never generate or approve a cutout."""
+    meta = validate_canonical_or_raise(product)
+    return {
+        **meta,
+        "durable_path": meta["source_path"],
+        "cutout_path": meta["cutout_path"],
         "product_uuid": str(product.get("id") or product.get("product_id") or ""),
     }
-    (dest_dir / "provenance.json").write_text(
-        json.dumps(meta, indent=2), encoding="utf-8"
-    )
-    return meta
 
 
 def validate_canonical_or_raise(product: dict[str, Any]) -> dict[str, Any]:
-    """Pre-credit fail-closed gate."""
+    """Pre-credit fail-closed gate backed by the persisted truth contract."""
     photo = exact_product_policy(product)
     if not photo:
         raise ExactProductCompositeError(
             "EXACT_POLICY_NOT_REQUIRED",
             status_code=400,
         )
-    entry = resolve_schema_entry(product)
-    key = _schema_key(entry)
-    path = resolve_canonical_source(photo, schema_key=key)
-    digest = _sha(path)
-    expected = str(photo["sha256"])
-    if digest != expected:
+    product_id = str(product.get("id") or product.get("product_id") or "")
+    if not product_id:
         raise ExactProductCompositeError(
-            "CANONICAL_PRODUCT_SOURCE_INVALID",
-            f"Hash mismatch for {path}",
+            "PRODUCT_TRUTH_LOCK_REQUIRED",
+            "Exact output requires a canonical product id bound to an approved truth lock.",
             status_code=422,
         )
+    try:
+        resolved = truth_lock_service.resolve_approved_product_truth_lock(product_id)
+    except truth_lock_service.ProductTruthLockError as exc:
+        raise ExactProductCompositeError(exc.code, exc.message, status_code=exc.status_code) from exc
+    entry = resolve_schema_entry(product)
+    key = _schema_key(entry)
     return {
+        "product_id": product_id,
         "schema_key": key,
-        "source_path": str(path),
-        "source_sha256": digest,
-        "dimensions": str(photo.get("dimensions") or ""),
+        "source_path": resolved.canonical_source_path,
+        "source_sha256": resolved.canonical_sha256,
+        "dimensions": f"{resolved.source_width}x{resolved.source_height}",
+        "canonical_media_id": resolved.canonical_media_id,
+        "cutout_path": resolved.canonical_cutout_path,
+        "cutout_media_id": resolved.canonical_cutout_media_id,
+        "cutout_sha256": resolved.canonical_cutout_sha256,
+        "alpha_mask_sha256": resolved.alpha_mask_sha256,
+        "allowed_bbox": resolved.allowed_bbox,
+        "anchor_point": resolved.anchor_point,
+        "min_scale": resolved.min_scale,
+        "max_scale": resolved.max_scale,
+        "allowed_rotation": resolved.allowed_rotation,
+        "allowed_perspective": resolved.allowed_perspective,
+        "product_truth_lock_schema_version": resolved.schema_version,
         "exact_product_composite_required": True,
         "scene_only_required": True,
         "send_product_reference_to_flow": False,
@@ -1368,43 +1370,65 @@ def prepare_layer(
     *,
     fill: float = SAFE_REGION_FILL,
 ) -> dict[str, Any]:
-    photo = exact_product_policy(product)
-    if not photo:
+    if not exact_product_policy(product):
         return {}
-    entry = resolve_schema_entry(product)
-    key = _schema_key(entry)
-    source = resolve_canonical_source(photo, schema_key=key)
-    expected = str(photo["sha256"])
-    if _sha(source) != expected:
-        raise ExactProductCompositeError("CANONICAL_PRODUCT_SOURCE_INVALID")
-
-    cutout_dir = BASE_DIR / "data" / "exact-product-cutouts"
-    cutout_dir.mkdir(parents=True, exist_ok=True)
-    # Also mirror under OUTPUT_DIR for compositor path compatibility.
-    out_cutout_dir = OUTPUT_DIR / "exact-product-cutouts"
-    out_cutout_dir.mkdir(parents=True, exist_ok=True)
-    # v2: cream-safe protect + hole-only fill (no label median mosaic)
-    cutout = cutout_dir / f"{expected}_cutout_v13.png"
-    if not cutout.exists():
-        image = _build_canonical_cutout(source)
-        image.save(cutout)
-    mirror = out_cutout_dir / cutout.name
-    if not mirror.exists() or _sha(mirror) != _sha(cutout):
-        shutil.copy2(cutout, mirror)
-
+    validation = validate_canonical_or_raise(product)
+    cutout = Path(validation["cutout_path"])
     cw, ch = int(canvas["w"]), int(canvas["h"])
-    max_w = int(cw * float(safe_region["w"]) / 100)
-    max_h = int(ch * float(safe_region["h"]) / 100)
-    im = Image.open(cutout)
-    scale = min(max_w / im.width, max_h / im.height) * float(fill)
-    w, h = max(1, round(im.width * scale)), max(1, round(im.height * scale))
-    x = round(cw * float(safe_region["x"]) / 100 + (max_w - w) / 2)
-    y = round(ch * float(safe_region["y"]) / 100 + (max_h - h) / 2)
+    if cw <= 0 or ch <= 0:
+        raise ExactProductCompositeError("PRODUCT_TRUTH_PLACEMENT_INVALID", status_code=422)
+
+    # Placement is the intersection of the lane's reserved region and the
+    # persisted product contract.  The model never chooses or enlarges it.
+    lane = {
+        "x": float(safe_region["x"]) / 100.0,
+        "y": float(safe_region["y"]) / 100.0,
+        "w": float(safe_region["w"]) / 100.0,
+        "h": float(safe_region["h"]) / 100.0,
+    }
+    allowed = validation["allowed_bbox"]
+    x0 = max(lane["x"], float(allowed["x"]))
+    y0 = max(lane["y"], float(allowed["y"]))
+    x1 = min(lane["x"] + lane["w"], float(allowed["x"]) + float(allowed["w"]))
+    y1 = min(lane["y"] + lane["h"], float(allowed["y"]) + float(allowed["h"]))
+    if x1 <= x0 or y1 <= y0:
+        raise ExactProductCompositeError(
+            "PRODUCT_TRUTH_PLACEMENT_INVALID",
+            "Lane placement region does not intersect the persisted allowed bbox.",
+            status_code=422,
+        )
+    max_w = max(1, round(cw * (x1 - x0)))
+    max_h = max(1, round(ch * (y1 - y0)))
+    with Image.open(cutout) as cutout_image:
+        iw, ih = cutout_image.size
+    desired_scale = min(max_w / iw, max_h / ih) * max(0.01, min(float(fill), 1.0))
+    scale = max(float(validation["min_scale"]), min(desired_scale, float(validation["max_scale"])))
+    w, h = max(1, round(iw * scale)), max(1, round(ih * scale))
+    if w > max_w or h > max_h:
+        raise ExactProductCompositeError(
+            "PRODUCT_TRUTH_SCALE_INVALID",
+            "Approved minimum scale cannot fit inside the allowed product bbox.",
+            status_code=422,
+        )
+    anchor = validation["anchor_point"]
+    anchor_x = float(anchor["x"])
+    anchor_y = float(anchor["y"])
+    x_min, y_min = round(cw * x0), round(ch * y0)
+    x_max, y_max = round(cw * x1) - w, round(ch * y1) - h
+    x = round(cw * (x0 + (x1 - x0) / 2.0) - w * anchor_x)
+    y = round(ch * (y0 + (y1 - y0) / 2.0) - h * anchor_y)
+    x = max(x_min, min(x, x_max))
+    y = max(y_min, min(y, y_max))
     return {
         "asset_ref": str(cutout),
-        "source_sha256": expected,
-        "cutout_sha256": _sha(cutout),
-        "schema_key": key,
+        "product_id": validation.get("product_id") or str(product.get("id") or product.get("product_id") or ""),
+        "source_sha256": validation["source_sha256"],
+        "cutout_sha256": validation["cutout_sha256"],
+        "canonical_media_id": validation["canonical_media_id"],
+        "canonical_cutout_media_id": validation["cutout_media_id"],
+        "alpha_mask_sha256": validation["alpha_mask_sha256"],
+        "truth_lock_schema_version": validation.get("product_truth_lock_schema_version") or "",
+        "schema_key": validation.get("schema_key") or "PRODUCT_TRUTH_LOCK",
         "transform": {
             "x": x,
             "y": y,
@@ -1414,6 +1438,7 @@ def prepare_layer(
             "perspective_skew_x": 0.0,
             "shadow_opacity": 0.24,
             "shadow_blur_px": 18.0,
+            "scale": scale,
         },
     }
 
@@ -1551,6 +1576,11 @@ def compose_final_from_plate(
         "output_sha256": final_sha,
         "raw_plate_path": str(plate_path),
         "raw_plate_sha256": plate_sha,
+        "product_id": layer["product_id"],
+        "canonical_media_id": layer["canonical_media_id"],
+        "canonical_cutout_media_id": layer["canonical_cutout_media_id"],
+        "alpha_mask_sha256": layer["alpha_mask_sha256"],
+        "truth_lock_schema_version": layer.get("truth_lock_schema_version") or "",
         "canonical_source_sha256": layer["source_sha256"],
         "cutout_sha256": layer["cutout_sha256"],
         "cutout_path": layer["asset_ref"],

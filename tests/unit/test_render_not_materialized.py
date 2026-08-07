@@ -175,6 +175,16 @@ def test_a_delivered_video_is_never_reported_as_free():
     assert "_stamp_credit(job, CREDIT_MAY_HAVE_SPENT)" in window
 
 
+def test_img_success_is_explicitly_not_video_credit_spent():
+    """Direct image API success must not inherit the paid-video verdict."""
+    import inspect
+
+    src = inspect.getsource(mv)
+    img_success = src.index('artifact="image"')
+    window = src[img_success:img_success + 360]
+    assert "_stamp_credit(job, CREDIT_NOT_SPENT)" in window
+
+
 def test_production_queue_persists_the_structured_state_not_just_the_bool():
     src = inspect.getsource(pq)
     assert '"credit_state": job.get("credit_state")' in src

@@ -190,3 +190,60 @@ def test_product_subject_local_file_uploads_into_image_media_ids(monkeypatch):
     assert result["status"] == "SUBMITTED"
     assert calls["uploaded"], "the local product file must be uploaded before generation"
     assert "fresh-local-1" in calls["start_generate"]["image_media_ids"]
+
+
+def test_img_generation_orders_product_reference_before_explicit_refs(monkeypatch):
+    """IMG must put the product slot first in the provider reference list.
+
+    The dashboard sends product truth in ``refs.productAsset`` while older
+    callers still populate ``image_media_ids`` with avatar/scene references.
+    Those two sources must be merged in canonical slot order so the product is
+    not silently demoted to the final, unlabeled provider input.
+    """
+    calls = {"start_generate": None}
+    product = "11111111-1111-1111-1111-111111111111"
+    subject = "22222222-2222-2222-2222-222222222222"
+    scene = "33333333-3333-3333-3333-333333333333"
+    avatar = "44444444-4444-4444-4444-444444444444"
+
+    class _C:
+        connected = True
+
+        async def get_media(self, media_id):
+            return {"status": 200, "data": {"name": media_id}}
+
+    async def fake_start_generate(mode, prompt, project_id=None, image_media_ids=None, **kw):
+        calls["start_generate"] = {
+            "mode": mode,
+            "image_media_ids": image_media_ids,
+        }
+        return {"job_id": "g_order", "status": "SUBMITTED", "mode": mode}
+
+    monkeypatch.setattr(flow, "get_flow_client", lambda: _C())
+    from agent.services import make_video as mv
+
+    monkeypatch.setattr(mv, "start_generate", fake_start_generate)
+
+    body = flow.GenerateRequest(
+        mode="IMG",
+        prompt="Product hero prompt",
+        # These are legacy/explicit non-product references. ``scene`` is also
+        # present in refs to prove duplicate suppression during the merge.
+        image_media_ids=[avatar, scene],
+        refs={
+            "productAsset": {"mediaId": product},
+            "subjectAsset": {"mediaId": subject},
+            "sceneAsset": {"mediaId": scene},
+        },
+    )
+
+    result = _run(flow.generate(body))
+
+    assert result["status"] == "SUBMITTED"
+    assert calls["start_generate"] is not None
+    assert calls["start_generate"]["image_media_ids"] == [
+        product,
+        subject,
+        scene,
+        avatar,
+    ]

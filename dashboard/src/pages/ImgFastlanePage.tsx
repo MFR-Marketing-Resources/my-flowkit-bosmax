@@ -252,6 +252,7 @@ export default function ImgFastlanePage() {
 
 	// Gated live generation.
 	const [showGenConfirm, setShowGenConfirm] = useState(false);
+	const [imgGenConfirmed, setImgGenConfirmed] = useState(false);
 	const [generating, setGenerating] = useState(false);
 	const [genJob, setGenJob] = useState<ImgGenerationJob | null>(null);
 
@@ -621,18 +622,22 @@ export default function ImgFastlanePage() {
 	};
 
 	const handleConfirmedGenerate = async () => {
+		if (!imgGenConfirmed) return;
 		setShowGenConfirm(false);
 		setGenerating(true);
 		setError(null);
 		try {
 			const productId = selectedProduct?.id ?? "";
-			const gate = await resolveExactGenerationGate(productId);
+			const hasAvatar = Boolean(characterAssetId);
+			const isProductOnly = !hasAvatar && Boolean(framePresetId?.includes("PRODUCT_ONLY") || framePresetId?.includes("HERO"));
+			const gate = await resolveExactGenerationGate(productId, undefined, {
+				laneId: framePresetId || undefined,
+				hasAvatar,
+				isProductOnly,
+			});
 			if (gate.mode === "blocked") {
 				throw new Error(gate.message);
 			}
-
-			const hasAvatar = Boolean(characterAssetId || sceneAssetId);
-			const isProductOnly = !hasAvatar && Boolean(framePresetId?.includes("PRODUCT_ONLY") || framePresetId?.includes("HERO"));
 
 			let scenePrompt = prompt;
 			let groundedProdAsset: ReturnType<typeof buildProviderProductReferenceAsset> = null;
@@ -663,6 +668,8 @@ export default function ImgFastlanePage() {
 				aspect,
 				quantity,
 				imageModel,
+				productId: productId || undefined,
+				visualLaneId: framePresetId || undefined,
 			});
 
 			const { job_id } = await startImgGeneration(genInput);
@@ -708,6 +715,11 @@ export default function ImgFastlanePage() {
 		} finally {
 			setGenerating(false);
 		}
+	};
+
+	const openGenConfirm = () => {
+		setImgGenConfirmed(false);
+		setShowGenConfirm(true);
 	};
 
 	const resetOutputForm = () => {
@@ -1089,7 +1101,7 @@ export default function ImgFastlanePage() {
 								title="Generate image"
 								status={generateStatus}
 								summary={genJob?.status ?? "Manual confirmation required"}
-								helper="This is the credit-bearing external action; it never fires without explicit confirmation."
+								helper="This is the external IMG action; it never fires without explicit confirmation. IMG does not use Google Flow video credits."
 							>
 								<div className="space-y-3">
 									<div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
@@ -1098,7 +1110,7 @@ export default function ImgFastlanePage() {
 									</div>
 									<button
 										type="button"
-										onClick={() => setShowGenConfirm(true)}
+										onClick={openGenConfirm}
 										disabled={!prompt.trim() || generating || generationBlocked}
 										className="w-full rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-[12px] font-bold text-rose-100 disabled:opacity-40"
 									>
@@ -1228,7 +1240,7 @@ export default function ImgFastlanePage() {
 										label: "Generate image · gated",
 										disabled: !prompt.trim() || generating || generationBlocked,
 										loading: generating,
-										onClick: () => setShowGenConfirm(true),
+										onClick: openGenConfirm,
 										note: "manual confirmation required · no auto-fire",
 									}}
 									debugLabel="IMG Fastlane diagnostics"
@@ -1255,9 +1267,10 @@ export default function ImgFastlanePage() {
 				{showGenConfirm ? (
 					<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-[2px]">
 						<div className="max-w-md w-full rounded-2xl border border-rose-500/40 bg-slate-950 p-6 space-y-4 shadow-2xl">
-							<div className="text-sm font-bold text-rose-100 uppercase tracking-wider">Confirm Image Generation</div>
-							<div className="text-xs text-slate-300 space-y-2"><p>This fires the real image generation lane. It stays behind this explicit confirmation and is not auto-fired.</p><p>Build status: <strong>{GEN_NOT_FIRED}</strong> · <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.</p></div>
-							<div className="flex justify-end gap-3 pt-2"><button type="button" onClick={() => setShowGenConfirm(false)} className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-xs font-semibold text-slate-300">Cancel</button><button type="button" onClick={() => void handleConfirmedGenerate()} className="rounded-xl border border-rose-500/40 bg-rose-500/20 px-4 py-2 text-xs font-bold text-rose-100">Confirm &amp; Generate</button></div>
+							<div className="text-sm font-bold text-rose-100 uppercase tracking-wider">Sahkan penghantaran kerja IMG</div>
+							<div className="text-xs text-slate-300 space-y-2"><p>Sahkan sekali lagi untuk menghantar satu kerja IMG. Penjanaan imej tidak menggunakan kredit video Google Flow; hanya kerja video menggunakan kredit. Tiada kerja akan dihantar sebelum pengesahan ini.</p><p>Build status: <strong>{GEN_NOT_FIRED}</strong> · <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.</p></div>
+							<label className="flex items-start gap-2 text-xs text-slate-200"><input type="checkbox" data-testid="img-fastlane-credit-confirm-checkbox" checked={imgGenConfirmed} onChange={(event) => setImgGenConfirmed(event.target.checked)} className="mt-0.5" /><span>Saya faham tindakan ini menghantar satu kerja IMG dan tidak menggunakan kredit video Google Flow.</span></label>
+							<div className="flex justify-end gap-3 pt-2"><button type="button" onClick={() => setShowGenConfirm(false)} className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-xs font-semibold text-slate-300">Cancel</button><button type="button" disabled={!imgGenConfirmed} onClick={() => void handleConfirmedGenerate()} className="rounded-xl border border-rose-500/40 bg-rose-500/20 px-4 py-2 text-xs font-bold text-rose-100 disabled:opacity-40">Confirm &amp; Generate</button></div>
 						</div>
 					</div>
 				) : null}
@@ -1629,7 +1642,7 @@ export default function ImgFastlanePage() {
 
 						<button
 							type="button"
-							onClick={() => setShowGenConfirm(true)}
+							onClick={openGenConfirm}
 							disabled={!prompt.trim() || generating || generationBlocked}
 							className="rounded-xl border border-blue-500/40 bg-blue-500/10 px-5 py-2.5 text-xs font-bold text-blue-200 hover:bg-blue-500/20 disabled:opacity-40 transition-all w-full cursor-pointer"
 						>
@@ -1891,18 +1904,20 @@ export default function ImgFastlanePage() {
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-[2px]">
 					<div className="max-w-md w-full rounded-2xl border border-blue-500/40 bg-slate-950 p-6 space-y-4 shadow-2xl">
 						<div className="text-sm font-bold text-blue-200 uppercase tracking-wider">
-							Confirm Image Generation
+							Sahkan penghantaran kerja IMG
 						</div>
 						<div className="text-xs text-slate-300 space-y-2">
 							<p>
-								This fires a real avatar + product image generation on Google Flow.{" "}
-								<strong>Image generation is credit-free</strong> — only video
-								generations consume credits.
+								Sahkan sekali lagi untuk menghantar satu kerja IMG avatar + produk.
+								<strong> Penjanaan imej tidak menggunakan kredit video Google Flow</strong> —
+								hanya kerja video menggunakan kredit. Tiada kerja akan dihantar sebelum
+								pengesahan ini.
 							</p>
 							<p>
 								Build status: <strong>{GEN_NOT_FIRED}</strong> | <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.
 							</p>
 						</div>
+						<label className="flex items-start gap-2 text-xs text-slate-200"><input type="checkbox" data-testid="img-fastlane-credit-confirm-checkbox" checked={imgGenConfirmed} onChange={(event) => setImgGenConfirmed(event.target.checked)} className="mt-0.5" /><span>Saya faham tindakan ini menghantar satu kerja IMG dan tidak menggunakan kredit video Google Flow.</span></label>
 						<div className="flex justify-end gap-3 pt-2">
 							<button
 								type="button"
@@ -1913,6 +1928,7 @@ export default function ImgFastlanePage() {
 							</button>
 							<button
 								type="button"
+								disabled={!imgGenConfirmed}
 								onClick={() => void handleConfirmedGenerate()}
 								className="rounded-xl border border-blue-500/40 bg-blue-500/20 px-4 py-2 text-xs font-bold text-blue-100 hover:bg-blue-500/30 cursor-pointer"
 							>

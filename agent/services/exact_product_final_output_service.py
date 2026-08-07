@@ -29,6 +29,8 @@ from agent.services.exact_product_compositor_service import (
     scene_only_prompt_block,
     validate_canonical_or_raise,
 )
+from agent.services.product_visual_grounding_resolver import resolve_generation_strategy
+from agent.services import product_truth_lock_service as truth_lock_service
 
 logger = logging.getLogger(__name__)
 
@@ -78,9 +80,38 @@ async def resolve_product(product_id: str) -> dict[str, Any]:
     return dict(product)
 
 
-async def get_policy_for_product(product_id: str) -> dict[str, Any]:
+async def get_policy_for_product(
+    product_id: str,
+    *,
+    lane_id: str | None = None,
+    has_avatar: bool = False,
+    is_product_only: bool = False,
+    is_poster: bool = False,
+) -> dict[str, Any]:
     product = await resolve_product(product_id)
-    if not requires_exact_composite(product):
+    context_supplied = any((lane_id, has_avatar, is_product_only, is_poster))
+    strategy = (
+        resolve_generation_strategy(
+            lane_id=lane_id,
+            product_id=product_id,
+            has_avatar=has_avatar,
+            is_product_only=is_product_only,
+            is_poster=is_poster,
+        )
+        if context_supplied
+        else None
+    )
+    exact_required = (
+        strategy
+        in {
+            "PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE",
+            "FIXED_HERO_POSTER",
+        }
+        if strategy is not None
+        else requires_exact_composite(product)
+    )
+    truth_status = truth_lock_service.inspect_product_truth_lock(product_id)
+    if not exact_required:
         return {
             "product_id": product_id,
             "exact_product_composite_required": False,
@@ -88,7 +119,14 @@ async def get_policy_for_product(product_id: str) -> dict[str, Any]:
             "send_product_reference_to_flow": True,
             "scene_only_prompt_block": "",
             "lanes": {},
+            "selected_strategy": strategy,
+            "product_truth": {
+                "status": "NON_DETERMINISTIC_REFERENCE_CONDITIONED",
+                "review_status": truth_status.get("review_status"),
+                "exact_allowed": False,
+            },
         }
+    product["_exact_product_required"] = True
     try:
         meta = validate_canonical_or_raise(product)
         ensure_durable_canonical_copy(product)
@@ -112,6 +150,17 @@ async def get_policy_for_product(product_id: str) -> dict[str, Any]:
         "canonical_valid": valid,
         "canonical": meta if valid else None,
         "error": error,
+        "selected_strategy": strategy,
+        "product_truth": {
+            "status": (
+                "PRODUCT_TRUTH_PRESERVED_EXACT_COMPOSITE"
+                if valid
+                else truth_status.get("product_truth_status", "PRODUCT_TRUTH_LOCK_REQUIRED")
+            ),
+            "review_status": truth_status.get("review_status"),
+            "exact_allowed": valid,
+            "failure_state": "" if valid else (error or {}).get("code", ""),
+        },
         "scene_only_prompt_block": scene_only_prompt_block(),
         "lanes": LANE_SAFE_REGIONS,
         "progress_stages": [
@@ -170,6 +219,10 @@ async def compose_final_for_product(
 ) -> dict[str, Any]:
     """Deterministic finalize: plate + canonical cutout → registered final artifact."""
     product = await resolve_product(product_id)
+    # This endpoint is the explicit deterministic final-output lane.  The lane
+    # marker selects the strategy; the persisted Product Truth Lock remains the
+    # only source allowed to provide product pixels.
+    product["_exact_product_required"] = True
     if not requires_exact_composite(product):
         raise ExactProductCompositeError(
             "EXACT_POLICY_NOT_REQUIRED",
@@ -201,6 +254,10 @@ async def compose_final_for_product(
         "schema_key": result.get("schema_key"),
         "canonical_source_sha256": result["canonical_source_sha256"],
         "cutout_sha256": result["cutout_sha256"],
+        "canonical_media_id": result.get("canonical_media_id"),
+        "canonical_cutout_media_id": result.get("canonical_cutout_media_id"),
+        "alpha_mask_sha256": result.get("alpha_mask_sha256"),
+        "truth_lock_schema_version": result.get("truth_lock_schema_version"),
         "raw_plate_media_id": plate_media_id or None,
         "raw_plate_sha256": result["raw_plate_sha256"],
         "raw_plate_path": result["raw_plate_path"],
@@ -210,7 +267,7 @@ async def compose_final_for_product(
         "final_output_path": result["output_path"],
         "qa": result["qa"],
         "truth_status": result["truth_status"],
-        "product_reference_source": "SCHEMA_CANONICAL_SOURCE" if result.get("schema_key") else "PRODUCT_DATABASE_RECORD",
+        "product_reference_source": "PRODUCT_TRUTH_LOCK",
         "product_visual_grounding_resolved": True,
         "selected_strategy": "DETERMINISTIC_EXACT_COMPOSITE",
         "raw_plate_approvable": False,

@@ -506,6 +506,41 @@ CREATE TABLE IF NOT EXISTS product (
     updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
+-- Server-owned visual identity contract.  This is intentionally separate from
+-- prompt/product metadata: exact IMG output is allowed only when these bytes,
+-- masks, bounds, and review gates validate at generation time.
+CREATE TABLE IF NOT EXISTS product_visual_truth_lock (
+    product_id              TEXT PRIMARY KEY REFERENCES product(id) ON DELETE CASCADE,
+    canonical_media_id      TEXT NOT NULL,
+    canonical_sha256        TEXT NOT NULL CHECK(length(canonical_sha256) = 64),
+    source_width            INTEGER NOT NULL CHECK(source_width > 0),
+    source_height           INTEGER NOT NULL CHECK(source_height > 0),
+    canonical_source_path   TEXT NOT NULL,
+    canonical_cutout_media_id TEXT NOT NULL,
+    canonical_cutout_sha256 TEXT NOT NULL CHECK(length(canonical_cutout_sha256) = 64),
+    canonical_cutout_path   TEXT NOT NULL,
+    alpha_mask_json         TEXT NOT NULL DEFAULT '{}',
+    anchor_point_json       TEXT NOT NULL DEFAULT '{}',
+    min_scale               REAL NOT NULL CHECK(min_scale > 0),
+    max_scale               REAL NOT NULL CHECK(max_scale > 0),
+    allowed_bbox_json       TEXT NOT NULL DEFAULT '{}',
+    allowed_rotation        REAL NOT NULL DEFAULT 0 CHECK(allowed_rotation >= 0 AND allowed_rotation <= 45),
+    allowed_perspective     REAL NOT NULL DEFAULT 0 CHECK(allowed_perspective >= 0 AND allowed_perspective <= 1),
+    identity_lock           INTEGER NOT NULL DEFAULT 0 CHECK(identity_lock IN (0,1)),
+    geometry_lock           INTEGER NOT NULL DEFAULT 0 CHECK(geometry_lock IN (0,1)),
+    label_lock              INTEGER NOT NULL DEFAULT 0 CHECK(label_lock IN (0,1)),
+    logo_lock               INTEGER NOT NULL DEFAULT 0 CHECK(logo_lock IN (0,1)),
+    colour_lock             INTEGER NOT NULL DEFAULT 0 CHECK(colour_lock IN (0,1)),
+    scale_lock              INTEGER NOT NULL DEFAULT 0 CHECK(scale_lock IN (0,1)),
+    review_status           TEXT NOT NULL DEFAULT 'DRAFT' CHECK(review_status IN ('DRAFT','PENDING_REVIEW','APPROVED','REJECTED')),
+    failure_state           TEXT NOT NULL DEFAULT '',
+    provenance_json         TEXT NOT NULL DEFAULT '{}',
+    schema_version          TEXT NOT NULL DEFAULT '1.0',
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_product_truth_lock_review ON product_visual_truth_lock(review_status);
+
 CREATE TABLE IF NOT EXISTS batch (
     id                      TEXT PRIMARY KEY,
     product_id              TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
