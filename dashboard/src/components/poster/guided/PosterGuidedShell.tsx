@@ -993,14 +993,13 @@ function VisualStep({ wf, recipes }: { wf: WF; recipes: PosterRecipe[] }) {
 	);
 }
 
-// ── Scene picker (approved existing assets — no raw media IDs) ──────────────
+// ── Scene source (existing artifacts are optional; guided generation is native) ─
 function SceneStep({ wf }: { wf: WF }) {
 	const [artifacts, setArtifacts] = useState<ImageArtifact[] | null>(null);
 	const [artifactsError, setArtifactsError] = useState("");
 	const [loading, setLoading] = useState(false);
-	const imgFastlaneHref = wf.product?.id
-		? `/assets/img-fastlane?product_id=${encodeURIComponent(wf.product.id)}`
-		: "/assets/img-fastlane";
+	const [creditConfirmOpen, setCreditConfirmOpen] = useState(false);
+	const [creditConfirmed, setCreditConfirmed] = useState(false);
 
 	const load = () => {
 		setLoading(true);
@@ -1021,8 +1020,8 @@ function SceneStep({ wf }: { wf: WF }) {
 	return (
 		<div className="space-y-3">
 			<p className="text-sm text-slate-400">
-				Pilih latar daripada scene sedia ada (tanpa kredit). Jika tiada scene,
-				jana scene bersih di modul IMG dan kembali semula ke langkah ini.
+				Pilih scene sedia ada tanpa kredit, atau jana visual poster baharu terus
+				dalam aliran ini. Teks poster akan dilukis kemudian oleh compositor.
 			</p>
 			<div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
 				Identiti produk adalah reference-conditioned — pastikan label & skala
@@ -1051,16 +1050,9 @@ function SceneStep({ wf }: { wf: WF }) {
 				>
 					<p className="text-sm text-slate-400">
 						Tiada scene tersedia buat masa ini (scene lama luput selepas 48 jam).
-						Poster belum boleh dihasilkan sehingga scene bersih tersedia.
+						Anda boleh jana scene bersih baharu di sini.
 					</p>
 					<div className="flex flex-wrap justify-center gap-2">
-						<a
-							data-testid="poster-scene-open-img"
-							href={imgFastlaneHref}
-							className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-emerald-400"
-						>
-							Buka IMG untuk jana scene
-						</a>
 						<button
 							type="button"
 							data-testid="poster-scene-refresh"
@@ -1072,6 +1064,106 @@ function SceneStep({ wf }: { wf: WF }) {
 					</div>
 				</div>
 			) : null}
+
+			<div
+				className="space-y-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4"
+				data-testid="poster-scene-generation-panel"
+			>
+				<div>
+					<p className="font-semibold text-slate-100">Jana visual poster</p>
+					<p className="mt-1 text-xs text-slate-400">
+						Gunakan produk, teks disahkan dan gaya visual pilihan untuk membina
+						scene bersih. Tindakan ini menggunakan kredit penjanaan.
+					</p>
+				</div>
+				{wf.sceneGenerationLoading ? (
+					<Busy
+						label={
+							{
+								building_prompt: "Menyediakan arahan visual…",
+								validating_product: "Mengesahkan polisi produk…",
+								preparing_exact_scene: "Menyediakan scene exact-product…",
+								generating_scene: "Menjana scene melalui enjin imej…",
+								waiting_for_scene: "Menunggu scene siap…",
+							}[wf.sceneGenerationStage] || "Memproses scene…"
+						}
+					/>
+				) : null}
+				<ErrorNote
+					testid="poster-scene-generation-error"
+					text={wf.sceneGenerationError}
+				/>
+				<button
+					type="button"
+					data-testid="poster-generate-scene"
+					disabled={wf.sceneGenerationLoading}
+					onClick={() => {
+						setCreditConfirmed(false);
+						setCreditConfirmOpen(true);
+					}}
+					className="rounded-lg bg-emerald-500 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-50"
+				>
+					{wf.generatedSceneMediaId ? "Jana semula visual" : "Jana visual poster"}
+				</button>
+				{creditConfirmOpen ? (
+					<div
+						className="space-y-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3"
+						data-testid="poster-generate-scene-confirm"
+					>
+						<p className="text-xs text-amber-100">
+							Sahkan sekali lagi untuk menghantar satu kerja IMG yang menggunakan
+							kredit. Tiada kerja akan dihantar sebelum pengesahan ini.
+						</p>
+						<label className="flex items-start gap-2 text-xs text-slate-200">
+							<input
+								type="checkbox"
+								data-testid="poster-generate-scene-credit-checkbox"
+								checked={creditConfirmed}
+								onChange={(event) => setCreditConfirmed(event.target.checked)}
+								className="mt-0.5"
+							/>
+							<span>Saya faham tindakan ini menggunakan kredit penjanaan.</span>
+						</label>
+						<div className="flex gap-2">
+							<button
+								type="button"
+								data-testid="poster-generate-scene-credit-cancel"
+								onClick={() => setCreditConfirmOpen(false)}
+								className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-200"
+							>
+								Batal
+							</button>
+							<button
+								type="button"
+								data-testid="poster-generate-scene-credit-confirm"
+								disabled={!creditConfirmed || wf.sceneGenerationLoading}
+								onClick={() => {
+									setCreditConfirmOpen(false);
+									void wf.generateScene();
+								}}
+								className="rounded-lg bg-amber-400 px-3 py-1.5 text-xs font-bold text-slate-950 disabled:opacity-50"
+							>
+								Teruskan jana
+							</button>
+						</div>
+					</div>
+				) : null}
+				{wf.generatedSceneMediaId ? (
+					<div className="space-y-2" data-testid="poster-generated-scene">
+						<p className="text-xs font-semibold text-emerald-200">
+							Scene baharu tersedia dan dipilih untuk poster.
+						</p>
+						<img
+							src={
+								wf.generatedSceneUrl ||
+								`/api/flow/retrieved/${encodeURIComponent(wf.generatedSceneMediaId)}`
+							}
+							alt="Scene poster yang dijana"
+							className="max-h-72 rounded-lg border border-slate-800 object-contain"
+						/>
+					</div>
+				) : null}
+			</div>
 
 			{artifacts && artifacts.length > 0 ? (
 				<div data-testid="poster-scene-grid">

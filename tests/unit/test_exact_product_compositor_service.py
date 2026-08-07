@@ -102,6 +102,33 @@ def test_scene_only_prompt_forbids_product_and_strips_preserve(tmp_path, monkeyp
     assert "PRESERVE the real product label" not in out
 
 
+def test_scene_only_prompt_removes_marketing_copy_sections():
+    prompt = "\n".join(
+        (
+            "=== PRODUCT TRUTH LOCK ===",
+            "Sambal Nyet Berapi by Khairulaming; preserve label truth.",
+            "=== POSTER RECIPE ===",
+            "Recipe: Product Hero.",
+            "=== COPY SLOTS ===",
+            "- [HEADLINE] headline: Sambal Nyet Berapi: Pedasnya Memang Gila!",
+            "- [CTA] cta: Jom cuba sekarang!",
+            "=== TEXT OVERLAY ===",
+            "Language: ms. Text density: medium.",
+            "=== OPERATOR NOTES ===",
+            "Guided Poster Builder",
+        )
+    )
+
+    out = augment_prompt_scene_only(prompt)
+
+    assert "=== PRODUCT TRUTH LOCK ===" not in out
+    assert "=== COPY SLOTS ===" not in out
+    assert "=== TEXT OVERLAY ===" not in out
+    assert "Sambal Nyet Berapi: Pedasnya Memang Gila!" not in out
+    assert "Jom cuba sekarang!" not in out
+    assert "EXACT_PRODUCT_COMPOSITE_REQUIRED" in out
+
+
 def test_compose_final_from_plate_lineage(tmp_path, monkeypatch):
     source, digest = _make_source(tmp_path)
     entry = _entry(source, digest)
