@@ -1,5 +1,5 @@
 import type { CreativeAsset } from "../types";
-import { fetchAPI, getAPI, postAPI } from "./client";
+import { deleteAPI, fetchAPI, getAPI, postAPI } from "./client";
 
 export interface ImgAssetLane {
 	lane_id: string;
@@ -242,6 +242,11 @@ export async function fetchImageArtifacts(limit = 50): Promise<ImageArtifact[]> 
 		`/api/flow/artifacts?kind=image&limit=${limit}`,
 	);
 	return response.artifacts ?? [];
+}
+
+/** Explicitly delete one transient image artifact; durable Creative Assets are untouched. */
+export async function deleteImageArtifact(mediaId: string): Promise<void> {
+	await deleteAPI(`/api/flow/artifacts/${encodeURIComponent(mediaId)}`);
 }
 
 // ── F2V composite-frame resolver (safe validation gate) ───────────────────────

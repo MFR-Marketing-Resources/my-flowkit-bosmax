@@ -3697,16 +3697,20 @@ async def list_generated_artifacts(limit: int = 50, mode: str = None,
 
 
 async def purge_expired_artifacts(retention_hours: int = 48) -> dict:
-    """Retention law: finished artifacts live 48 hours, then the FILE and the
-    library row are deleted. Runs lazily on every library listing (no scheduler
-    needed) and is safe to call repeatedly."""
+    """Purge expired video artifacts; image artifacts require manual deletion.
+
+    Runs lazily on every library listing (no scheduler needed) and is safe to
+    call repeatedly. Images are intentionally excluded so a library refresh
+    cannot destroy reusable visual outputs.
+    """
     import os
     from datetime import datetime, timedelta, timezone
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=retention_hours)).strftime(
         "%Y-%m-%dT%H:%M:%SZ")
     db = await get_db()
     cursor = await db.execute(
-        "SELECT media_id, local_path FROM generated_artifact WHERE created_at < ?",
+        """SELECT media_id, local_path FROM generated_artifact
+           WHERE artifact_kind='video' AND created_at < ?""",
         (cutoff,),
     )
     rows = await cursor.fetchall()
@@ -3721,7 +3725,10 @@ async def purge_expired_artifacts(retention_hours: int = 48) -> dict:
     if rows:
         async with _db_lock:
             await db.execute(
-                "DELETE FROM generated_artifact WHERE created_at < ?", (cutoff,))
+                """DELETE FROM generated_artifact
+                   WHERE artifact_kind='video' AND created_at < ?""",
+                (cutoff,),
+            )
             await db.commit()
     return {"purged_rows": len(rows), "purged_files": removed_files,
             "retention_hours": retention_hours, "cutoff": cutoff}

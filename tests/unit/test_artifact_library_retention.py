@@ -1,8 +1,8 @@
-"""Library retention law (48h) + kind filtering.
+"""Kind-aware library retention (video 48h, image manual delete) + filtering.
 
-Results collect in the LIBRARY pages, retained 48 hours, then the FILE and the
-DB record are auto-deleted (lazily, on every listing). Workspace pages stay
-workplaces.
+Video results collect in the LIBRARY pages, retained 48 hours, then the FILE and
+DB record are auto-deleted (lazily, on every listing). Image artifacts remain
+until an explicit manual delete. Workspace pages stay workplaces.
 """
 import asyncio
 import uuid
@@ -94,3 +94,29 @@ def test_list_filters_by_kind(tmp_path):
             await db.commit()
 
     _run(scenario())
+
+
+def test_expired_image_survives_retention_sweep(tmp_path):
+    image_id = f"test-old-image-{uuid.uuid4().hex[:8]}"
+    image_file = tmp_path / f"{image_id}.jpg"
+    image_file.write_bytes(b"persistent-image")
+
+    async def scenario():
+        await _insert(
+            image_id,
+            kind="image",
+            created_at=_ts(49),
+            local_path=str(image_file),
+        )
+        await crud.purge_expired_artifacts(retention_hours=48)
+        assert await _fetch(image_id) is not None, "expired images remain until manual delete"
+        assert image_file.exists(), "retention sweep must not delete image files"
+        db = await crud.get_db()
+        async with crud._db_lock:
+            await db.execute(
+                "DELETE FROM generated_artifact WHERE media_id = ?", (image_id,)
+            )
+            await db.commit()
+
+    _run(scenario())
+    assert image_file.exists(), "the test image was not deleted by retention"

@@ -12,16 +12,18 @@ Two operator needs converge on the same object — **one finished generation**:
    social captions** (TikTok / Facebook / Instagram / Threads / X), for download
    + copy-paste into the social post.
 
-Before this, the only results surface was the 48h Video/Image Library — a
-download-only list that carried **no prompt, no settings, no captions**, and
-whose rows are hard-deleted at 48h (captions became orphaned). This hub fixes
-both, without touching the proven generation lane.
+Before this, the only results surface was the Video/Image Library — a
+download-only list that carried **no prompt, no settings, no captions**. Video
+rows/files were hard-deleted at 48h; image rows/files had the same accidental
+TTL even though reusable images must remain until manual deletion. This hub
+fixes the metadata gap without touching the proven generation lane.
 
-## Model — heavy file ephemeral, light record durable
+## Model — video file ephemeral, image file persistent, light record durable
 
 | Data | Table | Lifetime |
 |------|-------|----------|
-| Artifact FILE (mp4/jpg) | `generated_artifact` | **48h** (existing purge, unchanged) |
+| Video artifact FILE (mp4) | `generated_artifact` | **48h** (existing purge) |
+| Image artifact FILE (jpg/png) | `generated_artifact` | **Persistent until manual delete** |
 | Prompt + settings snapshot | `generation_result` (**new**) | **durable** |
 | Per-platform captions | `social_copy_package` (existing) | **durable** |
 
@@ -39,8 +41,8 @@ The proven `make_video.start_generate` lane is not modified.
 
 ## API (`/api`)
 
-- `GET /api/results?kind=&mode=&limit=` — newest-first list. Runs the lazy 48h
-  file purge, merges durable records with any file-only artifacts (older rows /
+- `GET /api/results?kind=&mode=&limit=` — newest-first list. Runs the lazy video
+  48h purge, merges durable records with any file-only artifacts (older rows /
   direct programmatic lane still appear, so nothing disappears), and attaches a
   one-query caption rollup (`{count, approved}`) per media id.
 - `GET /api/results/{media_id}` — detail: the durable prompt/settings snapshot,
@@ -53,7 +55,8 @@ One hub; video/image are a filter (not separate pages). Each card opens a detail
 modal with three sections:
 
 1. **Preview & Download** — inline player/image + download while the file lives;
-   an "expired but record kept" note after 48h.
+   videos can show an "expired but record kept" note after 48h; images are
+   manual-delete.
 2. **Prompt & Settings** — the fired prompt + model/aspect/duration/count/refs,
    each copy-to-clipboard, for manual Flow fallback.
 3. **Captions** — reuses `SocialCopyPackagePanel` (no forked editor).

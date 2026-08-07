@@ -626,7 +626,7 @@ async def avatar_registry_register_generated(request: AvatarRegisterGeneratedReq
     existing = await _generated_avatar_asset_ids()
     if identity["avatar_code"].upper() in existing:
         raise HTTPException(409, f"AVATAR_ALREADY_REGISTERED:{existing[identity['avatar_code'].upper()]}")
-    # Copy the image OUT of the 48h-retention artifact library into permanent
+    # Copy the image OUT of the transient artifact library into permanent
     # creative-asset storage (the base64 path handles file placement + URLs).
     import base64
     from pathlib import Path
@@ -988,7 +988,7 @@ async def avatar_registry_delete(avatar_code: str):
             if code == target:
                 await archive_creative_asset(str(asset.asset_id))
                 archived_asset_id = str(asset.asset_id)
-                # Also purge the linked 48h temp artifact so the image fully
+                # Also purge the linked transient artifact so the image fully
                 # leaves the Library now (archiving the saved asset alone un-hides
                 # its temp twin). Best-effort; never blocks the delete.
                 media_id = getattr(asset, "media_id", None)

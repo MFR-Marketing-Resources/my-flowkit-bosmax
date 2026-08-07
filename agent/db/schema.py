@@ -2005,8 +2005,8 @@ CREATE TABLE IF NOT EXISTS postiz_publish_record (
         # Social Copy Package — platform-specific caption/comment copy linked to
         # a generated artifact (media_id). Authored on the generator pages,
         # approved, then prefilled into Postiz Publish. Like postiz_publish_record
-        # this uses a plain artifact_media_id (no hard FK): generated_artifact rows
-        # self-purge at 48h while copy packages persist as publishing history.
+        # this uses a plain artifact_media_id (no hard FK): video generated_artifact
+        # rows self-purge at 48h while copy packages persist as publishing history.
         await db.executescript("""
 CREATE TABLE IF NOT EXISTS social_copy_package (
     package_id            TEXT PRIMARY KEY,
@@ -2038,8 +2038,9 @@ CREATE INDEX IF NOT EXISTS idx_social_copy_status ON social_copy_package(status)
         await db.commit()
 
         # Generation Result (Results Hub) — DURABLE per-finished-generation record.
-        # The heavy artifact FILE still lives in `generated_artifact` and is purged
-        # at 48h; THIS row is the lightweight, long-lived deliverable record so the
+        # Video artifact FILE still lives in `generated_artifact` and is purged at
+        # 48h; image artifact files are manual-delete. THIS row is the lightweight,
+        # long-lived deliverable record so the
         # operator can, at any time: (a) copy the exact prompt + settings used to
         # manually re-drive Google Flow if automation breaks, and (b) reach the
         # per-platform social captions for that result. Keyed by Flow media_id, it

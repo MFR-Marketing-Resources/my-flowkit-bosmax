@@ -84,7 +84,7 @@ const NAV_GROUPS = [
 			{ to: "/operator/i2v", icon: Layers, label: "Ingredients" },
 			{ to: "/operator/img", icon: ImageIcon, label: "Image Gen" },
 			{ to: "/library/videos", icon: Video, label: "Video Library (48j)" },
-			{ to: "/library/images", icon: ImageIcon, label: "Image Library (48j)" },
+			{ to: "/library/images", icon: ImageIcon, label: "Image Library (Manual Delete)" },
 			{ to: "/results", icon: FolderOpen, label: "Results (Hasil + Caption)" },
 			{ to: "/workspace/jobs", icon: Activity, label: "Workspace Jobs" },
 			{

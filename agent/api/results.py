@@ -6,13 +6,13 @@ and (b) reach the per-platform social captions to publish. It composes three
 sources by Flow media_id — WITHOUT changing the proven generation lane:
 
   - generation_result   DURABLE snapshot (prompt / settings / product / refs)
-  - generated_artifact   48h FILE (availability + size + expiry)
+  - generated_artifact   video 48h FILE; image persistent FILE
   - social_copy_package  DURABLE captions (per-platform status)
 
-The heavy file expires at 48h; the record + captions do not — so the manual
-fallback + caption never silently vanish. Artifacts that have a file but no
-durable record (older rows / direct programmatic lane) still appear (thin), so
-nothing disappears from the hub.
+Video files expire at 48h; image files and the record + captions do not — so
+the manual fallback + caption never silently vanish. Artifacts that have a file
+but no durable record (older rows / direct programmatic lane) still appear
+(thin), so nothing disappears from the hub.
 
 Endpoints (registered under /api):
   GET /api/results             list (kind/mode filter) + file status + caption rollup
@@ -35,8 +35,12 @@ _RETRIEVED_URL = "/api/flow/retrieved/{}"
 _CAPTION_JSON_COLUMNS = ("hashtags_json", "blockers_json", "warnings_json")
 
 
-def _expiry(created_at: str | None) -> tuple[str | None, float | None]:
-    """File expiry derived from the artifact's created_at (48h retention)."""
+def _expiry(
+    created_at: str | None, artifact_kind: str | None = "video"
+) -> tuple[str | None, float | None]:
+    """Return expiry only for video artifacts; images are manual-delete."""
+    if str(artifact_kind or "video").lower() != "video":
+        return None, None
     try:
         created = datetime.strptime(created_at, "%Y-%m-%dT%H:%M:%SZ").replace(
             tzinfo=timezone.utc)
@@ -58,8 +62,11 @@ def _refs(record: dict) -> list:
 
 def _entry_from_record(record: dict, artifact: dict | None) -> dict:
     """A hub row backed by a durable record; file fields come from the artifact
-    when its 48h file is still present, otherwise file_available is False."""
-    expires_at, expires_in = _expiry(artifact["created_at"]) if artifact else (None, None)
+    when its file is still present, otherwise file_available is False."""
+    expires_at, expires_in = (
+        _expiry(artifact["created_at"], artifact.get("artifact_kind"))
+        if artifact else (None, None)
+    )
     return {
         "media_id": record["media_id"],
         "mode": record.get("mode"),
@@ -79,7 +86,9 @@ def _entry_from_record(record: dict, artifact: dict | None) -> dict:
 
 def _entry_from_artifact(artifact: dict) -> dict:
     """A hub row for a file that has no durable record yet (older/direct lane)."""
-    expires_at, expires_in = _expiry(artifact.get("created_at"))
+    expires_at, expires_in = _expiry(
+        artifact.get("created_at"), artifact.get("artifact_kind")
+    )
     return {
         "media_id": artifact["media_id"],
         "mode": artifact.get("mode"),
@@ -103,9 +112,9 @@ async def list_results(
     mode: str | None = None,
     kind: str | None = None,
 ):
-    """Newest-first deliverable list. Runs the lazy 48h file purge first (so file
-    availability is accurate), then merges durable records with any file-only
-    artifacts, and attaches a one-query caption rollup per media id."""
+    """Newest-first deliverable list. Runs the lazy video 48h purge first (so
+    file availability is accurate), then merges durable records with any
+    file-only artifacts, and attaches a one-query caption rollup per media id."""
     limit = max(1, min(200, int(limit or 60)))
     purged = await crud.purge_expired_artifacts(ARTIFACT_RETENTION_HOURS)
     records = await crud.list_generation_results(limit=limit, mode=mode, kind=kind)
@@ -135,6 +144,7 @@ async def list_results(
         "results": entries,
         "count": len(entries),
         "retention_hours": ARTIFACT_RETENTION_HOURS,
+        "retention_policy": {"video": "48h", "image": "manual_delete"},
         "purged": purged,
     }
 
@@ -158,7 +168,10 @@ async def get_result(media_id: str):
 
     base = record or artifact or {}
     file_available = artifact is not None
-    expires_at, expires_in = _expiry(artifact["created_at"]) if artifact else (None, None)
+    expires_at, expires_in = (
+        _expiry(artifact["created_at"], artifact.get("artifact_kind"))
+        if artifact else (None, None)
+    )
 
     snapshot = None
     if record:

@@ -3,7 +3,8 @@
 Exercises the route handlers directly (no HTTP server), the same way
 tests/api/test_social_copy_api.py does. The hub composes three sources by Flow
 media_id: the durable generation_result snapshot (manual Flow fallback), the
-48h artifact file (download), and the social captions (publish).
+video 48h/image persistent artifact file (download), and the social captions
+(publish).
 """
 import pytest
 from fastapi import HTTPException

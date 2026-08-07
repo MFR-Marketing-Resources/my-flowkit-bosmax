@@ -337,7 +337,7 @@ async def scene_context_registry_delete(scene_code: str):
     except ValueError as exc:
         msg = str(exc)
         raise HTTPException(404 if "NOT_FOUND" in msg else 422, msg) from exc
-    # Best-effort archive of the linked background image + purge its 48h temp
+    # Best-effort archive of the linked background image + purge its transient
     # artifact so the image fully leaves the Library now (archiving the saved
     # asset alone un-hides its temp twin). Match the SCENE_CODE marker in the
     # asset description. Never blocks the profile delete.
