@@ -26,8 +26,14 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from agent.authority.product_readiness_applicability_registry import (
+    resolve_applicability_profile,
+)
 from agent.services import creative_recipe_service
 from agent.services import creative_scene_prompt_service
+
+
+B3_LOGICAL_MODE = "T2V"
 
 
 @dataclass(frozen=True)
@@ -35,6 +41,29 @@ class RecipeTuple:
     avatar_code: str
     scene_template_id: str
     camera_preset_code: str
+
+
+def required_asset_roles_for_mode(logical_mode: str) -> tuple[str, ...]:
+    """Read the canonical mode-to-asset-role authority used by readiness."""
+    normalized_mode = str(logical_mode or "").strip().upper()
+    profile = resolve_applicability_profile("UNKNOWN")
+    return tuple(
+        str(role)
+        for role in profile.required_asset_roles_by_mode.get(normalized_mode, [])
+    )
+
+
+def video_asset_blockers_for_mode(
+    product_id: str,
+    logical_mode: str,
+    asset_products_by_role: dict[str, set[str]],
+) -> tuple[str, ...]:
+    """Return only the visual-asset blockers applicable to this logical mode."""
+    return tuple(
+        f"{role}_VIDEO_ASSET_REQUIRED"
+        for role in required_asset_roles_for_mode(logical_mode)
+        if product_id not in asset_products_by_role.get(role, set())
+    )
 
 
 def _json_list(value: object, fallback: object) -> list[str]:
@@ -156,6 +185,7 @@ def read_snapshot(db_path: Path) -> dict[str, Any]:
             "SELECT DISTINCT product_id FROM copy_set "
             "WHERE status='COPY_APPROVED' AND archived=0",
         )
+        required_asset_roles = required_asset_roles_for_mode(B3_LOGICAL_MODE)
         asset_products_by_role = {
             role: _distinct_products(
                 db,
@@ -165,7 +195,7 @@ def read_snapshot(db_path: Path) -> dict[str, Any]:
                 "AND approved_for_video_support=1",
                 role,
             )
-            for role in ("PRODUCT_REFERENCE", "CHARACTER_REFERENCE")
+            for role in required_asset_roles
         }
 
         blockers: Counter[str] = Counter()
@@ -197,11 +227,13 @@ def read_snapshot(db_path: Path) -> dict[str, Any]:
             if product_id not in copy_products:
                 blockers["COPY_SET_NOT_APPROVED"] += 1
                 continue
-            if product_id not in asset_products_by_role["PRODUCT_REFERENCE"]:
-                blockers["PRODUCT_REFERENCE_VIDEO_ASSET_REQUIRED"] += 1
-                continue
-            if product_id not in asset_products_by_role["CHARACTER_REFERENCE"]:
-                blockers["CHARACTER_REFERENCE_VIDEO_ASSET_REQUIRED"] += 1
+            asset_blockers = video_asset_blockers_for_mode(
+                product_id,
+                B3_LOGICAL_MODE,
+                asset_products_by_role,
+            )
+            if asset_blockers:
+                blockers[asset_blockers[0]] += 1
                 continue
             target_rows.append(
                 {

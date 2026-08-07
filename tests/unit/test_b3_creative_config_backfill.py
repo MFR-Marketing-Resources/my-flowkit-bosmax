@@ -13,7 +13,24 @@ sys.modules[_SPEC.name] = _MODULE
 _SPEC.loader.exec_module(_MODULE)
 
 RecipeTuple = _MODULE.RecipeTuple
+required_asset_roles_for_mode = _MODULE.required_asset_roles_for_mode
 select_recipe_tuple = _MODULE.select_recipe_tuple
+video_asset_blockers_for_mode = _MODULE.video_asset_blockers_for_mode
+
+
+def test_t2v_does_not_require_visual_asset_roles() -> None:
+    assert required_asset_roles_for_mode("T2V") == ()
+    assert video_asset_blockers_for_mode("product-1", "T2V", {}) == ()
+
+
+def test_reference_modes_keep_their_visual_asset_requirements() -> None:
+    assert video_asset_blockers_for_mode("product-1", "F2V", {}) == (
+        "COMPOSITE_FRAME_REFERENCE_VIDEO_ASSET_REQUIRED",
+    )
+    assert video_asset_blockers_for_mode("product-1", "I2V", {}) == (
+        "PRODUCT_REFERENCE_VIDEO_ASSET_REQUIRED",
+        "SCENE_CONTEXT_REFERENCE_VIDEO_ASSET_REQUIRED",
+    )
 
 
 def test_select_recipe_tuple_derives_camera_from_scene() -> None:
