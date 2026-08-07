@@ -993,14 +993,14 @@ function VisualStep({ wf, recipes }: { wf: WF; recipes: PosterRecipe[] }) {
 	);
 }
 
-// ── Scene picker (approved existing assets — no raw media IDs) ──────────────
+// ── Poster visual source (native generation first; existing assets optional) ─
 function SceneStep({ wf }: { wf: WF }) {
 	const [artifacts, setArtifacts] = useState<ImageArtifact[] | null>(null);
 	const [artifactsError, setArtifactsError] = useState("");
 	const [loading, setLoading] = useState(false);
-	const imgFastlaneHref = wf.product?.id
-		? `/assets/img-fastlane?product_id=${encodeURIComponent(wf.product.id)}`
-		: "/assets/img-fastlane";
+	const [existingOpen, setExistingOpen] = useState(false);
+	const [creditConfirmOpen, setCreditConfirmOpen] = useState(false);
+	const [creditConfirmed, setCreditConfirmed] = useState(false);
 
 	const load = () => {
 		setLoading(true);
@@ -1015,92 +1015,190 @@ function SceneStep({ wf }: { wf: WF }) {
 			.finally(() => setLoading(false));
 	};
 
-	// eslint-disable-next-line react-hooks/exhaustive-deps -- load once on mount
-	useEffect(load, []);
-
 	return (
 		<div className="space-y-3">
 			<p className="text-sm text-slate-400">
-				Pilih latar daripada scene sedia ada (tanpa kredit). Jika tiada scene,
-				jana scene bersih di modul IMG dan kembali semula ke langkah ini.
+				Poster Builder akan jana visual baharu menggunakan produk yang dipilih,
+				gaya visual dan teks yang telah disahkan. Tidak perlu pilih gambar lama di
+				langkah ini.
 			</p>
 			<div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
 				Identiti produk adalah reference-conditioned — pastikan label & skala
 				disemak sebelum diterbitkan.
 			</div>
 
-			{loading ? <Busy label="Memuatkan scene sedia ada…" /> : null}
-			{artifactsError ? (
-				<div className="space-y-2" data-testid="poster-scene-error">
-					<ErrorNote testid="poster-scene-error-text" text={artifactsError} />
-					<button
-						type="button"
-						data-testid="poster-scene-retry"
-						onClick={load}
-						className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-200"
-					>
-						Cuba lagi
-					</button>
-				</div>
-			) : null}
-
-			{!loading && !artifactsError && artifacts && artifacts.length === 0 ? (
-				<div
-					className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-5 text-center"
-					data-testid="poster-scene-empty"
-				>
-					<p className="text-sm text-slate-400">
-						Tiada scene tersedia buat masa ini (scene lama luput selepas 48 jam).
-						Poster belum boleh dihasilkan sehingga scene bersih tersedia.
+			<div
+				className="space-y-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4"
+				data-testid="poster-scene-generation-panel"
+			>
+				<div>
+					<p className="font-semibold text-slate-100">Jana visual poster</p>
+					<p className="mt-1 text-xs text-slate-400">
+						Visual baharu menggunakan product reference yang dikunci oleh sistem;
+						teks pemasaran akan dilukis kemudian oleh compositor. IMG poster tidak
+						menggunakan kredit video Google Flow.
 					</p>
-					<div className="flex flex-wrap justify-center gap-2">
-						<a
-							data-testid="poster-scene-open-img"
-							href={imgFastlaneHref}
-							className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-emerald-400"
-						>
-							Buka IMG untuk jana scene
-						</a>
+				</div>
+				{wf.sceneGenerationLoading ? (
+					<Busy
+						label={
+							{
+								building_prompt: "Menyediakan arahan visual…",
+								validating_product: "Mengesahkan product reference…",
+								preparing_exact_scene: "Menyediakan visual exact-product…",
+								generating_scene: "Menghantar kerja IMG…",
+								waiting_for_scene: "Menunggu visual siap…",
+							}[wf.sceneGenerationStage] || "Memproses visual…"
+						}
+					/>
+				) : null}
+				<ErrorNote
+					testid="poster-scene-generation-error"
+					text={wf.sceneGenerationError}
+				/>
+				<button
+					type="button"
+					data-testid="poster-generate-scene"
+					disabled={wf.sceneGenerationLoading}
+					onClick={() => {
+						setCreditConfirmed(false);
+						setCreditConfirmOpen(true);
+					}}
+					className="rounded-lg bg-emerald-500 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-50"
+				>
+					{wf.generatedSceneMediaId ? "Jana semula visual" : "Jana visual poster"}
+				</button>
+				{creditConfirmOpen ? (
+					<div
+						className="space-y-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3"
+						data-testid="poster-generate-scene-confirm"
+					>
+						<p className="text-xs text-amber-100">
+							Sahkan sekali lagi untuk menghantar satu kerja IMG. Tindakan ini tidak
+							menggunakan kredit video Google Flow; hanya kerja video menggunakan
+							kredit video. Tiada kerja dihantar sebelum pengesahan ini.
+						</p>
+						<label className="flex items-start gap-2 text-xs text-slate-200">
+							<input
+								type="checkbox"
+								data-testid="poster-generate-scene-credit-checkbox"
+								checked={creditConfirmed}
+								onChange={(event) => setCreditConfirmed(event.target.checked)}
+								className="mt-0.5"
+							/>
+							<span>
+								Saya faham tindakan ini menghantar satu kerja IMG dan tidak
+								menggunakan kredit video Google Flow.
+							</span>
+						</label>
+						<div className="flex gap-2">
+							<button
+								type="button"
+								data-testid="poster-generate-scene-credit-cancel"
+								onClick={() => setCreditConfirmOpen(false)}
+								className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-200"
+							>
+								Batal
+							</button>
+							<button
+								type="button"
+								data-testid="poster-generate-scene-credit-confirm"
+								disabled={!creditConfirmed || wf.sceneGenerationLoading}
+								onClick={() => {
+									setCreditConfirmOpen(false);
+									void wf.generateScene();
+								}}
+								className="rounded-lg bg-amber-400 px-3 py-1.5 text-xs font-bold text-slate-950 disabled:opacity-50"
+							>
+								Teruskan jana
+							</button>
+						</div>
+					</div>
+				) : null}
+				{wf.generatedSceneMediaId ? (
+					<div className="space-y-2" data-testid="poster-generated-scene">
+						<p className="text-xs font-semibold text-emerald-200">
+							Visual baharu tersedia dan dipilih untuk poster.
+						</p>
+						<img
+							src={
+								wf.generatedSceneUrl ||
+								`/api/flow/retrieved/${encodeURIComponent(wf.generatedSceneMediaId)}`
+							}
+							alt="Visual poster yang dijana"
+							className="max-h-72 rounded-lg border border-slate-800 object-contain"
+						/>
+					</div>
+				) : null}
+			</div>
+
+			<details
+				className="rounded-xl border border-slate-800 bg-slate-950/40 p-3"
+				data-testid="poster-existing-scene-options"
+				onToggle={(event) => {
+					const open = event.currentTarget.open;
+					setExistingOpen(open);
+					if (open && artifacts === null && !loading) load();
+				}}
+			>
+				<summary className="cursor-pointer text-xs font-semibold text-slate-400">
+					Gunakan visual sedia ada (pilihan sahaja)
+				</summary>
+				<p className="mt-2 text-[11px] text-slate-500">
+					Ini bukan prasyarat. Visual sedia ada mungkin luput selepas 48 jam;
+					jana visual baharu di atas untuk kerja poster baharu.
+				</p>
+				{existingOpen && loading ? <Busy label="Memuatkan visual sedia ada…" /> : null}
+				{existingOpen && artifactsError ? (
+					<div className="space-y-2" data-testid="poster-scene-error">
+						<ErrorNote testid="poster-scene-error-text" text={artifactsError} />
 						<button
 							type="button"
-							data-testid="poster-scene-refresh"
+							data-testid="poster-scene-retry"
 							onClick={load}
-							className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-800"
+							className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-200"
 						>
-							Muat semula scene
+							Cuba lagi
 						</button>
 					</div>
-				</div>
-			) : null}
-
-			{artifacts && artifacts.length > 0 ? (
-				<div data-testid="poster-scene-grid">
-					<VisualAssetPicker
-						items={artifacts.map((artifact) => {
-							const expiring =
-								typeof (artifact as { expires_in_hours?: number | null })
-									.expires_in_hours === "number" &&
-								((artifact as { expires_in_hours?: number | null })
-									.expires_in_hours ?? 99) < 6;
-							return {
-								value: artifact.media_id,
-								title: (artifact.mode || "Scene").toUpperCase(),
-								subtitle: artifact.created_at
-									? `${artifact.media_id} · ${artifact.created_at.slice(0, 10)}`
-									: artifact.media_id,
-								previewUrl: `/api/flow/retrieved/${encodeURIComponent(
-									artifact.media_id,
-								)}`,
-								status: expiring ? "Hampir luput" : "Sedia digunakan",
-							};
-						})}
-						label="Poster scene"
-						onChange={wf.setBackgroundMediaId}
-						placeholder="Pilih scene visual"
-						value={wf.backgroundMediaId}
-					/>
-				</div>
-			) : null}
+				) : null}
+				{existingOpen && !loading && !artifactsError && artifacts?.length === 0 ? (
+					<div
+						className="mt-3 rounded-lg border border-slate-800 px-3 py-3 text-xs text-slate-400"
+						data-testid="poster-scene-empty"
+					>
+						Tiada visual sedia ada. Ini tidak menghalang jana visual poster baharu.
+					</div>
+				) : null}
+				{existingOpen && artifacts && artifacts.length > 0 ? (
+					<div className="mt-3" data-testid="poster-scene-grid">
+						<VisualAssetPicker
+							items={artifacts.map((artifact) => {
+								const expiring =
+									typeof (artifact as { expires_in_hours?: number | null })
+										.expires_in_hours === "number" &&
+									((artifact as { expires_in_hours?: number | null })
+										.expires_in_hours ?? 99) < 6;
+								return {
+									value: artifact.media_id,
+									title: (artifact.mode || "Visual").toUpperCase(),
+									subtitle: artifact.created_at
+										? `${artifact.media_id} · ${artifact.created_at.slice(0, 10)}`
+										: artifact.media_id,
+									previewUrl: `/api/flow/retrieved/${encodeURIComponent(
+										artifact.media_id,
+									)}`,
+									status: expiring ? "Hampir luput" : "Sedia digunakan",
+								};
+							})}
+							label="Visual poster sedia ada"
+							onChange={wf.setBackgroundMediaId}
+							placeholder="Pilih visual sedia ada"
+							value={wf.backgroundMediaId}
+						/>
+					</div>
+				) : null}
+			</details>
 
 			<details className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
 				<summary className="cursor-pointer text-xs font-semibold text-slate-400">
@@ -1134,7 +1232,7 @@ function ComposeStep({ wf }: { wf: WF }) {
 					className="text-xs text-amber-200/90"
 					data-testid="poster-compose-need-scene"
 				>
-					Pilih scene latar dahulu di langkah Latar.
+					Jana atau pilih visual poster dahulu di langkah Latar.
 				</p>
 			) : null}
 			<button

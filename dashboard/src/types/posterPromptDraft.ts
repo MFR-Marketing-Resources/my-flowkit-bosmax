@@ -29,10 +29,12 @@ export interface PosterPromptDraftRequest {
 	usp_3: string;
 	cta: string;
 	operator_notes: string;
+	creative_mode?: string | null;
 	copy_source?: string;
 	copy_set_id?: string;
 	copy_fallback_confirmed?: boolean;
 	poster_recipe_id?: string;
+	poster_copy_set_id?: string;
 }
 
 export interface PosterPromptDraftResponse {
