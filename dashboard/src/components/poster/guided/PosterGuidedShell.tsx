@@ -998,6 +998,9 @@ function SceneStep({ wf }: { wf: WF }) {
 	const [artifacts, setArtifacts] = useState<ImageArtifact[] | null>(null);
 	const [artifactsError, setArtifactsError] = useState("");
 	const [loading, setLoading] = useState(false);
+	const imgFastlaneHref = wf.product?.id
+		? `/assets/img-fastlane?product_id=${encodeURIComponent(wf.product.id)}`
+		: "/assets/img-fastlane";
 
 	const load = () => {
 		setLoading(true);
@@ -1018,8 +1021,8 @@ function SceneStep({ wf }: { wf: WF }) {
 	return (
 		<div className="space-y-3">
 			<p className="text-sm text-slate-400">
-				Pilih latar daripada scene sedia ada (tanpa kredit). Scene baharu boleh
-				dijana dari langkah Hasilkan bila perlu.
+				Pilih latar daripada scene sedia ada (tanpa kredit). Jika tiada scene,
+				jana scene bersih di modul IMG dan kembali semula ke langkah ini.
 			</p>
 			<div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
 				Identiti produk adalah reference-conditioned — pastikan label & skala
@@ -1042,14 +1045,32 @@ function SceneStep({ wf }: { wf: WF }) {
 			) : null}
 
 			{!loading && !artifactsError && artifacts && artifacts.length === 0 ? (
-				<p
-					className="rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-6 text-center text-sm text-slate-400"
+				<div
+					className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-5 text-center"
 					data-testid="poster-scene-empty"
 				>
-					Tiada scene tersedia buat masa ini (scene lama luput selepas 48 jam).
-					Jana scene bersih baharu melalui butang penjanaan di modul IMG, atau
-					teruskan — poster boleh dihasilkan selepas scene tersedia.
-				</p>
+					<p className="text-sm text-slate-400">
+						Tiada scene tersedia buat masa ini (scene lama luput selepas 48 jam).
+						Poster belum boleh dihasilkan sehingga scene bersih tersedia.
+					</p>
+					<div className="flex flex-wrap justify-center gap-2">
+						<a
+							data-testid="poster-scene-open-img"
+							href={imgFastlaneHref}
+							className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-emerald-400"
+						>
+							Buka IMG untuk jana scene
+						</a>
+						<button
+							type="button"
+							data-testid="poster-scene-refresh"
+							onClick={load}
+							className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-800"
+						>
+							Muat semula scene
+						</button>
+					</div>
+				</div>
 			) : null}
 
 			{artifacts && artifacts.length > 0 ? (

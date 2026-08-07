@@ -766,9 +766,11 @@ export function PosterBuilderLegacyPanel() {
 					});
 					setPosterGenStage("final_ready");
 					const deliv = result.deliverable;
+					const deliverableId =
+						deliv?.poster_deliverable_id || subjectAsset.mediaId || "";
 					setPosterGenResult({
-						url: `/api/poster/deliverable/${deliv?.poster_deliverable_id || subjectAsset.mediaId || ""}`,
-						mediaId: deliv?.poster_deliverable_id || subjectAsset.mediaId || "",
+						url: posterDeliverableOutputUrl(deliverableId),
+						mediaId: deliverableId,
 						sizeMb: null,
 					});
 					return;
