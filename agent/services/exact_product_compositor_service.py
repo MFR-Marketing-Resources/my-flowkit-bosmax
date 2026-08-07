@@ -11,6 +11,7 @@ from collections import deque
 
 import hashlib
 import json
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -92,9 +93,33 @@ def scene_only_prompt_block() -> str:
     return "\n".join(f"- {line}" for line in SCENE_ONLY_PROMPT_LINES)
 
 
+_SCENE_ONLY_DROPPED_SECTIONS = {
+    "=== PRODUCT TRUTH LOCK ===",
+    "=== COPY SLOTS ===",
+    "=== TEXT OVERLAY ===",
+}
+_PROMPT_SECTION_HEADER = re.compile(r"^=== [A-Z0-9 _/&-]+ ===$")
+
+
+def _strip_scene_only_sections(prompt: str) -> str:
+    """Remove product/copy instructions before appending the scene-only block."""
+    kept: list[str] = []
+    dropping = False
+    for raw_line in (prompt or "").splitlines():
+        line = raw_line.strip()
+        if line in _SCENE_ONLY_DROPPED_SECTIONS:
+            dropping = True
+            continue
+        if dropping and _PROMPT_SECTION_HEADER.fullmatch(line):
+            dropping = False
+        if not dropping:
+            kept.append(raw_line)
+    return "\n".join(kept).strip()
+
+
 def augment_prompt_scene_only(prompt: str) -> str:
-    """Append scene-only constraints; strip soft product-preserve language."""
-    base = (prompt or "").strip()
+    """Append scene-only constraints and strip product/copy instructions."""
+    base = _strip_scene_only_sections(prompt)
     # Soft preserve lines encourage Flow to redraw packaging — drop them for exact.
     drop_markers = (
         "PRESERVE the real product label",
