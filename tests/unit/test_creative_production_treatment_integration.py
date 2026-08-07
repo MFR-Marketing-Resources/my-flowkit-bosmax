@@ -315,6 +315,18 @@ def test_video_dimensions_are_one_row_per_treatment_not_cartesian() -> None:
     assert len(rows) == 1
     assert not blockers
     assert rows[0]["treatment_id"] == "treatment-1"
+    assert rows[0]["scene_template_id"] == "scene-1"
+    assert rows[0]["camera_preset_code"] == "camera-1"
+    assert rows[0]["camera_composition"] == "camera-1"
+    dna = plans._creative_dna_payload(rows[0])
+    changed_tuple = {
+        **rows[0],
+        "scene_template_id": "scene-2",
+        "camera_preset_code": "camera-2",
+    }
+    assert plans._sha(dna) != plans._sha(
+        plans._creative_dna_payload(changed_tuple)
+    )
     assert rows[0]["creative_treatment"]["shot_grammar"]
 
 

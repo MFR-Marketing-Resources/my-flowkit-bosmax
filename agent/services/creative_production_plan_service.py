@@ -2232,6 +2232,8 @@ def _creative_dna_payload(dimensions: dict[str, str]) -> dict[str, str]:
         "scene_family",
         "scene_strategy",
         "scene_context",
+        "scene_template_id",
+        "camera_preset_code",
         "style_asset_id",
         "layout_id",
         "camera_composition",
@@ -2399,6 +2401,8 @@ def _product_dimension_rows(
                     "scene_family": treatment["scene_strategy_id"],
                     "scene_strategy": treatment["scene_strategy_id"],
                     "scene_context": treatment["scene_template_id"],
+                    "scene_template_id": treatment["scene_template_id"],
+                    "camera_preset_code": treatment["camera_preset_code"],
                     "product_interaction": _stable_json(
                         treatment["action_sequence"]
                     ),
