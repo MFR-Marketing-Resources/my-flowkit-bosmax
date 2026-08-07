@@ -1,4 +1,9 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import {
+	buildExactSceneOnlyPrompt,
+	resolveExactGenerationGate,
+} from "../../api/exactProductOutput";
+import { pollImgGenerationJob, startImgGeneration } from "../../api/imgFactory";
 import {
 	approvePosterCopySet,
 	composePoster,
@@ -13,6 +18,11 @@ import {
 	savePosterToLibrary,
 } from "../../api/posterCopySets";
 import { fetchPosterReadiness } from "../../api/posterReadiness";
+import {
+	createPosterPromptDraft,
+	formatPosterPromptDraftError,
+} from "../../api/posterPromptDraft";
+import { productSubjectAsset } from "../../utils/productSubjectAsset";
 import type { Product } from "../../types";
 import {
 	POSTER_COPY_APPROVAL_PHRASE,
@@ -183,6 +193,12 @@ export interface PosterGuidedWorkflow {
 	// scene
 	backgroundMediaId: string;
 	setBackgroundMediaId: (id: string) => void;
+	sceneGenerationLoading: boolean;
+	sceneGenerationStage: string;
+	sceneGenerationError: string;
+	generatedSceneMediaId: string | null;
+	generatedSceneUrl: string | null;
+	generateScene: () => Promise<void>;
 	// compose
 	compose: () => Promise<void>;
 	composeLoading: boolean;
@@ -248,8 +264,18 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 	const [forkError, setForkError] = useState("");
 
 	const [recipeId, setRecipeId] = useState<string | null>(null);
-	const [creativeMode, setCreativeMode] = useState("");
-	const [backgroundMediaId, setBackgroundMediaId] = useState("");
+	const [creativeMode, setCreativeModeState] = useState("");
+	const [backgroundMediaId, setBackgroundMediaIdState] = useState("");
+	const [sceneGenerationLoading, setSceneGenerationLoading] = useState(false);
+	const [sceneGenerationStage, setSceneGenerationStage] = useState("");
+	const [sceneGenerationError, setSceneGenerationError] = useState("");
+	const [generatedSceneMediaId, setGeneratedSceneMediaId] = useState<
+		string | null
+	>(null);
+	const [generatedSceneUrl, setGeneratedSceneUrl] = useState<string | null>(
+		null,
+	);
+	const sceneGenerationTokenRef = useRef(0);
 
 	const [deliverable, setDeliverable] = useState<PosterComposeResponse | null>(
 		null,
@@ -260,6 +286,34 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 	const [savedAssetId, setSavedAssetId] = useState<string | null>(null);
 	const [saveLoading, setSaveLoading] = useState(false);
 	const [saveError, setSaveError] = useState("");
+
+	const invalidateScene = useCallback(() => {
+		sceneGenerationTokenRef.current += 1;
+		setBackgroundMediaIdState("");
+		setSceneGenerationError("");
+		setSceneGenerationStage("");
+		setGeneratedSceneMediaId(null);
+		setGeneratedSceneUrl(null);
+	}, []);
+
+	const setCreativeMode = useCallback(
+		(mode: string) => {
+			if (mode !== creativeMode) invalidateScene();
+			setCreativeModeState(mode);
+		},
+		[creativeMode, invalidateScene],
+	);
+
+	const setBackgroundMediaId = useCallback(
+		(id: string) => {
+			setBackgroundMediaIdState(id);
+			if (id !== generatedSceneMediaId) {
+				setGeneratedSceneMediaId(null);
+				setGeneratedSceneUrl(null);
+			}
+		},
+		[generatedSceneMediaId],
+	);
 
 	const reach = useCallback((target: GuidedStepId) => {
 		setReached((prev) => (prev.includes(target) ? prev : [...prev, target]));
@@ -279,6 +333,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 
 	// Selecting a product invalidates EVERYTHING downstream.
 	const selectProduct = useCallback((p: Product | null) => {
+		invalidateScene();
 		setProduct(p);
 		setReadiness(null);
 		setReadinessError("");
@@ -298,7 +353,6 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		setHistoricalCopySet(null);
 		setForkError("");
 		setRecipeId(null);
-		setBackgroundMediaId("");
 		setDeliverable(null);
 		setSavedAssetId(null);
 		setReached(p ? ["product", "goal"] : ["product"]);
@@ -311,7 +365,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 				setReadinessError(friendlyError(e, "Gagal menyemak kesediaan produk.")),
 			)
 			.finally(() => setReadinessLoading(false));
-	}, []);
+	}, [invalidateScene]);
 
 	const recommendGoals = useCallback(async () => {
 		if (!product) return;
@@ -363,6 +417,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 	// Selecting a goal invalidates angle + copy downstream.
 	const selectGoal = useCallback(
 		(archetype: string, recipe?: string, objective?: string) => {
+			invalidateScene();
 			setGoalArchetype(archetype);
 			setGoalRecipeId(recipe ?? null);
 			setObjectiveText(objective ?? "");
@@ -374,13 +429,15 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			setApprovedCopySet(null);
 			setEditingCopySetId(null);
 			setHistoricalCopySet(null);
+			setRecipeId(null);
+			setDeliverable(null);
 			setReached((prev) => {
 				const keep = prev.filter((s) => stepIndex(s) <= stepIndex("goal"));
 				return keep.includes("angle") ? keep : [...keep, "angle"];
 			});
 			setStep("angle");
 		},
-		[],
+		[invalidateScene],
 	);
 
 	const loadDirections = useCallback(async () => {
@@ -408,6 +465,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 
 	// Selecting an angle invalidates copy downstream and advances to copy.
 	const selectAngle = useCallback((angle: string) => {
+		invalidateScene();
 		setSelectedAngle(angle);
 		setDirections([]);
 		setSelectedDirection(null);
@@ -420,12 +478,13 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			return keep.includes("copy") ? keep : [...keep, "copy"];
 		});
 		setStep("copy");
-	}, []);
+	}, [invalidateScene]);
 
 	const selectDirection = useCallback(
 		(index: number) => {
 			const d = directions[index];
 			if (!d) return;
+			invalidateScene();
 			setSelectedDirection(index);
 			setFields(directionToFields(d));
 			// Choosing a fresh AI direction is a BRAND-NEW copy flow — abandon any
@@ -437,22 +496,24 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 				prev.includes("approve") ? prev : [...prev, "approve"],
 			);
 		},
-		[directions],
+		[directions, invalidateScene],
 	);
 
 	const updateField = useCallback(
 		(field: keyof GuidedCopyFields, value: string | string[]) => {
+			invalidateScene();
 			setFields((prev) => ({ ...prev, [field]: value }));
 			// Editing invalidates a prior approval (but NOT the editing draft id —
 			// the whole point of the version draft is to receive these edits).
 			setApprovedCopySet(null);
 		},
-		[],
+		[invalidateScene],
 	);
 
 	const regenField = useCallback(
 		async (field: string) => {
 			if (!product || !goalArchetype) return;
+			invalidateScene();
 			setFieldRegenLoading(field);
 			setFieldRegenError("");
 			try {
@@ -479,11 +540,12 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 				setFieldRegenLoading("");
 			}
 		},
-		[product, goalArchetype, selectedAngle, fields],
+		[product, goalArchetype, selectedAngle, fields, invalidateScene],
 	);
 
 	const approve = useCallback(async () => {
 		if (!product || !goalArchetype) return;
+		invalidateScene();
 		setApproveLoading(true);
 		setApproveError("");
 		try {
@@ -527,12 +589,14 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		objectiveText,
 		fields,
 		editingCopySetId,
+		invalidateScene,
 	]);
 
 	// Editing approved copy uses the immutable new-version lifecycle. The created
 	// draft id is KEPT so approve() patches it instead of creating a duplicate.
 	const editApproved = useCallback(async () => {
 		if (!approvedCopySet) return;
+		invalidateScene();
 		setApproveLoading(true);
 		setApproveError("");
 		try {
@@ -550,12 +614,13 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		} finally {
 			setApproveLoading(false);
 		}
-	}, [approvedCopySet]);
+	}, [approvedCopySet, invalidateScene]);
 
 	// ── Creative Library reopen ────────────────────────────────────────────────
 
 	const restoreFromReopen = useCallback(
 		(recon: PosterDeliverableReconstruction, p: Product | null) => {
+			sceneGenerationTokenRef.current += 1;
 			const pcs = recon.poster_copy_set;
 			const historical =
 				!!recon.poster_copy_set_historical ||
@@ -589,8 +654,21 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			setEditingCopySetId(null);
 			setForkError("");
 			setRecipeId(recon.deliverable.recipe_id ?? null);
-			setCreativeMode(String((recon.render_manifest?.provenance as { creative_mode?: string } | undefined)?.creative_mode ?? ""));
-			setBackgroundMediaId(recon.deliverable.background_media_id ?? "");
+			setCreativeModeState(
+				String(
+					(
+						recon.render_manifest?.provenance as
+							| { creative_mode?: string }
+							| undefined
+					)?.creative_mode ?? "",
+				),
+			);
+			setBackgroundMediaIdState(recon.deliverable.background_media_id ?? "");
+			setSceneGenerationLoading(false);
+			setSceneGenerationStage("");
+			setSceneGenerationError("");
+			setGeneratedSceneMediaId(null);
+			setGeneratedSceneUrl(null);
 			setDeliverable({
 				deliverable: recon.deliverable,
 				render_report: {},
@@ -628,6 +706,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 	// DRAFT lineage-linked to the historical row, preserving the original record.
 	const forkHistorical = useCallback(async () => {
 		if (!historicalCopySet) return;
+		invalidateScene();
 		setForkLoading(true);
 		setForkError("");
 		try {
@@ -650,15 +729,146 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		} finally {
 			setForkLoading(false);
 		}
-	}, [historicalCopySet]);
+	}, [historicalCopySet, invalidateScene]);
 
 	const selectRecipe = useCallback((recipe: string) => {
+		invalidateScene();
 		setRecipeId(recipe);
 		setDeliverable(null);
 		setSavedAssetId(null);
 		setReached((prev) => (prev.includes("scene") ? prev : [...prev, "scene"]));
 		setStep("scene");
-	}, []);
+	}, [invalidateScene]);
+
+	const generateScene = useCallback(async () => {
+		if (!product || !approvedCopySet || !recipeId) {
+			setSceneGenerationError(
+				"Lengkapkan produk, teks yang disahkan dan gaya visual dahulu.",
+			);
+			return;
+		}
+
+		const token = ++sceneGenerationTokenRef.current;
+		setSceneGenerationLoading(true);
+		setSceneGenerationStage("building_prompt");
+		setSceneGenerationError("");
+		setBackgroundMediaIdState("");
+		setGeneratedSceneMediaId(null);
+		setGeneratedSceneUrl(null);
+
+		try {
+			const promptPackage = await createPosterPromptDraft({
+				product_id: product.id,
+				poster_objective:
+					objectiveText || approvedCopySet.objective || "Poster",
+				poster_type: goalArchetype || approvedCopySet.archetype || "PRODUCT_HERO",
+				visual_route: selectedAngle || recipeId,
+				human_presence_mode: "",
+				frame_ratio: "9:16",
+				language: fields.language || approvedCopySet.language || "ms",
+				text_density: "medium",
+				hook: fields.primary_message,
+				subhook: fields.support_message,
+				usp_1: fields.proof_points[0] || "",
+				usp_2: fields.proof_points[1] || "",
+				usp_3: fields.proof_points[2] || "",
+				cta: fields.cta,
+				operator_notes: selectedAngle
+					? `Guided poster angle: ${selectedAngle}`
+					: "Guided Poster Builder",
+				creative_mode: creativeMode || undefined,
+				copy_source: "APPROVED_POSTER_COPY_SET",
+				poster_recipe_id: recipeId,
+				poster_copy_set_id: approvedCopySet.poster_copy_set_id,
+			});
+			if (token !== sceneGenerationTokenRef.current) return;
+			if (!promptPackage.generation_allowed || !promptPackage.poster_prompt) {
+				throw new Error(
+					promptPackage.blocked_reasons?.[0] ||
+						"Produk belum dibenarkan untuk jana visual poster.",
+				);
+			}
+
+			setSceneGenerationStage("validating_product");
+			const gate = await resolveExactGenerationGate(product.id, undefined, {
+				laneId: "POSTER_BUILDER",
+				isPoster: true,
+			});
+			if (token !== sceneGenerationTokenRef.current) return;
+			if (gate.mode === "blocked") throw new Error(gate.message);
+
+			const exactComposite = gate.mode === "exact";
+			const subjectAsset = productSubjectAsset(product);
+			if (!exactComposite && !subjectAsset) {
+				throw new Error(
+					"PRODUCT_REFERENCE_IMAGE_REQUIRED — produk ini tiada gambar rujukan yang boleh digunakan.",
+				);
+			}
+
+			let prompt = promptPackage.poster_prompt;
+			if (exactComposite) {
+				setSceneGenerationStage("preparing_exact_scene");
+				const sceneOnly = await buildExactSceneOnlyPrompt(product.id, prompt);
+				if (token !== sceneGenerationTokenRef.current) return;
+				prompt = sceneOnly.prompt;
+			}
+
+			setSceneGenerationStage("generating_scene");
+			const { job_id: jobId } = await startImgGeneration({
+				product_id: product.id,
+				visual_lane_id: "POSTER_BUILDER",
+				prompt,
+				aspect: "9:16",
+				count: 1,
+				...(subjectAsset && !exactComposite
+					? { refs: { subjectAsset } }
+					: {}),
+			});
+			if (token !== sceneGenerationTokenRef.current) return;
+
+			setSceneGenerationStage("waiting_for_scene");
+			const job = await pollImgGenerationJob(jobId);
+			if (token !== sceneGenerationTokenRef.current) return;
+			const status = String(job.status || "").toUpperCase();
+			if (!(status === "DONE" || status === "COMPLETED") || !job.media_id) {
+				throw new Error(
+					job.error ||
+						`Penjanaan visual tamat sebagai ${job.status || "UNKNOWN"} tanpa imej.`,
+				);
+			}
+
+			// Compose owns the exact-product insertion. The generated artifact stays a
+			// raw scene plate and is never treated as the final product-truth output.
+			const mediaId = job.media_id;
+			const url = job.url || `/api/flow/retrieved/${encodeURIComponent(mediaId)}`;
+			setBackgroundMediaIdState(mediaId);
+			setGeneratedSceneMediaId(mediaId);
+			setGeneratedSceneUrl(url);
+		} catch (e) {
+			if (token !== sceneGenerationTokenRef.current) return;
+			const promptError = formatPosterPromptDraftError(e);
+			setSceneGenerationError(
+				friendlyError(
+					promptError === "Prompt draft failed" ? e : new Error(promptError),
+					"Gagal menyediakan visual poster. Tiada poster dikompos sehingga visual berjaya.",
+				),
+			);
+		} finally {
+			if (token === sceneGenerationTokenRef.current) {
+				setSceneGenerationLoading(false);
+				setSceneGenerationStage("");
+			}
+		}
+	}, [
+		product,
+		approvedCopySet,
+		recipeId,
+		objectiveText,
+		goalArchetype,
+		selectedAngle,
+		fields,
+		creativeMode,
+	]);
 
 	const compose = useCallback(async () => {
 		if (!product || !approvedCopySet || !recipeId) return;
@@ -761,6 +971,12 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		selectRecipe,
 		backgroundMediaId,
 		setBackgroundMediaId,
+		sceneGenerationLoading,
+		sceneGenerationStage,
+		sceneGenerationError,
+		generatedSceneMediaId,
+		generatedSceneUrl,
+		generateScene,
 		compose,
 		composeLoading,
 		composeError,
