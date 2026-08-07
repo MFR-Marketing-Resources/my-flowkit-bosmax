@@ -39,6 +39,8 @@ from agent.services import (
     ai_copy_assist_service,
     copy_composer_service,
     copy_rotation_service,
+    creative_recipe_service,
+    creative_scene_prompt_service,
     creative_treatment_service,
     product_readiness_applicability_service,
 )
@@ -113,6 +115,45 @@ def _sequence_of_mappings(value: object) -> list[dict[str, object]]:
     if not isinstance(value, list):
         return []
     return [_mapping(item) for item in value if isinstance(item, Mapping)]
+
+
+def _selection_recipe_grid(selection: Mapping[str, object]) -> list[creative_recipe_service.CreativeRecipe]:
+    """Build the approved selection's coherent avatar x scene rotation grid."""
+
+    def values(list_key: str, primary_key: str) -> list[str]:
+        raw = selection.get(list_key)
+        source = raw if isinstance(raw, list) else []
+        if not source:
+            source = [selection.get(primary_key)]
+        return list(
+            dict.fromkeys(
+                str(value).strip()
+                for value in source
+                if str(value or "").strip()
+            )
+        )
+
+    avatars = values("selected_avatar_codes", "selected_avatar_code")
+    scene_ids = values(
+        "selected_scene_template_ids",
+        "selected_scene_template_id",
+    )
+    if not avatars or not scene_ids:
+        return []
+    scene_index = {
+        str(template.get("template_id")): template
+        for template in creative_scene_prompt_service.library_templates()
+        if template.get("template_id")
+    }
+    scenes = [scene_index[scene_id] for scene_id in scene_ids if scene_id in scene_index]
+    if not scenes:
+        return []
+    return creative_recipe_service.build_recipes(
+        avatars,
+        scenes,
+        creative_recipe_service.load_bridge(),
+        creative_recipe_service.load_camera_mapping(),
+    )
 
 
 def _string_list(value: object) -> list[str]:
@@ -893,6 +934,8 @@ def _candidate_signature(value: Mapping[str, object]) -> str:
                 _sequence_of_mappings(value.get("asset_bindings")),
                 key=lambda item: (str(item.get("role")), str(item.get("asset_id"))),
             ),
+            "avatar_code": value.get("avatar_code"),
+            "scene_template_id": value.get("scene_template_id"),
         }
     )
 
@@ -902,6 +945,7 @@ def _treatment_request_from_snapshot(
     *,
     created_by: str,
     copy_set_id: str | None = None,
+    recipe: creative_recipe_service.CreativeRecipe | None = None,
 ) -> CreateTreatmentRequest:
     snapshot = _mapping(task.get("snapshot"))
     resolved = _mapping(snapshot.get("resolved_authority"))
@@ -934,6 +978,7 @@ def _treatment_request_from_snapshot(
             "TREATMENT_PREREQUISITES_REQUIRED",
             details={"task_id": str(task["task_id"])},
         )
+    format_name = str(template.get("format") or "")
     return CreateTreatmentRequest(
         product_id=str(task["product_id"]),
         product_truth_snapshot_id=product_truth_snapshot_id,
@@ -950,6 +995,12 @@ def _treatment_request_from_snapshot(
             template["compatibility_profile"],
         ),
         asset_bindings=asset_bindings,
+        avatar_code=(
+            recipe.avatar_code
+            if recipe is not None and format_name != "PGC"
+            else None
+        ),
+        scene_template_id=(recipe.scene_template_id if recipe is not None else None),
         created_by=created_by,
     )
 
@@ -1079,6 +1130,8 @@ async def _prepare_treatment_task(
             },
         )
     copy_set_ids = copy_set_ids[:required_dialogues]
+    selection = _mapping(resolved.get("selection"))
+    recipes = _selection_recipe_grid(selection)
     product_id = str(task["product_id"])
     existing = await creative_treatment_service.list_treatments(
         product_id=product_id,
@@ -1089,11 +1142,13 @@ async def _prepare_treatment_task(
     template_id = cast(str | None, task.get("template_id"))
     template_sha256 = cast(str | None, task.get("template_sha256"))
     candidates: list[dict[str, object]] = []
-    for copy_set_id in copy_set_ids:
+    for index, copy_set_id in enumerate(copy_set_ids):
+        recipe = recipes[index % len(recipes)] if recipes else None
         request = _treatment_request_from_snapshot(
             task,
             created_by=actor_id,
             copy_set_id=copy_set_id,
+            recipe=recipe,
         )
         request_projection = request.model_dump(mode="json")
         signature = _candidate_signature(request_projection)
@@ -1118,6 +1173,11 @@ async def _prepare_treatment_task(
             {
                 "candidate_signature_sha256": signature,
                 "copy_set_id": copy_set_id,
+                "avatar_code": request.avatar_code,
+                "scene_template_id": request.scene_template_id,
+                "camera_preset_code": (
+                    recipe.camera_preset_code if recipe is not None else None
+                ),
                 "created": created,
                 "treatment_id": treatment_id,
                 "treatment_sha256": treatment_sha256,

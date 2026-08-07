@@ -15,6 +15,8 @@ from agent.models.product_treatment_factory import (
     PrepareFactoryPlanRequest,
 )
 from agent.services import product_treatment_factory_service as service
+from agent.services import avatar_registry
+from agent.services import creative_scene_prompt_service
 from agent.services.product_treatment_template_service import resolve_treatment_template
 
 
@@ -172,6 +174,63 @@ def _scan(
         treatments=[],
         error_code=None,
     )
+
+
+def test_selection_recipe_grid_is_avatar_scene_coherent_and_scene_derived():
+    avatars = [
+        row["avatar_code"] for row in avatar_registry.list_pool()[:2]
+    ]
+    scenes = creative_scene_prompt_service.library_templates()[:2]
+    recipes = service._selection_recipe_grid(
+        {
+            "selected_avatar_codes": avatars,
+            "selected_scene_template_ids": [
+                scene["template_id"] for scene in scenes
+            ],
+        }
+    )
+
+    assert len(recipes) == 4
+    assert [recipe.avatar_code for recipe in recipes[:2]] == [avatars[0]] * 2
+    assert [recipe.scene_template_id for recipe in recipes[:2]] == [
+        scenes[0]["template_id"],
+        scenes[1]["template_id"],
+    ]
+    assert all(recipe.camera_preset_code for recipe in recipes)
+
+
+def test_treatment_request_carries_the_selected_recipe_tuple():
+    scan = _scan("product-a", approved_copy=True)
+    snapshot = service._task_snapshot(scan)
+    snapshot["treatment_template"]["format"] = "CINEMATIC"
+    snapshot["resolved_authority"]["selection"] = {
+        "selection_id": "selection-approved",
+        "status": "APPROVED",
+        "selected_avatar_codes": [
+            row["avatar_code"] for row in avatar_registry.list_pool()[:2]
+        ],
+        "selected_scene_template_ids": [
+            row["template_id"]
+            for row in creative_scene_prompt_service.library_templates()[:2]
+        ],
+    }
+    task = {
+        "task_id": "recipe-task",
+        "product_id": "product-a",
+        "snapshot": snapshot,
+    }
+    recipe = service._selection_recipe_grid(
+        snapshot["resolved_authority"]["selection"]
+    )[1]
+
+    request = service._treatment_request_from_snapshot(
+        task,
+        created_by="factory-test",
+        recipe=recipe,
+    )
+
+    assert request.avatar_code == recipe.avatar_code
+    assert request.scene_template_id == recipe.scene_template_id
 
 def test_target_capacity_uses_schema_derived_variation_group_cap():
     reuse_cap = service.canonical_same_dialogue_reuse_cap()

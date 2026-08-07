@@ -29,6 +29,8 @@ from agent.models.creative_production import (
 )
 from agent.services import avatar_registry
 from agent.services import copy_rotation_service
+from agent.services import creative_recipe_service
+from agent.services import creative_scene_prompt_service
 from agent.services import creative_treatment_service as treatment_service
 from agent.services import poster_recipe_service
 from agent.services import video_models
@@ -1762,6 +1764,23 @@ def _selection_avatar_codes(selection: dict[str, Any] | None) -> list[str]:
     return _unique(codes)
 
 
+def _selection_scene_template_ids(selection: dict[str, Any] | None) -> list[str]:
+    """The product's diverse scene picks with a single-pick fallback."""
+    if not selection:
+        return []
+    scene_ids = [
+        str(value).strip()
+        for value in (
+            _loads(selection.get("selected_scene_template_ids_json"), []) or []
+        )
+        if str(value or "").strip()
+    ]
+    if not scene_ids:
+        single = str(selection.get("selected_scene_template_id") or "").strip()
+        scene_ids = [single] if single else []
+    return _unique(scene_ids)
+
+
 async def _load_approved_pools(plan: dict[str, Any]) -> dict[str, Any]:
     pool = _loads(plan.get("pool_snapshot_json"), {})
     product_ids = _loads(plan.get("product_scope_json"), [])
@@ -2156,6 +2175,38 @@ def _scene_variants(
                 ),
             }
         )
+    selection = approved["creative_selections"].get(product_id)
+    selected_scene_ids = _selection_scene_template_ids(selection)
+    if not selected_scene_ids:
+        return variants
+    templates_by_id = {
+        str(template.get("template_id")): template
+        for template in creative_scene_prompt_service.library_templates()
+        if template.get("template_id")
+    }
+    selected_templates = [
+        templates_by_id[scene_id]
+        for scene_id in selected_scene_ids
+        if scene_id in templates_by_id
+    ]
+    if not selected_templates:
+        # Keep the existing strategy authority if an approved selection's scene
+        # ids have drifted out of the current library; the recipe service applies
+        # the same fail-soft policy for a drifted saved plan.
+        return variants
+    rotated: list[dict[str, str]] = []
+    for index, template in enumerate(selected_templates):
+        base = dict(variants[index % len(variants)])
+        rotated.append(
+            {
+                **base,
+                "scene_template_id": str(template["template_id"]),
+                "camera_preset_code": creative_recipe_service.camera_for_variant(
+                    template.get("variant")
+                ),
+            }
+        )
+    return rotated
     return variants
 
 

@@ -12,8 +12,10 @@ from agent.models.creative_production import (
 )
 from agent.services import creative_production_compile_service as compiler
 from agent.services import creative_production_plan_service as plans
+from agent.services import creative_scene_prompt_service
 from agent.services import creative_production_scheduler_service as scheduler
 from agent.services import creative_treatment_service
+from agent.services.scene_strategy_library import resolve_scene_strategy
 
 
 def _projection(treatment_id: str = "treatment-1") -> dict:
@@ -314,6 +316,28 @@ def test_video_dimensions_are_one_row_per_treatment_not_cartesian() -> None:
     assert not blockers
     assert rows[0]["treatment_id"] == "treatment-1"
     assert rows[0]["creative_treatment"]["shot_grammar"]
+
+
+def test_selected_scene_templates_rotate_strategy_variants_and_derive_camera():
+    templates = creative_scene_prompt_service.library_templates()[:2]
+    strategy = resolve_scene_strategy({"product_type": "spice seasoning"})
+    approved = {
+        "scene_strategies": {"product-1": strategy},
+        "creative_selections": {
+            "product-1": {
+                "selected_scene_template_ids_json": json.dumps(
+                    [template["template_id"] for template in templates]
+                )
+            }
+        },
+    }
+
+    variants = plans._scene_variants(approved, "product-1")
+
+    assert [variant["scene_template_id"] for variant in variants] == [
+        template["template_id"] for template in templates
+    ]
+    assert all(variant["camera_preset_code"] for variant in variants)
 
 
 @pytest.mark.asyncio
