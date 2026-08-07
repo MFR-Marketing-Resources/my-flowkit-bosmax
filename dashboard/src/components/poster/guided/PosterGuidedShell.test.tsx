@@ -18,6 +18,7 @@ const { TEST_PRODUCT, RECIPE } = vi.hoisted(() => ({
 		product_display_name: "Minyak Warisan Tok",
 		product_short_name: "Minyak Warisan",
 		category: "Traditional",
+		image_url: "https://example.test/minyak-warisan.png",
 	},
 	RECIPE: {
 		recipe_id: "product_hero_night_routine",
@@ -92,6 +93,36 @@ vi.mock("../../../api/imgFactory", () => ({
 			created_at: "2026-07-10T00:00:00Z",
 		},
 	]),
+	startImgGeneration: vi.fn().mockResolvedValue({ job_id: "job-guided-1" }),
+	pollImgGenerationJob: vi.fn().mockResolvedValue({
+		status: "DONE",
+		media_id: "scene-generated-1",
+		url: "/api/flow/retrieved/scene-generated-1",
+	}),
+}));
+
+vi.mock("../../../api/exactProductOutput", () => ({
+	resolveExactGenerationGate: vi.fn().mockResolvedValue({
+		mode: "standard",
+		policy: {
+			product_id: "prod-1",
+			exact_product_composite_required: false,
+		},
+	}),
+	buildExactSceneOnlyPrompt: vi.fn(),
+}));
+
+vi.mock("../../../api/posterPromptDraft", () => ({
+	createPosterPromptDraft: vi.fn().mockResolvedValue({
+		product_id: "prod-1",
+		poster_status: "POSTER_READY",
+		prompt_package_status: "DRAFT_READY",
+		generation_allowed: true,
+		production_allowed: true,
+		poster_prompt: "clean scene prompt from approved poster copy",
+		negative_prompt: "no rendered marketing text",
+	}),
+	formatPosterPromptDraftError: vi.fn(),
 }));
 
 vi.mock("../../../api/posterRecipes", () => ({
@@ -254,7 +285,16 @@ vi.mock("../../../api/posterCopySets", () => {
 	};
 });
 
-import { fetchImageArtifacts } from "../../../api/imgFactory";
+import {
+	fetchImageArtifacts,
+	pollImgGenerationJob,
+	startImgGeneration,
+} from "../../../api/imgFactory";
+import {
+	buildExactSceneOnlyPrompt,
+	resolveExactGenerationGate,
+} from "../../../api/exactProductOutput";
+import { createPosterPromptDraft } from "../../../api/posterPromptDraft";
 import {
 	approvePosterCopySet,
 	composePoster,
@@ -629,7 +669,7 @@ describe("PosterGuidedShell closure", () => {
 		expect(screen.getByTestId("poster-scene-bg-input")).not.toBeVisible();
 	});
 
-	it("scene picker shows empty state and a retry path on failure", async () => {
+	it("scene step keeps zero-artifact flow self-contained and requires confirmation", async () => {
 		vi.mocked(fetchImageArtifacts).mockResolvedValueOnce([]);
 		renderShell();
 		await driveToApproved();
@@ -640,16 +680,35 @@ describe("PosterGuidedShell closure", () => {
 			),
 		);
 		expect(await screen.findByTestId("poster-scene-empty")).toBeInTheDocument();
-		const imgLink = screen.getByTestId("poster-scene-open-img");
-		expect(imgLink).toHaveAttribute(
-			"href",
-			"/assets/img-fastlane?product_id=prod-1",
-		);
+		expect(screen.getByTestId("poster-generate-scene")).toBeInTheDocument();
+		expect(screen.queryByTestId("poster-scene-open-img")).toBeNull();
 		expect(screen.getByTestId("poster-scene-refresh")).toBeInTheDocument();
 		expect(
 			(screen.getByTestId("poster-guided-continue") as HTMLButtonElement)
 				.disabled,
 		).toBe(true);
+		fireEvent.click(screen.getByTestId("poster-generate-scene"));
+		expect(startImgGeneration).not.toHaveBeenCalled();
+		expect(
+			(screen.getByTestId("poster-generate-scene-credit-confirm") as HTMLButtonElement)
+				.disabled,
+		).toBe(true);
+		fireEvent.click(screen.getByTestId("poster-generate-scene-credit-checkbox"));
+		fireEvent.click(screen.getByTestId("poster-generate-scene-credit-confirm"));
+		await waitFor(() => expect(createPosterPromptDraft).toHaveBeenCalled());
+		await waitFor(() => expect(resolveExactGenerationGate).toHaveBeenCalledWith("prod-1"));
+		await waitFor(() => expect(startImgGeneration).toHaveBeenCalledTimes(1));
+		expect(vi.mocked(startImgGeneration).mock.lastCall?.[0]).toMatchObject({
+			prompt: "clean scene prompt from approved poster copy",
+			aspect: "9:16",
+			count: 1,
+		});
+		expect(vi.mocked(startImgGeneration).mock.lastCall?.[0].refs).toBeTruthy();
+		await waitFor(() => expect(pollImgGenerationJob).toHaveBeenCalledWith("job-guided-1"));
+		expect(
+			(screen.getByTestId("poster-guided-continue") as HTMLButtonElement)
+				.disabled,
+		).toBe(false);
 		// Failure → visible error + retry re-fetches.
 		vi.mocked(fetchImageArtifacts).mockRejectedValueOnce(new Error("boom"));
 		fireEvent.click(screen.getByTestId("poster-guided-step-visual"));
@@ -661,6 +720,105 @@ describe("PosterGuidedShell closure", () => {
 		await screen.findByRole("button", {
 			name: "Poster scene visual combobox",
 		});
+	});
+
+	it("exact-product scene generation is scene-only, then composes the canonical output", async () => {
+		vi.mocked(fetchImageArtifacts).mockResolvedValueOnce([]);
+		vi.mocked(resolveExactGenerationGate).mockResolvedValueOnce({
+			mode: "exact",
+			policy: {
+				product_id: "prod-1",
+				exact_product_composite_required: true,
+				canonical_valid: true,
+			},
+		});
+		vi.mocked(buildExactSceneOnlyPrompt).mockResolvedValueOnce({
+			product_id: "prod-1",
+			exact_product_composite_required: true,
+			prompt: "exact scene-only prompt",
+			send_product_reference_to_flow: false,
+		});
+		renderShell();
+		await driveToApproved();
+		fireEvent.click(screen.getByTestId("poster-guided-continue"));
+		fireEvent.click(
+			await screen.findByTestId(
+				"poster-visual-card-product_hero_night_routine",
+			),
+		);
+		fireEvent.click(screen.getByTestId("poster-generate-scene"));
+		fireEvent.click(screen.getByTestId("poster-generate-scene-credit-checkbox"));
+		fireEvent.click(screen.getByTestId("poster-generate-scene-credit-confirm"));
+
+		await waitFor(() => expect(startImgGeneration).toHaveBeenCalledTimes(1));
+		expect(vi.mocked(startImgGeneration).mock.lastCall?.[0]).toMatchObject({
+			prompt: "exact scene-only prompt",
+			aspect: "9:16",
+			count: 1,
+		});
+		expect(vi.mocked(startImgGeneration).mock.lastCall?.[0].refs).toBeUndefined();
+		fireEvent.click(await screen.findByTestId("poster-guided-continue"));
+		fireEvent.click(await screen.findByTestId("poster-compose"));
+		await waitFor(() => expect(composePoster).toHaveBeenCalled());
+		expect(vi.mocked(composePoster).mock.lastCall?.[0]).toMatchObject({
+			background_media_id: "scene-generated-1",
+		});
+	});
+
+	it.each(["FAILED", "SUBMITTED"])(
+		"does not unlock compose when the one-door job is %s",
+		async (status) => {
+			vi.mocked(fetchImageArtifacts).mockResolvedValueOnce([]);
+			vi.mocked(pollImgGenerationJob).mockResolvedValueOnce({
+				status,
+				error: status === "FAILED" ? "provider failed" : undefined,
+			});
+			renderShell();
+			await driveToApproved();
+			fireEvent.click(screen.getByTestId("poster-guided-continue"));
+			fireEvent.click(
+				await screen.findByTestId(
+					"poster-visual-card-product_hero_night_routine",
+				),
+			);
+			fireEvent.click(screen.getByTestId("poster-generate-scene"));
+			fireEvent.click(screen.getByTestId("poster-generate-scene-credit-checkbox"));
+			fireEvent.click(screen.getByTestId("poster-generate-scene-credit-confirm"));
+			await screen.findByTestId("poster-scene-generation-error");
+			expect(
+				(screen.getByTestId("poster-guided-continue") as HTMLButtonElement)
+					.disabled,
+			).toBe(true);
+			expect(composePoster).not.toHaveBeenCalled();
+			cleanup();
+		},
+	);
+
+	it("does not spend generation credits when the prompt package is blocked", async () => {
+		vi.mocked(fetchImageArtifacts).mockResolvedValueOnce([]);
+		vi.mocked(createPosterPromptDraft).mockResolvedValueOnce({
+			product_id: "prod-1",
+			poster_status: "POSTER_BLOCKED",
+			prompt_package_status: "BLOCKED",
+			generation_allowed: false,
+			production_allowed: false,
+			blocked_reasons: ["POSTER_BLOCKED"],
+			poster_prompt: "",
+		} as never);
+		renderShell();
+		await driveToApproved();
+		fireEvent.click(screen.getByTestId("poster-guided-continue"));
+		fireEvent.click(
+			await screen.findByTestId(
+				"poster-visual-card-product_hero_night_routine",
+			),
+		);
+		fireEvent.click(screen.getByTestId("poster-generate-scene"));
+		fireEvent.click(screen.getByTestId("poster-generate-scene-credit-checkbox"));
+		fireEvent.click(screen.getByTestId("poster-generate-scene-credit-confirm"));
+		await screen.findByTestId("poster-scene-generation-error");
+		expect(startImgGeneration).not.toHaveBeenCalled();
+		expect(resolveExactGenerationGate).not.toHaveBeenCalled();
 	});
 
 	it("readiness failure is visible and friendly", async () => {
