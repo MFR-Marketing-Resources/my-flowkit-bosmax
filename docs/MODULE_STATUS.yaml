@@ -162,9 +162,11 @@ domains:
       - agent/services/product_treatment_factory_service.py
       - agent/api/product_treatment_factory.py
       - scripts/universal-product-treatment-factory-rehearsal.py
+      - scripts/b3-creative-config-backfill.py
       - tests/unit/test_product_treatment_factory_migration.py
       - tests/unit/test_product_treatment_template_service.py
       - tests/unit/test_product_treatment_factory_service.py
+      - tests/unit/test_b3_creative_config_backfill.py
       - tests/unit/test_universal_product_treatment_factory_rehearsal.py
       - tests/api/test_product_treatment_factory_api.py
       - dashboard/src/api/productTreatmentFactory.ts

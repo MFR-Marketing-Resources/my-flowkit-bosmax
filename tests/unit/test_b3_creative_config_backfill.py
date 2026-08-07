@@ -1,0 +1,42 @@
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+
+
+_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "b3-creative-config-backfill.py"
+_SPEC = importlib.util.spec_from_file_location("b3_creative_config_backfill", _SCRIPT)
+assert _SPEC is not None and _SPEC.loader is not None
+_MODULE = importlib.util.module_from_spec(_SPEC)
+sys.modules[_SPEC.name] = _MODULE
+_SPEC.loader.exec_module(_MODULE)
+
+RecipeTuple = _MODULE.RecipeTuple
+select_recipe_tuple = _MODULE.select_recipe_tuple
+
+
+def test_select_recipe_tuple_derives_camera_from_scene() -> None:
+    selection = {
+        "selected_avatar_codes_json": '["AVATAR_A", "AVATAR_B"]',
+        "selected_scene_template_ids_json": '["SCN-01", "SCN-05"]',
+        "selected_camera_preset_codes_json": '["WRONG_CALLER_CAMERA"]',
+    }
+    tuple_value, reason = select_recipe_tuple(
+        selection,
+        {"SCN-01": {"template_id": "SCN-01", "variant": "Variation 1 - Present"}},
+    )
+    assert reason is None
+    assert tuple_value == RecipeTuple("AVATAR_A", "SCN-01", "BODY_A")
+
+
+def test_select_recipe_tuple_fails_closed_for_missing_avatar_or_scene() -> None:
+    tuple_value, reason = select_recipe_tuple(
+        {
+            "selected_avatar_codes_json": "[]",
+            "selected_scene_template_ids_json": '["SCN-01"]',
+        },
+        {"SCN-01": {"template_id": "SCN-01", "variant": "Variation 1 - Present"}},
+    )
+    assert tuple_value is None
+    assert reason == "SELECTION_TUPLE_INCOMPLETE"
