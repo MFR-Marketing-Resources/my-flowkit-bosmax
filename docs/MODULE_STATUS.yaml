@@ -8,6 +8,9 @@ domains:
       - docs/agent-instructions/BOSMAX_AVATAR_REGISTRY_AGENT_INSTRUCTION.md
       - .gitignore
       - .ai/decisions/ADR-008-canonical-prompt-compiler-authority.md
+      - .ai/projects/README.md
+      - .ai/projects/FACELESS_VIDEO_BUILD_BRIEF.md
+      - .ai/projects/MONTAGE_BUILD_BRIEF.md
       - docs/authority/working/WORKSPACE_GENERATION_PACKAGE_AND_HANDOFF_BANK_PLAN_v0_1.md
       - package.json
       - package-lock.json
