@@ -1,5 +1,6 @@
 // Montage API — plan, durable runs, M-04 authorize-generation, readiness, gated assemble.
 import { getAPI, postAPI } from "./client";
+import type { VideoCapabilityMatrix } from "../utils/videoCapability";
 
 export interface MontageScenePlan {
 	scene_id: string;
@@ -28,6 +29,8 @@ export interface MontagePlanResponse {
 	assembly_path: string;
 	credit_spend: boolean;
 	execution_supported?: boolean;
+	model: string;
+	duration_seconds: number;
 }
 
 export interface MontageSceneJob {
@@ -135,12 +138,18 @@ export async function fetchMontagePolicies(): Promise<{
 	return getAPI("/api/montage/policies");
 }
 
+export async function fetchMontageVideoCapability(): Promise<VideoCapabilityMatrix> {
+	return getAPI("/api/flow/video-capability-matrix");
+}
+
 export async function createMontagePlan(input: {
 	product_id: string;
 	hook_id?: string;
 	background_id?: string;
 	product_media_id?: string | null;
 	default_policy?: string;
+	model: string;
+	duration_seconds: number;
 }): Promise<MontagePlanResponse> {
 	return postAPI("/api/montage/plan", {
 		product_id: input.product_id,
@@ -148,6 +157,8 @@ export async function createMontagePlan(input: {
 		background_id: input.background_id ?? "AUTO",
 		product_media_id: input.product_media_id ?? null,
 		default_policy: input.default_policy ?? "PRODUCT_ANCHOR",
+		model: input.model,
+		duration_seconds: input.duration_seconds,
 		beats: [],
 	});
 }
@@ -159,6 +170,8 @@ export async function executeMontageScenes(input: {
 	product_media_id?: string | null;
 	default_policy?: string;
 	scene_context_override?: string | null;
+	model: string;
+	duration_seconds: number;
 }): Promise<MontageExecuteResponse> {
 	return postAPI("/api/montage/execute-scenes", {
 		product_id: input.product_id,
@@ -169,6 +182,8 @@ export async function executeMontageScenes(input: {
 		beats: [],
 		copy_fallback_confirmed: true,
 		scene_context_override: input.scene_context_override ?? null,
+		model: input.model,
+		duration_seconds: input.duration_seconds,
 		allow_live_generate: false,
 	});
 }
@@ -181,8 +196,8 @@ export async function createMontageRun(input: {
 	product_media_id?: string | null;
 	default_policy?: string;
 	scene_context_override?: string | null;
-	model?: string;
-	duration_seconds?: number;
+	model: string;
+	duration_seconds: number;
 }): Promise<MontageRunResponse> {
 	return postAPI("/api/montage/runs", {
 		product_id: input.product_id,
@@ -194,8 +209,8 @@ export async function createMontageRun(input: {
 		copy_fallback_confirmed: true,
 		scene_context_override: input.scene_context_override ?? null,
 		allow_live_generate: false,
-		model: input.model ?? "Veo 3.1 - Lite",
-		duration_seconds: input.duration_seconds ?? 8,
+		model: input.model,
+		duration_seconds: input.duration_seconds,
 	});
 }
 
@@ -239,6 +254,7 @@ export async function authorizeMontageGeneration(
 	input: {
 		confirm_credit_burn: boolean;
 		expected_video_generations: number;
+		expected_provider_operations: number;
 		dry_run?: boolean;
 	},
 ): Promise<MontageAuthorizeGenerationResponse> {
@@ -247,6 +263,7 @@ export async function authorizeMontageGeneration(
 		{
 			confirm_credit_burn: input.confirm_credit_burn,
 			expected_video_generations: input.expected_video_generations,
+			expected_provider_operations: input.expected_provider_operations,
 			dry_run: input.dry_run ?? true,
 		},
 	);
@@ -264,10 +281,25 @@ export async function assembleMontageRunDryRun(
 	runId: string,
 	jobId = "montage-discrete-run",
 ): Promise<MontageAssembleResponse> {
-	return postAPI(`/api/montage/runs/${encodeURIComponent(runId)}/assemble`, {
+	return assembleMontageRun(runId, {
 		job_id: jobId,
 		dry_run: true,
 		confirm_live_credit_burn: false,
+	});
+}
+
+export async function assembleMontageRun(
+	runId: string,
+	input: {
+		job_id?: string;
+		dry_run: boolean;
+		confirm_live_credit_burn: boolean;
+	},
+): Promise<MontageAssembleResponse> {
+	return postAPI(`/api/montage/runs/${encodeURIComponent(runId)}/assemble`, {
+		job_id: input.job_id ?? "montage-discrete-run",
+		dry_run: input.dry_run,
+		confirm_live_credit_burn: input.confirm_live_credit_burn,
 	});
 }
 

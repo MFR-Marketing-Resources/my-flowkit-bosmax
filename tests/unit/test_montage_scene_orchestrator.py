@@ -35,10 +35,11 @@ async def test_image_first_calls_package_factory_with_f2v_start_frame() -> None:
         reference_media_ids=("sf1",),
     )
     pkg_factory = AsyncMock(
-        return_value={
-            "workspace_execution_package_id": "wep-1",
-            "prompt_text": "hello",
-        }
+            return_value={
+                "workspace_execution_package_id": "wep-1",
+                "prompt_text": "hello",
+                "execution_allowed": True,
+            }
     )
     gen = AsyncMock(return_value={"job_id": "job-9", "media_id": "clip-9"})
     state = await execute_scene_plan(
@@ -46,6 +47,8 @@ async def test_image_first_calls_package_factory_with_f2v_start_frame() -> None:
         product_id="p1",
         package_factory=pkg_factory,
         generate_fn=gen,
+        model="Veo 3.1 - Lite",
+        duration_seconds=8,
     )
     assert state.status == "VIDEO_READY"
     assert state.workspace_execution_package_id == "wep-1"
@@ -64,8 +67,18 @@ async def test_orchestrate_full_story_calls_package_per_scene() -> None:
     ]
     pkg_factory = AsyncMock(
         side_effect=[
-            {"workspace_execution_package_id": "wep-a", "prompt_text": "a"},
-            {"workspace_execution_package_id": "wep-b", "prompt_text": "b"},
+            {
+                "workspace_execution_package_id": "wep-a",
+                "prompt_text": "a",
+                "execution_allowed": True,
+                "asset_slots": [{"slot_key": "start_frame", "resolved_asset": {"download_url": "https://cdn.example/a.png"}}],
+            },
+            {
+                "workspace_execution_package_id": "wep-b",
+                "prompt_text": "b",
+                "execution_allowed": True,
+                "asset_slots": [{"slot_key": "start_frame", "resolved_asset": {"download_url": "https://cdn.example/b.png"}}],
+            },
         ]
     )
     report = await orchestrate_montage_scenes(
@@ -74,6 +87,8 @@ async def test_orchestrate_full_story_calls_package_per_scene() -> None:
         package_factory=pkg_factory,
         product_media_id="pm1",
         default_policy=SceneReferencePolicy.PRODUCT_ANCHOR,
+        model="Veo 3.1 - Lite",
+        duration_seconds=8,
     )
     assert report.ok is True
     assert len(report.scenes) == 2
@@ -101,6 +116,6 @@ async def test_image_first_blocked_without_frame_or_image_fn() -> None:
     state = await execute_scene_plan(
         plan, product_id="p1", package_factory=pkg_factory
     )
-    assert state.status == "BLOCKED"
+    assert state.status == "IMAGE_PENDING"
     assert state.error_code == "ERR_MONTAGE_IMAGE_REQUIRED"
     pkg_factory.assert_not_awaited()

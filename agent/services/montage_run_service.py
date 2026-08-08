@@ -35,6 +35,29 @@ ITEM_TYPE = "MONTAGE_SCENE"
 PackageFactory = Callable[..., Awaitable[dict[str, Any]]]
 
 
+def _resolve_montage_single_settings(
+    model: str | None,
+    duration_seconds: int | None,
+) -> tuple[str, int]:
+    """Resolve the operator tuple through the shared capability authority."""
+    model_label = str(model or "").strip()
+    try:
+        duration = int(duration_seconds) if duration_seconds is not None else 0
+    except (TypeError, ValueError) as exc:
+        raise ValueError("ERR_MONTAGE_MODEL_DURATION_REQUIRED") from exc
+    if not model_label or duration <= 0:
+        raise ValueError("ERR_MONTAGE_MODEL_DURATION_REQUIRED")
+
+    from agent.services import video_capability_matrix
+
+    valid, code = video_capability_matrix.validate_single(
+        "GOOGLE_FLOW", model_label, duration
+    )
+    if not valid:
+        raise ValueError(f"ERR_MONTAGE_{code}")
+    return model_label, duration
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -62,8 +85,8 @@ async def create_montage_discrete_run(
     copy_fallback_confirmed: bool = True,
     hook_id: str = "AUTO",
     background_id: str = "AUTO",
-    model: str = "Veo 3.1 - Lite",
-    duration_seconds: int = 8,
+    model: str | None = None,
+    duration_seconds: int | None = None,
 ) -> dict[str, Any]:
     """Orchestrate packages and persist a durable run + per-scene jobs."""
     pid = str(product_id or "").strip()
@@ -86,21 +109,15 @@ async def create_montage_discrete_run(
     bg_label = str(bg_res.get("display_label") or resolved_bg_id)
 
     context_bits = [
-        f"HOOK: {hook_label} (selected={hook_id}; resolved={resolved_hook_id}; {hook_res.get('resolution')})",
-        f"BACKGROUND: {bg_label} (selected={background_id}; resolved={resolved_bg_id}; {bg_res.get('resolution')})",
+        f"HOOK: {hook_label} (resolved={resolved_hook_id}; {hook_res.get('resolution')})",
+        f"BACKGROUND: {bg_label} (resolved={resolved_bg_id}; {bg_res.get('resolution')})",
         "Montage discrete clips — one short SINGLE clip per scene; no native extend.",
     ]
     if scene_context_override:
         context_bits.append(str(scene_context_override).strip())
     composed_context = "\n".join(context_bits)
 
-    model_label = str(model or "").strip() or "Veo 3.1 - Lite"
-    try:
-        dur = int(duration_seconds)
-    except (TypeError, ValueError):
-        dur = 8
-    if dur <= 0:
-        dur = 8
+    model_label, dur = _resolve_montage_single_settings(model, duration_seconds)
 
     report = await orchestrate_montage_scenes(
         product_id=pid,
@@ -302,6 +319,24 @@ _TERMINAL_NO_GEN = frozenset(
 )
 
 
+def _has_transportable_plate(scene: dict[str, Any]) -> bool:
+    if scene.get("image_media_id"):
+        return True
+    snapshot = scene.get("start_asset_snapshot")
+    if not isinstance(snapshot, dict):
+        return False
+    return bool(
+        snapshot.get("mediaId")
+        or snapshot.get("media_id")
+        or snapshot.get("downloadUrl")
+        or snapshot.get("download_url")
+        or snapshot.get("previewUrl")
+        or snapshot.get("preview_url")
+        or snapshot.get("localFilePath")
+        or snapshot.get("local_file_path")
+    )
+
+
 def estimate_montage_generation_from_scenes(
     scenes: Sequence[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -316,29 +351,29 @@ def estimate_montage_generation_from_scenes(
         status = str(s.get("status") or "").upper()
         if status in _TERMINAL_NO_GEN:
             continue
-        # Image ops: IMAGE_FIRST-ish without image_media_id and without package plate
+        # Image ops: IMAGE_FIRST-ish without a bound/transportable plate.
         needs_image = (
-            not s.get("image_media_id")
-            and str(s.get("route") or "").upper() == "IMAGE_FIRST"
-            and not s.get("start_asset_snapshot")
-            and status not in ("PACKAGE_READY", "IMAGE_BOUND", "IMAGE_READY", "RESULT_BOUND", "VIDEO_READY")
+            str(s.get("route") or "").upper() == "IMAGE_FIRST"
+            and not _has_transportable_plate(s)
+            and status not in _TERMINAL_NO_GEN
         )
         if needs_image:
             pending_image.append(s)
         if s.get("video_media_id"):
             continue
-        if not s.get("workspace_execution_package_id"):
-            # still may need package+video later; count video only when package exists
+        if status in _TERMINAL_NO_GEN:
             continue
+        # A missing package is still a pending video operation once the
+        # package/plate boundary is repaired; do not undercount it.
         pending_video.append(s)
     nv = len(pending_video)
     ni = len(pending_image)
-    parts = []
-    if ni:
-        parts.append(f"{ni} pending scene image(s)")
-    parts.append(f"{nv} video generation(s)")
-    summary = f"{nv} scenes → {nv} video generations" if ni == 0 else (
-        f"{ni} pending scene images + {nv} pending scene videos"
+    total = ni + nv
+    summary = (
+        f"{ni} pending scene image(s) + {nv} pending scene video(s)"
+        f" = {total} provider operation(s)"
+        if ni
+        else f"{nv} pending scene video(s) = {total} provider operation(s)"
     )
     return {
         "expected_video_generations": nv,
@@ -368,6 +403,7 @@ async def authorize_montage_run_generation(
     *,
     confirm_credit_burn: bool,
     expected_video_generations: int,
+    expected_provider_operations: int | None = None,
     dry_run: bool = True,
     generate_fn: Optional[Callable[..., Awaitable[dict[str, Any]]]] = None,
     poll_fn: Optional[Callable[..., Awaitable[dict[str, Any]]]] = None,
@@ -386,6 +422,7 @@ async def authorize_montage_run_generation(
 
     estimate = await estimate_montage_run_generation(run_id)
     needed = int(estimate["expected_video_generations"])
+    needed_provider = int(estimate["expected_provider_operations"])
     try:
         claimed = int(expected_video_generations)
     except (TypeError, ValueError) as exc:
@@ -393,6 +430,17 @@ async def authorize_montage_run_generation(
     if claimed != needed:
         raise ValueError(
             f"ERR_MONTAGE_CREDIT_COUNT_MISMATCH: claimed={claimed} needed={needed}"
+        )
+    if expected_provider_operations is None:
+        raise ValueError("ERR_MONTAGE_PROVIDER_COUNT_REQUIRED")
+    try:
+        claimed_provider = int(expected_provider_operations)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("ERR_MONTAGE_PROVIDER_COUNT_INVALID") from exc
+    if claimed_provider != needed_provider:
+        raise ValueError(
+            "ERR_MONTAGE_PROVIDER_COUNT_MISMATCH: "
+            f"claimed={claimed_provider} needed={needed_provider}"
         )
 
     if dry_run:
@@ -412,14 +460,18 @@ async def authorize_montage_run_generation(
     if generate_fn is None:
         raise ValueError("ERR_MONTAGE_GENERATE_BOUNDARY_REQUIRED")
 
+    if int(estimate.get("expected_image_operations") or 0) > 0:
+        raise ValueError(
+            "ERR_MONTAGE_IMAGE_BOUNDARY_REQUIRED: bind or prepare every scene "
+            "image plate before video dispatch"
+        )
+
     state = await get_montage_discrete_run(run_id)
     cfg = state.get("config") or {}
     product_id = str(cfg.get("product_id") or state.get("product_id") or "").strip()
-    model = str(cfg.get("model") or "Veo 3.1 - Lite")
-    try:
-        duration_s = int(cfg.get("duration_seconds") or 8)
-    except (TypeError, ValueError):
-        duration_s = 8
+    model, duration_s = _resolve_montage_single_settings(
+        cfg.get("model"), cfg.get("duration_seconds")
+    )
 
     await crud.update_bulk_generation_run(
         run_id, status="GENERATING", updated_at=_now()
@@ -481,6 +533,12 @@ async def authorize_montage_run_generation(
             continue
 
         mode = str(scene.get("transport_mode") or "F2V")
+        if not scene.get("workspace_execution_package_id"):
+            raise ValueError(
+                f"ERR_MONTAGE_PACKAGE_REQUIRED:{scene_id}"
+            )
+        if not _has_transportable_plate(scene) and str(scene.get("route") or "").upper() == "IMAGE_FIRST":
+            raise ValueError(f"ERR_MONTAGE_IMAGE_REQUIRED:{scene_id}")
         prompt = str(
             scene.get("package_prompt")
             or scene.get("detail")
@@ -673,14 +731,8 @@ def scene_jobs_to_readiness(
             "VIDEO_READY",
             "GENERATE_RETURNED",
         )
-        # Once a video result is bound, the image plate is satisfied for assembly
-        # (image may have been product-start-frame without a separate image job).
-        image_ready = (
-            bool(image_id)
-            or video_ready
-            or status in ("IMAGE_BOUND", "IMAGE_READY", "PACKAGE_READY", "RESULT_BOUND", "VIDEO_READY")
-        )
-        pm = product_media_id or s.get("product_media_id") or "product-truth-bound"
+        image_ready = bool(image_id) or _has_transportable_plate(s)
+        pm = s.get("product_media_id") or product_media_id
         out.append(
             MontageSceneReadiness(
                 scene_id=str(s.get("scene_id") or ""),
@@ -729,24 +781,58 @@ async def assemble_from_montage_run(
     """M-03 path from durable run: readiness → gated concat."""
     state = await get_montage_discrete_run(run_id)
     cfg = state.get("config") or {}
+    model, duration_s = _resolve_montage_single_settings(
+        cfg.get("model"), cfg.get("duration_seconds")
+    )
+    _ = model
     scenes = scene_jobs_to_readiness(
         state["scenes"], product_media_id=cfg.get("product_media_id")
     )
+    scene_count = len(scenes)
+    if scene_count <= 0:
+        raise ValueError("ERR_MONTAGE_EMPTY_PLAN")
+    requested_seconds = duration_s * scene_count
     result = await assemble_montage_discrete(
         scenes,
         concat_fn=concat_fn,
         job_id=job_id or f"montage-run-{run_id[:8]}",
+        requested_seconds=requested_seconds,
+        segment_seconds=duration_s,
         dry_run=dry_run,
     )
     result["montage_run_id"] = run_id
+    await persist_montage_assembly_result(run_id, result)
     return result
+
+
+async def persist_montage_assembly_result(
+    run_id: str, result: dict[str, Any]
+) -> dict[str, Any]:
+    """Persist final-timeline identity/status on the existing Montage run row."""
+    run = await crud.get_bulk_generation_run(run_id)
+    if not run:
+        raise ValueError("ERR_MONTAGE_RUN_NOT_FOUND")
+    config = _loads(run.get("config_json"), {})
+    config["assembly"] = result
+    concat = result.get("concat") if isinstance(result, dict) else None
+    final_status = str(
+        (concat or {}).get("status") if isinstance(concat, dict) else ""
+    ).upper()
+    status = "COMPLETE" if final_status == "COMPLETE" else "ASSEMBLY_READY"
+    await crud.update_bulk_generation_run(
+        run_id,
+        status=status,
+        config_json=json.dumps(config),
+        updated_at=_now(),
+    )
+    return config["assembly"]
 
 
 def _scene_payload(
     state: SceneJobState, *, product_media_id: Optional[str]
 ) -> dict[str, Any]:
     d = state.to_dict()
-    d["product_media_id"] = product_media_id
+    d["product_media_id"] = d.get("product_media_id") or product_media_id
     return d
 
 

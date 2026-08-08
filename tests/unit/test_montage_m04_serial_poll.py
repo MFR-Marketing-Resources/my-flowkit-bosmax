@@ -68,9 +68,12 @@ async def test_serial_poll_second_scene_waits_for_first_done() -> None:
     }
     items = _pkg_items()
     order: list[str] = []
+    ledger_statuses: list[tuple[str, str]] = []
     polls = {"job-scene-1-hook": 0}
 
     async def update_item(iid, **kw):
+        if kw.get("status"):
+            ledger_statuses.append((iid, str(kw["status"])))
         for it in items:
             if it["bulk_item_id"] == iid:
                 it.update(kw)
@@ -121,6 +124,7 @@ async def test_serial_poll_second_scene_waits_for_first_done() -> None:
             "run-serial",
             confirm_credit_burn=True,
             expected_video_generations=2,
+            expected_provider_operations=2,
             dry_run=False,
             generate_fn=gen_fn,
             poll_fn=poll_fn,
@@ -134,6 +138,12 @@ async def test_serial_poll_second_scene_waits_for_first_done() -> None:
     assert order.index("poll:job-scene-1-hook") < order.index("submit:scene-2-body")
     assert "submit:scene-2-body" in order
     assert {d["status"] for d in out["dispatched"]} == {"RESULT_BOUND"}
+    assert ledger_statuses[:3] == [
+        ("i1", "VIDEO_SUBMITTED"),
+        ("i1", "RESULT_BOUND"),
+        ("i2", "VIDEO_SUBMITTED"),
+    ]
+    assert ledger_statuses[3:] == [("i2", "RESULT_BOUND")]
 
 
 @pytest.mark.asyncio
@@ -187,6 +197,7 @@ async def test_failed_scene_stops_remaining() -> None:
             "run-fail",
             confirm_credit_burn=True,
             expected_video_generations=2,
+            expected_provider_operations=2,
             dry_run=False,
             generate_fn=gen_fn,
             poll_fn=poll_fn,

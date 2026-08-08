@@ -5,20 +5,23 @@
  * as Faceless). No local vocabulary arrays.
  *
  * Operator: Product → Hook/BG → Model+Duration → Scene Plan → Generate Montage
- * → Progress → Final Video. Backend ledger/authorize/bind/readiness/concat hidden.
+ * → Progress → Final Video. Raw backend ledger/authorize/bind/readiness controls
+ * are hidden; the gated final-video action remains visible.
  * Credit fire requires explicit count confirm.
  */
 import { useEffect, useState } from "react";
 import { useCreativeLaneSettings } from "../api/creativeLaneSettings";
-import { fetchVideoModels, type VideoModelInfo } from "../api/productionQueue";
 import {
+	assembleMontageRun,
 	assembleMontageRunDryRun,
 	authorizeMontageGeneration,
 	checkMontageRunReadiness,
 	createMontagePlan,
 	createMontageRun,
+	fetchMontageVideoCapability,
 	fetchMontageGenerationEstimate,
 	type MontageAuthorizeGenerationResponse,
+	type MontageAssembleResponse,
 	type MontageGenerationEstimate,
 	type MontagePlanResponse,
 	type MontageReadinessResponse,
@@ -32,6 +35,14 @@ import {
 } from "../components/workflow";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { Product } from "../types";
+import {
+	defaultEngine,
+	modelsForSingle,
+	resolveDurationChange,
+	resolveSingleSelection,
+	singleDurations,
+	type VideoCapabilityMatrix,
+} from "../utils/videoCapability";
 
 const selectClass =
 	"w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100";
@@ -56,15 +67,20 @@ export default function MontagePage() {
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const [hookId, setHookId] = useState("AUTO");
 	const [backgroundId, setBackgroundId] = useState("AUTO");
-	const [videoModels, setVideoModels] = useState<VideoModelInfo[]>([]);
-	const [videoModel, setVideoModel] = useState("Veo 3.1 - Lite");
-	const [clipDuration, setClipDuration] = useState(8);
+	const [capabilityMatrix, setCapabilityMatrix] =
+		useState<VideoCapabilityMatrix | null>(null);
+	const [capabilityError, setCapabilityError] = useState<string | null>(null);
+	const [videoModel, setVideoModel] = useState<string | null>(null);
+	const [clipDuration, setClipDuration] = useState<number | null>(null);
 	const [plan, setPlan] = useState<MontagePlanResponse | null>(null);
 	const [run, setRun] = useState<MontageRunResponse | null>(null);
 	const [readiness, setReadiness] = useState<MontageReadinessResponse | null>(
 		null,
 	);
 	const [assembleNote, setAssembleNote] = useState<string | null>(null);
+	const [assembleResult, setAssembleResult] =
+		useState<MontageAssembleResponse | null>(null);
+	const [finalCreditConfirm, setFinalCreditConfirm] = useState(false);
 	const [estimate, setEstimate] = useState<MontageGenerationEstimate | null>(null);
 	const [authNote, setAuthNote] = useState<string | null>(null);
 	const [creditConfirm, setCreditConfirm] = useState(false);
@@ -76,12 +92,28 @@ export default function MontagePage() {
 		void fetchProductCatalog(250, "GENERATION")
 			.then((r) => setProducts(r.items || []))
 			.catch(() => setProducts([]));
-		void fetchVideoModels()
-			.then((r) => {
-				setVideoModels(r.models || []);
-				if (r.default) setVideoModel(String(r.default));
+		void fetchMontageVideoCapability()
+			.then((matrix) => {
+				setCapabilityMatrix(matrix);
+				setCapabilityError(null);
+				const selection = resolveSingleSelection(
+					defaultEngine(matrix),
+					null,
+					null,
+				);
+				setVideoModel(selection?.model ?? null);
+				setClipDuration(selection?.durationSeconds ?? null);
 			})
-			.catch(() => setVideoModels([]));
+			.catch((err: unknown) => {
+				setCapabilityMatrix(null);
+				setVideoModel(null);
+				setClipDuration(null);
+				setCapabilityError(
+					err instanceof Error
+						? err.message
+						: "Video capability authority unavailable",
+				);
+			});
 	}, []);
 
 	const hookLabel = labelOf(settings.hook.options, hookId);
@@ -92,9 +124,18 @@ export default function MontagePage() {
 	const v4Toggle = (index: number, currentOpen: boolean) =>
 		setV4Open((prev) => ({ ...prev, [index]: !currentOpen }));
 
-	const canOperate = Boolean(selectedProduct) && settingsAvailable;
+	const engine = defaultEngine(capabilityMatrix);
+	const durationOptions = singleDurations(engine);
+	const modelOptions = modelsForSingle(engine, clipDuration ?? 0);
+	const validSelection = resolveSingleSelection(
+		engine,
+		videoModel,
+		clipDuration,
+	);
+	const canOperate =
+		Boolean(selectedProduct) && settingsAvailable && Boolean(validSelection);
 	const packagesReady = Boolean(
-		run?.scenes?.some((s) => s.workspace_execution_package_id),
+		run?.scenes?.some((scene) => scene.workspace_execution_package_id),
 	);
 	const packageCount =
 		run?.scenes?.filter((s) => s.workspace_execution_package_id).length ?? 0;
@@ -143,14 +184,20 @@ export default function MontagePage() {
 		setReadiness(null);
 		setRun(null);
 		setAssembleNote(null);
+		setAssembleResult(null);
+		setFinalCreditConfirm(false);
 		setEstimate(null);
 		setAuthNote(null);
 		setCreditConfirm(false);
 		try {
+			if (!selectedProduct || !validSelection) return;
 			const next = await createMontagePlan({
 				product_id: selectedProduct.id,
 				hook_id: hookId,
 				background_id: backgroundId,
+				product_media_id: selectedProduct.media_id ?? null,
+				model: validSelection.model,
+				duration_seconds: validSelection.durationSeconds,
 			});
 			setPlan(next);
 		} catch (err: unknown) {
@@ -166,18 +213,21 @@ export default function MontagePage() {
 		setBusy(true);
 		setError(null);
 		setAssembleNote(null);
+		setAssembleResult(null);
+		setFinalCreditConfirm(false);
 		setReadiness(null);
 		setEstimate(null);
 		setAuthNote(null);
 		setCreditConfirm(false);
 		try {
+			if (!selectedProduct || !validSelection) return;
 			const res = await createMontageRun({
 				product_id: selectedProduct.id,
 				hook_id: hookId,
 				background_id: backgroundId,
-				product_media_id: null,
-				model: videoModel,
-				duration_seconds: clipDuration,
+				product_media_id: selectedProduct.media_id ?? null,
+				model: validSelection.model,
+				duration_seconds: validSelection.durationSeconds,
 			});
 			setRun(res);
 			try {
@@ -191,6 +241,22 @@ export default function MontagePage() {
 		} finally {
 			setBusy(false);
 		}
+	};
+
+	const handleGenerateMontage = () => {
+		if (!run) {
+			void handleStartRun();
+			return;
+		}
+		if (!estimate) {
+			void handleRefreshEstimate();
+			return;
+		}
+		if (!creditConfirm) {
+			setError("Confirm the current provider-operation count before generating.");
+			return;
+		}
+		void handleAuthorize(false);
 	};
 
 
@@ -221,6 +287,9 @@ export default function MontagePage() {
 				await authorizeMontageGeneration(run.montage_run_id, {
 					confirm_credit_burn: true,
 					expected_video_generations: estimate.expected_video_generations,
+					expected_provider_operations:
+						estimate.expected_provider_operations ??
+						estimate.expected_video_generations,
 					dry_run: dryRun,
 				});
 			setAuthNote(
@@ -263,18 +332,44 @@ export default function MontagePage() {
 		}
 	};
 
-	const handleAssemble = async () => {
+	const handleAssemble = async (dryRun: boolean) => {
 		if (!run?.montage_run_id) return;
+		if (!dryRun && !finalCreditConfirm) {
+			setError("Confirm the single final-concat provider operation before building.");
+			return;
+		}
 		setBusy(true);
 		setError(null);
 		setAssembleNote(null);
+		setAssembleResult(null);
+		setFinalCreditConfirm(false);
 		try {
-			const res = await assembleMontageRunDryRun(run.montage_run_id);
+			let effectiveReadiness = readiness;
+			if (!dryRun && !effectiveReadiness) {
+				effectiveReadiness = await checkMontageRunReadiness(run.montage_run_id);
+				setReadiness(effectiveReadiness);
+			}
+			if (!dryRun && !effectiveReadiness?.ok) {
+				throw new Error(
+					effectiveReadiness?.detail ||
+						"Final Montage video is blocked until every mandatory scene clip is ready.",
+				);
+			}
+			const res = dryRun
+				? await assembleMontageRunDryRun(run.montage_run_id)
+				: await assembleMontageRun(run.montage_run_id, {
+						dry_run: false,
+						confirm_live_credit_burn: true,
+					});
+			setAssembleResult(res);
 			setAssembleNote(
 				res.ok
-					? `Assemble dry-run OK — clips: ${(res.readiness?.clip_media_ids || []).join(", ") || "none"}`
+					? dryRun
+						? `Final-timeline dry-run OK — clips: ${(res.readiness?.clip_media_ids || []).join(", ") || "none"}`
+						: "Final Montage video completed and persisted."
 					: "Assemble dry-run returned not-ok",
 			);
+			if (!dryRun) setFinalCreditConfirm(false);
 		} catch (e) {
 			setError(e instanceof Error ? e.message : String(e));
 		} finally {
@@ -327,6 +422,8 @@ export default function MontagePage() {
 								setRun(null);
 								setReadiness(null);
 								setAssembleNote(null);
+								setAssembleResult(null);
+								setFinalCreditConfirm(false);
 							}}
 						/>
 					</WorkflowStep>
@@ -401,24 +498,35 @@ export default function MontagePage() {
 						status={canOperate ? "done" : "upcoming"}
 						open={v4IsOpen(3, canOperate ? "done" : "upcoming")}
 						onToggleOpen={() => v4Toggle(3, v4IsOpen(3, canOperate ? "done" : "upcoming"))}
-						summary={`${videoModel} · ${clipDuration}s / scene`}
+						summary={
+							validSelection
+								? `${validSelection.model} · ${validSelection.durationSeconds}s / scene`
+								: "Load the canonical video capability authority"
+						}
 						helper="Discrete SINGLE clips only — final length = N × clip duration (concat)."
 					>
+						{capabilityError ? (
+							<div
+								className="mb-2 text-[11px] text-rose-300"
+								data-testid="montage-capability-unavailable"
+							>
+								Video capability authority unavailable — no local model/duration
+								fallback is offered. {capabilityError}
+							</div>
+						) : null}
 						<div className="grid gap-3 sm:grid-cols-2">
 							<label className="space-y-1">
 								<span className={labelClass}>Video model</span>
 								<select
 									className={selectClass}
-									value={videoModel}
+									value={videoModel ?? ""}
+									disabled={!engine || !modelOptions.length}
 									onChange={(e) => setVideoModel(e.target.value)}
 									data-testid="montage-model"
 								>
-									{(videoModels.length
-										? videoModels.map((m) => m.ui_label)
-										: [videoModel]
-									).map((label) => (
-										<option key={label} value={label}>
-											{label}
+									{modelOptions.map((modelOption) => (
+										<option key={modelOption.ui_label} value={modelOption.ui_label}>
+											{modelOption.ui_label}
 										</option>
 									))}
 								</select>
@@ -427,11 +535,20 @@ export default function MontagePage() {
 								<span className={labelClass}>Clip duration</span>
 								<select
 									className={selectClass}
-									value={clipDuration}
-									onChange={(e) => setClipDuration(Number(e.target.value))}
+									value={clipDuration ?? ""}
+									disabled={!engine || !durationOptions.length}
+									onChange={(e) => {
+										const next = resolveDurationChange(
+											engine,
+											videoModel,
+											Number(e.target.value),
+										);
+										setClipDuration(next?.durationSeconds ?? null);
+										setVideoModel(next?.model ?? null);
+									}}
 									data-testid="montage-duration"
 								>
-									{[4, 6, 8].map((d) => (
+									{durationOptions.map((d) => (
 										<option key={d} value={d}>
 											{d}s
 										</option>
@@ -442,11 +559,11 @@ export default function MontagePage() {
 </WorkflowStep>
 
 					<WorkflowStep
-						index={3}
+						index={4}
 						title="Plan scenes"
 						status={sPlan}
-						open={v4IsOpen(3, sPlan)}
-						onToggleOpen={() => v4Toggle(3, v4IsOpen(3, sPlan))}
+						open={v4IsOpen(4, sPlan)}
+						onToggleOpen={() => v4Toggle(4, v4IsOpen(4, sPlan))}
 						summary={
 							plan
 								? `${plan.scene_count} scenes · ${plan.assembly_path}`
@@ -480,11 +597,70 @@ export default function MontagePage() {
 					</WorkflowStep>
 
 					<WorkflowStep
-						index={4}
+						index={5}
+						title="Generate Montage"
+						status={sExec}
+						open={v4IsOpen(5, sExec)}
+						onToggleOpen={() => v4Toggle(5, v4IsOpen(5, sExec))}
+						summary={
+							run
+								? `${run.total_scenes} scene(s) · ${estimate?.summary || "operation estimate loading"}`
+								: "Prepare the durable scene run, then confirm provider operations"
+						}
+						helper="One owner action starts the durable Montage pipeline. No provider call occurs until the explicit operation confirmation is checked."
+					>
+						<button
+							type="button"
+							disabled={!canOperate || busy}
+							onClick={handleGenerateMontage}
+							className="rounded-xl border border-v4-accent/40 bg-v4-accent/15 px-4 py-2.5 text-[12px] font-bold text-v4-accent-ink hover:bg-v4-accent/25 disabled:opacity-40"
+							data-testid="montage-generate"
+						>
+							{busy
+								? "Working…"
+								: run && creditConfirm
+									? "Generate Montage (credits)"
+									: run
+										? "Refresh operation estimate"
+										: "Generate Montage"}
+						</button>
+						{estimate ? (
+							<label className="mt-3 flex items-start gap-2 text-[11px] text-slate-200">
+								<input
+									type="checkbox"
+									checked={creditConfirm}
+									onChange={(e) => setCreditConfirm(e.target.checked)}
+									data-testid="montage-credit-confirm-normal"
+									className="mt-0.5"
+								/>
+								<span>
+									Confirm {estimate.expected_provider_operations ?? estimate.expected_video_generations} provider operation(s): {estimate.expected_image_operations ?? 0} image + {estimate.expected_video_generations} video.
+								</span>
+							</label>
+						) : null}
+						{run ? (
+							<ul className="mt-3 space-y-1 text-[11px] text-slate-300" data-testid="montage-scene-progress">
+								{run.scenes.map((scene) => (
+									<li key={scene.scene_id} className="rounded border border-slate-800 px-2 py-1">
+										<span className="font-semibold text-slate-100">{scene.scene_id}</span>{" · "}{scene.status}
+										{scene.video_media_id ? " · clip ready" : ""}
+									</li>
+								))}
+							</ul>
+						) : null}
+					</WorkflowStep>
+
+					<details className="rounded-xl border border-slate-800 bg-slate-950/50 p-3" data-testid="montage-debug">
+						<summary className="cursor-pointer text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+							Debug / Advanced lifecycle
+						</summary>
+						<div className="mt-3 space-y-3">
+					<WorkflowStep
+						index={6}
 						title="Scene plan & prepare"
 						status={sExec}
-						open={v4IsOpen(4, sExec)}
-						onToggleOpen={() => v4Toggle(4, v4IsOpen(4, sExec))}
+						open={v4IsOpen(6, sExec)}
+						onToggleOpen={() => v4Toggle(6, v4IsOpen(6, sExec))}
 						summary={
 							run
 								? `${packageCount}/${run.total_scenes} packages · run ${run.montage_run_id.slice(0, 8)}`
@@ -524,11 +700,11 @@ export default function MontagePage() {
 
 
 					<WorkflowStep
-						index={5}
+						index={7}
 						title="Authorize scene generation"
 						status={sAuth}
-						open={v4IsOpen(5, sAuth)}
-						onToggleOpen={() => v4Toggle(5, v4IsOpen(5, sAuth))}
+						open={v4IsOpen(7, sAuth)}
+						onToggleOpen={() => v4Toggle(7, v4IsOpen(7, sAuth))}
 						summary={
 							estimate
 								? estimate.summary
@@ -567,8 +743,11 @@ export default function MontagePage() {
 									/>
 									<span>
 										I authorize{" "}
-										<strong>{estimate.expected_video_generations}</strong> video
-										generation(s) for this Montage run (explicit credit control).
+										<strong>
+											{estimate.expected_provider_operations ?? estimate.expected_video_generations}
+										</strong>{" "}
+										provider operation(s): {estimate.expected_image_operations ?? 0} image +{" "}
+										{estimate.expected_video_generations} video.
 									</span>
 								</label>
 								<div className="mt-3 flex flex-wrap gap-2">
@@ -605,11 +784,11 @@ export default function MontagePage() {
 					</WorkflowStep>
 
 					<WorkflowStep
-						index={6}
+						index={8}
 						title="Assembly readiness"
 						status={sReady}
-						open={v4IsOpen(6, sReady)}
-						onToggleOpen={() => v4Toggle(6, v4IsOpen(6, sReady))}
+						open={v4IsOpen(8, sReady)}
+						onToggleOpen={() => v4Toggle(8, v4IsOpen(8, sReady))}
 						summary={
 							readiness
 								? readiness.ok
@@ -647,27 +826,66 @@ export default function MontagePage() {
 						) : null}
 					</WorkflowStep>
 
+						</div>
+					</details>
+
 					<WorkflowStep
-						index={7}
+						index={9}
 						title="Final video"
 						status={sAssemble}
-						open={v4IsOpen(7, sAssemble)}
-						onToggleOpen={() => v4Toggle(7, v4IsOpen(7, sAssemble))}
+						open={v4IsOpen(9, sAssemble)}
+						onToggleOpen={() => v4Toggle(9, v4IsOpen(9, sAssemble))}
 						summary={assembleNote || "Gated concat boundary — incomplete set never calls concat"}
-						helper="M-03: readiness enforced before concat. Live credit concat remains locked."
+						helper="All mandatory scene clips are checked immediately before the existing final-timeline concat path."
 					>
 						<button
 							type="button"
 							disabled={busy || !run}
-							onClick={() => void handleAssemble()}
+							onClick={() => void handleAssemble(true)}
 							className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-[12px] font-bold text-slate-100 hover:bg-slate-800 disabled:opacity-40"
-							data-testid="montage-assemble"
+							data-testid="montage-assemble-preview"
 						>
-							Build final video (dry-run gate)
+							Preview final timeline (no spend)
+						</button>
+						<label className="mt-3 flex items-start gap-2 text-[11px] text-slate-200">
+							<input
+								type="checkbox"
+								checked={finalCreditConfirm}
+								onChange={(e) => setFinalCreditConfirm(e.target.checked)}
+								data-testid="montage-final-credit-confirm"
+								className="mt-0.5"
+							/>
+							<span>
+								Confirm one final-concat provider operation after the mandatory scene set is ready.
+						</span>
+						</label>
+						<button
+							type="button"
+							disabled={busy || !run || !finalCreditConfirm}
+							onClick={() => void handleAssemble(false)}
+							className="mt-2 rounded-xl border border-rose-700/50 bg-rose-950/40 px-4 py-2.5 text-[12px] font-bold text-rose-100 hover:bg-rose-900/40 disabled:opacity-40"
+							data-testid="montage-assemble-live"
+							title="Runs the existing final-timeline concat, polls to terminal, retrieves and persists the final video"
+						>
+							Build final video (credits)
 						</button>
 						{assembleNote ? (
 							<p className="mt-2 text-[11px] text-emerald-300" data-testid="montage-assemble-note">
 								{assembleNote}
+							</p>
+						) : null}
+						{typeof assembleResult?.concat?.final_media_id === "string" ? (
+							<a
+								href={`/api/flow/retrieved/${encodeURIComponent(String(assembleResult.concat.final_media_id))}`}
+								className="mt-3 inline-flex rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-[12px] font-bold text-emerald-200"
+								data-testid="montage-final-video"
+							>
+								Open final Montage video
+							</a>
+						) : null}
+						{typeof assembleResult?.concat?.local_path === "string" ? (
+							<p className="mt-2 text-[11px] text-slate-400">
+								Saved artifact: {String(assembleResult.concat.local_path)}
 							</p>
 						) : null}
 					</WorkflowStep>
@@ -705,49 +923,32 @@ export default function MontagePage() {
 							{ k: "Hook", v: hookLabel, mono: true },
 							{ k: "Background", v: backgroundLabel, mono: true },
 							{
-								k: "Run",
-								v: run?.montage_run_id?.slice(0, 8) || "—",
+								k: "Model",
+								v: validSelection?.model || "—",
 								mono: true,
 							},
 							{
-								k: "Packages",
-								v: packagesReady ? String(packageCount) : "0",
-								tone: packagesReady ? "good" : "muted",
-							},
-							{
-								k: "Readiness",
-								v: readiness ? (readiness.ok ? "READY" : "BLOCKED") : "—",
-								tone: readiness?.ok ? "good" : "default",
-							},
-							{
-								k: "Gen estimate",
-								v: estimate?.summary || "—",
+								k: "Duration",
+								v: validSelection ? `${validSelection.durationSeconds}s / scene` : "—",
 								mono: true,
 							},
-							{ k: "Path", v: "DISCRETE_MONTAGE", mono: true },
 							{
-								k: "Credit",
-								v: creditConfirm
-									? `CONFIRM ${estimate?.expected_video_generations ?? 0}`
-									: "locked until confirm",
-								tone: creditConfirm ? "default" : "good",
+								k: "Progress",
+								v: run ? `${run.status} · ${run.total_scenes} scenes` : "—",
+								tone: run ? "default" : "muted",
 							},
 						]}
 						queueTitle="Execution state"
 						generate={{
 							label: estimate
-								? "Confirm ops (no spend)"
-								: run
-									? "Refresh estimate"
-									: "Start discrete path",
+								? creditConfirm
+									? "Generate Montage (credits)"
+									: "Confirm provider operations"
+								: "Generate Montage",
 							disabled: !canOperate || busy,
 							loading: busy,
-							onClick: () => {
-								if (!run) void handleStartRun();
-								else if (estimate && creditConfirm) void handleAuthorize(true);
-								else void handleRefreshEstimate();
-							},
-							note: "M-04: multi-scene live fire is a separate red CTA after checkbox confirm. Cockpit never auto-burns.",
+							onClick: handleGenerateMontage,
+							note: "The operation count is explicit; no provider call is implicit.",
 						}}
 						debug={
 							<pre className="max-h-40 overflow-auto text-[10px] text-slate-400">

@@ -54,7 +54,12 @@ async def test_complete_set_calls_concat_with_clip_ids() -> None:
     scenes = [_ready("s1", "c1"), _ready("s2", "c2"), _ready("s3", "c3")]
     concat = AsyncMock(return_value={"dry_run": True, "status": "SEGMENTS_READY"})
     out = await assemble_montage_discrete(
-        scenes, concat_fn=concat, job_id="j1", dry_run=True
+        scenes,
+        concat_fn=concat,
+        job_id="j1",
+        requested_seconds=30,
+        segment_seconds=10,
+        dry_run=True,
     )
     assert out["ok"] is True
     concat.assert_awaited_once()
@@ -62,3 +67,6 @@ async def test_complete_set_calls_concat_with_clip_ids() -> None:
     assert kwargs["segment_media_ids"] == ["c1", "c2", "c3"]
     assert kwargs["dry_run"] is True
     assert len(kwargs["input_videos"]) == 3
+    assert kwargs["requested_seconds"] == 30
+    assert kwargs["segment_seconds"] == 10
+    assert kwargs["input_videos"][0]["length"] == str(10_000_000_000)

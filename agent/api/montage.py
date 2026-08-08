@@ -7,6 +7,8 @@ API paths are package-prepare + dry-run assembly.
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -59,8 +61,8 @@ class MontagePlanRequest(BaseModel):
     per_beat_policy: Optional[dict[str, str]] = None
     hook_id: str = "AUTO"
     background_id: str = "AUTO"
-    model: str = "Veo 3.1 - Lite"
-    duration_seconds: int = 8
+    model: str = Field(..., min_length=1)
+    duration_seconds: int = Field(..., gt=0)
 
 
 class MontageExecuteRequest(MontagePlanRequest):
@@ -159,6 +161,14 @@ async def montage_plan(body: MontagePlanRequest) -> dict[str, Any]:
         default_policy = parse_scene_reference_policy(body.default_policy)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    from agent.services.montage_run_service import _resolve_montage_single_settings
+
+    try:
+        model, duration_seconds = _resolve_montage_single_settings(
+            body.model, body.duration_seconds
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     beats = body.beats or _default_beats()
     plans = plan_scenes_from_story(
@@ -176,6 +186,8 @@ async def montage_plan(body: MontagePlanRequest) -> dict[str, Any]:
         "assembly_path": "DISCRETE_MONTAGE",
         "credit_spend": False,
         "execution_supported": True,
+        "model": model,
+        "duration_seconds": duration_seconds,
     }
 
 
@@ -201,6 +213,14 @@ async def montage_execute_scenes(body: MontageExecuteRequest) -> dict[str, Any]:
         default_policy = parse_scene_reference_policy(body.default_policy)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    from agent.services.montage_run_service import _resolve_montage_single_settings
+
+    try:
+        model, duration_seconds = _resolve_montage_single_settings(
+            body.model, body.duration_seconds
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     beats = body.beats or _default_beats()
     report = await orchestrate_montage_scenes(
@@ -213,6 +233,8 @@ async def montage_execute_scenes(body: MontageExecuteRequest) -> dict[str, Any]:
         generate_fn=None,
         scene_context_override=body.scene_context_override,
         copy_fallback_confirmed=body.copy_fallback_confirmed,
+        model=model,
+        duration_seconds=duration_seconds,
     )
     payload = report.to_dict()
     payload["hook_id"] = body.hook_id
@@ -331,8 +353,8 @@ async def montage_create_run(body: MontageRunCreateRequest) -> dict[str, Any]:
             copy_fallback_confirmed=body.copy_fallback_confirmed,
             hook_id=body.hook_id,
             background_id=body.background_id,
-            model=getattr(body, "model", None) or "Veo 3.1 - Lite",
-            duration_seconds=int(getattr(body, "duration_seconds", None) or 8),
+            model=body.model,
+            duration_seconds=body.duration_seconds,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -378,36 +400,93 @@ async def montage_run_assemble(run_id: str, body: MontageRunAssembleRequest) -> 
     via the existing client primitive (not Laluan-A native-extend).
     """
 
+    state = await get_montage_discrete_run(run_id)
+    cfg = state.get("config") or {}
+    from agent.services.montage_run_service import _resolve_montage_single_settings
+
+    try:
+        _model, clip_duration = _resolve_montage_single_settings(
+            cfg.get("model"), cfg.get("duration_seconds")
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    scene_count = int(state.get("total_scenes") or 0)
+    if scene_count <= 0:
+        raise HTTPException(status_code=409, detail="ERR_MONTAGE_EMPTY_PLAN")
+    requested_seconds = clip_duration * scene_count
+
     async def _concat_boundary(**kwargs: Any) -> dict[str, Any]:
         segment_ids = list(kwargs.get("segment_media_ids") or [])
-        input_videos = kwargs.get("input_videos")
-        if body.dry_run or not body.confirm_live_credit_burn:
-            return {
-                "dry_run": True,
-                "status": "SEGMENTS_READY",
-                "job_id": kwargs.get("job_id"),
-                "segment_media_ids": segment_ids,
-                "input_videos": input_videos,
-                "requested_seconds": kwargs.get("requested_seconds"),
-                "endpoint": "/v1:runVideoFxConcatenation",
-                "assembly_path": "DISCRETE_MONTAGE",
-            }
-        # Live discrete concat — existing Flow client primitive
-        from agent.services.flow_client import FlowClient
+        effective_job_id = str(kwargs.get("job_id") or body.job_id)
+        from agent.services.google_flow_final_timeline_runtime import finalize_timeline
 
-        client = FlowClient()
-        submit = await client.run_video_concatenation(
-            input_videos if isinstance(input_videos, list) else [{"mediaId": m} for m in segment_ids]
+        if body.dry_run:
+            return await finalize_timeline(
+                None,
+                job_id=effective_job_id,
+                segment_media_ids=segment_ids,
+                requested_seconds=int(kwargs.get("requested_seconds") or requested_seconds),
+                segment_seconds=clip_duration,
+                out_dir=Path("output") / "retrieved",
+                dry_run=True,
+                confirm_live_credit_burn=False,
+            )
+        if not body.confirm_live_credit_burn:
+            raise ValueError("ERR_MONTAGE_LIVE_CONCAT_CONFIRM_REQUIRED")
+
+        # The existing final-timeline primitive owns concat submit, polling,
+        # artifact save, and final identity persistence. Use the connected
+        # client singleton and create only this run's lifecycle owner row.
+        from agent.db import crud
+        from agent.services.flow_client import get_flow_client
+
+        logical_key = f"montage:{run_id}"
+        existing = await crud.get_video_production_job_by_logical_key(logical_key)
+        if existing:
+            effective_job_id = str(existing["job_id"])
+        else:
+            # The legacy request default is shared by every Montage run. Derive a
+            # durable per-run owner so a second run can never resume or overwrite
+            # another run's final-timeline job.
+            effective_job_id = f"montage-final-{run_id}"
+            await crud.create_video_production_job_full(
+                effective_job_id,
+                logical_job_key=logical_key,
+                status="CREATED",
+                requested_duration_seconds=requested_seconds,
+                product_id=cfg.get("product_id"),
+                model=cfg.get("model"),
+                aspect_ratio="9:16",
+                segment_media_ids_json=json.dumps(segment_ids),
+                whole_plan_json=json.dumps({
+                    "execution_mode": "MONTAGE_DISCRETE",
+                    "requested_seconds": requested_seconds,
+                    "segment_seconds": clip_duration,
+                    "segment_count": len(segment_ids),
+                }),
+            )
+        result = await finalize_timeline(
+            get_flow_client(),
+            job_id=effective_job_id,
+            segment_media_ids=segment_ids,
+            requested_seconds=int(kwargs.get("requested_seconds") or requested_seconds),
+            segment_seconds=clip_duration,
+            out_dir=Path("output") / "retrieved",
+            dry_run=False,
+            confirm_live_credit_burn=True,
         )
-        return {
-            "dry_run": False,
-            "status": "CONCAT_SUBMITTED",
-            "job_id": kwargs.get("job_id"),
-            "segment_media_ids": segment_ids,
-            "submit": submit,
-            "endpoint": "/v1:runVideoFxConcatenation",
-            "assembly_path": "DISCRETE_MONTAGE",
-        }
+        if result.get("final_media_id"):
+            await crud.insert_generated_artifact(
+                result["final_media_id"],
+                job_id=effective_job_id,
+                mode="MONTAGE",
+                artifact_kind="video",
+                local_path=result.get("local_path"),
+                size_mb=result.get("size_mb"),
+                model_used=cfg.get("model"),
+                duration_used=result.get("measured_duration_s"),
+            )
+        return result
 
     try:
         return await assemble_from_montage_run(
@@ -440,6 +519,7 @@ class MontageAuthorizeGenerationRequest(BaseModel):
 
     confirm_credit_burn: bool = False
     expected_video_generations: int
+    expected_provider_operations: int
     dry_run: bool = True
 
 
@@ -504,20 +584,23 @@ async def montage_authorize_generation(
             return {"job_id": None, "media_id": None}
 
         async def poll_fn(job_id: str) -> dict[str, Any]:
-            try:
-                from agent.services import video_production_orchestrator as _orch
-                st = await _orch.get_job_status(job_id)
-                if isinstance(st, dict):
-                    return st
-            except Exception:
-                pass
-            return {"status": "RUNNING", "job_id": job_id}
+            from agent.services import make_video
+
+            status = make_video.get_job(job_id)
+            if isinstance(status, dict):
+                return status
+            return {
+                "status": "FAILED",
+                "job_id": job_id,
+                "error": "ERR_MONTAGE_CANONICAL_JOB_NOT_FOUND",
+            }
 
     try:
         return await authorize_montage_run_generation(
             run_id,
             confirm_credit_burn=body.confirm_credit_burn,
             expected_video_generations=body.expected_video_generations,
+            expected_provider_operations=body.expected_provider_operations,
             dry_run=body.dry_run,
             generate_fn=generate_fn,
             poll_fn=poll_fn,
@@ -539,5 +622,8 @@ async def montage_policies() -> dict[str, Any]:
         "assembly_path": "DISCRETE_MONTAGE",
         "execution_supported": True,
         "live_generate_via": "/api/montage/runs/{id}/authorize-generation → /api/flow/generate per scene",
-        "live_concat_via": "assemble dry_run only on this router",
+        "live_concat_via": (
+            "/api/montage/runs/{id}/assemble with dry_run=false and "
+            "confirm_live_credit_burn=true -> existing final-timeline runtime"
+        ),
     }

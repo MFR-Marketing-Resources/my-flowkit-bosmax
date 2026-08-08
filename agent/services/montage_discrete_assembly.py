@@ -25,6 +25,7 @@ async def assemble_montage_discrete(
     concat_fn: ConcatFn,
     job_id: str = "montage-discrete",
     requested_seconds: Optional[int] = None,
+    segment_seconds: Optional[int] = None,
     dry_run: bool = True,
 ) -> dict[str, Any]:
     """Readiness → concat. Incomplete mandatory sets never call concat_fn.
@@ -42,16 +43,27 @@ async def assemble_montage_discrete(
         )
 
     clip_ids = list(report.clip_media_ids)
+    seconds = (
+        int(requested_seconds)
+        if requested_seconds is not None
+        else int(segment_seconds or 8) * len(clip_ids)
+    )
+    segment_s = int(segment_seconds or (seconds // len(clip_ids)))
+    if segment_s <= 0 or seconds != segment_s * len(clip_ids):
+        raise MontageAssemblyError(
+            BLOCKED_INCOMPLETE_SCENE_SET,
+            "requested montage duration must equal scene count × clip duration",
+        )
     # Validate concat contract shape without submitting when dry_run and concat_fn
     # still builds the body — build_concat_input fails closed if <2 segments.
-    input_videos = build_concat_input(clip_ids)
-    seconds = requested_seconds if requested_seconds is not None else 8 * len(clip_ids)
+    input_videos = build_concat_input(clip_ids, segment_seconds=segment_s)
 
     result = await concat_fn(
         job_id=job_id,
         segment_media_ids=clip_ids,
         input_videos=input_videos,
         requested_seconds=seconds,
+        segment_seconds=segment_s,
         dry_run=dry_run,
     )
     return {

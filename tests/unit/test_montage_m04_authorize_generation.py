@@ -81,7 +81,7 @@ def test_estimate_counts_pending_packages() -> None:
     est = estimate_montage_generation_from_scenes(scenes)
     assert est["expected_video_generations"] == 2
     assert est["pending_scene_ids"] == ["a", "c"]
-    assert est["summary"] == "2 scenes → 2 video generations"
+    assert est["summary"] == "2 pending scene video(s) = 2 provider operation(s)"
 
 
 @pytest.mark.asyncio
@@ -90,7 +90,7 @@ async def test_authorize_requires_confirm_and_matching_count() -> None:
         "bulk_run_id": "run-m04",
         "kind": KIND,
         "status": "PREPARED",
-        "config_json": json.dumps({"product_id": "p1"}),
+        "config_json": json.dumps({"product_id": "p1", "model": "Veo 3.1 - Lite", "duration_seconds": 8}),
     }
     items = _pkg_items()
 
@@ -109,6 +109,7 @@ async def test_authorize_requires_confirm_and_matching_count() -> None:
                 "run-m04",
                 confirm_credit_burn=False,
                 expected_video_generations=2,
+                expected_provider_operations=2,
                 dry_run=True,
             )
         with pytest.raises(ValueError, match="CREDIT_COUNT_MISMATCH"):
@@ -116,19 +117,21 @@ async def test_authorize_requires_confirm_and_matching_count() -> None:
                 "run-m04",
                 confirm_credit_burn=True,
                 expected_video_generations=99,
+                expected_provider_operations=99,
                 dry_run=True,
             )
         dry = await authorize_montage_run_generation(
             "run-m04",
             confirm_credit_burn=True,
             expected_video_generations=2,
+            expected_provider_operations=2,
             dry_run=True,
         )
         assert dry["ok"] is True
         assert dry["authorized"] is True
         assert dry["credit_spend"] is False
         assert dry["dispatched"] == []
-        assert dry["summary"] == "2 scenes → 2 video generations"
+        assert dry["summary"] == "2 pending scene video(s) = 2 provider operation(s)"
 
 
 @pytest.mark.asyncio
@@ -137,7 +140,7 @@ async def test_authorize_dispatch_calls_generate_with_start_asset_and_binds() ->
         "bulk_run_id": "run-m04b",
         "kind": KIND,
         "status": "PREPARED",
-        "config_json": json.dumps({"product_id": "p1"}),
+        "config_json": json.dumps({"product_id": "p1", "product_media_id": "pm1", "model": "Veo 3.1 - Lite", "duration_seconds": 8}),
     }
     items = _pkg_items()
 
@@ -181,6 +184,7 @@ async def test_authorize_dispatch_calls_generate_with_start_asset_and_binds() ->
             "run-m04b",
             confirm_credit_burn=True,
             expected_video_generations=2,
+            expected_provider_operations=2,
             dry_run=False,
             generate_fn=gen_fn,
         )
@@ -225,6 +229,7 @@ async def test_authorize_live_without_generate_fn_fails_closed() -> None:
                 "run-m04c",
                 confirm_credit_burn=True,
                 expected_video_generations=2,
+                expected_provider_operations=2,
                 dry_run=False,
                 generate_fn=None,
             )

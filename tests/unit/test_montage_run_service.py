@@ -31,8 +31,24 @@ def _beats():
 async def test_create_run_persists_scene_lifecycle() -> None:
     pkg = AsyncMock(
         side_effect=[
-            {"workspace_execution_package_id": "wep-a", "prompt_text": "a"},
-            {"workspace_execution_package_id": "wep-b", "prompt_text": "b"},
+            {
+                "workspace_execution_package_id": "wep-a",
+                "prompt_text": "a",
+                "execution_allowed": True,
+                "asset_slots": [{
+                    "slot_key": "start_frame",
+                    "resolved_asset": {"download_url": "https://cdn.example/a.png"},
+                }],
+            },
+            {
+                "workspace_execution_package_id": "wep-b",
+                "prompt_text": "b",
+                "execution_allowed": True,
+                "asset_slots": [{
+                    "slot_key": "start_frame",
+                    "resolved_asset": {"download_url": "https://cdn.example/b.png"},
+                }],
+            },
         ]
     )
     run_row = {"bulk_run_id": "r1", "kind": KIND, "status": "PREPARED", "config_json": "{}"}
@@ -72,6 +88,8 @@ async def test_create_run_persists_scene_lifecycle() -> None:
             package_factory=pkg,
             product_media_id="pm1",
             default_policy=SceneReferencePolicy.PRODUCT_ANCHOR,
+            model="Veo 3.1 - Lite",
+            duration_seconds=8,
         )
     assert out["kind"] == KIND
     assert out["total_scenes"] == 2
@@ -85,7 +103,7 @@ async def test_create_run_persists_scene_lifecycle() -> None:
 async def test_bind_result_then_readiness_and_assemble_gate() -> None:
     import json
 
-    config = json.dumps({"product_media_id": "pm1"})
+    config = json.dumps({"product_media_id": "pm1", "model": "Veo 3.1 - Lite", "duration_seconds": 8})
     run_row = {"bulk_run_id": "run-x", "kind": KIND, "status": "PREPARED", "config_json": config}
     items = [
         {
@@ -98,6 +116,7 @@ async def test_bind_result_then_readiness_and_assemble_gate() -> None:
                     "beat_id": "hook",
                     "reference_policy": "PRODUCT_ANCHOR",
                     "workspace_execution_package_id": "wep-1",
+                    "start_asset_snapshot": {"downloadUrl": "https://cdn.example/1.png"},
                 }
             ),
         },
@@ -111,6 +130,7 @@ async def test_bind_result_then_readiness_and_assemble_gate() -> None:
                     "beat_id": "body",
                     "reference_policy": "PRODUCT_ANCHOR",
                     "workspace_execution_package_id": "wep-2",
+                    "start_asset_snapshot": {"downloadUrl": "https://cdn.example/2.png"},
                 }
             ),
         },
@@ -129,6 +149,7 @@ async def test_bind_result_then_readiness_and_assemble_gate() -> None:
         patch("agent.services.montage_run_service.crud.get_bulk_generation_run", AsyncMock(return_value=run_row)),
         patch("agent.services.montage_run_service.crud.list_bulk_generation_items", AsyncMock(return_value=items)),
         patch("agent.services.montage_run_service.crud.update_bulk_generation_item", side_effect=update_item),
+        patch("agent.services.montage_run_service.crud.update_bulk_generation_run", AsyncMock(return_value=run_row)),
     ):
         # incomplete → readiness fail
         ready = await readiness_from_montage_run("run-x")
@@ -154,6 +175,8 @@ async def test_bind_result_then_readiness_and_assemble_gate() -> None:
         assembled = await assemble_from_montage_run("run-x", concat_fn=concat2, dry_run=True)
         assert assembled["ok"] is True
         concat2.assert_awaited_once()
+        assert concat2.await_args.kwargs["requested_seconds"] == 16
+        assert concat2.await_args.kwargs["segment_seconds"] == 8
 
 
 def test_scene_jobs_to_readiness_maps_result_bound() -> None:

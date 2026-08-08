@@ -33,6 +33,7 @@ class SceneJobState:
     transport_mode: str
     source_mode: str
     reference_policy: str
+    product_media_id: Optional[str] = None
     status: str = "PLANNED"
     image_job_id: Optional[str] = None
     image_media_id: Optional[str] = None
@@ -53,6 +54,7 @@ class SceneJobState:
             "transport_mode": self.transport_mode,
             "source_mode": self.source_mode,
             "reference_policy": self.reference_policy,
+            "product_media_id": self.product_media_id,
             "status": self.status,
             "image_job_id": self.image_job_id,
             "image_media_id": self.image_media_id,
@@ -111,7 +113,29 @@ def _snapshot_start_asset(pkg: dict[str, Any]) -> Optional[dict[str, Any]]:
         "localFilePath": ra.get("local_file_path"),
         "fileName": ra.get("file_name") or "start_frame",
         "label": ra.get("label") or "start_frame",
+        "assetFingerprint": ra.get("asset_fingerprint"),
+        "assetSource": ra.get("asset_source"),
+        "localImagePathPresent": bool(
+            ra.get("local_image_path_present") or ra.get("local_file_path")
+        ),
+        "remoteImageUrlPresent": bool(
+            ra.get("remote_image_url_present")
+            or ra.get("download_url")
+            or ra.get("preview_url")
+        ),
     }
+
+
+def _snapshot_is_transportable(snapshot: Optional[dict[str, Any]]) -> bool:
+    """Return true only when the package contains a real image transport path."""
+    if not isinstance(snapshot, dict):
+        return False
+    return bool(
+        snapshot.get("mediaId")
+        or snapshot.get("downloadUrl")
+        or snapshot.get("previewUrl")
+        or snapshot.get("localFilePath")
+    )
 
 
 def _start_frame_for_plan(plan: MontageSceneExecutionPlan) -> Optional[str]:
@@ -129,8 +153,8 @@ async def execute_scene_plan(
     generate_fn: Optional[GenerateFn] = None,
     scene_context_override: Optional[str] = None,
     copy_fallback_confirmed: bool = True,
-    model: str = "Veo 3.1 - Lite",
-    duration_seconds: int = 8,
+    model: str | None = None,
+    duration_seconds: int | None = None,
 ) -> SceneJobState:
     """Run one planned scene through existing package (+ optional generate) path."""
     state = SceneJobState(
@@ -141,6 +165,7 @@ async def execute_scene_plan(
         transport_mode=plan.transport_mode,
         source_mode=plan.source_mode,
         reference_policy=plan.reference_policy.value,
+        product_media_id=plan.product_media_id,
     )
 
     if plan.route == SceneExecutionRoute.INHERIT_PREVIOUS:
@@ -175,7 +200,7 @@ async def execute_scene_plan(
             state.status = "IMAGE_PENDING_PACKAGE"
             state.detail = "PRODUCT_ANCHOR → HYBRID product image from approved package"
         else:
-            state.status = "BLOCKED"
+            state.status = "IMAGE_PENDING"
             state.error_code = "ERR_MONTAGE_IMAGE_REQUIRED"
             state.detail = (
                 f"IMAGE_FIRST scene {plan.scene_id} needs product/start frame "
@@ -191,13 +216,24 @@ async def execute_scene_plan(
     mode = plan.transport_mode
     source_mode = plan.source_mode if plan.source_mode != mode else None
     # Prefer operator-selected model/duration (no empty model / hardcoded-only path)
+    model_label = str(model or "").strip()
     try:
-        dur = int(duration_seconds)
+        dur = int(duration_seconds) if duration_seconds is not None else 0
     except (TypeError, ValueError):
-        dur = 8
-    if dur <= 0:
-        dur = 8
-    model_label = str(model or "").strip() or "Veo 3.1 - Lite"
+        dur = 0
+    if not model_label or dur <= 0:
+        state.status = "PACKAGE_FAILED"
+        state.error_code = "ERR_MONTAGE_MODEL_DURATION_REQUIRED"
+        state.detail = "Montage requires an explicitly selected canonical model and duration"
+        return state
+    from agent.services import video_capability_matrix as _cm
+
+    capability_ok, capability_code = _cm.validate_single("GOOGLE_FLOW", model_label, dur)
+    if not capability_ok:
+        state.status = "PACKAGE_FAILED"
+        state.error_code = f"ERR_MONTAGE_{capability_code}"
+        state.detail = f"Unsupported canonical Montage model/duration: {capability_code}"
+        return state
     kwargs: dict[str, Any] = {
         "product_id": product_id,
         "mode": mode,
@@ -224,23 +260,47 @@ async def execute_scene_plan(
         state.detail = str(exc)[:400]
         return state
 
+    if not isinstance(pkg, dict):
+        state.status = "PACKAGE_FAILED"
+        state.error_code = "ERR_MONTAGE_PACKAGE_INVALID"
+        state.detail = "workspace package factory returned a non-object result"
+        return state
     state.workspace_execution_package_id = str(
         pkg.get("workspace_execution_package_id") or ""
     ) or None
     state.package_prompt = str(pkg.get("prompt_text") or pkg.get("prompt") or "") or None
-    state.start_asset_snapshot = _snapshot_start_asset(pkg if isinstance(pkg, dict) else {})
+    state.start_asset_snapshot = _snapshot_start_asset(pkg)
     if state.package_prompt and not state.detail:
         state.detail = state.package_prompt[:400]
-    # Product-anchor HYBRID: package start_frame IS the scene image plate
+    if not bool(pkg.get("execution_allowed")):
+        state.status = "IMAGE_PENDING" if plan.route == SceneExecutionRoute.IMAGE_FIRST else "PACKAGE_FAILED"
+        state.error_code = "ERR_MONTAGE_IMAGE_REQUIRED" if state.status == "IMAGE_PENDING" else "ERR_MONTAGE_PACKAGE_BLOCKED"
+        state.detail = str(pkg.get("blockers") or "workspace package is not execution-ready")[:400]
+        return state
+
+    # Product-anchor HYBRID: package start_frame IS the scene image plate.
+    # A composite asset id alone is not a transportable image; keep the real
+    # media id separate so assembly cannot be satisfied by a fabricated id.
     if state.start_asset_snapshot and not state.image_media_id:
         mid = state.start_asset_snapshot.get("mediaId")
-        aid = state.start_asset_snapshot.get("assetId")
         if mid:
             state.image_media_id = str(mid)
-        elif aid:
-            state.image_media_id = str(aid)
+            if not state.product_media_id and plan.reference_policy in (
+                SceneReferencePolicy.PRODUCT_ANCHOR,
+                SceneReferencePolicy.AVATAR_PRODUCT,
+            ):
+                state.product_media_id = str(mid)
         if state.image_media_id:
             state.status = "IMAGE_BOUND"
+    if (
+        plan.route == SceneExecutionRoute.IMAGE_FIRST
+        and not state.image_media_id
+        and not _snapshot_is_transportable(state.start_asset_snapshot)
+    ):
+        state.status = "IMAGE_PENDING"
+        state.error_code = "ERR_MONTAGE_IMAGE_REQUIRED"
+        state.detail = "IMAGE_FIRST scene has no transportable canonical plate"
+        return state
     state.status = "PACKAGE_READY"
 
     if generate_fn is None:
@@ -255,6 +315,8 @@ async def execute_scene_plan(
         scene_id=plan.scene_id,
         start_asset=state.start_asset_snapshot,
         image_media_id=state.image_media_id,
+        model=model_label,
+        duration_s=dur,
     )
     state.video_job_id = str(gen.get("job_id") or gen.get("id") or "") or None
     state.video_media_id = str(
@@ -278,8 +340,8 @@ async def orchestrate_montage_scenes(
     generate_fn: Optional[GenerateFn] = None,
     scene_context_override: Optional[str] = None,
     copy_fallback_confirmed: bool = True,
-    model: str = "Veo 3.1 - Lite",
-    duration_seconds: int = 8,
+    model: str | None = None,
+    duration_seconds: int | None = None,
 ) -> MontageOrchestrationReport:
     """Beat → route → package (/ optional generate) for the full scene set."""
     if not str(product_id or "").strip():
