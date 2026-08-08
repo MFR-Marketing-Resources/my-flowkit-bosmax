@@ -26,6 +26,18 @@ def test_unknown_mode_fails_closed():
         resolve_creative_direction("UNSAFE_MODE")
 
 
+def test_creative_campaign_is_a_provider_integrated_authority_mode():
+    direction = resolve_creative_direction(
+        CreativeMode.CREATIVE_CAMPAIGN,
+        product={"category": "Food & Beverages"},
+    )
+
+    assert direction.mode == CreativeMode.CREATIVE_CAMPAIGN
+    assert direction.product_dominance == "hero_integrated"
+    assert "local cutout compositor" in direction.negative_rules
+    assert "complete visual" in direction.environment
+
+
 def test_existing_category_authority_is_reused_without_new_taxonomy():
     direction = resolve_creative_direction(
         CreativeMode.UGC_AUTHENTIC,

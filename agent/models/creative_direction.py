@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class CreativeMode(StrEnum):
+    CREATIVE_CAMPAIGN = "CREATIVE_CAMPAIGN"
     PGC_CAMPAIGN = "PGC_CAMPAIGN"
     UGC_AUTHENTIC = "UGC_AUTHENTIC"
     MODEL_AMBASSADOR = "MODEL_AMBASSADOR"

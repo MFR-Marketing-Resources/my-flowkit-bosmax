@@ -75,6 +75,24 @@ class PosterCompositionError(ValueError):
 # USP/CTA treatment, typography intensity, background complexity, lighting,
 # prop density, negative-space strategy and label style.
 _PROFILES: dict[str, dict[str, Any]] = {
+    "CREATIVE_CAMPAIGN": {
+        "profile": "provider_integrated_campaign_v1",
+        "anchor": "middle-right",
+        "dominance": "60-70%",
+        "human_presence": "optional",
+        "face_safe_rule": "upper-right protected when present",
+        "copy_side": "left",
+        "hook_treatment": "clean campaign headline field",
+        "usp_treatment": "two concise proof lines",
+        "cta_treatment": "restrained high-contrast campaign action",
+        "typography_intensity": "provider-safe clean display",
+        "background_complexity": "preset-led coherent Malaysian environment",
+        "lighting": "physically coherent integrated scene light",
+        "prop_density": "purposeful category props only",
+        "negative_space": "left copy field with product-safe breathing room",
+        "label_style": "label forward and fully readable",
+        "reading_order": ["product_scene", "hook", "cta", "usp"],
+    },
     "PGC_CAMPAIGN": {
         "profile": "campaign_product_hero_v1",
         "anchor": "middle-right",
