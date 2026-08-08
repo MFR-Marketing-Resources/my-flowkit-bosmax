@@ -107,7 +107,10 @@ export interface MontageAssembleResponse {
 export interface MontageGenerationEstimate {
 	montage_run_id: string;
 	expected_video_generations: number;
+	expected_image_operations?: number;
+	expected_provider_operations?: number;
 	pending_scene_ids: string[];
+	pending_image_scene_ids?: string[];
 	summary: string;
 	authorization_required: boolean;
 	credit_spend: boolean;
@@ -178,6 +181,8 @@ export async function createMontageRun(input: {
 	product_media_id?: string | null;
 	default_policy?: string;
 	scene_context_override?: string | null;
+	model?: string;
+	duration_seconds?: number;
 }): Promise<MontageRunResponse> {
 	return postAPI("/api/montage/runs", {
 		product_id: input.product_id,
@@ -189,6 +194,8 @@ export async function createMontageRun(input: {
 		copy_fallback_confirmed: true,
 		scene_context_override: input.scene_context_override ?? null,
 		allow_live_generate: false,
+		model: input.model ?? "Veo 3.1 - Lite",
+		duration_seconds: input.duration_seconds ?? 8,
 	});
 }
 

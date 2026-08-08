@@ -1403,6 +1403,7 @@ domains:
       - tests/unit/test_montage_run_service.py
       - agent/services/montage_run_service.py
       - tests/unit/test_montage_m04_authorize_generation.py
+      - tests/unit/test_montage_m04_serial_poll.py
       - tests/unit/test_montage_scene_orchestrator.py
       - tests/unit/test_montage_discrete_assembly.py
       - agent/authority/creative_lane_settings.json

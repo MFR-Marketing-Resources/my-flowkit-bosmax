@@ -62,6 +62,8 @@ async def create_montage_discrete_run(
     copy_fallback_confirmed: bool = True,
     hook_id: str = "AUTO",
     background_id: str = "AUTO",
+    model: str = "Veo 3.1 - Lite",
+    duration_seconds: int = 8,
 ) -> dict[str, Any]:
     """Orchestrate packages and persist a durable run + per-scene jobs."""
     pid = str(product_id or "").strip()
@@ -69,6 +71,36 @@ async def create_montage_discrete_run(
         raise ValueError("ERR_MONTAGE_PRODUCT_REQUIRED")
     if not story_beats:
         raise ValueError("ERR_MONTAGE_BEATS_REQUIRED")
+
+    # Resolve Hook/Background canonically — never compile raw AUTO into scene direction
+    from agent.services.creative_lane_settings_service import (
+        resolve_background as _resolve_bg,
+        resolve_hook as _resolve_hook,
+    )
+
+    hook_res = _resolve_hook(hook_id)
+    bg_res = _resolve_bg(background_id)
+    resolved_hook_id = str(hook_res.get("setting_id") or hook_id)
+    resolved_bg_id = str(bg_res.get("setting_id") or background_id)
+    hook_label = str(hook_res.get("display_label") or resolved_hook_id)
+    bg_label = str(bg_res.get("display_label") or resolved_bg_id)
+
+    context_bits = [
+        f"HOOK: {hook_label} (selected={hook_id}; resolved={resolved_hook_id}; {hook_res.get('resolution')})",
+        f"BACKGROUND: {bg_label} (selected={background_id}; resolved={resolved_bg_id}; {bg_res.get('resolution')})",
+        "Montage discrete clips — one short SINGLE clip per scene; no native extend.",
+    ]
+    if scene_context_override:
+        context_bits.append(str(scene_context_override).strip())
+    composed_context = "\n".join(context_bits)
+
+    model_label = str(model or "").strip() or "Veo 3.1 - Lite"
+    try:
+        dur = int(duration_seconds)
+    except (TypeError, ValueError):
+        dur = 8
+    if dur <= 0:
+        dur = 8
 
     report = await orchestrate_montage_scenes(
         product_id=pid,
@@ -78,8 +110,10 @@ async def create_montage_discrete_run(
         per_beat_policy=per_beat_policy,
         product_media_id=product_media_id,
         generate_fn=None,
-        scene_context_override=scene_context_override,
+        scene_context_override=composed_context,
         copy_fallback_confirmed=copy_fallback_confirmed,
+        model=model_label,
+        duration_seconds=dur,
     )
 
     run_id = str(uuid.uuid4())
@@ -95,6 +129,20 @@ async def create_montage_discrete_run(
         "per_beat_policy": per_beat_policy or {},
         "hook_id": hook_id,
         "background_id": background_id,
+        "hook_resolved": {
+            "selected_id": hook_id,
+            "setting_id": resolved_hook_id,
+            "display_label": hook_label,
+            "resolution": hook_res.get("resolution"),
+        },
+        "background_resolved": {
+            "selected_id": background_id,
+            "setting_id": resolved_bg_id,
+            "display_label": bg_label,
+            "resolution": bg_res.get("resolution"),
+        },
+        "model": model_label,
+        "duration_seconds": dur,
         "scene_context_override": scene_context_override,
         "orchestration_ok": report.ok,
     }
@@ -257,23 +305,50 @@ _TERMINAL_NO_GEN = frozenset(
 def estimate_montage_generation_from_scenes(
     scenes: Sequence[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Count pending video generations for operator credit authorization."""
-    pending: list[dict[str, Any]] = []
+    """Count pending provider ops for operator credit authorization.
+
+    Includes pending scene-image work (IMAGE_FIRST without bound image) plus
+    pending video generations. Already-bound images/videos are not counted again.
+    """
+    pending_video: list[dict[str, Any]] = []
+    pending_image: list[dict[str, Any]] = []
     for s in scenes:
         status = str(s.get("status") or "").upper()
-        if s.get("video_media_id"):
-            continue
         if status in _TERMINAL_NO_GEN:
             continue
-        if not s.get("workspace_execution_package_id"):
+        # Image ops: IMAGE_FIRST-ish without image_media_id and without package plate
+        needs_image = (
+            not s.get("image_media_id")
+            and str(s.get("route") or "").upper() == "IMAGE_FIRST"
+            and not s.get("start_asset_snapshot")
+            and status not in ("PACKAGE_READY", "IMAGE_BOUND", "IMAGE_READY", "RESULT_BOUND", "VIDEO_READY")
+        )
+        if needs_image:
+            pending_image.append(s)
+        if s.get("video_media_id"):
             continue
-        pending.append(s)
-    n = len(pending)
+        if not s.get("workspace_execution_package_id"):
+            # still may need package+video later; count video only when package exists
+            continue
+        pending_video.append(s)
+    nv = len(pending_video)
+    ni = len(pending_image)
+    parts = []
+    if ni:
+        parts.append(f"{ni} pending scene image(s)")
+    parts.append(f"{nv} video generation(s)")
+    summary = f"{nv} scenes → {nv} video generations" if ni == 0 else (
+        f"{ni} pending scene images + {nv} pending scene videos"
+    )
     return {
-        "expected_video_generations": n,
-        "pending_scene_ids": [str(s.get("scene_id") or "") for s in pending],
-        "pending_scenes": pending,
-        "summary": f"{n} scenes → {n} video generations",
+        "expected_video_generations": nv,
+        "expected_image_operations": ni,
+        "expected_provider_operations": ni + nv,
+        "pending_scene_ids": [str(s.get("scene_id") or "") for s in pending_video],
+        "pending_image_scene_ids": [str(s.get("scene_id") or "") for s in pending_image],
+        "pending_scenes": pending_video,
+        "pending_image_scenes": pending_image,
+        "summary": summary,
         "authorization_required": True,
         "credit_spend": False,
     }
@@ -295,13 +370,16 @@ async def authorize_montage_run_generation(
     expected_video_generations: int,
     dry_run: bool = True,
     generate_fn: Optional[Callable[..., Awaitable[dict[str, Any]]]] = None,
+    poll_fn: Optional[Callable[..., Awaitable[dict[str, Any]]]] = None,
+    max_polls: int = 120,
+    poll_interval_s: float = 0.0,
 ) -> dict[str, Any]:
     """M-04: explicit operator-authorized multi-scene generation.
 
-    - Requires confirm_credit_burn=True
-    - expected_video_generations must match pending count (fail-closed mismatch)
-    - dry_run=True: authorization only, no generate boundary
-    - dry_run=False: invoke generate_fn per pending scene, bind media when returned
+    Single-flight serial loop:
+      authorize → next pending scene → submit ONE video → persist job_id →
+      poll to terminal → bind media → only then next scene.
+    Fail-closed on scene failure (no skip). Resume skips already-bound scenes.
     """
     if not confirm_credit_burn:
         raise ValueError("ERR_MONTAGE_CREDIT_CONFIRM_REQUIRED")
@@ -337,15 +415,71 @@ async def authorize_montage_run_generation(
     state = await get_montage_discrete_run(run_id)
     cfg = state.get("config") or {}
     product_id = str(cfg.get("product_id") or state.get("product_id") or "").strip()
+    model = str(cfg.get("model") or "Veo 3.1 - Lite")
+    try:
+        duration_s = int(cfg.get("duration_seconds") or 8)
+    except (TypeError, ValueError):
+        duration_s = 8
 
     await crud.update_bulk_generation_run(
         run_id, status="GENERATING", updated_at=_now()
     )
 
+    async def _mark_scene(scene_id: str, *, status: str, **extra: Any) -> None:
+        items = await crud.list_bulk_generation_items(run_id)
+        for it in items:
+            payload = _loads(it.get("payload_json"), {})
+            if payload.get("scene_id") == scene_id or it.get("source_ref") == scene_id:
+                payload.update(extra)
+                payload["status"] = status
+                await crud.update_bulk_generation_item(
+                    it["bulk_item_id"],
+                    status=status,
+                    job_id=extra.get("video_job_id") or it.get("job_id"),
+                    payload_json=json.dumps(payload),
+                    error=extra.get("error_code"),
+                    updated_at=_now(),
+                )
+                return
+
     dispatched: list[dict[str, Any]] = []
     any_fail = False
+    active_job: Optional[str] = None
+
     for scene in estimate["pending_scenes"]:
+        # Single-flight invariant: never submit while previous job active
+        if active_job is not None:
+            any_fail = True
+            dispatched.append(
+                {
+                    "scene_id": str(scene.get("scene_id") or ""),
+                    "status": "BLOCKED_SINGLE_FLIGHT",
+                    "error": f"previous job still active: {active_job}",
+                }
+            )
+            break
+
         scene_id = str(scene.get("scene_id") or "")
+        # Resume: skip if already bound (ledger re-read)
+        fresh = await get_montage_discrete_run(run_id)
+        already = next(
+            (
+                s
+                for s in fresh["scenes"]
+                if str(s.get("scene_id") or "") == scene_id and s.get("video_media_id")
+            ),
+            None,
+        )
+        if already:
+            dispatched.append(
+                {
+                    "scene_id": scene_id,
+                    "status": "SKIPPED_ALREADY_BOUND",
+                    "media_id": already.get("video_media_id"),
+                }
+            )
+            continue
+
         mode = str(scene.get("transport_mode") or "F2V")
         prompt = str(
             scene.get("package_prompt")
@@ -358,6 +492,8 @@ async def authorize_montage_run_generation(
                 "workspace_execution_package_id"
             ),
             "mode": mode,
+            "model": model,
+            "duration_s": duration_s,
         }
         try:
             gen = await generate_fn(
@@ -370,6 +506,8 @@ async def authorize_montage_run_generation(
                 scene_id=scene_id,
                 start_asset=scene.get("start_asset_snapshot"),
                 image_media_id=scene.get("image_media_id"),
+                model=model,
+                duration_s=duration_s,
             )
             media_id = str(
                 gen.get("media_id") or gen.get("video_media_id") or ""
@@ -377,6 +515,78 @@ async def authorize_montage_run_generation(
             job_id = str(gen.get("job_id") or gen.get("id") or "").strip() or None
             entry["job_id"] = job_id
             entry["media_id"] = media_id
+            active_job = job_id
+
+            await _mark_scene(
+                scene_id,
+                status="VIDEO_SUBMITTED",
+                video_job_id=job_id,
+            )
+
+            # Async semantics: if no immediate media, poll to terminal before next scene
+            if not media_id and job_id and poll_fn is not None:
+                import asyncio
+
+                terminal = False
+                for _ in range(max(1, int(max_polls))):
+                    if poll_interval_s and poll_interval_s > 0:
+                        await asyncio.sleep(float(poll_interval_s))
+                    polled = await poll_fn(job_id)
+                    st = str(
+                        polled.get("status") or polled.get("state") or ""
+                    ).upper()
+                    entry["poll_status"] = st
+                    if st in ("DONE", "COMPLETED", "SUCCESS"):
+                        media_id = str(
+                            polled.get("media_id")
+                            or polled.get("video_media_id")
+                            or ""
+                        ).strip() or None
+                        entry["media_id"] = media_id
+                        terminal = True
+                        break
+                    if st in ("FAILED", "ERROR", "GENERATED_BUT_UNRETRIEVED"):
+                        any_fail = True
+                        entry["status"] = "GENERATE_FAILED"
+                        entry["error"] = str(polled.get("error") or st)[:400]
+                        await _mark_scene(
+                            scene_id,
+                            status="GENERATE_FAILED",
+                            error_code="ERR_MONTAGE_GENERATE",
+                            detail=entry["error"],
+                            video_job_id=job_id,
+                        )
+                        dispatched.append(entry)
+                        active_job = None
+                        # fail-closed: stop remaining scenes
+                        await crud.update_bulk_generation_run(
+                            run_id, status="PARTIAL", updated_at=_now()
+                        )
+                        final = await get_montage_discrete_run(run_id)
+                        return {
+                            **estimate,
+                            "ok": False,
+                            "authorized": True,
+                            "dry_run": False,
+                            "credit_spend": True,
+                            "dispatched": dispatched,
+                            "run": final,
+                            "detail": f"Scene {scene_id} failed — remaining scenes not submitted.",
+                        }
+                if not terminal and not media_id:
+                    any_fail = True
+                    entry["status"] = "GENERATE_FAILED"
+                    entry["error"] = "ERR_MONTAGE_POLL_TIMEOUT"
+                    await _mark_scene(
+                        scene_id,
+                        status="GENERATE_FAILED",
+                        error_code="ERR_MONTAGE_POLL_TIMEOUT",
+                        video_job_id=job_id,
+                    )
+                    dispatched.append(entry)
+                    active_job = None
+                    break
+
             if media_id:
                 await bind_montage_scene_result(
                     run_id,
@@ -386,55 +596,28 @@ async def authorize_montage_run_generation(
                     job_id=job_id,
                 )
                 entry["status"] = "RESULT_BOUND"
-            else:
-                items = await crud.list_bulk_generation_items(run_id)
-                target = None
-                for it in items:
-                    payload = _loads(it.get("payload_json"), {})
-                    if (
-                        payload.get("scene_id") == scene_id
-                        or it.get("source_ref") == scene_id
-                    ):
-                        target = it
-                        break
-                if target:
-                    payload = _loads(target.get("payload_json"), {})
-                    payload["video_job_id"] = job_id
-                    payload["status"] = "VIDEO_SUBMITTED"
-                    await crud.update_bulk_generation_item(
-                        target["bulk_item_id"],
-                        status="VIDEO_SUBMITTED",
-                        job_id=job_id,
-                        payload_json=json.dumps(payload),
-                        updated_at=_now(),
-                    )
+            elif job_id and poll_fn is None:
+                # Caller returned SUBMITTED only (tests may bind immediately via media_id)
                 entry["status"] = "VIDEO_SUBMITTED"
+            active_job = None
             dispatched.append(entry)
         except Exception as exc:  # noqa: BLE001
             any_fail = True
+            active_job = None
             entry["status"] = "GENERATE_FAILED"
             entry["error"] = str(exc)[:400]
             dispatched.append(entry)
             try:
-                items = await crud.list_bulk_generation_items(run_id)
-                for it in items:
-                    payload = _loads(it.get("payload_json"), {})
-                    if (
-                        payload.get("scene_id") == scene_id
-                        or it.get("source_ref") == scene_id
-                    ):
-                        payload["error_code"] = "ERR_MONTAGE_GENERATE"
-                        payload["detail"] = str(exc)[:400]
-                        await crud.update_bulk_generation_item(
-                            it["bulk_item_id"],
-                            status="GENERATE_FAILED",
-                            error="ERR_MONTAGE_GENERATE",
-                            payload_json=json.dumps(payload),
-                            updated_at=_now(),
-                        )
-                        break
+                await _mark_scene(
+                    scene_id,
+                    status="GENERATE_FAILED",
+                    error_code="ERR_MONTAGE_GENERATE",
+                    detail=str(exc)[:400],
+                )
             except Exception:  # noqa: BLE001
                 pass
+            # fail-closed — do not continue to next scene
+            break
 
     final = await get_montage_discrete_run(run_id)
     bound = sum(
@@ -462,7 +645,7 @@ async def authorize_montage_run_generation(
         "dispatched": dispatched,
         "run": final,
         "detail": (
-            f"Dispatched {len(dispatched)} generation(s) after operator credit confirm "
+            f"Serial dispatch {len(dispatched)} scene(s) after operator credit confirm "
             f"({estimate['summary']})."
         ),
     }

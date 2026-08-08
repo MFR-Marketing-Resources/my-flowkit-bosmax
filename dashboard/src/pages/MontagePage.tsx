@@ -4,12 +4,13 @@
  * Hook/Background options come ONLY from creative-lane settings API (same SSOT
  * as Faceless). No local vocabulary arrays.
  *
- * Execution: plan → durable run → operator-authorized generation (M-04) →
- * bind results → readiness → assemble dry-run.
- * Credit fire requires explicit count confirm (N scenes → N video gens).
+ * Operator: Product → Hook/BG → Model+Duration → Scene Plan → Generate Montage
+ * → Progress → Final Video. Backend ledger/authorize/bind/readiness/concat hidden.
+ * Credit fire requires explicit count confirm.
  */
 import { useEffect, useState } from "react";
 import { useCreativeLaneSettings } from "../api/creativeLaneSettings";
+import { fetchVideoModels, type VideoModelInfo } from "../api/productionQueue";
 import {
 	assembleMontageRunDryRun,
 	authorizeMontageGeneration,
@@ -55,6 +56,9 @@ export default function MontagePage() {
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const [hookId, setHookId] = useState("AUTO");
 	const [backgroundId, setBackgroundId] = useState("AUTO");
+	const [videoModels, setVideoModels] = useState<VideoModelInfo[]>([]);
+	const [videoModel, setVideoModel] = useState("Veo 3.1 - Lite");
+	const [clipDuration, setClipDuration] = useState(8);
 	const [plan, setPlan] = useState<MontagePlanResponse | null>(null);
 	const [run, setRun] = useState<MontageRunResponse | null>(null);
 	const [readiness, setReadiness] = useState<MontageReadinessResponse | null>(
@@ -72,6 +76,12 @@ export default function MontagePage() {
 		void fetchProductCatalog(250, "GENERATION")
 			.then((r) => setProducts(r.items || []))
 			.catch(() => setProducts([]));
+		void fetchVideoModels()
+			.then((r) => {
+				setVideoModels(r.models || []);
+				if (r.default) setVideoModel(String(r.default));
+			})
+			.catch(() => setVideoModels([]));
 	}, []);
 
 	const hookLabel = labelOf(settings.hook.options, hookId);
@@ -166,7 +176,8 @@ export default function MontagePage() {
 				hook_id: hookId,
 				background_id: backgroundId,
 				product_media_id: null,
-				scene_context_override: `hook=${hookId}; background=${backgroundId}`,
+				model: videoModel,
+				duration_seconds: clipDuration,
 			});
 			setRun(res);
 			try {
@@ -287,9 +298,9 @@ export default function MontagePage() {
 					One product → N discrete scenes → one finished video
 				</h1>
 				<p className="mt-1 max-w-2xl text-[12px] text-slate-400">
-					Lifecycle: plan → durable run → authorize N→N video gens → bind →
-					fail-closed readiness → assemble. Credit fire only after explicit
-					operator confirm.
+					One product, N short clips, one finished video. Choose product, hook,
+					background, model and clip duration — then Generate Montage. Credits
+					only after you confirm the operation count.
 				</p>
 			</header>
 
@@ -381,7 +392,54 @@ export default function MontagePage() {
 								</select>
 							</label>
 						</div>
+					
 					</WorkflowStep>
+
+					<WorkflowStep
+						index={3}
+						title="Video settings"
+						status={canOperate ? "done" : "upcoming"}
+						open={v4IsOpen(3, canOperate ? "done" : "upcoming")}
+						onToggleOpen={() => v4Toggle(3, v4IsOpen(3, canOperate ? "done" : "upcoming"))}
+						summary={`${videoModel} · ${clipDuration}s / scene`}
+						helper="Discrete SINGLE clips only — final length = N × clip duration (concat)."
+					>
+						<div className="grid gap-3 sm:grid-cols-2">
+							<label className="space-y-1">
+								<span className={labelClass}>Video model</span>
+								<select
+									className={selectClass}
+									value={videoModel}
+									onChange={(e) => setVideoModel(e.target.value)}
+									data-testid="montage-model"
+								>
+									{(videoModels.length
+										? videoModels.map((m) => m.ui_label)
+										: [videoModel]
+									).map((label) => (
+										<option key={label} value={label}>
+											{label}
+										</option>
+									))}
+								</select>
+							</label>
+							<label className="space-y-1">
+								<span className={labelClass}>Clip duration</span>
+								<select
+									className={selectClass}
+									value={clipDuration}
+									onChange={(e) => setClipDuration(Number(e.target.value))}
+									data-testid="montage-duration"
+								>
+									{[4, 6, 8].map((d) => (
+										<option key={d} value={d}>
+											{d}s
+										</option>
+									))}
+								</select>
+							</label>
+						</div>
+</WorkflowStep>
 
 					<WorkflowStep
 						index={3}
@@ -423,7 +481,7 @@ export default function MontagePage() {
 
 					<WorkflowStep
 						index={4}
-						title="Start discrete run"
+						title="Scene plan & prepare"
 						status={sExec}
 						open={v4IsOpen(4, sExec)}
 						onToggleOpen={() => v4Toggle(4, v4IsOpen(4, sExec))}
@@ -441,7 +499,7 @@ export default function MontagePage() {
 							className="rounded-xl border border-v4-accent/40 bg-v4-accent/15 px-4 py-2.5 text-[12px] font-bold text-v4-accent-ink hover:bg-v4-accent/25 disabled:opacity-40"
 							data-testid="montage-execute"
 						>
-							{busy ? "Preparing…" : "Start discrete run (ledger + packages)"}
+							{busy ? "Preparing…" : "Prepare scene packages"}
 						</button>
 						{run ? (
 							<ul
@@ -485,7 +543,7 @@ export default function MontagePage() {
 							className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-[12px] font-bold text-slate-100 hover:bg-slate-800 disabled:opacity-40"
 							data-testid="montage-estimate"
 						>
-							Refresh generation estimate
+							Refresh operation estimate
 						</button>
 						{estimate ? (
 							<div
@@ -521,7 +579,7 @@ export default function MontagePage() {
 										className="rounded-xl border border-v4-accent/40 bg-v4-accent/15 px-4 py-2 text-[12px] font-bold text-v4-accent-ink hover:bg-v4-accent/25 disabled:opacity-40"
 										data-testid="montage-authorize-dry"
 									>
-										Authorize dry-run (no credits)
+										Confirm ops (no spend)
 									</button>
 									<button
 										type="button"
@@ -591,7 +649,7 @@ export default function MontagePage() {
 
 					<WorkflowStep
 						index={7}
-						title="Assemble (dry-run)"
+						title="Final video"
 						status={sAssemble}
 						open={v4IsOpen(7, sAssemble)}
 						onToggleOpen={() => v4Toggle(7, v4IsOpen(7, sAssemble))}
@@ -605,7 +663,7 @@ export default function MontagePage() {
 							className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-[12px] font-bold text-slate-100 hover:bg-slate-800 disabled:opacity-40"
 							data-testid="montage-assemble"
 						>
-							Assemble dry-run from run
+							Build final video (dry-run gate)
 						</button>
 						{assembleNote ? (
 							<p className="mt-2 text-[11px] text-emerald-300" data-testid="montage-assemble-note">
@@ -678,7 +736,7 @@ export default function MontagePage() {
 						queueTitle="Execution state"
 						generate={{
 							label: estimate
-								? "Authorize dry-run (no credit)"
+								? "Confirm ops (no spend)"
 								: run
 									? "Refresh estimate"
 									: "Start discrete path",

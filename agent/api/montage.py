@@ -59,6 +59,8 @@ class MontagePlanRequest(BaseModel):
     per_beat_policy: Optional[dict[str, str]] = None
     hook_id: str = "AUTO"
     background_id: str = "AUTO"
+    model: str = "Veo 3.1 - Lite"
+    duration_seconds: int = 8
 
 
 class MontageExecuteRequest(MontagePlanRequest):
@@ -329,6 +331,8 @@ async def montage_create_run(body: MontageRunCreateRequest) -> dict[str, Any]:
             copy_fallback_confirmed=body.copy_fallback_confirmed,
             hook_id=body.hook_id,
             background_id=body.background_id,
+            model=getattr(body, "model", None) or "Veo 3.1 - Lite",
+            duration_seconds=int(getattr(body, "duration_seconds", None) or 8),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -367,28 +371,49 @@ async def montage_run_readiness(run_id: str) -> dict[str, Any]:
 
 @router.post("/runs/{run_id}/assemble")
 async def montage_run_assemble(run_id: str, body: MontageRunAssembleRequest) -> dict[str, Any]:
-    """Assemble from durable run state — readiness enforced before concat boundary."""
-    if body.confirm_live_credit_burn and not body.dry_run:
-        raise HTTPException(
-            status_code=403,
-            detail="Live montage concat not authorized — use dry_run=true",
-        )
+    """Assemble from durable run state — readiness gate then real concat path.
+
+    dry_run=True (default): readiness + concat contract shape only.
+    dry_run=False + confirm_live_credit_burn=True: invoke Flow video concatenation
+    via the existing client primitive (not Laluan-A native-extend).
+    """
 
     async def _concat_boundary(**kwargs: Any) -> dict[str, Any]:
+        segment_ids = list(kwargs.get("segment_media_ids") or [])
+        input_videos = kwargs.get("input_videos")
+        if body.dry_run or not body.confirm_live_credit_burn:
+            return {
+                "dry_run": True,
+                "status": "SEGMENTS_READY",
+                "job_id": kwargs.get("job_id"),
+                "segment_media_ids": segment_ids,
+                "input_videos": input_videos,
+                "requested_seconds": kwargs.get("requested_seconds"),
+                "endpoint": "/v1:runVideoFxConcatenation",
+                "assembly_path": "DISCRETE_MONTAGE",
+            }
+        # Live discrete concat — existing Flow client primitive
+        from agent.services.flow_client import FlowClient
+
+        client = FlowClient()
+        submit = await client.run_video_concatenation(
+            input_videos if isinstance(input_videos, list) else [{"mediaId": m} for m in segment_ids]
+        )
         return {
-            "dry_run": True,
-            "status": "SEGMENTS_READY",
+            "dry_run": False,
+            "status": "CONCAT_SUBMITTED",
             "job_id": kwargs.get("job_id"),
-            "segment_media_ids": kwargs.get("segment_media_ids"),
-            "input_videos": kwargs.get("input_videos"),
+            "segment_media_ids": segment_ids,
+            "submit": submit,
             "endpoint": "/v1:runVideoFxConcatenation",
+            "assembly_path": "DISCRETE_MONTAGE",
         }
 
     try:
         return await assemble_from_montage_run(
             run_id,
             concat_fn=_concat_boundary,
-            dry_run=True,
+            dry_run=body.dry_run,
             job_id=body.job_id,
         )
     except MontageAssemblyError as exc:
@@ -403,7 +428,6 @@ async def montage_run_assemble(run_id: str, body: MontageRunAssembleRequest) -> 
         ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-
 
 
 class MontageAuthorizeGenerationRequest(BaseModel):
@@ -440,11 +464,13 @@ async def montage_authorize_generation(
     with startAsset / image_media_ids from package snapshot — never package-id-only.
     """
     generate_fn = None
+    poll_fn = None
     if not body.dry_run:
         from agent.api.flow import GenerateRequest
         from agent.api.flow import generate as flow_generate
 
         async def generate_fn(**kwargs: Any) -> dict[str, Any]:
+            """Canonical GenerateRequest one-door — single body arg only (MON-02)."""
             start_asset = kwargs.get("start_asset")
             image_media_ids: list[str] = []
             mid = kwargs.get("image_media_id")
@@ -453,18 +479,20 @@ async def montage_authorize_generation(
             if isinstance(start_asset, dict):
                 sm = start_asset.get("mediaId") or start_asset.get("media_id")
                 if sm and str(sm) not in image_media_ids:
-                    # only include if looks like a flow media UUID-ish; still ok to send
                     image_media_ids.append(str(sm))
             gen_body = GenerateRequest(
                 mode=str(kwargs.get("mode") or "F2V"),
                 prompt=str(kwargs.get("prompt") or f"Montage scene {kwargs.get('scene_id')}"),
                 product_id=kwargs.get("product_id") or None,
                 aspect="9:16",
+                model=kwargs.get("model") or None,
+                duration_s=kwargs.get("duration_s"),
+                generation_mode="SINGLE",
+                engine="GOOGLE_FLOW",
                 startAsset=start_asset if isinstance(start_asset, dict) else None,
                 image_media_ids=image_media_ids or None,
             )
-            result = await flow_generate(gen_body, request)
-            # Normalize job/media identity for binder
+            result = await flow_generate(gen_body)
             if isinstance(result, dict):
                 return {
                     "job_id": result.get("job_id") or result.get("id"),
@@ -475,6 +503,16 @@ async def montage_authorize_generation(
                 }
             return {"job_id": None, "media_id": None}
 
+        async def poll_fn(job_id: str) -> dict[str, Any]:
+            try:
+                from agent.services import video_production_orchestrator as _orch
+                st = await _orch.get_job_status(job_id)
+                if isinstance(st, dict):
+                    return st
+            except Exception:
+                pass
+            return {"status": "RUNNING", "job_id": job_id}
+
     try:
         return await authorize_montage_run_generation(
             run_id,
@@ -482,6 +520,7 @@ async def montage_authorize_generation(
             expected_video_generations=body.expected_video_generations,
             dry_run=body.dry_run,
             generate_fn=generate_fn,
+            poll_fn=poll_fn,
         )
     except ValueError as exc:
         msg = str(exc)

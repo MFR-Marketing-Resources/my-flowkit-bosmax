@@ -129,6 +129,8 @@ async def execute_scene_plan(
     generate_fn: Optional[GenerateFn] = None,
     scene_context_override: Optional[str] = None,
     copy_fallback_confirmed: bool = True,
+    model: str = "Veo 3.1 - Lite",
+    duration_seconds: int = 8,
 ) -> SceneJobState:
     """Run one planned scene through existing package (+ optional generate) path."""
     state = SceneJobState(
@@ -151,10 +153,11 @@ async def execute_scene_plan(
         state.status = "VIDEO_READY"
         return state
 
-    # IMAGE_FIRST: optional image prepare hook before video package
+    # IMAGE_FIRST: optional image prepare; PRODUCT_ANCHOR/HYBRID may defer to package product image
     start_frame = _start_frame_for_plan(plan)
+    hybrid_product_anchor = str(plan.source_mode or "").upper() == "HYBRID"
     if plan.route == SceneExecutionRoute.IMAGE_FIRST and plan.image_generation_required:
-        if image_prepare_fn is not None and not start_frame:
+        if image_prepare_fn is not None and not start_frame and not hybrid_product_anchor:
             img = await image_prepare_fn(
                 product_id=product_id,
                 scene_id=plan.scene_id,
@@ -167,6 +170,10 @@ async def execute_scene_plan(
         elif start_frame:
             state.image_media_id = start_frame
             state.status = "IMAGE_BOUND"
+        elif hybrid_product_anchor:
+            # Canonical product package supplies start_frame after factory call
+            state.status = "IMAGE_PENDING_PACKAGE"
+            state.detail = "PRODUCT_ANCHOR → HYBRID product image from approved package"
         else:
             state.status = "BLOCKED"
             state.error_code = "ERR_MONTAGE_IMAGE_REQUIRED"
@@ -183,21 +190,30 @@ async def execute_scene_plan(
     # DIRECT_VIDEO or IMAGE_FIRST → create workspace execution package via canonical factory
     mode = plan.transport_mode
     source_mode = plan.source_mode if plan.source_mode != mode else None
+    # Prefer operator-selected model/duration (no empty model / hardcoded-only path)
+    try:
+        dur = int(duration_seconds)
+    except (TypeError, ValueError):
+        dur = 8
+    if dur <= 0:
+        dur = 8
+    model_label = str(model or "").strip() or "Veo 3.1 - Lite"
     kwargs: dict[str, Any] = {
         "product_id": product_id,
         "mode": mode,
-        "duration_seconds": 8,
+        "duration_seconds": dur,
         "aspect_ratio": "9:16",
-        "model": "",
+        "model": model_label,
         "manual_override": False,
         "generation_mode": "SINGLE",
         "source_mode": source_mode,
         "copy_fallback_confirmed": copy_fallback_confirmed,
         "scene_context_override": scene_context_override,
     }
-    if start_frame and mode in ("F2V", "I2V", "FRAMES"):
+    # FRAMES/I2V need explicit start; HYBRID product-anchor does not take start_frame_asset_id
+    if start_frame and mode in ("F2V", "I2V", "FRAMES") and str(source_mode or "").upper() != "HYBRID":
         kwargs["start_frame_asset_id"] = start_frame
-    if plan.product_media_id and mode in ("T2V", "HYBRID"):
+    if plan.product_media_id and str(source_mode or "").upper() == "HYBRID":
         kwargs["product_reference_asset_id"] = plan.product_media_id
 
     try:
@@ -215,6 +231,16 @@ async def execute_scene_plan(
     state.start_asset_snapshot = _snapshot_start_asset(pkg if isinstance(pkg, dict) else {})
     if state.package_prompt and not state.detail:
         state.detail = state.package_prompt[:400]
+    # Product-anchor HYBRID: package start_frame IS the scene image plate
+    if state.start_asset_snapshot and not state.image_media_id:
+        mid = state.start_asset_snapshot.get("mediaId")
+        aid = state.start_asset_snapshot.get("assetId")
+        if mid:
+            state.image_media_id = str(mid)
+        elif aid:
+            state.image_media_id = str(aid)
+        if state.image_media_id:
+            state.status = "IMAGE_BOUND"
     state.status = "PACKAGE_READY"
 
     if generate_fn is None:
@@ -252,6 +278,8 @@ async def orchestrate_montage_scenes(
     generate_fn: Optional[GenerateFn] = None,
     scene_context_override: Optional[str] = None,
     copy_fallback_confirmed: bool = True,
+    model: str = "Veo 3.1 - Lite",
+    duration_seconds: int = 8,
 ) -> MontageOrchestrationReport:
     """Beat → route → package (/ optional generate) for the full scene set."""
     if not str(product_id or "").strip():
@@ -285,6 +313,8 @@ async def orchestrate_montage_scenes(
             generate_fn=generate_fn,
             scene_context_override=scene_context_override,
             copy_fallback_confirmed=copy_fallback_confirmed,
+            model=model,
+            duration_seconds=duration_seconds,
         )
         report.scenes.append(state)
         if state.video_media_id:
