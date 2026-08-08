@@ -183,6 +183,45 @@ def test_pre_provider_lint_allows_static_dry_run_when_all_compile_gates_are_read
     assert result.max_retry_operations == 0
 
 
+def test_pre_provider_lint_allows_grounded_proof_chip_in_product_fact_context():
+    result = build_pre_provider_lint(
+        product_id="prod-1",
+        reference_pack={"pack_status": "APPROVED"},
+        brief=_brief(),
+        candidate=_candidate(
+            approved_proof_points=["Formula tradisional"],
+        ),
+        compiled_prompt=(
+            "4. COMPOSITION_AND_HIERARCHY\n"
+            "Approved product facts only: Formula tradisional; approved family cue\n"
+            "8. MARKETING_COPY_AND_TEXT_LAYOUT\n"
+            "CLEAN KEY VISUAL: render no marketing text."
+        ),
+        live=False,
+    )
+    assert result.allowed is True
+    assert result.prompt_marketing_copy_leak is False
+
+
+def test_pre_provider_lint_still_blocks_grounded_proof_repeated_as_copy():
+    result = build_pre_provider_lint(
+        product_id="prod-1",
+        reference_pack={"pack_status": "APPROVED"},
+        brief=_brief(),
+        candidate=_candidate(
+            approved_proof_points=["Formula tradisional"],
+        ),
+        compiled_prompt=(
+            "Approved product facts only: Formula tradisional\n"
+            "proof_points=Formula tradisional\n"
+            "CLEAN KEY VISUAL: render no marketing text."
+        ),
+        live=False,
+    )
+    assert result.allowed is False
+    assert "CLEAN_KEY_VISUAL_MARKETING_COPY_LEAK:proof_points[1]" in result.blockers
+
+
 def test_machine_qa_never_infers_identity_or_scale_from_payload():
     qa = build_campaign_machine_qa("media-1")
     assert qa.machine_qa_status == "WARN"

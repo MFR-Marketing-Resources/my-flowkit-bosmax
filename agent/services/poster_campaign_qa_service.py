@@ -63,7 +63,18 @@ def _prompt_copy_leaks(
     compiled_prompt: str,
     candidate: CampaignCopyRoute | dict[str, Any],
 ) -> list[str]:
-    prompt = _clean(compiled_prompt).casefold()
+    # Creative Campaign deliberately carries approved product facts in the
+    # visual-grounding section so the provider can stage the right ritual and
+    # materials.  Those facts are not the operator's marketing copy.  Mask
+    # that typed grounding line before scanning the candidate fields; a proof
+    # chip may be a bounded substring of an approved fact because poster-native
+    # chip limits are shorter than some approved fact strings.
+    prompt_without_grounding_facts = re.sub(
+        r"(?im)^[ \t]*approved product facts only:[^\r\n]*(?:\r?\n|$)",
+        "\n",
+        str(compiled_prompt or ""),
+    )
+    prompt = _clean(prompt_without_grounding_facts).casefold()
     leaks: list[str] = []
     for key in ("primary_message", "support_message", "cta"):
         value = _clean(_candidate_value(candidate, key))
