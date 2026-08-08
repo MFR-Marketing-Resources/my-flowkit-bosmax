@@ -78,3 +78,47 @@ def test_creative_campaign_rejects_unbounded_variant_request(monkeypatch):
 
     assert raised.value.status_code == 422
     assert raised.value.detail == "CREATIVE_CAMPAIGN_MAX_THREE_VARIANTS"
+
+
+def test_creative_campaign_requires_clean_key_visual_and_final_model(monkeypatch):
+    monkeypatch.setattr(
+        "agent.config.CREATIVE_CAMPAIGN_LIVE_BENCHMARK_AUTHORIZED", True
+    )
+
+    with pytest.raises(HTTPException) as intent_error:
+        asyncio.run(
+            generate(
+                GenerateRequest(
+                    mode="IMG",
+                    prompt="nine-section prompt",
+                    product_id="product-test-1",
+                    visual_lane_id="POSTER_BUILDER_CREATIVE_CAMPAIGN",
+                    image_contract_version="image_prompt_compiler_v1",
+                    output_intent="COMPLETE_POSTER",
+                    image_model="NANO_BANANA_PRO",
+                    confirm_live_credit_burn=True,
+                    maximum_provider_operations=1,
+                    max_retry_operations=0,
+                )
+            )
+        )
+    assert intent_error.value.detail == "CREATIVE_CAMPAIGN_CLEAN_KEY_VISUAL_REQUIRED"
+
+    with pytest.raises(HTTPException) as model_error:
+        asyncio.run(
+            generate(
+                GenerateRequest(
+                    mode="IMG",
+                    prompt="nine-section prompt",
+                    product_id="product-test-1",
+                    visual_lane_id="POSTER_BUILDER_CREATIVE_CAMPAIGN",
+                    image_contract_version="image_prompt_compiler_v1",
+                    output_intent="CLEAN_KEY_VISUAL",
+                    image_model="NANO_BANANA_2",
+                    confirm_live_credit_burn=True,
+                    maximum_provider_operations=1,
+                    max_retry_operations=0,
+                )
+            )
+        )
+    assert model_error.value.detail == "CREATIVE_CAMPAIGN_FINAL_MODEL_REQUIRED:NANO_BANANA_PRO"

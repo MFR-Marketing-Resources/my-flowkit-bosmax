@@ -1082,6 +1082,17 @@ async def generate(body: GenerateRequest):
         expected_operations = max(1, int(body.count)) + body.max_retry_operations
         if body.maximum_provider_operations != expected_operations:
             raise HTTPException(422, "PROVIDER_OPERATION_BUDGET_MISMATCH")
+        if (body.output_intent or "").upper() != "CLEAN_KEY_VISUAL":
+            raise HTTPException(
+                422,
+                "CREATIVE_CAMPAIGN_CLEAN_KEY_VISUAL_REQUIRED",
+            )
+        requested_image_model = (body.image_model or "NANO_BANANA_PRO").upper()
+        if requested_image_model != "NANO_BANANA_PRO":
+            raise HTTPException(
+                422,
+                "CREATIVE_CAMPAIGN_FINAL_MODEL_REQUIRED:NANO_BANANA_PRO",
+            )
     if mode == "IMG" and body.product_id:
         # Product-aware IMG requests pass this server gate before extension
         # connectivity or provider work. The workspace wrapper calls the same
@@ -2896,6 +2907,23 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
                     "creative campaign is bounded to at most three provider outputs",
                     "ERR_CREATIVE_CAMPAIGN_MAX_THREE_VARIANTS",
                 )
+            if str(body.get("output_intent") or "").upper() != "CLEAN_KEY_VISUAL":
+                await _fail_manual_request(
+                    request_id,
+                    "API_LANE_REJECTED",
+                    "creative campaign requires a clean key visual provider output",
+                    "ERR_CREATIVE_CAMPAIGN_CLEAN_KEY_VISUAL_REQUIRED",
+                )
+            requested_image_model = str(
+                body.get("image_model") or "NANO_BANANA_PRO"
+            ).upper()
+            if requested_image_model != "NANO_BANANA_PRO":
+                await _fail_manual_request(
+                    request_id,
+                    "API_LANE_REJECTED",
+                    "creative campaign final model must be NANO_BANANA_PRO",
+                    "ERR_CREATIVE_CAMPAIGN_FINAL_MODEL_REQUIRED",
+                )
         prompt, gated_refs, _ = await _apply_img_product_truth_gate(
             product_id=str(body["product_id"]),
             visual_lane_id=body.get("visual_lane_id") or body.get("lane"),
@@ -3097,6 +3125,7 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         duration_s=duration_s, num_videos=count,
         max_image_attempts=1 if creative_campaign else 8,
         collect_image_variants=creative_campaign,
+        image_model=body.get("image_model") if creative_campaign else None,
         product_id=body.get("product_id"))
     if not isinstance(res, dict) or not res.get("job_id"):
         code = str((res or {}).get("error") or "VIDEO_JOB_IN_FLIGHT")

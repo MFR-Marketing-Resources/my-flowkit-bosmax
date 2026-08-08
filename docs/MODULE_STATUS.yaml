@@ -1032,6 +1032,9 @@ domains:
       - data/exact-product/**
       - tests/unit/test_exact_product_final_output_service.py
       - agent/services/poster_deliverable_service.py
+      - agent/models/poster_campaign_design_brief.py
+      - agent/services/poster_campaign_design_service.py
+      - agent/services/poster_design_system.py
       - agent/api/poster_copy_sets.py
       - agent/api/poster_compose.py
       - agent/authority/POSTER_TEMPLATE_TOKENS.yaml
@@ -1060,6 +1063,7 @@ domains:
       - tests/unit/test_poster_template_and_manifest.py
       - tests/unit/test_exact_product_compositor_service.py
       - tests/unit/test_poster_deliverable_service.py
+      - tests/unit/test_poster_campaign_design_service.py
       - tests/unit/test_poster_clean_scene_prompt.py
       - tests/api/test_poster_copy_sets_api.py
       - tests/ui/test_poster_compositor_service_contract.py
@@ -1387,6 +1391,8 @@ domains:
       - tests/unit/test_image_generation_contract.py
       - tests/api/test_creative_campaign_contract.py
       - docs/evidence/image-capability-audit-20260808.md
+      - docs/evidence/poster-builder-v3-pre-refactor-audit.md
+      - docs/evidence/poster-builder-v3-design-system-audit.md
       # Faceless Video + creative lane settings (Hook/Background SSOT) C1
       - agent/authority/creative_lane_settings.json
       - agent/services/creative_lane_settings_service.py
