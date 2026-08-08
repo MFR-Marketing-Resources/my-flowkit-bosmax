@@ -472,6 +472,9 @@ describe("PosterGuidedShell", () => {
 			(screen.getByTestId("poster-generate-scene") as HTMLButtonElement).disabled,
 		).toBe(true);
 
+		fireEvent.change(screen.getByTestId("poster-truth-reviewed-by"), {
+			target: { value: "Faris" },
+		});
 		fireEvent.click(screen.getByTestId("poster-truth-confirm-identity"));
 		fireEvent.click(screen.getByTestId("poster-truth-confirm-label-logo"));
 		fireEvent.click(screen.getByTestId("poster-truth-confirm-geometry-scale"));
@@ -481,6 +484,7 @@ describe("PosterGuidedShell", () => {
 		expect(approveProductTruthLock).toHaveBeenCalledWith(
 			"prod-1",
 			expect.objectContaining({
+				reviewed_by: "Faris",
 				confirm_identity: true,
 				confirm_label_logo: true,
 				confirm_geometry_scale: true,
