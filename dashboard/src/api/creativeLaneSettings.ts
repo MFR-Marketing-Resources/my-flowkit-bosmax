@@ -61,9 +61,18 @@ export async function resolveCreativeLaneSettings(input: {
 export interface FacelessPrepareResponse {
 	ok: boolean;
 	lane?: string;
-	transport_mode?: string;
-	source_mode?: string;
+	generation_mode?: string;
+	model?: string;
+	duration_seconds?: number | null;
+	total_duration_seconds?: number | null;
 	character_presence?: string;
+	avatar_id?: null;
+	visual_law?: string;
+	debug?: {
+		transport_mode?: string;
+		source_mode?: string;
+		reference_override?: boolean;
+	};
 	resolution?: {
 		hook: ResolvedLaneSetting;
 		background: ResolvedLaneSetting;
@@ -73,28 +82,44 @@ export interface FacelessPrepareResponse {
 		workspace_execution_package_id?: string;
 		prompt_text?: string;
 		prompt_fingerprint?: string | null;
+		asset_slots?: Array<Record<string, unknown>>;
 		[key: string]: unknown;
 	};
+	durable_lifecycle?: {
+		plan: string;
+		authorize: string;
+		start: string;
+		status: string;
+		base_clip_duration_seconds: number;
+		total_duration_seconds: number | null;
+	} | null;
 	error_code?: string;
 	detail?: string;
 }
 
 export async function prepareFacelessPackage(input: {
 	product_id: string;
-	start_frame_asset_id: string;
-	end_frame_asset_id?: string | null;
 	hook_id: string;
 	background_id: string;
-	duration_seconds?: number;
+	model: string;
+	generation_mode: "SINGLE" | "EXTEND";
+	duration_seconds?: number | null;
+	total_duration_seconds?: number | null;
+	/** Advanced override only */
+	start_frame_asset_id?: string | null;
+	end_frame_asset_id?: string | null;
 	copy_fallback_confirmed?: boolean;
 }): Promise<FacelessPrepareResponse> {
 	return postAPI("/api/faceless/prepare", {
 		product_id: input.product_id,
-		start_frame_asset_id: input.start_frame_asset_id,
-		end_frame_asset_id: input.end_frame_asset_id ?? null,
 		hook_id: input.hook_id,
 		background_id: input.background_id,
-		duration_seconds: input.duration_seconds ?? 8,
+		model: input.model,
+		generation_mode: input.generation_mode,
+		duration_seconds: input.duration_seconds ?? null,
+		total_duration_seconds: input.total_duration_seconds ?? null,
+		start_frame_asset_id: input.start_frame_asset_id ?? null,
+		end_frame_asset_id: input.end_frame_asset_id ?? null,
 		copy_fallback_confirmed: input.copy_fallback_confirmed ?? true,
 	});
 }
