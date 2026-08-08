@@ -1,0 +1,313 @@
+%YAML 1.2
+---
+id: KB-VISUAL-LANGUAGE-SEA-004
+title: Visual Language & Photography System Sovereign Core (Malaysia + SEA)
+version: "1.0.0"
+type: sovereign
+
+document_control:
+  enforcement_level: strict
+  region_scope: malaysia_sea
+  owner: BINA_POSTER_PROJECT
+  last_updated: "2026-03-02"
+
+description:
+  en: Master visual language system defining photography style, composition hierarchy, sensory logic, and commercial aesthetics for AI-generated visuals in Malaysia and Southeast Asia.
+
+governance:
+  realism_bias: high
+  luxury_motion_bias: controlled_slow
+  mobile_first_framing: true
+  cultural_authenticity_required: true
+  emotional_consistency_required: true
+
+visual_hierarchy_system:
+
+  primary_focus_rule:
+    single_dominant_subject_required: true
+    minimum_subject_canvas_fill_percentage: 60
+    background_distraction_level: low
+
+  commercial_poster_rule:
+    one_big_idea_required: true
+    product_first_by_default: true
+    avatar_led_only_when_explicit: true
+    breathing_room_required: true
+    trust_before_flash_required: true
+    cluttered_marketplace_style_prohibited: true
+
+  secondary_elements_rule:
+    max_secondary_elements: 3
+    layering_depth_required: true
+    z_axis_separation_required: true
+
+  typography_visual_balance:
+    text_must_not_compete_with_subject: true
+    minimum_contrast_ratio: 4.5
+    safe_zone_alignment_required: true
+
+composition_framework:
+
+  rule_of_thirds:
+    allowed: true
+    intersection_priority: high
+
+  central_composition:
+    allowed_for_ecommerce: true
+    symmetry_bias: moderate
+
+  leading_lines:
+    allowed: true
+    must_direct_to_subject: true
+
+  negative_space_usage:
+    required_for_cta_focus: true
+    minimum_negative_space_percentage: 15
+
+  horizon_control:
+    level_required: true
+    vertical_alignment_required: true
+
+lighting_system:
+
+  lighting_profiles:
+
+    studio_high_key:
+      shadow_intensity: soft
+      background_cleanliness: pure_white_or_neutral
+      reflection_control: required
+
+    natural_daylight:
+      color_temperature_range_kelvin: [5000, 6500]
+      shadow_direction_consistency: required
+
+    golden_hour:
+      color_temperature_range_kelvin: [3500, 4500]
+      highlight_control_required: true
+
+    hdr_balanced:
+      highlight_clipping_allowed: false
+      shadow_detail_preserved: true
+
+  prohibit_mixed_color_temperatures: true
+  prohibit_multiple_conflicting_light_sources: true
+
+camera_kinematics:
+
+  static_product:
+    camera_movement: none
+    focal_length_preference_mm: [50, 85]
+    depth_of_field: shallow
+    distortion_allowed: false
+
+  lifestyle_scene:
+    camera_movement: subtle_push_in
+    focal_length_preference_mm: [35, 50]
+    depth_of_field: moderate
+    motion_blur_allowed: minimal
+
+  real_estate:
+    camera_movement: stable_tripod
+    focal_length_preference_mm: [24, 35]
+    depth_of_field: deep
+    vertical_line_correction_required: true
+
+  human_avatar_livestream_creator:
+    camera_movement: none_or_subtle_push_in
+    focal_length_preference_mm: [35, 50, 85]
+    depth_of_field: moderate
+    framing: medium_close_up_or_half_body
+    perspective: eye_level
+    motion_blur_allowed: minimal
+    distortion_allowed: false
+    direct_camera_engagement_required: true
+
+  non_product_human_scene:
+    camera_movement: none_or_subtle_push_in
+    focal_length_preference_mm: [35, 50, 85]
+    depth_of_field: moderate
+    framing: portrait_to_half_body
+    distortion_allowed: false
+
+human_avatar_visual_requirements:
+  applies_to_routes:
+    - if_human_avatar_livestream_creator
+    - human_avatar_portrait
+    - livestream_creator
+    - studio_creator_scene
+    - non_product_human_scene
+  primary_subject_type: human
+  product_scale_classification: prohibited_unless_product_explicit
+  mandatory_subject_fields:
+    - cultural_identity
+    - age_range
+    - gender_presentation
+    - attire_description
+    - hijab_style_when_requested
+    - facial_features
+    - natural_skin_tone
+    - facial_expression
+    - posture_specification
+    - hand_behavior
+    - studio_or_location_context
+    - camera_engagement
+  malaysia_sea_cultural_authenticity:
+    required: true
+    avoid_generic_western_influencer_styling: true
+    preserve_natural_skin_tone_variation: true
+    hijab_representation_when_requested: respectful_modern_or_traditional
+    facial_feature_authenticity: natural_malay_sea_features
+  subject_detail_minimum:
+    age_range_required: true
+    attire_required: true
+    expression_required: true
+    posture_required: true
+    hand_behavior_required: true
+    activity_context_required: true
+
+livestream_creator_composition:
+  environment_type: creator_studio_or_home_studio
+  required_scene_elements:
+    - studio_desk
+    - camera_or_smartphone_setup
+    - soft_studio_lighting
+    - clean_background
+  optional_secondary_elements:
+    - microphone
+    - ring_light
+    - neutral_shelves
+    - soft_bokeh_lights
+  max_secondary_elements: 3
+  subject_priority: dominant
+  subject_canvas_fill_guidance: medium_close_up_to_half_body
+  camera_engagement:
+    direct_eye_contact: required
+    expression_style: warm_confident_professional
+    posture: seated_upright_or_slight_forward_engagement
+  product_presence:
+    default: prohibited
+    allowed_only_if_user_explicitly_requests_product: true
+
+human_hand_behavior_rules:
+  applies_to_human_only_scenes: true
+  default_hand_behavior:
+    - relaxed_visible_hands
+    - natural_resting_on_desk
+    - light_open_palm_gesture_when_contextual
+  prohibited_without_explicit_product_request:
+    - holding_product
+    - gripping_bottle
+    - product_pinch_pose
+    - palm_filling_object
+    - macro_hand_scale_reference
+  object_interaction_rule: "No product or object holding unless explicitly requested by the user."
+  hand_anatomy_integrity:
+    no_extra_fingers: true
+    no_warped_hands: true
+    no_fused_fingers: true
+    no_unnatural_grip: true
+
+safe_zone_visual_translation:
+  safe_zone_terms_are_metadata_only: true
+  prohibit_rendered_safe_zone_text: true
+  prohibit_visual_guide_boxes: true
+  prohibit_percentage_margin_labels: true
+  prohibited_prompt_terms:
+    - safe_zone
+    - side_margin_px
+    - bottom_exclusion_px
+    - top_10_percent
+    - side_10_percent
+    - bottom_exclusion
+    - side_margin
+  prompt_safe_replacements:
+    - "balanced lower negative space"
+    - "clean lower foreground"
+    - "subject positioned clear of interface area"
+    - "uncluttered composition edges"
+    - "no visual guide labels"
+  composition_behavior:
+    leave_clean_lower_space_for_platform_interface: true
+    maintain_subject_dominance_without_layout_labels: true
+
+sensory_logic:
+
+  predator_silo:
+    expression_style: neutral_or_stoic
+    dominance_posture_allowed: true
+    excessive_smiling_prohibited: true
+
+  empathy_silo:
+    expression_style: warm_and_reassuring
+    direct_eye_contact_required: moderate
+    cynical_expression_prohibited: true
+
+  cross_silo_contamination_prohibited: true
+
+color_psychology_system:
+
+  luxury_palette:
+    dominant_colors: [black, deep_gold, navy, emerald]
+    saturation_level: controlled
+    contrast_bias: high
+
+  ecommerce_palette:
+    dominant_colors: [white, neutral_gray, soft_pastel]
+    saturation_level: moderate
+    background_cleanliness_required: true
+
+  fmcg_palette:
+    dominant_colors: [warm_red, yellow, green]
+    vibrancy_bias: high
+    clarity_required: high
+
+render_integrity_rules:
+
+  prohibit_over_sharpening: true
+  prohibit_unrealistic_skin_texture: true
+  prohibit_excessive_hdr_halo: true
+  prohibit_background_bandings: true
+
+metadata_reference_targets:
+  - rule_id: primary_subject_check
+    action: enforce_in_metadata_handoff
+  - rule_id: lighting_conflict_check
+    action: enforce_in_metadata_handoff
+  - rule_id: horizon_alignment_check
+    action: enforce_in_metadata_handoff
+  - rule_id: cross_silo_expression_check
+    action: enforce_in_metadata_handoff
+  - rule_id: color_temperature_conflict_check
+    action: enforce_in_metadata_handoff
+  - rule_id: human_avatar_subject_detail_check
+    action: enforce_in_metadata_handoff
+  - rule_id: human_hand_behavior_check
+    action: enforce_in_metadata_handoff
+  - rule_id: safe_zone_visual_translation_check
+    action: enforce_in_metadata_handoff
+  - rule_id: product_absence_in_non_product_scene_check
+    action: enforce_in_metadata_handoff
+
+canonical_visual_templates:
+
+  - template_id: ecommerce_white_background_standard
+    structure: "Centered product, 60% canvas fill, studio_high_key lighting, shallow depth of field, pure white background, balanced contrast, no visual clutter."
+
+  - template_id: cinematic_lifestyle_sea
+    structure: "Authentic Malaysian urban environment, natural daylight or golden hour, moderate depth of field, subject aligned to rule of thirds, warm natural skin tones."
+
+  - template_id: luxury_real_estate_presentation
+    structure: "HDR balanced interior, 24mm lens, deep depth of field, straight vertical lines, controlled highlight exposure, neutral luxury palette."
+
+examples:
+
+  - scenario: ecommerce_product_listing
+    expected_visual_behavior: "Single centered product, clean white background, no background texture, balanced lighting, no shadow spill."
+
+  - scenario: tiktok_lifestyle_vertical
+    expected_visual_behavior: "Natural golden hour lighting, subject separated from background, cinematic depth, no mixed light temperature."
+
+  - scenario: luxury_condo_marketing
+    expected_visual_behavior: "Straight vertical lines, balanced HDR, controlled warm interior lighting, no overexposed windows."
+
+...

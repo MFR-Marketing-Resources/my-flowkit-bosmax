@@ -1,0 +1,196 @@
+%YAML 1.2
+---
+id: KB-ECOM-PRODUCT-SEA-009
+title: E-Commerce Product Visual Strategy (Malaysia + SEA)
+version: "1.0.0"
+type: satellite
+
+document_control:
+  enforcement_level: aligned_with_sovereign
+  region_scope: malaysia_sea
+  owner: BINA_POSTER_PROJECT
+  last_updated: "2026-03-02"
+
+description:
+  en: E-commerce product visual configuration system defining listing hierarchy, conversion-focused image sequencing, thumbnail optimization, and marketplace compliance for Shopee, Lazada, and SEA platforms.
+
+governance:
+  conversion_priority: high
+  mobile_scroll_behavior_optimized: true
+  white_background_compliance_required: true
+  marketplace_rule_override_prohibited: true
+  sovereign_override_protocol: "must_yield_to_sovereign_conflict"
+  commercial_poster_elevation_alignment: required
+
+commercial_conversion_intelligence:
+
+  one_big_idea_rule:
+    required: true
+    prohibit_multi_message_confusion: true
+
+  hierarchy_defaults:
+    product_first_by_default: true
+    trust_before_flash_required: true
+    mobile_readability_priority: high
+    clutter_rejection_required: true
+
+  overlay_density:
+    max_headline_count: 1
+    max_support_line_count: 1
+    max_badge_count: 3
+    paragraph_overlay_prohibited: true
+
+  marketplace_spam_rejection:
+    prohibit:
+      - fake_discount_noise
+      - badge_overload
+      - cluttered_composition
+      - weak_product_focus
+      - unreadable_mobile_text
+
+listing_image_hierarchy:
+
+  image_sequence_structure:
+    - hero_product_image
+    - feature_highlight_image
+    - benefit_visual_image
+    - social_proof_or_trust_image
+    - infographic_specification_image
+
+  hero_product_image:
+    background_required: pure_white
+    minimum_canvas_fill_percentage: 75
+    text_overlay_allowed: false
+    shadow_intensity_max_percentage: 20
+    micro_product_constraints:
+      apply_when_product_scale_class: class_a_micro
+      canvas_rules:
+        max_canvas_fill_percentage: 25
+        enforce_negative_space: true
+      composition_rules:
+        prohibit_full_canvas_product: true
+        fingertip_reference_required: true
+        macro_depth_of_field_required: true
+      prohibited_visual_patterns:
+        - palm_filling_product
+        - oversized_dropper
+        - giant_lip_balm
+
+  feature_highlight_image:
+    background_allowed: minimal_gradient_or_neutral
+    text_overlay_allowed: true
+    max_feature_points: 3
+    icon_usage_allowed: true
+
+  benefit_visual_image:
+    lifestyle_context_allowed: true
+    require_clear_product_visibility: true
+    emotional_trigger_alignment_required: true
+
+  commercial_poster_variant:
+    allowed_for:
+      - tiktok_shop
+      - meta_social_commerce
+    background_allowed: premium_neutral_or_soft_gradient
+    text_overlay_allowed: true
+    one_primary_angle_required: true
+    max_overlay_blocks: 5
+    product_truth_lock_required: true
+    cheap_marketplace_spam_prohibited: true
+
+  trust_image:
+    allowed_elements:
+      - certification_badges
+      - warranty_icons
+      - rating_visuals
+    prohibit_fake_reviews: true
+
+thumbnail_optimization:
+
+  square_priority: true
+  center_weighted_crop_required: true
+  prohibit_edge_cutoff_of_product: true
+  minimum_subject_visibility_percentage: 70
+  high_contrast_required_for_mobile: true
+
+mobile_conversion_rules:
+
+  hook_visibility_within_first_scroll: true
+  first_image_must_be_clear_without_zoom: true
+  prohibit_cluttered_layout: true
+  font_size_mobile_minimum_px: 16
+
+platform_specific_alignment:
+
+  shopee:
+    hero_white_background_required: true
+    max_file_size_mb: 2
+    prohibit_promotional_text_on_hero: true
+    first_keyword_alignment_required: true
+
+  lazada:
+    hero_white_background_required: true
+    min_product_fill_percentage: 80
+    overlay_on_hero_prohibited: true
+
+  tiktok_shop:
+    vertical_variant_allowed: true
+    motion_intent_preferred: true
+    commercial_poster_allowed: true
+    premium_mobile_hook_priority: high
+
+pricing_visual_rules:
+
+  currency_format_required: true
+  prohibit_fake_discount_percentage: true
+  alignment_of_price_digits_required: true
+  high_contrast_price_display_required: true
+
+bundle_and_variant_logic:
+
+  show_all_variants_clearly: true
+  prohibit_misleading_color_representation: true
+  require_consistent_lighting_across_variants: true
+
+render_integrity:
+
+  prohibit_background_noise: true
+  prohibit_low_resolution_zoom_blur: true
+  prohibit_logo_distortion: true
+  require_edge_sharpness: true
+
+metadata_reference_targets:
+  - rule_id: hero_background_check
+    action: enforce_in_metadata_handoff
+  - rule_id: canvas_fill_check
+    action: enforce_in_metadata_handoff
+  - rule_id: overlay_violation_check
+    action: enforce_in_metadata_handoff
+  - rule_id: thumbnail_cutoff_check
+    action: enforce_in_metadata_handoff
+  - rule_id: fake_discount_check
+    action: enforce_in_metadata_handoff
+
+canonical_ecommerce_templates:
+
+  - template_id: standard_shopee_listing
+    structure: "White background hero image, 75% canvas fill, no text, sharp edges, secondary infographic image with max 3 features."
+
+  - template_id: premium_lazada_listing
+    structure: "White background, 80% product fill, neutral lighting, clean infographic with benefit clarity."
+
+  - template_id: vertical_tiktok_shop_variant
+    structure: "9:16 vertical layout, one dominant product or explicitly requested hero subject, one clear selling angle, minimal overlay density, premium commercial hierarchy, mobile-first readability."
+
+examples:
+
+  - scenario: shopee_skincare_product
+    expected_behavior: "Pure white hero image, no text overlay, product centered, sharp focus, high contrast."
+
+  - scenario: lazada_electronics_listing
+    expected_behavior: "80% product fill, white background, clear feature infographic, no clutter."
+
+  - scenario: tiktok_shop_fashion_item
+    expected_behavior: "Vertical layout, strong hook image, clear product visibility, mobile optimized contrast."
+
+...
