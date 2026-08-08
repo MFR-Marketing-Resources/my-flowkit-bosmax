@@ -1,6 +1,10 @@
 /**
  * Faceless Video — pure helpers (unit-testable without rendering).
- * Image-first single clip via F2V/FRAMES one-door. No new engine.
+ *
+ * Operator surface: Hybrid product path WITHOUT avatar/face.
+ * Internal transport: F2V + HYBRID product-anchor (approved package image).
+ * Optional Advanced FRAMES override with start frame.
+ * No new engine.
  */
 
 import type {
@@ -9,18 +13,19 @@ import type {
 	WorkspaceExecutionPackage,
 } from "../types";
 
+/** Internal only — never operator chrome. */
 export const FACELESS_TRANSPORT_MODE = "F2V" as const;
-export const FACELESS_SOURCE_MODE = "FRAMES" as const;
+export const FACELESS_SOURCE_MODE = "HYBRID" as const;
+export const FACELESS_OVERRIDE_SOURCE_MODE = "FRAMES" as const;
 export const FACELESS_CHARACTER_PRESENCE = "FACELESS" as const;
 
-export function facelessStartFrameBlocker(
-	startFrameAssetId: string | null | undefined,
-): string | null {
-	if (!String(startFrameAssetId || "").trim()) {
-		return "Faceless requires a product or scene image as the start frame before prepare/generate.";
-	}
-	return null;
-}
+export const FACELESS_VISUAL_LAW =
+	"VISUAL LAW (FACELESS): No visible human face and no AI presenter face. " +
+	"Hands, arms, and torso may appear with the head and face kept out of frame. " +
+	"The person may hold, interact with, demonstrate, or gently move the product. " +
+	"Product identity and packaging remain locked and authoritative.";
+
+export type FacelessSceneMode = "SINGLE" | "EXTEND";
 
 export function facelessProductBlocker(
 	productId: string | null | undefined,
@@ -31,14 +36,75 @@ export function facelessProductBlocker(
 	return null;
 }
 
+/** Advanced override only. */
+export function facelessStartFrameBlocker(
+	startFrameAssetId: string | null | undefined,
+	referenceOverride = false,
+): string | null {
+	if (!referenceOverride) return null;
+	if (!String(startFrameAssetId || "").trim()) {
+		return "Advanced override requires a start-frame asset.";
+	}
+	return null;
+}
+
+export function facelessModelBlocker(
+	model: string | null | undefined,
+): string | null {
+	if (!String(model || "").trim()) return "Select a video model.";
+	return null;
+}
+
+export function facelessDurationBlocker(
+	sceneMode: FacelessSceneMode,
+	durationSeconds: number | null | undefined,
+	extendTotalSeconds: number | null | undefined,
+): string | null {
+	if (sceneMode === "SINGLE") {
+		if (
+			durationSeconds == null ||
+			!Number.isFinite(durationSeconds) ||
+			durationSeconds <= 0
+		) {
+			return "Select a clip duration.";
+		}
+		return null;
+	}
+	if (
+		extendTotalSeconds == null ||
+		!Number.isFinite(extendTotalSeconds) ||
+		extendTotalSeconds <= 0
+	) {
+		return "Select an authorized total duration for Extend.";
+	}
+	return null;
+}
+
 export function facelessPrepareBlockers(input: {
 	productId: string | null | undefined;
-	startFrameAssetId: string | null | undefined;
+	model: string | null | undefined;
+	sceneMode: FacelessSceneMode;
+	durationSeconds?: number | null;
+	extendTotalSeconds?: number | null;
+	/** Advanced only */
+	startFrameAssetId?: string | null;
+	referenceOverride?: boolean;
 }): string[] {
 	const out: string[] = [];
 	const p = facelessProductBlocker(input.productId);
-	const s = facelessStartFrameBlocker(input.startFrameAssetId);
 	if (p) out.push(p);
+	const m = facelessModelBlocker(input.model);
+	if (m) out.push(m);
+	const d = facelessDurationBlocker(
+		input.sceneMode,
+		input.durationSeconds,
+		input.extendTotalSeconds,
+	);
+	if (d) out.push(d);
+	const s = facelessStartFrameBlocker(
+		input.startFrameAssetId,
+		Boolean(input.referenceOverride),
+	);
 	if (s) out.push(s);
 	return out;
 }
@@ -94,10 +160,6 @@ export function resolvedAssetToGenerateAsset(
 	};
 }
 
-/**
- * Minimal startAsset when package slots are thin but operator binding has asset id.
- * Prefer package-resolved payloads (media / path / url).
- */
 export function bindingFallbackGenerateAsset(
 	assetId: string | null | undefined,
 	label = "start_frame",
@@ -121,31 +183,47 @@ export function generateAssetHasTransport(
 	if (!asset) return false;
 	return Boolean(
 		asset.mediaId ||
-			asset.localFilePath ||
-			asset.downloadUrl ||
-			asset.previewUrl ||
-			asset.assetId,
+		asset.localFilePath ||
+		asset.downloadUrl ||
+		asset.previewUrl,
 	);
 }
 
 /**
  * Canonical Faceless → POST /api/flow/generate body.
- *
- * MUST carry startAsset (+ optional image_media_ids) on the existing one-door
- * contract. Package id alone does NOT transport the frame to make_video.
+ * startAsset from package product anchor (normal) or Advanced override binding.
+ * model + duration_s required (no hardcoded 8).
  */
 export function buildFacelessGenerateBody(input: {
 	prompt: string;
 	productId?: string | null;
 	workspacePackage?: WorkspaceExecutionPackage | null;
-	/** Operator binding — used if package slot missing. */
 	startFrameAssetId?: string | null;
 	endFrameAssetId?: string | null;
 	aspect?: string;
+	model: string;
+	durationSeconds: number;
+	sceneMode?: FacelessSceneMode;
+	extendTotalSeconds?: number | null;
+	engine?: string;
 }): Record<string, unknown> {
 	const prompt = String(input.prompt || "").trim();
 	if (!prompt) {
 		throw new Error("Faceless generate requires package prompt_text.");
+	}
+	const model = String(input.model || "").trim();
+	if (!model) {
+		throw new Error("Faceless generate requires a video model.");
+	}
+	const durationSeconds = Number(input.durationSeconds);
+	if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+		throw new Error("Faceless generate requires a positive duration_s.");
+	}
+	if ((input.sceneMode || "SINGLE") === "EXTEND") {
+		throw new Error(
+			"Faceless EXTEND uses the durable video-job/native-Extend lifecycle; " +
+			"do not submit its base clip through /api/flow/generate.",
+		);
 	}
 
 	const pkg = input.workspacePackage ?? null;
@@ -165,7 +243,8 @@ export function buildFacelessGenerateBody(input: {
 
 	if (!generateAssetHasTransport(startAsset)) {
 		throw new Error(
-			"Faceless generate blocked: start frame reference missing from package and binding.",
+			"Faceless generate blocked: product image anchor missing from package. " +
+				"Product must be image-ready, or use Advanced reference override.",
 		);
 	}
 
@@ -176,17 +255,16 @@ export function buildFacelessGenerateBody(input: {
 	const body: Record<string, unknown> = {
 		mode: FACELESS_TRANSPORT_MODE,
 		prompt,
-		// GenerateRequest field is `aspect`, not aspectRatio.
 		aspect: input.aspect || pkg?.aspect_ratio || "9:16",
 		product_id: input.productId ?? pkg?.product_id ?? null,
-		// Primary F2V reference path used by ordered_ref_slots → resolve → start_generate.
+		model,
+		duration_s: durationSeconds,
+		generation_mode: "SINGLE",
+		engine: input.engine || "GOOGLE_FLOW",
 		startAsset,
-		// Explicit media ids when already live (OperatorPage parity).
 		image_media_ids,
 	};
 
-	// End frame without mediaId: GenerateRequest has no endAsset field on this
-	// one-door path — transport via refs.imageAsset (ordered after start).
 	if (
 		endAsset &&
 		generateAssetHasTransport(endAsset) &&
@@ -206,7 +284,6 @@ export function buildFacelessGenerateBody(input: {
 		};
 	}
 
-	// Lineage only — NOT a substitute for startAsset (Pydantic may strip unknowns).
 	if (pkg?.workspace_execution_package_id) {
 		body.workspace_execution_package_id = pkg.workspace_execution_package_id;
 	}
