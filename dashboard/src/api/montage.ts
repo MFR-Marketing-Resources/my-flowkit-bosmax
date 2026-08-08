@@ -1,4 +1,4 @@
-// Montage API — plan, durable runs, readiness, gated assemble (dry-run).
+// Montage API — plan, durable runs, M-04 authorize-generation, readiness, gated assemble.
 import { getAPI, postAPI } from "./client";
 
 export interface MontageScenePlan {
@@ -40,6 +40,8 @@ export interface MontageSceneJob {
 	reference_policy: string;
 	status: string;
 	workspace_execution_package_id: string | null;
+	package_prompt?: string | null;
+	start_asset_snapshot?: Record<string, unknown> | null;
 	video_media_id: string | null;
 	image_media_id: string | null;
 	error_code: string | null;
@@ -100,6 +102,26 @@ export interface MontageAssembleResponse {
 	concat: Record<string, unknown>;
 	credit_spend: boolean;
 	montage_run_id?: string;
+}
+
+export interface MontageGenerationEstimate {
+	montage_run_id: string;
+	expected_video_generations: number;
+	pending_scene_ids: string[];
+	summary: string;
+	authorization_required: boolean;
+	credit_spend: boolean;
+	run_status?: string;
+	total_scenes?: number;
+}
+
+export interface MontageAuthorizeGenerationResponse extends MontageGenerationEstimate {
+	ok: boolean;
+	authorized: boolean;
+	dry_run: boolean;
+	dispatched: Array<Record<string, unknown>>;
+	detail: string;
+	run?: MontageRunResponse;
 }
 
 export async function fetchMontagePolicies(): Promise<{
@@ -189,6 +211,38 @@ export async function bindMontageSceneResult(
 		result_kind: input.result_kind ?? "video",
 		job_id: input.job_id ?? null,
 	});
+}
+
+/** M-04 credit estimate — no spend. */
+export async function fetchMontageGenerationEstimate(
+	runId: string,
+): Promise<MontageGenerationEstimate> {
+	return getAPI(
+		`/api/montage/runs/${encodeURIComponent(runId)}/generation-estimate`,
+	);
+}
+
+/**
+ * M-04 authorize multi-scene generation.
+ * dryRun=true (default): validate count only.
+ * dryRun=false: dispatches live one-door generate per pending scene (credits).
+ */
+export async function authorizeMontageGeneration(
+	runId: string,
+	input: {
+		confirm_credit_burn: boolean;
+		expected_video_generations: number;
+		dry_run?: boolean;
+	},
+): Promise<MontageAuthorizeGenerationResponse> {
+	return postAPI(
+		`/api/montage/runs/${encodeURIComponent(runId)}/authorize-generation`,
+		{
+			confirm_credit_burn: input.confirm_credit_burn,
+			expected_video_generations: input.expected_video_generations,
+			dry_run: input.dry_run ?? true,
+		},
+	);
 }
 
 export async function checkMontageRunReadiness(

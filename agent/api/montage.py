@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from agent.services.montage_assembly_readiness import (
@@ -26,8 +26,10 @@ from agent.services.montage_scene_execution_routing import (
 from agent.services.montage_scene_orchestrator import orchestrate_montage_scenes
 from agent.services.montage_run_service import (
     assemble_from_montage_run,
+    authorize_montage_run_generation,
     bind_montage_scene_result,
     create_montage_discrete_run,
+    estimate_montage_run_generation,
     get_montage_discrete_run,
     readiness_from_montage_run,
 )
@@ -403,12 +405,100 @@ async def montage_run_assemble(run_id: str, body: MontageRunAssembleRequest) -> 
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+
+class MontageAuthorizeGenerationRequest(BaseModel):
+    """Operator-authorized multi-scene generation (M-04).
+
+    dry_run=True (default): validate credit count only — no generate boundary.
+    dry_run=False + confirm_credit_burn=True: dispatch per pending scene via
+    one-door generate boundary (startAsset/image_media_ids, not package-id-only).
+    """
+
+    confirm_credit_burn: bool = False
+    expected_video_generations: int
+    dry_run: bool = True
+
+
+@router.get("/runs/{run_id}/generation-estimate")
+async def montage_run_generation_estimate(run_id: str) -> dict[str, Any]:
+    """Credit estimate: N scenes → N video generations (no spend)."""
+    try:
+        return await estimate_montage_run_generation(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/runs/{run_id}/authorize-generation")
+async def montage_authorize_generation(
+    run_id: str,
+    body: MontageAuthorizeGenerationRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """M-04: explicit credit authorization before multi-scene generate.
+
+    Live path (dry_run=false) calls existing /api/flow/generate contract per scene
+    with startAsset / image_media_ids from package snapshot — never package-id-only.
+    """
+    generate_fn = None
+    if not body.dry_run:
+        from agent.api.flow import GenerateRequest
+        from agent.api.flow import generate as flow_generate
+
+        async def generate_fn(**kwargs: Any) -> dict[str, Any]:
+            start_asset = kwargs.get("start_asset")
+            image_media_ids: list[str] = []
+            mid = kwargs.get("image_media_id")
+            if mid:
+                image_media_ids.append(str(mid))
+            if isinstance(start_asset, dict):
+                sm = start_asset.get("mediaId") or start_asset.get("media_id")
+                if sm and str(sm) not in image_media_ids:
+                    # only include if looks like a flow media UUID-ish; still ok to send
+                    image_media_ids.append(str(sm))
+            gen_body = GenerateRequest(
+                mode=str(kwargs.get("mode") or "F2V"),
+                prompt=str(kwargs.get("prompt") or f"Montage scene {kwargs.get('scene_id')}"),
+                product_id=kwargs.get("product_id") or None,
+                aspect="9:16",
+                startAsset=start_asset if isinstance(start_asset, dict) else None,
+                image_media_ids=image_media_ids or None,
+            )
+            result = await flow_generate(gen_body, request)
+            # Normalize job/media identity for binder
+            if isinstance(result, dict):
+                return {
+                    "job_id": result.get("job_id") or result.get("id"),
+                    "media_id": result.get("media_id")
+                    or result.get("video_media_id")
+                    or (result.get("result") or {}).get("media_id"),
+                    **result,
+                }
+            return {"job_id": None, "media_id": None}
+
+    try:
+        return await authorize_montage_run_generation(
+            run_id,
+            confirm_credit_burn=body.confirm_credit_burn,
+            expected_video_generations=body.expected_video_generations,
+            dry_run=body.dry_run,
+            generate_fn=generate_fn,
+        )
+    except ValueError as exc:
+        msg = str(exc)
+        code = 400
+        if "NOT_FOUND" in msg:
+            code = 404
+        if "CREDIT_CONFIRM" in msg or "COUNT_MISMATCH" in msg:
+            code = 403
+        raise HTTPException(status_code=code, detail=msg) from exc
+
+
 @router.get("/policies")
 async def montage_policies() -> dict[str, Any]:
     return {
         "reference_policies": [p.value for p in SceneReferencePolicy],
         "assembly_path": "DISCRETE_MONTAGE",
         "execution_supported": True,
-        "live_generate_via": "/api/flow/generate",
+        "live_generate_via": "/api/montage/runs/{id}/authorize-generation → /api/flow/generate per scene",
         "live_concat_via": "assemble dry_run only on this router",
     }

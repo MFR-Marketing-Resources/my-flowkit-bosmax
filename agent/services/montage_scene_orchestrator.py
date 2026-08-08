@@ -39,6 +39,8 @@ class SceneJobState:
     video_job_id: Optional[str] = None
     video_media_id: Optional[str] = None
     workspace_execution_package_id: Optional[str] = None
+    package_prompt: Optional[str] = None
+    start_asset_snapshot: Optional[dict[str, Any]] = None
     error_code: Optional[str] = None
     detail: str = ""
 
@@ -57,6 +59,8 @@ class SceneJobState:
             "video_job_id": self.video_job_id,
             "video_media_id": self.video_media_id,
             "workspace_execution_package_id": self.workspace_execution_package_id,
+            "package_prompt": self.package_prompt,
+            "start_asset_snapshot": self.start_asset_snapshot,
             "error_code": self.error_code,
             "detail": self.detail,
         }
@@ -80,6 +84,34 @@ class MontageOrchestrationReport:
             "detail": self.detail,
             "assembly_path": "DISCRETE_MONTAGE",
         }
+
+
+
+def _snapshot_start_asset(pkg: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Capture transportable start-frame fields from a workspace package."""
+    slots = list(pkg.get("asset_slots") or [])
+    resolved = list(pkg.get("resolved_assets") or [])
+    candidates: list[dict[str, Any]] = []
+    for slot in slots:
+        if str(slot.get("slot_key") or "") == "start_frame" and isinstance(slot.get("resolved_asset"), dict):
+            ra = dict(slot["resolved_asset"])
+            ra.setdefault("slot_key", "start_frame")
+            candidates.append(ra)
+    for ra in resolved:
+        if isinstance(ra, dict) and str(ra.get("slot_key") or "") == "start_frame":
+            candidates.append(ra)
+    if not candidates:
+        return None
+    ra = candidates[0]
+    return {
+        "assetId": ra.get("asset_id"),
+        "mediaId": ra.get("media_id"),
+        "downloadUrl": ra.get("download_url"),
+        "previewUrl": ra.get("preview_url"),
+        "localFilePath": ra.get("local_file_path"),
+        "fileName": ra.get("file_name") or "start_frame",
+        "label": ra.get("label") or "start_frame",
+    }
 
 
 def _start_frame_for_plan(plan: MontageSceneExecutionPlan) -> Optional[str]:
@@ -179,6 +211,10 @@ async def execute_scene_plan(
     state.workspace_execution_package_id = str(
         pkg.get("workspace_execution_package_id") or ""
     ) or None
+    state.package_prompt = str(pkg.get("prompt_text") or pkg.get("prompt") or "") or None
+    state.start_asset_snapshot = _snapshot_start_asset(pkg if isinstance(pkg, dict) else {})
+    if state.package_prompt and not state.detail:
+        state.detail = state.package_prompt[:400]
     state.status = "PACKAGE_READY"
 
     if generate_fn is None:
@@ -189,8 +225,10 @@ async def execute_scene_plan(
         product_id=product_id,
         mode=mode,
         workspace_execution_package_id=state.workspace_execution_package_id,
-        prompt=pkg.get("prompt_text") or "",
+        prompt=state.package_prompt or pkg.get("prompt_text") or "",
         scene_id=plan.scene_id,
+        start_asset=state.start_asset_snapshot,
+        image_media_id=state.image_media_id,
     )
     state.video_job_id = str(gen.get("job_id") or gen.get("id") or "") or None
     state.video_media_id = str(

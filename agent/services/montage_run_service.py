@@ -241,6 +241,233 @@ async def bind_montage_scene_result(
     return state
 
 
+
+_TERMINAL_NO_GEN = frozenset(
+    {
+        "VIDEO_READY",
+        "RESULT_BOUND",
+        "SKIPPED_VIDEO",
+        "BLOCKED",
+        "PACKAGE_FAILED",
+        "GENERATE_FAILED",
+    }
+)
+
+
+def estimate_montage_generation_from_scenes(
+    scenes: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    """Count pending video generations for operator credit authorization."""
+    pending: list[dict[str, Any]] = []
+    for s in scenes:
+        status = str(s.get("status") or "").upper()
+        if s.get("video_media_id"):
+            continue
+        if status in _TERMINAL_NO_GEN:
+            continue
+        if not s.get("workspace_execution_package_id"):
+            continue
+        pending.append(s)
+    n = len(pending)
+    return {
+        "expected_video_generations": n,
+        "pending_scene_ids": [str(s.get("scene_id") or "") for s in pending],
+        "pending_scenes": pending,
+        "summary": f"{n} scenes → {n} video generations",
+        "authorization_required": True,
+        "credit_spend": False,
+    }
+
+
+async def estimate_montage_run_generation(run_id: str) -> dict[str, Any]:
+    state = await get_montage_discrete_run(run_id)
+    est = estimate_montage_generation_from_scenes(state["scenes"])
+    est["montage_run_id"] = run_id
+    est["run_status"] = state.get("status")
+    est["total_scenes"] = state.get("total_scenes")
+    return est
+
+
+async def authorize_montage_run_generation(
+    run_id: str,
+    *,
+    confirm_credit_burn: bool,
+    expected_video_generations: int,
+    dry_run: bool = True,
+    generate_fn: Optional[Callable[..., Awaitable[dict[str, Any]]]] = None,
+) -> dict[str, Any]:
+    """M-04: explicit operator-authorized multi-scene generation.
+
+    - Requires confirm_credit_burn=True
+    - expected_video_generations must match pending count (fail-closed mismatch)
+    - dry_run=True: authorization only, no generate boundary
+    - dry_run=False: invoke generate_fn per pending scene, bind media when returned
+    """
+    if not confirm_credit_burn:
+        raise ValueError("ERR_MONTAGE_CREDIT_CONFIRM_REQUIRED")
+
+    estimate = await estimate_montage_run_generation(run_id)
+    needed = int(estimate["expected_video_generations"])
+    try:
+        claimed = int(expected_video_generations)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("ERR_MONTAGE_CREDIT_COUNT_INVALID") from exc
+    if claimed != needed:
+        raise ValueError(
+            f"ERR_MONTAGE_CREDIT_COUNT_MISMATCH: claimed={claimed} needed={needed}"
+        )
+
+    if dry_run:
+        return {
+            **estimate,
+            "ok": True,
+            "authorized": True,
+            "dry_run": True,
+            "credit_spend": False,
+            "dispatched": [],
+            "detail": (
+                f"Authorized dry-run: {estimate['summary']}. "
+                "No generate boundary invoked."
+            ),
+        }
+
+    if generate_fn is None:
+        raise ValueError("ERR_MONTAGE_GENERATE_BOUNDARY_REQUIRED")
+
+    state = await get_montage_discrete_run(run_id)
+    cfg = state.get("config") or {}
+    product_id = str(cfg.get("product_id") or state.get("product_id") or "").strip()
+
+    await crud.update_bulk_generation_run(
+        run_id, status="GENERATING", updated_at=_now()
+    )
+
+    dispatched: list[dict[str, Any]] = []
+    any_fail = False
+    for scene in estimate["pending_scenes"]:
+        scene_id = str(scene.get("scene_id") or "")
+        mode = str(scene.get("transport_mode") or "F2V")
+        prompt = str(
+            scene.get("package_prompt")
+            or scene.get("detail")
+            or f"Montage scene {scene_id}"
+        )
+        entry: dict[str, Any] = {
+            "scene_id": scene_id,
+            "workspace_execution_package_id": scene.get(
+                "workspace_execution_package_id"
+            ),
+            "mode": mode,
+        }
+        try:
+            gen = await generate_fn(
+                product_id=product_id,
+                mode=mode,
+                workspace_execution_package_id=scene.get(
+                    "workspace_execution_package_id"
+                ),
+                prompt=prompt,
+                scene_id=scene_id,
+                start_asset=scene.get("start_asset_snapshot"),
+                image_media_id=scene.get("image_media_id"),
+            )
+            media_id = str(
+                gen.get("media_id") or gen.get("video_media_id") or ""
+            ).strip() or None
+            job_id = str(gen.get("job_id") or gen.get("id") or "").strip() or None
+            entry["job_id"] = job_id
+            entry["media_id"] = media_id
+            if media_id:
+                await bind_montage_scene_result(
+                    run_id,
+                    scene_id=scene_id,
+                    media_id=media_id,
+                    result_kind="video",
+                    job_id=job_id,
+                )
+                entry["status"] = "RESULT_BOUND"
+            else:
+                items = await crud.list_bulk_generation_items(run_id)
+                target = None
+                for it in items:
+                    payload = _loads(it.get("payload_json"), {})
+                    if (
+                        payload.get("scene_id") == scene_id
+                        or it.get("source_ref") == scene_id
+                    ):
+                        target = it
+                        break
+                if target:
+                    payload = _loads(target.get("payload_json"), {})
+                    payload["video_job_id"] = job_id
+                    payload["status"] = "VIDEO_SUBMITTED"
+                    await crud.update_bulk_generation_item(
+                        target["bulk_item_id"],
+                        status="VIDEO_SUBMITTED",
+                        job_id=job_id,
+                        payload_json=json.dumps(payload),
+                        updated_at=_now(),
+                    )
+                entry["status"] = "VIDEO_SUBMITTED"
+            dispatched.append(entry)
+        except Exception as exc:  # noqa: BLE001
+            any_fail = True
+            entry["status"] = "GENERATE_FAILED"
+            entry["error"] = str(exc)[:400]
+            dispatched.append(entry)
+            try:
+                items = await crud.list_bulk_generation_items(run_id)
+                for it in items:
+                    payload = _loads(it.get("payload_json"), {})
+                    if (
+                        payload.get("scene_id") == scene_id
+                        or it.get("source_ref") == scene_id
+                    ):
+                        payload["error_code"] = "ERR_MONTAGE_GENERATE"
+                        payload["detail"] = str(exc)[:400]
+                        await crud.update_bulk_generation_item(
+                            it["bulk_item_id"],
+                            status="GENERATE_FAILED",
+                            error="ERR_MONTAGE_GENERATE",
+                            payload_json=json.dumps(payload),
+                            updated_at=_now(),
+                        )
+                        break
+            except Exception:  # noqa: BLE001
+                pass
+
+    final = await get_montage_discrete_run(run_id)
+    bound = sum(
+        1
+        for s in final["scenes"]
+        if s.get("video_media_id")
+        or str(s.get("status") or "").upper() in ("RESULT_BOUND", "VIDEO_READY")
+    )
+    total = int(final.get("total_scenes") or 0)
+    if bound >= total and total > 0 and not any_fail:
+        run_status = "COMPLETE"
+    elif bound or dispatched:
+        run_status = "PARTIAL"
+    else:
+        run_status = "GENERATING"
+    await crud.update_bulk_generation_run(run_id, status=run_status, updated_at=_now())
+    final = await get_montage_discrete_run(run_id)
+
+    return {
+        **estimate,
+        "ok": not any_fail,
+        "authorized": True,
+        "dry_run": False,
+        "credit_spend": True,
+        "dispatched": dispatched,
+        "run": final,
+        "detail": (
+            f"Dispatched {len(dispatched)} generation(s) after operator credit confirm "
+            f"({estimate['summary']})."
+        ),
+    }
+
+
 def scene_jobs_to_readiness(
     scenes: Sequence[dict[str, Any]],
     *,
@@ -360,6 +587,8 @@ def _item_to_public(item: dict[str, Any]) -> dict[str, Any]:
         "reference_policy": payload.get("reference_policy"),
         "status": status,
         "workspace_execution_package_id": payload.get("workspace_execution_package_id"),
+        "package_prompt": payload.get("package_prompt"),
+        "start_asset_snapshot": payload.get("start_asset_snapshot"),
         "image_job_id": payload.get("image_job_id"),
         "image_media_id": image_media,
         "video_job_id": payload.get("video_job_id") or item.get("job_id"),

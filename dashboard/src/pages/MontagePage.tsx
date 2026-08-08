@@ -4,16 +4,21 @@
  * Hook/Background options come ONLY from creative-lane settings API (same SSOT
  * as Faceless). No local vocabulary arrays.
  *
- * Execution: plan → durable run (scene job ledger + packages) → bind results →
- * readiness → assemble dry-run. Live multi-scene credit fire stays gated.
+ * Execution: plan → durable run → operator-authorized generation (M-04) →
+ * bind results → readiness → assemble dry-run.
+ * Credit fire requires explicit count confirm (N scenes → N video gens).
  */
 import { useEffect, useState } from "react";
 import { useCreativeLaneSettings } from "../api/creativeLaneSettings";
 import {
 	assembleMontageRunDryRun,
+	authorizeMontageGeneration,
 	checkMontageRunReadiness,
 	createMontagePlan,
 	createMontageRun,
+	fetchMontageGenerationEstimate,
+	type MontageAuthorizeGenerationResponse,
+	type MontageGenerationEstimate,
 	type MontagePlanResponse,
 	type MontageReadinessResponse,
 	type MontageRunResponse,
@@ -56,6 +61,9 @@ export default function MontagePage() {
 		null,
 	);
 	const [assembleNote, setAssembleNote] = useState<string | null>(null);
+	const [estimate, setEstimate] = useState<MontageGenerationEstimate | null>(null);
+	const [authNote, setAuthNote] = useState<string | null>(null);
+	const [creditConfirm, setCreditConfirm] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [v4Open, setV4Open] = useState<Record<number, boolean>>({});
@@ -100,11 +108,16 @@ export default function MontagePage() {
 		: plan
 			? "active"
 			: "upcoming";
+	const sAuth: WorkflowStepStatus = authNote
+		? "done"
+		: run
+			? "active"
+			: "upcoming";
 	const sReady: WorkflowStepStatus = readiness
 		? readiness.ok
 			? "done"
 			: "active"
-		: run
+		: authNote
 			? "active"
 			: "upcoming";
 	const sAssemble: WorkflowStepStatus = assembleNote
@@ -120,6 +133,9 @@ export default function MontagePage() {
 		setReadiness(null);
 		setRun(null);
 		setAssembleNote(null);
+		setEstimate(null);
+		setAuthNote(null);
+		setCreditConfirm(false);
 		try {
 			const next = await createMontagePlan({
 				product_id: selectedProduct.id,
@@ -141,6 +157,9 @@ export default function MontagePage() {
 		setError(null);
 		setAssembleNote(null);
 		setReadiness(null);
+		setEstimate(null);
+		setAuthNote(null);
+		setCreditConfirm(false);
 		try {
 			const res = await createMontageRun({
 				product_id: selectedProduct.id,
@@ -150,6 +169,68 @@ export default function MontagePage() {
 				scene_context_override: `hook=${hookId}; background=${backgroundId}`,
 			});
 			setRun(res);
+			try {
+				const est = await fetchMontageGenerationEstimate(res.montage_run_id);
+				setEstimate(est);
+			} catch {
+				/* estimate is best-effort after create */
+			}
+		} catch (e) {
+			setError(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy(false);
+		}
+	};
+
+
+	const handleRefreshEstimate = async () => {
+		if (!run?.montage_run_id) return;
+		setBusy(true);
+		setError(null);
+		try {
+			const est = await fetchMontageGenerationEstimate(run.montage_run_id);
+			setEstimate(est);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	const handleAuthorize = async (dryRun: boolean) => {
+		if (!run?.montage_run_id || !estimate) return;
+		if (!creditConfirm) {
+			setError("Confirm credit count before authorize (checkbox).");
+			return;
+		}
+		setBusy(true);
+		setError(null);
+		try {
+			const res: MontageAuthorizeGenerationResponse =
+				await authorizeMontageGeneration(run.montage_run_id, {
+					confirm_credit_burn: true,
+					expected_video_generations: estimate.expected_video_generations,
+					dry_run: dryRun,
+				});
+			setAuthNote(
+				res.detail ||
+					(dryRun
+						? `Authorized dry-run: ${res.summary}`
+						: `Dispatched ${res.dispatched?.length ?? 0} generation(s)`),
+			);
+			if (res.run) setRun(res.run);
+			// refresh estimate after dispatch
+			const est = await fetchMontageGenerationEstimate(run.montage_run_id);
+			setEstimate(est);
+			if (!dryRun && res.run) {
+				// auto-check readiness after bind
+				try {
+					const ready = await checkMontageRunReadiness(run.montage_run_id);
+					setReadiness(ready);
+				} catch {
+					/* optional */
+				}
+			}
 		} catch (e) {
 			setError(e instanceof Error ? e.message : String(e));
 		} finally {
@@ -206,9 +287,9 @@ export default function MontagePage() {
 					One product → N discrete scenes → one finished video
 				</h1>
 				<p className="mt-1 max-w-2xl text-[12px] text-slate-400">
-					Durable run ledger: beats → scene jobs → workspace packages → bind
-					results → fail-closed assemble. Live multi-scene credit fire is not
-					auto-burned on this page.
+					Lifecycle: plan → durable run → authorize N→N video gens → bind →
+					fail-closed readiness → assemble. Credit fire only after explicit
+					operator confirm.
 				</p>
 			</header>
 
@@ -383,12 +464,94 @@ export default function MontagePage() {
 						) : null}
 					</WorkflowStep>
 
+
 					<WorkflowStep
 						index={5}
+						title="Authorize scene generation"
+						status={sAuth}
+						open={v4IsOpen(5, sAuth)}
+						onToggleOpen={() => v4Toggle(5, v4IsOpen(5, sAuth))}
+						summary={
+							estimate
+								? estimate.summary
+								: "Load credit estimate after durable run"
+						}
+						helper="M-04: operator must confirm N scenes → N video generations before any multi-scene fire. Dry-run validates counts only."
+					>
+						<button
+							type="button"
+							disabled={busy || !run}
+							onClick={() => void handleRefreshEstimate()}
+							className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-[12px] font-bold text-slate-100 hover:bg-slate-800 disabled:opacity-40"
+							data-testid="montage-estimate"
+						>
+							Refresh generation estimate
+						</button>
+						{estimate ? (
+							<div
+								className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-50"
+								data-testid="montage-estimate-summary"
+							>
+								<div className="font-bold tracking-wide text-amber-100">
+									{estimate.summary}
+								</div>
+								<div className="mt-1 text-[11px] opacity-90">
+									Pending scenes:{" "}
+									{(estimate.pending_scene_ids || []).join(", ") || "none"}
+								</div>
+								<label className="mt-3 flex items-start gap-2 text-[11px] text-slate-200">
+									<input
+										type="checkbox"
+										checked={creditConfirm}
+										onChange={(e) => setCreditConfirm(e.target.checked)}
+										data-testid="montage-credit-confirm"
+										className="mt-0.5"
+									/>
+									<span>
+										I authorize{" "}
+										<strong>{estimate.expected_video_generations}</strong> video
+										generation(s) for this Montage run (explicit credit control).
+									</span>
+								</label>
+								<div className="mt-3 flex flex-wrap gap-2">
+									<button
+										type="button"
+										disabled={busy || !creditConfirm}
+										onClick={() => void handleAuthorize(true)}
+										className="rounded-xl border border-v4-accent/40 bg-v4-accent/15 px-4 py-2 text-[12px] font-bold text-v4-accent-ink hover:bg-v4-accent/25 disabled:opacity-40"
+										data-testid="montage-authorize-dry"
+									>
+										Authorize dry-run (no credits)
+									</button>
+									<button
+										type="button"
+										disabled={busy || !creditConfirm || estimate.expected_video_generations === 0}
+										onClick={() => void handleAuthorize(false)}
+										className="rounded-xl border border-rose-700/50 bg-rose-950/40 px-4 py-2 text-[12px] font-bold text-rose-100 hover:bg-rose-900/40 disabled:opacity-40"
+										data-testid="montage-authorize-live"
+										title="Calls /api/flow/generate per pending scene with startAsset — spends credits"
+									>
+										Authorize + dispatch (credits)
+									</button>
+								</div>
+							</div>
+						) : null}
+						{authNote ? (
+							<p
+								className="mt-2 text-[11px] text-emerald-300"
+								data-testid="montage-auth-note"
+							>
+								{authNote}
+							</p>
+						) : null}
+					</WorkflowStep>
+
+					<WorkflowStep
+						index={6}
 						title="Assembly readiness"
 						status={sReady}
-						open={v4IsOpen(5, sReady)}
-						onToggleOpen={() => v4Toggle(5, v4IsOpen(5, sReady))}
+						open={v4IsOpen(6, sReady)}
+						onToggleOpen={() => v4Toggle(6, v4IsOpen(6, sReady))}
 						summary={
 							readiness
 								? readiness.ok
@@ -427,11 +590,11 @@ export default function MontagePage() {
 					</WorkflowStep>
 
 					<WorkflowStep
-						index={6}
+						index={7}
 						title="Assemble (dry-run)"
 						status={sAssemble}
-						open={v4IsOpen(6, sAssemble)}
-						onToggleOpen={() => v4Toggle(6, v4IsOpen(6, sAssemble))}
+						open={v4IsOpen(7, sAssemble)}
+						onToggleOpen={() => v4Toggle(7, v4IsOpen(7, sAssemble))}
 						summary={assembleNote || "Gated concat boundary — incomplete set never calls concat"}
 						helper="M-03: readiness enforced before concat. Live credit concat remains locked."
 					>
@@ -498,18 +661,35 @@ export default function MontagePage() {
 								v: readiness ? (readiness.ok ? "READY" : "BLOCKED") : "—",
 								tone: readiness?.ok ? "good" : "default",
 							},
+							{
+								k: "Gen estimate",
+								v: estimate?.summary || "—",
+								mono: true,
+							},
 							{ k: "Path", v: "DISCRETE_MONTAGE", mono: true },
-							{ k: "Credit", v: "0 (no auto-burn)", tone: "good" },
+							{
+								k: "Credit",
+								v: creditConfirm
+									? `CONFIRM ${estimate?.expected_video_generations ?? 0}`
+									: "locked until confirm",
+								tone: creditConfirm ? "default" : "good",
+							},
 						]}
 						queueTitle="Execution state"
 						generate={{
-							label: run
-								? "Re-run discrete path (no credit)"
-								: "Start discrete path",
+							label: estimate
+								? "Authorize dry-run (no credit)"
+								: run
+									? "Refresh estimate"
+									: "Start discrete path",
 							disabled: !canOperate || busy,
 							loading: busy,
-							onClick: () => void handleStartRun(),
-							note: "Live multi-scene credit fire stays off this CTA. Use /api/flow/generate per package then bind-result.",
+							onClick: () => {
+								if (!run) void handleStartRun();
+								else if (estimate && creditConfirm) void handleAuthorize(true);
+								else void handleRefreshEstimate();
+							},
+							note: "M-04: multi-scene live fire is a separate red CTA after checkbox confirm. Cockpit never auto-burns.",
 						}}
 						debug={
 							<pre className="max-h-40 overflow-auto text-[10px] text-slate-400">
@@ -520,12 +700,15 @@ export default function MontagePage() {
 										run_ok: run?.ok,
 										readiness_ok: readiness?.ok,
 										packages_ready: packagesReady,
+										estimate: estimate?.summary,
+										credit_confirm: creditConfirm,
 									},
 									null,
 									2,
 								)}
 							</pre>
 						}
+
 					/>
 				</aside>
 			</div>
