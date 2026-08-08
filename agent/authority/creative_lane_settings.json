@@ -1,0 +1,55 @@
+{
+  "_meta": {
+    "purpose": "Controlled vocabulary for Faceless Video and Montage operator lanes (Hook + Background). Single source of truth for UI dropdowns, backend validation, and tests. Display label 'Auto (AI decided)' is NOT a paid-LLM mandate — AUTO resolves deterministically from product/recipe knowledge when available.",
+    "version": "CREATIVE_LANE_SETTINGS_v1",
+    "lanes": ["FACELESS", "MONTAGE"],
+    "semantics": {
+      "hook": "Creative strategy/category only. Does not authorize unsupported product claims, medical guarantees, fabricated discounts, or fake scarcity. Copy remains subordinate to product truth and compliance.",
+      "background": "Scene/environment visual intent only. Does not override product truth, packaging, product scale, avatar/reference policies, scene continuity, or compliance. Example: Pharmacy is environment direction, not pharmacist endorsement."
+    }
+  },
+  "auto": {
+    "id": "AUTO",
+    "label": "Auto (AI decided)"
+  },
+  "hook": {
+    "default": "AUTO",
+    "options": [
+      { "id": "AUTO", "label": "Auto (AI decided)" },
+      { "id": "PENAT_KEJAR_PROMO", "label": "Penat Kejar Promo" },
+      { "id": "FINALLY_DAPAT_LESS", "label": "Finally Dapat Less" },
+      { "id": "NANGIS_MAK_MAK", "label": "Nangis Mak-Mak" },
+      { "id": "BARU_LAUNCH_DISCOUNT", "label": "Baru Launch Discount" },
+      { "id": "DISKAUN_DISBELIEF", "label": "Diskaun Disbelief" },
+      { "id": "GENERAL_USP_PRODUCT", "label": "General (USP Product)" }
+    ]
+  },
+  "background": {
+    "default": "AUTO",
+    "options": [
+      { "id": "AUTO", "label": "Auto (AI decided)" },
+      { "id": "DALAM_KERETA", "label": "Dalam kereta" },
+      { "id": "LAMAN_RUMAH", "label": "Laman rumah" },
+      { "id": "AESTHETIC_TABLE", "label": "Aesthetic Table" },
+      { "id": "PHARMACY", "label": "Pharmacy" },
+      { "id": "KITCHEN", "label": "Kitchen" },
+      { "id": "RUMAH_AESTHETIC", "label": "Rumah aesthetic" }
+    ]
+  },
+  "background_environment_intent": {
+    "DALAM_KERETA": "Inside a car cabin, natural daylight through windows, product readable in frame.",
+    "LAMAN_RUMAH": "Home yard / outdoor residential setting, soft natural light, product readable.",
+    "AESTHETIC_TABLE": "Clean aesthetic tabletop surface, controlled props, product hero on table.",
+    "PHARMACY": "Pharmacy shelf / counter environment visual only — no clinician endorsement.",
+    "KITCHEN": "Home kitchen counter environment, everyday ritual context, product readable.",
+    "RUMAH_AESTHETIC": "Aesthetic home interior, soft ambient light, lifestyle context without claim invention."
+  },
+  "hook_strategy_intent": {
+    "PENAT_KEJAR_PROMO": "Fatigue-with-promo-chasing angle — emotional relief framing only; no invented discount facts.",
+    "FINALLY_DAPAT_LESS": "Relief at paying less — must not invent prices or guarantee savings.",
+    "NANGIS_MAK_MAK": "Relatable parental empathy tone — no medical or miracle claims.",
+    "BARU_LAUNCH_DISCOUNT": "New-launch excitement framing — only use launch/discount facts present in product truth.",
+    "DISKAUN_DISBELIEF": "Surprise-at-value tone — never fabricate discount percentages or scarcity.",
+    "GENERAL_USP_PRODUCT": "Lead with approved product USP from product truth / approved copy only."
+  }
+}

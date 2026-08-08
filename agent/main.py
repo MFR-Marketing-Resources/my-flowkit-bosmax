@@ -43,6 +43,8 @@ from agent.api.poster_compose import router as poster_compose_router
 from agent.api.exact_product_output import router as exact_product_output_router
 from agent.api.workspace_packages import router as workspace_packages_router
 from agent.api.scene_context_registry import router as scene_context_registry_router
+from agent.api.creative_lane_settings import router as creative_lane_settings_router
+from agent.api.faceless import router as faceless_router
 from agent.api.workspace_generation_packages import router as workspace_generation_packages_router
 from agent.api.production_queue import router as production_queue_router
 from agent.api.bulk_generation import router as bulk_generation_router
@@ -349,6 +351,8 @@ app.include_router(poster_compose_router, prefix="/api")
 app.include_router(exact_product_output_router, prefix="/api")
 app.include_router(workspace_packages_router, prefix="/api")
 app.include_router(scene_context_registry_router, prefix="/api")
+app.include_router(creative_lane_settings_router, prefix="/api")
+app.include_router(faceless_router, prefix="/api")
 app.include_router(workspace_generation_packages_router, prefix="/api")
 app.include_router(production_queue_router, prefix="/api")
 app.include_router(bulk_generation_router, prefix="/api")

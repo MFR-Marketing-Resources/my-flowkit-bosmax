@@ -1386,3 +1386,18 @@ domains:
       - tests/unit/test_image_generation_contract.py
       - tests/api/test_creative_campaign_contract.py
       - docs/evidence/image-capability-audit-20260808.md
+      # Faceless Video + creative lane settings (Hook/Background SSOT) C1
+      - agent/authority/creative_lane_settings.json
+      - agent/services/creative_lane_settings_service.py
+      - agent/api/creative_lane_settings.py
+      - agent/api/faceless.py
+      - agent/services/faceless_lane_service.py
+      - tests/unit/test_creative_lane_settings_service.py
+      - tests/unit/test_faceless_lane_service.py
+      - tests/unit/test_faceless_prepare_api.py
+      - dashboard/src/api/creativeLaneSettings.ts
+      - dashboard/src/faceless/facelessLane.ts
+      - dashboard/src/faceless/facelessLane.test.ts
+      - dashboard/src/pages/FacelessVideoPage.tsx
+      - dashboard/src/App.tsx
+      - agent/main.py
