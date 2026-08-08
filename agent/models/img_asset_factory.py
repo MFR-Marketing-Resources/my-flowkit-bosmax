@@ -7,6 +7,13 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent.models.creative_asset import CreativeAssetReviewStatus
+from agent.models.image_generation_contract import (
+    ImageOperationPlan,
+    ImageOperationPlanRequest,
+    ImagePromptCompileRequest,
+    ImagePromptCompileResponse,
+    ProductReferencePackRecord,
+)
 
 
 class ImgAssetLaneSummary(BaseModel):
@@ -94,6 +101,13 @@ class ImgProviderStatusResponse(BaseModel):
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
+class ProductReferencePackApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reviewed_by: str = Field(min_length=1, max_length=160)
+    note: str = Field(default="", max_length=2000)
+
+
 FastlaneRoute = Literal["FRAMES", "INGREDIENTS"]
 IngredientRole = Literal[
     "AVATAR_REFERENCE",
@@ -139,6 +153,7 @@ class ImgFastlanePromptPreviewRequest(BaseModel):
     scene_context_code: str | None = None
     # Optional governed mode. Omission preserves the legacy fastlane preview.
     creative_mode: str | None = None
+    requested_outputs: int = Field(default=1, ge=1, le=3)
 
 
 class ImgFastlanePromptPreviewResponse(BaseModel):

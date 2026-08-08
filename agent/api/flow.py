@@ -791,6 +791,16 @@ class GenerateRequest(BaseModel):
     engine: Optional[str] = None
     generation_mode: Optional[str] = None
     capability_matrix_version: Optional[str] = None
+    # Creative Campaign contract.  These fields are ignored by the proven
+    # video lanes and are required only when the opt-in creative IMG lane is
+    # explicitly enabled and bounded.
+    image_contract_version: Optional[str] = None
+    reference_pack_id: Optional[str] = None
+    output_intent: Optional[str] = None
+    creative_mode: Optional[str] = None
+    confirm_live_credit_burn: bool = False
+    maximum_provider_operations: Optional[int] = None
+    max_retry_operations: int = 0
 
 
 @router.get("/video-models")
@@ -817,6 +827,10 @@ async def video_capability_matrix():
 # one-door /generate lane and the manual lane (was duplicated inline in each).
 REF_SLOT_ORDER: tuple[tuple[str, str], ...] = (
     ("productAsset", "Product"),
+    ("productLabelAsset", "ProductLabel"),
+    ("productLogoAsset", "ProductLogo"),
+    ("productScaleAsset", "ProductScale"),
+    ("productCutoutAsset", "ProductCutout"),
     ("subjectAsset", "Subject"),
     ("sceneAsset", "Scene"),
     ("styleAsset", "Style"),
@@ -864,6 +878,7 @@ def _is_multi_block_prompt(prompt: str) -> bool:
 async def _apply_img_product_truth_gate(
     *, product_id: str, visual_lane_id: str | None, prompt: str,
     request_refs: dict[str, Any], start_asset: object = None,
+    reference_pack_id: str | None = None, creative_mode: str | None = None,
 ) -> tuple[str, dict[str, Any], bool]:
     """Apply the server product resolver to every API-first IMG entry point.
 
@@ -888,6 +903,62 @@ async def _apply_img_product_truth_gate(
         raise HTTPException(404, f"PRODUCT_NOT_FOUND: {product_id}")
     refs = dict(request_refs or {})
     lane = (visual_lane_id or "").upper()
+    creative_lane = (
+        lane == "POSTER_BUILDER_CREATIVE_CAMPAIGN"
+        or str(creative_mode or "").upper() == "CREATIVE_CAMPAIGN"
+    )
+    if creative_lane:
+        from agent import config
+        from agent.services.product_reference_pack_service import (
+            ProductReferencePackError,
+            ensure_product_reference_pack,
+            get_reference_pack,
+        )
+
+        if not config.CREATIVE_CAMPAIGN_POSTER_ENABLED:
+            raise HTTPException(409, "CREATIVE_CAMPAIGN_FEATURE_DISABLED")
+        pack = await get_reference_pack(product_id)
+        if pack is None:
+            try:
+                pack = await ensure_product_reference_pack(product_id)
+            except ProductReferencePackError as exc:
+                raise HTTPException(422, f"{exc.code}: {exc.message}") from exc
+        if reference_pack_id and reference_pack_id != pack.pack_id:
+            raise HTTPException(422, "REFERENCE_PACK_ID_MISMATCH")
+        try:
+            # Approval and every bound byte are checked before any Flow upload.
+            from agent.services.product_reference_pack_service import transport_reference_ids
+
+            transport_reference_ids(pack)
+        except ProductReferencePackError as exc:
+            raise HTTPException(422, f"{exc.code}: {exc.message}") from exc
+        bound_refs: dict[str, Any] = {}
+        role_slots = {
+            "PRODUCT_CANONICAL": "productAsset",
+            "PRODUCT_LABEL_CROP": "productLabelAsset",
+            "PRODUCT_LOGO_CROP": "productLogoAsset",
+            "PRODUCT_SCALE_EVIDENCE": "productScaleAsset",
+            "PRODUCT_CUTOUT": "productCutoutAsset",
+        }
+        for binding in pack.references:
+            slot = role_slots.get(binding.role)
+            if not slot:
+                continue
+            bound_refs[slot] = {
+                "productId": product_id,
+                "mediaId": binding.media_id,
+                "localFilePath": binding.local_file_path,
+                "fileName": f"{product_id}_{binding.role.lower()}",
+                "semanticRole": binding.role,
+                "assetSource": "PRODUCT_REFERENCE_PACK",
+            }
+        # Optional approved character/scene/style references remain operator
+        # controls. Product roles above are server-owned and cannot be replaced
+        # by client-selected product bytes.
+        for key, asset in refs.items():
+            if key not in role_slots and isinstance(asset, dict):
+                bound_refs[key] = asset
+        return prompt, bound_refs, False
     has_avatar = bool(
         refs.get("characterAsset")
         or refs.get("avatarAsset")
@@ -990,6 +1061,27 @@ async def generate(body: GenerateRequest):
 
     generation_prompt = body.prompt
     request_refs = dict(body.refs or {})
+    creative_campaign = mode == "IMG" and (
+        (body.visual_lane_id or "").upper() == "POSTER_BUILDER_CREATIVE_CAMPAIGN"
+        or (body.creative_mode or "").upper() == "CREATIVE_CAMPAIGN"
+    )
+    if creative_campaign:
+        from agent import config
+        if not config.CREATIVE_CAMPAIGN_LIVE_BENCHMARK_AUTHORIZED:
+            raise HTTPException(403, "CREATIVE_CAMPAIGN_LIVE_BENCHMARK_AUTHORIZATION_REQUIRED")
+        if not body.product_id:
+            raise HTTPException(422, "CREATIVE_CAMPAIGN_PRODUCT_ID_REQUIRED")
+        if not body.confirm_live_credit_burn:
+            raise HTTPException(409, "IMAGE_LIVE_CREDIT_CONFIRMATION_REQUIRED")
+        if body.image_contract_version != "image_prompt_compiler_v1":
+            raise HTTPException(422, "IMAGE_CONTRACT_VERSION_REQUIRED")
+        if body.max_retry_operations != 0:
+            raise HTTPException(422, "HIDDEN_RETRY_DISABLED_FOR_CREATIVE_CAMPAIGN")
+        if int(body.count) < 1 or int(body.count) > 3:
+            raise HTTPException(422, "CREATIVE_CAMPAIGN_MAX_THREE_VARIANTS")
+        expected_operations = max(1, int(body.count)) + body.max_retry_operations
+        if body.maximum_provider_operations != expected_operations:
+            raise HTTPException(422, "PROVIDER_OPERATION_BUDGET_MISMATCH")
     if mode == "IMG" and body.product_id:
         # Product-aware IMG requests pass this server gate before extension
         # connectivity or provider work. The workspace wrapper calls the same
@@ -1000,6 +1092,8 @@ async def generate(body: GenerateRequest):
             prompt=body.prompt,
             request_refs=request_refs,
             start_asset=body.startAsset,
+            reference_pack_id=body.reference_pack_id,
+            creative_mode=body.creative_mode,
         )
     # Validate model+duration BEFORE connectivity so 422 stays deterministic (patch I2a);
     # always resolve against the EFFECTIVE model (defaults to Lite) so a bad duration_s with
@@ -1060,7 +1154,10 @@ async def generate(body: GenerateRequest):
         mode, generation_prompt, project_id=body.project_id,
         image_media_ids=resolved_ids, image_prompt=body.image_prompt,
         aspect=body.aspect, tier=tier, model=body.model, duration_s=body.duration_s,
-        num_videos=body.count, image_model=body.image_model)
+        num_videos=body.count, image_model=body.image_model,
+        max_image_attempts=1 if creative_campaign else 8,
+        collect_image_variants=creative_campaign,
+        product_id=body.product_id)
     if isinstance(result, dict) and result.get("status") == "REJECTED":
         # single-flight video lane busy (patch H)
         raise HTTPException(409, result.get("error") or "rejected")
@@ -2733,9 +2830,24 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
     client = get_flow_client()
     request_id = body["request_id"]
     prompt = str(body.get("prompt") or "").strip()
+    creative_campaign = (
+        mode == "IMG"
+        and (
+            str(body.get("visual_lane_id") or body.get("lane") or "").upper()
+            == "POSTER_BUILDER_CREATIVE_CAMPAIGN"
+            or str(body.get("creative_mode") or "").upper() == "CREATIVE_CAMPAIGN"
+        )
+    )
     if not prompt:
         await _fail_manual_request(
             request_id, "API_LANE_REJECTED", "manual job has no prompt", "ERR_PROMPT_REQUIRED")
+    if creative_campaign and not body.get("product_id"):
+        await _fail_manual_request(
+            request_id,
+            "API_LANE_REJECTED",
+            "creative campaign requires a server-bound product reference pack",
+            "ERR_CREATIVE_CAMPAIGN_PRODUCT_ID_REQUIRED",
+        )
     # ONE generation = ONE block. The full multi-block compiled document must never
     # reach the agent (live incident: 2 blocks → 2-video proposal → count steer →
     # reference image dropped). Block 2+ runs as native Extend on the finished clip.
@@ -2746,12 +2858,52 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
             "block 2+ belongs to the Extend step", "ERR_MULTI_BLOCK_PROMPT")
 
     if mode == "IMG" and body.get("product_id"):
+        if creative_campaign:
+            from agent import config
+            if not config.CREATIVE_CAMPAIGN_LIVE_BENCHMARK_AUTHORIZED:
+                await _fail_manual_request(
+                    request_id, "API_LANE_REJECTED",
+                    "creative campaign live benchmark authorization is required",
+                    "ERR_CREATIVE_CAMPAIGN_AUTH_REQUIRED",
+                )
+            if not body.get("confirm_live_credit_burn"):
+                await _fail_manual_request(
+                    request_id, "API_LANE_REJECTED",
+                    "explicit image credit confirmation is required",
+                    "ERR_IMAGE_LIVE_CREDIT_CONFIRMATION_REQUIRED",
+                )
+            if body.get("image_contract_version") != "image_prompt_compiler_v1":
+                await _fail_manual_request(
+                    request_id, "API_LANE_REJECTED",
+                    "image contract version is required",
+                    "ERR_IMAGE_CONTRACT_VERSION_REQUIRED",
+                )
+            if int(body.get("max_retry_operations") or 0) != 0:
+                await _fail_manual_request(
+                    request_id,
+                    "API_LANE_REJECTED",
+                    "creative campaign hidden retries are disabled",
+                    "ERR_HIDDEN_RETRY_DISABLED",
+                )
+            try:
+                requested_count = int(body.get("count") or 1)
+            except (TypeError, ValueError):
+                requested_count = 0
+            if requested_count < 1 or requested_count > 3:
+                await _fail_manual_request(
+                    request_id,
+                    "API_LANE_REJECTED",
+                    "creative campaign is bounded to at most three provider outputs",
+                    "ERR_CREATIVE_CAMPAIGN_MAX_THREE_VARIANTS",
+                )
         prompt, gated_refs, _ = await _apply_img_product_truth_gate(
             product_id=str(body["product_id"]),
             visual_lane_id=body.get("visual_lane_id") or body.get("lane"),
             prompt=prompt,
             request_refs=dict(body.get("refs") or {}),
             start_asset=start_asset,
+            reference_pack_id=body.get("reference_pack_id"),
+            creative_mode=body.get("creative_mode"),
         )
         body["prompt"] = prompt
         body["refs"] = gated_refs
@@ -2864,6 +3016,15 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         count = max(1, min(4, int(body.get("count") or 1)))
     except (TypeError, ValueError):
         count = 1
+    if creative_campaign:
+        expected_operations = count + int(body.get("max_retry_operations") or 0)
+        if body.get("maximum_provider_operations") != expected_operations:
+            await _fail_manual_request(
+                request_id,
+                "API_LANE_REJECTED",
+                "creative campaign provider operation budget mismatch",
+                "ERR_PROVIDER_OPERATION_BUDGET_MISMATCH",
+            )
     # Duration: honour an explicit setting; None → the model's default.
     duration_s = None
     raw_duration = body.get("duration_s") or body.get("duration_seconds")
@@ -2933,7 +3094,10 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         mode, prompt, project_id=created_project_id,
         image_media_ids=refs or None,
         aspect=aspect, tier=tier, model=model_key,
-        duration_s=duration_s, num_videos=count)
+        duration_s=duration_s, num_videos=count,
+        max_image_attempts=1 if creative_campaign else 8,
+        collect_image_variants=creative_campaign,
+        product_id=body.get("product_id"))
     if not isinstance(res, dict) or not res.get("job_id"):
         code = str((res or {}).get("error") or "VIDEO_JOB_IN_FLIGHT")
         await _fail_manual_request(

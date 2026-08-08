@@ -9,8 +9,11 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
+	approveProductReferencePack,
 	fetchImageArtifacts,
+	fetchProductReferencePack,
 	type ImageArtifact,
+	type ProductReferencePackSummary,
 } from "../../../api/imgFactory";
 import {
 	approveProductTruthLock,
@@ -552,7 +555,7 @@ function AngleStep({ wf }: { wf: WF }) {
 			</p>
 			<label className="block text-xs text-slate-300">Creative Direction
 				<select data-testid="poster-creative-mode" value={wf.creativeMode} onChange={(event) => wf.setCreativeMode(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 p-2">
-					<option value="">No governed mode (legacy)</option><option value="PGC_CAMPAIGN">PGC Campaign</option><option value="UGC_AUTHENTIC">UGC Authentic</option><option value="MODEL_AMBASSADOR">Model Ambassador</option><option value="CLEAN_STUDIO_CATALOGUE">Clean Studio / Clean Catalogue</option><option value="LIFESTYLE_EDITORIAL">Lifestyle Editorial</option>
+						<option value="">No governed mode (legacy)</option><option value="CREATIVE_CAMPAIGN">Creative Campaign (provider poster)</option><option value="PGC_CAMPAIGN">PGC Campaign</option><option value="UGC_AUTHENTIC">UGC Authentic</option><option value="MODEL_AMBASSADOR">Model Ambassador</option><option value="CLEAN_STUDIO_CATALOGUE">Clean Studio / Clean Catalogue</option><option value="LIFESTYLE_EDITORIAL">Lifestyle Editorial</option>
 				</select>
 			</label>
 			{wf.anglesLoading ? <Busy label="Menjana sudut jualan…" /> : null}
@@ -1011,10 +1014,46 @@ function SceneStep({ wf }: { wf: WF }) {
 	const [truthLoading, setTruthLoading] = useState(false);
 	const [truthApproving, setTruthApproving] = useState(false);
 	const [truthError, setTruthError] = useState("");
+	const [referencePack, setReferencePack] = useState<ProductReferencePackSummary | null>(null);
+	const [referencePackLoading, setReferencePackLoading] = useState(false);
+	const [referencePackApproving, setReferencePackApproving] = useState(false);
+	const [referencePackError, setReferencePackError] = useState("");
 	const [reviewedBy, setReviewedBy] = useState("");
 	const [confirmIdentity, setConfirmIdentity] = useState(false);
 	const [confirmLabelLogo, setConfirmLabelLogo] = useState(false);
 	const [confirmGeometryScale, setConfirmGeometryScale] = useState(false);
+
+	useEffect(() => {
+		let active = true;
+		setReferencePack(null);
+		setReferencePackError("");
+		if (!wf.product || wf.creativeMode !== "CREATIVE_CAMPAIGN") {
+			setReferencePackLoading(false);
+			return () => {
+				active = false;
+			};
+		}
+		setReferencePackLoading(true);
+		void fetchProductReferencePack(wf.product.id)
+			.then((pack) => {
+				if (active) setReferencePack(pack);
+			})
+			.catch((error) => {
+				if (active) {
+					setReferencePackError(
+						error instanceof Error
+							? error.message
+							: "Gagal memuatkan Product Reference Pack.",
+					);
+				}
+			})
+			.finally(() => {
+				if (active) setReferencePackLoading(false);
+			});
+		return () => {
+			active = false;
+		};
+	}, [wf.product, wf.creativeMode]);
 
 	useEffect(() => {
 		let active = true;
@@ -1024,7 +1063,7 @@ function SceneStep({ wf }: { wf: WF }) {
 		setConfirmIdentity(false);
 		setConfirmLabelLogo(false);
 		setConfirmGeometryScale(false);
-		if (!wf.product) {
+		if (!wf.product || wf.creativeMode === "CREATIVE_CAMPAIGN") {
 			return () => {
 				active = false;
 			};
@@ -1049,7 +1088,7 @@ function SceneStep({ wf }: { wf: WF }) {
 		return () => {
 			active = false;
 		};
-	}, [wf.product]);
+	}, [wf.product, wf.creativeMode]);
 
 	const approveTruthLock = async () => {
 		if (!wf.product) return;
@@ -1073,6 +1112,27 @@ function SceneStep({ wf }: { wf: WF }) {
 			);
 		} finally {
 			setTruthApproving(false);
+		}
+	};
+
+	const approveReferencePack = async () => {
+		if (!wf.product || !reviewedBy.trim()) return;
+		setReferencePackApproving(true);
+		setReferencePackError("");
+		try {
+			const pack = await approveProductReferencePack(wf.product.id, {
+				reviewed_by: reviewedBy.trim(),
+				note: "Operator reviewed canonical, label/logo candidates and scale evidence before Creative Campaign generation.",
+			});
+			setReferencePack(pack);
+		} catch (error) {
+			setReferencePackError(
+				error instanceof Error
+					? error.message
+					: "Gagal mengesahkan Product Reference Pack.",
+			);
+		} finally {
+			setReferencePackApproving(false);
 		}
 	};
 
@@ -1108,9 +1168,70 @@ function SceneStep({ wf }: { wf: WF }) {
 				Identiti produk adalah reference-conditioned — pastikan label & skala
 				disemak sebelum diterbitkan.
 			</div>
+			{wf.creativeMode === "CREATIVE_CAMPAIGN" ? (
+				<div
+					className="space-y-3 rounded-xl border border-cyan-500/40 bg-cyan-500/10 p-4"
+					data-testid="poster-reference-pack-review-panel"
+				>
+					<div>
+						<p className="font-semibold text-cyan-100">Product Reference Pack</p>
+						<p className="mt-1 text-xs text-cyan-100/80">
+							Creative Campaign tidak memerlukan legacy scene asset. Semak pack canonical,
+							label/logo candidate dan bukti skala sebelum provider menerima kerja IMG.
+						</p>
+					</div>
+					{referencePackLoading ? <Busy label="Menyediakan Product Reference Pack…" /> : null}
+					{referencePack ? (
+						<>
+							<div className="grid gap-2 text-xs text-slate-100 sm:grid-cols-2">
+								<div>Status: <strong>{referencePack.pack_status}</strong></div>
+								<div>Machine QA: <strong>{referencePack.machine_qa_status}</strong></div>
+								<div>
+									Roles: <strong>{(referencePack.references || []).map((item) => `${item.role}${item.approved ? " ✓" : " · review"}`).join(", ") || "none"}</strong>
+								</div>
+								<div>
+									Scale: <strong>{referencePack.physical_measurements?.scale_confidence || "UNVERIFIED"}</strong>
+								</div>
+							</div>
+							{referencePack.pack_status !== "APPROVED" ? (
+								<>
+									<label className="grid gap-1 text-xs text-slate-100">
+										<span className="font-semibold">Nama penyemak</span>
+										<input
+											value={reviewedBy}
+											onChange={(event) => setReviewedBy(event.target.value)}
+											placeholder="Masukkan nama penyemak"
+											data-testid="poster-reference-pack-reviewed-by"
+											className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100"
+										/>
+									</label>
+									<p className="text-xs text-amber-100/80">
+										Approval only approves the reference pack. Every generated poster remains
+										machine-checked and separately human-reviewed.
+									</p>
+									<button
+										type="button"
+										onClick={() => void approveReferencePack()}
+										disabled={!reviewedBy.trim() || referencePackApproving || referencePack.machine_qa_status === "FAIL"}
+										data-testid="poster-reference-pack-approve"
+										className="rounded-lg bg-cyan-400 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-50"
+									>
+										{referencePackApproving ? "Mengesahkan…" : "Sahkan Product Reference Pack"}
+									</button>
+								</>
+							) : (
+								<p className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+									Reference pack approved. Generated output still requires independent human approval.
+								</p>
+							)}
+						</>
+					) : null}
+					<ErrorNote testid="poster-reference-pack-error" text={referencePackError} />
+				</div>
+			) : null}
 
 			{truthLoading ? <Busy label="Menyemak kunci identiti produk…" /> : null}
-			{truthPending && wf.product ? (
+			{truthPending && wf.product && wf.creativeMode !== "CREATIVE_CAMPAIGN" ? (
 				<div
 					className="space-y-3 rounded-xl border border-amber-400/50 bg-amber-500/10 p-4"
 					data-testid="poster-truth-review-panel"
@@ -1181,7 +1302,7 @@ function SceneStep({ wf }: { wf: WF }) {
 					</button>
 				</div>
 			) : null}
-			{truthConfirmed ? (
+			{truthConfirmed && wf.creativeMode !== "CREATIVE_CAMPAIGN" ? (
 				<p
 					className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100"
 					data-testid="poster-truth-approved"
@@ -1198,9 +1319,10 @@ function SceneStep({ wf }: { wf: WF }) {
 				<div>
 					<p className="font-semibold text-slate-100">Jana visual poster</p>
 					<p className="mt-1 text-xs text-slate-400">
-						Visual baharu menggunakan product reference yang dikunci oleh sistem;
-						teks pemasaran akan dilukis kemudian oleh compositor. IMG poster tidak
-						menggunakan kredit video Google Flow.
+						{wf.creativeMode === "CREATIVE_CAMPAIGN"
+							? "Creative Campaign menghantar prompt sembilan seksyen bersama Product Reference Pack kepada provider. Provider menghasilkan poster lengkap; scene lama tidak diperlukan."
+							: "Visual baharu menggunakan product reference yang dikunci oleh sistem. Exact Commerce kekal menggunakan compositor sebagai fallback. "}
+						IMG boleh menggunakan kuota/kredit penjanaan imej, tetapi tidak menggunakan kredit video Google Flow.
 					</p>
 				</div>
 				{wf.sceneGenerationLoading ? (
@@ -1209,7 +1331,8 @@ function SceneStep({ wf }: { wf: WF }) {
 							{
 								building_prompt: "Menyediakan arahan visual…",
 								validating_product: "Mengesahkan product reference…",
-								preparing_exact_scene: "Menyediakan visual exact-product…",
+						preparing_exact_scene: "Menyediakan visual exact-product…",
+						compiling_creative_prompt: "Menyusun prompt Creative Campaign…",
 								generating_scene: "Menghantar kerja IMG…",
 								waiting_for_scene: "Menunggu visual siap…",
 							}[wf.sceneGenerationStage] || "Memproses visual…"
@@ -1223,7 +1346,13 @@ function SceneStep({ wf }: { wf: WF }) {
 				<button
 					type="button"
 					data-testid="poster-generate-scene"
-					disabled={wf.sceneGenerationLoading || truthLoading || truthPending}
+						disabled={
+							wf.sceneGenerationLoading ||
+							(wf.creativeMode === "CREATIVE_CAMPAIGN" &&
+								(referencePackLoading || referencePack?.pack_status !== "APPROVED")) ||
+							(wf.creativeMode !== "CREATIVE_CAMPAIGN" &&
+									(truthLoading || truthPending))
+							}
 					onClick={() => {
 						setCreditConfirmed(false);
 						setCreditConfirmOpen(true);
@@ -1238,9 +1367,9 @@ function SceneStep({ wf }: { wf: WF }) {
 						data-testid="poster-generate-scene-confirm"
 					>
 						<p className="text-xs text-amber-100">
-							Sahkan sekali lagi untuk menghantar satu kerja IMG. Tindakan ini tidak
-							menggunakan kredit video Google Flow; hanya kerja video menggunakan
-							kredit video. Tiada kerja dihantar sebelum pengesahan ini.
+							Sahkan sekali lagi untuk menghantar satu kerja IMG. Tindakan ini boleh
+							menggunakan kuota/kredit penjanaan imej provider, tetapi tidak menggunakan
+							kredit video Google Flow. Tiada kerja dihantar sebelum pengesahan ini.
 						</p>
 						<label className="flex items-start gap-2 text-xs text-slate-200">
 							<input
@@ -1251,8 +1380,8 @@ function SceneStep({ wf }: { wf: WF }) {
 								className="mt-0.5"
 							/>
 							<span>
-								Saya faham tindakan ini menghantar satu kerja IMG dan tidak
-								menggunakan kredit video Google Flow.
+								Saya faham tindakan ini menggunakan kuota/kredit penjanaan imej
+								dan menghantar satu kerja IMG; ia bukan kredit video.
 							</span>
 						</label>
 						<div className="flex gap-2">
@@ -1388,6 +1517,37 @@ function SceneStep({ wf }: { wf: WF }) {
 }
 
 function ComposeStep({ wf }: { wf: WF }) {
+	if (wf.creativeMode === "CREATIVE_CAMPAIGN") {
+		return (
+			<div className="space-y-3">
+				{wf.generatedSceneMediaId ? (
+					<>
+						<p className="text-sm text-emerald-100">
+							Poster lengkap diterima daripada provider. BOSMAX tidak menampal
+							cutout atau melukis semula poster di laluan Creative Campaign.
+						</p>
+						<img
+							data-testid="poster-creative-campaign-preview"
+							src={
+								wf.generatedSceneUrl ||
+								`/api/flow/retrieved/${encodeURIComponent(wf.generatedSceneMediaId)}`
+							}
+							alt="Poster Creative Campaign"
+							className="max-h-96 rounded-xl border border-slate-800 object-contain"
+						/>
+						<p className="text-xs text-amber-200/90">
+							Output masih GENERATED_OUTPUT_MACHINE_CHECKED dan memerlukan
+							semakan manusia sebelum diterbitkan.
+						</p>
+					</>
+				) : (
+					<p className="text-xs text-amber-200/90" data-testid="poster-compose-need-scene">
+						Jana poster Creative Campaign dahulu di langkah Visual/Latar.
+					</p>
+				)}
+			</div>
+		);
+	}
 	const qa = bucketQaFindings(wf.deliverable?.qa_report);
 	return (
 		<div className="space-y-3">
@@ -1485,9 +1645,10 @@ function QaGroup({
 }
 
 function SaveStep({ wf }: { wf: WF }) {
+	const creativeOutput = wf.creativeMode === "CREATIVE_CAMPAIGN";
 	return (
 		<div className="space-y-3">
-			{!wf.deliverable ? (
+			{!wf.deliverable && !(creativeOutput && wf.generatedSceneMediaId) ? (
 				<p className="text-sm text-slate-400">Hasilkan poster dahulu.</p>
 			) : wf.savedAssetId ? (
 				<div
@@ -1498,9 +1659,14 @@ function SaveStep({ wf }: { wf: WF }) {
 						<Check className="h-4 w-4" /> Poster disimpan ke Creative Library.
 					</p>
 					<img
-						src={posterDeliverableOutputUrl(
-							wf.deliverable.deliverable.poster_deliverable_id,
-						)}
+						src={
+							creativeOutput && wf.generatedSceneMediaId
+								? wf.generatedSceneUrl ||
+								  `/api/flow/retrieved/${encodeURIComponent(wf.generatedSceneMediaId)}`
+								: posterDeliverableOutputUrl(
+										wf.deliverable?.deliverable.poster_deliverable_id || "",
+									)
+						}
 						alt="Poster tersimpan"
 						className="max-h-72 rounded-lg border border-slate-800 object-contain"
 					/>
@@ -1509,6 +1675,9 @@ function SaveStep({ wf }: { wf: WF }) {
 				<>
 					<p className="text-sm text-slate-400">
 						Simpan poster ke Creative Library untuk guna semula & muat turun.
+						{creativeOutput
+							? " Output provider akan kekal PENDING_REVIEW sehingga semakan manusia selesai."
+							: ""}
 					</p>
 					<ErrorNote testid="poster-save-error" text={wf.saveError} />
 					<button
@@ -1546,8 +1715,15 @@ function StepNav({ wf }: { wf: WF }) {
 		(wf.step === "copy" &&
 			(wf.selectedDirection !== null || !!wf.editingCopySetId)) ||
 		(wf.step === "approve" && wf.approvedCopySet !== null) ||
-		(wf.step === "scene" && wf.recipeId !== null && !!wf.backgroundMediaId) ||
-		(wf.step === "compose" && wf.deliverable !== null);
+		(wf.step === "scene" &&
+			wf.recipeId !== null &&
+			(wf.creativeMode === "CREATIVE_CAMPAIGN"
+				? !!wf.generatedSceneMediaId
+				: !!wf.backgroundMediaId)) ||
+		(wf.step === "compose" &&
+			(wf.creativeMode === "CREATIVE_CAMPAIGN"
+				? !!wf.generatedSceneMediaId
+				: wf.deliverable !== null));
 
 	return (
 		<div className="mt-5 flex items-center justify-between border-t border-slate-800 pt-4">

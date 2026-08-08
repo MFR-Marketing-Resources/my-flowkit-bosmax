@@ -1509,8 +1509,9 @@ export function PosterBuilderLegacyPanel() {
 						</div>
 						<div className="text-[11px] text-slate-300">
 							Sahkan sekali lagi untuk menghantar satu kerja IMG. Penjanaan
-							imej/poster tidak menggunakan kredit video Google Flow; hanya kerja
-							video menggunakan kredit. Tiada kerja akan dihantar sebelum pengesahan ini.
+							imej/poster boleh menggunakan kuota/kredit penjanaan imej provider,
+							tetapi tidak menggunakan kredit video Google Flow. Tiada kerja akan
+							dihantar sebelum pengesahan ini.
 						</div>
 						<label className="flex items-start gap-2 text-[11px] text-slate-200">
 							<input
@@ -1520,7 +1521,7 @@ export function PosterBuilderLegacyPanel() {
 								onChange={(event) => setPosterImgConfirmed(event.target.checked)}
 								className="mt-0.5"
 							/>
-							<span>Saya faham tindakan ini menghantar satu kerja IMG dan tidak menggunakan kredit video Google Flow.</span>
+							<span>Saya faham tindakan ini menggunakan kuota/kredit penjanaan imej dan menghantar satu kerja IMG; ia bukan kredit video.</span>
 						</label>
 						<div className="flex justify-end gap-2">
 							<button

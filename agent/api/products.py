@@ -1039,11 +1039,35 @@ async def _ensure_intake_intelligence(
     # The exact state this request left behind: the CAS reference point.
     applied_after = await crud.get_product(product_id) or dict(product)
     try:
-        return await ensure_product_intelligence(
+        intelligence = await ensure_product_intelligence(
             product_id,
             evidence_from_product_payload(payload, lane=lane),
             lane=lane,
         )
+        # Product Reference Pack construction is deterministic and provider-free.
+        # A missing/invalid image keeps the pack in a reviewable failure path but
+        # must not roll back an otherwise valid product registration.
+        try:
+            from agent.services.product_reference_pack_service import (
+                ProductReferencePackError,
+                ensure_product_reference_pack,
+            )
+
+            pack = await ensure_product_reference_pack(product_id)
+            intelligence["reference_pack"] = {
+                "pack_id": pack.pack_id,
+                "pack_status": pack.pack_status,
+                "machine_qa_status": pack.machine_qa_status,
+                "created_without_credit": True,
+            }
+        except ProductReferencePackError as pack_exc:
+            intelligence["reference_pack"] = {
+                "pack_status": "PENDING_REVIEW",
+                "error_code": pack_exc.code,
+                "message": pack_exc.message,
+                "created_without_credit": True,
+            }
+        return intelligence
     except Exception as exc:  # noqa: BLE001 - compensating
         version_guard = {"updated_at": applied_after.get("updated_at")}
         if created:

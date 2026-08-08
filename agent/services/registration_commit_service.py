@@ -24,6 +24,31 @@ from agent.utils.paths import product_image_path
 logger = logging.getLogger(__name__)
 
 
+async def _reference_pack_receipt(product_id: str) -> dict[str, Any]:
+    """Build the no-spend pack after a product row and its image are committed."""
+    try:
+        from agent.services.product_reference_pack_service import (
+            ProductReferencePackError,
+            ensure_product_reference_pack,
+        )
+
+        pack = await ensure_product_reference_pack(product_id)
+        return {
+            "pack_id": pack.pack_id,
+            "pack_status": pack.pack_status,
+            "machine_qa_status": pack.machine_qa_status,
+            "created_without_credit": True,
+        }
+    except ProductReferencePackError as exc:
+        logger.warning("Product Reference Pack pending for %s: %s", product_id, exc.code)
+        return {
+            "pack_status": "PENDING_REVIEW",
+            "error_code": exc.code,
+            "message": exc.message,
+            "created_without_credit": True,
+        }
+
+
 def _build_owned_raw_title(draft: RegistrationReviewDraft) -> str:
     base_name = (
         draft.declared_evidence_fields.get("product_name")
@@ -306,6 +331,7 @@ class RegistrationCommitService:
             )
             if failure:
                 return failure
+            reference_pack = await _reference_pack_receipt(product["id"])
             draft.write_back_performed = True
             draft.write_back_status = "COMMITTED"
             draft.review_status = "COMMITTED"
@@ -317,6 +343,7 @@ class RegistrationCommitService:
                 "committed_fields": list(payload.keys()),
                 "strategy_taxonomy": materialized_taxonomy,
                 "product_intelligence": promotion,
+                "reference_pack": reference_pack,
                 "intelligence_draft_id": (promotion or {}).get("intelligence_draft_id"),
                 "provenance": ["registration_commit_service:fastmoss_promoted:v1"],
             }
@@ -526,6 +553,7 @@ class RegistrationCommitService:
             )
             if failure:
                 return failure
+            reference_pack = await _reference_pack_receipt(product["id"])
 
             # Update Draft Status
             draft.write_back_performed = True
@@ -544,6 +572,7 @@ class RegistrationCommitService:
                 "excluded_fields": [f for f in draft.canonical_candidate_fields.keys() if not draft.approval_checklist.get(f)],
                 "strategy_taxonomy": materialized_taxonomy,
                 "product_intelligence": promotion,
+                "reference_pack": reference_pack,
                 "intelligence_draft_id": (promotion or {}).get("intelligence_draft_id"),
                 "intelligence_dropped_fields": (promotion or {}).get("dropped_fields", []),
                 "provenance": ["registration_commit_service:v1"]
