@@ -136,12 +136,38 @@ def test_missing_lock_is_a_hard_requirement_for_exact_output(tmp_path, monkeypat
 
 def test_pending_lock_is_review_only(tmp_path, monkeypatch):
     assets = _assets(tmp_path)
-    monkeypatch.setattr(lock_service, "DB_PATH", _db(tmp_path, assets, status="PENDING_REVIEW"))
+    db_path = _db(tmp_path, assets, status="PENDING_REVIEW")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE product_visual_truth_lock
+            SET identity_lock = 0, geometry_lock = 0, label_lock = 0,
+                logo_lock = 0, colour_lock = 0, scale_lock = 0
+            WHERE product_id = ?
+            """,
+            ("p-1",),
+        )
+        conn.commit()
+    monkeypatch.setattr(lock_service, "DB_PATH", db_path)
 
     status = lock_service.inspect_product_truth_lock("p-1")
 
     assert status["product_truth_status"] == "HUMAN_REVIEW_REQUIRED"
+    assert status["failure_state"] == "HUMAN_REVIEW_REQUIRED"
+    assert status["canonical_cutout_media_id"] == "media-cutout"
+    assert status["canonical_cutout_sha256"] == assets["cutout_sha"]
     assert status["exact_allowed"] is False
+
+
+def test_pending_cutout_preview_is_server_owned(tmp_path, monkeypatch):
+    assets = _assets(tmp_path)
+    monkeypatch.setattr(lock_service, "DB_PATH", _db(tmp_path, assets, status="PENDING_REVIEW"))
+    monkeypatch.setattr(lock_service, "BASE_DIR", tmp_path)
+
+    preview = lock_service.resolve_product_truth_cutout_preview("p-1")
+
+    assert preview == Path(assets["cutout"]).resolve()
+    assert preview.read_bytes() == Path(assets["cutout"]).read_bytes()
 
 
 def test_stale_canonical_source_fails_closed(tmp_path, monkeypatch):
