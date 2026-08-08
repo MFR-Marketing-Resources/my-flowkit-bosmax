@@ -253,6 +253,52 @@ async def test_onboarding_persists_server_owned_pending_lock_from_reviewed_cutou
 
 
 @pytest.mark.asyncio
+async def test_cutout_media_registration_is_stored_without_approving_lock(tmp_path, monkeypatch):
+    assets = _assets(tmp_path)
+    captured: dict[str, object] = {}
+
+    async def get_product(product_id: str):
+        return {"id": product_id, "product_display_name": "Test product"}
+
+    async def no_existing_media(*, product_id: str):
+        assert product_id == "p-1"
+        return []
+
+    async def create_media(draft_id: str, kind: str, **kwargs):
+        captured.update(kwargs)
+        captured["draft_id"] = draft_id
+        captured["kind"] = kind
+        return {"media_id": "stored-cutout-1", **kwargs}
+
+    from agent.services import product_visual_grounding_resolver as resolver
+
+    monkeypatch.setattr(lock_service.crud, "get_product", get_product)
+    monkeypatch.setattr(lock_service.crud, "list_product_source_media", no_existing_media)
+    monkeypatch.setattr(lock_service.crud, "create_product_source_media", create_media)
+    monkeypatch.setattr(
+        resolver,
+        "resolve_product_reference_image",
+        lambda _product: SimpleNamespace(width=20, height=40),
+    )
+    monkeypatch.setattr(lock_service, "BASE_DIR", tmp_path)
+
+    result = await lock_service.register_product_truth_cutout_media(
+        "p-1",
+        filename="reviewed-cutout.png",
+        content_type="image/png",
+        raw_bytes=Path(assets["cutout"]).read_bytes(),
+    )
+
+    assert result["media_id"] == "stored-cutout-1"
+    assert result["status"] == "STORED"
+    assert result["review_status"] == "PENDING_REVIEW"
+    assert captured["draft_id"] == "visual-lock:p-1"
+    assert captured["kind"] == "image"
+    assert captured["status"] == "STORED"
+    assert (tmp_path / str(captured["local_path"])).exists()
+
+
+@pytest.mark.asyncio
 async def test_approval_requires_explicit_human_acknowledgement(tmp_path, monkeypatch):
     assets = _assets(tmp_path)
     db_path = _db(tmp_path, assets, status="PENDING_REVIEW")

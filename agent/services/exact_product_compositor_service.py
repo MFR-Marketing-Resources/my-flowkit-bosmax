@@ -1425,7 +1425,19 @@ def prepare_layer(
     max_w = max(1, round(cw * (x1 - x0)))
     max_h = max(1, round(ch * (y1 - y0)))
     with Image.open(cutout) as cutout_image:
-        iw, ih = cutout_image.size
+        rgba = cutout_image.convert("RGBA")
+        try:
+            alpha_bbox = rgba.getchannel("A").getbbox()
+        finally:
+            rgba.close()
+        if not alpha_bbox:
+            raise ExactProductCompositeError(
+                "CANONICAL_CUTOUT_INVALID",
+                "Approved cutout has no visible product geometry.",
+                status_code=422,
+            )
+        crop_x0, crop_y0, crop_x1, crop_y1 = alpha_bbox
+        iw, ih = crop_x1 - crop_x0, crop_y1 - crop_y0
     desired_scale = min(max_w / iw, max_h / ih) * max(0.01, min(float(fill), 1.0))
     scale = max(float(validation["min_scale"]), min(desired_scale, float(validation["max_scale"])))
     w, h = max(1, round(iw * scale)), max(1, round(ih * scale))
@@ -1459,6 +1471,12 @@ def prepare_layer(
             "y": y,
             "w": w,
             "h": h,
+            "source_crop": {
+                "x": crop_x0,
+                "y": crop_y0,
+                "w": iw,
+                "h": ih,
+            },
             "rotation_degrees": 0.0,
             "perspective_skew_x": 0.0,
             "shadow_opacity": 0.24,
@@ -1511,10 +1529,22 @@ def _product_region_match(
 def composite(output_path: Path, layer: dict[str, Any]) -> dict[str, Any]:
     asset, t = Path(str(layer["asset_ref"])), layer["transform"]
     base = Image.open(output_path).convert("RGBA")
-    product = _resize_rgba_premultiplied(
-        Image.open(asset).convert("RGBA"),
-        (int(t["w"]), int(t["h"])),
-    )
+    with Image.open(asset) as asset_image:
+        source = asset_image.convert("RGBA")
+        crop = t.get("source_crop") or {}
+        if crop:
+            crop_box = (
+                int(crop["x"]),
+                int(crop["y"]),
+                int(crop["x"] + crop["w"]),
+                int(crop["y"] + crop["h"]),
+            )
+            source = source.crop(crop_box)
+        product = _resize_rgba_premultiplied(
+            source,
+            (int(t["w"]), int(t["h"])),
+        )
+        source.close()
     product = _harden_cutout_alpha_after_resize(product)
     shadow = Image.new("RGBA", base.size)
     alpha = product.getchannel("A").filter(

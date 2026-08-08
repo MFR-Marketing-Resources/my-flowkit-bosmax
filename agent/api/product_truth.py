@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from agent.db import crud
 from agent.models.product_truth_lock import (
     ProductTruthLockApprovalRequest,
@@ -10,6 +10,7 @@ from agent.services.product_truth_lock_service import (
     approve_product_truth_lock,
     create_pending_product_truth_lock,
     inspect_product_truth_lock,
+    register_product_truth_cutout_media,
 )
 
 router = APIRouter(prefix="/product-truth", tags=["product-truth"])
@@ -61,6 +62,27 @@ def _truth_lock_http_error(exc: ProductTruthLockError) -> HTTPException:
         status_code=exc.status_code,
         detail={"code": exc.code, "message": exc.message},
     )
+
+
+@router.post("/{product_id}/visual-lock/cutout")
+async def upload_visual_product_truth_cutout(
+    product_id: str,
+    cutout: UploadFile = File(...),
+):
+    """Register a transparent cutout for review; never creates or approves a lock."""
+
+    try:
+        raw_bytes = await cutout.read(10 * 1024 * 1024 + 1)
+        return await register_product_truth_cutout_media(
+            product_id,
+            filename=cutout.filename or "review-cutout.png",
+            content_type=cutout.content_type,
+            raw_bytes=raw_bytes,
+        )
+    except ProductTruthLockError as exc:
+        raise _truth_lock_http_error(exc) from exc
+    finally:
+        await cutout.close()
 
 
 @router.post("/{product_id}/visual-lock/onboard")
