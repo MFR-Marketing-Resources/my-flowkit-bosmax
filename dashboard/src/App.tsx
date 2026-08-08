@@ -54,6 +54,7 @@ import ReportingOperationsPage from "./pages/ReportingOperationsPage";
 import GalleryPage from "./pages/GalleryPage";
 import LogsPage from "./pages/LogsPage";
 import OperatorPage from "./pages/OperatorPage";
+import MontagePage from "./pages/MontagePage";
 import PosterBuilderPage from "./pages/PosterBuilderPage";
 import PostizPublishPage from "./pages/PostizPublishPage";
 import ResultsHubPage from "./pages/ResultsHubPage";
@@ -83,6 +84,7 @@ const NAV_GROUPS = [
 			{ to: "/operator/f2v", icon: Sparkles, label: "Frames (F2V)" },
 			{ to: "/operator/i2v", icon: Layers, label: "Ingredients" },
 			{ to: "/operator/img", icon: ImageIcon, label: "Image Gen" },
+			{ to: "/operator/montage", icon: Layers, label: "Montage" },
 			{ to: "/library/videos", icon: Video, label: "Video Library (48j)" },
 			{ to: "/library/images", icon: ImageIcon, label: "Image Library (48j)" },
 			{ to: "/results", icon: FolderOpen, label: "Results (Hasil + Caption)" },
@@ -336,6 +338,7 @@ function Layout() {
 		{ to: "/library/images", label: "IMAGES" },
 		{ to: "/operator/i2v", label: "I2V" },
 		{ to: "/operator/img", label: "IMG" },
+		{ to: "/operator/montage", label: "MONTAGE" },
 		{ to: "/assets/creative-library", label: "Creative" },
 		{ to: "/workspace/generation-packages", label: "Bank" },
 		{ to: "/workspace/jobs", label: "Jobs" },
@@ -528,6 +531,7 @@ function Layout() {
 						<Route path="/operator/f2v" element={<OperatorPage mode="F2V" />} />
 						<Route path="/operator/i2v" element={<OperatorPage mode="I2V" />} />
 						<Route path="/operator/img" element={<OperatorPage mode="IMG" />} />
+						<Route path="/operator/montage" element={<MontagePage />} />
 						<Route path="/workspace/jobs" element={<WorkspaceJobsPage />} />
 						<Route
 							path="/workspace/generation-packages"
