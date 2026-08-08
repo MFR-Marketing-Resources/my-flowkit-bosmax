@@ -53,4 +53,4 @@ jobs:
 
       - name: Run BOSMAX verification gate
         shell: pwsh
-        run: .\scripts\verify-gate.ps1
+        run: .\scripts\verify-gate.ps1 -VitestTestTimeout 15000

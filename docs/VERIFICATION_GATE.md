@@ -56,6 +56,10 @@ powershell -ExecutionPolicy Bypass -File scripts\verify-gate.ps1 -Full
 powershell -ExecutionPolicy Bypass -File scripts\verify-gate.ps1 -SkipMandor
 ```
 
+The CI workflow passes `-VitestTestTimeout 15000` because hosted Windows runners can be
+slower than the local workstation for jsdom tests. This changes only the test deadline; it
+does not skip or select fewer tests.
+
 Frontend-only convenience (build + vitest):
 
 ```bash
