@@ -963,3 +963,18 @@ async def test_generic_frames_engine_prompt_carries_all_locks_and_no_platform_wo
     assert "like/comment/share icons" in ep
     assert "tiktok" not in ep.lower()
     assert "GENERIC_FRAMES_AVATAR_PRODUCT" not in ep   # routing metadata never leaks
+
+
+def test_campaign_key_visual_cannot_be_saved_as_terminal_img_asset():
+    with pytest.raises(ValueError, match="CAMPAIGN_KEY_VISUAL_MUST_BE_COMPOSED"):
+        asyncio.run(
+            save_img_output_to_library(
+                SaveImgOutputRequest(
+                    lane_id="PRODUCT_POSTER",
+                    display_name="Campaign KV",
+                    generated_artifact_media_id="kv-media-1",
+                    product_id="prod-1",
+                    creative_mode="CREATIVE_CAMPAIGN",
+                )
+            )
+        )

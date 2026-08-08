@@ -47,6 +47,41 @@ def _copy_text(copy_layout: dict[str, str]) -> str:
     return "; ".join(lines) or "No marketing copy supplied; do not invent marketing claims."
 
 
+_COPY_SPACE_KEYS: tuple[str, ...] = (
+    "headline_line_budget",
+    "support_line_budget",
+    "proof_line_budget",
+    "cta_line_budget",
+    "text_hierarchy",
+    "copy_zone_strategy",
+    "copy_safe_margin",
+    "avoid_product_overlap",
+)
+
+
+def _copy_space_text(copy_space: dict[str, Any]) -> str:
+    """Compile structural copy-space metadata without leaking copy values.
+
+    The clean-key-visual provider call owns visual integration; deterministic
+    composition owns the wording.  Only geometry/line-budget keys are allowed
+    through this boundary so a caller cannot accidentally turn a clean KV into
+    a provider-rendered poster by putting text in the preview request.
+    """
+    parts: list[str] = []
+    for key in _COPY_SPACE_KEYS:
+        value = copy_space.get(key)
+        if value is None or isinstance(value, (dict, list, tuple, set)):
+            continue
+        text = " ".join(str(value).split()).strip()
+        if text:
+            parts.append(f"{key}={text[:160]}")
+    return "; ".join(parts) or (
+        "headline_line_budget=1; support_line_budget=1; proof_line_budget=1; "
+        "cta_line_budget=1; copy_zone_strategy=deliberate_negative_space; "
+        "copy_safe_margin=5%; avoid_product_overlap=true"
+    )
+
+
 def _creative_context_text(context: ImageCreativeContext | None) -> str:
     if context is None:
         return (
@@ -194,7 +229,8 @@ def compile_image_prompt(
     if request.output_intent == "CLEAN_KEY_VISUAL":
         copy_section = (
             "CLEAN KEY VISUAL: render no headline, CTA, offer, logo recreation or marketing text. "
-            "Leave intentional negative space for the deterministic copy layer."
+            "Leave intentional negative space for the deterministic copy layer. "
+            f"Structural copy-space contract only: {_copy_space_text(request.copy_space)}."
         )
     else:
         copy_section = (

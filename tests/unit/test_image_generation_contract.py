@@ -191,11 +191,17 @@ def test_clean_key_visual_compiler_excludes_marketing_copy():
             product_id=PRODUCT_ID,
             output_intent="CLEAN_KEY_VISUAL",
             copy_layout={"headline": "Must not be rendered"},
+            copy_space={
+                "headline_line_budget": 2,
+                "copy_zone_strategy": "DELIBERATE_NEGATIVE_SPACE",
+            },
         ),
     )
 
     assert "no headline" in response.sections["MARKETING_COPY_AND_TEXT_LAYOUT"]
     assert "Must not be rendered" not in response.sections["MARKETING_COPY_AND_TEXT_LAYOUT"]
+    assert "headline_line_budget=2" in response.sections["MARKETING_COPY_AND_TEXT_LAYOUT"]
+    assert response.provider_operation_plan["model"] == "NANO_BANANA_PRO"
     assert response.blockers == []
 
 
