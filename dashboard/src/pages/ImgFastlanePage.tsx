@@ -1290,8 +1290,8 @@ export default function ImgFastlanePage() {
 					<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-[2px]">
 						<div className="max-w-md w-full rounded-2xl border border-rose-500/40 bg-slate-950 p-6 space-y-4 shadow-2xl">
 							<div className="text-sm font-bold text-rose-100 uppercase tracking-wider">Sahkan penghantaran kerja IMG</div>
-							<div className="text-xs text-slate-300 space-y-2"><p>Sahkan sekali lagi untuk menghantar satu kerja IMG. Penjanaan imej boleh menggunakan kuota/kredit penjanaan imej provider; ia tidak menggunakan kredit video Google Flow. Tiada kerja akan dihantar sebelum pengesahan ini.</p><p>Build status: <strong>{GEN_NOT_FIRED}</strong> · <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.</p></div>
-							<label className="flex items-start gap-2 text-xs text-slate-200"><input type="checkbox" data-testid="img-fastlane-credit-confirm-checkbox" checked={imgGenConfirmed} onChange={(event) => setImgGenConfirmed(event.target.checked)} className="mt-0.5" /><span>Saya faham tindakan ini menggunakan kuota/kredit penjanaan imej provider dan bukan kredit video.</span></label>
+							<div className="text-xs text-slate-300 space-y-2"><p>IMG ini tidak menggunakan kredit penjanaan; kredit Google Flow hanya berkaitan video. Pengesahan di bawah hanya mengesahkan satu operasi IMG akan dihantar. Tiada kerja akan dihantar sebelum pengesahan ini.</p><p>Build status: <strong>{GEN_NOT_FIRED}</strong> · <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.</p></div>
+							<label className="flex items-start gap-2 text-xs text-slate-200"><input type="checkbox" data-testid="img-fastlane-credit-confirm-checkbox" checked={imgGenConfirmed} onChange={(event) => setImgGenConfirmed(event.target.checked)} className="mt-0.5" /><span>Saya faham tindakan ini menghantar satu kerja IMG tanpa caj kredit penjanaan.</span></label>
 							<div className="flex justify-end gap-3 pt-2"><button type="button" onClick={() => setShowGenConfirm(false)} className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-xs font-semibold text-slate-300">Cancel</button><button type="button" disabled={!imgGenConfirmed} onClick={() => void handleConfirmedGenerate()} className="rounded-xl border border-rose-500/40 bg-rose-500/20 px-4 py-2 text-xs font-bold text-rose-100 disabled:opacity-40">Confirm &amp; Generate</button></div>
 						</div>
 					</div>
@@ -1931,16 +1931,16 @@ export default function ImgFastlanePage() {
 						</div>
 						<div className="text-xs text-slate-300 space-y-2">
 											<p>
-														Sahkan sekali lagi untuk menghantar satu kerja IMG avatar + produk.
-														Penjanaan imej boleh menggunakan kuota/kredit penjanaan imej provider;
-														ia tidak menggunakan kredit video Google Flow. Tiada kerja akan dihantar
-														sebelum pengesahan ini.
+														IMG ini tidak menggunakan kredit penjanaan; kredit Google Flow hanya
+														berkaitan video. Pengesahan di bawah hanya mengesahkan satu operasi
+														IMG avatar + produk akan dihantar. Tiada kerja akan dihantar sebelum
+														pengesahan ini.
 												</p>
 							<p>
 								Build status: <strong>{GEN_NOT_FIRED}</strong> | <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.
 							</p>
 						</div>
-											<label className="flex items-start gap-2 text-xs text-slate-200"><input type="checkbox" data-testid="img-fastlane-credit-confirm-checkbox" checked={imgGenConfirmed} onChange={(event) => setImgGenConfirmed(event.target.checked)} className="mt-0.5" /><span>Saya faham tindakan ini menggunakan kuota/kredit penjanaan imej provider dan bukan kredit video.</span></label>
+											<label className="flex items-start gap-2 text-xs text-slate-200"><input type="checkbox" data-testid="img-fastlane-credit-confirm-checkbox" checked={imgGenConfirmed} onChange={(event) => setImgGenConfirmed(event.target.checked)} className="mt-0.5" /><span>Saya faham tindakan ini menghantar satu kerja IMG tanpa caj kredit penjanaan.</span></label>
 						<div className="flex justify-end gap-3 pt-2">
 							<button
 								type="button"

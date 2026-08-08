@@ -12,6 +12,7 @@ import {
 	approvePosterCopySet,
 	composePoster,
 	createPosterCopySet,
+	fetchPosterCampaignVariants,
 	forkPosterCopySetFromHistorical,
 	generatePosterDirections,
 	newPosterCopySetVersion,
@@ -19,6 +20,7 @@ import {
 	recommendPosterAngles,
 	recommendPosterObjectives,
 	regeneratePosterField,
+	reviewPosterDeliverable,
 	savePosterToLibrary,
 } from "../../api/posterCopySets";
 import { fetchPosterReadiness } from "../../api/posterReadiness";
@@ -31,6 +33,8 @@ import type { Product } from "../../types";
 import {
 	POSTER_COPY_APPROVAL_PHRASE,
 	type PosterAngleRecommendation,
+	type CampaignReviewRequest,
+	type CampaignVariantsResponse,
 	type PosterComposeResponse,
 	type PosterCopyDirection,
 	type PosterCopySet,
@@ -208,6 +212,17 @@ export interface PosterGuidedWorkflow {
 	composeLoading: boolean;
 	composeError: string;
 	deliverable: PosterComposeResponse | null;
+	campaignVariants: CampaignVariantsResponse | null;
+	campaignVariantsLoading: boolean;
+	campaignVariantsError: string;
+	loadCampaignVariants: (payload?: {
+		copy_patch?: Record<string, string>;
+		design_route?: string;
+		layout_variant?: string;
+	}) => Promise<void>;
+	reviewCampaign: (request: CampaignReviewRequest) => Promise<void>;
+	campaignReviewLoading: boolean;
+	campaignReviewError: string;
 	// save
 	save: () => Promise<void>;
 	saveLoading: boolean;
@@ -286,6 +301,12 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 	);
 	const [composeLoading, setComposeLoading] = useState(false);
 	const [composeError, setComposeError] = useState("");
+	const [campaignVariants, setCampaignVariants] =
+		useState<CampaignVariantsResponse | null>(null);
+	const [campaignVariantsLoading, setCampaignVariantsLoading] = useState(false);
+	const [campaignVariantsError, setCampaignVariantsError] = useState("");
+	const [campaignReviewLoading, setCampaignReviewLoading] = useState(false);
+	const [campaignReviewError, setCampaignReviewError] = useState("");
 
 	const [savedAssetId, setSavedAssetId] = useState<string | null>(null);
 	const [saveLoading, setSaveLoading] = useState(false);
@@ -298,6 +319,9 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		setSceneGenerationStage("");
 		setGeneratedSceneMediaId(null);
 		setGeneratedSceneUrl(null);
+		setCampaignVariants(null);
+		setCampaignVariantsError("");
+		setCampaignReviewError("");
 	}, []);
 
 	const setCreativeMode = useCallback(
@@ -706,6 +730,46 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		setStep("compose");
 	}, []);
 
+	const loadCampaignVariantsFor = useCallback(
+		async (
+			posterDeliverableId: string,
+			payload: {
+				copy_patch?: Record<string, string>;
+				design_route?: string;
+				layout_variant?: string;
+			} = {},
+		) => {
+			setCampaignVariantsLoading(true);
+			setCampaignVariantsError("");
+			try {
+				const variants = await fetchPosterCampaignVariants(
+					posterDeliverableId,
+					payload,
+				);
+				setCampaignVariants(variants);
+			} catch (e) {
+				setCampaignVariantsError(
+					friendlyError(e, "Gagal menyediakan tiga varian poster terkawal."),
+				);
+			} finally {
+				setCampaignVariantsLoading(false);
+			}
+		},
+		[],
+	);
+
+	const loadCampaignVariants = useCallback(
+		async (payload: {
+			copy_patch?: Record<string, string>;
+			design_route?: string;
+			layout_variant?: string;
+		} = {}) => {
+			const id = deliverable?.deliverable.poster_deliverable_id;
+			if (id) await loadCampaignVariantsFor(id, payload);
+		},
+		[deliverable, loadCampaignVariantsFor],
+	);
+
 	// Historical (superseded) copy stays read-only; forking creates an editable
 	// DRAFT lineage-linked to the historical row, preserving the original record.
 	const forkHistorical = useCallback(async () => {
@@ -841,6 +905,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 					count: 1,
 					image_contract_version: compiled.compiler_version,
 					reference_pack_id: compiled.reference_pack.pack_id,
+					poster_copy_set_id: approvedCopySet.poster_copy_set_id,
 					output_intent: "CLEAN_KEY_VISUAL",
 					confirm_live_credit_burn: true,
 					maximum_provider_operations:
@@ -966,7 +1031,13 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			});
 			setDeliverable(res);
 			setSavedAssetId(null);
+			setCampaignVariants(null);
 			setReached((prev) => (prev.includes("save") ? prev : [...prev, "save"]));
+			if (creativeMode === "CREATIVE_CAMPAIGN") {
+				await loadCampaignVariantsFor(
+					res.deliverable.poster_deliverable_id,
+				);
+			}
 		} catch (e) {
 			setComposeError(
 				friendlyError(
@@ -984,7 +1055,32 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		backgroundMediaId,
 		creativeMode,
 		generatedSceneMediaId,
+		loadCampaignVariantsFor,
 	]);
+
+	const reviewCampaign = useCallback(
+		async (request: CampaignReviewRequest) => {
+			const id = deliverable?.deliverable.poster_deliverable_id;
+			if (!id) return;
+			setCampaignReviewLoading(true);
+			setCampaignReviewError("");
+			try {
+				const response = await reviewPosterDeliverable(id, request);
+				setDeliverable((current) =>
+					current
+						? { ...current, qa_report: response.qa_report }
+						: current,
+				);
+			} catch (e) {
+				setCampaignReviewError(
+					friendlyError(e, "Semakan manusia tidak berjaya disimpan."),
+				);
+			} finally {
+				setCampaignReviewLoading(false);
+			}
+		},
+		[deliverable],
+	);
 
 	const save = useCallback(async () => {
 		if (!deliverable) return;
@@ -1070,6 +1166,13 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		composeLoading,
 		composeError,
 		deliverable,
+		campaignVariants,
+		campaignVariantsLoading,
+		campaignVariantsError,
+		loadCampaignVariants,
+		reviewCampaign,
+		campaignReviewLoading,
+		campaignReviewError,
 		save,
 		saveLoading,
 		saveError,

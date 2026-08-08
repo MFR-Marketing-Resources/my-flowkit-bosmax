@@ -31,9 +31,11 @@ from agent.models.poster_copy_set import (
 )
 from agent.models.poster_copy_quality import PosterCopyQualityRequest
 from agent.models.poster_render_manifest import (
+    PosterQAFinding,
     PosterQAReport,
     build_qa_report,
 )
+from agent.models.poster_campaign_qa import CampaignReviewRequest
 from agent.services import poster_compositor_service as compositor
 from agent.services.exact_product_compositor_service import prepare_layer
 from agent.services import poster_recipe_service
@@ -57,6 +59,12 @@ from agent.services.poster_template_service import (
     template_contract,
 )
 from agent.services.poster_design_system import resolve_design_route
+from agent.services.poster_campaign_qa_service import (
+    CampaignQAError,
+    build_campaign_machine_qa,
+    build_campaign_post_composition_qa,
+    build_world_class_review,
+)
 
 # HONEST product-truth stamping: REFERENCE_CONDITIONED generation cannot prove
 # pixel-level product preservation — never stamp PRESERVED for it. A
@@ -587,6 +595,37 @@ class PosterDeliverableService:
             report, expected_zone_ids=[z.zone_id for z in manifest.zones]
         )
         sha = _sha256(out_path)
+        if campaign_mode:
+            campaign_machine_qa = build_campaign_machine_qa(media_id)
+            campaign_post_qa = build_campaign_post_composition_qa(
+                manifest=manifest,
+                report=report,
+                copy_set=copy_set,
+                settings=settings,
+                output_sha256=sha,
+            )
+            campaign_findings = [
+                PosterQAFinding(
+                    code=f"CAMPAIGN_{name.upper()}",
+                    severity=("BLOCK" if check.status == "BLOCK" else "WARN"),
+                    message="; ".join(check.evidence) or name,
+                )
+                for name, check in campaign_post_qa.checks.items()
+                if check.status in {"BLOCK", "WARN", "UNVERIFIED"}
+            ]
+            qa = qa.model_copy(
+                update={
+                    "machine_qa": campaign_machine_qa,
+                    "campaign_qa": campaign_post_qa,
+                    "ok": qa.ok and campaign_post_qa.ok,
+                    "findings": [*qa.findings, *campaign_findings],
+                    # Campaign-specific deterministic blockers must participate
+                    # in the existing final save gate. Warnings remain additive;
+                    # Exact Commerce keeps the legacy counts unchanged.
+                    "block_count": qa.block_count + campaign_post_qa.block_count,
+                    "warn_count": qa.warn_count + campaign_post_qa.warn_count,
+                }
+            )
         row = await crud.create_poster_deliverable(
             product_id,
             poster_copy_set_id=copy_set["poster_copy_set_id"],
@@ -609,6 +648,72 @@ class PosterDeliverableService:
             # The EXACT plan the manifest preserves — so the UI can prove the
             # compiled poster used the same plan it displayed.
             "composition_plan": composition_plan,
+        }
+
+    @staticmethod
+    async def review_campaign_deliverable(
+        poster_deliverable_id: str,
+        request: CampaignReviewRequest,
+    ) -> dict[str, Any]:
+        """Persist an explicit human visual review without promoting product truth.
+
+        This is the only path that changes the Campaign review decision. It does
+        not approve the product reference pack and it never changes the
+        campaign asset's ``approved_for_poster`` governance field.
+        """
+        row = await crud.get_poster_deliverable(_norm(poster_deliverable_id))
+        if not row:
+            raise PosterDeliverableError("POSTER_DELIVERABLE_NOT_FOUND", status_code=404)
+        try:
+            manifest = json.loads(row.get("render_manifest_json") or "{}")
+            qa = PosterQAReport.model_validate_json(row.get("qa_report_json") or "{}")
+        except (ValueError, TypeError) as exc:
+            raise PosterDeliverableError(
+                "POSTER_CAMPAIGN_REVIEW_DATA_INVALID",
+                "saved poster review evidence is not valid JSON",
+                status_code=409,
+            ) from exc
+        provenance = manifest.get("provenance") if isinstance(manifest, dict) else {}
+        if not isinstance(provenance, dict) or _norm(provenance.get("creative_mode")).upper() != "CREATIVE_CAMPAIGN":
+            raise PosterDeliverableError(
+                "POSTER_CAMPAIGN_REVIEW_NOT_APPLICABLE",
+                "human Campaign review is only available for Creative Campaign deliverables",
+                status_code=409,
+            )
+        if qa.campaign_qa is None:
+            raise PosterDeliverableError(
+                "POSTER_CAMPAIGN_QA_MISSING",
+                "compose must produce Campaign QA evidence before review",
+                status_code=409,
+            )
+        try:
+            review = build_world_class_review(request)
+        except CampaignQAError as exc:
+            raise PosterDeliverableError(exc.code, exc.message, status_code=422) from exc
+        campaign_qa = qa.campaign_qa.model_copy(
+            update={"campaign_review_status": review.decision}
+        )
+        updated_qa = qa.model_copy(
+            update={"campaign_qa": campaign_qa, "world_class_review": review}
+        )
+        try:
+            settings = json.loads(row.get("settings_json") or "{}")
+        except (ValueError, TypeError):
+            settings = {}
+        if not isinstance(settings, dict):
+            settings = {}
+        settings["campaign_review"] = review.model_dump(mode="json")
+        updated = await crud.update_poster_deliverable(
+            row["poster_deliverable_id"],
+            qa_report_json=updated_qa.model_dump_json(),
+            settings_json=json.dumps(settings, ensure_ascii=False),
+        )
+        return {
+            "deliverable": updated,
+            "qa_report": updated_qa.model_dump(mode="json"),
+            "world_class_review": review.model_dump(mode="json"),
+            "product_truth_status": "REFERENCE_CONDITIONED_UNVERIFIED",
+            "approved_for_poster": False,
         }
 
     @staticmethod

@@ -289,6 +289,7 @@ export interface StartImgGenerationInput {
 	startAsset?: Record<string, any>;
 	image_contract_version?: string;
 	reference_pack_id?: string;
+	poster_copy_set_id?: string;
 	output_intent?: string;
 	creative_mode?: string;
 	confirm_live_credit_burn?: boolean;
@@ -342,6 +343,7 @@ export async function startImgGeneration(
 	startAsset: input.startAsset,
 	image_contract_version: input.image_contract_version,
 	reference_pack_id: input.reference_pack_id,
+	poster_copy_set_id: input.poster_copy_set_id,
 	output_intent: input.output_intent,
 	creative_mode: input.creative_mode,
 	confirm_live_credit_burn: input.confirm_live_credit_burn,

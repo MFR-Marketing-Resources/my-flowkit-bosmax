@@ -122,3 +122,43 @@ def test_creative_campaign_requires_clean_key_visual_and_final_model(monkeypatch
             )
         )
     assert model_error.value.detail == "CREATIVE_CAMPAIGN_FINAL_MODEL_REQUIRED:NANO_BANANA_PRO"
+
+
+def test_creative_campaign_pre_provider_lint_blocks_without_copy_set(monkeypatch):
+    monkeypatch.setattr(
+        "agent.config.CREATIVE_CAMPAIGN_POSTER_ENABLED", True
+    )
+    monkeypatch.setattr(
+        "agent.config.CREATIVE_CAMPAIGN_LIVE_BENCHMARK_AUTHORIZED", True
+    )
+
+    async def fake_truth_gate(**kwargs):
+        return kwargs["prompt"], {}, False
+
+    async def fail_if_provider_called(*args, **kwargs):
+        raise AssertionError("provider boundary must not be reached")
+
+    monkeypatch.setattr("agent.api.flow._apply_img_product_truth_gate", fake_truth_gate)
+    monkeypatch.setattr(
+        "agent.services.make_video.start_generate",
+        fail_if_provider_called,
+    )
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(
+            generate(
+                GenerateRequest(
+                    mode="IMG",
+                    prompt="clean key visual prompt with no marketing copy",
+                    product_id="product-test-1",
+                    visual_lane_id="POSTER_BUILDER_CREATIVE_CAMPAIGN",
+                    image_contract_version="image_prompt_compiler_v1",
+                    output_intent="CLEAN_KEY_VISUAL",
+                    image_model="NANO_BANANA_PRO",
+                    confirm_live_credit_burn=True,
+                    maximum_provider_operations=1,
+                    max_retry_operations=0,
+                )
+            )
+        )
+    assert raised.value.status_code == 422
+    assert raised.value.detail == "POSTER_COPY_SET_REQUIRED_FOR_CREATIVE_CAMPAIGN"

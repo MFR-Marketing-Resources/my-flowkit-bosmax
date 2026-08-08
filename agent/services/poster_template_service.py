@@ -207,20 +207,13 @@ def build_render_manifest(
             continue  # no placeholder text in production posters
         zone_rect = {"x": z.x, "y": z.y, "w": z.w, "h": z.h}
         if isinstance(variant_tokens, dict):
-            if z.zone_id in ("headline", "support") and variant_tokens.get("headline_x") is not None:
-                zone_rect["x"] = float(variant_tokens["headline_x"])
-            if z.zone_id in ("headline", "support") and variant_tokens.get("headline_w") is not None:
-                zone_rect["w"] = float(
-                    variant_tokens["headline_w"]
-                    if z.zone_id == "headline"
-                    else variant_tokens.get("support_w") or zone_rect["w"]
-                )
-            if z.zone_id in ("headline", "support") and variant_tokens.get("headline_align"):
-                z_align = str(
-                    variant_tokens["headline_align"]
-                    if z.zone_id == "headline"
-                    else variant_tokens.get("support_align") or z.align
-                )
+            zone_prefix = "headline" if z.zone_id == "headline" else "support"
+            if z.zone_id in ("headline", "support") and variant_tokens.get(f"{zone_prefix}_x") is not None:
+                zone_rect["x"] = float(variant_tokens[f"{zone_prefix}_x"])
+            if z.zone_id in ("headline", "support") and variant_tokens.get(f"{zone_prefix}_w") is not None:
+                zone_rect["w"] = float(variant_tokens[f"{zone_prefix}_w"])
+            if z.zone_id in ("headline", "support") and variant_tokens.get(f"{zone_prefix}_align"):
+                z_align = str(variant_tokens[f"{zone_prefix}_align"])
             else:
                 z_align = z.align
             if z.zone_id == "cta" and variant_tokens.get("cta_x") is not None:
@@ -250,7 +243,7 @@ def build_render_manifest(
                 zone_id="disclaimer",
                 role="FOOTER",
                 component="disclaimer",
-                rect=ManifestRect(x=8, y=97.0, w=84, h=2.4),
+                rect=ManifestRect(x=8, y=92.3, w=84, h=2.4),
                 align="center",
                 font_token="caption",
                 text=disclaimer,
