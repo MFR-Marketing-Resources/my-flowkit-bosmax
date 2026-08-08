@@ -28,6 +28,9 @@ ACTIVE_STATUS = "ACTIVE"
 ARCHIVED_STATUS = "ARCHIVED"
 APPROVED_REVIEW_STATUS = "APPROVED"
 DEFAULT_I2V_RECIPE_ID = "PRODUCT_HELD_BY_CHARACTER_IN_SCENE"
+_VALID_ENGINE_SLOT_VALUES: frozenset[str] = frozenset(
+    {"subject", "scene", "style", "start_frame", "end_frame"}
+)
 # The truth/safety gates that MUST be PASS before an asset can be APPROVED — the
 # same set the IMG Asset Factory save gate enforces (see save_img_output_to_library).
 # product_truth_status is intentionally NOT here (it is derived PRESERVED/NOT_APPLICABLE,
@@ -55,12 +58,30 @@ def _parse_json_text(value: str | None, default: Any) -> Any:
         return default
 
 
+def _normalize_engine_slot_eligibility(value: str | None) -> list[str]:
+    """Keep only slots from the current video-engine slot contract.
+
+    Older product-reference rows stored IMG reference roles such as
+    ``productAsset`` and ``PRODUCT_CANONICAL`` in this field.  Those roles are
+    still carried by the Product Reference Pack metadata, but they are not
+    engine slots.  Normalizing them at the read boundary keeps legacy rows
+    readable without weakening the typed model or mutating the database.
+    """
+    parsed = _parse_json_text(value, [])
+    if not isinstance(parsed, list):
+        return []
+    return [
+        slot
+        for slot in parsed
+        if isinstance(slot, str) and slot in _VALID_ENGINE_SLOT_VALUES
+    ]
+
+
 def _normalize_record(row: dict[str, Any]) -> CreativeAssetRecord:
     payload = dict(row)
     payload["allowed_modes"] = _parse_json_text(payload.get("allowed_modes"), [])
-    payload["engine_slot_eligibility"] = _parse_json_text(
-        payload.get("engine_slot_eligibility"),
-        [],
+    payload["engine_slot_eligibility"] = _normalize_engine_slot_eligibility(
+        payload.get("engine_slot_eligibility")
     )
     payload["mode_a_metadata_handoff"] = _parse_json_text(
         payload.get("mode_a_metadata_handoff"),
