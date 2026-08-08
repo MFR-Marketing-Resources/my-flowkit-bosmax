@@ -407,6 +407,7 @@ def verify_final_media_payload(path: str | Path, requested_seconds: int) -> int:
 # ── the finalize orchestration (submit → poll → save → validate) ────────────
 async def finalize_timeline(client, *, job_id: str, segment_media_ids: list[str],
                             requested_seconds: int, out_dir: Path,
+                            segment_seconds: int = _SEGMENT_SECONDS,
                             dry_run: bool = True,
                             confirm_live_credit_burn: bool = False,
                             poll_timeout_s: int = 600,
@@ -418,7 +419,7 @@ async def finalize_timeline(client, *, job_id: str, segment_media_ids: list[str]
     never auto-retried (resume uses the persisted concat job name instead).
     """
     input_videos = build_concat_input(segment_media_ids,
-                                      segment_seconds=_SEGMENT_SECONDS)
+                                      segment_seconds=int(segment_seconds))
     plan = {
         "job_id": job_id,
         "planned_request": {"endpoint": "/v1:runVideoFxConcatenation",
@@ -446,7 +447,8 @@ async def finalize_timeline(client, *, job_id: str, segment_media_ids: list[str]
         # Duration preflight (zero credit) — prove every segment is a real ~8s block
         # and the total matches BEFORE submitting the concat. Fails closed.
         preflight = await preflight_segment_durations(
-            client, segment_media_ids, requested_seconds, out_dir)
+            client, segment_media_ids, requested_seconds, out_dir,
+            segment_seconds=int(segment_seconds))
         await _crud.update_video_production_job(job_id, status=JOB_FINALIZING)
         submit = await client.run_video_concatenation(input_videos)
         if submit.get("error") or (isinstance(submit.get("status"), int)

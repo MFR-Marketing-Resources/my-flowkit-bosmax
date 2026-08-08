@@ -1391,6 +1391,32 @@ domains:
       - tests/unit/test_image_generation_contract.py
       - tests/api/test_creative_campaign_contract.py
       - docs/evidence/image-capability-audit-20260808.md
+      # Montage Laluan-B hardening R1-R4 C1
+      - agent/services/montage_scene_reference_policy.py
+      - agent/services/montage_scene_execution_routing.py
+      - agent/services/montage_assembly_readiness.py
+      - tests/unit/test_montage_scene_reference_policy.py
+      - tests/unit/test_montage_scene_execution_routing.py
+      - tests/unit/test_montage_assembly_readiness.py
+      - agent/api/montage.py
+      - dashboard/src/api/montage.ts
+      - dashboard/src/pages/MontagePage.tsx
+      - dashboard/src/App.tsx
+      - agent/main.py
+      - agent/services/montage_scene_orchestrator.py
+      - agent/services/montage_discrete_assembly.py
+      - tests/unit/test_montage_run_service.py
+      - agent/services/montage_run_service.py
+      - tests/unit/test_montage_m04_authorize_generation.py
+      - tests/unit/test_montage_m04_serial_poll.py
+      - tests/unit/test_montage_scene_orchestrator.py
+      - tests/unit/test_montage_discrete_assembly.py
+      - agent/authority/creative_lane_settings.json
+      - agent/services/creative_lane_settings_service.py
+      - agent/api/creative_lane_settings.py
+      - dashboard/src/api/creativeLaneSettings.ts
+      - tests/unit/test_creative_lane_settings_service.py
+      - dashboard/src/pages/MontagePage.test.ts
       - docs/evidence/poster-builder-v3-pre-refactor-audit.md
       - docs/evidence/poster-builder-v3-design-system-audit.md
       # Faceless Video + creative lane settings (Hook/Background SSOT) C1
