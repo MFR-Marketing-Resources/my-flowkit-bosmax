@@ -993,6 +993,17 @@ async def _is_verified_exact_product_artifact(
 
 
 async def save_img_output_to_library(request: SaveImgOutputRequest) -> CreativeAssetRecord:
+    # A Creative Campaign provider result is a clean key visual, not a terminal
+    # poster.  Poster Builder must first create a durable poster_deliverable via
+    # the deterministic copy compositor.  Keep this guard at the generic IMG
+    # save boundary as well so stale UI clients or direct callers cannot bypass
+    # the compose-before-save contract.
+    if (
+        str(request.creative_mode or "").strip().upper() == "CREATIVE_CAMPAIGN"
+        and request.lane_id == "PRODUCT_POSTER"
+    ):
+        raise ValueError("CAMPAIGN_KEY_VISUAL_MUST_BE_COMPOSED")
+
     # Lane must exist (fail closed on unknown lane).
     governance = derive_asset_governance(request.lane_id)
     lane = get_img_asset_lane(request.lane_id)

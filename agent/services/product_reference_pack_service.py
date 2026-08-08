@@ -264,7 +264,9 @@ async def _create_asset(
             silo=product.get("silo"),
             product_type=product.get("product_type"),
             allowed_modes=json.dumps(["IMG"]),
-            engine_slot_eligibility=json.dumps(["productAsset", role]),
+            # Product Reference Pack roles are IMG reference metadata, not
+            # video engine slots.  Keep this field valid for CreativeAssetRecord.
+            engine_slot_eligibility=json.dumps([]),
             mode_a_metadata_handoff=json.dumps({"reference_role": role, "metadata": metadata}),
             visual_dna_summary=None,
             character_dna=None,
@@ -290,6 +292,9 @@ async def _create_asset(
             "mode_a_metadata_handoff": json.dumps(
                 {"reference_role": role, "metadata": metadata}
             ),
+            # Repair rows created by the pre-pack contract as they are reused;
+            # the reference role remains authoritative in the handoff metadata.
+            "engine_slot_eligibility": json.dumps([]),
         }
         if not preserve_approval:
             changes.update(

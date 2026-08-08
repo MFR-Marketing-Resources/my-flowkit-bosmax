@@ -187,11 +187,14 @@ export async function saveImgOutputToLibrary(
 export interface CreativeCampaignPromptPreviewInput {
 	product_id: string;
 	output_intent?: "COMPLETE_POSTER" | "CLEAN_KEY_VISUAL" | "COMPLETE_IMAGE";
+	model?: string;
 	objective?: string;
 	composition?: string;
 	camera?: string;
 	lighting?: string;
 	scene_direction?: string;
+	/** Structural copy-space only; never actual headline/support/CTA wording. */
+	copy_space?: Record<string, string | number | boolean>;
 	copy_layout?: Record<string, string>;
 	negative_constraints?: string[];
 	aspect_ratio?: string;

@@ -6,7 +6,6 @@ import {
 import {
 	compileCreativeCampaignPrompt,
 	pollImgGenerationJob,
-	saveImgOutputToLibrary,
 	startImgGeneration,
 } from "../../api/imgFactory";
 import {
@@ -760,6 +759,8 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		setBackgroundMediaIdState("");
 		setGeneratedSceneMediaId(null);
 		setGeneratedSceneUrl(null);
+		setDeliverable(null);
+		setSavedAssetId(null);
 
 		try {
 			const promptPackage = await createPosterPromptDraft({
@@ -800,7 +801,8 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 				setSceneGenerationStage("compiling_creative_prompt");
 				const compiled = await compileCreativeCampaignPrompt({
 					product_id: product.id,
-					output_intent: "COMPLETE_POSTER",
+					output_intent: "CLEAN_KEY_VISUAL",
+					model: "NANO_BANANA_PRO",
 					objective:
 						objectiveText || approvedCopySet.objective || "Product Hero",
 					composition: selectedAngle || recipeId,
@@ -809,12 +811,21 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 						"Physically coherent Malaysian commercial light with contact shadow",
 					scene_direction:
 						selectedAngle || "Culturally appropriate Malaysian campaign environment",
-					copy_layout: {
-						headline: fields.primary_message,
-						support: fields.support_message,
-						proof_1: fields.proof_points[0] || "",
-						proof_2: fields.proof_points[1] || "",
-						cta: fields.cta,
+					copy_space: {
+						headline_line_budget:
+							Math.max(
+								1,
+								Math.ceil(
+									fields.primary_message.trim().split(/\s+/).filter(Boolean).length / 4,
+								),
+							),
+						support_line_budget: 1,
+						proof_line_budget: fields.proof_points.length > 0 ? 1 : 0,
+						cta_line_budget: 1,
+						text_hierarchy: "HEADLINE > SUPPORT > PROOF > CTA",
+						copy_zone_strategy: "DELIBERATE_NEGATIVE_SPACE",
+						copy_safe_margin: "5%",
+						avoid_product_overlap: true,
 					},
 					aspect_ratio: "9:16",
 					creative_mode: "CREATIVE_CAMPAIGN",
@@ -825,12 +836,12 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 					visual_lane_id: "POSTER_BUILDER_CREATIVE_CAMPAIGN",
 					creative_mode: "CREATIVE_CAMPAIGN",
 					prompt: compiled.compiled_prompt,
-					image_model: "NANO_BANANA_2",
+					image_model: "NANO_BANANA_PRO",
 					aspect: "9:16",
 					count: 1,
 					image_contract_version: compiled.compiler_version,
 					reference_pack_id: compiled.reference_pack.pack_id,
-					output_intent: "COMPLETE_POSTER",
+					output_intent: "CLEAN_KEY_VISUAL",
 					confirm_live_credit_burn: true,
 					maximum_provider_operations:
 						compiled.provider_operation_plan.max_provider_operations,
@@ -887,8 +898,9 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 				);
 			}
 
-			// Compose owns the exact-product insertion. The generated artifact stays a
-			// raw scene plate and is never treated as the final product-truth output.
+			// The provider artifact is a clean key visual. It is retained as
+			// background/lineage only; compose() must create the durable poster before
+			// the result can be saved.
 			const mediaId = job.media_id;
 			const url = job.url || `/api/flow/retrieved/${encodeURIComponent(mediaId)}`;
 			setBackgroundMediaIdState(mediaId);
@@ -922,25 +934,35 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 
 	const compose = useCallback(async () => {
 		if (!product || !approvedCopySet || !recipeId) return;
-		if (creativeMode === "CREATIVE_CAMPAIGN") {
-			if (!generatedSceneMediaId) {
-				setComposeError("Visual poster lengkap belum tersedia.");
-				return;
-			}
-			setComposeError("");
-			setSavedAssetId(null);
-			setReached((prev) => (prev.includes("save") ? prev : [...prev, "save"]));
-			return;
-		}
 		setComposeLoading(true);
 		setComposeError("");
 		try {
+			if (!backgroundMediaId) {
+				setComposeError(
+					creativeMode === "CREATIVE_CAMPAIGN"
+						? "Key visual belum tersedia untuk dikompos."
+						: "Latar poster belum tersedia.",
+				);
+				return;
+			}
 			const res = await composePoster({
 				product_id: product.id,
 				poster_copy_set_id: approvedCopySet.poster_copy_set_id,
 				recipe_id: recipeId,
 				background_media_id: backgroundMediaId || undefined,
+				image_model:
+					creativeMode === "CREATIVE_CAMPAIGN"
+						? "NANO_BANANA_PRO"
+						: undefined,
 				creative_mode: creativeMode || undefined,
+				settings:
+					creativeMode === "CREATIVE_CAMPAIGN"
+						? {
+							pipeline: "CLEAN_KEY_VISUAL_THEN_DETERMINISTIC_COPY_COMPOSITE",
+							raw_key_visual_media_id: generatedSceneMediaId,
+							raw_key_visual_is_lineage_only: true,
+						}
+						: undefined,
 			});
 			setDeliverable(res);
 			setSavedAssetId(null);
@@ -965,30 +987,10 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 	]);
 
 	const save = useCallback(async () => {
-		if (
-			!deliverable &&
-			!(creativeMode === "CREATIVE_CAMPAIGN" && generatedSceneMediaId && product)
-		)
-			return;
+		if (!deliverable) return;
 		setSaveLoading(true);
 		setSaveError("");
 		try {
-			if (creativeMode === "CREATIVE_CAMPAIGN" && generatedSceneMediaId && product) {
-				const asset = await saveImgOutputToLibrary({
-					lane_id: "PRODUCT_POSTER",
-					display_name: `${product.product_display_name || "Product"} Campaign Poster`,
-					description:
-						"Complete poster returned by the Creative Campaign provider route; human review required.",
-					generated_artifact_media_id: generatedSceneMediaId,
-					product_id: product.id,
-					creative_mode: "CREATIVE_CAMPAIGN",
-					review_status: "PENDING_REVIEW",
-				});
-				setSavedAssetId(asset.asset_id);
-				setStep("save");
-				return;
-			}
-			if (!deliverable) return;
 			const res = await savePosterToLibrary(
 				deliverable.deliverable.poster_deliverable_id,
 			);
@@ -999,7 +1001,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		} finally {
 			setSaveLoading(false);
 		}
-	}, [deliverable, creativeMode, generatedSceneMediaId, product]);
+	}, [deliverable]);
 
 	return {
 		step,

@@ -33,6 +33,7 @@ from agent.models.copy_grounding import (
     CopyGrounding,
     ProductKnowledge,
 )
+from agent.services.poster_design_system import font_readiness, resolve_design_route
 
 
 def _clean(value: Any) -> str:
@@ -214,6 +215,21 @@ def _build_art_direction(
     if grounding.metaphor_silos:
         codes.append("approved_metaphor_silos=" + ",".join(grounding.metaphor_silos[:3]))
 
+    copy_chars = sum(
+        len(_clean(copy_layout.get(key)))
+        for key in ("headline", "primary_message", "hook", "support", "subhook", "cta")
+        if copy_layout and copy_layout.get(key)
+    )
+    design = resolve_design_route(
+        product,
+        objective=objective,
+        selected_angle=angle,
+        copy_chars=copy_chars,
+        headline_lines=_copy_word_count(copy_layout),
+        audience=_clean(grounding.buyer_persona.audience),
+    )
+    route_data = font_readiness(design["design_route"])
+
     return {
         "creative_territory": territory,
         "layout_family": layout_family,
@@ -227,6 +243,14 @@ def _build_art_direction(
         "negative_space_strategy": negative_space,
         "brand_visual_codes": codes,
         "anti_cliche_rules": anti_cliche,
+        "design_route": design["design_route"],
+        "layout_variant": design["layout_variant"],
+        "type_pairing_id": design["type_pairing_id"],
+        "color_strategy": design["color_strategy"],
+        "proof_treatment": design["proof_treatment"],
+        "malaysian_context_route": design["malaysian_context_route"],
+        "font_license": design["font_license"],
+        "font_readiness_status": route_data["status"],
     }
 
 

@@ -1,3 +1,7 @@
+import json
+
+import pytest
+
 from agent.models.image_generation_contract import (
     ImageCreativeContext,
     ImageOperationPlanRequest,
@@ -22,6 +26,7 @@ from agent.services.image_prompt_compiler import (
 from agent.services.copy_grounding_service import build_safe_campaign_context
 from agent.services.product_reference_pack_service import (
     ProductReferencePackError,
+    _create_asset,
     _explicit_measurements,
     machine_check_generated_output,
     transport_reference_ids,
@@ -30,6 +35,39 @@ from agent.services.make_video import _image_provider_operation_reference
 
 
 PRODUCT_ID = "product-test-1"
+
+
+@pytest.mark.asyncio
+async def test_product_reference_pack_assets_do_not_claim_video_engine_slots(
+    tmp_path, monkeypatch
+):
+    captured: dict[str, object] = {}
+
+    async def fake_get(_asset_id):
+        return None
+
+    async def fake_create(**kwargs):
+        captured.update(kwargs)
+        return kwargs
+
+    monkeypatch.setattr(
+        "agent.services.product_reference_pack_service.crud.get_creative_asset",
+        fake_get,
+    )
+    monkeypatch.setattr(
+        "agent.services.product_reference_pack_service.crud.create_creative_asset",
+        fake_create,
+    )
+
+    await _create_asset(
+        product={"id": PRODUCT_ID, "product_display_name": "Test product"},
+        pack_id="pack-test-1",
+        role="PRODUCT_CANONICAL",
+        path=tmp_path / "canonical.jpg",
+        metadata={"sha256": "a" * 64},
+    )
+
+    assert json.loads(str(captured["engine_slot_eligibility"])) == []
 
 
 def _grounding_for_context(
@@ -153,11 +191,17 @@ def test_clean_key_visual_compiler_excludes_marketing_copy():
             product_id=PRODUCT_ID,
             output_intent="CLEAN_KEY_VISUAL",
             copy_layout={"headline": "Must not be rendered"},
+            copy_space={
+                "headline_line_budget": 2,
+                "copy_zone_strategy": "DELIBERATE_NEGATIVE_SPACE",
+            },
         ),
     )
 
     assert "no headline" in response.sections["MARKETING_COPY_AND_TEXT_LAYOUT"]
     assert "Must not be rendered" not in response.sections["MARKETING_COPY_AND_TEXT_LAYOUT"]
+    assert "headline_line_budget=2" in response.sections["MARKETING_COPY_AND_TEXT_LAYOUT"]
+    assert response.provider_operation_plan["model"] == "NANO_BANANA_PRO"
     assert response.blockers == []
 
 

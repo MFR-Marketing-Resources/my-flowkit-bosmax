@@ -17,8 +17,61 @@ from agent.services.poster_prompt_draft_service import (
     PosterPromptDraftValidationError,
 )
 from agent.services.creative_direction_service import CreativeDirectionError
+from agent.models.poster_campaign_design_brief import (
+    CampaignCopyRoutesRequest,
+    CampaignDesignBriefRequest,
+)
+from agent.services.poster_campaign_design_service import (
+    CampaignDesignBriefError,
+    build_campaign_design_brief,
+    generate_campaign_copy_routes,
+)
 
 router = APIRouter(prefix="/poster", tags=["poster"])
+
+
+@router.post("/campaign-design-brief")
+async def campaign_design_brief(body: CampaignDesignBriefRequest):
+    """Resolve the canonical Campaign Design Brief without generation/spend."""
+    try:
+        brief = await build_campaign_design_brief(
+            body.product_id,
+            objective=body.objective,
+            selected_angle=body.selected_angle,
+            copy_layout=body.copy_layout,
+            fail_closed=False,
+        )
+    except CampaignDesignBriefError as exc:
+        status = 404 if exc.code == "PRODUCT_NOT_FOUND" else 409
+        raise HTTPException(
+            status_code=status,
+            detail={"code": exc.code, "message": str(exc), "blockers": exc.blockers},
+        ) from exc
+    return brief.model_dump(mode="json")
+
+
+@router.post("/campaign-copy-routes")
+async def campaign_copy_routes(body: CampaignCopyRoutesRequest):
+    """Return five scored routes; provider invocation is explicit and bounded."""
+    try:
+        brief = await build_campaign_design_brief(
+            body.product_id,
+            objective=body.objective,
+            selected_angle=body.selected_angle,
+            copy_layout=body.copy_layout,
+            fail_closed=False,
+        )
+        routes = generate_campaign_copy_routes(
+            brief,
+            invoke_provider=body.invoke_provider,
+        )
+    except CampaignDesignBriefError as exc:
+        status = 404 if exc.code == "PRODUCT_NOT_FOUND" else 409
+        raise HTTPException(
+            status_code=status,
+            detail={"code": exc.code, "message": str(exc), "blockers": exc.blockers},
+        ) from exc
+    return routes.model_dump(mode="json")
 
 
 @router.get("/builder-settings", response_model=PosterBuilderSettingsResponse)
