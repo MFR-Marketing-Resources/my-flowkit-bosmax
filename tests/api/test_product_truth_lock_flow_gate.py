@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from starlette.datastructures import UploadFile
 
 from agent.api import flow
 from agent.api import product_truth
@@ -204,6 +205,32 @@ async def test_product_truth_onboarding_route_never_approves_lock(monkeypatch):
     assert result["review_status"] == "PENDING_REVIEW"
     assert result["exact_allowed"] is False
     assert captured["product_id"] == "p1"
+
+
+@pytest.mark.asyncio
+async def test_product_truth_cutout_upload_only_registers_review_media(monkeypatch):
+    captured = {}
+
+    async def fake_register(product_id, **kwargs):
+        captured["product_id"] = product_id
+        captured.update(kwargs)
+        return {
+            "product_id": product_id,
+            "media_id": "stored-cutout-1",
+            "status": "STORED",
+            "review_status": "PENDING_REVIEW",
+        }
+
+    monkeypatch.setattr(product_truth, "register_product_truth_cutout_media", fake_register)
+
+    upload = UploadFile(filename="cutout.png", file=__import__("io").BytesIO(b"png-bytes"))
+    result = await product_truth.upload_visual_product_truth_cutout("p1", upload)
+
+    assert result["media_id"] == "stored-cutout-1"
+    assert result["review_status"] == "PENDING_REVIEW"
+    assert captured["product_id"] == "p1"
+    assert captured["filename"] == "cutout.png"
+    assert captured["raw_bytes"] == b"png-bytes"
 
 
 @pytest.mark.asyncio

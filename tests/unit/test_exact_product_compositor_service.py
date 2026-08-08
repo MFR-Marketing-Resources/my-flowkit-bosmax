@@ -220,7 +220,9 @@ def test_compose_final_from_plate_lineage(tmp_path, monkeypatch):
         {"w": 540, "h": 960},
     )
     cut_im = Image.open(layer["asset_ref"])
-    expected = cut_im.width / max(1, cut_im.height)
+    crop = cut_im.getchannel("A").getbbox()
+    assert crop is not None
+    expected = (crop[2] - crop[0]) / max(1, crop[3] - crop[1])
     assert abs((tr["w"] / tr["h"]) - expected) < 0.02
 
 

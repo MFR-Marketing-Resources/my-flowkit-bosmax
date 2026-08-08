@@ -58,7 +58,10 @@ class ProductLayer(BaseModel):
     asset_ref: str = ""
     source_sha256: str = ""
     cutout_sha256: str = ""
-    transform: dict[str, float] = Field(default_factory=dict)
+    # ``source_crop`` carries the visible-alpha crop used to calculate product
+    # scale.  Keep the manifest extensible for this nested compositor
+    # provenance instead of discarding it during Pydantic validation.
+    transform: dict[str, Any] = Field(default_factory=dict)
     integrity: dict[str, Any] = Field(default_factory=dict)
 
 

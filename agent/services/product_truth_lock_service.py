@@ -9,6 +9,7 @@ text, browser state, client hashes, OCR, CLIP, and a checkbox are not authority.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import math
 import shutil
@@ -484,6 +485,144 @@ def _safe_media_path(raw_path: Any) -> Path:
             "Reviewed cutout media file is missing or empty.",
         )
     return resolved
+
+
+async def register_product_truth_cutout_media(
+    product_id: str,
+    *,
+    filename: str,
+    content_type: str | None,
+    raw_bytes: bytes,
+) -> dict[str, Any]:
+    """Persist a transparent review cutout as server-owned ``STORED`` media.
+
+    This is an onboarding input lane only. It does not create a truth lock or
+    change review status. The media ID returned by ``crud`` is the real
+    persisted registry ID consumed by the separate onboarding endpoint.
+    """
+
+    if not raw_bytes:
+        raise ProductTruthLockError("CANONICAL_CUTOUT_INVALID", "Uploaded cutout is empty.")
+    if len(raw_bytes) > 10 * 1024 * 1024:
+        raise ProductTruthLockError(
+            "CANONICAL_CUTOUT_INVALID",
+            "Uploaded cutout exceeds the 10 MB review-media limit.",
+            status_code=413,
+        )
+
+    product = await crud.get_product(product_id)
+    if not product:
+        raise ProductTruthLockError("PRODUCT_NOT_FOUND", f"Product {product_id} was not found.", status_code=404)
+
+    try:
+        from agent.services import product_visual_grounding_resolver as resolver
+
+        reference = resolver.resolve_product_reference_image(dict(product))
+    except Exception as exc:
+        if isinstance(exc, ProductTruthLockError):
+            raise
+        raise ProductTruthLockError(
+            "CANONICAL_PRODUCT_SOURCE_INVALID",
+            f"Server could not resolve the canonical product source: {exc}",
+        ) from exc
+
+    try:
+        with Image.open(io.BytesIO(raw_bytes)) as image:
+            if (image.format or "").upper() != "PNG":
+                raise ProductTruthLockError(
+                    "CANONICAL_CUTOUT_INVALID",
+                    "Reviewed product cutouts must be PNG files with an alpha channel.",
+                )
+            width, height = image.size
+            if (width, height) != (int(reference.width), int(reference.height)):
+                raise ProductTruthLockError(
+                    "CANONICAL_CUTOUT_DIMENSIONS_MISMATCH",
+                    "Reviewed cutout dimensions must match the canonical source dimensions.",
+                )
+            rgba = image.convert("RGBA")
+            try:
+                alpha = rgba.getchannel("A")
+                extrema = alpha.getextrema()
+                if extrema[1] <= 0 or extrema[0] >= 255 or alpha.getbbox() is None:
+                    raise ProductTruthLockError(
+                        "CANONICAL_CUTOUT_INVALID",
+                        "Reviewed cutout must contain transparent background and visible product geometry.",
+                    )
+            finally:
+                rgba.close()
+    except ProductTruthLockError:
+        raise
+    except Exception as exc:
+        raise ProductTruthLockError(
+            "CANONICAL_CUTOUT_INVALID",
+            f"Uploaded cutout cannot be decoded: {exc}",
+        ) from exc
+
+    cutout_sha = _sha256_bytes(raw_bytes)
+    existing_media = await crud.list_product_source_media(product_id=product_id)
+    for row in existing_media:
+        if str(row.get("kind") or "") != "image":
+            continue
+        try:
+            path = _safe_media_path(row.get("local_path"))
+        except ProductTruthLockError:
+            continue
+        if _sha256_path(path) == cutout_sha:
+            return {
+                "product_id": product_id,
+                "media_id": row.get("media_id"),
+                "kind": "image",
+                "filename": row.get("filename") or filename,
+                "mime": row.get("mime") or content_type or "image/png",
+                "bytes": len(raw_bytes),
+                "width": width,
+                "height": height,
+                "status": str(row.get("status") or "STORED"),
+                "review_status": "PENDING_REVIEW",
+                "sha256": cutout_sha,
+                "reused": True,
+            }
+
+    directory = _truth_lock_directory(product_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    durable_path = directory / f"review_cutout_{cutout_sha[:16]}.png"
+    durable_path.write_bytes(raw_bytes)
+    try:
+        row = await crud.create_product_source_media(
+            f"visual-lock:{product_id}",
+            "image",
+            product_id=product_id,
+            local_path=_server_path_string(durable_path),
+            filename=filename or durable_path.name,
+            mime="image/png",
+            bytes=len(raw_bytes),
+            width=width,
+            height=height,
+            status="STORED",
+        )
+    except Exception:
+        durable_path.unlink(missing_ok=True)
+        raise
+    if not row or not str(row.get("media_id") or "").strip():
+        durable_path.unlink(missing_ok=True)
+        raise ProductTruthLockError(
+            "CANONICAL_CUTOUT_MEDIA_REQUIRED",
+            "Server could not persist a media ID for the reviewed cutout.",
+        )
+    return {
+        "product_id": product_id,
+        "media_id": row.get("media_id") if row else None,
+        "kind": "image",
+        "filename": filename or durable_path.name,
+        "mime": "image/png",
+        "bytes": len(raw_bytes),
+        "width": width,
+        "height": height,
+        "status": "STORED",
+        "review_status": "PENDING_REVIEW",
+        "sha256": cutout_sha,
+        "reused": False,
+    }
 
 
 def _validate_placement(request: ProductTruthLockOnboardingRequest) -> None:

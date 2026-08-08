@@ -67,6 +67,32 @@ def test_resolve_generic_db_product_with_image_url(tmp_path, monkeypatch):
     assert "Sambal Nyet Berapi" in bundle.identity_lock
 
 
+def test_schema_canonical_source_reuses_matching_persisted_asset_id(tmp_path, monkeypatch):
+    source = tmp_path / "canonical.jpg"
+    Image.new("RGB", (120, 180), color=(20, 80, 120)).save(source, format="JPEG")
+    from agent.services import product_visual_grounding_resolver as module
+
+    monkeypatch.setattr(
+        module,
+        "resolve_schema_entry",
+        lambda _product: {"canonical_source_path": str(source)},
+    )
+    monkeypatch.setattr(
+        module,
+        "_find_linked_approved_creative_asset",
+        lambda _product_id: {
+            "asset_id": "ca_persisted_canonical",
+            "media_id": None,
+            "local_file_path": str(source),
+        },
+    )
+
+    resolved = resolve_product_reference_image({"id": "product-1"})
+
+    assert resolved.media_id == "ca_persisted_canonical"
+    assert resolved.source_type == "SCHEMA_CANONICAL_SOURCE"
+
+
 def test_get_grounded_generation_payload_binds_6_locks():
     mwcb_id = "6483d624-a03d-4933-9bba-6ca2e5f7b6fd"
     payload = get_grounded_generation_payload(

@@ -177,7 +177,7 @@ def _find_linked_approved_creative_asset(product_id: str) -> dict[str, Any] | No
             """
             SELECT * FROM creative_asset
             WHERE product_id = ?
-              AND (semantic_role = 'PRODUCT_REFERENCE' OR asset_type = 'PRODUCT_REFERENCE')
+              AND semantic_role = 'PRODUCT_REFERENCE'
               AND status = 'ACTIVE'
               AND review_status = 'APPROVED'
             ORDER BY updated_at DESC
@@ -195,6 +195,26 @@ def _find_linked_approved_creative_asset(product_id: str) -> dict[str, Any] | No
         return None
     except Exception:
         return None
+
+
+def _registered_reference_id_for_bytes(product_id: str, expected_sha256: str) -> str | None:
+    """Return an existing registry ID only when its bytes match the source.
+
+    Older manual registrations can retain the canonical photo as an approved
+    ``creative_asset`` without a separate ``media_id``.  Its persisted asset
+    ID is still a server-owned reference, so it may bind onboarding when the
+    bytes are identical.  This helper never mints or derives an ID from a
+    hash; missing or mismatched registry evidence remains a hard blocker.
+    """
+
+    asset = _find_linked_approved_creative_asset(product_id)
+    if not asset:
+        return None
+    local_path = asset.get("local_file_path") or asset.get("local_path")
+    meta = _inspect_image_file(local_path) if local_path else None
+    if not meta or meta[3] != expected_sha256:
+        return None
+    return str(asset.get("media_id") or asset.get("asset_id") or "").strip() or None
 
 
 def resolve_product_reference_image(product: dict[str, Any]) -> ProductReferenceInfo:
@@ -245,9 +265,12 @@ def resolve_product_reference_image(product: dict[str, Any]) -> ProductReference
                 meta = _inspect_image_file(c_path)
                 if meta:
                     w, h, mime, sha = meta
+                    registered_media_id = str(product.get("media_id") or "").strip()
+                    if not registered_media_id:
+                        registered_media_id = _registered_reference_id_for_bytes(product_id, sha)
                     return ProductReferenceInfo(
                         source_type="SCHEMA_CANONICAL_SOURCE",
-                        media_id=product.get("media_id"),
+                        media_id=registered_media_id or None,
                         local_path=str(c_path),
                         image_url=product.get("image_url"),
                         mime_type=mime,
