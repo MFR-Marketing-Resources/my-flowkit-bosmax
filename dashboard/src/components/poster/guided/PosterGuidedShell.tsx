@@ -1011,6 +1011,7 @@ function SceneStep({ wf }: { wf: WF }) {
 	const [truthLoading, setTruthLoading] = useState(false);
 	const [truthApproving, setTruthApproving] = useState(false);
 	const [truthError, setTruthError] = useState("");
+	const [reviewedBy, setReviewedBy] = useState("");
 	const [confirmIdentity, setConfirmIdentity] = useState(false);
 	const [confirmLabelLogo, setConfirmLabelLogo] = useState(false);
 	const [confirmGeometryScale, setConfirmGeometryScale] = useState(false);
@@ -1019,10 +1020,15 @@ function SceneStep({ wf }: { wf: WF }) {
 		let active = true;
 		setTruthLock(null);
 		setTruthError("");
+		setReviewedBy("");
 		setConfirmIdentity(false);
 		setConfirmLabelLogo(false);
 		setConfirmGeometryScale(false);
-		if (!wf.product) return () => { active = false; };
+		if (!wf.product) {
+			return () => {
+				active = false;
+			};
+		}
 		setTruthLoading(true);
 		void fetchProductTruthLock(wf.product.id)
 			.then((status) => {
@@ -1040,7 +1046,9 @@ function SceneStep({ wf }: { wf: WF }) {
 			.finally(() => {
 				if (active) setTruthLoading(false);
 			});
-		return () => { active = false; };
+		return () => {
+			active = false;
+		};
 	}, [wf.product]);
 
 	const approveTruthLock = async () => {
@@ -1049,7 +1057,7 @@ function SceneStep({ wf }: { wf: WF }) {
 		setTruthError("");
 		try {
 			const status = await approveProductTruthLock(wf.product.id, {
-				reviewed_by: "poster-builder-operator",
+				reviewed_by: reviewedBy.trim(),
 				review_note:
 					"Operator reviewed the displayed cutout for identity, colour, label/logo, geometry, and scale.",
 				confirm_identity: confirmIdentity,
@@ -1071,7 +1079,10 @@ function SceneStep({ wf }: { wf: WF }) {
 	const truthPending = truthLock?.review_status === "PENDING_REVIEW";
 	const truthConfirmed = truthLock?.exact_allowed === true;
 	const allTruthConfirmed =
-		confirmIdentity && confirmLabelLogo && confirmGeometryScale;
+		reviewedBy.trim().length > 0 &&
+		confirmIdentity &&
+		confirmLabelLogo &&
+		confirmGeometryScale;
 
 	const load = () => {
 		setLoading(true);
@@ -1120,6 +1131,17 @@ function SceneStep({ wf }: { wf: WF }) {
 						data-testid="poster-truth-cutout-preview"
 					/>
 					<div className="grid gap-2 text-xs text-slate-100">
+						<label className="grid gap-1">
+							<span className="font-semibold">Nama penyemak</span>
+							<input
+								type="text"
+								value={reviewedBy}
+								onChange={(event) => setReviewedBy(event.target.value)}
+								placeholder="Masukkan nama penyemak"
+								data-testid="poster-truth-reviewed-by"
+								className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100"
+							/>
+						</label>
 						<label className="flex items-start gap-2">
 							<input
 								type="checkbox"
@@ -1155,7 +1177,7 @@ function SceneStep({ wf }: { wf: WF }) {
 						data-testid="poster-truth-approve"
 						className="rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-50"
 					>
-						{truthApproving ? "Mengesahkan…" : "Sahkan product truth lock"}
+						{truthApproving ? "Mengesahkan…" : "Sahkan semakan produk"}
 					</button>
 				</div>
 			) : null}
