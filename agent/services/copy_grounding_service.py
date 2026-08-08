@@ -50,95 +50,291 @@ def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
     return any(term in lowered for term in terms)
 
 
+_VISUAL_RAW_CONCERN_TERMS = (
+    "sakit",
+    "kembung",
+    "berangin",
+    "gatal",
+    "sengal",
+    "kebas",
+    "lenguh",
+    "resdung",
+    "selesema",
+    "gigitan",
+    "bayi",
+    "anak",
+    "anak susah tidur",
+    "susah tidur",
+    "sukar tidur",
+    "loya",
+    "mabuk",
+    "bengkak",
+    "cramp",
+    "pinggang",
+    "lebam",
+    "hidung tersumbat",
+    "perut",
+    "otot",
+)
+
+
+def _safe_persona_phrase(values: list[str], blocked_terms: list[str]) -> str:
+    """Return one approved, non-raw-concern phrase without inventing a rewrite."""
+
+    blocked = tuple(
+        term.casefold()
+        for term in [*blocked_terms, *_VISUAL_RAW_CONCERN_TERMS]
+        if _clean(term)
+    )
+    for value in values:
+        phrase = _clean(value)
+        if phrase and not _contains_any(phrase, blocked):
+            return phrase
+    return ""
+
+
+def _provenance_for(grounding: CopyGrounding, field: str, fallback: str = "MISSING") -> str:
+    return _clean(grounding.field_provenance.get(field)) or fallback
+
+
+def _copy_word_count(copy_layout: dict[str, str] | None) -> int:
+    if not copy_layout:
+        return 1
+    headline = _clean(
+        copy_layout.get("headline")
+        or copy_layout.get("primary_message")
+        or copy_layout.get("hook")
+    )
+    words = len(headline.split())
+    return 1 if words <= 4 else 2 if words <= 8 else 3
+
+
+def _build_art_direction(
+    product: dict[str, Any],
+    grounding: CopyGrounding,
+    *,
+    selected_angle: str,
+    objective: str,
+    copy_layout: dict[str, str] | None,
+) -> dict[str, Any]:
+    """Resolve a typed visual territory from product evidence and copy shape.
+
+    These are art-direction classifications, not customer-avatar claims. The
+    audience is never inferred from size, category or product tokens here.
+    """
+
+    family = _clean(grounding.family).casefold()
+    product_type = _clean(product.get("product_type") or product.get("type")).casefold()
+    physics = _clean(product.get("physics_class")).casefold()
+    scale = _clean(product.get("product_scale")).casefold()
+    evidence = " ".join(
+        [
+            family,
+            _clean(product.get("category")).casefold(),
+            _clean(product.get("subcategory")).casefold(),
+            _clean(product.get("product_display_name")).casefold(),
+            " ".join(_clean_list(grounding.metaphor_silos)).casefold(),
+        ]
+    )
+    heritage = _contains_any(
+        evidence,
+        ("heritage", "warisan", "tradisi", "tradisional", "herbal", "herba"),
+    )
+    beauty = _contains_any(evidence, ("beauty", "personal care", "penjagaan diri"))
+    compact = scale == "small_object" or _contains_any(
+        evidence, ("minyak", "roll-on", "pocket", "travel", "25ml", "25 ml")
+    )
+
+    if heritage:
+        layout_family = "HERITAGE_EDITORIAL"
+        territory = "heritage craft translated through a restrained modern editorial grid"
+        tension = "tactile heritage cues against clean contemporary product clarity"
+        type_contrast = "characterful display serif with a disciplined humanist sans"
+        negative_space = "leave quiet breathing room around the heritage cue; keep ornament subordinate to label"
+        anti_cliche = [
+            "no generic palace, royal crest or fake historical seal",
+            "no ornamental frame that competes with the registered label",
+        ]
+    elif beauty:
+        layout_family = "ROUTINE_EDITORIAL"
+        territory = "quiet personal-care editorial with material and finish doing the selling"
+        tension = "soft tactile atmosphere against crisp product silhouette and readable copy"
+        type_contrast = "refined display face with a neutral high-legibility sans"
+        negative_space = "use calm asymmetrical breathing room; keep the product silhouette clean"
+        anti_cliche = [
+            "no generic spa leaves, water splash or ungrounded ingredient props",
+            "no before-and-after transformation language or imagery",
+        ]
+    elif compact:
+        layout_family = "COMPACT_STANDBY"
+        territory = "intimate pocket-scale product story with a decisive first-read hook"
+        tension = "small physical format against confident, never oversized, visual presence"
+        type_contrast = "strong compact sans headline with a warm readable sans support"
+        negative_space = "reserve a clear pocket of negative space for the short hook and a compact action cue"
+        anti_cliche = [
+            "no giant bottle enlargement, floating packshot or scale illusion",
+            "no random family scene or symptom tableau without an approved reference",
+        ]
+    else:
+        layout_family = "PRODUCT_HERO_SCULPTURE"
+        territory = "literal product-hero composition shaped by the registered silhouette and material"
+        tension = "physical product clarity against one restrained atmospheric cue"
+        type_contrast = "confident display sans with a neutral readable sans support"
+        negative_space = "reserve negative space according to copy length, not a fixed poster template"
+        anti_cliche = [
+            "no generic premium gradient, stock lifestyle tableau or decorative clutter",
+            "no invented use scene, ingredient or transformation",
+        ]
+
+    angle = _clean(selected_angle)
+    objective_text = _clean(objective).casefold()
+    headline_personality = (
+        f"{_clean(grounding.buyer_persona.tone) or 'approved buyer tone'}; "
+        f"specific to the approved angle '{angle or 'approved angle strategy'}'; no vague superlatives"
+    )
+    product_anchor = (
+        f"registered silhouette={physics or product_type or 'UNSPECIFIED'}; "
+        f"catalog scale class={scale or 'UNVERIFIED'}; preserve authored geometry and never infer dimensions"
+    )
+    copy_anchor = (
+        "headline -> support -> approved proof chips -> CTA; "
+        f"headline line budget={_copy_word_count(copy_layout)}; line breaks must preserve supplied wording"
+    )
+    if any(token in objective_text for token in ("catalog", "marketplace", "exact")):
+        cta_treatment = "compact high-contrast action label with quiet commerce confidence"
+    else:
+        cta_treatment = "clear action cue with editorial restraint; never a discount sticker or urgency gimmick"
+
+    codes = [
+        f"family={_clean(grounding.family) or 'UNSPECIFIED'}",
+        f"product_type={_clean(product_type) or 'UNSPECIFIED'}",
+    ]
+    if physics:
+        codes.append(f"physics_class={physics}")
+    if grounding.metaphor_silos:
+        codes.append("approved_metaphor_silos=" + ",".join(grounding.metaphor_silos[:3]))
+
+    return {
+        "creative_territory": territory,
+        "layout_family": layout_family,
+        "visual_tension": tension,
+        "product_anchor": product_anchor,
+        "copy_anchor": copy_anchor,
+        "headline_personality": headline_personality,
+        "headline_line_budget": _copy_word_count(copy_layout),
+        "type_contrast": type_contrast,
+        "cta_treatment": cta_treatment,
+        "negative_space_strategy": negative_space,
+        "brand_visual_codes": codes,
+        "anti_cliche_rules": anti_cliche,
+    }
+
+
 def build_safe_campaign_context(
     product: dict[str, Any],
     grounding: CopyGrounding,
     *,
     operator_direction: str = "",
+    objective: str = "",
+    copy_layout: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Transform product intelligence into a provider-safe campaign brief.
 
     Persona pains, fears and symptom language are upstream intelligence, not
-    poster copy. The image lane receives adjacent commercial motivation:
-    familiarity, readiness, portability and clear product identity. Product
-    facts remain limited to approved USPs and are never invented here.
+    poster copy. Only fields authored in the approved snapshot may personalize
+    the brief; framework defaults are never presented as this product's avatar.
+    Product facts remain limited to approved USPs and are never invented here.
     """
 
-    name = _clean(product.get("product_display_name") or product.get("raw_product_title"))
     knowledge = grounding.product_knowledge
     persona = grounding.buyer_persona
     guardrails = grounding.claim_guardrails
-    evidence_text = " ".join(
-        [
-            name,
-            _clean(product.get("category")),
-            _clean(product.get("subcategory")),
-            " ".join(_clean_list(knowledge.usps)),
-        ]
-    ).casefold()
-
-    heritage = _contains_any(
-        evidence_text,
-        ("warisan", "tradisi", "tradisional", "herba", "herbal", "turun-temurun"),
+    blocked = [*_clean_list(guardrails.banned_terms), *_clean_list(guardrails.blocked_claims)]
+    has_approved_snapshot = grounding.source == GROUNDING_APPROVED_SNAPSHOT
+    audience = _clean(persona.audience) if has_approved_snapshot else ""
+    desire = _safe_persona_phrase(persona.desires, blocked) if has_approved_snapshot else ""
+    objection = _safe_persona_phrase(persona.objections, blocked) if has_approved_snapshot else ""
+    trigger = _safe_persona_phrase(persona.triggers, blocked) if has_approved_snapshot else ""
+    tone = _clean(persona.tone) if has_approved_snapshot else ""
+    selected_angle = (
+        _safe_persona_phrase([operator_direction], blocked)
+        if has_approved_snapshot
+        else ""
     )
-    portable = _contains_any(
-        evidence_text,
-        ("25ml", "25 ml", "mudah dibawa", "praktikal", "kompak", "pocket", "travel"),
+    approved_angle = (
+        _safe_persona_phrase(grounding.angle_strategies, blocked)
+        if has_approved_snapshot
+        else ""
     )
-    family = _contains_any(evidence_text, ("keluarga", "seisi keluarga"))
-
-    pillars: list[str] = []
-    if heritage:
-        pillars.append("familiar heritage identity")
-    if portable:
-        pillars.append("compact format that is easy to keep close")
-    if family:
-        pillars.append("household-ready reassurance")
-    if not pillars:
-        pillars.append("clear product identity and approved product evidence")
-
-    direction = _clean(operator_direction)
-    banned = [*_clean_list(guardrails.banned_terms), "cure", "sembuh", "rawat", "ubat"]
-    if direction and any(term.casefold() in direction.casefold() for term in banned if term):
-        direction = ""
-    direction_clause = f"Operator direction: {direction}. " if direction else ""
-
-    if family or portable:
-        audience = "Malaysian household shoppers and parents choosing a practical standby"
-        desire = "a familiar product that feels easy to understand, keep close and reach for"
-        trigger = "the moment a shopper wants to feel prepared at home or on the move"
-    else:
-        audience = "Malaysian shoppers comparing a clear, trustworthy product choice"
-        desire = "a product choice that feels credible, relevant and easy to act on"
-        trigger = "the moment a shopper is comparing practical options"
-
+    safe_angle_parts = [
+        part
+        for part in (
+            f"approved strategy: {approved_angle}" if approved_angle else "",
+            f"selected direction: {selected_angle}" if selected_angle else "",
+        )
+        if part
+    ]
+    safe_angle = "; ".join(safe_angle_parts)
     approved_facts: list[str] = []
-    for fact in _clean_list(knowledge.usps):
-        if any(term.casefold() in fact.casefold() for term in banned if term):
+    for fact in (_clean_list(knowledge.usps) if has_approved_snapshot else []):
+        if any(term.casefold() in fact.casefold() for term in blocked if term):
             continue
         if fact.casefold() not in {item.casefold() for item in approved_facts}:
             approved_facts.append(fact)
         if len(approved_facts) == 5:
             break
 
+    provenance = {
+        "buyer_persona.audience": _provenance_for(grounding, "buyer_persona.audience"),
+        "buyer_persona.desires": _provenance_for(grounding, "buyer_persona.desires"),
+        "buyer_persona.objections": _provenance_for(grounding, "buyer_persona.objections"),
+        "buyer_persona.triggers": _provenance_for(grounding, "buyer_persona.triggers"),
+        "buyer_persona.tone": _provenance_for(grounding, "buyer_persona.tone"),
+        "angle_strategies": _provenance_for(grounding, "angle_strategies"),
+        "product_knowledge.usps": _provenance_for(grounding, "product_knowledge.usps"),
+    }
+    missing: list[str] = []
+    required_fields = {
+        "buyer_persona.audience": audience,
+        "buyer_persona.desires": desire,
+        "buyer_persona.objections": objection,
+        "buyer_persona.triggers": trigger,
+        "buyer_persona.tone": tone,
+        "angle_strategies": approved_angle,
+        "product_knowledge.usps": approved_facts,
+    }
+    if grounding.source != GROUNDING_APPROVED_SNAPSHOT:
+        missing.append("approved snapshot")
+    for field, value in required_fields.items():
+        provenance_value = provenance[field]
+        if (not value) or (
+            not provenance_value.startswith("APPROVED_SNAPSHOT")
+        ):
+            missing.append(field)
+
+    art_direction = _build_art_direction(
+        product,
+        grounding,
+        selected_angle=selected_angle,
+        objective=objective,
+        copy_layout=copy_layout,
+    )
+
     return {
+        "intelligence_status": "READY" if not missing else "INCOMPLETE",
         "grounding_source": _clean(grounding.source) or "MINIMAL",
         "product_family": _clean(grounding.family),
         "formula": _clean(grounding.copy_formula),
         "audience": audience,
         "desire": desire,
-        "objection": (
-            "Make the real product identity, familiar origin and practical format legible; "
-            "do not ask vague premium language to carry the whole sale."
-        ),
+        "objection": objection,
         "trigger": trigger,
-        "safe_angle": (
-            f"{direction_clause}Lead with one coherent commercial idea: "
-            + ", ".join(pillars)
-            + "."
-        ),
-        "tone": _clean(persona.tone) or "warm, confident and grounded",
+        "safe_angle": safe_angle,
+        "tone": tone,
         "approved_facts": approved_facts,
+        "missing_fields": missing,
+        "field_provenance": provenance,
+        "art_direction": art_direction,
     }
 
 
@@ -211,6 +407,15 @@ def build_framework_grounding(product: dict[str, Any]) -> CopyGrounding:
         missing=[
             "approved product-intelligence snapshot (real benefits / USPs / ingredients) — author to enrich",
         ],
+        field_provenance={
+            "buyer_persona.audience": "FRAMEWORK_FAMILY.avatar.audience",
+            "buyer_persona.desires": "FRAMEWORK_FAMILY.avatar.desires",
+            "buyer_persona.objections": "FRAMEWORK_FAMILY.avatar.objections",
+            "buyer_persona.triggers": "FRAMEWORK_FAMILY.avatar.triggers",
+            "buyer_persona.tone": "FRAMEWORK_FAMILY.avatar.tone",
+            "angle_strategies": "FRAMEWORK_FAMILY.angle_strategies",
+            "product_knowledge.usps": "MISSING_APPROVED_SNAPSHOT",
+        },
     )
 
 
@@ -317,8 +522,43 @@ def _grounding_from_snapshot(product: dict[str, Any], snap: Any) -> CopyGroundin
     """APPROVED_SNAPSHOT tier — real product knowledge + persona + claims, with
     the framework tier filling avatar / angle / silo / route gaps."""
     fw = build_framework_grounding(product)
-    persona = _merge_persona(getattr(snap, "buyer_persona_snapshot_json", {}), fw.buyer_persona)
-    angles = _resolve_snapshot_angles(snap, persona) or fw.angle_strategies
+    raw_persona = getattr(snap, "buyer_persona_snapshot_json", {})
+    raw_persona = raw_persona if isinstance(raw_persona, dict) else {}
+    persona = _merge_persona(raw_persona, fw.buyer_persona)
+    resolved_angles = _resolve_snapshot_angles(snap, persona)
+    angles = resolved_angles or fw.angle_strategies
+
+    persona_sources = {
+        "buyer_persona.audience": "audience",
+        "buyer_persona.desires": "desires",
+        "buyer_persona.objections": "objections",
+        "buyer_persona.triggers": "triggers",
+        "buyer_persona.tone": "tone",
+    }
+    field_provenance: dict[str, str] = {}
+    for field, key in persona_sources.items():
+        if raw_persona.get(key):
+            field_provenance[field] = f"APPROVED_SNAPSHOT.buyer_persona_snapshot_json.{key}"
+        else:
+            field_provenance[field] = fw.field_provenance.get(
+                field, "MISSING_APPROVED_PERSONA_FIELD"
+            )
+
+    strategy = getattr(snap, "copy_strategy_summary_json", {})
+    strategy = strategy if isinstance(strategy, dict) else {}
+    stored_angles = _angles_from_strategy(strategy)
+    if stored_angles and not _is_family_template(stored_angles):
+        field_provenance["angle_strategies"] = (
+            "APPROVED_SNAPSHOT.copy_strategy_summary_json.angles"
+        )
+    elif resolved_angles:
+        field_provenance["angle_strategies"] = (
+            "APPROVED_SNAPSHOT.buyer_persona_snapshot_json->copy_angle_derivation"
+        )
+    else:
+        field_provenance["angle_strategies"] = fw.field_provenance.get(
+            "angle_strategies", "MISSING_APPROVED_ANGLE"
+        )
 
     knowledge = ProductKnowledge(
         description=_clean(getattr(snap, "product_description", "")),
@@ -353,6 +593,10 @@ def _grounding_from_snapshot(product: dict[str, Any], snap: Any) -> CopyGroundin
         angle_strategies=angles,
         claim_guardrails=guardrails,
         missing=missing,
+        field_provenance={
+            **field_provenance,
+            "product_knowledge.usps": "APPROVED_SNAPSHOT.usp_json",
+        },
     )
 
 

@@ -6,11 +6,20 @@ from agent.models.image_generation_contract import (
     PhysicalMeasurementEvidence,
     ProductReferencePackRecord,
 )
+from agent.models.copy_grounding import (
+    BuyerPersona,
+    ClaimGuardrails,
+    CopyGrounding,
+    GROUNDING_APPROVED_SNAPSHOT,
+    GROUNDING_FRAMEWORK_FAMILY,
+    ProductKnowledge,
+)
 from agent.services.image_prompt_compiler import (
     IMAGE_PROMPT_SECTIONS,
     build_operation_plan,
     compile_image_prompt,
 )
+from agent.services.copy_grounding_service import build_safe_campaign_context
 from agent.services.product_reference_pack_service import (
     ProductReferencePackError,
     _explicit_measurements,
@@ -21,6 +30,46 @@ from agent.services.make_video import _image_provider_operation_reference
 
 
 PRODUCT_ID = "product-test-1"
+
+
+def _grounding_for_context(
+    *,
+    family: str = "BEAUTY_PERSONAL_CARE",
+    audience: str = "wanita bekerja",
+    desires: list[str] | None = None,
+    objections: list[str] | None = None,
+    triggers: list[str] | None = None,
+    source: str = GROUNDING_APPROVED_SNAPSHOT,
+    angle: str = "quiet confidence",
+) -> CopyGrounding:
+    source_prefix = "APPROVED_SNAPSHOT" if source == GROUNDING_APPROVED_SNAPSHOT else "FRAMEWORK_FAMILY"
+    return CopyGrounding(
+        product_id=PRODUCT_ID,
+        grounded=source == GROUNDING_APPROVED_SNAPSHOT,
+        source=source,
+        family=family,
+        copy_formula="PAS / AIDA",
+        metaphor_silos=["quiet_confidence"],
+        product_knowledge=ProductKnowledge(usps=["Bekalan 25ml yang praktikal"]),
+        buyer_persona=BuyerPersona(
+            audience=audience,
+            desires=desires or ["rasa lebih bersedia dalam rutin harian"],
+            objections=objections or ["mahu pilihan yang mudah difahami"],
+            triggers=triggers or ["mencari pilihan praktikal sebelum keluar"],
+            tone="mesra, yakin dan prihatin",
+        ),
+        angle_strategies=[angle],
+        claim_guardrails=ClaimGuardrails(),
+        field_provenance={
+            "buyer_persona.audience": f"{source_prefix}.persona.audience",
+            "buyer_persona.desires": f"{source_prefix}.persona.desires",
+            "buyer_persona.objections": f"{source_prefix}.persona.objections",
+            "buyer_persona.triggers": f"{source_prefix}.persona.triggers",
+            "buyer_persona.tone": f"{source_prefix}.persona.tone",
+            "angle_strategies": f"{source_prefix}.angle_strategies",
+            "product_knowledge.usps": f"{source_prefix}.product_knowledge.usps",
+        },
+    )
 
 
 def _pack(*, status: str = "PENDING_REVIEW", approved: bool = False):
@@ -112,8 +161,118 @@ def test_clean_key_visual_compiler_excludes_marketing_copy():
     assert response.blockers == []
 
 
+def test_context_uses_approved_persona_and_never_infers_parents_from_size():
+    product = {
+        "id": PRODUCT_ID,
+        "product_display_name": "Small Product A",
+        "product_scale": "SMALL_OBJECT",
+        "physics_class": "SMALL_BOTTLE",
+    }
+    grounding = _grounding_for_context(
+        audience="wanita bekerja",
+        desires=["rasa yakin sebelum memulakan hari"],
+        objections=["mahu pilihan yang mudah difahami"],
+        triggers=["bersiap sebelum keluar bekerja"],
+    )
+
+    context = build_safe_campaign_context(
+        product,
+        grounding,
+        operator_direction="quiet confidence",
+        objective="Product Hero",
+        copy_layout={"headline": "Rasa Yakin Setiap Hari"},
+    )
+
+    assert context["intelligence_status"] == "READY"
+    assert context["audience"] == "wanita bekerja"
+    assert context["desire"] == "rasa yakin sebelum memulakan hari"
+    assert context["trigger"] == "bersiap sebelum keluar bekerja"
+    assert "parents" not in str(context).casefold()
+    assert all(
+        value.startswith("APPROVED_SNAPSHOT")
+        for value in context["field_provenance"].values()
+    )
+
+
+def test_same_size_products_with_different_approved_personas_do_not_collapse():
+    product = {"id": PRODUCT_ID, "product_scale": "SMALL_OBJECT"}
+    first = build_safe_campaign_context(
+        product,
+        _grounding_for_context(
+            audience="wanita bekerja",
+            desires=["rasa yakin sebelum memulakan hari"],
+            triggers=["bersiap sebelum keluar bekerja"],
+        ),
+    )
+    second = build_safe_campaign_context(
+        product,
+        _grounding_for_context(
+            audience="penjaga warga emas",
+            desires=["rutin penjagaan yang lebih teratur"],
+            triggers=["menyusun keperluan sebelum perjalanan"],
+        ),
+    )
+
+    assert first["audience"] != second["audience"]
+    assert first["desire"] != second["desire"]
+    assert first["trigger"] != second["trigger"]
+
+
+def test_missing_approved_intelligence_is_incomplete_and_blocks_campaign():
+    context = build_safe_campaign_context(
+        {"id": PRODUCT_ID, "product_scale": "SMALL_OBJECT"},
+        _grounding_for_context(source=GROUNDING_FRAMEWORK_FAMILY),
+    )
+    assert context["intelligence_status"] == "INCOMPLETE"
+    assert "approved snapshot" in context["missing_fields"]
+    assert context["audience"] == ""
+    assert context["safe_angle"] == ""
+
+    response = compile_image_prompt(
+        {"id": PRODUCT_ID, "product_display_name": "Test Product"},
+        _pack(status="APPROVED", approved=True),
+        ImagePromptCompileRequest(product_id=PRODUCT_ID),
+        ImageCreativeContext.model_validate(context),
+    )
+    assert "CREATIVE_INTELLIGENCE_INCOMPLETE" in response.blockers
+
+
+def test_art_direction_changes_with_product_visual_territory():
+    cases = [
+        (
+            {"id": PRODUCT_ID, "product_display_name": "Warisan Herbal Oil", "product_scale": "SMALL_OBJECT"},
+            _grounding_for_context(family="TRADITIONAL_HERBAL_OIL"),
+        ),
+        (
+            {"id": PRODUCT_ID, "product_display_name": "Daily Serum", "product_scale": "MEDIUM_OBJECT"},
+            _grounding_for_context(family="BEAUTY_PERSONAL_CARE"),
+        ),
+        (
+            {"id": PRODUCT_ID, "product_display_name": "Desk Organizer", "product_scale": "LARGE_OBJECT"},
+            _grounding_for_context(family="HOME_STORAGE"),
+        ),
+    ]
+    directions = [
+        build_safe_campaign_context(
+            product,
+            grounding,
+            objective="Product Hero",
+            copy_layout={"headline": "Short Hook"},
+        )["art_direction"]
+        for product, grounding in cases
+    ]
+
+    assert {item["layout_family"] for item in directions} == {
+        "HERITAGE_EDITORIAL",
+        "ROUTINE_EDITORIAL",
+        "PRODUCT_HERO_SCULPTURE",
+    }
+    assert len({item["creative_territory"] for item in directions}) == 3
+
+
 def test_creative_campaign_compiler_carries_campaign_intelligence_and_mobile_hierarchy():
     context = ImageCreativeContext(
+        intelligence_status="READY",
         grounding_source="APPROVED_SNAPSHOT",
         approved_snapshot_id="snapshot-1",
         approved_snapshot_version=5,
@@ -153,7 +312,8 @@ def test_creative_campaign_compiler_carries_campaign_intelligence_and_mobile_hie
     assert "Campaign intelligence" in response.sections["COMPOSITION_AND_HIERARCHY"]
     assert "familiar heritage identity" in response.compiled_prompt
     assert "MOBILE-FIRST TEXT HIERARCHY" in response.sections["MARKETING_COPY_AND_TEXT_LAYOUT"]
-    assert "at most two type families" in response.sections["MARKETING_COPY_AND_TEXT_LAYOUT"]
+    assert "typed art direction's headline personality" in response.sections["MARKETING_COPY_AND_TEXT_LAYOUT"]
+    assert "do not force an upper/middle/lower grid" in response.sections["COMPOSITION_AND_HIERARCHY"]
     assert "proof_1: Resipi tradisional" in response.sections["MARKETING_COPY_AND_TEXT_LAYOUT"]
     assert "Do not depict symptoms, treatment, medical outcomes" in response.compiled_prompt
 

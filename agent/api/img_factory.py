@@ -198,6 +198,8 @@ async def preview_creative_campaign_prompt(
     creative_context = await resolve_image_creative_context(
         product,
         operator_direction=request.composition,
+        objective=request.objective,
+        copy_layout=request.copy_layout,
     )
     return compile_image_prompt(product, pack, request, creative_context)
 

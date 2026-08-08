@@ -598,6 +598,7 @@ async def compile_img_fastlane_prompt_preview(
         creative_context = await resolve_image_creative_context(
             product,
             operator_direction=request.preset_id,
+            objective=request.preset_id,
         )
         compiled = compile_image_prompt(
             product,
