@@ -36,7 +36,7 @@ recipes:
       - { zone_id: support, role: SUBHEADLINE, source_field: subhook, x: 8, y: 20, w: 84, h: 7, align: left, font_role: subhead, max_chars: 72, max_words: 14, placeholder: "[Ayat sokongan pendek]" }
       - { zone_id: chip_1, role: CHIP, source_field: usp_1, x: 8, y: 78, w: 84, h: 5, align: left, font_role: chip, max_chars: 36, max_words: 5, placeholder: "[Faedah 1]" }
       - { zone_id: chip_2, role: CHIP, source_field: usp_2, x: 8, y: 84, w: 84, h: 5, align: left, font_role: chip, max_chars: 36, max_words: 5, placeholder: "[Faedah 2]" }
-      - { zone_id: cta, role: CTA, source_field: cta, x: 8, y: 91, w: 56, h: 6, align: center, font_role: button, max_chars: 24, max_words: 4, placeholder: "[CTA]" }
+      - { zone_id: cta, role: CTA, source_field: cta, x: 8, y: 88, w: 56, h: 6, align: center, font_role: button, max_chars: 24, max_words: 4, placeholder: "[CTA]" }
     negative_prompt_additions: ["cluttered layout", "tiny illegible text", "text over product"]
     allowed_text_density: [low, medium]
 
@@ -62,7 +62,7 @@ recipes:
       - { zone_id: headline, role: HEADLINE, source_field: hook, x: 8, y: 9, w: 84, h: 12, align: left, font_role: display, max_chars: 48, max_words: 7, placeholder: "[Tajuk pendek]" }
       - { zone_id: chip_1, role: CHIP, source_field: usp_1, x: 8, y: 80, w: 84, h: 5, align: left, font_role: chip, max_chars: 36, max_words: 5, placeholder: "[Faedah saiz]" }
       - { zone_id: chip_2, role: CHIP, source_field: usp_2, x: 8, y: 86, w: 84, h: 5, align: left, font_role: chip, max_chars: 36, max_words: 5, placeholder: "[Faedah bawa]" }
-      - { zone_id: cta, role: CTA, source_field: cta, x: 8, y: 92, w: 56, h: 5, align: center, font_role: button, max_chars: 24, max_words: 4, placeholder: "[CTA]" }
+      - { zone_id: cta, role: CTA, source_field: cta, x: 8, y: 89, w: 56, h: 5, align: center, font_role: button, max_chars: 24, max_words: 4, placeholder: "[CTA]" }
     negative_prompt_additions: ["busy background", "cluttered layout"]
     allowed_text_density: [low]
 
@@ -90,7 +90,7 @@ recipes:
       - { zone_id: chip_1, role: CHIP, source_field: usp_1, x: 10, y: 74, w: 80, h: 5, align: left, font_role: chip, max_chars: 36, max_words: 5, placeholder: "[Nilai 1]" }
       - { zone_id: chip_2, role: CHIP, source_field: usp_2, x: 10, y: 80, w: 80, h: 5, align: left, font_role: chip, max_chars: 36, max_words: 5, placeholder: "[Nilai 2]" }
       - { zone_id: chip_3, role: CHIP, source_field: usp_3, x: 10, y: 86, w: 80, h: 5, align: left, font_role: chip, max_chars: 36, max_words: 5, placeholder: "[Nilai 3]" }
-      - { zone_id: cta, role: CTA, source_field: cta, x: 22, y: 92, w: 56, h: 5, align: center, font_role: button, max_chars: 24, max_words: 4, placeholder: "[CTA]" }
+      - { zone_id: cta, role: CTA, source_field: cta, x: 22, y: 89, w: 56, h: 5, align: center, font_role: button, max_chars: 24, max_words: 4, placeholder: "[CTA]" }
     negative_prompt_additions: ["modern minimalist layout", "cluttered text"]
     allowed_text_density: [medium, high]
 
@@ -117,7 +117,7 @@ recipes:
       - { zone_id: support, role: SUBHEADLINE, source_field: subhook, x: 8, y: 21, w: 84, h: 6, align: left, font_role: subhead, max_chars: 72, max_words: 14, placeholder: "[Ayat sokongan rutin]" }
       - { zone_id: chip_1, role: CHIP, source_field: usp_1, x: 8, y: 80, w: 84, h: 5, align: left, font_role: chip, max_chars: 36, max_words: 5, placeholder: "[Faedah rutin 1]" }
       - { zone_id: chip_2, role: CHIP, source_field: usp_2, x: 8, y: 86, w: 84, h: 5, align: left, font_role: chip, max_chars: 36, max_words: 5, placeholder: "[Faedah rutin 2]" }
-      - { zone_id: cta, role: CTA, source_field: cta, x: 8, y: 92, w: 56, h: 5, align: center, font_role: button, max_chars: 24, max_words: 4, placeholder: "[CTA]" }
+      - { zone_id: cta, role: CTA, source_field: cta, x: 8, y: 89, w: 56, h: 5, align: center, font_role: button, max_chars: 24, max_words: 4, placeholder: "[CTA]" }
     negative_prompt_additions: ["clinical look", "cluttered layout"]
     allowed_text_density: [low, medium]
 
@@ -143,7 +143,7 @@ recipes:
       - { zone_id: headline, role: HEADLINE, source_field: hook, x: 8, y: 7, w: 84, h: 13, align: left, font_role: display, max_chars: 48, max_words: 7, placeholder: "[Tajuk tawaran]" }
       - { zone_id: chip_1, role: CHIP, source_field: usp_1, x: 8, y: 78, w: 84, h: 5, align: left, font_role: chip, max_chars: 36, max_words: 5, placeholder: "[Nilai tawaran 1]" }
       - { zone_id: chip_2, role: CHIP, source_field: usp_2, x: 8, y: 84, w: 84, h: 5, align: left, font_role: chip, max_chars: 36, max_words: 5, placeholder: "[Nilai tawaran 2]" }
-      - { zone_id: cta, role: CTA, source_field: cta, x: 8, y: 91, w: 60, h: 6, align: center, font_role: button, max_chars: 24, max_words: 4, placeholder: "[CTA kuat]" }
+      - { zone_id: cta, role: CTA, source_field: cta, x: 8, y: 88, w: 60, h: 6, align: center, font_role: button, max_chars: 24, max_words: 4, placeholder: "[CTA kuat]" }
     negative_prompt_additions: ["cluttered layout", "too many offers"]
     allowed_text_density: [low, medium]
 
@@ -170,7 +170,7 @@ recipes:
       - { zone_id: support, role: SUBHEADLINE, source_field: subhook, x: 8, y: 21, w: 84, h: 6, align: left, font_role: subhead, max_chars: 72, max_words: 14, placeholder: "[Ayat sokongan selamat]" }
       - { zone_id: chip_1, role: CHIP, source_field: usp_1, x: 8, y: 80, w: 84, h: 5, align: left, font_role: chip, max_chars: 36, max_words: 5, placeholder: "[Nilai selamat 1]" }
       - { zone_id: chip_2, role: CHIP, source_field: usp_2, x: 8, y: 86, w: 84, h: 5, align: left, font_role: chip, max_chars: 36, max_words: 5, placeholder: "[Nilai selamat 2]" }
-      - { zone_id: cta, role: CTA, source_field: cta, x: 8, y: 92, w: 56, h: 5, align: center, font_role: button, max_chars: 24, max_words: 4, placeholder: "[CTA]" }
+      - { zone_id: cta, role: CTA, source_field: cta, x: 8, y: 89, w: 56, h: 5, align: center, font_role: button, max_chars: 24, max_words: 4, placeholder: "[CTA]" }
     negative_prompt_additions: ["medical imagery", "before-after comparison", "clinical look"]
     allowed_text_density: [low, medium]
 
@@ -200,6 +200,6 @@ recipes:
       - { zone_id: chip_1, role: CHIP, source_field: usp_1, x: 8, y: 74, w: 84, h: 5, align: left, font_role: chip, max_chars: 36, max_words: 5, placeholder: "[Kelebihan 1]" }
       - { zone_id: chip_2, role: CHIP, source_field: usp_2, x: 8, y: 80, w: 84, h: 5, align: left, font_role: chip, max_chars: 36, max_words: 5, placeholder: "[Kelebihan 2]" }
       - { zone_id: chip_3, role: CHIP, source_field: usp_3, x: 8, y: 86, w: 84, h: 5, align: left, font_role: chip, max_chars: 36, max_words: 5, placeholder: "[Kelebihan 3]" }
-      - { zone_id: cta, role: CTA, source_field: cta, x: 8, y: 92, w: 60, h: 6, align: center, font_role: button, max_chars: 24, max_words: 4, placeholder: "[CTA kuat]" }
+      - { zone_id: cta, role: CTA, source_field: cta, x: 8, y: 88, w: 60, h: 6, align: center, font_role: button, max_chars: 24, max_words: 4, placeholder: "[CTA kuat]" }
     negative_prompt_additions: ["cluttered layout", "tiny illegible text", "text over product", "clinical or medical imagery"]
     allowed_text_density: [low, medium]

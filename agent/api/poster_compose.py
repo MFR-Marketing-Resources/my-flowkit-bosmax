@@ -14,7 +14,13 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from agent.models.poster_campaign_qa import CampaignReviewRequest, CampaignVariantsRequest
 from agent.services import poster_compositor_service as compositor
+from agent.services.poster_campaign_variant_service import (
+    CampaignVariantError,
+    build_campaign_variants,
+    render_campaign_variant,
+)
 from agent.services.poster_deliverable_service import (
     PosterDeliverableError,
     PosterDeliverableService,
@@ -143,3 +149,46 @@ async def save_deliverable_to_library(poster_deliverable_id: str):
         return await PosterDeliverableService.save_to_library(poster_deliverable_id)
     except PosterDeliverableError as exc:
         raise _http(exc, exc.code, exc.status_code)
+
+
+@router.post("/deliverables/{poster_deliverable_id}/review")
+async def review_campaign_deliverable(
+    poster_deliverable_id: str,
+    req: CampaignReviewRequest,
+):
+    try:
+        return await PosterDeliverableService.review_campaign_deliverable(
+            poster_deliverable_id, req
+        )
+    except PosterDeliverableError as exc:
+        raise _http(exc, exc.code, exc.status_code)
+
+
+@router.post("/deliverables/{poster_deliverable_id}/variants")
+async def campaign_variants(
+    poster_deliverable_id: str,
+    req: CampaignVariantsRequest = CampaignVariantsRequest(),
+):
+    try:
+        return await build_campaign_variants(poster_deliverable_id, req)
+    except CampaignVariantError as exc:
+        raise _http(exc, exc.code, exc.status_code)
+
+
+@router.get("/deliverables/{poster_deliverable_id}/variants/{variant_id}/output")
+async def campaign_variant_output(poster_deliverable_id: str, variant_id: str):
+    try:
+        out_path, selected = await render_campaign_variant(
+            poster_deliverable_id, variant_id
+        )
+    except CampaignVariantError as exc:
+        raise _http(exc, exc.code, exc.status_code)
+    return FileResponse(
+        out_path,
+        media_type="image/png",
+        filename=f"poster_{poster_deliverable_id}_{selected.variant_id}.png",
+        headers={
+            "X-Poster-Variant-Sha256": selected.manifest_sha256,
+            "X-Poster-Provider-Operations": "0",
+        },
+    )

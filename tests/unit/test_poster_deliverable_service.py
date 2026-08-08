@@ -298,6 +298,31 @@ async def test_campaign_composes_copy_over_reference_conditioned_key_visual(tmp_
 
 
 @pytest.mark.asyncio
+async def test_campaign_save_blocks_when_campaign_lineage_qa_fails(tmp_path, monkeypatch):
+    pid = await _seed_product()
+    pcs = await _seed_copy_set(pid)
+    monkeypatch.setattr(compositor, "compose", _fake_compose(tmp_path))
+    result = await PosterDeliverableService.compose_poster(
+        product_id=pid,
+        poster_copy_set_id=pcs["poster_copy_set_id"],
+        recipe_id="product_hero_night_routine",
+        background_local_path=_bg(tmp_path),
+        creative_mode="CREATIVE_CAMPAIGN",
+        settings={"pipeline": "WRONG", "raw_key_visual_is_lineage_only": False},
+    )
+    assert result["qa_report"]["ok"] is False
+    assert result["qa_report"]["campaign_qa"]["block_count"] > 0
+    captured = {}
+    _mock_asset(monkeypatch, captured, asset_id="ca_campaign_blocked")
+    with pytest.raises(PosterDeliverableError) as exc:
+        await PosterDeliverableService.save_to_library(
+            result["deliverable"]["poster_deliverable_id"]
+        )
+    assert exc.value.code == "POSTER_QA_BLOCKED"
+    assert "CAMPAIGN_CLEAN_KEY_VISUAL_LINEAGE" in str(exc.value)
+
+
+@pytest.mark.asyncio
 async def test_save_requires_approved_copy_set(tmp_path, monkeypatch):
     pid = await _seed_product()
     pcs = await _seed_copy_set(pid, approve=False)  # DRAFT

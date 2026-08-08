@@ -799,7 +799,7 @@ export default function ImgCockpitPage() {
 				</div>
 
 				<ApproveAssetModal asset={approveTarget} open={approveTarget !== null} onCancel={() => setApproveTarget(null)} onApproved={() => { setApproveTarget(null); void loadReferences(); }} />
-				{showGenConfirm ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"><div className="max-w-md rounded-2xl border border-rose-500/40 bg-slate-950 p-5 space-y-3"><div className="text-sm font-bold text-rose-100">Sahkan penghantaran kerja IMG</div><div className="text-[11px] text-slate-300">Sahkan sekali lagi untuk menghantar satu kerja IMG. Penjanaan imej boleh menggunakan kuota/kredit penjanaan imej provider; ia tidak menggunakan kredit video Google Flow. Tiada kerja akan dihantar sebelum pengesahan ini. Build-session status: <strong>{GEN_NOT_FIRED}</strong> · <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.</div><label className="flex items-start gap-2 text-[11px] text-slate-200"><input type="checkbox" data-testid="img-cockpit-credit-confirm-checkbox" checked={imgGenConfirmed} onChange={(event) => setImgGenConfirmed(event.target.checked)} className="mt-0.5" /><span>Saya faham tindakan ini menggunakan kuota/kredit penjanaan imej provider dan bukan kredit video.</span></label><div className="flex justify-end gap-2"><button type="button" onClick={() => setShowGenConfirm(false)} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-300">Cancel</button><button type="button" disabled={!imgGenConfirmed} onClick={() => void handleConfirmedGenerate()} className="rounded-lg border border-rose-500/40 bg-rose-500/20 px-3 py-1.5 text-[11px] font-bold text-rose-100 disabled:opacity-40">Confirm &amp; Generate (live)</button></div></div></div> : null}
+				{showGenConfirm ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"><div className="max-w-md rounded-2xl border border-rose-500/40 bg-slate-950 p-5 space-y-3"><div className="text-sm font-bold text-rose-100">Sahkan penghantaran kerja IMG</div><div className="text-[11px] text-slate-300">IMG ini tidak menggunakan kredit penjanaan; kredit Google Flow hanya berkaitan video. Pengesahan di bawah hanya mengesahkan satu operasi IMG akan dihantar. Tiada kerja akan dihantar sebelum pengesahan ini. Build-session status: <strong>{GEN_NOT_FIRED}</strong> · <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.</div><label className="flex items-start gap-2 text-[11px] text-slate-200"><input type="checkbox" data-testid="img-cockpit-credit-confirm-checkbox" checked={imgGenConfirmed} onChange={(event) => setImgGenConfirmed(event.target.checked)} className="mt-0.5" /><span>Saya faham tindakan ini menghantar satu kerja IMG tanpa caj kredit penjanaan.</span></label><div className="flex justify-end gap-2"><button type="button" onClick={() => setShowGenConfirm(false)} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-300">Cancel</button><button type="button" disabled={!imgGenConfirmed} onClick={() => void handleConfirmedGenerate()} className="rounded-lg border border-rose-500/40 bg-rose-500/20 px-3 py-1.5 text-[11px] font-bold text-rose-100 disabled:opacity-40">Confirm &amp; Generate (live)</button></div></div></div> : null}
 			</>
 		);
 	}
@@ -1380,12 +1380,12 @@ export default function ImgCockpitPage() {
 							Sahkan penghantaran kerja IMG
 						</div>
 						<div className="text-[11px] text-slate-300">
-							Sahkan sekali lagi untuk menghantar satu kerja IMG. Penjanaan imej boleh
-							menggunakan kuota/kredit penjanaan imej provider; ia tidak menggunakan kredit video Google Flow.
-							Tiada kerja akan dihantar sebelum pengesahan ini. (In the build session
+							IMG ini tidak menggunakan kredit penjanaan; kredit Google Flow hanya
+							berkaitan video. Pengesahan di bawah hanya mengesahkan satu operasi IMG
+							akan dihantar. Tiada kerja akan dihantar sebelum pengesahan ini. (In the build session
 							this path is <strong>{GEN_NOT_FIRED}</strong>.)
 						</div>
-						<label className="flex items-start gap-2 text-[11px] text-slate-200"><input type="checkbox" data-testid="img-cockpit-credit-confirm-checkbox" checked={imgGenConfirmed} onChange={(event) => setImgGenConfirmed(event.target.checked)} className="mt-0.5" /><span>Saya faham tindakan ini menggunakan kuota/kredit penjanaan imej provider dan bukan kredit video.</span></label>
+						<label className="flex items-start gap-2 text-[11px] text-slate-200"><input type="checkbox" data-testid="img-cockpit-credit-confirm-checkbox" checked={imgGenConfirmed} onChange={(event) => setImgGenConfirmed(event.target.checked)} className="mt-0.5" /><span>Saya faham tindakan ini menghantar satu kerja IMG tanpa caj kredit penjanaan.</span></label>
 						<div className="flex justify-end gap-2">
 							<button
 								type="button"
