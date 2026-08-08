@@ -11,6 +11,18 @@ representation_policy:
     - "Preserve approved avatar and uploaded-reference identity."
     - "Localise through environment, language, everyday ritual, architecture, culturally credible props, wardrobe context, and product-use context."
 modes:
+  CREATIVE_CAMPAIGN:
+    label: "Creative Campaign"
+    composition_direction: "Provider-integrated complete-poster hierarchy with the product embedded naturally in one coherent scene and deliberate negative space for the approved copy layout."
+    product_dominance: "hero_integrated"
+    lighting: "Physically coherent commercial lighting with contact shadow, material response, and scene-consistent reflections around the real product."
+    camera_framing: "Vertical campaign framing that preserves the product silhouette, readable identity, and believable relationship to the environment."
+    props: "Purposeful category-relevant Malaysian props that support the campaign story without replacing or overpowering the product."
+    environment: "Preset-led culturally credible Malaysian commercial environment; the provider creates the complete visual and no legacy scene plate is required."
+    human_presence_policy: "optional_natural_interaction"
+    product_interaction: "credible_in_scene_interaction"
+    negative_rules: ["local cutout compositor", "flat background with pasted product", "label morphing", "product scale drift", "generic replacement packaging", "garbled marketing typography"]
+    malaysian_localisation_cues: ["everyday Malaysian product-use context", "credible local environment", "language and copy supplied by the operator"]
   PGC_CAMPAIGN:
     label: "PGC Campaign"
     composition_direction: "Product-dominant campaign hierarchy with deliberate depth layers and controlled negative space."

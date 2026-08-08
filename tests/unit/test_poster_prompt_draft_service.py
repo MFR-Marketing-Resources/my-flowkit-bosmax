@@ -299,6 +299,7 @@ async def test_explicit_creative_modes_enrich_poster_and_preserve_legacy(monkeyp
     assert legacy.creative_direction == {}
     outputs = []
     for mode in (
+        "CREATIVE_CAMPAIGN",
         "PGC_CAMPAIGN", "UGC_AUTHENTIC", "MODEL_AMBASSADOR",
         "CLEAN_STUDIO_CATALOGUE", "LIFESTYLE_EDITORIAL",
     ):
@@ -308,7 +309,7 @@ async def test_explicit_creative_modes_enrich_poster_and_preserve_legacy(monkeyp
         assert result.creative_direction["mode"] == mode
         assert result.creative_direction["authority_version"] == "creative-direction-modes-v1"
         outputs.append(result.visual_instruction)
-    assert len(set(outputs)) == 5
+    assert len(set(outputs)) == 6
     with pytest.raises(ValueError, match="UNSUPPORTED_CREATIVE_MODE"):
         await PosterPromptDraftService.build_draft(
             _full_request(creative_mode="UNSAFE_MODE"),
