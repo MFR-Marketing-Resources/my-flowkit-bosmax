@@ -392,7 +392,7 @@ export default function MontagePage() {
 								</select>
 							</label>
 						</div>
-					
+
 					</WorkflowStep>
 
 					<WorkflowStep
