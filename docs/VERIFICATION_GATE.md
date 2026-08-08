@@ -4,15 +4,15 @@
 runs the checks that actually reflect the production + local-agent build path, so a change
 **should not** be reported "green" while the real dashboard build is broken.
 
-> **LOCAL ONLY.** This is not CI. It runs on the developer/agent machine. Do not report a
-> change as CI-verified on the basis of this gate — the repo has no CI workflow.
+> **LOCAL GATE.** This remains the developer/agent process-control entry point. The same
+> gate is now executed by `.github/workflows/verify.yml` for pull requests targeting `main`
+> and by manual workflow dispatch. A local pass is still local proof; a remote pass is
+> reported separately as GitHub Actions proof.
 
-> **Enforcement status — advisory, not a hard block.** There is no GitHub Actions CI and no
-> required branch protection, and the pre-push hook is optional (not installed). The gate is a
-> **local process control**: a human or agent *can* still bypass it, so it does not make a
-> broken build *impossible* to merge. Rule of thumb: **PRs should not be reported green unless
-> `scripts/verify-gate.ps1` passes locally.** Making this server-side enforceable (CI / required
-> checks) is a separate future step — see the end of this doc.
+> **Enforcement status — workflow present, branch protection separate.** GitHub Actions now
+> runs the gate, but `main` still requires repository-admin configuration before the check can
+> become a mandatory branch-protection rule. Rule of thumb: **PRs should not be reported green
+> unless `scripts/verify-gate.ps1` passes locally and the remote workflow is green.**
 
 ## Why this exists
 
@@ -56,6 +56,10 @@ powershell -ExecutionPolicy Bypass -File scripts\verify-gate.ps1 -Full
 powershell -ExecutionPolicy Bypass -File scripts\verify-gate.ps1 -SkipMandor
 ```
 
+The CI workflow passes `-VitestTestTimeout 15000` because hosted Windows runners can be
+slower than the local workstation for jsdom tests. This changes only the test deadline; it
+does not skip or select fewer tests.
+
 Frontend-only convenience (build + vitest):
 
 ```bash
@@ -83,14 +87,10 @@ change green if `DASHBOARD_BUILD` is FAIL. Prefer "PRs should not be reported gr
 `scripts/verify-gate.ps1` passes locally" over absolute claims like "impossible to merge broken"
 — that is only true once server-side enforcement exists.
 
-## Future: server-side enforcement (not yet done)
+## Server-side enforcement status
 
-The gate is currently local/advisory only. To make it actually enforceable so a broken build
-cannot merge regardless of who runs it:
-
-1. Add a GitHub Actions workflow (`.github/workflows/verify.yml`) that runs the same layers on
-   PRs: `npm ci` + `npm run build` + `npm test` (dashboard) and `pytest` (the curated smoke set).
-2. Mark that workflow as a **required status check** via branch protection on `main`
-   (needs repo-admin permission).
-
-Until both exist, treat this gate as a discipline, not a guarantee.
+`.github/workflows/verify.yml` runs the same layers on pull requests: dependency installation,
+the real dashboard build, Vitest, the curated backend pytest smoke set, and Mandor ownership
+validation. Marking the resulting `verify / verify` check as **required** via branch protection
+on `main` remains a repository-admin action; until that is configured, the workflow is genuine
+remote evidence but not an immutable merge block.

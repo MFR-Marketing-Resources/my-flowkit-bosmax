@@ -28,6 +28,7 @@ from agent.models.poster_copy_set import (
     PROVENANCE_FALLBACK,
 )
 from agent.services import ai_copy_provider_adapter as ai_provider
+from agent.services.copy_grounding_service import build_safe_campaign_context
 from agent.services import poster_recipe_service
 from agent.services.copy_grounding_service import resolve_copy_grounding
 from agent.services.poster_copy_set_service import run_poster_copy_gate, PosterCopySetError
@@ -44,11 +45,17 @@ _SYSTEM_PROMPT = (
     "punchy first-read primary message; at most one short support line; up to "
     "three tight factual proof points; a short imperative CTA. Natural, warm, "
     "persuasive Malay (or the requested language) — never stiff translationese. "
-    "NEVER invent product facts, ingredients, numbers, prices, discounts or "
-    "certifications. NEVER use medical / symptom / relief / treatment / disease "
-    "wording (no ubat, rawat, sembuh, legakan, lega, kembung, sakit, simptom, "
-    "penyakit, cure, treat, heal, relief). Respect every character limit "
-    "exactly. Return STRICT JSON ONLY — no markdown, no commentary."
+    "Use one concrete buyer-facing angle, not a vague product-name slogan: make "
+    "the audience, moment and reason to care obvious within three seconds. "
+    "Prefer a headline of 3–6 words, a complete support line of 6–12 words, "
+    "proof points of 2–6 words and a CTA of 2–4 words. Never truncate a sentence "
+    "or repeat the same angle across directions. If a direction cannot fit the "
+    "hard character limits, omit that direction; never mechanically clip it. "
+    "NEVER invent product facts, "
+    "ingredients, numbers, prices, discounts or certifications. Transform raw "
+    "pain/fear language into safe readiness, comfort or product-familiarity "
+    "language; never promise treatment, cure or certainty. Respect every "
+    "character limit exactly. Return STRICT JSON ONLY — no markdown, no commentary."
 )
 
 
@@ -79,9 +86,54 @@ def _provenance_model() -> str:
     return f"{provider}:{model}" if provider or model else ""
 
 
-def _clip(text: str, limit: int) -> str:
-    text = _norm(text)
-    return text if len(text) <= limit else text[:limit].rstrip()
+_INCOMPLETE_TAIL_WORDS = frozenset(
+    "dan atau untuk dengan yang ke di dari dalam kepada tentang serta and or for with to from".split()
+)
+
+
+def _validate_metadata_text(value: Any, field: str, limit: int) -> tuple[str, str | None]:
+    """Accept complete non-rendered metadata or reject it with its reason."""
+
+    text = _norm(value)
+    if not text:
+        return "", None
+    if len(text) > limit:
+        return "", f"METADATA_OVER_LIMIT:{field}:{len(text)}/{limit}"
+    return text, None
+
+
+def _validate_copy_text(value: Any, field: str, limit: int) -> tuple[str, str | None]:
+    """Accept complete copy only; return a rejection reason instead of clipping."""
+
+    text = _norm(value)
+    if not text:
+        return "", None
+    if len(text) > limit:
+        return "", f"COPY_FIELD_OVER_LIMIT:{field}:{len(text)}/{limit}"
+    tail = text.rstrip(" ,;:-").casefold().split()[-1]
+    if tail in _INCOMPLETE_TAIL_WORDS:
+        return "", f"COPY_FIELD_INCOMPLETE_TAIL:{field}:{tail}"
+    return text, None
+
+
+def _copy_rejection_snapshot(item: dict[str, Any], reason: str, index: int) -> dict[str, Any]:
+    return {
+        "direction_index": index,
+        "reason": reason,
+        "original_output": {
+            key: item.get(key)
+            for key in (
+                "primary_message",
+                "support_message",
+                "proof_points",
+                "cta",
+                "disclaimer",
+                "tone",
+            )
+            if key in item
+        },
+        "provenance": PROVENANCE_AI,
+    }
 
 
 # ─── Grounded brief ───────────────────────────────────────────────────────────
@@ -112,14 +164,31 @@ def _grounding_block(grounding: Any, product: dict[str, Any]) -> str:
             "ingredient, specification, number or outcome — use neutral routine/"
             "convenience/heritage/portability angles only."
         )
-    if persona.audience:
-        lines.append(f"Audience: {persona.audience}")
-    if persona.desires:
-        lines.append("Audience desires: " + "; ".join(persona.desires[:4]))
+    if grounding.source == "APPROVED_SNAPSHOT":
+        if persona.audience:
+            lines.append(f"Audience: {persona.audience}")
+        if persona.desires:
+            lines.append("Audience desires: " + "; ".join(persona.desires[:4]))
+    else:
+        lines.append(
+            "CUSTOMER AVATAR: no approved product snapshot — do not personalize "
+            "the copy from framework defaults."
+        )
     if guard.blocked_claims:
         lines.append("BLOCKED claims (never use): " + "; ".join(guard.blocked_claims[:8]))
     if guard.banned_terms:
         lines.append("BANNED terms (never use): " + "; ".join(guard.banned_terms[:12]))
+    safe_context = build_safe_campaign_context(product, grounding)
+    lines.extend(
+        [
+            "SAFE CAMPAIGN BRIEF (use this to make the poster specific without repeating raw pain language):",
+            f"Audience: {safe_context['audience']}",
+            f"Desire: {safe_context['desire']}",
+            f"Trigger: {safe_context['trigger']}",
+            f"Safe angle: {safe_context['safe_angle']}",
+            f"Tone: {safe_context['tone']}",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -297,6 +366,7 @@ async def recommend_angles(
         for a in contract["selling_angles"]
     ]
     warnings: list[str] = []
+    rejected_candidates: list[dict[str, Any]] = []
     if refresh_ai and ai_provider.is_configured():
         try:
             grounding = await resolve_copy_grounding(dict(product))
@@ -313,14 +383,30 @@ async def recommend_angles(
             for item in raw.get("angles") or []:
                 if not isinstance(item, dict):
                     continue
-                angle = _clip(item.get("angle"), 60)
+                angle, angle_rejection = _validate_metadata_text(
+                    item.get("angle"), "angle", 60
+                )
+                rationale, rationale_rejection = _validate_metadata_text(
+                    item.get("rationale"), "rationale", 160
+                )
+                rejection = angle_rejection or rationale_rejection
+                if rejection:
+                    rejected_candidates.append(
+                        {
+                            "reason": rejection,
+                            "original_output": dict(item),
+                            "provenance": PROVENANCE_AI,
+                        }
+                    )
+                    warnings.append(f"AI angle rejected: {rejection}.")
+                    continue
                 if not angle or angle.lower() in seen:
                     continue
                 seen.add(angle.lower())
                 angles.append(
                     {
                         "angle": angle,
-                        "rationale": _clip(item.get("rationale"), 160),
+                        "rationale": rationale,
                         "source": "AI",
                     }
                 )
@@ -334,6 +420,7 @@ async def recommend_angles(
         "angles": angles[:8],
         "ai_provider_status": ai_provider.provider_status(),
         "prompt_version": POSTER_COPY_PROMPT_VERSION,
+        "rejected_candidates": rejected_candidates,
         "warnings": warnings,
     }
 
@@ -367,7 +454,11 @@ def _grounded_fallback_points(grounding: Any, limit: int) -> list[str]:
     for src in ((getattr(pk, "benefits", None) or []),
                 (getattr(pk, "usps", None) or [])):
         for p in src:
-            p = _clip(p, POSTER_NATIVE_LIMITS["proof_point"])
+            p, rejection = _validate_copy_text(
+                p, "proof_point", POSTER_NATIVE_LIMITS["proof_point"]
+            )
+            if rejection:
+                continue
             if p and p.lower() not in {x.lower() for x in points}:
                 points.append(p)
             if len(points) >= limit:
@@ -399,15 +490,15 @@ def _fallback_directions(
     name = _norm(product.get("product_display_name")) or _norm(
         product.get("raw_product_title")
     ) or "Produk"
-    short = name if len(name) <= 30 else name[:30].rstrip()
+    short = name if len(name) <= 40 else "Produk berdaftar"
     grounded_points = _grounded_fallback_points(
         grounding, contract["max_proof_points"]
     ) if grounding is not None else []
     supports = contract["supports_support_message"]
     templates = [
         {
-            "primary_message": _clip(f"Kenali {short}", 48),
-            "support_message": _clip(f"Ketahui lebih lanjut tentang {short}.", 72)
+            "primary_message": f"Kenali {short}",
+            "support_message": f"Ketahui lebih lanjut tentang {short}."
             if supports else "",
             "proof_points": list(grounded_points),
             "cta": "Ketahui lebih lanjut",
@@ -415,7 +506,7 @@ def _fallback_directions(
             "tone": "neutral",
         },
         {
-            "primary_message": _clip(short, 48),
+            "primary_message": short,
             "support_message": "Lihat produk." if supports else "",
             "proof_points": list(grounded_points),
             "cta": "Lihat produk",
@@ -423,7 +514,7 @@ def _fallback_directions(
             "tone": "neutral",
         },
         {
-            "primary_message": _clip(f"Terokai {short}", 48),
+            "primary_message": f"Terokai {short}",
             "support_message": "Terokai pilihan." if supports else "",
             "proof_points": list(grounded_points),
             "cta": "Terokai pilihan",
@@ -468,6 +559,7 @@ async def generate_directions(
     count = max(1, min(int(count or 3), 5))
     warnings: list[str] = []
     directions: list[dict[str, Any]] = []
+    copy_rejections: list[dict[str, Any]] = []
     ai_directions_unavailable = False
 
     if ai_provider.is_configured():
@@ -494,31 +586,91 @@ async def generate_directions(
             for i, item in enumerate((raw.get("directions") or [])[: count + 2]):
                 if not isinstance(item, dict):
                     continue
-                candidate = {
-                    "primary_message": _clip(item.get("primary_message"),
-                                             POSTER_NATIVE_LIMITS["primary_message"]),
-                    "support_message": (
-                        _clip(item.get("support_message"),
-                              POSTER_NATIVE_LIMITS["support_message"])
-                        if contract["supports_support_message"] else ""
-                    ),
-                    "proof_points": [
-                        _clip(p, POSTER_NATIVE_LIMITS["proof_point"])
-                        for p in (item.get("proof_points") or [])[: contract["max_proof_points"]]
-                        if _norm(p)
-                    ],
-                    "cta": _clip(item.get("cta"), POSTER_NATIVE_LIMITS["cta"]),
-                    "disclaimer": _clip(item.get("disclaimer"),
-                                        POSTER_NATIVE_LIMITS["disclaimer"]),
-                    "tone": _clip(item.get("tone"), 30) or tone,
-                    "language": language,
-                    "field_provenance": {k: PROVENANCE_AI for k in AI_COPY_FIELDS},
-                }
-                if not candidate["primary_message"] or not candidate["cta"]:
-                    warnings.append(f"AI direction {i + 1} incomplete — dropped.")
+                rejection_reason = ""
+                primary_message, primary_rejection = _validate_copy_text(
+                    item.get("primary_message"),
+                    "primary_message",
+                    POSTER_NATIVE_LIMITS["primary_message"],
+                )
+                rejection_reason = primary_rejection or ""
+                support_message = ""
+                if contract["supports_support_message"]:
+                    support_message, support_rejection = _validate_copy_text(
+                        item.get("support_message"),
+                        "support_message",
+                        POSTER_NATIVE_LIMITS["support_message"],
+                    )
+                    rejection_reason = rejection_reason or support_rejection or ""
+
+                raw_proof_points = item.get("proof_points") or []
+                proof_points: list[str] = []
+                if not isinstance(raw_proof_points, list):
+                    rejection_reason = "COPY_PROOF_POINTS_NOT_LIST"
+                elif len(raw_proof_points) > contract["max_proof_points"]:
+                    rejection_reason = (
+                        f"COPY_PROOF_POINTS_OVER_LIMIT:{len(raw_proof_points)}/"
+                        f"{contract['max_proof_points']}"
+                    )
+                else:
+                    for proof_point in raw_proof_points:
+                        normalized, proof_rejection = _validate_copy_text(
+                            proof_point,
+                            "proof_point",
+                            POSTER_NATIVE_LIMITS["proof_point"],
+                        )
+                        if proof_rejection:
+                            rejection_reason = proof_rejection
+                            break
+                        if normalized:
+                            proof_points.append(normalized)
+
+                cta, cta_rejection = _validate_copy_text(
+                    item.get("cta"), "cta", POSTER_NATIVE_LIMITS["cta"]
+                )
+                disclaimer, disclaimer_rejection = _validate_copy_text(
+                    item.get("disclaimer"),
+                    "disclaimer",
+                    POSTER_NATIVE_LIMITS["disclaimer"],
+                )
+                candidate_tone, tone_rejection = _validate_copy_text(
+                    item.get("tone"), "tone", 30
+                )
+                rejection_reason = (
+                    rejection_reason
+                    or cta_rejection
+                    or disclaimer_rejection
+                    or tone_rejection
+                )
+                if not primary_message or not cta:
+                    rejection_reason = rejection_reason or "COPY_REQUIRED_FIELD_MISSING"
+                if rejection_reason:
+                    copy_rejections.append(
+                        _copy_rejection_snapshot(item, rejection_reason, i + 1)
+                    )
+                    warnings.append(
+                        f"AI direction {i + 1} rejected: {rejection_reason}."
+                    )
                     continue
+                candidate = {
+                    "primary_message": primary_message,
+                    "support_message": support_message,
+                    "proof_points": proof_points,
+                    "cta": cta,
+                    "disclaimer": disclaimer,
+                    "tone": candidate_tone or tone,
+                    "language": language,
+                    "field_provenance": {
+                        **{k: PROVENANCE_AI for k in AI_COPY_FIELDS},
+                        "quality_gate": "COPY_ACCEPTED_WITHOUT_CLIPPING",
+                    },
+                }
                 if not _direction_is_safe(candidate, contract["archetype"]):
                     warnings.append(f"AI direction {i + 1} failed the safety gate — dropped.")
+                    copy_rejections.append(
+                        _copy_rejection_snapshot(
+                            item, "POSTER_COPY_SAFETY_GATE_FAILED", i + 1
+                        )
+                    )
                     continue
                 directions.append(candidate)
                 if len(directions) >= count:
@@ -555,6 +707,7 @@ async def generate_directions(
         "ai_model": _provenance_model(),
         "prompt_version": POSTER_COPY_PROMPT_VERSION,
         "ai_provider_status": ai_provider.provider_status(),
+        "rejected_candidates": copy_rejections,
         "warnings": warnings,
     }
 
@@ -615,13 +768,32 @@ async def regenerate_field(
             "POSTER_FIELD_REGEN_FAILED", str(exc.code or exc), status_code=502
         )
     if field_name == "proof_points":
-        value: Any = [
-            _clip(p, limit)
-            for p in (raw.get("proof_points") or [])[: contract["max_proof_points"]]
-            if _norm(p)
-        ]
+        raw_points = raw.get("proof_points") or []
+        if not isinstance(raw_points, list) or len(raw_points) > contract["max_proof_points"]:
+            raise PosterCopyAIError(
+                "POSTER_FIELD_REGEN_OVER_LIMIT",
+                "Regenerated proof points exceeded the bounded poster contract.",
+                status_code=422,
+            )
+        value = []
+        for point in raw_points:
+            normalized, rejection = _validate_copy_text(point, "proof_point", limit)
+            if rejection:
+                raise PosterCopyAIError(
+                    "POSTER_FIELD_REGEN_OVER_LIMIT",
+                    rejection,
+                    status_code=422,
+                )
+            if normalized:
+                value.append(normalized)
     else:
-        value = _clip(raw.get(field_name), limit)
+        value, rejection = _validate_copy_text(raw.get(field_name), field_name, limit)
+        if rejection:
+            raise PosterCopyAIError(
+                "POSTER_FIELD_REGEN_OVER_LIMIT",
+                rejection,
+                status_code=422,
+            )
     if not value:
         raise PosterCopyAIError("POSTER_FIELD_REGEN_EMPTY", status_code=502)
     merged = dict(fields)

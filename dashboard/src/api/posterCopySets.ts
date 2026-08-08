@@ -25,7 +25,15 @@ export async function recommendPosterAngles(payload: {
 	product_id: string;
 	archetype: string;
 	refresh_ai?: boolean;
-}): Promise<{ angles: PosterAngleRecommendation[]; warnings: string[] }> {
+}): Promise<{
+	angles: PosterAngleRecommendation[];
+	rejected_candidates?: Array<{
+		reason: string;
+		original_output: Record<string, unknown>;
+		provenance: string;
+	}>;
+	warnings: string[];
+}> {
 	return postAPI("/api/poster/copy-sets/recommend-angles", payload);
 }
 
@@ -40,6 +48,12 @@ export async function generatePosterDirections(payload: {
 	directions: PosterCopyDirection[];
 	ai_model: string;
 	prompt_version: string;
+	rejected_candidates?: Array<{
+		direction_index: number;
+		reason: string;
+		original_output: Record<string, unknown>;
+		provenance: string;
+	}>;
 	warnings: string[];
 }> {
 	return postAPI("/api/poster/copy-sets/directions", payload);
