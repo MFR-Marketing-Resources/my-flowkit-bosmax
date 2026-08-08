@@ -13,6 +13,12 @@ import {
 	type ImageArtifact,
 } from "../../../api/imgFactory";
 import {
+	approveProductTruthLock,
+	fetchProductTruthLock,
+	productTruthCutoutPreviewUrl,
+	type ProductTruthLockStatus,
+} from "../../../api/productTruthLock";
+import {
 	fetchCompositionPlan,
 	fetchPosterDeliverableByAsset,
 	posterDeliverableOutputUrl,
@@ -1001,6 +1007,71 @@ function SceneStep({ wf }: { wf: WF }) {
 	const [existingOpen, setExistingOpen] = useState(false);
 	const [creditConfirmOpen, setCreditConfirmOpen] = useState(false);
 	const [creditConfirmed, setCreditConfirmed] = useState(false);
+	const [truthLock, setTruthLock] = useState<ProductTruthLockStatus | null>(null);
+	const [truthLoading, setTruthLoading] = useState(false);
+	const [truthApproving, setTruthApproving] = useState(false);
+	const [truthError, setTruthError] = useState("");
+	const [confirmIdentity, setConfirmIdentity] = useState(false);
+	const [confirmLabelLogo, setConfirmLabelLogo] = useState(false);
+	const [confirmGeometryScale, setConfirmGeometryScale] = useState(false);
+
+	useEffect(() => {
+		let active = true;
+		setTruthLock(null);
+		setTruthError("");
+		setConfirmIdentity(false);
+		setConfirmLabelLogo(false);
+		setConfirmGeometryScale(false);
+		if (!wf.product) return () => { active = false; };
+		setTruthLoading(true);
+		void fetchProductTruthLock(wf.product.id)
+			.then((status) => {
+				if (active) setTruthLock(status);
+			})
+			.catch((error) => {
+				if (active) {
+					setTruthError(
+						error instanceof Error
+							? error.message
+							: "Gagal menyemak status pengesahan produk.",
+					);
+				}
+			})
+			.finally(() => {
+				if (active) setTruthLoading(false);
+			});
+		return () => { active = false; };
+	}, [wf.product]);
+
+	const approveTruthLock = async () => {
+		if (!wf.product) return;
+		setTruthApproving(true);
+		setTruthError("");
+		try {
+			const status = await approveProductTruthLock(wf.product.id, {
+				reviewed_by: "poster-builder-operator",
+				review_note:
+					"Operator reviewed the displayed cutout for identity, colour, label/logo, geometry, and scale.",
+				confirm_identity: confirmIdentity,
+				confirm_label_logo: confirmLabelLogo,
+				confirm_geometry_scale: confirmGeometryScale,
+			});
+			setTruthLock(status);
+		} catch (error) {
+			setTruthError(
+				error instanceof Error
+					? error.message
+					: "Gagal mengesahkan product truth lock.",
+			);
+		} finally {
+			setTruthApproving(false);
+		}
+	};
+
+	const truthPending = truthLock?.review_status === "PENDING_REVIEW";
+	const truthConfirmed = truthLock?.exact_allowed === true;
+	const allTruthConfirmed =
+		confirmIdentity && confirmLabelLogo && confirmGeometryScale;
 
 	const load = () => {
 		setLoading(true);
@@ -1026,6 +1097,77 @@ function SceneStep({ wf }: { wf: WF }) {
 				Identiti produk adalah reference-conditioned — pastikan label & skala
 				disemak sebelum diterbitkan.
 			</div>
+
+			{truthLoading ? <Busy label="Menyemak kunci identiti produk…" /> : null}
+			{truthPending && wf.product ? (
+				<div
+					className="space-y-3 rounded-xl border border-amber-400/50 bg-amber-500/10 p-4"
+					data-testid="poster-truth-review-panel"
+				>
+					<div>
+						<p className="font-semibold text-amber-100">
+							Semakan produk diperlukan sebelum jana visual
+						</p>
+						<p className="mt-1 text-xs text-amber-100/80">
+							Semak cutout sebenar di bawah. Jana visual kekal disekat dan
+							tiada kerja IMG dihantar sehingga semua pengesahan dibuat.
+						</p>
+					</div>
+					<img
+						src={productTruthCutoutPreviewUrl(wf.product.id)}
+						alt={`Cutout untuk semakan ${wf.product.product_display_name || "produk"}`}
+						className="max-h-80 w-full rounded-lg border border-slate-700 bg-white/5 object-contain"
+						data-testid="poster-truth-cutout-preview"
+					/>
+					<div className="grid gap-2 text-xs text-slate-100">
+						<label className="flex items-start gap-2">
+							<input
+								type="checkbox"
+								checked={confirmIdentity}
+								onChange={(event) => setConfirmIdentity(event.target.checked)}
+								data-testid="poster-truth-confirm-identity"
+							/>
+							<span>Identiti dan warna produk tepat.</span>
+						</label>
+						<label className="flex items-start gap-2">
+							<input
+								type="checkbox"
+								checked={confirmLabelLogo}
+								onChange={(event) => setConfirmLabelLogo(event.target.checked)}
+								data-testid="poster-truth-confirm-label-logo"
+							/>
+							<span>Label dan logo tepat serta boleh dikenal pasti.</span>
+						</label>
+						<label className="flex items-start gap-2">
+							<input
+								type="checkbox"
+								checked={confirmGeometryScale}
+								onChange={(event) => setConfirmGeometryScale(event.target.checked)}
+								data-testid="poster-truth-confirm-geometry-scale"
+							/>
+							<span>Geometry dan skala cutout tepat.</span>
+						</label>
+					</div>
+					<button
+						type="button"
+						onClick={() => void approveTruthLock()}
+						disabled={!allTruthConfirmed || truthApproving}
+						data-testid="poster-truth-approve"
+						className="rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-50"
+					>
+						{truthApproving ? "Mengesahkan…" : "Sahkan product truth lock"}
+					</button>
+				</div>
+			) : null}
+			{truthConfirmed ? (
+				<p
+					className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100"
+					data-testid="poster-truth-approved"
+				>
+					Identiti, label/logo, geometry dan skala produk telah disahkan.
+				</p>
+			) : null}
+			<ErrorNote testid="poster-truth-review-error" text={truthError} />
 
 			<div
 				className="space-y-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4"
@@ -1059,7 +1201,7 @@ function SceneStep({ wf }: { wf: WF }) {
 				<button
 					type="button"
 					data-testid="poster-generate-scene"
-					disabled={wf.sceneGenerationLoading}
+					disabled={wf.sceneGenerationLoading || truthLoading || truthPending}
 					onClick={() => {
 						setCreditConfirmed(false);
 						setCreditConfirmOpen(true);
