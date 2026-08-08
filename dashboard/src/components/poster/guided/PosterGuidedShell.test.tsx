@@ -860,6 +860,7 @@ describe("PosterGuidedShell closure", () => {
 				"poster-visual-card-product_hero_night_routine",
 			),
 		);
+		await screen.findByTestId("poster-truth-approved");
 		fireEvent.click(screen.getByTestId("poster-generate-scene"));
 		fireEvent.click(screen.getByTestId("poster-generate-scene-credit-checkbox"));
 		fireEvent.click(screen.getByTestId("poster-generate-scene-credit-confirm"));
