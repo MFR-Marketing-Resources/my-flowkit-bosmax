@@ -102,6 +102,14 @@ class ImageArtDirection(BaseModel):
     negative_space_strategy: str = ""
     brand_visual_codes: list[str] = Field(default_factory=list, max_length=8)
     anti_cliche_rules: list[str] = Field(default_factory=list, max_length=8)
+    design_route: str = ""
+    layout_variant: str = ""
+    type_pairing_id: str = ""
+    color_strategy: str = ""
+    proof_treatment: str = ""
+    malaysian_context_route: str = ""
+    font_license: str = ""
+    font_readiness_status: str = "HOST_RUNTIME_REQUIRED"
 
 
 class ImageCreativeContext(BaseModel):
@@ -129,6 +137,7 @@ class ImageCreativeContext(BaseModel):
     missing_fields: list[str] = Field(default_factory=list, max_length=20)
     field_provenance: dict[str, str] = Field(default_factory=dict, max_length=30)
     art_direction: ImageArtDirection = Field(default_factory=ImageArtDirection)
+    campaign_design_brief: dict[str, Any] | None = None
 
 
 class ImagePromptCompileRequest(BaseModel):
