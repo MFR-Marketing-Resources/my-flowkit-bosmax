@@ -996,6 +996,7 @@ domains:
       - tests/ui/test_verification_gate_contract.py
       - dashboard/package.json
       - AGENTS.md
+      - .github/workflows/verify.yml
       # RESULTS_HUB: durable deliverable hub — every finished generation gets a
       # long-lived record (prompt+settings for manual Flow fallback) + per-platform
       # social captions, decoupled from the 48h artifact file retention.

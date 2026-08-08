@@ -47,7 +47,10 @@ from agent.services.creative_direction_service import (
     select_creative_direction_directives,
 )
 from agent.models.image_generation_contract import ImagePromptCompileRequest
-from agent.services.image_prompt_compiler import compile_image_prompt
+from agent.services.image_prompt_compiler import (
+    compile_image_prompt,
+    resolve_image_creative_context,
+)
 from agent.services.product_reference_pack_service import (
     ProductReferencePackError,
     ensure_product_reference_pack,
@@ -592,6 +595,11 @@ async def compile_img_fastlane_prompt_preview(
             if "POSTER" in str(preset.get("lane_id") or "").upper()
             else "COMPLETE_IMAGE"
         )
+        creative_context = await resolve_image_creative_context(
+            product,
+            operator_direction=request.preset_id,
+            objective=request.preset_id,
+        )
         compiled = compile_image_prompt(
             product,
             reference_pack,
@@ -607,6 +615,7 @@ async def compile_img_fastlane_prompt_preview(
                 creative_mode="CREATIVE_CAMPAIGN",
                 requested_outputs=request.requested_outputs,
             ),
+            creative_context,
         )
         role_lines = [f"{binding.role}: {binding.asset_id or binding.media_id}" for binding in compiled.reference_bindings]
         return ImgFastlanePromptPreviewResponse(
@@ -628,6 +637,11 @@ async def compile_img_fastlane_prompt_preview(
                 "prompt_fingerprint": compiled.prompt_fingerprint,
                 "reference_pack_id": reference_pack.pack_id,
                 "provider_operation_plan": compiled.provider_operation_plan,
+                "creative_context": (
+                    compiled.creative_context.model_dump(mode="json")
+                    if compiled.creative_context is not None
+                    else None
+                ),
             },
         )
     creative_direction = (

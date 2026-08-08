@@ -68,6 +68,38 @@ export interface ImgFastlanePromptPreviewInput {
 	requested_outputs?: number;
 }
 
+export interface CreativeCampaignContext {
+	intelligence_status: "READY" | "INCOMPLETE";
+	grounding_source: string;
+	approved_snapshot_id?: string | null;
+	approved_snapshot_version?: number | null;
+	product_family: string;
+	formula: string;
+	audience: string;
+	desire: string;
+	objection: string;
+	trigger: string;
+	safe_angle: string;
+	tone: string;
+	approved_facts: string[];
+	missing_fields: string[];
+	field_provenance: Record<string, string>;
+	art_direction: {
+		creative_territory: string;
+		layout_family: string;
+		visual_tension: string;
+		product_anchor: string;
+		copy_anchor: string;
+		headline_personality: string;
+		headline_line_budget: number;
+		type_contrast: string;
+		cta_treatment: string;
+		negative_space_strategy: string;
+		brand_visual_codes: string[];
+		anti_cliche_rules: string[];
+	};
+}
+
 export interface ImgFastlanePromptPreview {
 	preset_id: string;
 	route: ImgFastlaneRoute;
@@ -92,6 +124,7 @@ export interface ImgFastlanePromptPreview {
 			max_provider_operations: number;
 			max_retry_operations: number;
 		};
+		creative_context?: CreativeCampaignContext;
 	};
 }
 
@@ -179,6 +212,7 @@ export interface CreativeCampaignPromptPreview {
 		max_provider_operations: number;
 		max_retry_operations: number;
 	};
+	creative_context?: CreativeCampaignContext;
 }
 
 export interface ProductReferencePackSummary {

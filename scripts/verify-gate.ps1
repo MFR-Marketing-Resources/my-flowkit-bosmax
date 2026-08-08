@@ -30,12 +30,17 @@
     Skip the ownership (mandor-check) gate. Use only when intentionally running the gate
     on a clean tree with nothing to own-check.
 
+.PARAMETER VitestTestTimeout
+    Optional per-test timeout passed to Vitest. CI runners may need a larger timeout for
+    browser-like jsdom tests; local default remains Vitest's configured timeout.
+
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File scripts\verify-gate.ps1
 #>
 param(
     [switch]$Full,
-    [switch]$SkipMandor
+    [switch]$SkipMandor,
+    [int]$VitestTestTimeout = 0
 )
 
 Set-StrictMode -Version Latest
@@ -123,7 +128,11 @@ if ($SkipMandor) {
 Invoke-Gate -Name 'DASHBOARD_BUILD' -WorkingDir $DashboardDir -Command { & npm run build }
 
 # Gate 3 - Frontend vitest smoke.
-Invoke-Gate -Name 'DASHBOARD_VITEST' -WorkingDir $DashboardDir -Command { & npm test }
+$vitestArgs = @()
+if ($VitestTestTimeout -gt 0) {
+    $vitestArgs = @('--', '--testTimeout', "$VitestTestTimeout")
+}
+Invoke-Gate -Name 'DASHBOARD_VITEST' -WorkingDir $DashboardDir -Command { & npm test @vitestArgs }
 
 # Gate 4 - Backend pytest smoke (or full with -Full).
 $pytestArgs = if ($Full) { @('-m', 'pytest', '-q') } else { @('-m', 'pytest', '-q') + $SmokeTests }
