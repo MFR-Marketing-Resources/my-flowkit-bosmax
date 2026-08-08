@@ -24,8 +24,6 @@ import CanonicalReferenceBindingControls, {
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { Product, WorkspaceExecutionPackage } from "../types";
 import {
-	FACELESS_CHARACTER_PRESENCE,
-	FACELESS_SOURCE_MODE,
 	FACELESS_TRANSPORT_MODE,
 	facelessPrepareBlockers,
 	optionLabel,
@@ -142,7 +140,7 @@ export default function FacelessVideoPage() {
 				duration_seconds: 8,
 				copy_fallback_confirmed: true,
 			});
-			const pkg = (prepared.package || {}) as WorkspaceExecutionPackage;
+			const pkg = (prepared.package || {}) as unknown as WorkspaceExecutionPackage;
 			if (!pkg.workspace_execution_package_id || !pkg.prompt_text) {
 				throw new Error("Prepare returned incomplete package");
 			}
