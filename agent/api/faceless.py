@@ -25,6 +25,10 @@ class FacelessPrepareRequest(BaseModel):
     hook_id: str = "AUTO"
     background_id: str = "AUTO"
     duration_seconds: int = 8
+    # Product surface (Hybrid parity, no avatar): Single | Extend + model
+    generation_mode: str = "SINGLE"
+    requested_total_duration_seconds: Optional[int] = None
+    model: str = "Veo 3.1 - Lite"
     aspect_ratio: str = "9:16"
     copy_set_id: Optional[str] = None
     copy_fallback_confirmed: bool = True
@@ -94,14 +98,31 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
         )
 
     try:
+        gen_mode = str(body.generation_mode or "SINGLE").upper()
+        if gen_mode not in ("SINGLE", "EXTEND"):
+            gen_mode = "SINGLE"
+        duration = int(body.duration_seconds or 8)
+        total = body.requested_total_duration_seconds
+        if gen_mode == "EXTEND":
+            # First block is 8s independent; total drives plan authority.
+            duration = 8
+            if total is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "error_code": "ERR_FACELESS_EXTEND_TOTAL_REQUIRED",
+                        "message": "Extend requires requested_total_duration_seconds",
+                    },
+                )
+        model = str(body.model or "").strip() or "Veo 3.1 - Lite"
         pkg = await create_workspace_execution_package(
             product_id=body.product_id,
             mode=fl.FACELESS_TRANSPORT_MODE,
-            duration_seconds=body.duration_seconds,
+            duration_seconds=duration,
             aspect_ratio=body.aspect_ratio,
-            model="",
+            model=model,
             manual_override=False,
-            generation_mode="SINGLE",
+            generation_mode=gen_mode,
             character_presence=fl.FACELESS_CHARACTER_PRESENCE,
             creator_persona="DEFAULT_CREATOR",
             source_mode=fl.FACELESS_SOURCE_MODE,
@@ -111,6 +132,7 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
             scene_context_override=scene_context,
             copy_set_id=body.copy_set_id,
             copy_fallback_confirmed=body.copy_fallback_confirmed,
+            requested_total_duration_seconds=int(total) if total is not None else None,
         )
     except Exception as exc:  # noqa: BLE001 — surface package errors as 422/400
         msg = str(exc)
@@ -120,9 +142,14 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
     return {
         "ok": True,
         "lane": fl.FACELESS_SURFACE_MODE,
+        "surface": "PRODUCT_HANDS_BODY_NO_AVATAR",
         "transport_mode": fl.FACELESS_TRANSPORT_MODE,
         "source_mode": fl.FACELESS_SOURCE_MODE,
         "character_presence": fl.FACELESS_CHARACTER_PRESENCE,
+        "generation_mode": str(body.generation_mode or "SINGLE").upper(),
+        "model": str(body.model or "").strip() or "Veo 3.1 - Lite",
+        "duration_seconds": int(body.duration_seconds or 8),
+        "requested_total_duration_seconds": body.requested_total_duration_seconds,
         "resolution": {
             "hook": resolution["hook"],
             "background": resolution["background"],
