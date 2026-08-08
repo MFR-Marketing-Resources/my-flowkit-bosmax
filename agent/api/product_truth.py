@@ -1,4 +1,5 @@
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from agent.db import crud
 from agent.models.product_truth_lock import (
     ProductTruthLockApprovalRequest,
@@ -11,6 +12,7 @@ from agent.services.product_truth_lock_service import (
     create_pending_product_truth_lock,
     inspect_product_truth_lock,
     register_product_truth_cutout_media,
+    resolve_product_truth_cutout_preview,
 )
 
 router = APIRouter(prefix="/product-truth", tags=["product-truth"])
@@ -62,6 +64,20 @@ def _truth_lock_http_error(exc: ProductTruthLockError) -> HTTPException:
         status_code=exc.status_code,
         detail={"code": exc.code, "message": exc.message},
     )
+
+
+@router.get("/{product_id}/visual-lock/cutout-preview")
+async def preview_visual_product_truth_cutout(product_id: str):
+    """Serve the server-owned cutout so an operator can review before approval."""
+
+    try:
+        return FileResponse(
+            resolve_product_truth_cutout_preview(product_id),
+            media_type="image/png",
+            headers={"Cache-Control": "no-store"},
+        )
+    except ProductTruthLockError as exc:
+        raise _truth_lock_http_error(exc) from exc
 
 
 @router.post("/{product_id}/visual-lock/cutout")

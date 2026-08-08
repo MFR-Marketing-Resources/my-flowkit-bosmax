@@ -242,6 +242,34 @@ def _validate_alpha_mask(lock: ProductTruthLock, cutout: Path) -> str:
     return alpha_sha
 
 
+def resolve_product_truth_cutout_preview(product_id: str) -> Path:
+    """Return the server-owned cutout used by the pending/approved review lock."""
+
+    lock = load_product_truth_lock(product_id)
+    if lock is None:
+        raise ProductTruthLockError(
+            "PRODUCT_TRUTH_LOCK_REQUIRED",
+            "No onboarding lock exists for this product.",
+            status_code=404,
+        )
+    cutout = _path_from_server_record(lock.canonical_cutout_path)
+    try:
+        cutout.relative_to(BASE_DIR.resolve())
+    except ValueError as exc:
+        raise ProductTruthLockError(
+            "CANONICAL_CUTOUT_INVALID",
+            "Persisted cutout path is outside the server media root.",
+            status_code=403,
+        ) from exc
+    if not cutout.exists() or not cutout.is_file() or cutout.stat().st_size == 0:
+        raise ProductTruthLockError(
+            "CANONICAL_CUTOUT_INVALID",
+            "Persisted canonical cutout is missing.",
+            status_code=404,
+        )
+    return cutout
+
+
 def _validate_lock_bytes(lock: ProductTruthLock) -> ResolvedProductTruthLock:
     source = _path_from_server_record(lock.canonical_source_path)
     cutout = _path_from_server_record(lock.canonical_cutout_path)
@@ -321,6 +349,11 @@ def _validate_lock_bytes(lock: ProductTruthLock) -> ResolvedProductTruthLock:
             "PRODUCT_TRUTH_SCALE_INVALID",
             "min_scale cannot exceed max_scale.",
         )
+    if lock.review_status != "APPROVED":
+        raise ProductTruthLockError(
+            "HUMAN_REVIEW_REQUIRED",
+            "Product truth lock is not approved for exact output.",
+        )
     if not all(
         (
             lock.identity_lock,
@@ -334,11 +367,6 @@ def _validate_lock_bytes(lock: ProductTruthLock) -> ResolvedProductTruthLock:
         raise ProductTruthLockError(
             "PRODUCT_TRUTH_LOCK_INCOMPLETE",
             "All identity, geometry, label, logo, colour, and scale locks must be true.",
-        )
-    if lock.review_status != "APPROVED":
-        raise ProductTruthLockError(
-            "HUMAN_REVIEW_REQUIRED",
-            "Product truth lock is not approved for exact output.",
         )
     if lock.failure_state:
         raise ProductTruthLockError(
@@ -427,6 +455,14 @@ def inspect_product_truth_lock(product_id: str) -> dict[str, Any]:
             "product_truth_status": status,
             "failure_state": exc.code,
             "error": exc.message,
+            "canonical_media_id": lock.canonical_media_id,
+            "canonical_sha256": lock.canonical_sha256,
+            "canonical_cutout_media_id": lock.canonical_cutout_media_id,
+            "canonical_cutout_sha256": lock.canonical_cutout_sha256,
+            "source_width": lock.source_width,
+            "source_height": lock.source_height,
+            "provenance": dict(lock.provenance),
+            "schema_version": lock.schema_version,
         }
 
 

@@ -101,6 +101,27 @@ vi.mock("../../../api/imgFactory", () => ({
 	}),
 }));
 
+vi.mock("../../../api/productTruthLock", () => ({
+	fetchProductTruthLock: vi.fn().mockResolvedValue({
+		product_id: "prod-1",
+		lock_present: true,
+		lock_valid: true,
+		exact_allowed: true,
+		review_status: "APPROVED",
+		product_truth_status: "PRODUCT_TRUTH_PRESERVED_EXACT_COMPOSITE",
+	}),
+	approveProductTruthLock: vi.fn().mockResolvedValue({
+		product_id: "prod-1",
+		lock_present: true,
+		lock_valid: true,
+		exact_allowed: true,
+		review_status: "APPROVED",
+		product_truth_status: "PRODUCT_TRUTH_PRESERVED_EXACT_COMPOSITE",
+	}),
+	productTruthCutoutPreviewUrl: (productId: string) =>
+		`/api/product-truth/${productId}/visual-lock/cutout-preview`,
+}));
+
 vi.mock("../../../api/exactProductOutput", () => ({
 	resolveExactGenerationGate: vi.fn().mockResolvedValue({
 		mode: "standard",
@@ -310,6 +331,10 @@ import {
 	savePosterToLibrary,
 } from "../../../api/posterCopySets";
 import { fetchPosterReadiness } from "../../../api/posterReadiness";
+import {
+	approveProductTruthLock,
+	fetchProductTruthLock,
+} from "../../../api/productTruthLock";
 
 const RECON_APPROVED = {
 	deliverable: {
@@ -417,6 +442,57 @@ describe("PosterGuidedShell", () => {
 		expect(screen.queryByText(/Subhook/i)).toBeNull();
 		expect(screen.queryByText(/\bUSP\b/)).toBeNull();
 		expect(screen.queryByText(/Manual Expert/i)).toBeNull();
+	});
+
+	it("shows the pending cutout and requires explicit truth approval before IMG", async () => {
+		vi.mocked(fetchProductTruthLock).mockResolvedValueOnce({
+			product_id: "prod-1",
+			lock_present: true,
+			lock_valid: false,
+			exact_allowed: false,
+			review_status: "PENDING_REVIEW",
+			product_truth_status: "HUMAN_REVIEW_REQUIRED",
+			failure_state: "HUMAN_REVIEW_REQUIRED",
+			canonical_cutout_media_id: "cutout-1",
+		});
+
+		renderShell();
+		await driveToApproved();
+		fireEvent.click(screen.getByTestId("poster-guided-continue"));
+		fireEvent.click(
+			await screen.findByTestId("poster-visual-card-product_hero_night_routine"),
+		);
+
+		const panel = await screen.findByTestId("poster-truth-review-panel");
+		expect(panel).toBeInTheDocument();
+		expect(
+			screen.getByTestId("poster-truth-cutout-preview").getAttribute("src"),
+		).toBe("/api/product-truth/prod-1/visual-lock/cutout-preview");
+		expect(
+			(screen.getByTestId("poster-generate-scene") as HTMLButtonElement).disabled,
+		).toBe(true);
+
+		fireEvent.change(screen.getByTestId("poster-truth-reviewed-by"), {
+			target: { value: "Faris" },
+		});
+		fireEvent.click(screen.getByTestId("poster-truth-confirm-identity"));
+		fireEvent.click(screen.getByTestId("poster-truth-confirm-label-logo"));
+		fireEvent.click(screen.getByTestId("poster-truth-confirm-geometry-scale"));
+		fireEvent.click(screen.getByTestId("poster-truth-approve"));
+
+		await screen.findByTestId("poster-truth-approved");
+		expect(approveProductTruthLock).toHaveBeenCalledWith(
+			"prod-1",
+			expect.objectContaining({
+				reviewed_by: "Faris",
+				confirm_identity: true,
+				confirm_label_logo: true,
+				confirm_geometry_scale: true,
+			}),
+		);
+		expect(
+			(screen.getByTestId("poster-generate-scene") as HTMLButtonElement).disabled,
+		).toBe(false);
 	});
 
 	it("walks the full guided journey product → save", async () => {
