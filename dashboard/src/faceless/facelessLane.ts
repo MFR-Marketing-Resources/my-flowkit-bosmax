@@ -183,10 +183,9 @@ export function generateAssetHasTransport(
 	if (!asset) return false;
 	return Boolean(
 		asset.mediaId ||
-			asset.localFilePath ||
-			asset.downloadUrl ||
-			asset.previewUrl ||
-			asset.assetId,
+		asset.localFilePath ||
+		asset.downloadUrl ||
+		asset.previewUrl,
 	);
 }
 
@@ -219,6 +218,12 @@ export function buildFacelessGenerateBody(input: {
 	const durationSeconds = Number(input.durationSeconds);
 	if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
 		throw new Error("Faceless generate requires a positive duration_s.");
+	}
+	if ((input.sceneMode || "SINGLE") === "EXTEND") {
+		throw new Error(
+			"Faceless EXTEND uses the durable video-job/native-Extend lifecycle; " +
+			"do not submit its base clip through /api/flow/generate.",
+		);
 	}
 
 	const pkg = input.workspacePackage ?? null;
@@ -284,15 +289,6 @@ export function buildFacelessGenerateBody(input: {
 	}
 	if (pkg?.prompt_fingerprint) {
 		body.prompt_fingerprint = pkg.prompt_fingerprint;
-	}
-
-	const sceneMode = input.sceneMode || "SINGLE";
-	if (sceneMode === "EXTEND" && input.extendTotalSeconds) {
-		body.faceless_extend_plan = {
-			total_duration_seconds: input.extendTotalSeconds,
-			base_duration_seconds: 8,
-			route: "NATIVE_EXTEND",
-		};
 	}
 
 	return body;

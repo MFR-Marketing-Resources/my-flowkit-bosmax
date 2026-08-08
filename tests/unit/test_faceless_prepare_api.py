@@ -54,12 +54,19 @@ def test_prepare_rejects_missing_model(client: TestClient) -> None:
 def test_prepare_product_only_no_start_frame(client: TestClient) -> None:
     fake_pkg = {
         "workspace_execution_package_id": "wep-1",
+        "execution_allowed": True,
         "prompt_text": "resolved environment intent in prompt",
         "prompt_fingerprint": "fp1",
         "asset_slots": [
             {
                 "slot_key": "start_frame",
-                "resolved_asset": {"asset_id": "product-image:p1:start_frame"},
+                "resolved_asset": {
+                    "asset_id": "product-image:p1:start_frame",
+                    "asset_fingerprint": "sha256:product-p1",
+                    "asset_source": "PRODUCT_IMAGE_CACHE",
+                    "media_id": "media-p1",
+                    "download_url": "https://cdn.example/p1.png",
+                },
             }
         ],
     }
@@ -95,10 +102,26 @@ def test_prepare_product_only_no_start_frame(client: TestClient) -> None:
     assert "VISUAL LAW" in (kwargs.get("scene_context_override") or "")
 
 
-def test_prepare_extend_routes_base_package_and_native_extend_hint(
+def test_prepare_extend_keeps_durable_multiblock_package_lineage(
     client: TestClient,
 ) -> None:
-    fake_pkg = {"workspace_execution_package_id": "wep-e", "prompt_text": "x"}
+    fake_pkg = {
+        "workspace_execution_package_id": "wep-e",
+        "execution_allowed": True,
+        "prompt_text": "x",
+        "asset_slots": [
+            {
+                "slot_key": "start_frame",
+                "resolved_asset": {
+                    "asset_id": "product-image:p1:start_frame",
+                    "asset_fingerprint": "sha256:product-p1",
+                    "asset_source": "PRODUCT_IMAGE_CACHE",
+                    "media_id": "media-p1",
+                    "download_url": "https://cdn.example/p1.png",
+                },
+            }
+        ],
+    }
     with patch(
         "agent.api.faceless.create_workspace_execution_package",
         new_callable=AsyncMock,
@@ -115,15 +138,33 @@ def test_prepare_extend_routes_base_package_and_native_extend_hint(
         )
     assert r.status_code == 200, r.text
     data = r.json()
-    assert data["extend_routing"]["authority"] == "NATIVE_EXTEND"
-    assert data["extend_routing"]["total_duration_seconds"] == 16
+    assert data["durable_lifecycle"]["plan"].endswith("/video-jobs/plan")
+    assert data["durable_lifecycle"]["total_duration_seconds"] == 16
     kwargs = mock_create.await_args.kwargs
-    assert kwargs["duration_seconds"] == 8  # base block
+    assert kwargs["duration_seconds"] == 8
+    assert kwargs["generation_mode"] == "EXTEND"
+    assert kwargs["requested_total_duration_seconds"] == 16
     assert kwargs["model"] == "Veo 3.1 - Lite"
 
 
 def test_prepare_propagates_omni_flash_duration(client: TestClient) -> None:
-    fake_pkg = {"workspace_execution_package_id": "wep-o", "prompt_text": "x"}
+    fake_pkg = {
+        "workspace_execution_package_id": "wep-o",
+        "execution_allowed": True,
+        "prompt_text": "x",
+        "asset_slots": [
+            {
+                "slot_key": "start_frame",
+                "resolved_asset": {
+                    "asset_id": "product-image:p1:start_frame",
+                    "asset_fingerprint": "sha256:product-p1",
+                    "asset_source": "PRODUCT_IMAGE_CACHE",
+                    "media_id": "media-p1",
+                    "download_url": "https://cdn.example/p1.png",
+                },
+            }
+        ],
+    }
     with patch(
         "agent.api.faceless.create_workspace_execution_package",
         new_callable=AsyncMock,
@@ -131,12 +172,26 @@ def test_prepare_propagates_omni_flash_duration(client: TestClient) -> None:
     ) as mock_create:
         r = client.post(
             "/api/faceless/prepare",
-            json=_base_body(model="Omni Flash", duration_seconds=6),
+            json=_base_body(model="Omni Flash", duration_seconds=8),
         )
     assert r.status_code == 200, r.text
     kwargs = mock_create.await_args.kwargs
     assert kwargs["model"] == "Omni Flash"
-    assert kwargs["duration_seconds"] == 6
+    assert kwargs["duration_seconds"] == 8
+
+
+def test_prepare_rejects_unknown_model_or_unsupported_duration(client: TestClient) -> None:
+    unknown = client.post(
+        "/api/faceless/prepare",
+        json=_base_body(model="Not A Flow Model", duration_seconds=8),
+    )
+    assert unknown.status_code == 422
+
+    unsupported = client.post(
+        "/api/faceless/prepare",
+        json=_base_body(model="Veo 3.1 - Lite", duration_seconds=6),
+    )
+    assert unsupported.status_code == 422
 
 
 def test_validate_preview_no_package_write(client: TestClient) -> None:

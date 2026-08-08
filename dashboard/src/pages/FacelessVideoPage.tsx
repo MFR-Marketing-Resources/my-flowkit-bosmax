@@ -23,6 +23,7 @@ import {
 	WorkflowStep,
 	type WorkflowStepStatus,
 } from "../components/workflow";
+import NativeExtendPanel from "../components/NativeExtendPanel";
 import CanonicalReferenceBindingControls, {
 	EMPTY_BINDING,
 	type CanonicalReferenceBinding,
@@ -80,9 +81,10 @@ export default function FacelessVideoPage() {
 
 	const [sceneMode, setSceneMode] = useState<FacelessSceneMode>("SINGLE");
 	const [capability, setCapability] = useState<VideoCapabilityMatrix | null>(null);
+	const [capabilityError, setCapabilityError] = useState<string | null>(null);
 	const [videoModels, setVideoModels] = useState<VideoModelInfo[]>([]);
-	const [videoModel, setVideoModel] = useState("Veo 3.1 - Lite");
-	const [durationSec, setDurationSec] = useState<number>(8);
+	const [videoModel, setVideoModel] = useState("");
+	const [durationSec, setDurationSec] = useState<number>(0);
 	const [extendTotalSec, setExtendTotalSec] = useState<number | null>(null);
 
 	const [workspacePackage, setWorkspacePackage] =
@@ -104,8 +106,18 @@ export default function FacelessVideoPage() {
 	useEffect(() => {
 		void fetch("/api/flow/video-capability-matrix")
 			.then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-			.then((m: VideoCapabilityMatrix) => setCapability(m))
-			.catch(() => setCapability(null));
+			.then((m: VideoCapabilityMatrix) => {
+				setCapability(m);
+				setCapabilityError(null);
+			})
+			.catch((err: unknown) => {
+				setCapability(null);
+				setCapabilityError(
+					err instanceof Error
+						? err.message
+						: "Video capability authority unavailable",
+				);
+			});
 		void fetchVideoModels()
 			.then((res) => setVideoModels(res.models || []))
 			.catch(() => setVideoModels([]));
@@ -143,6 +155,7 @@ export default function FacelessVideoPage() {
 		() => videoModels.find((m) => m.ui_label === videoModel) || null,
 		[videoModels, videoModel],
 	);
+	const extendBaseDurationSec = selectedRegistryModel?.extend_block_duration_s ?? null;
 
 	const extendTotals = useMemo(() => {
 		const t = selectedRegistryModel?.extend_totals_s;
@@ -155,8 +168,11 @@ export default function FacelessVideoPage() {
 		if (extendTotals.length === 0) {
 			return `${videoModel} has no proven Extend totals in the model authority. Choose another model or use Single.`;
 		}
+		if (!extendBaseDurationSec || extendBaseDurationSec <= 0) {
+			return `${videoModel} has no proven Extend block duration in the model authority.`;
+		}
 		return null;
-	}, [sceneMode, videoModel, extendTotals]);
+	}, [sceneMode, videoModel, extendTotals, extendBaseDurationSec]);
 
 	useEffect(() => {
 		if (sceneMode !== "EXTEND") return;
@@ -176,7 +192,7 @@ export default function FacelessVideoPage() {
 			productId: selectedProduct?.id,
 			model: videoModel,
 			sceneMode,
-			durationSeconds: sceneMode === "SINGLE" ? durationSec : 8,
+			durationSeconds: sceneMode === "SINGLE" ? durationSec : extendBaseDurationSec,
 			extendTotalSeconds: extendTotalSec,
 			startFrameAssetId: binding.startFrameAssetId,
 			referenceOverride: showAdvancedRef && !binding.startFrameAssetId ? true : referenceOverride && showAdvancedRef,
@@ -193,7 +209,7 @@ export default function FacelessVideoPage() {
 					productId: selectedProduct?.id,
 					model: videoModel,
 					sceneMode,
-					durationSeconds: sceneMode === "SINGLE" ? durationSec : 8,
+					durationSeconds: sceneMode === "SINGLE" ? durationSec : extendBaseDurationSec,
 					extendTotalSeconds: extendTotalSec,
 					// optional — do not require frame
 			  })
@@ -204,12 +220,20 @@ export default function FacelessVideoPage() {
 			productId: selectedProduct?.id,
 			model: videoModel,
 			sceneMode,
-			durationSeconds: sceneMode === "SINGLE" ? durationSec : 8,
+			durationSeconds: sceneMode === "SINGLE" ? durationSec : extendBaseDurationSec,
 			extendTotalSeconds: extendTotalSec,
 		});
 		const result = [...core];
 		if (!settingsAvailable) {
 			result.unshift("Hook/Background settings unavailable — retry when API is up");
+		}
+		if (!capability || !engine) {
+			result.unshift(
+				`Video capability authority unavailable${capabilityError ? `: ${capabilityError}` : ""} — no local model/duration fallback is allowed`,
+			);
+		}
+		if (sceneMode === "SINGLE" && !modelsAtDuration.length) {
+			result.unshift("No valid SINGLE model/duration tuple is available from the capability authority.");
 		}
 		if (extendBlockedReason) result.push(extendBlockedReason);
 		if (showAdvancedRef && binding.startFrameAssetId === "" && false) {
@@ -222,11 +246,16 @@ export default function FacelessVideoPage() {
 		videoModel,
 		sceneMode,
 		durationSec,
+		extendBaseDurationSec,
 		extendTotalSec,
 		binding.startFrameAssetId,
 		showAdvancedRef,
 		referenceOverride,
 		settingsAvailable,
+		capability,
+		capabilityError,
+		engine,
+		modelsAtDuration,
 		extendBlockedReason,
 	]);
 
@@ -238,7 +267,9 @@ export default function FacelessVideoPage() {
 			? extendTotalSec != null
 				? `${extendTotalSec}s total`
 				: "—"
-			: `${durationSec}s`;
+			: durationSec > 0
+				? `${durationSec}s`
+				: "—";
 
 	const v4IsOpen = (index: number, status: WorkflowStepStatus) =>
 		v4Open[index] ?? status === "active";
@@ -287,7 +318,8 @@ export default function FacelessVideoPage() {
 				background_id: backgroundId,
 				model: videoModel,
 				generation_mode: sceneMode,
-				duration_seconds: sceneMode === "SINGLE" ? durationSec : 8,
+				duration_seconds:
+					sceneMode === "SINGLE" ? durationSec : extendBaseDurationSec,
 				total_duration_seconds: sceneMode === "EXTEND" ? extendTotalSec : null,
 				start_frame_asset_id:
 					showAdvancedRef && binding.startFrameAssetId
@@ -375,6 +407,15 @@ export default function FacelessVideoPage() {
 	};
 
 	const handleGenerate = async () => {
+		if (sceneMode === "EXTEND") {
+			setNotice({
+				tone: "info",
+				title: "Use the full-video plan",
+				detail: "Faceless Extend is owned by the durable video-job lifecycle below.",
+				requestId: null,
+			});
+			return;
+		}
 		if (executionInFlightRef.current) return;
 		if (!workspacePackage?.prompt_text) {
 			setNotice({
@@ -400,10 +441,7 @@ export default function FacelessVideoPage() {
 		const requestId = `faceless_${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`;
 		setNotice({
 			tone: "info",
-			title:
-				sceneMode === "EXTEND"
-					? "Submitting base clip"
-					: "Submitting faceless clip",
+			title: "Submitting faceless clip",
 			detail: "One-door generate — spends credits. Needs open Flow editor.",
 			requestId,
 		});
@@ -421,7 +459,7 @@ export default function FacelessVideoPage() {
 						? binding.endFrameAssetId
 						: null,
 				model: videoModel,
-				durationSeconds: sceneMode === "EXTEND" ? 8 : durationSec,
+				durationSeconds: durationSec,
 				sceneMode,
 				extendTotalSeconds: extendTotalSec,
 			});
@@ -459,12 +497,7 @@ export default function FacelessVideoPage() {
 					? "border-amber-500/30 bg-amber-500/10 text-amber-100"
 					: "border-sky-500/30 bg-sky-500/10 text-sky-100";
 
-	const genLabel =
-		sceneMode === "EXTEND"
-			? isExecuting
-				? "Generating base…"
-				: "▶ Generate base clip (then native-extend)"
-			: isExecuting
+	const genLabel = isExecuting
 				? "Generating…"
 				: `▶ Generate 1 faceless clip · ${durationSec}s`;
 
@@ -642,6 +675,7 @@ export default function FacelessVideoPage() {
 								<select
 									className={selectClass}
 									value={videoModel}
+									disabled={!capability || !(sceneMode === "SINGLE" ? modelsAtDuration : videoModels).length}
 									onChange={(e) => {
 										const next = e.target.value;
 										setVideoModel(next);
@@ -678,6 +712,7 @@ export default function FacelessVideoPage() {
 									<select
 										className={selectClass}
 										value={durationSec}
+										disabled={!capability || !singleDurationOptions.length}
 										onChange={(e) => {
 											const next = Number(e.target.value);
 											setDurationSec(next);
@@ -813,21 +848,44 @@ export default function FacelessVideoPage() {
 						helper="Credits are spent only here. Never auto-fired."
 						collapsible={false}
 					>
-						<button
-							type="button"
-							disabled={
-								!workspacePackage?.prompt_text || isExecuting || blockers.length > 0
-							}
-							onClick={() => void handleGenerate()}
-							className="w-full rounded-xl bg-gradient-to-br from-v4-accent to-v4-auto px-4 py-3 text-[13px] font-bold text-slate-950 shadow-lg shadow-v4-accent/20 transition-opacity hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-40"
-							data-testid="faceless-generate"
-						>
-							{genLabel}
-						</button>
-						<p className="mt-2 text-[11px] text-slate-500">
-							Uses the shared one-door generate path. Needs an open, warmed-up Flow
-							editor tab.
-						</p>
+						{sceneMode === "EXTEND" ? (
+							<NativeExtendPanel
+								productId={selectedProduct?.id}
+								productName={
+									selectedProduct?.raw_product_title || selectedProduct?.id
+								}
+								executionPackageId={
+									workspacePackage?.workspace_execution_package_id
+								}
+								approvedAssetSha256={
+									workspacePackage?.resolved_assets?.find(
+										(asset) => asset.slot_key === "start_frame",
+									)?.asset_fingerprint
+								}
+								totalDurationSeconds={extendTotalSec}
+								aspectRatio="VIDEO_ASPECT_RATIO_PORTRAIT"
+							/>
+						) : (
+							<>
+								<button
+									type="button"
+									disabled={
+										!workspacePackage?.prompt_text ||
+										isExecuting ||
+										blockers.length > 0
+									}
+									onClick={() => void handleGenerate()}
+									className="w-full rounded-xl bg-gradient-to-br from-v4-accent to-v4-auto px-4 py-3 text-[13px] font-bold text-slate-950 shadow-lg shadow-v4-accent/20 transition-opacity hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-40"
+									data-testid="faceless-generate"
+								>
+									{genLabel}
+								</button>
+								<p className="mt-2 text-[11px] text-slate-500">
+									Uses the shared one-door generate path. Needs an open, warmed-up Flow
+									editor tab.
+								</p>
+							</>
+						)}
 						{completedUrl ? (
 							<video
 								className="mt-3 max-h-64 w-full rounded-xl border border-slate-800 bg-black"
@@ -892,16 +950,20 @@ export default function FacelessVideoPage() {
 							tone: workspacePackage ? "good" : "muted",
 						},
 					]}
-					generate={{
-						label: genLabel,
-						note: "Credits only on Generate. Prepare is free.",
-						disabled:
-							!workspacePackage?.prompt_text ||
-							isExecuting ||
-							blockers.length > 0,
-						loading: isExecuting,
-						onClick: () => void handleGenerate(),
-					}}
+					generate={
+						sceneMode === "SINGLE"
+							? {
+									label: genLabel,
+									note: "Credits only on Generate. Prepare is free.",
+									disabled:
+										!workspacePackage?.prompt_text ||
+										isExecuting ||
+										blockers.length > 0,
+									loading: isExecuting,
+									onClick: () => void handleGenerate(),
+								}
+							: undefined
+					}
 					debug={
 						<pre className="overflow-auto text-[10px] text-slate-400">
 							{JSON.stringify(

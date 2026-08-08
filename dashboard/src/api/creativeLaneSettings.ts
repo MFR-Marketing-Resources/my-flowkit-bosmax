@@ -85,7 +85,14 @@ export interface FacelessPrepareResponse {
 		asset_slots?: Array<Record<string, unknown>>;
 		[key: string]: unknown;
 	};
-	extend_routing?: Record<string, unknown> | null;
+	durable_lifecycle?: {
+		plan: string;
+		authorize: string;
+		start: string;
+		status: string;
+		base_clip_duration_seconds: number;
+		total_duration_seconds: number | null;
+	} | null;
 	error_code?: string;
 	detail?: string;
 }

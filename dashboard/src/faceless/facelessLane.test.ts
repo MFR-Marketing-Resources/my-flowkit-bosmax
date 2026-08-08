@@ -125,7 +125,7 @@ describe("facelessLane product-first", () => {
 		expect(body.workspace_execution_package_id).toBe("wep_1");
 	});
 
-	it("EXTEND body carries native-extend plan + 8s base duration", () => {
+	it("EXTEND cannot fall back to a base one-door submission", () => {
 		const pkg = {
 			prompt_text: "hands",
 			asset_slots: [
@@ -139,22 +139,16 @@ describe("facelessLane product-first", () => {
 				},
 			],
 		} as unknown as WorkspaceExecutionPackage;
-		const body = buildFacelessGenerateBody({
-			prompt: "hands",
-			workspacePackage: pkg,
-			model: "Veo 3.1 - Lite",
-			durationSeconds: 8,
-			sceneMode: "EXTEND",
-			extendTotalSeconds: 24,
-		});
-		expect(body.duration_s).toBe(8);
-		expect((body.faceless_extend_plan as { route: string }).route).toBe(
-			"NATIVE_EXTEND",
-		);
-		expect(
-			(body.faceless_extend_plan as { total_duration_seconds: number })
-				.total_duration_seconds,
-		).toBe(24);
+		expect(() =>
+			buildFacelessGenerateBody({
+				prompt: "hands",
+				workspacePackage: pkg,
+				model: "Veo 3.1 - Lite",
+				durationSeconds: 8,
+				sceneMode: "EXTEND",
+				extendTotalSeconds: 24,
+			}),
+		).toThrow(/durable video-job/i);
 	});
 
 	it("packageSlotResolvedAsset prefers asset_slots", () => {

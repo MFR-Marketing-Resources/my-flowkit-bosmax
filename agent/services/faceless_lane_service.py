@@ -27,9 +27,75 @@ ERR_FACELESS_PRODUCT_REQUIRED = "ERR_FACELESS_PRODUCT_REQUIRED"
 ERR_FACELESS_START_FRAME_REQUIRED = "ERR_FACELESS_START_FRAME_REQUIRED"
 ERR_FACELESS_REFERENCE_CONTRACT = "ERR_FACELESS_REFERENCE_CONTRACT"
 ERR_FACELESS_MODEL_REQUIRED = "ERR_FACELESS_MODEL_REQUIRED"
+ERR_FACELESS_MODEL_UNSUPPORTED = "ERR_FACELESS_MODEL_UNSUPPORTED"
 ERR_FACELESS_MODE_INVALID = "ERR_FACELESS_MODE_INVALID"
 ERR_FACELESS_DURATION_INVALID = "ERR_FACELESS_DURATION_INVALID"
+ERR_FACELESS_MODEL_DURATION_UNSUPPORTED = "ERR_FACELESS_MODEL_DURATION_UNSUPPORTED"
 ERR_FACELESS_EXTEND_TOTAL_REQUIRED = "ERR_FACELESS_EXTEND_TOTAL_REQUIRED"
+
+
+def resolve_faceless_video_configuration(
+    *,
+    model: Optional[str],
+    generation_mode: Optional[str],
+    duration_seconds: Optional[int] = None,
+    total_duration_seconds: Optional[int] = None,
+) -> tuple[bool, Optional[str], Optional[str], Optional[dict[str, Any]]]:
+    """Resolve the selected Faceless tuple through shared video authorities.
+
+    SINGLE uses the operator capability matrix (the same matrix exposed by the
+    dashboard). EXTEND uses the shared video-model registry's proven totals and
+    the existing native-Extend route authority. No Faceless-local model or
+    duration table is permitted here.
+    """
+    mode = str(generation_mode or "SINGLE").strip().upper()
+    try:
+        from agent.services import video_models as vm
+
+        if mode == "SINGLE":
+            duration = int(duration_seconds) if duration_seconds is not None else 0
+            from agent.services import video_capability_matrix as cm
+
+            ok, code = cm.validate_single("GOOGLE_FLOW", model, duration)
+            if not ok:
+                if code in (cm.ERR_UNSUPPORTED_ENGINE_MODEL,):
+                    return False, ERR_FACELESS_MODEL_UNSUPPORTED, code, None
+                return False, ERR_FACELESS_MODEL_DURATION_UNSUPPORTED, code, None
+            orchestration = vm.resolve_orchestration(model, duration)
+            return True, None, None, orchestration
+
+        if mode == "EXTEND":
+            total = int(total_duration_seconds) if total_duration_seconds is not None else 0
+            orchestration = vm.resolve_orchestration(model, total)
+            if orchestration.get("generation_mode") != "EXTEND":
+                return (
+                    False,
+                    ERR_FACELESS_MODEL_DURATION_UNSUPPORTED,
+                    "selected model/total is not an authorized EXTEND tuple",
+                    None,
+                )
+            from agent.services import extend_route_planner as routes
+
+            duration_authority = routes.resolve_native_extend_execution(
+                parent_operation_id=None,
+                project_id=None,
+                scene_id=None,
+                total_duration_seconds=total,
+            )
+            if not duration_authority.get("duration_plan_authorized"):
+                return (
+                    False,
+                    ERR_FACELESS_MODEL_DURATION_UNSUPPORTED,
+                    "selected total is not authorized by the native-Extend route",
+                    None,
+                )
+            return True, None, None, orchestration
+    except (TypeError, ValueError) as exc:
+        if "unknown video model" in str(exc).lower():
+            return False, ERR_FACELESS_MODEL_UNSUPPORTED, str(exc), None
+        return False, ERR_FACELESS_MODEL_DURATION_UNSUPPORTED, str(exc), None
+
+    return False, ERR_FACELESS_MODE_INVALID, f"unsupported generation mode: {mode}", None
 
 FACELESS_VISUAL_LAW = (
     "VISUAL LAW (FACELESS): No visible human face and no AI presenter face. "
@@ -93,6 +159,15 @@ def validate_faceless_inputs(
             return False, ERR_FACELESS_EXTEND_TOTAL_REQUIRED, (
                 "EXTEND requires an authorized total duration from capability authority"
             )
+
+    ok_video, code_video, detail_video, _ = resolve_faceless_video_configuration(
+        model=model,
+        generation_mode=gen_mode,
+        duration_seconds=duration_seconds,
+        total_duration_seconds=total_duration_seconds,
+    )
+    if not ok_video:
+        return False, code_video, detail_video
 
     ok_h, code_h, detail_h = cls.validate_hook(hook_id)
     if not ok_h:

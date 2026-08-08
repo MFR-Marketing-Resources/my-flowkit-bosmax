@@ -64,6 +64,20 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
             detail={"error_code": code, "message": detail},
         )
 
+    ok_video, code_video, detail_video, orchestration = (
+        fl.resolve_faceless_video_configuration(
+            model=body.model,
+            generation_mode=gen_mode,
+            duration_seconds=body.duration_seconds,
+            total_duration_seconds=body.total_duration_seconds,
+        )
+    )
+    if not ok_video or not orchestration:
+        raise HTTPException(
+            status_code=422,
+            detail={"error_code": code_video, "message": detail_video},
+        )
+
     try:
         resolution = fl.build_faceless_resolution(
             hook_id=body.hook_id,
@@ -81,14 +95,11 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
 
     scene_context = fl.build_faceless_scene_context(resolution)
 
-    # Package duration: SINGLE uses clip duration; EXTEND packages base 8s block
-    # (native-extend continues after base — same as Hybrid Laluan-A).
-    if gen_mode == "EXTEND":
-        pkg_duration = 8
-        pkg_gen_mode = "SINGLE"  # base clip package; extend is separate authority
-    else:
-        pkg_duration = int(body.duration_seconds or 0)
-        pkg_gen_mode = "SINGLE"
+    # The package is the server-owned authority consumed by the durable full-video
+    # lifecycle. EXTEND keeps the canonical multi-block compiler lineage; it is not
+    # reduced to a SINGLE base package with a routing hint.
+    pkg_duration = int(orchestration["engine_block_duration_seconds"])
+    pkg_gen_mode = str(orchestration["generation_mode"])
 
     source_mode = resolution["source_mode"]
     start_id = body.start_frame_asset_id if reference_override else None
@@ -115,11 +126,67 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
             scene_context_override=scene_context,
             copy_set_id=body.copy_set_id,
             copy_fallback_confirmed=body.copy_fallback_confirmed,
+            requested_total_duration_seconds=(
+                int(body.total_duration_seconds)
+                if gen_mode == "EXTEND"
+                else None
+            ),
         )
     except Exception as exc:  # noqa: BLE001 — surface package errors as 422/400
         msg = str(exc)
         status = 422 if "required" in msg.lower() or "ERR_" in msg else 400
         raise HTTPException(status_code=status, detail=msg) from exc
+
+    if not isinstance(pkg, dict) or not bool(pkg.get("execution_allowed")):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error_code": "ERR_FACELESS_PACKAGE_BLOCKED",
+                "message": "Workspace execution package is not execution-ready.",
+                "blockers": (pkg.get("blockers") if isinstance(pkg, dict) else None),
+            },
+        )
+
+    if not reference_override:
+        start_asset = None
+        for slot in pkg.get("asset_slots") or []:
+            if slot.get("slot_key") == "start_frame":
+                start_asset = slot.get("resolved_asset")
+                break
+        if not isinstance(start_asset, dict):
+            start_asset = next(
+                (
+                    asset
+                    for asset in (pkg.get("resolved_assets") or [])
+                    if isinstance(asset, dict) and asset.get("slot_key") == "start_frame"
+                ),
+                None,
+            )
+        is_product_anchor = str((start_asset or {}).get("asset_id") or "").startswith(
+            "product-image:"
+        )
+        has_transport = bool(
+            (start_asset or {}).get("media_id")
+            or (start_asset or {}).get("local_file_path")
+            or (start_asset or {}).get("download_url")
+            or (start_asset or {}).get("preview_url")
+        )
+        has_lineage = bool(
+            (start_asset or {}).get("asset_fingerprint")
+            and (start_asset or {}).get("asset_source")
+        )
+        if not is_product_anchor or not has_transport or not has_lineage:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error_code": "ERR_FACELESS_PRODUCT_ANCHOR_UNRESOLVED",
+                    "message": (
+                        "Approved product package did not resolve a transportable "
+                        "start-frame anchor. Prepare is blocked until product image truth "
+                        "is ready."
+                    ),
+                },
+            )
 
     return {
         "ok": True,
@@ -127,7 +194,7 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
         # Operator-facing (no transport chrome)
         "generation_mode": gen_mode,
         "model": str(body.model).strip(),
-        "duration_seconds": body.duration_seconds,
+        "duration_seconds": pkg_duration,
         "total_duration_seconds": body.total_duration_seconds,
         "character_presence": fl.FACELESS_CHARACTER_PRESENCE,
         "avatar_id": None,
@@ -144,15 +211,14 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
         },
         "scene_context_override": scene_context,
         "package": pkg if isinstance(pkg, dict) else pkg,
-        "extend_routing": (
+        "durable_lifecycle": (
             {
-                "authority": "NATIVE_EXTEND",
-                "base_clip_duration_seconds": 8,
+                "plan": "/api/flow/video-jobs/plan",
+                "authorize": "/api/flow/video-jobs/{job_id}/authorize",
+                "start": "/api/flow/video-jobs/{job_id}/start",
+                "status": "/api/flow/video-jobs/{job_id}/status",
+                "base_clip_duration_seconds": pkg_duration,
                 "total_duration_seconds": body.total_duration_seconds,
-                "note": (
-                    "After base clip completes, continue via existing native-extend "
-                    "authority — do not multi-block through single /api/flow/generate."
-                ),
             }
             if gen_mode == "EXTEND"
             else None
@@ -180,6 +246,16 @@ async def faceless_validate(body: FacelessPrepareRequest) -> dict[str, Any]:
     )
     if not ok:
         return {"ok": False, "error_code": code, "detail": detail}
+    ok_video, code_video, detail_video, orchestration = (
+        fl.resolve_faceless_video_configuration(
+            model=body.model,
+            generation_mode=gen_mode,
+            duration_seconds=body.duration_seconds,
+            total_duration_seconds=body.total_duration_seconds,
+        )
+    )
+    if not ok_video or not orchestration:
+        return {"ok": False, "error_code": code_video, "detail": detail_video}
     resolution = fl.build_faceless_resolution(
         hook_id=body.hook_id,
         background_id=body.background_id,
@@ -192,6 +268,8 @@ async def faceless_validate(body: FacelessPrepareRequest) -> dict[str, Any]:
         "ok": True,
         "generation_mode": gen_mode,
         "model": body.model,
+        "duration_seconds": orchestration["engine_block_duration_seconds"],
+        "total_duration_seconds": body.total_duration_seconds,
         "resolution": {
             "hook": resolution["hook"],
             "background": resolution["background"],
