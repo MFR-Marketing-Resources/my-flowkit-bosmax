@@ -89,16 +89,15 @@ describe("facelessLane", () => {
 		expect(facelessProductBlocker(null)).toMatch(/product/i);
 		expect(facelessStartFrameBlocker("")).toMatch(/start frame/i);
 		expect(
-					facelessPrepareBlockers({ productId: null, startFrameAssetId: null }),
-				).toHaveLength(3); // product + start frame + model
-				expect(
-					facelessPrepareBlockers({
-						productId: "p1",
-						startFrameAssetId: "asset-1",
-						model: "Veo 3.1 - Lite",
-					}),
-				).toEqual([]);
-			});
+			facelessPrepareBlockers({ productId: null, startFrameAssetId: null }),
+		).toHaveLength(2);
+		expect(
+			facelessPrepareBlockers({
+				productId: "p1",
+				startFrameAssetId: "asset-1",
+			}),
+		).toEqual([]);
+	});
 
 	it("frontend settings shell is fail-closed empty (no second SSOT vocab)", () => {
 		expect(CREATIVE_LANE_SETTINGS_UNAVAILABLE.source).toBe("unavailable");
@@ -118,77 +117,26 @@ describe("facelessLane", () => {
 		expect(start?.asset_id).toBe("ca_start_selected");
 
 		const body = buildFacelessGenerateBody({
-					prompt: pkg.prompt_text,
-					productId: pkg.product_id,
-					workspacePackage: pkg,
-					startFrameAssetId: "ca_start_selected",
-					model: "Omni Flash",
-					durationSeconds: 6,
-					sceneMode: "SINGLE",
-				});
+			prompt: pkg.prompt_text,
+			productId: pkg.product_id,
+			workspacePackage: pkg,
+			startFrameAssetId: "ca_start_selected",
+		});
 
-				// Internal transport only — not operator product mode chrome
-				expect(body.mode).toBe("F2V");
-				expect(body.aspect).toBe("9:16");
-				expect(body.aspectRatio).toBeUndefined();
-				expect(body.prompt).toContain("Faceless clip");
-				expect(body.product_id).toBe("prod-1");
-				expect(body.model).toBe("Omni Flash");
-				expect(body.duration_s).toBe(6);
-				expect(body.generation_mode).toBe("SINGLE");
+		expect(body.mode).toBe("F2V");
+		expect(body.aspect).toBe("9:16");
+		expect(body.aspectRatio).toBeUndefined();
+		expect(body.prompt).toContain("Faceless clip");
+		expect(body.product_id).toBe("prod-1");
 
-				const startAsset = body.startAsset as Record<string, unknown>;
-				expect(startAsset).toBeTruthy();
-				expect(startAsset.assetId).toBe("ca_start_selected");
-				expect(startAsset.downloadUrl).toBe("https://cdn.example.com/start.png");
-				// Must not rely only on package id for frame transport
-				expect(body.workspace_execution_package_id).toBe("wep_test");
-				expect(startAsset.assetId).not.toBe(body.workspace_execution_package_id);
-			});
-
-			it("product surface: EXTEND carries total plan + first-block 8s duration", () => {
-				const pkg = fakePkg();
-				const body = buildFacelessGenerateBody({
-					prompt: pkg.prompt_text,
-					workspacePackage: pkg,
-					model: "Veo 3.1 - Lite",
-					sceneMode: "EXTEND",
-					extendTotalSeconds: 16,
-					durationSeconds: 8,
-				});
-				expect(body.generation_mode).toBe("EXTEND");
-				expect(body.requested_total_duration_seconds).toBe(16);
-				expect(body.duration_s).toBe(8);
-				expect(body.model).toBe("Veo 3.1 - Lite");
-			});
-
-			it("requires model + extend total in prepare blockers", () => {
-				expect(
-					facelessPrepareBlockers({
-						productId: "p1",
-						startFrameAssetId: "a1",
-						model: "",
-						sceneMode: "SINGLE",
-					}).some((b) => /model/i.test(b)),
-				).toBe(true);
-				expect(
-					facelessPrepareBlockers({
-						productId: "p1",
-						startFrameAssetId: "a1",
-						model: "Veo 3.1 - Lite",
-						sceneMode: "EXTEND",
-						extendTotalSeconds: null,
-					}).some((b) => /extend/i.test(b)),
-				).toBe(true);
-				expect(
-					facelessPrepareBlockers({
-						productId: "p1",
-						startFrameAssetId: "a1",
-						model: "Omni Flash",
-						sceneMode: "SINGLE",
-					}),
-				).toEqual([]);
-			});
+		const startAsset = body.startAsset as Record<string, unknown>;
+		expect(startAsset).toBeTruthy();
+		expect(startAsset.assetId).toBe("ca_start_selected");
+		expect(startAsset.downloadUrl).toBe("https://cdn.example.com/start.png");
+		// Must not rely only on package id for frame transport
+		expect(body.workspace_execution_package_id).toBe("wep_test");
+		expect(startAsset.assetId).not.toBe(body.workspace_execution_package_id);
+	});
 
 	it("F-05: live mediaId is listed in image_media_ids for start_generate path", () => {
 		const uuid = "12345678-1234-1234-1234-123456789abc";

@@ -1,42 +1,23 @@
 /**
  * Faceless Video — pure helpers (unit-testable without rendering).
- *
- * PRODUCT SURFACE (operator-facing):
- *   Product + hands/body product plate → short clip. NO avatar / no face presenter.
- *   Same family as Hybrid product path, without AI presenter identity.
- *
- * ENGINE TRANSPORT (internal, never operator mode chrome):
- *   F2V + FRAMES + character_presence FACELESS on the existing one-door
- *   POST /api/flow/generate. Not a second engine. Not I2V/T2V mode pickers.
+ * Image-first single clip via F2V/FRAMES one-door. No new engine.
  */
+
 import type {
 	ApprovedPackageResolvedAsset,
 	UploadedAsset,
 	WorkspaceExecutionPackage,
 } from "../types";
 
-/** Internal one-door job mode — not an operator "F2V vs I2V" product choice. */
 export const FACELESS_TRANSPORT_MODE = "F2V" as const;
 export const FACELESS_SOURCE_MODE = "FRAMES" as const;
 export const FACELESS_CHARACTER_PRESENCE = "FACELESS" as const;
-
-/** Google Flow independent 8s blocks (same route Hybrid EXTEND uses). */
-export const FACELESS_EXTEND_ROUTE = "GOOGLE_FLOW_INDEPENDENT_8S_BLOCKS" as const;
-export const FACELESS_EXTEND_TOTALS: Record<number, number[]> = {
-	16: [8, 8],
-	24: [8, 8, 8],
-	32: [8, 8, 8, 8],
-	48: [8, 8, 8, 8, 8, 8],
-	56: [8, 8, 8, 8, 8, 8, 8],
-};
-
-export type FacelessSceneMode = "SINGLE" | "EXTEND";
 
 export function facelessStartFrameBlocker(
 	startFrameAssetId: string | null | undefined,
 ): string | null {
 	if (!String(startFrameAssetId || "").trim()) {
-		return "Faceless requires a product or scene image (hands / body + product, no face) as the start frame.";
+		return "Faceless requires a product or scene image as the start frame before prepare/generate.";
 	}
 	return null;
 }
@@ -53,24 +34,12 @@ export function facelessProductBlocker(
 export function facelessPrepareBlockers(input: {
 	productId: string | null | undefined;
 	startFrameAssetId: string | null | undefined;
-	sceneMode?: FacelessSceneMode;
-	extendTotalSeconds?: number | null;
-	model?: string | null;
 }): string[] {
 	const out: string[] = [];
 	const p = facelessProductBlocker(input.productId);
 	const s = facelessStartFrameBlocker(input.startFrameAssetId);
 	if (p) out.push(p);
 	if (s) out.push(s);
-	if (!String(input.model || "").trim()) {
-		out.push("Select a video model (e.g. Omni Flash or Veo 3.1 - Lite).");
-	}
-	if (input.sceneMode === "EXTEND") {
-		const total = input.extendTotalSeconds;
-		if (total == null || !FACELESS_EXTEND_TOTALS[total]) {
-			out.push("Extend requires an authorised total duration (e.g. 16s / 24s).");
-		}
-	}
 	return out;
 }
 
@@ -79,12 +48,6 @@ export function optionLabel(
 	id: string,
 ): string {
 	return options.find((o) => o.id === id)?.label ?? id;
-}
-
-export function facelessExtendPlanSummary(totalSeconds: number): string {
-	const plan = FACELESS_EXTEND_TOTALS[totalSeconds];
-	if (!plan) return `${totalSeconds}s`;
-	return `${totalSeconds}s → ${plan.map((s) => `${s}s`).join(" + ")}`;
 }
 
 /** Pick resolved package asset for a slot (start_frame / end_frame). */
@@ -168,11 +131,8 @@ export function generateAssetHasTransport(
 /**
  * Canonical Faceless → POST /api/flow/generate body.
  *
- * Product surface carries model + duration like Hybrid.
- * MUST also carry startAsset (+ optional image_media_ids). Package id alone
- * does NOT transport the frame to make_video.
- *
- * `mode: F2V` here is internal transport only — not operator product mode chrome.
+ * MUST carry startAsset (+ optional image_media_ids) on the existing one-door
+ * contract. Package id alone does NOT transport the frame to make_video.
  */
 export function buildFacelessGenerateBody(input: {
 	prompt: string;
@@ -182,12 +142,6 @@ export function buildFacelessGenerateBody(input: {
 	startFrameAssetId?: string | null;
 	endFrameAssetId?: string | null;
 	aspect?: string;
-	/** ui_label e.g. "Veo 3.1 - Lite" | "Omni Flash" */
-	model?: string | null;
-	/** SINGLE block seconds, or first EXTEND block (usually 8). */
-	durationSeconds?: number | null;
-	sceneMode?: FacelessSceneMode;
-	extendTotalSeconds?: number | null;
 }): Record<string, unknown> {
 	const prompt = String(input.prompt || "").trim();
 	if (!prompt) {
@@ -219,39 +173,20 @@ export function buildFacelessGenerateBody(input: {
 		(id): id is string => Boolean(id && String(id).trim()),
 	);
 
-	const model =
-		String(input.model || pkg?.model || "").trim() || "Veo 3.1 - Lite";
-	const sceneMode = input.sceneMode || "SINGLE";
-	let duration_s =
-		input.durationSeconds != null
-			? Number(input.durationSeconds)
-			: Number(pkg?.duration_seconds || 8);
-	if (sceneMode === "EXTEND") {
-		// First independent block; remaining blocks are Flow extend path.
-		duration_s = 8;
-	}
-
 	const body: Record<string, unknown> = {
-		// Internal one-door transport (not operator F2V/I2V product chrome).
 		mode: FACELESS_TRANSPORT_MODE,
 		prompt,
+		// GenerateRequest field is `aspect`, not aspectRatio.
 		aspect: input.aspect || pkg?.aspect_ratio || "9:16",
 		product_id: input.productId ?? pkg?.product_id ?? null,
-		model,
-		duration_s,
+		// Primary F2V reference path used by ordered_ref_slots → resolve → start_generate.
 		startAsset,
+		// Explicit media ids when already live (OperatorPage parity).
 		image_media_ids,
 	};
 
-	if (sceneMode === "EXTEND" && input.extendTotalSeconds != null) {
-		body.generation_mode = "EXTEND";
-		body.requested_total_duration_seconds = input.extendTotalSeconds;
-		body.extend_route = FACELESS_EXTEND_ROUTE;
-	} else {
-		body.generation_mode = "SINGLE";
-	}
-
-	// End frame without mediaId: transport via refs.imageAsset.
+	// End frame without mediaId: GenerateRequest has no endAsset field on this
+	// one-door path — transport via refs.imageAsset (ordered after start).
 	if (
 		endAsset &&
 		generateAssetHasTransport(endAsset) &&
@@ -271,7 +206,7 @@ export function buildFacelessGenerateBody(input: {
 		};
 	}
 
-	// Lineage only — NOT a substitute for startAsset.
+	// Lineage only — NOT a substitute for startAsset (Pydantic may strip unknowns).
 	if (pkg?.workspace_execution_package_id) {
 		body.workspace_execution_package_id = pkg.workspace_execution_package_id;
 	}

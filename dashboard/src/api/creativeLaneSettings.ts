@@ -86,9 +86,6 @@ export async function prepareFacelessPackage(input: {
 	hook_id: string;
 	background_id: string;
 	duration_seconds?: number;
-	generation_mode?: "SINGLE" | "EXTEND";
-	requested_total_duration_seconds?: number | null;
-	model?: string;
 	copy_fallback_confirmed?: boolean;
 }): Promise<FacelessPrepareResponse> {
 	return postAPI("/api/faceless/prepare", {
@@ -98,10 +95,6 @@ export async function prepareFacelessPackage(input: {
 		hook_id: input.hook_id,
 		background_id: input.background_id,
 		duration_seconds: input.duration_seconds ?? 8,
-		generation_mode: input.generation_mode ?? "SINGLE",
-		requested_total_duration_seconds:
-			input.requested_total_duration_seconds ?? null,
-		model: input.model ?? "Veo 3.1 - Lite",
 		copy_fallback_confirmed: input.copy_fallback_confirmed ?? true,
 	});
 }
