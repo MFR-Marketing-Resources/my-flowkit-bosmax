@@ -1377,3 +1377,12 @@ domains:
       - outputs/mission-copy-final/writer_failures.json
       - outputs/mission-copy-final/writer_summary.json
       - tests/unit/test_copy_set_validity_service.py
+      # Conditional GO: shared image compiler and no-spend Product Reference Pack.
+      # Creative Campaign remains feature-flagged and exact production-default
+      # until the bounded live benchmark receives explicit credit authorization.
+      - agent/models/image_generation_contract.py
+      - agent/services/image_prompt_compiler.py
+      - agent/services/product_reference_pack_service.py
+      - tests/unit/test_image_generation_contract.py
+      - tests/api/test_creative_campaign_contract.py
+      - docs/evidence/image-capability-audit-20260808.md

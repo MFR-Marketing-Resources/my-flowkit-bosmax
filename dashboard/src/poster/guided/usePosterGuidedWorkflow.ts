@@ -3,7 +3,12 @@ import {
 	buildExactSceneOnlyPrompt,
 	resolveExactGenerationGate,
 } from "../../api/exactProductOutput";
-import { pollImgGenerationJob, startImgGeneration } from "../../api/imgFactory";
+import {
+	compileCreativeCampaignPrompt,
+	pollImgGenerationJob,
+	saveImgOutputToLibrary,
+	startImgGeneration,
+} from "../../api/imgFactory";
 import {
 	approvePosterCopySet,
 	composePoster,
@@ -789,41 +794,84 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 				);
 			}
 
-			setSceneGenerationStage("validating_product");
-			const gate = await resolveExactGenerationGate(product.id, undefined, {
-				laneId: "POSTER_BUILDER",
-				isPoster: true,
-			});
-			if (token !== sceneGenerationTokenRef.current) return;
-			if (gate.mode === "blocked") throw new Error(gate.message);
-
-			const exactComposite = gate.mode === "exact";
-			const subjectAsset = productSubjectAsset(product);
-			if (!exactComposite && !subjectAsset) {
-				throw new Error(
-					"PRODUCT_REFERENCE_IMAGE_REQUIRED — produk ini tiada gambar rujukan yang boleh digunakan.",
-				);
-			}
-
-			let prompt = promptPackage.poster_prompt;
-			if (exactComposite) {
-				setSceneGenerationStage("preparing_exact_scene");
-				const sceneOnly = await buildExactSceneOnlyPrompt(product.id, prompt);
+			const creativeCampaign = creativeMode === "CREATIVE_CAMPAIGN";
+			let generationRequest: Parameters<typeof startImgGeneration>[0];
+			if (creativeCampaign) {
+				setSceneGenerationStage("compiling_creative_prompt");
+				const compiled = await compileCreativeCampaignPrompt({
+					product_id: product.id,
+					output_intent: "COMPLETE_POSTER",
+					objective:
+						objectiveText || approvedCopySet.objective || "Product Hero",
+					composition: selectedAngle || recipeId,
+					camera: "Vertical 9:16, natural product perspective, readable label",
+					lighting:
+						"Physically coherent Malaysian commercial light with contact shadow",
+					scene_direction:
+						selectedAngle || "Culturally appropriate Malaysian campaign environment",
+					copy_layout: {
+						headline: fields.primary_message,
+						support: fields.support_message,
+						cta: fields.cta,
+					},
+					aspect_ratio: "9:16",
+					creative_mode: "CREATIVE_CAMPAIGN",
+				});
+				if (compiled.blockers.length) throw new Error(compiled.blockers[0]);
+				generationRequest = {
+					product_id: product.id,
+					visual_lane_id: "POSTER_BUILDER_CREATIVE_CAMPAIGN",
+					creative_mode: "CREATIVE_CAMPAIGN",
+					prompt: compiled.compiled_prompt,
+					image_model: "NANO_BANANA_2",
+					aspect: "9:16",
+					count: 1,
+					image_contract_version: compiled.compiler_version,
+					reference_pack_id: compiled.reference_pack.pack_id,
+					output_intent: "COMPLETE_POSTER",
+					confirm_live_credit_burn: true,
+					maximum_provider_operations:
+						compiled.provider_operation_plan.max_provider_operations,
+					max_retry_operations: 0,
+				};
+			} else {
+				setSceneGenerationStage("validating_product");
+				const gate = await resolveExactGenerationGate(product.id, undefined, {
+					laneId: "POSTER_BUILDER",
+					isPoster: true,
+				});
 				if (token !== sceneGenerationTokenRef.current) return;
-				prompt = sceneOnly.prompt;
+				if (gate.mode === "blocked") throw new Error(gate.message);
+
+				const exactComposite = gate.mode === "exact";
+				const subjectAsset = productSubjectAsset(product);
+				if (!exactComposite && !subjectAsset) {
+					throw new Error(
+						"PRODUCT_REFERENCE_IMAGE_REQUIRED — produk ini tiada gambar rujukan yang boleh digunakan.",
+					);
+				}
+
+				let prompt = promptPackage.poster_prompt;
+				if (exactComposite) {
+					setSceneGenerationStage("preparing_exact_scene");
+					const sceneOnly = await buildExactSceneOnlyPrompt(product.id, prompt);
+					if (token !== sceneGenerationTokenRef.current) return;
+					prompt = sceneOnly.prompt;
+				}
+				generationRequest = {
+					product_id: product.id,
+					visual_lane_id: "POSTER_BUILDER",
+					prompt,
+					aspect: "9:16",
+					count: 1,
+					...(subjectAsset && !exactComposite
+						? { refs: { subjectAsset } }
+						: {}),
+				};
 			}
 
 			setSceneGenerationStage("generating_scene");
-			const { job_id: jobId } = await startImgGeneration({
-				product_id: product.id,
-				visual_lane_id: "POSTER_BUILDER",
-				prompt,
-				aspect: "9:16",
-				count: 1,
-				...(subjectAsset && !exactComposite
-					? { refs: { subjectAsset } }
-					: {}),
-			});
+			const { job_id: jobId } = await startImgGeneration(generationRequest);
 			if (token !== sceneGenerationTokenRef.current) return;
 
 			setSceneGenerationStage("waiting_for_scene");
@@ -872,6 +920,16 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 
 	const compose = useCallback(async () => {
 		if (!product || !approvedCopySet || !recipeId) return;
+		if (creativeMode === "CREATIVE_CAMPAIGN") {
+			if (!generatedSceneMediaId) {
+				setComposeError("Visual poster lengkap belum tersedia.");
+				return;
+			}
+			setComposeError("");
+			setSavedAssetId(null);
+			setReached((prev) => (prev.includes("save") ? prev : [...prev, "save"]));
+			return;
+		}
 		setComposeLoading(true);
 		setComposeError("");
 		try {
@@ -895,13 +953,40 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		} finally {
 			setComposeLoading(false);
 		}
-	}, [product, approvedCopySet, recipeId, backgroundMediaId, creativeMode]);
+	}, [
+		product,
+		approvedCopySet,
+		recipeId,
+		backgroundMediaId,
+		creativeMode,
+		generatedSceneMediaId,
+	]);
 
 	const save = useCallback(async () => {
-		if (!deliverable) return;
+		if (
+			!deliverable &&
+			!(creativeMode === "CREATIVE_CAMPAIGN" && generatedSceneMediaId && product)
+		)
+			return;
 		setSaveLoading(true);
 		setSaveError("");
 		try {
+			if (creativeMode === "CREATIVE_CAMPAIGN" && generatedSceneMediaId && product) {
+				const asset = await saveImgOutputToLibrary({
+					lane_id: "PRODUCT_POSTER",
+					display_name: `${product.product_display_name || "Product"} Campaign Poster`,
+					description:
+						"Complete poster returned by the Creative Campaign provider route; human review required.",
+					generated_artifact_media_id: generatedSceneMediaId,
+					product_id: product.id,
+					creative_mode: "CREATIVE_CAMPAIGN",
+					review_status: "PENDING_REVIEW",
+				});
+				setSavedAssetId(asset.asset_id);
+				setStep("save");
+				return;
+			}
+			if (!deliverable) return;
 			const res = await savePosterToLibrary(
 				deliverable.deliverable.poster_deliverable_id,
 			);
@@ -912,7 +997,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		} finally {
 			setSaveLoading(false);
 		}
-	}, [deliverable]);
+	}, [deliverable, creativeMode, generatedSceneMediaId, product]);
 
 	return {
 		step,

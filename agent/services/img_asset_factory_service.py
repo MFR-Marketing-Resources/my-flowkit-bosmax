@@ -46,6 +46,12 @@ from agent.services.creative_direction_service import (
     resolve_creative_direction,
     select_creative_direction_directives,
 )
+from agent.models.image_generation_contract import ImagePromptCompileRequest
+from agent.services.image_prompt_compiler import compile_image_prompt
+from agent.services.product_reference_pack_service import (
+    ProductReferencePackError,
+    ensure_product_reference_pack,
+)
 
 
 # NOTE: deliberately NOT worded as a "TikTok image". Live leak (owner-reported):
@@ -569,6 +575,61 @@ async def compile_img_fastlane_prompt_preview(
         if found_product is None:
             raise ValueError("PRODUCT_NOT_FOUND")
         product = dict(found_product)
+
+    # Creative Campaign Fastlane is a control surface over the same canonical
+    # compiler as Poster Builder.  It intentionally bypasses the legacy local
+    # scene/compositor prompt branch; the feature remains provider-gated until
+    # the reference pack and bounded live benchmark pass.
+    if request.creative_mode == "CREATIVE_CAMPAIGN":
+        if not product:
+            raise ValueError("PRODUCT_REQUIRED_FOR_CREATIVE_CAMPAIGN")
+        try:
+            reference_pack = await ensure_product_reference_pack(str(product["id"]))
+        except ProductReferencePackError as exc:
+            raise ValueError(f"{exc.code}: {exc.message}") from exc
+        output_intent = (
+            "COMPLETE_POSTER"
+            if "POSTER" in str(preset.get("lane_id") or "").upper()
+            else "COMPLETE_IMAGE"
+        )
+        compiled = compile_image_prompt(
+            product,
+            reference_pack,
+            ImagePromptCompileRequest(
+                product_id=str(product["id"]),
+                output_intent=output_intent,
+                objective=str(preset.get("label") or "Creative Campaign"),
+                composition="; ".join(_preset_directives(request.preset_id, product)),
+                scene_direction=(
+                    _clean_text(request.scene_context_code)
+                    or "Preset-driven scene direction; no legacy scene asset required"
+                ),
+                creative_mode="CREATIVE_CAMPAIGN",
+                requested_outputs=request.requested_outputs,
+            ),
+        )
+        role_lines = [f"{binding.role}: {binding.asset_id or binding.media_id}" for binding in compiled.reference_bindings]
+        return ImgFastlanePromptPreviewResponse(
+            preset_id=str(preset["preset_id"]),
+            route=request.route,
+            ingredient_role=request.ingredient_role,
+            lane_id=str(preset["lane_id"]),
+            prompt_text=compiled.compiled_prompt,
+            engine_prompt_text=compiled.compiled_prompt,
+            display_name_suggestion=_display_name_suggestion(preset, product),
+            blockers=compiled.blockers,
+            warnings=[*compiled.warnings, "Fastlane and Poster Builder share image_prompt_compiler_v1."],
+            output_spec=str(preset["output_spec"]),
+            negative_rules=compiled.sections["NEGATIVE_CONSTRAINTS_AND_OUTPUT_SPECIFICATION"].split("; "),
+            reference_map=role_lines,
+            creative_direction={
+                "mode": "CREATIVE_CAMPAIGN",
+                "compiler_version": compiled.compiler_version,
+                "prompt_fingerprint": compiled.prompt_fingerprint,
+                "reference_pack_id": reference_pack.pack_id,
+                "provider_operation_plan": compiled.provider_operation_plan,
+            },
+        )
     creative_direction = (
         resolve_creative_direction(request.creative_mode, product=product)
         if request.creative_mode is not None

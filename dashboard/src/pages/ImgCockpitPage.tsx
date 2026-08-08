@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { archiveCreativeAsset, fetchCreativeAssets } from "../api/creativeAssets";
 import {
+	compileCreativeCampaignPrompt,
 	type ImageArtifact,
+	type CreativeCampaignPromptPreview,
 	type ImgAssetLane,
 	type ImgGenerationJob,
 	fetchImageArtifacts,
@@ -207,6 +209,8 @@ export default function ImgCockpitPage() {
 	const [aspect, setAspect] = useState<string>("9:16");
 	const [count, setCount] = useState<number>(1);
 	const [imageModel, setImageModel] = useState<string>("Nano Banana 2");
+	const [creativeMode, setCreativeMode] = useState("");
+	const [creativePreview, setCreativePreview] = useState<CreativeCampaignPromptPreview | null>(null);
 
 	// Gated live generation (never auto-fires).
 	const [showGenConfirm, setShowGenConfirm] = useState(false);
@@ -391,12 +395,33 @@ export default function ImgCockpitPage() {
 		setCompiling(true);
 		setError(null);
 		try {
-			const preview = await compileWorkspacePromptPreview({
-				product_id: selectedProduct.id,
-				mode: "IMG",
-				source_mode: "IMAGES",
-			});
-			setPrompt(preview.final_compiled_prompt_text || prompt);
+			if (creativeMode === "CREATIVE_CAMPAIGN") {
+				const outputIntent = lane?.default_contains_rendered_text
+					? "COMPLETE_POSTER"
+					: "COMPLETE_IMAGE";
+				const preview = await compileCreativeCampaignPrompt({
+					product_id: selectedProduct.id,
+					output_intent: outputIntent,
+					objective: lane?.label || "IMG Creative Campaign",
+					composition: prompt || "Product-led commercial composition",
+					camera: `Vertical ${aspect}, readable product label and natural perspective`,
+					lighting: "Physically coherent commercial light, contact shadow and material response",
+					scene_direction: "Preset-driven scene direction; no legacy scene asset required",
+					aspect_ratio: aspect,
+					creative_mode: "CREATIVE_CAMPAIGN",
+				});
+				if (preview.blockers.length) throw new Error(preview.blockers[0]);
+				setCreativePreview(preview);
+				setPrompt(preview.compiled_prompt);
+			} else {
+				setCreativePreview(null);
+				const preview = await compileWorkspacePromptPreview({
+					product_id: selectedProduct.id,
+					mode: "IMG",
+					source_mode: "IMAGES",
+				});
+				setPrompt(preview.final_compiled_prompt_text || prompt);
+			}
 		} catch (err) {
 			setError(
 				err instanceof Error ? err.message : "Failed to compile suggested prompt.",
@@ -418,22 +443,31 @@ export default function ImgCockpitPage() {
 		setError(null);
 		try {
 			const productId = selectedProduct?.id ?? "";
+			const creativeCampaign = creativeMode === "CREATIVE_CAMPAIGN";
 			const isProductOnlyLane = lane?.lane_id === "PRODUCT_ONLY_HERO" || lane?.lane_id === "PRODUCT_ONLY";
 			const hasAvatar = Boolean(characterAssetId);
-			const gate = await resolveExactGenerationGate(productId, undefined, {
-				laneId: lane?.lane_id,
-				hasAvatar,
-				isProductOnly: isProductOnlyLane,
-			});
-			if (gate.mode === "blocked") {
-				throw new Error(gate.message);
-			}
 
 			let scenePrompt = prompt;
 			let useExactComposite = false;
 			let groundedProdAsset = null;
 
-			if (productId) {
+			if (creativeCampaign) {
+				if (!selectedProduct) throw new Error("Creative Campaign requires a product.");
+				if (!creativePreview) {
+					throw new Error("Compile the Creative Campaign prompt before generating.");
+				}
+				scenePrompt = creativePreview.compiled_prompt;
+			} else {
+				const gate = await resolveExactGenerationGate(productId, undefined, {
+					laneId: lane?.lane_id,
+					hasAvatar,
+					isProductOnly: isProductOnlyLane,
+				});
+				if (gate.mode === "blocked") {
+					throw new Error(gate.message);
+				}
+
+				if (productId) {
 				const grounded = await fetchGroundedPayload(productId, {
 					prompt,
 					lane_id: lane?.lane_id,
@@ -449,6 +483,7 @@ export default function ImgCockpitPage() {
 					scenePrompt = grounded.full_prompt;
 					groundedProdAsset = buildProviderProductReferenceAsset(grounded);
 				}
+			}
 			}
 
 			let payload = useExactComposite
@@ -470,6 +505,20 @@ export default function ImgCockpitPage() {
 						productId: productId || undefined,
 						visualLaneId: lane?.lane_id,
 					});
+			if (creativeCampaign) {
+				payload = {
+					...payload,
+					image_media_ids: [],
+					creative_mode: "CREATIVE_CAMPAIGN",
+					image_contract_version: creativePreview?.compiler_version,
+					reference_pack_id: creativePreview?.reference_pack.pack_id,
+					output_intent: creativePreview?.output_intent,
+					confirm_live_credit_burn: true,
+					maximum_provider_operations:
+						creativePreview?.provider_operation_plan.max_provider_operations,
+					max_retry_operations: 0,
+				};
+			}
 
 			if (!useExactComposite && groundedProdAsset) {
 				payload = {
@@ -750,7 +799,7 @@ export default function ImgCockpitPage() {
 				</div>
 
 				<ApproveAssetModal asset={approveTarget} open={approveTarget !== null} onCancel={() => setApproveTarget(null)} onApproved={() => { setApproveTarget(null); void loadReferences(); }} />
-				{showGenConfirm ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"><div className="max-w-md rounded-2xl border border-rose-500/40 bg-slate-950 p-5 space-y-3"><div className="text-sm font-bold text-rose-100">Sahkan penghantaran kerja IMG</div><div className="text-[11px] text-slate-300">Sahkan sekali lagi untuk menghantar satu kerja IMG. Penjanaan imej tidak menggunakan kredit video Google Flow; hanya kerja video menggunakan kredit. Tiada kerja akan dihantar sebelum pengesahan ini. Build-session status: <strong>{GEN_NOT_FIRED}</strong> · <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.</div><label className="flex items-start gap-2 text-[11px] text-slate-200"><input type="checkbox" data-testid="img-cockpit-credit-confirm-checkbox" checked={imgGenConfirmed} onChange={(event) => setImgGenConfirmed(event.target.checked)} className="mt-0.5" /><span>Saya faham tindakan ini menghantar satu kerja IMG dan tidak menggunakan kredit video Google Flow.</span></label><div className="flex justify-end gap-2"><button type="button" onClick={() => setShowGenConfirm(false)} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-300">Cancel</button><button type="button" disabled={!imgGenConfirmed} onClick={() => void handleConfirmedGenerate()} className="rounded-lg border border-rose-500/40 bg-rose-500/20 px-3 py-1.5 text-[11px] font-bold text-rose-100 disabled:opacity-40">Confirm &amp; Generate (live)</button></div></div></div> : null}
+				{showGenConfirm ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"><div className="max-w-md rounded-2xl border border-rose-500/40 bg-slate-950 p-5 space-y-3"><div className="text-sm font-bold text-rose-100">Sahkan penghantaran kerja IMG</div><div className="text-[11px] text-slate-300">Sahkan sekali lagi untuk menghantar satu kerja IMG. Penjanaan imej boleh menggunakan kuota/kredit penjanaan imej provider; ia tidak menggunakan kredit video Google Flow. Tiada kerja akan dihantar sebelum pengesahan ini. Build-session status: <strong>{GEN_NOT_FIRED}</strong> · <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.</div><label className="flex items-start gap-2 text-[11px] text-slate-200"><input type="checkbox" data-testid="img-cockpit-credit-confirm-checkbox" checked={imgGenConfirmed} onChange={(event) => setImgGenConfirmed(event.target.checked)} className="mt-0.5" /><span>Saya faham tindakan ini menggunakan kuota/kredit penjanaan imej provider dan bukan kredit video.</span></label><div className="flex justify-end gap-2"><button type="button" onClick={() => setShowGenConfirm(false)} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-300">Cancel</button><button type="button" disabled={!imgGenConfirmed} onClick={() => void handleConfirmedGenerate()} className="rounded-lg border border-rose-500/40 bg-rose-500/20 px-3 py-1.5 text-[11px] font-bold text-rose-100 disabled:opacity-40">Confirm &amp; Generate (live)</button></div></div></div> : null}
 			</>
 		);
 	}
@@ -926,6 +975,22 @@ export default function ImgCockpitPage() {
 
 			{/* 5 — Prompt preview */}
 			<Section step="5" title="Preview prompt">
+				<label className="block text-[11px] text-slate-300 space-y-1">
+					<span className="font-semibold uppercase tracking-[0.14em] text-slate-500">
+						Image route
+					</span>
+					<select
+						value={creativeMode}
+						onChange={(event) => {
+							setCreativeMode(event.target.value);
+							setCreativePreview(null);
+						}}
+						className="w-full rounded-xl border border-slate-800 bg-slate-950 p-2.5 text-xs text-slate-200"
+					>
+						<option value="">Legacy governed IMG route</option>
+						<option value="CREATIVE_CAMPAIGN">Creative Campaign (shared compiler)</option>
+					</select>
+				</label>
 				<textarea
 					value={prompt}
 					onChange={(e) => setPrompt(e.target.value)}
@@ -945,9 +1010,9 @@ export default function ImgCockpitPage() {
 			{/* 6 — Gated Generate */}
 			<Section step="6" title="Generate image output (gated · no video credit)">
 				<div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
-					Live generation calls the real one-door lane
+				Live generation calls the real one-door lane
 					(<code>POST /api/flow/generate</code> mode:IMG) — it does not use Google Flow
-					video credits. It only runs after an explicit confirmation and{" "}
+					video credits, but may use image-generation quota/credits. It only runs after an explicit confirmation and{" "}
 					<strong>never auto-fires</strong>. Build-session status:{" "}
 					<strong>{GEN_NOT_FIRED}</strong> · <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.
 				</div>
@@ -1315,12 +1380,12 @@ export default function ImgCockpitPage() {
 							Sahkan penghantaran kerja IMG
 						</div>
 						<div className="text-[11px] text-slate-300">
-							Sahkan sekali lagi untuk menghantar satu kerja IMG. Penjanaan imej tidak
-							menggunakan kredit video Google Flow; hanya kerja video menggunakan kredit.
+							Sahkan sekali lagi untuk menghantar satu kerja IMG. Penjanaan imej boleh
+							menggunakan kuota/kredit penjanaan imej provider; ia tidak menggunakan kredit video Google Flow.
 							Tiada kerja akan dihantar sebelum pengesahan ini. (In the build session
 							this path is <strong>{GEN_NOT_FIRED}</strong>.)
 						</div>
-						<label className="flex items-start gap-2 text-[11px] text-slate-200"><input type="checkbox" data-testid="img-cockpit-credit-confirm-checkbox" checked={imgGenConfirmed} onChange={(event) => setImgGenConfirmed(event.target.checked)} className="mt-0.5" /><span>Saya faham tindakan ini menghantar satu kerja IMG dan tidak menggunakan kredit video Google Flow.</span></label>
+						<label className="flex items-start gap-2 text-[11px] text-slate-200"><input type="checkbox" data-testid="img-cockpit-credit-confirm-checkbox" checked={imgGenConfirmed} onChange={(event) => setImgGenConfirmed(event.target.checked)} className="mt-0.5" /><span>Saya faham tindakan ini menggunakan kuota/kredit penjanaan imej provider dan bukan kredit video.</span></label>
 						<div className="flex justify-end gap-2">
 							<button
 								type="button"

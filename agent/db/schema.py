@@ -541,6 +541,35 @@ CREATE TABLE IF NOT EXISTS product_visual_truth_lock (
 );
 CREATE INDEX IF NOT EXISTS idx_product_truth_lock_review ON product_visual_truth_lock(review_status);
 
+-- Provider-facing creative reference pack.  This is intentionally separate
+-- from product_visual_truth_lock: exact compositor truth and generative
+-- campaign evidence have different approval and QA lifecycles.
+CREATE TABLE IF NOT EXISTS product_reference_pack (
+    product_id              TEXT PRIMARY KEY REFERENCES product(id) ON DELETE CASCADE,
+    pack_id                 TEXT NOT NULL UNIQUE,
+    schema_version          TEXT NOT NULL DEFAULT 'product_reference_pack_v1',
+    pack_status             TEXT NOT NULL DEFAULT 'DRAFT'
+        CHECK(pack_status IN ('DRAFT','PENDING_REVIEW','APPROVED','REJECTED')),
+    machine_qa_status        TEXT NOT NULL DEFAULT 'WARN'
+        CHECK(machine_qa_status IN ('PASS','WARN','FAIL')),
+    machine_qa_json          TEXT NOT NULL DEFAULT '{}',
+    physical_width_mm       REAL,
+    physical_height_mm      REAL,
+    physical_depth_mm       REAL,
+    volume_ml               REAL,
+    scale_evidence_source   TEXT NOT NULL DEFAULT 'UNVERIFIED',
+    scale_confidence        TEXT NOT NULL DEFAULT 'UNVERIFIED'
+        CHECK(scale_confidence IN ('UNVERIFIED','LOW','MEDIUM','HIGH')),
+    geometry_json            TEXT NOT NULL DEFAULT '{}',
+    references_json          TEXT NOT NULL DEFAULT '[]',
+    provenance_json          TEXT NOT NULL DEFAULT '{}',
+    human_review_json        TEXT NOT NULL DEFAULT '{}',
+    created_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_product_reference_pack_status
+    ON product_reference_pack(pack_status, updated_at);
+
 CREATE TABLE IF NOT EXISTS batch (
     id                      TEXT PRIMARY KEY,
     product_id              TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
@@ -724,6 +753,27 @@ CREATE TABLE IF NOT EXISTS generated_artifact (
     duration_used  INTEGER,
     created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
+
+-- Per-submit provenance for bounded Creative Campaign image operations.  The
+-- local record id is deliberately separate from provider_operation_id: a
+-- missing provider id remains UNPROVEN rather than being fabricated.
+CREATE TABLE IF NOT EXISTS image_generation_operation (
+    operation_record_id       TEXT PRIMARY KEY,
+    job_id                    TEXT NOT NULL,
+    product_id                TEXT,
+    mode                      TEXT NOT NULL DEFAULT 'IMG',
+    provider                  TEXT NOT NULL DEFAULT 'GOOGLE_FLOW',
+    model                     TEXT,
+    variant_index             INTEGER NOT NULL,
+    provider_operation_id     TEXT,
+    transport_batch_id        TEXT,
+    operation_id_status       TEXT NOT NULL,
+    provider_media_id         TEXT,
+    response_status           TEXT NOT NULL,
+    created_at                TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_image_generation_operation_job
+    ON image_generation_operation(job_id, variant_index);
 """
 
 

@@ -65,6 +65,7 @@ export interface ImgFastlanePromptPreviewInput {
 	// the compiled prompt (any of the 20 scenes usable without a generated image).
 	scene_context_code?: string | null;
 	creative_mode?: string | null;
+	requested_outputs?: number;
 }
 
 export interface ImgFastlanePromptPreview {
@@ -82,6 +83,16 @@ export interface ImgFastlanePromptPreview {
 	output_spec: string;
 	negative_rules: string[];
 	reference_map: string[];
+	creative_direction?: {
+		mode?: string;
+		compiler_version?: string;
+		prompt_fingerprint?: string;
+		reference_pack_id?: string;
+		provider_operation_plan?: {
+			max_provider_operations: number;
+			max_retry_operations: number;
+		};
+	};
 }
 
 export interface ImgProviderStatus {
@@ -140,6 +151,84 @@ export async function saveImgOutputToLibrary(
 	return postAPI<CreativeAsset>("/api/img-factory/save", input);
 }
 
+export interface CreativeCampaignPromptPreviewInput {
+	product_id: string;
+	output_intent?: "COMPLETE_POSTER" | "CLEAN_KEY_VISUAL" | "COMPLETE_IMAGE";
+	objective?: string;
+	composition?: string;
+	camera?: string;
+	lighting?: string;
+	scene_direction?: string;
+	copy_layout?: Record<string, string>;
+	negative_constraints?: string[];
+	aspect_ratio?: string;
+	creative_mode?: string;
+}
+
+export interface CreativeCampaignPromptPreview {
+	compiler_version: string;
+	product_id: string;
+	output_intent: string;
+	aspect_ratio: string;
+	compiled_prompt: string;
+	prompt_fingerprint: string;
+	reference_pack: { pack_id: string; pack_status: string };
+	blockers: string[];
+	warnings: string[];
+	provider_operation_plan: {
+		max_provider_operations: number;
+		max_retry_operations: number;
+	};
+}
+
+export interface ProductReferencePackSummary {
+	pack_id: string;
+	product_id: string;
+	pack_status: "DRAFT" | "PENDING_REVIEW" | "APPROVED" | "REJECTED";
+	machine_qa_status: "PASS" | "WARN" | "FAIL";
+	physical_measurements?: {
+		physical_width_mm?: number | null;
+		physical_height_mm?: number | null;
+		physical_depth_mm?: number | null;
+		volume_ml?: number | null;
+		scale_evidence_source?: string;
+		scale_confidence?: string;
+	};
+	references?: Array<{
+		role: string;
+		approved: boolean;
+		local_file_path?: string | null;
+		sha256?: string | null;
+	}>;
+}
+
+export async function fetchProductReferencePack(
+	productId: string,
+): Promise<ProductReferencePackSummary> {
+	return fetchAPI<ProductReferencePackSummary>(
+		`/api/img-factory/products/${encodeURIComponent(productId)}/reference-pack`,
+	);
+}
+
+export async function approveProductReferencePack(
+	productId: string,
+	input: { reviewed_by: string; note?: string },
+): Promise<ProductReferencePackSummary> {
+	return postAPI<ProductReferencePackSummary>(
+		`/api/img-factory/products/${encodeURIComponent(productId)}/reference-pack/approve`,
+		input,
+	);
+}
+
+export async function compileCreativeCampaignPrompt(
+	input: CreativeCampaignPromptPreviewInput,
+): Promise<CreativeCampaignPromptPreview> {
+	return postAPI<CreativeCampaignPromptPreview>(
+		"/api/img-factory/creative-campaign/preview",
+		input,
+	);
+}
+
 // ── Gated live IMG generation ─────────────────────────────────────────────────
 // These call the SAME proven one-door lane OperatorPage uses. They are wired for
 // the cockpit but MUST only ever run behind an explicit operator confirmation —
@@ -161,6 +250,13 @@ export interface StartImgGenerationInput {
 	count?: number;
 	refs?: Record<string, any>;
 	startAsset?: Record<string, any>;
+	image_contract_version?: string;
+	reference_pack_id?: string;
+	output_intent?: string;
+	creative_mode?: string;
+	confirm_live_credit_burn?: boolean;
+	maximum_provider_operations?: number;
+	max_retry_operations?: number;
 }
 
 export interface StartImgGenerationResult {
@@ -205,8 +301,15 @@ export async function startImgGeneration(
 		image_model: input.image_model,
 		duration_s: input.duration_s,
 		count: input.count,
-		refs: input.refs,
-		startAsset: input.startAsset,
+	refs: input.refs,
+	startAsset: input.startAsset,
+	image_contract_version: input.image_contract_version,
+	reference_pack_id: input.reference_pack_id,
+	output_intent: input.output_intent,
+	creative_mode: input.creative_mode,
+	confirm_live_credit_burn: input.confirm_live_credit_burn,
+	maximum_provider_operations: input.maximum_provider_operations,
+	max_retry_operations: input.max_retry_operations,
 	});
 }
 

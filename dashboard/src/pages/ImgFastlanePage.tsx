@@ -567,6 +567,7 @@ export default function ImgFastlanePage() {
 				advanced_override_notes: advancedOverrideNotes || null,
 				scene_context_code: sceneContextCode || null,
 				creative_mode: creativeMode || null,
+				requested_outputs: creativeMode === "CREATIVE_CAMPAIGN" ? Math.min(quantity, 3) : 1,
 			});
 			setCompiledPreview(preview);
 			// Send + display the CLEAN engine brief (no internal routing ids), which
@@ -596,6 +597,7 @@ export default function ImgFastlanePage() {
 		advancedOverrideNotes,
 		sceneContextCode,
 		creativeMode,
+		quantity,
 	]);
 
 	useEffect(() => {
@@ -628,36 +630,44 @@ export default function ImgFastlanePage() {
 		setError(null);
 		try {
 			const productId = selectedProduct?.id ?? "";
+			const creativeCampaign = creativeMode === "CREATIVE_CAMPAIGN";
 			const hasAvatar = Boolean(characterAssetId);
-			const isProductOnly = !hasAvatar && Boolean(framePresetId?.includes("PRODUCT_ONLY") || framePresetId?.includes("HERO"));
-			const gate = await resolveExactGenerationGate(productId, undefined, {
-				laneId: framePresetId || undefined,
-				hasAvatar,
-				isProductOnly,
-			});
-			if (gate.mode === "blocked") {
-				throw new Error(gate.message);
-			}
-
 			let scenePrompt = prompt;
 			let groundedProdAsset: ReturnType<typeof buildProviderProductReferenceAsset> = null;
 			let useExactComposite = false;
 
-			if (productId) {
-				const grounded = await fetchGroundedPayload(productId, {
-					prompt,
-					lane_id: framePresetId,
-					has_avatar: hasAvatar,
-					is_product_only: isProductOnly,
+			if (creativeCampaign) {
+				if (!compiledPreview?.creative_direction?.reference_pack_id) {
+					throw new Error("Creative Campaign preview is not ready.");
+				}
+				scenePrompt = compiledPreview.engine_prompt_text || prompt;
+			} else {
+				const isProductOnly = !hasAvatar && Boolean(framePresetId?.includes("PRODUCT_ONLY") || framePresetId?.includes("HERO"));
+				const gate = await resolveExactGenerationGate(productId, undefined, {
+					laneId: framePresetId || undefined,
+					hasAvatar,
+					isProductOnly,
 				});
+				if (gate.mode === "blocked") {
+					throw new Error(gate.message);
+				}
 
-				if (grounded.selected_strategy === STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE && gate.mode === "exact") {
-					useExactComposite = true;
-					const scene = await buildExactSceneOnlyPrompt(productId, prompt);
-					scenePrompt = scene.prompt;
-				} else {
-					scenePrompt = grounded.full_prompt;
-					groundedProdAsset = buildProviderProductReferenceAsset(grounded);
+				if (productId) {
+					const grounded = await fetchGroundedPayload(productId, {
+						prompt,
+						lane_id: framePresetId,
+						has_avatar: hasAvatar,
+						is_product_only: isProductOnly,
+					});
+
+					if (grounded.selected_strategy === STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE && gate.mode === "exact") {
+						useExactComposite = true;
+						const scene = await buildExactSceneOnlyPrompt(productId, prompt);
+						scenePrompt = scene.prompt;
+					} else {
+						scenePrompt = grounded.full_prompt;
+						groundedProdAsset = buildProviderProductReferenceAsset(grounded);
+					}
 				}
 			}
 
@@ -666,11 +676,23 @@ export default function ImgFastlanePage() {
 				resolvedRefsPayload: useExactComposite ? {} : resolvedRefsPayload,
 				groundedProdAsset: useExactComposite ? null : groundedProdAsset,
 				aspect,
-				quantity,
+				quantity: creativeCampaign ? Math.min(quantity, 3) : quantity,
 				imageModel,
 				productId: productId || undefined,
 				visualLaneId: framePresetId || undefined,
 			});
+			if (creativeCampaign) {
+				Object.assign(genInput, {
+					creative_mode: "CREATIVE_CAMPAIGN",
+					image_contract_version: "image_prompt_compiler_v1",
+					reference_pack_id: compiledPreview?.creative_direction?.reference_pack_id,
+					output_intent: framePresetId?.includes("POSTER") ? "COMPLETE_POSTER" : "COMPLETE_IMAGE",
+					confirm_live_credit_burn: true,
+					maximum_provider_operations:
+						compiledPreview?.creative_direction?.provider_operation_plan?.max_provider_operations,
+					max_retry_operations: 0,
+				});
+			}
 
 			const { job_id } = await startImgGeneration(genInput);
 			const job = await pollImgGenerationJob(job_id);
@@ -1101,7 +1123,7 @@ export default function ImgFastlanePage() {
 								title="Generate image"
 								status={generateStatus}
 								summary={genJob?.status ?? "Manual confirmation required"}
-								helper="This is the external IMG action; it never fires without explicit confirmation. IMG does not use Google Flow video credits."
+								helper="This is the external IMG action; it never fires without explicit confirmation. Image generation may use provider image quota/credits, not video credits."
 							>
 								<div className="space-y-3">
 									<div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
@@ -1268,8 +1290,8 @@ export default function ImgFastlanePage() {
 					<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-[2px]">
 						<div className="max-w-md w-full rounded-2xl border border-rose-500/40 bg-slate-950 p-6 space-y-4 shadow-2xl">
 							<div className="text-sm font-bold text-rose-100 uppercase tracking-wider">Sahkan penghantaran kerja IMG</div>
-							<div className="text-xs text-slate-300 space-y-2"><p>Sahkan sekali lagi untuk menghantar satu kerja IMG. Penjanaan imej tidak menggunakan kredit video Google Flow; hanya kerja video menggunakan kredit. Tiada kerja akan dihantar sebelum pengesahan ini.</p><p>Build status: <strong>{GEN_NOT_FIRED}</strong> · <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.</p></div>
-							<label className="flex items-start gap-2 text-xs text-slate-200"><input type="checkbox" data-testid="img-fastlane-credit-confirm-checkbox" checked={imgGenConfirmed} onChange={(event) => setImgGenConfirmed(event.target.checked)} className="mt-0.5" /><span>Saya faham tindakan ini menghantar satu kerja IMG dan tidak menggunakan kredit video Google Flow.</span></label>
+							<div className="text-xs text-slate-300 space-y-2"><p>Sahkan sekali lagi untuk menghantar satu kerja IMG. Penjanaan imej boleh menggunakan kuota/kredit penjanaan imej provider; ia tidak menggunakan kredit video Google Flow. Tiada kerja akan dihantar sebelum pengesahan ini.</p><p>Build status: <strong>{GEN_NOT_FIRED}</strong> · <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.</p></div>
+							<label className="flex items-start gap-2 text-xs text-slate-200"><input type="checkbox" data-testid="img-fastlane-credit-confirm-checkbox" checked={imgGenConfirmed} onChange={(event) => setImgGenConfirmed(event.target.checked)} className="mt-0.5" /><span>Saya faham tindakan ini menggunakan kuota/kredit penjanaan imej provider dan bukan kredit video.</span></label>
 							<div className="flex justify-end gap-3 pt-2"><button type="button" onClick={() => setShowGenConfirm(false)} className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-xs font-semibold text-slate-300">Cancel</button><button type="button" disabled={!imgGenConfirmed} onClick={() => void handleConfirmedGenerate()} className="rounded-xl border border-rose-500/40 bg-rose-500/20 px-4 py-2 text-xs font-bold text-rose-100 disabled:opacity-40">Confirm &amp; Generate</button></div>
 						</div>
 					</div>
@@ -1457,8 +1479,9 @@ export default function ImgFastlanePage() {
 									Creative Direction optional
 								</span>
 								<select value={creativeMode} onChange={(event) => setCreativeMode(event.target.value)} className="w-full rounded-xl border border-slate-800 bg-slate-950 p-2.5 text-xs text-slate-200">
-									<option value="">No governed mode (legacy)</option>
-									<option value="PGC_CAMPAIGN">PGC Campaign</option>
+					<option value="">No governed mode (legacy)</option>
+					<option value="CREATIVE_CAMPAIGN">Creative Campaign (provider image)</option>
+					<option value="PGC_CAMPAIGN">PGC Campaign</option>
 									<option value="UGC_AUTHENTIC">UGC Authentic</option>
 									<option value="MODEL_AMBASSADOR">Model Ambassador</option>
 									<option value="CLEAN_STUDIO_CATALOGUE">Clean Studio / Clean Catalogue</option>
@@ -1907,17 +1930,17 @@ export default function ImgFastlanePage() {
 							Sahkan penghantaran kerja IMG
 						</div>
 						<div className="text-xs text-slate-300 space-y-2">
-							<p>
-								Sahkan sekali lagi untuk menghantar satu kerja IMG avatar + produk.
-								<strong> Penjanaan imej tidak menggunakan kredit video Google Flow</strong> —
-								hanya kerja video menggunakan kredit. Tiada kerja akan dihantar sebelum
-								pengesahan ini.
-							</p>
+											<p>
+														Sahkan sekali lagi untuk menghantar satu kerja IMG avatar + produk.
+														Penjanaan imej boleh menggunakan kuota/kredit penjanaan imej provider;
+														ia tidak menggunakan kredit video Google Flow. Tiada kerja akan dihantar
+														sebelum pengesahan ini.
+												</p>
 							<p>
 								Build status: <strong>{GEN_NOT_FIRED}</strong> | <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.
 							</p>
 						</div>
-						<label className="flex items-start gap-2 text-xs text-slate-200"><input type="checkbox" data-testid="img-fastlane-credit-confirm-checkbox" checked={imgGenConfirmed} onChange={(event) => setImgGenConfirmed(event.target.checked)} className="mt-0.5" /><span>Saya faham tindakan ini menghantar satu kerja IMG dan tidak menggunakan kredit video Google Flow.</span></label>
+											<label className="flex items-start gap-2 text-xs text-slate-200"><input type="checkbox" data-testid="img-fastlane-credit-confirm-checkbox" checked={imgGenConfirmed} onChange={(event) => setImgGenConfirmed(event.target.checked)} className="mt-0.5" /><span>Saya faham tindakan ini menggunakan kuota/kredit penjanaan imej provider dan bukan kredit video.</span></label>
 						<div className="flex justify-end gap-3 pt-2">
 							<button
 								type="button"

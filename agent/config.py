@@ -132,6 +132,16 @@ VIDEO_MODELS = _MODELS["video_models"]
 UPSCALE_MODELS = _MODELS["upscale_models"]
 IMAGE_MODELS = _MODELS["image_models"]
 
+# Creative Campaign is deliberately opt-in.  Exact Commerce remains the
+# production default until a bounded live benchmark produces artifact-backed
+# evidence and the owner authorizes the rollout.
+CREATIVE_CAMPAIGN_POSTER_ENABLED = os.environ.get(
+    "CREATIVE_CAMPAIGN_POSTER_ENABLED", "0"
+) == "1"
+CREATIVE_CAMPAIGN_LIVE_BENCHMARK_AUTHORIZED = os.environ.get(
+    "CREATIVE_CAMPAIGN_LIVE_BENCHMARK_AUTHORIZED", "0"
+) == "1"
+
 # Native Flow Extend model key, per captured aspect ratio (live evidence
 # 2026-07-11: portrait -> veo_3_1_extension_lite). FAILS CLOSED for any aspect
 # ratio without captured evidence — the Extend builder NEVER silently downgrades
