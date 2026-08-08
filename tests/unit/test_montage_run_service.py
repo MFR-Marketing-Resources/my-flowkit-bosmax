@@ -1,6 +1,7 @@
 """Durable montage run ledger tests (M-02)."""
 from __future__ import annotations
 
+import sqlite3
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -13,11 +14,20 @@ from agent.services.montage_run_service import (
     assemble_from_montage_run,
     bind_montage_scene_result,
     create_montage_discrete_run,
+    estimate_montage_run_generation,
     get_montage_discrete_run,
     readiness_from_montage_run,
     scene_jobs_to_readiness,
 )
 from agent.services.montage_scene_reference_policy import SceneReferencePolicy
+from agent.db.schema import (
+    _BULK_GENERATION_ITEM_STATUSES,
+    _BULK_GENERATION_ITEM_TYPES,
+    _BULK_GENERATION_RUN_KINDS,
+    _BULK_GENERATION_RUN_STATUSES,
+    _migrate_bulk_generation_ledger,
+    get_db,
+)
 
 
 def _beats():
@@ -197,3 +207,252 @@ def test_scene_jobs_to_readiness_maps_result_bound() -> None:
     assert ready[0].video_ready is True
     assert ready[0].clip_media_id == "v1"
     assert ready[1].video_ready is False
+
+
+def _create_legacy_bulk_ledger(path) -> None:
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            """
+CREATE TABLE bulk_generation_run (
+    bulk_run_id             TEXT PRIMARY KEY,
+    kind                    TEXT NOT NULL
+                            CHECK(kind IN ('AVATAR_IMAGE','IMG','VIDEO','MIXED')),
+    status                  TEXT NOT NULL DEFAULT 'PENDING'
+                            CHECK(status IN ('PENDING','RUNNING','COMPLETED','PARTIAL_FAILED','FAILED','CANCELLED','PAUSED')),
+    total_expected          INTEGER NOT NULL DEFAULT 0,
+    total_completed         INTEGER NOT NULL DEFAULT 0,
+    total_failed            INTEGER NOT NULL DEFAULT 0,
+    max_parallel_images     INTEGER NOT NULL DEFAULT 2,
+    max_parallel_videos     INTEGER NOT NULL DEFAULT 1,
+    confirm_credit_burn     INTEGER NOT NULL DEFAULT 0,
+    interval_min_seconds    INTEGER NOT NULL DEFAULT 5,
+    interval_max_seconds    INTEGER NOT NULL DEFAULT 15,
+    cooldown_after_n_jobs   INTEGER NOT NULL DEFAULT 5,
+    cooldown_seconds        INTEGER NOT NULL DEFAULT 60,
+    error_log_json          TEXT NOT NULL DEFAULT '[]',
+    config_json             TEXT NOT NULL DEFAULT '{}',
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE TABLE bulk_generation_item (
+    bulk_item_id            TEXT PRIMARY KEY,
+    bulk_run_id             TEXT NOT NULL,
+    item_type               TEXT NOT NULL
+                            CHECK(item_type IN ('AVATAR_IMAGE','IMG','T2V','I2V','F2V')),
+    source_ref              TEXT NOT NULL,
+    prompt_snapshot         TEXT,
+    payload_json            TEXT NOT NULL DEFAULT '{}',
+    status                  TEXT NOT NULL DEFAULT 'QUEUED'
+                            CHECK(status IN ('QUEUED','SUBMITTED','RUNNING','GENERATED','DOWNLOADED','REGISTERED','FAILED','CANCELLED')),
+    job_id                  TEXT,
+    media_id                TEXT,
+    local_path              TEXT,
+    creative_asset_id       TEXT,
+    error                   TEXT,
+    retry_count             INTEGER NOT NULL DEFAULT 0,
+    started_at              TEXT,
+    completed_at            TEXT,
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX idx_bulk_generation_item_run ON bulk_generation_item(bulk_run_id);
+CREATE INDEX idx_bulk_generation_item_run_status
+    ON bulk_generation_item(bulk_run_id, status);
+INSERT INTO bulk_generation_run (bulk_run_id, kind, status, config_json)
+VALUES ('legacy-run', 'VIDEO', 'COMPLETED', '{"legacy":true}');
+INSERT INTO bulk_generation_item (
+    bulk_item_id, bulk_run_id, item_type, source_ref, status, payload_json
+) VALUES ('legacy-item', 'legacy-run', 'F2V', 'legacy-source', 'REGISTERED', '{}');
+"""
+        )
+
+
+def test_bulk_ledger_migration_is_complete_preserving_and_fail_closed(tmp_path) -> None:
+    database = tmp_path / "legacy-bulk-ledger.sqlite"
+    _create_legacy_bulk_ledger(database)
+
+    assert _migrate_bulk_generation_ledger(str(database)) is True
+
+    with sqlite3.connect(database) as connection:
+        connection.execute("PRAGMA foreign_keys=ON")
+        run_row = connection.execute(
+            "SELECT kind, status, config_json FROM bulk_generation_run "
+            "WHERE bulk_run_id='legacy-run'"
+        ).fetchone()
+        item_row = connection.execute(
+            "SELECT item_type, status, payload_json FROM bulk_generation_item "
+            "WHERE bulk_item_id='legacy-item'"
+        ).fetchone()
+        assert run_row == ("VIDEO", "COMPLETED", '{"legacy":true}')
+        assert item_row == ("F2V", "REGISTERED", "{}")
+
+        run_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name='bulk_generation_run'"
+        ).fetchone()[0]
+        item_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name='bulk_generation_item'"
+        ).fetchone()[0]
+        for value in _BULK_GENERATION_RUN_KINDS + _BULK_GENERATION_RUN_STATUSES:
+            assert f"'{value}'" in run_sql
+        for value in _BULK_GENERATION_ITEM_TYPES + _BULK_GENERATION_ITEM_STATUSES:
+            assert f"'{value}'" in item_sql
+
+        for index, status in enumerate(_BULK_GENERATION_RUN_STATUSES):
+            connection.execute(
+                "INSERT INTO bulk_generation_run (bulk_run_id, kind, status) "
+                "VALUES (?, 'MONTAGE_DISCRETE', ?)",
+                (f"montage-run-{index}", status),
+            )
+        for index, status in enumerate(_BULK_GENERATION_ITEM_STATUSES):
+            connection.execute(
+                "INSERT INTO bulk_generation_item ("
+                "bulk_item_id, bulk_run_id, item_type, source_ref, status"
+                ") VALUES (?, 'montage-run-0', 'MONTAGE_SCENE', ?, ?)",
+                (f"montage-item-{index}", f"scene-{index}", status),
+            )
+        connection.execute(
+            "UPDATE bulk_generation_run SET status='ASSEMBLY_READY' "
+            "WHERE bulk_run_id='montage-run-0'"
+        )
+        connection.execute(
+            "UPDATE bulk_generation_item SET status='RESULT_BOUND' "
+            "WHERE bulk_item_id='montage-item-0'"
+        )
+        connection.commit()
+
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO bulk_generation_run (bulk_run_id, kind) "
+                "VALUES ('invalid-kind', 'TOTALLY_INVALID')"
+            )
+        connection.rollback()
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO bulk_generation_item ("
+                "bulk_item_id, bulk_run_id, item_type, source_ref"
+                ") VALUES ('invalid-type', 'montage-run-0', 'TOTALLY_INVALID', 'x')"
+            )
+        connection.rollback()
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO bulk_generation_item ("
+                "bulk_item_id, bulk_run_id, item_type, source_ref, status"
+                ") VALUES ('invalid-status', 'montage-run-0', 'MONTAGE_SCENE', 'x', 'TOTALLY_INVALID')"
+            )
+        connection.rollback()
+
+        before_counts = tuple(
+            connection.execute(
+                f"SELECT COUNT(*) FROM {table_name}"
+            ).fetchone()[0]
+            for table_name in ("bulk_generation_run", "bulk_generation_item")
+        )
+        assert connection.execute(
+            "SELECT status FROM bulk_generation_run "
+            "WHERE bulk_run_id='montage-run-0'"
+        ).fetchone()[0] == "ASSEMBLY_READY"
+        assert connection.execute(
+            "SELECT status FROM bulk_generation_item "
+            "WHERE bulk_item_id='montage-item-0'"
+        ).fetchone()[0] == "RESULT_BOUND"
+        index_names = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA index_list('bulk_generation_item')"
+            ).fetchall()
+        }
+        assert {
+            "idx_bulk_generation_item_run",
+            "idx_bulk_generation_item_run_status",
+        }.issubset(index_names)
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+
+    assert _migrate_bulk_generation_ledger(str(database)) is False
+    with sqlite3.connect(database) as connection:
+        after_counts = tuple(
+            connection.execute(
+                f"SELECT COUNT(*) FROM {table_name}"
+            ).fetchone()[0]
+            for table_name in ("bulk_generation_run", "bulk_generation_item")
+        )
+        assert after_counts == before_counts
+
+
+@pytest.mark.asyncio
+async def test_montage_run_persists_real_sqlite_ledger_and_estimate() -> None:
+    beats = [
+        SimpleNamespace(beat_id="hook", role="HOOK", objective="open", visual_action="reveal"),
+        SimpleNamespace(beat_id="body", role="BODY", objective="show", visual_action="use"),
+        SimpleNamespace(beat_id="cta", role="CTA", objective="close", visual_action="pack shot"),
+    ]
+    package_index = 0
+
+    async def package_factory(**kwargs):
+        nonlocal package_index
+        package_index += 1
+        scene_id = f"scene-{package_index}"
+        return {
+            "workspace_execution_package_id": f"wep-{scene_id}",
+            "prompt_text": f"prompt-{scene_id}",
+            "execution_allowed": True,
+            "asset_slots": [
+                {
+                    "slot_key": "start_frame",
+                    "resolved_asset": {
+                        "media_id": f"product-media-{scene_id}",
+                        "download_url": f"https://example.test/{scene_id}.png",
+                    },
+                }
+            ],
+        }
+
+    created = await create_montage_discrete_run(
+        product_id="product-1",
+        story_beats=beats,
+        package_factory=package_factory,
+        product_media_id="product-media-1",
+        model="Veo 3.1 - Lite",
+        duration_seconds=8,
+    )
+
+    assert created["credit_spend"] is False
+    assert created["kind"] == "MONTAGE_DISCRETE"
+    assert created["status"] == "PREPARED", created
+    assert created["total_scenes"] == 3
+
+    readback = await get_montage_discrete_run(created["montage_run_id"])
+    assert readback["kind"] == "MONTAGE_DISCRETE"
+    assert readback["status"] == "PREPARED"
+    assert readback["total_scenes"] == 3
+    assert all(scene["status"] == "PACKAGE_READY" for scene in readback["scenes"])
+    assert all(
+        scene["workspace_execution_package_id"]
+        for scene in readback["scenes"]
+    )
+
+    db = await get_db()
+    run_cursor = await db.execute(
+        "SELECT kind, status, config_json FROM bulk_generation_run "
+        "WHERE bulk_run_id=?",
+        (created["montage_run_id"],),
+    )
+    run_row = await run_cursor.fetchone()
+    item_cursor = await db.execute(
+        "SELECT item_type, status FROM bulk_generation_item "
+        "WHERE bulk_run_id=? ORDER BY created_at",
+        (created["montage_run_id"],),
+    )
+    item_rows = await item_cursor.fetchall()
+    assert run_row[0] == "MONTAGE_DISCRETE"
+    assert run_row[1] == "PREPARED"
+    assert '"duration_seconds": 8' in run_row[2]
+    assert [row[0] for row in item_rows] == ["MONTAGE_SCENE"] * 3
+    assert [row[1] for row in item_rows] == ["PACKAGE_READY"] * 3
+
+    estimate = await estimate_montage_run_generation(created["montage_run_id"])
+    assert estimate["expected_image_operations"] == 0
+    assert estimate["expected_video_generations"] == 3
+    assert estimate["expected_provider_operations"] == 3
+    assert estimate["credit_spend"] is False
