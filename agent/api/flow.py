@@ -796,6 +796,7 @@ class GenerateRequest(BaseModel):
     # explicitly enabled and bounded.
     image_contract_version: Optional[str] = None
     reference_pack_id: Optional[str] = None
+    poster_copy_set_id: Optional[str] = None
     output_intent: Optional[str] = None
     creative_mode: Optional[str] = None
     confirm_live_credit_burn: bool = False
@@ -1044,6 +1045,93 @@ async def _apply_img_product_truth_gate(
     return prompt, refs, False
 
 
+async def _run_creative_campaign_pre_provider_lint(
+    *,
+    product_id: str,
+    poster_copy_set_id: str | None,
+    prompt: str,
+    image_model: str | None,
+    output_intent: str | None,
+    maximum_provider_operations: int | None,
+    max_retry_operations: int,
+) -> None:
+    """Run the typed Campaign gate immediately before the provider boundary.
+
+    The Poster Prompt Draft endpoint is a useful earlier check, but it is not
+    the final transport authority. This read-only gate re-resolves the approved
+    copy set, campaign brief and reference pack at the same request boundary so
+    a stale or hand-crafted IMG payload cannot bypass Campaign governance.
+    """
+    from agent import config
+    from agent.models.poster_copy_set import (
+        STATUS_POSTER_COPY_APPROVED,
+        serialize_poster_copy_set,
+    )
+    from agent.services.poster_campaign_design_service import (
+        build_campaign_design_brief,
+        score_campaign_copy_route,
+    )
+    from agent.services.poster_campaign_qa_service import build_pre_provider_lint
+    from agent.services.product_reference_pack_service import get_reference_pack
+
+    copy_id = str(poster_copy_set_id or "").strip()
+    if not copy_id:
+        raise HTTPException(422, "POSTER_COPY_SET_REQUIRED_FOR_CREATIVE_CAMPAIGN")
+    copy_row = await crud.get_poster_copy_set(copy_id)
+    if not copy_row:
+        raise HTTPException(404, "POSTER_COPY_SET_NOT_FOUND")
+    if str(copy_row.get("product_id") or "").strip() != str(product_id).strip():
+        raise HTTPException(422, "POSTER_COPY_SET_PRODUCT_MISMATCH")
+    if copy_row.get("status") != STATUS_POSTER_COPY_APPROVED:
+        raise HTTPException(409, "POSTER_COPY_SET_APPROVAL_REQUIRED")
+
+    copy_set = serialize_poster_copy_set(copy_row)
+    brief = await build_campaign_design_brief(
+        product_id,
+        objective=str(copy_set.get("objective") or "Product Hero"),
+        selected_angle=str(copy_set.get("angle") or ""),
+        copy_layout={
+            "primary_message": str(copy_set.get("primary_message") or ""),
+            "support_message": str(copy_set.get("support_message") or ""),
+            "cta": str(copy_set.get("cta") or ""),
+        },
+    )
+    candidate = {
+        "route_id": str(copy_set.get("campaign_copy_route_id") or copy_id),
+        "singular_proposition": str(copy_set.get("angle") or ""),
+        "primary_message": str(copy_set.get("primary_message") or ""),
+        "support_message": str(copy_set.get("support_message") or ""),
+        "approved_proof_points": list(copy_set.get("proof_points") or []),
+        "cta": str(copy_set.get("cta") or ""),
+    }
+    score, rejected_reasons = score_campaign_copy_route(candidate, brief)
+    candidate["score"] = score.model_dump(mode="json")
+    candidate["production_eligible"] = (
+        not rejected_reasons
+        and score.total >= 72
+        and not brief.missing_field_blockers
+    )
+    lint = build_pre_provider_lint(
+        product_id=product_id,
+        reference_pack=await get_reference_pack(product_id),
+        brief=brief,
+        candidate=candidate,
+        compiled_prompt=prompt,
+        model=image_model or "NANO_BANANA_PRO",
+        output_intent=output_intent or "",
+        max_provider_operations=maximum_provider_operations or 0,
+        max_retry_operations=max_retry_operations,
+        live=True,
+        feature_enabled=config.CREATIVE_CAMPAIGN_POSTER_ENABLED,
+        live_authorized=config.CREATIVE_CAMPAIGN_LIVE_BENCHMARK_AUTHORIZED,
+    )
+    if not lint.allowed:
+        raise HTTPException(
+            422,
+            "CAMPAIGN_PRE_PROVIDER_LINT_BLOCKED:" + "|".join(lint.blockers),
+        )
+
+
 @router.post("/generate")
 async def generate(body: GenerateRequest):
     """THE one door for all four modes. mode = IMG | T2V | I2V | F2V → job_id.
@@ -1106,6 +1194,16 @@ async def generate(body: GenerateRequest):
             reference_pack_id=body.reference_pack_id,
             creative_mode=body.creative_mode,
         )
+        if creative_campaign:
+            await _run_creative_campaign_pre_provider_lint(
+                product_id=body.product_id,
+                poster_copy_set_id=body.poster_copy_set_id,
+                prompt=generation_prompt,
+                image_model=body.image_model,
+                output_intent=body.output_intent,
+                maximum_provider_operations=body.maximum_provider_operations,
+                max_retry_operations=body.max_retry_operations,
+            )
     # Validate model+duration BEFORE connectivity so 422 stays deterministic (patch I2a);
     # always resolve against the EFFECTIVE model (defaults to Lite) so a bad duration_s with
     # no model (e.g. 10s on default Lite) is caught here, not late inside the job.
@@ -2935,6 +3033,24 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         )
         body["prompt"] = prompt
         body["refs"] = gated_refs
+        if creative_campaign:
+            try:
+                await _run_creative_campaign_pre_provider_lint(
+                    product_id=str(body["product_id"]),
+                    poster_copy_set_id=body.get("poster_copy_set_id"),
+                    prompt=prompt,
+                    image_model=body.get("image_model"),
+                    output_intent=body.get("output_intent"),
+                    maximum_provider_operations=body.get("maximum_provider_operations"),
+                    max_retry_operations=int(body.get("max_retry_operations") or 0),
+                )
+            except HTTPException as exc:
+                await _fail_manual_request(
+                    request_id,
+                    "API_CAMPAIGN_PRE_PROVIDER_LINT",
+                    str(exc.detail),
+                    "ERR_CAMPAIGN_PRE_PROVIDER_LINT_BLOCKED",
+                )
 
     # Collect EVERY image the dashboard sent: F2V uses startAsset (+ optional
     # endAsset — previously materialized then silently DROPPED here, losing the
