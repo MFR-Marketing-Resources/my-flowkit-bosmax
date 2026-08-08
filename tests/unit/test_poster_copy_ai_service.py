@@ -283,6 +283,32 @@ async def test_fallback_chips_come_only_from_approved_grounding(monkeypatch):
             assert chip in allowed, f"chip {chip!r} is not an approved fact"
 
 
+@pytest.mark.asyncio
+async def test_fallback_drops_grounded_chips_that_fail_poster_safety(monkeypatch):
+    """A legacy grounded claim must not block neutral fallback directions."""
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
+    pid = await _seed_product(title="Produk Legacy Claim", display="Produk Legacy Claim")
+
+    class _PK:
+        description = ""
+        benefits = ["Membantu melegakan sengal badan"]
+        usps = []
+
+    class _G:
+        source = "LEGACY_TEST"
+        product_knowledge = _PK()
+
+    async def fake_grounding(_product):
+        return _G()
+
+    monkeypatch.setattr(svc, "resolve_copy_grounding", fake_grounding)
+    out = await svc.generate_directions(pid, "PRODUCT_HERO", "Product quality")
+
+    assert len(out["directions"]) == 3
+    assert all(d["proof_points"] == [] for d in out["directions"])
+    assert all("melegakan" not in d["primary_message"].lower() for d in out["directions"])
+
+
 # ─── Closure: neutral fallback copy — no usage/routine, no angle (item D) ────
 
 _ROUTINE_USAGE_FRAGMENTS = (

@@ -437,6 +437,17 @@ def _fallback_directions(
         t["field_provenance"] = {k: PROVENANCE_FALLBACK for k in AI_COPY_FIELDS}
         if _direction_is_safe(t, contract["archetype"]):
             out.append(t)
+            continue
+
+        # Approved grounding can still contain a legacy benefit/USP that is
+        # rejected by the poster-native safety gate (for example, a relief
+        # phrase).  Keep the conservative copy usable by removing only the
+        # optional proof chips; never let a rejected chip strand the whole
+        # zero-spend fallback path.
+        if grounded_points:
+            neutral = {**t, "proof_points": []}
+            if _direction_is_safe(neutral, contract["archetype"]):
+                out.append(neutral)
     return out
 
 
