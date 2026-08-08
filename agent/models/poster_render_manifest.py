@@ -13,6 +13,12 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+from agent.models.poster_campaign_qa import (
+    CampaignMachineQA,
+    CampaignPostCompositionQA,
+    WorldClassPosterReview,
+)
+
 POSTER_RENDER_MANIFEST_SCHEMA = "poster-render-manifest-v1"
 
 COMPOSITION_REFERENCE_CONDITIONED = "REFERENCE_CONDITIONED"
@@ -141,6 +147,11 @@ class PosterQAReport(BaseModel):
     findings: list[PosterQAFinding] = Field(default_factory=list)
     block_count: int = 0
     warn_count: int = 0
+    # Campaign-specific evidence is additive. Exact Commerce retains the
+    # legacy geometry report and does not inherit generative review gates.
+    machine_qa: CampaignMachineQA | None = None
+    campaign_qa: CampaignPostCompositionQA | None = None
+    world_class_review: WorldClassPosterReview | None = None
 
 
 def build_qa_report(report: PosterRenderReport, *, expected_zone_ids: list[str],

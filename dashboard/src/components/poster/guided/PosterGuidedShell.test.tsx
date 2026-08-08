@@ -99,6 +99,40 @@ vi.mock("../../../api/imgFactory", () => ({
 		media_id: "scene-generated-1",
 		url: "/api/flow/retrieved/scene-generated-1",
 	}),
+	fetchProductReferencePack: vi.fn().mockResolvedValue({
+		pack_id: "pack-1",
+		product_id: "prod-1",
+		pack_status: "APPROVED",
+		machine_qa_status: "PASS",
+		physical_measurements: { scale_confidence: "VERIFIED" },
+		references: [
+		{ role: "CANONICAL_PRODUCT", approved: true, sha256: "canonical-sha" },
+		{ role: "LABEL_LOGO_CROP", approved: true, sha256: "label-sha" },
+		{ role: "TRANSPARENT_CUTOUT", approved: true, sha256: "cutout-sha" },
+		{ role: "SCALE_REFERENCE", approved: true, sha256: "scale-sha" },
+		],
+	}),
+	approveProductReferencePack: vi.fn().mockResolvedValue({
+		pack_id: "pack-1",
+		product_id: "prod-1",
+		pack_status: "APPROVED",
+		machine_qa_status: "PASS",
+	}),
+	compileCreativeCampaignPrompt: vi.fn().mockResolvedValue({
+		product_id: "prod-1",
+		output_intent: "CLEAN_KEY_VISUAL",
+		aspect_ratio: "9:16",
+		compiled_prompt: "CLEAN_KEY_VISUAL_PROMPT_WITHOUT_MARKETING_COPY",
+		prompt_fingerprint: "prompt-sha",
+		compiler_version: "image_prompt_compiler_v1",
+		reference_pack: { pack_id: "pack-1", pack_status: "APPROVED" },
+		blockers: [],
+		warnings: [],
+		provider_operation_plan: {
+			max_provider_operations: 1,
+			max_retry_operations: 0,
+		},
+	}),
 }));
 
 vi.mock("../../../api/productTruthLock", () => ({
@@ -229,6 +263,51 @@ vi.mock("../../../api/posterCopySets", () => {
 			// for this mode, so the UI can prove compile == displayed plan.
 			composition_plan: { signature: "sig-LIFESTYLE_EDITORIAL" },
 		}),
+		fetchPosterCampaignVariants: vi.fn().mockResolvedValue({
+			poster_deliverable_id: "pd-1",
+			kv_media_id: "scene-generated-1",
+			provider_operation_count: 0,
+			retry_operation_count: 0,
+			variants: [
+				{
+					variant_id: "variant-1",
+					variant_index: 1,
+					route_id: "ROUTE_01",
+					layout_variant: "EDITORIAL_RAIL",
+					manifest_sha256: "manifest-1",
+					output_sha256: "output-1",
+				},
+				{
+					variant_id: "variant-2",
+					variant_index: 2,
+					route_id: "ROUTE_01",
+					layout_variant: "EDITORIAL_SPLIT",
+					manifest_sha256: "manifest-2",
+					output_sha256: "output-2",
+				},
+				{
+					variant_id: "variant-3",
+					variant_index: 3,
+					route_id: "ROUTE_01",
+					layout_variant: "EDITORIAL_CENTER",
+					manifest_sha256: "manifest-3",
+					output_sha256: "output-3",
+				},
+			],
+		}),
+		reviewPosterDeliverable: vi.fn().mockResolvedValue({
+			deliverable: { poster_deliverable_id: "pd-1" },
+			qa_report: {
+				ok: true,
+				findings: [],
+				block_count: 0,
+				warn_count: 0,
+				world_class_review: { decision: "APPROVED", total: 88 },
+			},
+			world_class_review: { decision: "APPROVED", total: 88 },
+			product_truth_status: "REFERENCE_CONDITIONED_UNVERIFIED",
+			approved_for_poster: false,
+		}),
 		// Backend-resolved plan preview: derived from the REQUESTED mode so the
 		// tests observe real refetch-on-change behaviour (values themselves are
 		// proven by the backend composition tests).
@@ -301,11 +380,17 @@ vi.mock("../../../api/posterCopySets", () => {
 		}),
 		posterDeliverableOutputUrl: (id: string) =>
 			`/api/poster/deliverables/${id}/output`,
+		posterCampaignVariantOutputUrl: (deliverableId: string, variantId: string) =>
+			`/api/poster/deliverables/${deliverableId}/variants/${variantId}/output`,
 		fetchPosterDeliverableByAsset: vi.fn(),
 	};
 });
 
-import { fetchImageArtifacts } from "../../../api/imgFactory";
+import {
+	compileCreativeCampaignPrompt,
+	fetchImageArtifacts,
+	fetchProductReferencePack,
+} from "../../../api/imgFactory";
 import {
 	pollImgGenerationJob,
 	startImgGeneration,
@@ -328,6 +413,8 @@ import {
 	recommendPosterAngles,
 	recommendPosterObjectives,
 	regeneratePosterField,
+	fetchPosterCampaignVariants,
+	reviewPosterDeliverable,
 	savePosterToLibrary,
 } from "../../../api/posterCopySets";
 import { fetchPosterReadiness } from "../../../api/posterReadiness";
@@ -555,6 +642,85 @@ describe("PosterGuidedShell", () => {
 		fireEvent.click(await screen.findByTestId("poster-save"));
 		await waitFor(() => expect(savePosterToLibrary).toHaveBeenCalled());
 		expect(await screen.findByTestId("poster-saved")).toBeInTheDocument();
+	});
+
+	it("Creative Campaign generates a clean KV without a legacy scene and reviews three variants", async () => {
+		vi.mocked(fetchImageArtifacts).mockResolvedValueOnce([]);
+		renderShell();
+		fireEvent.click(screen.getByTestId("pick-product"));
+		fireEvent.click(await screen.findByTestId("poster-goal-card-PRODUCT_HERO"));
+		fireEvent.change(await screen.findByTestId("poster-creative-mode"), {
+			target: { value: "CREATIVE_CAMPAIGN" },
+		});
+		fireEvent.click(await screen.findByTestId("poster-angle-card-0"));
+		fireEvent.click(await screen.findByTestId("poster-copy-direction-0"));
+		fireEvent.click(screen.getByTestId("poster-guided-continue"));
+		fireEvent.click(await screen.findByTestId("poster-approve-copy"));
+		await screen.findByTestId("poster-copy-approved");
+
+		fireEvent.click(screen.getByTestId("poster-guided-continue"));
+		fireEvent.click(
+			await screen.findByTestId(
+				"poster-visual-card-product_hero_night_routine",
+			),
+		);
+		await waitFor(() => expect(fetchProductReferencePack).toHaveBeenCalledWith("prod-1"));
+		expect(
+			(screen.getByTestId("poster-existing-scene-options") as HTMLDetailsElement)
+				.open,
+		).toBe(false);
+		expect(
+			(screen.getByTestId("poster-generate-scene") as HTMLButtonElement).disabled,
+		).toBe(false);
+
+		fireEvent.click(screen.getByTestId("poster-generate-scene"));
+		expect(screen.getByTestId("poster-generate-scene-confirm")).toBeInTheDocument();
+		expect(startImgGeneration).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByTestId("poster-generate-scene-credit-checkbox"));
+		fireEvent.click(screen.getByTestId("poster-generate-scene-credit-confirm"));
+		await waitFor(() => expect(compileCreativeCampaignPrompt).toHaveBeenCalled());
+		await waitFor(() => expect(startImgGeneration).toHaveBeenCalled());
+		expect(vi.mocked(startImgGeneration).mock.lastCall?.[0]).toMatchObject({
+			creative_mode: "CREATIVE_CAMPAIGN",
+			image_model: "NANO_BANANA_PRO",
+			output_intent: "CLEAN_KEY_VISUAL",
+			maximum_provider_operations: 1,
+			max_retry_operations: 0,
+		});
+		await screen.findByTestId("poster-generated-scene");
+
+		fireEvent.click(screen.getByTestId("poster-guided-continue"));
+		fireEvent.click(await screen.findByTestId("poster-compose"));
+		await waitFor(() => expect(composePoster).toHaveBeenCalled());
+		await waitFor(() =>
+			expect(fetchPosterCampaignVariants).toHaveBeenCalledWith("pd-1", {}),
+		);
+		expect(await screen.findByTestId("poster-creative-campaign-preview")).toBeInTheDocument();
+		expect(await screen.findByTestId("poster-campaign-variants")).toBeInTheDocument();
+		expect(screen.getByTestId("poster-campaign-variants").textContent).toContain(
+			"provider ops 0",
+		);
+
+		fireEvent.change(screen.getByLabelText("Product identity score"), {
+			target: { value: "23" },
+		});
+		fireEvent.change(screen.getByLabelText("Integration score"), {
+			target: { value: "22" },
+		});
+		fireEvent.change(screen.getByLabelText("Typography score"), {
+			target: { value: "18" },
+		});
+		fireEvent.change(screen.getByLabelText("Malaysian context score"), {
+			target: { value: "12" },
+		});
+		fireEvent.change(screen.getByLabelText("Conversion score"), {
+			target: { value: "13" },
+		});
+		fireEvent.click(screen.getByTestId("poster-review-approve"));
+		await waitFor(() => expect(reviewPosterDeliverable).toHaveBeenCalledWith(
+			"pd-1",
+			expect.objectContaining({ decision: "APPROVED", product_identity: 23 }),
+		));
 	});
 
 	it("loads deterministic curated angles without optional AI enrichment", async () => {
