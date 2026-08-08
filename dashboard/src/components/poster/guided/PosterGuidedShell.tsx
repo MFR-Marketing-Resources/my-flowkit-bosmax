@@ -217,9 +217,10 @@ export default function PosterGuidedShell() {
 	const [reopenError, setReopenError] = useState("");
 	const restoredRef = useRef(false);
 
-	// B-04: BACKEND-resolved composition plan for the selected governed mode.
-	// Refetched whenever the mode / product / recipe / approved copy changes;
-	// the UI never derives plan values locally.
+	// B-04: BACKEND-resolved composition plan for legacy/exact governed modes.
+	// Creative Campaign has a separate canonical image compiler and must not
+	// enter the deterministic compositor resolver, which intentionally rejects
+	// provider-poster modes.
 	const [compositionPlan, setCompositionPlan] = useState<CompositionPlan | null>(
 		null,
 	);
@@ -230,7 +231,11 @@ export default function PosterGuidedShell() {
 	const approvedCopySetId = wf.approvedCopySet?.poster_copy_set_id ?? "";
 	useEffect(() => {
 		const fetchId = ++planFetchRef.current;
-		if (!productId || !wf.creativeMode) {
+		if (
+			!productId ||
+			!wf.creativeMode ||
+			wf.creativeMode === "CREATIVE_CAMPAIGN"
+		) {
 			setCompositionPlan(null);
 			setPlanError("");
 			setPlanLoading(false);

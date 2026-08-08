@@ -1056,6 +1056,21 @@ describe("PosterGuidedShell composition plan (B-04)", () => {
 		expect(fetchCompositionPlan).not.toHaveBeenCalled();
 	});
 
+	it("does not route Creative Campaign through the legacy compositor resolver", async () => {
+		renderShell();
+		fireEvent.click(screen.getByTestId("pick-product"));
+		fireEvent.click(await screen.findByTestId("poster-goal-card-PRODUCT_HERO"));
+		fireEvent.change(await screen.findByTestId("poster-creative-mode"), {
+			target: { value: "CREATIVE_CAMPAIGN" },
+		});
+
+		await waitFor(() =>
+			expect(screen.queryByTestId("poster-composition-plan-error")).toBeNull(),
+		);
+		expect(screen.queryByTestId("poster-composition-plan")).toBeNull();
+		expect(fetchCompositionPlan).not.toHaveBeenCalled();
+	});
+
 	it("mode change preserves product, approved copy, angle and recipe state", async () => {
 		renderShell();
 		await driveToApproved();
