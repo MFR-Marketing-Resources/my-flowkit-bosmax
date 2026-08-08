@@ -259,6 +259,45 @@ async def test_save_registers_creative_asset_with_poster_governance(tmp_path, mo
 
 
 @pytest.mark.asyncio
+async def test_campaign_composes_copy_over_reference_conditioned_key_visual(tmp_path, monkeypatch):
+    pid = await _seed_product()
+    pcs = await _seed_copy_set(pid)
+    monkeypatch.setattr(compositor, "compose", _fake_compose(tmp_path))
+    result = await PosterDeliverableService.compose_poster(
+        product_id=pid,
+        poster_copy_set_id=pcs["poster_copy_set_id"],
+        recipe_id="product_hero_night_routine",
+        background_local_path=_bg(tmp_path),
+        image_model="NANO_BANANA_PRO",
+        creative_mode="CREATIVE_CAMPAIGN",
+    )
+    row = result["deliverable"]
+    manifest = json.loads(row["render_manifest_json"])
+    assert row["composition_strategy"] == "REFERENCE_CONDITIONED"
+    assert manifest["product_layer"]["strategy"] == "REFERENCE_CONDITIONED"
+    assert not manifest["product_layer"].get("asset_ref")
+    assert manifest["provenance"]["creative_mode"] == "CREATIVE_CAMPAIGN"
+
+    captured = {}
+    _mock_asset(monkeypatch, captured, asset_id="ca_campaign_1")
+    saved = await PosterDeliverableService.save_to_library(
+        row["poster_deliverable_id"]
+    )
+    assert saved["creative_asset_id"] == "ca_campaign_1"
+    request = captured["request"]
+    assert request.asset_subtype == "CAMPAIGN_POSTER_REFERENCE_CONDITIONED"
+    assert request.review_status == "PENDING_REVIEW"
+    assert request.approved_for_poster is False
+    assert request.product_truth_status == "REFERENCE_CONDITIONED_UNVERIFIED"
+    assert request.identity_lock_status == "UNVERIFIED"
+    assert request.scale_truth_status == "UNVERIFIED"
+    assert (
+        request.mode_a_metadata_handoff["campaign_governance"]["review_state"]
+        == "PENDING_HUMAN_REVIEW"
+    )
+
+
+@pytest.mark.asyncio
 async def test_save_requires_approved_copy_set(tmp_path, monkeypatch):
     pid = await _seed_product()
     pcs = await _seed_copy_set(pid, approve=False)  # DRAFT

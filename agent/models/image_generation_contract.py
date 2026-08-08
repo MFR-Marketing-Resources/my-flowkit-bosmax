@@ -141,12 +141,16 @@ class ImagePromptCompileRequest(BaseModel):
     camera: str = Field(default="Vertical 9:16, natural perspective, product remains readable", max_length=2000)
     lighting: str = Field(default="Natural physically coherent light, contact shadow and material response", max_length=2000)
     scene_direction: str = Field(default="A culturally appropriate Malaysian commercial environment", max_length=3000)
+    # Provider-facing campaign prompts may carry geometry/line-budget metadata,
+    # but a clean key visual must never receive the actual marketing wording.
+    # The compiler allowlists the structural keys before serialising this field.
+    copy_space: dict[str, Any] = Field(default_factory=dict)
     copy_layout: dict[str, str] = Field(default_factory=dict)
     negative_constraints: list[str] = Field(default_factory=list, max_length=40)
     aspect_ratio: str = Field(default="9:16", pattern=r"^(9:16|16:9|1:1|4:3|3:4)$")
     creative_mode: str = Field(default="CREATIVE_CAMPAIGN", min_length=1, max_length=128)
     requested_outputs: int = Field(default=1, ge=1, le=3)
-    model: str = Field(default="NANO_BANANA_2", min_length=1, max_length=128)
+    model: str = Field(default="NANO_BANANA_PRO", min_length=1, max_length=128)
     reference_roles: list[ImageReferenceRole] = Field(
         default_factory=lambda: [
             "PRODUCT_CANONICAL",
@@ -197,7 +201,7 @@ class ImageOperationPlanRequest(BaseModel):
     product_id: str = Field(min_length=1)
     requested_outputs: int = Field(default=3, ge=1, le=3)
     max_retry_operations: int = Field(default=0, ge=0, le=2)
-    model: str = Field(default="NANO_BANANA_2", min_length=1, max_length=128)
+    model: str = Field(default="NANO_BANANA_PRO", min_length=1, max_length=128)
 
 
 class ImageOperationPlan(BaseModel):
