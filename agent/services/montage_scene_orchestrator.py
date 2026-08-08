@@ -17,6 +17,10 @@ from agent.services.montage_scene_execution_routing import (
 )
 from agent.services.montage_scene_reference_policy import SceneReferencePolicy
 
+
+ERR_MONTAGE_AVATAR_SELECTION_REQUIRED = "ERR_MONTAGE_AVATAR_SELECTION_REQUIRED"
+
+
 PackageFactory = Callable[..., Awaitable[dict[str, Any]]]
 GenerateFn = Callable[..., Awaitable[dict[str, Any]]]
 ImagePrepareFn = Callable[..., Awaitable[dict[str, Any]]]
@@ -178,6 +182,19 @@ async def execute_scene_plan(
         state.status = "VIDEO_READY"
         return state
 
+    # Montage currently has no explicit Avatar Registry identity field. An
+    # AVATAR_PRODUCT declaration must therefore fail closed at the Montage
+    # boundary rather than inheriting VISIBLE_CREATOR or silently becoming
+    # FACELESS inside the generic package/compiler path.
+    if plan.reference_policy is SceneReferencePolicy.AVATAR_PRODUCT:
+        state.status = "PACKAGE_FAILED"
+        state.error_code = ERR_MONTAGE_AVATAR_SELECTION_REQUIRED
+        state.detail = (
+            "AVATAR_PRODUCT requires an explicit Avatar Registry identity; "
+            "Montage will not select, invent, or downgrade an avatar"
+        )
+        return state
+
     # IMAGE_FIRST: optional image prepare; PRODUCT_ANCHOR/HYBRID may defer to package product image
     start_frame = _start_frame_for_plan(plan)
     hybrid_product_anchor = str(plan.source_mode or "").upper() == "HYBRID"
@@ -251,6 +268,12 @@ async def execute_scene_plan(
         kwargs["start_frame_asset_id"] = start_frame
     if plan.product_media_id and str(source_mode or "").upper() == "HYBRID":
         kwargs["product_reference_asset_id"] = plan.product_media_id
+    if plan.reference_policy is SceneReferencePolicy.PRODUCT_ANCHOR:
+        # PRODUCT_ANCHOR is the normal presenter-free Montage contract. The
+        # generic package factory defaults to VISIBLE_CREATOR, so make the
+        # Montage-owned intent explicit and keep Avatar Registry identity null.
+        kwargs["character_presence"] = "FACELESS"
+        kwargs["avatar_id"] = None
 
     try:
         pkg = await package_factory(**kwargs)
