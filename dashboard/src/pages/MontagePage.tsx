@@ -7,7 +7,7 @@
  * Execution: plan → durable run (scene job ledger + packages) → bind results →
  * readiness → assemble dry-run. Live multi-scene credit fire stays gated.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useCreativeLaneSettings } from "../api/creativeLaneSettings";
 import {
 	assembleMontageRunDryRun,
@@ -17,12 +17,10 @@ import {
 	type MontagePlanResponse,
 	type MontageReadinessResponse,
 	type MontageRunResponse,
-	type MontageScenePlan,
 } from "../api/montage";
 import { fetchProductCatalog } from "../api/products";
 import {
 	OperatorCockpit,
-	ResolvedChip,
 	WorkflowStep,
 	type WorkflowStepStatus,
 } from "../components/workflow";
@@ -77,10 +75,19 @@ export default function MontagePage() {
 		setV4Open((prev) => ({ ...prev, [index]: !currentOpen }));
 
 	const canOperate = Boolean(selectedProduct) && settingsAvailable;
+	const packagesReady = Boolean(
+		run?.scenes?.some((s) => s.workspace_execution_package_id),
+	);
+	const packageCount =
+		run?.scenes?.filter((s) => s.workspace_execution_package_id).length ?? 0;
 
 	const sProduct: WorkflowStepStatus = selectedProduct ? "done" : "active";
 	const sCreative: WorkflowStepStatus =
-		selectedProduct && settingsAvailable ? "done" : selectedProduct ? "active" : "upcoming";
+		selectedProduct && settingsAvailable
+			? "done"
+			: selectedProduct
+				? "active"
+				: "upcoming";
 	const sPlan: WorkflowStepStatus = plan
 		? "done"
 		: canOperate
@@ -100,13 +107,18 @@ export default function MontagePage() {
 		: run
 			? "active"
 			: "upcoming";
+	const sAssemble: WorkflowStepStatus = assembleNote
+		? "done"
+		: readiness?.ok
+			? "active"
+			: "upcoming";
 
 	const handlePlan = async () => {
 		if (!selectedProduct || !settingsAvailable) return;
 		setBusy(true);
 		setError(null);
 		setReadiness(null);
-		setExecution(null);
+		setRun(null);
 		setAssembleNote(null);
 		try {
 			const next = await createMontagePlan({
@@ -134,7 +146,7 @@ export default function MontagePage() {
 				product_id: selectedProduct.id,
 				hook_id: hookId,
 				background_id: backgroundId,
-				product_media_id: selectedProduct.primary_image_asset_id || null,
+				product_media_id: null,
 				scene_context_override: `hook=${hookId}; background=${backgroundId}`,
 			});
 			setRun(res);
@@ -194,9 +206,9 @@ export default function MontagePage() {
 					One product → N discrete scenes → one finished video
 				</h1>
 				<p className="mt-1 max-w-2xl text-[12px] text-slate-400">
-					Storyboard beats route to existing scene/image/video primitives via
-					workspace packages. Assembly is fail-closed. Live credit generate stays
-					locked.
+					Durable run ledger: beats → scene jobs → workspace packages → bind
+					results → fail-closed assemble. Live multi-scene credit fire is not
+					auto-burned on this page.
 				</p>
 			</header>
 
@@ -220,8 +232,9 @@ export default function MontagePage() {
 							onSelect={(p) => {
 								setSelectedProduct(p);
 								setPlan(null);
-								setExecution(null);
+								setRun(null);
 								setReadiness(null);
+								setAssembleNote(null);
 							}}
 						/>
 					</WorkflowStep>
@@ -254,15 +267,14 @@ export default function MontagePage() {
 							</div>
 						) : null}
 						<div className="grid gap-3 sm:grid-cols-2">
-							<label className="space-y-1">
+							<label className="block">
 								<span className={labelClass}>Hook</span>
 								<select
 									className={selectClass}
 									value={hookId}
-									onChange={(e) => setHookId(e.target.value)}
 									disabled={!settingsAvailable}
+									onChange={(e) => setHookId(e.target.value)}
 									data-testid="montage-hook"
-									data-settings-source={settings.source}
 								>
 									{settings.hook.options.map((o) => (
 										<option key={o.id} value={o.id}>
@@ -271,13 +283,13 @@ export default function MontagePage() {
 									))}
 								</select>
 							</label>
-							<label className="space-y-1">
+							<label className="block">
 								<span className={labelClass}>Background</span>
 								<select
 									className={selectClass}
 									value={backgroundId}
-									onChange={(e) => setBackgroundId(e.target.value)}
 									disabled={!settingsAvailable}
+									onChange={(e) => setBackgroundId(e.target.value)}
 									data-testid="montage-background"
 								>
 									{settings.background.options.map((o) => (
@@ -288,28 +300,18 @@ export default function MontagePage() {
 								</select>
 							</label>
 						</div>
-						<div className="mt-3 flex flex-wrap gap-2">
-							<ResolvedChip label="Hook" value={hookLabel} auto={hookId === "AUTO"} />
-							<ResolvedChip
-								label="Background"
-								value={backgroundLabel}
-								auto={backgroundId === "AUTO"}
-							/>
-							<ResolvedChip label="Path" value="Discrete montage" />
-							<ResolvedChip label="SSOT" value={settings.source} />
-						</div>
 					</WorkflowStep>
 
 					<WorkflowStep
 						index={3}
-						title="Scene plan"
+						title="Plan scenes"
 						status={sPlan}
 						open={v4IsOpen(3, sPlan)}
 						onToggleOpen={() => v4Toggle(3, v4IsOpen(3, sPlan))}
 						summary={
 							plan
 								? `${plan.scene_count} scenes · ${plan.assembly_path}`
-								: "Build discrete scenes from storyboard beats"
+								: "Expand beats into discrete scene plans"
 						}
 					>
 						<button
@@ -319,29 +321,19 @@ export default function MontagePage() {
 							className="rounded-xl border border-v4-accent/40 bg-v4-accent/15 px-4 py-2.5 text-[12px] font-bold text-v4-accent-ink hover:bg-v4-accent/25 disabled:opacity-40"
 							data-testid="montage-plan"
 						>
-							{busy && !plan ? "Planning…" : "Build scene plan"}
+							{busy ? "Planning…" : "Plan scenes"}
 						</button>
-						{sceneRows.length ? (
-							<ul className="mt-3 space-y-2" data-testid="montage-scene-list">
-								{sceneRows.map((s) => (
-									<li
-										key={s.scene_id}
-										className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2 text-[12px]"
-									>
-										<div className="flex flex-wrap items-center justify-between gap-2">
-											<span className="font-bold text-slate-100">{s.scene_id}</span>
-											<span className="rounded-full border border-slate-700 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-400">
-												{s.route} · {s.reference_policy}
-											</span>
-										</div>
-										<div className="mt-1 text-slate-400">
-											{s.role || s.beat_id}: {s.objective || s.visual_action || "—"}
-										</div>
-										<div className="mt-1 font-mono text-[10px] text-slate-500">
-											{s.transport_mode}/{s.source_mode}
-											{s.image_generation_required ? " · image-first" : ""}
-											{s.video_generation_required ? " · video" : " · inherit"}
-										</div>
+						{plan ? (
+							<ul
+								className="mt-3 space-y-1 text-[11px] text-slate-300"
+								data-testid="montage-plan-list"
+							>
+								{plan.scenes.map((s) => (
+									<li key={s.scene_id} className="rounded border border-slate-800 px-2 py-1">
+										<span className="font-semibold text-slate-100">{s.scene_id}</span>
+										{" · "}
+										{s.route} · {s.transport_mode}/{s.source_mode} ·{" "}
+										{s.reference_policy}
 									</li>
 								))}
 							</ul>
@@ -350,16 +342,16 @@ export default function MontagePage() {
 
 					<WorkflowStep
 						index={4}
-						title="Execute scenes (packages)"
+						title="Start discrete run"
 						status={sExec}
 						open={v4IsOpen(4, sExec)}
 						onToggleOpen={() => v4Toggle(4, v4IsOpen(4, sExec))}
 						summary={
 							run
-								? `${run.scenes.filter((s) => s.workspace_execution_package_id).length}/${run.total_scenes} packages`
-								: "Create workspace packages via existing factory"
+								? `${packageCount}/${run.total_scenes} packages · run ${run.montage_run_id.slice(0, 8)}`
+								: "Persist scene job ledger + workspace packages"
 						}
-						helper="R2 operational path — no credit auto-fire. Live generate uses /api/flow/generate per package."
+						helper="M-02 durable path on bulk_generation_run kind=MONTAGE_DISCRETE. No credit auto-fire."
 					>
 						<button
 							type="button"
@@ -371,13 +363,19 @@ export default function MontagePage() {
 							{busy ? "Preparing…" : "Start discrete run (ledger + packages)"}
 						</button>
 						{run ? (
-							<ul className="mt-3 space-y-1 text-[11px] text-slate-300" data-testid="montage-exec-list">
+							<ul
+								className="mt-3 space-y-1 text-[11px] text-slate-300"
+								data-testid="montage-exec-list"
+							>
 								{run.scenes.map((s) => (
-									<li key={s.scene_id} className="font-mono">
-										{s.scene_id}: {s.status}
+									<li key={s.scene_id} className="rounded border border-slate-800 px-2 py-1">
+										<span className="font-semibold text-slate-100">{s.scene_id}</span>
+										{" · "}
+										{s.status}
 										{s.workspace_execution_package_id
 											? ` · ${s.workspace_execution_package_id}`
 											: ""}
+										{s.video_media_id ? ` · clip=${s.video_media_id}` : ""}
 										{s.error_code ? ` · ${s.error_code}` : ""}
 									</li>
 								))}
@@ -387,157 +385,149 @@ export default function MontagePage() {
 
 					<WorkflowStep
 						index={5}
-						title="Assembly readiness + dry-run"
+						title="Assembly readiness"
 						status={sReady}
 						open={v4IsOpen(5, sReady)}
 						onToggleOpen={() => v4Toggle(5, v4IsOpen(5, sReady))}
 						summary={
 							readiness
 								? readiness.ok
-									? "READY for discrete concat"
-									: readiness.code || "BLOCKED"
-								: "Check fail-closed gates"
+									? `Ready · ${readiness.clip_media_ids.length} clips`
+									: `Blocked · ${readiness.blockers?.length ?? 0}`
+								: "Check durable run before concat"
 						}
-						helper="Incomplete mandatory sets never reach concat (HTTP 409 on /assemble)."
 					>
-						<div className="flex flex-wrap gap-2">
-							<button
-								type="button"
-								disabled={(!plan && !run) || busy}
-								onClick={() => void handleRunReadiness()}
-								className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-[12px] font-bold text-slate-100 hover:border-slate-500 disabled:opacity-40"
-								data-testid="montage-readiness"
-							>
-								Check assembly readiness
-							</button>
-							<button
-								type="button"
-								disabled={!readiness?.ok || busy}
-								onClick={() => void handleAssembleDryRun()}
-								className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2.5 text-[12px] font-bold text-emerald-100 hover:bg-emerald-500/20 disabled:opacity-40"
-								data-testid="montage-assemble-dry"
-							>
-								Assemble dry-run
-							</button>
-						</div>
+						<button
+							type="button"
+							disabled={busy || !run}
+							onClick={() => void handleRunReadiness()}
+							className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-[12px] font-bold text-slate-100 hover:bg-slate-800 disabled:opacity-40"
+							data-testid="montage-readiness"
+						>
+							Check run readiness
+						</button>
 						{readiness ? (
-							<div
-								className={`mt-3 rounded-xl border px-3 py-2 text-[12px] ${
-									readiness.ok
-										? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
-										: "border-amber-500/30 bg-amber-500/10 text-amber-100"
-								}`}
-								data-testid="montage-readiness-report"
+							<pre
+								className="mt-2 max-h-40 overflow-auto rounded border border-slate-800 bg-slate-950 p-2 text-[10px] text-slate-300"
+								data-testid="montage-readiness-json"
 							>
-								<div className="font-bold">
-									{readiness.ok
-										? "Assembly READY"
-										: readiness.blocked_incomplete_scene_set ||
-											readiness.code ||
-											"BLOCKED"}
-								</div>
-								<div className="mt-1 opacity-90">{readiness.detail}</div>
-							</div>
+								{JSON.stringify(
+									{
+										ok: readiness.ok,
+										code: readiness.code,
+										detail: readiness.detail,
+										blockers: readiness.blockers,
+										clip_media_ids: readiness.clip_media_ids,
+									},
+									null,
+									2,
+								)}
+							</pre>
 						) : null}
+					</WorkflowStep>
+
+					<WorkflowStep
+						index={6}
+						title="Assemble (dry-run)"
+						status={sAssemble}
+						open={v4IsOpen(6, sAssemble)}
+						onToggleOpen={() => v4Toggle(6, v4IsOpen(6, sAssemble))}
+						summary={assembleNote || "Gated concat boundary — incomplete set never calls concat"}
+						helper="M-03: readiness enforced before concat. Live credit concat remains locked."
+					>
+						<button
+							type="button"
+							disabled={busy || !run}
+							onClick={() => void handleAssemble()}
+							className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-[12px] font-bold text-slate-100 hover:bg-slate-800 disabled:opacity-40"
+							data-testid="montage-assemble"
+						>
+							Assemble dry-run from run
+						</button>
 						{assembleNote ? (
-							<div className="mt-2 text-[11px] text-emerald-200" data-testid="montage-assemble-note">
+							<p className="mt-2 text-[11px] text-emerald-300" data-testid="montage-assemble-note">
 								{assembleNote}
-							</div>
+							</p>
 						) : null}
 					</WorkflowStep>
 
 					{error ? (
-						<div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[12px] text-rose-100">
+						<div
+							className="rounded-lg border border-rose-800 bg-rose-950/40 px-3 py-2 text-[12px] text-rose-200"
+							data-testid="montage-error"
+						>
 							{error}
 						</div>
 					) : null}
 				</div>
 
-				<OperatorCockpit
-					laneLabel="Montage"
-					status={{
-						label: readiness?.ok
-							? "Ready"
-							: packagesReady
-								? "Packaged"
-								: plan
-									? "Planned"
-									: selectedProduct
-										? "Online"
-										: "Idle",
-						state: readiness?.ok
-							? "done"
-							: plan
-								? "online"
-								: selectedProduct
-									? "online"
-									: "idle",
-					}}
-					product={
-						selectedProduct
-							? {
-									name: selectedProduct.raw_product_title || selectedProduct.id,
-									sub: selectedProduct.id,
-								}
-							: undefined
-					}
-					plan={[
-						{ k: "Lane", v: "Montage", tone: "good" },
-						{ k: "Hook", v: hookLabel },
-						{ k: "Background", v: backgroundLabel },
-						{ k: "SSOT", v: settings.source, mono: true },
-						{
-							k: "Scenes",
-							v: plan ? String(plan.scene_count) : "—",
-							mono: true,
-						},
-						{
-							k: "Packages",
-							v: run
-								? String(
-										run.scenes.filter((s) => s.workspace_execution_package_id)
-											.length,
-									)
-								: "—",
-							mono: true,
-						},
-						{
-							k: "Assembly",
-							v: readiness
-								? readiness.ok
-									? "READY"
-									: readiness.code || "BLOCKED"
-								: "—",
-							tone: readiness?.ok ? "good" : "muted",
-						},
-						{ k: "Engine", v: "Discrete scenes", mono: true },
-					]}
-					generate={{
-						label: packagesReady
-							? "Credit generate locked — use /api/flow/generate per package"
-							: "Generate locked until packages + owner credit auth",
-						note: "Backend supports plan → execute-scenes → readiness → assemble dry-run. Live concat/generate require owner credit authorization.",
-						disabled: true,
-					}}
-					debug={
-						<pre className="overflow-auto text-[10px] text-slate-400">
-							{JSON.stringify(
-								{
-									hookId,
-									backgroundId,
-									settings_source: settings.source,
-									settings_available: settingsAvailable,
-									scene_count: plan?.scene_count,
-									run_ok: run?.ok,
-									readiness_ok: readiness?.ok,
-									code: readiness?.code,
-								},
-								null,
-								2,
-							)}
-						</pre>
-					}
-				/>
+				<aside className="min-h-0">
+					<OperatorCockpit
+						laneLabel="Montage · discrete"
+						status={{
+							label: busy ? "Working" : run ? "Run ready" : "Idle",
+							state: busy ? "running" : run ? "online" : "idle",
+						}}
+						product={
+							selectedProduct
+								? {
+										name:
+											selectedProduct.product_short_name ||
+											selectedProduct.raw_product_title ||
+											selectedProduct.id,
+										sub: selectedProduct.id,
+								  }
+								: undefined
+						}
+						planTitle="Discrete plan"
+						plan={[
+							{ k: "Hook", v: hookLabel, mono: true },
+							{ k: "Background", v: backgroundLabel, mono: true },
+							{
+								k: "Run",
+								v: run?.montage_run_id?.slice(0, 8) || "—",
+								mono: true,
+							},
+							{
+								k: "Packages",
+								v: packagesReady ? String(packageCount) : "0",
+								tone: packagesReady ? "good" : "muted",
+							},
+							{
+								k: "Readiness",
+								v: readiness ? (readiness.ok ? "READY" : "BLOCKED") : "—",
+								tone: readiness?.ok ? "good" : "default",
+							},
+							{ k: "Path", v: "DISCRETE_MONTAGE", mono: true },
+							{ k: "Credit", v: "0 (no auto-burn)", tone: "good" },
+						]}
+						queueTitle="Execution state"
+						generate={{
+							label: run
+								? "Re-run discrete path (no credit)"
+								: "Start discrete path",
+							disabled: !canOperate || busy,
+							loading: busy,
+							onClick: () => void handleStartRun(),
+							note: "Live multi-scene credit fire stays off this CTA. Use /api/flow/generate per package then bind-result.",
+						}}
+						debug={
+							<pre className="max-h-40 overflow-auto text-[10px] text-slate-400">
+								{JSON.stringify(
+									{
+										settings_source: settings.source,
+										run_id: run?.montage_run_id,
+										run_ok: run?.ok,
+										readiness_ok: readiness?.ok,
+										packages_ready: packagesReady,
+									},
+									null,
+									2,
+								)}
+							</pre>
+						}
+					/>
+				</aside>
 			</div>
 		</div>
 	);
