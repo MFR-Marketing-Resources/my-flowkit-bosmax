@@ -1,0 +1,387 @@
+"""Montage durable discrete run ledger (M-02).
+
+Persists beat → scene job lifecycle on existing bulk_generation_run/item tables
+(kind=MONTAGE_DISCRETE). Orchestration reuses montage_scene_orchestrator →
+canonical workspace package factory. Result identity via bind_scene_result.
+
+No second video engine. No DOM lane. Credit fire is never automatic.
+"""
+from __future__ import annotations
+
+import json
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Awaitable, Callable, Optional, Sequence
+
+from agent.db import crud
+from agent.services.montage_assembly_readiness import (
+    MontageSceneReadiness,
+    assess_montage_assembly_readiness,
+)
+from agent.services.montage_discrete_assembly import assemble_montage_discrete
+from agent.services.montage_scene_orchestrator import (
+    MontageOrchestrationReport,
+    SceneJobState,
+    orchestrate_montage_scenes,
+)
+from agent.services.montage_scene_reference_policy import (
+    SceneReferencePolicy,
+    parse_scene_reference_policy,
+)
+
+KIND = "MONTAGE_DISCRETE"
+ITEM_TYPE = "MONTAGE_SCENE"
+
+PackageFactory = Callable[..., Awaitable[dict[str, Any]]]
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _loads(raw: Any, default: Any = None) -> Any:
+    if raw is None:
+        return {} if default is None else default
+    if isinstance(raw, (dict, list)):
+        return raw
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {} if default is None else default
+
+
+async def create_montage_discrete_run(
+    *,
+    product_id: str,
+    story_beats: Sequence[Any],
+    package_factory: PackageFactory,
+    default_policy: SceneReferencePolicy | str = SceneReferencePolicy.PRODUCT_ANCHOR,
+    per_beat_policy: Optional[dict[str, str]] = None,
+    product_media_id: Optional[str] = None,
+    scene_context_override: Optional[str] = None,
+    copy_fallback_confirmed: bool = True,
+    hook_id: str = "AUTO",
+    background_id: str = "AUTO",
+) -> dict[str, Any]:
+    """Orchestrate packages and persist a durable run + per-scene jobs."""
+    pid = str(product_id or "").strip()
+    if not pid:
+        raise ValueError("ERR_MONTAGE_PRODUCT_REQUIRED")
+    if not story_beats:
+        raise ValueError("ERR_MONTAGE_BEATS_REQUIRED")
+
+    report = await orchestrate_montage_scenes(
+        product_id=pid,
+        story_beats=story_beats,
+        package_factory=package_factory,
+        default_policy=default_policy,
+        per_beat_policy=per_beat_policy,
+        product_media_id=product_media_id,
+        generate_fn=None,
+        scene_context_override=scene_context_override,
+        copy_fallback_confirmed=copy_fallback_confirmed,
+    )
+
+    run_id = str(uuid.uuid4())
+    policy_val = (
+        default_policy.value
+        if isinstance(default_policy, SceneReferencePolicy)
+        else str(default_policy)
+    )
+    config = {
+        "product_id": pid,
+        "product_media_id": product_media_id,
+        "default_policy": policy_val,
+        "per_beat_policy": per_beat_policy or {},
+        "hook_id": hook_id,
+        "background_id": background_id,
+        "scene_context_override": scene_context_override,
+        "orchestration_ok": report.ok,
+    }
+    await crud.create_bulk_generation_run(
+        run_id,
+        kind=KIND,
+        total_expected=len(report.scenes),
+        max_parallel_images=1,
+        max_parallel_videos=1,
+        confirm_credit_burn=False,
+        config_json=json.dumps(config),
+    )
+    await crud.update_bulk_generation_run(
+        run_id, status="PREPARED" if report.ok else "PARTIAL", updated_at=_now()
+    )
+
+    scenes_out: list[dict[str, Any]] = []
+    for state in report.scenes:
+        item_id = str(uuid.uuid4())
+        payload = _scene_payload(state, product_media_id=product_media_id)
+        await crud.create_bulk_generation_item(
+            item_id,
+            bulk_run_id=run_id,
+            item_type=ITEM_TYPE,
+            source_ref=state.scene_id,
+            prompt_snapshot=(state.detail or state.beat_id or "")[:2000],
+            payload_json=json.dumps(payload),
+            status=state.status,
+        )
+        if state.error_code:
+            await crud.update_bulk_generation_item(
+                item_id, error=state.error_code, updated_at=_now()
+            )
+        row = state.to_dict()
+        row["bulk_item_id"] = item_id
+        row["montage_run_id"] = run_id
+        scenes_out.append(row)
+
+    return {
+        "montage_run_id": run_id,
+        "kind": KIND,
+        "status": "PREPARED" if report.ok else "PARTIAL",
+        "product_id": pid,
+        "ok": report.ok,
+        "detail": report.detail,
+        "total_scenes": len(scenes_out),
+        "scenes": scenes_out,
+        "execution_supported": True,
+        "credit_spend": False,
+        "assembly_path": "DISCRETE_MONTAGE",
+        "lifecycle": [
+            "PLANNED",
+            "PACKAGE_READY",
+            "IMAGE_BOUND",
+            "VIDEO_READY",
+            "RESULT_BOUND",
+        ],
+    }
+
+
+async def get_montage_discrete_run(run_id: str) -> dict[str, Any]:
+    run = await crud.get_bulk_generation_run(run_id)
+    if not run:
+        raise ValueError("ERR_MONTAGE_RUN_NOT_FOUND")
+    if (run.get("kind") or "").upper() != KIND:
+        raise ValueError("ERR_MONTAGE_RUN_WRONG_KIND")
+    items = await crud.list_bulk_generation_items(run_id)
+    scenes = [_item_to_public(i) for i in items]
+    return {
+        "montage_run_id": run_id,
+        "kind": KIND,
+        "status": run.get("status"),
+        "config": _loads(run.get("config_json"), {}),
+        "total_scenes": len(scenes),
+        "scenes": scenes,
+        "status_counts": _count_statuses(scenes),
+        "execution_supported": True,
+        "credit_spend": False,
+        "assembly_path": "DISCRETE_MONTAGE",
+    }
+
+
+async def bind_montage_scene_result(
+    run_id: str,
+    *,
+    scene_id: str,
+    media_id: str,
+    result_kind: str = "video",
+    job_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Attach result identity to a durable scene job after canonical generate."""
+    mid = str(media_id or "").strip()
+    if not mid:
+        raise ValueError("ERR_MONTAGE_MEDIA_REQUIRED")
+    kind = str(result_kind or "video").strip().lower()
+    if kind not in ("video", "image"):
+        raise ValueError("ERR_MONTAGE_RESULT_KIND")
+
+    await get_montage_discrete_run(run_id)  # validate
+    items = await crud.list_bulk_generation_items(run_id)
+    target = None
+    for it in items:
+        payload = _loads(it.get("payload_json"), {})
+        if payload.get("scene_id") == scene_id or it.get("source_ref") == scene_id:
+            target = it
+            break
+    if not target:
+        raise ValueError("ERR_MONTAGE_SCENE_NOT_FOUND")
+
+    payload = _loads(target.get("payload_json"), {})
+    item_id = target["bulk_item_id"]
+    if kind == "image":
+        payload["image_media_id"] = mid
+        if job_id:
+            payload["image_job_id"] = job_id
+        new_status = "IMAGE_BOUND"
+        await crud.update_bulk_generation_item(
+            item_id,
+            status=new_status,
+            media_id=mid,
+            payload_json=json.dumps(payload),
+            updated_at=_now(),
+        )
+    else:
+        payload["video_media_id"] = mid
+        if job_id:
+            payload["video_job_id"] = job_id
+        new_status = "RESULT_BOUND"
+        await crud.update_bulk_generation_item(
+            item_id,
+            status=new_status,
+            media_id=mid,
+            job_id=job_id,
+            payload_json=json.dumps(payload),
+            completed_at=_now(),
+            updated_at=_now(),
+        )
+
+    state = await get_montage_discrete_run(run_id)
+    state["bound_scene_id"] = scene_id
+    state["bound_media_id"] = mid
+    state["bound_kind"] = kind
+    state["bound_status"] = new_status
+    return state
+
+
+def scene_jobs_to_readiness(
+    scenes: Sequence[dict[str, Any]],
+    *,
+    product_media_id: Optional[str] = None,
+) -> list[MontageSceneReadiness]:
+    out: list[MontageSceneReadiness] = []
+    for s in scenes:
+        status = str(s.get("status") or "").upper()
+        video_id = s.get("video_media_id") or (
+            s.get("media_id") if status in ("RESULT_BOUND", "VIDEO_READY") else None
+        )
+        image_id = s.get("image_media_id")
+        policy_raw = s.get("reference_policy") or s.get("policy_mode") or "PRODUCT_ANCHOR"
+        try:
+            policy = parse_scene_reference_policy(str(policy_raw))
+        except ValueError:
+            policy = SceneReferencePolicy.PRODUCT_ANCHOR
+        video_ready = bool(video_id) and status in (
+            "RESULT_BOUND",
+            "VIDEO_READY",
+            "GENERATE_RETURNED",
+        )
+        # Once a video result is bound, the image plate is satisfied for assembly
+        # (image may have been product-start-frame without a separate image job).
+        image_ready = (
+            bool(image_id)
+            or video_ready
+            or status in ("IMAGE_BOUND", "IMAGE_READY", "PACKAGE_READY", "RESULT_BOUND", "VIDEO_READY")
+        )
+        pm = product_media_id or s.get("product_media_id") or "product-truth-bound"
+        out.append(
+            MontageSceneReadiness(
+                scene_id=str(s.get("scene_id") or ""),
+                mandatory=True,
+                reference_policy=policy,
+                product_media_id=str(pm) if pm else None,
+                clip_media_id=video_id if video_ready else None,
+                image_ready=image_ready,
+                video_ready=video_ready,
+                dialogue_required=False,
+                dialogue_text=s.get("dialogue"),
+                image_generation_required=True,
+                video_generation_required=True,
+            )
+        )
+    return out
+
+
+async def readiness_from_montage_run(run_id: str) -> dict[str, Any]:
+    state = await get_montage_discrete_run(run_id)
+    cfg = state.get("config") or {}
+    scenes = scene_jobs_to_readiness(
+        state["scenes"], product_media_id=cfg.get("product_media_id")
+    )
+    report = assess_montage_assembly_readiness(scenes)
+    return {
+        "montage_run_id": run_id,
+        "ok": report.ok,
+        "code": report.code,
+        "detail": report.detail,
+        "blockers": report.blockers,
+        "ready_scene_ids": report.ready_scene_ids,
+        "clip_media_ids": report.clip_media_ids,
+        "scenes": state["scenes"],
+        "assembly_path": "DISCRETE_MONTAGE",
+    }
+
+
+async def assemble_from_montage_run(
+    run_id: str,
+    *,
+    concat_fn: Callable[..., Awaitable[dict[str, Any]]],
+    dry_run: bool = True,
+    job_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """M-03 path from durable run: readiness → gated concat."""
+    state = await get_montage_discrete_run(run_id)
+    cfg = state.get("config") or {}
+    scenes = scene_jobs_to_readiness(
+        state["scenes"], product_media_id=cfg.get("product_media_id")
+    )
+    result = await assemble_montage_discrete(
+        scenes,
+        concat_fn=concat_fn,
+        job_id=job_id or f"montage-run-{run_id[:8]}",
+        dry_run=dry_run,
+    )
+    result["montage_run_id"] = run_id
+    return result
+
+
+def _scene_payload(
+    state: SceneJobState, *, product_media_id: Optional[str]
+) -> dict[str, Any]:
+    d = state.to_dict()
+    d["product_media_id"] = product_media_id
+    return d
+
+
+def _item_to_public(item: dict[str, Any]) -> dict[str, Any]:
+    payload = _loads(item.get("payload_json"), {})
+    status = str(item.get("status") or payload.get("status") or "PLANNED")
+    video_media = payload.get("video_media_id")
+    image_media = payload.get("image_media_id")
+    if status in ("RESULT_BOUND", "VIDEO_READY") and not video_media:
+        video_media = item.get("media_id")
+    if status == "IMAGE_BOUND" and not image_media:
+        image_media = item.get("media_id")
+    return {
+        "bulk_item_id": item.get("bulk_item_id"),
+        "scene_id": payload.get("scene_id") or item.get("source_ref"),
+        "beat_id": payload.get("beat_id"),
+        "block_index": payload.get("block_index"),
+        "route": payload.get("route"),
+        "transport_mode": payload.get("transport_mode"),
+        "source_mode": payload.get("source_mode"),
+        "reference_policy": payload.get("reference_policy"),
+        "status": status,
+        "workspace_execution_package_id": payload.get("workspace_execution_package_id"),
+        "image_job_id": payload.get("image_job_id"),
+        "image_media_id": image_media,
+        "video_job_id": payload.get("video_job_id") or item.get("job_id"),
+        "video_media_id": video_media,
+        "error_code": item.get("error") or payload.get("error_code"),
+        "detail": payload.get("detail") or "",
+        "product_media_id": payload.get("product_media_id"),
+    }
+
+
+def _count_statuses(scenes: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for s in scenes:
+        st = str(s.get("status") or "?")
+        counts[st] = counts.get(st, 0) + 1
+    return counts
+
+
+def report_to_durable_preview(report: MontageOrchestrationReport) -> dict[str, Any]:
+    """Helper for tests — shape without DB."""
+    return {
+        "ok": report.ok,
+        "scenes": [s.to_dict() for s in report.scenes],
+        "credit_spend": report.credit_spend,
+    }

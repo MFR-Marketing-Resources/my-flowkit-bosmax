@@ -4,19 +4,19 @@
  * Hook/Background options come ONLY from creative-lane settings API (same SSOT
  * as Faceless). No local vocabulary arrays.
  *
- * Execution: plan → execute-scenes (workspace packages) → readiness → assemble
- * dry-run. Live credit generate remains locked.
+ * Execution: plan → durable run (scene job ledger + packages) → bind results →
+ * readiness → assemble dry-run. Live multi-scene credit fire stays gated.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useCreativeLaneSettings } from "../api/creativeLaneSettings";
 import {
-	assembleMontageDryRun,
-	checkMontageAssemblyReadiness,
+	assembleMontageRunDryRun,
+	checkMontageRunReadiness,
 	createMontagePlan,
-	executeMontageScenes,
-	type MontageExecuteResponse,
+	createMontageRun,
 	type MontagePlanResponse,
 	type MontageReadinessResponse,
+	type MontageRunResponse,
 	type MontageScenePlan,
 } from "../api/montage";
 import { fetchProductCatalog } from "../api/products";
@@ -53,7 +53,7 @@ export default function MontagePage() {
 	const [hookId, setHookId] = useState("AUTO");
 	const [backgroundId, setBackgroundId] = useState("AUTO");
 	const [plan, setPlan] = useState<MontagePlanResponse | null>(null);
-	const [execution, setExecution] = useState<MontageExecuteResponse | null>(null);
+	const [run, setRun] = useState<MontageRunResponse | null>(null);
 	const [readiness, setReadiness] = useState<MontageReadinessResponse | null>(
 		null,
 	);
@@ -86,10 +86,10 @@ export default function MontagePage() {
 		: canOperate
 			? "active"
 			: "upcoming";
-	const sExec: WorkflowStepStatus = execution
-		? execution.ok
-			? "done"
-			: "active"
+	const sExec: WorkflowStepStatus = run
+		? run.ok === false
+			? "active"
+			: "done"
 		: plan
 			? "active"
 			: "upcoming";
@@ -97,7 +97,7 @@ export default function MontagePage() {
 		? readiness.ok
 			? "done"
 			: "active"
-		: execution
+		: run
 			? "active"
 			: "upcoming";
 
@@ -123,101 +123,60 @@ export default function MontagePage() {
 		}
 	};
 
-	const handleExecute = async () => {
+	const handleStartRun = async () => {
 		if (!selectedProduct || !settingsAvailable) return;
 		setBusy(true);
 		setError(null);
 		setAssembleNote(null);
+		setReadiness(null);
 		try {
-			const next = await executeMontageScenes({
+			const res = await createMontageRun({
 				product_id: selectedProduct.id,
 				hook_id: hookId,
 				background_id: backgroundId,
-				scene_context_override: `Montage strategy hook=${hookId}; environment=${backgroundId}`,
+				product_media_id: selectedProduct.primary_image_asset_id || null,
+				scene_context_override: `hook=${hookId}; background=${backgroundId}`,
 			});
-			setExecution(next);
-			if (!next.ok) {
-				setError(next.detail || "Some scenes failed package prepare");
-			}
-		} catch (err: unknown) {
-			setError(err instanceof Error ? err.message : "Execute scenes failed");
-			setExecution(null);
+			setRun(res);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : String(e));
 		} finally {
 			setBusy(false);
 		}
 	};
 
-	const handleReadiness = async () => {
-		if (!plan && !execution) return;
+	const handleRunReadiness = async () => {
+		if (!run?.montage_run_id) return;
 		setBusy(true);
 		setError(null);
 		try {
-			const baseScenes = plan?.scenes ?? [];
-			const jobs = execution?.scenes ?? [];
-			const scenes = baseScenes.map((s: MontageScenePlan) => {
-				const job = jobs.find((j) => j.scene_id === s.scene_id);
-				const clip = job?.video_media_id || null;
-				return {
-					scene_id: s.scene_id,
-					mandatory: true,
-					reference_policy: s.reference_policy,
-					product_media_id: s.product_media_id,
-					reference_media_ids: s.reference_media_ids,
-					clip_media_id: clip,
-					image_ready: Boolean(job?.image_media_id || clip),
-					video_ready: Boolean(clip),
-					image_generation_required: s.image_generation_required,
-					video_generation_required: s.video_generation_required,
-				};
-			});
-			const report = await checkMontageAssemblyReadiness(scenes);
-			setReadiness(report);
-		} catch (err: unknown) {
-			setError(err instanceof Error ? err.message : "Readiness check failed");
+			const res = await checkMontageRunReadiness(run.montage_run_id);
+			setReadiness(res);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : String(e));
 		} finally {
 			setBusy(false);
 		}
 	};
 
-	const handleAssembleDryRun = async () => {
-		if (!readiness?.ok || !readiness.clip_media_ids?.length) {
-			setError("Assembly dry-run requires readiness PASS with clip ids");
-			return;
-		}
+	const handleAssemble = async () => {
+		if (!run?.montage_run_id) return;
 		setBusy(true);
 		setError(null);
+		setAssembleNote(null);
 		try {
-			const scenes = (plan?.scenes ?? []).map((s) => ({
-				scene_id: s.scene_id,
-				mandatory: true,
-				reference_policy: s.reference_policy,
-				product_media_id: s.product_media_id,
-				reference_media_ids: s.reference_media_ids,
-				clip_media_id:
-					execution?.scenes.find((j) => j.scene_id === s.scene_id)?.video_media_id ||
-					null,
-				image_ready: true,
-				video_ready: true,
-				image_generation_required: false,
-				video_generation_required: true,
-			}));
-			const out = await assembleMontageDryRun(scenes);
+			const res = await assembleMontageRunDryRun(run.montage_run_id);
 			setAssembleNote(
-				out.ok
-					? `Assemble dry-run OK · clips=${out.readiness.clip_media_ids.length}`
-					: "Assemble dry-run failed",
+				res.ok
+					? `Assemble dry-run OK — clips: ${(res.readiness?.clip_media_ids || []).join(", ") || "none"}`
+					: "Assemble dry-run returned not-ok",
 			);
-		} catch (err: unknown) {
-			setError(err instanceof Error ? err.message : "Assemble dry-run failed");
+		} catch (e) {
+			setError(e instanceof Error ? e.message : String(e));
 		} finally {
 			setBusy(false);
 		}
 	};
-
-	const sceneRows = useMemo(() => plan?.scenes ?? [], [plan]);
-	const packagesReady =
-		Boolean(execution?.scenes?.length) &&
-		(execution?.scenes.every((s) => s.workspace_execution_package_id) ?? false);
 
 	return (
 		<div
@@ -396,8 +355,8 @@ export default function MontagePage() {
 						open={v4IsOpen(4, sExec)}
 						onToggleOpen={() => v4Toggle(4, v4IsOpen(4, sExec))}
 						summary={
-							execution
-								? `${execution.scenes.filter((s) => s.workspace_execution_package_id).length}/${execution.scene_count} packages`
+							run
+								? `${run.scenes.filter((s) => s.workspace_execution_package_id).length}/${run.total_scenes} packages`
 								: "Create workspace packages via existing factory"
 						}
 						helper="R2 operational path — no credit auto-fire. Live generate uses /api/flow/generate per package."
@@ -405,15 +364,15 @@ export default function MontagePage() {
 						<button
 							type="button"
 							disabled={!canOperate || busy}
-							onClick={() => void handleExecute()}
+							onClick={() => void handleStartRun()}
 							className="rounded-xl border border-v4-accent/40 bg-v4-accent/15 px-4 py-2.5 text-[12px] font-bold text-v4-accent-ink hover:bg-v4-accent/25 disabled:opacity-40"
 							data-testid="montage-execute"
 						>
-							{busy ? "Preparing…" : "Prepare scene packages"}
+							{busy ? "Preparing…" : "Start discrete run (ledger + packages)"}
 						</button>
-						{execution ? (
+						{run ? (
 							<ul className="mt-3 space-y-1 text-[11px] text-slate-300" data-testid="montage-exec-list">
-								{execution.scenes.map((s) => (
+								{run.scenes.map((s) => (
 									<li key={s.scene_id} className="font-mono">
 										{s.scene_id}: {s.status}
 										{s.workspace_execution_package_id
@@ -444,8 +403,8 @@ export default function MontagePage() {
 						<div className="flex flex-wrap gap-2">
 							<button
 								type="button"
-								disabled={(!plan && !execution) || busy}
-								onClick={() => void handleReadiness()}
+								disabled={(!plan && !run) || busy}
+								onClick={() => void handleRunReadiness()}
 								className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-[12px] font-bold text-slate-100 hover:border-slate-500 disabled:opacity-40"
 								data-testid="montage-readiness"
 							>
@@ -534,9 +493,9 @@ export default function MontagePage() {
 						},
 						{
 							k: "Packages",
-							v: execution
+							v: run
 								? String(
-										execution.scenes.filter((s) => s.workspace_execution_package_id)
+										run.scenes.filter((s) => s.workspace_execution_package_id)
 											.length,
 									)
 								: "—",
@@ -569,7 +528,7 @@ export default function MontagePage() {
 									settings_source: settings.source,
 									settings_available: settingsAvailable,
 									scene_count: plan?.scene_count,
-									execution_ok: execution?.ok,
+									run_ok: run?.ok,
 									readiness_ok: readiness?.ok,
 									code: readiness?.code,
 								},

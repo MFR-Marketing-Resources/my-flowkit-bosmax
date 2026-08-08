@@ -1,4 +1,4 @@
-// Montage API — plan, execute packages, readiness, gated assemble (dry-run).
+// Montage API — plan, durable runs, readiness, gated assemble (dry-run).
 import { getAPI, postAPI } from "./client";
 
 export interface MontageScenePlan {
@@ -44,6 +44,8 @@ export interface MontageSceneJob {
 	image_media_id: string | null;
 	error_code: string | null;
 	detail: string;
+	bulk_item_id?: string;
+	montage_run_id?: string;
 }
 
 export interface MontageExecuteResponse {
@@ -57,6 +59,22 @@ export interface MontageExecuteResponse {
 	execution_supported?: boolean;
 }
 
+export interface MontageRunResponse {
+	montage_run_id: string;
+	kind: string;
+	status: string;
+	product_id?: string;
+	ok?: boolean;
+	detail?: string;
+	total_scenes: number;
+	scenes: MontageSceneJob[];
+	execution_supported?: boolean;
+	credit_spend?: boolean;
+	assembly_path?: string;
+	status_counts?: Record<string, number>;
+	config?: Record<string, unknown>;
+}
+
 export interface MontageReadinessResponse {
 	ok: boolean;
 	code: string | null;
@@ -64,9 +82,11 @@ export interface MontageReadinessResponse {
 	blockers: Array<Record<string, unknown>>;
 	ready_scene_ids: string[];
 	clip_media_ids: string[];
-	blocked_incomplete_scene_set: string | null;
+	blocked_incomplete_scene_set?: string | null;
 	assembly_path: string;
-	credit_spend: boolean;
+	credit_spend?: boolean;
+	montage_run_id?: string;
+	scenes?: MontageSceneJob[];
 }
 
 export interface MontageAssembleResponse {
@@ -79,6 +99,7 @@ export interface MontageAssembleResponse {
 	};
 	concat: Record<string, unknown>;
 	credit_spend: boolean;
+	montage_run_id?: string;
 }
 
 export async function fetchMontagePolicies(): Promise<{
@@ -124,6 +145,68 @@ export async function executeMontageScenes(input: {
 		copy_fallback_confirmed: true,
 		scene_context_override: input.scene_context_override ?? null,
 		allow_live_generate: false,
+	});
+}
+
+/** M-02 durable ledger: packages + per-scene job state. */
+export async function createMontageRun(input: {
+	product_id: string;
+	hook_id?: string;
+	background_id?: string;
+	product_media_id?: string | null;
+	default_policy?: string;
+	scene_context_override?: string | null;
+}): Promise<MontageRunResponse> {
+	return postAPI("/api/montage/runs", {
+		product_id: input.product_id,
+		hook_id: input.hook_id ?? "AUTO",
+		background_id: input.background_id ?? "AUTO",
+		product_media_id: input.product_media_id ?? null,
+		default_policy: input.default_policy ?? "PRODUCT_ANCHOR",
+		beats: [],
+		copy_fallback_confirmed: true,
+		scene_context_override: input.scene_context_override ?? null,
+		allow_live_generate: false,
+	});
+}
+
+export async function fetchMontageRun(runId: string): Promise<MontageRunResponse> {
+	return getAPI(`/api/montage/runs/${encodeURIComponent(runId)}`);
+}
+
+export async function bindMontageSceneResult(
+	runId: string,
+	input: {
+		scene_id: string;
+		media_id: string;
+		result_kind?: "video" | "image";
+		job_id?: string | null;
+	},
+): Promise<MontageRunResponse> {
+	return postAPI(`/api/montage/runs/${encodeURIComponent(runId)}/bind-result`, {
+		scene_id: input.scene_id,
+		media_id: input.media_id,
+		result_kind: input.result_kind ?? "video",
+		job_id: input.job_id ?? null,
+	});
+}
+
+export async function checkMontageRunReadiness(
+	runId: string,
+): Promise<MontageReadinessResponse> {
+	return getAPI(
+		`/api/montage/runs/${encodeURIComponent(runId)}/assembly-readiness`,
+	);
+}
+
+export async function assembleMontageRunDryRun(
+	runId: string,
+	jobId = "montage-discrete-run",
+): Promise<MontageAssembleResponse> {
+	return postAPI(`/api/montage/runs/${encodeURIComponent(runId)}/assemble`, {
+		job_id: jobId,
+		dry_run: true,
+		confirm_live_credit_burn: false,
 	});
 }
 

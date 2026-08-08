@@ -24,6 +24,13 @@ from agent.services.montage_scene_execution_routing import (
     plan_to_dict,
 )
 from agent.services.montage_scene_orchestrator import orchestrate_montage_scenes
+from agent.services.montage_run_service import (
+    assemble_from_montage_run,
+    bind_montage_scene_result,
+    create_montage_discrete_run,
+    get_montage_discrete_run,
+    readiness_from_montage_run,
+)
 from agent.services.montage_scene_reference_policy import (
     SceneReferencePolicy,
     parse_scene_reference_policy,
@@ -272,6 +279,128 @@ async def montage_assemble(body: MontageAssembleRequest) -> dict[str, Any]:
                 "blocked_incomplete_scene_set": BLOCKED_INCOMPLETE_SCENE_SET,
             },
         ) from exc
+
+
+
+
+class MontageRunCreateRequest(MontageExecuteRequest):
+    """Create durable montage run + packages (no credit)."""
+
+
+class MontageBindResultRequest(BaseModel):
+    scene_id: str
+    media_id: str
+    result_kind: str = "video"
+    job_id: Optional[str] = None
+
+
+class MontageRunAssembleRequest(BaseModel):
+    dry_run: bool = True
+    job_id: str = "montage-discrete-run"
+    confirm_live_credit_burn: bool = False
+
+
+@router.post("/runs")
+async def montage_create_run(body: MontageRunCreateRequest) -> dict[str, Any]:
+    """M-02 durable path: plan → packages → persisted scene job ledger."""
+    if not str(body.product_id or "").strip():
+        raise HTTPException(status_code=400, detail="product_id required")
+    if body.allow_live_generate:
+        raise HTTPException(
+            status_code=403,
+            detail="Live credit generate is not auto-started on run create",
+        )
+    try:
+        default_policy = parse_scene_reference_policy(body.default_policy)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    beats = body.beats or _default_beats()
+    try:
+        return await create_montage_discrete_run(
+            product_id=body.product_id,
+            story_beats=beats,
+            package_factory=create_workspace_execution_package,
+            default_policy=default_policy,
+            per_beat_policy=body.per_beat_policy,
+            product_media_id=body.product_media_id,
+            scene_context_override=body.scene_context_override,
+            copy_fallback_confirmed=body.copy_fallback_confirmed,
+            hook_id=body.hook_id,
+            background_id=body.background_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/runs/{run_id}")
+async def montage_get_run(run_id: str) -> dict[str, Any]:
+    try:
+        return await get_montage_discrete_run(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/runs/{run_id}/bind-result")
+async def montage_bind_run_result(run_id: str, body: MontageBindResultRequest) -> dict[str, Any]:
+    try:
+        return await bind_montage_scene_result(
+            run_id,
+            scene_id=body.scene_id,
+            media_id=body.media_id,
+            result_kind=body.result_kind,
+            job_id=body.job_id,
+        )
+    except ValueError as exc:
+        code = 404 if "NOT_FOUND" in str(exc) else 400
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+
+
+@router.get("/runs/{run_id}/assembly-readiness")
+async def montage_run_readiness(run_id: str) -> dict[str, Any]:
+    try:
+        return await readiness_from_montage_run(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/runs/{run_id}/assemble")
+async def montage_run_assemble(run_id: str, body: MontageRunAssembleRequest) -> dict[str, Any]:
+    """Assemble from durable run state — readiness enforced before concat boundary."""
+    if body.confirm_live_credit_burn and not body.dry_run:
+        raise HTTPException(
+            status_code=403,
+            detail="Live montage concat not authorized — use dry_run=true",
+        )
+
+    async def _concat_boundary(**kwargs: Any) -> dict[str, Any]:
+        return {
+            "dry_run": True,
+            "status": "SEGMENTS_READY",
+            "job_id": kwargs.get("job_id"),
+            "segment_media_ids": kwargs.get("segment_media_ids"),
+            "input_videos": kwargs.get("input_videos"),
+            "endpoint": "/v1:runVideoFxConcatenation",
+        }
+
+    try:
+        return await assemble_from_montage_run(
+            run_id,
+            concat_fn=_concat_boundary,
+            dry_run=True,
+            job_id=body.job_id,
+        )
+    except MontageAssemblyError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_code": exc.code,
+                "message": exc.detail,
+                "blockers": exc.blockers,
+                "blocked_incomplete_scene_set": BLOCKED_INCOMPLETE_SCENE_SET,
+            },
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/policies")
