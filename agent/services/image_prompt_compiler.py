@@ -123,6 +123,18 @@ def _creative_context_text(context: ImageCreativeContext | None) -> str:
             f"type contrast={art.type_contrast}",
             f"CTA treatment={art.cta_treatment}",
             f"negative-space strategy={art.negative_space_strategy}",
+            f"design route={art.design_route or 'UNRESOLVED'}; layout variant={art.layout_variant or 'UNRESOLVED'}; type pairing={art.type_pairing_id or 'UNRESOLVED'}",
+            f"color strategy={art.color_strategy or 'route-specific'}; proof treatment={art.proof_treatment or 'route-specific'}",
+            f"Malaysian context route={art.malaysian_context_route or 'UNRESOLVED'}; font readiness={art.font_readiness_status}",
+            (
+                "CAMPAIGN DESIGN BRIEF: "
+                f"status={context.campaign_design_brief.get('review_status')}; "
+                f"snapshot={context.campaign_design_brief.get('approved_snapshot_id') or 'none'}; "
+                f"route={context.campaign_design_brief.get('design_route') or art.design_route or 'UNRESOLVED'}; "
+                "provider may use strategy/physics only; deterministic compositor owns marketing wording."
+                if context.campaign_design_brief
+                else "CAMPAIGN DESIGN BRIEF: not resolved; preserve explicit context blockers."
+            ),
             "brand visual codes=" + "; ".join(art.brand_visual_codes),
             "anti-cliche rules=" + "; ".join(art.anti_cliche_rules),
             "Do not depict symptoms, treatment, medical outcomes, or unsupported claims. Translate raw customer concerns into safe readiness, comfort and product-familiarity cues.",
@@ -194,6 +206,29 @@ async def resolve_image_creative_context(
     if snapshot:
         payload["approved_snapshot_id"] = snapshot.get("snapshot_id")
         payload["approved_snapshot_version"] = snapshot.get("version")
+    # The typed brief is a read-only projection of the same approved grounding;
+    # keep it attached to the context so Poster Builder, Fastlane and Cockpit
+    # inspect one provenance object before compiling the provider prompt.
+    try:
+        from agent.services.poster_campaign_design_service import (
+            build_campaign_design_brief,
+        )
+
+        brief = await build_campaign_design_brief(
+            str(product.get("id") or product.get("product_id") or ""),
+            objective=objective,
+            selected_angle=operator_direction,
+            copy_layout=copy_layout,
+            fail_closed=False,
+        )
+        context = ImageCreativeContext.model_validate(payload)
+        context.campaign_design_brief = brief.model_dump(mode="json")
+        return context
+    except Exception:
+        # Context resolution remains honest and backwards compatible if the
+        # optional poster-specific projection is unavailable; the base typed
+        # ImageCreativeContext still carries its explicit blockers.
+        pass
     return ImageCreativeContext.model_validate(payload)
 
 

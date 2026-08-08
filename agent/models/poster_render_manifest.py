@@ -80,6 +80,10 @@ class ManifestProvenance(BaseModel):
     composition_schema_version: str = ""
     composition_profile_id: str = ""
     composition_signature: str = ""
+    design_route: str = ""
+    layout_variant: str = ""
+    type_pairing_id: str = ""
+    font_readiness_status: str = ""
     # The FULL canonical composition plan (already resolved by the caller from
     # the real authorities). Persisting it verbatim is what makes save/reopen
     # deterministic — reopen reads this plan back instead of re-deriving a
@@ -98,6 +102,8 @@ class PosterRenderManifest(BaseModel):
     component_styles: dict[str, Any] = Field(default_factory=dict)
     fit_policy: dict[str, float] = Field(default_factory=lambda: {"min_scale": 0.6, "step": 0.05})
     palette: dict[str, str] = Field(default_factory=dict)
+    design_route: str = ""
+    layout_variant: str = ""
     provenance: ManifestProvenance = Field(default_factory=ManifestProvenance)
 
 

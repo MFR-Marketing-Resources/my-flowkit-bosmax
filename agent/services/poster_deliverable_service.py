@@ -56,6 +56,7 @@ from agent.services.poster_template_service import (
     manifest_frame_ratio,
     template_contract,
 )
+from agent.services.poster_design_system import resolve_design_route
 
 # HONEST product-truth stamping: REFERENCE_CONDITIONED generation cannot prove
 # pixel-level product preservation — never stamp PRESERVED for it. A
@@ -505,6 +506,23 @@ class PosterDeliverableService:
             )
             settings.setdefault("raw_key_visual_is_lineage_only", True)
             settings.setdefault("review_state", "PENDING_HUMAN_REVIEW")
+            design = resolve_design_route(
+                dict(product),
+                objective=_norm(copy_set.get("objective")) or "Product Hero",
+                selected_angle=_norm(copy_set.get("angle")),
+                copy_chars=sum(
+                    len(_norm(copy_set.get(key)))
+                    for key in ("primary_message", "support_message", "cta")
+                ),
+                headline_lines=max(
+                    1,
+                    min(3, len(_norm(copy_set.get("primary_message")).split()) // 4 + 1),
+                ),
+            )
+            settings.setdefault("design_route", design["design_route"])
+            settings.setdefault("layout_variant", design["layout_variant"])
+        else:
+            design = {}
         direction = resolve_creative_direction(creative_mode, product=dict(product)) if creative_mode is not None else None
 
         media_id, bg_local = await _resolve_background(
@@ -521,14 +539,29 @@ class PosterDeliverableService:
                 recipe_id=_norm(recipe_id),
                 direction=direction,
             )
+            direction_payload = {
+                "mode": direction.mode.value,
+                "authority_version": direction.authority_version,
+                "representation_policy_version": direction.representation_policy_version,
+                **(
+                    {
+                        "design_route": str(settings.get("design_route") or design.get("design_route") or ""),
+                        "layout_variant": str(settings.get("layout_variant") or design.get("layout_variant") or ""),
+                    }
+                    if campaign_mode
+                    else {}
+                ),
+            } if direction else None
             manifest = build_render_manifest(
                 recipe_id=_norm(recipe_id),
                 copy_set=copy_set,
                 background_media_id=media_id,
                 background_local_path=bg_local,
                 image_model=_norm(image_model),
-                creative_direction=({"mode": direction.mode.value, "authority_version": direction.authority_version, "representation_policy_version": direction.representation_policy_version} if direction else None),
+                creative_direction=direction_payload,
                 composition_plan=composition_plan,
+                design_route=str(settings.get("design_route") or "") if campaign_mode else "",
+                layout_variant=str(settings.get("layout_variant") or "") if campaign_mode else "",
                 # Campaigns already receive a provider-integrated clean key
                 # visual. The local compositor adds deterministic copy only;
                 # Exact Commerce retains the immutable cutout layer.
