@@ -85,6 +85,29 @@ class ProductReferencePackRecord(BaseModel):
     updated_at: str
 
 
+class ImageCreativeContext(BaseModel):
+    """Safe, auditable product-intelligence context for image generation.
+
+    Raw persona pain language must not be copied into a provider prompt. This
+    contract carries only transformed campaign strategy and approved facts.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    grounding_source: str = "MINIMAL"
+    approved_snapshot_id: str | None = None
+    approved_snapshot_version: int | None = None
+    product_family: str = ""
+    formula: str = ""
+    audience: str = ""
+    desire: str = ""
+    objection: str = ""
+    trigger: str = ""
+    safe_angle: str = ""
+    tone: str = ""
+    approved_facts: list[str] = Field(default_factory=list, max_length=5)
+
+
 class ImagePromptCompileRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -127,6 +150,7 @@ class ImagePromptCompileResponse(BaseModel):
     blockers: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     capability_status: dict[str, CapabilityStatus] = Field(default_factory=dict)
+    creative_context: ImageCreativeContext | None = None
     provider_operation_plan: dict[str, Any] = Field(default_factory=dict)
 
 

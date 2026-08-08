@@ -44,7 +44,11 @@ from agent.services.img_asset_factory_service import (
     list_img_lane_summaries,
     save_img_output_to_library,
 )
-from agent.services.image_prompt_compiler import build_operation_plan, compile_image_prompt
+from agent.services.image_prompt_compiler import (
+    build_operation_plan,
+    compile_image_prompt,
+    resolve_image_creative_context,
+)
 from agent.services.product_reference_pack_service import (
     ProductReferencePackError,
     approve_product_reference_pack,
@@ -191,7 +195,11 @@ async def preview_creative_campaign_prompt(
             pack = await ensure_product_reference_pack(request.product_id)
         except ProductReferencePackError as exc:
             raise HTTPException(status_code=409, detail={"code": exc.code, "message": exc.message}) from exc
-    return compile_image_prompt(product, pack, request)
+    creative_context = await resolve_image_creative_context(
+        product,
+        operator_direction=request.composition,
+    )
+    return compile_image_prompt(product, pack, request, creative_context)
 
 
 @router.post("/creative-campaign/operation-plan", response_model=ImageOperationPlan)

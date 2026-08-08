@@ -30,6 +30,11 @@ async def _seed_bare_product(**kw) -> str:
     return row["id"]
 
 
+def test_clip_preserves_word_boundaries():
+    assert svc._clip("alpha beta gamma", 10) == "alpha beta"
+    assert not svc._clip("alpha beta gamma", 11).endswith("g")
+
+
 @pytest.mark.asyncio
 async def test_objective_ranking_is_deterministic_and_signal_aware(monkeypatch):
     monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)

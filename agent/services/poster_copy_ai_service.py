@@ -28,6 +28,7 @@ from agent.models.poster_copy_set import (
     PROVENANCE_FALLBACK,
 )
 from agent.services import ai_copy_provider_adapter as ai_provider
+from agent.services.copy_grounding_service import build_safe_campaign_context
 from agent.services import poster_recipe_service
 from agent.services.copy_grounding_service import resolve_copy_grounding
 from agent.services.poster_copy_set_service import run_poster_copy_gate, PosterCopySetError
@@ -44,11 +45,15 @@ _SYSTEM_PROMPT = (
     "punchy first-read primary message; at most one short support line; up to "
     "three tight factual proof points; a short imperative CTA. Natural, warm, "
     "persuasive Malay (or the requested language) — never stiff translationese. "
-    "NEVER invent product facts, ingredients, numbers, prices, discounts or "
-    "certifications. NEVER use medical / symptom / relief / treatment / disease "
-    "wording (no ubat, rawat, sembuh, legakan, lega, kembung, sakit, simptom, "
-    "penyakit, cure, treat, heal, relief). Respect every character limit "
-    "exactly. Return STRICT JSON ONLY — no markdown, no commentary."
+    "Use one concrete buyer-facing angle, not a vague product-name slogan: make "
+    "the audience, moment and reason to care obvious within three seconds. "
+    "Prefer a headline of 3–6 words, a complete support line of 6–12 words, "
+    "proof points of 2–6 words and a CTA of 2–4 words. Never truncate a sentence "
+    "or repeat the same angle across directions. NEVER invent product facts, "
+    "ingredients, numbers, prices, discounts or certifications. Transform raw "
+    "pain/fear language into safe readiness, comfort or product-familiarity "
+    "language; never promise treatment, cure or certainty. Respect every "
+    "character limit exactly. Return STRICT JSON ONLY — no markdown, no commentary."
 )
 
 
@@ -81,7 +86,13 @@ def _provenance_model() -> str:
 
 def _clip(text: str, limit: int) -> str:
     text = _norm(text)
-    return text if len(text) <= limit else text[:limit].rstrip()
+    if len(text) <= limit:
+        return text
+    candidate = text[:limit]
+    if candidate[-1].isspace() or text[limit].isspace():
+        return candidate.rstrip(" ,.;:-")
+    clipped = candidate.rsplit(" ", 1)[0].rstrip(" ,.;:-")
+    return clipped or text[:limit].rstrip()
 
 
 # ─── Grounded brief ───────────────────────────────────────────────────────────
@@ -120,6 +131,17 @@ def _grounding_block(grounding: Any, product: dict[str, Any]) -> str:
         lines.append("BLOCKED claims (never use): " + "; ".join(guard.blocked_claims[:8]))
     if guard.banned_terms:
         lines.append("BANNED terms (never use): " + "; ".join(guard.banned_terms[:12]))
+    safe_context = build_safe_campaign_context(product, grounding)
+    lines.extend(
+        [
+            "SAFE CAMPAIGN BRIEF (use this to make the poster specific without repeating raw pain language):",
+            f"Audience: {safe_context['audience']}",
+            f"Desire: {safe_context['desire']}",
+            f"Trigger: {safe_context['trigger']}",
+            f"Safe angle: {safe_context['safe_angle']}",
+            f"Tone: {safe_context['tone']}",
+        ]
+    )
     return "\n".join(lines)
 
 

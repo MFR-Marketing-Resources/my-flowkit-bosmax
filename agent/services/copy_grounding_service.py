@@ -45,6 +45,103 @@ def _clean_list(value: Any) -> list[str]:
     return []
 
 
+def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
+    lowered = _clean(text).casefold()
+    return any(term in lowered for term in terms)
+
+
+def build_safe_campaign_context(
+    product: dict[str, Any],
+    grounding: CopyGrounding,
+    *,
+    operator_direction: str = "",
+) -> dict[str, Any]:
+    """Transform product intelligence into a provider-safe campaign brief.
+
+    Persona pains, fears and symptom language are upstream intelligence, not
+    poster copy. The image lane receives adjacent commercial motivation:
+    familiarity, readiness, portability and clear product identity. Product
+    facts remain limited to approved USPs and are never invented here.
+    """
+
+    name = _clean(product.get("product_display_name") or product.get("raw_product_title"))
+    knowledge = grounding.product_knowledge
+    persona = grounding.buyer_persona
+    guardrails = grounding.claim_guardrails
+    evidence_text = " ".join(
+        [
+            name,
+            _clean(product.get("category")),
+            _clean(product.get("subcategory")),
+            " ".join(_clean_list(knowledge.usps)),
+        ]
+    ).casefold()
+
+    heritage = _contains_any(
+        evidence_text,
+        ("warisan", "tradisi", "tradisional", "herba", "herbal", "turun-temurun"),
+    )
+    portable = _contains_any(
+        evidence_text,
+        ("25ml", "25 ml", "mudah dibawa", "praktikal", "kompak", "pocket", "travel"),
+    )
+    family = _contains_any(evidence_text, ("keluarga", "seisi keluarga"))
+
+    pillars: list[str] = []
+    if heritage:
+        pillars.append("familiar heritage identity")
+    if portable:
+        pillars.append("compact format that is easy to keep close")
+    if family:
+        pillars.append("household-ready reassurance")
+    if not pillars:
+        pillars.append("clear product identity and approved product evidence")
+
+    direction = _clean(operator_direction)
+    banned = [*_clean_list(guardrails.banned_terms), "cure", "sembuh", "rawat", "ubat"]
+    if direction and any(term.casefold() in direction.casefold() for term in banned if term):
+        direction = ""
+    direction_clause = f"Operator direction: {direction}. " if direction else ""
+
+    if family or portable:
+        audience = "Malaysian household shoppers and parents choosing a practical standby"
+        desire = "a familiar product that feels easy to understand, keep close and reach for"
+        trigger = "the moment a shopper wants to feel prepared at home or on the move"
+    else:
+        audience = "Malaysian shoppers comparing a clear, trustworthy product choice"
+        desire = "a product choice that feels credible, relevant and easy to act on"
+        trigger = "the moment a shopper is comparing practical options"
+
+    approved_facts: list[str] = []
+    for fact in _clean_list(knowledge.usps):
+        if any(term.casefold() in fact.casefold() for term in banned if term):
+            continue
+        if fact.casefold() not in {item.casefold() for item in approved_facts}:
+            approved_facts.append(fact)
+        if len(approved_facts) == 5:
+            break
+
+    return {
+        "grounding_source": _clean(grounding.source) or "MINIMAL",
+        "product_family": _clean(grounding.family),
+        "formula": _clean(grounding.copy_formula),
+        "audience": audience,
+        "desire": desire,
+        "objection": (
+            "Make the real product identity, familiar origin and practical format legible; "
+            "do not ask vague premium language to carry the whole sale."
+        ),
+        "trigger": trigger,
+        "safe_angle": (
+            f"{direction_clause}Lead with one coherent commercial idea: "
+            + ", ".join(pillars)
+            + "."
+        ),
+        "tone": _clean(persona.tone) or "warm, confident and grounded",
+        "approved_facts": approved_facts,
+    }
+
+
 def build_framework_grounding(product: dict[str, Any]) -> CopyGrounding:
     """FRAMEWORK tier (sync, pure) — grounding derived from the product's family
     via the curated authority. Used when no approved snapshot exists."""

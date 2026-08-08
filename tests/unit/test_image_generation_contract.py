@@ -1,4 +1,5 @@
 from agent.models.image_generation_contract import (
+    ImageCreativeContext,
     ImageOperationPlanRequest,
     ImagePromptCompileRequest,
     ImageReferenceBinding,
@@ -109,6 +110,52 @@ def test_clean_key_visual_compiler_excludes_marketing_copy():
     assert "no headline" in response.sections["MARKETING_COPY_AND_TEXT_LAYOUT"]
     assert "Must not be rendered" not in response.sections["MARKETING_COPY_AND_TEXT_LAYOUT"]
     assert response.blockers == []
+
+
+def test_creative_campaign_compiler_carries_campaign_intelligence_and_mobile_hierarchy():
+    context = ImageCreativeContext(
+        grounding_source="APPROVED_SNAPSHOT",
+        approved_snapshot_id="snapshot-1",
+        approved_snapshot_version=5,
+        product_family="BEAUTY_PERSONAL_CARE",
+        formula="PAS / AIDA",
+        audience="Malaysian household shoppers and parents",
+        desire="a familiar product that is easy to keep close",
+        objection="The product identity must be immediately legible.",
+        trigger="choosing a practical standby for home or travel",
+        safe_angle="Lead with familiar heritage identity and compact portability.",
+        tone="warm, confident and grounded",
+        approved_facts=[
+            "Resipi tradisional warisan Tok Cap Burung",
+            "Bekalan 25ml yang praktikal dan mudah dibawa",
+        ],
+    )
+
+    response = compile_image_prompt(
+        {"id": PRODUCT_ID, "product_display_name": "Minyak Warisan Cap Burung 25ml"},
+        _pack(status="APPROVED", approved=True),
+        ImagePromptCompileRequest(
+            product_id=PRODUCT_ID,
+            output_intent="COMPLETE_POSTER",
+            composition="Premium look",
+            copy_layout={
+                "headline": "Warisan Tok, Kini Premium",
+                "support": "Mudah dibawa, sentiasa dekat",
+                "proof_1": "Resipi tradisional",
+                "proof_2": "25ml praktikal",
+                "cta": "Dapatkan sekarang",
+            },
+        ),
+        creative_context=context,
+    )
+
+    assert response.creative_context == context
+    assert "Campaign intelligence" in response.sections["COMPOSITION_AND_HIERARCHY"]
+    assert "familiar heritage identity" in response.compiled_prompt
+    assert "MOBILE-FIRST TEXT HIERARCHY" in response.sections["MARKETING_COPY_AND_TEXT_LAYOUT"]
+    assert "at most two type families" in response.sections["MARKETING_COPY_AND_TEXT_LAYOUT"]
+    assert "proof_1: Resipi tradisional" in response.sections["MARKETING_COPY_AND_TEXT_LAYOUT"]
+    assert "Do not depict symptoms, treatment, medical outcomes" in response.compiled_prompt
 
 
 def test_physical_scale_never_comes_from_pixel_dimensions(monkeypatch):

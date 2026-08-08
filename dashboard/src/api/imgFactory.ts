@@ -68,6 +68,21 @@ export interface ImgFastlanePromptPreviewInput {
 	requested_outputs?: number;
 }
 
+export interface CreativeCampaignContext {
+	grounding_source: string;
+	approved_snapshot_id?: string | null;
+	approved_snapshot_version?: number | null;
+	product_family: string;
+	formula: string;
+	audience: string;
+	desire: string;
+	objection: string;
+	trigger: string;
+	safe_angle: string;
+	tone: string;
+	approved_facts: string[];
+}
+
 export interface ImgFastlanePromptPreview {
 	preset_id: string;
 	route: ImgFastlaneRoute;
@@ -92,6 +107,7 @@ export interface ImgFastlanePromptPreview {
 			max_provider_operations: number;
 			max_retry_operations: number;
 		};
+		creative_context?: CreativeCampaignContext;
 	};
 }
 
@@ -179,6 +195,7 @@ export interface CreativeCampaignPromptPreview {
 		max_provider_operations: number;
 		max_retry_operations: number;
 	};
+	creative_context?: CreativeCampaignContext;
 }
 
 export interface ProductReferencePackSummary {
