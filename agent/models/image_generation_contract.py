@@ -85,6 +85,52 @@ class ProductReferencePackRecord(BaseModel):
     updated_at: str
 
 
+class ImageArtDirection(BaseModel):
+    """Typed, product-sensitive art direction for a complete generated image."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    creative_territory: str = ""
+    layout_family: str = ""
+    visual_tension: str = ""
+    product_anchor: str = ""
+    copy_anchor: str = ""
+    headline_personality: str = ""
+    headline_line_budget: int = Field(default=1, ge=1, le=3)
+    type_contrast: str = ""
+    cta_treatment: str = ""
+    negative_space_strategy: str = ""
+    brand_visual_codes: list[str] = Field(default_factory=list, max_length=8)
+    anti_cliche_rules: list[str] = Field(default_factory=list, max_length=8)
+
+
+class ImageCreativeContext(BaseModel):
+    """Safe, auditable product-intelligence context for image generation.
+
+    Raw persona pain language must not be copied into a provider prompt. This
+    contract carries only transformed campaign strategy and approved facts.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    intelligence_status: Literal["READY", "INCOMPLETE"] = "INCOMPLETE"
+    grounding_source: str = "MINIMAL"
+    approved_snapshot_id: str | None = None
+    approved_snapshot_version: int | None = None
+    product_family: str = ""
+    formula: str = ""
+    audience: str = ""
+    desire: str = ""
+    objection: str = ""
+    trigger: str = ""
+    safe_angle: str = ""
+    tone: str = ""
+    approved_facts: list[str] = Field(default_factory=list, max_length=5)
+    missing_fields: list[str] = Field(default_factory=list, max_length=20)
+    field_provenance: dict[str, str] = Field(default_factory=dict, max_length=30)
+    art_direction: ImageArtDirection = Field(default_factory=ImageArtDirection)
+
+
 class ImagePromptCompileRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -127,6 +173,7 @@ class ImagePromptCompileResponse(BaseModel):
     blockers: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     capability_status: dict[str, CapabilityStatus] = Field(default_factory=dict)
+    creative_context: ImageCreativeContext | None = None
     provider_operation_plan: dict[str, Any] = Field(default_factory=dict)
 
 

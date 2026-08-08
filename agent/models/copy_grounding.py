@@ -63,3 +63,4 @@ class CopyGrounding(BaseModel):
     angle_strategies: list[str] = Field(default_factory=list)
     claim_guardrails: ClaimGuardrails = Field(default_factory=ClaimGuardrails)
     missing: list[str] = Field(default_factory=list)
+    field_provenance: dict[str, str] = Field(default_factory=dict)

@@ -812,6 +812,8 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 					copy_layout: {
 						headline: fields.primary_message,
 						support: fields.support_message,
+						proof_1: fields.proof_points[0] || "",
+						proof_2: fields.proof_points[1] || "",
 						cta: fields.cta,
 					},
 					aspect_ratio: "9:16",
