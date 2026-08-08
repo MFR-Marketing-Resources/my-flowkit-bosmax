@@ -4,11 +4,79 @@ import {
 	FACELESS_CHARACTER_PRESENCE,
 	FACELESS_SOURCE_MODE,
 	FACELESS_TRANSPORT_MODE,
+	buildFacelessGenerateBody,
 	facelessPrepareBlockers,
 	facelessProductBlocker,
 	facelessStartFrameBlocker,
 	optionLabel,
+	packageSlotResolvedAsset,
 } from "./facelessLane";
+import type { WorkspaceExecutionPackage } from "../types";
+
+function fakePkg(
+	overrides: Partial<WorkspaceExecutionPackage> = {},
+): WorkspaceExecutionPackage {
+	return {
+		source_of_truth_notes: [],
+		warnings: [],
+		provenance: [],
+		workspace_execution_package_id: "wep_test",
+		product_id: "prod-1",
+		product_name: "Test",
+		mode: "F2V",
+		duration_seconds: 8,
+		aspect_ratio: "9:16",
+		model: "",
+		manual_override: false,
+		prompt_text: "SECTION 1 - ROLE & OBJECTIVE\nFaceless clip prompt",
+		prompt_fingerprint: "fp_test",
+		prompt_package_snapshot_id: "snap_1",
+		asset_slots: [
+			{
+				slot_key: "start_frame",
+				required: true,
+				default_source: "CREATIVE_LIBRARY",
+				allowed_sources: ["CREATIVE_LIBRARY"],
+				resolved_asset: {
+					asset_id: "ca_start_selected",
+					asset_fingerprint: "fp_start",
+					slot_key: "start_frame",
+					asset_source: "CREATIVE_LIBRARY_COMPOSITE",
+					label: "Start frame",
+					file_name: "start.png",
+					preview_url: "/api/creative-assets/ca_start_selected/preview",
+					download_url: "https://cdn.example.com/start.png",
+					media_id: null,
+					local_file_path: null,
+					remote_image_url_present: true,
+				},
+			},
+		],
+		resolved_assets: [],
+		readiness: "READY",
+		execution_allowed: true,
+		production_generation_allowed: true,
+		manual_fallback: {
+			allowed: false,
+			copy_prompt_available: false,
+			image_preview_url: null,
+			image_download_url: null,
+			asset_slots: [],
+			execution_checklist: [],
+			operator_warning: "",
+		},
+		blockers: [],
+		request_lineage_payload: {
+			product_id: "prod-1",
+			mode: "F2V",
+			prompt_package_snapshot_id: "snap_1",
+			workspace_execution_package_id: "wep_test",
+			prompt_fingerprint: "fp_test",
+			asset_fingerprints: ["fp_start"],
+		},
+		...overrides,
+	} as WorkspaceExecutionPackage;
+}
 
 describe("facelessLane", () => {
 	it("uses F2V/FRAMES transport with faceless presence", () => {
@@ -35,10 +103,79 @@ describe("facelessLane", () => {
 		expect(CREATIVE_LANE_SETTINGS_UNAVAILABLE.source).toBe("unavailable");
 		expect(CREATIVE_LANE_SETTINGS_UNAVAILABLE.hook.options).toEqual([]);
 		expect(CREATIVE_LANE_SETTINGS_UNAVAILABLE.background.options).toEqual([]);
-		// Must NOT mirror full owner vocabulary
-		const labels = CREATIVE_LANE_SETTINGS_UNAVAILABLE.hook.options.map((o) => o.label);
+		const labels = CREATIVE_LANE_SETTINGS_UNAVAILABLE.hook.options.map(
+			(o) => o.label,
+		);
 		expect(labels).not.toContain("Penat Kejar Promo");
 		expect(labels).not.toContain("Nangis Mak-Mak");
 		expect(optionLabel([], "AUTO")).toBe("AUTO");
+	});
+
+	it("F-05: generate body carries startAsset from prepared package (not package id alone)", () => {
+		const pkg = fakePkg();
+		const start = packageSlotResolvedAsset(pkg, "start_frame");
+		expect(start?.asset_id).toBe("ca_start_selected");
+
+		const body = buildFacelessGenerateBody({
+			prompt: pkg.prompt_text,
+			productId: pkg.product_id,
+			workspacePackage: pkg,
+			startFrameAssetId: "ca_start_selected",
+		});
+
+		expect(body.mode).toBe("F2V");
+		expect(body.aspect).toBe("9:16");
+		expect(body.aspectRatio).toBeUndefined();
+		expect(body.prompt).toContain("Faceless clip");
+		expect(body.product_id).toBe("prod-1");
+
+		const startAsset = body.startAsset as Record<string, unknown>;
+		expect(startAsset).toBeTruthy();
+		expect(startAsset.assetId).toBe("ca_start_selected");
+		expect(startAsset.downloadUrl).toBe("https://cdn.example.com/start.png");
+		// Must not rely only on package id for frame transport
+		expect(body.workspace_execution_package_id).toBe("wep_test");
+		expect(startAsset.assetId).not.toBe(body.workspace_execution_package_id);
+	});
+
+	it("F-05: live mediaId is listed in image_media_ids for start_generate path", () => {
+		const uuid = "12345678-1234-1234-1234-123456789abc";
+		const pkg = fakePkg({
+			asset_slots: [
+				{
+					slot_key: "start_frame",
+					required: true,
+					default_source: "CREATIVE_LIBRARY",
+					allowed_sources: ["CREATIVE_LIBRARY"],
+					resolved_asset: {
+						asset_id: "ca_live",
+						asset_fingerprint: "fp",
+						slot_key: "start_frame",
+						asset_source: "MEDIA_ID",
+						label: "Live",
+						file_name: "live.png",
+						preview_url: "",
+						download_url: "",
+						media_id: uuid,
+					},
+				},
+			],
+		});
+		const body = buildFacelessGenerateBody({
+			prompt: pkg.prompt_text,
+			workspacePackage: pkg,
+		});
+		expect(body.image_media_ids).toEqual([uuid]);
+		expect((body.startAsset as { mediaId: string }).mediaId).toBe(uuid);
+	});
+
+	it("F-05: fails closed when no start frame transport exists", () => {
+		expect(() =>
+			buildFacelessGenerateBody({
+				prompt: "x",
+				workspacePackage: fakePkg({ asset_slots: [], resolved_assets: [] }),
+				startFrameAssetId: null,
+			}),
+		).toThrow(/start frame/i);
 	});
 });

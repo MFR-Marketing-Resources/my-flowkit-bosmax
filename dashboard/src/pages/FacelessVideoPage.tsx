@@ -24,7 +24,7 @@ import CanonicalReferenceBindingControls, {
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { Product, WorkspaceExecutionPackage } from "../types";
 import {
-	FACELESS_TRANSPORT_MODE,
+	buildFacelessGenerateBody,
 	facelessPrepareBlockers,
 	optionLabel,
 } from "../faceless/facelessLane";
@@ -243,19 +243,19 @@ export default function FacelessVideoPage() {
 			requestId,
 		});
 		try {
+			// F-05: one-door GenerateRequest resolves refs via startAsset / image_media_ids
+			// — package id alone does NOT carry the operator-selected frame.
+			const generateBody = buildFacelessGenerateBody({
+				prompt: workspacePackage.prompt_text,
+				productId: selectedProduct?.id ?? workspacePackage.product_id,
+				workspacePackage,
+				startFrameAssetId: binding.startFrameAssetId,
+				endFrameAssetId: binding.endFrameAssetId,
+			});
 			const response = await fetch("/api/flow/generate", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					mode: FACELESS_TRANSPORT_MODE,
-					prompt: workspacePackage.prompt_text,
-					aspectRatio: "9:16",
-					product_id: selectedProduct?.id ?? null,
-					workspace_execution_package_id:
-						workspacePackage.workspace_execution_package_id ?? null,
-					prompt_fingerprint: workspacePackage.prompt_fingerprint ?? null,
-					// Start frame binding is on the package; generate lane resolves refs.
-				}),
+				body: JSON.stringify(generateBody),
 			});
 			if (!response.ok) {
 				const text = await response.text();
@@ -346,42 +346,42 @@ export default function FacelessVideoPage() {
 						helper="Controlled settings only. Hook is strategy — not a claim license. Background is environment only."
 					>
 						<div className="grid gap-3 sm:grid-cols-2">
-							<label className="space-y-1">
-								<span className={labelClass}>Hook</span>
-								<select
-									className={selectClass}
-									value={hookId}
-									onChange={(e) => {
-										setHookId(e.target.value);
-										setWorkspacePackage(null);
-									}}
-									data-testid="faceless-hook"
-									disabled={!settingsAvailable}
+							{!settingsAvailable ? (
+							<div
+								className="sm:col-span-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-200"
+								data-testid="faceless-settings-unavailable"
+							>
+								Settings unavailable
+								{settingsError ? `: ${settingsError}` : ""}.{" "}
+								<button
+									type="button"
+									className="underline"
+									onClick={() => reloadSettings()}
+									data-testid="faceless-settings-retry"
 								>
-									{!settingsAvailable ? (
-									<div
-										className="mb-2 text-[11px] text-rose-300"
-										data-testid="faceless-settings-unavailable"
-									>
-										Settings unavailable
-										{settingsError ? `: ${settingsError}` : ""}.{" "}
-										<button
-											type="button"
-											className="underline"
-											onClick={() => reloadSettings()}
-											data-testid="faceless-settings-retry"
-										>
-											Retry
-										</button>
-									</div>
-								) : null}
+									Retry
+								</button>
+							</div>
+						) : null}
+						<label className="space-y-1">
+							<span className={labelClass}>Hook</span>
+							<select
+								className={selectClass}
+								value={hookId}
+								onChange={(e) => {
+									setHookId(e.target.value);
+									setWorkspacePackage(null);
+								}}
+								data-testid="faceless-hook"
+								disabled={!settingsAvailable}
+							>
 								{settings.hook.options.map((o) => (
-										<option key={o.id} value={o.id}>
-											{o.label}
-										</option>
-									))}
-								</select>
-							</label>
+									<option key={o.id} value={o.id}>
+										{o.label}
+									</option>
+								))}
+							</select>
+						</label>
 							<label className="space-y-1">
 								<span className={labelClass}>Background</span>
 								<select

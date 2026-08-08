@@ -1399,5 +1399,6 @@ domains:
       - dashboard/src/faceless/facelessLane.ts
       - dashboard/src/faceless/facelessLane.test.ts
       - dashboard/src/pages/FacelessVideoPage.tsx
+      - tests/api/test_faceless_f05_start_frame_transport.py
       - dashboard/src/App.tsx
       - agent/main.py
