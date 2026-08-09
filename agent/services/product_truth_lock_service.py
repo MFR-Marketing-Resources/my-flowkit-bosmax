@@ -553,7 +553,7 @@ async def register_product_truth_cutout_media(
     try:
         from agent.services import product_visual_grounding_resolver as resolver
 
-        reference = resolver.resolve_product_reference_image(dict(product))
+        reference = resolver.resolve_product_reference_image(dict(product), prefer_approved_cutout=False)
     except Exception as exc:
         if isinstance(exc, ProductTruthLockError):
             raise
@@ -859,7 +859,7 @@ async def create_pending_product_truth_lock(
     try:
         from agent.services import product_visual_grounding_resolver as resolver
 
-        reference = resolver.resolve_product_reference_image(dict(product))
+        reference = resolver.resolve_product_reference_image(dict(product), prefer_approved_cutout=False)
     except Exception as exc:
         if isinstance(exc, ProductTruthLockError):
             raise

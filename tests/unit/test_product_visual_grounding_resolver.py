@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -91,6 +92,92 @@ def test_schema_canonical_source_reuses_matching_persisted_asset_id(tmp_path, mo
 
     assert resolved.media_id == "ca_persisted_canonical"
     assert resolved.source_type == "SCHEMA_CANONICAL_SOURCE"
+
+
+def test_approved_canonical_cutout_wins_over_source_fallback(tmp_path, monkeypatch):
+    source = tmp_path / "source.jpg"
+    cutout = tmp_path / "cutout.png"
+    Image.new("RGB", (120, 180), color=(20, 80, 120)).save(source, format="JPEG")
+    cutout_image = Image.new("RGBA", (120, 180), color=(0, 0, 0, 0))
+    cutout_image.paste((20, 80, 120, 255), (20, 20, 100, 160))
+    cutout_image.save(cutout, format="PNG")
+    source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    cutout_sha = hashlib.sha256(cutout.read_bytes()).hexdigest()
+
+    from agent.services import product_visual_grounding_resolver as module
+
+    monkeypatch.setattr(
+        module.truth_lock_service,
+        "load_product_truth_lock",
+        lambda _product_id: SimpleNamespace(review_status="APPROVED"),
+    )
+    monkeypatch.setattr(
+        module.truth_lock_service,
+        "resolve_approved_product_truth_lock",
+        lambda _product_id: SimpleNamespace(
+            canonical_media_id="source-media-1",
+            canonical_source_path=str(source),
+            canonical_sha256=source_sha,
+            canonical_cutout_path=str(cutout),
+            canonical_cutout_sha256=cutout_sha,
+            canonical_cutout_media_id="cutout-media-1",
+        ),
+    )
+    monkeypatch.setattr(module, "_is_purged_product_id", lambda _product_id: False)
+
+    resolved = module.resolve_product_reference_image({"id": "canonical-1", "image_url": "https://example.com/source.jpg"})
+
+    assert resolved.source_type == "PRODUCT_TRUTH_LOCK_CUTOUT"
+    assert resolved.media_id == "cutout-media-1"
+    assert resolved.local_path == str(cutout)
+    assert resolved.sha256 == cutout_sha
+
+
+def test_reference_pack_source_builder_can_explicitly_keep_canonical_source(tmp_path, monkeypatch):
+    source = tmp_path / "source.jpg"
+    cutout = tmp_path / "cutout.png"
+    Image.new("RGB", (120, 180), color=(20, 80, 120)).save(source, format="JPEG")
+    Image.new("RGBA", (120, 180), color=(0, 0, 0, 0)).save(cutout, format="PNG")
+    source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    cutout_sha = hashlib.sha256(cutout.read_bytes()).hexdigest()
+
+    from agent.services import product_visual_grounding_resolver as module
+
+    monkeypatch.setattr(
+        module.truth_lock_service,
+        "load_product_truth_lock",
+        lambda _product_id: SimpleNamespace(review_status="APPROVED"),
+    )
+    monkeypatch.setattr(
+        module.truth_lock_service,
+        "resolve_approved_product_truth_lock",
+        lambda _product_id: SimpleNamespace(
+            canonical_media_id="source-media-1",
+            canonical_source_path=str(source),
+            canonical_sha256=source_sha,
+            canonical_cutout_path=str(cutout),
+            canonical_cutout_sha256=cutout_sha,
+            canonical_cutout_media_id="cutout-media-1",
+        ),
+    )
+
+    resolved = module.resolve_product_reference_image({"id": "canonical-1"}, prefer_approved_cutout=False)
+
+    assert resolved.source_type == "PRODUCT_TRUTH_LOCK"
+    assert resolved.local_path == str(source)
+    assert resolved.sha256 == source_sha
+
+
+def test_purged_alias_cannot_receive_schema_visual_fallback(monkeypatch):
+    from agent.services import product_visual_grounding_resolver as module
+
+    monkeypatch.setattr(module, "get_product_by_id", lambda _product_id: None)
+    monkeypatch.setattr(module, "_is_purged_product_id", lambda _product_id: True)
+
+    with pytest.raises(ProductVisualReferenceRequiredError) as exc_info:
+        module.resolve_product_visual_grounding("purged-alias-1")
+
+    assert "PRODUCT_PURGED_ALIAS_NOT_ELIGIBLE" in str(exc_info.value)
 
 
 def test_get_grounded_generation_payload_binds_6_locks():
