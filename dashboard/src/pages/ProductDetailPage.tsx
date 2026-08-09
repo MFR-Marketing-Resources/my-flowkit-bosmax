@@ -16,7 +16,6 @@ import {
 import type { Product, ProductStrategyTypeRegistryResponse } from "../types";
 import ProductIntelligenceReviewDraftPanel from "../components/product-intelligence/ProductIntelligenceReviewDraftPanel";
 import CreativeSetupPanel from "../components/product-intelligence/CreativeSetupPanel";
-import RecommendedAvatarsCard from "../components/product-intelligence/RecommendedAvatarsCard";
 import RecommendedScenePromptsCard from "../components/product-intelligence/RecommendedScenePromptsCard";
 import RecommendedCameraPresetsCard from "../components/product-intelligence/RecommendedCameraPresetsCard";
 import CreativeHandoffPreview from "../components/product-intelligence/CreativeHandoffPreview";
@@ -281,7 +280,8 @@ export default function ProductDetailPage() {
 								<h2 className="text-lg font-bold leading-snug text-white md:text-xl">
 									{product.product_display_name || product.raw_product_title}
 								</h2>
-								<div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px]">
+								{tab !== "CREATIVE" && (
+									<div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px]">
 									<span
 										className={`rounded px-1.5 py-0.5 font-bold ${
 											SOURCE_BADGE[product.source || ""] ||
@@ -296,8 +296,10 @@ export default function ProductDetailPage() {
 											{product.lifecycle_status.replace(/_/g, " ")}
 										</span>
 									) : null}
-								</div>
-								<div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-[11px] text-slate-400">
+									</div>
+								)}
+								{tab !== "CREATIVE" && (
+									<div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-[11px] text-slate-400">
 									<span>
 										Price:{" "}
 										<span className="text-slate-200">
@@ -320,11 +322,13 @@ export default function ProductDetailPage() {
 												: "—"}
 										</span>
 									</span>
-								</div>
+									</div>
+								)}
 							</div>
 						</div>
 					</div>
 
+					{tab !== "CREATIVE" && (
 					<ProductVisualReadinessPanel
 						productId={product.id}
 						productSourceUrl={product.tiktok_product_url || product.source_url}
@@ -336,6 +340,7 @@ export default function ProductDetailPage() {
 							)
 						}
 					/>
+					)}
 
 					{/* Tabs */}
 					<div className="mb-5 flex w-fit gap-1 rounded-xl border border-slate-800 bg-slate-900/60 p-1">
@@ -362,6 +367,7 @@ export default function ProductDetailPage() {
 					</div>
 
 					{/* Per-tab helper: what this tab does + how to fill / where to save. */}
+					{tab !== "CREATIVE" && (
 					<div className="mb-5 rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-3 text-[11px] leading-relaxed text-slate-400">
 						{tab === "EDIT" && (
 							<>
@@ -392,6 +398,7 @@ export default function ProductDetailPage() {
 							</>
 						)}
 					</div>
+					)}
 
 					{tab === "EDIT" && (
 						<div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
@@ -539,14 +546,27 @@ export default function ProductDetailPage() {
 					)}
 
 					{tab === "CREATIVE" && (
-						<div className="space-y-5">
+						<div data-testid="creative-setup-tab" className="space-y-5">
 							<CreativeSetupPanel productId={product.id} />
-							<div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-								<RecommendedAvatarsCard productId={product.id} />
-								<RecommendedScenePromptsCard productId={product.id} />
-								<RecommendedCameraPresetsCard productId={product.id} />
+							<section>
+								<div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+									<div>
+										<h3 className="text-sm font-bold uppercase tracking-[0.16em] text-slate-300">
+											Reference library
+										</h3>
+										<p className="mt-1 text-xs text-slate-500">
+											Prompts and camera presets are reference material for the saved plan.
+										</p>
+									</div>
+								</div>
+								<div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+									<RecommendedScenePromptsCard productId={product.id} />
+									<RecommendedCameraPresetsCard productId={product.id} />
+								</div>
+							</section>
+							<section>
 								<CreativeHandoffPreview productId={product.id} />
-							</div>
+							</section>
 						</div>
 					)}
 				</>
