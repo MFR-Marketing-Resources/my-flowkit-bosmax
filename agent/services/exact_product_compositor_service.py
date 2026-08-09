@@ -7,6 +7,7 @@ product-region identity against that cutout (not self-comparison alone).
 """
 from __future__ import annotations
 
+from array import array
 from collections import deque
 
 import hashlib
@@ -1068,7 +1069,11 @@ def _build_canonical_cutout(source: Path, *, preserve_canvas: bool = False) -> I
     Cream cartouche stays as source RGB (never classified as wall).
     Clear glass holes filled; edge freckles removed.
     """
-    image = Image.open(source).convert("RGBA")
+    # Decode the canonical source once.  The previous path reopened the same
+    # image for RGB locking and again for the cap gate, which was measurable on
+    # the bulk lane and needlessly inflated memory pressure.
+    with Image.open(source) as opened:
+        image = opened.convert("RGBA")
     w, h = image.size
     rgb = image.convert("RGB")
     px = rgb.load()
@@ -1271,32 +1276,50 @@ def _build_canonical_cutout(source: Path, *, preserve_canvas: bool = False) -> I
 
     # SOURCE-RGB LOCK: silhouette from mask; RGB from canonical photo only.
     # Hole/median/inpaint previously rebuilt cream from teal buckets → mosaic.
-    src_rgba = Image.open(source).convert("RGBA")
-    src_px = src_rgba.load()
+    src_px = image.load()
     final = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     fpx = final.load()
     mpx_final = mask.load()
     bpx = before.load()
 
+    # Fill-mask RGB repair used to run a nested expanding search for every
+    # hole pixel.  On an 800x800 source that could become millions of Python
+    # coordinate visits and was the dominant compositor cost.  A multi-source
+    # breadth-first pass computes the exact nearest pre-hole product pixel in
+    # O(width*height), retaining the same source-RGB lock without the repeated
+    # radial scans.
+    nearest_seed = array("i", [-1]) * (w * h)
+    nearest_queue: deque[int] = deque()
+    for y in range(h):
+        for x in range(w):
+            if bpx[x, y] < 200:
+                continue
+            r, g, b = px[x, y]
+            if is_protected(r, g, b) or not (
+                _is_soft_bg_rgb(r, g, b) or _is_strict_bg_rgb(r, g, b)
+            ):
+                index = y * w + x
+                nearest_seed[index] = index
+                nearest_queue.append(index)
+
+    while nearest_queue:
+        index = nearest_queue.popleft()
+        x, y = index % w, index // w
+        seed = nearest_seed[index]
+        for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if nx < 0 or ny < 0 or nx >= w or ny >= h:
+                continue
+            neighbour = ny * w + nx
+            if nearest_seed[neighbour] != -1:
+                continue
+            nearest_seed[neighbour] = seed
+            nearest_queue.append(neighbour)
+
     def nearest_product_rgb(x: int, y: int) -> tuple[int, int, int]:
-        best = None
-        best_d = 10**18
-        for rad in (4, 8, 16, 32, 64, 128, 256):
-            for yy in range(max(0, y - rad), min(h, y + rad + 1), 2):
-                for xx in range(max(0, x - rad), min(w, x + rad + 1), 2):
-                    if bpx[xx, yy] < 200:
-                        continue
-                    r, g, b = px[xx, yy]
-                    if is_protected(r, g, b) or not (
-                        _is_soft_bg_rgb(r, g, b) or _is_strict_bg_rgb(r, g, b)
-                    ):
-                        d = (xx - x) * (xx - x) + (yy - y) * (yy - y)
-                        if d < best_d:
-                            best_d = d
-                            best = (r, g, b)
-            if best is not None:
-                return best
-        return (200, 200, 195)
+        seed = nearest_seed[y * w + x]
+        if seed < 0:
+            return (200, 200, 195)
+        return px[seed % w, seed // w]
 
     for y in range(h):
         for x in range(w):
@@ -1370,9 +1393,8 @@ def _build_canonical_cutout(source: Path, *, preserve_canvas: bool = False) -> I
             if aa >= 200 and _is_red_cap_rgb(r, g, b):
                 cap_px += 1
     if cap_px < 80:
-        src_chk = Image.open(source).convert("RGB")
-        sp = src_chk.load()
-        sw, sh = src_chk.size
+        sp = px
+        sw, sh = w, h
         src_red = sum(
             1
             for yy in range(int(sh * 0.35))

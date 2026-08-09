@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime
 import uuid
 
 from fastapi import APIRouter, HTTPException, Query
@@ -19,6 +20,7 @@ from agent.services.product_visual_onboarding_service import (
     get_product_visual_readiness,
     preview_bulk_cutout_preparation,
     prepare_product_cutout,
+    request_bulk_cutout_cancellation,
     run_bulk_cutout_preparation,
 )
 
@@ -31,6 +33,7 @@ class BulkPrepareRequest(BaseModel):
     confirm: bool = False
     preview_digest: str = Field(min_length=64, max_length=64)
     batch_size: int = Field(default=5, ge=1, le=25)
+    concurrency: int = Field(default=2, ge=1, le=4)
 
 
 def _error(exc: ProductVisualOnboardingError) -> HTTPException:
@@ -73,12 +76,20 @@ async def queue_bulk_prepare(request: BulkPrepareRequest):
         product_ids_json=json.dumps(product_ids, separators=(",", ":")),
         error_log_json="[]",
     )
-    asyncio.create_task(run_bulk_cutout_preparation(run_id, product_ids, request.batch_size))
+    asyncio.create_task(
+        run_bulk_cutout_preparation(
+            run_id,
+            product_ids,
+            request.batch_size,
+            request.concurrency,
+        )
+    )
     return {
         "run_id": run_id,
         "status": "QUEUED",
         "total_expected": len(product_ids),
         "counts": preview["counts"],
+        "concurrency": request.concurrency,
         "provider_operations": 0,
         "created_without_credit": True,
     }
@@ -93,7 +104,47 @@ async def get_bulk_prepare_run(run_id: str):
     row["errors"] = json.loads(row.pop("error_log_json") or "[]")
     row["provider_operations"] = 0
     row["created_without_credit"] = True
+    created = _parse_utc(row.get("created_at"))
+    terminal = str(row.get("status") or "").upper() in {
+        "COMPLETED",
+        "PARTIAL_FAILED",
+        "FAILED",
+    }
+    updated = _parse_utc(row.get("updated_at"))
+    elapsed_seconds = (
+        max(0.0, ((updated or datetime.now(UTC)) - created).total_seconds())
+        if created
+        else 0.0
+    )
+    processed = int(row.get("total_processed") or 0)
+    total = int(row.get("total_expected") or 0)
+    products_per_minute = processed / (elapsed_seconds / 60.0) if elapsed_seconds > 0 else 0.0
+    remaining = max(0, total - processed)
+    row.update({
+        "elapsed_seconds": round(elapsed_seconds, 3),
+        "products_per_minute": round(products_per_minute, 3),
+        "remaining": remaining,
+        "estimated_remaining_seconds": round(remaining / (products_per_minute / 60.0), 3)
+        if products_per_minute > 0 else None,
+    })
     return row
+
+
+def _parse_utc(value: object) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+@router.post("/bulk/runs/{run_id}/cancel")
+async def cancel_bulk_prepare_run(run_id: str):
+    try:
+        return await request_bulk_cutout_cancellation(run_id)
+    except ProductVisualOnboardingError as exc:
+        raise _error(exc) from exc
 
 
 @router.get("/{product_id}")
