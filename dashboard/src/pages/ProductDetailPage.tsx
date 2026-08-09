@@ -20,6 +20,7 @@ import RecommendedAvatarsCard from "../components/product-intelligence/Recommend
 import RecommendedScenePromptsCard from "../components/product-intelligence/RecommendedScenePromptsCard";
 import RecommendedCameraPresetsCard from "../components/product-intelligence/RecommendedCameraPresetsCard";
 import CreativeHandoffPreview from "../components/product-intelligence/CreativeHandoffPreview";
+import ProductVisualReadinessPanel from "../components/product-registration/ProductVisualReadinessPanel";
 
 // One clean full-screen editor for ONE product. Opened from All Products →
 // "Open". Reuses the proven panels (PI review, creative setup multi-tick,
@@ -323,6 +324,18 @@ export default function ProductDetailPage() {
 							</div>
 						</div>
 					</div>
+
+					<ProductVisualReadinessPanel
+						productId={product.id}
+						productSourceUrl={product.tiktok_product_url || product.source_url}
+						readiness={product.visual_readiness}
+						showApprovalForm
+						onChanged={(visualReadiness) =>
+							setProduct((previous) =>
+								previous ? { ...previous, visual_readiness: visualReadiness } : previous,
+							)
+						}
+					/>
 
 					{/* Tabs */}
 					<div className="mb-5 flex w-fit gap-1 rounded-xl border border-slate-800 bg-slate-900/60 p-1">

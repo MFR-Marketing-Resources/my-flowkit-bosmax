@@ -1,4 +1,6 @@
+import inspect
 import logging
+import re
 import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -22,6 +24,11 @@ from agent.services.product_strategy_taxonomy_service import (
 from agent.utils.paths import product_image_path
 
 logger = logging.getLogger(__name__)
+
+
+async def _await_result(value):
+    """Keep duplicate gates compatible with lightweight test doubles."""
+    return await value if inspect.isawaitable(value) else value
 
 
 async def _reference_pack_receipt(product_id: str) -> dict[str, Any]:
@@ -49,6 +56,40 @@ async def _reference_pack_receipt(product_id: str) -> dict[str, Any]:
         }
 
 
+async def _visual_onboarding_receipt(
+    product_id: str,
+    reference_pack: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Run deterministic visual preparation after a committed product row.
+
+    Product Truth approval remains a separate operator action.  Any cutout
+    failure is returned as a receipt and cannot invalidate the already-complete
+    product/intelligence commit.
+    """
+    try:
+        from agent.services.product_visual_onboarding_service import (
+            ensure_product_visual_onboarding,
+        )
+
+        return await ensure_product_visual_onboarding(
+            product_id,
+            reference_pack=reference_pack,
+        )
+    except Exception as exc:  # noqa: BLE001 - additive post-commit receipt
+        logger.exception("Visual onboarding failed after product commit %s", product_id)
+        return {
+            "product_id": product_id,
+            "cutout_status": "PREPARATION_FAILED",
+            "visual_grounding_status": "VISUAL_GROUNDING_BLOCKED",
+            "exact_commerce_status": "EXACT_COMMERCE_REVIEW_REQUIRED",
+            "failure_code": "VISUAL_ONBOARDING_FAILED",
+            "failure_message": str(exc),
+            "reference_pack": reference_pack,
+            "provider_operations": 0,
+            "created_without_credit": True,
+        }
+
+
 def _build_owned_raw_title(draft: RegistrationReviewDraft) -> str:
     base_name = (
         draft.declared_evidence_fields.get("product_name")
@@ -66,6 +107,9 @@ def _build_owned_raw_title(draft: RegistrationReviewDraft) -> str:
 
 
 async def _find_manual_duplicate(draft: RegistrationReviewDraft) -> dict[str, Any] | None:
+    strong = await _find_strong_duplicate(draft)
+    if strong:
+        return strong
     candidate_names = [
         str(draft.canonical_candidate_fields.get("normalized_name") or "").strip(),
         str(draft.declared_evidence_fields.get("product_name") or "").strip(),
@@ -107,7 +151,51 @@ def _is_canonical_duplicate_blocker(row: dict) -> bool:
     return True
 
 
+async def _find_strong_duplicate(draft) -> dict[str, Any] | None:
+    """Resolve immutable identity evidence before the legacy title check."""
+    evidence = draft.declared_evidence_fields or {}
+    urls = {
+        str(evidence.get(key) or "").strip()
+        for key in ("tiktok_product_url", "product_url")
+        if str(evidence.get(key) or "").strip()
+    }
+    for url in urls:
+        exact_rows = await _await_result(crud.find_products_by_tiktok_product_url(url))
+        for row in exact_rows or []:
+            if _is_canonical_duplicate_blocker(row):
+                return row
+        # The URL carries the strongest available TikTok identity for legacy
+        # rows; exact URL remains the first gate, ID lookup is the normalized
+        # trailing-slash/query fallback.
+        for tiktok_id in re.findall(r"(?:product/|product_id[=/])([0-9]{6,})", url):
+            id_rows = await _await_result(crud.find_products_by_tiktok_product_id(tiktok_id))
+            for row in id_rows or []:
+                if _is_canonical_duplicate_blocker(row):
+                    return row
+
+    reference_id = str(
+        getattr(draft, "fastmoss_reference_id", None)
+        or evidence.get("fastmoss_reference_id")
+        or ""
+    ).strip()
+    if reference_id:
+        linked = await _await_result(crud.get_product_by_fastmoss_reference_id(reference_id))
+        if isinstance(linked, dict) and _is_canonical_duplicate_blocker(linked):
+            return linked
+
+    # A replay carrying a previously purged alias must never recreate the alias.
+    for candidate_id in (evidence.get("canonical_product_id"), evidence.get("product_id")):
+        candidate = str(candidate_id or "").strip()
+        tombstoned = await _await_result(crud.is_product_catalog_alias_tombstoned(candidate)) if candidate else False
+        if candidate and tombstoned:
+            return {"id": candidate, "duplicate_reason": "PURGED_ALIAS_TOMBSTONE"}
+    return None
+
+
 async def _find_fastmoss_promoted_duplicate(draft) -> dict | None:
+    strong = await _find_strong_duplicate(draft)
+    if strong:
+        return strong
     candidate_names = [
         str(draft.canonical_candidate_fields.get("normalized_name") or "").strip(),
         str(draft.declared_evidence_fields.get("product_name") or "").strip(),
@@ -332,6 +420,9 @@ class RegistrationCommitService:
             if failure:
                 return failure
             reference_pack = await _reference_pack_receipt(product["id"])
+            visual_onboarding = await _visual_onboarding_receipt(
+                product["id"], reference_pack
+            )
             draft.write_back_performed = True
             draft.write_back_status = "COMMITTED"
             draft.review_status = "COMMITTED"
@@ -344,6 +435,7 @@ class RegistrationCommitService:
                 "strategy_taxonomy": materialized_taxonomy,
                 "product_intelligence": promotion,
                 "reference_pack": reference_pack,
+                "visual_onboarding": visual_onboarding,
                 "intelligence_draft_id": (promotion or {}).get("intelligence_draft_id"),
                 "provenance": ["registration_commit_service:fastmoss_promoted:v1"],
             }
@@ -554,6 +646,9 @@ class RegistrationCommitService:
             if failure:
                 return failure
             reference_pack = await _reference_pack_receipt(product["id"])
+            visual_onboarding = await _visual_onboarding_receipt(
+                product["id"], reference_pack
+            )
 
             # Update Draft Status
             draft.write_back_performed = True
@@ -573,6 +668,7 @@ class RegistrationCommitService:
                 "strategy_taxonomy": materialized_taxonomy,
                 "product_intelligence": promotion,
                 "reference_pack": reference_pack,
+                "visual_onboarding": visual_onboarding,
                 "intelligence_draft_id": (promotion or {}).get("intelligence_draft_id"),
                 "intelligence_dropped_fields": (promotion or {}).get("dropped_fields", []),
                 "provenance": ["registration_commit_service:v1"]

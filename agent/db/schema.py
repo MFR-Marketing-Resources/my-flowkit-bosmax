@@ -844,6 +844,49 @@ CREATE TABLE IF NOT EXISTS product_reference_pack (
 CREATE INDEX IF NOT EXISTS idx_product_reference_pack_status
     ON product_reference_pack(pack_status, updated_at);
 
+-- Deterministic product cutout preparation receipt.  This is operational
+-- evidence only; product_visual_truth_lock remains the exact-IMG authority and
+-- its APPROVED state can only be reached through the explicit human gate.
+CREATE TABLE IF NOT EXISTS product_cutout_preparation (
+    product_id       TEXT PRIMARY KEY REFERENCES product(id) ON DELETE CASCADE,
+    status           TEXT NOT NULL DEFAULT 'NOT_PREPARED'
+        CHECK(status IN ('NOT_PREPARED','PREPARING','PENDING_REVIEW','APPROVED','PREPARATION_FAILED','BLOCKED')),
+    source_sha256    TEXT,
+    cutout_media_id  TEXT,
+    cutout_sha256    TEXT,
+    failure_code     TEXT,
+    failure_message  TEXT,
+    attempt_count    INTEGER NOT NULL DEFAULT 0,
+    last_started_at  TEXT,
+    last_finished_at TEXT,
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_product_cutout_preparation_status
+    ON product_cutout_preparation(status, updated_at);
+
+-- Bounded, provider-free bulk preparation progress.  Product IDs are a frozen
+-- preview receipt, not a free-form client-side selection; the execution worker
+-- re-checks every identity/lifecycle gate before touching a row.
+CREATE TABLE IF NOT EXISTS product_visual_onboarding_run (
+    run_id              TEXT PRIMARY KEY,
+    status              TEXT NOT NULL DEFAULT 'PREVIEW'
+        CHECK(status IN ('PREVIEW','QUEUED','RUNNING','COMPLETED','PARTIAL_FAILED','FAILED')),
+    total_expected      INTEGER NOT NULL DEFAULT 0,
+    total_processed     INTEGER NOT NULL DEFAULT 0,
+    total_pending_review INTEGER NOT NULL DEFAULT 0,
+    total_failed        INTEGER NOT NULL DEFAULT 0,
+    total_blocked       INTEGER NOT NULL DEFAULT 0,
+    total_skipped       INTEGER NOT NULL DEFAULT 0,
+    batch_size          INTEGER NOT NULL DEFAULT 5,
+    product_ids_json    TEXT NOT NULL DEFAULT '[]',
+    error_log_json      TEXT NOT NULL DEFAULT '[]',
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_product_visual_onboarding_run_status
+    ON product_visual_onboarding_run(status, updated_at);
+
 CREATE TABLE IF NOT EXISTS batch (
     id                      TEXT PRIMARY KEY,
     product_id              TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,

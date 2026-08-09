@@ -1314,6 +1314,7 @@ export interface Product {
 		review_status: string;
 		updated_at?: string | null;
 	} | null;
+	visual_readiness?: ProductVisualReadiness;
 	taxonomy_conflict?: boolean;
 	taxonomy_conflict_reason?: string | null;
 	strategy_taxonomy?: ProductStrategyTaxonomy | null;
@@ -1447,6 +1448,40 @@ export interface Product {
 	local_image_path: string | null;
 	created_at: string;
 	updated_at: string;
+}
+
+export type ProductVisualCutoutStatus =
+	| "NOT_PREPARED"
+	| "PREPARING"
+	| "PENDING_REVIEW"
+	| "APPROVED"
+	| "PREPARATION_FAILED"
+	| "BLOCKED";
+
+export interface ProductVisualReadiness {
+	product_id: string;
+	canonical_media_status: "AVAILABLE" | "MISSING" | string;
+	reference_pack_status: string;
+	visual_grounding_status: string;
+	visual_grounding_source: string;
+	cutout_status: ProductVisualCutoutStatus | string;
+	cutout_review_status: string;
+	exact_commerce_status: string;
+	cutout_media_id?: string | null;
+	cutout_preview_available?: boolean;
+	attempt_count?: number;
+	failure_code?: string | null;
+	failure_message?: string | null;
+	blockers: string[];
+	warnings: string[];
+	provider_operations: number;
+	created_without_credit: boolean;
+	can_prepare_cutout: boolean;
+	can_review_cutout: boolean;
+	can_approve_cutout: boolean;
+	can_rebuild_cutout: boolean;
+	can_open_source: boolean;
+	can_view: boolean;
 }
 
 export interface ProductCatalogResponse {
