@@ -171,7 +171,7 @@ def test_products_sales_analyzer_product_intelligence_wires_real_snapshot_apis()
 
     for token in [
         "Product Intelligence Review Draft Pipeline",
-        "Create Review Draft",
+			"Create Revision Draft",
         "Validate Draft",
         "Approve Draft",
         "Reject Draft",
