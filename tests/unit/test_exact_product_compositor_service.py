@@ -398,6 +398,25 @@ def test_cutout_preserves_cream_cartouche_label(tmp_path, monkeypatch):
     assert len(colors) >= 8, f"label collapsed to mosaic blocks uniq={len(colors)}"
 
 
+def test_cutout_can_preserve_canonical_source_canvas(tmp_path):
+    from PIL import Image, ImageDraw
+    from agent.services.exact_product_compositor_service import _build_canonical_cutout
+
+    im = Image.new("RGB", (120, 240), (240, 238, 232))
+    d = ImageDraw.Draw(im)
+    d.rectangle((45, 10, 75, 35), fill=(200, 30, 30))
+    d.rectangle((35, 50, 85, 210), fill=(40, 130, 140))
+    d.rectangle((45, 80, 75, 150), fill=(205, 197, 173))
+    d.rectangle((40, 160, 80, 200), fill=(30, 140, 70))
+    src = tmp_path / "canvas.jpg"
+    im.save(src, quality=95)
+
+    cut = _build_canonical_cutout(src, preserve_canvas=True)
+
+    assert cut.size == im.size
+    assert cut.getchannel("A").getbbox() is not None
+
+
 def test_prepare_layer_uses_cutout_v13_cache_key(tmp_path, monkeypatch):
     from agent.services import exact_product_compositor_service as mod
     from PIL import Image, ImageDraw

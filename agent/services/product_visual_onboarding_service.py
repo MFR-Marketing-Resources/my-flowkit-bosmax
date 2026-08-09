@@ -297,7 +297,7 @@ async def _ensure_canonical_media(product: dict[str, Any], reference: Any) -> st
 def _build_cutout_bytes(source_path: Path) -> tuple[bytes, dict[str, float], str]:
     from agent.services.exact_product_compositor_service import _build_canonical_cutout
 
-    image = _build_canonical_cutout(source_path)
+    image = _build_canonical_cutout(source_path, preserve_canvas=True)
     try:
         rgba = image.convert("RGBA")
         alpha = rgba.getchannel("A")
