@@ -84,6 +84,11 @@ export interface CreativeCampaignContext {
 	approved_facts: string[];
 	missing_fields: string[];
 	field_provenance: Record<string, string>;
+	campaign_design_brief?: {
+		schema_version?: string;
+		approved_snapshot_id?: string | null;
+		approved_snapshot_version?: number | null;
+	};
 	art_direction: {
 		creative_territory: string;
 		layout_family: string;

@@ -1,0 +1,149 @@
+{
+  "schema_version": "poster-builder-v3-e1-mwcb-replay-v1",
+  "mission_phase": "E1_PRODUCTION_ACTIVATION_EVIDENCE_CLOSURE",
+  "verification_mode": "READ_ONLY_EXISTING_ARTIFACT_REPLAY",
+  "source_runtime_sha": "2c82774d8a7461f46074912c786dbe901ac547ad",
+  "product": {
+    "product_id": "6483d624-a03d-4933-9bba-6ca2e5f7b6fd",
+    "display_name": "Minyak Warisan Cap Burung 25ml",
+    "approved_snapshot_id": "c06504d2-1666-4ca1-8ae4-88a06d7c359c",
+    "approved_snapshot_version": 5,
+    "approved_snapshot_status": "APPROVED",
+    "claim_gate": "CLAIM_SAFE",
+    "reference_pack_id": "prp_5f5ff615134b256b780935b42b22",
+    "reference_pack_status": "APPROVED",
+    "reference_pack_machine_qa_status": "WARN",
+    "reference_pack_physical_measurements": {
+      "physical_width_mm": null,
+      "physical_height_mm": null,
+      "physical_depth_mm": null,
+      "volume_ml": 25.0,
+      "scale_evidence_source": "PRODUCT_RECORD_OR_AUTHORITY_SCHEMA",
+      "scale_confidence": "MEDIUM",
+      "status": "UNVERIFIED"
+    },
+    "reference_role_hashes": {
+      "PRODUCT_CANONICAL": "68e5f4b62b1b0454444bb429a2a2970044ae63c49399ad2fc792d254cb19bda4",
+      "PRODUCT_LABEL_CROP": "b63b57066c20106f33ce219a6cb10f6a8f18da1b3b5bb34e7dbc5ba290301726",
+      "PRODUCT_LOGO_CROP": "b63b57066c20106f33ce219a6cb10f6a8f18da1b3b5bb34e7dbc5ba290301726",
+      "PRODUCT_CUTOUT": "fe77343c1733c8a73f36368062d5e1642bb0d7bfb6056758592ee4f73af25bb8"
+    }
+  },
+  "provider_history": {
+    "provider": "GOOGLE_FLOW",
+    "model": "NANO_BANANA_PRO",
+    "job_id": "g_2ce9f70fd450",
+    "transport_batch_id": "875e6da5-1231-4225-82ac-39c984634d54",
+    "provider_submit_count": 1,
+    "provider_submit_count_status": "VERIFIED_PREVIOUS_LIVE_UAT",
+    "retry_count": 0,
+    "retry_count_status": "VERIFIED_PREVIOUS_LIVE_UAT",
+    "provider_operation_id": null,
+    "provider_operation_id_status": "UNPROVEN_PROVIDER_OPERATION_ID",
+    "credit_consumption": "NOT VERIFIED",
+    "e1_replay_provider_operation_count": 0,
+    "e1_replay_retry_count": 0,
+    "e1_replay_db_mutation_count": 0,
+    "e1_replay_credit_spend": false,
+    "operation_record": {
+      "operation_record_id": "igop_440bd40fe9ba49b5aadf9d75cca976ff",
+      "provider_media_id": "7f011c63-7038-4696-ad12-f66d6c355b31",
+      "response_status": "MEDIA_RETURNED",
+      "mode": "IMG",
+      "variant_index": 0
+    }
+  },
+  "source_artifact": {
+    "raw_key_visual_media_id": "7f011c63-7038-4696-ad12-f66d6c355b31",
+    "raw_key_visual_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\output\\retrieved\\7f011c63-7038-4696-ad12-f66d6c355b31.jpg",
+    "raw_key_visual_sha256": "457b144120537dfa52f94dd55c8e88d8542f0b1c865cc48578c9de939c1e0486",
+    "raw_key_visual_bytes": 676260,
+    "raw_key_visual_lineage": "PROVIDER_RETURNED_CLEAN_KEY_VISUAL_BACKGROUND_ONLY"
+  },
+  "poster_deliverable": {
+    "poster_deliverable_id": "25743dc1-ca35-48ad-87b5-db868dbb74ee",
+    "poster_copy_set_id": "beb668fb-0988-46af-98f0-3e91cda25f79",
+    "poster_copy_set_version": 1,
+    "poster_copy_set_status": "POSTER_COPY_APPROVED",
+    "composition_strategy": "REFERENCE_CONDITIONED",
+    "creative_asset_id": "ca_5b496d6f8a754e56",
+    "output_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\output\\posters\\39a12fc11c9f\\poster.png",
+    "output_sha256": "8502c10097aa2d06e7dd1455798f813a37b33649e3a90c005fea6d2c71a2e855",
+    "output_bytes": 2257891,
+    "creative_asset_sha256": "8502c10097aa2d06e7dd1455798f813a37b33649e3a90c005fea6d2c71a2e855",
+    "manifest_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\output\\posters\\39a12fc11c9f\\manifest.json",
+    "manifest_sha256": "ed035f65a50122c5ad376fe792fb9c9f527ddb7eadb6bbff587591ecd6a48ee5",
+    "render_report_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\output\\posters\\39a12fc11c9f\\render_report.json",
+    "render_report_sha256": "8bf10e91b9c597e4e8bcdbc0f51d97acacb0d5f2826a76155b1d076603572d8a",
+    "persisted_status": "POSTER_SAVED"
+  },
+  "prompt_lineage": {
+    "previous_compile_fingerprint": "c7b9ac3c4a64659b5f0b7610dd6da03cabe33f46d43fced6bafb454dddaa4793",
+    "previous_raw_key_visual_prompt_fingerprint": "",
+    "historical_manifest_background_prompt_fingerprint": "",
+    "historical_manifest_provenance_gap": "PROMPT_AND_REFERENCE_ROLE_PROVENANCE_NOT_PERSISTED_IN_PRIOR_DELIVERABLE"
+  },
+  "historical_variant_outputs": {
+    "provider_operation_count": 1,
+    "local_variant_count": 3,
+    "retry_count": 0,
+    "variant_sha256": [
+      "1c1f5478a90904dcc40d7234d82b613903f2f5f3c01e94284614bb2f0af6a5eb",
+      "8502c10097aa2d06e7dd1455798f813a37b33649e3a90c005fea6d2c71a2e855",
+      "6cbd6acef4dd12e0557e3a76fd9c29a4df4d6f32c9cca5431836d2020b5f3fb8"
+    ],
+    "generation_mode": "CREDIT_FREE_LOCAL_DETERMINISTIC_VARIANTS"
+  },
+  "historical_qa": {
+    "machine_qa_status": "WARN",
+    "human_review_required": true,
+    "campaign_review_status": "REVISION_REQUIRED",
+    "identity_status": "UNVERIFIED",
+    "label_status": "UNVERIFIED",
+    "logo_status": "UNVERIFIED",
+    "geometry_status": "UNVERIFIED",
+    "scale_status": "UNVERIFIED",
+    "lighting_integration_status": "UNVERIFIED",
+    "font_loaded_proof_status": "UNVERIFIED",
+    "font_loaded_proof_evidence": "HOST_RUNTIME_REQUIRED",
+    "contrast_status": "UNVERIFIED",
+    "contrast_evidence": "NO_PIXEL_CONTRAST_ANALYZER_CONFIGURED",
+    "clean_key_visual_lineage_status": "PASS",
+    "copy_provenance_status": "PASS"
+  },
+  "replay_verification": {
+    "raw_key_visual": "REPLAY_VERIFIED",
+    "poster_output": "REPLAY_VERIFIED",
+    "creative_asset_output": "REPLAY_VERIFIED",
+    "manifest": "REPLAY_VERIFIED",
+    "render_report": "REPLAY_VERIFIED",
+    "hash_mismatch_count": 0,
+    "missing_artifact_count": 0,
+    "provider_operation_count": 0,
+    "db_mutation_count": 0,
+    "no_provider_resubmission": true
+  },
+  "offline_renderer_uat": {
+    "renderer": "HTML_CHROMIUM_SERVICE_V1",
+    "chromium_installed": true,
+    "canvas": "1080x1920",
+    "successful_render_exit": 0,
+    "successful_render_zone_count": 5,
+    "successful_render_all_zones_fitted": true,
+    "successful_render_font_document_ready": true,
+    "successful_render_font_zone_fallbacks": false,
+    "successful_render_credit_spend": false,
+    "successful_render_network": false,
+    "missing_font_render_exit": 4,
+    "missing_font_failure_code": "FONT_UNAVAILABLE",
+    "playwright_evaluate_contract": "ONE_OBJECT_ARGUMENT"
+  },
+  "e1_code_effect": {
+    "font_runtime_proof": "IMPLEMENTED_FOR_NEW_RENDER_REPORTS; historical artifact remains UNVERIFIED",
+    "contrast_measurement": "IMPLEMENTED_FOR_NEW_COMPOSITIONS; historical artifact remains UNVERIFIED",
+    "final_manifest_provenance": "IMPLEMENTED_SERVER_SIDE_FOR_NEW_CAMPAIGN_DELIVERABLES",
+    "identity_label_logo_geometry_scale_lighting": "LEFT_UNVERIFIED_WITHOUT_RELIABLE_VISION_OR_PHYSICAL_DIMENSION_EVIDENCE"
+  },
+  "decision": "REPLAY_EVIDENCE_CLOSED; KEEP_FEATURE_DISABLED",
+  "next_decision": "PHASE_E2_BLOCKED_COHORT_INCOMPLETE"
+}

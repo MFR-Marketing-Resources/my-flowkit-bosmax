@@ -172,6 +172,7 @@ def _read_report(report_path: Path) -> PosterRenderReport | None:
                     }
                     for z in data.get("zones") or []
                 ],
+                "fonts": data.get("fonts") or {},
                 "missing_zones": data.get("missing_zones") or [],
                 "errors": data.get("errors") or [],
                 "ok": bool(data.get("ok")),

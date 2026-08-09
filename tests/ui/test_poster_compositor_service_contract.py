@@ -41,6 +41,10 @@ def test_renderer_source_enforces_production_invariants():
     assert "watchdog" in src and "browser.close()" in src
     # Renderer is Playwright/Chromium.
     assert 'require("playwright")' in src
+    # Playwright evaluate accepts one serialisable argument; the renderer must
+    # pass fit policy and font evidence as one object, not positional values.
+    assert "function pageFitAndMeasure({ fitPolicy, fontRequirements })" in src
+    assert "fontRequirements: fontEvidence" in src
 
 
 def test_renderer_is_offline_and_credit_free():

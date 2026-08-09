@@ -8,6 +8,7 @@ approve a reference pack, call Google Flow, compose PNGs, or mutate the DB.
 Usage:
     python scripts/poster-builder-v3-benchmark.py
     python scripts/poster-builder-v3-benchmark.py --product-id <uuid>
+    python scripts/poster-builder-v3-benchmark.py --cohort-evidence <json>
 """
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 DEFAULT_PRODUCT_ID = "6483d624-a03d-4933-9bba-6ca2e5f7b6fd"
+DEFAULT_COHORT_EVIDENCE = ROOT / "docs" / "evidence" / "poster-builder-v3-e1-benchmark-cohort.json"
 
 
 def _runtime_sha() -> str:
@@ -224,9 +226,47 @@ async def run(product_id: str) -> dict:
     return report.model_dump(mode="json")
 
 
+def run_cohort_evidence(path: Path) -> dict:
+    """Read a zero-spend scout artifact and print only a future plan.
+
+    This path has no async DB access and no transport import.  It is therefore
+    safe to use as the Phase E1 dry-run gate even when the canonical runtime is
+    online: it can never submit a provider operation.
+    """
+    from agent.services.poster_benchmark_cohort_service import (
+        BENCHMARK_EXP_IDS,
+        build_phase_e2_operation_plan,
+        select_recommendations,
+    )
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    classes = payload.get("benchmark_classes") if isinstance(payload, dict) else {}
+    classes = classes if isinstance(classes, dict) else {}
+    candidates_by_exp = {
+        exp_id: list((classes.get(exp_id) or {}).get("top_3_candidates") or [])
+        for exp_id in BENCHMARK_EXP_IDS
+    }
+    recommendations = select_recommendations(candidates_by_exp)
+    plan = build_phase_e2_operation_plan(recommendations)
+    return {
+        "status": "COHORT_DRY_RUN_READY" if plan["status"] == "READY_FOR_AUTHORIZATION" else "COHORT_DRY_RUN_BLOCKED",
+        "runtime_sha": _runtime_sha(),
+        "evidence_path": str(path),
+        "recommendations": recommendations,
+        "operation_plan": plan,
+        "provider_operation_count": 0,
+        "db_mutation_count": 0,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--product-id", default=DEFAULT_PRODUCT_ID)
+    parser.add_argument(
+        "--cohort-evidence",
+        default=None,
+        help="read-only E1 cohort JSON; emits a five-slot future plan without submitting",
+    )
     parser.add_argument(
         "--agent-dir",
         default=None,
@@ -238,6 +278,13 @@ def main() -> int:
             import os
 
             os.environ["FLOW_AGENT_DIR"] = str(Path(args.agent_dir).resolve())
+
+        if args.cohort_evidence:
+            result = run_cohort_evidence(Path(args.cohort_evidence).resolve())
+            print("LIVE_BENCHMARK_AUTHORIZATION_REQUIRED")
+            print("CREDIT_EXPOSURE = NOT VERIFIED")
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0 if result["status"] == "COHORT_DRY_RUN_READY" else 2
 
         async def execute_and_close() -> dict:
             from agent.db.schema import close_db

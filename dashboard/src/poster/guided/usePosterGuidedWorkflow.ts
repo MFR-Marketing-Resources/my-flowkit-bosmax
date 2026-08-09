@@ -66,6 +66,24 @@ const EMPTY_FIELDS: GuidedCopyFields = {
 	language: "ms",
 };
 
+interface CreativeCampaignPromptProvenance {
+	prompt_fingerprint: string;
+	reference_pack_id: string;
+	approved_snapshot_id: string;
+	approved_snapshot_version: number | null;
+	design_brief_version: string;
+	copy_route_id: string;
+}
+
+const EMPTY_CREATIVE_PROMPT_PROVENANCE: CreativeCampaignPromptProvenance = {
+	prompt_fingerprint: "",
+	reference_pack_id: "",
+	approved_snapshot_id: "",
+	approved_snapshot_version: null,
+	design_brief_version: "",
+	copy_route_id: "",
+};
+
 function directionToFields(d: PosterCopyDirection): GuidedCopyFields {
 	return {
 		primary_message: d.primary_message,
@@ -294,6 +312,10 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 	const [generatedSceneUrl, setGeneratedSceneUrl] = useState<string | null>(
 		null,
 	);
+	const [creativePromptProvenance, setCreativePromptProvenance] =
+		useState<CreativeCampaignPromptProvenance>(
+			EMPTY_CREATIVE_PROMPT_PROVENANCE,
+		);
 	const sceneGenerationTokenRef = useRef(0);
 
 	const [deliverable, setDeliverable] = useState<PosterComposeResponse | null>(
@@ -319,6 +341,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		setSceneGenerationStage("");
 		setGeneratedSceneMediaId(null);
 		setGeneratedSceneUrl(null);
+		setCreativePromptProvenance(EMPTY_CREATIVE_PROMPT_PROVENANCE);
 		setCampaignVariants(null);
 		setCampaignVariantsError("");
 		setCampaignReviewError("");
@@ -823,6 +846,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		setBackgroundMediaIdState("");
 		setGeneratedSceneMediaId(null);
 		setGeneratedSceneUrl(null);
+		setCreativePromptProvenance(EMPTY_CREATIVE_PROMPT_PROVENANCE);
 		setDeliverable(null);
 		setSavedAssetId(null);
 
@@ -895,6 +919,18 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 					creative_mode: "CREATIVE_CAMPAIGN",
 				});
 				if (compiled.blockers.length) throw new Error(compiled.blockers[0]);
+				const brief = compiled.creative_context?.campaign_design_brief;
+				setCreativePromptProvenance({
+					prompt_fingerprint: compiled.prompt_fingerprint || "",
+					reference_pack_id: compiled.reference_pack.pack_id || "",
+					approved_snapshot_id: String(brief?.approved_snapshot_id || compiled.creative_context?.approved_snapshot_id || ""),
+					approved_snapshot_version:
+						brief?.approved_snapshot_version ??
+						compiled.creative_context?.approved_snapshot_version ??
+						null,
+					design_brief_version: String(brief?.schema_version || ""),
+					copy_route_id: approvedCopySet.poster_copy_set_id,
+				});
 				generationRequest = {
 					product_id: product.id,
 					visual_lane_id: "POSTER_BUILDER_CREATIVE_CAMPAIGN",
@@ -1020,12 +1056,23 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 						? "NANO_BANANA_PRO"
 						: undefined,
 				creative_mode: creativeMode || undefined,
-				settings:
-					creativeMode === "CREATIVE_CAMPAIGN"
+					settings:
+						creativeMode === "CREATIVE_CAMPAIGN"
 						? {
 							pipeline: "CLEAN_KEY_VISUAL_THEN_DETERMINISTIC_COPY_COMPOSITE",
 							raw_key_visual_media_id: generatedSceneMediaId,
 							raw_key_visual_is_lineage_only: true,
+							prompt_fingerprint: creativePromptProvenance.prompt_fingerprint,
+							clean_key_visual_prompt_fingerprint:
+								creativePromptProvenance.prompt_fingerprint,
+							reference_pack_id: creativePromptProvenance.reference_pack_id,
+							approved_snapshot_id: creativePromptProvenance.approved_snapshot_id,
+							approved_snapshot_version:
+								creativePromptProvenance.approved_snapshot_version,
+							design_brief_version: creativePromptProvenance.design_brief_version,
+							copy_route_id: creativePromptProvenance.copy_route_id,
+							provider_operation_budget: 1,
+							actual_retry_count: 0,
 						}
 						: undefined,
 			});
@@ -1055,6 +1102,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		backgroundMediaId,
 		creativeMode,
 		generatedSceneMediaId,
+		creativePromptProvenance,
 		loadCampaignVariantsFor,
 	]);
 
