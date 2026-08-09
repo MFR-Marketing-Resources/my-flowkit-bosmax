@@ -30,19 +30,58 @@ const BADGE: Record<string, string> = {
 	NOT_PREPARED: "bg-slate-700/40 text-slate-400",
 };
 
+const COMPACT_STATUS_LABEL: Record<string, string> = {
+	AVAILABLE: "Available",
+	MISSING: "Missing",
+	APPROVED: "Approved",
+	PENDING_REVIEW: "Review",
+	PREPARING: "Preparing",
+	PREPARATION_FAILED: "Failed",
+	BLOCKED: "Blocked",
+	NOT_PREPARED: "Not prepared",
+	VISUAL_GROUNDING_READY: "Ready",
+	VISUAL_GROUNDING_BLOCKED: "Blocked",
+	EXACT_COMMERCE_CUTOUT_READY: "Ready",
+	EXACT_COMMERCE_REVIEW_REQUIRED: "Review required",
+	EXACT_COMMERCE_BLOCKED: "Blocked",
+};
+
 const label = (value: string | undefined | null): string =>
 	(value || "NOT_PREPARED").replace(/_/g, " ");
 
-function Status({ name, value }: { name: string; value: string | undefined }) {
+const compactLabel = (value: string | undefined | null): string => {
+	const normalized = value || "NOT_PREPARED";
+	if (COMPACT_STATUS_LABEL[normalized]) return COMPACT_STATUS_LABEL[normalized];
+	return normalized
+		.replace(/_/g, " ")
+		.toLowerCase()
+		.replace(/(^|\s)\S/g, (character) => character.toUpperCase());
+};
+
+function Status({
+	name,
+	value,
+	compact = false,
+}: {
+	name: string;
+	value: string | undefined;
+	compact?: boolean;
+}) {
+	const fullLabel = label(value);
 	return (
-		<div className="min-w-0">
+		<div className={`${compact ? "min-w-0 rounded-lg border border-slate-800/80 bg-slate-950/30 p-1.5" : "min-w-0"}`}>
 			<div className="mb-1 text-[8px] font-bold uppercase tracking-widest text-slate-500">
 				{name}
 			</div>
 			<span
-				className={`inline-flex max-w-full truncate rounded px-1.5 py-0.5 text-[9px] font-bold ${BADGE[value || ""] || "bg-slate-700/40 text-slate-400"}`}
+				title={compact ? fullLabel : undefined}
+				className={`inline-flex max-w-full rounded ${compact ? "text-[8px]" : "text-[9px]"} font-bold ${
+					compact
+						? "min-h-6 w-full items-center justify-center whitespace-normal break-words px-1 py-1 text-center leading-tight"
+						: "truncate px-1.5 py-0.5"
+				} ${BADGE[value || ""] || "bg-slate-700/40 text-slate-400"}`}
 			>
-				{label(value)}
+				{compact ? compactLabel(value) : fullLabel}
 			</span>
 		</div>
 	);
@@ -130,16 +169,16 @@ export default function ProductVisualReadinessPanel({
 
 	if (!readiness) {
 		return (
-			<div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3 text-[11px] text-slate-500">
+			<div className="w-full max-w-full overflow-hidden rounded-xl border border-slate-800 bg-slate-900/40 p-3 text-[11px] text-slate-500">
 				Loading product visual readiness…
 			</div>
 		);
 	}
 
 	return (
-		<div className={`rounded-xl border border-slate-800 bg-slate-900/40 ${compact ? "p-2" : "p-5"}`} data-testid="product-visual-readiness">
-			<div className="flex flex-wrap items-start justify-between gap-3">
-				<div>
+		<div className={`rounded-xl border border-slate-800 bg-slate-900/40 ${compact ? "w-full max-w-full overflow-hidden p-2" : "p-5"}`} data-testid="product-visual-readiness">
+			<div className="flex min-w-0 items-start justify-between gap-2">
+				<div className="min-w-0">
 					<h3 className={`${compact ? "text-[10px]" : "text-sm"} font-bold uppercase tracking-widest text-white`}>
 						{compact ? "Visual" : "PRODUCT VISUAL READINESS"}
 					</h3>
@@ -149,18 +188,18 @@ export default function ProductVisualReadinessPanel({
 						</p>
 					)}
 				</div>
-				{readiness.provider_operations === 0 && (
+				{!compact && readiness.provider_operations === 0 && (
 					<span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-widest text-emerald-300">
 						No provider spend
 					</span>
 				)}
 			</div>
 
-			<div className={`mt-3 grid gap-2 ${compact ? "grid-cols-2" : "grid-cols-2 md:grid-cols-4"}`}>
-				<Status name="Reference" value={readiness.canonical_media_status} />
-				<Status name="Cutout" value={readiness.cutout_status} />
-				<Status name="Visual Ready" value={readiness.visual_grounding_status} />
-				<Status name="Exact Commerce" value={readiness.exact_commerce_status} />
+			<div className={`mt-3 grid min-w-0 gap-2 ${compact ? "grid-cols-2" : "grid-cols-2 md:grid-cols-4"}`}>
+				<Status compact={compact} name="Reference" value={readiness.canonical_media_status} />
+				<Status compact={compact} name="Cutout" value={readiness.cutout_status} />
+				<Status compact={compact} name="Visual Ready" value={readiness.visual_grounding_status} />
+				<Status compact={compact} name="Exact Commerce" value={readiness.exact_commerce_status} />
 			</div>
 
 			{!compact && (
@@ -180,25 +219,25 @@ export default function ProductVisualReadinessPanel({
 				</div>
 			)}
 
-			<div className="mt-4 flex flex-wrap items-center gap-2">
+			<div className={compact ? "mt-3 grid grid-cols-2 gap-1.5" : "mt-4 flex flex-wrap items-center gap-2"}>
 				{readiness.can_prepare_cutout && (
-					<button type="button" onClick={() => void refresh("prepare")} disabled={busy !== null} className="rounded-lg bg-indigo-600/80 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40">
+					<button type="button" onClick={() => void refresh("prepare")} disabled={busy !== null} className={`${compact ? "min-w-0 w-full truncate px-2" : "px-2.5"} rounded-lg bg-indigo-600/80 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40`}>
 						{busy === "prepare" ? "Preparing…" : "Prepare"}
 					</button>
 				)}
 				{readiness.can_rebuild_cutout && readiness.cutout_status !== "NOT_PREPARED" && (
-					<button type="button" onClick={() => void refresh("rebuild")} disabled={busy !== null} className="rounded-lg bg-slate-700 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-200 disabled:opacity-40">
+					<button type="button" onClick={() => void refresh("rebuild")} disabled={busy !== null} className={`${compact ? "min-w-0 w-full truncate px-2" : "px-2.5"} rounded-lg bg-slate-700 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-200 disabled:opacity-40`}>
 						{busy === "rebuild" ? "Rebuilding…" : "Rebuild"}
 					</button>
 				)}
 				{readiness.can_review_cutout && (
-					<button type="button" onClick={onOpenReview} className="rounded-lg bg-amber-500/20 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-amber-200">
+					<button type="button" onClick={onOpenReview} className={`${compact ? "min-w-0 w-full truncate px-2" : "px-2.5"} rounded-lg bg-amber-500/20 py-1.5 text-[9px] font-bold uppercase tracking-widest text-amber-200`}>
 						Review
 					</button>
 				)}
 				{productSourceUrl && readiness.can_open_source && (
-					<a href={productSourceUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-300">
-						Open Source
+					<a title={compact ? "Open source" : undefined} href={productSourceUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className={`${compact ? "min-w-0 w-full truncate px-2" : "px-2.5"} rounded-lg bg-slate-800 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-300`}>
+						{compact ? "Source" : "Open Source"}
 					</a>
 				)}
 			</div>
@@ -228,7 +267,7 @@ export default function ProductVisualReadinessPanel({
 				</div>
 			)}
 
-			{error && <div className="mt-3 text-[10px] text-red-300">{error}</div>}
+			{error && <div className="mt-3 break-words text-[10px] text-red-300">{error}</div>}
 		</div>
 	);
 }

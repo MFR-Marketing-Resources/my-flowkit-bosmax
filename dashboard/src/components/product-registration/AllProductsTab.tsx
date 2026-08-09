@@ -485,7 +485,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 									<th className="px-3 py-2 text-right font-semibold">Image (u)</th>
 									<th className="px-3 py-2 text-right font-semibold">Video (u)</th>
 									<th className="px-3 py-2 text-left font-semibold">Status</th>
-									<th className="px-3 py-2 text-left font-semibold">Visual</th>
+									<th className="w-[13rem] min-w-[13rem] px-3 py-2 text-left font-semibold">Visual</th>
 									<th className="px-3 py-2 text-left font-semibold">Freshness</th>
 									<th className="px-3 py-2 text-left font-semibold">Draft</th>
 									<th className="px-3 py-2 text-left font-semibold">Actions</th>
@@ -600,7 +600,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 														<span className="text-[9px] text-slate-600">—</span>
 													)}
 											</td>
-											<td className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
+											<td className="w-[13rem] min-w-[13rem] px-3 py-2 align-top whitespace-normal" onClick={(event) => event.stopPropagation()}>
 												<ProductVisualReadinessPanel
 													productId={product.id}
 													productSourceUrl={product.tiktok_product_url || product.source_url}

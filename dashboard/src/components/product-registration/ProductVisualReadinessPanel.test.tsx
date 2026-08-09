@@ -49,4 +49,19 @@ describe("ProductVisualReadinessPanel", () => {
 		expect(screen.getByRole("button", { name: "Approve Exact Cutout" })).toBeDisabled();
 		expect(screen.getByText("Open Source")).toHaveAttribute("href", "https://example.test/product");
 	});
+
+	it("uses compact work labels without exposing metadata or clipping long enum values", () => {
+		render(
+			<ProductVisualReadinessPanel
+				productId="product-1"
+				productSourceUrl="https://example.test/product"
+				readiness={pending}
+				compact
+			/>,
+		);
+
+		expect(screen.getByText("Review required")).toBeInTheDocument();
+		expect(screen.getByTitle("EXACT COMMERCE REVIEW REQUIRED")).toBeInTheDocument();
+		expect(screen.queryByText("No provider spend")).not.toBeInTheDocument();
+	});
 });
