@@ -66,6 +66,280 @@ class _ReentrantDbLock:
 _db_lock = _ReentrantDbLock()
 
 
+_BULK_GENERATION_RUN_KINDS = (
+    "AVATAR_IMAGE",
+    "IMG",
+    "VIDEO",
+    "MIXED",
+    "MONTAGE_DISCRETE",
+)
+_BULK_GENERATION_RUN_STATUSES = (
+    "PENDING",
+    "RUNNING",
+    "COMPLETED",
+    "PARTIAL_FAILED",
+    "FAILED",
+    "CANCELLED",
+    "PAUSED",
+    "PREPARED",
+    "PARTIAL",
+    "GENERATING",
+    "COMPLETE",
+    "ASSEMBLY_READY",
+)
+_BULK_GENERATION_ITEM_TYPES = (
+    "AVATAR_IMAGE",
+    "IMG",
+    "T2V",
+    "I2V",
+    "F2V",
+    "MONTAGE_SCENE",
+)
+_BULK_GENERATION_ITEM_STATUSES = (
+    "QUEUED",
+    "SUBMITTED",
+    "RUNNING",
+    "GENERATED",
+    "DOWNLOADED",
+    "REGISTERED",
+    "FAILED",
+    "CANCELLED",
+    "PLANNED",
+    "IMAGE_PENDING_PACKAGE",
+    "IMAGE_PENDING",
+    "IMAGE_READY",
+    "IMAGE_BOUND",
+    "PACKAGE_READY",
+    "PACKAGE_FAILED",
+    "VIDEO_SUBMITTED",
+    "VIDEO_READY",
+    "GENERATE_RETURNED",
+    "GENERATE_FAILED",
+    "RESULT_BOUND",
+    "BLOCKED",
+    "SKIPPED_VIDEO",
+)
+_BULK_GENERATION_RUN_COLUMNS = (
+    "bulk_run_id",
+    "kind",
+    "status",
+    "total_expected",
+    "total_completed",
+    "total_failed",
+    "max_parallel_images",
+    "max_parallel_videos",
+    "confirm_credit_burn",
+    "interval_min_seconds",
+    "interval_max_seconds",
+    "cooldown_after_n_jobs",
+    "cooldown_seconds",
+    "error_log_json",
+    "config_json",
+    "created_at",
+    "updated_at",
+)
+_BULK_GENERATION_ITEM_COLUMNS = (
+    "bulk_item_id",
+    "bulk_run_id",
+    "item_type",
+    "source_ref",
+    "prompt_snapshot",
+    "payload_json",
+    "status",
+    "job_id",
+    "media_id",
+    "local_path",
+    "creative_asset_id",
+    "error",
+    "retry_count",
+    "started_at",
+    "completed_at",
+    "created_at",
+    "updated_at",
+)
+
+
+def _check_values_sql(values: tuple[str, ...]) -> str:
+    return ",".join(f"'{value}'" for value in values)
+
+
+def _bulk_generation_run_table_sql(table_name: str) -> str:
+    return f"""
+CREATE TABLE {table_name} (
+    bulk_run_id             TEXT PRIMARY KEY,
+    kind                    TEXT NOT NULL
+                            CHECK(kind IN ({_check_values_sql(_BULK_GENERATION_RUN_KINDS)})),
+    status                  TEXT NOT NULL DEFAULT 'PENDING'
+                            CHECK(status IN ({_check_values_sql(_BULK_GENERATION_RUN_STATUSES)})),
+    total_expected          INTEGER NOT NULL DEFAULT 0,
+    total_completed         INTEGER NOT NULL DEFAULT 0,
+    total_failed            INTEGER NOT NULL DEFAULT 0,
+    max_parallel_images     INTEGER NOT NULL DEFAULT 2,
+    max_parallel_videos     INTEGER NOT NULL DEFAULT 1,
+    confirm_credit_burn     INTEGER NOT NULL DEFAULT 0,
+    interval_min_seconds    INTEGER NOT NULL DEFAULT 5,
+    interval_max_seconds    INTEGER NOT NULL DEFAULT 15,
+    cooldown_after_n_jobs   INTEGER NOT NULL DEFAULT 5,
+    cooldown_seconds        INTEGER NOT NULL DEFAULT 60,
+    error_log_json          TEXT NOT NULL DEFAULT '[]',
+    config_json             TEXT NOT NULL DEFAULT '{{}}',
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+)
+"""
+
+
+def _bulk_generation_item_table_sql(table_name: str) -> str:
+    return f"""
+CREATE TABLE {table_name} (
+    bulk_item_id            TEXT PRIMARY KEY,
+    bulk_run_id             TEXT NOT NULL,
+    item_type               TEXT NOT NULL
+                            CHECK(item_type IN ({_check_values_sql(_BULK_GENERATION_ITEM_TYPES)})),
+    source_ref              TEXT NOT NULL,
+    prompt_snapshot         TEXT,
+    payload_json            TEXT NOT NULL DEFAULT '{{}}',
+    status                  TEXT NOT NULL DEFAULT 'QUEUED'
+                            CHECK(status IN ({_check_values_sql(_BULK_GENERATION_ITEM_STATUSES)})),
+    job_id                  TEXT,
+    media_id                TEXT,
+    local_path              TEXT,
+    creative_asset_id       TEXT,
+    error                   TEXT,
+    retry_count             INTEGER NOT NULL DEFAULT 0,
+    started_at              TEXT,
+    completed_at            TEXT,
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+)
+"""
+
+
+def _bulk_generation_table_sql(connection, table_name: str) -> str:
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+        (table_name,),
+    ).fetchone()
+    return str(row[0] or "") if row else ""
+
+
+def _bulk_generation_table_indexes(connection, table_name: str) -> list[str]:
+    rows = connection.execute(
+        "SELECT sql FROM sqlite_master "
+        "WHERE type='index' AND tbl_name=? AND sql IS NOT NULL "
+        "AND name NOT LIKE 'sqlite_autoindex_%' ORDER BY name",
+        (table_name,),
+    ).fetchall()
+    return [str(row[0]) for row in rows if row[0]]
+
+
+def _assert_bulk_generation_columns(
+    connection,
+    table_name: str,
+    expected_columns: tuple[str, ...],
+) -> None:
+    rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+    actual_columns = tuple(str(row[1]) for row in rows)
+    if actual_columns != expected_columns:
+        raise RuntimeError(
+            f"MONTAGE_LEDGER_SCHEMA_UNRECOGNIZED:{table_name}:"
+            f"expected={expected_columns}:actual={actual_columns}"
+        )
+
+
+def _bulk_generation_ledger_needs_migration(connection) -> bool:
+    run_sql = _bulk_generation_table_sql(connection, "bulk_generation_run")
+    item_sql = _bulk_generation_table_sql(connection, "bulk_generation_item")
+    if not run_sql or not item_sql:
+        return False
+    return not (
+        all(f"'{value}'" in run_sql for value in _BULK_GENERATION_RUN_KINDS)
+        and all(f"'{value}'" in run_sql for value in _BULK_GENERATION_RUN_STATUSES)
+        and all(f"'{value}'" in item_sql for value in _BULK_GENERATION_ITEM_TYPES)
+        and all(f"'{value}'" in item_sql for value in _BULK_GENERATION_ITEM_STATUSES)
+    )
+
+
+def _migrate_bulk_generation_ledger(db_path: str) -> bool:
+    """Rebuild the shared bulk ledger when its CHECK contract is stale.
+
+    SQLite cannot alter CHECK constraints.  The migration is deliberately
+    synchronous so PRAGMA foreign_keys can be disabled before BEGIN IMMEDIATE;
+    init_db has already committed the aiosqlite connection before calling this.
+    """
+    if str(db_path) == ":memory:":
+        return False
+
+    import sqlite3
+
+    connection = sqlite3.connect(str(db_path), timeout=60)
+    migrated = False
+    run_new = "bulk_generation_run__montage_new"
+    item_new = "bulk_generation_item__montage_new"
+    run_old = "bulk_generation_run__montage_old"
+    item_old = "bulk_generation_item__montage_old"
+    try:
+        if not _bulk_generation_ledger_needs_migration(connection):
+            return False
+        _assert_bulk_generation_columns(
+            connection, "bulk_generation_run", _BULK_GENERATION_RUN_COLUMNS
+        )
+        _assert_bulk_generation_columns(
+            connection, "bulk_generation_item", _BULK_GENERATION_ITEM_COLUMNS
+        )
+        for table_name in (run_new, item_new, run_old, item_old):
+            if _bulk_generation_table_sql(connection, table_name):
+                raise RuntimeError(
+                    f"MONTAGE_LEDGER_MIGRATION_RESIDUE:{table_name}"
+                )
+
+        run_indexes = _bulk_generation_table_indexes(connection, "bulk_generation_run")
+        item_indexes = _bulk_generation_table_indexes(connection, "bulk_generation_item")
+        quoted_run_columns = ", ".join(f'"{column}"' for column in _BULK_GENERATION_RUN_COLUMNS)
+        quoted_item_columns = ", ".join(f'"{column}"' for column in _BULK_GENERATION_ITEM_COLUMNS)
+
+        connection.execute("PRAGMA foreign_keys=OFF")
+        connection.execute("PRAGMA legacy_alter_table=ON")
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(_bulk_generation_run_table_sql(run_new))
+        connection.execute(_bulk_generation_item_table_sql(item_new))
+        connection.execute(
+            f"INSERT INTO {run_new} ({quoted_run_columns}) "
+            f"SELECT {quoted_run_columns} FROM bulk_generation_run"
+        )
+        connection.execute(
+            f"INSERT INTO {item_new} ({quoted_item_columns}) "
+            f"SELECT {quoted_item_columns} FROM bulk_generation_item"
+        )
+        connection.execute("ALTER TABLE bulk_generation_run RENAME TO " + run_old)
+        connection.execute("ALTER TABLE bulk_generation_item RENAME TO " + item_old)
+        connection.execute("ALTER TABLE " + run_new + " RENAME TO bulk_generation_run")
+        connection.execute("ALTER TABLE " + item_new + " RENAME TO bulk_generation_item")
+        connection.execute("DROP TABLE " + item_old)
+        connection.execute("DROP TABLE " + run_old)
+        for index_sql in (*run_indexes, *item_indexes):
+            connection.execute(index_sql)
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bulk_generation_item_run "
+            "ON bulk_generation_item(bulk_run_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bulk_generation_item_run_status "
+            "ON bulk_generation_item(bulk_run_id, status)"
+        )
+        connection.commit()
+        migrated = True
+        logger.info("Migrated: rebuilt bulk generation ledger for Montage lifecycle")
+    except BaseException:
+        connection.rollback()
+        raise
+    finally:
+        connection.execute("PRAGMA legacy_alter_table=OFF")
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.close()
+    return migrated
+
+
 @contextlib.asynccontextmanager
 async def atomic():
     """Run several crud writes as ONE transaction: all of them commit, or none do.
@@ -3347,9 +3621,9 @@ CREATE INDEX IF NOT EXISTS idx_product_intelligence_review_field_provenance_draf
 CREATE TABLE IF NOT EXISTS bulk_generation_run (
     bulk_run_id             TEXT PRIMARY KEY,
     kind                    TEXT NOT NULL
-                            CHECK(kind IN ('AVATAR_IMAGE','IMG','VIDEO','MIXED')),
+                            CHECK(kind IN ('AVATAR_IMAGE','IMG','VIDEO','MIXED','MONTAGE_DISCRETE')),
     status                  TEXT NOT NULL DEFAULT 'PENDING'
-                            CHECK(status IN ('PENDING','RUNNING','COMPLETED','PARTIAL_FAILED','FAILED','CANCELLED','PAUSED')),
+                            CHECK(status IN ('PENDING','RUNNING','COMPLETED','PARTIAL_FAILED','FAILED','CANCELLED','PAUSED','PREPARED','PARTIAL','GENERATING','COMPLETE','ASSEMBLY_READY')),
     total_expected          INTEGER NOT NULL DEFAULT 0,
     total_completed         INTEGER NOT NULL DEFAULT 0,
     total_failed            INTEGER NOT NULL DEFAULT 0,
@@ -3369,12 +3643,12 @@ CREATE TABLE IF NOT EXISTS bulk_generation_item (
     bulk_item_id            TEXT PRIMARY KEY,
     bulk_run_id             TEXT NOT NULL,
     item_type               TEXT NOT NULL
-                            CHECK(item_type IN ('AVATAR_IMAGE','IMG','T2V','I2V','F2V')),
+                            CHECK(item_type IN ('AVATAR_IMAGE','IMG','T2V','I2V','F2V','MONTAGE_SCENE')),
     source_ref              TEXT NOT NULL,
     prompt_snapshot         TEXT,
     payload_json            TEXT NOT NULL DEFAULT '{}',
     status                  TEXT NOT NULL DEFAULT 'QUEUED'
-                            CHECK(status IN ('QUEUED','SUBMITTED','RUNNING','GENERATED','DOWNLOADED','REGISTERED','FAILED','CANCELLED')),
+                            CHECK(status IN ('QUEUED','SUBMITTED','RUNNING','GENERATED','DOWNLOADED','REGISTERED','FAILED','CANCELLED','PLANNED','IMAGE_PENDING_PACKAGE','IMAGE_PENDING','IMAGE_READY','IMAGE_BOUND','PACKAGE_READY','PACKAGE_FAILED','VIDEO_SUBMITTED','VIDEO_READY','GENERATE_RETURNED','GENERATE_FAILED','RESULT_BOUND','BLOCKED','SKIPPED_VIDEO')),
     job_id                  TEXT,
     media_id                TEXT,
     local_path              TEXT,
@@ -3455,6 +3729,7 @@ CREATE INDEX IF NOT EXISTS idx_poster_deliverable_product
     ON poster_deliverable(product_id, status);
 """)
         await db.commit()
+        _migrate_bulk_generation_ledger(str(DB_PATH))
 
         # P6 Batch Creative Production Orchestrator — durable control plane.
         #
