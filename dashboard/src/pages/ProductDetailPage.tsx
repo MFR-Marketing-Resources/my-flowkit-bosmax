@@ -27,7 +27,7 @@ import ProductVisualReadinessPanel from "../components/product-registration/Prod
 // recommendation cards) in a consistent house-style layout — no cramped
 // three-column Sales-Analyzer clutter.
 
-type DetailTab = "EDIT" | "INTELLIGENCE" | "CREATIVE";
+type DetailTab = "EDIT" | "INTELLIGENCE" | "CREATIVE" | "VISUAL";
 
 const EDIT_FIELDS: { key: string; label: string }[] = [
 	{ key: "product_short_name", label: "Short Name" },
@@ -325,30 +325,25 @@ export default function ProductDetailPage() {
 						</div>
 					</div>
 
-					<ProductVisualReadinessPanel
-						productId={product.id}
-						productSourceUrl={product.tiktok_product_url || product.source_url}
-						readiness={product.visual_readiness}
-						showApprovalForm
-						onChanged={(visualReadiness) =>
-							setProduct((previous) =>
-								previous ? { ...previous, visual_readiness: visualReadiness } : previous,
-							)
-						}
-					/>
-
 					{/* Tabs */}
-					<div className="mb-5 flex w-fit gap-1 rounded-xl border border-slate-800 bg-slate-900/60 p-1">
+					<div
+						role="tablist"
+						aria-label="Product detail sections"
+						className="mb-5 flex w-fit gap-1 rounded-xl border border-slate-800 bg-slate-900/60 p-1"
+					>
 						{(
 							[
 								["EDIT", "Edit & Save"],
 								["INTELLIGENCE", "Product Intelligence"],
 								["CREATIVE", "Creative Setup"],
+								["VISUAL", "Visual / Canva"],
 							] as [DetailTab, string][]
 						).map(([value, label]) => (
 							<button
 								key={value}
 								type="button"
+								role="tab"
+								aria-selected={tab === value}
 								onClick={() => setTab(value)}
 								className={`rounded-lg px-4 py-2 text-xs font-bold uppercase tracking-widest transition-all ${
 									tab === value
@@ -385,13 +380,35 @@ export default function ProductDetailPage() {
 						)}
 						{tab === "CREATIVE" && (
 							<>
-								Plan the creative set — tick one or MORE avatars, scene templates, and
-								camera presets, or press <Hl>⚡ Auto-fill top pick</Hl>. Then{" "}
+								Plan the creative set — tick one or MORE avatars and scene templates;
+								camera follows the selected scene automatically. Use <Hl>Smart suggest</Hl>{" "}
+								or <Hl>⚡ Auto-fill top pick</Hl>. Then{" "}
 								<Hl>Save Selection</Hl> and <Hl>Approve</Hl>. Planning only — nothing is
 								generated here.
 							</>
 						)}
+						{tab === "VISUAL" && (
+							<>
+								Review the original, automatic, and manual cutout candidates, Canva handoff,
+								provenance, and Exact Commerce approval in this tab. No provider operation
+								starts unless explicitly triggered by the operator.
+							</>
+						)}
 					</div>
+
+					{tab === "VISUAL" && (
+						<ProductVisualReadinessPanel
+							productId={product.id}
+							productSourceUrl={product.tiktok_product_url || product.source_url}
+							readiness={product.visual_readiness}
+							showApprovalForm
+							onChanged={(visualReadiness) =>
+								setProduct((previous) =>
+									previous ? { ...previous, visual_readiness: visualReadiness } : previous,
+								)
+							}
+						/>
+					)}
 
 					{tab === "EDIT" && (
 						<div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
