@@ -329,9 +329,9 @@ export default function ProductVisualReadinessPanel({
 	}
 
 	return (
-		<div className={`rounded-xl border border-slate-800 bg-slate-900/40 ${compact ? "p-2" : "p-5"}`} data-testid="product-visual-readiness">
-			<div className="flex flex-wrap items-start justify-between gap-3">
-				<div>
+		<div className={`min-w-0 max-w-full overflow-hidden rounded-xl border border-slate-800 bg-slate-900/40 ${compact ? "p-2" : "p-5"}`} data-testid="product-visual-readiness">
+			<div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+				<div className="min-w-0">
 					<h3 className={`${compact ? "text-[10px]" : "text-sm"} font-bold uppercase tracking-widest text-white`}>
 						{compact ? "Visual" : "PRODUCT VISUAL READINESS"}
 					</h3>
@@ -398,7 +398,7 @@ export default function ProductVisualReadinessPanel({
 				</div>
 			)}
 
-			<div className="mt-4 flex flex-wrap items-center gap-2">
+			<div className="mt-4 flex min-w-0 flex-wrap items-center gap-2">
 				{readiness.canonical_media_status === "AVAILABLE" && readiness.can_start_canva_cutout !== false && (
 					<button type="button" onClick={() => void startCanva()} disabled={busy !== null} className="rounded-lg bg-violet-600/90 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40" data-testid="canva-cutout-button">
 						{busy === "canva" ? "Starting Canva…" : canvaWorkflow?.current_stage && canvaWorkflow.current_stage !== "NOT_STARTED" ? "Resume Canva Cutout" : "Canva Cutout"}
@@ -448,33 +448,33 @@ export default function ProductVisualReadinessPanel({
 			</div>
 
 			{canvaWorkflow && canvaWorkflow.current_stage !== "NOT_STARTED" && (
-				<div className="mt-4 rounded-lg border border-violet-500/30 bg-violet-500/5 p-3 text-[10px]" data-testid="canva-cutout-workflow">
-					<div className="flex flex-wrap items-center justify-between gap-2">
-						<div className="font-bold uppercase tracking-widest text-violet-200">Canva Cutout · {label(canvaWorkflow.current_stage)}</div>
+				<div className="mt-4 min-w-0 rounded-lg border border-violet-500/30 bg-violet-500/5 p-3 text-[10px]" data-testid="canva-cutout-workflow">
+					<div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+						<div className="min-w-0 break-words font-bold uppercase tracking-widest text-violet-200">Canva Cutout · {label(canvaWorkflow.current_stage)}</div>
 						{canvaWorkflow.design_url && <a href={canvaWorkflow.design_url} target="_blank" rel="noreferrer" className="rounded bg-violet-500/20 px-2 py-1 font-bold uppercase tracking-widest text-violet-200">Open Canva Design</a>}
 					</div>
-					<p className="mt-2 leading-relaxed text-slate-400">
+					<p className="mt-2 break-words leading-relaxed text-slate-400">
 						Canva editing is operator/browser-controller work. BOSMAX records source identity, verifies alpha, and sends the PNG into the existing manual review lane; it does not store Canva cookies or auto-approve.
 					</p>
-					<div className="mt-3 grid gap-2 md:grid-cols-3">
+					<div className={`mt-3 grid min-w-0 gap-2 ${compact ? "grid-cols-1 sm:grid-cols-2" : "md:grid-cols-3"}`}>
 						<label className="text-slate-400">Method
-							<select value={canvaMethod} onChange={(event) => setCanvaMethod(event.target.value as CanvaMethod)} className="mt-1 w-full rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-200">
+							<select value={canvaMethod} onChange={(event) => setCanvaMethod(event.target.value as CanvaMethod)} className="mt-1 min-w-0 w-full rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-200">
 								<option value="MAGIC_GRAB">Magic Grab</option>
 								<option value="BACKGROUND_REMOVER">Background Remover</option>
 								<option value="MAGIC_LAYERS">Magic Layers</option>
 							</select>
 						</label>
 						<label className="text-slate-400">Design ID
-							<input value={canvaDesignId} onChange={(event) => setCanvaDesignId(event.target.value)} placeholder="Optional" className="mt-1 w-full rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-200" />
+							<input value={canvaDesignId} onChange={(event) => setCanvaDesignId(event.target.value)} placeholder="Optional" className="mt-1 min-w-0 w-full rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-200" />
 						</label>
 						<label className="text-slate-400">Design URL
-							<input value={canvaDesignUrl} onChange={(event) => setCanvaDesignUrl(event.target.value)} placeholder="https://www.canva.com/design/..." className="mt-1 w-full rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-200" />
+							<input value={canvaDesignUrl} onChange={(event) => setCanvaDesignUrl(event.target.value)} placeholder="https://www.canva.com/design/..." className="mt-1 min-w-0 w-full rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-200" />
 						</label>
 					</div>
-					<div className="mt-3 grid gap-2 md:grid-cols-5">
+					<div className={`mt-3 grid min-w-0 gap-2 ${compact ? "grid-cols-1 sm:grid-cols-2" : "md:grid-cols-5"}`}>
 						{CANVA_PREFLIGHT_FIELDS.map(([key, name]) => (
 							<label key={key} className="text-slate-400">{name}
-								<select value={canvaPreflight[key] || "UNKNOWN"} onChange={(event) => setCanvaPreflight((previous) => ({ ...previous, [key]: event.target.value as CanvaCapabilityStatus }))} className="mt-1 w-full rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-[9px] text-slate-200">
+								<select value={canvaPreflight[key] || "UNKNOWN"} onChange={(event) => setCanvaPreflight((previous) => ({ ...previous, [key]: event.target.value as CanvaCapabilityStatus }))} className="mt-1 min-w-0 w-full rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-[9px] text-slate-200">
 									{CANVA_PREFLIGHT_OPTIONS.map((option) => <option key={option} value={option}>{option.replace(/_/g, " ")}</option>)}
 								</select>
 							</label>

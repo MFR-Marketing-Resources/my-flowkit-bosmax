@@ -27,6 +27,19 @@ const pending: ProductVisualReadiness = {
 	can_view: true,
 };
 
+const compactCanvaPending: ProductVisualReadiness = {
+	...pending,
+	can_upload_manual_cutout: true,
+	can_start_canva_cutout: true,
+	canva_cutout_workflow: {
+		current_stage: "CANVA_PRO_REQUIRED",
+		attempt_count: 0,
+		alpha_verified: false,
+		human_review_status: "NOT_STARTED",
+		preflight: {},
+	},
+};
+
 describe("ProductVisualReadinessPanel", () => {
 	afterEach(() => cleanup());
 
@@ -49,5 +62,24 @@ describe("ProductVisualReadinessPanel", () => {
 		expect(screen.getByRole("button", { name: "Canva Cutout" })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Approve Exact Cutout" })).toBeDisabled();
 		expect(screen.getByText("Open Source")).toHaveAttribute("href", "https://example.test/product");
+	});
+
+	it("keeps the compact Canva workflow bounded and readable", () => {
+		render(
+			<ProductVisualReadinessPanel
+				productId="product-1"
+				readiness={compactCanvaPending}
+				compact
+			/>,
+		);
+
+		const panel = screen.getByTestId("product-visual-readiness");
+		const workflow = screen.getByTestId("canva-cutout-workflow");
+		const workflowGrids = workflow.querySelectorAll("div.grid");
+
+		expect(panel).toHaveClass("min-w-0", "max-w-full", "overflow-hidden");
+		expect(workflowGrids).toHaveLength(2);
+		expect(workflowGrids[0]).toHaveClass("grid-cols-1", "sm:grid-cols-2");
+		expect(workflowGrids[1]).toHaveClass("grid-cols-1", "sm:grid-cols-2");
 	});
 });
