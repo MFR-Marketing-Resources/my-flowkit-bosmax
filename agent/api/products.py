@@ -695,6 +695,16 @@ async def _list_products_response(
         item["source_media_video_count"] = int(counts.get("video", 0) or 0)
         item["open_review_draft"] = open_drafts.get(pid)
 
+    # One shared visual onboarding read model for All Products.  It is strictly
+    # batched over the current page and never materializes URLs or calls a
+    # provider.  A legacy DB without the additive tables remains readable until
+    # the next normal startup migration.
+    from agent.services.product_visual_onboarding_service import (
+        annotate_products_visual_readiness,
+    )
+
+    await annotate_products_visual_readiness(enriched)
+
     return {
         "total_count": total,
         "returned_count": len(enriched),
@@ -1065,6 +1075,28 @@ async def _ensure_intake_intelligence(
                 "pack_status": "PENDING_REVIEW",
                 "error_code": pack_exc.code,
                 "message": pack_exc.message,
+                "created_without_credit": True,
+            }
+        # Visual onboarding is additive and fail-closed: a deterministic
+        # cutout failure never rolls back an otherwise valid registration.
+        try:
+            from agent.services.product_visual_onboarding_service import (
+                ensure_product_visual_onboarding,
+            )
+
+            intelligence["visual_onboarding"] = await ensure_product_visual_onboarding(
+                product_id,
+                reference_pack=intelligence.get("reference_pack"),
+            )
+        except Exception as visual_exc:  # noqa: BLE001 - receipt, not rollback
+            intelligence["visual_onboarding"] = {
+                "product_id": product_id,
+                "cutout_status": "PREPARATION_FAILED",
+                "visual_grounding_status": "VISUAL_GROUNDING_BLOCKED",
+                "exact_commerce_status": "EXACT_COMMERCE_REVIEW_REQUIRED",
+                "failure_code": "VISUAL_ONBOARDING_FAILED",
+                "failure_message": str(visual_exc),
+                "provider_operations": 0,
                 "created_without_credit": True,
             }
         return intelligence
@@ -1601,7 +1633,24 @@ async def get_product(product_id: str):
         raise HTTPException(status_code=404, detail="Product not found")
     product = await _refresh_claim_safe_product_row_if_needed(product)
     enriched = await _enrich_product(product, persist=True)
-    return (await attach_product_strategy_taxonomies([enriched]))[0]
+    enriched = (await attach_product_strategy_taxonomies([enriched]))[0]
+    from agent.services.product_visual_onboarding_service import (
+        get_product_visual_readiness,
+    )
+
+    try:
+        enriched["visual_readiness"] = await get_product_visual_readiness(product_id)
+    except Exception as exc:  # noqa: BLE001 - visual readiness is additive to detail
+        enriched["visual_readiness"] = {
+            "product_id": product_id,
+            "visual_grounding_status": "VISUAL_GROUNDING_BLOCKED",
+            "exact_commerce_status": "EXACT_COMMERCE_BLOCKED",
+            "cutout_status": "NOT_PREPARED",
+            "blockers": ["VISUAL_READINESS_UNAVAILABLE"],
+            "warnings": [str(exc)],
+            "provider_operations": 0,
+        }
+    return enriched
 
 
 @router.get(

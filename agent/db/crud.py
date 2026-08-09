@@ -11,7 +11,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "product_visual_truth_lock", "product_reference_pack", "image_generation_operation", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_component", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "content_combination", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "creative_product_selection", "product_strategy_taxonomy", "poster_copy_set", "poster_deliverable", "extend_lineage", "product_source_media"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "product_visual_truth_lock", "product_reference_pack", "product_cutout_preparation", "product_visual_onboarding_run", "image_generation_operation", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_component", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "content_combination", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "creative_product_selection", "product_strategy_taxonomy", "poster_copy_set", "poster_deliverable", "extend_lineage", "product_source_media"})
 
 
 def _validate_table(table: str) -> None:
@@ -21,6 +21,8 @@ def _validate_table(table: str) -> None:
 # Column whitelists per table — prevents SQL injection via kwargs keys
 _COLUMNS = {
     "product_source_media": {"draft_id", "product_id", "kind", "ordinal", "local_path", "remote_url", "filename", "mime", "bytes", "width", "height", "duration_sec", "status", "updated_at"},
+    "product_cutout_preparation": {"status", "source_sha256", "cutout_media_id", "cutout_sha256", "failure_code", "failure_message", "attempt_count", "last_started_at", "last_finished_at", "updated_at"},
+    "product_visual_onboarding_run": {"status", "total_expected", "total_processed", "total_pending_review", "total_failed", "total_blocked", "total_skipped", "batch_size", "product_ids_json", "error_log_json", "updated_at"},
     "character": {"name", "slug", "entity_type", "description", "image_prompt", "voice_description", "reference_image_url", "media_id", "updated_at"},
     "project": {"name", "description", "story", "thumbnail_url", "language", "status", "user_paygate_tier", "narrator_voice", "narrator_ref_audio", "material", "allow_music", "allow_voice", "updated_at"},
     "video": {"title", "description", "display_order", "status", "orientation", "vertical_url", "horizontal_url",
@@ -411,6 +413,20 @@ async def get_product(pid: str): return await _get("product", "id", pid)
 async def get_product_truth_lock(product_id: str):
     return await _get("product_visual_truth_lock", "product_id", product_id)
 
+
+async def list_product_truth_locks(product_ids: list[str]) -> dict[str, dict]:
+    """Batch-load truth locks for a catalog page."""
+    resolved = [str(value).strip() for value in product_ids if str(value).strip()]
+    if not resolved:
+        return {}
+    db = await get_db()
+    placeholders = ",".join("?" for _ in resolved)
+    cur = await db.execute(
+        f"SELECT * FROM product_visual_truth_lock WHERE product_id IN ({placeholders})",
+        resolved,
+    )
+    return {str(row["product_id"]): dict(row) for row in await cur.fetchall()}
+
 async def upsert_product_truth_lock(product_id: str, **kwargs) -> dict | None:
     """Persist a reviewed contract without changing its review authority.
 
@@ -444,6 +460,20 @@ async def upsert_product_truth_lock(product_id: str, **kwargs) -> dict | None:
 async def get_product_reference_pack(product_id: str) -> dict | None:
     """Return the product's generative reference pack, if materialized."""
     return await _get("product_reference_pack", "product_id", product_id)
+
+
+async def list_product_reference_packs_by_products(product_ids: list[str]) -> dict[str, dict]:
+    """Batch-load reference packs for a catalog page."""
+    resolved = [str(value).strip() for value in product_ids if str(value).strip()]
+    if not resolved:
+        return {}
+    db = await get_db()
+    placeholders = ",".join("?" for _ in resolved)
+    cur = await db.execute(
+        f"SELECT * FROM product_reference_pack WHERE product_id IN ({placeholders})",
+        resolved,
+    )
+    return {str(row["product_id"]): dict(row) for row in await cur.fetchall()}
 
 
 async def upsert_product_reference_pack(product_id: str, **kwargs) -> dict | None:
@@ -496,6 +526,98 @@ async def list_product_reference_packs(
             (limit,),
         )
     return [dict(row) for row in await cur.fetchall()]
+
+
+async def get_product_cutout_preparation(product_id: str) -> dict | None:
+    """Return the deterministic cutout preparation receipt for one product."""
+    return await _get("product_cutout_preparation", "product_id", product_id)
+
+
+async def list_product_cutout_preparations(product_ids: list[str]) -> dict[str, dict]:
+    """Batch-load cutout receipts for one catalog page; never query per row."""
+    resolved = [str(value).strip() for value in product_ids if str(value).strip()]
+    if not resolved:
+        return {}
+    db = await get_db()
+    placeholders = ",".join("?" for _ in resolved)
+    cur = await db.execute(
+        f"SELECT * FROM product_cutout_preparation WHERE product_id IN ({placeholders})",
+        resolved,
+    )
+    return {str(row["product_id"]): dict(row) for row in await cur.fetchall()}
+
+
+async def upsert_product_cutout_preparation(product_id: str, **kwargs) -> dict | None:
+    """Persist a preparation receipt without changing truth-lock authority."""
+    _validate_table("product_cutout_preparation")
+    values = _safe_kwargs("product_cutout_preparation", kwargs)
+    values["updated_at"] = _now()
+    db = await get_db()
+    async with _db_lock:
+        existing = await _get_with_db(db, "product_cutout_preparation", "product_id", product_id)
+        if existing is None:
+            columns = ["product_id", *values.keys()]
+            placeholders = ",".join("?" for _ in columns)
+            await db.execute(
+                f"INSERT INTO product_cutout_preparation ({','.join(columns)}) VALUES ({placeholders})",
+                [product_id, *values.values()],
+            )
+        else:
+            sets = ",".join(f"{key}=?" for key in values)
+            await db.execute(
+                f"UPDATE product_cutout_preparation SET {sets} WHERE product_id=?",
+                [*values.values(), product_id],
+            )
+        await db.commit()
+    return await _get("product_cutout_preparation", "product_id", product_id)
+
+
+async def get_product_visual_onboarding_run(run_id: str) -> dict | None:
+    return await _get("product_visual_onboarding_run", "run_id", run_id)
+
+
+async def create_product_visual_onboarding_run(run_id: str, **kwargs) -> dict | None:
+    """Create a frozen, bounded onboarding worker receipt."""
+    _validate_table("product_visual_onboarding_run")
+    values = _safe_kwargs("product_visual_onboarding_run", kwargs)
+    db = await get_db()
+    columns = ["run_id", *values.keys()]
+    placeholders = ",".join("?" for _ in columns)
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO product_visual_onboarding_run ({','.join(columns)}) VALUES ({placeholders})",
+            [run_id, *values.values()],
+        )
+        await db.commit()
+    return await _get("product_visual_onboarding_run", "run_id", run_id)
+
+
+async def update_product_visual_onboarding_run(run_id: str, **kwargs) -> dict | None:
+    return await _update("product_visual_onboarding_run", "run_id", run_id, **kwargs)
+
+
+async def list_product_visual_onboarding_runs(limit: int = 20) -> list[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM product_visual_onboarding_run ORDER BY created_at DESC LIMIT ?",
+        (max(1, min(int(limit), 100)),),
+    )
+    return [dict(row) for row in await cur.fetchall()]
+
+
+async def is_product_catalog_alias_tombstoned(product_id: str) -> bool:
+    """Tombstone lookup used by future registration and visual workers."""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT 1 FROM product_catalog_alias_tombstone WHERE alias_product_id=? LIMIT 1",
+            (product_id,),
+        )
+    except Exception as exc:
+        if "no such table" in str(exc).lower():
+            return False
+        raise
+    return await cur.fetchone() is not None
 
 
 async def record_image_generation_operation(
@@ -3326,6 +3448,19 @@ async def find_products_by_tiktok_product_id(tiktok_product_id: str) -> list[dic
     db = await get_db()
     cur = await db.execute(
         "SELECT * FROM product WHERE tiktok_product_url LIKE ?", (f"%{tid}%",))
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def find_products_by_tiktok_product_url(tiktok_product_url: str) -> list[dict]:
+    """Exact URL identity lookup for future registration duplicate gates."""
+    url = str(tiktok_product_url or "").strip()
+    if not url:
+        return []
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM product WHERE tiktok_product_url=? ORDER BY created_at DESC",
+        (url,),
+    )
     return [dict(r) for r in await cur.fetchall()]
 
 

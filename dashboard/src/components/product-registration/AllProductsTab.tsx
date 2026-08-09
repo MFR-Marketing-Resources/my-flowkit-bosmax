@@ -3,7 +3,14 @@ import {
 	fetchProductRegistry,
 	fetchProductStrategyTypeRegistry,
 } from "../../api/products";
+import {
+	fetchProductVisualBulkPreview,
+	queueProductVisualBulkPrepare,
+	type ProductVisualBulkPreview,
+	type ProductVisualBulkRun,
+} from "../../api/productVisualOnboarding";
 import type { Product, ProductCatalogResponse } from "../../types";
+import ProductVisualReadinessPanel from "./ProductVisualReadinessPanel";
 
 const SOURCE_BADGE: Record<string, string> = {
 	FASTMOSS: "bg-indigo-500/20 text-indigo-300",
@@ -97,6 +104,9 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [data, setData] = useState<ProductCatalogResponse | null>(null);
+	const [bulkPreview, setBulkPreview] = useState<ProductVisualBulkPreview | null>(null);
+	const [bulkRun, setBulkRun] = useState<ProductVisualBulkRun | null>(null);
+	const [bulkBusy, setBulkBusy] = useState(false);
 
 	// Cluster list + cluster → product_type_group map (dependent Product Type dropdown).
 	const [clusters, setClusters] = useState<string[]>([]);
@@ -205,6 +215,51 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 	const rangeStart = total === 0 ? 0 : offset + 1;
 	const rangeEnd = Math.min(offset + PAGE_SIZE, total);
 
+	const updateVisualReadiness = useCallback(
+		(productId: string, visualReadiness: Product["visual_readiness"]) => {
+			setData((previous) =>
+				previous
+					? {
+							...previous,
+							items: previous.items.map((item) =>
+								item.id === productId
+									? { ...item, visual_readiness: visualReadiness }
+									: item,
+							),
+						}
+					: previous,
+			);
+		},
+		[],
+	);
+
+	async function openBulkPreview() {
+		setBulkBusy(true);
+		setError(null);
+		try {
+			setBulkRun(null);
+			setBulkPreview(await fetchProductVisualBulkPreview(1000));
+		} catch (err: unknown) {
+			setError(getErrorMessage(err, "Could not preview missing cutouts"));
+		} finally {
+			setBulkBusy(false);
+		}
+	}
+
+	async function confirmBulkPrepare() {
+		if (!bulkPreview) return;
+		if (!window.confirm(`Prepare ${bulkPreview.counts.eligible} canonical cutout candidates for human review? No provider calls or approvals will occur.`)) return;
+		setBulkBusy(true);
+		setError(null);
+		try {
+			setBulkRun(await queueProductVisualBulkPrepare({ preview_digest: bulkPreview.preview_digest, batch_size: 5 }));
+		} catch (err: unknown) {
+			setError(getErrorMessage(err, "Could not queue cutout preparation"));
+		} finally {
+			setBulkBusy(false);
+		}
+	}
+
 	return (
 		<div className="space-y-5">
 			{/* Header */}
@@ -221,11 +276,38 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 							matching the filters.
 						</p>
 					</div>
-					<span className="px-2 py-0.5 rounded text-[9px] font-bold bg-slate-700/30 text-slate-400">
-						Total: {total.toLocaleString()}
-					</span>
+					<div className="flex items-center gap-2">
+						<button type="button" onClick={() => void openBulkPreview()} disabled={bulkBusy} className="rounded-lg bg-indigo-600/80 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40" data-testid="prepare-missing-cutouts">
+							{bulkBusy ? "Loading…" : "Prepare Missing Cutouts"}
+						</button>
+						<span className="px-2 py-0.5 rounded text-[9px] font-bold bg-slate-700/30 text-slate-400">
+							Total: {total.toLocaleString()}
+						</span>
+					</div>
 				</div>
 			</div>
+
+			{bulkPreview && (
+				<div className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 p-4" data-testid="cutout-bulk-preview">
+					<div className="flex flex-wrap items-center justify-between gap-3">
+						<div>
+							<div className="text-xs font-bold text-white">Cutout preparation preview</div>
+							<div className="mt-1 text-[10px] text-slate-400">Canonical active products only; archived, purged aliases, fixtures, approved locks, and rows without trusted media are excluded.</div>
+						</div>
+						<button type="button" onClick={() => void confirmBulkPrepare()} disabled={bulkBusy || bulkPreview.counts.eligible === 0} className="rounded-lg bg-emerald-600/80 px-3 py-2 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40">
+							Confirm &amp; Queue
+						</button>
+					</div>
+					<div className="mt-3 grid grid-cols-2 gap-2 text-[10px] text-slate-300 md:grid-cols-5">
+						<div>Eligible <span className="font-bold text-white">{bulkPreview.counts.eligible}</span></div>
+						<div>Approved <span className="font-bold text-emerald-300">{bulkPreview.counts.already_approved}</span></div>
+						<div>Pending <span className="font-bold text-amber-300">{bulkPreview.counts.pending_review}</span></div>
+						<div>Blocked <span className="font-bold text-red-300">{bulkPreview.counts.blocked}</span></div>
+						<div>Skipped <span className="font-bold text-slate-400">{bulkPreview.counts.skipped}</span></div>
+					</div>
+					{bulkRun && <div className="mt-3 text-[10px] text-sky-200">Run {bulkRun.run_id}: {bulkRun.status} · {bulkRun.total_expected} queued · provider operations {bulkRun.provider_operations}</div>}
+				</div>
+			)}
 
 			{/* Error */}
 			{error && (
@@ -403,6 +485,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 									<th className="px-3 py-2 text-right font-semibold">Image (u)</th>
 									<th className="px-3 py-2 text-right font-semibold">Video (u)</th>
 									<th className="px-3 py-2 text-left font-semibold">Status</th>
+									<th className="px-3 py-2 text-left font-semibold">Visual</th>
 									<th className="px-3 py-2 text-left font-semibold">Freshness</th>
 									<th className="px-3 py-2 text-left font-semibold">Draft</th>
 									<th className="px-3 py-2 text-left font-semibold">Actions</th>
@@ -514,8 +597,18 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 														{lifecycle.replace(/_/g, " ")}
 													</span>
 												) : (
-													<span className="text-[9px] text-slate-600">—</span>
-												)}
+														<span className="text-[9px] text-slate-600">—</span>
+													)}
+											</td>
+											<td className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
+												<ProductVisualReadinessPanel
+													productId={product.id}
+													productSourceUrl={product.tiktok_product_url || product.source_url}
+													readiness={product.visual_readiness}
+													compact
+													onOpenReview={() => onOpenProduct?.(product.id)}
+													onChanged={(next) => updateVisualReadiness(product.id, next)}
+												/>
 											</td>
 											<td className="px-3 py-2">
 												{fresh ? (
