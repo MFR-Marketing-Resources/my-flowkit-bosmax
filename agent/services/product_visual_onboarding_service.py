@@ -21,6 +21,10 @@ import hashlib
 import io
 import json
 import logging
+import os
+import time
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterable
@@ -55,6 +59,90 @@ PREPARATION_STATES = {
     PREPARATION_FAILED,
     BLOCKED,
 }
+
+_COMPOSITOR_POOL: ProcessPoolExecutor | None = None
+_BULK_CANCEL_REQUESTS: set[str] = set()
+
+
+def _compositor_worker_count() -> int:
+    """Bound CPU parallelism; SQLite writes remain serialized by the DB lock."""
+    try:
+        requested = int(os.getenv("BOSMAX_CUTOUT_COMPOSITOR_WORKERS", "2"))
+    except ValueError:
+        requested = 2
+    return max(1, min(requested, 4))
+
+
+def _get_compositor_pool() -> ProcessPoolExecutor:
+    global _COMPOSITOR_POOL
+    if _COMPOSITOR_POOL is None:
+        _COMPOSITOR_POOL = ProcessPoolExecutor(max_workers=_compositor_worker_count())
+    return _COMPOSITOR_POOL
+
+
+def _build_cutout_bytes_timed(
+    source_path: Path,
+) -> tuple[bytes, dict[str, float], str, float]:
+    started = time.perf_counter()
+    raw, bounds, cutout_sha = _build_cutout_bytes(source_path)
+    return raw, bounds, cutout_sha, time.perf_counter() - started
+
+
+async def _run_cutout_compositor(
+    source_path: Path,
+) -> tuple[bytes, dict[str, float], str, float]:
+    """Run the CPU-bound compositor off the event loop with bounded processes.
+
+    Unit tests replace ``_build_cutout_bytes`` with local doubles. Those doubles
+    stay on a thread so the test seam remains patchable; production uses the
+    process pool because the compositor contains Python-level pixel loops and
+    therefore does not scale through GIL-bound worker threads.
+    """
+    started = time.perf_counter()
+    import __main__
+
+    main_file = getattr(__main__, "__file__", None)
+    spawned_from_stdin = not main_file or str(main_file).startswith("<")
+    if (
+        getattr(_build_cutout_bytes, "__module__", None) != __name__
+        or spawned_from_stdin
+    ):
+        raw, bounds, cutout_sha = await asyncio.to_thread(
+            _build_cutout_bytes, source_path
+        )
+        return raw, bounds, cutout_sha, time.perf_counter() - started
+
+    loop = asyncio.get_running_loop()
+    try:
+        return await loop.run_in_executor(
+            _get_compositor_pool(), _build_cutout_bytes_timed, source_path
+        )
+    except BrokenProcessPool:
+        # A worker crash must not poison future pilot/full-run work. Recreate the
+        # bounded pool once and retry this product in a thread as a fail-safe.
+        global _COMPOSITOR_POOL
+        if _COMPOSITOR_POOL is not None:
+            _COMPOSITOR_POOL.shutdown(wait=False, cancel_futures=True)
+            _COMPOSITOR_POOL = None
+        raw, bounds, cutout_sha = await asyncio.to_thread(
+            _build_cutout_bytes, source_path
+        )
+        return raw, bounds, cutout_sha, time.perf_counter() - started
+
+
+def _with_performance(
+    payload: dict[str, Any],
+    *,
+    started: float,
+    compositor_seconds: float = 0.0,
+    db_write_seconds: float = 0.0,
+) -> dict[str, Any]:
+    payload["performance"] = {
+        "wall_seconds": round(time.perf_counter() - started, 4),
+        "compositor_seconds": round(compositor_seconds, 4),
+        "db_write_seconds": round(db_write_seconds, 4),
+    }
+    return payload
 
 
 class ProductVisualOnboardingError(ValueError):
@@ -325,6 +413,17 @@ def _build_cutout_bytes(source_path: Path) -> tuple[bytes, dict[str, float], str
 
 async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dict[str, Any]:
     """Prepare one deterministic cutout candidate; never approve it."""
+    started = time.perf_counter()
+    compositor_seconds = 0.0
+    db_write_seconds = 0.0
+
+    async def timed_write(awaitable):
+        nonlocal db_write_seconds
+        write_started = time.perf_counter()
+        result = await awaitable
+        db_write_seconds += time.perf_counter() - write_started
+        return result
+
     product = await crud.get_product(product_id)
     if not product:
         raise ProductVisualOnboardingError("PRODUCT_NOT_FOUND", f"Product {product_id} was not found.")
@@ -333,7 +432,7 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
     pack = await crud.get_product_reference_pack(product_id)
     prep = await crud.get_product_cutout_preparation(product_id)
     if _truth_row_approved(lock):
-        row = await crud.upsert_product_cutout_preparation(
+        row = await timed_write(crud.upsert_product_cutout_preparation(
             product_id,
             status=APPROVED,
             source_sha256=lock.get("canonical_sha256"),
@@ -341,25 +440,25 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
             cutout_sha256=lock.get("canonical_cutout_sha256"),
             failure_code=None,
             failure_message=None,
-        )
-        return _readiness_payload(
+        ))
+        return _with_performance(_readiness_payload(
             product,
             lock=lock,
             pack=pack,
             prep=row or prep,
             reference=None,
             source_available=True,
-        )
+        ), started=started, db_write_seconds=db_write_seconds)
 
     blocked_reason = await _blocked_reason(product)
     if blocked_reason:
-        row = await crud.upsert_product_cutout_preparation(
+        row = await timed_write(crud.upsert_product_cutout_preparation(
             product_id,
             status=BLOCKED,
             failure_code=blocked_reason,
             failure_message="Product is outside the canonical production preparation cohort.",
-        )
-        return _readiness_payload(
+        ))
+        return _with_performance(_readiness_payload(
             product,
             lock=lock,
             pack=pack,
@@ -368,17 +467,17 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
             source_available=False,
             source_error=blocked_reason,
             blocked_reason=blocked_reason,
-        )
+        ), started=started, db_write_seconds=db_write_seconds)
 
     if str((lock or {}).get("review_status") or "").upper() == PENDING_REVIEW and not force:
-        return _readiness_payload(
+        return _with_performance(_readiness_payload(
             product,
             lock=lock,
             pack=pack,
             prep=prep,
             reference=None,
             source_available=True,
-        )
+        ), started=started, db_write_seconds=db_write_seconds)
 
     try:
         reference = await _resolve_source(product)
@@ -387,7 +486,7 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
             raise ProductVisualOnboardingError("TRUSTED_SAME_PRODUCT_SOURCE_REQUIRED", "Canonical source is not a readable local image.")
         source_sha = str(getattr(reference, "sha256", "") or "")
         attempt_count = int((prep or {}).get("attempt_count") or 0) + 1
-        await crud.upsert_product_cutout_preparation(
+        await timed_write(crud.upsert_product_cutout_preparation(
             product_id,
             status=PREPARING,
             source_sha256=source_sha,
@@ -395,23 +494,37 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
             last_started_at=_now(),
             failure_code=None,
             failure_message=None,
-        )
+        ))
+        media_sync_started = time.perf_counter()
         canonical_media_id = await _ensure_canonical_media(product, reference)
-        raw_cutout, bounds, cutout_sha = await asyncio.to_thread(_build_cutout_bytes, source_path)
+        db_write_seconds += time.perf_counter() - media_sync_started
+        compositor_started = time.perf_counter()
+        try:
+            raw_cutout, bounds, cutout_sha, compositor_seconds = await _run_cutout_compositor(
+                source_path
+            )
+        except Exception:
+            # Failed compositor calls still contribute to the pilot/full-run
+            # timing receipt; otherwise deterministic failures look free.
+            compositor_seconds = time.perf_counter() - compositor_started
+            raise
         from agent.services.product_truth_lock_service import (
             create_pending_product_truth_lock,
             register_product_truth_cutout_media,
         )
 
+        media_started = time.perf_counter()
         media = await register_product_truth_cutout_media(
             product_id,
             filename=f"deterministic-cutout-{cutout_sha[:16]}.png",
             content_type="image/png",
             raw_bytes=raw_cutout,
         )
+        db_write_seconds += time.perf_counter() - media_started
         media_id = str(media.get("media_id") or "").strip()
         if not media_id:
             raise ProductVisualOnboardingError("CANONICAL_CUTOUT_MEDIA_REQUIRED", "Cutout registry did not return a media ID.")
+        lock_started = time.perf_counter()
         await create_pending_product_truth_lock(
             product_id,
             ProductTruthLockOnboardingRequest(
@@ -424,8 +537,9 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
                 onboarding_note="Deterministic local candidate; explicit human review and approval required.",
             ),
         )
+        db_write_seconds += time.perf_counter() - lock_started
         persisted_lock = await crud.get_product_truth_lock(product_id)
-        row = await crud.upsert_product_cutout_preparation(
+        row = await timed_write(crud.upsert_product_cutout_preparation(
             product_id,
             status=PENDING_REVIEW,
             source_sha256=source_sha,
@@ -435,8 +549,8 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
             last_finished_at=_now(),
             failure_code=None,
             failure_message=None,
-        )
-        return _readiness_payload(
+        ))
+        return _with_performance(_readiness_payload(
             product,
             lock=persisted_lock
             or {
@@ -447,16 +561,17 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
             prep=row,
             reference=reference,
             source_available=True,
-        )
+        ), started=started, compositor_seconds=compositor_seconds,
+        db_write_seconds=db_write_seconds)
     except ProductVisualOnboardingError as exc:
-        row = await crud.upsert_product_cutout_preparation(
+        row = await timed_write(crud.upsert_product_cutout_preparation(
             product_id,
             status=BLOCKED if exc.code in {"TRUSTED_SAME_PRODUCT_SOURCE_REQUIRED", "CANONICAL_MEDIA_ID_REQUIRED"} else PREPARATION_FAILED,
             failure_code=exc.code,
             failure_message=exc.message,
             last_finished_at=_now(),
-        )
-        return _readiness_payload(
+        ))
+        return _with_performance(_readiness_payload(
             product,
             lock=await crud.get_product_truth_lock(product_id),
             pack=pack,
@@ -464,17 +579,18 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
             reference=None,
             source_available=exc.code not in {"TRUSTED_SAME_PRODUCT_SOURCE_REQUIRED", "CANONICAL_MEDIA_ID_REQUIRED"},
             source_error=exc.code,
-        )
+        ), started=started, compositor_seconds=compositor_seconds,
+        db_write_seconds=db_write_seconds)
     except Exception as exc:  # noqa: BLE001 - failure is receipt, never rollback product
         logger.exception("Product cutout preparation failed for %s", product_id)
-        row = await crud.upsert_product_cutout_preparation(
+        row = await timed_write(crud.upsert_product_cutout_preparation(
             product_id,
             status=PREPARATION_FAILED,
             failure_code="CUTOUT_PREPARATION_FAILED",
             failure_message=str(exc),
             last_finished_at=_now(),
-        )
-        return _readiness_payload(
+        ))
+        return _with_performance(_readiness_payload(
             product,
             lock=await crud.get_product_truth_lock(product_id),
             pack=pack,
@@ -482,7 +598,8 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
             reference=None,
             source_available=True,
             source_error="CUTOUT_PREPARATION_FAILED",
-        )
+        ), started=started, compositor_seconds=compositor_seconds,
+        db_write_seconds=db_write_seconds)
 
 
 async def ensure_product_visual_onboarding(
@@ -631,15 +748,43 @@ async def preview_bulk_cutout_preparation(*, limit: int = 454) -> dict[str, Any]
     }
 
 
-async def run_bulk_cutout_preparation(run_id: str, product_ids: Iterable[str], batch_size: int) -> None:
+async def request_bulk_cutout_cancellation(run_id: str) -> dict[str, Any]:
+    """Request a durable stop; the worker honours it after the active batch."""
+    row = await crud.get_product_visual_onboarding_run(run_id)
+    if not row:
+        raise ProductVisualOnboardingError("BULK_RUN_NOT_FOUND", f"Run {run_id} was not found.")
+    status = str(row.get("status") or "").upper()
+    if status not in {"QUEUED", "RUNNING"}:
+        return {"run_id": run_id, "status": status, "cancel_requested": False}
+    _BULK_CANCEL_REQUESTS.add(run_id)
+    return {"run_id": run_id, "status": "CANCEL_REQUESTED", "cancel_requested": True}
+
+
+async def run_bulk_cutout_preparation(
+    run_id: str,
+    product_ids: Iterable[str],
+    batch_size: int,
+    concurrency: int = 2,
+) -> None:
     ids = [str(value) for value in product_ids if str(value).strip()]
+    batch_size = max(1, min(int(batch_size), 25))
+    concurrency = max(1, min(int(concurrency), _compositor_worker_count()))
     await crud.update_product_visual_onboarding_run(run_id, status="RUNNING")
     processed = pending_review = failed = blocked = skipped = 0
     errors: list[dict[str, str]] = []
     try:
-        for start in range(0, len(ids), max(1, min(batch_size, 25))):
-            for product_id in ids[start : start + max(1, min(batch_size, 25))]:
-                result = await prepare_product_cutout(product_id)
+        for start in range(0, len(ids), batch_size):
+            batch = ids[start : start + batch_size]
+            semaphore = asyncio.Semaphore(concurrency)
+
+            async def prepare_one(product_id: str):
+                async with semaphore:
+                    return product_id, await prepare_product_cutout(product_id)
+
+            results = await asyncio.gather(
+                *(prepare_one(product_id) for product_id in batch),
+            )
+            for product_id, result in results:
                 state = str(result.get("cutout_status") or "")
                 processed += 1
                 if state == PENDING_REVIEW:
@@ -660,6 +805,23 @@ async def run_bulk_cutout_preparation(run_id: str, product_ids: Iterable[str], b
                 total_skipped=skipped,
                 error_log_json=json.dumps(errors, sort_keys=True),
             )
+            if run_id in _BULK_CANCEL_REQUESTS:
+                errors.append({
+                    "code": "BULK_RUN_CANCELLED_AT_BATCH_BOUNDARY",
+                    "message": "Operator cancellation was applied after the active batch completed.",
+                })
+                await crud.update_product_visual_onboarding_run(
+                    run_id,
+                    status="PARTIAL_FAILED",
+                    total_processed=processed,
+                    total_pending_review=pending_review,
+                    total_failed=failed,
+                    total_blocked=blocked,
+                    total_skipped=skipped,
+                    error_log_json=json.dumps(errors, sort_keys=True),
+                )
+                _BULK_CANCEL_REQUESTS.discard(run_id)
+                return
         final_status = "PARTIAL_FAILED" if failed else "COMPLETED"
         await crud.update_product_visual_onboarding_run(
             run_id,
@@ -671,6 +833,7 @@ async def run_bulk_cutout_preparation(run_id: str, product_ids: Iterable[str], b
             total_skipped=skipped,
             error_log_json=json.dumps(errors, sort_keys=True),
         )
+        _BULK_CANCEL_REQUESTS.discard(run_id)
     except Exception as exc:  # noqa: BLE001 - durable run receipt
         logger.exception("Bulk product visual onboarding failed for %s", run_id)
         await crud.update_product_visual_onboarding_run(
@@ -683,3 +846,4 @@ async def run_bulk_cutout_preparation(run_id: str, product_ids: Iterable[str], b
             total_skipped=skipped,
             error_log_json=json.dumps([*errors, {"code": "BULK_RUN_FAILED", "message": str(exc)}], sort_keys=True),
         )
+        _BULK_CANCEL_REQUESTS.discard(run_id)
