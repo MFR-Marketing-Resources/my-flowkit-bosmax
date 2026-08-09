@@ -57,6 +57,28 @@ async def test_resolve_setup_composes_all_three_for_imported_and_manual():
 
 
 @pytest.mark.asyncio
+async def test_default_camera_selection_is_derived_from_default_scenes():
+    product = await _mk_product(category="Food & Beverage")
+    resolved = await svc.resolve_creative_setup(product["id"])
+    default = resolved["default_selection"]
+    scene_index = {row["template_id"]: row for row in _scene.library_templates()}
+    camera_index = {row["preset_code"]: row for row in _camera.named_presets()}
+
+    expected: list[str] = []
+    from agent.services import creative_recipe_service as _recipe
+
+    for scene_id in default["selected_scene_template_ids"]:
+        code = _recipe.camera_for_variant(scene_index[scene_id].get("variant"))
+        if code and code in camera_index and code not in expected:
+            expected.append(code)
+
+    assert default["selected_camera_preset_codes"] == expected
+    assert set(default["selected_camera_preset_codes"]).issubset(
+        set(camera_index)
+    )
+
+
+@pytest.mark.asyncio
 async def test_resolve_setup_missing_product_raises():
     with pytest.raises(ValueError, match="PRODUCT_NOT_FOUND"):
         await svc.resolve_creative_setup("does-not-exist")

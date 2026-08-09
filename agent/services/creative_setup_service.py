@@ -12,10 +12,10 @@ READ-FIRST for the resolver; review-gated writes ONLY to the
 
 Safety: it NEVER writes product rows or product camera columns, Product Truth,
 Product Intelligence snapshots/drafts, Copy Sets, Copy Registry, Copy Intelligence,
-DeepSeek, the canonical compiler, or any generation/asset table. The saved
-selection is a planning artifact only — it never triggers or feeds generation, and
-scene-template ``[AVATAR]``/``[PRODUCT]`` placeholders stay unresolved in the
-preview.
+DeepSeek, the canonical compiler, or any generation/asset table. Saving is a
+planning-only write and never triggers generation. An APPROVED selection is read by
+the governed treatment/P6 planners; the preview itself remains non-generative and
+scene-template ``[AVATAR]``/``[PRODUCT]`` placeholders stay unresolved there.
 """
 from __future__ import annotations
 
@@ -126,6 +126,29 @@ def _scene_index() -> dict[str, dict[str, Any]]:
 
 def _camera_index() -> dict[str, dict[str, Any]]:
     return {p["preset_code"]: p for p in _camera.named_presets()}
+
+
+def _camera_codes_for_scene_ids(
+    scene_ids: list[str],
+    scene_index: dict[str, dict[str, Any]],
+    camera_index: dict[str, dict[str, Any]],
+) -> list[str]:
+    """Derive the unique camera rollup for a scene selection.
+
+    Camera is not a selectable axis. The scene variation bridge is the single
+    authority, so both the unsaved default and persisted selections use this
+    helper and cannot drift into an unrelated all-presets list.
+    """
+    from agent.services import creative_recipe_service as _recipe
+
+    camera_codes: list[str] = []
+    for scene_id in scene_ids:
+        code = _recipe.camera_for_variant(
+            (scene_index.get(scene_id) or {}).get("variant")
+        )
+        if code and code in camera_index and code not in camera_codes:
+            camera_codes.append(code)
+    return camera_codes
 
 
 def _build_preview(row: dict[str, Any]) -> dict[str, Any]:
@@ -256,16 +279,17 @@ async def resolve_creative_setup(product_id: str) -> dict[str, Any]:
     # Live-derived, recomputed every read → auto-updates when avatars / scene templates
     # / camera presets change. A saved selection (if any) OVERRIDES this. Diverse-by-
     # design so mass production can rotate combinations without repeating.
+    default_scene_ids = [
+        t["template_id"] for t in scenes["templates"] if t.get("template_id")
+    ]
     default_selection = {
         "selected_avatar_codes": gender_avatars,
-        "selected_scene_template_ids": [
-            t["template_id"] for t in scenes["templates"] if t.get("template_id")
-        ],
-        "selected_camera_preset_codes": [
-            p["preset_code"]
-            for p in cameras["library"]["named_presets"]
-            if p.get("preset_code")
-        ],
+        "selected_scene_template_ids": default_scene_ids,
+        "selected_camera_preset_codes": _camera_codes_for_scene_ids(
+            default_scene_ids,
+            _scene_index(),
+            _camera_index(),
+        ),
         "source": "AUTO_DEFAULT_FROM_CLUSTER_MAPPING",
         "target_gender": target_gender,
     }
@@ -341,20 +365,12 @@ async def save_creative_selection(
     # camera for each chosen scene via the scene->variation->camera bridge and IGNORE
     # any caller-supplied camera code, so a saved plan can never carry a camera that
     # contradicts its scene (enforced server-side; the UI already shows it read-only).
-    from agent.services import creative_recipe_service as _recipe
-
-    camera_codes: list[str] = []
-    for sid in scene_ids:
-        code = _recipe.camera_for_variant((scene_index.get(sid) or {}).get("variant"))
-        if code and code in camera_index and code not in camera_codes:
-            camera_codes.append(code)
+    camera_codes = _camera_codes_for_scene_ids(scene_ids, scene_index, camera_index)
 
     # Primary = first of each list (kept for the single-value preview + as the
-    # backward-compatible column). NOTE: as of the linkage audit, the saved selection
-    # is consumed by the P6 plan builder for AVATARS only (via the multi-select list,
-    # intersected against the plan pool) — the manual T2V/F2V/HYBRID/I2V, IMG, and
-    # Poster lanes do NOT yet read it, and scene/camera never reach P6. Wiring those is
-    # the pending program; do not claim this "feeds the generation pipeline" wholesale.
+    # backward-compatible column). Approved scene selections are consumed by the
+    # governed treatment/P6 planners, where camera is derived again from each scene;
+    # this planning save still never triggers generation.
     primary_avatar = avatar_codes[0] if avatar_codes else None
     primary_scene = scene_ids[0] if scene_ids else None
     primary_camera = camera_codes[0] if camera_codes else None
