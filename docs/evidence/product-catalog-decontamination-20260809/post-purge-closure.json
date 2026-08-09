@@ -1,6 +1,6 @@
 {
   "mission_id": "product-catalog-decontamination-20260809",
-  "captured_at": "2026-08-09T05:22:06Z",
+  "captured_at": "2026-08-09T05:56:27Z",
   "before_backup_path": "C:\\Users\\USER\\Desktop\\_bosmax_recovery\\product-catalog-decontamination-20260809\\flow_agent.pre-purge.db",
   "before_product_row_count": 901,
   "after_product_row_count": 853,

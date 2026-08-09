@@ -1,11 +1,11 @@
 {
   "mission_id": "product-catalog-decontamination-20260809",
-  "captured_at": "2026-08-09T05:21:21Z",
+  "captured_at": "2026-08-09T05:56:07Z",
   "database": {
     "absolute_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
     "data_version": 2
   },
-  "origin_main_sha": "d03ca4fcddbce16a0c4ef8ae4fb6d4b8eb512940",
+  "origin_main_sha": "64b82b06f3b06de611ecb7a275f2a733b1504457",
   "count": 454,
   "product_ids": [
     "0024f514-d296-4efa-bc85-d3c45993a986",
