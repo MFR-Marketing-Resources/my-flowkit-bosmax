@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from agent.db import crud
@@ -16,6 +18,7 @@ from agent.services.product_truth_lock_service import (
 )
 
 router = APIRouter(prefix="/product-truth", tags=["product-truth"])
+logger = logging.getLogger(__name__)
 
 @router.get("/reconciliation-audit")
 async def get_reconciliation_audit(sample_limit: int = Query(default=20, ge=1, le=100)):
@@ -120,6 +123,18 @@ async def approve_visual_product_truth_lock(
 ):
     """Separate explicit human approval gate for exact product output."""
     try:
-        return await approve_product_truth_lock(product_id, request)
+        result = await approve_product_truth_lock(product_id, request)
+        # Canva is an optional assisted source.  Keep the existing Product
+        # Truth approval authority primary, then mirror the durable workflow
+        # state when the approved candidate came through that lane.
+        from agent.services.canva_cutout_workflow_service import mark_canva_workflow_approved
+
+        try:
+            await mark_canva_workflow_approved(product_id)
+        except Exception as exc:  # noqa: BLE001 - additive ledger may await runtime restart
+            if "no such table" not in str(exc).lower():
+                raise
+            logger.warning("Canva workflow mirror deferred until schema initialization: %s", exc)
+        return result
     except ProductTruthLockError as exc:
         raise _truth_lock_http_error(exc) from exc

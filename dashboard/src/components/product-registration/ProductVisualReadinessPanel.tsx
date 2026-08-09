@@ -10,8 +10,14 @@ import {
 	rebuildProductCutout,
 	uploadManualProductCutout,
 	useOriginalProductFallback,
+	startCanvaCutout,
+	recordCanvaPreflight,
+	advanceCanvaStage,
+	completeCanvaCutout,
+	type CanvaCapabilityStatus,
+	type CanvaMethod,
 } from "../../api/productVisualOnboarding";
-import type { ProductVisualReadiness } from "../../types";
+import type { CanvaCutoutWorkflow, ProductVisualReadiness } from "../../types";
 
 interface Props {
 	productId: string;
@@ -40,6 +46,16 @@ const BADGE: Record<string, string> = {
 const label = (value: string | undefined | null): string =>
 	(value || "NOT_PREPARED").replace(/_/g, " ");
 
+const CANVA_PREFLIGHT_FIELDS = [
+	["login_status", "Canva login/session"],
+	["magic_grab_status", "Magic Grab"],
+	["background_remover_status", "Background Remover"],
+	["magic_layers_status", "Magic Layers"],
+	["transparent_export_status", "Transparent PNG export"],
+] as const;
+const CANVA_PREFLIGHT_OPTIONS: CanvaCapabilityStatus[] = ["UNKNOWN", "READY", "UNAVAILABLE", "PRO_REQUIRED", "USER_ACTION_REQUIRED"];
+const CANVA_OPERATOR_STAGES = ["OPENING_CANVA", "MAGIC_GRAB", "BACKGROUND_REMOVER", "MAGIC_LAYERS", "CLEAN_CANVAS", "READY_TO_EXPORT", "EXPORTING", "PAUSED"] as const;
+
 function Status({ name, value }: { name: string; value: string | undefined }) {
 	return (
 		<div className="min-w-0">
@@ -67,7 +83,7 @@ export default function ProductVisualReadinessPanel({
 	const [readiness, setReadiness] = useState<ProductVisualReadiness | undefined>(
 		initialReadiness,
 	);
-	const [busy, setBusy] = useState<"prepare" | "rebuild" | "approve" | "upload" | "reject" | "fallback" | null>(null);
+	const [busy, setBusy] = useState<"prepare" | "rebuild" | "approve" | "upload" | "reject" | "fallback" | "canva" | "canva-preflight" | "canva-stage" | "canva-upload" | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [reviewedBy, setReviewedBy] = useState("");
 	const [reviewNote, setReviewNote] = useState("");
@@ -75,9 +91,31 @@ export default function ProductVisualReadinessPanel({
 	const [confirmLabelLogo, setConfirmLabelLogo] = useState(false);
 	const [confirmGeometryScale, setConfirmGeometryScale] = useState(false);
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	const canvaFileInputRef = useRef<HTMLInputElement>(null);
+	const [canvaWorkflow, setCanvaWorkflow] = useState<CanvaCutoutWorkflow | undefined>(initialReadiness?.canva_cutout_workflow);
+	const [canvaMethod, setCanvaMethod] = useState<CanvaMethod>("MAGIC_GRAB");
+	const [canvaDesignId, setCanvaDesignId] = useState("");
+	const [canvaDesignUrl, setCanvaDesignUrl] = useState("");
+	const [canvaOperatorStage, setCanvaOperatorStage] = useState<(typeof CANVA_OPERATOR_STAGES)[number]>("OPENING_CANVA");
+	const [canvaPreflight, setCanvaPreflight] = useState<Record<string, CanvaCapabilityStatus>>({
+		login_status: "UNKNOWN",
+		magic_grab_status: "UNKNOWN",
+		background_remover_status: "UNKNOWN",
+		magic_layers_status: "UNKNOWN",
+		transparent_export_status: "UNKNOWN",
+	});
 
 	useEffect(() => {
 		setReadiness(initialReadiness);
+		setCanvaWorkflow(initialReadiness?.canva_cutout_workflow);
+		if (initialReadiness?.canva_cutout_workflow) {
+			const workflow = initialReadiness.canva_cutout_workflow;
+			if (workflow.canva_method && workflow.canva_method !== "UNSELECTED") setCanvaMethod(workflow.canva_method as CanvaMethod);
+			setCanvaDesignId(workflow.design_id || "");
+			setCanvaDesignUrl(workflow.design_url || "");
+			if (CANVA_OPERATOR_STAGES.includes(workflow.current_stage as (typeof CANVA_OPERATOR_STAGES)[number])) setCanvaOperatorStage(workflow.current_stage as (typeof CANVA_OPERATOR_STAGES)[number]);
+			setCanvaPreflight((workflow.preflight || {}) as Record<string, CanvaCapabilityStatus>);
+		}
 	}, [initialReadiness]);
 
 	useEffect(() => {
@@ -152,6 +190,91 @@ export default function ProductVisualReadinessPanel({
 			onChanged?.(next);
 		} catch (err: unknown) {
 			setError(err instanceof Error ? err.message : "Manual cutout upload failed");
+		} finally {
+			setBusy(null);
+		}
+	}
+
+	function applyCanvaEnvelope(envelope: { workflow: CanvaCutoutWorkflow; readiness: ProductVisualReadiness }) {
+		setCanvaWorkflow(envelope.workflow);
+		setReadiness(envelope.readiness);
+		if (envelope.workflow.canva_method && envelope.workflow.canva_method !== "UNSELECTED") setCanvaMethod(envelope.workflow.canva_method as CanvaMethod);
+		setCanvaDesignId(envelope.workflow.design_id || "");
+		setCanvaDesignUrl(envelope.workflow.design_url || "");
+		if (CANVA_OPERATOR_STAGES.includes(envelope.workflow.current_stage as (typeof CANVA_OPERATOR_STAGES)[number])) setCanvaOperatorStage(envelope.workflow.current_stage as (typeof CANVA_OPERATOR_STAGES)[number]);
+		setCanvaPreflight((envelope.workflow.preflight || {}) as Record<string, CanvaCapabilityStatus>);
+		onChanged?.(envelope.readiness);
+	}
+
+	async function saveCanvaStage() {
+		setBusy("canva-stage");
+		setError(null);
+		try {
+			applyCanvaEnvelope(await advanceCanvaStage(productId, {
+				stage: canvaOperatorStage,
+				canva_method: canvaMethod,
+				design_id: canvaDesignId.trim() || undefined,
+				design_url: canvaDesignUrl.trim() || undefined,
+			}));
+		} catch (err: unknown) {
+			setError(err instanceof Error ? err.message : "Canva operator stage could not be saved");
+		} finally {
+			setBusy(null);
+		}
+	}
+
+	async function startCanva() {
+		setBusy("canva");
+		setError(null);
+		try {
+			applyCanvaEnvelope(await startCanvaCutout(productId));
+		} catch (err: unknown) {
+			setError(err instanceof Error ? err.message : "Canva workflow could not start");
+		} finally {
+			setBusy(null);
+		}
+	}
+
+	async function saveCanvaPreflight() {
+		setBusy("canva-preflight");
+		setError(null);
+		try {
+			applyCanvaEnvelope(await recordCanvaPreflight(productId, {
+				canva_method: canvaMethod,
+				design_id: canvaDesignId.trim() || undefined,
+				design_url: canvaDesignUrl.trim() || undefined,
+				login_status: canvaPreflight.login_status || "UNKNOWN",
+				magic_grab_status: canvaPreflight.magic_grab_status || "UNKNOWN",
+				background_remover_status: canvaPreflight.background_remover_status || "UNKNOWN",
+				magic_layers_status: canvaPreflight.magic_layers_status || "UNKNOWN",
+				transparent_export_status: canvaPreflight.transparent_export_status || "UNKNOWN",
+			}));
+		} catch (err: unknown) {
+			setError(err instanceof Error ? err.message : "Canva preflight could not be saved");
+		} finally {
+			setBusy(null);
+		}
+	}
+
+	async function uploadCanva(event: ChangeEvent<HTMLInputElement>) {
+		const file = event.target.files?.[0];
+		event.target.value = "";
+		if (!file) return;
+		if (file.type !== "image/png" || !file.name.toLowerCase().endsWith(".png")) {
+			setError("Canva handoff requires an image/png transparent PNG export.");
+			return;
+		}
+		setBusy("canva-upload");
+		setError(null);
+		try {
+			applyCanvaEnvelope(await completeCanvaCutout(productId, file, {
+				canva_method: canvaMethod,
+				uploaded_by: reviewedBy.trim() || "operator",
+				design_id: canvaDesignId.trim() || undefined,
+				design_url: canvaDesignUrl.trim() || undefined,
+			}));
+		} catch (err: unknown) {
+			setError(err instanceof Error ? err.message : "Canva PNG handoff failed");
 		} finally {
 			setBusy(null);
 		}
@@ -276,6 +399,11 @@ export default function ProductVisualReadinessPanel({
 			)}
 
 			<div className="mt-4 flex flex-wrap items-center gap-2">
+				{readiness.canonical_media_status === "AVAILABLE" && readiness.can_start_canva_cutout !== false && (
+					<button type="button" onClick={() => void startCanva()} disabled={busy !== null} className="rounded-lg bg-violet-600/90 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40" data-testid="canva-cutout-button">
+						{busy === "canva" ? "Starting Canva…" : canvaWorkflow?.current_stage && canvaWorkflow.current_stage !== "NOT_STARTED" ? "Resume Canva Cutout" : "Canva Cutout"}
+					</button>
+				)}
 				{readiness.can_upload_manual_cutout && (
 					<>
 						<input ref={fileInputRef} type="file" accept="image/png,.png" onChange={(event) => void uploadManual(event)} className="hidden" />
@@ -319,6 +447,62 @@ export default function ProductVisualReadinessPanel({
 				)}
 			</div>
 
+			{canvaWorkflow && canvaWorkflow.current_stage !== "NOT_STARTED" && (
+				<div className="mt-4 rounded-lg border border-violet-500/30 bg-violet-500/5 p-3 text-[10px]" data-testid="canva-cutout-workflow">
+					<div className="flex flex-wrap items-center justify-between gap-2">
+						<div className="font-bold uppercase tracking-widest text-violet-200">Canva Cutout · {label(canvaWorkflow.current_stage)}</div>
+						{canvaWorkflow.design_url && <a href={canvaWorkflow.design_url} target="_blank" rel="noreferrer" className="rounded bg-violet-500/20 px-2 py-1 font-bold uppercase tracking-widest text-violet-200">Open Canva Design</a>}
+					</div>
+					<p className="mt-2 leading-relaxed text-slate-400">
+						Canva editing is operator/browser-controller work. BOSMAX records source identity, verifies alpha, and sends the PNG into the existing manual review lane; it does not store Canva cookies or auto-approve.
+					</p>
+					<div className="mt-3 grid gap-2 md:grid-cols-3">
+						<label className="text-slate-400">Method
+							<select value={canvaMethod} onChange={(event) => setCanvaMethod(event.target.value as CanvaMethod)} className="mt-1 w-full rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-200">
+								<option value="MAGIC_GRAB">Magic Grab</option>
+								<option value="BACKGROUND_REMOVER">Background Remover</option>
+								<option value="MAGIC_LAYERS">Magic Layers</option>
+							</select>
+						</label>
+						<label className="text-slate-400">Design ID
+							<input value={canvaDesignId} onChange={(event) => setCanvaDesignId(event.target.value)} placeholder="Optional" className="mt-1 w-full rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-200" />
+						</label>
+						<label className="text-slate-400">Design URL
+							<input value={canvaDesignUrl} onChange={(event) => setCanvaDesignUrl(event.target.value)} placeholder="https://www.canva.com/design/..." className="mt-1 w-full rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-200" />
+						</label>
+					</div>
+					<div className="mt-3 grid gap-2 md:grid-cols-5">
+						{CANVA_PREFLIGHT_FIELDS.map(([key, name]) => (
+							<label key={key} className="text-slate-400">{name}
+								<select value={canvaPreflight[key] || "UNKNOWN"} onChange={(event) => setCanvaPreflight((previous) => ({ ...previous, [key]: event.target.value as CanvaCapabilityStatus }))} className="mt-1 w-full rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-[9px] text-slate-200">
+									{CANVA_PREFLIGHT_OPTIONS.map((option) => <option key={option} value={option}>{option.replace(/_/g, " ")}</option>)}
+								</select>
+							</label>
+						))}
+					</div>
+					<div className="mt-3 flex flex-wrap items-center gap-2">
+						<button type="button" onClick={() => void saveCanvaPreflight()} disabled={busy !== null} className="rounded bg-violet-600/80 px-2.5 py-1.5 font-bold uppercase tracking-widest text-white disabled:opacity-40">
+							{busy === "canva-preflight" ? "Saving preflight…" : "Save Canva Preflight"}
+						</button>
+						<input ref={canvaFileInputRef} type="file" accept="image/png,.png" onChange={(event) => void uploadCanva(event)} className="hidden" />
+						<button type="button" onClick={() => canvaFileInputRef.current?.click()} disabled={busy !== null || canvaWorkflow.current_stage === "CANVA_PRO_REQUIRED"} className="rounded bg-fuchsia-600/80 px-2.5 py-1.5 font-bold uppercase tracking-widest text-white disabled:opacity-40">
+							{busy === "canva-upload" ? "Verifying PNG…" : "Upload Canva PNG → Manual Review"}
+						</button>
+						<label className="text-slate-400">Operator stage
+							<select value={canvaOperatorStage} onChange={(event) => setCanvaOperatorStage(event.target.value as (typeof CANVA_OPERATOR_STAGES)[number])} className="ml-2 rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-[9px] text-slate-200">
+								{CANVA_OPERATOR_STAGES.map((stage) => <option key={stage} value={stage}>{stage.replace(/_/g, " ")}</option>)}
+							</select>
+						</label>
+						<button type="button" onClick={() => void saveCanvaStage()} disabled={busy !== null || canvaWorkflow.current_stage === "CANVA_PRO_REQUIRED"} className="rounded bg-slate-700 px-2.5 py-1.5 font-bold uppercase tracking-widest text-slate-200 disabled:opacity-40">
+							{busy === "canva-stage" ? "Saving stage…" : "Record Operator Stage"}
+						</button>
+						<span className="text-slate-500">Alpha verified: <span className={canvaWorkflow.alpha_verified ? "text-emerald-300" : "text-amber-300"}>{canvaWorkflow.alpha_verified ? "YES" : "NO"}</span></span>
+					</div>
+					{canvaWorkflow.current_stage === "CANVA_PRO_REQUIRED" && <div className="mt-2 text-amber-300">CANVA_PRO_REQUIRED — no editing/export workflow is started until transparent PNG entitlement is available.</div>}
+					{canvaWorkflow.last_error && <div className="mt-2 text-red-300">{canvaWorkflow.last_error_code ? `${canvaWorkflow.last_error_code}: ` : ""}{canvaWorkflow.last_error}</div>}
+				</div>
+			)}
+
 			{showApprovalForm && readiness.can_review_cutout && (
 				<div className="mt-5 border-t border-slate-800 pt-4" data-testid="product-visual-approval">
 					<div className="mb-3 flex flex-wrap items-start gap-4">
@@ -326,7 +510,7 @@ export default function ProductVisualReadinessPanel({
 							<img src={readiness.active_cutout_preview_url || productTruthCutoutPreviewUrl(productId)} alt="Deterministic cutout candidate" className="h-32 w-32 rounded-lg border border-slate-700 bg-white object-contain" />
 						)}
 						<div className="flex-1 text-[10px] leading-relaxed text-amber-200">
-							This candidate is not approved. Inspect identity, label/logo, geometry, scale, and source lineage before using the explicit approval gate.
+							This candidate is not approved. Inspect identity, label/logo, geometry, scale, and source lineage. Approve Exact Cutout applies to the active candidate, including a Canva handoff, only after explicit human confirmation.
 						</div>
 					</div>
 					<div className="grid gap-2 md:grid-cols-2">

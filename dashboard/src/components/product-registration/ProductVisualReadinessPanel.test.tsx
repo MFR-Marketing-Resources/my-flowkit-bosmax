@@ -46,6 +46,7 @@ describe("ProductVisualReadinessPanel", () => {
 		expect(screen.getByText("Cutout")).toBeInTheDocument();
 		expect(screen.getByText("Visual Ready")).toBeInTheDocument();
 		expect(screen.getByText("Exact Commerce")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Canva Cutout" })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Approve Exact Cutout" })).toBeDisabled();
 		expect(screen.getByText("Open Source")).toHaveAttribute("href", "https://example.test/product");
 	});

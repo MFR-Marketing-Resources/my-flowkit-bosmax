@@ -35,10 +35,13 @@ domains:
       - agent/services/product_truth_lock_service.py
       - agent/api/product_truth.py
       - agent/api/product_visual_onboarding.py
+      - agent/services/canva_cutout_workflow_service.py
       - tests/unit/test_product_truth_lock_service.py
       - agent/services/product_visual_onboarding_service.py
       - tests/unit/test_product_visual_onboarding_service.py
       - tests/api/test_product_visual_onboarding_api.py
+      - tests/unit/test_canva_cutout_workflow_service.py
+      - tests/api/test_canva_cutout_workflow_api.py
       - tests/api/test_product_truth_lock_flow_gate.py
       - dashboard/src/pages/ImgFastlanePage.tsx
       - dashboard/src/pages/imgCockpitLogic.ts
@@ -707,6 +710,8 @@ domains:
       - dashboard/src/components/product-registration/AllProductsTab.tsx
       - dashboard/src/api/productVisualOnboarding.ts
       - dashboard/src/components/product-registration/ProductVisualReadinessPanel.tsx
+      - docs/workflows/CANVA_PRODUCT_CUTOUT_WORKFLOW.md
+      - docs/runbooks/canva-cutout-operator-runbook.md
       - dashboard/src/components/product-registration/ProductVisualReadinessPanel.test.tsx
       - dashboard/src/components/workspace/SearchableProductSelect.tsx
       - dashboard/src/components/workspace/T2VModule.tsx

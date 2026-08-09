@@ -914,6 +914,97 @@ CREATE TABLE IF NOT EXISTS product_visual_onboarding_run (
 CREATE INDEX IF NOT EXISTS idx_product_visual_onboarding_run_status
     ON product_visual_onboarding_run(status, updated_at);
 
+-- Canva-assisted cutout workflow ledger.  Canva UI work remains operator- or
+-- browser-controller-owned; this table persists only bounded workflow
+-- evidence and never stores credentials, cookies, or provider session data.
+CREATE TABLE IF NOT EXISTS canva_cutout_workflow (
+    product_id          TEXT PRIMARY KEY REFERENCES product(id) ON DELETE CASCADE,
+    workflow_id         TEXT NOT NULL UNIQUE,
+    source_sha256       TEXT NOT NULL CHECK(length(source_sha256) = 64),
+    source_width        INTEGER NOT NULL CHECK(source_width > 0),
+    source_height       INTEGER NOT NULL CHECK(source_height > 0),
+    canva_method        TEXT NOT NULL DEFAULT 'UNSELECTED'
+                        CHECK(canva_method IN ('UNSELECTED','MAGIC_GRAB','BACKGROUND_REMOVER','MAGIC_LAYERS')),
+    design_id           TEXT,
+    design_url          TEXT,
+    current_stage       TEXT NOT NULL DEFAULT 'NOT_STARTED'
+                        CHECK(current_stage IN (
+                            'NOT_STARTED','PREFLIGHT','CANVA_PRO_REQUIRED','OPENING_CANVA',
+                            'MAGIC_GRAB','BACKGROUND_REMOVER','MAGIC_LAYERS','CLEAN_CANVAS',
+                            'READY_TO_EXPORT','EXPORTING','VERIFYING_ALPHA','CUTOUT_READY',
+                            'PENDING_HUMAN_REVIEW','APPROVED','FAILED','PAUSED','CANCELLED'
+                        )),
+    attempt_count       INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+    last_error_code     TEXT,
+    last_error          TEXT,
+    preflight_json      TEXT NOT NULL DEFAULT '{}',
+    output_path         TEXT,
+    output_sha256       TEXT CHECK(output_sha256 IS NULL OR length(output_sha256) = 64),
+    output_width        INTEGER CHECK(output_width IS NULL OR output_width > 0),
+    output_height       INTEGER CHECK(output_height IS NULL OR output_height > 0),
+    alpha_verified      INTEGER NOT NULL DEFAULT 0 CHECK(alpha_verified IN (0,1)),
+    human_review_status TEXT NOT NULL DEFAULT 'NOT_STARTED'
+                        CHECK(human_review_status IN ('NOT_STARTED','PENDING_REVIEW','APPROVED','REJECTED')),
+    provenance_source   TEXT CHECK(provenance_source IS NULL OR provenance_source IN (
+                            'CANVA_MAGIC_GRAB','CANVA_BG_REMOVER','CANVA_MAGIC_LAYERS'
+                        )),
+    started_at          TEXT,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_canva_cutout_workflow_stage
+    ON canva_cutout_workflow(current_stage, updated_at);
+
+-- Resumable, optional Canva queue.  A run is a durable operator queue, not a
+-- claim that BOSMAX drove Canva.  Item progress survives restart and permits
+-- per-product bypass without disturbing the remaining cohort.
+CREATE TABLE IF NOT EXISTS canva_cutout_bulk_run (
+    run_id                   TEXT PRIMARY KEY,
+    status                   TEXT NOT NULL DEFAULT 'PREVIEW'
+                             CHECK(status IN ('PREVIEW','QUEUED','RUNNING','PAUSED',
+                                 'BLOCKED_CANVA_PRO_REQUIRED','COMPLETED','FAILED','CANCELLED')),
+    preview_digest            TEXT NOT NULL CHECK(length(preview_digest) = 64),
+    total_expected            INTEGER NOT NULL DEFAULT 0,
+    total_processed           INTEGER NOT NULL DEFAULT 0,
+    total_ready               INTEGER NOT NULL DEFAULT 0,
+    total_pending_review      INTEGER NOT NULL DEFAULT 0,
+    total_failed              INTEGER NOT NULL DEFAULT 0,
+    total_blocked             INTEGER NOT NULL DEFAULT 0,
+    total_bypassed            INTEGER NOT NULL DEFAULT 0,
+    next_index                INTEGER NOT NULL DEFAULT 0,
+    product_ids_json          TEXT NOT NULL DEFAULT '[]',
+    priority_product_ids_json TEXT NOT NULL DEFAULT '[]',
+    preflight_json            TEXT NOT NULL DEFAULT '{}',
+    last_error_code           TEXT,
+    last_error                TEXT,
+    created_at                TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at                TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_canva_cutout_bulk_run_status
+    ON canva_cutout_bulk_run(status, updated_at);
+
+CREATE TABLE IF NOT EXISTS canva_cutout_bulk_item (
+    item_id             TEXT PRIMARY KEY,
+    run_id              TEXT NOT NULL REFERENCES canva_cutout_bulk_run(run_id) ON DELETE CASCADE,
+    product_id          TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    ordinal             INTEGER NOT NULL CHECK(ordinal >= 0),
+    priority            INTEGER NOT NULL DEFAULT 0,
+    workflow_id         TEXT,
+    current_stage       TEXT NOT NULL DEFAULT 'NOT_STARTED'
+                        CHECK(current_stage IN (
+                            'NOT_STARTED','PREFLIGHT','CANVA_PRO_REQUIRED','OPENING_CANVA',
+                            'MAGIC_GRAB','BACKGROUND_REMOVER','MAGIC_LAYERS','CLEAN_CANVAS',
+                            'READY_TO_EXPORT','EXPORTING','VERIFYING_ALPHA','CUTOUT_READY',
+                            'PENDING_HUMAN_REVIEW','APPROVED','FAILED','PAUSED','CANCELLED','BYPASSED'
+                        )),
+    last_error          TEXT,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(run_id, product_id)
+);
+CREATE INDEX IF NOT EXISTS idx_canva_cutout_bulk_item_run
+    ON canva_cutout_bulk_item(run_id, ordinal);
+
 CREATE TABLE IF NOT EXISTS batch (
     id                      TEXT PRIMARY KEY,
     product_id              TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
