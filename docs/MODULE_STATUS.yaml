@@ -1416,6 +1416,7 @@ domains:
       - agent/api/operator.py
       - docs/evidence/product-catalog-decontamination-20260809/c0-baseline.json
       - docs/evidence/product-catalog-decontamination-20260809/c0-classification.json
+      - docs/evidence/product-catalog-decontamination-20260809/c0-classification-after.json
       - docs/evidence/product-catalog-decontamination-20260809/merge-proven-48-reproof.json
       - docs/evidence/product-catalog-decontamination-20260809/dependency-blast-radius.json
       - docs/evidence/product-catalog-decontamination-20260809/purge-plan.json
@@ -1424,6 +1425,7 @@ domains:
       - docs/evidence/product-catalog-decontamination-20260809/canonical-survivor-cohort.json
       - docs/evidence/product-catalog-decontamination-20260809/visual-coverage.json
       - docs/evidence/product-catalog-decontamination-20260809/runtime-proof.json
+      - docs/evidence/product-catalog-decontamination-20260809/post-purge-closure.json
       - docs/evidence/product-catalog-decontamination-20260809/FINAL_REPORT.md
       # Montage Laluan-B hardening R1-R4 C1
       - agent/services/montage_scene_reference_policy.py
