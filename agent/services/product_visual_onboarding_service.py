@@ -216,6 +216,29 @@ async def _blocked_reason(product: dict[str, Any]) -> str | None:
     return None
 
 
+async def _get_canva_workflow_row(product_id: str) -> dict[str, Any] | None:
+    """Read the additive Canva ledger without breaking legacy DB readers."""
+    try:
+        return await crud.get_canva_cutout_workflow(product_id)
+    except Exception as exc:  # noqa: BLE001 - legacy runtime compatibility
+        if "no such table" in str(exc).lower():
+            return None
+        raise
+
+
+def _canva_table_missing(exc: Exception) -> bool:
+    return "no such table" in str(exc).lower()
+
+
+async def _list_canva_workflow_rows(product_ids: list[str]) -> dict[str, dict[str, Any]]:
+    try:
+        return await crud.list_canva_cutout_workflows(product_ids)
+    except Exception as exc:  # noqa: BLE001 - legacy runtime compatibility
+        if "no such table" in str(exc).lower():
+            return {}
+        raise
+
+
 def _reference_file(product: dict[str, Any]) -> Path | None:
     """Cheap local source check used by list/preview; it never downloads URLs."""
     local = _path(product.get("local_image_path"))
@@ -320,10 +343,12 @@ def _candidate_actions(
     state: str,
     lock: dict[str, Any] | None,
     blocked_reason: str | None,
+    canva_workflow: dict[str, Any] | None = None,
 ) -> dict[str, bool]:
     active = not blocked_reason
     pending = str((lock or {}).get("review_status") or "").upper() == PENDING_REVIEW
     approved = _truth_row_approved(lock)
+    canva_stage = str((canva_workflow or {}).get("current_stage") or "NOT_STARTED").upper()
     return {
         "can_prepare_cutout": bool(active and source_available and not approved and not pending),
         "can_review_cutout": bool(active and pending),
@@ -332,6 +357,7 @@ def _candidate_actions(
         "can_upload_manual_cutout": bool(active and source_available),
         "can_reject_cutout": bool(active and lock and str(lock.get("review_status") or "").upper() in {PENDING_REVIEW, APPROVED}),
         "can_use_original_fallback": bool(active and source_available),
+        "can_start_canva_cutout": bool(active and source_available and canva_stage not in {"PENDING_HUMAN_REVIEW", "APPROVED"}),
         "can_open_source": bool(source_available or product.get("image_url")),
         "can_view": True,
     }
@@ -348,6 +374,7 @@ def _readiness_payload(
     source_error: str | None = None,
     blocked_reason: str | None = None,
     history: list[dict[str, Any]] | None = None,
+    canva_workflow: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     history = history or []
     state = _prep_state(lock, prep)
@@ -399,7 +426,28 @@ def _readiness_payload(
         state=state,
         lock=lock,
         blocked_reason=blocked_reason,
+        canva_workflow=canva_workflow,
     )
+    canva_preflight = _parse_json((canva_workflow or {}).get("preflight_json"), {})
+    canva_payload = {
+        "workflow_id": (canva_workflow or {}).get("workflow_id"),
+        "current_stage": str((canva_workflow or {}).get("current_stage") or "NOT_STARTED"),
+        "canva_method": (canva_workflow or {}).get("canva_method") or "UNSELECTED",
+        "design_id": (canva_workflow or {}).get("design_id"),
+        "design_url": (canva_workflow or {}).get("design_url"),
+        "attempt_count": int((canva_workflow or {}).get("attempt_count") or 0),
+        "last_error_code": (canva_workflow or {}).get("last_error_code"),
+        "last_error": (canva_workflow or {}).get("last_error"),
+        "preflight": canva_preflight,
+        "output_dimensions": {
+            "width": int((canva_workflow or {}).get("output_width") or 0) or None,
+            "height": int((canva_workflow or {}).get("output_height") or 0) or None,
+        },
+        "output_sha256": (canva_workflow or {}).get("output_sha256"),
+        "alpha_verified": bool((canva_workflow or {}).get("alpha_verified")),
+        "human_review_status": (canva_workflow or {}).get("human_review_status") or "NOT_STARTED",
+        "provenance_source": (canva_workflow or {}).get("provenance_source"),
+    }
     return {
         "product_id": str(product.get("id") or ""),
         "canonical_media_status": "AVAILABLE" if source_available else "MISSING",
@@ -442,6 +490,8 @@ def _readiness_payload(
         "warnings": warnings,
         "provider_operations": 0,
         "created_without_credit": True,
+        "canva_cutout_workflow": canva_payload,
+        "canva_cutout_stage": canva_payload["current_stage"],
         **actions,
     }
 
@@ -750,6 +800,7 @@ async def upload_manual_product_cutout(
     content_type: str | None,
     raw_bytes: bytes,
     uploaded_by: str,
+    provenance_source: str | None = None,
 ) -> dict[str, Any]:
     """Persist a user PNG as a pending first-class cutout candidate."""
     product = await crud.get_product(product_id)
@@ -778,6 +829,9 @@ async def upload_manual_product_cutout(
         if not media_id:
             raise ProductVisualOnboardingError("CANONICAL_CUTOUT_MEDIA_REQUIRED", "Manual cutout media was not persisted.")
         bounds = _manual_cutout_bounds(raw_bytes, width, height)
+        onboarding_kwargs: dict[str, Any] = {}
+        if provenance_source:
+            onboarding_kwargs["provenance_source"] = provenance_source
         await create_pending_product_truth_lock(
             product_id,
             ProductTruthLockOnboardingRequest(
@@ -795,6 +849,7 @@ async def upload_manual_product_cutout(
             uploaded_by=uploaded_by,
             uploaded_at=_now(),
             supersede_reason="MANUAL_CUTOUT_OVERRIDE",
+            **onboarding_kwargs,
         )
     except ProductTruthLockError as exc:
         raise _truth_error(exc) from exc
@@ -808,6 +863,14 @@ async def upload_manual_product_cutout(
         failure_message=None,
         last_finished_at=_now(),
     )
+    if not provenance_source:
+        from agent.services.canva_cutout_workflow_service import mark_canva_workflow_superseded_by_manual
+
+        try:
+            await mark_canva_workflow_superseded_by_manual(product_id)
+        except Exception as exc:  # noqa: BLE001 - additive table may await runtime restart
+            if not _canva_table_missing(exc):
+                raise
     return await get_product_visual_readiness(product_id)
 
 
@@ -828,6 +891,13 @@ async def reject_product_cutout(
         failure_message=str(reason).strip(),
         last_finished_at=_now(),
     )
+    from agent.services.canva_cutout_workflow_service import mark_canva_workflow_rejected
+
+    try:
+        await mark_canva_workflow_rejected(product_id, str(reason).strip())
+    except Exception as exc:  # noqa: BLE001 - additive table may await runtime restart
+        if not _canva_table_missing(exc):
+            raise
     return await get_product_visual_readiness(product_id)
 
 
@@ -848,6 +918,13 @@ async def use_original_product_fallback(
         failure_message=str(reason).strip(),
         last_finished_at=_now(),
     )
+    from agent.services.canva_cutout_workflow_service import mark_canva_workflow_fallback
+
+    try:
+        await mark_canva_workflow_fallback(product_id, str(reason).strip())
+    except Exception as exc:  # noqa: BLE001 - additive table may await runtime restart
+        if not _canva_table_missing(exc):
+            raise
     return await get_product_visual_readiness(product_id)
 
 
@@ -951,6 +1028,7 @@ async def get_product_visual_readiness(product_id: str) -> dict[str, Any]:
     history = await crud.list_product_truth_lock_history(product_id)
     pack = await crud.get_product_reference_pack(product_id)
     prep = await crud.get_product_cutout_preparation(product_id)
+    canva_workflow = await _get_canva_workflow_row(product_id)
     reference = None
     source_error = None
     source_available = bool(_reference_file(product)) or _truth_row_approved(lock)
@@ -980,6 +1058,7 @@ async def get_product_visual_readiness(product_id: str) -> dict[str, Any]:
         source_error=source_error,
         blocked_reason=blocked_reason,
         history=history,
+        canva_workflow=canva_workflow,
     )
 
 
@@ -992,6 +1071,7 @@ async def annotate_products_visual_readiness(products: list[dict[str, Any]]) -> 
     packs = await crud.list_product_reference_packs_by_products(ids)
     preps = await crud.list_product_cutout_preparations(ids)
     histories = await crud.list_product_truth_lock_histories(ids)
+    canva_workflows = await _list_canva_workflow_rows(ids)
     tombstoned: set[str] = set()
     # Tombstones are a small, indexed purge authority; load the page ids in one
     # query where possible, while legacy DBs without the table stay compatible.
@@ -1029,6 +1109,7 @@ async def annotate_products_visual_readiness(products: list[dict[str, Any]]) -> 
             source_error=None,
             blocked_reason=blocked,
             history=histories.get(pid, []),
+            canva_workflow=canva_workflows.get(pid),
         )
 
 

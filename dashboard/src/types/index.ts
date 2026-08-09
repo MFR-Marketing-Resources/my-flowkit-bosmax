@@ -1460,6 +1460,50 @@ export type ProductVisualCutoutStatus =
 	| "REJECTED"
 	| "SUPERSEDED";
 
+export type CanvaCutoutStage =
+	| "NOT_STARTED"
+	| "PREFLIGHT"
+	| "CANVA_PRO_REQUIRED"
+	| "OPENING_CANVA"
+	| "MAGIC_GRAB"
+	| "BACKGROUND_REMOVER"
+	| "MAGIC_LAYERS"
+	| "CLEAN_CANVAS"
+	| "READY_TO_EXPORT"
+	| "EXPORTING"
+	| "VERIFYING_ALPHA"
+	| "CUTOUT_READY"
+	| "PENDING_HUMAN_REVIEW"
+	| "APPROVED"
+	| "FAILED"
+	| "PAUSED"
+	| "CANCELLED"
+	| string;
+
+export interface CanvaCutoutWorkflow {
+	workflow_id?: string | null;
+	product_id?: string | null;
+	source_sha256?: string | null;
+	source_dimensions?: { width: number | null; height: number | null };
+	output_dimensions?: { width: number | null; height: number | null };
+	canva_method?: "UNSELECTED" | "MAGIC_GRAB" | "BACKGROUND_REMOVER" | "MAGIC_LAYERS" | string;
+	design_id?: string | null;
+	design_url?: string | null;
+	current_stage: CanvaCutoutStage;
+	attempt_count: number;
+	last_error_code?: string | null;
+	last_error?: string | null;
+	preflight?: Record<string, string>;
+	output_sha256?: string | null;
+	output_available?: boolean;
+	alpha_verified: boolean;
+	human_review_status: "NOT_STARTED" | "PENDING_REVIEW" | "APPROVED" | "REJECTED" | string;
+	provenance_source?: "CANVA_MAGIC_GRAB" | "CANVA_BG_REMOVER" | "CANVA_MAGIC_LAYERS" | string | null;
+	started_at?: string | null;
+	updated_at?: string | null;
+	next_action?: string;
+}
+
 export interface ProductVisualReadiness {
 	product_id: string;
 	canonical_media_status: "AVAILABLE" | "MISSING" | string;
@@ -1491,10 +1535,13 @@ export interface ProductVisualReadiness {
 	can_approve_cutout: boolean;
 	can_rebuild_cutout: boolean;
 	can_upload_manual_cutout?: boolean;
+	can_start_canva_cutout?: boolean;
 	can_reject_cutout?: boolean;
 	can_use_original_fallback?: boolean;
 	can_open_source: boolean;
 	can_view: boolean;
+	canva_cutout_stage?: CanvaCutoutStage;
+	canva_cutout_workflow?: CanvaCutoutWorkflow;
 }
 
 export interface ProductCatalogResponse {

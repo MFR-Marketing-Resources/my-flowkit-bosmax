@@ -10,6 +10,7 @@ import asyncio
 import json
 from datetime import UTC, datetime
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -28,6 +29,21 @@ from agent.services.product_visual_onboarding_service import (
     run_bulk_cutout_preparation,
     upload_manual_product_cutout,
     use_original_product_fallback,
+)
+from agent.services.canva_cutout_workflow_service import (
+    CanvaCutoutWorkflowError,
+    advance_canva_stage,
+    bypass_canva_cutout_bulk_item,
+    cancel_canva_cutout_bulk,
+    complete_canva_cutout,
+    get_canva_cutout_bulk_run,
+    get_canva_cutout_workflow,
+    pause_canva_cutout_bulk,
+    prepare_canva_cutout_bulk,
+    preview_canva_cutout_bulk,
+    record_canva_preflight,
+    resume_canva_cutout_bulk,
+    start_canva_cutout,
 )
 
 router = APIRouter(prefix="/product-visual-onboarding", tags=["product-visual-onboarding"])
@@ -50,8 +66,82 @@ class CutoutDecisionRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=2000)
 
 
+CanvaCapabilityStatus = Literal["READY", "UNAVAILABLE", "UNKNOWN", "PRO_REQUIRED", "USER_ACTION_REQUIRED"]
+CanvaMethod = Literal["MAGIC_GRAB", "BACKGROUND_REMOVER", "MAGIC_LAYERS"]
+CanvaStage = Literal[
+    "PREFLIGHT",
+    "OPENING_CANVA",
+    "MAGIC_GRAB",
+    "BACKGROUND_REMOVER",
+    "MAGIC_LAYERS",
+    "CLEAN_CANVAS",
+    "READY_TO_EXPORT",
+    "EXPORTING",
+    "PAUSED",
+]
+
+
+class CanvaPreflightRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    canva_method: CanvaMethod | None = None
+    design_id: str | None = Field(default=None, max_length=256)
+    design_url: str | None = Field(default=None, max_length=2000)
+    login_status: CanvaCapabilityStatus = "UNKNOWN"
+    magic_grab_status: CanvaCapabilityStatus = "UNKNOWN"
+    background_remover_status: CanvaCapabilityStatus = "UNKNOWN"
+    magic_layers_status: CanvaCapabilityStatus = "UNKNOWN"
+    transparent_export_status: CanvaCapabilityStatus = "UNKNOWN"
+
+    def capability_payload(self) -> dict[str, str]:
+        return {
+            "login_status": self.login_status,
+            "magic_grab_status": self.magic_grab_status,
+            "background_remover_status": self.background_remover_status,
+            "magic_layers_status": self.magic_layers_status,
+            "transparent_export_status": self.transparent_export_status,
+        }
+
+
+class CanvaStageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    stage: CanvaStage
+    canva_method: CanvaMethod
+    design_id: str | None = Field(default=None, max_length=256)
+    design_url: str | None = Field(default=None, max_length=2000)
+
+
+class CanvaBulkPrepareRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirm: bool = False
+    preview_digest: str = Field(min_length=64, max_length=64)
+    max_products: int = Field(default=3, ge=1, le=25)
+    priority_product_ids: list[str] = Field(default_factory=list, max_length=25)
+    preflight: CanvaPreflightRequest = Field(default_factory=CanvaPreflightRequest)
+
+
+class CanvaBulkResumeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    preflight: CanvaPreflightRequest = Field(default_factory=CanvaPreflightRequest)
+
+
+class CanvaBulkBypassRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operator: str = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=1, max_length=2000)
+
+
 def _error(exc: ProductVisualOnboardingError) -> HTTPException:
     status = getattr(exc, "status_code", None) or (404 if exc.code == "PRODUCT_NOT_FOUND" else 409)
+    return HTTPException(status_code=status, detail={"code": exc.code, "message": exc.message})
+
+
+def _canva_error(exc: CanvaCutoutWorkflowError) -> HTTPException:
+    status = getattr(exc, "status_code", None) or 409
     return HTTPException(status_code=status, detail={"code": exc.code, "message": exc.message})
 
 
@@ -229,6 +319,142 @@ async def get_visual_cutout_preview(
         return FileResponse(path, media_type="image/png", filename=path.name)
     except ProductVisualOnboardingError as exc:
         raise _error(exc) from exc
+
+
+@router.get("/canva/bulk/preview")
+async def preview_canva_bulk(limit: int = Query(default=1000, ge=1, le=1000)):
+    try:
+        return await preview_canva_cutout_bulk(limit=limit)
+    except CanvaCutoutWorkflowError as exc:
+        raise _canva_error(exc) from exc
+
+
+@router.post("/canva/bulk/prepare")
+async def prepare_canva_bulk(request: CanvaBulkPrepareRequest):
+    try:
+        return await prepare_canva_cutout_bulk(
+            confirm=request.confirm,
+            preview_digest=request.preview_digest,
+            max_products=request.max_products,
+            priority_product_ids=request.priority_product_ids,
+            preflight=request.preflight.capability_payload(),
+        )
+    except CanvaCutoutWorkflowError as exc:
+        raise _canva_error(exc) from exc
+
+
+@router.get("/canva/bulk/runs/{run_id}")
+async def get_canva_bulk_run(run_id: str):
+    try:
+        return await get_canva_cutout_bulk_run(run_id)
+    except CanvaCutoutWorkflowError as exc:
+        raise _canva_error(exc) from exc
+
+
+@router.post("/canva/bulk/runs/{run_id}/pause")
+async def pause_canva_bulk_run(run_id: str):
+    try:
+        return await pause_canva_cutout_bulk(run_id)
+    except CanvaCutoutWorkflowError as exc:
+        raise _canva_error(exc) from exc
+
+
+@router.post("/canva/bulk/runs/{run_id}/resume")
+async def resume_canva_bulk_run(run_id: str, request: CanvaBulkResumeRequest):
+    try:
+        return await resume_canva_cutout_bulk(
+            run_id,
+            preflight=request.preflight.capability_payload(),
+        )
+    except CanvaCutoutWorkflowError as exc:
+        raise _canva_error(exc) from exc
+
+
+@router.post("/canva/bulk/runs/{run_id}/cancel")
+async def cancel_canva_bulk_run(run_id: str):
+    try:
+        return await cancel_canva_cutout_bulk(run_id)
+    except CanvaCutoutWorkflowError as exc:
+        raise _canva_error(exc) from exc
+
+
+@router.post("/canva/bulk/runs/{run_id}/items/{product_id}/bypass")
+async def bypass_canva_bulk_item(run_id: str, product_id: str, request: CanvaBulkBypassRequest):
+    try:
+        return await bypass_canva_cutout_bulk_item(run_id, product_id, reason=f"{request.operator}: {request.reason}")
+    except CanvaCutoutWorkflowError as exc:
+        raise _canva_error(exc) from exc
+
+
+@router.get("/{product_id}/canva")
+async def get_canva_workflow(product_id: str):
+    try:
+        return await get_canva_cutout_workflow(product_id)
+    except CanvaCutoutWorkflowError as exc:
+        raise _canva_error(exc) from exc
+
+
+@router.post("/{product_id}/canva/start")
+async def start_canva_workflow(product_id: str):
+    try:
+        return await start_canva_cutout(product_id)
+    except CanvaCutoutWorkflowError as exc:
+        raise _canva_error(exc) from exc
+
+
+@router.post("/{product_id}/canva/preflight")
+async def record_canva_workflow_preflight(product_id: str, request: CanvaPreflightRequest):
+    try:
+        return await record_canva_preflight(
+            product_id,
+            canva_method=request.canva_method,
+            design_id=request.design_id,
+            design_url=request.design_url,
+            preflight=request.capability_payload(),
+        )
+    except CanvaCutoutWorkflowError as exc:
+        raise _canva_error(exc) from exc
+
+
+@router.post("/{product_id}/canva/stage")
+async def advance_canva_workflow_stage(product_id: str, request: CanvaStageRequest):
+    try:
+        return await advance_canva_stage(
+            product_id,
+            stage=request.stage,
+            canva_method=request.canva_method,
+            design_id=request.design_id,
+            design_url=request.design_url,
+        )
+    except CanvaCutoutWorkflowError as exc:
+        raise _canva_error(exc) from exc
+
+
+@router.post("/{product_id}/canva/complete")
+async def complete_canva_workflow(
+    product_id: str,
+    cutout: UploadFile = File(...),
+    canva_method: CanvaMethod = Form(...),
+    uploaded_by: str = Form("operator"),
+    design_id: str | None = Form(default=None),
+    design_url: str | None = Form(default=None),
+):
+    try:
+        raw_bytes = await cutout.read()
+        return await complete_canva_cutout(
+            product_id,
+            filename=cutout.filename or "canva-cutout.png",
+            content_type=cutout.content_type,
+            raw_bytes=raw_bytes,
+            uploaded_by=uploaded_by,
+            canva_method=canva_method,
+            design_id=design_id,
+            design_url=design_url,
+        )
+    except CanvaCutoutWorkflowError as exc:
+        raise _canva_error(exc) from exc
+    finally:
+        await cutout.close()
 
 
 @router.get("/{product_id}")

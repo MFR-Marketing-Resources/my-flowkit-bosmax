@@ -976,6 +976,7 @@ async def create_pending_product_truth_lock(
     uploaded_by: str | None = None,
     uploaded_at: str | None = None,
     supersede_reason: str | None = None,
+    provenance_source: str | None = None,
 ) -> dict[str, Any]:
     """Create a server-owned, human-review-only lock from a cutout candidate."""
 
@@ -985,6 +986,12 @@ async def create_pending_product_truth_lock(
     existing = await crud.get_product_truth_lock(product_id)
     if source_kind not in {AUTO_GENERATED, USER_UPLOAD, CANONICAL_REFERENCE}:
         raise ProductTruthLockError("PRODUCT_TRUTH_SOURCE_INVALID", "Unsupported cutout provenance source.")
+    if provenance_source is not None and provenance_source not in {
+        "CANVA_MAGIC_GRAB",
+        "CANVA_BG_REMOVER",
+        "CANVA_MAGIC_LAYERS",
+    }:
+        raise ProductTruthLockError("PRODUCT_TRUTH_SOURCE_INVALID", "Unsupported Canva cutout provenance source.")
     if existing and str(existing.get("review_status") or "") == "APPROVED" and not allow_approved_replacement:
         raise ProductTruthLockError(
             "PRODUCT_TRUTH_LOCK_IMMUTABLE",
@@ -1067,7 +1074,13 @@ async def create_pending_product_truth_lock(
 
     provenance = {
         "source_kind": source_kind,
-        "onboarding_method": "DETERMINISTIC_AUTO_CUTOUT" if source_kind == AUTO_GENERATED else "USER_SUPPLIED_MANUAL_CUTOUT",
+        "source": provenance_source or source_kind,
+        "cutout_provenance": provenance_source or source_kind,
+        "onboarding_method": (
+            "CANVA_ASSISTED_MANUAL_HANDOFF"
+            if provenance_source
+            else "DETERMINISTIC_AUTO_CUTOUT" if source_kind == AUTO_GENERATED else "USER_SUPPLIED_MANUAL_CUTOUT"
+        ),
         "created_by": uploaded_by or request.created_by,
         "uploaded_by": uploaded_by or request.created_by,
         "uploaded_at": uploaded_at or datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
@@ -1088,6 +1101,8 @@ async def create_pending_product_truth_lock(
         "version_id": version_id,
         "human_review_required": True,
     }
+    if provenance_source:
+        provenance["canva_provenance_source"] = provenance_source
     if existing:
         provenance["supersedes_previous_media_id"] = existing.get("canonical_cutout_media_id")
         provenance["supersedes_previous_sha256"] = existing.get("canonical_cutout_sha256")
