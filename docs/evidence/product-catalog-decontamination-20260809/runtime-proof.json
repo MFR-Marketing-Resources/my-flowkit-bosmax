@@ -1,21 +1,21 @@
 {
   "mission_id": "product-catalog-decontamination-20260809",
-  "captured_at": "2026-08-09T05:56:31Z",
+  "captured_at": "2026-08-09T06:07:07Z",
   "runtime_url": "http://127.0.0.1:8100",
   "health_http_200": true,
   "runtime_loaded_sha": "64b82b06f3b06de611ecb7a275f2a733b1504457",
-  "runtime_branch": "codex/catalog-decontamination-evidence-20260809",
-  "runtime_pid": 48324,
-  "port_8100_owner_pid": 48324,
+  "runtime_branch": "HEAD",
+  "runtime_pid": 44020,
+  "port_8100_owner_pid": 44020,
   "runtime_route_count": 568,
-  "dashboard_bundle": "index-DZFNx8-_.js",
+  "dashboard_bundle": "index-qm-EQLo_.js",
   "source_stale_since_start": false,
   "runtime_db_absolute_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
   "expected_canonical_db_absolute_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
   "runtime_storage_matches_expected": true,
   "runtime_storage_status": {
     "status": "ok",
-    "cwd": "C:\\Users\\USER\\.codex\\worktrees\\catalog-decontamination-evidence-20260809",
+    "cwd": "C:\\Users\\USER\\.codex\\worktrees\\catalog-decontamination-runtime-20260809",
     "base_dir": "C:\\Users\\USER\\Desktop\\_ref_flowkit",
     "flow_agent_dir_override": "C:\\Users\\USER\\Desktop\\_ref_flowkit",
     "config_db_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
@@ -68,7 +68,7 @@
       "FLOW_AGENT_DIR_OVERRIDE_ACTIVE",
       "DB_PATH_PARENT_DIFFERS_FROM_CWD"
     ],
-    "timestamp": "2026-08-09T05:56:29.024837+00:00"
+    "timestamp": "2026-08-09T06:07:04.621843+00:00"
   },
   "endpoint_payloads": {
     "health": {
@@ -110,14 +110,14 @@
         "connected": true,
         "connects": 1,
         "disconnects": 0,
-        "uptime_s": 883
+        "uptime_s": 250
       }
     },
     "version": {
-      "pid": 48324,
-      "process_started_at": "2026-08-09T05:41:32.624479+00:00",
+      "pid": 44020,
+      "process_started_at": "2026-08-09T06:02:34.031770+00:00",
       "git_head": "64b82b06f3b06de611ecb7a275f2a733b1504457",
-      "git_branch": "codex/catalog-decontamination-evidence-20260809",
+      "git_branch": "HEAD",
       "route_count": 568,
       "critical_routes": {
         "/api/creative-asset-eligibility/audit": true,
@@ -126,13 +126,13 @@
         "/api/flow/generate": true,
         "/api/workspace/execution-package": true
       },
-      "dashboard_bundle": "index-DZFNx8-_.js",
+      "dashboard_bundle": "index-qm-EQLo_.js",
       "source_stale_since_start": false,
       "stale_source_sample": []
     },
     "storage": {
       "status": "ok",
-      "cwd": "C:\\Users\\USER\\.codex\\worktrees\\catalog-decontamination-evidence-20260809",
+      "cwd": "C:\\Users\\USER\\.codex\\worktrees\\catalog-decontamination-runtime-20260809",
       "base_dir": "C:\\Users\\USER\\Desktop\\_ref_flowkit",
       "flow_agent_dir_override": "C:\\Users\\USER\\Desktop\\_ref_flowkit",
       "config_db_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
@@ -185,7 +185,7 @@
         "FLOW_AGENT_DIR_OVERRIDE_ACTIVE",
         "DB_PATH_PARENT_DIFFERS_FROM_CWD"
       ],
-      "timestamp": "2026-08-09T05:56:29.024837+00:00"
+      "timestamp": "2026-08-09T06:07:04.621843+00:00"
     }
   },
   "failures": []

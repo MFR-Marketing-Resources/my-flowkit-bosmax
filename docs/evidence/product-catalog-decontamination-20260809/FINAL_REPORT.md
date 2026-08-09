@@ -21,7 +21,7 @@ PR #678 merge SHA: d03ca4fcddbce16a0c4ef8ae4fb6d4b8eb512940
 post-purge evidence PR #679: https://github.com/MFR-Marketing-Resources/my-flowkit-bosmax/pull/679
 post-purge evidence merge SHA: 64b82b06f3b06de611ecb7a275f2a733b1504457
 runtime SHA: 64b82b06f3b06de611ecb7a275f2a733b1504457
-runtime PID: 48324
+runtime PID: 44020
 canonical DB: C:\Users\USER\Desktop\_ref_flowkit\flow_agent.db
 DB SHA before: f9917a08288796fec61159cdba9d4a916da473a2626445a25ba9d02e0ce5b683
 DB SHA after: 6525e16a9e527469b5900737ba21521af061c53bd8e5229324a2300f2a0da8a4
@@ -29,11 +29,11 @@ integrity: ['ok']
 foreign keys: 0
 provider operations: 0
 
-backend source/worktree: C:\Users\USER\.codex\worktrees\catalog-decontamination-evidence-20260809
-backend runtime cwd: C:\Users\USER\.codex\worktrees\catalog-decontamination-evidence-20260809
+backend source/worktree: C:\Users\USER\.codex\worktrees\catalog-decontamination-runtime-20260809
+backend runtime cwd: C:\Users\USER\.codex\worktrees\catalog-decontamination-runtime-20260809
 backend command line: "C:\Users\USER\AppData\Local\Programs\Python\Python312\python.exe" -m agent.main
 runtime source stale: false
-dashboard bundle: index-DZFNx8-_.js
+dashboard bundle: index-qm-EQLo_.js
 canonical media root: C:\Users\USER\Desktop\_ref_flowkit
 Chrome extension path: C:\Users\USER\Desktop\_ref_flowkit\extension
 extension build SHA: e8353a4944ee9764b17ddece3cba509347e7afb5
