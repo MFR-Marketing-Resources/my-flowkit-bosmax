@@ -815,6 +815,33 @@ CREATE TABLE IF NOT EXISTS product_visual_truth_lock (
 );
 CREATE INDEX IF NOT EXISTS idx_product_truth_lock_review ON product_visual_truth_lock(review_status);
 
+-- Immutable audit history for replaced Product Truth candidates.  The active
+-- contract remains the single product_visual_truth_lock row; this table only
+-- preserves prior bytes and provenance for review, rejection, and supersession.
+CREATE TABLE IF NOT EXISTS product_visual_truth_lock_history (
+    history_id                  TEXT PRIMARY KEY,
+    product_id                  TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    source_kind                 TEXT NOT NULL CHECK(source_kind IN ('AUTO_GENERATED','USER_UPLOAD','CANONICAL_REFERENCE')),
+    review_status               TEXT NOT NULL,
+    canonical_media_id          TEXT,
+    canonical_sha256            TEXT,
+    source_width                INTEGER,
+    source_height               INTEGER,
+    canonical_source_path       TEXT,
+    canonical_cutout_media_id   TEXT,
+    canonical_cutout_sha256     TEXT,
+    canonical_cutout_path       TEXT,
+    alpha_mask_json             TEXT NOT NULL DEFAULT '{}',
+    anchor_point_json           TEXT NOT NULL DEFAULT '{}',
+    allowed_bbox_json           TEXT NOT NULL DEFAULT '{}',
+    provenance_json             TEXT NOT NULL DEFAULT '{}',
+    superseded_by_media_id      TEXT,
+    superseded_reason           TEXT,
+    created_at                  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_product_truth_lock_history_product
+    ON product_visual_truth_lock_history(product_id, created_at DESC);
+
 -- Provider-facing creative reference pack.  This is intentionally separate
 -- from product_visual_truth_lock: exact compositor truth and generative
 -- campaign evidence have different approval and QA lifecycles.

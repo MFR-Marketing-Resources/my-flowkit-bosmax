@@ -170,6 +170,32 @@ def test_pending_cutout_preview_is_server_owned(tmp_path, monkeypatch):
     assert preview.read_bytes() == Path(assets["cutout"]).read_bytes()
 
 
+def test_manual_cutout_png_alpha_and_upload_boundaries(tmp_path):
+    assets = _assets(tmp_path)
+    raw = Path(assets["cutout"]).read_bytes()
+
+    width, height, _alpha_sha, bbox = lock_service._uploaded_cutout_details(raw, expected_dimensions=(20, 40))
+    assert (width, height) == (20, 40)
+    assert bbox == (4, 2, 16, 37)
+    assert lock_service._safe_upload_filename(r"..\..\operator\manual.png") == "manual.png"
+
+    jpeg = tmp_path / "cutout.jpg"
+    Image.new("RGB", (20, 40), (10, 20, 30)).save(jpeg, format="JPEG")
+    with pytest.raises(lock_service.ProductTruthLockError) as jpeg_error:
+        lock_service._uploaded_cutout_details(jpeg.read_bytes())
+    assert jpeg_error.value.code == "CANONICAL_CUTOUT_MIME_INVALID"
+
+    with pytest.raises(lock_service.ProductTruthLockError) as fake_error:
+        lock_service._uploaded_cutout_details(b"not-a-png")
+    assert fake_error.value.code == "CANONICAL_CUTOUT_INVALID"
+
+    with pytest.raises(lock_service.ProductTruthLockError) as size_error:
+        lock_service._uploaded_cutout_details(b"x" * (10 * 1024 * 1024 + 1))
+    # The byte-size guard is enforced at the public registration boundary;
+    # decode-only validation correctly reports an undecodable oversized body.
+    assert size_error.value.code == "CANONICAL_CUTOUT_INVALID"
+
+
 def test_stale_canonical_source_fails_closed(tmp_path, monkeypatch):
     assets = _assets(tmp_path)
     db_path = _db(tmp_path, assets)
@@ -310,7 +336,7 @@ async def test_cutout_media_registration_is_stored_without_approving_lock(tmp_pa
 
     result = await lock_service.register_product_truth_cutout_media(
         "p-1",
-        filename="reviewed-cutout.png",
+        filename=r"..\..\reviewed-cutout.png",
         content_type="image/png",
         raw_bytes=Path(assets["cutout"]).read_bytes(),
     )
@@ -321,6 +347,8 @@ async def test_cutout_media_registration_is_stored_without_approving_lock(tmp_pa
     assert captured["draft_id"] == "visual-lock:p-1"
     assert captured["kind"] == "image"
     assert captured["status"] == "STORED"
+    assert captured["filename"] == "reviewed-cutout.png"
+    assert ".." not in str(captured["local_path"])
     assert (tmp_path / str(captured["local_path"])).exists()
 
 
@@ -359,6 +387,7 @@ async def test_approval_requires_explicit_human_acknowledgement(tmp_path, monkey
     assert captured["failure_state"] == ""
     provenance = json.loads(str(captured["provenance_json"]))
     assert provenance["reviewed_by"] == "human-reviewer"
+    assert provenance["active_selection"] == lock_service.ACTIVE_CANONICAL_CUTOUT
 
 
 @pytest.mark.asyncio
@@ -380,6 +409,35 @@ async def test_approval_rejects_missing_human_acknowledgement(tmp_path, monkeypa
         )
 
     assert exc.value.code == "HUMAN_REVIEW_CONFIRMATION_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_user_rejection_and_fallback_never_leave_exact_allowed(tmp_path, monkeypatch):
+    assets = _assets(tmp_path)
+    db_path = _db(tmp_path, assets, status="PENDING_REVIEW")
+    monkeypatch.setattr(lock_service, "DB_PATH", db_path)
+    captured: dict[str, object] = {}
+
+    async def upsert(product_id: str, **kwargs):
+        captured.update(kwargs)
+        captured["product_id"] = product_id
+        return {"product_id": product_id, **kwargs}
+
+    monkeypatch.setattr(lock_service.crud, "upsert_product_truth_lock", upsert)
+
+    rejected = await lock_service.reject_product_truth_lock(
+        "p-1", rejected_by="operator-1", reason="Auto cutout has the wrong package geometry."
+    )
+    assert rejected["review_status"] == "REJECTED_BY_USER"
+    assert rejected["exact_allowed"] is False
+    assert captured["review_status"] == "REJECTED"
+    assert json.loads(str(captured["provenance_json"]))["active_selection"] == lock_service.ACTIVE_SAME_PRODUCT_FALLBACK
+
+    fallback = await lock_service.select_product_truth_fallback(
+        "p-1", selected_by="operator-1", reason="Use the trusted same-product source while manual review is pending."
+    )
+    assert fallback["review_status"] == "FALLBACK_SELECTED"
+    assert fallback["exact_allowed"] is False
 
 
 @pytest.mark.asyncio
@@ -437,3 +495,94 @@ async def test_onboarding_rejects_canonical_source_hash_drift(tmp_path, monkeypa
         await lock_service.create_pending_product_truth_lock("p-1", request)
 
     assert exc.value.code == "CANONICAL_PRODUCT_SOURCE_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_manual_replacement_archives_auto_candidate_before_switching_active_row(tmp_path, monkeypatch):
+    assets = _assets(tmp_path)
+    source = assets["source"]
+    cutout = assets["cutout"]
+    captured: dict[str, object] = {}
+    existing = {
+        "product_id": "p-1",
+        "canonical_media_id": "canonical-media",
+        "canonical_sha256": assets["source_sha"],
+        "source_width": 20,
+        "source_height": 40,
+        "canonical_source_path": str(source),
+        "canonical_cutout_media_id": "auto-media",
+        "canonical_cutout_sha256": assets["cutout_sha"],
+        "canonical_cutout_path": str(cutout),
+        "alpha_mask_json": json.dumps({"source": "cutout_alpha"}),
+        "anchor_point_json": json.dumps({"x": 0.5, "y": 0.5}),
+        "allowed_bbox_json": json.dumps({"x": 0.1, "y": 0.1, "w": 0.8, "h": 0.8}),
+        "review_status": "APPROVED",
+        "provenance_json": json.dumps({"created_by": "system:deterministic-product-cutout"}),
+    }
+
+    async def get_product(product_id: str):
+        return {"id": product_id, "product_display_name": "Test product"}
+
+    async def get_media(media_id: str):
+        return {"media_id": media_id, "kind": "image", "status": "STORED", "local_path": str(cutout), "filename": "manual.png"}
+
+    async def get_lock(_product_id: str):
+        return existing
+
+    async def archive(product_id: str, **kwargs):
+        captured["history_product_id"] = product_id
+        captured["history"] = kwargs
+        return {"history_id": kwargs.get("history_id"), **kwargs}
+
+    async def upsert(product_id: str, **kwargs):
+        captured["upsert_product_id"] = product_id
+        captured["upsert"] = kwargs
+        return {"product_id": product_id, **kwargs}
+
+    from agent.services import product_visual_grounding_resolver as resolver
+
+    monkeypatch.setattr(lock_service.crud, "get_product", get_product)
+    monkeypatch.setattr(lock_service.crud, "get_product_source_media", get_media)
+    monkeypatch.setattr(lock_service.crud, "get_product_truth_lock", get_lock)
+    monkeypatch.setattr(lock_service.crud, "create_product_truth_lock_history", archive)
+    monkeypatch.setattr(lock_service.crud, "upsert_product_truth_lock", upsert)
+    monkeypatch.setattr(
+        resolver,
+        "resolve_product_reference_image",
+        lambda _product: SimpleNamespace(
+            media_id="canonical-media",
+            local_path=str(source),
+            sha256=assets["source_sha"],
+            width=20,
+            height=40,
+            source_type="PRODUCT_ROW_MEDIA_ID",
+            provenance="test",
+        ),
+    )
+    monkeypatch.setattr(lock_service, "BASE_DIR", tmp_path)
+
+    result = await lock_service.create_pending_product_truth_lock(
+        "p-1",
+        ProductTruthLockOnboardingRequest(
+            canonical_cutout_media_id="manual-media",
+            anchor_point={"x": 0.5, "y": 0.5},
+            min_scale=0.5,
+            max_scale=1.0,
+            allowed_bbox={"x": 0.1, "y": 0.1, "w": 0.8, "h": 0.8},
+            created_by="operator-1",
+            onboarding_note="Manual override",
+        ),
+        allow_approved_replacement=True,
+        source_kind=lock_service.USER_UPLOAD,
+        original_filename="manual.png",
+        uploaded_by="operator-1",
+        supersede_reason="MANUAL_CUTOUT_OVERRIDE",
+    )
+
+    history = captured["history"]
+    assert captured["history_product_id"] == "p-1"
+    assert history["source_kind"] == lock_service.AUTO_GENERATED
+    assert Path(tmp_path / history["canonical_source_path"]).exists()
+    assert Path(tmp_path / history["canonical_cutout_path"]).exists()
+    assert result["provenance"]["source_kind"] == lock_service.USER_UPLOAD
+    assert captured["upsert"]["review_status"] == "PENDING_REVIEW"

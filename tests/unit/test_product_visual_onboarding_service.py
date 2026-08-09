@@ -23,9 +23,10 @@ async def test_readiness_separates_same_product_grounding_from_exact_approval(tm
     readiness = await service.get_product_visual_readiness(product["id"])
 
     assert readiness["canonical_media_status"] == "AVAILABLE"
-    assert readiness["visual_grounding_status"] == "VISUAL_GROUNDING_READY"
-    assert readiness["exact_commerce_status"] == "EXACT_COMMERCE_REVIEW_REQUIRED"
+    assert readiness["visual_grounding_status"] == "VISUAL_GROUNDING_READY_FALLBACK"
+    assert readiness["exact_commerce_status"] == "CUTOUT_REQUIRED"
     assert readiness["cutout_status"] == "NOT_PREPARED"
+    assert readiness["can_use_original_fallback"] is True
     assert readiness["provider_operations"] == 0
 
 
@@ -109,7 +110,7 @@ async def test_deterministic_prepare_creates_pending_review_only(tmp_path, monke
 
     assert readiness["cutout_status"] == "PENDING_REVIEW"
     assert readiness["cutout_review_status"] == "PENDING_REVIEW"
-    assert readiness["exact_commerce_status"] == "EXACT_COMMERCE_REVIEW_REQUIRED"
+    assert readiness["exact_commerce_status"] == "CUTOUT_REQUIRED"
     assert readiness["provider_operations"] == 0
     receipt = await crud.get_product_cutout_preparation(product["id"])
     assert receipt["status"] == "PENDING_REVIEW"
@@ -149,3 +150,109 @@ async def test_bulk_preview_excludes_archived_and_fixture_rows(tmp_path):
     assert preview["created_without_credit"] is True
     assert preview["counts"]["eligible"] >= 1
     assert len(preview["preview_digest"]) == 64
+
+
+def test_manual_approved_candidate_outranks_superseded_auto_candidate():
+    product = {"id": "product-1"}
+    manual_lock = {
+        "review_status": "APPROVED",
+        "canonical_cutout_path": "data/exact-product/manual.png",
+        "provenance_json": '{"source_kind":"USER_UPLOAD","active_selection":"APPROVED_CANONICAL_CUTOUT"}',
+    }
+    readiness = service._readiness_payload(
+        product,
+        lock=manual_lock,
+        pack=None,
+        prep=None,
+        reference=None,
+        source_available=True,
+        history=[
+            {
+                "source_kind": "AUTO_GENERATED",
+                "review_status": "APPROVED",
+                "provenance_json": "{}",
+            }
+        ],
+    )
+
+    assert readiness["active_visual_source"] == "APPROVED_MANUAL_CANONICAL_CUTOUT"
+    assert readiness["exact_commerce_status"] == "EXACT_COMMERCE_CUTOUT_READY"
+    assert readiness["manual_cutout_status"] == "APPROVED"
+    assert readiness["auto_cutout_status"] == "SUPERSEDED"
+
+
+def test_rejected_auto_candidate_routes_to_trusted_fallback():
+    readiness = service._readiness_payload(
+        {"id": "product-1"},
+        lock={
+            "review_status": "REJECTED",
+            "provenance_json": '{"source_kind":"AUTO_GENERATED","review_status":"REJECTED_BY_USER","active_selection":"SAME_PRODUCT_TRUSTED_SOURCE"}',
+        },
+        pack=None,
+        prep={"status": "PREPARATION_FAILED", "failure_code": "REJECTED_BY_USER"},
+        reference=None,
+        source_available=True,
+        history=[],
+    )
+
+    assert readiness["auto_cutout_status"] == "REJECTED"
+    assert readiness["active_visual_source"] == "SAME_PRODUCT_TRUSTED_SOURCE"
+    assert readiness["visual_grounding_status"] == "VISUAL_GROUNDING_READY_FALLBACK"
+    assert readiness["exact_commerce_status"] == "CUTOUT_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_manual_upload_is_pending_and_uses_user_provenance(tmp_path, monkeypatch):
+    source = tmp_path / "source.png"
+    Image.new("RGB", (24, 24), (30, 120, 150)).save(source)
+    product = await crud.create_product(
+        raw_product_title="Manual Override Product",
+        source="MANUAL",
+        local_image_path=str(source),
+        image_asset_status="READY",
+        asset_status="DOWNLOADED",
+    )
+    cutout = Image.new("RGBA", (24, 24), (0, 0, 0, 0))
+    for x in range(4, 16):
+        for y in range(3, 20):
+            cutout.putpixel((x, y), (40, 80, 120, 255))
+    from io import BytesIO
+
+    buffer = BytesIO()
+    cutout.save(buffer, format="PNG")
+    captured: dict[str, object] = {}
+    reference = SimpleNamespace(width=24, height=24, sha256=service._sha256_bytes(source.read_bytes()), local_path=str(source))
+
+    async def resolve(_product):
+        return reference
+
+    async def register(*_args, **kwargs):
+        captured["register"] = kwargs
+        return {"media_id": "manual-media-1"}
+
+    async def onboard(*_args, **kwargs):
+        captured["onboard"] = kwargs
+        return {"review_status": "PENDING_REVIEW"}
+
+    async def readiness(_product_id):
+        return {"cutout_status": "PENDING_REVIEW", "exact_commerce_status": "CUTOUT_REQUIRED"}
+
+    monkeypatch.setattr(service, "_resolve_source", resolve)
+    monkeypatch.setattr(service, "register_product_truth_cutout_media", register)
+    monkeypatch.setattr(service, "create_pending_product_truth_lock", onboard)
+    monkeypatch.setattr(service, "get_product_visual_readiness", readiness)
+
+    result = await service.upload_manual_product_cutout(
+        product["id"],
+        filename=r"..\operator\manual.png",
+        content_type="image/png",
+        raw_bytes=buffer.getvalue(),
+        uploaded_by="operator-1",
+    )
+
+    assert result["cutout_status"] == "PENDING_REVIEW"
+    assert captured["register"]["content_type"] == "image/png"
+    assert captured["onboard"]["allow_approved_replacement"] is True
+    assert captured["onboard"]["source_kind"] == "USER_UPLOAD"
+    assert captured["onboard"]["uploaded_by"] == "operator-1"
+    assert captured["onboard"]["original_filename"] == r"..\operator\manual.png"

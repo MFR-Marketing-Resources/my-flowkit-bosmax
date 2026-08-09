@@ -248,11 +248,12 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 
 	async function confirmBulkPrepare() {
 		if (!bulkPreview) return;
-		if (!window.confirm(`Prepare ${bulkPreview.counts.eligible} canonical cutout candidates for human review? No provider calls or approvals will occur.`)) return;
+		const boundedBatch = bulkPreview.bounded_batch?.default_size ?? 5;
+		if (!window.confirm(`Prepare a bounded batch of up to ${boundedBatch} of ${bulkPreview.counts.eligible} auto-cutout candidates for human review? No provider calls or approvals will occur.`)) return;
 		setBulkBusy(true);
 		setError(null);
 		try {
-			setBulkRun(await queueProductVisualBulkPrepare({ preview_digest: bulkPreview.preview_digest, batch_size: 5 }));
+			setBulkRun(await queueProductVisualBulkPrepare({ preview_digest: bulkPreview.preview_digest, batch_size: boundedBatch, max_products: boundedBatch }));
 		} catch (err: unknown) {
 			setError(getErrorMessage(err, "Could not queue cutout preparation"));
 		} finally {
@@ -278,7 +279,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 					</div>
 					<div className="flex items-center gap-2">
 						<button type="button" onClick={() => void openBulkPreview()} disabled={bulkBusy} className="rounded-lg bg-indigo-600/80 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40" data-testid="prepare-missing-cutouts">
-							{bulkBusy ? "Loading…" : "Prepare Missing Cutouts"}
+							{bulkBusy ? "Loading…" : "Prepare Bounded Auto Batch"}
 						</button>
 						<span className="px-2 py-0.5 rounded text-[9px] font-bold bg-slate-700/30 text-slate-400">
 							Total: {total.toLocaleString()}
@@ -292,7 +293,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 					<div className="flex flex-wrap items-center justify-between gap-3">
 						<div>
 							<div className="text-xs font-bold text-white">Cutout preparation preview</div>
-							<div className="mt-1 text-[10px] text-slate-400">Canonical active products only; archived, purged aliases, fixtures, approved locks, and rows without trusted media are excluded.</div>
+							<div className="mt-1 text-[10px] text-slate-400">Preview only: archived, purged aliases, fixtures, approved locks, rejected candidates, and rows without trusted media are excluded. Execution is bounded and requires confirmation.</div>
 						</div>
 						<button type="button" onClick={() => void confirmBulkPrepare()} disabled={bulkBusy || bulkPreview.counts.eligible === 0} className="rounded-lg bg-emerald-600/80 px-3 py-2 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40">
 							Confirm &amp; Queue
@@ -305,6 +306,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 						<div>Blocked <span className="font-bold text-red-300">{bulkPreview.counts.blocked}</span></div>
 						<div>Skipped <span className="font-bold text-slate-400">{bulkPreview.counts.skipped}</span></div>
 					</div>
+					<div className="mt-3 text-[10px] text-slate-400">Batch limit <span className="font-bold text-white">{bulkPreview.bounded_batch?.default_size ?? 5}</span> (max {bulkPreview.bounded_batch?.max_size ?? 25}) · {bulkPreview.bounded_batch?.estimated_throughput ?? "Throughput measured from completed local runs"}</div>
 					{bulkRun && <div className="mt-3 text-[10px] text-sky-200">Run {bulkRun.run_id}: {bulkRun.status} · {bulkRun.total_expected} queued · provider operations {bulkRun.provider_operations}</div>}
 				</div>
 			)}
