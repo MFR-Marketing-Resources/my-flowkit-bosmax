@@ -375,7 +375,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 	}
 
 	return (
-		<div className="space-y-5">
+		<div className="min-w-0 space-y-5">
 			{/* Header */}
 			<div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
 				<div className="flex flex-wrap items-center justify-between gap-2">
@@ -633,7 +633,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 			</div>
 
 			{/* Table */}
-			<div className="rounded-2xl border border-slate-800 bg-slate-900/40 overflow-hidden">
+			<div className="min-w-0 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/40">
 				{loading ? (
 					<div className="p-8 text-center text-slate-500 text-xs">Loading…</div>
 				) : rows.length === 0 ? (
@@ -642,29 +642,49 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 						status, or clear the filters.
 					</div>
 				) : (
-					<div className="overflow-x-auto">
-						<table className="w-full text-xs text-slate-300 whitespace-nowrap">
+					<div className="min-w-0 overflow-x-auto overscroll-x-contain">
+						<table
+							data-testid="product-registry-table"
+							className="min-w-[1900px] w-full table-fixed text-xs text-slate-300 whitespace-normal"
+						>
+							<colgroup>
+								<col className="w-[220px]" />
+								<col className="w-[150px]" />
+								<col className="w-[80px]" />
+								<col className="w-[70px]" />
+								<col className="w-[85px]" />
+								<col className="w-[105px]" />
+								<col className="w-[76px]" />
+								<col className="w-[100px]" />
+								<col className="w-[70px]" />
+								<col className="w-[70px]" />
+								<col className="w-[90px]" />
+								<col className="w-[510px]" />
+								<col className="w-[90px]" />
+								<col className="w-[100px]" />
+								<col className="w-[90px]" />
+							</colgroup>
 							<thead>
 								<tr className="border-b border-slate-800 bg-slate-900/80 text-[9px] uppercase tracking-widest text-slate-400">
-									<th className="px-3 py-2 text-left font-semibold">Product</th>
-									<th className="px-3 py-2 text-left font-semibold">
+									<th scope="col" className="whitespace-nowrap px-3 py-2 text-left font-semibold">Product</th>
+									<th scope="col" className="whitespace-nowrap px-3 py-2 text-left font-semibold">
 										Cluster · Type
 									</th>
-									<th className="px-3 py-2 text-left font-semibold">Risk</th>
-									<th className="px-3 py-2 text-left font-semibold">Image</th>
-									<th className="px-3 py-2 text-right font-semibold">Sold</th>
-									<th className="px-3 py-2 text-right font-semibold">
+									<th scope="col" className="whitespace-nowrap px-3 py-2 text-left font-semibold">Risk</th>
+									<th scope="col" className="whitespace-nowrap px-3 py-2 text-left font-semibold">Image</th>
+									<th scope="col" className="whitespace-nowrap px-3 py-2 text-right font-semibold">Sold</th>
+									<th scope="col" className="whitespace-nowrap px-3 py-2 text-right font-semibold">
 										Sell price
 									</th>
-									<th className="px-3 py-2 text-right font-semibold">Comm%</th>
-									<th className="px-3 py-2 text-right font-semibold">Comm amt</th>
-									<th className="px-3 py-2 text-right font-semibold">Image (u)</th>
-									<th className="px-3 py-2 text-right font-semibold">Video (u)</th>
-									<th className="px-3 py-2 text-left font-semibold">Status</th>
-									<th className="px-3 py-2 text-left font-semibold">Visual</th>
-									<th className="px-3 py-2 text-left font-semibold">Freshness</th>
-									<th className="px-3 py-2 text-left font-semibold">Draft</th>
-									<th className="px-3 py-2 text-left font-semibold">Actions</th>
+									<th scope="col" className="whitespace-nowrap px-3 py-2 text-right font-semibold">Comm%</th>
+									<th scope="col" className="whitespace-nowrap px-3 py-2 text-right font-semibold">Comm amt</th>
+									<th scope="col" className="whitespace-nowrap px-3 py-2 text-right font-semibold">Image (u)</th>
+									<th scope="col" className="whitespace-nowrap px-3 py-2 text-right font-semibold">Video (u)</th>
+									<th scope="col" className="whitespace-nowrap px-3 py-2 text-left font-semibold">Status</th>
+									<th scope="col" className="whitespace-nowrap px-3 py-2 text-left font-semibold">Visual</th>
+									<th scope="col" className="whitespace-nowrap px-3 py-2 text-left font-semibold">Freshness</th>
+									<th scope="col" className="whitespace-nowrap px-3 py-2 text-left font-semibold">Draft</th>
+									<th scope="col" className="whitespace-nowrap px-3 py-2 text-left font-semibold">Actions</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -687,14 +707,14 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 										<tr
 											key={product.id}
 											onClick={() => onOpenProduct?.(product.id)}
-											className={`border-b border-slate-800/50 transition-colors ${
+											className={`align-top border-b border-slate-800/50 transition-colors ${
 												onOpenProduct
 													? "cursor-pointer hover:bg-slate-800/40"
 													: ""
 											}`}
 										>
-											<td className="px-3 py-2 max-w-[220px]">
-												<div className="font-medium text-white truncate max-w-[210px]">
+											<td className="w-[220px] max-w-[220px] px-3 py-3 align-top">
+												<div className="min-w-0 max-w-[210px] truncate font-medium text-white">
 													{product.product_display_name ||
 														product.raw_product_title}
 												</div>
@@ -712,10 +732,10 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 													</span>
 												</div>
 											</td>
-											<td className="px-3 py-2 text-slate-300 max-w-[150px] truncate">
+											<td className="w-[150px] max-w-[150px] break-words px-3 py-3 align-top text-slate-300">
 												{clusterType}
 											</td>
-											<td className="px-3 py-2">
+											<td className="whitespace-nowrap px-3 py-3 align-top">
 												{riskLevel ? (
 													<span
 														className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
@@ -729,7 +749,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 													<span className="text-[9px] text-slate-600">—</span>
 												)}
 											</td>
-											<td className="px-3 py-2">
+											<td className="whitespace-nowrap px-3 py-3 align-top">
 												{thumb ? (
 													<img
 														src={thumb}
@@ -744,25 +764,25 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 													<div className="w-8 h-8 rounded bg-slate-800 border border-slate-700" />
 												)}
 											</td>
-											<td className="px-3 py-2 text-right tabular-nums text-slate-300">
+											<td className="whitespace-nowrap px-3 py-3 text-right tabular-nums text-slate-300">
 												{fmtCount(sold)}
 											</td>
-											<td className="px-3 py-2 text-right tabular-nums text-slate-300">
+											<td className="whitespace-nowrap px-3 py-3 text-right tabular-nums text-slate-300">
 												{fmtMoney(product.price)}
 											</td>
-											<td className="px-3 py-2 text-right tabular-nums text-slate-400">
+											<td className="whitespace-nowrap px-3 py-3 text-right tabular-nums text-slate-400">
 												{fmtPercent(product.commission_rate)}
 											</td>
-											<td className="px-3 py-2 text-right tabular-nums text-slate-300">
+											<td className="whitespace-nowrap px-3 py-3 text-right tabular-nums text-slate-300">
 												{fmtMoney(product.commission_amount)}
 											</td>
-											<td className="px-3 py-2 text-right tabular-nums text-slate-400">
+											<td className="whitespace-nowrap px-3 py-3 text-right tabular-nums text-slate-400">
 												{product.source_media_image_count ?? 0}
 											</td>
-											<td className="px-3 py-2 text-right tabular-nums text-slate-400">
+											<td className="whitespace-nowrap px-3 py-3 text-right tabular-nums text-slate-400">
 												{product.source_media_video_count ?? 0}
 											</td>
-											<td className="px-3 py-2">
+											<td className="whitespace-nowrap px-3 py-3 align-top">
 												{lifecycle ? (
 													<span
 														className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
@@ -776,17 +796,19 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 														<span className="text-[9px] text-slate-600">—</span>
 													)}
 											</td>
-											<td className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
-												<ProductVisualReadinessPanel
-													productId={product.id}
-													productSourceUrl={product.tiktok_product_url || product.source_url}
-													readiness={product.visual_readiness}
-													compact
-													onOpenReview={() => onOpenProduct?.(product.id)}
-													onChanged={(next) => updateVisualReadiness(product.id, next)}
-												/>
+											<td className="w-[510px] max-w-[510px] px-3 py-3 align-top whitespace-normal" onClick={(event) => event.stopPropagation()}>
+												<div className="min-w-0 max-w-full">
+													<ProductVisualReadinessPanel
+														productId={product.id}
+														productSourceUrl={product.tiktok_product_url || product.source_url}
+														readiness={product.visual_readiness}
+														compact
+														onOpenReview={() => onOpenProduct?.(product.id)}
+														onChanged={(next) => updateVisualReadiness(product.id, next)}
+													/>
+												</div>
 											</td>
-											<td className="px-3 py-2">
+											<td className="whitespace-nowrap px-3 py-3 align-top">
 												{fresh ? (
 													<span
 														className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
@@ -800,7 +822,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 													<span className="text-[9px] text-slate-600">—</span>
 												)}
 											</td>
-											<td className="px-3 py-2">
+											<td className="whitespace-nowrap px-3 py-3 align-top">
 												{draft ? (
 													<span
 														className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
@@ -814,7 +836,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 													<span className="text-[9px] text-slate-600">—</span>
 												)}
 											</td>
-											<td className="px-3 py-2">
+											<td className="whitespace-nowrap px-3 py-3 align-top">
 												<button
 													type="button"
 													onClick={(e) => {
