@@ -1,3 +1,4 @@
+from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
@@ -26,6 +27,32 @@ async def test_readiness_separates_same_product_grounding_from_exact_approval(tm
     assert readiness["exact_commerce_status"] == "EXACT_COMMERCE_REVIEW_REQUIRED"
     assert readiness["cutout_status"] == "NOT_PREPARED"
     assert readiness["provider_operations"] == 0
+
+
+def test_deterministic_cutout_bytes_preserve_canonical_source_dimensions(tmp_path, monkeypatch):
+    source = tmp_path / "source.png"
+    Image.new("RGB", (24, 24), (30, 120, 150)).save(source)
+
+    def fake_cutout(_path, *, preserve_canvas=False):
+        assert preserve_canvas is True
+        image = Image.new("RGBA", (24, 24), (0, 0, 0, 0))
+        for x in range(2, 6):
+            for y in range(2, 8):
+                image.putpixel((x, y), (30, 120, 150, 255))
+        return image
+
+    monkeypatch.setattr(
+        "agent.services.exact_product_compositor_service._build_canonical_cutout",
+        fake_cutout,
+    )
+
+    raw, bounds, _sha = service._build_cutout_bytes(source)
+
+    with Image.open(BytesIO(raw)) as cutout:
+        assert cutout.size == (24, 24)
+        assert cutout.getchannel("A").getbbox() is not None
+    assert bounds["w"] < 1.0
+    assert bounds["h"] < 1.0
 
 
 @pytest.mark.asyncio

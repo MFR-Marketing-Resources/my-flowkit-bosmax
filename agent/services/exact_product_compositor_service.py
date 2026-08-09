@@ -1062,7 +1062,7 @@ def _recolor_neck_band(image: Image.Image) -> Image.Image:
     return img
 
 
-def _build_canonical_cutout(source: Path) -> Image.Image:
+def _build_canonical_cutout(source: Path, *, preserve_canvas: bool = False) -> Image.Image:
     """Isolate product: ROI from red-cap + teal-label anchors, then BG flood.
 
     Cream cartouche stays as source RGB (never classified as wall).
@@ -1344,7 +1344,7 @@ def _build_canonical_cutout(source: Path) -> Image.Image:
     image = _strip_synthetic_base_tab(image)
 
     bbox = image.getbbox()
-    if bbox:
+    if bbox and not preserve_canvas:
         pad = 1
         bx0, by0, bx1, by1 = bbox
         image = image.crop(
