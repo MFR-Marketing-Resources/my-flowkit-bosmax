@@ -1040,11 +1040,16 @@ domains:
       - agent/models/poster_campaign_qa.py
       - agent/services/poster_campaign_qa_service.py
       - agent/services/poster_campaign_variant_service.py
+      - agent/services/poster_benchmark_cohort_service.py
+      - agent/services/poster_replay_evidence_service.py
       - tests/unit/test_poster_campaign_qa_service.py
+      - tests/unit/test_poster_v3_e1_evidence.py
       - tests/api/test_poster_campaign_qa_api.py
       - tests/api/test_poster_campaign_compose_api.py
       - scripts/poster-builder-v3-benchmark.py
       - docs/evidence/poster-builder-v3-qa-review-20260808.md
+      - docs/evidence/poster-builder-v3-e1-benchmark-cohort.json
+      - docs/evidence/poster-builder-v3-e1-mwcb-replay.json
       - agent/api/poster_copy_sets.py
       - agent/api/poster_compose.py
       - agent/authority/POSTER_TEMPLATE_TOKENS.yaml

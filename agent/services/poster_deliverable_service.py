@@ -64,7 +64,10 @@ from agent.services.poster_campaign_qa_service import (
     build_campaign_machine_qa,
     build_campaign_post_composition_qa,
     build_world_class_review,
+    manifest_fingerprint,
 )
+from agent.services.poster_campaign_design_service import build_campaign_design_brief
+from agent.services.product_reference_pack_service import get_reference_pack
 
 # HONEST product-truth stamping: REFERENCE_CONDITIONED generation cannot prove
 # pixel-level product preservation — never stamp PRESERVED for it. A
@@ -537,6 +540,93 @@ class PosterDeliverableService:
             background_media_id, background_local_path
         )
 
+        # Campaign provenance is resolved server-side from the same immutable
+        # authorities used by the generation gate.  The client may contribute
+        # a prompt fingerprint, but it cannot manufacture product/reference or
+        # provider-operation lineage.
+        campaign_provenance: dict[str, Any] = {}
+        if campaign_mode:
+            reference_pack = None
+            try:
+                reference_pack = await get_reference_pack(product_id)
+            except Exception:
+                reference_pack = None
+            brief = None
+            try:
+                brief = await build_campaign_design_brief(
+                    product_id,
+                    objective=_norm(copy_set.get("objective")) or "Product Hero",
+                    selected_angle=_norm(copy_set.get("angle")),
+                    copy_layout={
+                        "primary_message": _norm(copy_set.get("primary_message")),
+                        "support_message": _norm(copy_set.get("support_message")),
+                        "cta": _norm(copy_set.get("cta")),
+                    },
+                    fail_closed=False,
+                )
+            except Exception:
+                brief = None
+            operation_rows: list[dict[str, Any]] = []
+            if media_id:
+                try:
+                    operation_rows = await crud.list_image_generation_operations_by_media_id(media_id)
+                except Exception:
+                    operation_rows = []
+            operation = operation_rows[0] if operation_rows else {}
+            raw_sha = ""
+            try:
+                raw_sha = _sha256(Path(bg_local)) if bg_local else ""
+            except OSError:
+                raw_sha = ""
+            try:
+                provider_budget = int(
+                    settings.get("provider_operation_budget")
+                    or settings.get("maximum_provider_operations")
+                    or 1
+                )
+            except (TypeError, ValueError):
+                provider_budget = 1
+            actual_retry_count = max(0, len(operation_rows) - 1)
+            reference_role_hashes = {
+                str(binding.role): str(binding.sha256 or "UNVERIFIED")
+                for binding in (reference_pack.references if reference_pack else [])
+            }
+            settings.setdefault("raw_key_visual_media_id", media_id)
+            settings.setdefault("raw_key_visual_sha256", raw_sha)
+            settings.setdefault("provider_operation_budget", provider_budget)
+            settings.setdefault("actual_retry_count", actual_retry_count)
+            settings.setdefault(
+                "clean_key_visual_prompt_fingerprint",
+                _norm(settings.get("prompt_fingerprint")),
+            )
+            campaign_provenance = {
+                "clean_key_visual_prompt_fingerprint": _norm(
+                    settings.get("clean_key_visual_prompt_fingerprint")
+                    or settings.get("prompt_fingerprint")
+                ),
+                "approved_snapshot_id": _norm(getattr(brief, "approved_snapshot_id", "")),
+                "approved_snapshot_version": getattr(brief, "approved_snapshot_version", None),
+                "design_brief_version": _norm(getattr(brief, "schema_version", "")),
+                "copy_route_id": _norm(settings.get("copy_route_id") or copy_set.get("campaign_id")),
+                "reference_pack_id": _norm(
+                    getattr(reference_pack, "pack_id", "") or settings.get("reference_pack_id")
+                ),
+                "reference_role_hashes": reference_role_hashes,
+                "requested_provider_model": _norm(
+                    image_model or operation.get("model") or "NANO_BANANA_PRO"
+                ),
+                "provider_batch_id": _norm(operation.get("transport_batch_id")),
+                "provider_operation_id": _norm(operation.get("provider_operation_id")),
+                "provider_operation_id_status": _norm(
+                    operation.get("operation_id_status")
+                    or ("PROVIDER_OPERATION_RECORD_MISSING" if not operation else "UNPROVEN_PROVIDER_OPERATION_ID")
+                ),
+                "provider_operation_budget": provider_budget,
+                "actual_retry_count": actual_retry_count,
+                "raw_key_visual_media_id": media_id,
+                "raw_key_visual_sha256": raw_sha,
+            }
+
         try:
             # B-01/B-03: the canonical plan is resolved ONCE here — with the
             # real product-truth/identity/recipe constraints — and passed into
@@ -570,6 +660,7 @@ class PosterDeliverableService:
                 composition_plan=composition_plan,
                 design_route=str(settings.get("design_route") or "") if campaign_mode else "",
                 layout_variant=str(settings.get("layout_variant") or "") if campaign_mode else "",
+                campaign_provenance=campaign_provenance if campaign_mode else None,
                 # Campaigns already receive a provider-integrated clean key
                 # visual. The local compositor adds deterministic copy only;
                 # Exact Commerce retains the immutable cutout layer.
@@ -603,6 +694,8 @@ class PosterDeliverableService:
                 copy_set=copy_set,
                 settings=settings,
                 output_sha256=sha,
+                background_path=bg_local,
+                output_path=str(out_path),
             )
             campaign_findings = [
                 PosterQAFinding(
@@ -626,6 +719,16 @@ class PosterDeliverableService:
                     "warn_count": qa.warn_count + campaign_post_qa.warn_count,
                 }
             )
+        manifest_sha = manifest_fingerprint(manifest)
+        settings["final_poster_sha256"] = sha
+        settings["manifest_sha256"] = manifest_sha
+        qa = qa.model_copy(
+            update={
+                "render_report": report,
+                "output_sha256": sha,
+                "manifest_sha256": manifest_sha,
+            }
+        )
         row = await crud.create_poster_deliverable(
             product_id,
             poster_copy_set_id=copy_set["poster_copy_set_id"],

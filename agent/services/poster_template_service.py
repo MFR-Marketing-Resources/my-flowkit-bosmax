@@ -180,6 +180,7 @@ def build_render_manifest(
     exact_product_layer: dict[str, Any] | None = None,
     design_route: str = "",
     layout_variant: str = "",
+    campaign_provenance: dict[str, Any] | None = None,
 ) -> PosterRenderManifest:
     """Approved poster copy + template contract → versioned render manifest.
 
@@ -261,6 +262,7 @@ def build_render_manifest(
     # in verbatim. The manifest never re-derives a second plan from fabricated
     # defaults — an absent plan is preserved honestly as absent (legacy path).
     composition_plan = composition_plan or {}
+    campaign_provenance = campaign_provenance or {}
     font_status = str((contract.get("font_readiness") or {}).get("status") or "")
     return PosterRenderManifest(
         background_media_id=background_media_id,
@@ -291,7 +293,13 @@ def build_render_manifest(
             ai_model=str(copy_set.get("ai_model") or ""),
             prompt_version=str(copy_set.get("prompt_version") or ""),
             image_model=image_model,
-            background_prompt_fingerprint=background_prompt_fingerprint,
+            background_prompt_fingerprint=(
+                background_prompt_fingerprint
+                or str(campaign_provenance.get("clean_key_visual_prompt_fingerprint") or "")
+            ),
+            clean_key_visual_prompt_fingerprint=str(
+                campaign_provenance.get("clean_key_visual_prompt_fingerprint") or ""
+            ),
             creative_mode=str(creative_direction.get("mode") or ""),
             creative_direction_authority_version=str(creative_direction.get("authority_version") or ""),
             representation_policy_version=str(creative_direction.get("representation_policy_version") or ""),
@@ -302,6 +310,30 @@ def build_render_manifest(
             layout_variant=selected_variant,
             type_pairing_id=str(contract.get("type_pairing_id") or ""),
             font_readiness_status=font_status,
+            approved_snapshot_id=str(campaign_provenance.get("approved_snapshot_id") or ""),
+            approved_snapshot_version=campaign_provenance.get("approved_snapshot_version"),
+            design_brief_version=str(campaign_provenance.get("design_brief_version") or ""),
+            copy_route_id=str(campaign_provenance.get("copy_route_id") or ""),
+            reference_pack_id=str(campaign_provenance.get("reference_pack_id") or ""),
+            reference_role_hashes={
+                str(key): str(value)
+                for key, value in (campaign_provenance.get("reference_role_hashes") or {}).items()
+                if str(key).strip() and str(value).strip()
+            },
+            requested_provider_model=str(
+                campaign_provenance.get("requested_provider_model") or image_model or ""
+            ),
+            provider_batch_id=str(campaign_provenance.get("provider_batch_id") or ""),
+            provider_operation_id=str(campaign_provenance.get("provider_operation_id") or ""),
+            provider_operation_id_status=str(
+                campaign_provenance.get("provider_operation_id_status") or ""
+            ),
+            provider_operation_budget=int(campaign_provenance.get("provider_operation_budget") or 0),
+            actual_retry_count=int(campaign_provenance.get("actual_retry_count") or 0),
+            raw_key_visual_media_id=str(
+                campaign_provenance.get("raw_key_visual_media_id") or background_media_id or ""
+            ),
+            raw_key_visual_sha256=str(campaign_provenance.get("raw_key_visual_sha256") or ""),
             composition_plan=composition_plan,
         ),
     )

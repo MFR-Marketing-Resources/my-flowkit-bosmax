@@ -561,6 +561,22 @@ async def list_image_generation_operations(job_id: str) -> list[dict]:
     return [dict(row) for row in await cur.fetchall()]
 
 
+async def list_image_generation_operations_by_media_id(media_id: str) -> list[dict]:
+    """Read-only reverse lookup for a retrieved IMG artifact.
+
+    The provider media id is the durable join available to Poster Builder.
+    A missing provider operation id remains represented by its persisted
+    ``operation_id_status``; this helper never synthesises one.
+    """
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM image_generation_operation WHERE provider_media_id=? "
+        "ORDER BY created_at DESC, variant_index DESC",
+        (media_id,),
+    )
+    return [dict(row) for row in await cur.fetchall()]
+
+
 async def get_product_by_fastmoss_reference_id(reference_id: str):
     """Return the canonical product row committed from a FastMoss reference, if
     any. Enables reference_id -> canonical fallback when a queue row is missing
