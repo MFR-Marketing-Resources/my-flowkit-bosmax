@@ -14,6 +14,7 @@ import json
 import math
 import shutil
 import sqlite3
+import uuid
 from datetime import UTC, datetime
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -38,6 +39,13 @@ class ProductTruthLockError(ValueError):
         self.code = code
         self.message = message or code
         self.status_code = status_code
+
+
+AUTO_GENERATED = "AUTO_GENERATED"
+USER_UPLOAD = "USER_UPLOAD"
+CANONICAL_REFERENCE = "CANONICAL_REFERENCE"
+ACTIVE_CANONICAL_CUTOUT = "APPROVED_CANONICAL_CUTOUT"
+ACTIVE_SAME_PRODUCT_FALLBACK = "SAME_PRODUCT_TRUSTED_SOURCE"
 
 
 @dataclass(frozen=True)
@@ -112,6 +120,74 @@ def _json_field(row: dict[str, Any], name: str, default: Any) -> Any:
         raise ProductTruthLockError(
             "PRODUCT_TRUTH_LOCK_INVALID",
             f"{name} is not valid JSON",
+        ) from exc
+
+
+def _cutout_source_kind(row: dict[str, Any]) -> str:
+    provenance = _json_field(row, "provenance_json", {})
+    declared = str(
+        provenance.get("source_kind")
+        or provenance.get("cutout_source")
+        or ""
+    ).upper()
+    if declared in {AUTO_GENERATED, USER_UPLOAD, CANONICAL_REFERENCE}:
+        return declared
+    created_by = str(provenance.get("created_by") or "").lower()
+    return AUTO_GENERATED if created_by.startswith("system:") else USER_UPLOAD
+
+
+def _safe_upload_filename(filename: str | None) -> str:
+    """Keep the operator label while preventing path components in metadata."""
+    raw = str(filename or "").replace("\\", "/")
+    safe = Path(raw).name.strip()
+    if not safe or safe in {".", ".."}:
+        return "manual-cutout.png"
+    return safe[:255]
+
+
+def _uploaded_cutout_details(
+    raw_bytes: bytes,
+    *,
+    expected_dimensions: tuple[int, int] | None = None,
+) -> tuple[int, int, str, tuple[int, int, int, int]]:
+    """Decode and validate a transparent PNG without resizing or mutating it."""
+    try:
+        with Image.open(io.BytesIO(raw_bytes)) as image:
+            if (image.format or "").upper() != "PNG":
+                raise ProductTruthLockError(
+                    "CANONICAL_CUTOUT_MIME_INVALID",
+                    "Manual product cutouts must be PNG files; JPEG and other formats are rejected.",
+                )
+            width, height = image.size
+            if width <= 0 or height <= 0 or width > 8192 or height > 8192:
+                raise ProductTruthLockError(
+                    "CANONICAL_CUTOUT_DIMENSIONS_INVALID",
+                    "Manual cutout dimensions must be positive and no larger than 8192px per side.",
+                )
+            if expected_dimensions and (width, height) != expected_dimensions:
+                raise ProductTruthLockError(
+                    "CANONICAL_CUTOUT_DIMENSIONS_MISMATCH",
+                    "Manual cutout dimensions must match the canonical product source dimensions.",
+                )
+            rgba = image.convert("RGBA")
+            try:
+                alpha = rgba.getchannel("A")
+                extrema = alpha.getextrema()
+                bbox = alpha.getbbox()
+                if extrema[1] <= 0 or extrema[0] >= 255 or bbox is None:
+                    raise ProductTruthLockError(
+                        "CANONICAL_CUTOUT_ALPHA_REQUIRED",
+                        "Manual cutout must contain transparent background and visible product geometry.",
+                    )
+                return width, height, _sha256_bytes(alpha.tobytes()), bbox
+            finally:
+                rgba.close()
+    except ProductTruthLockError:
+        raise
+    except Exception as exc:
+        raise ProductTruthLockError(
+            "CANONICAL_CUTOUT_INVALID",
+            f"Manual cutout cannot be decoded as a valid PNG: {exc}",
         ) from exc
 
 
@@ -354,6 +430,11 @@ def _validate_lock_bytes(lock: ProductTruthLock) -> ResolvedProductTruthLock:
             "HUMAN_REVIEW_REQUIRED",
             "Product truth lock is not approved for exact output.",
         )
+    if str(lock.provenance.get("active_selection") or "").upper() == ACTIVE_SAME_PRODUCT_FALLBACK:
+        raise ProductTruthLockError(
+            "SAME_PRODUCT_FALLBACK_SELECTED",
+            "The operator selected same-product fallback; the cutout is not active for exact commerce.",
+        )
     if not all(
         (
             lock.identity_lock,
@@ -523,6 +604,19 @@ def _safe_media_path(raw_path: Any) -> Path:
     return resolved
 
 
+def _resolve_canonical_reference(product: dict[str, Any]) -> Any:
+    from agent.services import product_visual_grounding_resolver as resolver
+
+    try:
+        return resolver.resolve_product_reference_image(dict(product), prefer_approved_cutout=False)
+    except TypeError as exc:
+        # Compatibility seam for narrow test doubles and legacy callers that
+        # predate the explicit resolver preference keyword.
+        if "prefer_approved_cutout" not in str(exc):
+            raise
+        return resolver.resolve_product_reference_image(dict(product))
+
+
 async def register_product_truth_cutout_media(
     product_id: str,
     *,
@@ -545,15 +639,19 @@ async def register_product_truth_cutout_media(
             "Uploaded cutout exceeds the 10 MB review-media limit.",
             status_code=413,
         )
+    normalized_mime = str(content_type or "").split(";", 1)[0].strip().lower()
+    if normalized_mime and normalized_mime != "image/png":
+        raise ProductTruthLockError(
+            "CANONICAL_CUTOUT_MIME_INVALID",
+            "Manual product cutouts must declare image/png MIME type.",
+        )
 
     product = await crud.get_product(product_id)
     if not product:
         raise ProductTruthLockError("PRODUCT_NOT_FOUND", f"Product {product_id} was not found.", status_code=404)
 
     try:
-        from agent.services import product_visual_grounding_resolver as resolver
-
-        reference = resolver.resolve_product_reference_image(dict(product), prefer_approved_cutout=False)
+        reference = _resolve_canonical_reference(dict(product))
     except Exception as exc:
         if isinstance(exc, ProductTruthLockError):
             raise
@@ -562,37 +660,10 @@ async def register_product_truth_cutout_media(
             f"Server could not resolve the canonical product source: {exc}",
         ) from exc
 
-    try:
-        with Image.open(io.BytesIO(raw_bytes)) as image:
-            if (image.format or "").upper() != "PNG":
-                raise ProductTruthLockError(
-                    "CANONICAL_CUTOUT_INVALID",
-                    "Reviewed product cutouts must be PNG files with an alpha channel.",
-                )
-            width, height = image.size
-            if (width, height) != (int(reference.width), int(reference.height)):
-                raise ProductTruthLockError(
-                    "CANONICAL_CUTOUT_DIMENSIONS_MISMATCH",
-                    "Reviewed cutout dimensions must match the canonical source dimensions.",
-                )
-            rgba = image.convert("RGBA")
-            try:
-                alpha = rgba.getchannel("A")
-                extrema = alpha.getextrema()
-                if extrema[1] <= 0 or extrema[0] >= 255 or alpha.getbbox() is None:
-                    raise ProductTruthLockError(
-                        "CANONICAL_CUTOUT_INVALID",
-                        "Reviewed cutout must contain transparent background and visible product geometry.",
-                    )
-            finally:
-                rgba.close()
-    except ProductTruthLockError:
-        raise
-    except Exception as exc:
-        raise ProductTruthLockError(
-            "CANONICAL_CUTOUT_INVALID",
-            f"Uploaded cutout cannot be decoded: {exc}",
-        ) from exc
+    width, height, _alpha_sha, _bbox = _uploaded_cutout_details(
+        raw_bytes,
+        expected_dimensions=(int(reference.width), int(reference.height)),
+    )
 
     cutout_sha = _sha256_bytes(raw_bytes)
     existing_media = await crud.list_product_source_media(product_id=product_id)
@@ -608,7 +679,7 @@ async def register_product_truth_cutout_media(
                 "product_id": product_id,
                 "media_id": row.get("media_id"),
                 "kind": "image",
-                "filename": row.get("filename") or filename,
+                "filename": row.get("filename") or _safe_upload_filename(filename),
                 "mime": row.get("mime") or content_type or "image/png",
                 "bytes": len(raw_bytes),
                 "width": width,
@@ -623,13 +694,14 @@ async def register_product_truth_cutout_media(
     directory.mkdir(parents=True, exist_ok=True)
     durable_path = directory / f"review_cutout_{cutout_sha[:16]}.png"
     durable_path.write_bytes(raw_bytes)
+    safe_filename = _safe_upload_filename(filename)
     try:
         row = await crud.create_product_source_media(
             f"visual-lock:{product_id}",
             "image",
             product_id=product_id,
             local_path=_server_path_string(durable_path),
-            filename=filename or durable_path.name,
+            filename=safe_filename,
             mime="image/png",
             bytes=len(raw_bytes),
             width=width,
@@ -649,7 +721,7 @@ async def register_product_truth_cutout_media(
         "product_id": product_id,
         "media_id": row.get("media_id") if row else None,
         "kind": "image",
-        "filename": filename or durable_path.name,
+        "filename": safe_filename or durable_path.name,
         "mime": "image/png",
         "bytes": len(raw_bytes),
         "width": width,
@@ -722,8 +794,11 @@ def _prepare_durable_assets(
     *,
     source_width: int,
     source_height: int,
+    version_id: str | None = None,
 ) -> tuple[Path, Path, str, str, dict[str, Any]]:
     directory = _truth_lock_directory(product_id)
+    if version_id:
+        directory = directory / "versions" / version_id
     directory.mkdir(parents=True, exist_ok=True)
 
     source_suffix = source_path.suffix.lower()
@@ -785,6 +860,72 @@ def _prepare_durable_assets(
     )
 
 
+async def _archive_existing_truth_lock(
+    product_id: str,
+    existing: dict[str, Any],
+    *,
+    superseded_by_media_id: str,
+    reason: str,
+) -> str:
+    """Copy the former active candidate before replacing the one-row SSOT."""
+    history_id = uuid.uuid4().hex
+    history_directory = _truth_lock_directory(product_id) / "history" / history_id
+    history_directory.mkdir(parents=True, exist_ok=False)
+    try:
+        source = _path_from_server_record(str(existing.get("canonical_source_path") or ""))
+        cutout = _path_from_server_record(str(existing.get("canonical_cutout_path") or ""))
+        if not source.is_file() or not cutout.is_file():
+            raise ProductTruthLockError(
+                "TRUTH_LOCK_HISTORY_REQUIRED",
+                "The previous truth-lock bytes are unavailable; replacement is blocked to preserve audit history.",
+                status_code=409,
+            )
+        archived_source = history_directory / f"canonical_source{source.suffix.lower() or '.bin'}"
+        archived_cutout = history_directory / "canonical_cutout.png"
+        shutil.copyfile(source, archived_source)
+        shutil.copyfile(cutout, archived_cutout)
+        provenance = _json_field(existing, "provenance_json", {})
+        provenance.update(
+            {
+                "history_id": history_id,
+                "superseded_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                "superseded_by_media_id": superseded_by_media_id,
+                "superseded_reason": reason,
+            }
+        )
+        await crud.create_product_truth_lock_history(
+            product_id,
+            history_id=history_id,
+            source_kind=_cutout_source_kind(existing),
+            review_status=str(existing.get("review_status") or "UNKNOWN"),
+            canonical_media_id=existing.get("canonical_media_id"),
+            canonical_sha256=existing.get("canonical_sha256"),
+            source_width=existing.get("source_width"),
+            source_height=existing.get("source_height"),
+            canonical_source_path=_server_path_string(archived_source),
+            canonical_cutout_media_id=existing.get("canonical_cutout_media_id"),
+            canonical_cutout_sha256=existing.get("canonical_cutout_sha256"),
+            canonical_cutout_path=_server_path_string(archived_cutout),
+            alpha_mask_json=str(existing.get("alpha_mask_json") or "{}"),
+            anchor_point_json=str(existing.get("anchor_point_json") or "{}"),
+            allowed_bbox_json=str(existing.get("allowed_bbox_json") or "{}"),
+            provenance_json=json.dumps(provenance, sort_keys=True),
+            superseded_by_media_id=superseded_by_media_id,
+            superseded_reason=reason,
+        )
+        return history_id
+    except ProductTruthLockError:
+        shutil.rmtree(history_directory, ignore_errors=True)
+        raise
+    except Exception as exc:
+        shutil.rmtree(history_directory, ignore_errors=True)
+        raise ProductTruthLockError(
+            "TRUTH_LOCK_HISTORY_REQUIRED",
+            f"Previous truth-lock candidate could not be archived: {exc}",
+            status_code=409,
+        ) from exc
+
+
 def _safe_result(
     *,
     product_id: str,
@@ -828,17 +969,26 @@ def _safe_result(
 async def create_pending_product_truth_lock(
     product_id: str,
     request: ProductTruthLockOnboardingRequest,
+    *,
+    allow_approved_replacement: bool = False,
+    source_kind: str = USER_UPLOAD,
+    original_filename: str | None = None,
+    uploaded_by: str | None = None,
+    uploaded_at: str | None = None,
+    supersede_reason: str | None = None,
 ) -> dict[str, Any]:
-    """Create a server-owned, human-review-only lock from an uploaded cutout."""
+    """Create a server-owned, human-review-only lock from a cutout candidate."""
 
     product = await crud.get_product(product_id)
     if not product:
         raise ProductTruthLockError("PRODUCT_NOT_FOUND", f"Product {product_id} was not found.", status_code=404)
     existing = await crud.get_product_truth_lock(product_id)
-    if existing and str(existing.get("review_status") or "") == "APPROVED":
+    if source_kind not in {AUTO_GENERATED, USER_UPLOAD, CANONICAL_REFERENCE}:
+        raise ProductTruthLockError("PRODUCT_TRUTH_SOURCE_INVALID", "Unsupported cutout provenance source.")
+    if existing and str(existing.get("review_status") or "") == "APPROVED" and not allow_approved_replacement:
         raise ProductTruthLockError(
             "PRODUCT_TRUTH_LOCK_IMMUTABLE",
-            "An approved product truth lock cannot be replaced through onboarding.",
+            "An approved product truth lock can only be replaced by an explicit manual cutout upload.",
             status_code=409,
         )
 
@@ -857,9 +1007,7 @@ async def create_pending_product_truth_lock(
     cutout_path = _safe_media_path(media.get("local_path"))
 
     try:
-        from agent.services import product_visual_grounding_resolver as resolver
-
-        reference = resolver.resolve_product_reference_image(dict(product), prefer_approved_cutout=False)
+        reference = _resolve_canonical_reference(dict(product))
     except Exception as exc:
         if isinstance(exc, ProductTruthLockError):
             raise
@@ -892,12 +1040,22 @@ async def create_pending_product_truth_lock(
             "Canonical source SHA-256 changed during onboarding.",
         )
 
+    if existing:
+        await _archive_existing_truth_lock(
+            product_id,
+            existing,
+            superseded_by_media_id=request.canonical_cutout_media_id,
+            reason=supersede_reason or "REPLACED_BY_NEW_CUTOUT_CANDIDATE",
+        )
+
+    version_id = uuid.uuid4().hex
     durable_source, durable_cutout, durable_source_sha, durable_cutout_sha, alpha_mask = _prepare_durable_assets(
         product_id,
         source_path,
         cutout_path,
         source_width=source_width,
         source_height=source_height,
+        version_id=version_id,
     )
     if durable_source_sha != source_sha:
         durable_source.unlink(missing_ok=True)
@@ -908,16 +1066,32 @@ async def create_pending_product_truth_lock(
         )
 
     provenance = {
-        "onboarding_method": "OPERATOR_SUPPLIED_TRANSPARENT_CUTOUT",
-        "created_by": request.created_by,
+        "source_kind": source_kind,
+        "onboarding_method": "DETERMINISTIC_AUTO_CUTOUT" if source_kind == AUTO_GENERATED else "USER_SUPPLIED_MANUAL_CUTOUT",
+        "created_by": uploaded_by or request.created_by,
+        "uploaded_by": uploaded_by or request.created_by,
+        "uploaded_at": uploaded_at or datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "original_filename": _safe_upload_filename(original_filename or media.get("filename")),
+        "mime": "image/png",
+        "width": source_width,
+        "height": source_height,
+        "sha256": durable_cutout_sha,
+        "review_status": "PENDING_REVIEW",
+        "approval_status": "PENDING_REVIEW",
+        "active_selection": "CANDIDATE",
         "onboarding_note": request.onboarding_note,
         "canonical_source_type": str(reference.source_type or ""),
         "canonical_source_provenance": str(reference.provenance or ""),
         "canonical_media_id": canonical_media_id,
         "source_media_id": request.canonical_cutout_media_id,
         "source_media_sha256": _sha256_path(cutout_path),
+        "version_id": version_id,
         "human_review_required": True,
     }
+    if existing:
+        provenance["supersedes_previous_media_id"] = existing.get("canonical_cutout_media_id")
+        provenance["supersedes_previous_sha256"] = existing.get("canonical_cutout_sha256")
+        provenance["supersede_reason"] = supersede_reason or "REPLACED_BY_NEW_CUTOUT_CANDIDATE"
     await crud.upsert_product_truth_lock(
         product_id,
         canonical_media_id=canonical_media_id,
@@ -1004,6 +1178,11 @@ async def approve_product_truth_lock(
             "reviewed_by": request.reviewed_by,
             "review_note": request.review_note,
             "reviewed_at": reviewed_at,
+            "review_status": "APPROVED",
+            "approval_status": "APPROVED",
+            "approved_by": request.reviewed_by,
+            "approved_at": reviewed_at,
+            "active_selection": ACTIVE_CANONICAL_CUTOUT,
             "human_review_required": False,
         }
     )
@@ -1064,3 +1243,111 @@ async def approve_product_truth_lock(
         provenance=resolved.provenance,
         schema_version=resolved.schema_version,
     )
+
+
+async def reject_product_truth_lock(
+    product_id: str,
+    *,
+    rejected_by: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Record an explicit human rejection while retaining candidate bytes."""
+    operator = str(rejected_by or "").strip()
+    note = str(reason or "").strip()
+    if not operator or not note:
+        raise ProductTruthLockError(
+            "HUMAN_REVIEW_NOTE_REQUIRED",
+            "A reviewer identity and rejection reason are required.",
+            status_code=409,
+        )
+    lock = load_product_truth_lock(product_id)
+    if lock is None:
+        raise ProductTruthLockError("PRODUCT_TRUTH_LOCK_REQUIRED", "No cutout candidate exists for this product.", status_code=404)
+    rejected_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    provenance = dict(lock.provenance)
+    provenance.update(
+        {
+            "review_status": "REJECTED_BY_USER",
+            "approval_status": "REJECTED_BY_USER",
+            "rejected_by": operator,
+            "rejection_reason": note,
+            "rejected_at": rejected_at,
+            "active_selection": ACTIVE_SAME_PRODUCT_FALLBACK,
+            "human_review_required": False,
+        }
+    )
+    await crud.upsert_product_truth_lock(
+        product_id,
+        review_status="REJECTED",
+        failure_state="REJECTED_BY_USER",
+        identity_lock=0,
+        geometry_lock=0,
+        label_lock=0,
+        logo_lock=0,
+        colour_lock=0,
+        scale_lock=0,
+        provenance_json=json.dumps(provenance, sort_keys=True),
+    )
+    return {
+        "product_id": product_id,
+        "review_status": "REJECTED_BY_USER",
+        "exact_allowed": False,
+        "active_selection": ACTIVE_SAME_PRODUCT_FALLBACK,
+        "provenance": provenance,
+    }
+
+
+async def select_product_truth_fallback(
+    product_id: str,
+    *,
+    selected_by: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Select the trusted same-product source without deleting any candidate."""
+    operator = str(selected_by or "").strip()
+    note = str(reason or "").strip()
+    if not operator or not note:
+        raise ProductTruthLockError(
+            "HUMAN_REVIEW_NOTE_REQUIRED",
+            "A reviewer identity and fallback reason are required.",
+            status_code=409,
+        )
+    lock = load_product_truth_lock(product_id)
+    if lock is None:
+        return {
+            "product_id": product_id,
+            "review_status": "NOT_CREATED",
+            "exact_allowed": False,
+            "active_selection": ACTIVE_SAME_PRODUCT_FALLBACK,
+        }
+    selected_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    provenance = dict(lock.provenance)
+    provenance.update(
+        {
+            "active_selection": ACTIVE_SAME_PRODUCT_FALLBACK,
+            "fallback_selected_by": operator,
+            "fallback_reason": note,
+            "fallback_selected_at": selected_at,
+            "review_status": "FALLBACK_SELECTED",
+            "approval_status": "FALLBACK_SELECTED",
+        }
+    )
+    await crud.upsert_product_truth_lock(
+        product_id,
+        review_status="REJECTED",
+        failure_state="FALLBACK_SELECTED",
+        identity_lock=0,
+        geometry_lock=0,
+        label_lock=0,
+        logo_lock=0,
+        colour_lock=0,
+        scale_lock=0,
+        provenance_json=json.dumps(provenance, sort_keys=True),
+    )
+    return {
+        "product_id": product_id,
+        "review_status": "FALLBACK_SELECTED",
+        "exact_allowed": False,
+        "active_selection": ACTIVE_SAME_PRODUCT_FALLBACK,
+        "provenance": provenance,
+    }

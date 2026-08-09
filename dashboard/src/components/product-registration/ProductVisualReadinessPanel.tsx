@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import {
 	approveProductTruthLock,
 	productTruthCutoutPreviewUrl,
@@ -6,7 +6,10 @@ import {
 import {
 	fetchProductVisualReadiness,
 	prepareProductCutout,
+	rejectProductCutout,
 	rebuildProductCutout,
+	uploadManualProductCutout,
+	useOriginalProductFallback,
 } from "../../api/productVisualOnboarding";
 import type { ProductVisualReadiness } from "../../types";
 
@@ -27,6 +30,10 @@ const BADGE: Record<string, string> = {
 	PREPARING: "bg-sky-500/15 text-sky-300",
 	PREPARATION_FAILED: "bg-red-500/15 text-red-300",
 	BLOCKED: "bg-red-500/15 text-red-300",
+	REJECTED: "bg-red-500/15 text-red-300",
+	SUPERSEDED: "bg-slate-700/40 text-slate-400",
+	VISUAL_GROUNDING_READY_FALLBACK: "bg-amber-500/15 text-amber-300",
+	CUTOUT_REQUIRED: "bg-amber-500/15 text-amber-300",
 	NOT_PREPARED: "bg-slate-700/40 text-slate-400",
 };
 
@@ -60,13 +67,14 @@ export default function ProductVisualReadinessPanel({
 	const [readiness, setReadiness] = useState<ProductVisualReadiness | undefined>(
 		initialReadiness,
 	);
-	const [busy, setBusy] = useState<"prepare" | "rebuild" | "approve" | null>(null);
+	const [busy, setBusy] = useState<"prepare" | "rebuild" | "approve" | "upload" | "reject" | "fallback" | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [reviewedBy, setReviewedBy] = useState("");
 	const [reviewNote, setReviewNote] = useState("");
 	const [confirmIdentity, setConfirmIdentity] = useState(false);
 	const [confirmLabelLogo, setConfirmLabelLogo] = useState(false);
 	const [confirmGeometryScale, setConfirmGeometryScale] = useState(false);
+	const fileInputRef = useRef<HTMLInputElement>(null);
 
 	useEffect(() => {
 		setReadiness(initialReadiness);
@@ -128,6 +136,67 @@ export default function ProductVisualReadinessPanel({
 		}
 	}
 
+	async function uploadManual(event: ChangeEvent<HTMLInputElement>) {
+		const file = event.target.files?.[0];
+		event.target.value = "";
+		if (!file) return;
+		if (file.type !== "image/png" || !file.name.toLowerCase().endsWith(".png")) {
+			setError("Manual cutout override requires a PNG file with image/png MIME type.");
+			return;
+		}
+		setBusy("upload");
+		setError(null);
+		try {
+			const next = await uploadManualProductCutout(productId, file, reviewedBy.trim() || "operator");
+			setReadiness(next);
+			onChanged?.(next);
+		} catch (err: unknown) {
+			setError(err instanceof Error ? err.message : "Manual cutout upload failed");
+		} finally {
+			setBusy(null);
+		}
+	}
+
+	async function reject() {
+		const operator = reviewedBy.trim() || window.prompt("Reviewer identity")?.trim() || "";
+		const reason = window.prompt("Why is this cutout rejected?")?.trim() || "";
+		if (!operator || !reason) {
+			setError("Reviewer identity and rejection reason are required.");
+			return;
+		}
+		setBusy("reject");
+		setError(null);
+		try {
+			const next = await rejectProductCutout(productId, operator, reason);
+			setReadiness(next);
+			onChanged?.(next);
+		} catch (err: unknown) {
+			setError(err instanceof Error ? err.message : "Cutout rejection failed");
+		} finally {
+			setBusy(null);
+		}
+	}
+
+	async function fallback() {
+		const operator = reviewedBy.trim() || window.prompt("Operator identity")?.trim() || "";
+		const reason = window.prompt("Why use the original same-product fallback?")?.trim() || "";
+		if (!operator || !reason) {
+			setError("Operator identity and fallback reason are required.");
+			return;
+		}
+		setBusy("fallback");
+		setError(null);
+		try {
+			const next = await useOriginalProductFallback(productId, operator, reason);
+			setReadiness(next);
+			onChanged?.(next);
+		} catch (err: unknown) {
+			setError(err instanceof Error ? err.message : "Fallback selection failed");
+		} finally {
+			setBusy(null);
+		}
+	}
+
 	if (!readiness) {
 		return (
 			<div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3 text-[11px] text-slate-500">
@@ -164,11 +233,37 @@ export default function ProductVisualReadinessPanel({
 			</div>
 
 			{!compact && (
+				<div className="mt-3 grid gap-2 md:grid-cols-3">
+					<Status name="Auto Candidate" value={readiness.auto_cutout_status} />
+					<Status name="Manual Candidate" value={readiness.manual_cutout_status} />
+					<Status name="Active Source" value={readiness.active_visual_source} />
+				</div>
+			)}
+
+			{!compact && (
 				<div className="mt-4 grid gap-2 text-[10px] text-slate-400 md:grid-cols-2">
 					<div>Source: <span className="text-slate-200">{label(readiness.visual_grounding_source)}</span></div>
 					<div>Reference Pack: <span className="text-slate-200">{label(readiness.reference_pack_status)}</span></div>
 					<div>Review: <span className="text-slate-200">{label(readiness.cutout_review_status)}</span></div>
 					<div>Attempts: <span className="text-slate-200">{readiness.attempt_count ?? 0}</span></div>
+					<div>History: <span className="text-slate-200">{readiness.cutout_history_count ?? 0} preserved candidate(s)</span></div>
+				</div>
+			)}
+
+			{!compact && (
+				<div className="mt-4 grid gap-3 md:grid-cols-3" data-testid="product-cutout-comparison">
+					{[
+						["Original", readiness.original_preview_url],
+						["Auto candidate", readiness.auto_cutout_preview_url],
+						["Manual candidate", readiness.manual_cutout_preview_url],
+					].map(([name, src]) => (
+						<div key={name} className="rounded-lg border border-slate-800 p-2">
+							<div className="mb-2 text-[9px] font-bold uppercase tracking-widest text-slate-500">{name}</div>
+							<div className="flex h-36 items-center justify-center rounded bg-white" style={{ backgroundImage: "linear-gradient(45deg,#d1d5db 25%,transparent 25%),linear-gradient(-45deg,#d1d5db 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#d1d5db 75%),linear-gradient(-45deg,transparent 75%,#d1d5db 75%)", backgroundSize: "16px 16px", backgroundPosition: "0 0,0 8px,8px -8px,-8px 0" }}>
+								{src ? <img src={src} alt={`${name} cutout`} className="max-h-full max-w-full object-contain" /> : <span className="text-[10px] text-slate-500">Not available</span>}
+							</div>
+						</div>
+					))}
 				</div>
 			)}
 
@@ -181,14 +276,22 @@ export default function ProductVisualReadinessPanel({
 			)}
 
 			<div className="mt-4 flex flex-wrap items-center gap-2">
+				{readiness.can_upload_manual_cutout && (
+					<>
+						<input ref={fileInputRef} type="file" accept="image/png,.png" onChange={(event) => void uploadManual(event)} className="hidden" />
+						<button type="button" onClick={() => fileInputRef.current?.click()} disabled={busy !== null} className="rounded-lg bg-fuchsia-600/80 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40">
+							{busy === "upload" ? "Uploading…" : readiness.manual_cutout_status === "NOT_UPLOADED" ? "Upload My Cutout" : "Replace Manual Cutout"}
+						</button>
+					</>
+				)}
 				{readiness.can_prepare_cutout && (
 					<button type="button" onClick={() => void refresh("prepare")} disabled={busy !== null} className="rounded-lg bg-indigo-600/80 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40">
-						{busy === "prepare" ? "Preparing…" : "Prepare"}
+						{busy === "prepare" ? "Preparing…" : "Prepare Auto Cutout"}
 					</button>
 				)}
 				{readiness.can_rebuild_cutout && readiness.cutout_status !== "NOT_PREPARED" && (
 					<button type="button" onClick={() => void refresh("rebuild")} disabled={busy !== null} className="rounded-lg bg-slate-700 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-200 disabled:opacity-40">
-						{busy === "rebuild" ? "Rebuilding…" : "Rebuild"}
+						{busy === "rebuild" ? "Rebuilding…" : "Rebuild Auto Cutout"}
 					</button>
 				)}
 				{readiness.can_review_cutout && (
@@ -201,13 +304,26 @@ export default function ProductVisualReadinessPanel({
 						Open Source
 					</a>
 				)}
+				{readiness.can_reject_cutout && (
+					<button type="button" onClick={() => void reject()} disabled={busy !== null} className="rounded-lg bg-red-500/20 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-red-200 disabled:opacity-40">
+						{busy === "reject" ? "Rejecting…" : "Reject Cutout"}
+					</button>
+				)}
+				{readiness.can_use_original_fallback && (
+					<button type="button" onClick={() => void fallback()} disabled={busy !== null} className="rounded-lg bg-amber-500/20 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-amber-200 disabled:opacity-40">
+						{busy === "fallback" ? "Selecting…" : "Use Original Fallback"}
+					</button>
+				)}
+				{readiness.active_cutout_preview_url && (
+					<a href={readiness.active_cutout_preview_url} download className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-300">Download Active Cutout</a>
+				)}
 			</div>
 
 			{showApprovalForm && readiness.can_review_cutout && (
 				<div className="mt-5 border-t border-slate-800 pt-4" data-testid="product-visual-approval">
 					<div className="mb-3 flex flex-wrap items-start gap-4">
 						{readiness.cutout_preview_available && (
-							<img src={productTruthCutoutPreviewUrl(productId)} alt="Deterministic cutout candidate" className="h-32 w-32 rounded-lg border border-slate-700 bg-white object-contain" />
+							<img src={readiness.active_cutout_preview_url || productTruthCutoutPreviewUrl(productId)} alt="Deterministic cutout candidate" className="h-32 w-32 rounded-lg border border-slate-700 bg-white object-contain" />
 						)}
 						<div className="flex-1 text-[10px] leading-relaxed text-amber-200">
 							This candidate is not approved. Inspect identity, label/logo, geometry, scale, and source lineage before using the explicit approval gate.

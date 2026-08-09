@@ -50,3 +50,8 @@ def test_visual_onboarding_routes_are_review_gated():
     assert "/product-visual-onboarding/bulk/prepare" in paths
     assert "/product-visual-onboarding/{product_id}/cutout/prepare" in paths
     assert "/product-visual-onboarding/{product_id}/cutout/rebuild" in paths
+    assert "/product-visual-onboarding/{product_id}/cutout/manual" in paths
+    assert "/product-visual-onboarding/{product_id}/cutout/reject" in paths
+    assert "/product-visual-onboarding/{product_id}/cutout/fallback" in paths
+    assert "/product-visual-onboarding/{product_id}/cutout/history" in paths
+    assert "/product-visual-onboarding/{product_id}/cutout/preview/{variant}" in paths

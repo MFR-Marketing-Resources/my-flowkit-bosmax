@@ -41,6 +41,15 @@ from agent.services.product_visual_grounding_resolver import (
     ProductVisualReferenceRequiredError,
     resolve_product_reference_image,
 )
+from agent.services.product_truth_lock_service import (
+    AUTO_GENERATED,
+    USER_UPLOAD,
+    ProductTruthLockError,
+    create_pending_product_truth_lock,
+    register_product_truth_cutout_media,
+    reject_product_truth_lock,
+    select_product_truth_fallback,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +59,8 @@ PENDING_REVIEW = "PENDING_REVIEW"
 APPROVED = "APPROVED"
 PREPARATION_FAILED = "PREPARATION_FAILED"
 BLOCKED = "BLOCKED"
+REJECTED = "REJECTED"
+SUPERSEDED = "SUPERSEDED"
 
 PREPARATION_STATES = {
     NOT_PREPARED,
@@ -58,6 +69,7 @@ PREPARATION_STATES = {
     APPROVED,
     PREPARATION_FAILED,
     BLOCKED,
+    REJECTED,
 }
 
 _COMPOSITOR_POOL: ProcessPoolExecutor | None = None
@@ -148,10 +160,11 @@ def _with_performance(
 class ProductVisualOnboardingError(ValueError):
     """Stable, provider-free onboarding failure."""
 
-    def __init__(self, code: str, message: str = "") -> None:
+    def __init__(self, code: str, message: str = "", *, status_code: int = 409) -> None:
         super().__init__(message or code)
         self.code = code
         self.message = message or code
+        self.status_code = status_code
 
 
 def _now() -> str:
@@ -172,7 +185,13 @@ def _path(value: Any) -> Path | None:
 
 
 def _truth_row_approved(lock: dict[str, Any] | None) -> bool:
-    return bool(lock and str(lock.get("review_status") or "").upper() == APPROVED)
+    if not lock or str(lock.get("review_status") or "").upper() != APPROVED:
+        return False
+    provenance = _parse_json(lock.get("provenance_json"), {})
+    return str(provenance.get("active_selection") or "").upper() not in {
+        "SAME_PRODUCT_TRUSTED_SOURCE",
+        "FALLBACK",
+    }
 
 
 def _purge_reason(product: dict[str, Any]) -> str | None:
@@ -231,6 +250,54 @@ def _source_label(reference: Any | None, *, approved: bool) -> str:
     return "SAME_PRODUCT_CANONICAL_REFERENCE"
 
 
+def _provenance(row: dict[str, Any] | None) -> dict[str, Any]:
+    return _parse_json((row or {}).get("provenance_json"), {})
+
+
+def _candidate_source_kind(row: dict[str, Any] | None) -> str:
+    provenance = _provenance(row)
+    declared = str(provenance.get("source_kind") or "").upper()
+    if declared in {AUTO_GENERATED, USER_UPLOAD}:
+        return declared
+    created_by = str(provenance.get("created_by") or "").lower()
+    return AUTO_GENERATED if created_by.startswith("system:") else USER_UPLOAD
+
+
+def _review_label(row: dict[str, Any] | None) -> str:
+    if not row:
+        return "NOT_CREATED"
+    provenance = _provenance(row)
+    if str(row.get("review_status") or "").upper() == "REJECTED":
+        return str(provenance.get("review_status") or "REJECTED_BY_USER")
+    return str(row.get("review_status") or "NOT_CREATED")
+
+
+def _candidate_status(
+    row: dict[str, Any] | None,
+    history: list[dict[str, Any]],
+    source_kind: str,
+) -> str:
+    if row and _candidate_source_kind(row) == source_kind:
+        review = str(row.get("review_status") or "").upper()
+        if review == "APPROVED" and _truth_row_approved(row):
+            return APPROVED
+        if review == "PENDING_REVIEW":
+            return PENDING_REVIEW
+        if review == "REJECTED":
+            return REJECTED
+    for item in history:
+        if str(item.get("source_kind") or "").upper() != source_kind:
+            continue
+        review = str(item.get("review_status") or "").upper()
+        if review == "APPROVED":
+            return SUPERSEDED
+        if review == "PENDING_REVIEW":
+            return SUPERSEDED
+        if review == "REJECTED":
+            return REJECTED
+    return "NOT_UPLOADED" if source_kind == USER_UPLOAD else NOT_PREPARED
+
+
 def _prep_state(
     lock: dict[str, Any] | None,
     prep: dict[str, Any] | None,
@@ -241,7 +308,7 @@ def _prep_state(
     if review_status == "PENDING_REVIEW":
         return PENDING_REVIEW
     if review_status == "REJECTED":
-        return PREPARATION_FAILED
+        return REJECTED
     state = str((prep or {}).get("status") or NOT_PREPARED).upper()
     return state if state in PREPARATION_STATES else NOT_PREPARED
 
@@ -262,6 +329,9 @@ def _candidate_actions(
         "can_review_cutout": bool(active and pending),
         "can_approve_cutout": bool(active and pending),
         "can_rebuild_cutout": bool(active and source_available and not approved),
+        "can_upload_manual_cutout": bool(active and source_available),
+        "can_reject_cutout": bool(active and lock and str(lock.get("review_status") or "").upper() in {PENDING_REVIEW, APPROVED}),
+        "can_use_original_fallback": bool(active and source_available),
         "can_open_source": bool(source_available or product.get("image_url")),
         "can_view": True,
     }
@@ -277,18 +347,36 @@ def _readiness_payload(
     source_available: bool,
     source_error: str | None = None,
     blocked_reason: str | None = None,
+    history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    history = history or []
     state = _prep_state(lock, prep)
     approved = _truth_row_approved(lock)
-    if approved:
+    source_kind = _candidate_source_kind(lock) if lock else ""
+    auto_status = _candidate_status(lock, history, AUTO_GENERATED)
+    manual_status = _candidate_status(lock, history, USER_UPLOAD)
+    if blocked_reason:
+        grounding_status = "VISUAL_GROUNDING_BLOCKED"
+        exact_status = "EXACT_COMMERCE_BLOCKED"
+    elif approved:
         grounding_status = "VISUAL_GROUNDING_READY"
         exact_status = "EXACT_COMMERCE_CUTOUT_READY"
     elif source_available:
-        grounding_status = "VISUAL_GROUNDING_READY"
-        exact_status = "EXACT_COMMERCE_REVIEW_REQUIRED"
+        grounding_status = "VISUAL_GROUNDING_READY_FALLBACK"
+        exact_status = "CUTOUT_REQUIRED"
     else:
         grounding_status = "VISUAL_GROUNDING_BLOCKED"
         exact_status = "EXACT_COMMERCE_BLOCKED"
+
+    active_source = "BLOCKED"
+    if blocked_reason:
+        active_source = "BLOCKED"
+    elif approved and source_kind == USER_UPLOAD:
+        active_source = "APPROVED_MANUAL_CANONICAL_CUTOUT"
+    elif approved and source_kind == AUTO_GENERATED:
+        active_source = "APPROVED_AUTO_CANONICAL_CUTOUT"
+    elif source_available:
+        active_source = "SAME_PRODUCT_TRUSTED_SOURCE"
 
     blockers: list[str] = []
     warnings: list[str] = []
@@ -302,6 +390,8 @@ def _readiness_payload(
         warnings.append("EXACT_COMMERCE_REQUIRES_EXPLICIT_HUMAN_APPROVAL")
     if state == PREPARATION_FAILED:
         warnings.append(str((prep or {}).get("failure_code") or "CUTOUT_PREPARATION_FAILED"))
+    if state == REJECTED:
+        warnings.append("REJECTED_BY_USER")
 
     actions = _candidate_actions(
         product,
@@ -315,10 +405,13 @@ def _readiness_payload(
         "canonical_media_status": "AVAILABLE" if source_available else "MISSING",
         "reference_pack_status": str((pack or {}).get("pack_status") or "NOT_PREPARED"),
         "visual_grounding_status": grounding_status,
-        "visual_grounding_source": _source_label(reference, approved=approved),
+        "visual_grounding_source": "BLOCKED" if blocked_reason else (active_source if approved else _source_label(reference, approved=False)),
         "cutout_status": state,
-        "cutout_review_status": str((lock or {}).get("review_status") or "NOT_CREATED"),
+        "cutout_review_status": _review_label(lock),
         "exact_commerce_status": exact_status,
+        "auto_cutout_status": auto_status,
+        "manual_cutout_status": manual_status,
+        "active_visual_source": active_source,
         "cutout_media_id": (lock or {}).get("canonical_cutout_media_id")
         or (prep or {}).get("cutout_media_id"),
         "cutout_preview_available": bool(
@@ -328,6 +421,23 @@ def _readiness_payload(
         "attempt_count": int((prep or {}).get("attempt_count") or 0),
         "failure_code": (prep or {}).get("failure_code"),
         "failure_message": (prep or {}).get("failure_message"),
+        "original_preview_url": (
+            f"/api/product-visual-onboarding/{product.get('id')}/cutout/preview/original"
+            if source_available else None
+        ),
+        "auto_cutout_preview_url": (
+            f"/api/product-visual-onboarding/{product.get('id')}/cutout/preview/auto"
+            if auto_status not in {NOT_PREPARED, "NOT_UPLOADED"} else None
+        ),
+        "manual_cutout_preview_url": (
+            f"/api/product-visual-onboarding/{product.get('id')}/cutout/preview/manual"
+            if manual_status not in {NOT_PREPARED, "NOT_UPLOADED"} else None
+        ),
+        "active_cutout_preview_url": (
+            f"/api/product-visual-onboarding/{product.get('id')}/cutout/preview/active"
+            if lock and (lock.get("canonical_cutout_path") or lock.get("canonical_cutout_media_id")) else None
+        ),
+        "cutout_history_count": len(history),
         "blockers": blockers,
         "warnings": warnings,
         "provider_operations": 0,
@@ -536,6 +646,10 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
                 created_by="system:deterministic-product-cutout",
                 onboarding_note="Deterministic local candidate; explicit human review and approval required.",
             ),
+            source_kind=AUTO_GENERATED,
+            original_filename=f"deterministic-cutout-{cutout_sha[:16]}.png",
+            uploaded_by="system:deterministic-product-cutout",
+            supersede_reason="REBUILT_AUTO_CANDIDATE",
         )
         db_write_seconds += time.perf_counter() - lock_started
         persisted_lock = await crud.get_product_truth_lock(product_id)
@@ -602,13 +716,226 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
         db_write_seconds=db_write_seconds)
 
 
+def _manual_cutout_bounds(raw_bytes: bytes, width: int, height: int) -> dict[str, float]:
+    try:
+        with Image.open(io.BytesIO(raw_bytes)) as image:
+            rgba = image.convert("RGBA")
+            try:
+                bbox = rgba.getchannel("A").getbbox()
+            finally:
+                rgba.close()
+    except Exception as exc:
+        raise ProductVisualOnboardingError("CANONICAL_CUTOUT_INVALID", str(exc)) from exc
+    if bbox is None:
+        raise ProductVisualOnboardingError("CANONICAL_CUTOUT_ALPHA_REQUIRED", "Manual cutout has no visible product geometry.")
+    left, top, right, bottom = bbox
+    return {
+        "x": left / width,
+        "y": top / height,
+        "w": (right - left) / width,
+        "h": (bottom - top) / height,
+        "anchor_x": (left + right) / (2 * width),
+        "anchor_y": (top + bottom) / (2 * height),
+    }
+
+
+def _truth_error(exc: ProductTruthLockError) -> ProductVisualOnboardingError:
+    return ProductVisualOnboardingError(exc.code, exc.message, status_code=exc.status_code)
+
+
+async def upload_manual_product_cutout(
+    product_id: str,
+    *,
+    filename: str,
+    content_type: str | None,
+    raw_bytes: bytes,
+    uploaded_by: str,
+) -> dict[str, Any]:
+    """Persist a user PNG as a pending first-class cutout candidate."""
+    product = await crud.get_product(product_id)
+    if not product:
+        raise ProductVisualOnboardingError("PRODUCT_NOT_FOUND", f"Product {product_id} was not found.", status_code=404)
+    blocked = await _blocked_reason(product)
+    if blocked:
+        raise ProductVisualOnboardingError(
+            blocked,
+            "Manual cutout upload is blocked for this product cohort.",
+            status_code=409,
+        )
+    reference = await _resolve_source(product)
+    width = int(getattr(reference, "width", 0) or 0)
+    height = int(getattr(reference, "height", 0) or 0)
+    if width <= 0 or height <= 0:
+        raise ProductVisualOnboardingError("CANONICAL_PRODUCT_SOURCE_INVALID", "Canonical product dimensions are unavailable.")
+    try:
+        media = await register_product_truth_cutout_media(
+            product_id,
+            filename=filename,
+            content_type=content_type,
+            raw_bytes=raw_bytes,
+        )
+        media_id = str(media.get("media_id") or "").strip()
+        if not media_id:
+            raise ProductVisualOnboardingError("CANONICAL_CUTOUT_MEDIA_REQUIRED", "Manual cutout media was not persisted.")
+        bounds = _manual_cutout_bounds(raw_bytes, width, height)
+        await create_pending_product_truth_lock(
+            product_id,
+            ProductTruthLockOnboardingRequest(
+                canonical_cutout_media_id=media_id,
+                anchor_point={"x": bounds["anchor_x"], "y": bounds["anchor_y"]},
+                min_scale=0.5,
+                max_scale=2.0,
+                allowed_bbox={key: bounds[key] for key in ("x", "y", "w", "h")},
+                created_by=uploaded_by,
+                onboarding_note="Operator-supplied manual cutout; explicit identity, label/logo, and geometry/scale approval required.",
+            ),
+            allow_approved_replacement=True,
+            source_kind=USER_UPLOAD,
+            original_filename=filename,
+            uploaded_by=uploaded_by,
+            uploaded_at=_now(),
+            supersede_reason="MANUAL_CUTOUT_OVERRIDE",
+        )
+    except ProductTruthLockError as exc:
+        raise _truth_error(exc) from exc
+    await crud.upsert_product_cutout_preparation(
+        product_id,
+        status=PENDING_REVIEW,
+        source_sha256=str(getattr(reference, "sha256", "") or ""),
+        cutout_media_id=media_id,
+        cutout_sha256=_sha256_bytes(raw_bytes),
+        failure_code=None,
+        failure_message=None,
+        last_finished_at=_now(),
+    )
+    return await get_product_visual_readiness(product_id)
+
+
+async def reject_product_cutout(
+    product_id: str,
+    *,
+    rejected_by: str,
+    reason: str,
+) -> dict[str, Any]:
+    try:
+        await reject_product_truth_lock(product_id, rejected_by=rejected_by, reason=reason)
+    except ProductTruthLockError as exc:
+        raise _truth_error(exc) from exc
+    await crud.upsert_product_cutout_preparation(
+        product_id,
+        status=PREPARATION_FAILED,
+        failure_code="REJECTED_BY_USER",
+        failure_message=str(reason).strip(),
+        last_finished_at=_now(),
+    )
+    return await get_product_visual_readiness(product_id)
+
+
+async def use_original_product_fallback(
+    product_id: str,
+    *,
+    selected_by: str,
+    reason: str,
+) -> dict[str, Any]:
+    try:
+        await select_product_truth_fallback(product_id, selected_by=selected_by, reason=reason)
+    except ProductTruthLockError as exc:
+        raise _truth_error(exc) from exc
+    await crud.upsert_product_cutout_preparation(
+        product_id,
+        status=PREPARATION_FAILED,
+        failure_code="FALLBACK_SELECTED",
+        failure_message=str(reason).strip(),
+        last_finished_at=_now(),
+    )
+    return await get_product_visual_readiness(product_id)
+
+
+async def get_product_cutout_history(product_id: str) -> dict[str, Any]:
+    product = await crud.get_product(product_id)
+    if not product:
+        raise ProductVisualOnboardingError("PRODUCT_NOT_FOUND", f"Product {product_id} was not found.", status_code=404)
+    current = await crud.get_product_truth_lock(product_id)
+    history = await crud.list_product_truth_lock_history(product_id)
+    current_candidate: dict[str, Any] | None = None
+    if current:
+        current_candidate = {
+            "history_id": None,
+            "source_kind": _candidate_source_kind(current),
+            "review_status": _review_label(current),
+            "active": _truth_row_approved(current),
+            "preview_url": f"/api/product-visual-onboarding/{product_id}/cutout/preview/active",
+            "provenance": _provenance(current),
+        }
+    history_candidates: list[dict[str, Any]] = []
+    for item in history:
+        history_candidates.append(
+            {
+                "history_id": item.get("history_id"),
+                "source_kind": str(item.get("source_kind") or "UNKNOWN"),
+                "review_status": str(item.get("review_status") or "UNKNOWN"),
+                "active": False,
+                "preview_url": f"/api/product-visual-onboarding/{product_id}/cutout/preview/history?history_id={item.get('history_id')}",
+                "provenance": _parse_json(item.get("provenance_json"), {}),
+            }
+        )
+    return {
+        "product_id": product_id,
+        "current": [current_candidate] if current_candidate else [],
+        "history": history_candidates,
+        "count": len(history),
+    }
+
+
+def _safe_preview_path(value: Any) -> Path:
+    candidate = _path(value)
+    if candidate is None:
+        raise ProductVisualOnboardingError("CUTOUT_PREVIEW_NOT_FOUND", "Requested cutout preview is not available.", status_code=404)
+    try:
+        candidate.resolve().relative_to(BASE_DIR.resolve())
+    except ValueError as exc:
+        raise ProductVisualOnboardingError("CUTOUT_PREVIEW_FORBIDDEN", "Requested preview is outside server media storage.", status_code=403) from exc
+    return candidate.resolve()
+
+
+async def resolve_product_visual_preview(
+    product_id: str,
+    variant: str,
+    *,
+    history_id: str | None = None,
+) -> Path:
+    product = await crud.get_product(product_id)
+    if not product:
+        raise ProductVisualOnboardingError("PRODUCT_NOT_FOUND", f"Product {product_id} was not found.", status_code=404)
+    normalized = str(variant or "").lower()
+    lock = await crud.get_product_truth_lock(product_id)
+    history = await crud.list_product_truth_lock_history(product_id)
+    if normalized == "original":
+        reference = await _resolve_source(product)
+        return _safe_preview_path(getattr(reference, "local_path", None))
+    if normalized in {"active", "current"}:
+        return _safe_preview_path((lock or {}).get("canonical_cutout_path"))
+    if normalized == "history":
+        item = next((row for row in history if str(row.get("history_id")) == str(history_id or "")), None)
+        return _safe_preview_path((item or {}).get("canonical_cutout_path"))
+    if normalized not in {"auto", "manual"}:
+        raise ProductVisualOnboardingError("CUTOUT_PREVIEW_VARIANT_INVALID", "Preview variant is not supported.", status_code=400)
+    source_kind = AUTO_GENERATED if normalized == "auto" else USER_UPLOAD
+    if lock and _candidate_source_kind(lock) == source_kind:
+        return _safe_preview_path(lock.get("canonical_cutout_path"))
+    for item in history:
+        if str(item.get("source_kind") or "").upper() == source_kind:
+            return _safe_preview_path(item.get("canonical_cutout_path"))
+    raise ProductVisualOnboardingError("CUTOUT_PREVIEW_NOT_FOUND", "Requested cutout candidate is not available.", status_code=404)
+
+
 async def ensure_product_visual_onboarding(
     product_id: str,
     *,
     reference_pack: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Registration seam: pack evidence plus cutout preparation receipt."""
-    result = await prepare_product_cutout(product_id)
+    """Registration seam: materialize readiness without auto-generating cutouts."""
+    result = await get_product_visual_readiness(product_id)
     if reference_pack is not None:
         result["reference_pack"] = reference_pack
     result["provider_operations"] = 0
@@ -621,6 +948,7 @@ async def get_product_visual_readiness(product_id: str) -> dict[str, Any]:
     if not product:
         raise ProductVisualOnboardingError("PRODUCT_NOT_FOUND", f"Product {product_id} was not found.")
     lock = await crud.get_product_truth_lock(product_id)
+    history = await crud.list_product_truth_lock_history(product_id)
     pack = await crud.get_product_reference_pack(product_id)
     prep = await crud.get_product_cutout_preparation(product_id)
     reference = None
@@ -651,6 +979,7 @@ async def get_product_visual_readiness(product_id: str) -> dict[str, Any]:
         source_available=source_available,
         source_error=source_error,
         blocked_reason=blocked_reason,
+        history=history,
     )
 
 
@@ -662,6 +991,7 @@ async def annotate_products_visual_readiness(products: list[dict[str, Any]]) -> 
     locks = await crud.list_product_truth_locks(ids)
     packs = await crud.list_product_reference_packs_by_products(ids)
     preps = await crud.list_product_cutout_preparations(ids)
+    histories = await crud.list_product_truth_lock_histories(ids)
     tombstoned: set[str] = set()
     # Tombstones are a small, indexed purge authority; load the page ids in one
     # query where possible, while legacy DBs without the table stay compatible.
@@ -698,6 +1028,7 @@ async def annotate_products_visual_readiness(products: list[dict[str, Any]]) -> 
             source_available=bool(source),
             source_error=None,
             blocked_reason=blocked,
+            history=histories.get(pid, []),
         )
 
 
@@ -710,6 +1041,10 @@ def eligible_bulk_product(product: dict[str, Any], readiness: dict[str, Any]) ->
     if readiness.get("cutout_status") == APPROVED:
         return False
     if readiness.get("cutout_review_status") == PENDING_REVIEW:
+        return False
+    if readiness.get("auto_cutout_status") in {PENDING_REVIEW, REJECTED, APPROVED}:
+        return False
+    if readiness.get("manual_cutout_status") in {PENDING_REVIEW, APPROVED}:
         return False
     if not readiness.get("canonical_media_status") == "AVAILABLE":
         return False
@@ -743,6 +1078,12 @@ async def preview_bulk_cutout_preparation(*, limit: int = 454) -> dict[str, Any]
         "preview_digest": digest,
         "counts": counts,
         "total_scanned": len(products),
+        "execution_policy": "BOUNDED_OPERATOR_CONFIRMATION_REQUIRED",
+        "bounded_batch": {
+            "default_size": 5,
+            "max_size": 25,
+            "estimated_throughput": "Measured from completed local runs; no provider work is scheduled.",
+        },
         "provider_operations": 0,
         "created_without_credit": True,
     }

@@ -1456,7 +1456,9 @@ export type ProductVisualCutoutStatus =
 	| "PENDING_REVIEW"
 	| "APPROVED"
 	| "PREPARATION_FAILED"
-	| "BLOCKED";
+	| "BLOCKED"
+	| "REJECTED"
+	| "SUPERSEDED";
 
 export interface ProductVisualReadiness {
 	product_id: string;
@@ -1467,6 +1469,14 @@ export interface ProductVisualReadiness {
 	cutout_status: ProductVisualCutoutStatus | string;
 	cutout_review_status: string;
 	exact_commerce_status: string;
+	auto_cutout_status?: ProductVisualCutoutStatus | string;
+	manual_cutout_status?: ProductVisualCutoutStatus | string;
+	active_visual_source?: string;
+	original_preview_url?: string | null;
+	auto_cutout_preview_url?: string | null;
+	manual_cutout_preview_url?: string | null;
+	active_cutout_preview_url?: string | null;
+	cutout_history_count?: number;
 	cutout_media_id?: string | null;
 	cutout_preview_available?: boolean;
 	attempt_count?: number;
@@ -1480,6 +1490,9 @@ export interface ProductVisualReadiness {
 	can_review_cutout: boolean;
 	can_approve_cutout: boolean;
 	can_rebuild_cutout: boolean;
+	can_upload_manual_cutout?: boolean;
+	can_reject_cutout?: boolean;
+	can_use_original_fallback?: boolean;
 	can_open_source: boolean;
 	can_view: boolean;
 }

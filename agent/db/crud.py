@@ -11,7 +11,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "product_visual_truth_lock", "product_reference_pack", "product_cutout_preparation", "product_visual_onboarding_run", "image_generation_operation", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_component", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "content_combination", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "creative_product_selection", "product_strategy_taxonomy", "poster_copy_set", "poster_deliverable", "extend_lineage", "product_source_media"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "product_visual_truth_lock", "product_visual_truth_lock_history", "product_reference_pack", "product_cutout_preparation", "product_visual_onboarding_run", "image_generation_operation", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_component", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "content_combination", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "creative_product_selection", "product_strategy_taxonomy", "poster_copy_set", "poster_deliverable", "extend_lineage", "product_source_media"})
 
 
 def _validate_table(table: str) -> None:
@@ -39,6 +39,7 @@ _COLUMNS = {
     "request": {"status", "request_id", "media_id", "output_url", "error_message", "retry_count", "next_retry_at", "source_media_id", "updated_at", "automation_report"},
     "product": {"source", "source_url", "brand", "raw_product_title", "product_display_name", "product_short_name", "category", "subcategory", "type", "shop_name", "price", "currency", "commission_amount", "commission_rate", "price_min", "price_max", "commission", "image_url", "tiktok_product_url", "fastmoss_source_file", "image_asset_status", "image_failure_detail", "product_type", "product_type_id", "silo", "trigger_id", "formula", "copywriting_angle", "claim_risk_level", "bosmax_product_family", "mode_recommendations", "physics_class", "product_scale", "hand_object_interaction", "recommended_grip", "handling_notes", "air_gap_rule", "material_behavior", "surface_behavior", "fragility_level", "camera_handling_notes", "scene_context", "camera_style", "camera_behavior", "camera_shot", "unsafe_handling_rules", "section_4_hint", "section_5_product_physics_prompt", "section_5_physics_hint", "section_6_copy_hint", "section_9_overlay_hint", "mapping_source", "mapping_confidence", "mapping_review_status", "mapping_status", "mapping_missing_fields", "prompt_readiness_status", "prompt_missing_fields", "claim_safe_copy_status", "claim_safe_copy_payload", "claim_safe_copy_updated_at", "production_prompt_approval_status", "production_prompt_approved_modes", "production_prompt_approved_at", "production_prompt_approval_note", "production_prompt_approval_provenance", "lifecycle_status", "archived_at", "archived_reason", "archived_by", "unarchived_at", "unarchived_reason", "lifecycle_provenance", "asset_status", "media_id", "local_image_path", "updated_at", "fastmoss_reference_id"},
     "product_visual_truth_lock": {"canonical_media_id", "canonical_sha256", "source_width", "source_height", "canonical_source_path", "canonical_cutout_media_id", "canonical_cutout_sha256", "canonical_cutout_path", "alpha_mask_json", "anchor_point_json", "min_scale", "max_scale", "allowed_bbox_json", "allowed_rotation", "allowed_perspective", "identity_lock", "geometry_lock", "label_lock", "logo_lock", "colour_lock", "scale_lock", "review_status", "failure_state", "provenance_json", "schema_version", "updated_at"},
+    "product_visual_truth_lock_history": {"source_kind", "review_status", "canonical_media_id", "canonical_sha256", "source_width", "source_height", "canonical_source_path", "canonical_cutout_media_id", "canonical_cutout_sha256", "canonical_cutout_path", "alpha_mask_json", "anchor_point_json", "allowed_bbox_json", "provenance_json", "superseded_by_media_id", "superseded_reason"},
     "product_reference_pack": {"pack_id", "schema_version", "pack_status", "machine_qa_status", "machine_qa_json", "physical_width_mm", "physical_height_mm", "physical_depth_mm", "volume_ml", "scale_evidence_source", "scale_confidence", "geometry_json", "references_json", "provenance_json", "human_review_json", "updated_at"},
     "image_generation_operation": {"operation_record_id", "job_id", "product_id", "mode", "provider", "model", "variant_index", "provider_operation_id", "transport_batch_id", "operation_id_status", "provider_media_id", "response_status", "created_at"},
     "request_telemetry": {"project_id", "video_id", "scene_id", "product_id", "request_type", "mode", "prompt_package_snapshot_id", "workspace_execution_package_id", "workspace_generation_package_id", "prompt_fingerprint", "asset_fingerprints", "request_lineage_payload", "git_sha", "background_build_id", "content_build_id", "last_checkpoint", "runtime_ready", "build_match", "status", "google_flow_stage", "extension_stage", "worker_stage", "queued_at", "started_at", "last_heartbeat_at", "completed_at", "failed_at", "duration_seconds", "idle_seconds", "processing_seconds", "error_code", "error_message", "provider", "engine", "model_label", "credits_spent", "estimated_credits", "estimated_cost", "actual_cost"},
@@ -455,6 +456,54 @@ async def upsert_product_truth_lock(product_id: str, **kwargs) -> dict | None:
             )
         await db.commit()
     return await _get("product_visual_truth_lock", "product_id", product_id)
+
+
+async def create_product_truth_lock_history(product_id: str, **kwargs) -> dict | None:
+    """Append an immutable snapshot of the former active truth-lock candidate."""
+    _validate_table("product_visual_truth_lock_history")
+    values = _safe_kwargs("product_visual_truth_lock_history", kwargs)
+    history_id = str(kwargs.get("history_id") or _uuid())
+    columns = ["history_id", "product_id", *values.keys()]
+    placeholders = ",".join("?" for _ in columns)
+    db = await get_db()
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO product_visual_truth_lock_history ({','.join(columns)}) VALUES ({placeholders})",
+            [history_id, product_id, *values.values()],
+        )
+        await db.commit()
+    return await _get("product_visual_truth_lock_history", "history_id", history_id)
+
+
+async def list_product_truth_lock_history(product_id: str, *, limit: int = 50) -> list[dict]:
+    """Return prior truth-lock candidates newest first for operator comparison."""
+    _validate_table("product_visual_truth_lock_history")
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM product_visual_truth_lock_history WHERE product_id=? "
+        "ORDER BY created_at DESC LIMIT ?",
+        (product_id, max(1, min(int(limit), 200))),
+    )
+    return [dict(row) for row in await cur.fetchall()]
+
+
+async def list_product_truth_lock_histories(product_ids: list[str]) -> dict[str, list[dict]]:
+    """Batch-load truth-lock history for catalog readiness without N+1 queries."""
+    resolved = [str(value).strip() for value in product_ids if str(value).strip()]
+    if not resolved:
+        return {}
+    _validate_table("product_visual_truth_lock_history")
+    db = await get_db()
+    placeholders = ",".join("?" for _ in resolved)
+    cur = await db.execute(
+        f"SELECT * FROM product_visual_truth_lock_history WHERE product_id IN ({placeholders}) "
+        "ORDER BY created_at DESC",
+        resolved,
+    )
+    result: dict[str, list[dict]] = {}
+    for row in await cur.fetchall():
+        result.setdefault(str(row["product_id"]), []).append(dict(row))
+    return result
 
 
 async def get_product_reference_pack(product_id: str) -> dict | None:

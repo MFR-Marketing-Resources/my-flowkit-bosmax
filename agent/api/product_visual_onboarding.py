@@ -11,17 +11,23 @@ import json
 from datetime import UTC, datetime
 import uuid
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent.db import crud
 from agent.services.product_visual_onboarding_service import (
     ProductVisualOnboardingError,
     get_product_visual_readiness,
+    get_product_cutout_history,
     preview_bulk_cutout_preparation,
     prepare_product_cutout,
+    reject_product_cutout,
     request_bulk_cutout_cancellation,
+    resolve_product_visual_preview,
     run_bulk_cutout_preparation,
+    upload_manual_product_cutout,
+    use_original_product_fallback,
 )
 
 router = APIRouter(prefix="/product-visual-onboarding", tags=["product-visual-onboarding"])
@@ -34,10 +40,18 @@ class BulkPrepareRequest(BaseModel):
     preview_digest: str = Field(min_length=64, max_length=64)
     batch_size: int = Field(default=5, ge=1, le=25)
     concurrency: int = Field(default=2, ge=1, le=4)
+    max_products: int = Field(default=5, ge=1, le=25)
+
+
+class CutoutDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operator: str = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=1, max_length=2000)
 
 
 def _error(exc: ProductVisualOnboardingError) -> HTTPException:
-    status = 404 if exc.code == "PRODUCT_NOT_FOUND" else 409
+    status = getattr(exc, "status_code", None) or (404 if exc.code == "PRODUCT_NOT_FOUND" else 409)
     return HTTPException(status_code=status, detail={"code": exc.code, "message": exc.message})
 
 
@@ -66,7 +80,8 @@ async def queue_bulk_prepare(request: BulkPrepareRequest):
             status_code=409,
             detail={"code": "PREVIEW_STALE", "message": "Catalog changed after preview; refresh the preview before execution."},
         )
-    product_ids = list(preview.get("eligible_product_ids") or [])
+    eligible_product_ids = list(preview.get("eligible_product_ids") or [])
+    product_ids = eligible_product_ids[: request.max_products]
     run_id = f"pvo_{uuid.uuid4().hex}"
     await crud.create_product_visual_onboarding_run(
         run_id,
@@ -88,6 +103,9 @@ async def queue_bulk_prepare(request: BulkPrepareRequest):
         "run_id": run_id,
         "status": "QUEUED",
         "total_expected": len(product_ids),
+        "eligible_total": len(eligible_product_ids),
+        "max_products": request.max_products,
+        "estimated_throughput": (preview.get("bounded_batch") or {}).get("estimated_throughput"),
         "counts": preview["counts"],
         "concurrency": request.concurrency,
         "provider_operations": 0,
@@ -143,6 +161,72 @@ def _parse_utc(value: object) -> datetime | None:
 async def cancel_bulk_prepare_run(run_id: str):
     try:
         return await request_bulk_cutout_cancellation(run_id)
+    except ProductVisualOnboardingError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/{product_id}/cutout/manual")
+async def upload_visual_manual_cutout(
+    product_id: str,
+    cutout: UploadFile = File(...),
+    uploaded_by: str = Form("operator"),
+):
+    try:
+        raw_bytes = await cutout.read()
+        return await upload_manual_product_cutout(
+            product_id,
+            filename=cutout.filename or "manual-cutout.png",
+            content_type=cutout.content_type,
+            raw_bytes=raw_bytes,
+            uploaded_by=uploaded_by,
+        )
+    except ProductVisualOnboardingError as exc:
+        raise _error(exc) from exc
+    finally:
+        await cutout.close()
+
+
+@router.post("/{product_id}/cutout/reject")
+async def reject_visual_cutout(product_id: str, request: CutoutDecisionRequest):
+    try:
+        return await reject_product_cutout(
+            product_id,
+            rejected_by=request.operator,
+            reason=request.reason,
+        )
+    except ProductVisualOnboardingError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/{product_id}/cutout/fallback")
+async def fallback_visual_cutout(product_id: str, request: CutoutDecisionRequest):
+    try:
+        return await use_original_product_fallback(
+            product_id,
+            selected_by=request.operator,
+            reason=request.reason,
+        )
+    except ProductVisualOnboardingError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/{product_id}/cutout/history")
+async def get_visual_cutout_history(product_id: str):
+    try:
+        return await get_product_cutout_history(product_id)
+    except ProductVisualOnboardingError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/{product_id}/cutout/preview/{variant}")
+async def get_visual_cutout_preview(
+    product_id: str,
+    variant: str,
+    history_id: str | None = Query(default=None),
+):
+    try:
+        path = await resolve_product_visual_preview(product_id, variant, history_id=history_id)
+        return FileResponse(path, media_type="image/png", filename=path.name)
     except ProductVisualOnboardingError as exc:
         raise _error(exc) from exc
 
