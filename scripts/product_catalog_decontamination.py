@@ -1253,6 +1253,130 @@ def build_visual_coverage(
     }
 
 
+def build_post_purge_closure(
+    connection: sqlite3.Connection,
+    *,
+    before_db_path: Path,
+    alias_ids: set[str],
+    survivor_ids: set[str],
+    visual: dict[str, Any],
+) -> dict[str, Any]:
+    """Compare the live product state with the verified pre-purge backup.
+
+    This is deliberately independent of the transaction's in-memory snapshots:
+    the durable pre-purge backup is the comparison authority for the final
+    deletion and survivor proof.
+    """
+
+    before_db_path = before_db_path.resolve()
+    if not before_db_path.exists():
+        raise GateError(FAIL_BACKUP_INTEGRITY, f"post-purge closure backup is missing: {before_db_path}")
+    with open_connection(before_db_path, read_only=True) as before_connection:
+        before_rows = {str(row["id"]): row for row in product_rows(before_connection)}
+    after_rows = {str(row["id"]): row for row in product_rows(connection)}
+    deleted_product_ids = sorted(set(before_rows) - set(after_rows))
+    unexpected_product_deletes = sorted(set(deleted_product_ids) - set(alias_ids))
+    canonical_survivor_mutations = sorted(
+        product_id
+        for product_id in survivor_ids
+        if product_id not in after_rows or after_rows[product_id] != before_rows.get(product_id)
+    )
+
+    table_names_seen = set(table_names(connection))
+    sensitive_tables = {
+        "product_visual_truth_lock",
+        "product_reference_pack",
+        "creative_asset",
+        "image_generation_operation",
+        "product_source_media",
+    }
+    sensitive_alias_refs: list[dict[str, Any]] = []
+    placeholders = ",".join("?" for _ in alias_ids)
+    if placeholders:
+        for table in sorted(sensitive_tables & table_names_seen):
+            for column in ("product_id", "target_product_id", "linked_product_id"):
+                if column not in table_columns(connection, table):
+                    continue
+                for row in connection.execute(
+                    f"SELECT {quote_identifier(column)} FROM {quote_identifier(table)} WHERE {quote_identifier(column)} IN ({placeholders})",
+                    sorted(alias_ids),
+                ).fetchall():
+                    sensitive_alias_refs.append({"table": table, "column": column, "product_id": row[0]})
+
+    dependency = scan_dependencies(connection, alias_ids)
+    unresolved_alias_references = [
+        {
+            "table": item.get("table"),
+            "column": item.get("column"),
+            "policy": item.get("policy"),
+            "row_locator": item.get("row_locator"),
+        }
+        for item in verify_no_alias_references(connection, alias_ids)
+    ]
+    preserved_lineage_counts = Counter(
+        (str(item.get("table")), str(item.get("column")))
+        for item in dependency.get("tables", [])
+        if item.get("policy") == "PRESERVE_WITH_TOMBSTONE"
+    )
+    snapshot = integrity_snapshot(connection)
+    tombstone_count = int(
+        connection.execute(
+            f"SELECT COUNT(*) FROM {quote_identifier(TOMBSTONE_TABLE)} WHERE alias_product_id IN ({placeholders})",
+            sorted(alias_ids),
+        ).fetchone()[0]
+    ) if placeholders and TOMBSTONE_TABLE in table_names_seen else 0
+    active_duplicate_platform_ids = assert_active_external_id_uniqueness(connection)
+    visual_alias_refs = visual.get("purged_ids_receiving_visual_work") or []
+    before_survivor_hash = sha256_bytes(
+        canonical_json([[product_id, before_rows.get(product_id)] for product_id in sorted(survivor_ids)]).encode("utf-8")
+    )
+    after_survivor_hash = sha256_bytes(
+        canonical_json([[product_id, after_rows.get(product_id)] for product_id in sorted(survivor_ids)]).encode("utf-8")
+    )
+    gates = {
+        "exactly_48_aliases_absent": len(alias_ids) == EXPECTED_HISTORICAL_COHORT and not (alias_ids & set(after_rows)),
+        "exactly_48_tombstones_present": tombstone_count == EXPECTED_HISTORICAL_COHORT,
+        "exactly_48_canonical_survivors_present": len(survivor_ids) == EXPECTED_HISTORICAL_COHORT and not set(canonical_survivor_mutations),
+        "canonical_survivors_unchanged": before_survivor_hash == after_survivor_hash,
+        "canonical_survivor_deletes_zero": not (set(survivor_ids) & set(deleted_product_ids)),
+        "unauthorized_product_deletes_zero": not unexpected_product_deletes,
+        "integrity_check_ok": snapshot["integrity_ok"] is True,
+        "foreign_key_check_zero": snapshot["foreign_key_check_count"] == 0,
+        "no_unresolved_alias_references": not unresolved_alias_references,
+        "no_duplicate_active_platform_ids": not active_duplicate_platform_ids,
+        "no_purged_visual_work": not visual_alias_refs,
+    }
+    return {
+        "mission_id": MISSION_ID,
+        "captured_at": utc_now(),
+        "before_backup_path": str(before_db_path),
+        "before_product_row_count": len(before_rows),
+        "after_product_row_count": len(after_rows),
+        "deleted_product_ids": deleted_product_ids,
+        "expected_alias_ids": sorted(alias_ids),
+        "unexpected_product_deletes": unexpected_product_deletes,
+        "canonical_survivor_ids": sorted(survivor_ids),
+        "canonical_survivor_mutations": canonical_survivor_mutations,
+        "canonical_survivor_deletes": len(set(survivor_ids) & set(deleted_product_ids)),
+        "unauthorized_product_deletes": len(unexpected_product_deletes),
+        "before_survivor_rows_sha256": before_survivor_hash,
+        "after_survivor_rows_sha256": after_survivor_hash,
+        "tombstones_present": tombstone_count,
+        "integrity": snapshot,
+        "unresolved_alias_references": unresolved_alias_references,
+        "preserved_lineage_reference_counts": {
+            f"{table}.{column}": int(count)
+            for (table, column), count in sorted(preserved_lineage_counts.items())
+        },
+        "purged_ids_receiving_sensitive_visual_work": sensitive_alias_refs,
+        "purged_ids_receiving_visual_work_from_coverage": visual_alias_refs,
+        "active_duplicate_platform_ids": active_duplicate_platform_ids,
+        "provider_operations": int(visual.get("provider_operations", 0)),
+        "gates": gates,
+        "all_gates_pass": all(gates.values()),
+    }
+
+
 def canonical_survivor_snapshot(connection: sqlite3.Connection, survivor_ids: list[str]) -> dict[str, dict[str, Any]]:
     return {product_id: product_row(connection, product_id) or {} for product_id in survivor_ids}
 
@@ -1791,11 +1915,13 @@ def write_final_report(
     verdict: str,
     next_decision: str,
     engineering: dict[str, Any] | None = None,
+    before_audit: dict[str, Any] | None = None,
 ) -> None:
-    before_counts = audit["baseline"]["counts"]
+    before_source = before_audit or audit
+    before_counts = before_source["baseline"]["counts"]
     after_counts = (after or {}).get("counts") or before_counts
-    reproven = audit["reproof"].get("current_reproven_count", 0)
-    drifted = audit["reproof"].get("drifted_count", 0)
+    reproven = before_source["reproof"].get("current_reproven_count", 0)
+    drifted = before_source["reproof"].get("drifted_count", 0)
     classification_counts = (audit.get("classifications") or {}).get("classification_counts") or {}
     state_counts = (visual or {}).get("state_counts") or {}
     not_verified_lines = [f"- {item}" for item in ((engineering or {}).get("not_verified") or [])] or ["NONE"]
@@ -1823,10 +1949,10 @@ def write_final_report(
         f"merge SHA: {(engineering or {}).get('merge_sha')}",
         f"runtime SHA: {(runtime or {}).get('runtime_loaded_sha')}",
         f"runtime PID: {(runtime or {}).get('runtime_pid')}",
-        f"canonical DB: {audit['baseline']['database']['absolute_path']}",
-        f"DB SHA before: {audit['baseline']['database']['consistent_snapshot_sha256']}",
+        f"canonical DB: {before_source['baseline']['database']['absolute_path']}",
+        f"DB SHA before: {before_source['baseline']['database']['consistent_snapshot_sha256']}",
         f"DB SHA after: {(after or {}).get('database', {}).get('consistent_snapshot_sha256')}",
-        f"integrity: {(after or {}).get('database', {}).get('integrity_check') or audit['baseline']['database']['integrity_check']}",
+        f"integrity: {(after or {}).get('database', {}).get('integrity_check') or before_source['baseline']['database']['integrity_check']}",
         f"foreign keys: {(after or {}).get('database', {}).get('foreign_key_check_count', 0)}",
         "provider operations: 0",
         "",
@@ -1843,7 +1969,7 @@ def write_final_report(
         "historical cohort = 48",
         f"re-proven = {reproven}",
         f"drifted = {drifted}",
-        f"canonical survivors = {audit['reproof'].get('canonical_survivor_count')}",
+        f"canonical survivors = {before_source['reproof'].get('canonical_survivor_count')}",
         "",
         "## PURGE RESULT",
         "",
@@ -1899,11 +2025,11 @@ def write_final_report(
         "",
         f"backup path = {(after or {}).get('backup', {}).get('path')}",
         f"backup SHA-256 = {(after or {}).get('backup', {}).get('sha256')}",
-        f"pre integrity_check = {audit['baseline']['database']['integrity_check']}",
+        f"pre integrity_check = {before_source['baseline']['database']['integrity_check']}",
         f"post integrity_check = {(after or {}).get('database', {}).get('integrity_check')}",
-        f"pre foreign_key_check = {audit['baseline']['database'].get('foreign_key_check')}",
+        f"pre foreign_key_check = {before_source['baseline']['database'].get('foreign_key_check')}",
         f"post foreign_key_check = {(after or {}).get('database', {}).get('foreign_key_check')}",
-        f"pre data_version = {audit['baseline']['database'].get('data_version')}",
+        f"pre data_version = {before_source['baseline']['database'].get('data_version')}",
         f"post data_version = {(after or {}).get('database', {}).get('data_version')}",
         "",
         "## TESTS",
@@ -1996,6 +2122,21 @@ def main(argv: list[str] | None = None) -> int:
                 or audit["reproof"].get("failures")
             ):
                 raise GateError(FAIL_DUPLICATE_DRIFT, "verify requires all 48 aliases absent and tombstoned", payload=audit["reproof"])
+            before_paths = [
+                evidence_dir / "c0-baseline.json",
+                evidence_dir / "c0-classification.json",
+                evidence_dir / "merge-proven-48-reproof.json",
+                evidence_dir / "purge-before.json",
+            ]
+            missing_before = [str(path) for path in before_paths if not path.exists()]
+            if missing_before:
+                raise GateError(FAIL_PLAN_DIGEST, "verify requires immutable C0 and purge-before evidence", payload={"missing": missing_before})
+            before_audit = {
+                "baseline": read_json(evidence_dir / "c0-baseline.json"),
+                "classifications": read_json(evidence_dir / "c0-classification.json"),
+                "reproof": read_json(evidence_dir / "merge-proven-48-reproof.json"),
+            }
+            before_document = read_json(evidence_dir / "purge-before.json")
             with open_connection(db_path, read_only=True) as connection:
                 classification = classify_products(product_rows(connection), audit["historical_pairs"])
                 cohort_document, cohort_rows = build_cohort_document(
@@ -2012,6 +2153,13 @@ def main(argv: list[str] | None = None) -> int:
                     purged_ids=purged_ids,
                     classification_by_id={item["product_id"]: item for item in classification["rows"]},
                 )
+                closure = build_post_purge_closure(
+                    connection,
+                    before_db_path=Path(before_document["backup"]["path"]),
+                    alias_ids=purged_ids,
+                    survivor_ids={item["canonical_survivor_product_id"] for item in audit["historical_pairs"]},
+                    visual=visual,
+                )
                 post_snapshot = integrity_snapshot(connection)
                 after = read_json(evidence_dir / "purge-after.json") if (evidence_dir / "purge-after.json").exists() else {
                     "counts": population_counts(product_rows(connection)),
@@ -2020,6 +2168,9 @@ def main(argv: list[str] | None = None) -> int:
             write_json(evidence_dir / "c0-classification-after.json", classification)
             write_json(evidence_dir / "canonical-survivor-cohort.json", cohort_document)
             write_json(evidence_dir / "visual-coverage.json", visual)
+            write_json(evidence_dir / "post-purge-closure.json", closure)
+            if not closure["all_gates_pass"]:
+                raise GateError(FAIL_POST_INTEGRITY, "post-purge closure gates failed", payload=closure)
             if args.runtime_proof:
                 runtime = capture_runtime_proof(db_path, runtime_url=args.runtime_url)
                 write_json(evidence_dir / "runtime-proof.json", runtime)
@@ -2028,6 +2179,7 @@ def main(argv: list[str] | None = None) -> int:
             write_final_report(
                 evidence_dir,
                 audit=audit,
+                before_audit=before_audit,
                 after=after,
                 cohort=cohort_document,
                 visual=visual,
