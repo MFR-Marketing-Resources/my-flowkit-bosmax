@@ -21,6 +21,7 @@ from agent.services.flow_client import get_flow_client
 from agent.services.product_intelligence import enrich_product
 from agent.services.product_mapping import resolve_product_mapping
 from agent.services.product_preflight import build_product_preflight
+from agent.services.reporting_service import catalog_population_summary
 
 router = APIRouter(prefix="/api/operator", tags=["operator"])
 
@@ -941,21 +942,22 @@ async def runtime_storage_status(include_authority_context_count: bool = False):
     product_count: int | None = None
     manual_product_count: int | None = None
     queue_count: int | None = None
+    population: dict[str, Any] | None = None
     read_error: str | None = None
     try:
         product_count = await crud.count_products()
         manual_product_count = await crud.count_products(source="MANUAL")
         queue_stats = await crud.get_bulk_queue_stats()
         queue_count = int(queue_stats.get("total", 0))
+        population = await catalog_population_summary()
     except Exception as exc:  # pragma: no cover - defensive
         read_error = str(exc)
 
-    # Honesty (audit HOLD item D): the canonical product count is only a CEILING
-    # on authority contexts, not the real authority context count. The real count
-    # is computed from the authority registry ONLY when explicitly requested,
-    # because that path enriches every product row and is expensive.
-    canonical_product_count = product_count
-    authority_context_count_ceiling = product_count
+    # Raw product_count remains available for storage binding diagnostics, but it
+    # is never labelled canonical. The population service excludes fixtures and
+    # PI-13 aliases using the same reporting predicates as Command Centre KPIs.
+    canonical_product_count = (population or {}).get("real_canonical_products")
+    authority_context_count_ceiling = canonical_product_count
     authority_context_count: int | None = None
     authority_context_count_source = "NOT_COMPUTED"
     if include_authority_context_count:
@@ -1000,6 +1002,13 @@ async def runtime_storage_status(include_authority_context_count: bool = False):
         "product_count": product_count,
         "manual_product_count": manual_product_count,
         "queue_count": queue_count,
+        "catalog_population": population,
+        "raw_product_rows": (population or {}).get("raw_database_rows", product_count),
+        "active_product_count": (population or {}).get("active_products"),
+        "archived_product_count": (population or {}).get("archived_products"),
+        "merged_alias_count": (population or {}).get("merged_historical_aliases"),
+        "real_canonical_product_count": (population or {}).get("real_canonical_products"),
+        "production_eligible_product_count": (population or {}).get("production_eligible_products"),
         "canonical_product_count": canonical_product_count,
         "authority_context_count_ceiling": authority_context_count_ceiling,
         "authority_context_count": authority_context_count,

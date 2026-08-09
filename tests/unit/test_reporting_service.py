@@ -99,6 +99,34 @@ async def test_product_intelligence_coverage():
     assert allp["missing_snapshot"] == 1           # P2
 
 
+async def test_catalog_population_summary_separates_raw_active_and_canonical():
+    await _seed()
+    db = await get_db()
+    await db.execute(
+        "INSERT INTO product (id, raw_product_title, product_display_name, product_short_name, lifecycle_status, archived_reason) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("alias-1", "Alpha duplicate", "Alpha duplicate", "Alpha duplicate", "ARCHIVED", "DUPLICATE_MERGED_TO_CANONICAL:P1"),
+    )
+    await db.execute(
+        "INSERT INTO product (id, raw_product_title, product_display_name, product_short_name, lifecycle_status) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("fixture_1", "Test Product", "Test Product", "Test Product", "ACTIVE"),
+    )
+    await db.commit()
+
+    summary = await svc.catalog_population_summary()
+
+    assert summary["raw_database_rows"] == 5
+    assert summary["active_products"] == 3
+    assert summary["archived_products"] == 2
+    assert summary["merged_historical_aliases"] == 1
+    assert summary["test_fixture_rows"] == 1
+    assert summary["real_canonical_products"] == 3
+    assert summary["real_active_canonical_products"] == 2
+    assert summary["production_eligible_products"] == 2
+    assert summary["arithmetic"]["raw_equals_real_plus_aliases_plus_fixtures"] is True
+
+
 async def test_prompt_readiness_histogram():
     await _seed()
     active = await svc.prompt_readiness_histogram("ACTIVE")

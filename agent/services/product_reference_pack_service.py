@@ -320,7 +320,7 @@ async def ensure_product_reference_pack(product_id: str) -> ProductReferencePack
         raise ProductReferencePackError("PRODUCT_NOT_FOUND", f"Unknown product: {product_id}")
 
     try:
-        reference = resolve_product_reference_image(product)
+        reference = resolve_product_reference_image(product, prefer_approved_cutout=False)
     except ProductVisualReferenceRequiredError as exc:
         raise ProductReferencePackError("PRODUCT_REFERENCE_REQUIRED", str(exc)) from exc
     source_path = _path_from_reference({"local_path": reference.local_path})

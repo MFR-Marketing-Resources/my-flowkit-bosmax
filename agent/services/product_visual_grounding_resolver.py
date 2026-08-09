@@ -113,6 +113,32 @@ def get_product_by_id(product_id: str) -> dict[str, Any] | None:
         return None
 
 
+def _is_purged_product_id(product_id: str) -> bool:
+    """Return true for a product UUID physically retired by catalog purge.
+
+    The tombstone is an audit authority, not a product fallback.  This guard is
+    required because schema-backed products can otherwise be reconstructed by
+    ``resolve_product_visual_grounding`` after their database row is gone.
+    """
+
+    if not product_id:
+        return False
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        row = conn.execute(
+            "SELECT 1 FROM product_catalog_alias_tombstone WHERE alias_product_id = ? LIMIT 1",
+            (product_id,),
+        ).fetchone()
+        conn.close()
+        return row is not None
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc).lower():
+            return False
+        return False
+    except Exception:
+        return False
+
+
 def _inspect_image_file(file_path: Path | str) -> tuple[int, int, str, str] | None:
     path = Path(file_path)
     if not path.exists() or not path.is_file() or path.stat().st_size == 0:
@@ -217,8 +243,18 @@ def _registered_reference_id_for_bytes(product_id: str, expected_sha256: str) ->
     return str(asset.get("media_id") or asset.get("asset_id") or "").strip() or None
 
 
-def resolve_product_reference_image(product: dict[str, Any]) -> ProductReferenceInfo:
-    """Resolve the authoritative product reference image in priority order."""
+def resolve_product_reference_image(
+    product: dict[str, Any],
+    *,
+    prefer_approved_cutout: bool = True,
+) -> ProductReferenceInfo:
+    """Resolve the authoritative product reference image in priority order.
+
+    An approved Product Truth cutout is the preferred grounding reference.  The
+    source-image path remains available to onboarding/reference-pack builders by
+    passing ``prefer_approved_cutout=False``; that keeps canonical-source
+    dimensions and cutout dimensions semantically distinct.
+    """
     product_id = str(product.get("id") or product.get("product_id") or "")
 
     # An approved Product Truth Lock outranks every URL/cache/creative-asset
@@ -231,6 +267,23 @@ def resolve_product_reference_image(product: dict[str, Any]) -> ProductReference
     if persisted_lock is not None and persisted_lock.review_status == "APPROVED":
         try:
             resolved = truth_lock_service.resolve_approved_product_truth_lock(product_id)
+            if prefer_approved_cutout:
+                cutout_path = Path(resolved.canonical_cutout_path)
+                cutout_meta = _inspect_image_file(cutout_path)
+                if cutout_meta and cutout_meta[3] == resolved.canonical_cutout_sha256:
+                    w, h, mime, sha = cutout_meta
+                    return ProductReferenceInfo(
+                        source_type="PRODUCT_TRUTH_LOCK_CUTOUT",
+                        media_id=resolved.canonical_cutout_media_id,
+                        local_path=str(cutout_path),
+                        image_url=product.get("image_url"),
+                        mime_type=mime,
+                        sha256=sha,
+                        width=w,
+                        height=h,
+                        provenance="PRODUCT_VISUAL_TRUTH_LOCK_CANONICAL_CUTOUT",
+                        validation_status="VALIDATED",
+                    )
             source_path = Path(resolved.canonical_source_path)
             meta = _inspect_image_file(source_path)
             if meta and meta[3] == resolved.canonical_sha256:
@@ -430,6 +483,10 @@ def resolve_product_visual_grounding(
     if isinstance(product_id_or_row, str):
         row = get_product_by_id(product_id_or_row)
         if not row:
+            if _is_purged_product_id(product_id_or_row):
+                raise ProductVisualReferenceRequiredError(
+                    f"PRODUCT_PURGED_ALIAS_NOT_ELIGIBLE: Product ID '{product_id_or_row}' was physically retired from the canonical catalog."
+                )
             fallback_name = "Minyak Warisan Cap Burung 25ml" if "6483d624" in product_id_or_row else ""
             schema = resolve_schema_entry({"id": product_id_or_row, "name": fallback_name})
             if schema:
@@ -448,6 +505,10 @@ def resolve_product_visual_grounding(
     elif isinstance(product_id_or_row, dict):
         product = dict(product_id_or_row)
         p_id = str(product.get("id") or product.get("product_id") or "")
+        if p_id and _is_purged_product_id(p_id):
+            raise ProductVisualReferenceRequiredError(
+                f"PRODUCT_PURGED_ALIAS_NOT_ELIGIBLE: Product ID '{p_id}' was physically retired from the canonical catalog."
+            )
         if p_id and not (product.get("local_image_path") or product.get("image_url") or product.get("media_id")):
             db_row = get_product_by_id(p_id)
             if db_row:

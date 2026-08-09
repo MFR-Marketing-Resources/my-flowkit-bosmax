@@ -243,6 +243,68 @@ async def _scalar(db, sql: str, params: list) -> int:
     return int(row[0]) if row and row[0] is not None else 0
 
 
+async def catalog_population_summary() -> dict:
+    """Return the canonical catalog population denominator contract.
+
+    ``product_count`` is intentionally not reused here: raw rows include
+    archived history, test fixtures, and PI-13 merged aliases.  This function
+    is the single read-only service authority for operator diagnostics that need
+    to expose those populations without relabelling one as another.
+    """
+
+    db = await get_db()
+    raw = await _scalar(db, "SELECT COUNT(*) FROM product", [])
+    active = await _scalar(db, "SELECT COUNT(*) FROM product WHERE COALESCE(lifecycle_status, 'ACTIVE') = 'ACTIVE'", [])
+    archived = await _scalar(db, "SELECT COUNT(*) FROM product WHERE COALESCE(lifecycle_status, 'ACTIVE') = 'ARCHIVED'", [])
+    merged = await _scalar(db, f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {_MERGED_ALIAS_PREDICATE}", [])
+    fixtures = await _scalar(db, f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE {_TEST_FIXTURE_PREDICATE}", [])
+    real = await _scalar(
+        db,
+        f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE NOT {_TEST_FIXTURE_PREDICATE} AND NOT {_MERGED_ALIAS_PREDICATE}",
+        [],
+    )
+    real_active = await _scalar(
+        db,
+        f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE p.lifecycle_status = 'ACTIVE' AND NOT {_TEST_FIXTURE_PREDICATE} AND NOT {_MERGED_ALIAS_PREDICATE}",
+        [],
+    )
+    production_eligible = await _scalar(
+        db,
+        f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE p.lifecycle_status = 'ACTIVE' AND NOT {_TEST_FIXTURE_PREDICATE} AND NOT {_MERGED_ALIAS_PREDICATE} "
+        "AND length(trim(COALESCE(p.id, ''))) > 0 "
+        "AND length(trim(COALESCE(p.product_display_name, p.raw_product_title, p.product_short_name, ''))) > 0",
+        [],
+    )
+    source_rows = await db.execute("SELECT COALESCE(source, 'MISSING_SOURCE') AS source, COUNT(*) AS count FROM product GROUP BY COALESCE(source, 'MISSING_SOURCE') ORDER BY source")
+    source_counts = {str(row["source"]): int(row["count"]) for row in await source_rows.fetchall()}
+    source_counts.setdefault("MISSING_SOURCE", 0)
+    return {
+        "raw_database_rows": raw,
+        "active_products": active,
+        "archived_products": archived,
+        "merged_historical_aliases": merged,
+        "test_fixture_rows": fixtures,
+        "real_canonical_products": real,
+        "real_active_canonical_products": real_active,
+        "real_archived_canonical_products": real - real_active,
+        "production_eligible_products": production_eligible,
+        "source_counts": source_counts,
+        "arithmetic": {
+            "raw_equals_active_plus_archived": raw == active + archived,
+            "raw_equals_real_plus_aliases_plus_fixtures": raw == real + merged + fixtures,
+            "real_equals_active_plus_archived_real": real == real_active + (real - real_active),
+        },
+        "count_semantics": {
+            "raw_database_rows": "All rows in product, including archived history, fixtures, and merged aliases.",
+            "active_products": "Rows with lifecycle_status ACTIVE; not a canonical or production KPI by itself.",
+            "archived_products": "Rows with lifecycle_status ARCHIVED; includes legitimate history and merged aliases.",
+            "merged_historical_aliases": "Rows whose archived_reason begins DUPLICATE_MERGED_TO_CANONICAL; excluded from real canonical products.",
+            "real_canonical_products": "Rows excluding the shared test-fixture predicate and merged-alias lineage.",
+            "production_eligible_products": "Active real canonical rows with a non-empty product identity; visual media readiness is reported separately.",
+        },
+    }
+
+
 async def copywriting_coverage(
     lifecycle_status: str = "ACTIVE",
     cluster: Optional[str] = None,
