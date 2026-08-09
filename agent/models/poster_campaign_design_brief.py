@@ -33,6 +33,9 @@ class PosterCampaignDesignBrief(BaseModel):
 
     schema_version: str = POSTER_CAMPAIGN_BRIEF_SCHEMA_VERSION
     product_id: str = Field(min_length=1)
+    # The canonical display name is carried alongside the id so deterministic
+    # draft copy never exposes an internal UUID as customer-facing text.
+    product_name: str = ""
     approved_snapshot_id: str = ""
     approved_snapshot_version: int | None = None
     product_truth_status: str = "UNVERIFIED"

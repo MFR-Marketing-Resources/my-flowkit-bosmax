@@ -1050,6 +1050,8 @@ domains:
       - docs/evidence/poster-builder-v3-qa-review-20260808.md
       - docs/evidence/poster-builder-v3-e1-benchmark-cohort.json
       - docs/evidence/poster-builder-v3-e1-mwcb-replay.json
+      # POSTER_BUILDER_V3 E1.5: deterministic benchmark cohort readiness evidence.
+      - docs/evidence/poster-builder-v3-e15-cohort-readiness.json
       - agent/api/poster_copy_sets.py
       - agent/api/poster_compose.py
       - agent/authority/POSTER_TEMPLATE_TOKENS.yaml
