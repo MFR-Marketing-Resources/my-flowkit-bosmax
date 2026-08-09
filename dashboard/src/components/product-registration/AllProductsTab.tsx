@@ -20,7 +20,6 @@ import {
 	type ProductVisualBulkRun,
 } from "../../api/productVisualOnboarding";
 import type { Product, ProductCatalogResponse } from "../../types";
-import ProductVisualReadinessPanel from "./ProductVisualReadinessPanel";
 
 const SOURCE_BADGE: Record<string, string> = {
 	FASTMOSS: "bg-indigo-500/20 text-indigo-300",
@@ -91,6 +90,69 @@ const fmtPercent = (value: string | null | undefined): string => {
 	const raw = String(value).trim();
 	return raw.endsWith("%") ? raw : raw;
 };
+
+const TABLE_VISUAL_BADGE = {
+	ready: "bg-emerald-500/15 text-emerald-300",
+	fallback: "bg-amber-500/15 text-amber-300",
+	required: "bg-red-500/15 text-red-300",
+	pending: "bg-sky-500/15 text-sky-300",
+	canva: "bg-violet-500/15 text-violet-300",
+} as const;
+
+function getTableVisualStatus(
+	readiness: Product["visual_readiness"],
+): { label: string; className: string } {
+	if (!readiness) {
+		return { label: "CUTOUT REQUIRED", className: TABLE_VISUAL_BADGE.required };
+	}
+
+	const canvaStage =
+		readiness.canva_cutout_workflow?.current_stage || readiness.canva_cutout_stage;
+	if (canvaStage === "CANVA_PRO_REQUIRED") {
+		return {
+			label: "CANVA PRO REQUIRED",
+			className: TABLE_VISUAL_BADGE.canva,
+		};
+	}
+
+	if (
+		readiness.cutout_status === "PENDING_REVIEW" ||
+		readiness.cutout_review_status === "PENDING_REVIEW" ||
+		readiness.can_review_cutout
+	) {
+		return { label: "PENDING REVIEW", className: TABLE_VISUAL_BADGE.pending };
+	}
+
+	if (
+		readiness.cutout_status === "APPROVED" ||
+		readiness.exact_commerce_status === "EXACT_COMMERCE_CUTOUT_READY"
+	) {
+		return { label: "READY", className: TABLE_VISUAL_BADGE.ready };
+	}
+
+	if (
+		readiness.visual_grounding_status === "VISUAL_GROUNDING_READY_FALLBACK" ||
+		readiness.active_visual_source === "SAME_PRODUCT_TRUSTED_SOURCE"
+	) {
+		return { label: "FALLBACK", className: TABLE_VISUAL_BADGE.fallback };
+	}
+
+	return { label: "CUTOUT REQUIRED", className: TABLE_VISUAL_BADGE.required };
+}
+
+function getTableVisualAction(
+	readiness: Product["visual_readiness"],
+): "Canva Cutout" | "Review" | "Upload Cutout" {
+	if (readiness?.can_review_cutout) return "Review";
+	if (
+		readiness?.canonical_media_status === "AVAILABLE" &&
+		readiness.can_start_canva_cutout === true
+	) {
+		return "Canva Cutout";
+	}
+	if (readiness?.can_upload_manual_cutout) return "Upload Cutout";
+	return "Review";
+}
 
 const SELECT_CLASS =
 	"bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 px-2 py-1.5 focus:outline-none focus:border-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed";
@@ -229,24 +291,6 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 	const hasNext = offset + PAGE_SIZE < total;
 	const rangeStart = total === 0 ? 0 : offset + 1;
 	const rangeEnd = Math.min(offset + PAGE_SIZE, total);
-
-	const updateVisualReadiness = useCallback(
-		(productId: string, visualReadiness: Product["visual_readiness"]) => {
-			setData((previous) =>
-				previous
-					? {
-							...previous,
-							items: previous.items.map((item) =>
-								item.id === productId
-									? { ...item, visual_readiness: visualReadiness }
-									: item,
-							),
-						}
-					: previous,
-			);
-		},
-		[],
-	);
 
 	async function openBulkPreview() {
 		setBulkBusy(true);
@@ -645,7 +689,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 					<div className="min-w-0 overflow-x-auto overscroll-x-contain">
 						<table
 							data-testid="product-registry-table"
-							className="min-w-[1900px] w-full table-fixed text-xs text-slate-300 whitespace-normal"
+							className="min-w-[1656px] w-full table-fixed text-xs text-slate-300 whitespace-normal"
 						>
 							<colgroup>
 								<col className="w-[220px]" />
@@ -659,7 +703,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 								<col className="w-[70px]" />
 								<col className="w-[70px]" />
 								<col className="w-[90px]" />
-								<col className="w-[510px]" />
+								<col className="w-[260px]" />
 								<col className="w-[90px]" />
 								<col className="w-[100px]" />
 								<col className="w-[90px]" />
@@ -701,6 +745,8 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 									const lifecycle = (product.lifecycle_status || "").toUpperCase();
 									const fresh = (product.freshness || "").toUpperCase();
 									const draft = product.open_review_draft;
+									const visualStatus = getTableVisualStatus(product.visual_readiness);
+									const visualAction = getTableVisualAction(product.visual_readiness);
 									const sold =
 										product.sold_count ?? product.product_sold_count ?? null;
 									return (
@@ -796,16 +842,49 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 														<span className="text-[9px] text-slate-600">—</span>
 													)}
 											</td>
-											<td className="w-[510px] max-w-[510px] px-3 py-3 align-top whitespace-normal" onClick={(event) => event.stopPropagation()}>
-												<div className="min-w-0 max-w-full">
-													<ProductVisualReadinessPanel
-														productId={product.id}
-														productSourceUrl={product.tiktok_product_url || product.source_url}
-														readiness={product.visual_readiness}
-														compact
-														onOpenReview={() => onOpenProduct?.(product.id)}
-														onChanged={(next) => updateVisualReadiness(product.id, next)}
-													/>
+											<td className="w-[260px] max-w-[260px] px-3 py-2 align-top">
+												<div
+													className="flex min-w-0 items-center gap-2"
+													data-testid="table-visual-summary"
+												>
+													<div className="h-10 w-10 shrink-0 overflow-hidden rounded border border-slate-700 bg-white">
+														{thumb ? (
+															<img
+																src={thumb}
+																alt=""
+																className="h-full w-full object-contain"
+																onError={(event) => {
+																	(event.target as HTMLImageElement).style.display =
+																		"none";
+																}}
+															/>
+														) : (
+															<span className="flex h-full items-center justify-center text-[10px] text-slate-500">
+																—
+															</span>
+														)}
+													</div>
+													<div className="min-w-0 flex-1">
+														<span
+															className={`inline-flex max-w-full truncate rounded px-1.5 py-0.5 text-[9px] font-bold ${visualStatus.className}`}
+															title={visualStatus.label}
+															data-testid="table-visual-status"
+														>
+															{visualStatus.label}
+														</span>
+														<button
+															type="button"
+															onClick={(event) => {
+																event.stopPropagation();
+																onOpenProduct?.(product.id);
+															}}
+															disabled={!onOpenProduct}
+															className="mt-1 inline-flex max-w-full truncate rounded bg-violet-600/80 px-2 py-1 text-[9px] font-bold uppercase tracking-widest text-white transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-40"
+															data-testid="table-visual-action"
+														>
+															{visualAction}
+														</button>
+													</div>
 												</div>
 											</td>
 											<td className="whitespace-nowrap px-3 py-3 align-top">
