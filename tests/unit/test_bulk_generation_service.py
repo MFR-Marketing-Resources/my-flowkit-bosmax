@@ -221,6 +221,66 @@ async def test_recover_stuck_run_after_restart(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_completed_avatar_generation_auto_registers_for_generated_badge(monkeypatch):
+    item = {
+        "bulk_item_id": "item-1",
+        "bulk_run_id": "run-auto-register",
+        "source_ref": "BOS_F_TEST_01",
+        "payload_json": "{}",
+    }
+    updates: list[dict] = []
+
+    monkeypatch.setattr(
+        svc.make_video,
+        "start_generate",
+        AsyncMock(return_value={"status": "RUNNING", "job_id": "g_test"}),
+    )
+    monkeypatch.setattr(
+        svc.make_video,
+        "get_job",
+        lambda _job_id: {
+            "status": "DONE",
+            "media_id": "media-test",
+            "local_path": "output/retrieved/media-test.jpg",
+        },
+    )
+    monkeypatch.setattr(
+        svc.crud,
+        "update_bulk_generation_item",
+        AsyncMock(side_effect=lambda _item_id, **fields: updates.append(fields)),
+    )
+    monkeypatch.setattr(
+        svc.crud,
+        "get_bulk_generation_run",
+        AsyncMock(return_value={"total_completed": 0}),
+    )
+    monkeypatch.setattr(svc.crud, "update_bulk_generation_run", AsyncMock())
+    monkeypatch.setattr(svc, "_register_avatar_item", AsyncMock(return_value="ca_test"))
+    monkeypatch.setattr(svc, "_append_error_log", AsyncMock())
+
+    from agent.services import avatar_registry
+
+    monkeypatch.setattr(
+        avatar_registry,
+        "get_generation_prompt",
+        lambda _code: {"prompt": "test avatar prompt"},
+    )
+
+    await svc._process_avatar_image_item("run-auto-register", item, {})
+
+    svc._register_avatar_item.assert_awaited_once_with({
+        **item,
+        "media_id": "media-test",
+        "local_path": "output/retrieved/media-test.jpg",
+    })
+    assert any(
+        update.get("status") == "REGISTERED"
+        and update.get("creative_asset_id") == "ca_test"
+        for update in updates
+    )
+
+
+@pytest.mark.asyncio
 async def test_live_video_loop_uses_build_execution_payload(monkeypatch):
     """Regression: build_execution_payload(pkg, run_config) not wrong kwargs."""
     pkg = {
