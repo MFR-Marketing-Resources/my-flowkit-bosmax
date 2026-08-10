@@ -26,6 +26,11 @@ GEMINI.md
 .pytest_cache/
 .local-agent/
 
+# Local cutout engine model cache — SHA-pinned BiRefNet ONNX weights, staged by
+# scripts/prepare_cutout_model.py. Repo-root anchored so it never matches the
+# agent/models/ Python package. Hundreds of MB — NEVER commit.
+/models/
+
 # PR #298 hermetic A/B harness temp roots (never commit)
 docs/evidence/pr298_ab/
 

@@ -43,6 +43,12 @@ domains:
       - tests/unit/test_canva_cutout_workflow_service.py
       - tests/api/test_canva_cutout_workflow_api.py
       - tests/api/test_product_truth_lock_flow_gate.py
+      # Local, CPU-only BiRefNet ONNX cutout engine (opt-in) — upgrades HOW the
+      # AUTO candidate bytes are prepared; never WHO approves truth.
+      - agent/services/local_cutout_engine.py
+      - scripts/prepare_cutout_model.py
+      - requirements-cutout.txt
+      - tests/unit/test_local_cutout_engine.py
       - dashboard/src/pages/ImgFastlanePage.tsx
       - dashboard/src/pages/imgCockpitLogic.ts
       - dashboard/src/pages/imgCockpitLogic.test.ts

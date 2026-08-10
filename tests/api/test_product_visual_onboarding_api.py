@@ -19,6 +19,23 @@ async def test_bulk_prepare_requires_explicit_confirmation():
 
 
 @pytest.mark.asyncio
+async def test_cutout_engine_readiness_endpoint_reports_engine_state():
+    # Read-only diagnostics: exposes the pinned model contract, reflects the
+    # opt-in flag, and fails closed to an ENGINE state (never mutates truth,
+    # never runs inference).
+    payload = await api.get_local_cutout_engine_readiness(verify=False)
+    assert payload["enabled"] is False  # opt-in flag defaults off
+    assert payload["model_id"] == "birefnet-general-lite"
+    assert payload["state"] in {
+        "READY",
+        "DEPENDENCY_MISSING",
+        "MODEL_MISSING",
+        "MODEL_INVALID",
+        "LOAD_FAILED",
+    }
+
+
+@pytest.mark.asyncio
 async def test_bulk_prepare_rejects_stale_preview(monkeypatch):
     async def preview(**_kwargs):
         return {

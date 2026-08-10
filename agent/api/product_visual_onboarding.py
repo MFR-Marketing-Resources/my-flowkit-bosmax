@@ -16,6 +16,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent import config
 from agent.db import crud
 from agent.services.product_visual_onboarding_service import (
     ProductVisualOnboardingError,
@@ -149,6 +150,23 @@ def _canva_error(exc: CanvaCutoutWorkflowError) -> HTTPException:
 async def get_catalog_visual_summary(limit: int = Query(default=1000, ge=1, le=1000)):
     """Read-only visual cohort summary; no lazy generation or provider work."""
     return await preview_bulk_cutout_preparation(limit=limit)
+
+
+@router.get("/cutout-engine/readiness")
+async def get_local_cutout_engine_readiness(
+    verify: bool = Query(default=True, description="Recompute the model SHA-256 (authoritative; ~1s cold)."),
+):
+    """Read-only local cutout ENGINE readiness diagnostics.
+
+    Reports engine states only (READY / DEPENDENCY_MISSING / MODEL_MISSING /
+    MODEL_INVALID / LOAD_FAILED) plus the pinned model contract. It performs no
+    inference, spends no credit, and never mutates product truth. Static route —
+    declared before ``/{product_id}`` so it is not captured as a product id.
+    """
+    from agent.services import local_cutout_engine as engine
+
+    state = await asyncio.to_thread(engine.readiness, verify_checksum=verify)
+    return {"enabled": config.LOCAL_CUTOUT_ENGINE_ENABLED, **state}
 
 
 @router.get("/bulk/preview")

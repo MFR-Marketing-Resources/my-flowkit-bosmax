@@ -142,6 +142,18 @@ CREATIVE_CAMPAIGN_LIVE_BENCHMARK_AUTHORIZED = os.environ.get(
     "CREATIVE_CAMPAIGN_LIVE_BENCHMARK_AUTHORIZED", "0"
 ) == "1"
 
+# Local, CPU-only BiRefNet ONNX background remover for AUTO product-cutout
+# candidates. Deliberately opt-in: the deterministic Pillow compositor stays the
+# production default until the owner authorizes rollout AND the model artifact is
+# staged + SHA-verified (scripts/prepare_cutout_model.py). Enabling this ONLY
+# changes HOW the AUTO candidate bytes are prepared — the candidate still lands
+# in PENDING_REVIEW, human approval is unchanged, and provider_operations stays
+# 0 (no paid provider). If the engine is not ready, the caller falls back to the
+# deterministic compositor.
+LOCAL_CUTOUT_ENGINE_ENABLED = os.environ.get(
+    "LOCAL_CUTOUT_ENGINE_ENABLED", "0"
+) == "1"
+
 # Native Flow Extend model key, per captured aspect ratio (live evidence
 # 2026-07-11: portrait -> veo_3_1_extension_lite). FAILS CLOSED for any aspect
 # ratio without captured evidence — the Extend builder NEVER silently downgrades

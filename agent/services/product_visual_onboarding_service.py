@@ -31,6 +31,7 @@ from typing import Any, Iterable
 
 from PIL import Image
 
+from agent import config
 from agent.config import BASE_DIR
 from agent.db import crud
 from agent.models.product_truth_lock import ProductTruthLockOnboardingRequest
@@ -580,6 +581,79 @@ def _build_cutout_bytes(source_path: Path) -> tuple[bytes, dict[str, float], str
         image.close()
 
 
+def _build_local_cutout_bytes(source_path: Path) -> tuple[bytes, dict[str, float], str]:
+    """Prepare AUTO cutout bytes via the local BiRefNet ONNX engine.
+
+    Produces the SAME (bytes, bounds, sha) contract as ``_build_cutout_bytes`` so
+    downstream persistence is unchanged. Raises ``ProductVisualOnboardingError``
+    on any engine failure (not ready / low quality / decode) so the caller can
+    fall back to the deterministic compositor. This engine is local: it spends no
+    provider credit and creates no provider operation.
+    """
+    from agent.services import local_cutout_engine as engine
+
+    result = engine.prepare(source_path)
+    if not result.ok() or not result.output_bytes:
+        raise ProductVisualOnboardingError(
+            "LOCAL_CUTOUT_ENGINE_UNAVAILABLE",
+            "Local cutout engine did not produce a valid cutout: "
+            f"{result.failure_code or result.quality_status}.",
+        )
+    rgba = Image.open(io.BytesIO(result.output_bytes)).convert("RGBA")
+    try:
+        alpha = rgba.getchannel("A")
+        bbox = alpha.getbbox()
+        if bbox is None:
+            raise ProductVisualOnboardingError(
+                "LOCAL_CUTOUT_ENGINE_UNAVAILABLE", "Local cutout has empty alpha bounding box."
+            )
+        width, height = rgba.size
+        allowed_bbox = {
+            "x": max(0.0, min(1.0, bbox[0] / width)),
+            "y": max(0.0, min(1.0, bbox[1] / height)),
+            "w": max(0.0001, min(1.0, (bbox[2] - bbox[0]) / width)),
+            "h": max(0.0001, min(1.0, (bbox[3] - bbox[1]) / height)),
+        }
+        anchor = {
+            "x": max(0.0, min(1.0, (bbox[0] + bbox[2]) / (2 * width))),
+            "y": max(0.0, min(1.0, (bbox[1] + bbox[3]) / (2 * height))),
+        }
+        bounds = {**allowed_bbox, **{f"anchor_{key}": value for key, value in anchor.items()}}
+        cutout_sha = result.output_sha256 or _sha256_bytes(result.output_bytes)
+        return result.output_bytes, bounds, cutout_sha
+    finally:
+        rgba.close()
+
+
+async def _run_auto_cutout(
+    source_path: Path,
+) -> tuple[bytes, dict[str, float], str, float, str]:
+    """Dispatch AUTO cutout byte production and report which engine produced it.
+
+    Policy (the ``LOCAL_CUTOUT_ENGINE_ENABLED`` flag IS the policy — two engines
+    never run for one candidate):
+
+    * Flag OFF  -> deterministic compositor only (byte-identical to prior behavior).
+    * Flag ON   -> try the local BiRefNet engine in-thread (reusing its ONNX
+      session); on ANY failure or not-ready, fall back to the deterministic
+      compositor. Exactly one set of bytes is ever persisted.
+    """
+    if config.LOCAL_CUTOUT_ENGINE_ENABLED:
+        started = time.perf_counter()
+        try:
+            raw, bounds, cutout_sha = await asyncio.to_thread(
+                _build_local_cutout_bytes, source_path
+            )
+            return raw, bounds, cutout_sha, time.perf_counter() - started, "local-birefnet-onnx"
+        except Exception as exc:  # not ready / low quality / inference error
+            logger.warning(
+                "local cutout engine unavailable; falling back to deterministic compositor: %s",
+                exc,
+            )
+    raw, bounds, cutout_sha, seconds = await _run_cutout_compositor(source_path)
+    return raw, bounds, cutout_sha, seconds, "deterministic-compositor"
+
+
 async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dict[str, Any]:
     """Prepare one deterministic cutout candidate; never approve it."""
     started = time.perf_counter()
@@ -669,7 +743,7 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
         db_write_seconds += time.perf_counter() - media_sync_started
         compositor_started = time.perf_counter()
         try:
-            raw_cutout, bounds, cutout_sha, compositor_seconds = await _run_cutout_compositor(
+            raw_cutout, bounds, cutout_sha, compositor_seconds, cutout_engine = await _run_auto_cutout(
                 source_path
             )
         except Exception:
@@ -682,10 +756,26 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
             register_product_truth_cutout_media,
         )
 
+        # Provenance reflects HOW the bytes were prepared; WHO approves is
+        # unchanged (still a PENDING_REVIEW candidate needing human approval).
+        if cutout_engine == "local-birefnet-onnx":
+            cutout_label = "local-cutout"
+            cutout_created_by = "system:local-cutout-engine"
+            cutout_note = (
+                "Local BiRefNet cutout candidate; explicit human review and approval required."
+            )
+        else:
+            cutout_label = "deterministic-cutout"
+            cutout_created_by = "system:deterministic-product-cutout"
+            cutout_note = (
+                "Deterministic local candidate; explicit human review and approval required."
+            )
+        cutout_filename = f"{cutout_label}-{cutout_sha[:16]}.png"
+
         media_started = time.perf_counter()
         media = await register_product_truth_cutout_media(
             product_id,
-            filename=f"deterministic-cutout-{cutout_sha[:16]}.png",
+            filename=cutout_filename,
             content_type="image/png",
             raw_bytes=raw_cutout,
         )
@@ -702,12 +792,12 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
                 min_scale=0.5,
                 max_scale=2.0,
                 allowed_bbox={key: float(bounds[key]) for key in ("x", "y", "w", "h")},
-                created_by="system:deterministic-product-cutout",
-                onboarding_note="Deterministic local candidate; explicit human review and approval required.",
+                created_by=cutout_created_by,
+                onboarding_note=cutout_note,
             ),
             source_kind=AUTO_GENERATED,
-            original_filename=f"deterministic-cutout-{cutout_sha[:16]}.png",
-            uploaded_by="system:deterministic-product-cutout",
+            original_filename=cutout_filename,
+            uploaded_by=cutout_created_by,
             supersede_reason="REBUILT_AUTO_CANDIDATE",
         )
         db_write_seconds += time.perf_counter() - lock_started
