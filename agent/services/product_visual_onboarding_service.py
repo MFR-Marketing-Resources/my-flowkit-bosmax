@@ -251,6 +251,15 @@ def _reference_file(product: dict[str, Any]) -> Path | None:
     return _path(schema_path)
 
 
+def _reference_pack_file(pack: dict[str, Any] | None) -> Path | None:
+    """Return only a byte-backed PRODUCT_CANONICAL pack source."""
+    references = _parse_json((pack or {}).get("references_json"), [])
+    for reference in references if isinstance(references, list) else []:
+        if isinstance(reference, dict) and str(reference.get("role") or "").upper() == "PRODUCT_CANONICAL":
+            return _path(reference.get("local_file_path"))
+    return None
+
+
 def _parse_json(value: Any, fallback: Any) -> Any:
     if value in (None, ""):
         return fallback
@@ -266,7 +275,7 @@ def _source_label(reference: Any | None, *, approved: bool) -> str:
     if approved:
         return "APPROVED_PRODUCT_TRUTH_CUTOUT"
     if reference is None:
-        return "SAME_PRODUCT_CANONICAL_REFERENCE"
+        return "SOURCE_NOT_RESOLVED"
     source_type = str(getattr(reference, "source_type", "") or "")
     if source_type:
         return source_type
@@ -1031,7 +1040,7 @@ async def get_product_visual_readiness(product_id: str) -> dict[str, Any]:
     canva_workflow = await _get_canva_workflow_row(product_id)
     reference = None
     source_error = None
-    source_available = bool(_reference_file(product)) or _truth_row_approved(lock)
+    source_available = bool(_reference_file(product)) or bool(_reference_pack_file(pack)) or _truth_row_approved(lock)
     # Detail reads stay read-only: the resolver is consulted only when a
     # server-local source/approved lock already exists.  URL-only rows remain
     # visibly unresolved until an explicit Prepare action is pressed; a GET must

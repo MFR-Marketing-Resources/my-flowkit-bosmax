@@ -243,6 +243,38 @@ def _registered_reference_id_for_bytes(product_id: str, expected_sha256: str) ->
     return str(asset.get("media_id") or asset.get("asset_id") or "").strip() or None
 
 
+def _find_reference_pack_canonical_source(product_id: str) -> dict[str, Any] | None:
+    """Resolve a byte-verified same-product canonical source from its pack.
+
+    A pending reference pack is review-gated as a *candidate pack*, but its
+    PRODUCT_CANONICAL entry is still the persisted same-product source from
+    which cutout candidates may be prepared.  This does not approve the pack
+    or any cutout.
+    """
+
+    if not product_id:
+        return None
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT references_json FROM product_reference_pack WHERE product_id = ?",
+                (product_id,),
+            ).fetchone()
+        references = json.loads(str((dict(row) if row else {}).get("references_json") or "[]"))
+    except (OSError, sqlite3.Error, TypeError, ValueError):
+        return None
+    for reference in references if isinstance(references, list) else []:
+        if not isinstance(reference, dict) or str(reference.get("role") or "").upper() != "PRODUCT_CANONICAL":
+            continue
+        local_path = reference.get("local_file_path")
+        meta = _inspect_image_file(local_path) if local_path else None
+        expected_sha = str(reference.get("sha256") or "").lower()
+        if meta and expected_sha and meta[3] == expected_sha:
+            return {**reference, "local_file_path": str(Path(str(local_path)).resolve())}
+    return None
+
+
 def resolve_product_reference_image(
     product: dict[str, Any],
     *,
@@ -405,7 +437,30 @@ def resolve_product_reference_image(
                         validation_status="VALIDATED",
                     )
 
-    # Priority 3: Approved & Active Linked Creative Asset
+    # Priority 3: byte-verified canonical source already persisted by the
+    # existing Product Reference Pack authority.  Pack/cutout approval remains
+    # unchanged; this only restores the same-product source input.
+    if product_id:
+        packed_source = _find_reference_pack_canonical_source(product_id)
+        if packed_source:
+            packed_path = packed_source["local_file_path"]
+            meta = _inspect_image_file(packed_path)
+            if meta:
+                w, h, mime, sha = meta
+                return ProductReferenceInfo(
+                    source_type="REFERENCE_PACK_CANONICAL_SOURCE",
+                    media_id=packed_source.get("media_id") or packed_source.get("asset_id"),
+                    local_path=packed_path,
+                    image_url=product.get("image_url"),
+                    mime_type=mime,
+                    sha256=sha,
+                    width=w,
+                    height=h,
+                    provenance="PRODUCT_REFERENCE_PACK",
+                    validation_status="VALIDATED",
+                )
+
+    # Priority 4: Approved & Active Linked Creative Asset
     if product_id:
         asset = _find_linked_approved_creative_asset(product_id)
         if asset:
@@ -427,7 +482,7 @@ def resolve_product_reference_image(
                         validation_status="VALIDATED",
                     )
 
-    # Priority 4: Product row image_url (materialized & byte-validated)
+    # Priority 5: Product row image_url (materialized & byte-validated)
     image_url = product.get("image_url") or product.get("source_url")
     if image_url and isinstance(image_url, str) and image_url.startswith("http"):
         mat = _materialize_image_url(image_url, product_id)

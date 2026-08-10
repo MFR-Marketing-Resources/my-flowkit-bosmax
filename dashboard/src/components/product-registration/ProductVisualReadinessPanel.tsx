@@ -327,6 +327,9 @@ export default function ProductVisualReadinessPanel({
 			</div>
 		);
 	}
+	const trustedSourceReason = readiness.canonical_media_status !== "AVAILABLE"
+		? "Trusted same-product source must be prepared first."
+		: "This action is unavailable in the current review state.";
 
 	return (
 		<div className={`min-w-0 max-w-full overflow-hidden rounded-xl border border-slate-800 bg-slate-900/40 ${compact ? "p-2" : "p-5"}`} data-testid="product-visual-readiness">
@@ -376,7 +379,7 @@ export default function ProductVisualReadinessPanel({
 			{!compact && (
 				<div className="mt-4 grid gap-3 md:grid-cols-3" data-testid="product-cutout-comparison">
 					{[
-						["Original", readiness.original_preview_url],
+						["Original source", readiness.original_preview_url],
 						["Auto candidate", readiness.auto_cutout_preview_url],
 						["Manual candidate", readiness.manual_cutout_preview_url],
 					].map(([name, src]) => (
@@ -398,48 +401,59 @@ export default function ProductVisualReadinessPanel({
 				</div>
 			)}
 
-			<div className="mt-4 flex min-w-0 flex-wrap items-center gap-2">
-				{readiness.canonical_media_status === "AVAILABLE" && readiness.can_start_canva_cutout !== false && (
-					<button type="button" onClick={() => void startCanva()} disabled={busy !== null} className="rounded-lg bg-violet-600/90 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40" data-testid="canva-cutout-button">
+			{!compact && (
+				<div className="mt-4 grid gap-3 md:grid-cols-3" data-testid="product-cutout-control-lanes">
+					<section className="rounded-lg border border-slate-800 p-3" aria-label="Original source controls">
+						<h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-200">Original Source</h4>
+						<p className="mt-2 text-[10px] text-slate-500">{readiness.canonical_media_status === "AVAILABLE" ? "Trusted same-product source is available." : trustedSourceReason}</p>
+						<div className="mt-3 flex flex-wrap gap-2">
+							{productSourceUrl && readiness.can_open_source && (
+								<a href={productSourceUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-300">Open Source</a>
+							)}
+							<button type="button" onClick={() => void fallback()} disabled={busy !== null || !readiness.can_use_original_fallback} title={!readiness.can_use_original_fallback ? trustedSourceReason : undefined} className="rounded-lg bg-amber-500/20 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-amber-200 disabled:opacity-40">
+								{busy === "fallback" ? "Selecting…" : "Use Original Fallback"}
+							</button>
+						</div>
+					</section>
+
+					<section className="rounded-lg border border-slate-800 p-3" aria-label="Auto cutout controls">
+						<h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-200">Auto Cutout</h4>
+						<p className="mt-2 text-[10px] text-slate-500">{readiness.can_prepare_cutout ? "Local deterministic preparation is ready." : trustedSourceReason}</p>
+						<div className="mt-3 flex flex-wrap gap-2">
+							<button type="button" onClick={() => void refresh("prepare")} disabled={busy !== null || !readiness.can_prepare_cutout} title={!readiness.can_prepare_cutout ? trustedSourceReason : undefined} className="rounded-lg bg-indigo-600/80 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40">
+								{busy === "prepare" ? "Preparing…" : "Prepare Auto Cutout"}
+							</button>
+							{readiness.cutout_status !== "NOT_PREPARED" && (
+								<button type="button" onClick={() => void refresh("rebuild")} disabled={busy !== null || !readiness.can_rebuild_cutout} className="rounded-lg bg-slate-700 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-200 disabled:opacity-40">{busy === "rebuild" ? "Rebuilding…" : "Rebuild Auto Cutout"}</button>
+							)}
+						</div>
+					</section>
+
+					<section className="rounded-lg border border-slate-800 p-3" aria-label="Manual and Canva cutout controls">
+						<h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-200">Manual / Canva Cutout</h4>
+						<p className="mt-2 text-[10px] text-slate-500">{readiness.can_upload_manual_cutout || readiness.can_start_canva_cutout ? "Governed manual lanes are ready." : trustedSourceReason}</p>
+						<input ref={fileInputRef} type="file" accept="image/png,.png" onChange={(event) => void uploadManual(event)} className="hidden" />
+						<div className="mt-3 flex flex-wrap gap-2">
+							<button type="button" onClick={() => void startCanva()} disabled={busy !== null || !readiness.can_start_canva_cutout} title={!readiness.can_start_canva_cutout ? trustedSourceReason : undefined} className="rounded-lg bg-violet-600/90 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40" data-testid="canva-cutout-button">
 						{busy === "canva" ? "Starting Canva…" : canvaWorkflow?.current_stage && canvaWorkflow.current_stage !== "NOT_STARTED" ? "Resume Canva Cutout" : "Canva Cutout"}
 					</button>
-				)}
-				{readiness.can_upload_manual_cutout && (
-					<>
-						<input ref={fileInputRef} type="file" accept="image/png,.png" onChange={(event) => void uploadManual(event)} className="hidden" />
-						<button type="button" onClick={() => fileInputRef.current?.click()} disabled={busy !== null} className="rounded-lg bg-fuchsia-600/80 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40">
+							<button type="button" onClick={() => fileInputRef.current?.click()} disabled={busy !== null || !readiness.can_upload_manual_cutout} title={!readiness.can_upload_manual_cutout ? trustedSourceReason : undefined} className="rounded-lg bg-fuchsia-600/80 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40">
 							{busy === "upload" ? "Uploading…" : readiness.manual_cutout_status === "NOT_UPLOADED" ? "Upload My Cutout" : "Replace Manual Cutout"}
 						</button>
-					</>
-				)}
-				{readiness.can_prepare_cutout && (
-					<button type="button" onClick={() => void refresh("prepare")} disabled={busy !== null} className="rounded-lg bg-indigo-600/80 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40">
-						{busy === "prepare" ? "Preparing…" : "Prepare Auto Cutout"}
-					</button>
-				)}
-				{readiness.can_rebuild_cutout && readiness.cutout_status !== "NOT_PREPARED" && (
-					<button type="button" onClick={() => void refresh("rebuild")} disabled={busy !== null} className="rounded-lg bg-slate-700 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-200 disabled:opacity-40">
-						{busy === "rebuild" ? "Rebuilding…" : "Rebuild Auto Cutout"}
-					</button>
-				)}
+						</div>
+					</section>
+				</div>
+			)}
+
+			<div className="mt-4 flex min-w-0 flex-wrap items-center gap-2">
 				{readiness.can_review_cutout && (
 					<button type="button" onClick={onOpenReview} className="rounded-lg bg-amber-500/20 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-amber-200">
 						Review
 					</button>
 				)}
-				{productSourceUrl && readiness.can_open_source && (
-					<a href={productSourceUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-300">
-						Open Source
-					</a>
-				)}
 				{readiness.can_reject_cutout && (
 					<button type="button" onClick={() => void reject()} disabled={busy !== null} className="rounded-lg bg-red-500/20 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-red-200 disabled:opacity-40">
 						{busy === "reject" ? "Rejecting…" : "Reject Cutout"}
-					</button>
-				)}
-				{readiness.can_use_original_fallback && (
-					<button type="button" onClick={() => void fallback()} disabled={busy !== null} className="rounded-lg bg-amber-500/20 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-amber-200 disabled:opacity-40">
-						{busy === "fallback" ? "Selecting…" : "Use Original Fallback"}
 					</button>
 				)}
 				{readiness.active_cutout_preview_url && (

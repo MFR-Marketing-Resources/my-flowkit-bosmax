@@ -40,6 +40,28 @@ const compactCanvaPending: ProductVisualReadiness = {
 	},
 };
 
+const missingSource: ProductVisualReadiness = {
+	...pending,
+	canonical_media_status: "MISSING",
+	visual_grounding_status: "VISUAL_GROUNDING_BLOCKED",
+	visual_grounding_source: "SOURCE_NOT_RESOLVED",
+	cutout_status: "NOT_PREPARED",
+	auto_cutout_status: "NOT_PREPARED",
+	manual_cutout_status: "NOT_UPLOADED",
+	active_visual_source: "BLOCKED",
+	original_preview_url: null,
+	auto_cutout_preview_url: null,
+	manual_cutout_preview_url: null,
+	blockers: ["TRUSTED_SAME_PRODUCT_SOURCE_REQUIRED"],
+	can_prepare_cutout: false,
+	can_review_cutout: false,
+	can_approve_cutout: false,
+	can_rebuild_cutout: false,
+	can_upload_manual_cutout: false,
+	can_start_canva_cutout: false,
+	can_use_original_fallback: false,
+};
+
 describe("ProductVisualReadinessPanel", () => {
 	afterEach(() => cleanup());
 
@@ -81,5 +103,27 @@ describe("ProductVisualReadinessPanel", () => {
 		expect(workflowGrids).toHaveLength(2);
 		expect(workflowGrids[0]).toHaveClass("grid-cols-1", "sm:grid-cols-2");
 		expect(workflowGrids[1]).toHaveClass("grid-cols-1", "sm:grid-cols-2");
+	});
+
+	it("keeps all operator lanes visible and explains blocked source actions", () => {
+		render(
+			<ProductVisualReadinessPanel
+				productId="missing-source"
+				productSourceUrl="https://example.test/product"
+				readiness={missingSource}
+			/>,
+		);
+
+		expect(screen.getByRole("region", { name: "Original source controls" })).toBeInTheDocument();
+		expect(screen.getByRole("region", { name: "Auto cutout controls" })).toBeInTheDocument();
+		expect(screen.getByRole("region", { name: "Manual and Canva cutout controls" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Prepare Auto Cutout" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Canva Cutout" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Upload My Cutout" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Use Original Fallback" })).toBeDisabled();
+		expect(screen.getAllByText("Trusted same-product source must be prepared first.").length).toBeGreaterThan(0);
+		expect(screen.getByText("SOURCE NOT RESOLVED")).toBeInTheDocument();
+		expect(screen.queryByAltText("Original source cutout")).not.toBeInTheDocument();
+		expect(screen.getAllByText("Not available")).toHaveLength(3);
 	});
 });

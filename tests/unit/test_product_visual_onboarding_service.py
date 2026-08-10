@@ -30,6 +30,23 @@ async def test_readiness_separates_same_product_grounding_from_exact_approval(tm
     assert readiness["provider_operations"] == 0
 
 
+def test_missing_source_label_is_truthful_and_actions_remain_fail_closed():
+    readiness = service._readiness_payload(
+        {"id": "missing-source", "image_url": "https://example.test/product.jpg"},
+        lock=None,
+        pack=None,
+        prep=None,
+        reference=None,
+        source_available=False,
+    )
+
+    assert readiness["visual_grounding_source"] == "SOURCE_NOT_RESOLVED"
+    assert readiness["can_prepare_cutout"] is False
+    assert readiness["can_upload_manual_cutout"] is False
+    assert readiness["can_start_canva_cutout"] is False
+    assert readiness["can_open_source"] is True
+
+
 def test_deterministic_cutout_bytes_preserve_canonical_source_dimensions(tmp_path, monkeypatch):
     source = tmp_path / "source.png"
     Image.new("RGB", (24, 24), (30, 120, 150)).save(source)
