@@ -18,10 +18,10 @@ from agent.services import product_visual_onboarding_service as service
 
 @pytest.fixture(autouse=True)
 def _reset_engine_state():
-    engine._sha_verified_ok = False
+    engine._sha_verified.clear()
     engine.reset_session_for_tests()
     yield
-    engine._sha_verified_ok = False
+    engine._sha_verified.clear()
     engine.reset_session_for_tests()
 
 
@@ -336,3 +336,41 @@ def test_engine_module_imports_and_fails_closed_without_ml_deps(monkeypatch):
 
     monkeypatch.setattr(engine, "_import_backends", _raise)
     assert engine.readiness()["state"] == engine.EngineReadiness.DEPENDENCY_MISSING.value
+
+
+# ─── MODEL REGISTRY / low-memory selection ───────────────────
+def test_default_model_is_u2net_low_memory():
+    spec = engine.selected_model()
+    assert spec.model_id == "u2net"
+    assert spec.family == "u2net"
+    assert spec.input_size == 320
+    assert engine.DEFAULT_MODEL_ID == "u2net"
+    assert engine.MODEL_ID == "u2net"
+
+
+def test_model_switch_via_env_changes_selection_and_path(monkeypatch, tmp_path):
+    monkeypatch.setenv("CUTOUT_MODEL_CACHE_DIR", str(tmp_path))
+    monkeypatch.setenv("CUTOUT_MODEL_ID", "birefnet-general-lite")
+    spec = engine.selected_model()
+    assert spec.model_id == "birefnet-general-lite"
+    assert spec.family == "birefnet" and spec.input_size == 1024
+    assert engine.model_path().name == "birefnet-general-lite.onnx"
+
+
+def test_unknown_model_id_falls_back_to_default_safely(monkeypatch):
+    monkeypatch.setenv("CUTOUT_MODEL_ID", "does-not-exist")
+    assert engine.selected_model().model_id == engine.DEFAULT_MODEL_ID
+
+
+def test_all_registry_models_are_commercially_licensed():
+    for spec in engine.MODEL_REGISTRY.values():
+        assert any(tok in spec.license for tok in ("Apache", "MIT", "BSD")), (spec.model_id, spec.license)
+
+
+def test_readiness_reports_selected_model_and_available_ids(monkeypatch, tmp_path):
+    _deps_ok(monkeypatch)
+    _stage_cache(monkeypatch, tmp_path, write=False)  # MODEL_MISSING is fine; we inspect metadata
+    state = engine.readiness()
+    assert state["model_id"] == "u2net"
+    assert state["input_size"] == 320
+    assert "u2netp" in state["available_model_ids"] and "birefnet-general-lite" in state["available_model_ids"]
