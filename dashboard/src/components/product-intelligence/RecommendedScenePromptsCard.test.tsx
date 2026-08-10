@@ -41,7 +41,7 @@ describe("RecommendedScenePromptsCard", () => {
 		// placeholders must remain unresolved in the preview
 		expect(list).toHaveTextContent("[AVATAR]");
 		expect(list).toHaveTextContent("[PRODUCT]");
-		expect(screen.getByTestId("recommended-scene-prompts-card")).toHaveTextContent(/cluster: Home & Living/);
+		expect(screen.getByTestId("recommended-scene-prompts-card")).toHaveTextContent(/Recommended scene \/ image prompts/i);
 		expect(screen.getByTestId("scene-global-style")).toHaveTextContent(/photorealistic/);
 		await waitFor(() => expect(mocked).toHaveBeenCalledWith("p1"));
 		// Read-only: no generate/create/approve control anywhere in the card.
@@ -60,6 +60,6 @@ describe("RecommendedScenePromptsCard", () => {
 	it("shows an error state without crashing", async () => {
 		mocked.mockRejectedValue(new Error("API 500: boom"));
 		render(<RecommendedScenePromptsCard productId="p3" />);
-		expect(await screen.findByText(/Unable to load scene prompts:/i)).toBeInTheDocument();
+		expect(await screen.findByText(/Unable to load scene references:/i)).toBeInTheDocument();
 	});
 });

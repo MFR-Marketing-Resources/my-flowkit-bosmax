@@ -60,7 +60,7 @@ describe("CreativeHandoffPreview", () => {
 		fireEvent.click(screen.getByTestId("creative-handoff-prepare"));
 		const err = await screen.findByTestId("creative-handoff-error");
 		expect(err).toHaveTextContent(/not APPROVED yet/i);
-		expect(err).toHaveTextContent(/Approve the saved selection above/i);
+		expect(err).toHaveTextContent(/approve the plan above/i);
 		// raw error code is not shown to the user
 		expect(err.textContent).not.toContain("SELECTION_NOT_APPROVED");
 	});
@@ -69,14 +69,14 @@ describe("CreativeHandoffPreview", () => {
 		mocked.mockRejectedValue(new Error('API 404: {"detail":"SELECTION_NOT_FOUND"}'));
 		render(<CreativeHandoffPreview productId="p3" />);
 		fireEvent.click(screen.getByTestId("creative-handoff-prepare"));
-		expect(await screen.findByTestId("creative-handoff-error")).toHaveTextContent(/No saved creative selection/i);
+		expect(await screen.findByTestId("creative-handoff-error")).toHaveTextContent(/No saved creative plan/i);
 	});
 });
 
 describe("handoffBlockedMessage", () => {
 	it("maps each fail-closed code to clear, code-free copy", () => {
 		expect(handoffBlockedMessage('API 409: {"detail":"SELECTION_NOT_APPROVED"}')).toMatch(/not APPROVED yet/i);
-		expect(handoffBlockedMessage('API 404: {"detail":"SELECTION_NOT_FOUND"}')).toMatch(/No saved creative selection/i);
+		expect(handoffBlockedMessage('API 404: {"detail":"SELECTION_NOT_FOUND"}')).toMatch(/No saved creative plan/i);
 		expect(handoffBlockedMessage('API 404: {"detail":"PRODUCT_NOT_FOUND"}')).toMatch(/Product not found/i);
 		expect(handoffBlockedMessage('API 422: {"detail":"INVALID_AVATAR_CODE"}')).toMatch(/avatar is no longer valid/i);
 		expect(handoffBlockedMessage('API 422: {"detail":"INVALID_SCENE_TEMPLATE_ID"}')).toMatch(/scene template is no longer valid/i);
