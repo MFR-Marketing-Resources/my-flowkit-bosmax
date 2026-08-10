@@ -435,6 +435,8 @@ domains:
       - tests/unit/test_avatar_csv_factory_service.py
       - tests/unit/test_avatar_registry_usage_tags.py
       - tests/unit/test_avatar_registry_manual_autogen.py
+      - tests/unit/test_avatar_registry_core_authority_lock.py
+      - tests/api/test_avatar_registry_system_immutable_api.py
       - tests/api/test_avatar_csv_factory_api.py
       - tests/api/test_avatar_registry_manual_autogen_api.py
       - tests/ui/test_avatar_registry_csv_factory_ui_contract.py
