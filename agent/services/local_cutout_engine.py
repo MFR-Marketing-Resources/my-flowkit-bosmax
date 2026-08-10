@@ -162,6 +162,18 @@ FAIL_FOREGROUND_TOO_SMALL = "FOREGROUND_TOO_SMALL"
 FAIL_FOREGROUND_TOO_LARGE = "FOREGROUND_TOO_LARGE"
 FAIL_EMPTY_BBOX = "EMPTY_ALPHA_BBOX"
 
+# ─── Product ISOLATION contract — SEPARATE from file/background-removal quality.
+# Background removal succeeding (alpha + foreground) does NOT prove the cutout is
+# the product ONLY (the CHEEZY GARLIC "jar + bread both retained" failure). These
+# are engine-PREPARATION states, NOT Product Truth lifecycle states.
+ISO_PASS = "PRODUCT_ISOLATION_PASS"  # only an explicit human review asserts this
+ISO_REVIEW_REQUIRED = "PRODUCT_ISOLATION_REVIEW_REQUIRED"
+ISO_TARGET_SELECTION_REQUIRED = "TARGET_SELECTION_REQUIRED"
+# Operator target-region (ROI) safety codes.
+ROI_INVALID = "TARGET_REGION_INVALID"
+ROI_TOO_SMALL = "TARGET_REGION_TOO_SMALL"
+ROI_SOURCE_CHANGED = "TARGET_SOURCE_CHANGED"
+
 
 @dataclass
 class LocalCutoutResult:
@@ -185,9 +197,23 @@ class LocalCutoutResult:
     output_sha256: str | None = None
     foreground_ratio: float = 0.0
     inference_seconds: float = 0.0
+    # Product-isolation contract (distinct from file quality above).
+    file_quality_status: str = QUALITY_OK
+    product_isolation_status: str = ISO_REVIEW_REQUIRED
+    component_count: int = 1
+    roi: tuple[int, int, int, int] | None = None
 
     def ok(self) -> bool:
+        """FILE / background-removal quality only — NOT proof of product isolation."""
         return self.failure_code is None and self.quality_status == QUALITY_OK
+
+    def needs_target_selection(self) -> bool:
+        return self.product_isolation_status == ISO_TARGET_SELECTION_REQUIRED
+
+    def isolation_review_ready(self) -> bool:
+        """Mechanically clean AND not flagged ambiguous — still requires HUMAN
+        product-isolation confirmation before it can be approved."""
+        return self.ok() and self.product_isolation_status == ISO_REVIEW_REQUIRED
 
     def summary(self) -> dict:
         data = asdict(self)
@@ -512,8 +538,82 @@ def _validate_alpha_and_quality(png_bytes: bytes, expected_size: tuple[int, int]
     return {**base, "quality_status": QUALITY_OK, "failure_code": None}
 
 
+def _foreground_components(mask: "Image.Image", *, work: int = 200, fg_threshold: int = 96) -> list[float]:
+    """Sizes (fraction of the downscaled canvas, largest first) of connected
+    foreground blobs in an ``L`` mask. Pure Pillow/Python (numpy-free) so the
+    ambiguity gate is testable without the ML backend."""
+    w, h = mask.size
+    scale = work / max(w, h, 1)
+    sw, sh = max(1, round(w * scale)), max(1, round(h * scale))
+    small = mask.convert("L").resize((sw, sh), Image.NEAREST)
+    px = small.load()
+    grid = [[px[x, y] >= fg_threshold for x in range(sw)] for y in range(sh)]
+    seen = [[False] * sw for _ in range(sh)]
+    total = float(sw * sh) or 1.0
+    sizes: list[int] = []
+    for sy in range(sh):
+        for sx in range(sw):
+            if grid[sy][sx] and not seen[sy][sx]:
+                cnt = 0
+                stack = [(sy, sx)]
+                seen[sy][sx] = True
+                while stack:
+                    cy, cx = stack.pop()
+                    cnt += 1
+                    for ny, nx in ((cy + 1, cx), (cy - 1, cx), (cy, cx + 1), (cy, cx - 1)):
+                        if 0 <= ny < sh and 0 <= nx < sw and grid[ny][nx] and not seen[ny][nx]:
+                            seen[ny][nx] = True
+                            stack.append((ny, nx))
+                sizes.append(cnt)
+    return sorted((s / total for s in sizes), reverse=True)
+
+
+def classify_source_isolation(mask: "Image.Image", *, min_component_frac: float | None = None) -> tuple[str, int]:
+    """From a FULL-FRAME mask decide whether the source is auto-isolatable.
+
+    Two or more significant foreground blobs => ambiguous (product + promotional
+    prop / food, e.g. CHEEZY GARLIC jar + bread) => the operator must select the
+    product target. Deterministic heuristics NEVER assert PASS — only a human
+    product-isolation review does.
+    """
+    frac = min_component_frac if min_component_frac is not None else _env_float("CUTOUT_ISO_MIN_COMPONENT_FRAC", 0.03)
+    significant = [c for c in _foreground_components(mask) if c >= frac]
+    if len(significant) >= 2:
+        return ISO_TARGET_SELECTION_REQUIRED, len(significant)
+    return ISO_REVIEW_REQUIRED, max(len(significant), 1)
+
+
+def validate_roi(roi, source_size, *, min_frac: float | None = None) -> str | None:
+    """Return an ROI error code (or None). Deterministic; numpy-free."""
+    try:
+        x, y, w, h = (int(round(float(v))) for v in roi)
+    except Exception:
+        return ROI_INVALID
+    sw, sh = int(source_size[0]), int(source_size[1])
+    if w <= 0 or h <= 0 or x < 0 or y < 0 or x + w > sw or y + h > sh:
+        return ROI_INVALID
+    frac = min_frac if min_frac is not None else _env_float("CUTOUT_ROI_MIN_FRAC", 0.005)
+    if sw * sh <= 0 or (w * h) < frac * (sw * sh):
+        return ROI_TOO_SMALL
+    return None
+
+
+def _infer_mask_roi(rgb_image: "Image.Image", roi) -> "Image.Image":
+    """Infer ONLY on the ROI crop, then paste its mask onto a full-source-size
+    transparent (0) canvas at the ROI location. Pixels outside the ROI stay
+    transparent => same-canvas product isolation (bread outside the jar ROI is
+    dropped)."""
+    x, y, w, h = (int(round(float(v))) for v in roi)
+    crop = rgb_image.crop((x, y, x + w, y + h))
+    crop_mask = _infer_mask(crop).convert("L")
+    canvas = Image.new("L", rgb_image.size, 0)
+    canvas.paste(crop_mask, (x, y))
+    return canvas
+
+
 def build_result_from_mask(
     source_rgb: "Image.Image", mask: "Image.Image", *, source_sha256: str, inference_seconds: float = 0.0,
+    product_isolation_status: str = ISO_REVIEW_REQUIRED, component_count: int = 1, roi=None,
 ) -> LocalCutoutResult:
     """Compose RGBA (same-canvas), encode PNG, validate — pure and testable."""
     spec = selected_model()
@@ -540,6 +640,10 @@ def build_result_from_mask(
         output_bytes=out_bytes if passed else None,
         output_sha256=_sha256_bytes(out_bytes) if passed else None,
         foreground_ratio=float(checks.get("foreground_ratio", 0.0)), inference_seconds=inference_seconds,
+        file_quality_status=checks.get("quality_status", QUALITY_OK),
+        product_isolation_status=product_isolation_status,
+        component_count=int(component_count),
+        roi=tuple(int(round(float(v))) for v in roi) if roi is not None else None,
     )
 
 
@@ -554,11 +658,18 @@ def _failed_result(*, failure_code: str, source_sha256: str, source_size: tuple[
     )
 
 
-def prepare(source, *, source_sha256: str | None = None) -> LocalCutoutResult:
-    """Prepare a same-canvas transparent PNG cutout from a source image.
+def prepare(
+    source, *, source_sha256: str | None = None, roi=None, roi_source_sha256: str | None = None,
+) -> LocalCutoutResult:
+    """Prepare a same-canvas transparent PNG cutout.
 
-    ``source`` may be raw image bytes, a path string, or a ``Path``. Always
-    returns a :class:`LocalCutoutResult`; never raises for expected failures.
+    ``source`` may be raw bytes, a path string, or a ``Path``. When ``roi``
+    (``(x, y, w, h)`` in source pixels) is given, inference runs ONLY inside that
+    operator-selected region and everything outside it stays transparent — so the
+    product is isolated from unrelated foreground (bread/props). Without an ROI, an
+    ambiguous multi-object source is flagged ``TARGET_SELECTION_REQUIRED`` (file
+    quality may still be OK — the two are separate gates). Always returns a
+    :class:`LocalCutoutResult`; never raises for expected failures.
     """
     try:
         if isinstance(source, (bytes, bytearray)):
@@ -574,12 +685,23 @@ def prepare(source, *, source_sha256: str | None = None) -> LocalCutoutResult:
     ssha = source_sha256 or _sha256_bytes(raw)
     source_size = src_rgb.size
 
+    # ROI provenance + geometry guards, fail-closed BEFORE any inference.
+    if roi is not None:
+        if roi_source_sha256 is not None and roi_source_sha256 != ssha:
+            return _failed_result(failure_code=ROI_SOURCE_CHANGED, source_sha256=ssha, source_size=source_size)
+        roi_err = validate_roi(roi, source_size)
+        if roi_err:
+            return _failed_result(failure_code=roi_err, source_sha256=ssha, source_size=source_size)
+
     state = readiness()
     if state["state"] != EngineReadiness.READY.value:
         return _failed_result(failure_code=state["state"], source_sha256=ssha, source_size=source_size)
 
     started = time.perf_counter()
-    future: Future = _get_infer_executor().submit(_infer_mask, src_rgb)
+    if roi is not None:
+        future: Future = _get_infer_executor().submit(_infer_mask_roi, src_rgb, roi)
+    else:
+        future = _get_infer_executor().submit(_infer_mask, src_rgb)
     try:
         mask = future.result(timeout=_inference_timeout_seconds())
     except FutureTimeoutError:
@@ -591,4 +713,14 @@ def prepare(source, *, source_sha256: str | None = None) -> LocalCutoutResult:
         return _failed_result(failure_code=code, source_sha256=ssha, source_size=source_size)
     inference_seconds = time.perf_counter() - started
 
-    return build_result_from_mask(src_rgb, mask, source_sha256=ssha, inference_seconds=inference_seconds)
+    # Product-isolation classification. An operator ROI target => human review;
+    # a full-frame ambiguous (multi-object) source => target selection required.
+    if roi is not None:
+        iso_status, components = ISO_REVIEW_REQUIRED, 1
+    else:
+        iso_status, components = classify_source_isolation(mask)
+
+    return build_result_from_mask(
+        src_rgb, mask, source_sha256=ssha, inference_seconds=inference_seconds,
+        product_isolation_status=iso_status, component_count=components, roi=roi,
+    )
