@@ -20,7 +20,13 @@ afterEach(() => {
 	vi.clearAllMocks();
 });
 
-function makeCopySet(id: string, angle = "Problem-Agitate", status: CopySet["status"] = "COPY_APPROVED"): CopySet {
+function makeCopySet(
+	id: string,
+	angle = "Problem-Agitate",
+	status: CopySet["status"] = "COPY_APPROVED",
+	opts: Partial<CopySet> = {},
+): CopySet {
+	const productionValid = status === "COPY_APPROVED" && opts.production_valid !== false;
 	return {
 		copy_set_id: id,
 		product_id: "p1",
@@ -39,6 +45,17 @@ function makeCopySet(id: string, angle = "Problem-Agitate", status: CopySet["sta
 		provenance: {},
 		claim_review: {},
 		approved_by: status === "COPY_APPROVED" ? "operator" : undefined,
+		archived: 0,
+		// #688 contract defaults: approved fixtures are production-valid unless overridden.
+		workflow_status: status,
+		production_valid: productionValid,
+		validity_class: productionValid ? "APPROVED_COPY_VALID" : "APPROVED_COPY_STALE",
+		validity_class_label: productionValid ? "VALID" : "STALE PI",
+		validity_reasons: productionValid ? [] : ["PI_SNAPSHOT_MISMATCH"],
+		recommended_action: productionValid ? "READY" : "REVALIDATE_APPROVED",
+		validity_primary_reason: productionValid ? null : "STALE",
+		validity_stale: !productionValid,
+		...opts,
 	} as CopySet;
 }
 
@@ -253,5 +270,53 @@ describe("CopySelectionPanel — honest angle counts (anti-monoculture display)"
 		expect(previews[0]).toHaveTextContent("Variant satu");
 		expect(previews[1]).toHaveTextContent("Variant dua");
 		expect(previews[0].textContent).not.toEqual(previews[1].textContent);
+	});
+});
+
+describe("CopySelectionPanel — production validity contract (#688)", () => {
+	it("blocks Select for Final Prompt when approved but not production-valid", async () => {
+		const sets = [
+			makeCopySet("stale-1", "Empathy", "COPY_APPROVED", {
+				production_valid: false,
+				validity_class: "APPROVED_COPY_STALE",
+				validity_class_label: "STALE PI",
+				validity_reasons: ["PI_SNAPSHOT_MISMATCH"],
+				recommended_action: "REVALIDATE_APPROVED",
+			}),
+		];
+		listCopySetsForProduct.mockResolvedValue({ items: sets });
+		const onSelect = vi.fn();
+		render(
+			<CopySelectionPanel productId="p1" selectedCopySetId={null} onSelect={onSelect} />,
+		);
+		await waitFor(() => {
+			expect(screen.getByTestId("copy-set-row")).toBeInTheDocument();
+		});
+		expect(screen.getByTestId("copy-select-blocked")).toBeInTheDocument();
+		expect(screen.queryByTestId("select-copy-for-final-prompt")).not.toBeInTheDocument();
+		expect(screen.getByTestId("copy-production-valid-count")).toHaveTextContent("0");
+		expect(screen.getByTestId("copy-raw-approved-count")).toHaveTextContent("1");
+	});
+
+	it("allows Select for Final Prompt only for production-valid approved sets", async () => {
+		const sets = [
+			makeCopySet("good-1", "Empathy", "COPY_APPROVED", { production_valid: true }),
+			makeCopySet("stale-1", "Empathy", "COPY_APPROVED", {
+				production_valid: false,
+				validity_class: "APPROVED_COPY_MISSING_REVIEW",
+				validity_class_label: "MISSING REVIEW",
+			}),
+		];
+		listCopySetsForProduct.mockResolvedValue({ items: sets });
+		render(
+			<CopySelectionPanel productId="p1" selectedCopySetId={null} onSelect={vi.fn()} />,
+		);
+		await waitFor(() => {
+			expect(screen.getAllByTestId("copy-set-row")).toHaveLength(2);
+		});
+		expect(screen.getAllByTestId("select-copy-for-final-prompt")).toHaveLength(1);
+		expect(screen.getAllByTestId("copy-select-blocked")).toHaveLength(1);
+		expect(screen.getByTestId("copy-production-valid-count")).toHaveTextContent("1");
+		expect(screen.getByTestId("copy-raw-approved-count")).toHaveTextContent("2");
 	});
 });

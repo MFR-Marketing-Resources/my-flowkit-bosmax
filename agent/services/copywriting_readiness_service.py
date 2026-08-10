@@ -158,11 +158,24 @@ async def get_copywriting_readiness(product_id: str) -> dict[str, Any]:
         "customer_avatar_ready": customer_avatar_ready,
         "recommended_formula": recommended_formula,
         "selected_copy_set_id": selected_copy_set_id,
+        # Raw workflow APPROVED count — NOT the same as production-valid (#688).
         "approved_copy_set_count": len(approved),
-        "valid_approved_copy_set_count": (
-            1 if classification.get("classification") == "APPROVED_COPY_VALID" else 0
+        "valid_approved_copy_set_count": int(
+            classification.get("valid_approved_count")
+            if classification.get("valid_approved_count") is not None
+            else (
+                sum(
+                    1
+                    for v in (classification.get("set_verdicts") or [])
+                    if v.get("valid")
+                )
+                if classification.get("set_verdicts") is not None
+                else (1 if classification.get("classification") == "APPROVED_COPY_VALID" else 0)
+            )
         ),
         "copy_classification": classification.get("classification"),
+        "primary_blocker": classification.get("primary_blocker"),
+        "recommended_copy_action": classification.get("recommended_next_action"),
         "formula_validation_status": formula_validation_status,
         "sales_clarity_status": sales_clarity_status,
         "copy_applicable": True,

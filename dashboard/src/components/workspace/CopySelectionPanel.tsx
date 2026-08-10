@@ -39,9 +39,37 @@ function StatusBadge({ status }: { status: CopySetStatus }) {
 	const meta = STATUS_META[status] ?? STATUS_META.DRAFT_COPY;
 	return (
 		<span
+			data-testid="copy-workflow-status-badge"
 			className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.15em] ${meta.className}`}
 		>
 			{meta.label}
+		</span>
+	);
+}
+
+/** Production validity is independent of workflow APPROVED (#688). */
+function ProductionValidityBadge({ copySet }: { copySet: CopySet }) {
+	if (copySet.status !== "COPY_APPROVED") return null;
+	const valid = copySet.production_valid === true;
+	const label =
+		copySet.validity_class_label ||
+		(valid
+			? "VALID"
+			: copySet.validity_class?.replace(/^APPROVED_COPY_/, "").replace(/_/g, " ") ||
+				"NOT VALID");
+	return (
+		<span
+			data-testid="copy-production-validity-badge"
+			data-production-valid={valid ? "true" : "false"}
+			data-validity-class={copySet.validity_class ?? ""}
+			title={(copySet.validity_reasons || []).join(", ") || undefined}
+			className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] ${
+				valid
+					? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+					: "border-amber-500/40 bg-amber-500/10 text-amber-200"
+			}`}
+		>
+			Production: {label}
 		</span>
 	);
 }
@@ -184,6 +212,9 @@ export default function CopySelectionPanel({
 	const approvedCount = copySets.filter(
 		(cs) => cs.status === "COPY_APPROVED",
 	).length;
+	const productionValidCount = copySets.filter(
+		(cs) => cs.status === "COPY_APPROVED" && cs.production_valid === true,
+	).length;
 
 	// Extract unique strategy angles for filtering
 	const uniqueAngles = Array.from(
@@ -296,10 +327,38 @@ export default function CopySelectionPanel({
 				</div>
 			) : (
 				<>
+					<div
+						className="mb-3 flex flex-wrap gap-3 rounded-lg border border-slate-700/50 bg-slate-950/60 px-3 py-2 text-[11px] text-slate-300"
+						data-testid="copy-validity-counts"
+					>
+						<span data-testid="copy-raw-approved-count">
+							Approved records: <strong>{approvedCount}</strong>
+						</span>
+						<span data-testid="copy-production-valid-count">
+							Production-valid:{" "}
+							<strong
+								className={
+									productionValidCount > 0 ? "text-emerald-300" : "text-amber-300"
+								}
+							>
+								{productionValidCount}
+							</strong>
+						</span>
+					</div>
 					{approvedCount === 0 ? (
 						<div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
 							Copy Sets exist but none are approved. Review and approve a Copy
 							Set before production-quality final prompt generation.
+						</div>
+					) : productionValidCount === 0 ? (
+						<div
+							className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200"
+							data-testid="copy-no-production-valid-banner"
+						>
+							{approvedCount} approved record{approvedCount === 1 ? "" : "s"} exist,
+							but none are production-valid (missing semantic review, stale PI
+							lineage, or other gate). Revalidate / semantic-review before final
+							prompt generation — workflow APPROVED alone is not enough.
 						</div>
 					) : selectedCopySetId ? (
 						<div className="mb-3 flex items-center justify-between rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-200">
@@ -398,6 +457,13 @@ export default function CopySelectionPanel({
 						{paginatedCopySets.map((cs) => {
 							const isSelected = cs.copy_set_id === selectedCopySetId;
 							const isApproved = cs.status === "COPY_APPROVED";
+							const isProductionValid = isApproved && cs.production_valid === true;
+							const validityBlocker =
+								isApproved && !isProductionValid
+									? cs.validity_class ||
+										cs.validity_primary_reason ||
+										"NOT_PRODUCTION_VALID"
+									: null;
 							const safety = cs.claim_review?.safety;
 							const claimWarning =
 								safety && safety.safe === false
@@ -416,6 +482,8 @@ export default function CopySelectionPanel({
 									data-copy-set-id={cs.copy_set_id}
 									data-status={cs.status}
 									data-approved={isApproved ? "true" : "false"}
+									data-production-valid={isProductionValid ? "true" : "false"}
+									data-validity-class={cs.validity_class ?? ""}
 									data-approved-by={cs.approved_by ?? ""}
 									data-selected={isSelected ? "true" : "false"}
 									className={`rounded-xl border px-3 py-2.5 transition-colors ${
@@ -427,7 +495,18 @@ export default function CopySelectionPanel({
 									{/* Compact Header Row */}
 									<div className="flex flex-wrap items-center justify-between gap-2">
 										<div className="flex flex-wrap items-center gap-2">
+											<span className="text-[9px] uppercase tracking-wider text-slate-500">
+												Workflow
+											</span>
 											<StatusBadge status={cs.status} />
+											{isApproved ? (
+												<>
+													<span className="text-[9px] uppercase tracking-wider text-slate-500">
+														Validity
+													</span>
+													<ProductionValidityBadge copySet={cs} />
+												</>
+											) : null}
 											{cs.angle ? (
 												<span className="rounded bg-slate-800 px-2 py-0.5 text-[10px] font-medium text-slate-300">
 													{cs.angle}
@@ -448,9 +527,10 @@ export default function CopySelectionPanel({
 												{isExpanded ? "Hide details ▲" : "Details ▼"}
 											</button>
 
-											{isApproved ? (
+											{isApproved && isProductionValid ? (
 												<button
 													type="button"
+													data-testid="select-copy-for-final-prompt"
 													onClick={() =>
 														onSelect(isSelected ? null : cs.copy_set_id)
 													}
@@ -463,6 +543,15 @@ export default function CopySelectionPanel({
 												>
 													{isSelected ? "✓ Selected — Deselect" : "Select for Final Prompt"}
 												</button>
+											) : isApproved && !isProductionValid ? (
+												<span
+													data-testid="copy-select-blocked"
+													title={(cs.validity_reasons || []).join(", ")}
+													className="max-w-[220px] rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[10px] font-semibold leading-snug text-amber-100"
+												>
+													Cannot bind — {validityBlocker}
+													{cs.recommended_action ? ` · ${cs.recommended_action}` : ""}
+												</span>
 											) : cs.status !== "COPY_REJECTED" ? (
 												<button
 													type="button"
@@ -530,8 +619,30 @@ export default function CopySelectionPanel({
 
 											{cs.approved_at ? (
 												<div className="mt-1 text-[10px] text-emerald-400/80">
-													Approved {cs.approved_at}
+													Workflow approved {cs.approved_at}
 													{cs.approved_by ? ` · by ${cs.approved_by}` : ""}
+												</div>
+											) : null}
+											{isApproved ? (
+												<div
+													data-testid="copy-validity-detail"
+													className={`mt-1 text-[10px] ${
+														isProductionValid
+															? "text-emerald-400/80"
+															: "text-amber-300/90"
+													}`}
+												>
+													Production validity:{" "}
+													{isProductionValid
+														? "VALID"
+														: cs.validity_class_label ||
+															cs.validity_class ||
+															"NOT VALID"}
+													{(cs.validity_reasons || []).length
+														? ` — ${(cs.validity_reasons || [])
+																.slice(0, 4)
+																.join(", ")}`
+														: ""}
 												</div>
 											) : null}
 										</div>
