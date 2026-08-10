@@ -53,6 +53,10 @@ interface AvatarProfile {
 	usage_tags: string[];
 	image_generated: boolean;
 	generated_asset_id: string | null;
+	registry_source: "SYSTEM_CORE" | "CUSTOM";
+	immutable: boolean;
+	delete_allowed: boolean;
+	archive_allowed: boolean;
 }
 
 interface AvatarGenerationState {
@@ -63,8 +67,13 @@ interface AvatarGenerationState {
 interface AvatarPoolResponse {
 	avatars: AvatarProfile[];
 	count: number;
+	system_core_count: number;
+	custom_count: number;
+	generated_count: number;
+	not_generated_count: number;
 	source: string;
 	bridge_active: boolean;
+	effective_pool_model: "SYSTEM_CORE_UNION_CUSTOM";
 	product_fit_mapped_count?: number;
 	saved_selection_referenced_count?: number;
 	unmapped_review_candidate_count?: number;
@@ -971,6 +980,10 @@ export default function AvatarRegistryPage() {
 	};
 
 	const handleDeleteAvatar = async (avatar: AvatarProfile) => {
+		if (!avatar.delete_allowed) {
+			setError("SYSTEM_AVATAR_IMMUTABLE");
+			return;
+		}
 		const confirmed = window.confirm(
 			`Padam avatar "${avatar.character_name}" (${avatar.avatar_code}) dari registry?\n\n` +
 				"Profil dibuang dari pool dan imej rujukannya (jika ada) diarkibkan " +
@@ -1156,7 +1169,7 @@ export default function AvatarRegistryPage() {
 							manual gallery.{" "}
 							{isLoading
 								? "Loading..."
-								: `${avatars.length} approved avatar${avatars.length !== 1 ? "s" : ""} · ${avatars.filter((a) => a.image_generated).length} generated · source: ${bridgeActive ? "synced bridge CSV" : "repo seed"}`}
+								: `${avatars.length} effective · ${avatars.filter((a) => a.registry_source === "SYSTEM_CORE").length} system core · ${avatars.filter((a) => a.registry_source === "CUSTOM").length} custom · ${avatars.filter((a) => a.image_generated).length} generated · ${avatars.filter((a) => !a.image_generated).length} not generated · custom bridge ${bridgeActive ? "active" : "inactive"}`}
 						</div>
 					</div>
 					<div>
@@ -1400,7 +1413,7 @@ export default function AvatarRegistryPage() {
 										{Object.entries(productClusterAudit.cluster_counts)
 											.sort((a, b) => b[1] - a[1])
 											.map(([cluster, count]) => {
-												const avatars = clusterAvatarSets?.[cluster]?.avatars ?? [];
+											const recommendedAvatars = clusterAvatarSets?.[cluster]?.avatars ?? [];
 												return (
 													<tr
 														key={cluster}
@@ -1417,13 +1430,13 @@ export default function AvatarRegistryPage() {
 																<span className="text-[11px] text-slate-500">
 																	Memuatkan…
 																</span>
-															) : avatars.length === 0 ? (
+															) : recommendedAvatars.length === 0 ? (
 																<span className="text-[11px] text-slate-500">
 																	— tiada —
 																</span>
 															) : (
 																<div className="flex flex-wrap gap-1.5">
-																	{avatars.map((avatar) => (
+																{recommendedAvatars.map((avatar) => (
 																		<span
 																			key={avatar.avatar_code}
 																			className="inline-flex items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[11px]"
@@ -1436,9 +1449,12 @@ export default function AvatarRegistryPage() {
 																					{avatar.character_name}
 																				</span>
 																			)}
-																			<span className="text-slate-500">
-																				fit {avatar.fit_score}
-																			</span>
+													<span className="text-slate-500">
+														fit {avatar.fit_score}
+													</span>
+													<span className={avatars.find((profile) => profile.avatar_code === avatar.avatar_code)?.image_generated ? "text-emerald-300" : "text-slate-400"}>
+														{avatars.find((profile) => profile.avatar_code === avatar.avatar_code)?.image_generated ? "GENERATED" : "NOT GENERATED"}
+													</span>
 																		</span>
 																	))}
 																</div>
@@ -2473,6 +2489,25 @@ export default function AvatarRegistryPage() {
 							),
 						},
 						{
+							key: "product_clusters",
+							header: "Mapped Product Cluster(s)",
+							render: (a) => (
+								<span className="text-xs text-slate-400">
+									{activeProductFitAvatars.find((profile) => profile.avatar_code === a.avatar_code)?.product_clusters.join(", ") || "—"}
+								</span>
+							),
+						},
+						{
+							key: "source",
+							header: "Source",
+							render: (a) => a.registry_source === "SYSTEM_CORE" ? "System Core" : "Custom",
+						},
+						{
+							key: "protection",
+							header: "Protection",
+							render: (a) => a.immutable ? "Locked" : "Managed",
+						},
+						{
 							key: "scene",
 							header: "Scene",
 							render: (a) => (
@@ -2506,17 +2541,20 @@ export default function AvatarRegistryPage() {
 										⏳ {generating[a.avatar_code].stage}
 									</span>
 								) : (
-									<button
-										type="button"
-										onClick={() => void handleGenerateImage(a)}
-										className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-100 hover:bg-blue-500/20"
-									>
-										Generate
-									</button>
+									<div className="flex flex-col items-start gap-1">
+										<span className="text-[10px] font-semibold text-slate-400">NOT GENERATED</span>
+										<button
+											type="button"
+											onClick={() => void handleGenerateImage(a)}
+											className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-100 hover:bg-blue-500/20"
+										>
+											Generate
+										</button>
+									</div>
 								),
 						},
 					]}
-					rowActions={(a) => (
+					rowActions={(a) => a.delete_allowed ? (
 						<button
 							type="button"
 							onClick={() => void handleDeleteAvatar(a)}
@@ -2525,7 +2563,7 @@ export default function AvatarRegistryPage() {
 						>
 							{deletingCode === a.avatar_code ? "..." : "Delete"}
 						</button>
-					)}
+					) : null}
 				/>
 			</section>
 		</div>

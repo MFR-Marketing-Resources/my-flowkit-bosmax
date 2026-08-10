@@ -510,12 +510,24 @@ async def avatar_registry_pool():
             "GENERATED_ASSET_EXISTS" if code in generated else
             "SAFE_ARCHIVE_CANDIDATE"
         )
+    system_core_count = sum(
+        profile["registry_source"] == avatar_registry.SOURCE_SYSTEM_CORE
+        for profile in profiles
+    )
+    custom_count = sum(
+        profile["registry_source"] == avatar_registry.SOURCE_CUSTOM
+        for profile in profiles
+    )
     return {
         "avatars": profiles,
         "count": len(profiles),
+        "system_core_count": system_core_count,
+        "custom_count": custom_count,
         "generated_count": sum(1 for p in profiles if p["image_generated"]),
+        "not_generated_count": sum(1 for p in profiles if not p["image_generated"]),
         "source": str(avatar_registry._active_pool_file()),
         "bridge_active": avatar_registry._BRIDGE_FILE.exists(),
+        "effective_pool_model": "SYSTEM_CORE_UNION_CUSTOM",
         "product_fit_mapped_count": len(fit_codes),
         "saved_selection_referenced_count": len(selected_codes),
         "unmapped_review_candidate_count": sum(
@@ -969,6 +981,8 @@ async def avatar_registry_delete(avatar_code: str):
         result = avatar_registry.delete_avatar(avatar_code)
     except ValueError as exc:
         msg = str(exc)
+        if msg.startswith("SYSTEM_AVATAR_IMMUTABLE:"):
+            raise HTTPException(409, "SYSTEM_AVATAR_IMMUTABLE") from exc
         raise HTTPException(404 if "NOT_FOUND" in msg else 422, msg) from exc
     # Best-effort archive of the linked reference image. Match the AVATAR_CODE
     # marker embedded in the asset description (the code is NOT a model field) —

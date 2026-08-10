@@ -25,4 +25,15 @@ describe("AvatarRegistryPage product-first safety contract", () => {
 		expect(source).toContain("autoAgeBand");
 		expect(source).toContain("age_band");
 	});
+
+	it("renders backend provenance, protection, image state, and permission-gated actions", () => {
+		expect(source).toContain("registry_source");
+		expect(source).toContain("System Core");
+		expect(source).toContain("Locked");
+		expect(source).toContain("Mapped Product Cluster(s)");
+		expect(source).toContain("NOT GENERATED");
+		expect(source).toContain("a.delete_allowed ?");
+		expect(source).toContain("SYSTEM_AVATAR_IMMUTABLE");
+		expect(source).toContain("?.image_generated ? \"GENERATED\" : \"NOT GENERATED\"");
+	});
 });
