@@ -1,11 +1,13 @@
-# Local cutout engine (OPT-IN) — CPU-only BiRefNet ONNX background remover.
+# Local cutout engine (OPT-IN) — CPU-only ONNX background remover.
 #
 # These are NOT part of the base runtime (requirements.txt). Install them ONLY
 # when enabling LOCAL_CUTOUT_ENGINE_ENABLED=1, then stage the model with
 #   python scripts/prepare_cutout_model.py
 #
-# Deliberately minimal: the engine runs the BiRefNet ONNX model directly through
-# onnxruntime with numpy + Pillow. rembg is intentionally NOT used at runtime
+# Deliberately minimal: the engine runs an ONNX foreground-segmentation model
+# directly through onnxruntime with numpy + Pillow. The default model is the
+# low-memory u2net (~0.45 GB peak, ~1s CPU); u2netp / birefnet-general-lite are
+# selectable via CUTOUT_MODEL_ID. rembg is intentionally NOT a runtime dependency
 # (it pulls ~30 native packages — numba, llvmlite, scipy, scikit-image,
 # pymatting — plus an uncontrolled first-request model download). Pillow is
 # already declared in requirements.txt.
