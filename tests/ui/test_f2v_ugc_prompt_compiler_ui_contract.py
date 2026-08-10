@@ -138,6 +138,7 @@ def test_storyboard_first_plan_is_visible_in_operator_preview_and_handoff_bank()
         "operator-storyboard-plan-summary",
         "Storyboard-first plan",
         "Full dialogue:",
+        "operator-cta-fit-diagnostics",
         "storyboard-allocation-summary",
         "Exact dialogue:",
     ]:
@@ -146,6 +147,7 @@ def test_storyboard_first_plan_is_visible_in_operator_preview_and_handoff_bank()
     for token in [
         "storyboard-plan-summary",
         "storyboardPlan",
+        "cta-fit-diagnostics",
     ]:
         assert token in handoff_source, token
 

@@ -615,8 +615,27 @@ function PackageDetailPanel({
 							<div className="mt-2 grid gap-1 text-slate-400">
 								<div>Route: {storyboardPlan.route_id} · Total: {storyboardPlan.total_duration_seconds}s · Plan: [{storyboardPlan.resolved_block_plan.join(", ")}]</div>
 								<div>Story: {storyboardPlan.full_story_plan.story_summary}</div>
-								<div>Full dialogue: {storyboardPlan.full_dialogue_plan.full_dialogue_text || "(visual-only package)"}</div>
-							</div>
+									<div>Full dialogue: {storyboardPlan.full_dialogue_plan.full_dialogue_text || "(visual-only package)"}</div>
+									{storyboardPlan.full_dialogue_plan.compliance_metadata?.cta_fit ? (
+										<div data-testid="cta-fit-diagnostics">
+											CTA fit: {storyboardPlan.full_dialogue_plan.compliance_metadata.cta_fit.fit_status}
+											{" · "}
+											{storyboardPlan.full_dialogue_plan.compliance_metadata.cta_fit.original_word_count}
+											{" → "}
+											{storyboardPlan.full_dialogue_plan.compliance_metadata.cta_fit.spoken_word_count}
+											{" / budget "}
+											{storyboardPlan.full_dialogue_plan.compliance_metadata.cta_fit.final_block_word_budget}
+											{" · "}
+											{storyboardPlan.full_dialogue_plan.compliance_metadata.cta_fit.fit_method}
+											{storyboardPlan.full_dialogue_plan.compliance_metadata.cta_fit.was_compacted ? (
+												<div className="mt-1 text-amber-200/90">
+													Spoken CTA (compacted): {storyboardPlan.full_dialogue_plan.compliance_metadata.cta_fit.spoken_cta_text}
+													<div className="text-slate-500">Canonical CTA preserved: {storyboardPlan.full_dialogue_plan.compliance_metadata.cta_fit.canonical_cta_text}</div>
+												</div>
+											) : null}
+										</div>
+									) : null}
+								</div>
 						</div>
 					) : null}
 
