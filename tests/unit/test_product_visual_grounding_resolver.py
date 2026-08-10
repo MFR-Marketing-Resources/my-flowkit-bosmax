@@ -168,6 +168,35 @@ def test_reference_pack_source_builder_can_explicitly_keep_canonical_source(tmp_
     assert resolved.sha256 == source_sha
 
 
+def test_reference_pack_canonical_source_restores_missing_product_cache(tmp_path, monkeypatch):
+    source = tmp_path / "canonical.jpg"
+    Image.new("RGB", (800, 800), color=(40, 90, 120)).save(source, format="JPEG")
+    source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    from agent.services import product_visual_grounding_resolver as module
+
+    monkeypatch.setattr(module, "resolve_schema_entry", lambda _product: None)
+    monkeypatch.setattr(
+        module,
+        "_find_reference_pack_canonical_source",
+        lambda _product_id: {
+            "asset_id": "ca_refpack_canonical",
+            "local_file_path": str(source),
+            "sha256": source_sha,
+        },
+    )
+
+    resolved = module.resolve_product_reference_image(
+        {"id": "product-pack-source", "local_image_path": str(tmp_path / "missing.jpg")},
+        prefer_approved_cutout=False,
+    )
+
+    assert resolved.source_type == "REFERENCE_PACK_CANONICAL_SOURCE"
+    assert resolved.media_id == "ca_refpack_canonical"
+    assert resolved.sha256 == source_sha
+    assert resolved.width == 800
+    assert resolved.height == 800
+
+
 def test_purged_alias_cannot_receive_schema_visual_fallback(monkeypatch):
     from agent.services import product_visual_grounding_resolver as module
 
