@@ -49,6 +49,7 @@ domains:
       - scripts/prepare_cutout_model.py
       - requirements-cutout.txt
       - tests/unit/test_local_cutout_engine.py
+      - tests/unit/test_product_aware_cutout.py
       - dashboard/src/pages/ImgFastlanePage.tsx
       - dashboard/src/pages/imgCockpitLogic.ts
       - dashboard/src/pages/imgCockpitLogic.test.ts
