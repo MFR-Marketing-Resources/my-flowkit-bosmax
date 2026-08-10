@@ -35,7 +35,7 @@ FIXTURE_INPUTS = {
 def build_fixture(name: str) -> dict:
     """Build a complete 24s proof artifact for one supported source mode."""
     config = FIXTURE_INPUTS[name]
-    compiled = compile_ugc_video_prompt(
+    kwargs = dict(
         product=deepcopy(PRODUCT),
         approved_package={"scene_context": "a bright lived-in bathroom counter"},
         mode=config["mode"],
@@ -46,6 +46,9 @@ def build_fixture(name: str) -> dict:
         target_language="BM_MS",
         copy_intelligence=deepcopy(COPY),
     )
+    if config["source_mode"] in {"T2V", "HYBRID"}:
+        kwargs["avatar_id"] = "BOS_F_AINA_01"
+    compiled = compile_ugc_video_prompt(**kwargs)
     planner = compiled["planner_result"]
     return {
         "fixture_id": name,

@@ -14,6 +14,10 @@ import json
 from typing import Any, Mapping, Sequence
 
 from agent.services import canonical_prompt_compiler as canonical
+from agent.services.canonical_cta_fitter import (
+    FIT_BLOCKED,
+    fit_spoken_cta,
+)
 
 
 PLAN_VERSION = "full_storyboard_first_extend_planner_v2"
@@ -456,18 +460,34 @@ def _build_dialogue_plan(
         canonical.dialogue_word_budget(seconds, target_language, wps_mode=wps_mode)
         for seconds in story_plan.resolved_block_plan
     ]
-    cta = _clean(normalized_copy.get("cta"))
+    canonical_cta = _clean(normalized_copy.get("cta"))
+    final_block_budget = budgets[-1] if dialogue_enabled and budgets else 0
+    # When dialogue is disabled the CTA is not spoken; fit against a huge budget so
+    # provenance still records EXACT without failing closed.
+    fit_budget = final_block_budget if dialogue_enabled else 10**9
+    cta_fit = fit_spoken_cta(
+        canonical_cta_text=canonical_cta,
+        final_block_word_budget=fit_budget,
+        target_language=target_language,
+        wps_mode=wps_mode,
+        cta_type=normalized_copy.get("cta_type"),
+        resolved_block_plan=story_plan.resolved_block_plan,
+    )
+    if dialogue_enabled and canonical_cta and cta_fit.fit_status == FIT_BLOCKED:
+        raise PlannerValidationError("FINAL_CTA_CANNOT_FIT_WPS_BUDGET")
+    spoken_cta = cta_fit.spoken_cta_text if dialogue_enabled else ""
     clause_specs = _global_dialogue_clause_specs(
         normalized_copy=normalized_copy,
         approved_dialogue=approved_dialogue,
-        final_cta=cta,
+        final_cta=spoken_cta,
+        canonical_cta=canonical_cta,
         target_language=target_language,
         family=canonical._infer_product_family(product, normalized_copy),
     ) if dialogue_enabled else []
     clause_specs = _compress_global_dialogue_clause_specs(
         clause_specs=clause_specs,
         total_budget=sum(budgets) if dialogue_enabled else 0,
-        final_block_budget=budgets[-1] if dialogue_enabled else 0,
+        final_block_budget=final_block_budget,
         total_blocks=len(story_plan.resolved_block_plan),
     )
     clause_specs, omission_log = _ensure_packable_clause_specs(
@@ -491,12 +511,17 @@ def _build_dialogue_plan(
         actual_total_word_count=len(full_text.split()),
         full_dialogue_text=full_text,
         utterances=tuple(utterances),
-        approved_copy_provenance={"copy_source": normalized_copy.get("copy_source") or "fallback"},
+        approved_copy_provenance={
+            "copy_source": normalized_copy.get("copy_source") or "fallback",
+            "canonical_cta_text": canonical_cta,
+            "spoken_cta_text": spoken_cta,
+        },
         compliance_metadata={
             "generated_once": True,
-            "final_cta_required": bool(cta and dialogue_enabled),
+            "final_cta_required": bool(canonical_cta and dialogue_enabled),
             "omitted_utterances": omission_log if dialogue_enabled else [],
             "compression_version": "dialogue_packable_compress_v1",
+            "cta_fit": cta_fit.to_dict(),
         },
     )
 
@@ -512,6 +537,7 @@ def _global_dialogue_clause_specs(
     final_cta: str,
     target_language: str,
     family: str,
+    canonical_cta: str | None = None,
 ) -> list[tuple[str, str]]:
     """Build one semantic Copy Set sequence without any block-local inputs."""
     source_text = _clean(approved_dialogue)
@@ -561,11 +587,19 @@ def _global_dialogue_clause_specs(
             raw_specs.append(("RESOLUTION", family_closing))
     specs: list[tuple[str, str]] = []
     seen: set[str] = set()
-    cta_key = _dialogue_clause_key(final_cta)
+    blocked_cta_keys = {
+        key
+        for key in (
+            _dialogue_clause_key(final_cta),
+            _dialogue_clause_key(canonical_cta or ""),
+            _dialogue_clause_key(normalized_copy.get("cta")),
+        )
+        if key
+    }
     for role, raw_clause in raw_specs:
         clause = _clean(raw_clause)
         key = _dialogue_clause_key(clause)
-        if not key or key == cta_key or key in seen:
+        if not key or key in blocked_cta_keys or key in seen:
             continue
         seen.add(key)
         specs.append((role, clause))
@@ -1023,7 +1057,19 @@ def _allocate(
                 ),
                 source_mode_adapter=story_plan.source_mode_adapter,
                 compliance_status="CLAIM_SAFE_COPY_BOUND",
-                final_cta_text=_clean(normalized_copy.get("cta")) if is_final else "",
+                final_cta_text=(
+                    _clean(
+                        ((dialogue_plan.compliance_metadata or {}).get("cta_fit") or {}).get(
+                            "spoken_cta_text"
+                        )
+                    )
+                    or _clean(
+                        (dialogue_plan.approved_copy_provenance or {}).get("spoken_cta_text")
+                    )
+                    or _clean(normalized_copy.get("cta"))
+                )
+                if is_final
+                else "",
                 end_frame_instruction=_end_frame_instruction(
                     source_mode=story_plan.source_mode,
                     product=product,

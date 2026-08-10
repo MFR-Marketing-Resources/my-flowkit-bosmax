@@ -534,6 +534,7 @@ domains:
       - agent/services/prompt_package_dryrun_service.py
       - agent/services/ugc_video_prompt_compiler_service.py
       - agent/services/full_storyboard_extend_planner.py
+      - agent/services/canonical_cta_fitter.py
       - agent/services/google_flow_extend_prompt_renderer.py
       - agent/services/product_physics.py
       - agent/services/workspace_execution_package_service.py
@@ -767,6 +768,7 @@ domains:
       - tests/unit/test_t2v_hybrid_registry_authority.py
       - tests/ui/test_operator_registry_authority_ui_contract.py
       - tests/unit/test_full_storyboard_extend_planner.py
+      - tests/unit/test_canonical_cta_wps_fitter.py
       - tests/unit/test_google_flow_extend_prompt_renderer.py
       - tests/unit/test_extend_prompt_sqlite_persistence.py
       - tests/unit/test_extend_representation_audio_contracts.py
