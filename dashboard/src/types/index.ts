@@ -736,6 +736,20 @@ export interface StoryboardBlockAllocation {
 	end_frame_instruction: string;
 }
 
+export interface StoryboardCtaFitDiagnostics {
+	canonical_cta_text: string;
+	spoken_cta_text: string;
+	original_word_count: number;
+	spoken_word_count: number;
+	final_block_word_budget: number;
+	fit_status: "EXACT" | "DETERMINISTIC_COMPACT" | "BLOCKED" | string;
+	fit_method: string;
+	was_compacted: boolean;
+	cta_type?: string;
+	target_language?: string;
+	wps_mode?: string;
+}
+
 export interface FullStoryboardPlannerResult {
 	plan_version: string;
 	input_fingerprint: string;
@@ -764,6 +778,17 @@ export interface FullStoryboardPlannerResult {
 		actual_total_word_count: number;
 		full_dialogue_text: string;
 		utterances: StoryboardDialogueUtterance[];
+		approved_copy_provenance?: {
+			copy_source?: string;
+			canonical_cta_text?: string;
+			spoken_cta_text?: string;
+			[key: string]: unknown;
+		};
+		compliance_metadata?: {
+			final_cta_required?: boolean;
+			cta_fit?: StoryboardCtaFitDiagnostics;
+			[key: string]: unknown;
+		};
 	};
 	block_allocations: StoryboardBlockAllocation[];
 }

@@ -364,6 +364,7 @@ def test_final_cta_is_spoken_only_in_the_final_rendered_section_six() -> None:
         requested_total_duration_seconds=24,
         target_language="BM_MS",
         copy_intelligence=COPY,
+        avatar_id="BOS_F_AINA_01",
     )
     cta = COPY["cta"]
     allocations = result["planner_result"]["block_allocations"]
@@ -411,6 +412,7 @@ def test_extend_renderer_uses_only_its_assigned_story_and_dialogue_slices() -> N
         requested_total_duration_seconds=24,
         target_language="BM_MS",
         copy_intelligence=COPY,
+        avatar_id="BOS_F_AINA_01",
     )
 
     planner = result["planner_result"]
@@ -456,6 +458,7 @@ def test_canonical_package_fingerprint_tracks_planner_and_rendered_block_mutatio
         requested_total_duration_seconds=24,
         target_language="BM_MS",
         copy_intelligence=COPY,
+        avatar_id="BOS_F_AINA_01",
     )
     fingerprint_builder = getattr(ugc_compiler, "canonical_package_fingerprint", None)
 
@@ -477,6 +480,7 @@ def test_canonical_package_fingerprint_tracks_planner_and_rendered_block_mutatio
         requested_total_duration_seconds=24,
         target_language="BM_MS",
         copy_intelligence=COPY,
+        avatar_id="BOS_F_AINA_01",
     )
     assert same_inputs["prompt_fingerprint"] == baseline
 
