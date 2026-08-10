@@ -50,7 +50,7 @@ describe("RecommendedCameraPresetsCard", () => {
 		expect(list).toHaveTextContent("Hook Block");
 		expect(list).toHaveTextContent("PAIN");
 		expect(list).toHaveTextContent("MCU + EYE");
-		expect(screen.getByTestId("recommended-camera-presets-card")).toHaveTextContent(/cluster: Home & Living/);
+		expect(screen.getByTestId("recommended-camera-presets-card")).toHaveTextContent(/Recommended camera \/ video presets/i);
 		await waitFor(() => expect(mocked).toHaveBeenCalledWith("p1"));
 		// Read-only: no generate/create/approve control anywhere in the card.
 		expect(screen.queryByRole("button", { name: /generate|create|approve/i })).not.toBeInTheDocument();
@@ -70,6 +70,6 @@ describe("RecommendedCameraPresetsCard", () => {
 	it("shows an error state without crashing", async () => {
 		mocked.mockRejectedValue(new Error("API 500: boom"));
 		render(<RecommendedCameraPresetsCard productId="p3" />);
-		expect(await screen.findByText(/Unable to load camera presets:/i)).toBeInTheDocument();
+		expect(await screen.findByText(/Unable to load camera references:/i)).toBeInTheDocument();
 	});
 });

@@ -16,7 +16,6 @@ import {
 import type { Product, ProductStrategyTypeRegistryResponse } from "../types";
 import ProductIntelligenceReviewDraftPanel from "../components/product-intelligence/ProductIntelligenceReviewDraftPanel";
 import CreativeSetupPanel from "../components/product-intelligence/CreativeSetupPanel";
-import RecommendedAvatarsCard from "../components/product-intelligence/RecommendedAvatarsCard";
 import RecommendedScenePromptsCard from "../components/product-intelligence/RecommendedScenePromptsCard";
 import RecommendedCameraPresetsCard from "../components/product-intelligence/RecommendedCameraPresetsCard";
 import CreativeHandoffPreview from "../components/product-intelligence/CreativeHandoffPreview";
@@ -380,9 +379,8 @@ export default function ProductDetailPage() {
 						)}
 						{tab === "CREATIVE" && (
 							<>
-								Plan the creative set — tick one or MORE avatars and scene templates;
-								camera follows the selected scene automatically. Use <Hl>Smart suggest</Hl>{" "}
-								or <Hl>⚡ Auto-fill top pick</Hl>. Then{" "}
+								Choose the people and scenes for this product. Camera presets follow the
+								selected scene automatically. Use <Hl>Smart suggest</Hl>, then{" "}
 								<Hl>Save Selection</Hl> and <Hl>Approve</Hl>. Planning only — nothing is
 								generated here.
 							</>
@@ -556,14 +554,31 @@ export default function ProductDetailPage() {
 					)}
 
 					{tab === "CREATIVE" && (
-						<div className="space-y-5">
+						<div data-testid="creative-setup-tab" className="space-y-5">
 							<CreativeSetupPanel productId={product.id} />
-							<div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-								<RecommendedAvatarsCard productId={product.id} />
-								<RecommendedScenePromptsCard productId={product.id} />
-								<RecommendedCameraPresetsCard productId={product.id} />
-								<CreativeHandoffPreview productId={product.id} />
-							</div>
+							<details
+								data-testid="creative-reference-library"
+								className="rounded-xl border border-slate-800 bg-slate-900/40 p-4"
+							>
+								<summary className="cursor-pointer list-none text-sm font-bold text-slate-200 hover:text-white">
+									Reference library <span className="ml-2 text-xs font-normal text-slate-500">optional prompt and camera detail</span>
+								</summary>
+								<div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+									<RecommendedScenePromptsCard productId={product.id} />
+									<RecommendedCameraPresetsCard productId={product.id} />
+								</div>
+							</details>
+							<details
+								data-testid="creative-handoff-disclosure"
+								className="rounded-xl border border-slate-800 bg-slate-900/40 p-4"
+							>
+								<summary className="cursor-pointer list-none text-sm font-bold text-slate-200 hover:text-white">
+									Generation handoff <span className="ml-2 text-xs font-normal text-slate-500">preview only · no generation</span>
+								</summary>
+								<div className="mt-4">
+									<CreativeHandoffPreview productId={product.id} />
+								</div>
+							</details>
 						</div>
 					)}
 				</>

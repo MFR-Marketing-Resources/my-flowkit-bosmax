@@ -30,9 +30,6 @@ vi.mock(
 vi.mock("../components/product-intelligence/CreativeSetupPanel", () => ({
 	default: () => <div data-testid="creative-panel">Creative Setup functions</div>,
 }));
-vi.mock("../components/product-intelligence/RecommendedAvatarsCard", () => ({
-	default: () => <div data-testid="recommended-avatars">Avatar recommendations</div>,
-}));
 vi.mock("../components/product-intelligence/RecommendedScenePromptsCard", () => ({
 	default: () => <div data-testid="recommended-scenes">Scene recommendations</div>,
 }));
@@ -137,7 +134,7 @@ describe("ProductDetailPage tab contract", () => {
 		);
 	});
 
-	it("mounts the complete Creative Setup surface without moving it into the visual tab", async () => {
+	it("mounts the operator-first Creative Setup surface with advanced references collapsed", async () => {
 		renderProductDetail();
 		await screen.findByRole("tablist");
 
@@ -146,10 +143,11 @@ describe("ProductDetailPage tab contract", () => {
 		expect(await screen.findByTestId("creative-panel")).toHaveTextContent(
 			"Creative Setup functions",
 		);
-		expect(screen.getByTestId("recommended-avatars")).toBeInTheDocument();
 		expect(screen.getByTestId("recommended-scenes")).toBeInTheDocument();
 		expect(screen.getByTestId("recommended-cameras")).toBeInTheDocument();
 		expect(screen.getByTestId("creative-handoff")).toBeInTheDocument();
+		expect(screen.getByTestId("creative-reference-library")).not.toHaveAttribute("open");
+		expect(screen.getByTestId("creative-handoff-disclosure")).not.toHaveAttribute("open");
 		expect(screen.queryByTestId("visual-panel")).not.toBeInTheDocument();
 	});
 

@@ -85,6 +85,28 @@ describe("ProductIntelligenceReviewDraftPanel", () => {
 		).toBeInTheDocument();
 	});
 
+	it("keeps the operator editor visible while advanced history and gates stay collapsed", async () => {
+		const draft = makeDraft({
+			draft_id: "d-editable",
+			review_status: "NEEDS_REVISION",
+		});
+		vi.mocked(fetchProductIntelligenceReviewDrafts).mockResolvedValue({
+			product_id: "p1",
+			items: [draft],
+		});
+		vi.mocked(fetchProductIntelligenceReviewDraft).mockResolvedValue(draft);
+
+		render(<ProductIntelligenceReviewDraftPanel productId="p1" onApproved={async () => {}} />);
+
+		expect(await screen.findByTestId("product-intelligence-review-panel")).toBeInTheDocument();
+		expect(await screen.findByLabelText("Product Description")).toBeVisible();
+		expect(screen.getByLabelText("Audience (who is the buyer)")).toBeVisible();
+		expect(screen.getByLabelText("Angle strategies (one per line)")).toBeVisible();
+		expect(screen.getByTestId("product-intelligence-draft-queue")).not.toHaveAttribute("open");
+		expect(screen.getByTestId("product-intelligence-review-gates")).not.toHaveAttribute("open");
+		expect(screen.getByText(/System fields — managed automatically/i)).toBeVisible();
+	});
+
 	it("selects the newest editable draft ahead of newer terminal history", async () => {
 		const approved = makeDraft({
 			draft_id: "d-approved",
@@ -685,7 +707,11 @@ describe("Analyze & Repair from source (existing-product recompute)", () => {
 
 		render(<ProductIntelligenceReviewDraftPanel productId="p1" onApproved={async () => {}} />);
 		// Validate first so the server-derived options are on screen.
-		fireEvent.click(await screen.findByRole("button", { name: /Recompute \(Validate\)/i }));
+		const validateButton = await screen.findByRole("button", { name: /Recompute \(Validate\)/i });
+		fireEvent.click(
+			screen.getByTestId("product-intelligence-review-gates").querySelector("summary") as HTMLElement,
+		);
+		fireEvent.click(validateButton);
 		fireEvent.click(await screen.findByTestId("resolve-absence-ingredients_text"));
 
 		const form = await screen.findByTestId("disposition-form");
@@ -732,11 +758,15 @@ describe("Analyze & Repair from source (existing-product recompute)", () => {
 		render(
 			<ProductIntelligenceReviewDraftPanel
 				productId="p1"
-				onApproved={async () => {}}
+			onApproved={async () => {}}
 			/>,
 		);
+		const validateButton = await screen.findByRole("button", { name: /Recompute \(Validate\)/i });
 		fireEvent.click(
-			await screen.findByRole("button", { name: /Recompute \(Validate\)/i }),
+			screen.getByTestId("product-intelligence-review-gates").querySelector("summary") as HTMLElement,
+		);
+		fireEvent.click(
+			validateButton,
 		);
 		fireEvent.click(
 			await screen.findByTestId("resolve-absence-ingredients_text"),

@@ -1344,16 +1344,18 @@ export default function ProductIntelligenceReviewDraftPanel({
 	};
 
 	return (
-		<section className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+		<section
+			data-testid="product-intelligence-review-panel"
+			className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4"
+		>
 			<div className="mb-4 flex flex-wrap items-start justify-between gap-3">
 				<div className="space-y-1">
 					<h2 className="text-sm font-bold text-slate-100">
-						Product Intelligence Review Draft Pipeline
+						Product Intelligence
 					</h2>
 					<p className="max-w-3xl text-[11px] text-slate-400">
-						Create a human-reviewable draft, validate required fields, inspect
-						claim safety, approve or reject, and create the immutable snapshot
-						used by the read-only INTELLIGENCE view.
+						Review product truth, save a revision, and approve only after the
+						visible evidence gates are satisfied.
 					</p>
 				</div>
 				<button
@@ -1379,10 +1381,17 @@ export default function ProductIntelligenceReviewDraftPanel({
 			</div>
 
 			{guidedClaimSafe ? (
-				<div
-					data-testid="guided-claim-safe-panel"
-					className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4"
+				<details
+					data-testid="guided-claim-safe-disclosure"
+					className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/5"
 				>
+					<summary className="cursor-pointer list-none px-4 py-3 text-[11px] font-semibold text-amber-100">
+						Guided claim-safe recovery <span className="ml-2 font-normal text-amber-200/60">advanced review path</span>
+					</summary>
+					<div
+						data-testid="guided-claim-safe-panel"
+						className="border-t border-amber-500/20 p-4"
+					>
 					<div className="flex flex-wrap items-start justify-between gap-3">
 						<div>
 							<div className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-300">
@@ -1517,11 +1526,20 @@ export default function ProductIntelligenceReviewDraftPanel({
 							)}
 						</div>
 					) : null}
-				</div>
+					</div>
+				</details>
 			) : null}
 
-			<div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
-				<div className="rounded border border-slate-800 bg-slate-900/50 p-3">
+			<div className="space-y-4">
+				<details
+					data-testid="product-intelligence-draft-queue"
+					className="rounded border border-slate-800 bg-slate-900/50"
+				>
+					<summary className="cursor-pointer list-none px-3 py-3 text-[11px] font-semibold text-slate-200">
+						Review history · {drafts.length} saved version{drafts.length === 1 ? "" : "s"}{" "}
+						<span className="ml-2 font-normal text-slate-500">open to switch versions</span>
+					</summary>
+					<div className="border-t border-slate-800 p-3">
 					<SectionHeading
 						title="Draft Queue"
 						subtitle="Editable drafts are preferred; terminal drafts remain read-only historical evidence."
@@ -1574,7 +1592,8 @@ export default function ProductIntelligenceReviewDraftPanel({
 							))
 						)}
 					</div>
-				</div>
+					</div>
+				</details>
 
 				<div className="space-y-4">
 					{message ? (
@@ -1910,6 +1929,14 @@ export default function ProductIntelligenceReviewDraftPanel({
 								}
 								className="block space-y-4 border-0 p-0"
 							>
+							<details
+								data-testid="product-intelligence-review-gates"
+								className="rounded border border-slate-800 bg-slate-900/50"
+							>
+								<summary className="cursor-pointer list-none px-3 py-3 text-[11px] font-semibold text-slate-200">
+									Review gates <span className="ml-2 font-normal text-slate-500">missing fields and claim safety</span>
+								</summary>
+								<div className="border-t border-slate-800 p-3">
 							<div className="grid gap-4 xl:grid-cols-2">
 								<div className="rounded border border-slate-800 bg-slate-900/50 p-3">
 									<SectionHeading title="Missing Required Fields" />
@@ -2160,11 +2187,13 @@ export default function ProductIntelligenceReviewDraftPanel({
 									</div>
 								</div>
 							</div>
+								</div>
+							</details>
 
 							<div className="rounded border border-slate-800 bg-slate-900/50 p-3">
 								<SectionHeading
 									title="Draft Editor"
-									subtitle="Minimal V1 editor for the canonical snapshot-aligned product truth fields."
+									subtitle="Edit product truth, buyer persona, and copy strategy. System fields stay collapsed below."
 								/>
 								<div className="mt-4 grid gap-4 xl:grid-cols-2">
 									<TextArea
