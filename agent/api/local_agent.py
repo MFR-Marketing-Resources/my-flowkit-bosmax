@@ -458,3 +458,22 @@ async def get_local_agent_version_proof(request: Request) -> LocalAgentVersionPr
         source_stale_since_start=bool(stale),
         stale_source_sample=stale,
     )
+
+
+@router.get("/runtime-provenance")
+async def get_runtime_provenance() -> dict:
+    """Read-only production runtime provenance lock diagnostics.
+
+    Reports whether ``:8100`` is served from a canonical immutable RELEASE
+    (``_bosmax_runtime/releases/<sha>`` with a matching ``runtime_manifest.json``)
+    or from a stale/mutable dev checkout. Frontend + local-agent diagnostics
+    consume this to surface a stale-runtime warning ONLY when non-canonical.
+    Never mutates anything and starts no provider operation.
+    """
+    from agent import runtime_release
+    from agent.config import DB_PATH
+
+    origin_main = _git_output("rev-parse", "origin/main")
+    provenance = runtime_release.resolve_provenance(_SOURCE_ROOT, DB_PATH, origin_main=origin_main)
+    provenance["origin_main"] = origin_main
+    return provenance

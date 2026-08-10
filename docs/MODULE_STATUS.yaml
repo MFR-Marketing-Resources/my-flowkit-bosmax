@@ -26,6 +26,13 @@ domains:
       - scripts/doctor-postiz-runtime.ps1
       - agent/api/ai_provider_settings.py
       - agent/api/local_agent.py
+      # Permanent production runtime provenance lock — :8100 serves ONLY from an
+      # immutable release (never the mutable dev root), fail-closed on drift.
+      - agent/runtime_release.py
+      - scripts/deploy-canonical-release.ps1
+      - scripts/start-canonical-runtime.ps1
+      - tests/unit/test_runtime_release.py
+      - tests/unit/test_product_detail_tabs_contract.py
       - agent/api/flow.py
       - agent/services/product_lock_builder.py
       - agent/services/product_visual_grounding_resolver.py
