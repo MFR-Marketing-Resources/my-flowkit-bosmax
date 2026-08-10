@@ -44,6 +44,7 @@ describe("CopywritingReadinessCard", () => {
 					product_knowledge_ready: true,
 					customer_avatar_ready: true,
 					approved_copy_set_count: 1,
+					valid_approved_copy_set_count: 1,
 					ready_for_generation: true,
 					blocking_reasons: [],
 					recommended_next_action: "READY",
@@ -61,5 +62,31 @@ describe("CopywritingReadinessCard", () => {
 			<CopywritingReadinessCard readiness={{ ...base, copy_applicable: false }} />,
 		);
 		expect(container).toBeEmptyDOMElement();
+	});
+
+	it("shows raw approved vs production-valid counts (#688)", () => {
+		render(
+			<CopywritingReadinessCard
+				readiness={{
+					...base,
+					has_approved_snapshot: true,
+					product_knowledge_ready: true,
+					customer_avatar_ready: true,
+					approved_copy_set_count: 1003,
+					valid_approved_copy_set_count: 1,
+					copy_classification: "APPROVED_COPY_VALID",
+					ready_for_generation: true,
+					blocking_reasons: [],
+					recommended_next_action: "READY",
+					formula_validation_status: "PASS",
+					sales_clarity_status: "CLEAR",
+				}}
+			/>,
+		);
+		expect(screen.getByTestId("readiness-raw-approved-count")).toHaveTextContent("1003");
+		expect(screen.getByTestId("readiness-valid-approved-count")).toHaveTextContent("1");
+		expect(screen.getByTestId("readiness-copy-classification")).toHaveTextContent(
+			"APPROVED_COPY_VALID",
+		);
 	});
 });

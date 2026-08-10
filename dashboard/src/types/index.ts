@@ -899,6 +899,15 @@ export interface CopySet {
 	similar_to_copy_set_id: string | null;
 	similarity_score: number | null;
 	archived: number;
+	// Production-validity contract (#688) — workflow status alone is not enough.
+	workflow_status?: string | null;
+	production_valid?: boolean;
+	validity_class?: string | null;
+	validity_class_label?: string | null;
+	validity_reasons?: string[];
+	recommended_action?: string | null;
+	validity_primary_reason?: string | null;
+	validity_stale?: boolean;
 }
 
 export interface SimilarityBackfillItem {

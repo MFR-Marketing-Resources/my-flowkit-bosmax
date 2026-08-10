@@ -60,7 +60,18 @@ export default function CopywritingReadinessCard({
 				<li>Approved snapshot: {readiness.has_approved_snapshot ? "✓" : "✗"}</li>
 				<li>Product Knowledge: {readiness.product_knowledge_ready ? "✓" : "✗"}</li>
 				<li>Customer Avatar: {readiness.customer_avatar_ready ? "✓" : "✗"}</li>
-				<li>Approved Copy Sets: {readiness.approved_copy_set_count}</li>
+				<li data-testid="readiness-raw-approved-count">
+					Approved records: {readiness.approved_copy_set_count}
+				</li>
+				<li data-testid="readiness-valid-approved-count">
+					Production-valid approved:{" "}
+					{readiness.valid_approved_copy_set_count ?? 0}
+				</li>
+				{readiness.copy_classification ? (
+					<li data-testid="readiness-copy-classification">
+						Copy class: {readiness.copy_classification}
+					</li>
+				) : null}
 				<li>Recommended formula: {readiness.recommended_formula}</li>
 				<li>
 					Formula QA: {readiness.formula_validation_status} ·{" "}

@@ -352,12 +352,20 @@ async def generate_copy_set(request: CopySetGenerateRequest | dict) -> dict[str,
 
 async def get_copy_set(copy_set_id: str) -> dict[str, Any] | None:
     row = await crud.get_copy_set(copy_set_id)
-    return serialize_copy_set(row) if row else None
+    if not row:
+        return None
+    from agent.services.copy_set_validity_service import enrich_copy_set_with_validity
+
+    return await enrich_copy_set_with_validity(serialize_copy_set(row))
 
 
 async def list_copy_sets(product_id: str) -> list[dict[str, Any]]:
     rows = await crud.list_copy_sets_for_product(product_id)
-    return [serialize_copy_set(row) for row in rows]
+    serialized = [serialize_copy_set(row) for row in rows]
+    from agent.services.copy_set_validity_service import enrich_copy_sets_with_validity
+
+    # Shared validity contract (#688): list never implies COPY_APPROVED == production-valid.
+    return await enrich_copy_sets_with_validity(product_id, serialized)
 
 
 async def delete_copy_set(copy_set_id: str) -> dict[str, Any]:
