@@ -33,8 +33,11 @@ It:
    location `_bosmax_runtime\launcher\` (boot never depends on the dev root or a
    version-pinned release path; the launcher re-resolves the pinned `current`
    release on each restart and **refuses to serve on drift**).
-3. Registers a logon Scheduled Task **`BOSMAX-Canonical-Runtime`** (hidden,
-   single-instance, restart-on-failure).
+3. Creates a per-user **Startup shortcut** `…\Startup\BOSMAX Canonical Runtime.lnk`
+   → the stable launcher (no admin required; matches how the machine already
+   auto-starts). If run elevated it *also* registers a logon Scheduled Task
+   `BOSMAX-Canonical-Runtime` (restart-on-failure) as a bonus — but the shortcut
+   is the active mechanism either way.
 4. Disables the legacy dev-root Startup shortcut → `…\BOSMAX Flow Kit Local Agent.lnk.disabled`.
 
 ## Verify (after a reboot, or any time the UI "looks old")
@@ -50,9 +53,10 @@ point `current` at the new build so the next boot serves it:
 
 ```powershell
 git -C C:\Users\USER\Desktop\_ref_flowkit fetch origin
-pwsh -File scripts/deploy-canonical-release.ps1 -Sha <full origin/main SHA>
-# then restart the runtime now (else it applies on next logon):
-Stop-ScheduledTask -TaskName BOSMAX-Canonical-Runtime; Start-ScheduledTask -TaskName BOSMAX-Canonical-Runtime
+pwsh -File scripts/deploy-canonical-release.ps1 -Sha <full origin/main SHA>   # updates `current`
+# apply now (else it applies on next logon): stop the backend; the launcher's
+# watchdog re-resolves `current` and respawns from the new release in ~3s.
+Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'agent\.main' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 pwsh -File scripts/verify-runtime-canonical.ps1
 ```
 
@@ -60,7 +64,8 @@ Merge → `deploy-canonical-release.ps1 <sha>` → verify. That is the whole loo
 
 ## Rollback
 ```powershell
-Unregister-ScheduledTask -TaskName BOSMAX-Canonical-Runtime -Confirm:$false
+Remove-Item "$([Environment]::GetFolderPath('Startup'))\BOSMAX Canonical Runtime.lnk" -Force
+Unregister-ScheduledTask -TaskName BOSMAX-Canonical-Runtime -Confirm:$false -ErrorAction SilentlyContinue
 Rename-Item "$([Environment]::GetFolderPath('Startup'))\BOSMAX Flow Kit Local Agent.lnk.disabled" `
             "$([Environment]::GetFolderPath('Startup'))\BOSMAX Flow Kit Local Agent.lnk"
 ```

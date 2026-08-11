@@ -75,19 +75,43 @@ $launcherDst = Join-Path $launcherDir "start-canonical-runtime.ps1"
 Copy-Item $launcherSrc $launcherDst -Force
 Write-Host "launcher: $launcherDst (copied from $launcherSrc)"
 
-# 3) Register the logon Scheduled Task (hidden, single-instance, restart on fail).
 $psArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcherDst`" -Repo `"$Repo`" -RuntimeRoot `"$RuntimeRoot`" -Python `"$chosen`""
-$action  = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $psArgs
-$trigger = New-ScheduledTaskTrigger -AtLogOn
-$settings = New-ScheduledTaskSettingsSet `
-  -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-  -MultipleInstances IgnoreNew `
-  -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
-  -ExecutionTimeLimit ([TimeSpan]::Zero)
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
-  -RunLevel Limited -Force `
-  -Description "Fail-closed BOSMAX :8100 canonical runtime (serves the pinned 'current' release, refuses the stale dev root). Replaces the legacy dev-root Startup launcher." | Out-Null
-Write-Host "scheduled task registered: $TaskName (trigger=AtLogon, hidden, restart-on-failure)"
+$psExe  = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
+
+# 3) PRIMARY (no admin required): a per-user Startup shortcut -> the stable
+#    launcher. This matches how the machine already auto-starts and needs no
+#    elevation, so it works in a locked-down session.
+$startup = [Environment]::GetFolderPath('Startup')
+$lnkPath = Join-Path $startup "BOSMAX Canonical Runtime.lnk"
+$sh  = New-Object -ComObject WScript.Shell
+$lnk = $sh.CreateShortcut($lnkPath)
+$lnk.TargetPath       = $psExe
+$lnk.Arguments        = $psArgs
+$lnk.WorkingDirectory = $RuntimeRoot
+$lnk.WindowStyle      = 7   # minimized / hidden
+$lnk.Description       = "Fail-closed BOSMAX :8100 canonical runtime (pinned release); replaces the stale dev-root launcher."
+$lnk.Save()
+Write-Host "startup shortcut: $lnkPath (runs at logon, no admin required)"
+
+# 3b) BONUS (only if elevated): a logon Scheduled Task with restart-on-failure.
+#     Non-fatal when it needs admin — the Startup shortcut above is the active
+#     mechanism either way.
+try {
+  $action  = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $psArgs
+  $trigger = New-ScheduledTaskTrigger -AtLogOn
+  $settings = New-ScheduledTaskSettingsSet `
+    -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -MultipleInstances IgnoreNew `
+    -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
+    -ExecutionTimeLimit ([TimeSpan]::Zero)
+  Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
+    -RunLevel Limited -Force -ErrorAction Stop `
+    -Description "Fail-closed BOSMAX :8100 canonical runtime (serves the pinned 'current' release, refuses the stale dev root)." | Out-Null
+  Write-Host "scheduled task registered (bonus, restart-on-failure): $TaskName"
+} catch {
+  Write-Host "scheduled task skipped (needs elevation): $($_.Exception.Message)"
+  Write-Host "  -> the Startup shortcut is the active auto-start; re-run elevated to also add the task."
+}
 
 # 4) Disable the legacy dev-root Startup shortcut (the stale-serving culprit).
 if (-not $NoDisableLegacy) {
@@ -102,5 +126,5 @@ if (-not $NoDisableLegacy) {
   }
 }
 
-Write-Host ("INSTALL_OK task={0} launcher={1} python={2} current={3}" -f $TaskName, $launcherDst, $chosen, $releaseDir)
-Write-Host "Next: verify with scripts/verify-runtime-canonical.ps1 (after the task starts the runtime)."
+Write-Host ("INSTALL_OK autostart={0} launcher={1} python={2} current={3}" -f $lnkPath, $launcherDst, $chosen, $releaseDir)
+Write-Host "Next: log off/on (or run the launcher now), then verify with scripts/verify-runtime-canonical.ps1."
