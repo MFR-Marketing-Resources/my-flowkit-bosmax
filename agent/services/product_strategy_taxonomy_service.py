@@ -181,6 +181,7 @@ def build_product_strategy_taxonomy_candidate(
         product_id=str(product.get("id") or product.get("product_id") or ""),
         taxonomy_version=TAXONOMY_VERSION,
         product_fingerprint=product_strategy_fingerprint(product),
+        current_product_fingerprint=product_strategy_fingerprint(product),
         cluster=str(binding["cluster"]),
         product_type_group=str(binding["product_type_group"]),
         matched_scene_strategy_id=str(
@@ -652,6 +653,7 @@ def _read_model_from_row(
 
     taxonomy = _row_to_taxonomy(row)
     current_fingerprint = product_strategy_fingerprint(product)
+    taxonomy.current_product_fingerprint = current_fingerprint
     if taxonomy.materialization_status == "PLACEHOLDER":
         taxonomy.product_fingerprint = current_fingerprint
         taxonomy.is_stale = False

@@ -1,8 +1,10 @@
 /**
  * Faceless Video operator lane (V4 language).
  *
- * Separate UI, shared engine: product + scene/product image → F2V single clip
- * via POST /api/flow/generate. Never auto-fires credit-bearing generation.
+ * Hybrid product path WITHOUT avatar / visible face.
+ * Operator: Product → Hook/BG → Single|Extend → Model → Duration → Prepare → Generate
+ * Internal: F2V + HYBRID product-anchor. Native-extend after base for EXTEND.
+ * Never auto-fires credit-bearing generation.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -10,24 +12,40 @@ import {
 	useCreativeLaneSettings,
 	type ResolvedLaneSetting,
 } from "../api/creativeLaneSettings";
+import {
+	fetchVideoModels,
+	type VideoModelInfo,
+} from "../api/productionQueue";
 import { fetchProductCatalog } from "../api/products";
 import {
+	OperatorCockpit,
 	ResolvedChip,
 	WorkflowStep,
 	type WorkflowStepStatus,
 } from "../components/workflow";
+import NativeExtendPanel from "../components/NativeExtendPanel";
 import CanonicalReferenceBindingControls, {
 	EMPTY_BINDING,
 	type CanonicalReferenceBinding,
 } from "../components/workspace/CanonicalReferenceBindingControls";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
-import ResultsSidebar, { type SessionResult } from "../components/workspace/ResultsSidebar";
 import type { Product, WorkspaceExecutionPackage } from "../types";
 import {
-	FACELESS_TRANSPORT_MODE,
+	buildFacelessGenerateBody,
+	FACELESS_VISUAL_LAW,
 	facelessPrepareBlockers,
 	optionLabel,
+	type FacelessSceneMode,
 } from "../faceless/facelessLane";
+import {
+	defaultEngine,
+	getEngine,
+	modelsForSingle,
+	resolveDurationChange,
+	resolveSingleSelection,
+	singleDurations,
+	type VideoCapabilityMatrix,
+} from "../utils/videoCapability";
 
 type NoticeTone = "info" | "success" | "warning" | "error";
 
@@ -43,21 +61,38 @@ const selectClass =
 const labelClass = "text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500";
 
 export default function FacelessVideoPage() {
-	const { settings, loading: settingsLoading, error: settingsError, available: settingsAvailable, reload: reloadSettings } = useCreativeLaneSettings();
+	const {
+		settings,
+		loading: settingsLoading,
+		error: settingsError,
+		available: settingsAvailable,
+		reload: reloadSettings,
+	} = useCreativeLaneSettings();
 	const [resolvedHook, setResolvedHook] = useState<ResolvedLaneSetting | null>(null);
-	const [resolvedBackground, setResolvedBackground] = useState<ResolvedLaneSetting | null>(null);
+	const [resolvedBackground, setResolvedBackground] = useState<ResolvedLaneSetting | null>(
+		null,
+	);
 	const [products, setProducts] = useState<Product[]>([]);
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const [hookId, setHookId] = useState("AUTO");
 	const [backgroundId, setBackgroundId] = useState("AUTO");
+	const [showAdvancedRef, setShowAdvancedRef] = useState(false);
 	const [binding, setBinding] = useState<CanonicalReferenceBinding>(EMPTY_BINDING);
+
+	const [sceneMode, setSceneMode] = useState<FacelessSceneMode>("SINGLE");
+	const [capability, setCapability] = useState<VideoCapabilityMatrix | null>(null);
+	const [capabilityError, setCapabilityError] = useState<string | null>(null);
+	const [videoModels, setVideoModels] = useState<VideoModelInfo[]>([]);
+	const [videoModel, setVideoModel] = useState("");
+	const [durationSec, setDurationSec] = useState<number>(0);
+	const [extendTotalSec, setExtendTotalSec] = useState<number | null>(null);
+
 	const [workspacePackage, setWorkspacePackage] =
 		useState<WorkspaceExecutionPackage | null>(null);
 	const [isPreparing, setIsPreparing] = useState(false);
 	const [isExecuting, setIsExecuting] = useState(false);
 	const [notice, setNotice] = useState<Notice | null>(null);
 	const [completedUrl, setCompletedUrl] = useState<string | null>(null);
-	const [sessionResults, setSessionResults] = useState<SessionResult[]>([]);
 	const [v4Open, setV4Open] = useState<Record<number, boolean>>({});
 	const executionInFlightRef = useRef(false);
 	const pollTimerRef = useRef<number | null>(null);
@@ -69,27 +104,172 @@ export default function FacelessVideoPage() {
 	}, []);
 
 	useEffect(() => {
+		void fetch("/api/flow/video-capability-matrix")
+			.then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+			.then((m: VideoCapabilityMatrix) => {
+				setCapability(m);
+				setCapabilityError(null);
+			})
+			.catch((err: unknown) => {
+				setCapability(null);
+				setCapabilityError(
+					err instanceof Error
+						? err.message
+						: "Video capability authority unavailable",
+				);
+			});
+		void fetchVideoModels()
+			.then((res) => setVideoModels(res.models || []))
+			.catch(() => setVideoModels([]));
+	}, []);
+
+	useEffect(() => {
 		return () => {
 			if (pollTimerRef.current != null) window.clearTimeout(pollTimerRef.current);
 		};
 	}, []);
 
+	const engine = useMemo(() => {
+		return getEngine(capability, "GOOGLE_FLOW") || defaultEngine(capability);
+	}, [capability]);
+
+	// SINGLE: keep model/duration valid via capability authority
+	useEffect(() => {
+		if (sceneMode !== "SINGLE" || !engine) return;
+		const sel = resolveSingleSelection(engine, videoModel, durationSec);
+		if (!sel) return;
+		if (sel.model !== videoModel) setVideoModel(sel.model);
+		if (sel.durationSeconds !== durationSec) setDurationSec(sel.durationSeconds);
+	}, [sceneMode, engine]); // eslint-disable-line react-hooks/exhaustive-deps
+
+	const singleDurationOptions = useMemo(
+		() => singleDurations(engine),
+		[engine],
+	);
+	const modelsAtDuration = useMemo(
+		() => modelsForSingle(engine, durationSec),
+		[engine, durationSec],
+	);
+
+	const selectedRegistryModel = useMemo(
+		() => videoModels.find((m) => m.ui_label === videoModel) || null,
+		[videoModels, videoModel],
+	);
+	const extendBaseDurationSec = selectedRegistryModel?.extend_block_duration_s ?? null;
+
+	const extendTotals = useMemo(() => {
+		const t = selectedRegistryModel?.extend_totals_s;
+		return Array.isArray(t) ? [...t].filter((n) => n > 0).sort((a, b) => a - b) : [];
+	}, [selectedRegistryModel]);
+
+	const extendBlockedReason = useMemo(() => {
+		if (sceneMode !== "EXTEND") return null;
+		if (!videoModel) return "Select a model first.";
+		if (extendTotals.length === 0) {
+			return `${videoModel} has no proven Extend totals in the model authority. Choose another model or use Single.`;
+		}
+		if (!extendBaseDurationSec || extendBaseDurationSec <= 0) {
+			return `${videoModel} has no proven Extend block duration in the model authority.`;
+		}
+		return null;
+	}, [sceneMode, videoModel, extendTotals, extendBaseDurationSec]);
+
+	useEffect(() => {
+		if (sceneMode !== "EXTEND") return;
+		if (extendTotals.length === 0) {
+			setExtendTotalSec(null);
+			return;
+		}
+		if (extendTotalSec == null || !extendTotals.includes(extendTotalSec)) {
+			setExtendTotalSec(extendTotals[0]);
+		}
+	}, [sceneMode, extendTotals, extendTotalSec]);
+
+	const referenceOverride = showAdvancedRef && Boolean(binding.startFrameAssetId);
+
 	const blockers = useMemo(() => {
 		const base = facelessPrepareBlockers({
 			productId: selectedProduct?.id,
+			model: videoModel,
+			sceneMode,
+			durationSeconds: sceneMode === "SINGLE" ? durationSec : extendBaseDurationSec,
+			extendTotalSeconds: extendTotalSec,
 			startFrameAssetId: binding.startFrameAssetId,
+			referenceOverride: showAdvancedRef && !binding.startFrameAssetId ? true : referenceOverride && showAdvancedRef,
 		});
+		// Only require start frame when advanced open AND user turned on override path with empty binding
+		const cleaned = base.filter((b) => {
+			if (!showAdvancedRef && /Advanced override/i.test(b)) return false;
+			return true;
+		});
+		// When advanced open but no frame selected, override is optional — strip advanced blocker unless they bound nothing while claiming override
+		// Advanced is optional: never block product-first when advanced closed
+		const advancedOnly = showAdvancedRef
+			? facelessPrepareBlockers({
+					productId: selectedProduct?.id,
+					model: videoModel,
+					sceneMode,
+					durationSeconds: sceneMode === "SINGLE" ? durationSec : extendBaseDurationSec,
+					extendTotalSeconds: extendTotalSec,
+					// optional — do not require frame
+			  })
+			: cleaned;
+		const out = showAdvancedRef ? advancedOnly : cleaned.filter((b) => !/Advanced/i.test(b));
+		// rebuild clean product-first blockers
+		const core = facelessPrepareBlockers({
+			productId: selectedProduct?.id,
+			model: videoModel,
+			sceneMode,
+			durationSeconds: sceneMode === "SINGLE" ? durationSec : extendBaseDurationSec,
+			extendTotalSeconds: extendTotalSec,
+		});
+		const result = [...core];
 		if (!settingsAvailable) {
-			return [
-				"Hook/Background settings unavailable — retry when API is up",
-				...base,
-			];
+			result.unshift("Hook/Background settings unavailable — retry when API is up");
 		}
-		return base;
-	}, [selectedProduct?.id, binding.startFrameAssetId, settingsAvailable]);
+		if (!capability || !engine) {
+			result.unshift(
+				`Video capability authority unavailable${capabilityError ? `: ${capabilityError}` : ""} — no local model/duration fallback is allowed`,
+			);
+		}
+		if (sceneMode === "SINGLE" && !modelsAtDuration.length) {
+			result.unshift("No valid SINGLE model/duration tuple is available from the capability authority.");
+		}
+		if (extendBlockedReason) result.push(extendBlockedReason);
+		if (showAdvancedRef && binding.startFrameAssetId === "" && false) {
+			/* advanced optional */
+		}
+		void out;
+		return result;
+	}, [
+		selectedProduct?.id,
+		videoModel,
+		sceneMode,
+		durationSec,
+		extendBaseDurationSec,
+		extendTotalSec,
+		binding.startFrameAssetId,
+		showAdvancedRef,
+		referenceOverride,
+		settingsAvailable,
+		capability,
+		capabilityError,
+		engine,
+		modelsAtDuration,
+		extendBlockedReason,
+	]);
 
 	const hookLabel = optionLabel(settings.hook.options, hookId);
 	const backgroundLabel = optionLabel(settings.background.options, backgroundId);
+
+	const durationLabel =
+		sceneMode === "EXTEND"
+			? extendTotalSec != null
+				? `${extendTotalSec}s total`
+				: "—"
+			: durationSec > 0
+				? `${durationSec}s`
+				: "—";
 
 	const v4IsOpen = (index: number, status: WorkflowStepStatus) =>
 		v4Open[index] ?? status === "active";
@@ -98,15 +278,15 @@ export default function FacelessVideoPage() {
 
 	const sProduct: WorkflowStepStatus = selectedProduct ? "done" : "active";
 	const sCreative: WorkflowStepStatus = selectedProduct
-		? blockers.length === 0
+		? settingsAvailable
 			? "done"
 			: "active"
 		: "upcoming";
-	const sImage: WorkflowStepStatus = !selectedProduct
+	const sSettings: WorkflowStepStatus = !selectedProduct
 		? "upcoming"
-		: binding.startFrameAssetId
-			? "done"
-			: "active";
+		: blockers.some((b) => /model|duration|Extend/i.test(b))
+			? "active"
+			: "done";
 	const sPrepare: WorkflowStepStatus = workspacePackage
 		? "done"
 		: blockers.length === 0
@@ -134,11 +314,21 @@ export default function FacelessVideoPage() {
 		try {
 			const prepared = await prepareFacelessPackage({
 				product_id: selectedProduct.id,
-				start_frame_asset_id: binding.startFrameAssetId || "",
-				end_frame_asset_id: binding.endFrameAssetId,
 				hook_id: hookId,
 				background_id: backgroundId,
-				duration_seconds: 8,
+				model: videoModel,
+				generation_mode: sceneMode,
+				duration_seconds:
+					sceneMode === "SINGLE" ? durationSec : extendBaseDurationSec,
+				total_duration_seconds: sceneMode === "EXTEND" ? extendTotalSec : null,
+				start_frame_asset_id:
+					showAdvancedRef && binding.startFrameAssetId
+						? binding.startFrameAssetId
+						: null,
+				end_frame_asset_id:
+					showAdvancedRef && binding.endFrameAssetId
+						? binding.endFrameAssetId
+						: null,
 				copy_fallback_confirmed: true,
 			});
 			const pkg = (prepared.package || {}) as unknown as WorkspaceExecutionPackage;
@@ -153,7 +343,7 @@ export default function FacelessVideoPage() {
 			setNotice({
 				tone: "success",
 				title: "Faceless package ready",
-				detail: `Package ${pkg.workspace_execution_package_id} · Hook ${h?.setting_id || hookId} (${h?.resolution || "?"}) · BG ${b?.setting_id || backgroundId}`,
+				detail: `${sceneMode} · ${videoModel} · ${durationLabel} · Hook ${h?.setting_id || hookId} · BG ${b?.setting_id || backgroundId}`,
 				requestId: pkg.workspace_execution_package_id,
 			});
 		} catch (err: unknown) {
@@ -176,16 +366,13 @@ export default function FacelessVideoPage() {
 			const status = job.status as string;
 			if (status === "DONE") {
 				const mediaId = job.media_id ?? job.video_media_id ?? "";
-				if (mediaId) {
-					setCompletedUrl(`/api/flow/retrieved/${mediaId}`);
-					setSessionResults((prev) => [
-						{ media_id: mediaId, kind: "video" },
-						...prev.filter((r) => r.media_id !== mediaId),
-					]);
-				}
+				if (mediaId) setCompletedUrl(`/api/flow/retrieved/${mediaId}`);
 				setNotice({
 					tone: "success",
-					title: "Faceless clip done",
+					title:
+						sceneMode === "EXTEND"
+							? "Base clip done — continue via native-extend for total duration"
+							: "Faceless clip done",
 					detail: `Saved ${job.size_mb ?? "?"}MB · media ${mediaId}`,
 					requestId,
 				});
@@ -220,6 +407,15 @@ export default function FacelessVideoPage() {
 	};
 
 	const handleGenerate = async () => {
+		if (sceneMode === "EXTEND") {
+			setNotice({
+				tone: "info",
+				title: "Use the full-video plan",
+				detail: "Faceless Extend is owned by the durable video-job lifecycle below.",
+				requestId: null,
+			});
+			return;
+		}
 		if (executionInFlightRef.current) return;
 		if (!workspacePackage?.prompt_text) {
 			setNotice({
@@ -246,23 +442,31 @@ export default function FacelessVideoPage() {
 		setNotice({
 			tone: "info",
 			title: "Submitting faceless clip",
-			detail: "One-door F2V generate — spends credits. Needs open Flow editor.",
+			detail: "One-door generate — spends credits. Needs open Flow editor.",
 			requestId,
 		});
 		try {
+			const generateBody = buildFacelessGenerateBody({
+				prompt: workspacePackage.prompt_text,
+				productId: selectedProduct?.id ?? workspacePackage.product_id,
+				workspacePackage,
+				startFrameAssetId:
+					showAdvancedRef && binding.startFrameAssetId
+						? binding.startFrameAssetId
+						: null,
+				endFrameAssetId:
+					showAdvancedRef && binding.endFrameAssetId
+						? binding.endFrameAssetId
+						: null,
+				model: videoModel,
+				durationSeconds: durationSec,
+				sceneMode,
+				extendTotalSeconds: extendTotalSec,
+			});
 			const response = await fetch("/api/flow/generate", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					mode: FACELESS_TRANSPORT_MODE,
-					prompt: workspacePackage.prompt_text,
-					aspectRatio: "9:16",
-					product_id: selectedProduct?.id ?? null,
-					workspace_execution_package_id:
-						workspacePackage.workspace_execution_package_id ?? null,
-					prompt_fingerprint: workspacePackage.prompt_fingerprint ?? null,
-					// Start frame binding is on the package; generate lane resolves refs.
-				}),
+				body: JSON.stringify(generateBody),
 			});
 			if (!response.ok) {
 				const text = await response.text();
@@ -293,6 +497,10 @@ export default function FacelessVideoPage() {
 					? "border-amber-500/30 bg-amber-500/10 text-amber-100"
 					: "border-sky-500/30 bg-sky-500/10 text-sky-100";
 
+	const genLabel = isExecuting
+				? "Generating…"
+				: `▶ Generate 1 faceless clip · ${durationSec}s`;
+
 	return (
 		<div
 			className="flex h-full min-h-0 flex-col gap-4 p-4 md:p-6"
@@ -306,11 +514,11 @@ export default function FacelessVideoPage() {
 						Faceless Video
 					</div>
 					<h1 className="text-xl font-bold text-slate-100">
-						Product image → one short clip
+						Product clip — hands / body, no face
 					</h1>
 					<p className="mt-1 max-w-2xl text-[12px] text-slate-400">
-						True faceless (no presenter). Reuses the canonical F2V one-door —
-						no duplicate engine. Credits spent only when you press Generate.
+						Same path as Hybrid without an AI avatar. Product image anchors the
+						clip automatically. Credits spent only when you press Generate.
 					</p>
 				</div>
 				{settingsLoading ? (
@@ -341,6 +549,10 @@ export default function FacelessVideoPage() {
 								setCompletedUrl(null);
 							}}
 						/>
+						<p className="mt-2 text-[11px] text-slate-500">
+							Product image is the automatic visual anchor — no Creative Library
+							frame pick required.
+						</p>
 					</WorkflowStep>
 
 					<WorkflowStep
@@ -350,9 +562,26 @@ export default function FacelessVideoPage() {
 						open={v4IsOpen(2, sCreative)}
 						onToggleOpen={() => v4Toggle(2, v4IsOpen(2, sCreative))}
 						summary={`${hookLabel} · ${backgroundLabel}`}
-						helper="Controlled settings only. Hook is strategy — not a claim license. Background is environment only."
+						helper="Controlled settings only. AUTO resolves on the server — never as raw label."
 					>
 						<div className="grid gap-3 sm:grid-cols-2">
+							{!settingsAvailable ? (
+								<div
+									className="sm:col-span-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-200"
+									data-testid="faceless-settings-unavailable"
+								>
+									Settings unavailable
+									{settingsError ? `: ${settingsError}` : ""}.{" "}
+									<button
+										type="button"
+										className="underline"
+										onClick={() => reloadSettings()}
+										data-testid="faceless-settings-retry"
+									>
+										Retry
+									</button>
+								</div>
+							) : null}
 							<label className="space-y-1">
 								<span className={labelClass}>Hook</span>
 								<select
@@ -365,24 +594,7 @@ export default function FacelessVideoPage() {
 									data-testid="faceless-hook"
 									disabled={!settingsAvailable}
 								>
-									{!settingsAvailable ? (
-									<div
-										className="mb-2 text-[11px] text-rose-300"
-										data-testid="faceless-settings-unavailable"
-									>
-										Settings unavailable
-										{settingsError ? `: ${settingsError}` : ""}.{" "}
-										<button
-											type="button"
-											className="underline"
-											onClick={() => reloadSettings()}
-											data-testid="faceless-settings-retry"
-										>
-											Retry
-										</button>
-									</div>
-								) : null}
-								{settings.hook.options.map((o) => (
+									{settings.hook.options.map((o) => (
 										<option key={o.id} value={o.id}>
 											{o.label}
 										</option>
@@ -429,37 +641,163 @@ export default function FacelessVideoPage() {
 								auto={backgroundId === "AUTO"}
 							/>
 							<ResolvedChip label="Presence" value="Faceless" />
-							<ResolvedChip label="Transport" value="F2V · FRAMES" />
+							<ResolvedChip label="Avatar" value="None" />
 						</div>
 					</WorkflowStep>
 
 					<WorkflowStep
 						index={3}
-						title="Product / scene image"
-						status={sImage}
-						open={v4IsOpen(3, sImage)}
-						onToggleOpen={() => v4Toggle(3, v4IsOpen(3, sImage))}
-						summary={
-							binding.startFrameAssetId
-								? "Start frame bound"
-								: "Start frame required"
-						}
-						helper="Image-first: bind the plate that will be animated into one clip."
+						title="Video settings"
+						status={sSettings}
+						open={v4IsOpen(3, sSettings)}
+						onToggleOpen={() => v4Toggle(3, v4IsOpen(3, sSettings))}
+						summary={`${sceneMode === "EXTEND" ? "Extend" : "Single"} · ${videoModel} · ${durationLabel}`}
+						helper="Same capability / model authority as Hybrid. No hardcoded 8s table."
 					>
-						<CanonicalReferenceBindingControls
-							mode="F2V"
-							productId={selectedProduct?.id ?? null}
-							binding={binding}
-							onChange={(next) => {
-								setBinding(next);
-								setWorkspacePackage(null);
-							}}
-						/>
+						<div className="grid gap-3 sm:grid-cols-3">
+							<label className="space-y-1">
+								<span className={labelClass}>Generation mode</span>
+								<select
+									className={selectClass}
+									value={sceneMode}
+									onChange={(e) => {
+										setSceneMode(e.target.value as FacelessSceneMode);
+										setWorkspacePackage(null);
+									}}
+									data-testid="faceless-scene-mode"
+								>
+									<option value="SINGLE">Single</option>
+									<option value="EXTEND">Extend</option>
+								</select>
+							</label>
+							<label className="space-y-1">
+								<span className={labelClass}>Video model</span>
+								<select
+									className={selectClass}
+									value={videoModel}
+									disabled={!capability || !(sceneMode === "SINGLE" ? modelsAtDuration : videoModels).length}
+									onChange={(e) => {
+										const next = e.target.value;
+										setVideoModel(next);
+										setWorkspacePackage(null);
+										if (sceneMode === "SINGLE" && engine) {
+											const still = modelsForSingle(engine, durationSec).some(
+												(m) => m.ui_label === next,
+											);
+											if (!still) {
+												const sel = resolveSingleSelection(engine, next, durationSec);
+												if (sel) setDurationSec(sel.durationSeconds);
+											}
+										}
+									}}
+									data-testid="faceless-model"
+								>
+									{(sceneMode === "SINGLE"
+										? modelsAtDuration.map((m) => m.ui_label)
+										: videoModels.map((m) => m.ui_label)
+									)
+										.filter((v, i, a) => a.indexOf(v) === i)
+										.map((label) => (
+											<option key={label} value={label}>
+												{label}
+											</option>
+										))}
+								</select>
+							</label>
+							<label className="space-y-1">
+								<span className={labelClass}>
+									{sceneMode === "EXTEND" ? "Total duration" : "Duration"}
+								</span>
+								{sceneMode === "SINGLE" ? (
+									<select
+										className={selectClass}
+										value={durationSec}
+										disabled={!capability || !singleDurationOptions.length}
+										onChange={(e) => {
+											const next = Number(e.target.value);
+											setDurationSec(next);
+											setWorkspacePackage(null);
+											if (engine) {
+												const sel = resolveDurationChange(engine, videoModel, next);
+												if (sel?.model) setVideoModel(sel.model);
+											}
+										}}
+										data-testid="faceless-duration"
+									>
+										{singleDurationOptions.map((d) => (
+											<option key={d} value={d}>
+												{d}s
+											</option>
+										))}
+									</select>
+								) : (
+									<select
+										className={selectClass}
+										value={extendTotalSec ?? ""}
+										onChange={(e) => {
+											setExtendTotalSec(Number(e.target.value));
+											setWorkspacePackage(null);
+										}}
+										disabled={Boolean(extendBlockedReason)}
+										data-testid="faceless-extend-total"
+									>
+										{extendBlockedReason ? (
+											<option value="">Unavailable</option>
+										) : null}
+										{extendTotals.map((t) => (
+											<option key={t} value={t}>
+												{t}s total
+											</option>
+										))}
+									</select>
+								)}
+							</label>
+						</div>
+						{extendBlockedReason ? (
+							<p
+								className="mt-2 text-[11px] text-amber-200"
+								data-testid="faceless-extend-blocked"
+							>
+								{extendBlockedReason}
+							</p>
+						) : null}
+						{sceneMode === "EXTEND" && !extendBlockedReason ? (
+							<p className="mt-2 text-[11px] text-slate-500">
+								Extend uses native-extend after an 8s base clip — not a multi-block
+								single generate call.
+							</p>
+						) : null}
 					</WorkflowStep>
+
+					<details className="rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2">
+						<summary
+							className="cursor-pointer text-[11px] font-bold uppercase tracking-wide text-slate-500"
+							data-testid="faceless-advanced-toggle"
+							onClick={() => setShowAdvancedRef((v) => !v)}
+						>
+							Advanced · optional reference override
+						</summary>
+						{showAdvancedRef ? (
+							<div className="mt-3">
+								<p className="mb-2 text-[11px] text-slate-500">
+									Optional. Default path uses the product image automatically.
+								</p>
+								<CanonicalReferenceBindingControls
+									mode="F2V"
+									productId={selectedProduct?.id ?? null}
+									binding={binding}
+									onChange={(next) => {
+										setBinding(next);
+										setWorkspacePackage(null);
+									}}
+								/>
+							</div>
+						) : null}
+					</details>
 
 					<WorkflowStep
 						index={4}
-						title="Prepare"
+						title="Review & prepare"
 						status={sPrepare}
 						open={v4IsOpen(4, sPrepare)}
 						onToggleOpen={() => v4Toggle(4, v4IsOpen(4, sPrepare))}
@@ -470,8 +808,11 @@ export default function FacelessVideoPage() {
 									? "Blocked"
 									: "Compile final prompt"
 						}
-						helper="Credit-free prepare through the shared execution package path."
+						helper="Credit-free prepare. Product image anchors the package."
 					>
+						<p className="mb-2 text-[11px] text-slate-400" data-testid="faceless-visual-law">
+							{FACELESS_VISUAL_LAW}
+						</p>
 						{blockers.length ? (
 							<ul className="mb-3 list-disc space-y-1 pl-4 text-[12px] text-amber-100">
 								{blockers.map((b) => (
@@ -501,25 +842,50 @@ export default function FacelessVideoPage() {
 						status={sGenerate}
 						open={v4IsOpen(5, sGenerate)}
 						onToggleOpen={() => v4Toggle(5, v4IsOpen(5, sGenerate))}
-						summary={isExecuting ? "Generating…" : completedUrl ? "Done" : "Operator gate"}
+						summary={
+							isExecuting ? "Generating…" : completedUrl ? "Done" : "Operator gate"
+						}
 						helper="Credits are spent only here. Never auto-fired."
 						collapsible={false}
 					>
-						<button
-							type="button"
-							disabled={!workspacePackage?.prompt_text || isExecuting || blockers.length > 0}
-							onClick={() => void handleGenerate()}
-							className="w-full rounded-xl bg-gradient-to-br from-v4-accent to-v4-auto px-4 py-3 text-[13px] font-bold text-slate-950 shadow-lg shadow-v4-accent/20 transition-opacity hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-40"
-							data-testid="faceless-generate"
-						>
-							{isExecuting
-								? "Generating…"
-								: "▶ Generate 1 faceless clip · 8s"}
-						</button>
-						<p className="mt-2 text-[11px] text-slate-500">
-							Fires one video through Google Flow (F2V start-frame path). Needs
-							an open, warmed-up Flow editor tab.
-						</p>
+						{sceneMode === "EXTEND" ? (
+							<NativeExtendPanel
+								productId={selectedProduct?.id}
+								productName={
+									selectedProduct?.raw_product_title || selectedProduct?.id
+								}
+								executionPackageId={
+									workspacePackage?.workspace_execution_package_id
+								}
+								approvedAssetSha256={
+									workspacePackage?.resolved_assets?.find(
+										(asset) => asset.slot_key === "start_frame",
+									)?.asset_fingerprint
+								}
+								totalDurationSeconds={extendTotalSec}
+								aspectRatio="VIDEO_ASPECT_RATIO_PORTRAIT"
+							/>
+						) : (
+							<>
+								<button
+									type="button"
+									disabled={
+										!workspacePackage?.prompt_text ||
+										isExecuting ||
+										blockers.length > 0
+									}
+									onClick={() => void handleGenerate()}
+									className="w-full rounded-xl bg-gradient-to-br from-v4-accent to-v4-auto px-4 py-3 text-[13px] font-bold text-slate-950 shadow-lg shadow-v4-accent/20 transition-opacity hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-40"
+									data-testid="faceless-generate"
+								>
+									{genLabel}
+								</button>
+								<p className="mt-2 text-[11px] text-slate-500">
+									Uses the shared one-door generate path. Needs an open, warmed-up Flow
+									editor tab.
+								</p>
+							</>
+						)}
 						{completedUrl ? (
 							<video
 								className="mt-3 max-h-64 w-full rounded-xl border border-slate-800 bg-black"
@@ -541,16 +907,88 @@ export default function FacelessVideoPage() {
 					) : null}
 				</div>
 
-					<ResultsSidebar
-						results={sessionResults}
-						generating={isExecuting}
-						libraryHref="/library/videos"
-						onRemoved={(mediaId) =>
-							setSessionResults((prev) =>
-								prev.filter((r) => r.media_id !== mediaId),
-							)
-						}
-					/>
+				<OperatorCockpit
+					laneLabel="Faceless Video"
+					status={{
+						label: isExecuting
+							? "Running"
+							: completedUrl
+								? "Done"
+								: selectedProduct
+									? "Online"
+									: "Idle",
+						state: isExecuting
+							? "running"
+							: completedUrl
+								? "done"
+								: selectedProduct
+									? "online"
+									: "idle",
+					}}
+					product={
+						selectedProduct
+							? {
+									name: selectedProduct.raw_product_title || selectedProduct.id,
+									sub: selectedProduct.id,
+								}
+							: undefined
+					}
+					plan={[
+						{ k: "Lane", v: "Faceless", tone: "good" },
+						{ k: "Hook", v: hookLabel, mono: hookId !== "AUTO" },
+						{ k: "Background", v: backgroundLabel },
+						{
+							k: "Mode",
+							v: sceneMode === "EXTEND" ? "Extend" : "Single",
+						},
+						{ k: "Model", v: videoModel, mono: true },
+						{ k: "Duration", v: durationLabel },
+						{ k: "Avatar", v: "None", tone: "good" },
+						{
+							k: "Package",
+							v: workspacePackage ? "Ready" : "—",
+							tone: workspacePackage ? "good" : "muted",
+						},
+					]}
+					generate={
+						sceneMode === "SINGLE"
+							? {
+									label: genLabel,
+									note: "Credits only on Generate. Prepare is free.",
+									disabled:
+										!workspacePackage?.prompt_text ||
+										isExecuting ||
+										blockers.length > 0,
+									loading: isExecuting,
+									onClick: () => void handleGenerate(),
+								}
+							: undefined
+					}
+					debug={
+						<pre className="overflow-auto text-[10px] text-slate-400">
+							{JSON.stringify(
+								{
+									hookId,
+									backgroundId,
+									sceneMode,
+									videoModel,
+									durationSec,
+									extendTotalSec,
+									advancedStartFrame: binding.startFrameAssetId,
+									packageId: workspacePackage?.workspace_execution_package_id,
+									settingsSource: settings.source,
+									// internal transport (debug only)
+									internal_transport: "F2V",
+									internal_source_mode: showAdvancedRef && binding.startFrameAssetId
+										? "FRAMES"
+										: "HYBRID",
+								},
+								null,
+								2,
+							)}
+						</pre>
+					}
+				/>
 			</div>
 		</div>
 	);

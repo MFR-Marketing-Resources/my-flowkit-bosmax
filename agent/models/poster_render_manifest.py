@@ -13,6 +13,12 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+from agent.models.poster_campaign_qa import (
+    CampaignMachineQA,
+    CampaignPostCompositionQA,
+    WorldClassPosterReview,
+)
+
 POSTER_RENDER_MANIFEST_SCHEMA = "poster-render-manifest-v1"
 
 COMPOSITION_REFERENCE_CONDITIONED = "REFERENCE_CONDITIONED"
@@ -46,10 +52,22 @@ class ManifestZone(BaseModel):
 class ProductLayer(BaseModel):
     strategy: str = COMPOSITION_REFERENCE_CONDITIONED
     safe_region: ManifestRect
+    # Product Truth Lock lineage is part of the manifest, not an inferred label.
+    # Pydantic's default extra-ignore behaviour previously discarded these keys
+    # when the exact layer was assembled, making a saved poster impossible to
+    # audit back to the immutable product bytes.
+    product_id: str = ""
+    canonical_media_id: str = ""
+    canonical_cutout_media_id: str = ""
+    alpha_mask_sha256: str = ""
+    truth_lock_schema_version: str = ""
     asset_ref: str = ""
     source_sha256: str = ""
     cutout_sha256: str = ""
-    transform: dict[str, float] = Field(default_factory=dict)
+    # ``source_crop`` carries the visible-alpha crop used to calculate product
+    # scale.  Keep the manifest extensible for this nested compositor
+    # provenance instead of discarding it during Pydantic validation.
+    transform: dict[str, Any] = Field(default_factory=dict)
     integrity: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -62,12 +80,35 @@ class ManifestProvenance(BaseModel):
     prompt_version: str = ""
     image_model: str = ""
     background_prompt_fingerprint: str = ""
+    clean_key_visual_prompt_fingerprint: str = ""
     creative_mode: str = ""
     creative_direction_authority_version: str = ""
     representation_policy_version: str = ""
     composition_schema_version: str = ""
     composition_profile_id: str = ""
     composition_signature: str = ""
+    design_route: str = ""
+    layout_variant: str = ""
+    type_pairing_id: str = ""
+    font_readiness_status: str = ""
+    # Campaign provenance is additive to the V2 manifest.  These fields are
+    # deliberately optional so historical Exact Commerce manifests remain
+    # loadable while a new Campaign deliverable can reconstruct the
+    # product-intelligence -> prompt -> provider -> compositor chain.
+    approved_snapshot_id: str = ""
+    approved_snapshot_version: int | None = None
+    design_brief_version: str = ""
+    copy_route_id: str = ""
+    reference_pack_id: str = ""
+    reference_role_hashes: dict[str, str] = Field(default_factory=dict)
+    requested_provider_model: str = ""
+    provider_batch_id: str = ""
+    provider_operation_id: str = ""
+    provider_operation_id_status: str = ""
+    provider_operation_budget: int = Field(default=0, ge=0)
+    actual_retry_count: int = Field(default=0, ge=0)
+    raw_key_visual_media_id: str = ""
+    raw_key_visual_sha256: str = ""
     # The FULL canonical composition plan (already resolved by the caller from
     # the real authorities). Persisting it verbatim is what makes save/reopen
     # deterministic — reopen reads this plan back instead of re-deriving a
@@ -86,6 +127,8 @@ class PosterRenderManifest(BaseModel):
     component_styles: dict[str, Any] = Field(default_factory=dict)
     fit_policy: dict[str, float] = Field(default_factory=lambda: {"min_scale": 0.6, "step": 0.05})
     palette: dict[str, str] = Field(default_factory=dict)
+    design_route: str = ""
+    layout_variant: str = ""
     provenance: ManifestProvenance = Field(default_factory=ManifestProvenance)
 
 
@@ -103,6 +146,9 @@ class PosterRenderReport(BaseModel):
     canvas: dict[str, int] = Field(default_factory=dict)
     output_png: dict[str, Any] = Field(default_factory=dict)
     zones: list[ZoneRenderResult] = Field(default_factory=list)
+    # Kept as a structured payload because the Chromium runtime evolves its
+    # per-zone font evidence independently from the legacy geometry report.
+    fonts: dict[str, Any] = Field(default_factory=dict)
     missing_zones: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     ok: bool = False
@@ -123,6 +169,14 @@ class PosterQAReport(BaseModel):
     findings: list[PosterQAFinding] = Field(default_factory=list)
     block_count: int = 0
     warn_count: int = 0
+    render_report: PosterRenderReport | None = None
+    output_sha256: str = ""
+    manifest_sha256: str = ""
+    # Campaign-specific evidence is additive. Exact Commerce retains the
+    # legacy geometry report and does not inherit generative review gates.
+    machine_qa: CampaignMachineQA | None = None
+    campaign_qa: CampaignPostCompositionQA | None = None
+    world_class_review: WorldClassPosterReview | None = None
 
 
 def build_qa_report(report: PosterRenderReport, *, expected_zone_ids: list[str],
@@ -166,5 +220,10 @@ def build_qa_report(report: PosterRenderReport, *, expected_zone_ids: list[str],
                 z.zone_id)
     blocks = sum(1 for f in findings if f.severity == "BLOCK")
     warns = sum(1 for f in findings if f.severity == "WARN")
-    return PosterQAReport(ok=blocks == 0, findings=findings,
-                          block_count=blocks, warn_count=warns)
+    return PosterQAReport(
+        ok=blocks == 0,
+        findings=findings,
+        block_count=blocks,
+        warn_count=warns,
+        render_report=report,
+    )

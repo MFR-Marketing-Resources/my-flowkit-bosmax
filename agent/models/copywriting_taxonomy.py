@@ -1,6 +1,6 @@
 """Contracts for the workbook-backed copywriting taxonomy authority."""
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -11,6 +11,7 @@ CopywritingTaxonomyMatchStatus = Literal[
     "EXACT_TAXONOMY",
     "AMBIGUOUS",
     "UNMATCHED",
+    "NEEDS_RECONCILIATION",
 ]
 
 
@@ -27,6 +28,12 @@ class CopywritingTaxonomyEntry(BaseModel):
     source_workbook: str
     source_sheet: str
     source_row: int = Field(ge=1)
+    source_category: str | None = None
+    source_subcategory: str | None = None
+    source_type: str | None = None
+    canonicalization_rules: list[str] = Field(default_factory=list)
+    source_header_row: int = Field(default=2, ge=1)
+    authority_version: str = "copywriting-taxonomy-v2"
     registry_status: CopywritingTaxonomyRegistryStatus
     created_at: str | None = None
     updated_at: str | None = None
@@ -35,7 +42,7 @@ class CopywritingTaxonomyEntry(BaseModel):
 class CopywritingTaxonomyListResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["copywriting-taxonomy-v1"]
+    schema_version: Literal["copywriting-taxonomy-v2"]
     source_workbook: str
     source_sheet: str
     items: list[CopywritingTaxonomyEntry]
@@ -59,7 +66,7 @@ class CopywritingTaxonomyRollupCluster(BaseModel):
 class CopywritingTaxonomyRollupResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["copywriting-taxonomy-v1"]
+    schema_version: Literal["copywriting-taxonomy-v2"]
     source_workbook: str
     source_sheet: str
     total_product_types: int = Field(ge=0)
@@ -79,8 +86,36 @@ class CopywritingTaxonomyProductResolution(BaseModel):
     match_status: CopywritingTaxonomyMatchStatus
     matched_by: Literal["PRODUCT_TYPE_CODE", "CATEGORY_SUBCATEGORY_TYPE"] | None = None
     product_fields: dict[str, str | None]
-    match: CopywritingTaxonomyEntry | None = None
-    candidates: list[CopywritingTaxonomyEntry] = Field(default_factory=list)
+    needs_reconciliation: bool = False
+    current: dict[str, str | None] = Field(default_factory=dict)
+    match: dict[str, Any] | None = None
+    nearest_match: dict[str, Any] | None = None
+    candidates: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class CopywritingTaxonomyTreeRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    copywriting_angle: str
+    product_type_code: str
+    cluster: str
+    display_name: str
+    category: str
+    subcategory: str
+    type: str
+
+
+class CopywritingTaxonomyTreeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    categories: list[str]
+    subcategories_by_category: dict[str, list[str]] = Field(
+        alias="subcategoriesByCategory"
+    )
+    types_by_subcategory: dict[str, list[str]] = Field(alias="typesBySubcategory")
+    record_by_type: dict[str, CopywritingTaxonomyTreeRecord] = Field(
+        alias="recordByType"
+    )
 
 
 class CopywritingTaxonomySeedResponse(BaseModel):

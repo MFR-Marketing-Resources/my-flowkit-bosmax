@@ -10,6 +10,8 @@ must resolve to one active registry row.
 from __future__ import annotations
 
 import json
+import hashlib
+from difflib import SequenceMatcher
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -23,9 +25,20 @@ AUTHORITY_PATH = (
     / "authority"
     / "copywriting_taxonomy_registry.json"
 )
-SCHEMA_VERSION = "copywriting-taxonomy-v1"
+SCHEMA_VERSION = "copywriting-taxonomy-v2"
 SEED_CONFIRMATION = "SEED_COPYWRITING_TAXONOMY_REGISTRY"
 REGISTRY_TABLE = "copywriting_taxonomy_registry"
+
+CATEGORY_ALIASES = {
+    "Health": "Health & Personal Care",
+    "Health & Personal Care": "Health & Personal Care",
+    "Sports & Outdoor": "Sports & Outdoors",
+    "Sports & Outdoors": "Sports & Outdoors",
+}
+TYPE_COLLISION_WINNERS = {
+    "Beauty & Personal Care::Facial Cleansing::Brightening Facial Soap":
+        "facial_cleansing_soap",
+}
 
 _AUTHORITY_FIELDS = (
     "cluster_name",
@@ -47,6 +60,13 @@ _SOURCE_FIELDS = (
     "source_workbook",
     "source_sheet",
     "source_row",
+    "source_category",
+    "source_subcategory",
+    "source_type",
+    "canonicalization_rules_json",
+    "source_header_row",
+    "authority_version",
+    "source_sha256",
 )
 _CODE_FIELDS = (
     "copywriting_product_type_code",
@@ -61,6 +81,17 @@ def _now() -> str:
 
 def _text(value: Any) -> str:
     return str(value).strip() if value is not None else ""
+
+
+def canonical_category(value: Any) -> str:
+    normalized = _text(value)
+    return CATEGORY_ALIASES.get(normalized, normalized)
+
+
+def taxonomy_key(category: Any, subcategory: Any, type_name: Any) -> str:
+    return "::".join(
+        (canonical_category(category), _text(subcategory), _text(type_name))
+    )
 
 
 def _authority_error(message: str) -> ValueError:
@@ -85,6 +116,8 @@ def load_authority_payload() -> dict[str, Any]:
         raise _authority_error("records must be a list")
     if payload.get("record_count") != len(records):
         raise _authority_error("record_count does not match records")
+    if payload.get("source_header_row") != 2:
+        raise _authority_error("source_header_row must be 2")
 
     seen_codes: set[str] = set()
     for index, record in enumerate(records):
@@ -103,6 +136,12 @@ def load_authority_payload() -> dict[str, Any]:
             raise _authority_error(f"record {index} source_row is invalid") from exc
         if source_row < 3:
             raise _authority_error(f"record {index} source_row must be >= 3")
+        if canonical_category(record.get("category")) != _text(
+            record.get("category")
+        ):
+            raise _authority_error(
+                f"record {index} category must already be canonicalized"
+            )
 
     return payload
 
@@ -116,8 +155,22 @@ def load_authority_records() -> list[dict[str, Any]]:
     if not source_workbook or not source_sheet:
         raise _authority_error("source metadata is incomplete")
 
+    source_sha256 = _text(payload.get("source_sha256"))
+    if not source_sha256:
+        source_sha256 = hashlib.sha256(AUTHORITY_PATH.read_bytes()).hexdigest()
+    source_header_row = int(payload.get("source_header_row", 2))
     records: list[dict[str, Any]] = []
     for record in payload["records"]:
+        source_category = _text(record.get("source_category")) or _text(
+            record["category"]
+        )
+        source_subcategory = _text(record.get("source_subcategory")) or _text(
+            record["subcategory"]
+        )
+        source_type = _text(record.get("source_type")) or _text(record["type"])
+        canonicalization_rules = record.get("canonicalization_rules") or []
+        if not isinstance(canonicalization_rules, list):
+            raise _authority_error("canonicalization_rules must be a list")
         normalized = {
             "cluster_name": _text(record["cluster_name"]),
             "product_type_code": _text(record["product_type_code"]),
@@ -129,6 +182,15 @@ def load_authority_records() -> list[dict[str, Any]]:
             "source_workbook": source_workbook,
             "source_sheet": source_sheet,
             "source_row": int(record["source_row"]),
+            "source_category": source_category,
+            "source_subcategory": source_subcategory,
+            "source_type": source_type,
+            "canonicalization_rules_json": json.dumps(
+                canonicalization_rules, ensure_ascii=False, separators=(",", ":")
+            ),
+            "source_header_row": source_header_row,
+            "authority_version": SCHEMA_VERSION,
+            "source_sha256": source_sha256,
         }
         records.append(normalized)
     return records
@@ -283,12 +345,188 @@ async def get_copywriting_taxonomy_rollup() -> dict[str, Any]:
     }
 
 
-def _source_changed(record: dict[str, Any], existing: dict[str, Any]) -> bool:
-    return any(
-        (int(existing[field]) if field == "source_row" else _text(existing[field]))
-        != record[field]
-        for field in _SOURCE_FIELDS
+class CopywritingTaxonomySelectionError(ValueError):
+    """Stable fail-closed error for an unmapped product taxonomy selection."""
+
+    def __init__(self, detail: dict[str, Any]):
+        self.detail = detail
+        super().__init__(str(detail))
+
+
+def _tree_record(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "copywriting_angle": _text(row.get("copywriting_angle")),
+        "product_type_code": _text(row.get("product_type_code")),
+        "cluster": _text(row.get("cluster_name")),
+        "display_name": _text(row.get("display_name")),
+        "category": canonical_category(row.get("category")),
+        "subcategory": _text(row.get("subcategory")),
+        "type": _text(row.get("type")),
+    }
+
+
+def _nearest_tree_records(
+    records: list[dict[str, Any]],
+    category: str,
+    subcategory: str,
+    type_name: str,
+) -> list[dict[str, Any]]:
+    target = taxonomy_key(category, subcategory, type_name).casefold()
+    scored = [
+        (
+            SequenceMatcher(
+                None,
+                target,
+                taxonomy_key(
+                    record["category"], record["subcategory"], record["type"]
+                ).casefold(),
+            ).ratio(),
+            record,
+        )
+        for record in records
+    ]
+    scored.sort(
+        key=lambda item: (
+            -item[0],
+            item[1]["category"],
+            item[1]["subcategory"],
+            item[1]["type"],
+            item[1]["product_type_code"],
+        )
     )
+    return [record for _, record in scored[:3]]
+
+
+async def get_copywriting_taxonomy_tree() -> dict[str, Any]:
+    """Build the canonical, strict Category -> Subcategory -> Type cascade."""
+
+    db = await get_db()
+    cursor = await db.execute(
+        f"SELECT * FROM {REGISTRY_TABLE} "
+        "WHERE registry_status='ACTIVE' "
+        "ORDER BY category, subcategory, type, product_type_code"
+    )
+    rows = [_entry(row) for row in await cursor.fetchall()]
+    categories: set[str] = set()
+    subcategories: dict[str, set[str]] = {}
+    types: dict[str, set[str]] = {}
+    record_by_type: dict[str, dict[str, Any]] = {}
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        record = _tree_record(row)
+        key = taxonomy_key(record["category"], record["subcategory"], record["type"])
+        grouped.setdefault(key, []).append(record)
+        categories.add(record["category"])
+        subcategories.setdefault(record["category"], set()).add(record["subcategory"])
+        types.setdefault(
+            f"{record['category']}::{record['subcategory']}", set()
+        ).add(record["type"])
+
+    for key, candidates in grouped.items():
+        if len(candidates) > 1:
+            winner = TYPE_COLLISION_WINNERS.get(key)
+            winners = {
+                candidate["product_type_code"] for candidate in candidates
+            }
+            if winner not in winners:
+                raise ValueError(
+                    "COPYWRITING_TAXONOMY_TREE_COLLISION_UNRESOLVED:"
+                    f"{key}"
+                )
+            selected = next(
+                candidate
+                for candidate in candidates
+                if candidate["product_type_code"] == winner
+            )
+        else:
+            selected = candidates[0]
+        record_by_type[key] = selected
+
+    return {
+        "categories": sorted(categories),
+        "subcategoriesByCategory": {
+            category: sorted(values)
+            for category, values in sorted(subcategories.items())
+        },
+        "typesBySubcategory": {
+            key: sorted(values) for key, values in sorted(types.items())
+        },
+        "recordByType": {
+            key: record_by_type[key] for key in sorted(record_by_type)
+        },
+    }
+
+
+async def validate_taxonomy_selection(
+    *,
+    category: str | None,
+    subcategory: str | None,
+    type_name: str | None,
+    product_type_code: str | None = None,
+) -> dict[str, Any]:
+    """Validate a submitted cascade selection against the canonical tree."""
+
+    normalized_category = canonical_category(category)
+    normalized_subcategory = _text(subcategory)
+    normalized_type = _text(type_name)
+    normalized_code = _text(product_type_code)
+    tree = await get_copywriting_taxonomy_tree()
+    key = taxonomy_key(
+        normalized_category, normalized_subcategory, normalized_type
+    )
+    selected = tree["recordByType"].get(key)
+    if selected is None:
+        all_records = list(tree["recordByType"].values())
+        nearest = _nearest_tree_records(
+            all_records,
+            normalized_category,
+            normalized_subcategory,
+            normalized_type,
+        )
+        raise CopywritingTaxonomySelectionError(
+            {
+                "error_code": "COPYWRITING_TAXONOMY_SELECTION_INVALID",
+                "selection": {
+                    "category": category,
+                    "subcategory": subcategory,
+                    "type": type_name,
+                    "product_type_code": product_type_code,
+                },
+                "nearest_match": nearest[0] if nearest else None,
+                "candidates": nearest,
+            }
+        )
+    if normalized_code and normalized_code != selected["product_type_code"]:
+        raise CopywritingTaxonomySelectionError(
+            {
+                "error_code": "COPYWRITING_TAXONOMY_SELECTION_INVALID",
+                "reason": "PRODUCT_TYPE_CODE_CONFLICTS_WITH_TAXONOMY",
+                "selection": {
+                    "category": category,
+                    "subcategory": subcategory,
+                    "type": type_name,
+                    "product_type_code": product_type_code,
+                },
+                "nearest_match": selected,
+                "candidates": [selected],
+            }
+        )
+    return selected
+
+
+def _source_changed(record: dict[str, Any], existing: dict[str, Any]) -> bool:
+    for field in _SOURCE_FIELDS:
+        current = existing.get(field)
+        if field in {"source_row", "source_header_row"}:
+            try:
+                current = int(current)
+            except (TypeError, ValueError):
+                current = None
+        else:
+            current = _text(current)
+        if current != record[field]:
+            return True
+    return False
 
 
 def _status_counts(existing_rows: list[dict[str, Any]], records: list[dict[str, Any]]) -> tuple[int, int]:
@@ -342,8 +580,10 @@ async def seed_copywriting_taxonomy_registry(
 INSERT INTO {REGISTRY_TABLE} (
     product_type_code, cluster_name, display_name, category, subcategory, type,
     copywriting_angle, source_workbook, source_sheet, source_row,
-    registry_status, created_at, updated_at
-) VALUES (?,?,?,?,?,?,?,?,?,?, 'ACTIVE', ?, ?)
+    source_category, source_subcategory, source_type,
+    canonicalization_rules_json, source_header_row, authority_version,
+    source_sha256, registry_status, created_at, updated_at
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'ACTIVE', ?, ?)
 ON CONFLICT(product_type_code) DO UPDATE SET
     cluster_name=excluded.cluster_name,
     display_name=excluded.display_name,
@@ -354,6 +594,13 @@ ON CONFLICT(product_type_code) DO UPDATE SET
     source_workbook=excluded.source_workbook,
     source_sheet=excluded.source_sheet,
     source_row=excluded.source_row,
+    source_category=excluded.source_category,
+    source_subcategory=excluded.source_subcategory,
+    source_type=excluded.source_type,
+    canonicalization_rules_json=excluded.canonicalization_rules_json,
+    source_header_row=excluded.source_header_row,
+    authority_version=excluded.authority_version,
+    source_sha256=excluded.source_sha256,
     updated_at=excluded.updated_at
 """
         async with _db_lock:
@@ -373,6 +620,13 @@ ON CONFLICT(product_type_code) DO UPDATE SET
                             record["source_workbook"],
                             record["source_sheet"],
                             record["source_row"],
+                            record["source_category"],
+                            record["source_subcategory"],
+                            record["source_type"],
+                            record["canonicalization_rules_json"],
+                            record["source_header_row"],
+                            record["authority_version"],
+                            record["source_sha256"],
                             now,
                             now,
                         ),
@@ -420,99 +674,131 @@ def _first_text(product: dict[str, Any], fields: tuple[str, ...]) -> str:
 async def resolve_product_taxonomy_record(
     product: dict[str, Any],
 ) -> dict[str, Any]:
-    """Resolve a product against active mappings using exact evidence only."""
+    """Resolve an existing product without silently dropping legacy values."""
 
     product_id = _first_text(product, ("id", "product_id"))
     product_name = _first_text(product, ("product_display_name", "raw_product_title"))
     code = _first_text(product, _CODE_FIELDS)
     cluster = _first_text(product, ("copywriting_cluster", "cluster_name", "cluster"))
-    category = _text(product.get("category"))
+    raw_category = _text(product.get("category"))
+    category = canonical_category(raw_category)
     subcategory = _text(product.get("subcategory"))
     type_name = _text(product.get("type"))
-    product_fields = {
+    angle = _text(product.get("copywriting_angle"))
+    current = {
         "product_type_code": code or None,
         "cluster_name": cluster or None,
-        "category": category or None,
+        "category": raw_category or None,
         "subcategory": subcategory or None,
         "type": type_name or None,
+        "copywriting_angle": angle or None,
+    }
+    product_fields = {
+        **current,
         "product_type_id": _text(product.get("product_type_id")) or None,
     }
 
-    if code:
-        code_match = await get_copywriting_taxonomy_entry(code, active_only=True)
-        if code_match is None or (
-            cluster and code_match["cluster_name"] != cluster
-        ):
-            # An explicit but unknown/conflicting code must not silently fall
-            # through to a weaker field match. The caller gets the evidence it
-            # supplied back as UNMATCHED and can review it in round two.
-            return {
-                "product_id": product_id,
-                "product_display_name": product_name,
-                "match_status": "UNMATCHED",
-                "matched_by": "PRODUCT_TYPE_CODE",
-                "product_fields": product_fields,
-                "match": None,
-                "candidates": [code_match] if code_match else [],
-            }
+    def result(
+        status: str,
+        matched_by: str | None,
+        match: dict[str, Any] | None,
+        candidates: list[dict[str, Any]],
+        nearest_match: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         return {
             "product_id": product_id,
             "product_display_name": product_name,
-            "match_status": "EXACT_CODE",
-            "matched_by": "PRODUCT_TYPE_CODE",
+            "match_status": status,
+            "matched_by": matched_by,
             "product_fields": product_fields,
-            "match": code_match,
-            "candidates": [code_match],
+            "needs_reconciliation": status
+            in {"UNMATCHED", "AMBIGUOUS", "NEEDS_RECONCILIATION"},
+            "current": current,
+            "match": match,
+            "nearest_match": nearest_match,
+            "candidates": candidates,
         }
 
-    if category and subcategory and type_name:
-        db = await get_db()
-        clauses = [
-            "category=?",
-            "subcategory=?",
-            "type=?",
-            "registry_status='ACTIVE'",
-        ]
-        params: list[Any] = [category, subcategory, type_name]
-        if cluster:
-            clauses.append("cluster_name=?")
-            params.append(cluster)
-        cursor = await db.execute(
-            f"SELECT * FROM {REGISTRY_TABLE} WHERE {' AND '.join(clauses)} "
-            "ORDER BY product_type_code",
-            params,
-        )
-        candidates = [_entry(row) for row in await cursor.fetchall()]
-        if len(candidates) == 1:
-            return {
-                "product_id": product_id,
-                "product_display_name": product_name,
-                "match_status": "EXACT_TAXONOMY",
-                "matched_by": "CATEGORY_SUBCATEGORY_TYPE",
-                "product_fields": product_fields,
-                "match": candidates[0],
-                "candidates": candidates,
-            }
-        if len(candidates) > 1:
-            return {
-                "product_id": product_id,
-                "product_display_name": product_name,
-                "match_status": "AMBIGUOUS",
-                "matched_by": "CATEGORY_SUBCATEGORY_TYPE",
-                "product_fields": product_fields,
-                "match": None,
-                "candidates": candidates,
-            }
+    tree = await get_copywriting_taxonomy_tree()
+    tree_records = list(tree["recordByType"].values())
+    if code:
+        code_match = await get_copywriting_taxonomy_entry(code, active_only=True)
+        if code_match is None:
+            nearest = _nearest_tree_records(
+                tree_records, category, subcategory, type_name
+            )
+            return result(
+                "NEEDS_RECONCILIATION",
+                "PRODUCT_TYPE_CODE",
+                None,
+                nearest,
+                nearest[0] if nearest else None,
+            )
+        code_record = _tree_record(code_match)
+        stored_key = taxonomy_key(category, subcategory, type_name)
+        if (
+            raw_category
+            and subcategory
+            and type_name
+            and stored_key != taxonomy_key(
+                code_record["category"],
+                code_record["subcategory"],
+                code_record["type"],
+            )
+        ):
+            return result(
+                "NEEDS_RECONCILIATION",
+                "PRODUCT_TYPE_CODE",
+                None,
+                [code_record],
+                code_record,
+            )
+        if cluster and code_record["cluster"] != cluster:
+            return result(
+                "NEEDS_RECONCILIATION",
+                "PRODUCT_TYPE_CODE",
+                None,
+                [code_record],
+                code_record,
+            )
+        if angle and angle != code_record["copywriting_angle"]:
+            return result(
+                "NEEDS_RECONCILIATION",
+                "PRODUCT_TYPE_CODE",
+                None,
+                [code_record],
+                code_record,
+            )
+        return result("EXACT_CODE", "PRODUCT_TYPE_CODE", code_match, [code_match])
 
-    return {
-        "product_id": product_id,
-        "product_display_name": product_name,
-        "match_status": "UNMATCHED",
-        "matched_by": None,
-        "product_fields": product_fields,
-        "match": None,
-        "candidates": [],
-    }
+    key = taxonomy_key(category, subcategory, type_name)
+    match = tree["recordByType"].get(key)
+    if match is not None:
+        if angle and angle != match["copywriting_angle"]:
+            return result(
+                "NEEDS_RECONCILIATION",
+                "CATEGORY_SUBCATEGORY_TYPE",
+                None,
+                [match],
+                match,
+            )
+        return result(
+            "EXACT_TAXONOMY",
+            "CATEGORY_SUBCATEGORY_TYPE",
+            match,
+            [match],
+        )
+
+    nearest = _nearest_tree_records(
+        tree_records, category, subcategory, type_name
+    )
+    return result(
+        "NEEDS_RECONCILIATION",
+        None,
+        None,
+        nearest,
+        nearest[0] if nearest else None,
+    )
 
 
 async def resolve_product_taxonomy(product_id: str) -> dict[str, Any] | None:

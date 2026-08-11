@@ -340,6 +340,8 @@ export interface WorkspaceExecutePayload {
 		styleAsset?: UploadedAsset | null;
 	};
 	product_id?: string | null;
+	/** Server-side IMG strategy context; product bytes remain resolver-owned. */
+	visual_lane_id?: string | null;
 	prompt_package_snapshot_id?: string | null;
 	workspace_execution_package_id?: string | null;
 	prompt_fingerprint?: string | null;
@@ -734,6 +736,20 @@ export interface StoryboardBlockAllocation {
 	end_frame_instruction: string;
 }
 
+export interface StoryboardCtaFitDiagnostics {
+	canonical_cta_text: string;
+	spoken_cta_text: string;
+	original_word_count: number;
+	spoken_word_count: number;
+	final_block_word_budget: number;
+	fit_status: "EXACT" | "DETERMINISTIC_COMPACT" | "BLOCKED" | string;
+	fit_method: string;
+	was_compacted: boolean;
+	cta_type?: string;
+	target_language?: string;
+	wps_mode?: string;
+}
+
 export interface FullStoryboardPlannerResult {
 	plan_version: string;
 	input_fingerprint: string;
@@ -762,6 +778,17 @@ export interface FullStoryboardPlannerResult {
 		actual_total_word_count: number;
 		full_dialogue_text: string;
 		utterances: StoryboardDialogueUtterance[];
+		approved_copy_provenance?: {
+			copy_source?: string;
+			canonical_cta_text?: string;
+			spoken_cta_text?: string;
+			[key: string]: unknown;
+		};
+		compliance_metadata?: {
+			final_cta_required?: boolean;
+			cta_fit?: StoryboardCtaFitDiagnostics;
+			[key: string]: unknown;
+		};
 	};
 	block_allocations: StoryboardBlockAllocation[];
 }
@@ -872,6 +899,15 @@ export interface CopySet {
 	similar_to_copy_set_id: string | null;
 	similarity_score: number | null;
 	archived: number;
+	// Production-validity contract (#688) — workflow status alone is not enough.
+	workflow_status?: string | null;
+	production_valid?: boolean;
+	validity_class?: string | null;
+	validity_class_label?: string | null;
+	validity_reasons?: string[];
+	recommended_action?: string | null;
+	validity_primary_reason?: string | null;
+	validity_stale?: boolean;
 }
 
 export interface SimilarityBackfillItem {
@@ -1086,6 +1122,8 @@ export interface ProductStrategyTaxonomy {
 	product_id: string;
 	taxonomy_version: string;
 	product_fingerprint: string;
+	/** Current product snapshot; differs from product_fingerprint when review is stale. */
+	current_product_fingerprint?: string | null;
 	cluster: string;
 	product_type_group: string;
 	matched_scene_strategy_id: string;
@@ -1322,6 +1360,7 @@ export interface Product {
 		review_status: string;
 		updated_at?: string | null;
 	} | null;
+	visual_readiness?: ProductVisualReadiness;
 	taxonomy_conflict?: boolean;
 	taxonomy_conflict_reason?: string | null;
 	strategy_taxonomy?: ProductStrategyTaxonomy | null;
@@ -1373,6 +1412,7 @@ export interface Product {
 	commission_rate?: string | null;
 	product_type_id?: string | null;
 	product_type?: string | null;
+	copywriting_product_type_code?: string | null;
 	silo?: string | null;
 	trigger_id?: string | null;
 	formula?: string | null;
@@ -1455,6 +1495,124 @@ export interface Product {
 	local_image_path: string | null;
 	created_at: string;
 	updated_at: string;
+}
+
+export type ProductVisualCutoutStatus =
+	| "NOT_PREPARED"
+	| "PREPARING"
+	| "PENDING_REVIEW"
+	| "APPROVED"
+	| "PREPARATION_FAILED"
+	| "BLOCKED"
+	| "REJECTED"
+	| "SUPERSEDED";
+
+export type CanvaCutoutStage =
+	| "NOT_STARTED"
+	| "PREFLIGHT"
+	| "CANVA_PRO_REQUIRED"
+	| "OPENING_CANVA"
+	| "MAGIC_GRAB"
+	| "BACKGROUND_REMOVER"
+	| "MAGIC_LAYERS"
+	| "CLEAN_CANVAS"
+	| "READY_TO_EXPORT"
+	| "EXPORTING"
+	| "VERIFYING_ALPHA"
+	| "CUTOUT_READY"
+	| "PENDING_HUMAN_REVIEW"
+	| "APPROVED"
+	| "FAILED"
+	| "PAUSED"
+	| "CANCELLED"
+	| string;
+
+export interface CanvaCutoutWorkflow {
+	workflow_id?: string | null;
+	product_id?: string | null;
+	source_sha256?: string | null;
+	source_dimensions?: { width: number | null; height: number | null };
+	output_dimensions?: { width: number | null; height: number | null };
+	canva_method?: "UNSELECTED" | "MAGIC_GRAB" | "BACKGROUND_REMOVER" | "MAGIC_LAYERS" | string;
+	design_id?: string | null;
+	design_url?: string | null;
+	current_stage: CanvaCutoutStage;
+	attempt_count: number;
+	last_error_code?: string | null;
+	last_error?: string | null;
+	preflight?: Record<string, string>;
+	output_sha256?: string | null;
+	output_available?: boolean;
+	alpha_verified: boolean;
+	human_review_status: "NOT_STARTED" | "PENDING_REVIEW" | "APPROVED" | "REJECTED" | string;
+	provenance_source?: "CANVA_MAGIC_GRAB" | "CANVA_BG_REMOVER" | "CANVA_MAGIC_LAYERS" | string | null;
+	started_at?: string | null;
+	updated_at?: string | null;
+	next_action?: string;
+}
+
+export interface ProductVisualReadiness {
+	product_id: string;
+	canonical_media_status: "AVAILABLE" | "MISSING" | string;
+	reference_pack_status: string;
+	visual_grounding_status: string;
+	visual_grounding_source: string;
+	cutout_status: ProductVisualCutoutStatus | string;
+	cutout_review_status: string;
+	exact_commerce_status: string;
+	auto_cutout_status?: ProductVisualCutoutStatus | string;
+	manual_cutout_status?: ProductVisualCutoutStatus | string;
+	active_visual_source?: string;
+	original_preview_url?: string | null;
+	original_display_url?: string | null;
+	original_display_source?: string | null;
+	original_display_trust_status?: string | null;
+	auto_input_preview_url?: string | null;
+	auto_input_source?: string | null;
+	auto_input_trust_status?: string | null;
+	auto_cutout_preview_url?: string | null;
+	manual_cutout_preview_url?: string | null;
+	active_cutout_preview_url?: string | null;
+	cutout_history_count?: number;
+	cutout_media_id?: string | null;
+	cutout_preview_available?: boolean;
+	// ── Product-aware isolation + operator target (preparation metadata) ──
+	file_quality_status?: string | null;
+	product_isolation_status?: string | null;
+	target_selection_required?: boolean;
+	target_selection_available?: boolean;
+	target_region?: {
+		x: number;
+		y: number;
+		width: number;
+		height: number;
+		source_sha256?: string;
+	} | null;
+	// ── Which visual BOSMAX uses RIGHT NOW (backend authority; no FE guess) ──
+	current_system_visual?: {
+		card: string | null;
+		label: string | null;
+		status: string;
+	};
+	attempt_count?: number;
+	failure_code?: string | null;
+	failure_message?: string | null;
+	blockers: string[];
+	warnings: string[];
+	provider_operations: number;
+	created_without_credit: boolean;
+	can_prepare_cutout: boolean;
+	can_review_cutout: boolean;
+	can_approve_cutout: boolean;
+	can_rebuild_cutout: boolean;
+	can_upload_manual_cutout?: boolean;
+	can_start_canva_cutout?: boolean;
+	can_reject_cutout?: boolean;
+	can_use_original_fallback?: boolean;
+	can_open_source: boolean;
+	can_view: boolean;
+	canva_cutout_stage?: CanvaCutoutStage;
+	canva_cutout_workflow?: CanvaCutoutWorkflow;
 }
 
 export interface ProductCatalogResponse {

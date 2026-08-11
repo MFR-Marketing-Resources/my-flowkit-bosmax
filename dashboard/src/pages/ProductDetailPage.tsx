@@ -13,20 +13,27 @@ import {
 	fetchProductStrategyTypeRegistry,
 	reviewProductStrategyTaxonomy,
 } from "../api/products";
+import {
+	fetchCopywritingTaxonomyTree,
+	fetchProductCopywritingTaxonomy,
+	type CopywritingTaxonomyResolution,
+	type CopywritingTaxonomyTree,
+	type CopywritingTaxonomyTreeRecord,
+} from "../api/taxonomy";
 import type { Product, ProductStrategyTypeRegistryResponse } from "../types";
 import ProductIntelligenceReviewDraftPanel from "../components/product-intelligence/ProductIntelligenceReviewDraftPanel";
 import CreativeSetupPanel from "../components/product-intelligence/CreativeSetupPanel";
-import RecommendedAvatarsCard from "../components/product-intelligence/RecommendedAvatarsCard";
 import RecommendedScenePromptsCard from "../components/product-intelligence/RecommendedScenePromptsCard";
 import RecommendedCameraPresetsCard from "../components/product-intelligence/RecommendedCameraPresetsCard";
 import CreativeHandoffPreview from "../components/product-intelligence/CreativeHandoffPreview";
+import ProductVisualReadinessPanel from "../components/product-registration/ProductVisualReadinessPanel";
 
 // One clean full-screen editor for ONE product. Opened from All Products →
 // "Open". Reuses the proven panels (PI review, creative setup multi-tick,
 // recommendation cards) in a consistent house-style layout — no cramped
 // three-column Sales-Analyzer clutter.
 
-type DetailTab = "EDIT" | "INTELLIGENCE" | "CREATIVE";
+type DetailTab = "EDIT" | "INTELLIGENCE" | "CREATIVE" | "VISUAL";
 
 const EDIT_FIELDS: { key: string; label: string }[] = [
 	{ key: "product_short_name", label: "Short Name" },
@@ -34,9 +41,6 @@ const EDIT_FIELDS: { key: string; label: string }[] = [
 	{ key: "price", label: "Price (RM)" },
 	{ key: "commission_rate", label: "Commission Rate" },
 	{ key: "commission_amount", label: "Commission Amount (RM)" },
-	{ key: "category", label: "Category" },
-	{ key: "subcategory", label: "Subcategory" },
-	{ key: "type", label: "Type" },
 ];
 
 // System / taxonomy plumbing — set by the pipeline, rarely edited by hand.
@@ -65,6 +69,29 @@ const SOURCE_BADGE: Record<string, string> = {
 const resolveThumb = (p: Product): string | null =>
 	p.image_url || p.rendered_img_src || p.image_analysis?.image_url || null;
 
+const taxonomyKey = (category: string, subcategory: string, type: string) =>
+	category + "::" + subcategory + "::" + type;
+
+function normalizeTaxonomyRecord(
+	value: Record<string, unknown> | null | undefined,
+): CopywritingTaxonomyTreeRecord | null {
+	if (!value) return null;
+	const category = String(value.category ?? "");
+	const subcategory = String(value.subcategory ?? "");
+	const type = String(value.type ?? "");
+	const productTypeCode = String(value.product_type_code ?? "");
+	if (!category || !subcategory || !type || !productTypeCode) return null;
+	return {
+		category,
+		subcategory,
+		type,
+		product_type_code: productTypeCode,
+		copywriting_angle: String(value.copywriting_angle ?? ""),
+		cluster: String(value.cluster ?? value.cluster_name ?? ""),
+		display_name: String(value.display_name ?? ""),
+	};
+}
+
 export default function ProductDetailPage() {
 	const { id = "" } = useParams();
 	const navigate = useNavigate();
@@ -80,6 +107,15 @@ export default function ProductDetailPage() {
 	// Edit form (identity + commerce). Flat string map, mirrors PATCH payload.
 	const [editForm, setEditForm] = useState<Record<string, string>>({});
 	const [copywritingAngle, setCopywritingAngle] = useState("");
+	const [copywritingAngleOverride, setCopywritingAngleOverride] = useState(false);
+	const [copywritingTree, setCopywritingTree] =
+		useState<CopywritingTaxonomyTree | null>(null);
+	const [copywritingResolution, setCopywritingResolution] =
+		useState<CopywritingTaxonomyResolution | null>(null);
+	const [copywritingTreeLoading, setCopywritingTreeLoading] = useState(true);
+	const [taxonomyCategory, setTaxonomyCategory] = useState("");
+	const [taxonomySubcategory, setTaxonomySubcategory] = useState("");
+	const [taxonomyType, setTaxonomyType] = useState("");
 	const [editSaving, setEditSaving] = useState(false);
 	const [editMsg, setEditMsg] = useState<{ ok: boolean; text: string } | null>(
 		null,
@@ -109,9 +145,6 @@ export default function ProductDetailPage() {
 				commission_rate: p.commission_rate || "",
 				commission_amount:
 					p.commission_amount != null ? String(p.commission_amount) : "",
-				category: p.category || "",
-				subcategory: p.subcategory || "",
-				type: p.type || "",
 				physics_class: p.physics_class || "",
 				silo: p.silo || "",
 				trigger_id: p.trigger_id || "",
@@ -146,6 +179,50 @@ export default function ProductDetailPage() {
 		};
 	}, []);
 
+	useEffect(() => {
+		let cancelled = false;
+		setCopywritingTreeLoading(true);
+		void fetchCopywritingTaxonomyTree()
+			.then((tree) => {
+				if (!cancelled) setCopywritingTree(tree);
+			})
+			.catch(() => {
+				if (!cancelled) setCopywritingTree(null);
+			})
+			.finally(() => {
+				if (!cancelled) setCopywritingTreeLoading(false);
+			});
+		if (!id) return () => undefined;
+		void fetchProductCopywritingTaxonomy(id)
+			.then((resolution) => {
+				if (cancelled) return;
+				setCopywritingResolution(resolution);
+				const resolved = normalizeTaxonomyRecord(
+					resolution.match as Record<string, unknown> | null,
+				);
+				if (resolved && !resolution.needs_reconciliation) {
+					setTaxonomyCategory(resolved.category);
+					setTaxonomySubcategory(resolved.subcategory);
+					setTaxonomyType(resolved.type);
+					setCopywritingAngle(resolved.copywriting_angle);
+				} else {
+					setTaxonomyCategory("");
+					setTaxonomySubcategory("");
+					setTaxonomyType("");
+					setCopywritingAngle(
+						resolution.current.copywriting_angle || "",
+					);
+				}
+				setCopywritingAngleOverride(false);
+			})
+			.catch(() => {
+				if (!cancelled) setCopywritingResolution(null);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [id]);
+
 	const clusters = useMemo(
 		() =>
 			(registry?.clusters ?? [])
@@ -166,16 +243,53 @@ export default function ProductDetailPage() {
 		[typeOptions, taxType],
 	);
 
+	const taxonomySubcategories = useMemo(
+		() =>
+			copywritingTree?.subcategoriesByCategory[taxonomyCategory] ?? [],
+		[copywritingTree, taxonomyCategory],
+	);
+	const taxonomyTypes = useMemo(
+		() =>
+			copywritingTree?.typesBySubcategory[
+				taxonomyCategory + "::" + taxonomySubcategory
+			] ?? [],
+		[copywritingTree, taxonomyCategory, taxonomySubcategory],
+	);
+	const selectedCopywritingRecord = useMemo(
+		() =>
+			copywritingTree?.recordByType[
+				taxonomyKey(taxonomyCategory, taxonomySubcategory, taxonomyType)
+			] ?? null,
+		[copywritingTree, taxonomyCategory, taxonomySubcategory, taxonomyType],
+	);
+
 	async function handleEditSave(e: FormEvent) {
 		e.preventDefault();
 		if (!product) return;
+		if (!selectedCopywritingRecord) {
+			setEditMsg({
+				ok: false,
+				text: "Select a valid Category → Subcategory → Type mapping before saving.",
+			});
+			return;
+		}
 		setEditSaving(true);
 		setEditMsg(null);
 		try {
-			const payload: Record<string, string | number | null> = {};
-			const all = { ...editForm, copywriting_angle: copywritingAngle };
+			const payload: Record<string, string | number | boolean | null> = {};
+			const all = {
+				...editForm,
+				category: selectedCopywritingRecord.category,
+				subcategory: selectedCopywritingRecord.subcategory,
+				type: selectedCopywritingRecord.type,
+				copywriting_product_type_code:
+					selectedCopywritingRecord.product_type_code,
+				copywriting_angle: copywritingAngle,
+				copywriting_angle_override_enabled: copywritingAngleOverride,
+			};
 			for (const [key, val] of Object.entries(all)) {
 				if (val === "") payload[key] = null;
+				else if (typeof val === "boolean") payload[key] = val;
 				else if (key === "price" || key === "commission_amount") {
 					const n = Number.parseFloat(val);
 					payload[key] = Number.isNaN(n) ? null : n;
@@ -183,6 +297,8 @@ export default function ProductDetailPage() {
 			}
 			await patchAPI(`/api/products/${encodeURIComponent(product.id)}`, payload);
 			await loadProduct();
+			const resolution = await fetchProductCopywritingTaxonomy(product.id);
+			setCopywritingResolution(resolution);
 			setEditMsg({ ok: true, text: "Saved." });
 		} catch (err) {
 			setEditMsg({
@@ -205,7 +321,9 @@ export default function ProductDetailPage() {
 		try {
 			await reviewProductStrategyTaxonomy(product.id, {
 				expected_product_fingerprint:
-					product.strategy_taxonomy?.product_fingerprint || "",
+					product.strategy_taxonomy?.current_product_fingerprint ||
+					product.strategy_taxonomy?.product_fingerprint ||
+					"",
 				cluster: selectedTaxEntry.cluster,
 				product_type_group: selectedTaxEntry.product_type_group,
 				matched_scene_strategy_id: selectedTaxEntry.matched_scene_strategy_id,
@@ -217,9 +335,18 @@ export default function ProductDetailPage() {
 			await loadProduct();
 			setTaxMsg({ ok: true, text: "Cluster / type saved." });
 		} catch (err) {
+			const message = err instanceof Error ? err.message : "Failed to save taxonomy";
+			if (message.includes("STALE_PRODUCT_FINGERPRINT")) {
+				await loadProduct();
+				setTaxMsg({
+					ok: false,
+					text: "Product data changed. Reloaded the current snapshot; confirm the cluster / type and save again.",
+				});
+				return;
+			}
 			setTaxMsg({
 				ok: false,
-				text: err instanceof Error ? err.message : "Failed to save taxonomy",
+				text: message,
 			});
 		} finally {
 			setTaxSaving(false);
@@ -325,17 +452,24 @@ export default function ProductDetailPage() {
 					</div>
 
 					{/* Tabs */}
-					<div className="mb-5 flex w-fit gap-1 rounded-xl border border-slate-800 bg-slate-900/60 p-1">
+					<div
+						role="tablist"
+						aria-label="Product detail sections"
+						className="mb-5 flex w-fit gap-1 rounded-xl border border-slate-800 bg-slate-900/60 p-1"
+					>
 						{(
 							[
 								["EDIT", "Edit & Save"],
 								["INTELLIGENCE", "Product Intelligence"],
 								["CREATIVE", "Creative Setup"],
+								["VISUAL", "Visual / Canva"],
 							] as [DetailTab, string][]
 						).map(([value, label]) => (
 							<button
 								key={value}
 								type="button"
+								role="tab"
+								aria-selected={tab === value}
 								onClick={() => setTab(value)}
 								className={`rounded-lg px-4 py-2 text-xs font-bold uppercase tracking-widest transition-all ${
 									tab === value
@@ -372,13 +506,34 @@ export default function ProductDetailPage() {
 						)}
 						{tab === "CREATIVE" && (
 							<>
-								Plan the creative set — tick one or MORE avatars, scene templates, and
-								camera presets, or press <Hl>⚡ Auto-fill top pick</Hl>. Then{" "}
+								Choose the people and scenes for this product. Camera presets follow the
+								selected scene automatically. Use <Hl>Smart suggest</Hl>, then{" "}
 								<Hl>Save Selection</Hl> and <Hl>Approve</Hl>. Planning only — nothing is
 								generated here.
 							</>
 						)}
+						{tab === "VISUAL" && (
+							<>
+								Review the original, automatic, and manual cutout candidates, Canva handoff,
+								provenance, and Exact Commerce approval in this tab. No provider operation
+								starts unless explicitly triggered by the operator.
+							</>
+						)}
 					</div>
+
+					{tab === "VISUAL" && (
+						<ProductVisualReadinessPanel
+							productId={product.id}
+							productSourceUrl={product.tiktok_product_url || product.source_url}
+							readiness={product.visual_readiness}
+							showApprovalForm
+							onChanged={(visualReadiness) =>
+								setProduct((previous) =>
+									previous ? { ...previous, visual_readiness: visualReadiness } : previous,
+								)
+							}
+						/>
+					)}
 
 					{tab === "EDIT" && (
 						<div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
@@ -404,10 +559,147 @@ export default function ProductDetailPage() {
 										</div>
 									))}
 								</div>
+								{copywritingResolution?.needs_reconciliation && (
+									<div
+										data-testid="copywriting-taxonomy-reconciliation"
+										className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200"
+									>
+										<strong>Needs reconciliation.</strong> Stored taxonomy is
+										not an exact SSOT match:{" "}
+										<span className="font-mono">
+											{copywritingResolution.current.category || "—"} →{" "}
+											{copywritingResolution.current.subcategory || "—"} →{" "}
+											{copywritingResolution.current.type || "—"}
+										</span>
+										. Choose a canonical mapping below; nothing is overwritten
+										until Save succeeds. Nearest match:{" "}
+										{normalizeTaxonomyRecord(
+											copywritingResolution.nearest_match as Record<
+												string,
+												unknown
+											> | null,
+										)?.display_name || "none"}
+										.
+									</div>
+								)}
+								<div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+									<div className="space-y-1.5">
+										<label className={LABEL}>Category</label>
+										<select
+											data-testid="copywriting-taxonomy-category-select"
+											className={INPUT}
+											value={taxonomyCategory}
+											disabled={copywritingTreeLoading || !copywritingTree}
+											onChange={(e) => {
+												setTaxonomyCategory(e.target.value);
+												setTaxonomySubcategory("");
+												setTaxonomyType("");
+												setCopywritingAngle("");
+												setCopywritingAngleOverride(false);
+											}}
+										>
+											<option value="">
+												{copywritingTreeLoading
+													? "Loading taxonomy…"
+													: "— select category —"}
+											</option>
+											{(copywritingTree?.categories ?? []).map((category) => (
+												<option key={category} value={category}>
+													{category}
+												</option>
+											))}
+										</select>
+									</div>
+									<div className="space-y-1.5">
+										<label className={LABEL}>Subcategory</label>
+										<select
+											data-testid="copywriting-taxonomy-subcategory-select"
+											className={INPUT}
+											value={taxonomySubcategory}
+											disabled={!taxonomyCategory || !copywritingTree}
+											onChange={(e) => {
+												setTaxonomySubcategory(e.target.value);
+												setTaxonomyType("");
+												setCopywritingAngle("");
+												setCopywritingAngleOverride(false);
+											}}
+										>
+											<option value="">— select subcategory —</option>
+											{taxonomySubcategories.map((subcategory) => (
+												<option key={subcategory} value={subcategory}>
+													{subcategory}
+												</option>
+											))}
+										</select>
+									</div>
+									<div className="space-y-1.5">
+										<label className={LABEL}>Type</label>
+										<select
+											data-testid="copywriting-taxonomy-type-select"
+											className={INPUT}
+											value={taxonomyType}
+											disabled={!taxonomySubcategory || !copywritingTree}
+											onChange={(e) => {
+												const nextType = e.target.value;
+												const record =
+													copywritingTree?.recordByType[
+														taxonomyKey(
+															taxonomyCategory,
+															taxonomySubcategory,
+															nextType,
+														)
+													] ?? null;
+												setTaxonomyType(nextType);
+												setCopywritingAngle(
+													record?.copywriting_angle ?? "",
+												);
+												setCopywritingAngleOverride(false);
+											}}
+										>
+											<option value="">— select type —</option>
+											{taxonomyTypes.map((type) => (
+												<option key={type} value={type}>
+													{type}
+												</option>
+											))}
+										</select>
+									</div>
+								</div>
 								<details className="mt-4 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
 									<summary className="cursor-pointer text-[10px] font-bold uppercase tracking-widest text-slate-500">
 										Advanced taxonomy — set automatically, rarely edited
 									</summary>
+									{selectedCopywritingRecord && (
+										<div
+											data-testid="copywriting-taxonomy-advanced"
+											className="mt-3 grid grid-cols-1 gap-4 border-b border-slate-800 pb-3 sm:grid-cols-3"
+										>
+											<div className="space-y-1.5">
+												<label className={LABEL}>Cluster</label>
+												<input
+													className={INPUT}
+													readOnly
+													value={selectedCopywritingRecord.cluster}
+												/>
+											</div>
+											<div className="space-y-1.5">
+												<label className={LABEL}>Product Type Code</label>
+												<input
+													className={INPUT}
+													readOnly
+													value={selectedCopywritingRecord.product_type_code}
+												/>
+											</div>
+											<div className="space-y-1.5">
+												<label className={LABEL}>Display Name</label>
+												<input
+													className={INPUT}
+													readOnly
+													value={selectedCopywritingRecord.display_name}
+												/>
+											</div>
+										</div>
+									)}
 									<div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
 										{EDIT_FIELDS_ADVANCED.map((f) => (
 											<div key={f.key} className="space-y-1.5">
@@ -424,10 +716,37 @@ export default function ProductDetailPage() {
 									</div>
 								</details>
 								<div className="mt-4 space-y-1.5">
-									<label className={LABEL}>Copywriting Angle</label>
+									<div className="flex items-center justify-between gap-3">
+										<label className={LABEL}>Copywriting Angle</label>
+										<label className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+											<input
+												data-testid="copywriting-taxonomy-angle-override"
+												type="checkbox"
+												checked={copywritingAngleOverride}
+												onChange={(e) => {
+													const enabled = e.target.checked;
+													setCopywritingAngleOverride(enabled);
+													if (!enabled && selectedCopywritingRecord) {
+														setCopywritingAngle(
+															selectedCopywritingRecord.copywriting_angle,
+														);
+													}
+												}}
+												disabled={!selectedCopywritingRecord}
+											/>
+											Custom override
+										</label>
+									</div>
 									<textarea
+										data-testid="copywriting-taxonomy-angle"
 										className={`${INPUT} h-24 resize-none`}
 										value={copywritingAngle}
+										readOnly={!copywritingAngleOverride}
+										placeholder={
+											selectedCopywritingRecord
+												? "Resolved from the canonical taxonomy"
+												: "Select a valid taxonomy mapping first"
+										}
 										onChange={(e) => setCopywritingAngle(e.target.value)}
 									/>
 								</div>
@@ -455,6 +774,13 @@ export default function ProductDetailPage() {
 									<span className="font-mono text-slate-300">{clusterType}</span>. Pick
 									a cluster, then its product type. Saved as VERIFIED.
 								</p>
+								{product.strategy_taxonomy?.is_stale && (
+									<div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200">
+										This taxonomy review is stale because the product identity changed.
+										Confirm the current cluster / type, then save to create a new review
+										snapshot.
+									</div>
+								)}
 								<div className="space-y-4">
 									<div className="space-y-1.5">
 										<label className={LABEL}>Cluster</label>
@@ -526,14 +852,31 @@ export default function ProductDetailPage() {
 					)}
 
 					{tab === "CREATIVE" && (
-						<div className="space-y-5">
+						<div data-testid="creative-setup-tab" className="space-y-5">
 							<CreativeSetupPanel productId={product.id} />
-							<div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-								<RecommendedAvatarsCard productId={product.id} />
-								<RecommendedScenePromptsCard productId={product.id} />
-								<RecommendedCameraPresetsCard productId={product.id} />
-								<CreativeHandoffPreview productId={product.id} />
-							</div>
+							<details
+								data-testid="creative-reference-library"
+								className="rounded-xl border border-slate-800 bg-slate-900/40 p-4"
+							>
+								<summary className="cursor-pointer list-none text-sm font-bold text-slate-200 hover:text-white">
+									Reference library <span className="ml-2 text-xs font-normal text-slate-500">optional prompt and camera detail</span>
+								</summary>
+								<div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+									<RecommendedScenePromptsCard productId={product.id} />
+									<RecommendedCameraPresetsCard productId={product.id} />
+								</div>
+							</details>
+							<details
+								data-testid="creative-handoff-disclosure"
+								className="rounded-xl border border-slate-800 bg-slate-900/40 p-4"
+							>
+								<summary className="cursor-pointer list-none text-sm font-bold text-slate-200 hover:text-white">
+									Generation handoff <span className="ml-2 text-xs font-normal text-slate-500">preview only · no generation</span>
+								</summary>
+								<div className="mt-4">
+									<CreativeHandoffPreview productId={product.id} />
+								</div>
+							</details>
 						</div>
 					)}
 				</>

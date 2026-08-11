@@ -1548,6 +1548,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				body: JSON.stringify({
 					mode: data.mode,
 					prompt: data.prompt,
+					product_id: data.mode === "IMG" ? data.product_id : undefined,
+					visual_lane_id:
+						data.mode === "IMG"
+							? data.visual_lane_id ?? data.lane
+							: undefined,
 					image_media_ids: refs,
 					aspect,
 					model: data.mode === "IMG" ? data.model : videoModel,
@@ -3996,6 +4001,49 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										{previewPackage.planner_result.full_dialogue_plan
 											.full_dialogue_text || "(visual-only preview)"}
 									</div>
+									{previewPackage.planner_result.full_dialogue_plan
+										.compliance_metadata?.cta_fit ? (
+										<div
+											className="mt-1 text-slate-400"
+											data-testid="operator-cta-fit-diagnostics"
+										>
+											CTA fit:{" "}
+											{
+												previewPackage.planner_result.full_dialogue_plan
+													.compliance_metadata.cta_fit.fit_status
+											}{" "}
+											·{" "}
+											{
+												previewPackage.planner_result.full_dialogue_plan
+													.compliance_metadata.cta_fit.original_word_count
+											}{" "}
+											→{" "}
+											{
+												previewPackage.planner_result.full_dialogue_plan
+													.compliance_metadata.cta_fit.spoken_word_count
+											}{" "}
+											/ budget{" "}
+											{
+												previewPackage.planner_result.full_dialogue_plan
+													.compliance_metadata.cta_fit.final_block_word_budget
+											}{" "}
+											·{" "}
+											{
+												previewPackage.planner_result.full_dialogue_plan
+													.compliance_metadata.cta_fit.fit_method
+											}
+											{previewPackage.planner_result.full_dialogue_plan
+												.compliance_metadata.cta_fit.was_compacted ? (
+												<div className="mt-1 text-amber-200/90">
+													Spoken CTA (compacted):{" "}
+													{
+														previewPackage.planner_result.full_dialogue_plan
+															.compliance_metadata.cta_fit.spoken_cta_text
+													}
+												</div>
+											) : null}
+										</div>
+									) : null}
 								</div>
 							) : null}
 							<div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-200">

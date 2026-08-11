@@ -34,6 +34,20 @@ def _creative_asset_row(**over):
     return base
 
 
+def test_normalize_record_drops_legacy_product_reference_roles_from_engine_slots():
+    row = _creative_asset_row(
+        asset_id="ca_refpack_legacy",
+        semantic_role="PRODUCT_REFERENCE",
+        source_type="PRODUCT_CACHE",
+        allowed_modes='["IMG"]',
+        engine_slot_eligibility='["productAsset", "PRODUCT_CANONICAL"]',
+    )
+
+    record = creative_asset_service._normalize_record(row)
+
+    assert record.engine_slot_eligibility == []
+
+
 @pytest.mark.asyncio
 async def test_create_creative_asset_upload_persists_local_preview(tmp_path, monkeypatch):
     captured = {}

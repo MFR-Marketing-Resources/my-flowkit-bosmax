@@ -30,6 +30,25 @@ async def _seed_bare_product(**kw) -> str:
     return row["id"]
 
 
+def test_over_limit_metadata_is_rejected_without_truncation():
+    value, rejection = svc._validate_metadata_text(
+        "alpha beta gamma", "angle", 10
+    )
+    assert value == ""
+    assert rejection == "METADATA_OVER_LIMIT:angle:16/10"
+    value, rejection = svc._validate_copy_text("alpha beta gamma", "support_message", 10)
+    assert value == ""
+    assert rejection == "COPY_FIELD_OVER_LIMIT:support_message:16/10"
+
+
+def test_copy_quality_gate_rejects_incomplete_tail():
+    value, rejection = svc._validate_copy_text(
+        "Sentuhan tradisional untuk", "support_message", 72
+    )
+    assert value == ""
+    assert rejection == "COPY_FIELD_INCOMPLETE_TAIL:support_message:untuk"
+
+
 @pytest.mark.asyncio
 async def test_objective_ranking_is_deterministic_and_signal_aware(monkeypatch):
     monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
@@ -193,7 +212,7 @@ async def test_ai_directions_are_parsed_gated_and_stamped(monkeypatch):
                     "disclaimer": "",
                     "tone": "",
                 },
-                {  # over-limit primary_message → clipped to fit, still valid
+                {  # over-limit primary_message → rejected without clipping
                     "primary_message": "P" * 80,
                     "support_message": "",
                     "proof_points": ["Okey"],
@@ -210,6 +229,10 @@ async def test_ai_directions_are_parsed_gated_and_stamped(monkeypatch):
     assert "Warisan dalam poket anda" in texts
     assert all("Legakan" not in t for t in texts)
     assert any("failed the safety gate" in w for w in out["warnings"])
+    assert any(
+        item["reason"].startswith("COPY_FIELD_OVER_LIMIT:primary_message")
+        for item in out["rejected_candidates"]
+    )
     ai_dirs = [d for d in out["directions"] if d["field_provenance"]["cta"] == "AI_GENERATED"]
     assert ai_dirs and out["ai_model"] == "deepseek:chat-x"
 
@@ -334,6 +357,32 @@ async def test_fallback_chips_come_only_from_approved_grounding(monkeypatch):
     for d in out["directions"]:
         for chip in d["proof_points"]:
             assert chip in allowed, f"chip {chip!r} is not an approved fact"
+
+
+@pytest.mark.asyncio
+async def test_fallback_drops_grounded_chips_that_fail_poster_safety(monkeypatch):
+    """A legacy grounded claim must not block neutral fallback directions."""
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
+    pid = await _seed_product(title="Produk Legacy Claim", display="Produk Legacy Claim")
+
+    class _PK:
+        description = ""
+        benefits = ["Membantu melegakan sengal badan"]
+        usps = []
+
+    class _G:
+        source = "LEGACY_TEST"
+        product_knowledge = _PK()
+
+    async def fake_grounding(_product):
+        return _G()
+
+    monkeypatch.setattr(svc, "resolve_copy_grounding", fake_grounding)
+    out = await svc.generate_directions(pid, "PRODUCT_HERO", "Product quality")
+
+    assert len(out["directions"]) == 3
+    assert all(d["proof_points"] == [] for d in out["directions"])
+    assert all("melegakan" not in d["primary_message"].lower() for d in out["directions"])
 
 
 # ─── Closure: neutral fallback copy — no usage/routine, no angle (item D) ────

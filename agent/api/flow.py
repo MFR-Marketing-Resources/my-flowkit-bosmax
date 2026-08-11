@@ -12,7 +12,7 @@ from uuid import uuid4
 import aiohttp
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
-from typing import Optional
+from typing import Any, Optional
 from agent.services.flow_client import get_flow_client
 from agent.db import crud
 
@@ -771,6 +771,10 @@ class GenerateRequest(BaseModel):
     mode: str                                  # IMG | T2V | I2V | F2V
     prompt: str
     project_id: Optional[str] = None
+    # Product identity is resolved server-side.  It is a lineage key, never a
+    # client-authorized image path/hash or truth status.
+    product_id: Optional[str] = None
+    visual_lane_id: Optional[str] = None
     image_media_ids: Optional[list] = None     # existing/uploaded refs (I2V/F2V)
     image_prompt: Optional[str] = None         # auto start-frame if no refs (I2V/F2V)
     aspect: str = "9:16"
@@ -787,6 +791,17 @@ class GenerateRequest(BaseModel):
     engine: Optional[str] = None
     generation_mode: Optional[str] = None
     capability_matrix_version: Optional[str] = None
+    # Creative Campaign contract.  These fields are ignored by the proven
+    # video lanes and are required only when the opt-in creative IMG lane is
+    # explicitly enabled and bounded.
+    image_contract_version: Optional[str] = None
+    reference_pack_id: Optional[str] = None
+    poster_copy_set_id: Optional[str] = None
+    output_intent: Optional[str] = None
+    creative_mode: Optional[str] = None
+    confirm_live_credit_burn: bool = False
+    maximum_provider_operations: Optional[int] = None
+    max_retry_operations: int = 0
 
 
 @router.get("/video-models")
@@ -813,6 +828,10 @@ async def video_capability_matrix():
 # one-door /generate lane and the manual lane (was duplicated inline in each).
 REF_SLOT_ORDER: tuple[tuple[str, str], ...] = (
     ("productAsset", "Product"),
+    ("productLabelAsset", "ProductLabel"),
+    ("productLogoAsset", "ProductLogo"),
+    ("productScaleAsset", "ProductScale"),
+    ("productCutoutAsset", "ProductCutout"),
     ("subjectAsset", "Subject"),
     ("sceneAsset", "Scene"),
     ("styleAsset", "Style"),
@@ -857,6 +876,262 @@ def _is_multi_block_prompt(prompt: str) -> bool:
     return (prompt or "").count(_BLOCK_HEADER_MARKER) > 1
 
 
+async def _apply_img_product_truth_gate(
+    *, product_id: str, visual_lane_id: str | None, prompt: str,
+    request_refs: dict[str, Any], start_asset: object = None,
+    reference_pack_id: str | None = None, creative_mode: str | None = None,
+) -> tuple[str, dict[str, Any], bool]:
+    """Apply the server product resolver to every API-first IMG entry point.
+
+    ``/generate`` and the workspace compatibility wrapper both feed the same
+    provider lane. Keeping this gate at the shared seam prevents the workspace
+    path from silently uploading a stale/client-selected product reference.
+    """
+    from agent.services.exact_product_compositor_service import (
+        ExactProductCompositeError,
+        augment_prompt_scene_only,
+        validate_canonical_or_raise,
+    )
+    from agent.services.product_visual_grounding_resolver import (
+        ProductTruthLockRequiredError,
+        ProductVisualReferenceRequiredError,
+        resolve_generation_strategy,
+        resolve_product_visual_grounding,
+    )
+
+    product = await crud.get_product(product_id)
+    if not product:
+        raise HTTPException(404, f"PRODUCT_NOT_FOUND: {product_id}")
+    refs = dict(request_refs or {})
+    lane = (visual_lane_id or "").upper()
+    creative_lane = (
+        lane == "POSTER_BUILDER_CREATIVE_CAMPAIGN"
+        or str(creative_mode or "").upper() == "CREATIVE_CAMPAIGN"
+    )
+    if creative_lane:
+        from agent import config
+        from agent.services.product_reference_pack_service import (
+            ProductReferencePackError,
+            ensure_product_reference_pack,
+            get_reference_pack,
+        )
+
+        if not config.CREATIVE_CAMPAIGN_POSTER_ENABLED:
+            raise HTTPException(409, "CREATIVE_CAMPAIGN_FEATURE_DISABLED")
+        pack = await get_reference_pack(product_id)
+        if pack is None:
+            try:
+                pack = await ensure_product_reference_pack(product_id)
+            except ProductReferencePackError as exc:
+                raise HTTPException(422, f"{exc.code}: {exc.message}") from exc
+        if reference_pack_id and reference_pack_id != pack.pack_id:
+            raise HTTPException(422, "REFERENCE_PACK_ID_MISMATCH")
+        try:
+            # Approval and every bound byte are checked before any Flow upload.
+            from agent.services.product_reference_pack_service import transport_reference_ids
+
+            transport_reference_ids(pack)
+        except ProductReferencePackError as exc:
+            raise HTTPException(422, f"{exc.code}: {exc.message}") from exc
+        bound_refs: dict[str, Any] = {}
+        role_slots = {
+            "PRODUCT_CANONICAL": "productAsset",
+            "PRODUCT_LABEL_CROP": "productLabelAsset",
+            "PRODUCT_LOGO_CROP": "productLogoAsset",
+            "PRODUCT_SCALE_EVIDENCE": "productScaleAsset",
+            "PRODUCT_CUTOUT": "productCutoutAsset",
+        }
+        for binding in pack.references:
+            slot = role_slots.get(binding.role)
+            if not slot:
+                continue
+            bound_refs[slot] = {
+                "productId": product_id,
+                "mediaId": binding.media_id,
+                "localFilePath": binding.local_file_path,
+                "fileName": f"{product_id}_{binding.role.lower()}",
+                "semanticRole": binding.role,
+                "assetSource": "PRODUCT_REFERENCE_PACK",
+            }
+        # Optional approved character/scene/style references remain operator
+        # controls. Product roles above are server-owned and cannot be replaced
+        # by client-selected product bytes.
+        for key, asset in refs.items():
+            if key not in role_slots and isinstance(asset, dict):
+                bound_refs[key] = asset
+        return prompt, bound_refs, False
+    has_avatar = bool(
+        refs.get("characterAsset")
+        or refs.get("avatarAsset")
+        or any(token in lane for token in ("AVATAR", "UGC", "MODEL", "HYBRID"))
+    )
+    is_poster = "POSTER" in lane
+    is_product_only = "PRODUCT_ONLY" in lane or ("HERO" in lane and not has_avatar)
+    strategy = resolve_generation_strategy(
+        lane_id=visual_lane_id,
+        product_id=product_id,
+        has_avatar=has_avatar,
+        is_product_only=is_product_only,
+        is_poster=is_poster,
+    )
+    exact_strategy = strategy in (
+        "PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE",
+        "FIXED_HERO_POSTER",
+    )
+
+    def _is_product_reference(asset: object, slot_key: str = "") -> bool:
+        if slot_key.lower() in {"productasset", "productreference"}:
+            return True
+        if not isinstance(asset, dict):
+            return False
+        asset_product_id = str(asset.get("productId") or asset.get("product_id") or "")
+        role = str(asset.get("semanticRole") or asset.get("semantic_role") or "").upper()
+        source = str(asset.get("assetSource") or asset.get("asset_source") or "").upper()
+        return (
+            asset_product_id == product_id
+            or role == "PRODUCT_REFERENCE"
+            or source == "PRODUCT_IMAGE_URL"
+        )
+
+    if exact_strategy:
+        exact_product = dict(product)
+        exact_product["_exact_product_required"] = True
+        try:
+            validate_canonical_or_raise(exact_product)
+        except ExactProductCompositeError as exc:
+            raise HTTPException(exc.status_code, f"{exc.code}: {exc.message}") from exc
+        if any(
+            _is_product_reference(asset, slot_key)
+            for slot_key, asset in refs.items()
+        ) or _is_product_reference(start_asset, "startAsset"):
+            raise HTTPException(
+                422,
+                "PRODUCT_REFERENCE_FORBIDDEN_EXACT_MODE: exact IMG sends a scene-only plate; the immutable product is inserted after Flow.",
+            )
+        return augment_prompt_scene_only(prompt), refs, True
+
+    try:
+        grounded = resolve_product_visual_grounding(
+            product_id,
+            lane_id=visual_lane_id,
+            has_avatar=has_avatar,
+            is_product_only=is_product_only,
+            is_poster=is_poster,
+        )
+    except (ProductVisualReferenceRequiredError, ProductTruthLockRequiredError) as exc:
+        code = getattr(exc, "code", "PRODUCT_VISUAL_REFERENCE_REQUIRED")
+        raise HTTPException(422, f"{code}: {exc}") from exc
+
+    # Remove every client-selected product asset, then bind the resolver's
+    # server-owned bytes in the canonical product slot. Human/avatar lanes stay
+    # reference-conditioned and therefore remain PENDING_REVIEW downstream.
+    refs = {
+        key: asset
+        for key, asset in refs.items()
+        if not _is_product_reference(asset, key)
+    }
+    product_ref = grounded.product_reference
+    refs["productAsset"] = {
+        "productId": product_id,
+        "mediaId": product_ref.get("media_id"),
+        "localFilePath": product_ref.get("local_path"),
+        "downloadUrl": product_ref.get("image_url"),
+        "fileName": f"{product_id}_product_reference",
+        "semanticRole": "PRODUCT_REFERENCE",
+        "assetSource": "PRODUCT_TRUTH_LOCK"
+        if product_ref.get("source_type") == "PRODUCT_TRUTH_LOCK"
+        else "PRODUCT_DATABASE_RECORD",
+    }
+    return prompt, refs, False
+
+
+async def _run_creative_campaign_pre_provider_lint(
+    *,
+    product_id: str,
+    poster_copy_set_id: str | None,
+    prompt: str,
+    image_model: str | None,
+    output_intent: str | None,
+    maximum_provider_operations: int | None,
+    max_retry_operations: int,
+) -> None:
+    """Run the typed Campaign gate immediately before the provider boundary.
+
+    The Poster Prompt Draft endpoint is a useful earlier check, but it is not
+    the final transport authority. This read-only gate re-resolves the approved
+    copy set, campaign brief and reference pack at the same request boundary so
+    a stale or hand-crafted IMG payload cannot bypass Campaign governance.
+    """
+    from agent import config
+    from agent.models.poster_copy_set import (
+        STATUS_POSTER_COPY_APPROVED,
+        serialize_poster_copy_set,
+    )
+    from agent.services.poster_campaign_design_service import (
+        build_campaign_design_brief,
+        score_campaign_copy_route,
+    )
+    from agent.services.poster_campaign_qa_service import build_pre_provider_lint
+    from agent.services.product_reference_pack_service import get_reference_pack
+
+    copy_id = str(poster_copy_set_id or "").strip()
+    if not copy_id:
+        raise HTTPException(422, "POSTER_COPY_SET_REQUIRED_FOR_CREATIVE_CAMPAIGN")
+    copy_row = await crud.get_poster_copy_set(copy_id)
+    if not copy_row:
+        raise HTTPException(404, "POSTER_COPY_SET_NOT_FOUND")
+    if str(copy_row.get("product_id") or "").strip() != str(product_id).strip():
+        raise HTTPException(422, "POSTER_COPY_SET_PRODUCT_MISMATCH")
+    if copy_row.get("status") != STATUS_POSTER_COPY_APPROVED:
+        raise HTTPException(409, "POSTER_COPY_SET_APPROVAL_REQUIRED")
+
+    copy_set = serialize_poster_copy_set(copy_row)
+    brief = await build_campaign_design_brief(
+        product_id,
+        objective=str(copy_set.get("objective") or "Product Hero"),
+        selected_angle=str(copy_set.get("angle") or ""),
+        copy_layout={
+            "primary_message": str(copy_set.get("primary_message") or ""),
+            "support_message": str(copy_set.get("support_message") or ""),
+            "cta": str(copy_set.get("cta") or ""),
+        },
+    )
+    candidate = {
+        "route_id": str(copy_set.get("campaign_copy_route_id") or copy_id),
+        "singular_proposition": str(copy_set.get("angle") or ""),
+        "primary_message": str(copy_set.get("primary_message") or ""),
+        "support_message": str(copy_set.get("support_message") or ""),
+        "approved_proof_points": list(copy_set.get("proof_points") or []),
+        "cta": str(copy_set.get("cta") or ""),
+    }
+    score, rejected_reasons = score_campaign_copy_route(candidate, brief)
+    candidate["score"] = score.model_dump(mode="json")
+    candidate["production_eligible"] = (
+        not rejected_reasons
+        and score.total >= 72
+        and not brief.missing_field_blockers
+    )
+    lint = build_pre_provider_lint(
+        product_id=product_id,
+        reference_pack=await get_reference_pack(product_id),
+        brief=brief,
+        candidate=candidate,
+        compiled_prompt=prompt,
+        model=image_model or "NANO_BANANA_PRO",
+        output_intent=output_intent or "",
+        max_provider_operations=maximum_provider_operations or 0,
+        max_retry_operations=max_retry_operations,
+        live=True,
+        feature_enabled=config.CREATIVE_CAMPAIGN_POSTER_ENABLED,
+        live_authorized=config.CREATIVE_CAMPAIGN_LIVE_BENCHMARK_AUTHORIZED,
+    )
+    if not lint.allowed:
+        raise HTTPException(
+            422,
+            "CAMPAIGN_PRE_PROVIDER_LINT_BLOCKED:" + "|".join(lint.blockers),
+        )
+
+
 @router.post("/generate")
 async def generate(body: GenerateRequest):
     """THE one door for all four modes. mode = IMG | T2V | I2V | F2V → job_id.
@@ -871,6 +1146,64 @@ async def generate(body: GenerateRequest):
         raise HTTPException(
             422, "MULTI_BLOCK_PROMPT_REJECTED: one generation carries ONE block's "
             "prompt; block 2+ text belongs to the Extend step on the finished video")
+
+    generation_prompt = body.prompt
+    request_refs = dict(body.refs or {})
+    creative_campaign = mode == "IMG" and (
+        (body.visual_lane_id or "").upper() == "POSTER_BUILDER_CREATIVE_CAMPAIGN"
+        or (body.creative_mode or "").upper() == "CREATIVE_CAMPAIGN"
+    )
+    if creative_campaign:
+        from agent import config
+        if not config.CREATIVE_CAMPAIGN_LIVE_BENCHMARK_AUTHORIZED:
+            raise HTTPException(403, "CREATIVE_CAMPAIGN_LIVE_BENCHMARK_AUTHORIZATION_REQUIRED")
+        if not body.product_id:
+            raise HTTPException(422, "CREATIVE_CAMPAIGN_PRODUCT_ID_REQUIRED")
+        if not body.confirm_live_credit_burn:
+            raise HTTPException(409, "IMAGE_LIVE_CREDIT_CONFIRMATION_REQUIRED")
+        if body.image_contract_version != "image_prompt_compiler_v1":
+            raise HTTPException(422, "IMAGE_CONTRACT_VERSION_REQUIRED")
+        if body.max_retry_operations != 0:
+            raise HTTPException(422, "HIDDEN_RETRY_DISABLED_FOR_CREATIVE_CAMPAIGN")
+        if int(body.count) < 1 or int(body.count) > 3:
+            raise HTTPException(422, "CREATIVE_CAMPAIGN_MAX_THREE_VARIANTS")
+        expected_operations = max(1, int(body.count)) + body.max_retry_operations
+        if body.maximum_provider_operations != expected_operations:
+            raise HTTPException(422, "PROVIDER_OPERATION_BUDGET_MISMATCH")
+        if (body.output_intent or "").upper() != "CLEAN_KEY_VISUAL":
+            raise HTTPException(
+                422,
+                "CREATIVE_CAMPAIGN_CLEAN_KEY_VISUAL_REQUIRED",
+            )
+        requested_image_model = (body.image_model or "NANO_BANANA_PRO").upper()
+        if requested_image_model != "NANO_BANANA_PRO":
+            raise HTTPException(
+                422,
+                "CREATIVE_CAMPAIGN_FINAL_MODEL_REQUIRED:NANO_BANANA_PRO",
+            )
+    if mode == "IMG" and body.product_id:
+        # Product-aware IMG requests pass this server gate before extension
+        # connectivity or provider work. The workspace wrapper calls the same
+        # helper so both routes have identical product-byte authority.
+        generation_prompt, request_refs, _ = await _apply_img_product_truth_gate(
+            product_id=body.product_id,
+            visual_lane_id=body.visual_lane_id,
+            prompt=body.prompt,
+            request_refs=request_refs,
+            start_asset=body.startAsset,
+            reference_pack_id=body.reference_pack_id,
+            creative_mode=body.creative_mode,
+        )
+        if creative_campaign:
+            await _run_creative_campaign_pre_provider_lint(
+                product_id=body.product_id,
+                poster_copy_set_id=body.poster_copy_set_id,
+                prompt=generation_prompt,
+                image_model=body.image_model,
+                output_intent=body.output_intent,
+                maximum_provider_operations=body.maximum_provider_operations,
+                max_retry_operations=body.max_retry_operations,
+            )
     # Validate model+duration BEFORE connectivity so 422 stays deterministic (patch I2a);
     # always resolve against the EFFECTIVE model (defaults to Lite) so a bad duration_s with
     # no model (e.g. 10s on default Lite) is caught here, not late inside the job.
@@ -907,12 +1240,18 @@ async def generate(body: GenerateRequest):
             raise HTTPException(503, "Extension not connected")
 
     # Resolve visual assets from refs / startAsset to live Flow media IDs, in the
-    # canonical slot order (startAsset, subject, scene, style, image).
-    resolved_ids = list(body.image_media_ids or [])
-    for slot_label, ref_asset in ordered_ref_slots(body.startAsset, body.refs):
+    # canonical slot order (startAsset, subject, scene, style, image). IMG keeps
+    # product truth ahead of legacy explicit IDs; video preserves its proven
+    # explicit-ID-first contract and is intentionally outside this repair.
+    resolved_ids = [] if mode == "IMG" else list(body.image_media_ids or [])
+    for slot_label, ref_asset in ordered_ref_slots(body.startAsset, request_refs):
         media_id = await _resolve_asset_to_media_id(client, ref_asset, slot_label)
         if media_id and media_id not in resolved_ids:
             resolved_ids.append(media_id)
+    if mode == "IMG":
+        for media_id in body.image_media_ids or []:
+            if media_id and media_id not in resolved_ids:
+                resolved_ids.append(media_id)
 
     tier = "PAYGATE_TIER_ONE"
     if mode in ("T2V", "I2V", "F2V"):  # video modes need Pro/Ultra
@@ -921,10 +1260,13 @@ async def generate(body: GenerateRequest):
         if tier not in ("PAYGATE_TIER_ONE", "PAYGATE_TIER_TWO"):
             raise HTTPException(500, f"Account tier '{tier}' cannot generate video — needs Pro/Ultra")
     result = await _mv.start_generate(
-        mode, body.prompt, project_id=body.project_id,
+        mode, generation_prompt, project_id=body.project_id,
         image_media_ids=resolved_ids, image_prompt=body.image_prompt,
         aspect=body.aspect, tier=tier, model=body.model, duration_s=body.duration_s,
-        num_videos=body.count, image_model=body.image_model)
+        num_videos=body.count, image_model=body.image_model,
+        max_image_attempts=1 if creative_campaign else 8,
+        collect_image_variants=creative_campaign,
+        product_id=body.product_id)
     if isinstance(result, dict) and result.get("status") == "REJECTED":
         # single-flight video lane busy (patch H)
         raise HTTPException(409, result.get("error") or "rejected")
@@ -944,6 +1286,7 @@ async def generate_job(job_id: str):
 async def get_product_visual_grounding_endpoint(product_id: str):
     from agent.services.product_visual_grounding_resolver import (
         resolve_product_visual_grounding,
+        ProductTruthLockRequiredError,
         ProductVisualReferenceRequiredError,
     )
     try:
@@ -951,6 +1294,8 @@ async def get_product_visual_grounding_endpoint(product_id: str):
         return bundle.to_dict()
     except ProductVisualReferenceRequiredError as e:
         raise HTTPException(422, str(e))
+    except ProductTruthLockRequiredError as e:
+        raise HTTPException(422, f"{e.code}: {e.message}")
     except Exception as e:
         raise HTTPException(500, f"Error resolving visual grounding: {str(e)}")
 
@@ -967,6 +1312,7 @@ class GroundedPayloadRequest(BaseModel):
 async def get_grounded_payload_endpoint(product_id: str, body: GroundedPayloadRequest):
     from agent.services.product_visual_grounding_resolver import (
         get_grounded_generation_payload,
+        ProductTruthLockRequiredError,
         ProductVisualReferenceRequiredError,
     )
     try:
@@ -981,6 +1327,8 @@ async def get_grounded_payload_endpoint(product_id: str, body: GroundedPayloadRe
         return payload
     except ProductVisualReferenceRequiredError as e:
         raise HTTPException(422, str(e))
+    except ProductTruthLockRequiredError as e:
+        raise HTTPException(422, f"{e.code}: {e.message}")
     except Exception as e:
         raise HTTPException(500, f"Error building grounded payload: {str(e)}")
 
@@ -2612,9 +2960,24 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
     client = get_flow_client()
     request_id = body["request_id"]
     prompt = str(body.get("prompt") or "").strip()
+    creative_campaign = (
+        mode == "IMG"
+        and (
+            str(body.get("visual_lane_id") or body.get("lane") or "").upper()
+            == "POSTER_BUILDER_CREATIVE_CAMPAIGN"
+            or str(body.get("creative_mode") or "").upper() == "CREATIVE_CAMPAIGN"
+        )
+    )
     if not prompt:
         await _fail_manual_request(
             request_id, "API_LANE_REJECTED", "manual job has no prompt", "ERR_PROMPT_REQUIRED")
+    if creative_campaign and not body.get("product_id"):
+        await _fail_manual_request(
+            request_id,
+            "API_LANE_REJECTED",
+            "creative campaign requires a server-bound product reference pack",
+            "ERR_CREATIVE_CAMPAIGN_PRODUCT_ID_REQUIRED",
+        )
     # ONE generation = ONE block. The full multi-block compiled document must never
     # reach the agent (live incident: 2 blocks → 2-video proposal → count steer →
     # reference image dropped). Block 2+ runs as native Extend on the finished clip.
@@ -2623,6 +2986,92 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
             request_id, "API_LANE_REJECTED",
             "prompt carries more than one compiled block — submit block 1 only; "
             "block 2+ belongs to the Extend step", "ERR_MULTI_BLOCK_PROMPT")
+
+    if mode == "IMG" and body.get("product_id"):
+        if creative_campaign:
+            from agent import config
+            if not config.CREATIVE_CAMPAIGN_LIVE_BENCHMARK_AUTHORIZED:
+                await _fail_manual_request(
+                    request_id, "API_LANE_REJECTED",
+                    "creative campaign live benchmark authorization is required",
+                    "ERR_CREATIVE_CAMPAIGN_AUTH_REQUIRED",
+                )
+            if not body.get("confirm_live_credit_burn"):
+                await _fail_manual_request(
+                    request_id, "API_LANE_REJECTED",
+                    "explicit image credit confirmation is required",
+                    "ERR_IMAGE_LIVE_CREDIT_CONFIRMATION_REQUIRED",
+                )
+            if body.get("image_contract_version") != "image_prompt_compiler_v1":
+                await _fail_manual_request(
+                    request_id, "API_LANE_REJECTED",
+                    "image contract version is required",
+                    "ERR_IMAGE_CONTRACT_VERSION_REQUIRED",
+                )
+            if int(body.get("max_retry_operations") or 0) != 0:
+                await _fail_manual_request(
+                    request_id,
+                    "API_LANE_REJECTED",
+                    "creative campaign hidden retries are disabled",
+                    "ERR_HIDDEN_RETRY_DISABLED",
+                )
+            try:
+                requested_count = int(body.get("count") or 1)
+            except (TypeError, ValueError):
+                requested_count = 0
+            if requested_count < 1 or requested_count > 3:
+                await _fail_manual_request(
+                    request_id,
+                    "API_LANE_REJECTED",
+                    "creative campaign is bounded to at most three provider outputs",
+                    "ERR_CREATIVE_CAMPAIGN_MAX_THREE_VARIANTS",
+                )
+            if str(body.get("output_intent") or "").upper() != "CLEAN_KEY_VISUAL":
+                await _fail_manual_request(
+                    request_id,
+                    "API_LANE_REJECTED",
+                    "creative campaign requires a clean key visual provider output",
+                    "ERR_CREATIVE_CAMPAIGN_CLEAN_KEY_VISUAL_REQUIRED",
+                )
+            requested_image_model = str(
+                body.get("image_model") or "NANO_BANANA_PRO"
+            ).upper()
+            if requested_image_model != "NANO_BANANA_PRO":
+                await _fail_manual_request(
+                    request_id,
+                    "API_LANE_REJECTED",
+                    "creative campaign final model must be NANO_BANANA_PRO",
+                    "ERR_CREATIVE_CAMPAIGN_FINAL_MODEL_REQUIRED",
+                )
+        prompt, gated_refs, _ = await _apply_img_product_truth_gate(
+            product_id=str(body["product_id"]),
+            visual_lane_id=body.get("visual_lane_id") or body.get("lane"),
+            prompt=prompt,
+            request_refs=dict(body.get("refs") or {}),
+            start_asset=start_asset,
+            reference_pack_id=body.get("reference_pack_id"),
+            creative_mode=body.get("creative_mode"),
+        )
+        body["prompt"] = prompt
+        body["refs"] = gated_refs
+        if creative_campaign:
+            try:
+                await _run_creative_campaign_pre_provider_lint(
+                    product_id=str(body["product_id"]),
+                    poster_copy_set_id=body.get("poster_copy_set_id"),
+                    prompt=prompt,
+                    image_model=body.get("image_model"),
+                    output_intent=body.get("output_intent"),
+                    maximum_provider_operations=body.get("maximum_provider_operations"),
+                    max_retry_operations=int(body.get("max_retry_operations") or 0),
+                )
+            except HTTPException as exc:
+                await _fail_manual_request(
+                    request_id,
+                    "API_CAMPAIGN_PRE_PROVIDER_LINT",
+                    str(exc.detail),
+                    "ERR_CAMPAIGN_PRE_PROVIDER_LINT_BLOCKED",
+                )
 
     # Collect EVERY image the dashboard sent: F2V uses startAsset (+ optional
     # endAsset — previously materialized then silently DROPPED here, losing the
@@ -2732,6 +3181,15 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         count = max(1, min(4, int(body.get("count") or 1)))
     except (TypeError, ValueError):
         count = 1
+    if creative_campaign:
+        expected_operations = count + int(body.get("max_retry_operations") or 0)
+        if body.get("maximum_provider_operations") != expected_operations:
+            await _fail_manual_request(
+                request_id,
+                "API_LANE_REJECTED",
+                "creative campaign provider operation budget mismatch",
+                "ERR_PROVIDER_OPERATION_BUDGET_MISMATCH",
+            )
     # Duration: honour an explicit setting; None → the model's default.
     duration_s = None
     raw_duration = body.get("duration_s") or body.get("duration_seconds")
@@ -2801,7 +3259,11 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         mode, prompt, project_id=created_project_id,
         image_media_ids=refs or None,
         aspect=aspect, tier=tier, model=model_key,
-        duration_s=duration_s, num_videos=count)
+        duration_s=duration_s, num_videos=count,
+        max_image_attempts=1 if creative_campaign else 8,
+        collect_image_variants=creative_campaign,
+        image_model=body.get("image_model") if creative_campaign else None,
+        product_id=body.get("product_id"))
     if not isinstance(res, dict) or not res.get("job_id"):
         code = str((res or {}).get("error") or "VIDEO_JOB_IN_FLIGHT")
         await _fail_manual_request(

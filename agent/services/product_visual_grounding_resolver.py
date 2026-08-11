@@ -34,6 +34,7 @@ from agent.services.product_lock_builder import (
     build_product_lock,
     resolve_schema_entry,
 )
+from agent.services import product_truth_lock_service as truth_lock_service
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,15 @@ logger = logging.getLogger(__name__)
 class ProductVisualReferenceRequiredError(ValueError):
     """Raised when a selected product has no valid, readable visual image reference."""
     pass
+
+
+class ProductTruthLockRequiredError(ValueError):
+    """Raised before provider submission when an exact lane lacks an approved lock."""
+
+    def __init__(self, code: str, message: str = ""):
+        super().__init__(message or code)
+        self.code = code
+        self.message = message or code
 
 
 STRATEGY_REFERENCE_CONDITIONED_HUMAN_INTERACTION = "REFERENCE_CONDITIONED_HUMAN_INTERACTION"
@@ -79,6 +89,9 @@ class ProductVisualGroundingBundle:
     grounding_source: str
     grounding_confidence: str
     field_provenance: dict[str, Any]
+    product_truth_status: str = "NON_DETERMINISTIC_REFERENCE_CONDITIONED"
+    product_truth_lock: dict[str, Any] | None = None
+    selected_strategy: str = STRATEGY_REFERENCE_CONDITIONED_HUMAN_INTERACTION
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -98,6 +111,32 @@ def get_product_by_id(product_id: str) -> dict[str, Any] | None:
         return res
     except Exception:
         return None
+
+
+def _is_purged_product_id(product_id: str) -> bool:
+    """Return true for a product UUID physically retired by catalog purge.
+
+    The tombstone is an audit authority, not a product fallback.  This guard is
+    required because schema-backed products can otherwise be reconstructed by
+    ``resolve_product_visual_grounding`` after their database row is gone.
+    """
+
+    if not product_id:
+        return False
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        row = conn.execute(
+            "SELECT 1 FROM product_catalog_alias_tombstone WHERE alias_product_id = ? LIMIT 1",
+            (product_id,),
+        ).fetchone()
+        conn.close()
+        return row is not None
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc).lower():
+            return False
+        return False
+    except Exception:
+        return False
 
 
 def _inspect_image_file(file_path: Path | str) -> tuple[int, int, str, str] | None:
@@ -164,7 +203,7 @@ def _find_linked_approved_creative_asset(product_id: str) -> dict[str, Any] | No
             """
             SELECT * FROM creative_asset
             WHERE product_id = ?
-              AND (semantic_role = 'PRODUCT_REFERENCE' OR asset_type = 'PRODUCT_REFERENCE')
+              AND semantic_role = 'PRODUCT_REFERENCE'
               AND status = 'ACTIVE'
               AND review_status = 'APPROVED'
             ORDER BY updated_at DESC
@@ -184,9 +223,136 @@ def _find_linked_approved_creative_asset(product_id: str) -> dict[str, Any] | No
         return None
 
 
-def resolve_product_reference_image(product: dict[str, Any]) -> ProductReferenceInfo:
-    """Resolve the authoritative product reference image in priority order."""
+def _registered_reference_id_for_bytes(product_id: str, expected_sha256: str) -> str | None:
+    """Return an existing registry ID only when its bytes match the source.
+
+    Older manual registrations can retain the canonical photo as an approved
+    ``creative_asset`` without a separate ``media_id``.  Its persisted asset
+    ID is still a server-owned reference, so it may bind onboarding when the
+    bytes are identical.  This helper never mints or derives an ID from a
+    hash; missing or mismatched registry evidence remains a hard blocker.
+    """
+
+    asset = _find_linked_approved_creative_asset(product_id)
+    if not asset:
+        return None
+    local_path = asset.get("local_file_path") or asset.get("local_path")
+    meta = _inspect_image_file(local_path) if local_path else None
+    if not meta or meta[3] != expected_sha256:
+        return None
+    return str(asset.get("media_id") or asset.get("asset_id") or "").strip() or None
+
+
+def _find_registered_product_source_media(product_id: str, media_id: str) -> dict[str, Any] | None:
+    """Read a byte-backed same-product source-media registry row."""
+    if not product_id or not media_id:
+        return None
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM product_source_media WHERE media_id = ? AND product_id = ? AND kind = 'image' LIMIT 1",
+                (media_id, product_id),
+            ).fetchone()
+        return dict(row) if row else None
+    except (OSError, sqlite3.Error):
+        return None
+
+
+def _find_reference_pack_canonical_source(product_id: str) -> dict[str, Any] | None:
+    """Resolve a byte-verified same-product canonical source from its pack.
+
+    A pending reference pack is review-gated as a *candidate pack*, but its
+    PRODUCT_CANONICAL entry is still the persisted same-product source from
+    which cutout candidates may be prepared.  This does not approve the pack
+    or any cutout.
+    """
+
+    if not product_id:
+        return None
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT references_json FROM product_reference_pack WHERE product_id = ?",
+                (product_id,),
+            ).fetchone()
+        references = json.loads(str((dict(row) if row else {}).get("references_json") or "[]"))
+    except (OSError, sqlite3.Error, TypeError, ValueError):
+        return None
+    for reference in references if isinstance(references, list) else []:
+        if not isinstance(reference, dict) or str(reference.get("role") or "").upper() != "PRODUCT_CANONICAL":
+            continue
+        local_path = reference.get("local_file_path")
+        meta = _inspect_image_file(local_path) if local_path else None
+        expected_sha = str(reference.get("sha256") or "").lower()
+        if meta and expected_sha and meta[3] == expected_sha:
+            return {**reference, "local_file_path": str(Path(str(local_path)).resolve())}
+    return None
+
+
+def resolve_product_reference_image(
+    product: dict[str, Any],
+    *,
+    prefer_approved_cutout: bool = True,
+) -> ProductReferenceInfo:
+    """Resolve the authoritative product reference image in priority order.
+
+    An approved Product Truth cutout is the preferred grounding reference.  The
+    source-image path remains available to onboarding/reference-pack builders by
+    passing ``prefer_approved_cutout=False``; that keeps canonical-source
+    dimensions and cutout dimensions semantically distinct.
+    """
     product_id = str(product.get("id") or product.get("product_id") or "")
+
+    # An approved Product Truth Lock outranks every URL/cache/creative-asset
+    # fallback.  Pending or invalid locks remain review-only for the standard
+    # reference-conditioned route; exact lanes reject them in the strategy gate.
+    try:
+        persisted_lock = truth_lock_service.load_product_truth_lock(product_id)
+    except truth_lock_service.ProductTruthLockError:
+        persisted_lock = None
+    if persisted_lock is not None and persisted_lock.review_status == "APPROVED":
+        try:
+            resolved = truth_lock_service.resolve_approved_product_truth_lock(product_id)
+            if prefer_approved_cutout:
+                cutout_path = Path(resolved.canonical_cutout_path)
+                cutout_meta = _inspect_image_file(cutout_path)
+                if cutout_meta and cutout_meta[3] == resolved.canonical_cutout_sha256:
+                    w, h, mime, sha = cutout_meta
+                    return ProductReferenceInfo(
+                        source_type="PRODUCT_TRUTH_LOCK_CUTOUT",
+                        media_id=resolved.canonical_cutout_media_id,
+                        local_path=str(cutout_path),
+                        image_url=product.get("image_url"),
+                        mime_type=mime,
+                        sha256=sha,
+                        width=w,
+                        height=h,
+                        provenance="PRODUCT_VISUAL_TRUTH_LOCK_CANONICAL_CUTOUT",
+                        validation_status="VALIDATED",
+                    )
+            source_path = Path(resolved.canonical_source_path)
+            meta = _inspect_image_file(source_path)
+            if meta and meta[3] == resolved.canonical_sha256:
+                w, h, mime, sha = meta
+                return ProductReferenceInfo(
+                    source_type="PRODUCT_TRUTH_LOCK",
+                    media_id=resolved.canonical_media_id,
+                    local_path=str(source_path),
+                    image_url=product.get("image_url"),
+                    mime_type=mime,
+                    sha256=sha,
+                    width=w,
+                    height=h,
+                    provenance="PRODUCT_VISUAL_TRUTH_LOCK",
+                    validation_status="VALIDATED",
+                )
+        except truth_lock_service.ProductTruthLockError:
+            # The exact strategy gate below will surface the stable blocker.
+            # Standard output may continue as explicitly non-deterministic and
+            # therefore remains PENDING_REVIEW.
+            pass
     
     # Priority 0: Handcrafted Schema Canonical Source (e.g. MWCB canonical photo)
     schema_entry = resolve_schema_entry(product)
@@ -200,9 +366,12 @@ def resolve_product_reference_image(product: dict[str, Any]) -> ProductReference
                 meta = _inspect_image_file(c_path)
                 if meta:
                     w, h, mime, sha = meta
+                    registered_media_id = str(product.get("media_id") or "").strip()
+                    if not registered_media_id:
+                        registered_media_id = _registered_reference_id_for_bytes(product_id, sha)
                     return ProductReferenceInfo(
                         source_type="SCHEMA_CANONICAL_SOURCE",
-                        media_id=product.get("media_id"),
+                        media_id=registered_media_id or None,
                         local_path=str(c_path),
                         image_url=product.get("image_url"),
                         mime_type=mime,
@@ -238,13 +407,15 @@ def resolve_product_reference_image(product: dict[str, Any]) -> ProductReference
     media_id = product.get("media_id")
     if media_id:
         try:
-            with get_db() as db:
-                cursor = db.cursor()
-                cursor.execute("SELECT * FROM request WHERE media_id = ? OR request_id = ?", (media_id, media_id))
-                row = cursor.fetchone()
-                if row:
-                    d = dict(row)
-                out_path = d.get("output_url") or d.get("local_path")
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT * FROM request WHERE media_id = ? OR request_id = ? LIMIT 1",
+                    (media_id, media_id),
+                ).fetchone()
+            if row:
+                data = dict(row)
+                out_path = data.get("output_url") or data.get("local_path")
                 if out_path and Path(out_path).exists():
                     meta = _inspect_image_file(out_path)
                     if meta:
@@ -263,6 +434,28 @@ def resolve_product_reference_image(product: dict[str, Any]) -> ProductReference
                         )
         except Exception:
             pass
+
+        registered = _find_registered_product_source_media(product_id, str(media_id))
+        registered_path = (registered or {}).get("local_path")
+        if registered_path:
+            resolved_registered_path = Path(str(registered_path))
+            if not resolved_registered_path.is_absolute():
+                resolved_registered_path = BASE_DIR / resolved_registered_path
+            meta = _inspect_image_file(resolved_registered_path)
+            if meta:
+                w, h, mime, sha = meta
+                return ProductReferenceInfo(
+                    source_type="PRODUCT_SOURCE_MEDIA",
+                    media_id=str(media_id),
+                    local_path=str(resolved_registered_path),
+                    image_url=product.get("image_url"),
+                    mime_type=mime,
+                    sha256=sha,
+                    width=w,
+                    height=h,
+                    provenance="PRODUCT_SOURCE_MEDIA_REGISTRY",
+                    validation_status="VALIDATED",
+                )
         
         # Check standard retrieved storage fallback across extensions
         for ext in (".jpg", ".jpeg", ".png", ".webp"):
@@ -284,7 +477,30 @@ def resolve_product_reference_image(product: dict[str, Any]) -> ProductReference
                         validation_status="VALIDATED",
                     )
 
-    # Priority 3: Approved & Active Linked Creative Asset
+    # Priority 3: byte-verified canonical source already persisted by the
+    # existing Product Reference Pack authority.  Pack/cutout approval remains
+    # unchanged; this only restores the same-product source input.
+    if product_id:
+        packed_source = _find_reference_pack_canonical_source(product_id)
+        if packed_source:
+            packed_path = packed_source["local_file_path"]
+            meta = _inspect_image_file(packed_path)
+            if meta:
+                w, h, mime, sha = meta
+                return ProductReferenceInfo(
+                    source_type="REFERENCE_PACK_CANONICAL_SOURCE",
+                    media_id=packed_source.get("media_id") or packed_source.get("asset_id"),
+                    local_path=packed_path,
+                    image_url=product.get("image_url"),
+                    mime_type=mime,
+                    sha256=sha,
+                    width=w,
+                    height=h,
+                    provenance="PRODUCT_REFERENCE_PACK",
+                    validation_status="VALIDATED",
+                )
+
+    # Priority 4: Approved & Active Linked Creative Asset
     if product_id:
         asset = _find_linked_approved_creative_asset(product_id)
         if asset:
@@ -306,7 +522,7 @@ def resolve_product_reference_image(product: dict[str, Any]) -> ProductReference
                         validation_status="VALIDATED",
                     )
 
-    # Priority 4: Product row image_url (materialized & byte-validated)
+    # Priority 5: Product row image_url (materialized & byte-validated)
     image_url = product.get("image_url") or product.get("source_url")
     if image_url and isinstance(image_url, str) and image_url.startswith("http"):
         mat = _materialize_image_url(image_url, product_id)
@@ -353,11 +569,19 @@ def resolve_product_visual_grounding(
     product_id_or_row: str | dict[str, Any],
     *,
     is_video: bool = False,
+    lane_id: str | None = None,
+    has_avatar: bool = False,
+    is_product_only: bool = False,
+    is_poster: bool = False,
 ) -> ProductVisualGroundingBundle:
     """Resolve a selected product into one universal ProductVisualGroundingBundle."""
     if isinstance(product_id_or_row, str):
         row = get_product_by_id(product_id_or_row)
         if not row:
+            if _is_purged_product_id(product_id_or_row):
+                raise ProductVisualReferenceRequiredError(
+                    f"PRODUCT_PURGED_ALIAS_NOT_ELIGIBLE: Product ID '{product_id_or_row}' was physically retired from the canonical catalog."
+                )
             fallback_name = "Minyak Warisan Cap Burung 25ml" if "6483d624" in product_id_or_row else ""
             schema = resolve_schema_entry({"id": product_id_or_row, "name": fallback_name})
             if schema:
@@ -376,6 +600,10 @@ def resolve_product_visual_grounding(
     elif isinstance(product_id_or_row, dict):
         product = dict(product_id_or_row)
         p_id = str(product.get("id") or product.get("product_id") or "")
+        if p_id and _is_purged_product_id(p_id):
+            raise ProductVisualReferenceRequiredError(
+                f"PRODUCT_PURGED_ALIAS_NOT_ELIGIBLE: Product ID '{p_id}' was physically retired from the canonical catalog."
+            )
         if p_id and not (product.get("local_image_path") or product.get("image_url") or product.get("media_id")):
             db_row = get_product_by_id(p_id)
             if db_row:
@@ -393,6 +621,23 @@ def resolve_product_visual_grounding(
         or product.get("raw_product_title")
         or "Product"
     ).strip()
+
+    strategy = resolve_generation_strategy(
+        lane_id=lane_id,
+        product_id=product_id,
+        has_avatar=has_avatar,
+        is_product_only=is_product_only,
+        is_poster=is_poster,
+    )
+    truth_status = truth_lock_service.inspect_product_truth_lock(product_id)
+    if strategy in (
+        STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE,
+        STRATEGY_FIXED_HERO_POSTER,
+    ) and not truth_status.get("exact_allowed"):
+        raise ProductTruthLockRequiredError(
+            str(truth_status.get("failure_state") or "PRODUCT_TRUTH_LOCK_REQUIRED"),
+            "Exact IMG lane is blocked until the server-side Product Truth Lock is approved and byte-valid.",
+        )
 
     ref_info = resolve_product_reference_image(product)
     locks = build_product_lock(product, is_video=is_video, has_product_reference=True)
@@ -430,7 +675,22 @@ def resolve_product_visual_grounding(
             "has_schema_override": bool(schema_entry),
             "ref_source": ref_info.source_type,
             "ref_sha256": ref_info.sha256,
+            "product_truth_status": truth_status.get("product_truth_status"),
+            "canonical_media_id": truth_status.get("canonical_media_id"),
+            "canonical_sha256": truth_status.get("canonical_sha256"),
+            "canonical_cutout_media_id": truth_status.get("canonical_cutout_media_id"),
+            "canonical_cutout_sha256": truth_status.get("canonical_cutout_sha256"),
         },
+        product_truth_status=(
+            "PRODUCT_TRUTH_PRESERVED_EXACT_COMPOSITE"
+            if truth_status.get("exact_allowed") and strategy in (
+                STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE,
+                STRATEGY_FIXED_HERO_POSTER,
+            )
+            else "NON_DETERMINISTIC_REFERENCE_CONDITIONED"
+        ),
+        product_truth_lock=truth_status,
+        selected_strategy=strategy,
     )
 
 
@@ -504,10 +764,16 @@ def get_grounded_generation_payload(
     is_poster: bool = False,
 ) -> dict[str, Any]:
     """Unified Grounding Contract: Resolves bundle, strategy, product reference, and concise reference-first prompt."""
-    bundle = resolve_product_visual_grounding(product_id)
     strategy = resolve_generation_strategy(
         lane_id=lane_id,
         product_id=product_id,
+        has_avatar=has_avatar,
+        is_product_only=is_product_only,
+        is_poster=is_poster,
+    )
+    bundle = resolve_product_visual_grounding(
+        product_id,
+        lane_id=lane_id,
         has_avatar=has_avatar,
         is_product_only=is_product_only,
         is_poster=is_poster,
@@ -517,7 +783,23 @@ def get_grounded_generation_payload(
     concise_contract = build_concise_engine_product_contract(product_row, is_clean_frame=not is_poster)
 
     cleaned_base = clean_provider_prompt_text(base_prompt, is_clean_frame=not is_poster)
-    full_prompt = f"{cleaned_base}\n\n[PRODUCT CONTRACT]\n{concise_contract}" if cleaned_base else concise_contract
+    standard_truth_notice = (
+        "NON_DETERMINISTIC_REFERENCE_CONDITIONED — exact label/logo/geometry/scale "
+        "not guaranteed; human review required."
+    )
+    full_prompt = (
+        f"{cleaned_base}\n\n[PRODUCT TRUTH STATUS]\n{standard_truth_notice}"
+        f"\n\n[PRODUCT CONTRACT]\n{concise_contract}"
+        if cleaned_base
+        else f"[PRODUCT TRUTH STATUS]\n{standard_truth_notice}\n\n{concise_contract}"
+    )
+    if strategy in (
+        STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE,
+        STRATEGY_FIXED_HERO_POSTER,
+    ):
+        from agent.services.exact_product_compositor_service import augment_prompt_scene_only
+
+        full_prompt = augment_prompt_scene_only(cleaned_base)
 
     ref = bundle.product_reference or {}
     product_reference_asset = {
@@ -534,6 +816,12 @@ def get_grounded_generation_payload(
         "selected_strategy": strategy,
         "product_reference": bundle.product_reference,
         "product_reference_asset": product_reference_asset,
+        "product_truth": {
+            "status": bundle.product_truth_status,
+            "review_status": (bundle.product_truth_lock or {}).get("review_status"),
+            "exact_allowed": bool((bundle.product_truth_lock or {}).get("exact_allowed")),
+            "failure_state": (bundle.product_truth_lock or {}).get("failure_state", ""),
+        },
         "grounding_locks": {
             "identity_lock": bundle.identity_lock,
             "geometry_lock": bundle.geometry_lock,

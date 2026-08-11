@@ -98,10 +98,10 @@ describe("CreativeSetupPanel", () => {
 		expect(screen.queryByRole("button", { name: /generate|create asset|render|produce/i })).not.toBeInTheDocument();
 	});
 
-	it("auto-fills a COHERENT recipe plan (camera follows scene) and approves in one click", async () => {
+	it("fills a coherent recommendation locally and waits for an explicit save", async () => {
 		mockedGet.mockResolvedValue(structuredClone(setup));
-		// Smart suggest now sources a coherent recipe pretick; the saved avatar/scene/
-		// camera lists are DERIVED from those tuples (camera never independent).
+		// The recommendation is read-only; it fills the form and leaves review-gated
+		// persistence to the explicit Save plan action.
 		mockedRecipes.mockResolvedValue({
 			product_id: "p1", cluster: "Home & Living", cluster_source: "EXACT",
 			review_required: false,
@@ -120,23 +120,29 @@ describe("CreativeSetupPanel", () => {
 		mockedSave.mockResolvedValue({
 			product_id: "p1", selection_id: "sel-1", status: "DRAFT",
 			selected_avatar_codes: ["BOS_F_FARAH_02"],
-		});
-		mockedReview.mockResolvedValue({
-			product_id: "p1", selection_id: "sel-1", status: "APPROVED",
-			selected_avatar_codes: ["BOS_F_FARAH_02"],
+			selected_scene_template_ids: ["SCN-0001"],
+			selected_camera_preset_codes: ["BODY_A"],
 		});
 
 		render(<CreativeSetupPanel productId="p1" />);
 		fireEvent.click(await screen.findByTestId("creative-setup-autofill"));
 
+		await waitFor(() => expect(
+			within(screen.getByTestId("creative-setup-avatar")).getByRole("checkbox"),
+		).toBeChecked());
+		expect(within(screen.getByTestId("creative-setup-scene")).getByRole("checkbox")).toBeChecked();
+		expect(mockedSave).not.toHaveBeenCalled();
+		expect(mockedReview).not.toHaveBeenCalled();
+
+		fireEvent.click(screen.getByTestId("creative-setup-save"));
 		await waitFor(() => expect(mockedSave).toHaveBeenCalledWith(expect.objectContaining({
 			product_id: "p1",
 			selected_avatar_codes: ["BOS_F_FARAH_02"],
 			selected_scene_template_ids: ["SCN-0001"],
 			selected_camera_preset_codes: ["BODY_A"],
 		})));
-		await waitFor(() => expect(mockedReview).toHaveBeenCalledWith("p1", "APPROVE"));
-		expect(await screen.findByTestId("creative-setup-status")).toHaveTextContent("APPROVED");
+		expect(mockedReview).not.toHaveBeenCalled();
+		expect(await screen.findByTestId("creative-setup-status")).toHaveTextContent("DRAFT");
 	});
 
 	it("shows approve/reject on a DRAFT and transitions on approve", async () => {
@@ -145,11 +151,13 @@ describe("CreativeSetupPanel", () => {
 			saved_selection: {
 				product_id: "p1", selection_id: "sel-1", status: "DRAFT",
 				selected_avatar_code: "BOS_F_FARAH_02", preview: { not_for_generation: true },
+				selected_scene_template_id: "SCN-0001",
 			},
 		});
 		mockedReview.mockResolvedValue({
 			product_id: "p1", selection_id: "sel-1", status: "APPROVED",
 			selected_avatar_code: "BOS_F_FARAH_02", preview: { not_for_generation: true },
+			selected_scene_template_id: "SCN-0001",
 		});
 
 		render(<CreativeSetupPanel productId="p1" />);
@@ -162,5 +170,40 @@ describe("CreativeSetupPanel", () => {
 		mockedGet.mockRejectedValue(new Error("API 500: boom"));
 		render(<CreativeSetupPanel productId="p3" />);
 		expect(await screen.findByText(/Unable to load creative setup:/i)).toBeInTheDocument();
+	});
+
+	it("keeps recommended avatars unique and locks review until approved edits are saved", async () => {
+		mockedGet.mockResolvedValue({
+			...structuredClone(setup),
+			avatar_library: [
+				{ avatar_code: "BOS_F_FARAH_02", character_name: "Farah", recommended: true },
+				{ avatar_code: "BOS_F_ALYA_08", character_name: "Alya", recommended: false },
+			],
+			saved_selection: {
+				product_id: "p1", selection_id: "sel-1", status: "APPROVED",
+				selected_avatar_codes: ["BOS_F_FARAH_02"],
+				selected_scene_template_ids: ["SCN-0001"],
+				notes: "Existing plan",
+			},
+		});
+		mockedRecipes.mockResolvedValue({
+			product_id: "p1", cluster: "Home & Living", cluster_source: "EXACT",
+			review_required: false, recipes: [], recommended_pretick: [],
+			counts: { avatars: 1, scenes: 1, recipes: 1, pretick: 0 },
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		} as any);
+
+		render(<CreativeSetupPanel productId="p1" />);
+		const avatarPicker = await screen.findByTestId("creative-setup-avatar");
+		expect(within(avatarPicker).getAllByRole("checkbox")).toHaveLength(2);
+		expect(screen.getAllByText("BOS_F_FARAH_02", { exact: true })).toHaveLength(1);
+		expect(screen.queryByTestId("creative-setup-camera")).not.toBeInTheDocument();
+
+		fireEvent.change(screen.getByTestId("creative-setup-notes"), {
+			target: { value: "Updated reviewer note" },
+		});
+		expect(screen.getByTestId("creative-setup-status")).toHaveTextContent("UNSAVED");
+		expect(screen.queryByTestId("creative-setup-approve")).not.toBeInTheDocument();
+		expect(screen.getByTestId("creative-setup-save")).not.toBeDisabled();
 	});
 });

@@ -189,14 +189,18 @@ export function buildImgGenerationRequest(input: {
 	aspect: string;
 	count: number;
 	imageModel?: string;
+	productId?: string;
+	visualLaneId?: string;
 }): StartImgGenerationInput {
-	const { prompt, resolution, aspect, count, imageModel } = input;
+	const { prompt, resolution, aspect, count, imageModel, productId, visualLaneId } = input;
 	const refs: Record<string, unknown> = {};
 	if (resolution.productAsset) {
 		refs.productAsset = resolution.productAsset;
 	}
 	return {
 		prompt,
+		product_id: productId,
+		visual_lane_id: visualLaneId,
 		image_media_ids: resolution.mediaIds,
 		aspect,
 		count,
@@ -217,8 +221,19 @@ export function buildFastlaneGenerationRequest(input: {
 	aspect: string;
 	quantity: number;
 	imageModel?: string;
+	productId?: string;
+	visualLaneId?: string;
 }): StartImgGenerationInput {
-	const { prompt, resolvedRefsPayload, groundedProdAsset, aspect, quantity, imageModel } = input;
+	const {
+		prompt,
+		resolvedRefsPayload,
+		groundedProdAsset,
+		aspect,
+		quantity,
+		imageModel,
+		productId,
+		visualLaneId,
+	} = input;
 	const refs: Record<string, unknown> = { ...resolvedRefsPayload };
 	if (groundedProdAsset) {
 		refs.productAsset = groundedProdAsset;
@@ -230,6 +245,8 @@ export function buildFastlaneGenerationRequest(input: {
 
 	return {
 		prompt,
+		product_id: productId,
+		visual_lane_id: visualLaneId,
 		image_media_ids: mediaIds,
 		aspect,
 		count: quantity,

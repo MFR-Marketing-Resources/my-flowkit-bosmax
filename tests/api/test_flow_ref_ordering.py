@@ -3,8 +3,9 @@
 Incident 2026-07-09 item 6: prove the final execution payload orders reference
 images deterministically for F2V/HYBRID/I2V without a live generation. The order
 is fixed by the pure helper agent.api.flow.ordered_ref_slots (startAsset first,
-then subject, scene, style, image), which both the one-door /generate lane and
-the manual lane consume. Asserting on it is the instrumented request-builder proof.
+then product, subject, scene, style, image), which both the one-door /generate
+lane and the manual lane consume. Asserting on it is the instrumented
+request-builder proof.
 """
 
 from agent.api.flow import REF_SLOT_ORDER, ordered_ref_slots
@@ -17,6 +18,7 @@ def _a(name):
 
 def test_ref_slot_order_is_the_canonical_contract():
     assert REF_SLOT_ORDER == (
+        ("productAsset", "Product"),
         ("subjectAsset", "Subject"),
         ("sceneAsset", "Scene"),
         ("styleAsset", "Style"),
@@ -24,17 +26,18 @@ def test_ref_slot_order_is_the_canonical_contract():
     )
 
 
-def test_i2v_full_ref_ordering_subject_scene_style():
+def test_i2v_full_ref_ordering_product_subject_scene_style():
     refs = {
         # Deliberately out of order in the dict to prove order is by the
         # canonical tuple, not by caller dict insertion order.
         "styleAsset": _a("style"),
         "subjectAsset": _a("subject"),
         "sceneAsset": _a("scene"),
+        "productAsset": _a("product"),
     }
     slots = ordered_ref_slots(None, refs)
-    assert [label for label, _ in slots] == ["Subject", "Scene", "Style"]
-    assert [asset["assetId"] for _, asset in slots] == ["subject", "scene", "style"]
+    assert [label for label, _ in slots] == ["Product", "Subject", "Scene", "Style"]
+    assert [asset["assetId"] for _, asset in slots] == ["product", "subject", "scene", "style"]
 
 
 def test_f2v_start_frame_leads_then_product_ref():
@@ -45,21 +48,31 @@ def test_f2v_start_frame_leads_then_product_ref():
     assert [asset["assetId"] for _, asset in slots] == ["start_frame", "product_ref"]
 
 
-def test_hybrid_start_first_then_subject_scene_style():
+def test_hybrid_start_first_then_product_subject_scene_style():
     slots = ordered_ref_slots(
         _a("start"),
-        {"subjectAsset": _a("subj"), "sceneAsset": _a("scn"), "styleAsset": _a("sty")},
+        {
+            "productAsset": _a("prod"),
+            "subjectAsset": _a("subj"),
+            "sceneAsset": _a("scn"),
+            "styleAsset": _a("sty"),
+        },
     )
-    assert [label for label, _ in slots] == ["Start", "Subject", "Scene", "Style"]
+    assert [label for label, _ in slots] == ["Start", "Product", "Subject", "Scene", "Style"]
 
 
 def test_empty_and_missing_slots_are_skipped_not_reordered():
     # Empty dicts / None are dropped; present slots keep canonical order.
     slots = ordered_ref_slots(
         None,
-        {"subjectAsset": _a("subj"), "sceneAsset": {}, "styleAsset": _a("sty")},
+        {
+            "productAsset": _a("prod"),
+            "subjectAsset": _a("subj"),
+            "sceneAsset": {},
+            "styleAsset": _a("sty"),
+        },
     )
-    assert [label for label, _ in slots] == ["Subject", "Style"]
+    assert [label for label, _ in slots] == ["Product", "Subject", "Style"]
 
 
 def test_no_assets_yields_empty_ordering():

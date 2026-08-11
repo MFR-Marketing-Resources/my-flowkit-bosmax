@@ -252,6 +252,18 @@ def resolve_creative_profile(product: dict[str, Any]) -> dict[str, Any]:
             "section_6_copy_hint": "Keep copy taste-led and convenience-led without unsupported health claims.",
             "section_9_overlay_hint": f"Overlay {short_name} with a concise taste or convenience line.",
         },
+        "AUTO_TOOL_GENERAL": {
+            "product_type_id": "KITCHEN_TOOL",
+            "copywriting_angle": "Trust-led kitchen utility and ease of use",
+            "handling_notes": "Use stable tabletop or hand-held utility handling that keeps the working surface, rim, and grip points visible.",
+            "scene_context": "clean kitchen counter or practical household utility scene",
+            "camera_style": "kitchen utility product close-up",
+            "camera_behavior": "steady function-led reveal with clear working-surface framing",
+            "camera_shot": "hero utility close-up with grip-point and working-surface detail",
+            "section_4_hint": "Show the kitchen tool in a clean utility setting with its working surface, rim, and practical use cues visible.",
+            "section_6_copy_hint": "Use practical kitchen-utility language focused on function and ease of use without implying food or unsupported performance.",
+            "section_9_overlay_hint": f"Overlay {short_name} with one concise kitchen-utility line.",
+        },
         "ACCESSORY_SMALL_ITEM": {
             "product_type_id": "ACCESSORY_SMALL_ITEM",
             "copywriting_angle": "Style-led small-detail accessorizing",

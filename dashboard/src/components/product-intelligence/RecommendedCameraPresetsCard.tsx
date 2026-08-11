@@ -6,13 +6,7 @@ import {
 	type CameraPresetRecommendation,
 } from "../../api/creativeIntelligence";
 
-/**
- * Read-only "Recommended Camera / Video Presets" card (Creative Intelligence —
- * Round 3). Shows the block-content -> preset mapping (HOOK / BODY / CTA / TRANS)
- * with each named preset's shot type, distance + angle, and movement, plus the
- * universal camera vocabulary counts. Reference/preview only — this card never
- * generates, approves, writes product camera columns, or feeds generation.
- */
+/** Read-only camera reference. Camera selection itself remains scene-derived. */
 export default function RecommendedCameraPresetsCard({ productId }: { productId: string }) {
 	const [data, setData] = useState<CameraPresetRecommendation | null>(null);
 	const [loading, setLoading] = useState(true);
@@ -28,7 +22,13 @@ export default function RecommendedCameraPresetsCard({ productId }: { productId:
 				if (active) setData(response);
 			})
 			.catch((cause) => {
-				if (active) setError(cause instanceof Error ? cause.message : "Failed to load camera presets.");
+				if (active) {
+					setError(
+						cause instanceof Error
+							? cause.message
+							: "Failed to load camera references.",
+					);
+				}
 			})
 			.finally(() => {
 				if (active) setLoading(false);
@@ -38,87 +38,101 @@ export default function RecommendedCameraPresetsCard({ productId }: { productId:
 		};
 	}, [productId]);
 
-	const recs = data?.block_recommendations ?? [];
-	const lib = data?.library;
-
-	const presetLine = (p?: CameraPreset | null) =>
-		p ? `${p.preset_code} · ${p.shot_type ?? ""} · ${p.distance_angle ?? ""} · ${p.movement ?? ""}` : "";
+	const recommendations = data?.block_recommendations ?? [];
 
 	return (
 		<div
 			data-testid="recommended-camera-presets-card"
-			className="rounded border border-amber-500/30 bg-amber-500/5 p-3"
+			className="rounded-2xl border border-amber-500/25 bg-amber-500/5 p-4"
 		>
-			<div className="flex items-center justify-between gap-2">
-				<div className="text-sm font-bold text-amber-100">Recommended Camera / Video Presets</div>
+			<div className="flex flex-wrap items-start justify-between gap-2">
+				<div>
+					<p className="text-[10px] font-bold uppercase tracking-[0.16em] text-amber-300">
+						Reference · Camera
+					</p>
+					<h3 className="mt-1 text-sm font-bold text-amber-100">
+						Recommended camera / video presets
+					</h3>
+				</div>
 				{data && (
-					<span className="rounded bg-slate-800 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">
-						cluster: {data.cluster} · {data.cluster_source}
-					</span>
+					<div className="text-right text-[10px] text-slate-500">
+						<div>{recommendations.length} presets</div>
+					</div>
 				)}
 			</div>
-			<p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-				Read-only creative suggestion — shot distance, camera angle, movement, e-commerce
-				shot type, and named HOOK / BODY / CTA / TRANS presets mapped by block purpose.
-				Reference only — nothing is generated, approved, written to product camera settings,
-				or sent to generation here.
+			<p className="mt-2 text-[11px] leading-relaxed text-slate-400">
+				These presets explain the shot language behind each creative block. The plan above
+				derives the final camera from the chosen scene; there is no separate camera checkbox.
 			</p>
 
 			{loading ? (
-				<p className="mt-3 text-xs text-slate-400">Loading camera presets…</p>
+				<p className="mt-4 text-xs text-slate-400">Loading camera references…</p>
 			) : error ? (
-				<p className="mt-3 text-xs font-medium text-red-300" role="alert">
-					Unable to load camera presets: {error}
+				<p className="mt-4 text-xs font-medium text-red-300" role="alert">
+					Unable to load camera references: {error}
 				</p>
-			) : recs.length === 0 ? (
-				<p className="mt-3 text-xs text-slate-400" data-testid="recommended-camera-presets-empty">
-					No camera / video presets available.
+			) : recommendations.length === 0 ? (
+				<p
+					className="mt-4 rounded-lg bg-slate-950/50 px-3 py-2 text-xs text-slate-500"
+					data-testid="recommended-camera-presets-empty"
+				>
+					No camera / video presets available for this product.
 				</p>
 			) : (
-				<>
-					<ul className="mt-3 space-y-2" data-testid="recommended-camera-presets-list">
-						{recs.slice(0, 6).map((rec) => (
-							<li
-								key={`${rec.block_purpose}-${rec.content_type}`}
-								className="rounded border border-slate-700/60 bg-slate-900/40 p-2 text-xs text-slate-200"
-							>
-								<div className="flex items-center justify-between gap-2">
-									<span className="text-[11px] font-semibold text-amber-200">
-										{rec.block_purpose}
-									</span>
-									<span className="text-[9px] uppercase tracking-wide text-slate-500">
-										{rec.content_type}
-									</span>
-								</div>
-								{rec.recommended_preset && (
-									<p className="mt-1">
-										<span className="text-slate-400">Preset: </span>
-										<span className="font-mono text-[10px] text-amber-100">
-											{rec.recommended_preset.preset_code}
-										</span>{" "}
-										{rec.recommended_preset.preset_name}
+				<ul
+					className="mt-4 grid gap-2 md:grid-cols-2"
+					data-testid="recommended-camera-presets-list"
+				>
+					{recommendations.map((recommendation) => (
+						<li
+							key={`${recommendation.block_purpose}-${recommendation.content_type}`}
+							className="min-w-0 rounded-xl border border-slate-700/70 bg-slate-950/45 p-3"
+						>
+							<div className="flex items-start justify-between gap-2">
+								<span className="text-[11px] font-semibold text-amber-200">
+									{recommendation.block_purpose || "Creative block"}
+								</span>
+								<span className="text-right text-[9px] uppercase tracking-wide text-slate-500">
+									{recommendation.content_type || "Preset"}
+								</span>
+							</div>
+							{recommendation.recommended_preset && (
+								<PresetDetail preset={recommendation.recommended_preset} />
+							)}
+							{recommendation.alt_presets.length > 0 && (
+								<details className="mt-2 border-t border-slate-800 pt-2">
+									<summary className="cursor-pointer text-[10px] font-semibold text-amber-300 hover:text-amber-200">
+										{recommendation.alt_presets.length} alternate preset{recommendation.alt_presets.length === 1 ? "" : "s"}
+									</summary>
+									<p className="mt-2 font-mono text-[10px] text-slate-500">
+										{recommendation.alt_presets.map((preset) => preset.preset_code).join(" · ")}
 									</p>
-								)}
-								<p className="mt-0.5 font-mono text-[10px] text-slate-400">
-									{presetLine(rec.recommended_preset)}
-								</p>
-								{rec.alt_presets.length > 0 && (
-									<p className="mt-0.5 text-[9px] text-slate-500">
-										alt: {rec.alt_presets.map((p) => p.preset_code).join(", ")}
-									</p>
-								)}
-							</li>
-						))}
-					</ul>
-					{lib && (
-						<div className="mt-3 border-t border-slate-700/50 pt-2 text-[10px] text-slate-400">
-							<span className="uppercase tracking-wide text-slate-500">Library: </span>
-							{lib.shot_distances.length} distances · {lib.camera_angles.length} angles ·{" "}
-							{lib.camera_movements.length} movements · {lib.ecomm_shot_types.length} shot types ·{" "}
-							{lib.named_presets.length} named presets
-						</div>
-					)}
-				</>
+								</details>
+							)}
+						</li>
+					))}
+				</ul>
+			)}
+		</div>
+	);
+}
+
+function PresetDetail({ preset }: { preset: CameraPreset }) {
+	const descriptor = [preset.shot_type, preset.distance_angle, preset.movement]
+		.filter(Boolean)
+		.join(" · ");
+	return (
+		<div className="mt-2">
+			<div className="flex flex-wrap items-center gap-2">
+				<span className="font-mono text-xs font-semibold text-amber-100">
+					{preset.preset_code}
+				</span>
+				<span className="text-[11px] text-slate-300">{preset.preset_name}</span>
+			</div>
+			{descriptor && (
+				<p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+					{descriptor}
+				</p>
 			)}
 		</div>
 	);

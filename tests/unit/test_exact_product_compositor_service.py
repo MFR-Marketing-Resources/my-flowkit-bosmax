@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -20,6 +22,7 @@ from agent.services.exact_product_compositor_service import (
     validate_canonical_or_raise,
 )
 from agent.services import exact_product_final_output_service as final_svc
+from agent.services import product_truth_lock_service as truth_lock_service
 
 
 def _client() -> TestClient:
@@ -51,6 +54,58 @@ def _entry(source: Path, digest: str) -> dict:
     }
 
 
+def _install_approved_lock(tmp_path: Path, product_id: str, source: Path) -> Path:
+    """Offline fixture for an explicitly reviewed cutout; no heuristic approval."""
+    cutout = tmp_path / f"{product_id}-approved-cutout.png"
+    with Image.open(source).convert("RGBA") as src:
+        rgba = Image.new("RGBA", src.size, (0, 0, 0, 0))
+        source_px = src.load()
+        target_px = rgba.load()
+        for y in range(src.height):
+            for x in range(src.width):
+                r, g, b, a = source_px[x, y]
+                if a >= 200 and not (r >= 235 and g >= 235 and b >= 230):
+                    target_px[x, y] = (r, g, b, 255)
+        rgba.save(cutout)
+    alpha_sha = hashlib.sha256(rgba.getchannel("A").tobytes()).hexdigest()
+    source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    cutout_sha = hashlib.sha256(cutout.read_bytes()).hexdigest()
+    db_path = tmp_path / f"{product_id}-truth.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE product_visual_truth_lock (
+                product_id TEXT PRIMARY KEY, canonical_media_id TEXT NOT NULL,
+                canonical_sha256 TEXT NOT NULL, source_width INTEGER NOT NULL,
+                source_height INTEGER NOT NULL, canonical_source_path TEXT NOT NULL,
+                canonical_cutout_media_id TEXT NOT NULL, canonical_cutout_sha256 TEXT NOT NULL,
+                canonical_cutout_path TEXT NOT NULL, alpha_mask_json TEXT NOT NULL,
+                anchor_point_json TEXT NOT NULL, min_scale REAL NOT NULL, max_scale REAL NOT NULL,
+                allowed_bbox_json TEXT NOT NULL, allowed_rotation REAL NOT NULL,
+                allowed_perspective REAL NOT NULL, identity_lock INTEGER NOT NULL,
+                geometry_lock INTEGER NOT NULL, label_lock INTEGER NOT NULL, logo_lock INTEGER NOT NULL,
+                colour_lock INTEGER NOT NULL, scale_lock INTEGER NOT NULL, review_status TEXT NOT NULL,
+                failure_state TEXT NOT NULL, provenance_json TEXT NOT NULL, schema_version TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO product_visual_truth_lock VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                product_id, f"media-{product_id}", source_sha, rgba.width, rgba.height, str(source),
+                f"cutout-{product_id}", cutout_sha, str(cutout),
+                json.dumps({"source": "cutout_alpha", "sha256": alpha_sha, "width": rgba.width, "height": rgba.height}),
+                json.dumps({"x": 0.5, "y": 0.5}), 0.01, 100.0,
+                json.dumps({"x": 0.05, "y": 0.05, "w": 0.9, "h": 0.9}),
+                0.0, 0.0, 1, 1, 1, 1, 1, 1, "APPROVED", "",
+                json.dumps({"source": "offline-test", "review": "approved-fixture"}), "1.0",
+            ),
+        )
+        conn.commit()
+    truth_lock_service.DB_PATH = db_path
+    return cutout
+
+
 def test_exact_product_cutout_composite_preserves_transformed_pixels(tmp_path, monkeypatch):
     source, digest = _make_source(tmp_path)
     entry = _entry(source, digest)
@@ -65,7 +120,8 @@ def test_exact_product_cutout_composite_preserves_transformed_pixels(tmp_path, m
         "agent.services.exact_product_compositor_service.OUTPUT_DIR", tmp_path / "out"
     )
     (tmp_path / "out").mkdir()
-    layer = prepare_layer({}, {"x": 10, "y": 10, "w": 60, "h": 70}, {"w": 1080, "h": 1920})
+    _install_approved_lock(tmp_path, "p1", source)
+    layer = prepare_layer({"id": "p1"}, {"x": 10, "y": 10, "w": 60, "h": 70}, {"w": 1080, "h": 1920})
     assert layer["source_sha256"] == digest
     assert layer["transform"]["perspective_skew_x"] == 0.0
     assert layer["transform"]["rotation_degrees"] == 0.0
@@ -81,13 +137,10 @@ def test_exact_product_cutout_composite_preserves_transformed_pixels(tmp_path, m
 
 def test_hash_mismatch_fails_before_compose(tmp_path, monkeypatch):
     source, digest = _make_source(tmp_path)
-    entry = _entry(source, "0" * 64)
-    monkeypatch.setattr(
-        "agent.services.exact_product_compositor_service.resolve_schema_entry",
-        lambda _: entry,
-    )
+    _install_approved_lock(tmp_path, "p1", source)
+    source.write_bytes(b"stale-source")
     with pytest.raises(ExactProductCompositeError) as ei:
-        validate_canonical_or_raise({"product_display_name": "x"})
+        validate_canonical_or_raise({"id": "p1", "_exact_product_required": True})
     assert ei.value.code == "CANONICAL_PRODUCT_SOURCE_INVALID"
 
 
@@ -98,8 +151,35 @@ def test_scene_only_prompt_forbids_product_and_strips_preserve(tmp_path, monkeyp
     )
     out = augment_prompt_scene_only(prompt)
     assert "EXACT_PRODUCT_COMPOSITE_REQUIRED" in out
-    assert "Do not render" in out or "do not render" in out.lower()
+    assert "Do not generate, render" in out
     assert "PRESERVE the real product label" not in out
+
+
+def test_scene_only_prompt_removes_marketing_copy_sections():
+    prompt = "\n".join(
+        (
+            "=== PRODUCT TRUTH LOCK ===",
+            "Sambal Nyet Berapi by Khairulaming; preserve label truth.",
+            "=== POSTER RECIPE ===",
+            "Recipe: Product Hero.",
+            "=== COPY SLOTS ===",
+            "- [HEADLINE] headline: Sambal Nyet Berapi: Pedasnya Memang Gila!",
+            "- [CTA] cta: Jom cuba sekarang!",
+            "=== TEXT OVERLAY ===",
+            "Language: ms. Text density: medium.",
+            "=== OPERATOR NOTES ===",
+            "Guided Poster Builder",
+        )
+    )
+
+    out = augment_prompt_scene_only(prompt)
+
+    assert "=== PRODUCT TRUTH LOCK ===" not in out
+    assert "=== COPY SLOTS ===" not in out
+    assert "=== TEXT OVERLAY ===" not in out
+    assert "Sambal Nyet Berapi: Pedasnya Memang Gila!" not in out
+    assert "Jom cuba sekarang!" not in out
+    assert "EXACT_PRODUCT_COMPOSITE_REQUIRED" in out
 
 
 def test_compose_final_from_plate_lineage(tmp_path, monkeypatch):
@@ -117,6 +197,7 @@ def test_compose_final_from_plate_lineage(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "agent.services.exact_product_compositor_service.OUTPUT_DIR", out_root
     )
+    _install_approved_lock(tmp_path, "p1", source)
     plate = tmp_path / "plate.png"
     Image.new("RGBA", (540, 960), (200, 210, 220, 255)).save(plate)
     result = compose_final_from_plate(
@@ -139,7 +220,9 @@ def test_compose_final_from_plate_lineage(tmp_path, monkeypatch):
         {"w": 540, "h": 960},
     )
     cut_im = Image.open(layer["asset_ref"])
-    expected = cut_im.width / max(1, cut_im.height)
+    crop = cut_im.getchannel("A").getbbox()
+    assert crop is not None
+    expected = (crop[2] - crop[0]) / max(1, crop[3] - crop[1])
     assert abs((tr["w"] / tr["h"]) - expected) < 0.02
 
 
@@ -182,6 +265,7 @@ async def test_final_output_service_registers_artifact(tmp_path, monkeypatch):
         "id": "6483d624-a03d-4933-9bba-6ca2e5f7b6fd",
         "product_display_name": "Minyak Warisan Cap Burung 25ml",
     }
+    _install_approved_lock(tmp_path, product["id"], source)
 
     async def fake_get(pid):
         return product
@@ -212,7 +296,7 @@ async def test_final_output_service_registers_artifact(tmp_path, monkeypatch):
 
 
 def test_api_policy_non_exact(monkeypatch):
-    async def fake_policy(pid):
+    async def fake_policy(pid, **kwargs):
         return {
             "product_id": pid,
             "exact_product_composite_required": False,
@@ -242,7 +326,7 @@ def test_api_compose_maps_error(monkeypatch):
 
 
 def test_api_scene_only_prompt(monkeypatch):
-    async def pol(pid):
+    async def pol(pid, **kwargs):
         return {
             "product_id": pid,
             "exact_product_composite_required": True,
@@ -314,6 +398,25 @@ def test_cutout_preserves_cream_cartouche_label(tmp_path, monkeypatch):
     assert len(colors) >= 8, f"label collapsed to mosaic blocks uniq={len(colors)}"
 
 
+def test_cutout_can_preserve_canonical_source_canvas(tmp_path):
+    from PIL import Image, ImageDraw
+    from agent.services.exact_product_compositor_service import _build_canonical_cutout
+
+    im = Image.new("RGB", (120, 240), (240, 238, 232))
+    d = ImageDraw.Draw(im)
+    d.rectangle((45, 10, 75, 35), fill=(200, 30, 30))
+    d.rectangle((35, 50, 85, 210), fill=(40, 130, 140))
+    d.rectangle((45, 80, 75, 150), fill=(205, 197, 173))
+    d.rectangle((40, 160, 80, 200), fill=(30, 140, 70))
+    src = tmp_path / "canvas.jpg"
+    im.save(src, quality=95)
+
+    cut = _build_canonical_cutout(src, preserve_canvas=True)
+
+    assert cut.size == im.size
+    assert cut.getchannel("A").getbbox() is not None
+
+
 def test_prepare_layer_uses_cutout_v13_cache_key(tmp_path, monkeypatch):
     from agent.services import exact_product_compositor_service as mod
     from PIL import Image, ImageDraw
@@ -326,16 +429,14 @@ def test_prepare_layer_uses_cutout_v13_cache_key(tmp_path, monkeypatch):
     d.rectangle((70, 250, 130, 320), fill=(25, 130, 60))
     src = tmp_path / "c.jpg"
     im.save(src, quality=95)
-    import hashlib
     sha = hashlib.sha256(src.read_bytes()).hexdigest()
-
     monkeypatch.setattr(mod, "BASE_DIR", tmp_path)
     monkeypatch.setattr(mod, "OUTPUT_DIR", tmp_path / "out")
-    (tmp_path / "data" / "exact-product-cutouts").mkdir(parents=True)
     (tmp_path / "out").mkdir(parents=True)
 
     product = {
         "id": "p1",
+        "_exact_product_required": True,
         "on_the_fly_flags": {"exact_product_composite_required": True},
         "canonical_product_photo": {
             "sha256": sha,
@@ -344,19 +445,14 @@ def test_prepare_layer_uses_cutout_v13_cache_key(tmp_path, monkeypatch):
         },
         "product_schema_key": "MWCB_25ML_CAP_BURUNG",
     }
-    # stub resolve paths used by prepare_layer
-    monkeypatch.setattr(mod, "exact_product_policy", lambda p: product["canonical_product_photo"])
-    monkeypatch.setattr(mod, "resolve_schema_entry", lambda p: {"schema_key": "MWCB_25ML_CAP_BURUNG"})
-    monkeypatch.setattr(mod, "resolve_canonical_source", lambda photo, schema_key="": src)
-    monkeypatch.setattr(mod, "_sha", lambda path: sha if str(path) == str(src) else hashlib.sha256(Path(path).read_bytes()).hexdigest())
-    from pathlib import Path
+    cutout = _install_approved_lock(tmp_path, "p1", src)
     layer = mod.prepare_layer(
         product,
         {"x": 10, "y": 10, "w": 80, "h": 80},
         {"w": 400, "h": 800},
     )
     assert layer
-    assert "_cutout_v13.png" in layer["asset_ref"]
+    assert layer["asset_ref"] == str(cutout)
 
 
 def test_trim_background_edge_fringe_removes_wall_halo():
@@ -498,6 +594,7 @@ def test_mwcb_cutout_neck_and_right_edge_free_of_pink_wall_fringe():
     )
     if not canonical_src.exists():
         return
+    pytest.skip("Legacy MWCB heuristic is not an approved Product Truth Lock fixture")
     product = {
         "product_display_name": "Minyak Warisan Cap Burung 25ml",
         "product_schema_key": "MWCB_25ML_CAP_BURUNG",

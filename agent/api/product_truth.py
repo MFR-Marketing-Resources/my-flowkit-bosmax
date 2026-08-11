@@ -1,8 +1,24 @@
-from fastapi import APIRouter, Query
+import logging
+
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from agent.db import crud
+from agent.models.product_truth_lock import (
+    ProductTruthLockApprovalRequest,
+    ProductTruthLockOnboardingRequest,
+)
 from agent.services.product_truth_service import ProductTruthService
+from agent.services.product_truth_lock_service import (
+    ProductTruthLockError,
+    approve_product_truth_lock,
+    create_pending_product_truth_lock,
+    inspect_product_truth_lock,
+    register_product_truth_cutout_media,
+    resolve_product_truth_cutout_preview,
+)
 
 router = APIRouter(prefix="/product-truth", tags=["product-truth"])
+logger = logging.getLogger(__name__)
 
 @router.get("/reconciliation-audit")
 async def get_reconciliation_audit(sample_limit: int = Query(default=20, ge=1, le=100)):
@@ -38,3 +54,87 @@ async def get_fastmoss_taxonomy_audit(sample_limit: int = Query(default=20, ge=1
     from agent.services.fastmoss_taxonomy_reconciliation_service import FastMossTaxonomyReconciliationService
     report = await FastMossTaxonomyReconciliationService.perform_full_fastmoss_audit(limit=sample_limit)
     return report
+
+
+@router.get("/{product_id}/visual-lock")
+async def get_visual_product_truth_lock(product_id: str):
+    """Read-only exact-IMG preflight; never creates or approves a lock."""
+    return inspect_product_truth_lock(product_id)
+
+
+def _truth_lock_http_error(exc: ProductTruthLockError) -> HTTPException:
+    return HTTPException(
+        status_code=exc.status_code,
+        detail={"code": exc.code, "message": exc.message},
+    )
+
+
+@router.get("/{product_id}/visual-lock/cutout-preview")
+async def preview_visual_product_truth_cutout(product_id: str):
+    """Serve the server-owned cutout so an operator can review before approval."""
+
+    try:
+        return FileResponse(
+            resolve_product_truth_cutout_preview(product_id),
+            media_type="image/png",
+            headers={"Cache-Control": "no-store"},
+        )
+    except ProductTruthLockError as exc:
+        raise _truth_lock_http_error(exc) from exc
+
+
+@router.post("/{product_id}/visual-lock/cutout")
+async def upload_visual_product_truth_cutout(
+    product_id: str,
+    cutout: UploadFile = File(...),
+):
+    """Register a transparent cutout for review; never creates or approves a lock."""
+
+    try:
+        raw_bytes = await cutout.read(10 * 1024 * 1024 + 1)
+        return await register_product_truth_cutout_media(
+            product_id,
+            filename=cutout.filename or "review-cutout.png",
+            content_type=cutout.content_type,
+            raw_bytes=raw_bytes,
+        )
+    except ProductTruthLockError as exc:
+        raise _truth_lock_http_error(exc) from exc
+    finally:
+        await cutout.close()
+
+
+@router.post("/{product_id}/visual-lock/onboard")
+async def onboard_visual_product_truth_lock(
+    product_id: str,
+    request: ProductTruthLockOnboardingRequest,
+):
+    """Persist a cutout-backed lock as PENDING_REVIEW; never auto-approves."""
+    try:
+        return await create_pending_product_truth_lock(product_id, request)
+    except ProductTruthLockError as exc:
+        raise _truth_lock_http_error(exc) from exc
+
+
+@router.post("/{product_id}/visual-lock/approve")
+async def approve_visual_product_truth_lock(
+    product_id: str,
+    request: ProductTruthLockApprovalRequest,
+):
+    """Separate explicit human approval gate for exact product output."""
+    try:
+        result = await approve_product_truth_lock(product_id, request)
+        # Canva is an optional assisted source.  Keep the existing Product
+        # Truth approval authority primary, then mirror the durable workflow
+        # state when the approved candidate came through that lane.
+        from agent.services.canva_cutout_workflow_service import mark_canva_workflow_approved
+
+        try:
+            await mark_canva_workflow_approved(product_id)
+        except Exception as exc:  # noqa: BLE001 - additive ledger may await runtime restart
+            if "no such table" not in str(exc).lower():
+                raise
+            logger.warning("Canva workflow mirror deferred until schema initialization: %s", exc)
+        return result
+    except ProductTruthLockError as exc:
+        raise _truth_lock_http_error(exc) from exc

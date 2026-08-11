@@ -36,6 +36,7 @@ from agent.api.local_agent import (
 )
 from agent.api.operator import router as operator_router
 from agent.api.products import router as products_router
+from agent.api.taxonomy import router as taxonomy_router
 from agent.api.poster_readiness import router as poster_readiness_router
 from agent.api.poster_prompt import router as poster_prompt_router
 from agent.api.poster_copy_sets import router as poster_copy_sets_router
@@ -43,6 +44,9 @@ from agent.api.poster_compose import router as poster_compose_router
 from agent.api.exact_product_output import router as exact_product_output_router
 from agent.api.workspace_packages import router as workspace_packages_router
 from agent.api.scene_context_registry import router as scene_context_registry_router
+from agent.api.montage import router as montage_router
+from agent.api.creative_lane_settings import router as creative_lane_settings_router
+from agent.api.faceless import router as faceless_router
 from agent.api.workspace_generation_packages import router as workspace_generation_packages_router
 from agent.api.production_queue import router as production_queue_router
 from agent.api.bulk_generation import router as bulk_generation_router
@@ -80,6 +84,7 @@ from agent.api.batches import router as batches_router
 from agent.api.batch_executor import router as batch_executor_router
 from agent.api.product_truth import router as product_truth_router
 from agent.api.product_registration import router as product_registration_router
+from agent.api.product_visual_onboarding import router as product_visual_onboarding_router
 from agent.api.fastmoss_import import router as fastmoss_import_router
 from agent.api.fastmoss_bulk import router as fastmoss_bulk_router
 from agent.api.kalodata_import import router as kalodata_import_router
@@ -341,6 +346,7 @@ app.add_middleware(
 )
 
 app.include_router(products_router, prefix="/api")
+app.include_router(taxonomy_router, prefix="/api")
 app.include_router(copywriting_router, prefix="/api")
 app.include_router(poster_readiness_router, prefix="/api")
 app.include_router(poster_prompt_router, prefix="/api")
@@ -349,6 +355,9 @@ app.include_router(poster_compose_router, prefix="/api")
 app.include_router(exact_product_output_router, prefix="/api")
 app.include_router(workspace_packages_router, prefix="/api")
 app.include_router(scene_context_registry_router, prefix="/api")
+app.include_router(montage_router, prefix="/api")
+app.include_router(creative_lane_settings_router, prefix="/api")
+app.include_router(faceless_router, prefix="/api")
 app.include_router(workspace_generation_packages_router, prefix="/api")
 app.include_router(production_queue_router, prefix="/api")
 app.include_router(bulk_generation_router, prefix="/api")
@@ -394,6 +403,7 @@ app.include_router(batches_router, prefix="/api")
 app.include_router(batch_executor_router, prefix="/api")
 app.include_router(product_truth_router, prefix="/api")
 app.include_router(product_registration_router, prefix="/api")
+app.include_router(product_visual_onboarding_router, prefix="/api")
 app.include_router(fastmoss_import_router, prefix="/api")
 app.include_router(fastmoss_bulk_router, prefix="/api")
 app.include_router(kalodata_import_router, prefix="/api")

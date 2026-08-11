@@ -26,9 +26,46 @@ domains:
       - scripts/doctor-postiz-runtime.ps1
       - agent/api/ai_provider_settings.py
       - agent/api/local_agent.py
+      # Permanent production runtime provenance lock — :8100 serves ONLY from an
+      # immutable release (never the mutable dev root), fail-closed on drift.
+      - agent/runtime_release.py
+      - scripts/deploy-canonical-release.ps1
+      - scripts/start-canonical-runtime.ps1
+      # Boot persistence: auto-start the canonical runtime at logon (fail-closed)
+      # and retire the stale dev-root Startup launcher that reverted :8100 to an
+      # unmerged branch after every reboot.
+      - scripts/install-canonical-runtime-autostart.ps1
+      - scripts/verify-runtime-canonical.ps1
+      - docs/CANONICAL_RUNTIME_PERSISTENCE.md
+      - tests/unit/test_runtime_release.py
+      - tests/unit/test_product_detail_tabs_contract.py
       - agent/api/flow.py
       - agent/services/product_lock_builder.py
       - agent/services/product_visual_grounding_resolver.py
+      # BOSMAX universal product-truth lock — immutable canonical product
+      # identity/geometry/label/scale authority shared by IMG and Poster lanes.
+      - agent/models/product_truth_lock.py
+      - agent/services/product_truth_lock_service.py
+      - agent/api/product_truth.py
+      - agent/api/product_visual_onboarding.py
+      - agent/services/canva_cutout_workflow_service.py
+      - tests/unit/test_product_truth_lock_service.py
+      - agent/services/product_visual_onboarding_service.py
+      - tests/unit/test_product_visual_onboarding_service.py
+      - tests/api/test_product_visual_onboarding_api.py
+      - tests/integration/test_product_visual_crud_workflow.py
+      - tests/unit/test_canonical_runtime_lock.py
+      - tests/unit/test_canva_cutout_workflow_service.py
+      - tests/api/test_canva_cutout_workflow_api.py
+      - tests/api/test_product_truth_lock_flow_gate.py
+      # Local, CPU-only BiRefNet ONNX cutout engine (opt-in) — upgrades HOW the
+      # AUTO candidate bytes are prepared; never WHO approves truth.
+      - agent/services/local_cutout_engine.py
+      - scripts/prepare_cutout_model.py
+      - requirements-cutout.txt
+      - tests/unit/test_local_cutout_engine.py
+      - tests/unit/test_product_aware_cutout.py
+      - tests/unit/test_cutout_target_completion.py
       - dashboard/src/pages/ImgFastlanePage.tsx
       - dashboard/src/pages/imgCockpitLogic.ts
       - dashboard/src/pages/imgCockpitLogic.test.ts
@@ -69,6 +106,9 @@ domains:
       - dashboard/src/api/copySets.ts
       - dashboard/src/components/workspace/CopySelectionPanel.tsx
       - dashboard/src/components/workspace/CopySelectionPanel.test.tsx
+      - dashboard/src/api/copywritingReadiness.ts
+      - dashboard/src/components/copywriting/CopywritingReadinessCard.tsx
+      - dashboard/src/components/copywriting/CopywritingReadinessCard.test.tsx
       - docs/COPY_SELECTION_AND_COMPILER_BINDING_FOUNDATION_V1.md
       - docs/COPY_FALLBACK_EXPLICIT_CONFIRMATION_V1.md
       - agent/services/ai_copy_assist_service.py
@@ -250,6 +290,18 @@ domains:
       - tests/api/test_product_strategy_taxonomy_api.py
       - tests/api/test_product_registration_review_api.py
       - tests/ui/test_product_strategy_taxonomy_ui_contract.py
+      # Canonical Copywriting Hub taxonomy authority — 313-row strict cascade
+      - agent/authority/copywriting_taxonomy_registry.json
+      - agent/models/copywriting_taxonomy.py
+      - agent/services/copywriting_taxonomy_service.py
+      - agent/api/taxonomy.py
+      - agent/api/products.py
+      - agent/db/schema.py
+      - agent/db/crud.py
+      - agent/main.py
+      - scripts/seed_copywriting_taxonomy_registry.py
+      - tests/unit/test_copywriting_taxonomy_service.py
+      - tests/api/test_taxonomy_api.py
       # P5.5 Dedicated Product Type Registry — standalone operator control room
       - dashboard/src/pages/ProductTypeRegistryPage.tsx
       - dashboard/src/pages/ProductTypeRegistryPage.test.tsx
@@ -418,6 +470,8 @@ domains:
       - tests/unit/test_avatar_csv_factory_service.py
       - tests/unit/test_avatar_registry_usage_tags.py
       - tests/unit/test_avatar_registry_manual_autogen.py
+      - tests/unit/test_avatar_registry_core_authority_lock.py
+      - tests/api/test_avatar_registry_system_immutable_api.py
       - tests/api/test_avatar_csv_factory_api.py
       - tests/api/test_avatar_registry_manual_autogen_api.py
       - tests/ui/test_avatar_registry_csv_factory_ui_contract.py
@@ -522,7 +576,9 @@ domains:
       - agent/services/prompt_package_dryrun_service.py
       - agent/services/ugc_video_prompt_compiler_service.py
       - agent/services/full_storyboard_extend_planner.py
+      - agent/services/canonical_cta_fitter.py
       - agent/services/google_flow_extend_prompt_renderer.py
+      - agent/services/product_preflight.py
       - agent/services/product_physics.py
       - agent/services/workspace_execution_package_service.py
       - agent/services/flow_client.py
@@ -664,6 +720,9 @@ domains:
       - dashboard/src/pages/ProductsSalesAnalyzerPage.tsx
       - dashboard/src/pages/ProductsSalesAnalyzerPage.sourceFilter.test.ts
       - dashboard/src/pages/ProductDetailPage.tsx
+      - dashboard/src/pages/ProductDetailPage.test.tsx
+      - dashboard/src/api/taxonomy.ts
+      - dashboard/src/types/index.ts
       - dashboard/src/components/product-registration/ProductKnowledgeResultPanel.tsx
       - dashboard/src/pages/WorkspaceJobsPage.tsx
       - dashboard/src/pages/WorkspaceGenerationPackagesPage.tsx
@@ -698,6 +757,13 @@ domains:
       - dashboard/src/components/product-registration/BulkFastMossConvertTab.tsx
       - dashboard/src/components/product-registration/BulkFastMossConvertTab.test.tsx
       - dashboard/src/components/product-registration/AllProductsTab.tsx
+      - dashboard/src/api/productVisualOnboarding.ts
+      - dashboard/src/api/productTruthLock.ts
+      - dashboard/src/components/product-registration/ProductVisualReadinessPanel.tsx
+      - docs/workflows/CANVA_PRODUCT_CUTOUT_WORKFLOW.md
+      - docs/runbooks/canva-cutout-operator-runbook.md
+      - dashboard/src/components/product-registration/ProductVisualReadinessPanel.test.tsx
+      - dashboard/src/components/product-registration/AllProductsTab.test.tsx
       - dashboard/src/components/workspace/SearchableProductSelect.tsx
       - dashboard/src/components/workspace/T2VModule.tsx
       - dashboard/src/components/workspace/T2VModule.test.tsx
@@ -752,6 +818,7 @@ domains:
       - tests/unit/test_t2v_hybrid_registry_authority.py
       - tests/ui/test_operator_registry_authority_ui_contract.py
       - tests/unit/test_full_storyboard_extend_planner.py
+      - tests/unit/test_canonical_cta_wps_fitter.py
       - tests/unit/test_google_flow_extend_prompt_renderer.py
       - tests/unit/test_extend_prompt_sqlite_persistence.py
       - tests/unit/test_extend_representation_audio_contracts.py
@@ -993,6 +1060,7 @@ domains:
       - tests/ui/test_verification_gate_contract.py
       - dashboard/package.json
       - AGENTS.md
+      - .github/workflows/verify.yml
       # RESULTS_HUB: durable deliverable hub — every finished generation gets a
       # long-lived record (prompt+settings for manual Flow fallback) + per-platform
       # social captions, decoupled from the 48h artifact file retention.
@@ -1028,6 +1096,24 @@ domains:
       - data/exact-product/**
       - tests/unit/test_exact_product_final_output_service.py
       - agent/services/poster_deliverable_service.py
+      - agent/models/poster_campaign_design_brief.py
+      - agent/services/poster_campaign_design_service.py
+      - agent/services/poster_design_system.py
+      # POSTER_BUILDER_V3 PR-C: deterministic Campaign QA, three controlled
+      # variants, explicit human rubric review and no-spend benchmark evidence.
+      - agent/models/poster_campaign_qa.py
+      - agent/services/poster_campaign_qa_service.py
+      - agent/services/poster_campaign_variant_service.py
+      - agent/services/poster_benchmark_cohort_service.py
+      - agent/services/poster_replay_evidence_service.py
+      - tests/unit/test_poster_campaign_qa_service.py
+      - tests/unit/test_poster_v3_e1_evidence.py
+      - tests/api/test_poster_campaign_qa_api.py
+      - tests/api/test_poster_campaign_compose_api.py
+      - scripts/poster-builder-v3-benchmark.py
+      - docs/evidence/poster-builder-v3-qa-review-20260808.md
+      - docs/evidence/poster-builder-v3-e1-benchmark-cohort.json
+      - docs/evidence/poster-builder-v3-e1-mwcb-replay.json
       - agent/api/poster_copy_sets.py
       - agent/api/poster_compose.py
       - agent/authority/POSTER_TEMPLATE_TOKENS.yaml
@@ -1056,6 +1142,7 @@ domains:
       - tests/unit/test_poster_template_and_manifest.py
       - tests/unit/test_exact_product_compositor_service.py
       - tests/unit/test_poster_deliverable_service.py
+      - tests/unit/test_poster_campaign_design_service.py
       - tests/unit/test_poster_clean_scene_prompt.py
       - tests/api/test_poster_copy_sets_api.py
       - tests/ui/test_poster_compositor_service_contract.py
@@ -1374,3 +1461,78 @@ domains:
       - outputs/mission-copy-final/writer_failures.json
       - outputs/mission-copy-final/writer_summary.json
       - tests/unit/test_copy_set_validity_service.py
+      - tests/unit/test_copy_approved_vs_production_valid_688.py
+      # Conditional GO: shared image compiler and no-spend Product Reference Pack.
+      # Creative Campaign remains feature-flagged and exact production-default
+      # until the bounded live benchmark receives explicit credit authorization.
+      - agent/models/image_generation_contract.py
+      - agent/services/image_prompt_compiler.py
+      - agent/services/product_reference_pack_service.py
+      - tests/unit/test_image_generation_contract.py
+      - tests/api/test_creative_campaign_contract.py
+      - docs/evidence/image-capability-audit-20260808.md
+      # 2026-08-09 canonical catalog decontamination: digest-locked historical
+      # duplicate purge, population denominator authority, and no-spend visual
+      # coverage evidence. The live mutation remains gated by the mission token.
+      - scripts/product_catalog_decontamination.py
+      - tests/unit/test_product_catalog_decontamination.py
+      - tests/api/test_runtime_storage_diagnostic_api.py
+      - agent/services/reporting_service.py
+      - agent/api/operator.py
+      - docs/evidence/product-catalog-decontamination-20260809/c0-baseline.json
+      - docs/evidence/product-catalog-decontamination-20260809/c0-classification.json
+      - docs/evidence/product-catalog-decontamination-20260809/c0-classification-after.json
+      - docs/evidence/product-catalog-decontamination-20260809/merge-proven-48-reproof.json
+      - docs/evidence/product-catalog-decontamination-20260809/dependency-blast-radius.json
+      - docs/evidence/product-catalog-decontamination-20260809/purge-plan.json
+      - docs/evidence/product-catalog-decontamination-20260809/purge-before.json
+      - docs/evidence/product-catalog-decontamination-20260809/purge-after.json
+      - docs/evidence/product-catalog-decontamination-20260809/canonical-survivor-cohort.json
+      - docs/evidence/product-catalog-decontamination-20260809/visual-coverage.json
+      - docs/evidence/product-catalog-decontamination-20260809/runtime-proof.json
+      - docs/evidence/product-catalog-decontamination-20260809/post-purge-closure.json
+      - docs/evidence/product-catalog-decontamination-20260809/FINAL_REPORT.md
+      # Montage Laluan-B hardening R1-R4 C1
+      - agent/services/montage_scene_reference_policy.py
+      - agent/services/montage_scene_execution_routing.py
+      - agent/services/montage_assembly_readiness.py
+      - tests/unit/test_montage_scene_reference_policy.py
+      - tests/unit/test_montage_scene_execution_routing.py
+      - tests/unit/test_montage_assembly_readiness.py
+      - agent/api/montage.py
+      - dashboard/src/api/montage.ts
+      - dashboard/src/pages/MontagePage.tsx
+      - dashboard/src/App.tsx
+      - agent/main.py
+      - agent/services/montage_scene_orchestrator.py
+      - agent/services/montage_discrete_assembly.py
+      - tests/unit/test_montage_run_service.py
+      - agent/services/montage_run_service.py
+      - tests/unit/test_montage_m04_authorize_generation.py
+      - tests/unit/test_montage_m04_serial_poll.py
+      - tests/unit/test_montage_scene_orchestrator.py
+      - tests/unit/test_montage_discrete_assembly.py
+      - agent/authority/creative_lane_settings.json
+      - agent/services/creative_lane_settings_service.py
+      - agent/api/creative_lane_settings.py
+      - dashboard/src/api/creativeLaneSettings.ts
+      - tests/unit/test_creative_lane_settings_service.py
+      - dashboard/src/pages/MontagePage.test.ts
+      - docs/evidence/poster-builder-v3-pre-refactor-audit.md
+      - docs/evidence/poster-builder-v3-design-system-audit.md
+      # Faceless Video + creative lane settings (Hook/Background SSOT) C1
+      - agent/authority/creative_lane_settings.json
+      - agent/services/creative_lane_settings_service.py
+      - agent/api/creative_lane_settings.py
+      - agent/api/faceless.py
+      - agent/services/faceless_lane_service.py
+      - tests/unit/test_creative_lane_settings_service.py
+      - tests/unit/test_faceless_lane_service.py
+      - tests/unit/test_faceless_prepare_api.py
+      - dashboard/src/api/creativeLaneSettings.ts
+      - dashboard/src/faceless/facelessLane.ts
+      - dashboard/src/faceless/facelessLane.test.ts
+      - dashboard/src/pages/FacelessVideoPage.tsx
+      - tests/api/test_faceless_f05_start_frame_transport.py
+      - dashboard/src/App.tsx
+      - agent/main.py

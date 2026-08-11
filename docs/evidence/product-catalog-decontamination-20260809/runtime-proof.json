@@ -1,0 +1,192 @@
+{
+  "mission_id": "product-catalog-decontamination-20260809",
+  "captured_at": "2026-08-09T05:22:16Z",
+  "runtime_url": "http://127.0.0.1:8100",
+  "health_http_200": true,
+  "runtime_loaded_sha": "d03ca4fcddbce16a0c4ef8ae4fb6d4b8eb512940",
+  "runtime_branch": "codex/catalog-decontamination-evidence-20260809",
+  "runtime_pid": 38240,
+  "port_8100_owner_pid": 38240,
+  "runtime_route_count": 568,
+  "dashboard_bundle": "index-CAV3Yse-.js",
+  "source_stale_since_start": false,
+  "runtime_db_absolute_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
+  "expected_canonical_db_absolute_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
+  "runtime_storage_matches_expected": true,
+  "runtime_storage_status": {
+    "status": "ok",
+    "cwd": "C:\\Users\\USER\\.codex\\worktrees\\catalog-decontamination-evidence-20260809",
+    "base_dir": "C:\\Users\\USER\\Desktop\\_ref_flowkit",
+    "flow_agent_dir_override": "C:\\Users\\USER\\Desktop\\_ref_flowkit",
+    "config_db_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
+    "effective_db_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
+    "db_exists": true,
+    "db_size_bytes": 788455424,
+    "product_count": 853,
+    "manual_product_count": 595,
+    "queue_count": 663,
+    "catalog_population": {
+      "raw_database_rows": 853,
+      "active_products": 584,
+      "archived_products": 269,
+      "merged_historical_aliases": 0,
+      "test_fixture_rows": 8,
+      "real_canonical_products": 845,
+      "real_active_canonical_products": 584,
+      "real_archived_canonical_products": 261,
+      "production_eligible_products": 584,
+      "source_counts": {
+        "FASTMOSS": 258,
+        "MANUAL": 595,
+        "MISSING_SOURCE": 0
+      },
+      "arithmetic": {
+        "raw_equals_active_plus_archived": true,
+        "raw_equals_real_plus_aliases_plus_fixtures": true,
+        "real_equals_active_plus_archived_real": true
+      },
+      "count_semantics": {
+        "raw_database_rows": "All rows in product, including archived history, fixtures, and merged aliases.",
+        "active_products": "Rows with lifecycle_status ACTIVE; not a canonical or production KPI by itself.",
+        "archived_products": "Rows with lifecycle_status ARCHIVED; includes legitimate history and merged aliases.",
+        "merged_historical_aliases": "Rows whose archived_reason begins DUPLICATE_MERGED_TO_CANONICAL; excluded from real canonical products.",
+        "real_canonical_products": "Rows excluding the shared test-fixture predicate and merged-alias lineage.",
+        "production_eligible_products": "Active real canonical rows with a non-empty product identity; visual media readiness is reported separately."
+      }
+    },
+    "raw_product_rows": 853,
+    "active_product_count": 584,
+    "archived_product_count": 269,
+    "merged_alias_count": 0,
+    "real_canonical_product_count": 845,
+    "production_eligible_product_count": 584,
+    "canonical_product_count": 845,
+    "authority_context_count_ceiling": 845,
+    "authority_context_count": null,
+    "authority_context_count_source": "NOT_COMPUTED",
+    "warnings": [
+      "FLOW_AGENT_DIR_OVERRIDE_ACTIVE",
+      "DB_PATH_PARENT_DIFFERS_FROM_CWD"
+    ],
+    "timestamp": "2026-08-09T05:22:08.395733+00:00"
+  },
+  "endpoint_payloads": {
+    "health": {
+      "status": "ok",
+      "version": "0.2.0",
+      "version_is_build_identity": false,
+      "identity_endpoints": [
+        "/api/local-agent/version-proof",
+        "/api/operator/runtime-storage-status",
+        "/api/flow/bind-check"
+      ],
+      "extension_build_sha": "e8353a4944ee9764b17ddece3cba509347e7afb5",
+      "extension_build_stamped": true,
+      "extension_build_dirty": false,
+      "extension_build_branch": "HEAD",
+      "extension_connected": true,
+      "extension_state": "idle",
+      "flow_key_present": true,
+      "extension_manual_disconnect": false,
+      "extension_metrics": {
+        "requestCount": 597,
+        "successCount": 552,
+        "failedCount": 43,
+        "lastError": null
+      },
+      "extension_status_error": null,
+      "dashboard_serving_mode": "BACKEND_SERVED_STATIC",
+      "dashboard_url": "http://127.0.0.1:8100/operator",
+      "repair_command": ".\\scripts\\install-local-agent.ps1",
+      "registration": {
+        "operator_id": null,
+        "device_id": "38b94591-5ab0-5519-8050-3efdfdb66027",
+        "approval_status": "PENDING_APPROVAL",
+        "license_status": "UNLICENSED",
+        "registered_at": null,
+        "updated_at": "2026-05-08T16:50:52.690560+00:00"
+      },
+      "ws": {
+        "connected": true,
+        "connects": 2,
+        "disconnects": 1,
+        "uptime_s": 815
+      }
+    },
+    "version": {
+      "pid": 38240,
+      "process_started_at": "2026-08-09T05:02:48.348921+00:00",
+      "git_head": "d03ca4fcddbce16a0c4ef8ae4fb6d4b8eb512940",
+      "git_branch": "codex/catalog-decontamination-evidence-20260809",
+      "route_count": 568,
+      "critical_routes": {
+        "/api/creative-asset-eligibility/audit": true,
+        "/api/creative-assets/eligibility-audit": true,
+        "/api/flow/execute-flow-job": true,
+        "/api/flow/generate": true,
+        "/api/workspace/execution-package": true
+      },
+      "dashboard_bundle": "index-CAV3Yse-.js",
+      "source_stale_since_start": false,
+      "stale_source_sample": []
+    },
+    "storage": {
+      "status": "ok",
+      "cwd": "C:\\Users\\USER\\.codex\\worktrees\\catalog-decontamination-evidence-20260809",
+      "base_dir": "C:\\Users\\USER\\Desktop\\_ref_flowkit",
+      "flow_agent_dir_override": "C:\\Users\\USER\\Desktop\\_ref_flowkit",
+      "config_db_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
+      "effective_db_path": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\flow_agent.db",
+      "db_exists": true,
+      "db_size_bytes": 788455424,
+      "product_count": 853,
+      "manual_product_count": 595,
+      "queue_count": 663,
+      "catalog_population": {
+        "raw_database_rows": 853,
+        "active_products": 584,
+        "archived_products": 269,
+        "merged_historical_aliases": 0,
+        "test_fixture_rows": 8,
+        "real_canonical_products": 845,
+        "real_active_canonical_products": 584,
+        "real_archived_canonical_products": 261,
+        "production_eligible_products": 584,
+        "source_counts": {
+          "FASTMOSS": 258,
+          "MANUAL": 595,
+          "MISSING_SOURCE": 0
+        },
+        "arithmetic": {
+          "raw_equals_active_plus_archived": true,
+          "raw_equals_real_plus_aliases_plus_fixtures": true,
+          "real_equals_active_plus_archived_real": true
+        },
+        "count_semantics": {
+          "raw_database_rows": "All rows in product, including archived history, fixtures, and merged aliases.",
+          "active_products": "Rows with lifecycle_status ACTIVE; not a canonical or production KPI by itself.",
+          "archived_products": "Rows with lifecycle_status ARCHIVED; includes legitimate history and merged aliases.",
+          "merged_historical_aliases": "Rows whose archived_reason begins DUPLICATE_MERGED_TO_CANONICAL; excluded from real canonical products.",
+          "real_canonical_products": "Rows excluding the shared test-fixture predicate and merged-alias lineage.",
+          "production_eligible_products": "Active real canonical rows with a non-empty product identity; visual media readiness is reported separately."
+        }
+      },
+      "raw_product_rows": 853,
+      "active_product_count": 584,
+      "archived_product_count": 269,
+      "merged_alias_count": 0,
+      "real_canonical_product_count": 845,
+      "production_eligible_product_count": 584,
+      "canonical_product_count": 845,
+      "authority_context_count_ceiling": 845,
+      "authority_context_count": null,
+      "authority_context_count_source": "NOT_COMPUTED",
+      "warnings": [
+        "FLOW_AGENT_DIR_OVERRIDE_ACTIVE",
+        "DB_PATH_PARENT_DIFFERS_FROM_CWD"
+      ],
+      "timestamp": "2026-08-09T05:22:08.395733+00:00"
+    }
+  },
+  "failures": []
+}

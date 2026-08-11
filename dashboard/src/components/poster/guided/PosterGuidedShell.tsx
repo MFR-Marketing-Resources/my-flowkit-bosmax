@@ -9,12 +9,22 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
+	approveProductReferencePack,
 	fetchImageArtifacts,
+	fetchProductReferencePack,
 	type ImageArtifact,
+	type ProductReferencePackSummary,
 } from "../../../api/imgFactory";
+import {
+	approveProductTruthLock,
+	fetchProductTruthLock,
+	productTruthCutoutPreviewUrl,
+	type ProductTruthLockStatus,
+} from "../../../api/productTruthLock";
 import {
 	fetchCompositionPlan,
 	fetchPosterDeliverableByAsset,
+	posterCampaignVariantOutputUrl,
 	posterDeliverableOutputUrl,
 } from "../../../api/posterCopySets";
 import type { CompositionPlan } from "../../../types/posterCompositionPlan";
@@ -208,9 +218,10 @@ export default function PosterGuidedShell() {
 	const [reopenError, setReopenError] = useState("");
 	const restoredRef = useRef(false);
 
-	// B-04: BACKEND-resolved composition plan for the selected governed mode.
-	// Refetched whenever the mode / product / recipe / approved copy changes;
-	// the UI never derives plan values locally.
+	// B-04: BACKEND-resolved composition plan for legacy/exact governed modes.
+	// Creative Campaign has a separate canonical image compiler and must not
+	// enter the deterministic compositor resolver, which intentionally rejects
+	// provider-poster modes.
 	const [compositionPlan, setCompositionPlan] = useState<CompositionPlan | null>(
 		null,
 	);
@@ -221,7 +232,11 @@ export default function PosterGuidedShell() {
 	const approvedCopySetId = wf.approvedCopySet?.poster_copy_set_id ?? "";
 	useEffect(() => {
 		const fetchId = ++planFetchRef.current;
-		if (!productId || !wf.creativeMode) {
+		if (
+			!productId ||
+			!wf.creativeMode ||
+			wf.creativeMode === "CREATIVE_CAMPAIGN"
+		) {
 			setCompositionPlan(null);
 			setPlanError("");
 			setPlanLoading(false);
@@ -243,7 +258,7 @@ export default function PosterGuidedShell() {
 				if (planFetchRef.current !== fetchId) return;
 				setCompositionPlan(null);
 				setPlanError(
-					"Failed to get the composition plan from the backend. Try switching mode again.",
+					"Gagal mendapatkan pelan komposisi dari backend. Cuba tukar mod semula.",
 				);
 			})
 			.finally(() => {
@@ -255,7 +270,7 @@ export default function PosterGuidedShell() {
 		void fetchProductCatalog(60)
 			.then((res) => setProducts(res.items ?? []))
 			.catch((e: Error) =>
-				setCatalogError(e.message || "Failed to load products."),
+				setCatalogError(e.message || "Gagal memuatkan produk."),
 			);
 	}, []);
 
@@ -269,7 +284,7 @@ export default function PosterGuidedShell() {
 			})
 			.catch(() =>
 				setReopenError(
-					"Failed to open the saved poster — the asset may have been deleted or is not a poster.",
+					"Gagal membuka poster tersimpan — aset mungkin telah dipadam atau bukan poster.",
 				),
 			);
 	}, [searchParams]);
@@ -289,7 +304,7 @@ export default function PosterGuidedShell() {
 			found ??
 			({
 				id: pid,
-				product_display_name: "Product (reopened)",
+				product_display_name: "Produk (dibuka semula)",
 			} as Product);
 		wf.restoreFromReopen(reopened, product);
 		// eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot restore
@@ -310,8 +325,8 @@ export default function PosterGuidedShell() {
 			<header className="space-y-1">
 				<h1 className="text-2xl font-bold text-slate-100">Poster Builder</h1>
 				<p className="text-sm text-slate-400">
-					Create a product poster step by step — no technical terms
-					needed.
+					Cipta poster produk langkah demi langkah — tiada istilah teknikal
+					diperlukan.
 				</p>
 			</header>
 
@@ -338,7 +353,7 @@ export default function PosterGuidedShell() {
 					{wf.step === "goal" ? (
 						<>
 							{wf.readinessLoading ? (
-								<Busy label="Checking product readiness…" />
+								<Busy label="Menyemak kesediaan produk…" />
 							) : wf.readinessError ? (
 								<div className="mb-4">
 									<ErrorNote
@@ -401,7 +416,7 @@ function ProductStep({
 	const thumb = productThumb(selected);
 	return (
 		<div className="space-y-3">
-			<p className="text-sm text-slate-400">Choose a product for this poster.</p>
+			<p className="text-sm text-slate-400">Pilih produk untuk poster ini.</p>
 			{catalogError ? (
 				<p className="text-sm text-rose-300">{catalogError}</p>
 			) : null}
@@ -428,7 +443,7 @@ function ProductStep({
 							{selected.product_display_name || selected.raw_product_title}
 						</p>
 						<p className="text-xs text-slate-500">
-							{selected.category || selected.type_of_product || "Product"}
+							{selected.category || selected.type_of_product || "Produk"}
 						</p>
 					</div>
 				</div>
@@ -447,7 +462,7 @@ function GoalStep({ wf, blocked }: { wf: WF; blocked: boolean }) {
 		<div className="space-y-4">
 			<div className="flex items-center justify-between gap-2">
 				<p className="text-sm text-slate-400">
-					Choose the poster's main objective. We can suggest the best one.
+					Pilih tujuan utama poster. Kami boleh mencadangkan yang terbaik.
 				</p>
 				<button
 					type="button"
@@ -461,7 +476,7 @@ function GoalStep({ wf, blocked }: { wf: WF; blocked: boolean }) {
 					) : (
 						<Sparkles className="h-3.5 w-3.5" />
 					)}
-					Suggest for me
+					Cadangkan untuk saya
 				</button>
 			</div>
 			<ErrorNote testid="poster-goals-error" text={wf.goalsError} />
@@ -489,14 +504,14 @@ function GoalStep({ wf, blocked }: { wf: WF; blocked: boolean }) {
 							badge={
 								recommended ? (
 									<span className="absolute right-3 top-3 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-200">
-										Recommended ✦
+										Disyorkan ✦
 									</span>
 								) : needsConfirm ? (
 									<span
 										className="absolute right-3 top-3 rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-200"
 										data-testid={`poster-goal-evidence-${g.archetype}`}
 									>
-										Product evidence required
+										Perlukan bukti produk
 									</span>
 								) : undefined
 							}
@@ -513,8 +528,8 @@ function GoalStep({ wf, blocked }: { wf: WF; blocked: boolean }) {
 									className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-100"
 									data-testid={`poster-goal-confirm-${g.archetype}`}
 								>
-									{evidence.requirement} Click again to continue with
-									human review.
+									{evidence.requirement} Klik sekali lagi untuk teruskan dengan
+									semakan manusia.
 								</p>
 							) : null}
 						</SelectCard>
@@ -541,15 +556,15 @@ function AngleStep({ wf }: { wf: WF }) {
 	return (
 		<div className="space-y-3">
 			<p className="text-sm text-slate-400">
-				Choose a selling angle for{" "}
+				Pilih sudut jualan untuk{" "}
 				{goalForArchetype(wf.goalArchetype ?? "").title}.
 			</p>
 			<label className="block text-xs text-slate-300">Creative Direction
 				<select data-testid="poster-creative-mode" value={wf.creativeMode} onChange={(event) => wf.setCreativeMode(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 p-2">
-					<option value="">No governed mode (legacy)</option><option value="PGC_CAMPAIGN">PGC Campaign</option><option value="UGC_AUTHENTIC">UGC Authentic</option><option value="MODEL_AMBASSADOR">Model Ambassador</option><option value="CLEAN_STUDIO_CATALOGUE">Clean Studio / Clean Catalogue</option><option value="LIFESTYLE_EDITORIAL">Lifestyle Editorial</option>
+						<option value="">No governed mode (legacy)</option><option value="CREATIVE_CAMPAIGN">Creative Campaign (provider poster)</option><option value="PGC_CAMPAIGN">PGC Campaign</option><option value="UGC_AUTHENTIC">UGC Authentic</option><option value="MODEL_AMBASSADOR">Model Ambassador</option><option value="CLEAN_STUDIO_CATALOGUE">Clean Studio / Clean Catalogue</option><option value="LIFESTYLE_EDITORIAL">Lifestyle Editorial</option>
 				</select>
 			</label>
-			{wf.anglesLoading ? <Busy label="Generating selling angles…" /> : null}
+			{wf.anglesLoading ? <Busy label="Menjana sudut jualan…" /> : null}
 			{wf.anglesError ? (
 				<div className="flex items-center gap-3">
 					<ErrorNote testid="poster-angles-error" text={wf.anglesError} />
@@ -558,7 +573,7 @@ function AngleStep({ wf }: { wf: WF }) {
 						onClick={() => void wf.loadAngles()}
 						className="rounded-lg border border-slate-700 px-2 py-1 text-xs text-slate-200"
 					>
-						Try again
+						Cuba lagi
 					</button>
 				</div>
 			) : null}
@@ -590,7 +605,7 @@ function AngleStep({ wf }: { wf: WF }) {
 						data-testid="poster-angle-custom"
 						value={custom}
 						onChange={(e) => setCustom(e.target.value)}
-						placeholder="e.g. great for special gifts"
+						placeholder="Cth: sesuai untuk hadiah istimewa"
 						className="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100"
 					/>
 					<button
@@ -629,9 +644,9 @@ function CopyStep({ wf }: { wf: WF }) {
 		return (
 			<div className="space-y-3" data-testid="poster-copy-historical">
 				<p className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
-					This poster copy is a HISTORICAL VERSION (superseded) and remains
-					read-only. To edit, create an editable copy — the original record
-					will not be changed.
+					Teks poster ini adalah VERSI SEJARAH (telah digantikan) dan kekal
+					kunci-baca. Untuk menyunting, cipta salinan boleh-edit — rekod asal
+					tidak akan diubah.
 				</p>
 				<div className="space-y-2 rounded-2xl border border-slate-800 bg-slate-950/40 p-4 text-sm">
 					<Review label="Primary Message" value={wf.fields.primary_message} />
@@ -651,7 +666,7 @@ function CopyStep({ wf }: { wf: WF }) {
 					className="flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50"
 				>
 					{wf.forkLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-					Create an editable copy
+					Cipta salinan boleh-edit
 				</button>
 			</div>
 		);
@@ -677,13 +692,13 @@ function CopyStep({ wf }: { wf: WF }) {
 					className="rounded-xl border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm text-sky-100"
 					data-testid="poster-copy-editing-version"
 				>
-					You are editing a NEW VERSION of the approved copy. Approve
-					again when done — the old version stays in the record.
+					Anda sedang menyunting VERSI BAHARU teks yang diluluskan. Sahkan
+					semula selepas selesai — versi lama kekal dalam rekod.
 				</p>
 			) : null}
 			<div className="flex items-center justify-between">
 				<p className="text-sm text-slate-400">
-					Compare the three poster copy directions and pick one.
+					Bandingkan tiga arah teks poster dan pilih satu.
 				</p>
 				<button
 					type="button"
@@ -692,10 +707,10 @@ function CopyStep({ wf }: { wf: WF }) {
 					disabled={wf.directionsLoading}
 					className="flex items-center gap-1.5 rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-200 disabled:opacity-50"
 				>
-					<RefreshCw className="h-3.5 w-3.5" /> Regenerate
+					<RefreshCw className="h-3.5 w-3.5" /> Jana semula
 				</button>
 			</div>
-			{wf.directionsLoading ? <Busy label="Generating copy directions…" /> : null}
+			{wf.directionsLoading ? <Busy label="Menjana arah teks…" /> : null}
 			<ErrorNote testid="poster-directions-error" text={wf.directionsError} />
 			{wf.directionWarnings.length ? (
 				<div
@@ -704,13 +719,13 @@ function CopyStep({ wf }: { wf: WF }) {
 				>
 					{hasFallbackDirections ? (
 						<p className="font-semibold" data-testid="poster-direction-fallback-note">
-							AI is unavailable right now — safe suggestions are still available.
-							Pick one to continue.
+							AI tidak tersedia buat masa ini — cadangan selamat masih tersedia.
+							Pilih satu untuk teruskan.
 						</p>
 					) : null}
 					{visibleDirectionWarnings.length ? (
 						<>
-							<p className="mt-1 font-semibold">Notes while generating copy:</p>
+							<p className="mt-1 font-semibold">Nota semasa menjana teks:</p>
 							<ul className="mt-1 space-y-0.5">
 								{visibleDirectionWarnings.map((w) => (
 							<li key={w}>• {w}</li>
@@ -762,7 +777,7 @@ function CopyEditor({ wf }: { wf: WF }) {
 			data-testid="poster-copy-editor"
 		>
 			<p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-				Edit the selected copy
+				Sunting teks pilihan
 			</p>
 			<ErrorNote testid="poster-regen-error" text={wf.fieldRegenError} />
 			{FIELD_LABELS.map(({ key, label }) => (
@@ -786,7 +801,7 @@ function CopyEditor({ wf }: { wf: WF }) {
 							) : (
 								<RefreshCw className="h-3 w-3" />
 							)}
-							Regenerate
+							Jana semula
 						</button>
 					</div>
 					<input
@@ -818,7 +833,7 @@ function CopyEditor({ wf }: { wf: WF }) {
 								.filter(Boolean),
 						)
 					}
-					placeholder="Separate with |"
+					placeholder="Pisahkan dengan |"
 					className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100"
 				/>
 			</div>
@@ -834,12 +849,12 @@ function ApproveStep({ wf }: { wf: WF }) {
 				data-testid="poster-copy-approved"
 			>
 				<p className="flex items-center gap-2 text-sm font-semibold text-emerald-100">
-					<Check className="h-4 w-4" /> Poster copy approved (version{" "}
+					<Check className="h-4 w-4" /> Teks poster telah disahkan (versi{" "}
 					{wf.approvedCopySet.version})
 				</p>
 				<p className="text-xs text-emerald-200/80">
-					The approved copy is now read-only. To edit, the system will
-					create a new version.
+					Teks yang diluluskan kini kunci-baca. Untuk menyunting, sistem akan
+					mencipta versi baharu.
 				</p>
 				<button
 					type="button"
@@ -847,7 +862,7 @@ function ApproveStep({ wf }: { wf: WF }) {
 					onClick={() => void wf.editApproved()}
 					className="mt-1 rounded-lg border border-emerald-400/50 bg-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-50"
 				>
-					Edit (create a new version)
+					Sunting (cipta versi baharu)
 				</button>
 			</div>
 		);
@@ -855,15 +870,15 @@ function ApproveStep({ wf }: { wf: WF }) {
 	return (
 		<div className="space-y-3">
 			<p className="text-sm text-slate-400">
-				Review the final copy. Once approved, the copy becomes read-only.
+				Semak teks akhir. Selepas disahkan, teks menjadi kunci-baca.
 			</p>
 			{wf.editingCopySetId ? (
 				<p
 					className="rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-xs text-sky-100"
 					data-testid="poster-approve-editing-version"
 				>
-					Approval will update the existing draft version — no duplicate copy
-					set will be created.
+					Pengesahan akan mengemas kini draf versi sedia ada — tiada set teks
+					pendua akan dicipta.
 				</p>
 			) : null}
 			<div className="space-y-2 rounded-2xl border border-slate-800 bg-slate-950/40 p-4 text-sm">
@@ -889,7 +904,7 @@ function ApproveStep({ wf }: { wf: WF }) {
 				{wf.approveLoading ? (
 					<Loader2 className="h-4 w-4 animate-spin" />
 				) : null}
-				Confirm poster copy
+				Sahkan teks poster
 			</button>
 		</div>
 	);
@@ -939,22 +954,22 @@ function RecipeMiniDiagram({ recipe }: { recipe: PosterRecipe }) {
 // Friendly product-placement phrasing from the recipe contract (no jargon).
 function placementLabel(recipe: PosterRecipe): string {
 	const p = (recipe.product_placement || "").toLowerCase();
-	if (p.includes("center") || p.includes("tengah")) return "Product centered";
+	if (p.includes("center") || p.includes("tengah")) return "Produk di tengah";
 	if (p.includes("bottom") || p.includes("bawah"))
-		return "Product at the bottom";
-	if (p.includes("hand") || p.includes("tangan")) return "Product held";
-	return recipe.product_placement || "Product as focus";
+		return "Produk di bahagian bawah";
+	if (p.includes("hand") || p.includes("tangan")) return "Produk dipegang";
+	return recipe.product_placement || "Produk sebagai fokus";
 }
 
 function VisualStep({ wf, recipes }: { wf: WF; recipes: PosterRecipe[] }) {
 	return (
 		<div className="space-y-3">
 			<p className="text-sm text-slate-400">
-				Choose a visual style for the poster. The small diagram shows the text layout
-				(grey), chip (blue), CTA (green).
+				Pilih gaya visual poster. Rajah kecil menunjukkan susun atur teks
+				(kelabu), chip (biru), CTA (hijau).
 			</p>
 			{recipes.length === 0 ? (
-				<Busy label="Loading visual styles…" />
+				<Busy label="Memuatkan gaya visual…" />
 			) : (
 				<div className="grid gap-3 sm:grid-cols-2">
 					{recipes.map((r) => (
@@ -970,16 +985,16 @@ function VisualStep({ wf, recipes }: { wf: WF; recipes: PosterRecipe[] }) {
 									<p className="font-semibold text-slate-100">{r.label}</p>
 									<p className="mt-1 text-xs text-slate-400">{r.description}</p>
 									<p className="mt-2 text-[11px] text-slate-300">
-										<span className="text-slate-500">Best for: </span>
+										<span className="text-slate-500">Sesuai untuk: </span>
 										{goalForArchetype(r.archetype).title}
 									</p>
 									<p className="text-[11px] text-slate-300">
-										<span className="text-slate-500">Product placement: </span>
+										<span className="text-slate-500">Kedudukan produk: </span>
 										{placementLabel(r)}
 									</p>
 									{r.allowed_text_density?.length ? (
 										<p className="text-[11px] text-slate-300">
-											<span className="text-slate-500">Text density: </span>
+											<span className="text-slate-500">Ketumpatan teks: </span>
 											{r.allowed_text_density.join(", ").toLowerCase()}
 										</p>
 									) : null}
@@ -993,14 +1008,151 @@ function VisualStep({ wf, recipes }: { wf: WF; recipes: PosterRecipe[] }) {
 	);
 }
 
-// ── Scene picker (approved existing assets — no raw media IDs) ──────────────
+// ── Poster visual source (native generation first; existing assets optional) ─
 function SceneStep({ wf }: { wf: WF }) {
 	const [artifacts, setArtifacts] = useState<ImageArtifact[] | null>(null);
 	const [artifactsError, setArtifactsError] = useState("");
 	const [loading, setLoading] = useState(false);
-	const imgFastlaneHref = wf.product?.id
-		? `/assets/img-fastlane?product_id=${encodeURIComponent(wf.product.id)}`
-		: "/assets/img-fastlane";
+	const [existingOpen, setExistingOpen] = useState(false);
+	const [creditConfirmOpen, setCreditConfirmOpen] = useState(false);
+	const [creditConfirmed, setCreditConfirmed] = useState(false);
+	const [truthLock, setTruthLock] = useState<ProductTruthLockStatus | null>(null);
+	const [truthLoading, setTruthLoading] = useState(false);
+	const [truthApproving, setTruthApproving] = useState(false);
+	const [truthError, setTruthError] = useState("");
+	const [referencePack, setReferencePack] = useState<ProductReferencePackSummary | null>(null);
+	const [referencePackLoading, setReferencePackLoading] = useState(false);
+	const [referencePackApproving, setReferencePackApproving] = useState(false);
+	const [referencePackError, setReferencePackError] = useState("");
+	const [reviewedBy, setReviewedBy] = useState("");
+	const [confirmIdentity, setConfirmIdentity] = useState(false);
+	const [confirmLabelLogo, setConfirmLabelLogo] = useState(false);
+	const [confirmGeometryScale, setConfirmGeometryScale] = useState(false);
+	const [confirmProductIsolation, setConfirmProductIsolation] = useState(false);
+
+	useEffect(() => {
+		let active = true;
+		setReferencePack(null);
+		setReferencePackError("");
+		if (!wf.product || wf.creativeMode !== "CREATIVE_CAMPAIGN") {
+			setReferencePackLoading(false);
+			return () => {
+				active = false;
+			};
+		}
+		setReferencePackLoading(true);
+		void fetchProductReferencePack(wf.product.id)
+			.then((pack) => {
+				if (active) setReferencePack(pack);
+			})
+			.catch((error) => {
+				if (active) {
+					setReferencePackError(
+						error instanceof Error
+							? error.message
+							: "Gagal memuatkan Product Reference Pack.",
+					);
+				}
+			})
+			.finally(() => {
+				if (active) setReferencePackLoading(false);
+			});
+		return () => {
+			active = false;
+		};
+	}, [wf.product, wf.creativeMode]);
+
+	useEffect(() => {
+		let active = true;
+		setTruthLock(null);
+		setTruthError("");
+		setReviewedBy("");
+		setConfirmIdentity(false);
+		setConfirmLabelLogo(false);
+		setConfirmGeometryScale(false);
+		setConfirmProductIsolation(false);
+		if (!wf.product || wf.creativeMode === "CREATIVE_CAMPAIGN") {
+			return () => {
+				active = false;
+			};
+		}
+		setTruthLoading(true);
+		void fetchProductTruthLock(wf.product.id)
+			.then((status) => {
+				if (active) setTruthLock(status);
+			})
+			.catch((error) => {
+				if (active) {
+					setTruthError(
+						error instanceof Error
+							? error.message
+							: "Gagal menyemak status pengesahan produk.",
+					);
+				}
+			})
+			.finally(() => {
+				if (active) setTruthLoading(false);
+			});
+		return () => {
+			active = false;
+		};
+	}, [wf.product, wf.creativeMode]);
+
+	const approveTruthLock = async () => {
+		if (!wf.product) return;
+		setTruthApproving(true);
+		setTruthError("");
+		try {
+			const status = await approveProductTruthLock(wf.product.id, {
+				reviewed_by: reviewedBy.trim(),
+				review_note:
+					"Operator reviewed the displayed cutout for identity, colour, label/logo, geometry, and scale.",
+				confirm_identity: confirmIdentity,
+				confirm_label_logo: confirmLabelLogo,
+				confirm_geometry_scale: confirmGeometryScale,
+				confirm_product_isolation: confirmProductIsolation,
+			});
+			setTruthLock(status);
+		} catch (error) {
+			setTruthError(
+				error instanceof Error
+					? error.message
+					: "Gagal mengesahkan product truth lock.",
+			);
+		} finally {
+			setTruthApproving(false);
+		}
+	};
+
+	const approveReferencePack = async () => {
+		if (!wf.product || !reviewedBy.trim()) return;
+		setReferencePackApproving(true);
+		setReferencePackError("");
+		try {
+			const pack = await approveProductReferencePack(wf.product.id, {
+				reviewed_by: reviewedBy.trim(),
+				note: "Operator reviewed canonical, label/logo candidates and scale evidence before Creative Campaign generation.",
+			});
+			setReferencePack(pack);
+		} catch (error) {
+			setReferencePackError(
+				error instanceof Error
+					? error.message
+					: "Gagal mengesahkan Product Reference Pack.",
+			);
+		} finally {
+			setReferencePackApproving(false);
+		}
+	};
+
+	const truthPending = truthLock?.review_status === "PENDING_REVIEW";
+	const truthConfirmed = truthLock?.exact_allowed === true;
+	const allTruthConfirmed =
+		reviewedBy.trim().length > 0 &&
+		confirmIdentity &&
+		confirmLabelLogo &&
+		confirmGeometryScale &&
+		confirmProductIsolation;
 
 	const load = () => {
 		setLoading(true);
@@ -1009,98 +1161,357 @@ function SceneStep({ wf }: { wf: WF }) {
 			.then((items) => setArtifacts(items))
 			.catch(() =>
 				setArtifactsError(
-					"Failed to load the scene list. Check the agent connection and try again.",
+					"Gagal memuatkan senarai scene. Semak sambungan agen dan cuba lagi.",
 				),
 			)
 			.finally(() => setLoading(false));
 	};
 
-	// eslint-disable-next-line react-hooks/exhaustive-deps -- load once on mount
-	useEffect(load, []);
-
 	return (
 		<div className="space-y-3">
 			<p className="text-sm text-slate-400">
-				Choose a background from an existing scene (no credits). If there are no scenes,
-				generate a clean scene in the IMG module and return to this step.
+				Poster Builder akan jana visual baharu menggunakan produk yang dipilih,
+				gaya visual dan teks yang telah disahkan. Tidak perlu pilih gambar lama di
+				langkah ini.
 			</p>
 			<div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
-				Product identity is reference-conditioned — make sure the label & scale are
-				reviewed before publishing.
+				Identiti produk adalah reference-conditioned — pastikan label & skala
+				disemak sebelum diterbitkan.
 			</div>
+			{wf.creativeMode === "CREATIVE_CAMPAIGN" ? (
+				<div
+					className="space-y-3 rounded-xl border border-cyan-500/40 bg-cyan-500/10 p-4"
+					data-testid="poster-reference-pack-review-panel"
+				>
+					<div>
+						<p className="font-semibold text-cyan-100">Product Reference Pack</p>
+						<p className="mt-1 text-xs text-cyan-100/80">
+							Creative Campaign tidak memerlukan legacy scene asset. Semak pack canonical,
+							label/logo candidate dan bukti skala sebelum provider menerima kerja IMG.
+						</p>
+					</div>
+					{referencePackLoading ? <Busy label="Menyediakan Product Reference Pack…" /> : null}
+					{referencePack ? (
+						<>
+							<div className="grid gap-2 text-xs text-slate-100 sm:grid-cols-2">
+								<div>Status: <strong>{referencePack.pack_status}</strong></div>
+								<div>Machine QA: <strong>{referencePack.machine_qa_status}</strong></div>
+								<div>
+									Roles: <strong>{(referencePack.references || []).map((item) => `${item.role}${item.approved ? " ✓" : " · review"}`).join(", ") || "none"}</strong>
+								</div>
+								<div>
+									Scale: <strong>{referencePack.physical_measurements?.scale_confidence || "UNVERIFIED"}</strong>
+								</div>
+							</div>
+							{referencePack.pack_status !== "APPROVED" ? (
+								<>
+									<label className="grid gap-1 text-xs text-slate-100">
+										<span className="font-semibold">Nama penyemak</span>
+										<input
+											value={reviewedBy}
+											onChange={(event) => setReviewedBy(event.target.value)}
+											placeholder="Masukkan nama penyemak"
+											data-testid="poster-reference-pack-reviewed-by"
+											className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100"
+										/>
+									</label>
+									<p className="text-xs text-amber-100/80">
+										Approval only approves the reference pack. Every generated poster remains
+										machine-checked and separately human-reviewed.
+									</p>
+									<button
+										type="button"
+										onClick={() => void approveReferencePack()}
+										disabled={!reviewedBy.trim() || referencePackApproving || referencePack.machine_qa_status === "FAIL"}
+										data-testid="poster-reference-pack-approve"
+										className="rounded-lg bg-cyan-400 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-50"
+									>
+										{referencePackApproving ? "Mengesahkan…" : "Sahkan Product Reference Pack"}
+									</button>
+								</>
+							) : (
+								<p className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+									Reference pack approved. Generated output still requires independent human approval.
+								</p>
+							)}
+						</>
+					) : null}
+					<ErrorNote testid="poster-reference-pack-error" text={referencePackError} />
+				</div>
+			) : null}
 
-			{loading ? <Busy label="Loading existing scenes…" /> : null}
-			{artifactsError ? (
-				<div className="space-y-2" data-testid="poster-scene-error">
-					<ErrorNote testid="poster-scene-error-text" text={artifactsError} />
+			{truthLoading ? <Busy label="Menyemak kunci identiti produk…" /> : null}
+			{truthPending && wf.product && wf.creativeMode !== "CREATIVE_CAMPAIGN" ? (
+				<div
+					className="space-y-3 rounded-xl border border-amber-400/50 bg-amber-500/10 p-4"
+					data-testid="poster-truth-review-panel"
+				>
+					<div>
+						<p className="font-semibold text-amber-100">
+							Semakan produk diperlukan sebelum jana visual
+						</p>
+						<p className="mt-1 text-xs text-amber-100/80">
+							Semak cutout sebenar di bawah. Jana visual kekal disekat dan
+							tiada kerja IMG dihantar sehingga semua pengesahan dibuat.
+						</p>
+					</div>
+					<img
+						src={productTruthCutoutPreviewUrl(wf.product.id)}
+						alt={`Cutout untuk semakan ${wf.product.product_display_name || "produk"}`}
+						className="max-h-80 w-full rounded-lg border border-slate-700 bg-white/5 object-contain"
+						data-testid="poster-truth-cutout-preview"
+					/>
+					<div className="grid gap-2 text-xs text-slate-100">
+						<label className="grid gap-1">
+							<span className="font-semibold">Nama penyemak</span>
+							<input
+								type="text"
+								value={reviewedBy}
+								onChange={(event) => setReviewedBy(event.target.value)}
+								placeholder="Masukkan nama penyemak"
+								data-testid="poster-truth-reviewed-by"
+								className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100"
+							/>
+						</label>
+						<label className="flex items-start gap-2">
+							<input
+								type="checkbox"
+								checked={confirmIdentity}
+								onChange={(event) => setConfirmIdentity(event.target.checked)}
+								data-testid="poster-truth-confirm-identity"
+							/>
+							<span>Identiti dan warna produk tepat.</span>
+						</label>
+						<label className="flex items-start gap-2">
+							<input
+								type="checkbox"
+								checked={confirmLabelLogo}
+								onChange={(event) => setConfirmLabelLogo(event.target.checked)}
+								data-testid="poster-truth-confirm-label-logo"
+							/>
+							<span>Label dan logo tepat serta boleh dikenal pasti.</span>
+						</label>
+						<label className="flex items-start gap-2">
+							<input
+								type="checkbox"
+								checked={confirmGeometryScale}
+								onChange={(event) => setConfirmGeometryScale(event.target.checked)}
+								data-testid="poster-truth-confirm-geometry-scale"
+							/>
+							<span>Geometry dan skala cutout tepat.</span>
+						</label>
+						<label className="flex items-start gap-2">
+							<input
+								type="checkbox"
+								checked={confirmProductIsolation}
+								onChange={(event) => setConfirmProductIsolation(event.target.checked)}
+								data-testid="poster-truth-confirm-product-isolation"
+							/>
+							<span>Produk sahaja — tiada props, makanan, hiasan, atau objek lain yang tinggal.</span>
+						</label>
+					</div>
 					<button
 						type="button"
-						data-testid="poster-scene-retry"
-						onClick={load}
-						className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-200"
+						onClick={() => void approveTruthLock()}
+						disabled={!allTruthConfirmed || truthApproving}
+						data-testid="poster-truth-approve"
+						className="rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-50"
 					>
-						Try again
+						{truthApproving ? "Mengesahkan…" : "Sahkan semakan produk"}
 					</button>
 				</div>
 			) : null}
-
-			{!loading && !artifactsError && artifacts && artifacts.length === 0 ? (
-				<div
-					className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-5 text-center"
-					data-testid="poster-scene-empty"
+			{truthConfirmed && wf.creativeMode !== "CREATIVE_CAMPAIGN" ? (
+				<p
+					className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100"
+					data-testid="poster-truth-approved"
 				>
-					<p className="text-sm text-slate-400">
-						No scenes available right now (old scenes expire after 48 hours).
-						The poster cannot be generated until a clean scene is available.
+					Identiti, label/logo, geometry dan skala produk telah disahkan.
+				</p>
+			) : null}
+			<ErrorNote testid="poster-truth-review-error" text={truthError} />
+
+			<div
+				className="space-y-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4"
+				data-testid="poster-scene-generation-panel"
+			>
+				<div>
+					<p className="font-semibold text-slate-100">Jana visual poster</p>
+					<p className="mt-1 text-xs text-slate-400">
+						{wf.creativeMode === "CREATIVE_CAMPAIGN"
+							? "Creative Campaign menghantar prompt sembilan seksyen bersama Product Reference Pack kepada provider. Provider menghasilkan poster lengkap; scene lama tidak diperlukan."
+							: "Visual baharu menggunakan product reference yang dikunci oleh sistem. Exact Commerce kekal menggunakan compositor sebagai fallback. "}
+						IMG ini tidak menggunakan kredit penjanaan; kredit Google Flow hanya berkaitan
+						video. Pengesahan di bawah hanya mengesahkan satu operasi IMG akan dihantar.
 					</p>
-					<div className="flex flex-wrap justify-center gap-2">
-						<a
-							data-testid="poster-scene-open-img"
-							href={imgFastlaneHref}
-							className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-emerald-400"
-						>
-							Open IMG to generate a scene
-						</a>
+				</div>
+				{wf.sceneGenerationLoading ? (
+					<Busy
+						label={
+							{
+								building_prompt: "Menyediakan arahan visual…",
+								validating_product: "Mengesahkan product reference…",
+						preparing_exact_scene: "Menyediakan visual exact-product…",
+						compiling_creative_prompt: "Menyusun prompt Creative Campaign…",
+								generating_scene: "Menghantar kerja IMG…",
+								waiting_for_scene: "Menunggu visual siap…",
+							}[wf.sceneGenerationStage] || "Memproses visual…"
+						}
+					/>
+				) : null}
+				<ErrorNote
+					testid="poster-scene-generation-error"
+					text={wf.sceneGenerationError}
+				/>
+				<button
+					type="button"
+					data-testid="poster-generate-scene"
+						disabled={
+							wf.sceneGenerationLoading ||
+							(wf.creativeMode === "CREATIVE_CAMPAIGN" &&
+								(referencePackLoading || referencePack?.pack_status !== "APPROVED")) ||
+							(wf.creativeMode !== "CREATIVE_CAMPAIGN" &&
+									(truthLoading || truthPending))
+							}
+					onClick={() => {
+						setCreditConfirmed(false);
+						setCreditConfirmOpen(true);
+					}}
+					className="rounded-lg bg-emerald-500 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-50"
+				>
+					{wf.generatedSceneMediaId ? "Jana semula visual" : "Jana visual poster"}
+				</button>
+				{creditConfirmOpen ? (
+					<div
+						className="space-y-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3"
+						data-testid="poster-generate-scene-confirm"
+					>
+						<p className="text-xs text-amber-100">
+							Sahkan sekali lagi untuk menghantar satu kerja IMG. Operasi gambar ini
+							tidak menggunakan kredit penjanaan; tiada kerja dihantar sebelum
+							pengesahan ini.
+						</p>
+						<label className="flex items-start gap-2 text-xs text-slate-200">
+							<input
+								type="checkbox"
+								data-testid="poster-generate-scene-credit-checkbox"
+								checked={creditConfirmed}
+								onChange={(event) => setCreditConfirmed(event.target.checked)}
+								className="mt-0.5"
+							/>
+							<span>
+								Saya faham tindakan ini menghantar satu kerja IMG tanpa caj kredit
+								penjanaan.
+							</span>
+						</label>
+						<div className="flex gap-2">
+							<button
+								type="button"
+								data-testid="poster-generate-scene-credit-cancel"
+								onClick={() => setCreditConfirmOpen(false)}
+								className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-200"
+							>
+								Batal
+							</button>
+							<button
+								type="button"
+								data-testid="poster-generate-scene-credit-confirm"
+								disabled={!creditConfirmed || wf.sceneGenerationLoading}
+								onClick={() => {
+									setCreditConfirmOpen(false);
+									void wf.generateScene();
+								}}
+								className="rounded-lg bg-amber-400 px-3 py-1.5 text-xs font-bold text-slate-950 disabled:opacity-50"
+							>
+								Teruskan jana
+							</button>
+						</div>
+					</div>
+				) : null}
+				{wf.generatedSceneMediaId ? (
+					<div className="space-y-2" data-testid="poster-generated-scene">
+						<p className="text-xs font-semibold text-emerald-200">
+							Visual baharu tersedia dan dipilih untuk poster.
+						</p>
+						<img
+							src={
+								wf.generatedSceneUrl ||
+								`/api/flow/retrieved/${encodeURIComponent(wf.generatedSceneMediaId)}`
+							}
+							alt="Visual poster yang dijana"
+							className="max-h-72 rounded-lg border border-slate-800 object-contain"
+						/>
+					</div>
+				) : null}
+			</div>
+
+			<details
+				className="rounded-xl border border-slate-800 bg-slate-950/40 p-3"
+				data-testid="poster-existing-scene-options"
+				onToggle={(event) => {
+					const open = event.currentTarget.open;
+					setExistingOpen(open);
+					if (open && artifacts === null && !loading) load();
+				}}
+			>
+				<summary className="cursor-pointer text-xs font-semibold text-slate-400">
+					Gunakan visual sedia ada (pilihan sahaja)
+				</summary>
+				<p className="mt-2 text-[11px] text-slate-500">
+					Ini bukan prasyarat. Visual sedia ada mungkin luput selepas 48 jam;
+					jana visual baharu di atas untuk kerja poster baharu.
+				</p>
+				{existingOpen && loading ? <Busy label="Memuatkan visual sedia ada…" /> : null}
+				{existingOpen && artifactsError ? (
+					<div className="space-y-2" data-testid="poster-scene-error">
+						<ErrorNote testid="poster-scene-error-text" text={artifactsError} />
 						<button
 							type="button"
-							data-testid="poster-scene-refresh"
+							data-testid="poster-scene-retry"
 							onClick={load}
-							className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-800"
+							className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-200"
 						>
-							Reload scenes
+							Cuba lagi
 						</button>
 					</div>
-				</div>
-			) : null}
-
-			{artifacts && artifacts.length > 0 ? (
-				<div data-testid="poster-scene-grid">
-					<VisualAssetPicker
-						items={artifacts.map((artifact) => {
-							const expiring =
-								typeof (artifact as { expires_in_hours?: number | null })
-									.expires_in_hours === "number" &&
-								((artifact as { expires_in_hours?: number | null })
-									.expires_in_hours ?? 99) < 6;
-							return {
-								value: artifact.media_id,
-								title: (artifact.mode || "Scene").toUpperCase(),
-								subtitle: artifact.created_at
-									? `${artifact.media_id} · ${artifact.created_at.slice(0, 10)}`
-									: artifact.media_id,
-								previewUrl: `/api/flow/retrieved/${encodeURIComponent(
-									artifact.media_id,
-								)}`,
-								status: expiring ? "Hampir luput" : "Sedia digunakan",
-							};
-						})}
-						label="Poster scene"
-						onChange={wf.setBackgroundMediaId}
-						placeholder="Choose a visual scene"
-						value={wf.backgroundMediaId}
-					/>
-				</div>
-			) : null}
+				) : null}
+				{existingOpen && !loading && !artifactsError && artifacts?.length === 0 ? (
+					<div
+						className="mt-3 rounded-lg border border-slate-800 px-3 py-3 text-xs text-slate-400"
+						data-testid="poster-scene-empty"
+					>
+						Tiada visual sedia ada. Ini tidak menghalang jana visual poster baharu.
+					</div>
+				) : null}
+				{existingOpen && artifacts && artifacts.length > 0 ? (
+					<div className="mt-3" data-testid="poster-scene-grid">
+						<VisualAssetPicker
+							items={artifacts.map((artifact) => {
+								const expiring =
+									typeof (artifact as { expires_in_hours?: number | null })
+										.expires_in_hours === "number" &&
+									((artifact as { expires_in_hours?: number | null })
+										.expires_in_hours ?? 99) < 6;
+								return {
+									value: artifact.media_id,
+									title: (artifact.mode || "Visual").toUpperCase(),
+									subtitle: artifact.created_at
+										? `${artifact.media_id} · ${artifact.created_at.slice(0, 10)}`
+										: artifact.media_id,
+									previewUrl: `/api/flow/retrieved/${encodeURIComponent(
+										artifact.media_id,
+									)}`,
+									status: expiring ? "Hampir luput" : "Sedia digunakan",
+								};
+							})}
+							label="Visual poster sedia ada"
+							onChange={wf.setBackgroundMediaId}
+							placeholder="Pilih visual sedia ada"
+							value={wf.backgroundMediaId}
+						/>
+					</div>
+				) : null}
+			</details>
 
 			<details className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
 				<summary className="cursor-pointer text-xs font-semibold text-slate-400">
@@ -1110,14 +1521,14 @@ function SceneStep({ wf }: { wf: WF }) {
 					className="mt-2 block text-xs font-semibold text-slate-300"
 					htmlFor="poster-scene-bg-input"
 				>
-					Scene media ID (for technicians only)
+					ID media scene (untuk juruteknik sahaja)
 				</label>
 				<input
 					id="poster-scene-bg-input"
 					data-testid="poster-scene-bg-input"
 					value={wf.backgroundMediaId}
 					onChange={(e) => wf.setBackgroundMediaId(e.target.value)}
-					placeholder="existing scene media_id"
+					placeholder="media_id scene sedia ada"
 					className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100"
 				/>
 			</details>
@@ -1126,6 +1537,135 @@ function SceneStep({ wf }: { wf: WF }) {
 }
 
 function ComposeStep({ wf }: { wf: WF }) {
+	const [reviewer, setReviewer] = useState("operator");
+	const [reviewScores, setReviewScores] = useState({
+		product_identity: 0,
+		product_integration_physics: 0,
+		typography_copy_hierarchy: 0,
+		malaysian_context_authenticity: 0,
+		conversion_strength: 0,
+	});
+	const updateScore = (key: keyof typeof reviewScores, value: string) =>
+		setReviewScores((current) => ({ ...current, [key]: Number(value) || 0 }));
+	const submitReview = (decision: "APPROVED" | "REVISION_REQUIRED") => {
+		void wf.reviewCampaign({
+			decision,
+			reviewer: reviewer.trim() || "operator",
+			...reviewScores,
+			rejection_reasons: decision === "REVISION_REQUIRED" ? ["OTHER"] : [],
+			review_notes:
+				decision === "REVISION_REQUIRED"
+					? "Operator meminta semakan semula selepas pemeriksaan visual."
+					: "Operator mengesahkan rubric World-Class Poster Review.",
+		});
+	};
+	if (wf.creativeMode === "CREATIVE_CAMPAIGN") {
+		const qaReport = wf.deliverable?.qa_report;
+		const campaignQa = qaReport?.campaign_qa;
+		const review = qaReport?.world_class_review;
+		const deliverableId = wf.deliverable?.deliverable.poster_deliverable_id ?? "";
+		return (
+			<div className="space-y-3">
+				{wf.generatedSceneMediaId ? (
+					<div className="rounded-xl border border-sky-500/30 bg-sky-500/10 p-3">
+						<p className="text-sm font-semibold text-sky-100">
+							Clean key visual daripada Google Flow — lineage sahaja
+						</p>
+						<img
+							data-testid="poster-creative-campaign-key-visual"
+							src={
+								wf.generatedSceneUrl ||
+								`/api/flow/retrieved/${encodeURIComponent(wf.generatedSceneMediaId)}`
+							}
+							alt="Clean key visual Creative Campaign"
+							className="mt-2 max-h-72 rounded-xl border border-slate-800 object-contain"
+						/>
+						<p className="mt-2 text-xs text-amber-200/90">
+							Bukan poster akhir. Copy deterministik ditambah hanya selepas KV berjaya.
+						</p>
+					</div>
+				) : (
+					<p className="text-xs text-amber-200/90" data-testid="poster-compose-need-scene">
+						Jana clean key visual dahulu di langkah Visual/Latar.
+					</p>
+				)}
+				<button
+					type="button"
+					data-testid="poster-compose"
+					onClick={() => void wf.compose()}
+					disabled={wf.composeLoading || !wf.backgroundMediaId}
+					className="flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50"
+				>
+					{wf.composeLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+					{wf.deliverable ? "Kompos semula poster" : "Kompos poster akhir"}
+				</button>
+				<ErrorNote testid="poster-compose-error" text={wf.composeError} />
+				{wf.deliverable ? (
+					<div className="space-y-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3">
+						<p className="text-sm font-semibold text-emerald-100">
+							Poster akhir — copy deterministik + KV berlineage
+						</p>
+						<img
+							data-testid="poster-creative-campaign-preview"
+							src={posterDeliverableOutputUrl(deliverableId)}
+							alt="Poster akhir Creative Campaign"
+							className="max-h-96 rounded-xl border border-slate-800 object-contain"
+						/>
+						<div className="grid gap-2 sm:grid-cols-2">
+							<button type="button" data-testid="poster-copy-edit-action" onClick={() => void wf.editApproved()} className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200">
+								Ubah copy sahaja
+							</button>
+							<button type="button" data-testid="poster-layout-action" onClick={() => void wf.loadCampaignVariants()} className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200">
+								Tukar layout sahaja
+							</button>
+							<button type="button" data-testid="poster-route-action" onClick={() => void wf.loadCampaignVariants()} className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200">
+								Tukar design route
+						</button>
+							<button type="button" data-testid="poster-new-kv-action" onClick={() => void wf.generateScene()} className="rounded-lg border border-amber-500/40 px-3 py-2 text-xs text-amber-100">
+								Jana KV baharu
+							</button>
+						</div>
+						{wf.campaignVariantsLoading ? <Busy label="Menyediakan tiga varian deterministic…" /> : null}
+						<ErrorNote testid="poster-variants-error" text={wf.campaignVariantsError} />
+						{wf.campaignVariants ? (
+							<div className="space-y-2" data-testid="poster-campaign-variants">
+								<div className="flex items-center justify-between">
+									<p className="text-xs font-semibold text-slate-200">Tiga varian terkawal · KV sama · provider ops 0</p>
+									<button type="button" data-testid="poster-compare-variants" onClick={() => void wf.loadCampaignVariants()} className="rounded-lg border border-sky-500/40 px-2 py-1 text-xs text-sky-100">Bandingkan</button>
+								</div>
+								<div className="grid gap-2 sm:grid-cols-3">
+									{wf.campaignVariants.variants.map((variant) => (
+										<figure key={variant.variant_id} className="rounded-lg border border-slate-800 bg-slate-950/50 p-2">
+											<img src={posterCampaignVariantOutputUrl(deliverableId, variant.variant_id)} alt={`Varian ${variant.variant_index}`} className="max-h-64 w-full rounded object-contain" />
+											<figcaption className="mt-1 text-[10px] text-slate-400">{variant.layout_variant} · {variant.manifest_sha256.slice(0, 10)}</figcaption>
+										</figure>
+									))}
+								</div>
+							</div>
+						) : null}
+						<div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3" data-testid="poster-world-class-review">
+							<p className="text-xs font-semibold text-amber-100">World-Class Poster Review · {review?.decision ?? campaignQa?.campaign_review_status ?? "PENDING_HUMAN_REVIEW"}</p>
+							<p className="mt-1 text-[11px] text-slate-400">Identity, label, scale, typography dan physical integration tidak auto-lulus.</p>
+							<div className="mt-2 grid gap-2 sm:grid-cols-2">
+								<input value={reviewer} onChange={(e) => setReviewer(e.target.value)} aria-label="Reviewer" placeholder="Reviewer" className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-100" />
+								<input type="number" min="0" max="25" value={reviewScores.product_identity} onChange={(e) => updateScore("product_identity", e.target.value)} aria-label="Product identity score" className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-100" />
+								<input type="number" min="0" max="25" value={reviewScores.product_integration_physics} onChange={(e) => updateScore("product_integration_physics", e.target.value)} aria-label="Integration score" className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-100" />
+								<input type="number" min="0" max="20" value={reviewScores.typography_copy_hierarchy} onChange={(e) => updateScore("typography_copy_hierarchy", e.target.value)} aria-label="Typography score" className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-100" />
+								<input type="number" min="0" max="15" value={reviewScores.malaysian_context_authenticity} onChange={(e) => updateScore("malaysian_context_authenticity", e.target.value)} aria-label="Malaysian context score" className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-100" />
+								<input type="number" min="0" max="15" value={reviewScores.conversion_strength} onChange={(e) => updateScore("conversion_strength", e.target.value)} aria-label="Conversion score" className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-100" />
+							</div>
+							<div className="mt-2 flex flex-wrap gap-2">
+								<button type="button" data-testid="poster-review-approve" onClick={() => submitReview("APPROVED")} disabled={wf.campaignReviewLoading} className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-slate-950 disabled:opacity-50">Luluskan</button>
+								<button type="button" data-testid="poster-review-reject" onClick={() => submitReview("REVISION_REQUIRED")} disabled={wf.campaignReviewLoading} className="rounded-lg border border-rose-500/50 px-3 py-1.5 text-xs text-rose-100 disabled:opacity-50">Tolak dengan sebab</button>
+							</div>
+							<ErrorNote testid="poster-review-error" text={wf.campaignReviewError} />
+						</div>
+						{campaignQa?.findings?.length ? <QaGroup testid="poster-campaign-qa-findings" tone="amber" title="Semakan Campaign" items={campaignQa.findings} /> : null}
+					</div>
+				) : null}
+			</div>
+		);
+	}
 	const qa = bucketQaFindings(wf.deliverable?.qa_report);
 	return (
 		<div className="space-y-3">
@@ -1134,7 +1674,7 @@ function ComposeStep({ wf }: { wf: WF }) {
 					className="text-xs text-amber-200/90"
 					data-testid="poster-compose-need-scene"
 				>
-					Choose a background scene first in the Background step.
+					Jana atau pilih visual poster dahulu di langkah Latar.
 				</p>
 			) : null}
 			<button
@@ -1147,7 +1687,7 @@ function ComposeStep({ wf }: { wf: WF }) {
 				{wf.composeLoading ? (
 					<Loader2 className="h-4 w-4 animate-spin" />
 				) : null}
-				{wf.deliverable ? "Generate again" : "Generate poster"}
+				{wf.deliverable ? "Hasilkan semula" : "Hasilkan poster"}
 			</button>
 			<ErrorNote testid="poster-compose-error" text={wf.composeError} />
 			{wf.deliverable ? (
@@ -1173,7 +1713,7 @@ function ComposeStep({ wf }: { wf: WF }) {
 							<QaGroup
 								testid="poster-qa-review"
 								tone="amber"
-								title="Review Recommended"
+								title="Semakan Disyorkan"
 								items={qa.review}
 							/>
 						) : null}
@@ -1182,7 +1722,7 @@ function ComposeStep({ wf }: { wf: WF }) {
 								className="rounded-lg border border-emerald-600/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100"
 								data-testid="poster-qa-passed"
 							>
-								✓ All checks passed.
+								✓ Semua semakan lulus.
 							</p>
 						) : null}
 					</div>
@@ -1223,30 +1763,34 @@ function QaGroup({
 }
 
 function SaveStep({ wf }: { wf: WF }) {
+	const creativeOutput = wf.creativeMode === "CREATIVE_CAMPAIGN";
 	return (
 		<div className="space-y-3">
 			{!wf.deliverable ? (
-				<p className="text-sm text-slate-400">Generate the poster first.</p>
+				<p className="text-sm text-slate-400">Hasilkan poster dahulu.</p>
 			) : wf.savedAssetId ? (
 				<div
 					className="space-y-2 rounded-2xl border border-emerald-600/40 bg-emerald-500/10 p-4"
 					data-testid="poster-saved"
 				>
 					<p className="flex items-center gap-2 text-sm font-semibold text-emerald-100">
-						<Check className="h-4 w-4" /> Poster saved to Creative Library.
+						<Check className="h-4 w-4" /> Poster disimpan ke Creative Library.
 					</p>
 					<img
 						src={posterDeliverableOutputUrl(
-							wf.deliverable.deliverable.poster_deliverable_id,
+							wf.deliverable?.deliverable.poster_deliverable_id || "",
 						)}
-						alt="Saved poster"
+						alt="Poster tersimpan"
 						className="max-h-72 rounded-lg border border-slate-800 object-contain"
 					/>
 				</div>
 			) : (
 				<>
 					<p className="text-sm text-slate-400">
-						Save the poster to Creative Library to reuse & download.
+						Simpan poster ke Creative Library untuk guna semula & muat turun.
+						{creativeOutput
+							? " Output provider akan kekal PENDING_REVIEW sehingga semakan manusia selesai."
+							: ""}
 					</p>
 					<ErrorNote testid="poster-save-error" text={wf.saveError} />
 					<button
@@ -1284,8 +1828,15 @@ function StepNav({ wf }: { wf: WF }) {
 		(wf.step === "copy" &&
 			(wf.selectedDirection !== null || !!wf.editingCopySetId)) ||
 		(wf.step === "approve" && wf.approvedCopySet !== null) ||
-		(wf.step === "scene" && wf.recipeId !== null && !!wf.backgroundMediaId) ||
-		(wf.step === "compose" && wf.deliverable !== null);
+		(wf.step === "scene" &&
+			wf.recipeId !== null &&
+			(wf.creativeMode === "CREATIVE_CAMPAIGN"
+				? !!wf.generatedSceneMediaId
+				: !!wf.backgroundMediaId)) ||
+		(wf.step === "compose" &&
+			(wf.creativeMode === "CREATIVE_CAMPAIGN"
+				? !!wf.generatedSceneMediaId
+				: wf.deliverable !== null));
 
 	return (
 		<div className="mt-5 flex items-center justify-between border-t border-slate-800 pt-4">
@@ -1296,7 +1847,7 @@ function StepNav({ wf }: { wf: WF }) {
 				onClick={() => prev && wf.goTo(prev)}
 				className="flex items-center gap-1.5 rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300 disabled:opacity-30"
 			>
-				<ArrowLeft className="h-4 w-4" /> Back
+				<ArrowLeft className="h-4 w-4" /> Kembali
 			</button>
 			{target ? (
 				<button
@@ -1311,7 +1862,7 @@ function StepNav({ wf }: { wf: WF }) {
 					Teruskan <ArrowRight className="h-4 w-4" />
 				</button>
 			) : (
-				<span className="text-xs text-slate-500">Select to continue</span>
+				<span className="text-xs text-slate-500">Pilih untuk meneruskan</span>
 			)}
 		</div>
 	);
@@ -1325,38 +1876,38 @@ function PosterSummary({ wf }: { wf: WF }) {
 			data-testid="poster-guided-summary"
 		>
 			<p className="text-xs font-bold uppercase tracking-wide text-slate-500">
-				Summary
+				Ringkasan
 			</p>
-			<SummaryRow label="Product" value={wf.product?.product_display_name} />
+			<SummaryRow label="Produk" value={wf.product?.product_display_name} />
 			<SummaryRow
-				label="Objective"
+				label="Tujuan"
 				value={
 					wf.goalArchetype
 						? goalForArchetype(wf.goalArchetype).title
 						: undefined
 				}
 			/>
-			<SummaryRow label="Angle" value={wf.selectedAngle || undefined} />
+			<SummaryRow label="Sudut" value={wf.selectedAngle || undefined} />
 			<SummaryRow
-				label="Primary text"
+				label="Teks utama"
 				value={wf.fields.primary_message || undefined}
 			/>
 			<SummaryRow
-				label="Text status"
+				label="Status teks"
 				value={
 					wf.approvedCopySet
-						? "Approved"
+						? "Disahkan"
 						: wf.historicalCopySet
-							? "History version (read-only)"
+							? "Versi sejarah (kunci-baca)"
 							: wf.editingCopySetId
-								? "New draft version"
+								? "Draf versi baharu"
 								: wf.fields.primary_message
-									? "Draft"
+									? "Draf"
 									: undefined
 				}
 			/>
 			<SummaryRow
-				label="Visual style"
+				label="Gaya visual"
 				value={
 					wf.recipeId
 						? goalForArchetype(wf.goalArchetype ?? "").title
@@ -1365,7 +1916,7 @@ function PosterSummary({ wf }: { wf: WF }) {
 			/>
 			{wf.deliverable ? (
 				<SummaryRow
-					label="Product authenticity"
+					label="Kesahihan produk"
 					value={truthLabel(wf.deliverable.deliverable.composition_strategy)}
 				/>
 			) : null}
@@ -1397,15 +1948,15 @@ function ReopenCard({
 	const status = reopened.poster_copy_set?.status ?? "";
 	const badge = historical
 		? {
-				label: "History version (read-only)",
+				label: "Versi sejarah (kunci-baca)",
 				cls: "bg-amber-500/20 text-amber-100",
 			}
 		: status === "POSTER_COPY_APPROVED"
 			? {
-					label: "Currently approved text",
+					label: "Teks diluluskan semasa",
 					cls: "bg-emerald-500/20 text-emerald-100",
 				}
-			: { label: "Draft", cls: "bg-slate-700 text-slate-200" };
+			: { label: "Draf", cls: "bg-slate-700 text-slate-200" };
 	return (
 		<section
 			className="rounded-2xl border border-emerald-700/40 bg-emerald-950/20 p-4"
@@ -1413,7 +1964,7 @@ function ReopenCard({
 		>
 			<div className="mb-3 flex items-center gap-2">
 				<p className="text-[10px] font-bold uppercase tracking-wide text-emerald-400">
-					Reopened from Creative Library
+					Dibuka semula dari Creative Library
 				</p>
 				<span
 					className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${badge.cls}`}
@@ -1427,33 +1978,33 @@ function ReopenCard({
 						src={posterDeliverableOutputUrl(
 							reopened.deliverable.poster_deliverable_id,
 						)}
-						alt="Original saved poster"
+						alt="Poster asal tersimpan"
 						className="h-48 rounded-lg border border-slate-800 object-contain"
 						data-testid="poster-guided-reopen-output"
 					/>
 				) : (
 					<p className="text-xs text-amber-300">
-						The original output is not on this runtime.
+						Output asal tiada di runtime ini.
 					</p>
 				)}
 				<div className="space-y-1 text-xs text-slate-300">
 					<p>
-						<span className="text-slate-500">Output source: </span>
+						<span className="text-slate-500">Sumber output: </span>
 						<span data-testid="poster-guided-reopen-source">
 							{reopened.output_available
 								? reopened.output_source === "CREATIVE_LIBRARY"
-									? "Creative Library copy (durable)"
-									: "Original deliverable file"
-								: "None"}
+									? "Salinan Creative Library (durable)"
+									: "Fail deliverable asal"
+								: "Tiada"}
 						</span>
 					</p>
 					<p>
-						<span className="text-slate-500">Text: </span>
+						<span className="text-slate-500">Teks: </span>
 						{reopened.poster_copy_set?.primary_message ?? "—"}
 					</p>
 					<p className="text-[11px] text-slate-500">
-						The entire workflow has been restored — you can navigate
-						each step below.
+						Keseluruhan aliran kerja telah dipulihkan — anda boleh menavigasi
+						setiap langkah di bawah.
 					</p>
 				</div>
 			</div>
@@ -1466,7 +2017,7 @@ function ReopenCard({
 							onClick={() => wf.reuseSameCopy()}
 							className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-100"
 						>
-							Use the same text
+							Guna teks sama
 						</button>
 						<button
 							type="button"
@@ -1474,7 +2025,7 @@ function ReopenCard({
 							onClick={() => void wf.editApproved()}
 							className="rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-1.5 text-xs font-semibold text-sky-100"
 						>
-							Create a new version
+							Cipta versi baharu
 						</button>
 					</>
 				) : null}
@@ -1487,8 +2038,8 @@ function ReopenCard({
 						className="rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-1.5 text-xs font-semibold text-sky-100 disabled:opacity-50"
 					>
 						{wf.forkLoading
-							? "Creating a copy…"
-							: "Copy & edit (history version kept)"}
+							? "Mencipta salinan…"
+							: "Salin & sunting (versi sejarah kekal)"}
 					</button>
 				) : null}
 				<button

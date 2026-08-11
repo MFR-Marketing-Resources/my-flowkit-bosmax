@@ -255,6 +255,13 @@ def _primary_reason(reasons: list[str]) -> Optional[str]:
             tokens.add("GENERIC")
         elif r.startswith("INCOMPLETE") or r.startswith("COMPLETENESS"):
             tokens.add("INCOMPLETE")
+        # Stale PI lineage on the receipt is STALE, not "missing review" — the
+        # receipt exists; it is bound to a superseded authority (#688).
+        elif r in {
+            "SEMANTIC_REVIEW_STALE_LINEAGE",
+            "SEMANTIC_REVIEW_DIGEST_MISMATCH",
+        } or r.startswith("SEMANTIC_REVIEW_STALE"):
+            tokens.add("STALE")
         elif r.startswith("SEMANTIC_REVIEW"):
             tokens.add("MISSING_REVIEW")
         elif r.startswith("FORMULA"):
@@ -264,6 +271,9 @@ def _primary_reason(reasons: list[str]) -> Optional[str]:
         elif r == "MISSING_PI_LINEAGE":
             tokens.add("INVALID_LINEAGE")
         elif r.startswith("PI_") and r.endswith("MISMATCH"):
+            tokens.add("STALE")
+        elif r.startswith("QUARANTINED"):
+            # Bare quarantine without a stronger token recovers via revalidation.
             tokens.add("STALE")
     if not tokens:
         return None
@@ -489,13 +499,21 @@ def classify_product_copy(
         }
 
     valid = [v for v in set_verdicts if v.get("valid")]
+    raw_approved_ids = {
+        _clean(s.get("copy_set_id"))
+        for s in raw_sets
+        if _clean(s.get("status")).upper() == STATUS_COPY_APPROVED and not bool(s.get("archived"))
+    }
     if valid:
+        invalid_ids = sorted(raw_approved_ids - {_clean(v.get("copy_set_id")) for v in valid})
         return {
             "classification": CLASS_APPROVED_COPY_VALID,
             "recommended_next_action": ACTION_READY,
             "valid_copy_set_id": valid[0].get("copy_set_id"),
+            "valid_approved_count": len(valid),
+            "raw_approved_count": len(raw_approved_ids),
             "block_reasons": [],
-            "invalid_copy_set_ids": [],
+            "invalid_copy_set_ids": invalid_ids,
         }
 
     # Approved-but-invalid sets: classify by the MOST RECOVERABLE dominant blocker.
@@ -526,6 +544,8 @@ def classify_product_copy(
             "classification": klass,
             "recommended_next_action": action,
             "valid_copy_set_id": None,
+            "valid_approved_count": 0,
+            "raw_approved_count": len(approved_ids),
             "primary_blocker": pr,
             "best_recoverable_copy_set_id": best.get("copy_set_id"),
             "block_reasons": list(best.get("reasons") or []),
@@ -1213,3 +1233,111 @@ async def copywriting_validity_coverage(
         "classification_counts": buckets,
         "coverage_pct": round(100.0 * valid / total, 1) if total else 0.0,
     }
+
+
+# ── Shared validity contract for API / UI consumers (#688) ───────────────────
+# Workflow status (COPY_APPROVED) is NOT production-valid by itself. Every list/
+# detail/readiness surface must expose these fields from the same authority.
+
+VALIDITY_UI_LABEL = {
+    CLASS_APPROVED_COPY_VALID: "VALID",
+    CLASS_APPROVED_COPY_STALE: "STALE PI",
+    CLASS_APPROVED_COPY_INVALID_LINEAGE: "INVALID LINEAGE",
+    CLASS_APPROVED_COPY_MISSING_REVIEW: "MISSING REVIEW",
+    CLASS_APPROVED_COPY_FORMULA_REVIEW: "FORMULA REVIEW",
+    CLASS_APPROVED_COPY_SALES_CLARITY_REVIEW: "SALES CLARITY",
+    CLASS_APPROVED_COPY_INCOMPLETE: "INCOMPLETE",
+    CLASS_APPROVED_COPY_GENERIC: "GENERIC",
+    CLASS_APPROVED_COPY_UNSAFE: "UNSAFE",
+}
+
+
+def build_validity_contract(*, copy_set: dict[str, Any], verdict: dict[str, Any]) -> dict[str, Any]:
+    """Map an evaluate_copy_set_validity verdict into the shared API contract."""
+    status = _clean(copy_set.get("status") or verdict.get("status")).upper()
+    valid = bool(verdict.get("valid"))
+    reasons = list(verdict.get("reasons") or [])
+    pr = verdict.get("primary_reason")
+    if pr is None and reasons:
+        pr = _primary_reason(reasons)
+    if valid:
+        klass = CLASS_APPROVED_COPY_VALID
+        action = ACTION_READY
+    elif status != STATUS_COPY_APPROVED:
+        klass = f"WORKFLOW_{status or 'UNKNOWN'}"
+        action = ACTION_REVIEW_EXISTING
+    else:
+        klass, action = _PRIMARY_TO_CLASS.get(
+            pr or "MISSING_REVIEW",
+            (CLASS_APPROVED_COPY_MISSING_REVIEW, ACTION_SEMANTIC_REVIEW),
+        )
+    return {
+        "workflow_status": status or None,
+        "production_valid": valid,
+        "validity_class": klass,
+        "validity_class_label": VALIDITY_UI_LABEL.get(
+            klass, klass.replace("APPROVED_COPY_", "").replace("_", " ")
+        ),
+        "validity_reasons": reasons,
+        "recommended_action": action,
+        "validity_primary_reason": pr,
+        "validity_stale": bool(verdict.get("stale")),
+    }
+
+
+def merge_validity_contract(copy_set: dict[str, Any], verdict: dict[str, Any]) -> dict[str, Any]:
+    """Return copy_set dict with top-level validity contract fields merged in."""
+    out = dict(copy_set)
+    out.update(build_validity_contract(copy_set=copy_set, verdict=verdict))
+    return out
+
+
+async def enrich_copy_sets_with_validity(
+    product_id: str, copy_sets: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Attach production-validity contract fields to serialized Copy Sets (one PI load)."""
+    if not copy_sets:
+        return []
+    from agent.services.copy_eligibility_service import copy_eligibility
+
+    elig = await copy_eligibility(product_id)
+    snap = await _latest_approved_snapshot(product_id)
+    digest = pi_authority_digest(snap) if snap else None
+    pname = await _product_name(product_id)
+    out: list[dict[str, Any]] = []
+    for cs in copy_sets:
+        row = dict(cs)
+        if "claim_review" not in row or row.get("claim_review") is None:
+            row["claim_review"] = _parse_json(row.get("claim_review_json")) or {}
+        if "provenance" not in row or row.get("provenance") is None:
+            row["provenance"] = _parse_json(row.get("provenance_json")) or {}
+        verdict = evaluate_copy_set_validity(
+            copy_set=row,
+            product_eligible=bool(elig.get("eligible")),
+            product_eligibility_reasons=list(elig.get("reasons") or []),
+            current_snapshot_id=str(snap["snapshot_id"]) if snap else None,
+            current_snapshot_version=int(snap["version"]) if snap else None,
+            current_authority_digest=digest,
+            product_name=pname,
+        )
+        out.append(merge_validity_contract(cs, verdict))
+    return out
+
+
+async def enrich_copy_set_with_validity(copy_set: dict[str, Any]) -> dict[str, Any]:
+    """Single-set enrichment (detail / get)."""
+    pid = _clean(copy_set.get("product_id"))
+    if not pid:
+        return merge_validity_contract(
+            copy_set,
+            {
+                "valid": False,
+                "reasons": ["COPY_SET_MISSING_PRODUCT"],
+                "stale": False,
+                "primary_reason": None,
+                "status": copy_set.get("status"),
+            },
+        )
+    enriched = await enrich_copy_sets_with_validity(pid, [copy_set])
+    return enriched[0]
+

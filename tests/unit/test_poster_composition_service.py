@@ -100,6 +100,17 @@ def test_each_mode_resolves_a_structured_professional_plan():
         assert "no text covering product or face" in plan["quality_negative_rules"]
 
 
+def test_creative_campaign_resolves_provider_integrated_composition_profile():
+    plan = _plan("CREATIVE_CAMPAIGN", recipe_id="product_hero_night_routine")
+
+    assert plan["creative_mode"] == "CREATIVE_CAMPAIGN"
+    assert plan["profile_id"] == "provider_integrated_campaign_v1"
+    assert plan["scene"]["background_complexity"] == (
+        "preset-led coherent Malaysian environment"
+    )
+    assert plan["product"]["label_visibility"] == "required"
+
+
 def test_modes_structurally_distinct_across_independent_dimensions_without_profile_id():
     plans = {mode: _plan(mode, fields={}) for mode in MODES}
 

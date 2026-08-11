@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -67,6 +68,175 @@ def test_resolve_generic_db_product_with_image_url(tmp_path, monkeypatch):
     assert "Sambal Nyet Berapi" in bundle.identity_lock
 
 
+def test_schema_canonical_source_reuses_matching_persisted_asset_id(tmp_path, monkeypatch):
+    source = tmp_path / "canonical.jpg"
+    Image.new("RGB", (120, 180), color=(20, 80, 120)).save(source, format="JPEG")
+    from agent.services import product_visual_grounding_resolver as module
+
+    monkeypatch.setattr(
+        module,
+        "resolve_schema_entry",
+        lambda _product: {"canonical_source_path": str(source)},
+    )
+    monkeypatch.setattr(
+        module,
+        "_find_linked_approved_creative_asset",
+        lambda _product_id: {
+            "asset_id": "ca_persisted_canonical",
+            "media_id": None,
+            "local_file_path": str(source),
+        },
+    )
+
+    resolved = resolve_product_reference_image({"id": "product-1"})
+
+    assert resolved.media_id == "ca_persisted_canonical"
+    assert resolved.source_type == "SCHEMA_CANONICAL_SOURCE"
+
+
+def test_approved_canonical_cutout_wins_over_source_fallback(tmp_path, monkeypatch):
+    source = tmp_path / "source.jpg"
+    cutout = tmp_path / "cutout.png"
+    Image.new("RGB", (120, 180), color=(20, 80, 120)).save(source, format="JPEG")
+    cutout_image = Image.new("RGBA", (120, 180), color=(0, 0, 0, 0))
+    cutout_image.paste((20, 80, 120, 255), (20, 20, 100, 160))
+    cutout_image.save(cutout, format="PNG")
+    source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    cutout_sha = hashlib.sha256(cutout.read_bytes()).hexdigest()
+
+    from agent.services import product_visual_grounding_resolver as module
+
+    monkeypatch.setattr(
+        module.truth_lock_service,
+        "load_product_truth_lock",
+        lambda _product_id: SimpleNamespace(review_status="APPROVED"),
+    )
+    monkeypatch.setattr(
+        module.truth_lock_service,
+        "resolve_approved_product_truth_lock",
+        lambda _product_id: SimpleNamespace(
+            canonical_media_id="source-media-1",
+            canonical_source_path=str(source),
+            canonical_sha256=source_sha,
+            canonical_cutout_path=str(cutout),
+            canonical_cutout_sha256=cutout_sha,
+            canonical_cutout_media_id="cutout-media-1",
+        ),
+    )
+    monkeypatch.setattr(module, "_is_purged_product_id", lambda _product_id: False)
+
+    resolved = module.resolve_product_reference_image({"id": "canonical-1", "image_url": "https://example.com/source.jpg"})
+
+    assert resolved.source_type == "PRODUCT_TRUTH_LOCK_CUTOUT"
+    assert resolved.media_id == "cutout-media-1"
+    assert resolved.local_path == str(cutout)
+    assert resolved.sha256 == cutout_sha
+
+
+def test_reference_pack_source_builder_can_explicitly_keep_canonical_source(tmp_path, monkeypatch):
+    source = tmp_path / "source.jpg"
+    cutout = tmp_path / "cutout.png"
+    Image.new("RGB", (120, 180), color=(20, 80, 120)).save(source, format="JPEG")
+    Image.new("RGBA", (120, 180), color=(0, 0, 0, 0)).save(cutout, format="PNG")
+    source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    cutout_sha = hashlib.sha256(cutout.read_bytes()).hexdigest()
+
+    from agent.services import product_visual_grounding_resolver as module
+
+    monkeypatch.setattr(
+        module.truth_lock_service,
+        "load_product_truth_lock",
+        lambda _product_id: SimpleNamespace(review_status="APPROVED"),
+    )
+    monkeypatch.setattr(
+        module.truth_lock_service,
+        "resolve_approved_product_truth_lock",
+        lambda _product_id: SimpleNamespace(
+            canonical_media_id="source-media-1",
+            canonical_source_path=str(source),
+            canonical_sha256=source_sha,
+            canonical_cutout_path=str(cutout),
+            canonical_cutout_sha256=cutout_sha,
+            canonical_cutout_media_id="cutout-media-1",
+        ),
+    )
+
+    resolved = module.resolve_product_reference_image({"id": "canonical-1"}, prefer_approved_cutout=False)
+
+    assert resolved.source_type == "PRODUCT_TRUTH_LOCK"
+    assert resolved.local_path == str(source)
+    assert resolved.sha256 == source_sha
+
+
+def test_reference_pack_canonical_source_restores_missing_product_cache(tmp_path, monkeypatch):
+    source = tmp_path / "canonical.jpg"
+    Image.new("RGB", (800, 800), color=(40, 90, 120)).save(source, format="JPEG")
+    source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    from agent.services import product_visual_grounding_resolver as module
+
+    monkeypatch.setattr(module, "resolve_schema_entry", lambda _product: None)
+    monkeypatch.setattr(
+        module,
+        "_find_reference_pack_canonical_source",
+        lambda _product_id: {
+            "asset_id": "ca_refpack_canonical",
+            "local_file_path": str(source),
+            "sha256": source_sha,
+        },
+    )
+
+    resolved = module.resolve_product_reference_image(
+        {"id": "product-pack-source", "local_image_path": str(tmp_path / "missing.jpg")},
+        prefer_approved_cutout=False,
+    )
+
+    assert resolved.source_type == "REFERENCE_PACK_CANONICAL_SOURCE"
+    assert resolved.media_id == "ca_refpack_canonical"
+    assert resolved.sha256 == source_sha
+    assert resolved.width == 800
+    assert resolved.height == 800
+
+
+def test_registered_product_source_media_is_same_product_reference(tmp_path, monkeypatch):
+    source = tmp_path / "registered-source.png"
+    Image.new("RGB", (320, 240), color=(40, 90, 120)).save(source, format="PNG")
+    from agent.services import product_visual_grounding_resolver as module
+
+    monkeypatch.setattr(module, "resolve_schema_entry", lambda _product: None)
+    monkeypatch.setattr(
+        module,
+        "_find_registered_product_source_media",
+        lambda _product_id, _media_id: {
+            "media_id": "source-media-1",
+            "product_id": "product-1",
+            "kind": "image",
+            "local_path": str(source),
+        },
+    )
+
+    resolved = module.resolve_product_reference_image(
+        {"id": "product-1", "media_id": "source-media-1"},
+        prefer_approved_cutout=False,
+    )
+
+    assert resolved.source_type == "PRODUCT_SOURCE_MEDIA"
+    assert resolved.media_id == "source-media-1"
+    assert resolved.local_path == str(source)
+    assert resolved.validation_status == "VALIDATED"
+
+
+def test_purged_alias_cannot_receive_schema_visual_fallback(monkeypatch):
+    from agent.services import product_visual_grounding_resolver as module
+
+    monkeypatch.setattr(module, "get_product_by_id", lambda _product_id: None)
+    monkeypatch.setattr(module, "_is_purged_product_id", lambda _product_id: True)
+
+    with pytest.raises(ProductVisualReferenceRequiredError) as exc_info:
+        module.resolve_product_visual_grounding("purged-alias-1")
+
+    assert "PRODUCT_PURGED_ALIAS_NOT_ELIGIBLE" in str(exc_info.value)
+
+
 def test_get_grounded_generation_payload_binds_6_locks():
     mwcb_id = "6483d624-a03d-4933-9bba-6ca2e5f7b6fd"
     payload = get_grounded_generation_payload(
@@ -91,6 +261,8 @@ def test_get_grounded_generation_payload_binds_6_locks():
     full_prompt = payload["full_prompt"]
     assert "[PRODUCT CONTRACT]" in full_prompt
     assert "Use the attached image as the sole product reference for" in full_prompt
+    assert "NON_DETERMINISTIC_REFERENCE_CONDITIONED" in full_prompt
+    assert "human review required" in full_prompt
 
 
 def test_missing_product_image_fails_closed():

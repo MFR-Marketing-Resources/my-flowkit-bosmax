@@ -277,11 +277,38 @@ async def _record_artifacts(job, mode, artifacts):
         job["artifact_record_error"] = str(e)
 
 
+def _image_provider_operation_reference(response: dict) -> dict[str, str | None]:
+    """Extract provider correlation evidence without inventing an operation id.
+
+    The current Flow image response is known to expose media names, while an
+    operation id is not yet part of the proven response contract. Keep both
+    facts explicit so a live benchmark can promote the status only when the
+    provider actually returns an operation identifier.
+    """
+    data = response.get("data", response) if isinstance(response, dict) else response
+    provider_operation_id = _deep(
+        data, "operationId", "operation_id", "requestId", "request_id"
+    )
+    transport_batch_id = _deep(data, "batchId", "batch_id")
+    return {
+        "provider_operation_id": str(provider_operation_id)
+        if provider_operation_id
+        else None,
+        "transport_batch_id": str(transport_batch_id) if transport_batch_id else None,
+        "operation_id_status": "OBSERVED"
+        if provider_operation_id
+        else "UNPROVEN_PROVIDER_OPERATION_ID",
+    }
+
+
 async def start_generate(mode: str, prompt: str, project_id: str = None,
                          image_media_ids: list = None, image_prompt: str = None,
                          aspect: str = "9:16", tier: str = "PAYGATE_TIER_ONE",
                          model: str = None, duration_s: int = None,
-                         num_videos: int = 1, image_model: str = None) -> dict:
+                         num_videos: int = 1, image_model: str = None,
+                         max_image_attempts: int = 8,
+                         collect_image_variants: bool = False,
+                         product_id: str = None) -> dict:
     """THE one door. mode = IMG | T2V | I2V | F2V. Returns a job_id; poll get_job.
     num_videos is the USER's count setting (1–4) — honoured end-to-end: the
     negotiation demands exactly that many and retrieval collects them all."""
@@ -289,6 +316,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
     _gc_jobs()
     mode = (mode or "").upper()
     num_videos = max(1, min(4, int(num_videos or 1)))
+    max_image_attempts = max(1, min(8, int(max_image_attempts or 1)))
     # ONE-DOOR reference contract (transport hard caps): T2V is text-only —
     # attached references are NEVER inherited/forwarded; F2V carries at most 2
     # frames, I2V at most 3 ingredient refs. Rejected synchronously, before the
@@ -309,12 +337,17 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                      "media_id": None, "size_mb": None, "artifact": None,
                      "approved": None, "binding": None, "model": model,
                      "num_videos": num_videos, "artifacts": [],
+                     "provider_operation_ids": [],
+                     "max_image_attempts": max_image_attempts,
+                     "collect_image_variants": bool(collect_image_variants),
+                     "product_id": product_id,
                      "error": None, "created": time.time()}
     if mode in _VIDEO_MODES:
         _VIDEO_LANE_JOB = job_id  # claim the lane synchronously to avoid a race
     _JOBS[job_id]["_task"] = asyncio.create_task(
         _run_generate(job_id, mode, prompt, project_id, image_media_ids, image_prompt,
-                      aspect, tier, model, duration_s, num_videos, image_model))
+                      aspect, tier, model, duration_s, num_videos, image_model,
+                      max_image_attempts, collect_image_variants, product_id))
     return {"job_id": job_id, "status": "SUBMITTED", "mode": mode}
 
 
@@ -656,7 +689,8 @@ def _identity_captured(identity) -> bool:
 
 async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
                         image_prompt, aspect, tier, model=None, duration_s=None,
-                        num_videos=1, image_model=None):
+                        num_videos=1, image_model=None, max_image_attempts=8,
+                        collect_image_variants=False, product_id=None):
     from agent.api.flow import (_generate_image_with_recovery, _extract_images,
                                  _extract_project_id, _IMG_ASPECT_MAP)
     import aiohttp
@@ -688,30 +722,128 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         # 2) IMG — direct image API, no agent, no video credits
         if mode == "IMG":
             job["status"], job["stage"] = "GENERATING", "generating image"
-            res = await _generate_image_with_recovery(
-                client, prompt, project_id, aspect_key, tier, image_media_ids or [],
-                image_model=image_model or "NANO_BANANA_PRO")
-            if not res or res.get("error"):
-                raise RuntimeError("image gen failed: " + str((res or {}).get("error")))
-            imgs = _extract_images(res.get("data", res))
-            if not imgs or not imgs[0].get("url"):
-                raise RuntimeError("no image/url returned")
-            mid, url = imgs[0]["media_id"], imgs[0]["url"]
             outdir = OUTPUT_DIR / "retrieved"
             outdir.mkdir(parents=True, exist_ok=True)
-            path = outdir / f"{mid}.jpg"
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120)) as s:
-                async with s.get(url) as r:
-                    if r.status != 200:
-                        raise RuntimeError(f"image download HTTP {r.status}")
-                    data = await r.read()
-            path.write_bytes(data)
-            job.update(status="DONE", stage="done", media_id=mid, local_path=str(path),
-                       size_mb=round(len(data) / 1024 / 1024, 2), artifact="image", url=url)
-            _stamp_credit(job, CREDIT_MAY_HAVE_SPENT)
-            await _record_artifacts(job, mode, [{
-                "media_id": mid, "local_path": str(path),
-                "size_mb": job["size_mb"]}])
+            variant_count = num_videos if collect_image_variants else 1
+            collected: list[dict] = []
+            provider_operation_ids: list[dict] = []
+            for variant_index in range(variant_count):
+                job["stage"] = (
+                    f"generating image variant {variant_index + 1}/{variant_count}"
+                    if collect_image_variants
+                    else "generating image"
+                )
+                res = await _generate_image_with_recovery(
+                    client,
+                    prompt,
+                    project_id,
+                    aspect_key,
+                    tier,
+                    image_media_ids or [],
+                    max_tries=max_image_attempts,
+                    image_model=image_model or "NANO_BANANA_PRO",
+                )
+                evidence = _image_provider_operation_reference(res or {})
+                imgs = _extract_images(
+                    (res or {}).get("data", res or {})
+                    if isinstance(res or {}, dict)
+                    else {}
+                )
+                provider_media_id = imgs[0].get("media_id") if imgs else None
+                response_status = (
+                    "ERROR"
+                    if not res or res.get("error")
+                    else "MEDIA_RETURNED"
+                    if provider_media_id
+                    else "NO_MEDIA_RETURNED"
+                )
+                if collect_image_variants:
+                    from agent.db import crud as _crud
+
+                    try:
+                        operation = await _crud.record_image_generation_operation(
+                            job_id=job_id,
+                            product_id=product_id,
+                            model=image_model or "NANO_BANANA_PRO",
+                            variant_index=variant_index,
+                            provider_operation_id=evidence.get("provider_operation_id"),
+                            transport_batch_id=evidence.get("transport_batch_id"),
+                            operation_id_status=str(
+                                evidence.get("operation_id_status")
+                                or "UNPROVEN_PROVIDER_OPERATION_ID"
+                            ),
+                            provider_media_id=provider_media_id,
+                            response_status=response_status,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - provenance is mandatory
+                        job["operation_provenance_error"] = str(exc)
+                        raise RuntimeError(
+                            "IMAGE_OPERATION_PROVENANCE_PERSIST_FAILED: "
+                            f"{exc}"
+                        ) from exc
+                    evidence.update(operation)
+                evidence["variant_index"] = str(variant_index)
+                provider_operation_ids.append(evidence)
+                if not res or res.get("error"):
+                    job["provider_operation_ids"] = provider_operation_ids
+                    raise RuntimeError("image gen failed: " + str((res or {}).get("error")))
+                if not imgs or not imgs[0].get("url"):
+                    job["provider_operation_ids"] = provider_operation_ids
+                    raise RuntimeError("no image/url returned")
+                mid, url = imgs[0]["media_id"], imgs[0]["url"]
+                path = outdir / f"{mid}.jpg"
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120)) as s:
+                    async with s.get(url) as r:
+                        if r.status != 200:
+                            job["provider_operation_ids"] = provider_operation_ids
+                            raise RuntimeError(f"image download HTTP {r.status}")
+                        data = await r.read()
+                path.write_bytes(data)
+                collected.append({
+                    "media_id": mid,
+                    "local_path": str(path),
+                    "size_mb": round(len(data) / 1024 / 1024, 2),
+                    "url": url,
+                    "variant_index": variant_index,
+                    "provider_operation_id": evidence.get("provider_operation_id"),
+                    "transport_batch_id": evidence.get("transport_batch_id"),
+                })
+                await _record_artifacts(job, mode, [collected[-1]])
+            if not collected:
+                raise RuntimeError("no image artifact returned")
+            first = collected[0]
+            job["provider_operation_ids"] = provider_operation_ids
+            job["artifacts"] = collected
+            if collect_image_variants and product_id:
+                try:
+                    from agent.services.product_reference_pack_service import (
+                        get_reference_pack,
+                        machine_check_generated_output,
+                    )
+
+                    pack = await get_reference_pack(product_id)
+                    if pack is not None:
+                        job["generated_output_machine_qa"] = [
+                            machine_check_generated_output(
+                                artifact["media_id"], pack
+                            ).model_dump(mode="json")
+                            for artifact in collected
+                        ]
+                        job["generated_output_review_state"] = (
+                            "GENERATED_OUTPUT_MACHINE_CHECKED"
+                        )
+                    else:
+                        job["generated_output_machine_qa"] = []
+                        job["generated_output_review_state"] = "UNPROVEN"
+                except Exception as exc:  # noqa: BLE001 - QA cannot corrupt retrieval
+                    job["generated_output_machine_qa_error"] = str(exc)
+            job.update(status="DONE", stage="done", media_id=first["media_id"],
+                       local_path=first["local_path"], size_mb=first["size_mb"],
+                       artifact="image", url=first["url"])
+            # The direct image API does not consume Google Flow video credits.
+            # Keep the explicit IMG verdict separate from the paid video lane.
+            _stamp_credit(job, CREDIT_NOT_SPENT)
+            await _record_artifacts(job, mode, collected)
             return
 
         # 3) T2V / I2V / F2V — agent video

@@ -10,7 +10,7 @@
 # stack below — no font bundling/licensing needed for V1. The stack pins a
 # deterministic priority order for reproducible rendering on the local runtime.
 schema_version: poster-template-tokens-v1
-template_version: "1.1.0"
+template_version: "1.2.0"
 
 font_tokens:
   display:  { family: "'Segoe UI', 'Noto Sans', Arial, sans-serif", size: 76, weight: 800, color: "#1c1c1c", line_height: 1.08, letter_spacing: "-0.5px" }
@@ -39,6 +39,115 @@ component_styles:
     background: "transparent"
     color: "rgba(0,0,0,0.55)"
     size: 18
+
+# Campaign-only route authority.  Exact Commerce continues to use the legacy
+# recipe tokens unless an operator explicitly selects a campaign route.  These
+# are host-installed, already-licensed Windows fonts; no font package is
+# downloaded or bundled by BOSMAX.  The Chromium compositor still verifies
+# every named family before rendering and fails closed when one is unavailable.
+design_routes:
+  HERITAGE_EDITORIAL:
+    type_pairing_id: "heritage-georgia-trebuchet-v1"
+    font_license: "HOST_SYSTEM_LICENSED"
+    color_strategy: "material earth neutrals with one product-derived accent; no automatic cream/gold"
+    proof_treatment: "editorial ruled facts or quiet marginal notes"
+    fonts:
+      display: { family: "Georgia, serif", size: 78, weight: 700, color: "#1c1c1c", line_height: 1.05, letter_spacing: "-0.4px" }
+      headline: { family: "Georgia, serif", size: 78, weight: 700, color: "#1c1c1c", line_height: 1.05, letter_spacing: "-0.4px" }
+      subhead: { family: "Trebuchet MS, sans-serif", size: 34, weight: 500, color: "#2e2e2e", line_height: 1.24, letter_spacing: "0px" }
+      chip: { family: "Trebuchet MS, sans-serif", size: 25, weight: 600, color: "#1f1f1f", line_height: 1.2, letter_spacing: "0px" }
+      button: { family: "Trebuchet MS, sans-serif", size: 30, weight: 700, color: "#ffffff", line_height: 1.1, letter_spacing: "0.2px" }
+      caption: { family: "Trebuchet MS, sans-serif", size: 20, weight: 500, color: "#4a4a4a", line_height: 1.3, letter_spacing: "0px" }
+      body: { family: "Trebuchet MS, sans-serif", size: 27, weight: 400, color: "#2a2a2a", line_height: 1.3, letter_spacing: "0px" }
+    variants:
+      EDITORIAL_ASYMMETRY: { headline_x: 8, headline_align: left, support_x: 8, support_align: left, cta_x: 8, cta_align: left }
+      STACKED_EDITORIAL: { headline_x: 8, headline_align: center, support_x: 8, support_align: center, cta_x: 22, cta_align: center }
+      EDITORIAL_RAIL: { headline_x: 12, headline_w: 76, headline_align: left, support_x: 12, support_w: 76, support_align: left, cta_x: 30, cta_w: 40, cta_align: center }
+  PRODUCT_HERO_SCULPTURE:
+    type_pairing_id: "hero-arialblack-trebuchet-v1"
+    font_license: "HOST_SYSTEM_LICENSED"
+    color_strategy: "one high-contrast product-derived accent with neutral field"
+    proof_treatment: "small technical callouts anchored to the reading path"
+    fonts:
+      display: { family: "Arial Black, sans-serif", size: 76, weight: 900, color: "#161616", line_height: 1.05, letter_spacing: "-0.6px" }
+      headline: { family: "Arial Black, sans-serif", size: 76, weight: 900, color: "#161616", line_height: 1.05, letter_spacing: "-0.6px" }
+      subhead: { family: "Trebuchet MS, sans-serif", size: 34, weight: 500, color: "#252525", line_height: 1.22, letter_spacing: "0px" }
+      chip: { family: "Trebuchet MS, sans-serif", size: 25, weight: 600, color: "#202020", line_height: 1.2, letter_spacing: "0px" }
+      button: { family: "Trebuchet MS, sans-serif", size: 31, weight: 700, color: "#ffffff", line_height: 1.1, letter_spacing: "0.2px" }
+      caption: { family: "Trebuchet MS, sans-serif", size: 20, weight: 500, color: "#404040", line_height: 1.3, letter_spacing: "0px" }
+      body: { family: "Trebuchet MS, sans-serif", size: 27, weight: 400, color: "#262626", line_height: 1.3, letter_spacing: "0px" }
+    variants:
+      SCULPTURE_LEFT_COPY: { headline_x: 8, headline_align: left, support_x: 8, support_align: left, cta_x: 8, cta_align: left }
+      SCULPTURE_CENTER_STACK: { headline_x: 8, headline_align: center, support_x: 8, support_align: center, cta_x: 22, cta_align: center }
+      SCULPTURE_RAIL: { headline_x: 14, headline_w: 72, headline_align: left, support_x: 14, support_w: 72, support_align: left, cta_x: 28, cta_w: 44, cta_align: center }
+  ROUTINE_LIFESTYLE_EDITORIAL:
+    type_pairing_id: "routine-georgia-trebuchet-v1"
+    font_license: "HOST_SYSTEM_LICENSED"
+    color_strategy: "warm natural neutrals with one calm accent; preserve lived-in context"
+    proof_treatment: "short routine notes, never badges or claim-heavy chips"
+    fonts:
+      display: { family: "Georgia, serif", size: 74, weight: 700, color: "#1d2421", line_height: 1.08, letter_spacing: "-0.3px" }
+      headline: { family: "Georgia, serif", size: 74, weight: 700, color: "#1d2421", line_height: 1.08, letter_spacing: "-0.3px" }
+      subhead: { family: "Trebuchet MS, sans-serif", size: 34, weight: 500, color: "#2d3733", line_height: 1.25, letter_spacing: "0px" }
+      chip: { family: "Trebuchet MS, sans-serif", size: 25, weight: 600, color: "#25312d", line_height: 1.2, letter_spacing: "0px" }
+      button: { family: "Trebuchet MS, sans-serif", size: 30, weight: 700, color: "#ffffff", line_height: 1.1, letter_spacing: "0px" }
+      caption: { family: "Trebuchet MS, sans-serif", size: 20, weight: 500, color: "#4a5550", line_height: 1.3, letter_spacing: "0px" }
+      body: { family: "Trebuchet MS, sans-serif", size: 27, weight: 400, color: "#2d3733", line_height: 1.3, letter_spacing: "0px" }
+    variants:
+      ROUTINE_WINDOW_COLUMN: { headline_x: 8, headline_align: left, support_x: 8, support_align: left, cta_x: 8, cta_align: left }
+      ROUTINE_EDITORIAL_CENTER: { headline_x: 8, headline_align: center, support_x: 8, support_align: center, cta_x: 22, cta_align: center }
+      ROUTINE_CALM_RAIL: { headline_x: 12, headline_w: 76, headline_align: left, support_x: 12, support_w: 76, support_align: left, cta_x: 30, cta_w: 40, cta_align: center }
+  BOLD_VALUE_COMMERCE:
+    type_pairing_id: "commerce-arialblack-trebuchet-v1"
+    font_license: "HOST_SYSTEM_LICENSED"
+    color_strategy: "high-contrast product-derived accent; no fake urgency or price sticker"
+    proof_treatment: "one strong factual proof block, not a row of pills"
+    fonts:
+      display: { family: "Arial Black, sans-serif", size: 82, weight: 900, color: "#161616", line_height: 1.02, letter_spacing: "-0.8px" }
+      headline: { family: "Arial Black, sans-serif", size: 82, weight: 900, color: "#161616", line_height: 1.02, letter_spacing: "-0.8px" }
+      subhead: { family: "Trebuchet MS, sans-serif", size: 33, weight: 600, color: "#232323", line_height: 1.2, letter_spacing: "0px" }
+      chip: { family: "Trebuchet MS, sans-serif", size: 25, weight: 700, color: "#202020", line_height: 1.2, letter_spacing: "0px" }
+      button: { family: "Trebuchet MS, sans-serif", size: 32, weight: 800, color: "#ffffff", line_height: 1.08, letter_spacing: "0.3px" }
+      caption: { family: "Trebuchet MS, sans-serif", size: 20, weight: 500, color: "#404040", line_height: 1.3, letter_spacing: "0px" }
+      body: { family: "Trebuchet MS, sans-serif", size: 27, weight: 400, color: "#262626", line_height: 1.3, letter_spacing: "0px" }
+    variants:
+      VALUE_DIAGONAL: { headline_x: 8, headline_align: left, support_x: 8, support_align: left, cta_x: 8, cta_align: left }
+      VALUE_CENTER_BAND: { headline_x: 8, headline_align: center, support_x: 8, support_align: center, cta_x: 22, cta_align: center }
+      VALUE_RAIL: { headline_x: 12, headline_w: 76, headline_align: left, support_x: 12, support_w: 76, support_align: left, cta_x: 28, cta_w: 44, cta_align: center }
+  TECHNICAL_PRECISION:
+    type_pairing_id: "technical-consolas-arial-v1"
+    font_license: "HOST_SYSTEM_LICENSED"
+    color_strategy: "measured neutral field with one functional accent"
+    proof_treatment: "ruled specification notes with approved facts only"
+    fonts:
+      display: { family: "Consolas, monospace", size: 70, weight: 700, color: "#14202a", line_height: 1.08, letter_spacing: "-0.2px" }
+      headline: { family: "Consolas, monospace", size: 70, weight: 700, color: "#14202a", line_height: 1.08, letter_spacing: "-0.2px" }
+      subhead: { family: "Arial, sans-serif", size: 32, weight: 600, color: "#26343e", line_height: 1.25, letter_spacing: "0px" }
+      chip: { family: "Arial, sans-serif", size: 24, weight: 600, color: "#20303a", line_height: 1.2, letter_spacing: "0px" }
+      button: { family: "Arial, sans-serif", size: 30, weight: 700, color: "#ffffff", line_height: 1.1, letter_spacing: "0px" }
+      caption: { family: "Arial, sans-serif", size: 19, weight: 500, color: "#46545c", line_height: 1.3, letter_spacing: "0px" }
+      body: { family: "Arial, sans-serif", size: 26, weight: 400, color: "#26343e", line_height: 1.3, letter_spacing: "0px" }
+    variants:
+      PRECISION_LEFT_RAIL: { headline_x: 8, headline_align: left, support_x: 8, support_align: left, cta_x: 8, cta_align: left }
+      PRECISION_CENTERED: { headline_x: 8, headline_align: center, support_x: 8, support_align: center, cta_x: 22, cta_align: center }
+      PRECISION_MEASURED_RAIL: { headline_x: 14, headline_w: 72, headline_align: left, support_x: 14, support_w: 72, support_align: left, cta_x: 30, cta_w: 40, cta_align: center }
+  MODEL_AMBASSADOR_SPLIT:
+    type_pairing_id: "ambassador-georgia-arial-v1"
+    font_license: "HOST_SYSTEM_LICENSED"
+    color_strategy: "editorial tonal field with a controlled contrast accent"
+    proof_treatment: "quiet side-notes that never compete with face or label"
+    fonts:
+      display: { family: "Georgia, serif", size: 76, weight: 700, color: "#1b1d20", line_height: 1.05, letter_spacing: "-0.3px" }
+      headline: { family: "Georgia, serif", size: 76, weight: 700, color: "#1b1d20", line_height: 1.05, letter_spacing: "-0.3px" }
+      subhead: { family: "Arial, sans-serif", size: 33, weight: 500, color: "#2b3035", line_height: 1.24, letter_spacing: "0px" }
+      chip: { family: "Arial, sans-serif", size: 24, weight: 600, color: "#252b30", line_height: 1.2, letter_spacing: "0px" }
+      button: { family: "Arial, sans-serif", size: 30, weight: 700, color: "#ffffff", line_height: 1.1, letter_spacing: "0px" }
+      caption: { family: "Arial, sans-serif", size: 19, weight: 500, color: "#4a4f54", line_height: 1.3, letter_spacing: "0px" }
+      body: { family: "Arial, sans-serif", size: 26, weight: 400, color: "#2b3035", line_height: 1.3, letter_spacing: "0px" }
+    variants:
+      AMBASSADOR_SIDE_COPY: { headline_x: 48, headline_w: 44, headline_align: left, support_x: 48, support_w: 44, support_align: left, cta_x: 48, cta_w: 44, cta_align: left }
+      AMBASSADOR_BOTTOM_LOCKUP: { headline_x: 8, headline_align: center, support_x: 8, support_align: center, cta_x: 22, cta_align: center }
+      AMBASSADOR_CENTER_RAIL: { headline_x: 28, headline_w: 44, headline_align: center, support_x: 28, support_w: 44, support_align: center, cta_x: 30, cta_w: 40, cta_align: center }
 
 # Shrink-to-fit: reduce font-size by `step` (fraction of the base size) until
 # the text fits its zone or `min_scale` is reached; below min_scale the zone is

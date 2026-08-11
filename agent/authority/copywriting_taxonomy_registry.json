@@ -1,8 +1,9 @@
 {
-  "schema_version": "copywriting-taxonomy-v1",
+  "schema_version": "copywriting-taxonomy-v2",
   "source_workbook": "Download-Copywriting_Hub-Rev4-FIXED-WS-Database-Mapped.xlsx",
   "source_sheet": "Database",
   "source_header_row": 2,
+  "source_sha256": "f3a7ba6e3ab13c98d97da031cda8d1dbcf51634042e7d33cb9ddacaf4803e5dd",
   "record_count": 313,
   "records": [
     {
@@ -13,17 +14,27 @@
       "category": "Toys & Games",
       "subcategory": "Creative Play",
       "type": "3D Scene Sticker Books",
-      "copywriting_angle": "Creativity-led city-scene storytelling, reusable play, and screen-free engagement"
+      "copywriting_angle": "Creativity-led city-scene storytelling, reusable play, and screen-free engagement",
+      "source_category": "Toys & Games",
+      "source_subcategory": "Creative Play",
+      "source_type": "3D Scene Sticker Books",
+      "canonicalization_rules": []
     },
     {
       "source_row": 4,
       "cluster_name": "Sensitive Wellness",
       "product_type_code": "acne_treatment_medicine",
       "display_name": "Acne Treatment Medicine",
-      "category": "Health",
+      "category": "Health & Personal Care",
       "subcategory": "Skin Treatment",
       "type": "Acne Treatment Medicine",
-      "copywriting_angle": "Trust-led wellness and daily support"
+      "copywriting_angle": "Trust-led wellness and daily support",
+      "source_category": "Health",
+      "source_subcategory": "Skin Treatment",
+      "source_type": "Acne Treatment Medicine",
+      "canonicalization_rules": [
+        "category:Health->Health & Personal Care"
+      ]
     },
     {
       "source_row": 5,
@@ -33,7 +44,11 @@
       "category": "Home & Living",
       "subcategory": "Hardware",
       "type": "Adhesive Wall Hooks",
-      "copywriting_angle": "Installation-led no-drill hanging, strong transparent hold, and multipack value"
+      "copywriting_angle": "Installation-led no-drill hanging, strong transparent hold, and multipack value",
+      "source_category": "Home & Living",
+      "source_subcategory": "Hardware",
+      "source_type": "Adhesive Wall Hooks",
+      "canonicalization_rules": []
     },
     {
       "source_row": 6,
@@ -43,7 +58,11 @@
       "category": "Health & Personal Care",
       "subcategory": "Adult Incontinence Care",
       "type": "Adult Diapers & Pull-Up Pants",
-      "copywriting_angle": "Dignity-led leak protection, strong absorption, and caregiver convenience"
+      "copywriting_angle": "Dignity-led leak protection, strong absorption, and caregiver convenience",
+      "source_category": "Health & Personal Care",
+      "source_subcategory": "Adult Incontinence Care",
+      "source_type": "Adult Diapers & Pull-Up Pants",
+      "canonicalization_rules": []
     },
     {
       "source_row": 7,
@@ -53,7 +72,11 @@
       "category": "Home & Living",
       "subcategory": "Air Care",
       "type": "Air Freshener Gel Tins",
-      "copywriting_angle": "Freshness-led compact-space odour control, wardrobe-to-car versatility, and bundle value"
+      "copywriting_angle": "Freshness-led compact-space odour control, wardrobe-to-car versatility, and bundle value",
+      "source_category": "Home & Living",
+      "source_subcategory": "Air Care",
+      "source_type": "Air Freshener Gel Tins",
+      "canonicalization_rules": []
     },
     {
       "source_row": 8,
@@ -63,7 +86,11 @@
       "category": "Home & Living",
       "subcategory": "Appliance Care",
       "type": "Air Conditioner Cleaners",
-      "copywriting_angle": "Performance-led coil cleaning, fresher airflow, and improved cooling efficiency"
+      "copywriting_angle": "Performance-led coil cleaning, fresher airflow, and improved cooling efficiency",
+      "source_category": "Home & Living",
+      "source_subcategory": "Appliance Care",
+      "source_type": "Air Conditioner Cleaners",
+      "canonicalization_rules": []
     },
     {
       "source_row": 9,
@@ -73,7 +100,11 @@
       "category": "Home & Living",
       "subcategory": "Kitchen Storage",
       "type": "Airtight Food Canisters",
-      "copywriting_angle": "Freshness-led airtight storage, clear visibility, and wide-mouth convenience"
+      "copywriting_angle": "Freshness-led airtight storage, clear visibility, and wide-mouth convenience",
+      "source_category": "Home & Living",
+      "source_subcategory": "Kitchen Storage",
+      "source_type": "Airtight Food Canisters",
+      "canonicalization_rules": []
     },
     {
       "source_row": 10,
@@ -83,7 +114,11 @@
       "category": "Fashion",
       "subcategory": "Modest Accessories",
       "type": "Arm Sleeves",
-      "copywriting_angle": "Protection-led comfortable coverage, secure fit, and outdoor versatility"
+      "copywriting_angle": "Protection-led comfortable coverage, secure fit, and outdoor versatility",
+      "source_category": "Fashion",
+      "source_subcategory": "Modest Accessories",
+      "source_type": "Arm Sleeves",
+      "canonicalization_rules": []
     },
     {
       "source_row": 11,
@@ -93,7 +128,11 @@
       "category": "Health & Personal Care",
       "subcategory": "Aromatherapy",
       "type": "Aromatherapy Oils",
-      "copywriting_angle": "Mood-led portable aroma ritual, relaxation, and easy topical use"
+      "copywriting_angle": "Mood-led portable aroma ritual, relaxation, and easy topical use",
+      "source_category": "Health & Personal Care",
+      "source_subcategory": "Aromatherapy",
+      "source_type": "Aromatherapy Oils",
+      "canonicalization_rules": []
     },
     {
       "source_row": 12,
@@ -103,7 +142,11 @@
       "category": "Home & Living",
       "subcategory": "Home Decor",
       "type": "Artificial Flower Bouquets",
-      "copywriting_angle": "Decor-led lasting colour, maintenance-free beauty, and event versatility"
+      "copywriting_angle": "Decor-led lasting colour, maintenance-free beauty, and event versatility",
+      "source_category": "Home & Living",
+      "source_subcategory": "Home Decor",
+      "source_type": "Artificial Flower Bouquets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 13,
@@ -113,7 +156,11 @@
       "category": "Electronics",
       "subcategory": "Charging Accessories",
       "type": "Auto Cut-Off Charging Cables",
-      "copywriting_angle": "Trust-led original warranty, automatic power cut-off, fast charging, and LED status"
+      "copywriting_angle": "Trust-led original warranty, automatic power cut-off, fast charging, and LED status",
+      "source_category": "Electronics",
+      "source_subcategory": "Charging Accessories",
+      "source_type": "Auto Cut-Off Charging Cables",
+      "canonicalization_rules": []
     },
     {
       "source_row": 14,
@@ -123,7 +170,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Skincare",
       "type": "Herbal Face Creams",
-      "copywriting_angle": "Ingredient-led Ayurvedic care for moisture, uneven tone, and dark-mark appearance."
+      "copywriting_angle": "Ingredient-led Ayurvedic care for moisture, uneven tone, and dark-mark appearance.",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Skincare",
+      "source_type": "Herbal Face Creams",
+      "canonicalization_rules": []
     },
     {
       "source_row": 15,
@@ -133,7 +184,11 @@
       "category": "Baby Care",
       "subcategory": "Feeding Hygiene",
       "type": "Bottle & Accessory Cleansers",
-      "copywriting_angle": "Trust-led milk-residue removal, baby-safe cleaning, and hygienic feeding accessories"
+      "copywriting_angle": "Trust-led milk-residue removal, baby-safe cleaning, and hygienic feeding accessories",
+      "source_category": "Baby Care",
+      "source_subcategory": "Feeding Hygiene",
+      "source_type": "Bottle & Accessory Cleansers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 16,
@@ -143,7 +198,11 @@
       "category": "Baby Care",
       "subcategory": "Baby Clothing",
       "type": "Baby Binders",
-      "copywriting_angle": "Trust-led gentle newborn support, breathable comfort, and value-pack convenience"
+      "copywriting_angle": "Trust-led gentle newborn support, breathable comfort, and value-pack convenience",
+      "source_category": "Baby Care",
+      "source_subcategory": "Baby Clothing",
+      "source_type": "Baby Binders",
+      "canonicalization_rules": []
     },
     {
       "source_row": 17,
@@ -153,7 +212,11 @@
       "category": "Baby Care",
       "subcategory": "Feeding",
       "type": "Baby Bottles",
-      "copywriting_angle": "Trust-led PPSU safety, anti-colic design, heat resistance, and newborn-friendly wide neck"
+      "copywriting_angle": "Trust-led PPSU safety, anti-colic design, heat resistance, and newborn-friendly wide neck",
+      "source_category": "Baby Care",
+      "source_subcategory": "Feeding",
+      "source_type": "Baby Bottles",
+      "canonicalization_rules": []
     },
     {
       "source_row": 18,
@@ -163,7 +226,11 @@
       "category": "Baby Care",
       "subcategory": "Feeding",
       "type": "Bottle Nipples & Teats",
-      "copywriting_angle": "Comfort-led natural latch, bottle compatibility, and easier feeding transitions"
+      "copywriting_angle": "Comfort-led natural latch, bottle compatibility, and easier feeding transitions",
+      "source_category": "Baby Care",
+      "source_subcategory": "Feeding",
+      "source_type": "Bottle Nipples & Teats",
+      "canonicalization_rules": []
     },
     {
       "source_row": 19,
@@ -173,7 +240,11 @@
       "category": "Baby Care",
       "subcategory": "Diapering",
       "type": "Pull-Up Diaper Pants",
-      "copywriting_angle": "Convenience-led active baby comfort, breathability, easy wear, and leak protection"
+      "copywriting_angle": "Convenience-led active baby comfort, breathability, easy wear, and leak protection",
+      "source_category": "Baby Care",
+      "source_subcategory": "Diapering",
+      "source_type": "Pull-Up Diaper Pants",
+      "canonicalization_rules": []
     },
     {
       "source_row": 20,
@@ -183,7 +254,11 @@
       "category": "Baby Care",
       "subcategory": "Diapering",
       "type": "Tape Diapers",
-      "copywriting_angle": "Trust-led newborn softness, skin comfort, secure fit, and leak protection"
+      "copywriting_angle": "Trust-led newborn softness, skin comfort, secure fit, and leak protection",
+      "source_category": "Baby Care",
+      "source_subcategory": "Diapering",
+      "source_type": "Tape Diapers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 21,
@@ -193,7 +268,11 @@
       "category": "Baby Care",
       "subcategory": "Baby Skincare",
       "type": "Baby Facial Moisturizers",
-      "copywriting_angle": "Trust-led shea butter and calendula moisture for soft, delicate baby skin"
+      "copywriting_angle": "Trust-led shea butter and calendula moisture for soft, delicate baby skin",
+      "source_category": "Baby Care",
+      "source_subcategory": "Baby Skincare",
+      "source_type": "Baby Facial Moisturizers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 22,
@@ -203,7 +282,11 @@
       "category": "Baby Care",
       "subcategory": "Feeding",
       "type": "Baby Feeding Sets",
-      "copywriting_angle": "Convenience-led complete feeding essentials for easier weaning and mealtimes"
+      "copywriting_angle": "Convenience-led complete feeding essentials for easier weaning and mealtimes",
+      "source_category": "Baby Care",
+      "source_subcategory": "Feeding",
+      "source_type": "Baby Feeding Sets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 23,
@@ -213,7 +296,11 @@
       "category": "Baby Care",
       "subcategory": "Feeding Appliances",
       "type": "Baby Food Makers",
-      "copywriting_angle": "Convenience-led steaming and blending, anti-dry safety, and automatic shut-off"
+      "copywriting_angle": "Convenience-led steaming and blending, anti-dry safety, and automatic shut-off",
+      "source_category": "Baby Care",
+      "source_subcategory": "Feeding Appliances",
+      "source_type": "Baby Food Makers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 24,
@@ -223,7 +310,11 @@
       "category": "Baby Care",
       "subcategory": "Feeding",
       "type": "Fruit Feeders & Teethers",
-      "copywriting_angle": "Safety-led self-feeding, choking-risk reduction, and easy introduction to fruits"
+      "copywriting_angle": "Safety-led self-feeding, choking-risk reduction, and easy introduction to fruits",
+      "source_category": "Baby Care",
+      "source_subcategory": "Feeding",
+      "source_type": "Fruit Feeders & Teethers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 25,
@@ -233,7 +324,11 @@
       "category": "Baby Care",
       "subcategory": "Baby Hygiene",
       "type": "Baby Handkerchiefs",
-      "copywriting_angle": "Trust-led six-layer softness, absorbency, and durable newborn care"
+      "copywriting_angle": "Trust-led six-layer softness, absorbency, and durable newborn care",
+      "source_category": "Baby Care",
+      "source_subcategory": "Baby Hygiene",
+      "source_type": "Baby Handkerchiefs",
+      "canonicalization_rules": []
     },
     {
       "source_row": 26,
@@ -243,7 +338,11 @@
       "category": "Baby Care",
       "subcategory": "Baby Bath",
       "type": "Hooded Baby Towels",
-      "copywriting_angle": "Comfort-led head-to-body warmth, soft microfiber, and strong absorbency"
+      "copywriting_angle": "Comfort-led head-to-body warmth, soft microfiber, and strong absorbency",
+      "source_category": "Baby Care",
+      "source_subcategory": "Baby Bath",
+      "source_type": "Hooded Baby Towels",
+      "canonicalization_rules": []
     },
     {
       "source_row": 27,
@@ -253,7 +352,11 @@
       "category": "Home & Living",
       "subcategory": "Laundry Care",
       "type": "Baby Laundry Detergent",
-      "copywriting_angle": "Trust-led gentle fabric cleaning, built-in softener, and sensitive-skin care"
+      "copywriting_angle": "Trust-led gentle fabric cleaning, built-in softener, and sensitive-skin care",
+      "source_category": "Home & Living",
+      "source_subcategory": "Laundry Care",
+      "source_type": "Baby Laundry Detergent",
+      "canonicalization_rules": []
     },
     {
       "source_row": 28,
@@ -263,7 +366,11 @@
       "category": "Baby Care",
       "subcategory": "Baby Skincare",
       "type": "Baby Oils",
-      "copywriting_angle": "Nourishment-led coconut moisture, gentle massage, and cradle-cap care"
+      "copywriting_angle": "Nourishment-led coconut moisture, gentle massage, and cradle-cap care",
+      "source_category": "Baby Care",
+      "source_subcategory": "Baby Skincare",
+      "source_type": "Baby Oils",
+      "canonicalization_rules": []
     },
     {
       "source_row": 29,
@@ -273,7 +380,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Oral Care",
       "type": "Baby Toothbrush & Tongue Cleaner Sets",
-      "copywriting_angle": "Parent-led gentle newborn oral hygiene and easy cleaning."
+      "copywriting_angle": "Parent-led gentle newborn oral hygiene and easy cleaning.",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Oral Care",
+      "source_type": "Baby Toothbrush & Tongue Cleaner Sets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 30,
@@ -283,7 +394,11 @@
       "category": "Baby Care",
       "subcategory": "Baby Hygiene",
       "type": "Baby Oral Cleaning Wipes",
-      "copywriting_angle": "Safety-led gentle milk-residue cleaning for tongue, gums, and early oral hygiene"
+      "copywriting_angle": "Safety-led gentle milk-residue cleaning for tongue, gums, and early oral hygiene",
+      "source_category": "Baby Care",
+      "source_subcategory": "Baby Hygiene",
+      "source_type": "Baby Oral Cleaning Wipes",
+      "canonicalization_rules": []
     },
     {
       "source_row": 31,
@@ -293,7 +408,11 @@
       "category": "Baby Care",
       "subcategory": "Soothing & Teething",
       "type": "Pacifiers & Soothers",
-      "copywriting_angle": "Comfort-led newborn soothing, soft silicone safety, and reduced fussiness"
+      "copywriting_angle": "Comfort-led newborn soothing, soft silicone safety, and reduced fussiness",
+      "source_category": "Baby Care",
+      "source_subcategory": "Soothing & Teething",
+      "source_type": "Pacifiers & Soothers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 32,
@@ -303,7 +422,11 @@
       "category": "Baby Care",
       "subcategory": "Baby Clothing",
       "type": "Baby Rompers & Bodysuits",
-      "copywriting_angle": "Comfort-led soft newborn wear, easy dressing, and unisex everyday value"
+      "copywriting_angle": "Comfort-led soft newborn wear, easy dressing, and unisex everyday value",
+      "source_category": "Baby Care",
+      "source_subcategory": "Baby Clothing",
+      "source_type": "Baby Rompers & Bodysuits",
+      "canonicalization_rules": []
     },
     {
       "source_row": 33,
@@ -313,7 +436,11 @@
       "category": "Baby Care",
       "subcategory": "Baby Bedding",
       "type": "Swaddles & Receiving Blankets",
-      "copywriting_angle": "Comfort-led breathable cotton wrapping, newborn warmth, and multipurpose bath use"
+      "copywriting_angle": "Comfort-led breathable cotton wrapping, newborn warmth, and multipurpose bath use",
+      "source_category": "Baby Care",
+      "source_subcategory": "Baby Bedding",
+      "source_type": "Swaddles & Receiving Blankets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 34,
@@ -323,7 +450,11 @@
       "category": "Toys & Games",
       "subcategory": "Educational Toys",
       "type": "Infant Visual Stimulation Cards",
-      "copywriting_angle": "Development-led visual stimulation, early learning, and parent-child interaction"
+      "copywriting_angle": "Development-led visual stimulation, early learning, and parent-child interaction",
+      "source_category": "Toys & Games",
+      "source_subcategory": "Educational Toys",
+      "source_type": "Infant Visual Stimulation Cards",
+      "canonicalization_rules": []
     },
     {
       "source_row": 35,
@@ -333,7 +464,11 @@
       "category": "Baby Care",
       "subcategory": "Baby Hygiene",
       "type": "Sensitive Baby Wipes",
-      "copywriting_angle": "Trust-led gentle, alcohol-free hygiene for newborn and sensitive baby skin"
+      "copywriting_angle": "Trust-led gentle, alcohol-free hygiene for newborn and sensitive baby skin",
+      "source_category": "Baby Care",
+      "source_subcategory": "Baby Hygiene",
+      "source_type": "Sensitive Baby Wipes",
+      "canonicalization_rules": []
     },
     {
       "source_row": 36,
@@ -343,7 +478,11 @@
       "category": "Fashion",
       "subcategory": "Modest Fashion",
       "type": "Baju Kurung Sets",
-      "copywriting_angle": "Elegance-led modest tailoring, breathable comfort, and festive-ready design"
+      "copywriting_angle": "Elegance-led modest tailoring, breathable comfort, and festive-ready design",
+      "source_category": "Fashion",
+      "source_subcategory": "Modest Fashion",
+      "source_type": "Baju Kurung Sets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 37,
@@ -353,7 +492,11 @@
       "category": "Home & Living",
       "subcategory": "Home Textiles",
       "type": "Towels & Shower Caps",
-      "copywriting_angle": "Comfort-led textile texture and home coziness"
+      "copywriting_angle": "Comfort-led textile texture and home coziness",
+      "source_category": "Home & Living",
+      "source_subcategory": "Home Textiles",
+      "source_type": "Towels & Shower Caps",
+      "canonicalization_rules": []
     },
     {
       "source_row": 38,
@@ -363,7 +506,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Bath & Body",
       "type": "Bath Salts",
-      "copywriting_angle": "Comfort-led relaxation and daily body care"
+      "copywriting_angle": "Comfort-led relaxation and daily body care",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Bath & Body",
+      "source_type": "Bath Salts",
+      "canonicalization_rules": []
     },
     {
       "source_row": 39,
@@ -373,7 +520,11 @@
       "category": "Home & Living",
       "subcategory": "Bathroom Storage",
       "type": "Wall-Mounted Bathroom Racks",
-      "copywriting_angle": "Space-saving-led no-drill organisation, anti-rust durability, and tidy toiletries"
+      "copywriting_angle": "Space-saving-led no-drill organisation, anti-rust durability, and tidy toiletries",
+      "source_category": "Home & Living",
+      "source_subcategory": "Bathroom Storage",
+      "source_type": "Wall-Mounted Bathroom Racks",
+      "canonicalization_rules": []
     },
     {
       "source_row": 40,
@@ -383,7 +534,11 @@
       "category": "Fashion",
       "subcategory": "Modest Fashion",
       "type": "Bawal Hijabs",
-      "copywriting_angle": "Ease-led breathable cotton voile, simple shaping, and versatile everyday colours"
+      "copywriting_angle": "Ease-led breathable cotton voile, simple shaping, and versatile everyday colours",
+      "source_category": "Fashion",
+      "source_subcategory": "Modest Fashion",
+      "source_type": "Bawal Hijabs",
+      "canonicalization_rules": []
     },
     {
       "source_row": 41,
@@ -393,7 +548,11 @@
       "category": "Health & Personal Care",
       "subcategory": "Beauty Supplements",
       "type": "Beauty Drink Sachets",
-      "copywriting_angle": "Beauty-from-within-led antioxidant berries, certified trust, and skin-support positioning"
+      "copywriting_angle": "Beauty-from-within-led antioxidant berries, certified trust, and skin-support positioning",
+      "source_category": "Health & Personal Care",
+      "source_subcategory": "Beauty Supplements",
+      "source_type": "Beauty Drink Sachets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 42,
@@ -403,7 +562,11 @@
       "category": "Home & Living",
       "subcategory": "Bedding",
       "type": "Pillow",
-      "copywriting_angle": "Comfort-led rest quality and home coziness"
+      "copywriting_angle": "Comfort-led rest quality and home coziness",
+      "source_category": "Home & Living",
+      "source_subcategory": "Bedding",
+      "source_type": "Pillow",
+      "canonicalization_rules": []
     },
     {
       "source_row": 43,
@@ -413,7 +576,11 @@
       "category": "Home & Living",
       "subcategory": "Bathroom Fixtures",
       "type": "Bidet Spray Sets",
-      "copywriting_angle": "Durability-led two-way water control, complete installation, and bathroom hygiene"
+      "copywriting_angle": "Durability-led two-way water control, complete installation, and bathroom hygiene",
+      "source_category": "Home & Living",
+      "source_subcategory": "Bathroom Fixtures",
+      "source_type": "Bidet Spray Sets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 44,
@@ -423,7 +590,11 @@
       "category": "Home & Living",
       "subcategory": "Household Appliances",
       "type": "Juicers & Blenders",
-      "copywriting_angle": "Authority-led appliance utility and convenience"
+      "copywriting_angle": "Authority-led appliance utility and convenience",
+      "source_category": "Home & Living",
+      "source_subcategory": "Household Appliances",
+      "source_type": "Juicers & Blenders",
+      "canonicalization_rules": []
     },
     {
       "source_row": 45,
@@ -433,7 +604,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Makeup",
       "type": "Blush",
-      "copywriting_angle": "Confidence-led colour payoff and everyday makeup"
+      "copywriting_angle": "Confidence-led colour payoff and everyday makeup",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Makeup",
+      "source_type": "Blush",
+      "canonicalization_rules": []
     },
     {
       "source_row": 46,
@@ -443,7 +618,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Body Care",
       "type": "Body Creams & Ointments",
-      "copywriting_angle": "Care-led targeted moisture, soothing body support, and promotional value"
+      "copywriting_angle": "Care-led targeted moisture, soothing body support, and promotional value",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Body Care",
+      "source_type": "Body Creams & Ointments",
+      "canonicalization_rules": []
     },
     {
       "source_row": 47,
@@ -453,7 +632,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Fragrance",
       "type": "Body Mists",
-      "copywriting_angle": "Refreshment-led light daily fragrance, playful scents, and easy reapplication"
+      "copywriting_angle": "Refreshment-led light daily fragrance, playful scents, and easy reapplication",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Fragrance",
+      "source_type": "Body Mists",
+      "canonicalization_rules": []
     },
     {
       "source_row": 48,
@@ -463,7 +646,11 @@
       "category": "Health & Personal Care",
       "subcategory": "Topical Body Care",
       "type": "Body Relief Balms & Salves",
-      "copywriting_angle": "Relief-led warming massage, targeted comfort, and easy absorption"
+      "copywriting_angle": "Relief-led warming massage, targeted comfort, and easy absorption",
+      "source_category": "Health & Personal Care",
+      "source_subcategory": "Topical Body Care",
+      "source_type": "Body Relief Balms & Salves",
+      "canonicalization_rules": []
     },
     {
       "source_row": 49,
@@ -473,7 +660,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Body Care",
       "type": "Day & Night Body Serums",
-      "copywriting_angle": "Routine-led 24-hour body brightening, smoothness, hydration, and fragrance"
+      "copywriting_angle": "Routine-led 24-hour body brightening, smoothness, hydration, and fragrance",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Body Care",
+      "source_type": "Day & Night Body Serums",
+      "canonicalization_rules": []
     },
     {
       "source_row": 50,
@@ -483,7 +674,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Bath & Body",
       "type": "Herbal Body Soap",
-      "copywriting_angle": "Heritage-led herbal exfoliation, deep cleansing, and traditional body care"
+      "copywriting_angle": "Heritage-led herbal exfoliation, deep cleansing, and traditional body care",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Bath & Body",
+      "source_type": "Herbal Body Soap",
+      "canonicalization_rules": []
     },
     {
       "source_row": 51,
@@ -493,7 +688,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Bath & Body",
       "type": "Body Wash",
-      "copywriting_angle": "Mood-led aromatic cleansing, refreshed skin, and uplifting daily shower ritual"
+      "copywriting_angle": "Mood-led aromatic cleansing, refreshed skin, and uplifting daily shower ritual",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Bath & Body",
+      "source_type": "Body Wash",
+      "canonicalization_rules": []
     },
     {
       "source_row": 52,
@@ -503,7 +702,11 @@
       "category": "Electronics",
       "subcategory": "Headphones & Earphones",
       "type": "Bone Conduction Earphones",
-      "copywriting_angle": "Awareness-led open-ear listening, LED display, clear calls, and noise reduction"
+      "copywriting_angle": "Awareness-led open-ear listening, LED display, clear calls, and noise reduction",
+      "source_category": "Electronics",
+      "source_subcategory": "Headphones & Earphones",
+      "source_type": "Bone Conduction Earphones",
+      "canonicalization_rules": []
     },
     {
       "source_row": 53,
@@ -513,7 +716,11 @@
       "category": "Books, Magazines & Audio",
       "subcategory": "Books",
       "type": "Religion & Philosophy",
-      "copywriting_angle": "Authority-led educational value and clarity"
+      "copywriting_angle": "Authority-led educational value and clarity",
+      "source_category": "Books, Magazines & Audio",
+      "source_subcategory": "Books",
+      "source_type": "Religion & Philosophy",
+      "canonicalization_rules": []
     },
     {
       "source_row": 54,
@@ -523,7 +730,11 @@
       "category": "Food & Beverage",
       "subcategory": "Functional Beverages",
       "type": "Botanical Wellness Drinks",
-      "copywriting_angle": "Ingredient-led plant extracts, reduced-sugar positioning, and daily wellness routine"
+      "copywriting_angle": "Ingredient-led plant extracts, reduced-sugar positioning, and daily wellness routine",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Functional Beverages",
+      "source_type": "Botanical Wellness Drinks",
+      "canonicalization_rules": []
     },
     {
       "source_row": 55,
@@ -533,7 +744,11 @@
       "category": "Home & Living",
       "subcategory": "Drinkware Accessories",
       "type": "Bottle Protective Boots",
-      "copywriting_angle": "Protection-led anti-slip grip, scratch prevention, and tumbler base cushioning"
+      "copywriting_angle": "Protection-led anti-slip grip, scratch prevention, and tumbler base cushioning",
+      "source_category": "Home & Living",
+      "source_subcategory": "Drinkware Accessories",
+      "source_type": "Bottle Protective Boots",
+      "canonicalization_rules": []
     },
     {
       "source_row": 56,
@@ -543,7 +758,11 @@
       "category": "Fashion",
       "subcategory": "Bottoms",
       "type": "Pants",
-      "copywriting_angle": "Confidence-led fit, shape, and versatile styling"
+      "copywriting_angle": "Confidence-led fit, shape, and versatile styling",
+      "source_category": "Fashion",
+      "source_subcategory": "Bottoms",
+      "source_type": "Pants",
+      "canonicalization_rules": []
     },
     {
       "source_row": 57,
@@ -553,7 +772,11 @@
       "category": "Electronics",
       "subcategory": "Charging Accessories",
       "type": "Braided Charging Cables",
-      "copywriting_angle": "Durability-led reinforced nylon, multi-device compatibility, and reliable fast charging"
+      "copywriting_angle": "Durability-led reinforced nylon, multi-device compatibility, and reliable fast charging",
+      "source_category": "Electronics",
+      "source_subcategory": "Charging Accessories",
+      "source_type": "Braided Charging Cables",
+      "canonicalization_rules": []
     },
     {
       "source_row": 58,
@@ -563,7 +786,11 @@
       "category": "Baby Care",
       "subcategory": "Breastfeeding",
       "type": "Breastmilk Storage Bags",
-      "copywriting_angle": "Trust-led BPA-free storage, double-lock leak protection, and feeding convenience"
+      "copywriting_angle": "Trust-led BPA-free storage, double-lock leak protection, and feeding convenience",
+      "source_category": "Baby Care",
+      "source_subcategory": "Breastfeeding",
+      "source_type": "Breastmilk Storage Bags",
+      "canonicalization_rules": []
     },
     {
       "source_row": 59,
@@ -573,7 +800,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Oral Care",
       "type": "Breath Sprays",
-      "copywriting_angle": "Confidence-led instant fresh breath, pocket convenience, and pleasant flavor."
+      "copywriting_angle": "Confidence-led instant fresh breath, pocket convenience, and pleasant flavor.",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Oral Care",
+      "source_type": "Breath Sprays",
+      "canonicalization_rules": []
     },
     {
       "source_row": 60,
@@ -583,7 +814,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Bath & Body",
       "type": "Brightening Body Wash",
-      "copywriting_angle": "Luxury-fragrance-led deep cleansing, moisture, and brighter-looking body skin"
+      "copywriting_angle": "Luxury-fragrance-led deep cleansing, moisture, and brighter-looking body skin",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Bath & Body",
+      "source_type": "Brightening Body Wash",
+      "canonicalization_rules": []
     },
     {
       "source_row": 61,
@@ -593,7 +828,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Facial Moisturizers",
       "type": "Brightening Repair Gels",
-      "copywriting_angle": "Limited-edition-led brightening, soothing moisture, and barrier-care appeal"
+      "copywriting_angle": "Limited-edition-led brightening, soothing moisture, and barrier-care appeal",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Facial Moisturizers",
+      "source_type": "Brightening Repair Gels",
+      "canonicalization_rules": []
     },
     {
       "source_row": 62,
@@ -603,7 +842,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Facial Moisturizers",
       "type": "Brightening Day Creams",
-      "copywriting_angle": "Ingredient-led niacinamide and TXA radiance, hydration, and smooth all-day finish"
+      "copywriting_angle": "Ingredient-led niacinamide and TXA radiance, hydration, and smooth all-day finish",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Facial Moisturizers",
+      "source_type": "Brightening Day Creams",
+      "canonicalization_rules": []
     },
     {
       "source_row": 63,
@@ -613,7 +856,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Bath & Body",
       "type": "Brightening Face & Body Soap",
-      "copywriting_angle": "Transformation-led brighter-looking tone, dark-mark care, and face-to-body convenience"
+      "copywriting_angle": "Transformation-led brighter-looking tone, dark-mark care, and face-to-body convenience",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Bath & Body",
+      "source_type": "Brightening Face & Body Soap",
+      "canonicalization_rules": []
     },
     {
       "source_row": 64,
@@ -623,7 +870,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Facial Cleansing",
       "type": "Brightening Facial Soap",
-      "copywriting_angle": "Ingredient-led alpha arbutin brightening and dark-mark care"
+      "copywriting_angle": "Ingredient-led alpha arbutin brightening and dark-mark care",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Facial Cleansing",
+      "source_type": "Brightening Facial Soap",
+      "canonicalization_rules": []
     },
     {
       "source_row": 65,
@@ -633,7 +884,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Facial Moisturizers",
       "type": "Brightening Night Creams",
-      "copywriting_angle": "Ingredient-led concentrated arbutin care for overnight brightening and dark spots"
+      "copywriting_angle": "Ingredient-led concentrated arbutin care for overnight brightening and dark spots",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Facial Moisturizers",
+      "source_type": "Brightening Night Creams",
+      "canonicalization_rules": []
     },
     {
       "source_row": 66,
@@ -643,7 +898,11 @@
       "category": "Fashion",
       "subcategory": "Accessories",
       "type": "Collar Clips & Brooches",
-      "copywriting_angle": "Confidence-led accessorizing and styling"
+      "copywriting_angle": "Confidence-led accessorizing and styling",
+      "source_category": "Fashion",
+      "source_subcategory": "Accessories",
+      "source_type": "Collar Clips & Brooches",
+      "canonicalization_rules": []
     },
     {
       "source_row": 67,
@@ -653,7 +912,11 @@
       "category": "Home & Living",
       "subcategory": "Home Decor",
       "type": "Candles",
-      "copywriting_angle": "Comfort-led home styling and everyday coziness"
+      "copywriting_angle": "Comfort-led home styling and everyday coziness",
+      "source_category": "Home & Living",
+      "source_subcategory": "Home Decor",
+      "source_type": "Candles",
+      "canonicalization_rules": []
     },
     {
       "source_row": 68,
@@ -663,7 +926,11 @@
       "category": "Fashion",
       "subcategory": "Footwear",
       "type": "Unisex Canvas Sneakers",
-      "copywriting_angle": "Versatility-led low-top comfort for school, uniforms, and casual daily wear"
+      "copywriting_angle": "Versatility-led low-top comfort for school, uniforms, and casual daily wear",
+      "source_category": "Fashion",
+      "source_subcategory": "Footwear",
+      "source_type": "Unisex Canvas Sneakers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 69,
@@ -673,7 +940,11 @@
       "category": "Automotive & Motorcycle",
       "subcategory": "Car Care",
       "type": "Cleaning Wipes & Tissues",
-      "copywriting_angle": "Trust-led quick car cleaning convenience"
+      "copywriting_angle": "Trust-led quick car cleaning convenience",
+      "source_category": "Automotive & Motorcycle",
+      "source_subcategory": "Car Care",
+      "source_type": "Cleaning Wipes & Tissues",
+      "canonicalization_rules": []
     },
     {
       "source_row": 70,
@@ -683,7 +954,11 @@
       "category": "Automotive & Motorcycle",
       "subcategory": "Car Interior Accessories",
       "type": "Seat & Comfort Accessories",
-      "copywriting_angle": "Comfort-led driving ergonomics and fatigue relief"
+      "copywriting_angle": "Comfort-led driving ergonomics and fatigue relief",
+      "source_category": "Automotive & Motorcycle",
+      "source_subcategory": "Car Interior Accessories",
+      "source_type": "Seat & Comfort Accessories",
+      "canonicalization_rules": []
     },
     {
       "source_row": 71,
@@ -693,7 +968,11 @@
       "category": "Automotive & Motorcycle",
       "subcategory": "Car Care",
       "type": "Car Covers & Protection",
-      "copywriting_angle": "Authority-led vehicle protection and weatherproofing"
+      "copywriting_angle": "Authority-led vehicle protection and weatherproofing",
+      "source_category": "Automotive & Motorcycle",
+      "source_subcategory": "Car Care",
+      "source_type": "Car Covers & Protection",
+      "canonicalization_rules": []
     },
     {
       "source_row": 72,
@@ -703,7 +982,11 @@
       "category": "Home & Living",
       "subcategory": "Air Care",
       "type": "Car & Home Air Fresheners",
-      "copywriting_angle": "Freshness-led long-lasting odour control, multiple scents, and car-to-room versatility"
+      "copywriting_angle": "Freshness-led long-lasting odour control, multiple scents, and car-to-room versatility",
+      "source_category": "Home & Living",
+      "source_subcategory": "Air Care",
+      "source_type": "Car & Home Air Fresheners",
+      "canonicalization_rules": []
     },
     {
       "source_row": 73,
@@ -713,7 +996,11 @@
       "category": "Automotive & Motorcycle",
       "subcategory": "Car Exterior Care",
       "type": "Paint Coatings & Protectants",
-      "copywriting_angle": "Transformation-led mirror shine, hydrophobic protection, and detailing savings"
+      "copywriting_angle": "Transformation-led mirror shine, hydrophobic protection, and detailing savings",
+      "source_category": "Automotive & Motorcycle",
+      "source_subcategory": "Car Exterior Care",
+      "source_type": "Paint Coatings & Protectants",
+      "canonicalization_rules": []
     },
     {
       "source_row": 74,
@@ -723,7 +1010,11 @@
       "category": "Automotive & Motorcycle",
       "subcategory": "Car Interior Accessories",
       "type": "Dashboard & Windshield Phone Holders",
-      "copywriting_angle": "Safety-led hands-free viewing, 360-degree adjustment, and secure suction mounting"
+      "copywriting_angle": "Safety-led hands-free viewing, 360-degree adjustment, and secure suction mounting",
+      "source_category": "Automotive & Motorcycle",
+      "source_subcategory": "Car Interior Accessories",
+      "source_type": "Dashboard & Windshield Phone Holders",
+      "canonicalization_rules": []
     },
     {
       "source_row": 75,
@@ -733,7 +1024,11 @@
       "category": "Home & Living",
       "subcategory": "Paper Products",
       "type": "Car Tissue Boxes",
-      "copywriting_angle": "Gift-led decorative tissue packaging, car convenience, and event doorgift value"
+      "copywriting_angle": "Gift-led decorative tissue packaging, car convenience, and event doorgift value",
+      "source_category": "Home & Living",
+      "source_subcategory": "Paper Products",
+      "source_type": "Car Tissue Boxes",
+      "canonicalization_rules": []
     },
     {
       "source_row": 76,
@@ -743,7 +1038,11 @@
       "category": "Automotive & Motorcycle",
       "subcategory": "Car Interior Accessories",
       "type": "Retractable Window Sunshades",
-      "copywriting_angle": "Protection-led UV blocking, cooler interiors, privacy, and cute styling"
+      "copywriting_angle": "Protection-led UV blocking, cooler interiors, privacy, and cute styling",
+      "source_category": "Automotive & Motorcycle",
+      "source_subcategory": "Car Interior Accessories",
+      "source_type": "Retractable Window Sunshades",
+      "canonicalization_rules": []
     },
     {
       "source_row": 77,
@@ -753,7 +1052,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Hair Care",
       "type": "Hair Oils",
-      "copywriting_angle": "Ingredient-led castor oil nourishment and a consistent scalp-care ritual."
+      "copywriting_angle": "Ingredient-led castor oil nourishment and a consistent scalp-care ritual.",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Hair Care",
+      "source_type": "Hair Oils",
+      "canonicalization_rules": []
     },
     {
       "source_row": 78,
@@ -763,7 +1066,11 @@
       "category": "Pet Supplies",
       "subcategory": "Pet Health",
       "type": "Herbal Cat Supplements",
-      "copywriting_angle": "Tradition-led herbal wellness support and easy liquid dosing"
+      "copywriting_angle": "Tradition-led herbal wellness support and easy liquid dosing",
+      "source_category": "Pet Supplies",
+      "source_subcategory": "Pet Health",
+      "source_type": "Herbal Cat Supplements",
+      "canonicalization_rules": []
     },
     {
       "source_row": 79,
@@ -773,7 +1080,11 @@
       "category": "Pet Supplies",
       "subcategory": "Pet Care",
       "type": "Cat Litter",
-      "copywriting_angle": "Trust-led daily pet care utility"
+      "copywriting_angle": "Trust-led daily pet care utility",
+      "source_category": "Pet Supplies",
+      "source_subcategory": "Pet Care",
+      "source_type": "Cat Litter",
+      "canonicalization_rules": []
     },
     {
       "source_row": 80,
@@ -783,7 +1094,11 @@
       "category": "Pet Supplies",
       "subcategory": "Cat Supplies",
       "type": "Cat Litter Boxes",
-      "copywriting_angle": "Comfort-led large capacity, high-sided cleanliness, and easy-grip handling"
+      "copywriting_angle": "Comfort-led large capacity, high-sided cleanliness, and easy-grip handling",
+      "source_category": "Pet Supplies",
+      "source_subcategory": "Cat Supplies",
+      "source_type": "Cat Litter Boxes",
+      "canonicalization_rules": []
     },
     {
       "source_row": 81,
@@ -793,7 +1108,11 @@
       "category": "Pet Supplies",
       "subcategory": "Cat Furniture",
       "type": "Self-Adhesive Scratch Mats",
-      "copywriting_angle": "Protection-led sofa defence, cut-to-fit installation, and healthy scratching outlet"
+      "copywriting_angle": "Protection-led sofa defence, cut-to-fit installation, and healthy scratching outlet",
+      "source_category": "Pet Supplies",
+      "source_subcategory": "Cat Furniture",
+      "source_type": "Self-Adhesive Scratch Mats",
+      "canonicalization_rules": []
     },
     {
       "source_row": 82,
@@ -803,7 +1122,11 @@
       "category": "Pet Supplies",
       "subcategory": "Cat Toys",
       "type": "Cat Teaser Wands",
-      "copywriting_angle": "Play-led hunting stimulation, bell engagement, and durable steel-wire construction"
+      "copywriting_angle": "Play-led hunting stimulation, bell engagement, and durable steel-wire construction",
+      "source_category": "Pet Supplies",
+      "source_subcategory": "Cat Toys",
+      "source_type": "Cat Teaser Wands",
+      "canonicalization_rules": []
     },
     {
       "source_row": 83,
@@ -813,7 +1136,11 @@
       "category": "Pet Supplies",
       "subcategory": "Cat Food",
       "type": "Wet Cat Food",
-      "copywriting_angle": "Appetite-led real meat, moist texture, and functional nutrition from probiotics or fish oil"
+      "copywriting_angle": "Appetite-led real meat, moist texture, and functional nutrition from probiotics or fish oil",
+      "source_category": "Pet Supplies",
+      "source_subcategory": "Cat Food",
+      "source_type": "Wet Cat Food",
+      "canonicalization_rules": []
     },
     {
       "source_row": 84,
@@ -823,7 +1150,11 @@
       "category": "Home & Living",
       "subcategory": "Tableware",
       "type": "Lidded Ceramic Bowl Sets",
-      "copywriting_angle": "Gift-led airtight storage, microwave-safe convenience, and elegant table presentation"
+      "copywriting_angle": "Gift-led airtight storage, microwave-safe convenience, and elegant table presentation",
+      "source_category": "Home & Living",
+      "source_subcategory": "Tableware",
+      "source_type": "Lidded Ceramic Bowl Sets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 85,
@@ -833,7 +1164,11 @@
       "category": "Arts & Crafts",
       "subcategory": "Craft Materials",
       "type": "Chenille Pipe Cleaners",
-      "copywriting_angle": "Creativity-led colourful flexibility for school crafts, flowers, and DIY projects"
+      "copywriting_angle": "Creativity-led colourful flexibility for school crafts, flowers, and DIY projects",
+      "source_category": "Arts & Crafts",
+      "source_subcategory": "Craft Materials",
+      "source_type": "Chenille Pipe Cleaners",
+      "canonicalization_rules": []
     },
     {
       "source_row": 86,
@@ -843,7 +1178,11 @@
       "category": "Food & Beverage",
       "subcategory": "Condiments",
       "type": "Crunchy Chilli Oil",
-      "copywriting_angle": "Flavour-led crispy garlic heat, ready-to-use convenience, and meal versatility"
+      "copywriting_angle": "Flavour-led crispy garlic heat, ready-to-use convenience, and meal versatility",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Condiments",
+      "source_type": "Crunchy Chilli Oil",
+      "canonicalization_rules": []
     },
     {
       "source_row": 87,
@@ -853,7 +1192,11 @@
       "category": "Home & Living",
       "subcategory": "Cleaning Tools",
       "type": "Reusable Cleaning Cloths",
-      "copywriting_angle": "Performance-led oil absorption, soap-free cleaning, and reusable household value"
+      "copywriting_angle": "Performance-led oil absorption, soap-free cleaning, and reusable household value",
+      "source_category": "Home & Living",
+      "source_subcategory": "Cleaning Tools",
+      "source_type": "Reusable Cleaning Cloths",
+      "canonicalization_rules": []
     },
     {
       "source_row": 88,
@@ -863,7 +1206,11 @@
       "category": "Home & Living",
       "subcategory": "Garden Decor",
       "type": "Climbing Plant Stands",
-      "copywriting_angle": "Display-led vertical organisation, climbing support, and decorative outdoor landscaping"
+      "copywriting_angle": "Display-led vertical organisation, climbing support, and decorative outdoor landscaping",
+      "source_category": "Home & Living",
+      "source_subcategory": "Garden Decor",
+      "source_type": "Climbing Plant Stands",
+      "canonicalization_rules": []
     },
     {
       "source_row": 89,
@@ -873,7 +1220,11 @@
       "category": "Home & Living",
       "subcategory": "Storage & Organisation",
       "type": "Clothes & Quilt Storage Bags",
-      "copywriting_angle": "Capacity-led waterproof fabric, double-zip access, and foldable seasonal storage"
+      "copywriting_angle": "Capacity-led waterproof fabric, double-zip access, and foldable seasonal storage",
+      "source_category": "Home & Living",
+      "source_subcategory": "Storage & Organisation",
+      "source_type": "Clothes & Quilt Storage Bags",
+      "canonicalization_rules": []
     },
     {
       "source_row": 90,
@@ -883,7 +1234,11 @@
       "category": "Food & Beverage",
       "subcategory": "Coffee",
       "type": "Low-Sugar Coffee Premix",
-      "copywriting_angle": "Better-choice-led natural sweetening, low calories, and moderate caffeine"
+      "copywriting_angle": "Better-choice-led natural sweetening, low calories, and moderate caffeine",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Coffee",
+      "source_type": "Low-Sugar Coffee Premix",
+      "canonicalization_rules": []
     },
     {
       "source_row": 91,
@@ -893,7 +1248,11 @@
       "category": "Home & Living",
       "subcategory": "Living Room Furniture",
       "type": "Coffee & Side Table Sets",
-      "copywriting_angle": "Space-saving-led two-tier storage, modern styling, and apartment-friendly versatility"
+      "copywriting_angle": "Space-saving-led two-tier storage, modern styling, and apartment-friendly versatility",
+      "source_category": "Home & Living",
+      "source_subcategory": "Living Room Furniture",
+      "source_type": "Coffee & Side Table Sets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 92,
@@ -903,7 +1262,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Makeup",
       "type": "Tinted Lip Balms",
-      "copywriting_angle": "Care-led hydration and temperature-adaptive natural tint."
+      "copywriting_angle": "Care-led hydration and temperature-adaptive natural tint.",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Makeup",
+      "source_type": "Tinted Lip Balms",
+      "canonicalization_rules": []
     },
     {
       "source_row": 93,
@@ -913,7 +1276,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Makeup",
       "type": "Concealer & Foundation",
-      "copywriting_angle": "Confidence-led complexion coverage and natural finish"
+      "copywriting_angle": "Confidence-led complexion coverage and natural finish",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Makeup",
+      "source_type": "Concealer & Foundation",
+      "canonicalization_rules": []
     },
     {
       "source_row": 94,
@@ -923,7 +1290,11 @@
       "category": "Home & Living",
       "subcategory": "Garden Tools",
       "type": "Cordless Grass Trimmers",
-      "copywriting_angle": "Convenience-led cordless mobility, rechargeable power, and lightweight lawn maintenance"
+      "copywriting_angle": "Convenience-led cordless mobility, rechargeable power, and lightweight lawn maintenance",
+      "source_category": "Home & Living",
+      "source_subcategory": "Garden Tools",
+      "source_type": "Cordless Grass Trimmers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 95,
@@ -933,7 +1304,11 @@
       "category": "Arts & Crafts",
       "subcategory": "Jewellery Making",
       "type": "Loose Craft Pearls",
-      "copywriting_angle": "Creativity-led decorative versatility, glossy finish, and bulk craft value"
+      "copywriting_angle": "Creativity-led decorative versatility, glossy finish, and bulk craft value",
+      "source_category": "Arts & Crafts",
+      "source_subcategory": "Jewellery Making",
+      "source_type": "Loose Craft Pearls",
+      "canonicalization_rules": []
     },
     {
       "source_row": 96,
@@ -943,7 +1318,11 @@
       "category": "Fashion",
       "subcategory": "Bags",
       "type": "Crossbody Bags",
-      "copywriting_angle": "Style-led lightweight hands-free carry and unisex daily versatility"
+      "copywriting_angle": "Style-led lightweight hands-free carry and unisex daily versatility",
+      "source_category": "Fashion",
+      "source_subcategory": "Bags",
+      "source_type": "Crossbody Bags",
+      "canonicalization_rules": []
     },
     {
       "source_row": 97,
@@ -953,7 +1332,11 @@
       "category": "Home & Living",
       "subcategory": "Window Treatments",
       "type": "Ready-Made Curtains",
-      "copywriting_angle": "Decor-led privacy, light control, soft drape, and easy installation"
+      "copywriting_angle": "Decor-led privacy, light control, soft drape, and easy installation",
+      "source_category": "Home & Living",
+      "source_subcategory": "Window Treatments",
+      "source_type": "Ready-Made Curtains",
+      "canonicalization_rules": []
     },
     {
       "source_row": 98,
@@ -963,7 +1346,11 @@
       "category": "Home & Living",
       "subcategory": "Window Hardware",
       "type": "Curtain Rods & Wires",
-      "copywriting_angle": "Installation-led adjustable hanging, easy setup, and window-to-door versatility"
+      "copywriting_angle": "Installation-led adjustable hanging, easy setup, and window-to-door versatility",
+      "source_category": "Home & Living",
+      "source_subcategory": "Window Hardware",
+      "source_type": "Curtain Rods & Wires",
+      "canonicalization_rules": []
     },
     {
       "source_row": 99,
@@ -973,7 +1360,11 @@
       "category": "Home & Living",
       "subcategory": "Home Decor",
       "type": "Refrigerator Magnets",
-      "copywriting_angle": "Comfort-led home styling and everyday coziness"
+      "copywriting_angle": "Comfort-led home styling and everyday coziness",
+      "source_category": "Home & Living",
+      "source_subcategory": "Home Decor",
+      "source_type": "Refrigerator Magnets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 100,
@@ -983,7 +1374,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Personal Care",
       "type": "Deodorants & Antiperspirants",
-      "copywriting_angle": "Confidence-led freshness and daily personal care"
+      "copywriting_angle": "Confidence-led freshness and daily personal care",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Personal Care",
+      "source_type": "Deodorants & Antiperspirants",
+      "canonicalization_rules": []
     },
     {
       "source_row": 101,
@@ -993,7 +1388,11 @@
       "category": "Food & Beverage",
       "subcategory": "Functional Beverages",
       "type": "Detox Tea & Drinks",
-      "copywriting_angle": "Routine-led digestive refreshment, convenient sachets, and lemon flavour"
+      "copywriting_angle": "Routine-led digestive refreshment, convenient sachets, and lemon flavour",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Functional Beverages",
+      "source_type": "Detox Tea & Drinks",
+      "canonicalization_rules": []
     },
     {
       "source_row": 102,
@@ -1003,7 +1402,11 @@
       "category": "Food & Beverage",
       "subcategory": "Coffee",
       "type": "Diet Coffee Premix",
-      "copywriting_angle": "Satiety-led diet support, convenient sachets, and all-day routine appeal"
+      "copywriting_angle": "Satiety-led diet support, convenient sachets, and all-day routine appeal",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Coffee",
+      "source_type": "Diet Coffee Premix",
+      "canonicalization_rules": []
     },
     {
       "source_row": 103,
@@ -1013,7 +1416,11 @@
       "category": "Home & Living",
       "subcategory": "Dishwashing",
       "type": "Dishwashing Liquid",
-      "copywriting_angle": "Portability-led travel-size grease removal and trusted dish-cleaning performance"
+      "copywriting_angle": "Portability-led travel-size grease removal and trusted dish-cleaning performance",
+      "source_category": "Home & Living",
+      "source_subcategory": "Dishwashing",
+      "source_type": "Dishwashing Liquid",
+      "canonicalization_rules": []
     },
     {
       "source_row": 104,
@@ -1023,7 +1430,11 @@
       "category": "Home & Living",
       "subcategory": "Kitchen Storage",
       "type": "Elastic Disposable Food Covers",
-      "copywriting_angle": "Freshness-led quick sealing, elastic fit, and convenient kitchen hygiene"
+      "copywriting_angle": "Freshness-led quick sealing, elastic fit, and convenient kitchen hygiene",
+      "source_category": "Home & Living",
+      "source_subcategory": "Kitchen Storage",
+      "source_type": "Elastic Disposable Food Covers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 105,
@@ -1033,7 +1444,11 @@
       "category": "Arts & Crafts",
       "subcategory": "Jewellery Making",
       "type": "DIY Jewellery Materials",
-      "copywriting_angle": "Creativity-led personalised bracelets, rings, and live-order customisation"
+      "copywriting_angle": "Creativity-led personalised bracelets, rings, and live-order customisation",
+      "source_category": "Arts & Crafts",
+      "source_subcategory": "Jewellery Making",
+      "source_type": "DIY Jewellery Materials",
+      "canonicalization_rules": []
     },
     {
       "source_row": 106,
@@ -1043,7 +1458,11 @@
       "category": "Fashion",
       "subcategory": "Dresses",
       "type": "Casual Dresses",
-      "copywriting_angle": "Confidence-led silhouette and everyday styling"
+      "copywriting_angle": "Confidence-led silhouette and everyday styling",
+      "source_category": "Fashion",
+      "source_subcategory": "Dresses",
+      "source_type": "Casual Dresses",
+      "canonicalization_rules": []
     },
     {
       "source_row": 107,
@@ -1053,7 +1472,11 @@
       "category": "Fashion",
       "subcategory": "Women's Clothing",
       "type": "Elastic-Waist Sarongs",
-      "copywriting_angle": "Comfort-led easy waist fit, confinement convenience, and daily traditional wear"
+      "copywriting_angle": "Comfort-led easy waist fit, confinement convenience, and daily traditional wear",
+      "source_category": "Fashion",
+      "source_subcategory": "Women's Clothing",
+      "source_type": "Elastic-Waist Sarongs",
+      "canonicalization_rules": []
     },
     {
       "source_row": 108,
@@ -1063,7 +1486,11 @@
       "category": "Home & Living",
       "subcategory": "Kitchen Tools",
       "type": "Electric Knife Sharpeners",
-      "copywriting_angle": "Performance-led automatic sharpening, USB convenience, and knife-to-scissors versatility"
+      "copywriting_angle": "Performance-led automatic sharpening, USB convenience, and knife-to-scissors versatility",
+      "source_category": "Home & Living",
+      "source_subcategory": "Kitchen Tools",
+      "source_type": "Electric Knife Sharpeners",
+      "canonicalization_rules": []
     },
     {
       "source_row": 109,
@@ -1073,7 +1500,11 @@
       "category": "Electronics",
       "subcategory": "Wearables",
       "type": "Smartwatch",
-      "copywriting_angle": "Authority-led features, utility, and lifestyle upgrade"
+      "copywriting_angle": "Authority-led features, utility, and lifestyle upgrade",
+      "source_category": "Electronics",
+      "source_subcategory": "Wearables",
+      "source_type": "Smartwatch",
+      "canonicalization_rules": []
     },
     {
       "source_row": 110,
@@ -1083,7 +1514,11 @@
       "category": "Automotive & Motorcycle",
       "subcategory": "Engine Maintenance",
       "type": "Radiator Coolant & Antifreeze",
-      "copywriting_angle": "Prevention-led engine cooling, anti-overheat protection, and long-term reliability"
+      "copywriting_angle": "Prevention-led engine cooling, anti-overheat protection, and long-term reliability",
+      "source_category": "Automotive & Motorcycle",
+      "source_subcategory": "Engine Maintenance",
+      "source_type": "Radiator Coolant & Antifreeze",
+      "canonicalization_rules": []
     },
     {
       "source_row": 111,
@@ -1093,7 +1528,11 @@
       "category": "Arts & Crafts",
       "subcategory": "Resin Crafts",
       "type": "Clear Epoxy Resin",
-      "copywriting_angle": "Creator-led self-levelling clarity, UV resistance, and versatile art-to-furniture use"
+      "copywriting_angle": "Creator-led self-levelling clarity, UV resistance, and versatile art-to-furniture use",
+      "source_category": "Arts & Crafts",
+      "source_subcategory": "Resin Crafts",
+      "source_type": "Clear Epoxy Resin",
+      "canonicalization_rules": []
     },
     {
       "source_row": 112,
@@ -1103,7 +1542,11 @@
       "category": "Home & Living",
       "subcategory": "Cleaning Tools",
       "type": "Extendable Microfiber Dusters",
-      "copywriting_angle": "Reach-led 2.8m adjustable cleaning, flexible head, and safer cobweb removal"
+      "copywriting_angle": "Reach-led 2.8m adjustable cleaning, flexible head, and safer cobweb removal",
+      "source_category": "Home & Living",
+      "source_subcategory": "Cleaning Tools",
+      "source_type": "Extendable Microfiber Dusters",
+      "canonicalization_rules": []
     },
     {
       "source_row": 113,
@@ -1113,7 +1556,11 @@
       "category": "Electronics",
       "subcategory": "Power Accessories",
       "type": "Extension Sockets with USB",
-      "copywriting_angle": "Utility-led extra outlets, USB charging, and 3-metre reach"
+      "copywriting_angle": "Utility-led extra outlets, USB charging, and 3-metre reach",
+      "source_category": "Electronics",
+      "source_subcategory": "Power Accessories",
+      "source_type": "Extension Sockets with USB",
+      "canonicalization_rules": []
     },
     {
       "source_row": 114,
@@ -1123,7 +1570,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Eye Care",
       "type": "Moisturizing Eye Balms",
-      "copywriting_angle": "Convenience-led targeted moisture, softer fine lines, and fresher-looking eyes"
+      "copywriting_angle": "Convenience-led targeted moisture, softer fine lines, and fresher-looking eyes",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Eye Care",
+      "source_type": "Moisturizing Eye Balms",
+      "canonicalization_rules": []
     },
     {
       "source_row": 115,
@@ -1133,7 +1584,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Makeup",
       "type": "Eyebrow Pencils/Powder/Paste",
-      "copywriting_angle": "Confidence-led brow definition and easy application"
+      "copywriting_angle": "Confidence-led brow definition and easy application",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Makeup",
+      "source_type": "Eyebrow Pencils/Powder/Paste",
+      "canonicalization_rules": []
     },
     {
       "source_row": 116,
@@ -1143,7 +1598,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Makeup",
       "type": "Eyeliner & Lipliner",
-      "copywriting_angle": "Confidence-led eye definition and precise application"
+      "copywriting_angle": "Confidence-led eye definition and precise application",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Makeup",
+      "source_type": "Eyeliner & Lipliner",
+      "canonicalization_rules": []
     },
     {
       "source_row": 117,
@@ -1153,7 +1612,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Makeup",
       "type": "Eyeshadow",
-      "copywriting_angle": "Confidence-led colour expression and eye makeup"
+      "copywriting_angle": "Confidence-led colour expression and eye makeup",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Makeup",
+      "source_type": "Eyeshadow",
+      "canonicalization_rules": []
     },
     {
       "source_row": 118,
@@ -1163,7 +1626,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Skincare",
       "type": "Face Masks",
-      "copywriting_angle": "Trust-led skincare routine and daily skin care"
+      "copywriting_angle": "Trust-led skincare routine and daily skin care",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Skincare",
+      "source_type": "Face Masks",
+      "canonicalization_rules": []
     },
     {
       "source_row": 119,
@@ -1173,7 +1640,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Makeup",
       "type": "Powder",
-      "copywriting_angle": "Confidence-led shine control and soft finish"
+      "copywriting_angle": "Confidence-led shine control and soft finish",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Makeup",
+      "source_type": "Powder",
+      "canonicalization_rules": []
     },
     {
       "source_row": 120,
@@ -1183,7 +1654,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Skincare",
       "type": "Facial Cleansers",
-      "copywriting_angle": "Trust-led skincare routine and daily skin care"
+      "copywriting_angle": "Trust-led skincare routine and daily skin care",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Skincare",
+      "source_type": "Facial Cleansers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 121,
@@ -1193,7 +1668,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Facial Cleansing",
       "type": "Brightening Facial Soap",
-      "copywriting_angle": "Glow-led facial cleansing, dark-mark care, and brighter-looking skin"
+      "copywriting_angle": "Glow-led facial cleansing, dark-mark care, and brighter-looking skin",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Facial Cleansing",
+      "source_type": "Brightening Facial Soap",
+      "canonicalization_rules": []
     },
     {
       "source_row": 122,
@@ -1203,7 +1682,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Skincare",
       "type": "Serums & Essences",
-      "copywriting_angle": "Trust-led skincare routine and daily skin care"
+      "copywriting_angle": "Trust-led skincare routine and daily skin care",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Skincare",
+      "source_type": "Serums & Essences",
+      "canonicalization_rules": []
     },
     {
       "source_row": 123,
@@ -1213,7 +1696,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Skincare Sets",
       "type": "Facial Skincare Sets",
-      "copywriting_angle": "Routine-led coordinated face care, value bundle, and radiance positioning"
+      "copywriting_angle": "Routine-led coordinated face care, value bundle, and radiance positioning",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Skincare Sets",
+      "source_type": "Facial Skincare Sets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 124,
@@ -1223,7 +1710,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Skincare",
       "type": "Toners & Pads",
-      "copywriting_angle": "Trust-led skincare routine and daily skin care"
+      "copywriting_angle": "Trust-led skincare routine and daily skin care",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Skincare",
+      "source_type": "Toners & Pads",
+      "canonicalization_rules": []
     },
     {
       "source_row": 125,
@@ -1233,17 +1724,27 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Makeup",
       "type": "False Eyelashes",
-      "copywriting_angle": "Confidence-led lash definition and easy application"
+      "copywriting_angle": "Confidence-led lash definition and easy application",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Makeup",
+      "source_type": "False Eyelashes",
+      "canonicalization_rules": []
     },
     {
       "source_row": 126,
       "cluster_name": "Sensitive Wellness",
       "product_type_code": "feminine_hygiene",
       "display_name": "Feminine Hygiene",
-      "category": "Health",
+      "category": "Health & Personal Care",
       "subcategory": "Feminine Care",
       "type": "Sanitary Towels",
-      "copywriting_angle": "Trust-led feminine hygiene and daily care"
+      "copywriting_angle": "Trust-led feminine hygiene and daily care",
+      "source_category": "Health",
+      "source_subcategory": "Feminine Care",
+      "source_type": "Sanitary Towels",
+      "canonicalization_rules": [
+        "category:Health->Health & Personal Care"
+      ]
     },
     {
       "source_row": 127,
@@ -1253,17 +1754,27 @@
       "category": "Health & Personal Care",
       "subcategory": "Maternal Health Devices",
       "type": "Fetal Doppler Monitors",
-      "copywriting_angle": "Reassurance-led at-home fetal heartbeat monitoring and pregnancy bonding"
+      "copywriting_angle": "Reassurance-led at-home fetal heartbeat monitoring and pregnancy bonding",
+      "source_category": "Health & Personal Care",
+      "source_subcategory": "Maternal Health Devices",
+      "source_type": "Fetal Doppler Monitors",
+      "canonicalization_rules": []
     },
     {
       "source_row": 128,
       "cluster_name": "Outdoor Equipment",
       "product_type_code": "fishing_reel",
       "display_name": "Fishing Reel",
-      "category": "Sports & Outdoor",
+      "category": "Sports & Outdoors",
       "subcategory": "Outdoor Recreation",
       "type": "Fishing Gear",
-      "copywriting_angle": "Confidence-led performance and outdoor readiness"
+      "copywriting_angle": "Confidence-led performance and outdoor readiness",
+      "source_category": "Sports & Outdoor",
+      "source_subcategory": "Outdoor Recreation",
+      "source_type": "Fishing Gear",
+      "canonicalization_rules": [
+        "category:Sports & Outdoor->Sports & Outdoors"
+      ]
     },
     {
       "source_row": 129,
@@ -1273,7 +1784,11 @@
       "category": "Home & Living",
       "subcategory": "Flooring & Wall Coverings",
       "type": "PVC Floor Stickers",
-      "copywriting_angle": "Transformation-led waterproof marble look, easy installation, and low-cost renovation"
+      "copywriting_angle": "Transformation-led waterproof marble look, easy installation, and low-cost renovation",
+      "source_category": "Home & Living",
+      "source_subcategory": "Flooring & Wall Coverings",
+      "source_type": "PVC Floor Stickers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 130,
@@ -1283,7 +1798,11 @@
       "category": "Home & Living",
       "subcategory": "Storage & Organisation",
       "type": "Foldable Clothes Storage Boxes",
-      "copywriting_angle": "Organisation-led large capacity, steel-frame strength, visibility, and foldable storage"
+      "copywriting_angle": "Organisation-led large capacity, steel-frame strength, visibility, and foldable storage",
+      "source_category": "Home & Living",
+      "source_subcategory": "Storage & Organisation",
+      "source_type": "Foldable Clothes Storage Boxes",
+      "canonicalization_rules": []
     },
     {
       "source_row": 131,
@@ -1293,7 +1812,11 @@
       "category": "Home & Living",
       "subcategory": "Kitchen Storage",
       "type": "Food Storage Container Sets",
-      "copywriting_angle": "Organisation-led food-grade storage, microwave-safe convenience, and multi-size value"
+      "copywriting_angle": "Organisation-led food-grade storage, microwave-safe convenience, and multi-size value",
+      "source_category": "Home & Living",
+      "source_subcategory": "Kitchen Storage",
+      "source_type": "Food Storage Container Sets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 132,
@@ -1303,7 +1826,11 @@
       "category": "Home & Living",
       "subcategory": "Kitchen Storage",
       "type": "Food Covers",
-      "copywriting_angle": "Hygiene-led anti-fly protection, attractive table presentation, and reusable convenience"
+      "copywriting_angle": "Hygiene-led anti-fly protection, attractive table presentation, and reusable convenience",
+      "source_category": "Home & Living",
+      "source_subcategory": "Kitchen Storage",
+      "source_type": "Food Covers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 133,
@@ -1313,7 +1840,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Foot Care",
       "type": "Foot Creams",
-      "copywriting_angle": "Repair-led softening for cracked heels, rough skin, and lasting moisture"
+      "copywriting_angle": "Repair-led softening for cracked heels, rough skin, and lasting moisture",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Foot Care",
+      "source_type": "Foot Creams",
+      "canonicalization_rules": []
     },
     {
       "source_row": 134,
@@ -1323,7 +1854,11 @@
       "category": "Food & Beverage",
       "subcategory": "Dairy Products",
       "type": "Full Cream Milk Powder",
-      "copywriting_angle": "Nutrition-led creamy dairy taste, trusted brand, and family-size value"
+      "copywriting_angle": "Nutrition-led creamy dairy taste, trusted brand, and family-size value",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Dairy Products",
+      "source_type": "Full Cream Milk Powder",
+      "canonicalization_rules": []
     },
     {
       "source_row": 135,
@@ -1333,7 +1868,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Hair Care",
       "type": "Shampoo, Mask & Essence Sets",
-      "copywriting_angle": "Routine-led complete anti-dandruff, softness, oil-control, and hair-fall care"
+      "copywriting_angle": "Routine-led complete anti-dandruff, softness, oil-control, and hair-fall care",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Hair Care",
+      "source_type": "Shampoo, Mask & Essence Sets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 136,
@@ -1343,7 +1882,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Men's Grooming Appliances",
       "type": "Hair & Beard Clippers",
-      "copywriting_angle": "Convenience-led home barbering, beard trimming, and rechargeable grooming"
+      "copywriting_angle": "Convenience-led home barbering, beard trimming, and rechargeable grooming",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Men's Grooming Appliances",
+      "source_type": "Hair & Beard Clippers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 137,
@@ -1353,7 +1896,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Hair Care",
       "type": "Hair Color & Dye",
-      "copywriting_angle": "Confidence-led hair colour transformation and coverage"
+      "copywriting_angle": "Confidence-led hair colour transformation and coverage",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Hair Care",
+      "source_type": "Hair Color & Dye",
+      "canonicalization_rules": []
     },
     {
       "source_row": 138,
@@ -1363,7 +1910,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Hair Color",
       "type": "Color-Depositing Shampoo",
-      "copywriting_angle": "Convenience-led 3-in-1 cleansing, nourishment, and fast grey coverage"
+      "copywriting_angle": "Convenience-led 3-in-1 cleansing, nourishment, and fast grey coverage",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Hair Color",
+      "source_type": "Color-Depositing Shampoo",
+      "canonicalization_rules": []
     },
     {
       "source_row": 139,
@@ -1373,7 +1924,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Hair Styling Appliances",
       "type": "High-Speed Hair Dryers",
-      "copywriting_angle": "Performance-led fast drying, high-speed motor, and negative-ion smoothness"
+      "copywriting_angle": "Performance-led fast drying, high-speed motor, and negative-ion smoothness",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Hair Styling Appliances",
+      "source_type": "High-Speed Hair Dryers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 140,
@@ -1383,7 +1938,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Hair Care",
       "type": "Herbal Shampoo Bars",
-      "copywriting_angle": "Heritage-led herbal cleansing, stronger roots, and reduced hair fall"
+      "copywriting_angle": "Heritage-led herbal cleansing, stronger roots, and reduced hair fall",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Hair Care",
+      "source_type": "Herbal Shampoo Bars",
+      "canonicalization_rules": []
     },
     {
       "source_row": 141,
@@ -1393,7 +1952,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Hair Care",
       "type": "Hair & Scalp Tonics",
-      "copywriting_angle": "Ingredient-led peptide scalp tonic and appearance-focused thinning care."
+      "copywriting_angle": "Ingredient-led peptide scalp tonic and appearance-focused thinning care.",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Hair Care",
+      "source_type": "Hair & Scalp Tonics",
+      "canonicalization_rules": []
     },
     {
       "source_row": 142,
@@ -1403,7 +1966,11 @@
       "category": "Electronics",
       "subcategory": "Personal Care Appliances",
       "type": "Hair Removal Devices",
-      "copywriting_angle": "Confidence-led grooming convenience and discreet use"
+      "copywriting_angle": "Confidence-led grooming convenience and discreet use",
+      "source_category": "Electronics",
+      "source_subcategory": "Personal Care Appliances",
+      "source_type": "Hair Removal Devices",
+      "canonicalization_rules": []
     },
     {
       "source_row": 143,
@@ -1413,7 +1980,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Hair Treatment",
       "type": "Repair Hair Serums",
-      "copywriting_angle": "Repair-led smoother hair, pollution protection, and grapefruit-fresh fragrance"
+      "copywriting_angle": "Repair-led smoother hair, pollution protection, and grapefruit-fresh fragrance",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Hair Treatment",
+      "source_type": "Repair Hair Serums",
+      "canonicalization_rules": []
     },
     {
       "source_row": 144,
@@ -1423,7 +1994,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Hair Treatment",
       "type": "Hair Masks",
-      "copywriting_angle": "Repair-led conditioning, smoother texture, and distinctive carrot treatment positioning"
+      "copywriting_angle": "Repair-led conditioning, smoother texture, and distinctive carrot treatment positioning",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Hair Treatment",
+      "source_type": "Hair Masks",
+      "canonicalization_rules": []
     },
     {
       "source_row": 145,
@@ -1433,17 +2008,27 @@
       "category": "Home & Living",
       "subcategory": "Paper Products",
       "type": "Hanging Facial Tissue",
-      "copywriting_angle": "Value-led multi-pack convenience, soft 3-ply comfort, and space-saving hanging design"
+      "copywriting_angle": "Value-led multi-pack convenience, soft 3-ply comfort, and space-saving hanging design",
+      "source_category": "Home & Living",
+      "source_subcategory": "Paper Products",
+      "source_type": "Hanging Facial Tissue",
+      "canonicalization_rules": []
     },
     {
       "source_row": 146,
       "cluster_name": "Health Devices",
       "product_type_code": "health_monitor",
       "display_name": "Health Monitor",
-      "category": "Health",
+      "category": "Health & Personal Care",
       "subcategory": "Health Devices",
       "type": "Health Monitors & Tests",
-      "copywriting_angle": "Trust-led test clarity and everyday health monitoring"
+      "copywriting_angle": "Trust-led test clarity and everyday health monitoring",
+      "source_category": "Health",
+      "source_subcategory": "Health Devices",
+      "source_type": "Health Monitors & Tests",
+      "canonicalization_rules": [
+        "category:Health->Health & Personal Care"
+      ]
     },
     {
       "source_row": 147,
@@ -1453,7 +2038,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Bath & Body",
       "type": "Herbal Bath Powders",
-      "copywriting_angle": "Heritage-led saffron and rose ritual for softer, brighter-looking body skin"
+      "copywriting_angle": "Heritage-led saffron and rose ritual for softer, brighter-looking body skin",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Bath & Body",
+      "source_type": "Herbal Bath Powders",
+      "canonicalization_rules": []
     },
     {
       "source_row": 148,
@@ -1463,7 +2052,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Facial Cleansing",
       "type": "Herbal Facial Soap",
-      "copywriting_angle": "Heritage-led saffron and ghee nourishment for healthy, radiant-looking skin"
+      "copywriting_angle": "Heritage-led saffron and ghee nourishment for healthy, radiant-looking skin",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Facial Cleansing",
+      "source_type": "Herbal Facial Soap",
+      "canonicalization_rules": []
     },
     {
       "source_row": 149,
@@ -1473,7 +2066,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Hair Color",
       "type": "Herbal Hair Color",
-      "copywriting_angle": "Convenience-led fast grey coverage, ammonia-free formula, and low-odour colouring"
+      "copywriting_angle": "Convenience-led fast grey coverage, ammonia-free formula, and low-odour colouring",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Hair Color",
+      "source_type": "Herbal Hair Color",
+      "canonicalization_rules": []
     },
     {
       "source_row": 150,
@@ -1483,7 +2080,11 @@
       "category": "Health & Personal Care",
       "subcategory": "Supplements",
       "type": "Herbal Capsules",
-      "copywriting_angle": "Ingredient-led antioxidant support, convenient capsules, and daily wellness"
+      "copywriting_angle": "Ingredient-led antioxidant support, convenient capsules, and daily wellness",
+      "source_category": "Health & Personal Care",
+      "source_subcategory": "Supplements",
+      "source_type": "Herbal Capsules",
+      "canonicalization_rules": []
     },
     {
       "source_row": 151,
@@ -1493,7 +2094,11 @@
       "category": "Food & Beverage",
       "subcategory": "Tea",
       "type": "Herbal Tea Sachets",
-      "copywriting_angle": "Lifestyle-led low-calorie plant extracts, flavour variety, and easy preparation"
+      "copywriting_angle": "Lifestyle-led low-calorie plant extracts, flavour variety, and easy preparation",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Tea",
+      "source_type": "Herbal Tea Sachets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 152,
@@ -1503,7 +2108,11 @@
       "category": "Home & Living",
       "subcategory": "Garden Care",
       "type": "Weed Killers & Herbicides",
-      "copywriting_angle": "Authority-led weed control, root-targeted action, and responsible outdoor use."
+      "copywriting_angle": "Authority-led weed control, root-targeted action, and responsible outdoor use.",
+      "source_category": "Home & Living",
+      "source_subcategory": "Garden Care",
+      "source_type": "Weed Killers & Herbicides",
+      "canonicalization_rules": []
     },
     {
       "source_row": 153,
@@ -1513,7 +2122,11 @@
       "category": "Electronics",
       "subcategory": "Charging Accessories",
       "type": "High-Watt Fast Chargers",
-      "copywriting_angle": "Speed-led 120W charging, QC compatibility, and cable-included convenience"
+      "copywriting_angle": "Speed-led 120W charging, QC compatibility, and cable-included convenience",
+      "source_category": "Electronics",
+      "source_subcategory": "Charging Accessories",
+      "source_type": "High-Watt Fast Chargers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 154,
@@ -1523,7 +2136,11 @@
       "category": "Home & Living",
       "subcategory": "Household Appliances",
       "type": "Fans",
-      "copywriting_angle": "Authority-led appliance utility and convenience"
+      "copywriting_angle": "Authority-led appliance utility and convenience",
+      "source_category": "Home & Living",
+      "source_subcategory": "Household Appliances",
+      "source_type": "Fans",
+      "canonicalization_rules": []
     },
     {
       "source_row": 155,
@@ -1533,7 +2150,11 @@
       "category": "Home & Living",
       "subcategory": "Air Care",
       "type": "Home Fragrance Oils",
-      "copywriting_angle": "Mood-led calming aroma, concentrated fragrance, and inviting room ambience"
+      "copywriting_angle": "Mood-led calming aroma, concentrated fragrance, and inviting room ambience",
+      "source_category": "Home & Living",
+      "source_subcategory": "Air Care",
+      "source_type": "Home Fragrance Oils",
+      "canonicalization_rules": []
     },
     {
       "source_row": 156,
@@ -1543,7 +2164,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Skincare",
       "type": "Acne Patches",
-      "copywriting_angle": "Problem-solution-led customizable blemish coverage and discreet daily care."
+      "copywriting_angle": "Problem-solution-led customizable blemish coverage and discreet daily care.",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Skincare",
+      "source_type": "Acne Patches",
+      "canonicalization_rules": []
     },
     {
       "source_row": 157,
@@ -1553,7 +2178,11 @@
       "category": "Fashion",
       "subcategory": "Modest Fashion",
       "type": "Inner Hijabs & Volumizers",
-      "copywriting_angle": "Comfort-led secure hijab base, breathable fit, and neat all-day styling"
+      "copywriting_angle": "Comfort-led secure hijab base, breathable fit, and neat all-day styling",
+      "source_category": "Fashion",
+      "source_subcategory": "Modest Fashion",
+      "source_type": "Inner Hijabs & Volumizers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 158,
@@ -1563,7 +2192,11 @@
       "category": "Fashion",
       "subcategory": "Modest Fashion",
       "type": "Instant Bawal Hijabs",
-      "copywriting_angle": "Speed-led ironless cotton, easy shaping, and everyday modest styling"
+      "copywriting_angle": "Speed-led ironless cotton, easy shaping, and everyday modest styling",
+      "source_category": "Fashion",
+      "source_subcategory": "Modest Fashion",
+      "source_type": "Instant Bawal Hijabs",
+      "canonicalization_rules": []
     },
     {
       "source_row": 159,
@@ -1573,7 +2206,11 @@
       "category": "Food & Beverage",
       "subcategory": "Instant Meals",
       "type": "Instant Fried Rice",
-      "copywriting_angle": "Convenience-led halal meal readiness in three minutes and Thai-to-kimchi flavour choice"
+      "copywriting_angle": "Convenience-led halal meal readiness in three minutes and Thai-to-kimchi flavour choice",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Instant Meals",
+      "source_type": "Instant Fried Rice",
+      "canonicalization_rules": []
     },
     {
       "source_row": 160,
@@ -1583,7 +2220,11 @@
       "category": "Fashion",
       "subcategory": "Modest Fashion",
       "type": "Instant Hijabs",
-      "copywriting_angle": "Speed-led ironless wear, easy awning, and comfortable everyday coverage"
+      "copywriting_angle": "Speed-led ironless wear, easy awning, and comfortable everyday coverage",
+      "source_category": "Fashion",
+      "source_subcategory": "Modest Fashion",
+      "source_type": "Instant Hijabs",
+      "canonicalization_rules": []
     },
     {
       "source_row": 161,
@@ -1593,7 +2234,11 @@
       "category": "Food & Beverage",
       "subcategory": "Instant Meals",
       "type": "Instant Noodles & Pasta",
-      "copywriting_angle": "Speed-led three-minute meal convenience, halal trust, and flavour variety"
+      "copywriting_angle": "Speed-led three-minute meal convenience, halal trust, and flavour variety",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Instant Meals",
+      "source_type": "Instant Noodles & Pasta",
+      "canonicalization_rules": []
     },
     {
       "source_row": 162,
@@ -1603,7 +2248,11 @@
       "category": "Food & Beverage",
       "subcategory": "Dessert Ingredients",
       "type": "Instant Pudding Powder",
-      "copywriting_angle": "Convenience-led halal dessert preparation with just water and bulk value"
+      "copywriting_angle": "Convenience-led halal dessert preparation with just water and bulk value",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Dessert Ingredients",
+      "source_type": "Instant Pudding Powder",
+      "canonicalization_rules": []
     },
     {
       "source_row": 163,
@@ -1613,7 +2262,11 @@
       "category": "Fashion",
       "subcategory": "Modest Fashion",
       "type": "Instant Shawls",
-      "copywriting_angle": "Speed-led back-tie convenience, premium chiffon drape, and polished styling"
+      "copywriting_angle": "Speed-led back-tie convenience, premium chiffon drape, and polished styling",
+      "source_category": "Fashion",
+      "source_subcategory": "Modest Fashion",
+      "source_type": "Instant Shawls",
+      "canonicalization_rules": []
     },
     {
       "source_row": 164,
@@ -1623,7 +2276,11 @@
       "category": "Home & Living",
       "subcategory": "Kitchenware",
       "type": "Water Bottles",
-      "copywriting_angle": "Trust-led kitchen utility and ease of use"
+      "copywriting_angle": "Trust-led kitchen utility and ease of use",
+      "source_category": "Home & Living",
+      "source_subcategory": "Kitchenware",
+      "source_type": "Water Bottles",
+      "canonicalization_rules": []
     },
     {
       "source_row": 165,
@@ -1633,7 +2290,11 @@
       "category": "Health & Personal Care",
       "subcategory": "Topical Relief",
       "type": "Joint Relief Creams",
-      "copywriting_angle": "Relief-led gentle topical comfort and skin-friendly collagen-care positioning"
+      "copywriting_angle": "Relief-led gentle topical comfort and skin-friendly collagen-care positioning",
+      "source_category": "Health & Personal Care",
+      "source_subcategory": "Topical Relief",
+      "source_type": "Joint Relief Creams",
+      "canonicalization_rules": []
     },
     {
       "source_row": 166,
@@ -1643,7 +2304,11 @@
       "category": "Fashion",
       "subcategory": "Women's Clothing",
       "type": "Kaftans",
-      "copywriting_angle": "Elegance-led modest coverage, ironless comfort, and occasion-ready styling"
+      "copywriting_angle": "Elegance-led modest coverage, ironless comfort, and occasion-ready styling",
+      "source_category": "Fashion",
+      "source_subcategory": "Women's Clothing",
+      "source_type": "Kaftans",
+      "canonicalization_rules": []
     },
     {
       "source_row": 167,
@@ -1653,7 +2318,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Hair Treatment",
       "type": "Repair Hair Masks",
-      "copywriting_angle": "Repair-led deep conditioning for dry, frizzy, and damaged hair"
+      "copywriting_angle": "Repair-led deep conditioning for dry, frizzy, and damaged hair",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Hair Treatment",
+      "source_type": "Repair Hair Masks",
+      "canonicalization_rules": []
     },
     {
       "source_row": 168,
@@ -1663,7 +2332,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Hair Treatment",
       "type": "Keratin Straightening & Repair Sets",
-      "copywriting_angle": "Salon-result-led smoother, straighter hair and intensive repair at home"
+      "copywriting_angle": "Salon-result-led smoother, straighter hair and intensive repair at home",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Hair Treatment",
+      "source_type": "Keratin Straightening & Repair Sets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 169,
@@ -1673,7 +2346,11 @@
       "category": "Toys & Games",
       "subcategory": "Ride-On Toys",
       "type": "Balance Bikes",
-      "copywriting_angle": "Development-led coordination, balance confidence, and safer pre-bicycle learning"
+      "copywriting_angle": "Development-led coordination, balance confidence, and safer pre-bicycle learning",
+      "source_category": "Toys & Games",
+      "source_subcategory": "Ride-On Toys",
+      "source_type": "Balance Bikes",
+      "canonicalization_rules": []
     },
     {
       "source_row": 170,
@@ -1683,7 +2360,11 @@
       "category": "Health & Personal Care",
       "subcategory": "Children's Wellness",
       "type": "Focus & Aromatherapy Oils",
-      "copywriting_angle": "Routine-led focus support, fresh alertness, and study-time concentration"
+      "copywriting_angle": "Routine-led focus support, fresh alertness, and study-time concentration",
+      "source_category": "Health & Personal Care",
+      "source_subcategory": "Children's Wellness",
+      "source_type": "Focus & Aromatherapy Oils",
+      "canonicalization_rules": []
     },
     {
       "source_row": 171,
@@ -1693,7 +2374,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Kids' Hair Care",
       "type": "Kids' Styling Gel & Comb",
-      "copywriting_angle": "Gentle-styling-led non-sticky control, included comb, and child-friendly use"
+      "copywriting_angle": "Gentle-styling-led non-sticky control, included comb, and child-friendly use",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Kids' Hair Care",
+      "source_type": "Kids' Styling Gel & Comb",
+      "canonicalization_rules": []
     },
     {
       "source_row": 172,
@@ -1703,7 +2388,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Oral Care",
       "type": "Children's Oral Sprays",
-      "copywriting_angle": "Parent-led easy oral-care routine and child-friendly convenience."
+      "copywriting_angle": "Parent-led easy oral-care routine and child-friendly convenience.",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Oral Care",
+      "source_type": "Children's Oral Sprays",
+      "canonicalization_rules": []
     },
     {
       "source_row": 173,
@@ -1713,7 +2402,11 @@
       "category": "Sports & Outdoors",
       "subcategory": "Skating",
       "type": "Kids' Roller Skates",
-      "copywriting_angle": "Learning-led stable four-wheel balance, beginner confidence, and free carry bag"
+      "copywriting_angle": "Learning-led stable four-wheel balance, beginner confidence, and free carry bag",
+      "source_category": "Sports & Outdoors",
+      "source_subcategory": "Skating",
+      "source_type": "Kids' Roller Skates",
+      "canonicalization_rules": []
     },
     {
       "source_row": 174,
@@ -1723,7 +2416,11 @@
       "category": "Home & Living",
       "subcategory": "Cleaning Supplies",
       "type": "Degreasing Kitchen Wipes",
-      "copywriting_angle": "Performance-led grease removal, large-sheet convenience, and multipack value"
+      "copywriting_angle": "Performance-led grease removal, large-sheet convenience, and multipack value",
+      "source_category": "Home & Living",
+      "source_subcategory": "Cleaning Supplies",
+      "source_type": "Degreasing Kitchen Wipes",
+      "canonicalization_rules": []
     },
     {
       "source_row": 175,
@@ -1733,7 +2430,11 @@
       "category": "Home & Living",
       "subcategory": "Cleaning Supplies",
       "type": "Disposable Kitchen Towels",
-      "copywriting_angle": "Convenience-led disposable wiping, dish drying, and mop replacement"
+      "copywriting_angle": "Convenience-led disposable wiping, dish drying, and mop replacement",
+      "source_category": "Home & Living",
+      "source_subcategory": "Cleaning Supplies",
+      "source_type": "Disposable Kitchen Towels",
+      "canonicalization_rules": []
     },
     {
       "source_row": 176,
@@ -1743,7 +2444,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Bath & Body",
       "type": "Kojic Acid Brightening Soap",
-      "copywriting_angle": "Ingredient-led kojic, turmeric, and lemon cleansing for dark spots and brighter tone"
+      "copywriting_angle": "Ingredient-led kojic, turmeric, and lemon cleansing for dark spots and brighter tone",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Bath & Body",
+      "source_type": "Kojic Acid Brightening Soap",
+      "canonicalization_rules": []
     },
     {
       "source_row": 177,
@@ -1753,7 +2458,11 @@
       "category": "Fashion",
       "subcategory": "Men's & Boys' Clothing",
       "type": "Kurta Sets",
-      "copywriting_angle": "Family-led matching style, neat tailoring, and festive versatility"
+      "copywriting_angle": "Family-led matching style, neat tailoring, and festive versatility",
+      "source_category": "Fashion",
+      "source_subcategory": "Men's & Boys' Clothing",
+      "source_type": "Kurta Sets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 178,
@@ -1763,7 +2472,11 @@
       "category": "Food & Beverage",
       "subcategory": "Functional Beverages",
       "type": "Lactation Support Drinks",
-      "copywriting_angle": "Support-led milk supply, organic ingredients, and convenient daily sachets"
+      "copywriting_angle": "Support-led milk supply, organic ingredients, and convenient daily sachets",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Functional Beverages",
+      "source_type": "Lactation Support Drinks",
+      "canonicalization_rules": []
     },
     {
       "source_row": 179,
@@ -1773,7 +2486,11 @@
       "category": "Home & Living",
       "subcategory": "Laundry Care",
       "type": "Liquid Laundry Detergent",
-      "copywriting_angle": "Value-led powerful cleaning, lasting fragrance, fabric softening, and family-size convenience"
+      "copywriting_angle": "Value-led powerful cleaning, lasting fragrance, fabric softening, and family-size convenience",
+      "source_category": "Home & Living",
+      "source_subcategory": "Laundry Care",
+      "source_type": "Liquid Laundry Detergent",
+      "canonicalization_rules": []
     },
     {
       "source_row": 180,
@@ -1783,7 +2500,11 @@
       "category": "Food & Beverage",
       "subcategory": "Cakes & Desserts",
       "type": "Sarawak Layer Cakes",
-      "copywriting_angle": "Heritage-led authentic recipe, moist texture, and twenty flavour choices"
+      "copywriting_angle": "Heritage-led authentic recipe, moist texture, and twenty flavour choices",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Cakes & Desserts",
+      "source_type": "Sarawak Layer Cakes",
+      "canonicalization_rules": []
     },
     {
       "source_row": 181,
@@ -1793,7 +2514,11 @@
       "category": "Sports & Outdoors",
       "subcategory": "Outdoor Lighting",
       "type": "High-Power Headlamps",
-      "copywriting_angle": "Performance-led extreme brightness, zoom, multi-colour modes, and long battery life"
+      "copywriting_angle": "Performance-led extreme brightness, zoom, multi-colour modes, and long battery life",
+      "source_category": "Sports & Outdoors",
+      "source_subcategory": "Outdoor Lighting",
+      "source_type": "High-Power Headlamps",
+      "canonicalization_rules": []
     },
     {
       "source_row": 182,
@@ -1803,7 +2528,11 @@
       "category": "Fashion",
       "subcategory": "Eyewear Accessories",
       "type": "Anti-Fog Lens Wipes",
-      "copywriting_angle": "Clarity-led dust removal, anti-fog protection, and portable lens care"
+      "copywriting_angle": "Clarity-led dust removal, anti-fog protection, and portable lens care",
+      "source_category": "Fashion",
+      "source_subcategory": "Eyewear Accessories",
+      "source_type": "Anti-Fog Lens Wipes",
+      "canonicalization_rules": []
     },
     {
       "source_row": 183,
@@ -1813,7 +2542,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Lip Makeup",
       "type": "Lip Liners",
-      "copywriting_angle": "Precision-led defined lip shape, cleaner lipstick edges, and fuller-looking lips"
+      "copywriting_angle": "Precision-led defined lip shape, cleaner lipstick edges, and fuller-looking lips",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Lip Makeup",
+      "source_type": "Lip Liners",
+      "canonicalization_rules": []
     },
     {
       "source_row": 184,
@@ -1823,7 +2556,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Makeup",
       "type": "Lipstick & Lip Gloss",
-      "copywriting_angle": "Confidence-led colour payoff and lip finish"
+      "copywriting_angle": "Confidence-led colour payoff and lip finish",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Makeup",
+      "source_type": "Lipstick & Lip Gloss",
+      "canonicalization_rules": []
     },
     {
       "source_row": 185,
@@ -1833,7 +2570,11 @@
       "category": "Fashion",
       "subcategory": "Tops",
       "type": "Long-Sleeve T-Shirts",
-      "copywriting_angle": "Basics-led cotton comfort, easy layering, and versatile daily styling"
+      "copywriting_angle": "Basics-led cotton comfort, easy layering, and versatile daily styling",
+      "source_category": "Fashion",
+      "source_subcategory": "Tops",
+      "source_type": "Long-Sleeve T-Shirts",
+      "canonicalization_rules": []
     },
     {
       "source_row": 186,
@@ -1843,7 +2584,11 @@
       "category": "Electronics",
       "subcategory": "Phone Accessories",
       "type": "MagSafe Holders & Mini Tripods",
-      "copywriting_angle": "Versatility-led MagSafe holding, 360-degree tripod use, and portable carabiner design"
+      "copywriting_angle": "Versatility-led MagSafe holding, 360-degree tripod use, and portable carabiner design",
+      "source_category": "Electronics",
+      "source_subcategory": "Phone Accessories",
+      "source_type": "MagSafe Holders & Mini Tripods",
+      "canonicalization_rules": []
     },
     {
       "source_row": 187,
@@ -1853,7 +2598,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Makeup",
       "type": "Makeup Primer",
-      "copywriting_angle": "Confidence-led smooth base and makeup longevity"
+      "copywriting_angle": "Confidence-led smooth base and makeup longevity",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Makeup",
+      "source_type": "Makeup Primer",
+      "canonicalization_rules": []
     },
     {
       "source_row": 188,
@@ -1863,17 +2612,27 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Makeup",
       "type": "Makeup Fixing Spray",
-      "copywriting_angle": "Confidence-led makeup hold and finished look"
+      "copywriting_angle": "Confidence-led makeup hold and finished look",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Makeup",
+      "source_type": "Makeup Fixing Spray",
+      "canonicalization_rules": []
     },
     {
       "source_row": 189,
       "cluster_name": "Sensitive Wellness",
       "product_type_code": "male_wellness",
       "display_name": "Male Wellness",
-      "category": "Health",
+      "category": "Health & Personal Care",
       "subcategory": "Supplements",
       "type": "Male Health",
-      "copywriting_angle": "Private confidence and discreet performance framing"
+      "copywriting_angle": "Private confidence and discreet performance framing",
+      "source_category": "Health",
+      "source_subcategory": "Supplements",
+      "source_type": "Male Health",
+      "canonicalization_rules": [
+        "category:Health->Health & Personal Care"
+      ]
     },
     {
       "source_row": 190,
@@ -1883,7 +2642,11 @@
       "category": "Baby Care",
       "subcategory": "Breastfeeding",
       "type": "Manual Breast Pumps",
-      "copywriting_angle": "Comfort-led painless massage, compact portability, and food-grade maternal care"
+      "copywriting_angle": "Comfort-led painless massage, compact portability, and food-grade maternal care",
+      "source_category": "Baby Care",
+      "source_subcategory": "Breastfeeding",
+      "source_type": "Manual Breast Pumps",
+      "canonicalization_rules": []
     },
     {
       "source_row": 191,
@@ -1893,7 +2656,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Makeup",
       "type": "Mascara",
-      "copywriting_angle": "Confidence-led lash definition and everyday eye look"
+      "copywriting_angle": "Confidence-led lash definition and everyday eye look",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Makeup",
+      "source_type": "Mascara",
+      "canonicalization_rules": []
     },
     {
       "source_row": 192,
@@ -1903,7 +2670,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Men's Grooming",
       "type": "Men's Body Care Sets",
-      "copywriting_angle": "Premium-set-led complete male body care and limited-edition appeal"
+      "copywriting_angle": "Premium-set-led complete male body care and limited-edition appeal",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Men's Grooming",
+      "source_type": "Men's Body Care Sets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 193,
@@ -1913,7 +2684,11 @@
       "category": "Fashion",
       "subcategory": "Men's Footwear",
       "type": "Men's Casual Leather Shoes",
-      "copywriting_angle": "Style-led smart casual appearance, cushioned comfort, grip, and odour control"
+      "copywriting_angle": "Style-led smart casual appearance, cushioned comfort, grip, and odour control",
+      "source_category": "Fashion",
+      "source_subcategory": "Men's Footwear",
+      "source_type": "Men's Casual Leather Shoes",
+      "canonicalization_rules": []
     },
     {
       "source_row": 194,
@@ -1923,7 +2698,11 @@
       "category": "Fashion",
       "subcategory": "Men's Clothing",
       "type": "Men's Pants & Shorts",
-      "copywriting_angle": "Comfort-led practical pockets, flexible fit, and sport-to-casual versatility"
+      "copywriting_angle": "Comfort-led practical pockets, flexible fit, and sport-to-casual versatility",
+      "source_category": "Fashion",
+      "source_subcategory": "Men's Clothing",
+      "source_type": "Men's Pants & Shorts",
+      "canonicalization_rules": []
     },
     {
       "source_row": 195,
@@ -1933,7 +2712,11 @@
       "category": "Fashion",
       "subcategory": "Men's Clothing",
       "type": "Men's Short-Sleeve Shirts",
-      "copywriting_angle": "Style-led geometric statement design, breathable comfort, and occasion-ready polish"
+      "copywriting_angle": "Style-led geometric statement design, breathable comfort, and occasion-ready polish",
+      "source_category": "Fashion",
+      "source_subcategory": "Men's Clothing",
+      "source_type": "Men's Short-Sleeve Shirts",
+      "canonicalization_rules": []
     },
     {
       "source_row": 196,
@@ -1943,7 +2726,11 @@
       "category": "Fashion",
       "subcategory": "Underwear",
       "type": "Men's Boxers",
-      "copywriting_angle": "Comfort-led breathable support, quick-dry fabric, and multipack value"
+      "copywriting_angle": "Comfort-led breathable support, quick-dry fabric, and multipack value",
+      "source_category": "Fashion",
+      "source_subcategory": "Underwear",
+      "source_type": "Men's Boxers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 197,
@@ -1953,7 +2740,11 @@
       "category": "Fashion",
       "subcategory": "Bags",
       "type": "Men's Waist Bags",
-      "copywriting_angle": "Utility-led rugged hands-free storage for work and outdoor activity"
+      "copywriting_angle": "Utility-led rugged hands-free storage for work and outdoor activity",
+      "source_category": "Fashion",
+      "source_subcategory": "Bags",
+      "source_type": "Men's Waist Bags",
+      "canonicalization_rules": []
     },
     {
       "source_row": 198,
@@ -1963,7 +2754,11 @@
       "category": "Fashion",
       "subcategory": "Wallets",
       "type": "Men's Trifold Wallets",
-      "copywriting_angle": "Utility-led organised cash and coin storage, durable PU leather, and smart styling"
+      "copywriting_angle": "Utility-led organised cash and coin storage, durable PU leather, and smart styling",
+      "source_category": "Fashion",
+      "source_subcategory": "Wallets",
+      "source_type": "Men's Trifold Wallets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 199,
@@ -1973,7 +2768,11 @@
       "category": "Home & Living",
       "subcategory": "Kitchen Storage",
       "type": "Adjustable Microwave Racks",
-      "copywriting_angle": "Space-saving-led expandable storage, stainless durability, and countertop organisation"
+      "copywriting_angle": "Space-saving-led expandable storage, stainless durability, and countertop organisation",
+      "source_category": "Home & Living",
+      "source_subcategory": "Kitchen Storage",
+      "source_type": "Adjustable Microwave Racks",
+      "canonicalization_rules": []
     },
     {
       "source_row": 200,
@@ -1983,7 +2782,11 @@
       "category": "Health & Personal Care",
       "subcategory": "Hair Loss Care",
       "type": "Minoxidil Hair Treatments",
-      "copywriting_angle": "Compliance-led minoxidil information and cautious hair-density support."
+      "copywriting_angle": "Compliance-led minoxidil information and cautious hair-density support.",
+      "source_category": "Health & Personal Care",
+      "source_subcategory": "Hair Loss Care",
+      "source_type": "Minoxidil Hair Treatments",
+      "canonicalization_rules": []
     },
     {
       "source_row": 201,
@@ -1993,7 +2796,11 @@
       "category": "Fashion",
       "subcategory": "Modest Fashion",
       "type": "Blouse & Skirt Sets",
-      "copywriting_angle": "Coordination-led complete modest outfit, breathable fabric, and polished convenience"
+      "copywriting_angle": "Coordination-led complete modest outfit, breathable fabric, and polished convenience",
+      "source_category": "Fashion",
+      "source_subcategory": "Modest Fashion",
+      "source_type": "Blouse & Skirt Sets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 202,
@@ -2003,7 +2810,11 @@
       "category": "Home & Living",
       "subcategory": "Home Care",
       "type": "Moisture Absorbers & Dehumidifiers",
-      "copywriting_angle": "Trust-led moisture and odour control"
+      "copywriting_angle": "Trust-led moisture and odour control",
+      "source_category": "Home & Living",
+      "source_subcategory": "Home Care",
+      "source_type": "Moisture Absorbers & Dehumidifiers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 203,
@@ -2013,7 +2824,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Skincare",
       "type": "Moisturizers & Mists",
-      "copywriting_angle": "Trust-led skincare routine and daily skin care"
+      "copywriting_angle": "Trust-led skincare routine and daily skin care",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Skincare",
+      "source_type": "Moisturizers & Mists",
+      "canonicalization_rules": []
     },
     {
       "source_row": 204,
@@ -2023,7 +2838,11 @@
       "category": "Stationery",
       "subcategory": "Envelope",
       "type": "Money Packet",
-      "copywriting_angle": "Gifting-led festive presentation and thoughtful giving"
+      "copywriting_angle": "Gifting-led festive presentation and thoughtful giving",
+      "source_category": "Stationery",
+      "source_subcategory": "Envelope",
+      "source_type": "Money Packet",
+      "canonicalization_rules": []
     },
     {
       "source_row": 205,
@@ -2033,7 +2852,11 @@
       "category": "Home & Living",
       "subcategory": "Pest Control",
       "type": "Mosquito Coils",
-      "copywriting_angle": "Protection-led mosquito deterrence and more comfortable nights."
+      "copywriting_angle": "Protection-led mosquito deterrence and more comfortable nights.",
+      "source_category": "Home & Living",
+      "source_subcategory": "Pest Control",
+      "source_type": "Mosquito Coils",
+      "canonicalization_rules": []
     },
     {
       "source_row": 206,
@@ -2043,7 +2866,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Oral Care",
       "type": "Breath Freshener Strips",
-      "copywriting_angle": "Convenience-led pocket freshness and discreet confidence."
+      "copywriting_angle": "Convenience-led pocket freshness and discreet confidence.",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Oral Care",
+      "source_type": "Breath Freshener Strips",
+      "canonicalization_rules": []
     },
     {
       "source_row": 207,
@@ -2053,7 +2880,11 @@
       "category": "Electronics",
       "subcategory": "Charging Accessories",
       "type": "Multi-Connector Fast Charging Cables",
-      "copywriting_angle": "Convenience-led 4-in-1 compatibility, 240W speed, and durable premium materials"
+      "copywriting_angle": "Convenience-led 4-in-1 compatibility, 240W speed, and durable premium materials",
+      "source_category": "Electronics",
+      "source_subcategory": "Charging Accessories",
+      "source_type": "Multi-Connector Fast Charging Cables",
+      "canonicalization_rules": []
     },
     {
       "source_row": 208,
@@ -2063,7 +2894,11 @@
       "category": "Home & Living",
       "subcategory": "Household Cleaning",
       "type": "Multi-Surface Cleaners",
-      "copywriting_angle": "Trust-led versatile cleaning across household surfaces with convenient everyday use"
+      "copywriting_angle": "Trust-led versatile cleaning across household surfaces with convenient everyday use",
+      "source_category": "Home & Living",
+      "source_subcategory": "Household Cleaning",
+      "source_type": "Multi-Surface Cleaners",
+      "canonicalization_rules": []
     },
     {
       "source_row": 209,
@@ -2073,7 +2908,11 @@
       "category": "Fashion",
       "subcategory": "Modest Fashion",
       "type": "Inner Pants",
-      "copywriting_angle": "Coverage-led cooling comfort, modest layering, and easy daily wear"
+      "copywriting_angle": "Coverage-led cooling comfort, modest layering, and easy daily wear",
+      "source_category": "Fashion",
+      "source_subcategory": "Modest Fashion",
+      "source_type": "Inner Pants",
+      "canonicalization_rules": []
     },
     {
       "source_row": 210,
@@ -2083,7 +2922,11 @@
       "category": "Fashion",
       "subcategory": "Modest Fashion",
       "type": "Inner Tops",
-      "copywriting_angle": "Coverage-led breathable layering, comfortable stretch, and modest styling"
+      "copywriting_angle": "Coverage-led breathable layering, comfortable stretch, and modest styling",
+      "source_category": "Fashion",
+      "source_subcategory": "Modest Fashion",
+      "source_type": "Inner Tops",
+      "canonicalization_rules": []
     },
     {
       "source_row": 211,
@@ -2093,7 +2936,11 @@
       "category": "Fashion",
       "subcategory": "Socks & Hosiery",
       "type": "Muslimah Socks",
-      "copywriting_angle": "Coverage-led comfortable aurat protection, secure fit, and everyday value"
+      "copywriting_angle": "Coverage-led comfortable aurat protection, secure fit, and everyday value",
+      "source_category": "Fashion",
+      "source_subcategory": "Socks & Hosiery",
+      "source_type": "Muslimah Socks",
+      "canonicalization_rules": []
     },
     {
       "source_row": 212,
@@ -2103,7 +2950,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Makeup",
       "type": "Nail Art & Nail Polish",
-      "copywriting_angle": "Confidence-led colour expression and neat finish"
+      "copywriting_angle": "Confidence-led colour expression and neat finish",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Makeup",
+      "source_type": "Nail Art & Nail Polish",
+      "canonicalization_rules": []
     },
     {
       "source_row": 213,
@@ -2113,7 +2964,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Makeup",
       "type": "Nail Henna & Nail Art",
-      "copywriting_angle": "Confidence-led traditional nail styling and colour payoff"
+      "copywriting_angle": "Confidence-led traditional nail styling and colour payoff",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Makeup",
+      "source_type": "Nail Henna & Nail Art",
+      "canonicalization_rules": []
     },
     {
       "source_row": 214,
@@ -2123,7 +2978,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Neck Care",
       "type": "Neck Firming Creams",
-      "copywriting_angle": "Ingredient-led hydration, smoother neck lines, and firming care"
+      "copywriting_angle": "Ingredient-led hydration, smoother neck lines, and firming care",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Neck Care",
+      "source_type": "Neck Firming Creams",
+      "canonicalization_rules": []
     },
     {
       "source_row": 215,
@@ -2133,7 +2992,11 @@
       "category": "Home & Living",
       "subcategory": "Kitchen Tools",
       "type": "Oil & Sauce Dispensers",
-      "copywriting_angle": "Control-led mess-free pouring, leak resistance, and multi-condiment convenience"
+      "copywriting_angle": "Control-led mess-free pouring, leak resistance, and multi-condiment convenience",
+      "source_category": "Home & Living",
+      "source_subcategory": "Kitchen Tools",
+      "source_type": "Oil & Sauce Dispensers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 216,
@@ -2143,7 +3006,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Oral Care",
       "type": "Orthodontic Toothbrushes",
-      "copywriting_angle": "Problem-solution-led precision cleaning for braces and gentle gum care."
+      "copywriting_angle": "Problem-solution-led precision cleaning for braces and gentle gum care.",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Oral Care",
+      "source_type": "Orthodontic Toothbrushes",
+      "canonicalization_rules": []
     },
     {
       "source_row": 217,
@@ -2153,7 +3020,11 @@
       "category": "Food & Beverage",
       "subcategory": "Snacks",
       "type": "Packaged Snacks",
-      "copywriting_angle": "Crunch-led flavour, convenient packs, and shareable everyday snacking"
+      "copywriting_angle": "Crunch-led flavour, convenient packs, and shareable everyday snacking",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Snacks",
+      "source_type": "Packaged Snacks",
+      "canonicalization_rules": []
     },
     {
       "source_row": 218,
@@ -2163,7 +3034,11 @@
       "category": "Health & Personal Care",
       "subcategory": "Over-the-Counter Medicine",
       "type": "Pain Relief Tablets",
-      "copywriting_angle": "Trust-led familiar everyday pain relief and convenient blister-pack supply"
+      "copywriting_angle": "Trust-led familiar everyday pain relief and convenient blister-pack supply",
+      "source_category": "Health & Personal Care",
+      "source_subcategory": "Over-the-Counter Medicine",
+      "source_type": "Pain Relief Tablets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 219,
@@ -2173,7 +3048,11 @@
       "category": "Home & Living",
       "subcategory": "Kitchenware",
       "type": "Pans & Woks",
-      "copywriting_angle": "Trust-led kitchen utility and ease of use"
+      "copywriting_angle": "Trust-led kitchen utility and ease of use",
+      "source_category": "Home & Living",
+      "source_subcategory": "Kitchenware",
+      "source_type": "Pans & Woks",
+      "canonicalization_rules": []
     },
     {
       "source_row": 220,
@@ -2183,7 +3062,11 @@
       "category": "Food & Beverage",
       "subcategory": "Cooking & Baking",
       "type": "Beans & Grains",
-      "copywriting_angle": "Trust-led taste, convenience, and appetite appeal"
+      "copywriting_angle": "Trust-led taste, convenience, and appetite appeal",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Cooking & Baking",
+      "source_type": "Beans & Grains",
+      "canonicalization_rules": []
     },
     {
       "source_row": 221,
@@ -2193,7 +3076,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Personal Care Sets",
       "type": "Daily Grooming Sets",
-      "copywriting_angle": "Value-led complete daily grooming routine across face, body, odour, and fragrance"
+      "copywriting_angle": "Value-led complete daily grooming routine across face, body, odour, and fragrance",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Personal Care Sets",
+      "source_type": "Daily Grooming Sets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 222,
@@ -2203,7 +3090,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Fragrance",
       "type": "Eau de Parfum & Pocket Perfume",
-      "copywriting_angle": "Identity-led lasting scent, portable sizing, and personal style expression"
+      "copywriting_angle": "Identity-led lasting scent, portable sizing, and personal style expression",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Fragrance",
+      "source_type": "Eau de Parfum & Pocket Perfume",
+      "canonicalization_rules": []
     },
     {
       "source_row": 223,
@@ -2213,7 +3104,11 @@
       "category": "Pet Supplies",
       "subcategory": "Pet Food",
       "type": "Cat Food",
-      "copywriting_angle": "Trust-led daily pet care utility"
+      "copywriting_angle": "Trust-led daily pet care utility",
+      "source_category": "Pet Supplies",
+      "source_subcategory": "Pet Food",
+      "source_type": "Cat Food",
+      "canonicalization_rules": []
     },
     {
       "source_row": 224,
@@ -2223,7 +3118,11 @@
       "category": "Pet Supplies",
       "subcategory": "Pet Food",
       "type": "Chicken Breast Pet Treats",
-      "copywriting_angle": "Protein-led real chicken nutrition, juicy texture, and cat-to-dog suitability"
+      "copywriting_angle": "Protein-led real chicken nutrition, juicy texture, and cat-to-dog suitability",
+      "source_category": "Pet Supplies",
+      "source_subcategory": "Pet Food",
+      "source_type": "Chicken Breast Pet Treats",
+      "canonicalization_rules": []
     },
     {
       "source_row": 225,
@@ -2233,7 +3132,11 @@
       "category": "Electronics",
       "subcategory": "Phone Repair Parts",
       "type": "Replacement Back Glass",
-      "copywriting_angle": "Repair-led broad model compatibility, restored appearance, and cost-saving replacement"
+      "copywriting_angle": "Repair-led broad model compatibility, restored appearance, and cost-saving replacement",
+      "source_category": "Electronics",
+      "source_subcategory": "Phone Repair Parts",
+      "source_type": "Replacement Back Glass",
+      "canonicalization_rules": []
     },
     {
       "source_row": 226,
@@ -2243,7 +3146,11 @@
       "category": "Electronics",
       "subcategory": "Phone Protection",
       "type": "Clear Phone Cases",
-      "copywriting_angle": "Protection-led slim transparency, anti-yellow material, and model compatibility"
+      "copywriting_angle": "Protection-led slim transparency, anti-yellow material, and model compatibility",
+      "source_category": "Electronics",
+      "source_subcategory": "Phone Protection",
+      "source_type": "Clear Phone Cases",
+      "canonicalization_rules": []
     },
     {
       "source_row": 227,
@@ -2253,7 +3160,11 @@
       "category": "Electronics",
       "subcategory": "Phone Protection",
       "type": "Screen Protectors",
-      "copywriting_angle": "Protection-led privacy, anti-fingerprint, impact resistance, and easy installation"
+      "copywriting_angle": "Protection-led privacy, anti-fingerprint, impact resistance, and easy installation",
+      "source_category": "Electronics",
+      "source_subcategory": "Phone Protection",
+      "source_type": "Screen Protectors",
+      "canonicalization_rules": []
     },
     {
       "source_row": 228,
@@ -2263,7 +3174,11 @@
       "category": "Home & Living",
       "subcategory": "Home Decor",
       "type": "Photo Frames",
-      "copywriting_angle": "Comfort-led home styling and everyday coziness"
+      "copywriting_angle": "Comfort-led home styling and everyday coziness",
+      "source_category": "Home & Living",
+      "source_subcategory": "Home Decor",
+      "source_type": "Photo Frames",
+      "canonicalization_rules": []
     },
     {
       "source_row": 229,
@@ -2273,7 +3188,11 @@
       "category": "Home & Living",
       "subcategory": "Garden Care",
       "type": "Plant Fertilizers",
-      "copywriting_angle": "Growth-led 4-in-1 nutrition, fuller foliage, and convenient bulk treatment"
+      "copywriting_angle": "Growth-led 4-in-1 nutrition, fuller foliage, and convenient bulk treatment",
+      "source_category": "Home & Living",
+      "source_subcategory": "Garden Care",
+      "source_type": "Plant Fertilizers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 230,
@@ -2283,7 +3202,11 @@
       "category": "Fashion",
       "subcategory": "Eyewear",
       "type": "Polarized Sunglasses",
-      "copywriting_angle": "Performance-led glare reduction, UV400 protection, and outdoor style"
+      "copywriting_angle": "Performance-led glare reduction, UV400 protection, and outdoor style",
+      "source_category": "Fashion",
+      "source_subcategory": "Eyewear",
+      "source_type": "Polarized Sunglasses",
+      "canonicalization_rules": []
     },
     {
       "source_row": 231,
@@ -2293,7 +3216,11 @@
       "category": "Electronics",
       "subcategory": "Radios",
       "type": "Multi-Band Portable Radios",
-      "copywriting_angle": "Nostalgia-led classic design, four-band tuning, and plug-in listening convenience"
+      "copywriting_angle": "Nostalgia-led classic design, four-band tuning, and plug-in listening convenience",
+      "source_category": "Electronics",
+      "source_subcategory": "Radios",
+      "source_type": "Multi-Band Portable Radios",
+      "canonicalization_rules": []
     },
     {
       "source_row": 232,
@@ -2303,7 +3230,11 @@
       "category": "Electronics",
       "subcategory": "Charging Accessories",
       "type": "Portable Power Banks",
-      "copywriting_angle": "Portability-led compact 5000mAh backup power, cute design, and fast charging"
+      "copywriting_angle": "Portability-led compact 5000mAh backup power, cute design, and fast charging",
+      "source_category": "Electronics",
+      "source_subcategory": "Charging Accessories",
+      "source_type": "Portable Power Banks",
+      "canonicalization_rules": []
     },
     {
       "source_row": 233,
@@ -2313,17 +3244,27 @@
       "category": "Home & Living",
       "subcategory": "Electrical",
       "type": "Power Savers",
-      "copywriting_angle": "Authority-led household utility and convenience"
+      "copywriting_angle": "Authority-led household utility and convenience",
+      "source_category": "Home & Living",
+      "source_subcategory": "Electrical",
+      "source_type": "Power Savers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 234,
       "cluster_name": "Health Devices",
       "product_type_code": "pregnancy_test",
       "display_name": "Pregnancy Test",
-      "category": "Health",
+      "category": "Health & Personal Care",
       "subcategory": "Health Devices",
       "type": "Family Planning Tests",
-      "copywriting_angle": "Trust-led test clarity and everyday health monitoring"
+      "copywriting_angle": "Trust-led test clarity and everyday health monitoring",
+      "source_category": "Health",
+      "source_subcategory": "Health Devices",
+      "source_type": "Family Planning Tests",
+      "canonicalization_rules": [
+        "category:Health->Health & Personal Care"
+      ]
     },
     {
       "source_row": 235,
@@ -2333,7 +3274,11 @@
       "category": "Home & Living",
       "subcategory": "Cleaning Supplies",
       "type": "Pressure Washers",
-      "copywriting_angle": "Trust-led household cleaning utility and convenience"
+      "copywriting_angle": "Trust-led household cleaning utility and convenience",
+      "source_category": "Home & Living",
+      "source_subcategory": "Cleaning Supplies",
+      "source_type": "Pressure Washers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 236,
@@ -2343,17 +3288,27 @@
       "category": "Food & Beverage",
       "subcategory": "Functional Beverages",
       "type": "Probiotic Matcha Drinks",
-      "copywriting_angle": "Beauty-from-within-led probiotics, antioxidants, and Japanese matcha wellness"
+      "copywriting_angle": "Beauty-from-within-led probiotics, antioxidants, and Japanese matcha wellness",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Functional Beverages",
+      "source_type": "Probiotic Matcha Drinks",
+      "canonicalization_rules": []
     },
     {
       "source_row": 237,
       "cluster_name": "Fitness Equipment",
       "product_type_code": "pull_up_bar",
       "display_name": "Pull-Up Bar",
-      "category": "Sports & Outdoor",
+      "category": "Sports & Outdoors",
       "subcategory": "Fitness",
       "type": "Pull-Up Bar",
-      "copywriting_angle": "Confidence-led performance and outdoor readiness"
+      "copywriting_angle": "Confidence-led performance and outdoor readiness",
+      "source_category": "Sports & Outdoor",
+      "source_subcategory": "Fitness",
+      "source_type": "Pull-Up Bar",
+      "canonicalization_rules": [
+        "category:Sports & Outdoor->Sports & Outdoors"
+      ]
     },
     {
       "source_row": 238,
@@ -2363,7 +3318,11 @@
       "category": "Food & Beverage",
       "subcategory": "Pantry Ingredients",
       "type": "Pure Honey",
-      "copywriting_angle": "Purity-led natural sweetness, one-kilogram value, and versatile food-to-drink use"
+      "copywriting_angle": "Purity-led natural sweetness, one-kilogram value, and versatile food-to-drink use",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Pantry Ingredients",
+      "source_type": "Pure Honey",
+      "canonicalization_rules": []
     },
     {
       "source_row": 239,
@@ -2373,7 +3332,11 @@
       "category": "Home Improvement",
       "subcategory": "Machine Hardware",
       "type": "Precision Lock Nuts",
-      "copywriting_angle": "Precision-led anti-loosening, anti-backlash stability, and machine reliability"
+      "copywriting_angle": "Precision-led anti-loosening, anti-backlash stability, and machine reliability",
+      "source_category": "Home Improvement",
+      "source_subcategory": "Machine Hardware",
+      "source_type": "Precision Lock Nuts",
+      "canonicalization_rules": []
     },
     {
       "source_row": 240,
@@ -2383,7 +3346,11 @@
       "category": "Sports & Outdoors",
       "subcategory": "Rain Gear",
       "type": "Waterproof Rain Suits",
-      "copywriting_angle": "Protection-led full waterproof coverage and ready-to-wear jacket-and-pants convenience"
+      "copywriting_angle": "Protection-led full waterproof coverage and ready-to-wear jacket-and-pants convenience",
+      "source_category": "Sports & Outdoors",
+      "source_subcategory": "Rain Gear",
+      "source_type": "Waterproof Rain Suits",
+      "canonicalization_rules": []
     },
     {
       "source_row": 241,
@@ -2393,7 +3360,11 @@
       "category": "Fashion",
       "subcategory": "Eyewear",
       "type": "Reading Glasses",
-      "copywriting_angle": "Utility-led clearer near vision, lightweight half-frame design, and unisex convenience"
+      "copywriting_angle": "Utility-led clearer near vision, lightweight half-frame design, and unisex convenience",
+      "source_category": "Fashion",
+      "source_subcategory": "Eyewear",
+      "source_type": "Reading Glasses",
+      "canonicalization_rules": []
     },
     {
       "source_row": 242,
@@ -2403,7 +3374,11 @@
       "category": "Food & Beverage",
       "subcategory": "Cooking & Baking",
       "type": "Herbs, Spices & Seasonings",
-      "copywriting_angle": "Trust-led taste, convenience, and appetite appeal"
+      "copywriting_angle": "Trust-led taste, convenience, and appetite appeal",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Cooking & Baking",
+      "source_type": "Herbs, Spices & Seasonings",
+      "canonicalization_rules": []
     },
     {
       "source_row": 243,
@@ -2413,7 +3388,11 @@
       "category": "Food & Beverage",
       "subcategory": "Cooking Ingredients",
       "type": "Rice & Spice Pastes",
-      "copywriting_angle": "Convenience-led authentic Yemeni flavour, complete spice blend, and bulk cooking ease"
+      "copywriting_angle": "Convenience-led authentic Yemeni flavour, complete spice blend, and bulk cooking ease",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Cooking Ingredients",
+      "source_type": "Rice & Spice Pastes",
+      "canonicalization_rules": []
     },
     {
       "source_row": 244,
@@ -2423,7 +3402,11 @@
       "category": "Home & Living",
       "subcategory": "Pest Control",
       "type": "Cockroach & Ant Baits",
-      "copywriting_angle": "Problem-solution-led targeted baiting and practical home pest control."
+      "copywriting_angle": "Problem-solution-led targeted baiting and practical home pest control.",
+      "source_category": "Home & Living",
+      "source_subcategory": "Pest Control",
+      "source_type": "Cockroach & Ant Baits",
+      "canonicalization_rules": []
     },
     {
       "source_row": 245,
@@ -2433,7 +3416,11 @@
       "category": "Home & Living",
       "subcategory": "Carpet",
       "type": "Mat-Rug",
-      "copywriting_angle": "Comfort-led texture, warmth, and room styling"
+      "copywriting_angle": "Comfort-led texture, warmth, and room styling",
+      "source_category": "Home & Living",
+      "source_subcategory": "Carpet",
+      "source_type": "Mat-Rug",
+      "canonicalization_rules": []
     },
     {
       "source_row": 246,
@@ -2443,7 +3430,11 @@
       "category": "Food & Beverage",
       "subcategory": "Cooking & Baking",
       "type": "Sambal",
-      "copywriting_angle": "Trust-led taste, convenience, and appetite appeal"
+      "copywriting_angle": "Trust-led taste, convenience, and appetite appeal",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Cooking & Baking",
+      "source_type": "Sambal",
+      "canonicalization_rules": []
     },
     {
       "source_row": 247,
@@ -2453,7 +3444,11 @@
       "category": "Health & Personal Care",
       "subcategory": "Feminine Hygiene",
       "type": "Sanitary Pads",
-      "copywriting_angle": "Protection-led 360-degree leak security, breathable comfort, and day-to-night use"
+      "copywriting_angle": "Protection-led 360-degree leak security, breathable comfort, and day-to-night use",
+      "source_category": "Health & Personal Care",
+      "source_subcategory": "Feminine Hygiene",
+      "source_type": "Sanitary Pads",
+      "canonicalization_rules": []
     },
     {
       "source_row": 248,
@@ -2463,7 +3458,11 @@
       "category": "Health & Personal Care",
       "subcategory": "Feminine Hygiene",
       "type": "Menstrual & Postpartum Pants",
-      "copywriting_angle": "Protection-led full-coverage leak security, maternity comfort, and inclusive sizing"
+      "copywriting_angle": "Protection-led full-coverage leak security, maternity comfort, and inclusive sizing",
+      "source_category": "Health & Personal Care",
+      "source_subcategory": "Feminine Hygiene",
+      "source_type": "Menstrual & Postpartum Pants",
+      "canonicalization_rules": []
     },
     {
       "source_row": 249,
@@ -2473,7 +3472,11 @@
       "category": "Food & Beverage",
       "subcategory": "Ready-to-eat/Food",
       "type": "Sauce-Food",
-      "copywriting_angle": "Trust-led taste, convenience, and appetite appeal"
+      "copywriting_angle": "Trust-led taste, convenience, and appetite appeal",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Ready-to-eat/Food",
+      "source_type": "Sauce-Food",
+      "canonicalization_rules": []
     },
     {
       "source_row": 250,
@@ -2483,7 +3486,11 @@
       "category": "Stationery",
       "subcategory": "Budgeting Tools",
       "type": "Savings Challenge Books",
-      "copywriting_angle": "Motivation-led 100-day saving, password privacy, and waterproof PU durability"
+      "copywriting_angle": "Motivation-led 100-day saving, password privacy, and waterproof PU durability",
+      "source_category": "Stationery",
+      "source_subcategory": "Budgeting Tools",
+      "source_type": "Savings Challenge Books",
+      "canonicalization_rules": []
     },
     {
       "source_row": 251,
@@ -2493,7 +3500,11 @@
       "category": "Fashion",
       "subcategory": "Modest Fashion",
       "type": "School Hijabs",
-      "copywriting_angle": "School-ready neat awning, soft fabric, and dependable daily comfort"
+      "copywriting_angle": "School-ready neat awning, soft fabric, and dependable daily comfort",
+      "source_category": "Fashion",
+      "source_subcategory": "Modest Fashion",
+      "source_type": "School Hijabs",
+      "canonicalization_rules": []
     },
     {
       "source_row": 252,
@@ -2503,7 +3514,11 @@
       "category": "Electronics",
       "subcategory": "Mobile Photography",
       "type": "Selfie Sticks & Tripods",
-      "copywriting_angle": "Creator-led 3-in-1 portability, hands-free shooting, and Bluetooth remote control"
+      "copywriting_angle": "Creator-led 3-in-1 portability, hands-free shooting, and Bluetooth remote control",
+      "source_category": "Electronics",
+      "source_subcategory": "Mobile Photography",
+      "source_type": "Selfie Sticks & Tripods",
+      "canonicalization_rules": []
     },
     {
       "source_row": 253,
@@ -2513,7 +3528,11 @@
       "category": "Arts & Crafts",
       "subcategory": "Sewing Supplies",
       "type": "Hand Sewing Needles",
-      "copywriting_angle": "Utility-led multi-size versatility for clothing, quilting, and repair work"
+      "copywriting_angle": "Utility-led multi-size versatility for clothing, quilting, and repair work",
+      "source_category": "Arts & Crafts",
+      "source_subcategory": "Sewing Supplies",
+      "source_type": "Hand Sewing Needles",
+      "canonicalization_rules": []
     },
     {
       "source_row": 254,
@@ -2523,7 +3542,11 @@
       "category": "Fashion",
       "subcategory": "Modest Fashion",
       "type": "Shawls",
-      "copywriting_angle": "Value-led premium drape, easy styling, and bundle savings"
+      "copywriting_angle": "Value-led premium drape, easy styling, and bundle savings",
+      "source_category": "Fashion",
+      "source_subcategory": "Modest Fashion",
+      "source_type": "Shawls",
+      "canonicalization_rules": []
     },
     {
       "source_row": 255,
@@ -2533,7 +3556,11 @@
       "category": "Home & Living",
       "subcategory": "Storage & Organisation",
       "type": "Shoe Racks",
-      "copywriting_angle": "Space-saving-led eco-friendly bamboo storage, large capacity, and easy assembly"
+      "copywriting_angle": "Space-saving-led eco-friendly bamboo storage, large capacity, and easy assembly",
+      "source_category": "Home & Living",
+      "source_subcategory": "Storage & Organisation",
+      "source_type": "Shoe Racks",
+      "canonicalization_rules": []
     },
     {
       "source_row": 256,
@@ -2543,7 +3570,11 @@
       "category": "Home & Living",
       "subcategory": "Kitchen Tools",
       "type": "Sink Strainers",
-      "copywriting_angle": "Hygiene-led food-waste capture, stainless durability, and cleaner drainage"
+      "copywriting_angle": "Hygiene-led food-waste capture, stainless durability, and cleaner drainage",
+      "source_category": "Home & Living",
+      "source_subcategory": "Kitchen Tools",
+      "source_type": "Sink Strainers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 257,
@@ -2553,7 +3584,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Skincare Sets",
       "type": "Travel-Size Skincare Kits",
-      "copywriting_angle": "Trial-led best-seller discovery, travel convenience, and complete mini routine"
+      "copywriting_angle": "Trial-led best-seller discovery, travel convenience, and complete mini routine",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Skincare Sets",
+      "source_type": "Travel-Size Skincare Kits",
+      "canonicalization_rules": []
     },
     {
       "source_row": 258,
@@ -2563,7 +3598,11 @@
       "category": "Electronics",
       "subcategory": "Headphones & Earphones",
       "type": "Mini Sleep Earbuds",
-      "copywriting_angle": "Comfort-led low-profile listening for sleep and work, clear calls, and wireless freedom"
+      "copywriting_angle": "Comfort-led low-profile listening for sleep and work, clear calls, and wireless freedom",
+      "source_category": "Electronics",
+      "source_subcategory": "Headphones & Earphones",
+      "source_type": "Mini Sleep Earbuds",
+      "canonicalization_rules": []
     },
     {
       "source_row": 259,
@@ -2573,7 +3612,11 @@
       "category": "Gifts & Occasions",
       "subcategory": "Gift Flowers",
       "type": "Soap Flower Bouquets",
-      "copywriting_angle": "Gift-led lasting floral presentation, premium appearance, and occasion-ready convenience"
+      "copywriting_angle": "Gift-led lasting floral presentation, premium appearance, and occasion-ready convenience",
+      "source_category": "Gifts & Occasions",
+      "source_subcategory": "Gift Flowers",
+      "source_type": "Soap Flower Bouquets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 260,
@@ -2583,7 +3626,11 @@
       "category": "Fashion",
       "subcategory": "Socks & Hosiery",
       "type": "Casual & Sports Socks",
-      "copywriting_angle": "Comfort-led sweat absorption, anti-odour wear, and multipack value"
+      "copywriting_angle": "Comfort-led sweat absorption, anti-odour wear, and multipack value",
+      "source_category": "Fashion",
+      "source_subcategory": "Socks & Hosiery",
+      "source_type": "Casual & Sports Socks",
+      "canonicalization_rules": []
     },
     {
       "source_row": 261,
@@ -2593,7 +3640,11 @@
       "category": "Home & Living",
       "subcategory": "Outdoor Lighting",
       "type": "Solar Outdoor Lights",
-      "copywriting_angle": "Savings-led automatic solar lighting, weather resistance, and wire-free installation"
+      "copywriting_angle": "Savings-led automatic solar lighting, weather resistance, and wire-free installation",
+      "source_category": "Home & Living",
+      "source_subcategory": "Outdoor Lighting",
+      "source_type": "Solar Outdoor Lights",
+      "canonicalization_rules": []
     },
     {
       "source_row": 262,
@@ -2603,7 +3654,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Face Masks",
       "type": "Cooling Jelly Masks",
-      "copywriting_angle": "Recovery-led after-sun cooling, redness relief, deep hydration, and glow"
+      "copywriting_angle": "Recovery-led after-sun cooling, redness relief, deep hydration, and glow",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Face Masks",
+      "source_type": "Cooling Jelly Masks",
+      "canonicalization_rules": []
     },
     {
       "source_row": 263,
@@ -2613,7 +3668,11 @@
       "category": "Home & Living",
       "subcategory": "Cleaning Tools",
       "type": "Spin Mop Sets",
-      "copywriting_angle": "Convenience-led 360-degree wringing, microfiber cleaning, and complete set value"
+      "copywriting_angle": "Convenience-led 360-degree wringing, microfiber cleaning, and complete set value",
+      "source_category": "Home & Living",
+      "source_subcategory": "Cleaning Tools",
+      "source_type": "Spin Mop Sets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 264,
@@ -2623,7 +3682,11 @@
       "category": "Fashion",
       "subcategory": "Sportswear",
       "type": "Jersey-Athleisure",
-      "copywriting_angle": "Confidence, performance, and modest activewear styling"
+      "copywriting_angle": "Confidence, performance, and modest activewear styling",
+      "source_category": "Fashion",
+      "source_subcategory": "Sportswear",
+      "source_type": "Jersey-Athleisure",
+      "canonicalization_rules": []
     },
     {
       "source_row": 265,
@@ -2633,7 +3696,11 @@
       "category": "Food & Beverage",
       "subcategory": "Pantry Ingredients",
       "type": "Stevia Sweeteners",
-      "copywriting_angle": "Swap-led halal sugar replacement, compact liquid dosing, and calorie-conscious sweetness"
+      "copywriting_angle": "Swap-led halal sugar replacement, compact liquid dosing, and calorie-conscious sweetness",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Pantry Ingredients",
+      "source_type": "Stevia Sweeteners",
+      "canonicalization_rules": []
     },
     {
       "source_row": 266,
@@ -2643,7 +3710,11 @@
       "category": "Home & Living",
       "subcategory": "Storage & Organisation",
       "type": "Storage Boxes",
-      "copywriting_angle": "Organisation-led premium presentation, reusable storage, and limited-edition appeal"
+      "copywriting_angle": "Organisation-led premium presentation, reusable storage, and limited-edition appeal",
+      "source_category": "Home & Living",
+      "source_subcategory": "Storage & Organisation",
+      "source_type": "Storage Boxes",
+      "canonicalization_rules": []
     },
     {
       "source_row": 267,
@@ -2653,7 +3724,11 @@
       "category": "Home & Living",
       "subcategory": "Storage & Organisation",
       "type": "Multi-Tier Storage Trolleys",
-      "copywriting_angle": "Mobility-led multi-tier organisation, strong shelving, and room-to-room versatility"
+      "copywriting_angle": "Mobility-led multi-tier organisation, strong shelving, and room-to-room versatility",
+      "source_category": "Home & Living",
+      "source_subcategory": "Storage & Organisation",
+      "source_type": "Multi-Tier Storage Trolleys",
+      "canonicalization_rules": []
     },
     {
       "source_row": 268,
@@ -2663,7 +3738,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Skincare",
       "type": "Facial Sunscreen & Sun Care",
-      "copywriting_angle": "Trust-led skincare routine and daily skin care"
+      "copywriting_angle": "Trust-led skincare routine and daily skin care",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Skincare",
+      "source_type": "Facial Sunscreen & Sun Care",
+      "canonicalization_rules": []
     },
     {
       "source_row": 269,
@@ -2673,7 +3752,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Oral Care",
       "type": "Teeth Whitening Strips",
-      "copywriting_angle": "Event-led at-home stain care and smile confidence."
+      "copywriting_angle": "Event-led at-home stain care and smile confidence.",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Oral Care",
+      "source_type": "Teeth Whitening Strips",
+      "canonicalization_rules": []
     },
     {
       "source_row": 270,
@@ -2683,7 +3766,11 @@
       "category": "Fashion",
       "subcategory": "Prayer Wear",
       "type": "Telekung",
-      "copywriting_angle": "Devotion-led comfortable prayer coverage, soft fabric, and elegant lace detail"
+      "copywriting_angle": "Devotion-led comfortable prayer coverage, soft fabric, and elegant lace detail",
+      "source_category": "Fashion",
+      "source_subcategory": "Prayer Wear",
+      "source_type": "Telekung",
+      "canonicalization_rules": []
     },
     {
       "source_row": 271,
@@ -2693,7 +3780,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Makeup",
       "type": "Lip Serums",
-      "copywriting_angle": "Care-led moisture, brighter-looking lips, and adaptive natural tint."
+      "copywriting_angle": "Care-led moisture, brighter-looking lips, and adaptive natural tint.",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Makeup",
+      "source_type": "Lip Serums",
+      "canonicalization_rules": []
     },
     {
       "source_row": 272,
@@ -2703,7 +3794,11 @@
       "category": "Toys & Games",
       "subcategory": "RC & Remote Control Toys",
       "type": "Remote Control Cars",
-      "copywriting_angle": "Fun-led play experience and hobby excitement"
+      "copywriting_angle": "Fun-led play experience and hobby excitement",
+      "source_category": "Toys & Games",
+      "source_subcategory": "RC & Remote Control Toys",
+      "source_type": "Remote Control Cars",
+      "canonicalization_rules": []
     },
     {
       "source_row": 273,
@@ -2713,7 +3808,11 @@
       "category": "Fashion",
       "subcategory": "Sportswear",
       "type": "Tracksuits",
-      "copywriting_angle": "Value-led coordinated sportswear, school suitability, and comfortable active fit"
+      "copywriting_angle": "Value-led coordinated sportswear, school suitability, and comfortable active fit",
+      "source_category": "Fashion",
+      "source_subcategory": "Sportswear",
+      "source_type": "Tracksuits",
+      "canonicalization_rules": []
     },
     {
       "source_row": 274,
@@ -2723,7 +3822,11 @@
       "category": "Health & Personal Care",
       "subcategory": "Traditional Wellness",
       "type": "Herbal Candy Supplements",
-      "copywriting_angle": "Convenience-led chewable herbal tradition and easy daily wellness routine"
+      "copywriting_angle": "Convenience-led chewable herbal tradition and easy daily wellness routine",
+      "source_category": "Health & Personal Care",
+      "source_subcategory": "Traditional Wellness",
+      "source_type": "Herbal Candy Supplements",
+      "canonicalization_rules": []
     },
     {
       "source_row": 275,
@@ -2733,7 +3836,11 @@
       "category": "Food & Beverage",
       "subcategory": "Snacks",
       "type": "Traditional Snack Variety Packs",
-      "copywriting_angle": "Celebration-led crunchy variety, bundle value, and festive sharing convenience"
+      "copywriting_angle": "Celebration-led crunchy variety, bundle value, and festive sharing convenience",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Snacks",
+      "source_type": "Traditional Snack Variety Packs",
+      "canonicalization_rules": []
     },
     {
       "source_row": 276,
@@ -2743,7 +3850,11 @@
       "category": "Health & Personal Care",
       "subcategory": "Traditional Wellness",
       "type": "Traditional Herbal Oils",
-      "copywriting_angle": "Heritage-led Nusantara herbs and targeted topical wellness support"
+      "copywriting_angle": "Heritage-led Nusantara herbs and targeted topical wellness support",
+      "source_category": "Health & Personal Care",
+      "source_subcategory": "Traditional Wellness",
+      "source_type": "Traditional Herbal Oils",
+      "canonicalization_rules": []
     },
     {
       "source_row": 277,
@@ -2753,7 +3864,11 @@
       "category": "Home & Living",
       "subcategory": "Cleaning Supplies",
       "type": "Trash Bags",
-      "copywriting_angle": "Trust-led household cleaning utility and convenience"
+      "copywriting_angle": "Trust-led household cleaning utility and convenience",
+      "source_category": "Home & Living",
+      "source_subcategory": "Cleaning Supplies",
+      "source_type": "Trash Bags",
+      "canonicalization_rules": []
     },
     {
       "source_row": 278,
@@ -2763,7 +3878,11 @@
       "category": "Fashion",
       "subcategory": "Tops",
       "type": "T-Shirts",
-      "copywriting_angle": "Comfort-led breathable fabric, easy styling, and everyday versatility"
+      "copywriting_angle": "Comfort-led breathable fabric, easy styling, and everyday versatility",
+      "source_category": "Fashion",
+      "source_subcategory": "Tops",
+      "source_type": "T-Shirts",
+      "canonicalization_rules": []
     },
     {
       "source_row": 279,
@@ -2773,7 +3892,11 @@
       "category": "Fashion",
       "subcategory": "Pants & Bottoms",
       "type": "Unisex Lounge Pants",
-      "copywriting_angle": "Comfort-led soft cotton, relaxed unisex fit, and easy homewear styling"
+      "copywriting_angle": "Comfort-led soft cotton, relaxed unisex fit, and easy homewear styling",
+      "source_category": "Fashion",
+      "source_subcategory": "Pants & Bottoms",
+      "source_type": "Unisex Lounge Pants",
+      "canonicalization_rules": []
     },
     {
       "source_row": 280,
@@ -2783,7 +3906,11 @@
       "category": "Electronics",
       "subcategory": "Charging Accessories",
       "type": "USB-C PD Fast Chargers",
-      "copywriting_angle": "Trust-led safety-marked PD charging and broad mobile-device compatibility"
+      "copywriting_angle": "Trust-led safety-marked PD charging and broad mobile-device compatibility",
+      "source_category": "Electronics",
+      "source_subcategory": "Charging Accessories",
+      "source_type": "USB-C PD Fast Chargers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 281,
@@ -2793,7 +3920,11 @@
       "category": "Home & Living",
       "subcategory": "Indoor Lighting",
       "type": "USB Night Lights",
-      "copywriting_angle": "Comfort-led eye-friendly reading, plug-in portability, and bedroom ambience"
+      "copywriting_angle": "Comfort-led eye-friendly reading, plug-in portability, and bedroom ambience",
+      "source_category": "Home & Living",
+      "source_subcategory": "Indoor Lighting",
+      "source_type": "USB Night Lights",
+      "canonicalization_rules": []
     },
     {
       "source_row": 282,
@@ -2803,7 +3934,11 @@
       "category": "Home & Living",
       "subcategory": "Portable Lighting",
       "type": "UV Inspection Flashlights",
-      "copywriting_angle": "Inspection-led 395nm detection, USB rechargeability, and travel hygiene checks"
+      "copywriting_angle": "Inspection-led 395nm detection, USB rechargeability, and travel hygiene checks",
+      "source_category": "Home & Living",
+      "source_subcategory": "Portable Lighting",
+      "source_type": "UV Inspection Flashlights",
+      "canonicalization_rules": []
     },
     {
       "source_row": 283,
@@ -2813,7 +3948,11 @@
       "category": "Home & Living",
       "subcategory": "Household Appliances",
       "type": "Vacuum Cleaners & Sweeping Robots",
-      "copywriting_angle": "Authority-led appliance utility and convenience"
+      "copywriting_angle": "Authority-led appliance utility and convenience",
+      "source_category": "Home & Living",
+      "source_subcategory": "Household Appliances",
+      "source_type": "Vacuum Cleaners & Sweeping Robots",
+      "canonicalization_rules": []
     },
     {
       "source_row": 284,
@@ -2823,7 +3962,11 @@
       "category": "Home & Living",
       "subcategory": "Kitchen Appliances",
       "type": "Food Vacuum Sealers",
-      "copywriting_angle": "Freshness-led sealing, food-waste reduction, and convenient household storage"
+      "copywriting_angle": "Freshness-led sealing, food-waste reduction, and convenient household storage",
+      "source_category": "Home & Living",
+      "source_subcategory": "Kitchen Appliances",
+      "source_type": "Food Vacuum Sealers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 285,
@@ -2833,7 +3976,11 @@
       "category": "Fashion",
       "subcategory": "Bags",
       "type": "Women's Waist Bags",
-      "copywriting_angle": "Style-led trendy dumpling shape, large capacity, and hands-free versatility"
+      "copywriting_angle": "Style-led trendy dumpling shape, large capacity, and hands-free versatility",
+      "source_category": "Fashion",
+      "source_subcategory": "Bags",
+      "source_type": "Women's Waist Bags",
+      "canonicalization_rules": []
     },
     {
       "source_row": 286,
@@ -2843,7 +3990,11 @@
       "category": "Home Improvement",
       "subcategory": "Home Improvement",
       "type": "Wallpaper & Wall Trim",
-      "copywriting_angle": "Authority-led household upgrade utility"
+      "copywriting_angle": "Authority-led household upgrade utility",
+      "source_category": "Home Improvement",
+      "source_subcategory": "Home Improvement",
+      "source_type": "Wallpaper & Wall Trim",
+      "canonicalization_rules": []
     },
     {
       "source_row": 287,
@@ -2853,7 +4004,11 @@
       "category": "Home & Living",
       "subcategory": "Wall Coverings",
       "type": "Marble Wall Stickers",
-      "copywriting_angle": "Renovation-led thick waterproof marble finish and large-area coverage"
+      "copywriting_angle": "Renovation-led thick waterproof marble finish and large-area coverage",
+      "source_category": "Home & Living",
+      "source_subcategory": "Wall Coverings",
+      "source_type": "Marble Wall Stickers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 288,
@@ -2863,7 +4018,11 @@
       "category": "Health & Personal Care",
       "subcategory": "Foot Care",
       "type": "Wart & Corn Removal Plasters",
-      "copywriting_angle": "Trust-led targeted callus and corn care with careful-use guidance."
+      "copywriting_angle": "Trust-led targeted callus and corn care with careful-use guidance.",
+      "source_category": "Health & Personal Care",
+      "source_subcategory": "Foot Care",
+      "source_type": "Wart & Corn Removal Plasters",
+      "canonicalization_rules": []
     },
     {
       "source_row": 289,
@@ -2873,7 +4032,11 @@
       "category": "Home Improvement",
       "subcategory": "Welding Supplies",
       "type": "Low-Melting Welding Rods",
-      "copywriting_angle": "Repair-led quick melting, stable bonding, and pipe-to-steel versatility"
+      "copywriting_angle": "Repair-led quick melting, stable bonding, and pipe-to-steel versatility",
+      "source_category": "Home Improvement",
+      "source_subcategory": "Welding Supplies",
+      "source_type": "Low-Melting Welding Rods",
+      "canonicalization_rules": []
     },
     {
       "source_row": 290,
@@ -2883,17 +4046,27 @@
       "category": "Food & Beverage",
       "subcategory": "Functional Beverages",
       "type": "Wellness Drink Sachets",
-      "copywriting_angle": "Trial-led convenient sampling, daily energy support, and easy routine adoption"
+      "copywriting_angle": "Trial-led convenient sampling, daily energy support, and easy routine adoption",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Functional Beverages",
+      "source_type": "Wellness Drink Sachets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 291,
       "cluster_name": "Sensitive Wellness",
       "product_type_code": "wellness_supplement",
       "display_name": "Wellness Supplement",
-      "category": "Health",
+      "category": "Health & Personal Care",
       "subcategory": "Supplements",
       "type": "Wellness Supplements",
-      "copywriting_angle": "Trust-led wellness and daily support"
+      "copywriting_angle": "Trust-led wellness and daily support",
+      "source_category": "Health",
+      "source_subcategory": "Supplements",
+      "source_type": "Wellness Supplements",
+      "canonicalization_rules": [
+        "category:Health->Health & Personal Care"
+      ]
     },
     {
       "source_row": 292,
@@ -2903,7 +4076,11 @@
       "category": "Beauty & Personal Care",
       "subcategory": "Oral Care",
       "type": "Whitening Toothpastes",
-      "copywriting_angle": "Trust-led stain care, plaque control, and fresh breath."
+      "copywriting_angle": "Trust-led stain care, plaque control, and fresh breath.",
+      "source_category": "Beauty & Personal Care",
+      "source_subcategory": "Oral Care",
+      "source_type": "Whitening Toothpastes",
+      "canonicalization_rules": []
     },
     {
       "source_row": 293,
@@ -2913,7 +4090,11 @@
       "category": "Fashion",
       "subcategory": "Outerwear",
       "type": "Water-Resistant Windbreakers",
-      "copywriting_angle": "Protection-led lightweight water resistance, hooded coverage, and active versatility"
+      "copywriting_angle": "Protection-led lightweight water resistance, hooded coverage, and active versatility",
+      "source_category": "Fashion",
+      "source_subcategory": "Outerwear",
+      "source_type": "Water-Resistant Windbreakers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 294,
@@ -2923,7 +4104,11 @@
       "category": "Automotive & Motorcycle",
       "subcategory": "Windshield Care",
       "type": "Glass Water Repellent Treatments",
-      "copywriting_angle": "Safety-led clear visibility, rain repellence, and confident wet-weather driving"
+      "copywriting_angle": "Safety-led clear visibility, rain repellence, and confident wet-weather driving",
+      "source_category": "Automotive & Motorcycle",
+      "source_subcategory": "Windshield Care",
+      "source_type": "Glass Water Repellent Treatments",
+      "canonicalization_rules": []
     },
     {
       "source_row": 295,
@@ -2933,7 +4118,11 @@
       "category": "Electronics",
       "subcategory": "Headphones & Earphones",
       "type": "True Wireless Earbuds",
-      "copywriting_angle": "Performance-led wireless sound, strong bass, clear calls, durability, and long battery life"
+      "copywriting_angle": "Performance-led wireless sound, strong bass, clear calls, durability, and long battery life",
+      "source_category": "Electronics",
+      "source_subcategory": "Headphones & Earphones",
+      "source_type": "True Wireless Earbuds",
+      "canonicalization_rules": []
     },
     {
       "source_row": 296,
@@ -2943,7 +4132,11 @@
       "category": "Electronics",
       "subcategory": "Computer Accessories",
       "type": "Wireless Mice",
-      "copywriting_angle": "Productivity-led dual wireless connectivity, adjustable tracking, and rechargeable convenience"
+      "copywriting_angle": "Productivity-led dual wireless connectivity, adjustable tracking, and rechargeable convenience",
+      "source_category": "Electronics",
+      "source_subcategory": "Computer Accessories",
+      "source_type": "Wireless Mice",
+      "canonicalization_rules": []
     },
     {
       "source_row": 297,
@@ -2953,7 +4146,11 @@
       "category": "Fashion",
       "subcategory": "Women's Clothing",
       "type": "Women's Blouses",
-      "copywriting_angle": "Style-led comfortable modest fit, easy pairing, and work-to-occasion versatility"
+      "copywriting_angle": "Style-led comfortable modest fit, easy pairing, and work-to-occasion versatility",
+      "source_category": "Fashion",
+      "source_subcategory": "Women's Clothing",
+      "source_type": "Women's Blouses",
+      "canonicalization_rules": []
     },
     {
       "source_row": 298,
@@ -2963,7 +4160,11 @@
       "category": "Fashion",
       "subcategory": "Underwear",
       "type": "Women's Bras",
-      "copywriting_angle": "Support-led wireless comfort, inclusive sizing, and smooth everyday fit"
+      "copywriting_angle": "Support-led wireless comfort, inclusive sizing, and smooth everyday fit",
+      "source_category": "Fashion",
+      "source_subcategory": "Underwear",
+      "source_type": "Women's Bras",
+      "canonicalization_rules": []
     },
     {
       "source_row": 299,
@@ -2973,7 +4174,11 @@
       "category": "Fashion",
       "subcategory": "Jewellery",
       "type": "Women's Bracelets",
-      "copywriting_angle": "Style-led gold-tone elegance, durable titanium construction, and viral appeal"
+      "copywriting_angle": "Style-led gold-tone elegance, durable titanium construction, and viral appeal",
+      "source_category": "Fashion",
+      "source_subcategory": "Jewellery",
+      "source_type": "Women's Bracelets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 300,
@@ -2983,7 +4188,11 @@
       "category": "Fashion",
       "subcategory": "Women's Footwear",
       "type": "Women's Canvas Slip-Ons",
-      "copywriting_angle": "Comfort-led easy slip-on wear, casual styling, and lightweight canvas"
+      "copywriting_angle": "Comfort-led easy slip-on wear, casual styling, and lightweight canvas",
+      "source_category": "Fashion",
+      "source_subcategory": "Women's Footwear",
+      "source_type": "Women's Canvas Slip-Ons",
+      "canonicalization_rules": []
     },
     {
       "source_row": 301,
@@ -2993,7 +4202,11 @@
       "category": "Fashion",
       "subcategory": "Women's Clothing",
       "type": "Women's Clothing Sets",
-      "copywriting_angle": "Convenience-led coordinated styling, comfortable fit, and ready-made outfit value"
+      "copywriting_angle": "Convenience-led coordinated styling, comfortable fit, and ready-made outfit value",
+      "source_category": "Fashion",
+      "source_subcategory": "Women's Clothing",
+      "source_type": "Women's Clothing Sets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 302,
@@ -3003,7 +4216,11 @@
       "category": "Fashion",
       "subcategory": "Bags",
       "type": "Convertible Women's Bags",
-      "copywriting_angle": "Versatility-led 2-in-1 carry options, spacious storage, and free gift value"
+      "copywriting_angle": "Versatility-led 2-in-1 carry options, spacious storage, and free gift value",
+      "source_category": "Fashion",
+      "source_subcategory": "Bags",
+      "source_type": "Convertible Women's Bags",
+      "canonicalization_rules": []
     },
     {
       "source_row": 303,
@@ -3013,7 +4230,11 @@
       "category": "Fashion",
       "subcategory": "Women's Footwear",
       "type": "Women's Flats",
-      "copywriting_angle": "Style-led lightweight comfort, feminine detail, and versatile everyday wear"
+      "copywriting_angle": "Style-led lightweight comfort, feminine detail, and versatile everyday wear",
+      "source_category": "Fashion",
+      "source_subcategory": "Women's Footwear",
+      "source_type": "Women's Flats",
+      "canonicalization_rules": []
     },
     {
       "source_row": 304,
@@ -3023,7 +4244,11 @@
       "category": "Health & Personal Care",
       "subcategory": "Women's Wellness",
       "type": "Women's Herbal Capsules",
-      "copywriting_angle": "Wellness-led plant-based female support with responsible daily-routine positioning"
+      "copywriting_angle": "Wellness-led plant-based female support with responsible daily-routine positioning",
+      "source_category": "Health & Personal Care",
+      "source_subcategory": "Women's Wellness",
+      "source_type": "Women's Herbal Capsules",
+      "canonicalization_rules": []
     },
     {
       "source_row": 305,
@@ -3033,7 +4258,11 @@
       "category": "Fashion",
       "subcategory": "Bags",
       "type": "Women's Mini Bags",
-      "copywriting_angle": "Elegance-led compact faux-leather styling and easy occasion carry"
+      "copywriting_angle": "Elegance-led compact faux-leather styling and easy occasion carry",
+      "source_category": "Fashion",
+      "source_subcategory": "Bags",
+      "source_type": "Women's Mini Bags",
+      "canonicalization_rules": []
     },
     {
       "source_row": 306,
@@ -3043,7 +4272,11 @@
       "category": "Fashion",
       "subcategory": "Women's Clothing",
       "type": "Women's Pants & Trousers",
-      "copywriting_angle": "Fit-led flattering comfort, flexible styling, and everyday versatility"
+      "copywriting_angle": "Fit-led flattering comfort, flexible styling, and everyday versatility",
+      "source_category": "Fashion",
+      "source_subcategory": "Women's Clothing",
+      "source_type": "Women's Pants & Trousers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 307,
@@ -3053,7 +4286,11 @@
       "category": "Fashion",
       "subcategory": "Women's Footwear",
       "type": "Women's Sandals & Slippers",
-      "copywriting_angle": "Comfort-led lightweight cushioning, anti-slip grip, and indoor-outdoor versatility"
+      "copywriting_angle": "Comfort-led lightweight cushioning, anti-slip grip, and indoor-outdoor versatility",
+      "source_category": "Fashion",
+      "source_subcategory": "Women's Footwear",
+      "source_type": "Women's Sandals & Slippers",
+      "canonicalization_rules": []
     },
     {
       "source_row": 308,
@@ -3063,7 +4300,11 @@
       "category": "Fashion",
       "subcategory": "Women's Clothing",
       "type": "Women's Casual Shorts",
-      "copywriting_angle": "Comfort-led high-waist fit, woven-tie detail, and summer-ready casual style"
+      "copywriting_angle": "Comfort-led high-waist fit, woven-tie detail, and summer-ready casual style",
+      "source_category": "Fashion",
+      "source_subcategory": "Women's Clothing",
+      "source_type": "Women's Casual Shorts",
+      "canonicalization_rules": []
     },
     {
       "source_row": 309,
@@ -3073,7 +4314,11 @@
       "category": "Fashion",
       "subcategory": "Women's Clothing",
       "type": "Women's Skirts",
-      "copywriting_angle": "Style-led flattering drape, modest coverage, comfortable fit, and easy outfit pairing."
+      "copywriting_angle": "Style-led flattering drape, modest coverage, comfortable fit, and easy outfit pairing.",
+      "source_category": "Fashion",
+      "source_subcategory": "Women's Clothing",
+      "source_type": "Women's Skirts",
+      "canonicalization_rules": []
     },
     {
       "source_row": 310,
@@ -3083,7 +4328,11 @@
       "category": "Fashion",
       "subcategory": "Sleepwear",
       "type": "Women's Pyjamas & Nightwear",
-      "copywriting_angle": "Comfort-led soft breathable sleep, relaxed fit, and attractive homewear styling"
+      "copywriting_angle": "Comfort-led soft breathable sleep, relaxed fit, and attractive homewear styling",
+      "source_category": "Fashion",
+      "source_subcategory": "Sleepwear",
+      "source_type": "Women's Pyjamas & Nightwear",
+      "canonicalization_rules": []
     },
     {
       "source_row": 311,
@@ -3093,7 +4342,11 @@
       "category": "Health & Personal Care",
       "subcategory": "Traditional Women's Wellness",
       "type": "Traditional Maajun",
-      "copywriting_angle": "Heritage-led herbal preparation, preservative-conscious positioning, and women's internal-care tradition"
+      "copywriting_angle": "Heritage-led herbal preparation, preservative-conscious positioning, and women's internal-care tradition",
+      "source_category": "Health & Personal Care",
+      "source_subcategory": "Traditional Women's Wellness",
+      "source_type": "Traditional Maajun",
+      "canonicalization_rules": []
     },
     {
       "source_row": 312,
@@ -3103,7 +4356,11 @@
       "category": "Fashion",
       "subcategory": "Underwear",
       "type": "Women's Panties",
-      "copywriting_angle": "Comfort-led seamless fit, breathable softness, and multipack everyday value"
+      "copywriting_angle": "Comfort-led seamless fit, breathable softness, and multipack everyday value",
+      "source_category": "Fashion",
+      "source_subcategory": "Underwear",
+      "source_type": "Women's Panties",
+      "canonicalization_rules": []
     },
     {
       "source_row": 313,
@@ -3113,7 +4370,11 @@
       "category": "Fashion",
       "subcategory": "Wallets",
       "type": "Women's Mini Wallets",
-      "copywriting_angle": "Organisation-led compact card and coin storage with cute zip styling"
+      "copywriting_angle": "Organisation-led compact card and coin storage with cute zip styling",
+      "source_category": "Fashion",
+      "source_subcategory": "Wallets",
+      "source_type": "Women's Mini Wallets",
+      "canonicalization_rules": []
     },
     {
       "source_row": 314,
@@ -3123,7 +4384,11 @@
       "category": "Food & Beverage",
       "subcategory": "Dairy Beverages",
       "type": "Flavoured Yogurt Drinks",
-      "copywriting_angle": "Refreshment-led strawberry taste and digestive-support positioning"
+      "copywriting_angle": "Refreshment-led strawberry taste and digestive-support positioning",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Dairy Beverages",
+      "source_type": "Flavoured Yogurt Drinks",
+      "canonicalization_rules": []
     },
     {
       "source_row": 315,
@@ -3133,7 +4398,34 @@
       "category": "Food & Beverage",
       "subcategory": "Pantry Ingredients",
       "type": "Sugar Substitutes",
-      "copywriting_angle": "Swap-led zero-sugar sweetness, calorie control, and easy beverage use"
+      "copywriting_angle": "Swap-led zero-sugar sweetness, calorie control, and easy beverage use",
+      "source_category": "Food & Beverage",
+      "source_subcategory": "Pantry Ingredients",
+      "source_type": "Sugar Substitutes",
+      "canonicalization_rules": []
     }
-  ]
+  ],
+  "category_aliases": {
+    "Health": "Health & Personal Care",
+    "Health & Personal Care": "Health & Personal Care",
+    "Sports & Outdoor": "Sports & Outdoors",
+    "Sports & Outdoors": "Sports & Outdoors"
+  },
+  "type_collision_winners": {
+    "Beauty & Personal Care::Facial Cleansing::Brightening Facial Soap": "facial_cleansing_soap"
+  },
+  "normalization": {
+    "category_aliases_applied": true,
+    "category_aliases": {
+      "Health": "Health & Personal Care",
+      "Health & Personal Care": "Health & Personal Care",
+      "Sports & Outdoor": "Sports & Outdoors",
+      "Sports & Outdoors": "Sports & Outdoors"
+    },
+    "source_header_row": 2,
+    "collision_policy": "explicit product_type_code winner for the sole duplicate (Category, Subcategory, Type) tuple",
+    "collision_winners": {
+      "Beauty & Personal Care::Facial Cleansing::Brightening Facial Soap": "facial_cleansing_soap"
+    }
+  }
 }

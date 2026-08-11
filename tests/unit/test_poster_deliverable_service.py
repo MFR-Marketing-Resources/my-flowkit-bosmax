@@ -7,9 +7,11 @@ per-archetype fixtures.
 """
 import hashlib
 import json
+import tempfile
 from pathlib import Path
 
 import pytest
+from PIL import Image, ImageDraw
 
 from agent.db import crud
 from agent.models.poster_copy_set import (
@@ -24,6 +26,7 @@ from agent.services.poster_deliverable_service import (
     PosterDeliverableError,
     PosterDeliverableService,
 )
+from agent.services import product_truth_lock_service as truth_lock_service
 
 
 
@@ -49,6 +52,55 @@ async def _seed_product() -> str:
     row = await crud.create_product(
         "Minyak Warisan Tok 25ml", source="MANUAL",
         product_display_name="Minyak Warisan Tok", category="Traditional",
+    )
+    # Poster Builder is an exact product-composite lane. The fixture represents
+    # a separately reviewed canonical source + transparent cutout; it never
+    # relies on a product-name heuristic or auto-approval in production code.
+    fixture_root = Path(tempfile.gettempdir()) / "flowkit-poster-truth-lock-fixtures"
+    fixture_root.mkdir(parents=True, exist_ok=True)
+    source = fixture_root / f"{row['id']}-canonical.png"
+    cutout = fixture_root / f"{row['id']}-cutout.png"
+    source_image = Image.new("RGB", (40, 60), (248, 248, 244))
+    source_draw = ImageDraw.Draw(source_image)
+    source_draw.rectangle((10, 8, 29, 54), fill=(12, 100, 70))
+    source_image.save(source)
+    cutout_image = Image.new("RGBA", (40, 60), (0, 0, 0, 0))
+    cutout_draw = ImageDraw.Draw(cutout_image)
+    cutout_draw.rectangle((10, 8, 29, 54), fill=(12, 100, 70, 255))
+    cutout_image.save(cutout)
+    truth_lock_service.DB_PATH = crud.DB_PATH
+    await crud.upsert_product_truth_lock(
+        row["id"],
+        canonical_media_id=f"media-{row['id']}",
+        canonical_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+        source_width=40,
+        source_height=60,
+        canonical_source_path=str(source),
+        canonical_cutout_media_id=f"cutout-{row['id']}",
+        canonical_cutout_sha256=hashlib.sha256(cutout.read_bytes()).hexdigest(),
+        canonical_cutout_path=str(cutout),
+        alpha_mask_json=json.dumps({
+            "source": "cutout_alpha",
+            "sha256": hashlib.sha256(cutout_image.getchannel("A").tobytes()).hexdigest(),
+            "width": 40,
+            "height": 60,
+        }),
+        anchor_point_json=json.dumps({"x": 0.5, "y": 0.5}),
+        min_scale=0.01,
+        max_scale=100.0,
+        allowed_bbox_json=json.dumps({"x": 0.05, "y": 0.05, "w": 0.9, "h": 0.9}),
+        allowed_rotation=0.0,
+        allowed_perspective=0.0,
+        identity_lock=1,
+        geometry_lock=1,
+        label_lock=1,
+        logo_lock=1,
+        colour_lock=1,
+        scale_lock=1,
+        review_status="APPROVED",
+        failure_state="",
+        provenance_json=json.dumps({"source": "offline-test", "review": "approved-fixture"}),
+        schema_version="1.0",
     )
     return row["id"]
 
@@ -96,6 +148,12 @@ def _fake_compose(tmp_path: Path, *, ok: bool = True):
             output_png={"width": 1080, "height": 1920},
             zones=zones, errors=[], ok=ok,
         )
+        manifest.product_layer.integrity = {
+            "composition_ok": True,
+            "write_verified": True,
+            "product_region_match": True,
+            "attestation": "CANONICAL_CUTOUT_REGION_MATCH",
+        }
         return out, report
 
     return fake
@@ -198,6 +256,70 @@ async def test_save_registers_creative_asset_with_poster_governance(tmp_path, mo
         result["deliverable"]["poster_deliverable_id"]
     )
     assert again["already_saved"] is True
+
+
+@pytest.mark.asyncio
+async def test_campaign_composes_copy_over_reference_conditioned_key_visual(tmp_path, monkeypatch):
+    pid = await _seed_product()
+    pcs = await _seed_copy_set(pid)
+    monkeypatch.setattr(compositor, "compose", _fake_compose(tmp_path))
+    result = await PosterDeliverableService.compose_poster(
+        product_id=pid,
+        poster_copy_set_id=pcs["poster_copy_set_id"],
+        recipe_id="product_hero_night_routine",
+        background_local_path=_bg(tmp_path),
+        image_model="NANO_BANANA_PRO",
+        creative_mode="CREATIVE_CAMPAIGN",
+    )
+    row = result["deliverable"]
+    manifest = json.loads(row["render_manifest_json"])
+    assert row["composition_strategy"] == "REFERENCE_CONDITIONED"
+    assert manifest["product_layer"]["strategy"] == "REFERENCE_CONDITIONED"
+    assert not manifest["product_layer"].get("asset_ref")
+    assert manifest["provenance"]["creative_mode"] == "CREATIVE_CAMPAIGN"
+
+    captured = {}
+    _mock_asset(monkeypatch, captured, asset_id="ca_campaign_1")
+    saved = await PosterDeliverableService.save_to_library(
+        row["poster_deliverable_id"]
+    )
+    assert saved["creative_asset_id"] == "ca_campaign_1"
+    request = captured["request"]
+    assert request.asset_subtype == "CAMPAIGN_POSTER_REFERENCE_CONDITIONED"
+    assert request.review_status == "PENDING_REVIEW"
+    assert request.approved_for_poster is False
+    assert request.product_truth_status == "REFERENCE_CONDITIONED_UNVERIFIED"
+    assert request.identity_lock_status == "UNVERIFIED"
+    assert request.scale_truth_status == "UNVERIFIED"
+    assert (
+        request.mode_a_metadata_handoff["campaign_governance"]["review_state"]
+        == "PENDING_HUMAN_REVIEW"
+    )
+
+
+@pytest.mark.asyncio
+async def test_campaign_save_blocks_when_campaign_lineage_qa_fails(tmp_path, monkeypatch):
+    pid = await _seed_product()
+    pcs = await _seed_copy_set(pid)
+    monkeypatch.setattr(compositor, "compose", _fake_compose(tmp_path))
+    result = await PosterDeliverableService.compose_poster(
+        product_id=pid,
+        poster_copy_set_id=pcs["poster_copy_set_id"],
+        recipe_id="product_hero_night_routine",
+        background_local_path=_bg(tmp_path),
+        creative_mode="CREATIVE_CAMPAIGN",
+        settings={"pipeline": "WRONG", "raw_key_visual_is_lineage_only": False},
+    )
+    assert result["qa_report"]["ok"] is False
+    assert result["qa_report"]["campaign_qa"]["block_count"] > 0
+    captured = {}
+    _mock_asset(monkeypatch, captured, asset_id="ca_campaign_blocked")
+    with pytest.raises(PosterDeliverableError) as exc:
+        await PosterDeliverableService.save_to_library(
+            result["deliverable"]["poster_deliverable_id"]
+        )
+    assert exc.value.code == "POSTER_QA_BLOCKED"
+    assert "CAMPAIGN_CLEAN_KEY_VISUAL_LINEAGE" in str(exc.value)
 
 
 @pytest.mark.asyncio
@@ -320,8 +442,8 @@ def _mock_asset(monkeypatch, captured, asset_id="ca_truth_1"):
 
 
 @pytest.mark.asyncio
-async def test_save_stamps_reference_conditioned_unverified(tmp_path, monkeypatch):
-    """REFERENCE_CONDITIONED composition must NEVER be stamped PRESERVED."""
+async def test_save_stamps_verified_exact_product_truth(tmp_path, monkeypatch):
+    """Poster save requires the approved lock plus compositor attestation."""
     pid = await _seed_product()
     pcs = await _seed_copy_set(pid)
     monkeypatch.setattr(compositor, "compose", _fake_compose(tmp_path))
@@ -333,10 +455,9 @@ async def test_save_stamps_reference_conditioned_unverified(tmp_path, monkeypatc
         result["deliverable"]["poster_deliverable_id"]
     )
     req = captured["request"]
-    assert req.product_truth_status == "DETERMINISTIC_COMPOSITE_UNVERIFIED"
-    assert req.product_truth_status != "PRESERVED"
-    # The library description carries the honest human-review note.
-    assert "human review" in req.description
+    assert req.product_truth_status == "DETERMINISTIC_COMPOSITE_VERIFIED"
+    assert req.product_truth_status != "NON_DETERMINISTIC_REFERENCE_CONDITIONED"
+    assert "immutable canonical product composite" in req.description
 
 
 def test_truth_status_mapping_is_fail_closed():

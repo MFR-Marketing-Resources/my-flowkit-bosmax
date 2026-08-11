@@ -31,9 +31,11 @@ from agent.models.poster_copy_set import (
 )
 from agent.models.poster_copy_quality import PosterCopyQualityRequest
 from agent.models.poster_render_manifest import (
+    PosterQAFinding,
     PosterQAReport,
     build_qa_report,
 )
+from agent.models.poster_campaign_qa import CampaignReviewRequest
 from agent.services import poster_compositor_service as compositor
 from agent.services.exact_product_compositor_service import prepare_layer
 from agent.services import poster_recipe_service
@@ -43,6 +45,7 @@ from agent.services.poster_composition_service import (
 )
 from agent.services.poster_copy_quality_service import evaluate_poster_copy
 from agent.services.product_truth_service import ProductTruthService
+from agent.services import product_truth_lock_service as truth_lock_service
 from agent.services.creative_asset_service import (
     CREATIVE_ASSET_UPLOAD_DIR,
     create_creative_asset,
@@ -55,6 +58,16 @@ from agent.services.poster_template_service import (
     manifest_frame_ratio,
     template_contract,
 )
+from agent.services.poster_design_system import resolve_design_route
+from agent.services.poster_campaign_qa_service import (
+    CampaignQAError,
+    build_campaign_machine_qa,
+    build_campaign_post_composition_qa,
+    build_world_class_review,
+    manifest_fingerprint,
+)
+from agent.services.poster_campaign_design_service import build_campaign_design_brief
+from agent.services.product_reference_pack_service import get_reference_pack
 
 # HONEST product-truth stamping: REFERENCE_CONDITIONED generation cannot prove
 # pixel-level product preservation — never stamp PRESERVED for it. A
@@ -98,6 +111,139 @@ def derive_poster_truth_status(
     ):
         return "DETERMINISTIC_COMPOSITE_VERIFIED"
     return base
+
+
+def _verify_exact_poster_lineage(
+    *, manifest_json: str, product_id: str, output_sha256: str
+) -> dict[str, Any]:
+    """Validate the persisted exact-composite attestation before library save.
+
+    A strategy name or a client review flag is not evidence. The manifest must
+    retain the approved Product Truth Lock lineage and the compositor must have
+    attested that the alpha-aware canonical region survived the write. This is
+    deliberately read-only and revalidates the lock bytes on every save.
+    """
+    try:
+        manifest = json.loads(manifest_json or "{}")
+    except json.JSONDecodeError as exc:
+        raise PosterDeliverableError(
+            "POSTER_PRODUCT_TRUTH_LINEAGE_INVALID",
+            "Saved poster manifest is not valid JSON.",
+            status_code=409,
+        ) from exc
+    layer = manifest.get("product_layer")
+    if not isinstance(layer, dict) or layer.get("strategy") != "DETERMINISTIC_COMPOSITE":
+        raise PosterDeliverableError(
+            "POSTER_PRODUCT_TRUTH_EXACT_COMPOSITE_REQUIRED",
+            "Only an exact deterministic product composite may be saved as a product poster.",
+            status_code=409,
+        )
+
+    try:
+        lock = truth_lock_service.resolve_approved_product_truth_lock(product_id)
+    except truth_lock_service.ProductTruthLockError as exc:
+        raise PosterDeliverableError(exc.code, exc.message, status_code=exc.status_code) from exc
+
+    expected = {
+        "product_id": product_id,
+        "canonical_media_id": lock.canonical_media_id,
+        "canonical_cutout_media_id": lock.canonical_cutout_media_id,
+        "source_sha256": lock.canonical_sha256,
+        "cutout_sha256": lock.canonical_cutout_sha256,
+        "alpha_mask_sha256": lock.alpha_mask_sha256,
+        "truth_lock_schema_version": lock.schema_version,
+    }
+    for key, value in expected.items():
+        if str(layer.get(key) or "") != str(value):
+            raise PosterDeliverableError(
+                "POSTER_PRODUCT_TRUTH_LINEAGE_INVALID",
+                f"Poster manifest {key} does not match the approved Product Truth Lock.",
+                status_code=409,
+            )
+    if Path(str(layer.get("asset_ref") or "")).resolve() != Path(
+        lock.canonical_cutout_path
+    ).resolve():
+        raise PosterDeliverableError(
+            "POSTER_PRODUCT_TRUTH_LINEAGE_INVALID",
+            "Poster manifest cutout path is not the server-approved cutout.",
+            status_code=409,
+        )
+
+    integrity = layer.get("integrity")
+    required = ("composition_ok", "write_verified", "product_region_match", "attestation")
+    if not isinstance(integrity, dict) or not all(integrity.get(key) for key in required):
+        raise PosterDeliverableError(
+            "POSTER_EXACT_COMPOSITE_ATTESTATION_REQUIRED",
+            "Poster output has no complete alpha-aware deterministic-compositor attestation.",
+            status_code=409,
+        )
+    return {
+        "approved_product_asset_id": lock.canonical_media_id,
+        "product_asset_sha256": lock.canonical_sha256,
+        "composition_ok": True,
+        "attestation": integrity.get("attestation"),
+        "output_sha256": output_sha256,
+        "canonical_cutout_media_id": lock.canonical_cutout_media_id,
+        "canonical_cutout_sha256": lock.canonical_cutout_sha256,
+        "alpha_mask_sha256": lock.alpha_mask_sha256,
+        "truth_lock_schema_version": lock.schema_version,
+    }
+
+
+def _verify_campaign_poster_lineage(
+    *, manifest_json: str, product_id: str, output_sha256: str
+) -> dict[str, Any]:
+    """Validate Campaign lineage without claiming pixel-exact product truth.
+
+    The provider owns the integrated clean key visual.  The local compositor
+    adds deterministic copy only, so this gate is intentionally separate from
+    Exact Commerce's Product Truth Lock attestation.
+    """
+    try:
+        manifest = json.loads(manifest_json or "{}")
+    except json.JSONDecodeError as exc:
+        raise PosterDeliverableError(
+            "POSTER_CAMPAIGN_LINEAGE_INVALID",
+            "Saved campaign manifest is not valid JSON.",
+            status_code=409,
+        ) from exc
+    layer = manifest.get("product_layer")
+    provenance = manifest.get("provenance")
+    if not isinstance(layer, dict) or layer.get("strategy") != "REFERENCE_CONDITIONED":
+        raise PosterDeliverableError(
+            "CAMPAIGN_REFERENCE_CONDITIONED_REQUIRED",
+            "Creative Campaign must save a reference-conditioned composed poster.",
+            status_code=409,
+        )
+    if not isinstance(provenance, dict) or _norm(provenance.get("creative_mode")).upper() != "CREATIVE_CAMPAIGN":
+        raise PosterDeliverableError(
+            "CAMPAIGN_GOVERNANCE_LINEAGE_REQUIRED",
+            "Campaign governance is missing from the persisted poster manifest.",
+            status_code=409,
+        )
+    if not _norm(manifest.get("background_media_id")) and not _norm(
+        manifest.get("background_local_path")
+    ):
+        raise PosterDeliverableError(
+            "CAMPAIGN_KEY_VISUAL_LINEAGE_REQUIRED",
+            "A composed Campaign poster must retain its provider key-visual lineage.",
+            status_code=409,
+        )
+    if _norm(layer.get("asset_ref")) or _norm(layer.get("canonical_cutout_media_id")):
+        raise PosterDeliverableError(
+            "CAMPAIGN_EXACT_PRODUCT_LAYER_FORBIDDEN",
+            "Campaign posters must not silently switch to the Exact Commerce product layer.",
+            status_code=409,
+        )
+    return {
+        "composition_ok": True,
+        "output_sha256": output_sha256,
+        "product_id": product_id,
+        "background_media_id": _norm(manifest.get("background_media_id")),
+        "review_state": "PENDING_HUMAN_REVIEW",
+        "identity_status": "UNVERIFIED",
+        "scale_status": "UNVERIFIED",
+    }
 
 
 class PosterDeliverableError(Exception):
@@ -363,12 +509,123 @@ class PosterDeliverableService:
                 status_code=409,
             )
         copy_set = serialize_poster_copy_set(pcs_row)
-        settings = settings or {}
+        campaign_mode = _norm(creative_mode).upper() == "CREATIVE_CAMPAIGN"
+        settings = dict(settings or {})
+        if campaign_mode:
+            settings.setdefault(
+                "pipeline", "CLEAN_KEY_VISUAL_THEN_DETERMINISTIC_COPY_COMPOSITE"
+            )
+            settings.setdefault("raw_key_visual_is_lineage_only", True)
+            settings.setdefault("review_state", "PENDING_HUMAN_REVIEW")
+            design = resolve_design_route(
+                dict(product),
+                objective=_norm(copy_set.get("objective")) or "Product Hero",
+                selected_angle=_norm(copy_set.get("angle")),
+                copy_chars=sum(
+                    len(_norm(copy_set.get(key)))
+                    for key in ("primary_message", "support_message", "cta")
+                ),
+                headline_lines=max(
+                    1,
+                    min(3, len(_norm(copy_set.get("primary_message")).split()) // 4 + 1),
+                ),
+            )
+            settings.setdefault("design_route", design["design_route"])
+            settings.setdefault("layout_variant", design["layout_variant"])
+        else:
+            design = {}
         direction = resolve_creative_direction(creative_mode, product=dict(product)) if creative_mode is not None else None
 
         media_id, bg_local = await _resolve_background(
             background_media_id, background_local_path
         )
+
+        # Campaign provenance is resolved server-side from the same immutable
+        # authorities used by the generation gate.  The client may contribute
+        # a prompt fingerprint, but it cannot manufacture product/reference or
+        # provider-operation lineage.
+        campaign_provenance: dict[str, Any] = {}
+        if campaign_mode:
+            reference_pack = None
+            try:
+                reference_pack = await get_reference_pack(product_id)
+            except Exception:
+                reference_pack = None
+            brief = None
+            try:
+                brief = await build_campaign_design_brief(
+                    product_id,
+                    objective=_norm(copy_set.get("objective")) or "Product Hero",
+                    selected_angle=_norm(copy_set.get("angle")),
+                    copy_layout={
+                        "primary_message": _norm(copy_set.get("primary_message")),
+                        "support_message": _norm(copy_set.get("support_message")),
+                        "cta": _norm(copy_set.get("cta")),
+                    },
+                    fail_closed=False,
+                )
+            except Exception:
+                brief = None
+            operation_rows: list[dict[str, Any]] = []
+            if media_id:
+                try:
+                    operation_rows = await crud.list_image_generation_operations_by_media_id(media_id)
+                except Exception:
+                    operation_rows = []
+            operation = operation_rows[0] if operation_rows else {}
+            raw_sha = ""
+            try:
+                raw_sha = _sha256(Path(bg_local)) if bg_local else ""
+            except OSError:
+                raw_sha = ""
+            try:
+                provider_budget = int(
+                    settings.get("provider_operation_budget")
+                    or settings.get("maximum_provider_operations")
+                    or 1
+                )
+            except (TypeError, ValueError):
+                provider_budget = 1
+            actual_retry_count = max(0, len(operation_rows) - 1)
+            reference_role_hashes = {
+                str(binding.role): str(binding.sha256 or "UNVERIFIED")
+                for binding in (reference_pack.references if reference_pack else [])
+            }
+            settings.setdefault("raw_key_visual_media_id", media_id)
+            settings.setdefault("raw_key_visual_sha256", raw_sha)
+            settings.setdefault("provider_operation_budget", provider_budget)
+            settings.setdefault("actual_retry_count", actual_retry_count)
+            settings.setdefault(
+                "clean_key_visual_prompt_fingerprint",
+                _norm(settings.get("prompt_fingerprint")),
+            )
+            campaign_provenance = {
+                "clean_key_visual_prompt_fingerprint": _norm(
+                    settings.get("clean_key_visual_prompt_fingerprint")
+                    or settings.get("prompt_fingerprint")
+                ),
+                "approved_snapshot_id": _norm(getattr(brief, "approved_snapshot_id", "")),
+                "approved_snapshot_version": getattr(brief, "approved_snapshot_version", None),
+                "design_brief_version": _norm(getattr(brief, "schema_version", "")),
+                "copy_route_id": _norm(settings.get("copy_route_id") or copy_set.get("campaign_id")),
+                "reference_pack_id": _norm(
+                    getattr(reference_pack, "pack_id", "") or settings.get("reference_pack_id")
+                ),
+                "reference_role_hashes": reference_role_hashes,
+                "requested_provider_model": _norm(
+                    image_model or operation.get("model") or "NANO_BANANA_PRO"
+                ),
+                "provider_batch_id": _norm(operation.get("transport_batch_id")),
+                "provider_operation_id": _norm(operation.get("provider_operation_id")),
+                "provider_operation_id_status": _norm(
+                    operation.get("operation_id_status")
+                    or ("PROVIDER_OPERATION_RECORD_MISSING" if not operation else "UNPROVEN_PROVIDER_OPERATION_ID")
+                ),
+                "provider_operation_budget": provider_budget,
+                "actual_retry_count": actual_retry_count,
+                "raw_key_visual_media_id": media_id,
+                "raw_key_visual_sha256": raw_sha,
+            }
 
         try:
             # B-01/B-03: the canonical plan is resolved ONCE here — with the
@@ -380,15 +637,42 @@ class PosterDeliverableService:
                 recipe_id=_norm(recipe_id),
                 direction=direction,
             )
+            direction_payload = {
+                "mode": direction.mode.value,
+                "authority_version": direction.authority_version,
+                "representation_policy_version": direction.representation_policy_version,
+                **(
+                    {
+                        "design_route": str(settings.get("design_route") or design.get("design_route") or ""),
+                        "layout_variant": str(settings.get("layout_variant") or design.get("layout_variant") or ""),
+                    }
+                    if campaign_mode
+                    else {}
+                ),
+            } if direction else None
             manifest = build_render_manifest(
                 recipe_id=_norm(recipe_id),
                 copy_set=copy_set,
                 background_media_id=media_id,
                 background_local_path=bg_local,
                 image_model=_norm(image_model),
-                creative_direction=({"mode": direction.mode.value, "authority_version": direction.authority_version, "representation_policy_version": direction.representation_policy_version} if direction else None),
+                creative_direction=direction_payload,
                 composition_plan=composition_plan,
-                exact_product_layer=prepare_layer(dict(product), template_contract(_norm(recipe_id))["product_safe_region"], {"w": 1080, "h": 1920}),
+                design_route=str(settings.get("design_route") or "") if campaign_mode else "",
+                layout_variant=str(settings.get("layout_variant") or "") if campaign_mode else "",
+                campaign_provenance=campaign_provenance if campaign_mode else None,
+                # Campaigns already receive a provider-integrated clean key
+                # visual. The local compositor adds deterministic copy only;
+                # Exact Commerce retains the immutable cutout layer.
+                exact_product_layer=(
+                    None
+                    if campaign_mode
+                    else prepare_layer(
+                        dict(product),
+                        template_contract(_norm(recipe_id))["product_safe_region"],
+                        {"w": 1080, "h": 1920},
+                    )
+                ),
             )
         except PosterTemplateError as exc:
             raise PosterDeliverableError(exc.code, str(exc), status_code=exc.status_code)
@@ -402,6 +686,49 @@ class PosterDeliverableService:
             report, expected_zone_ids=[z.zone_id for z in manifest.zones]
         )
         sha = _sha256(out_path)
+        if campaign_mode:
+            campaign_machine_qa = build_campaign_machine_qa(media_id)
+            campaign_post_qa = build_campaign_post_composition_qa(
+                manifest=manifest,
+                report=report,
+                copy_set=copy_set,
+                settings=settings,
+                output_sha256=sha,
+                background_path=bg_local,
+                output_path=str(out_path),
+            )
+            campaign_findings = [
+                PosterQAFinding(
+                    code=f"CAMPAIGN_{name.upper()}",
+                    severity=("BLOCK" if check.status == "BLOCK" else "WARN"),
+                    message="; ".join(check.evidence) or name,
+                )
+                for name, check in campaign_post_qa.checks.items()
+                if check.status in {"BLOCK", "WARN", "UNVERIFIED"}
+            ]
+            qa = qa.model_copy(
+                update={
+                    "machine_qa": campaign_machine_qa,
+                    "campaign_qa": campaign_post_qa,
+                    "ok": qa.ok and campaign_post_qa.ok,
+                    "findings": [*qa.findings, *campaign_findings],
+                    # Campaign-specific deterministic blockers must participate
+                    # in the existing final save gate. Warnings remain additive;
+                    # Exact Commerce keeps the legacy counts unchanged.
+                    "block_count": qa.block_count + campaign_post_qa.block_count,
+                    "warn_count": qa.warn_count + campaign_post_qa.warn_count,
+                }
+            )
+        manifest_sha = manifest_fingerprint(manifest)
+        settings["final_poster_sha256"] = sha
+        settings["manifest_sha256"] = manifest_sha
+        qa = qa.model_copy(
+            update={
+                "render_report": report,
+                "output_sha256": sha,
+                "manifest_sha256": manifest_sha,
+            }
+        )
         row = await crud.create_poster_deliverable(
             product_id,
             poster_copy_set_id=copy_set["poster_copy_set_id"],
@@ -424,6 +751,72 @@ class PosterDeliverableService:
             # The EXACT plan the manifest preserves — so the UI can prove the
             # compiled poster used the same plan it displayed.
             "composition_plan": composition_plan,
+        }
+
+    @staticmethod
+    async def review_campaign_deliverable(
+        poster_deliverable_id: str,
+        request: CampaignReviewRequest,
+    ) -> dict[str, Any]:
+        """Persist an explicit human visual review without promoting product truth.
+
+        This is the only path that changes the Campaign review decision. It does
+        not approve the product reference pack and it never changes the
+        campaign asset's ``approved_for_poster`` governance field.
+        """
+        row = await crud.get_poster_deliverable(_norm(poster_deliverable_id))
+        if not row:
+            raise PosterDeliverableError("POSTER_DELIVERABLE_NOT_FOUND", status_code=404)
+        try:
+            manifest = json.loads(row.get("render_manifest_json") or "{}")
+            qa = PosterQAReport.model_validate_json(row.get("qa_report_json") or "{}")
+        except (ValueError, TypeError) as exc:
+            raise PosterDeliverableError(
+                "POSTER_CAMPAIGN_REVIEW_DATA_INVALID",
+                "saved poster review evidence is not valid JSON",
+                status_code=409,
+            ) from exc
+        provenance = manifest.get("provenance") if isinstance(manifest, dict) else {}
+        if not isinstance(provenance, dict) or _norm(provenance.get("creative_mode")).upper() != "CREATIVE_CAMPAIGN":
+            raise PosterDeliverableError(
+                "POSTER_CAMPAIGN_REVIEW_NOT_APPLICABLE",
+                "human Campaign review is only available for Creative Campaign deliverables",
+                status_code=409,
+            )
+        if qa.campaign_qa is None:
+            raise PosterDeliverableError(
+                "POSTER_CAMPAIGN_QA_MISSING",
+                "compose must produce Campaign QA evidence before review",
+                status_code=409,
+            )
+        try:
+            review = build_world_class_review(request)
+        except CampaignQAError as exc:
+            raise PosterDeliverableError(exc.code, exc.message, status_code=422) from exc
+        campaign_qa = qa.campaign_qa.model_copy(
+            update={"campaign_review_status": review.decision}
+        )
+        updated_qa = qa.model_copy(
+            update={"campaign_qa": campaign_qa, "world_class_review": review}
+        )
+        try:
+            settings = json.loads(row.get("settings_json") or "{}")
+        except (ValueError, TypeError):
+            settings = {}
+        if not isinstance(settings, dict):
+            settings = {}
+        settings["campaign_review"] = review.model_dump(mode="json")
+        updated = await crud.update_poster_deliverable(
+            row["poster_deliverable_id"],
+            qa_report_json=updated_qa.model_dump_json(),
+            settings_json=json.dumps(settings, ensure_ascii=False),
+        )
+        return {
+            "deliverable": updated,
+            "qa_report": updated_qa.model_dump(mode="json"),
+            "world_class_review": review.model_dump(mode="json"),
+            "product_truth_status": "REFERENCE_CONDITIONED_UNVERIFIED",
+            "approved_for_poster": False,
         }
 
     @staticmethod
@@ -518,9 +911,43 @@ class PosterDeliverableService:
                 status_code=409,
             )
 
-        product = await crud.get_product(_norm(row.get("product_id"))) or {}
+        product_id = _norm(row.get("product_id"))
+        product = await crud.get_product(product_id) or {}
+        manifest_json = str(row.get("render_manifest_json") or "")
+        try:
+            manifest = json.loads(manifest_json or "{}")
+        except json.JSONDecodeError as exc:
+            raise PosterDeliverableError(
+                "POSTER_PRODUCT_TRUTH_LINEAGE_INVALID",
+                "Saved poster manifest is not valid JSON.",
+                status_code=409,
+            ) from exc
+        provenance = manifest.get("provenance") if isinstance(manifest, dict) else {}
+        campaign_mode = (
+            isinstance(provenance, dict)
+            and _norm(provenance.get("creative_mode")).upper() == "CREATIVE_CAMPAIGN"
+        )
+        verification = (
+            _verify_campaign_poster_lineage(
+                manifest_json=manifest_json,
+                product_id=product_id,
+                output_sha256=sha,
+            )
+            if campaign_mode
+            else _verify_exact_poster_lineage(
+                manifest_json=manifest_json,
+                product_id=product_id,
+                output_sha256=sha,
+            )
+        )
         governance = derive_asset_governance("PRODUCT_POSTER")
-        truth_status = derive_poster_truth_status(row.get("composition_strategy"))
+        truth_status = (
+            "REFERENCE_CONDITIONED_UNVERIFIED"
+            if campaign_mode
+            else derive_poster_truth_status(
+                row.get("composition_strategy"), verification=verification
+            )
+        )
         copy_set = serialize_poster_copy_set(pcs_row)
         display = (
             f"Poster — {_norm(product.get('product_display_name')) or _norm(row.get('product_id'))}"
@@ -533,23 +960,53 @@ class PosterDeliverableService:
                 f"Deterministic poster (compositor). angle={copy_set.get('angle')}; "
                 f"copy_set={copy_set.get('poster_copy_set_id')} v{copy_set.get('version')}; "
                 f"deliverable={row.get('poster_deliverable_id')}; "
-                f"product truth: {truth_status} — reference-conditioned scene; "
-                "product identity/label/scale need human review"
+                f"product truth: {truth_status}; "
+                + (
+                    "provider key visual is lineage-only; identity and scale remain unverified"
+                    if campaign_mode
+                    else "scene/background is separate from the immutable canonical product composite"
+                )
             ),
             source_type="GENERATED_IMAGE",
             storage_kind="LOCAL_FILE",
-            product_id=_norm(row.get("product_id")),
+            product_id=product_id,
             category=_norm(product.get("category")) or None,
             silo=_norm(product.get("silo")) or None,
             product_type=_norm(product.get("type")) or None,
             allowed_modes=governance["allowed_modes"],
             engine_slot_eligibility=governance["engine_slot_eligibility"],
-            asset_subtype=governance["asset_subtype"],
-            generation_recipe_id=_norm(row.get("recipe_id")) or None,
+            asset_subtype=(
+                "CAMPAIGN_POSTER_REFERENCE_CONDITIONED"
+                if campaign_mode
+                else governance["asset_subtype"]
+            ),
+            generation_recipe_id=(
+                "CAMPAIGN_POSTER_REFERENCE_CONDITIONED"
+                if campaign_mode
+                else _norm(row.get("recipe_id")) or None
+            ),
             contains_rendered_text=governance["contains_rendered_text"],
             approved_for_video_support=governance["approved_for_video_support"],
-            approved_for_poster=governance["approved_for_poster"],
+            approved_for_poster=(
+                False if campaign_mode else governance["approved_for_poster"]
+            ),
             product_truth_status=truth_status,
+            identity_lock_status="UNVERIFIED" if campaign_mode else None,
+            scale_truth_status="UNVERIFIED" if campaign_mode else None,
+            mode_a_metadata_handoff=(
+                {
+                    "poster_deliverable_id": row.get("poster_deliverable_id"),
+                    "campaign_governance": {
+                        "asset_subtype": "CAMPAIGN_POSTER_REFERENCE_CONDITIONED",
+                        "review_state": "PENDING_HUMAN_REVIEW",
+                        "approved_for_poster": False,
+                        "product_truth_status": "REFERENCE_CONDITIONED_UNVERIFIED",
+                        "raw_key_visual_is_lineage_only": True,
+                    },
+                }
+                if campaign_mode
+                else None
+            ),
             image_base64=base64.b64encode(data).decode("ascii"),
             file_name=f"poster_{row.get('poster_deliverable_id')}.png",
         )

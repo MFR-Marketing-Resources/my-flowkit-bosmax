@@ -92,13 +92,17 @@ def test_avatar_bridge_sync_fail_closed_and_reload(tmp_path, monkeypatch):
            "A,BOS_F_A_01,Light,Neat,Casual,Calm\nB,BOS_F_A_01,Light,Neat,Casual,Calm\n")
     with pytest.raises(ValueError, match="DUPLICATE_AVATAR_CODE"):
         avatar_registry.sync_pool_csv(dup.encode())
-    # valid sync: overrides the repo seed and resolves from the bridge
+    # valid sync: adds CUSTOM without replacing committed SYSTEM_CORE
     good = ("CharacterName,AvatarCode,SkinTone,HairStyle,Wardrobe,Expression\n"
             "Zara,BOS_F_ZARA_99,Medium,Long wavy,Modern baju kurung,Warm smile\n")
     info = avatar_registry.sync_pool_csv(good.encode())
-    assert info["approved_loaded"] == 1
+    core_count = len(avatar_registry.system_core_codes())
+    assert info["custom_rows"] == 1
+    assert info["approved_loaded"] == core_count + 1
     profile = avatar_registry.resolve_presenter("BOS_F_ZARA_99")
     assert profile["character_name"] == "Zara"
+    assert profile["registry_source"] == avatar_registry.SOURCE_CUSTOM
+    assert avatar_registry.resolve_presenter("BOS_F_ALYA_01")["registry_source"] == avatar_registry.SOURCE_SYSTEM_CORE
     # restore the repo seed for other tests
     bridge.unlink()
     avatar_registry.reload_pool()

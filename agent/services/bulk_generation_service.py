@@ -620,6 +620,29 @@ async def _process_avatar_image_item(run_id: str, item: dict, config: dict) -> N
                     completed_at=_now(),
                     updated_at=_now(),
                 )
+                try:
+                    asset_id = await _register_avatar_item({
+                        **item,
+                        "media_id": media_id,
+                        "local_path": local_path,
+                    })
+                    await crud.update_bulk_generation_item(
+                        item_id,
+                        status="REGISTERED",
+                        creative_asset_id=asset_id,
+                        updated_at=_now(),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    # Preserve the successfully generated artifact for the
+                    # existing manual registration retry path.
+                    await _append_error_log(
+                        run_id,
+                        {
+                            "bulk_item_id": item_id,
+                            "event": "AUTO_REGISTER_FAILED",
+                            "error": str(exc),
+                        },
+                    )
                 run = await crud.get_bulk_generation_run(run_id)
                 tc = int(run.get("total_completed") or 0) + 1
                 await crud.update_bulk_generation_run(run_id, total_completed=tc, updated_at=_now())

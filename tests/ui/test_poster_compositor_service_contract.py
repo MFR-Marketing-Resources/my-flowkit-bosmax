@@ -12,6 +12,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 RENDERER = ROOT / "scripts" / "poster-compositor-render.js"
 FIXGEN = ROOT / "scripts" / "generate_poster_fixtures.py"
 REAL_PRODUCT_PROOF = ROOT / "scripts" / "generate_real_product_poster_proof.py"
+GUIDED_WORKFLOW = ROOT / "dashboard" / "src" / "poster" / "guided" / "usePosterGuidedWorkflow.ts"
+IMG_FACTORY_API = ROOT / "dashboard" / "src" / "api" / "imgFactory.ts"
 ARCHETYPE_FIXTURES = ROOT / "scripts" / "fixtures" / "poster-compositor" / "archetypes"
 
 EXPECTED_RECIPES = (
@@ -39,6 +41,10 @@ def test_renderer_source_enforces_production_invariants():
     assert "watchdog" in src and "browser.close()" in src
     # Renderer is Playwright/Chromium.
     assert 'require("playwright")' in src
+    # Playwright evaluate accepts one serialisable argument; the renderer must
+    # pass fit policy and font evidence as one object, not positional values.
+    assert "function pageFitAndMeasure({ fitPolicy, fontRequirements })" in src
+    assert "fontRequirements: fontEvidence" in src
 
 
 def test_renderer_is_offline_and_credit_free():
@@ -53,6 +59,18 @@ def test_renderer_is_offline_and_credit_free():
         "https://",
     ):
         assert banned not in src, f"renderer must be offline/credit-free: {banned}"
+
+
+def test_campaign_workflow_is_clean_kv_then_compose_before_save():
+    workflow = GUIDED_WORKFLOW.read_text(encoding="utf-8")
+    img_api = IMG_FACTORY_API.read_text(encoding="utf-8")
+    assert 'output_intent: "CLEAN_KEY_VISUAL"' in workflow
+    assert 'image_model: "NANO_BANANA_PRO"' in workflow
+    assert 'pipeline: "CLEAN_KEY_VISUAL_THEN_DETERMINISTIC_COPY_COMPOSITE"' in workflow
+    assert "composePoster({" in workflow
+    assert "savePosterToLibrary(" in workflow
+    assert "saveImgOutputToLibrary({" not in workflow
+    assert "CAMPAIGN_KEY_VISUAL_MUST_BE_COMPOSED" not in img_api
 
 
 def test_every_launch_archetype_has_a_recorded_production_fixture():

@@ -65,6 +65,44 @@ export interface ImgFastlanePromptPreviewInput {
 	// the compiled prompt (any of the 20 scenes usable without a generated image).
 	scene_context_code?: string | null;
 	creative_mode?: string | null;
+	requested_outputs?: number;
+}
+
+export interface CreativeCampaignContext {
+	intelligence_status: "READY" | "INCOMPLETE";
+	grounding_source: string;
+	approved_snapshot_id?: string | null;
+	approved_snapshot_version?: number | null;
+	product_family: string;
+	formula: string;
+	audience: string;
+	desire: string;
+	objection: string;
+	trigger: string;
+	safe_angle: string;
+	tone: string;
+	approved_facts: string[];
+	missing_fields: string[];
+	field_provenance: Record<string, string>;
+	campaign_design_brief?: {
+		schema_version?: string;
+		approved_snapshot_id?: string | null;
+		approved_snapshot_version?: number | null;
+	};
+	art_direction: {
+		creative_territory: string;
+		layout_family: string;
+		visual_tension: string;
+		product_anchor: string;
+		copy_anchor: string;
+		headline_personality: string;
+		headline_line_budget: number;
+		type_contrast: string;
+		cta_treatment: string;
+		negative_space_strategy: string;
+		brand_visual_codes: string[];
+		anti_cliche_rules: string[];
+	};
 }
 
 export interface ImgFastlanePromptPreview {
@@ -82,6 +120,17 @@ export interface ImgFastlanePromptPreview {
 	output_spec: string;
 	negative_rules: string[];
 	reference_map: string[];
+	creative_direction?: {
+		mode?: string;
+		compiler_version?: string;
+		prompt_fingerprint?: string;
+		reference_pack_id?: string;
+		provider_operation_plan?: {
+			max_provider_operations: number;
+			max_retry_operations: number;
+		};
+		creative_context?: CreativeCampaignContext;
+	};
 }
 
 export interface ImgProviderStatus {
@@ -140,14 +189,101 @@ export async function saveImgOutputToLibrary(
 	return postAPI<CreativeAsset>("/api/img-factory/save", input);
 }
 
-// ── Gated live generation (IMAGE = credit-FREE; only VIDEO costs credits) ─────
+export interface CreativeCampaignPromptPreviewInput {
+	product_id: string;
+	output_intent?: "COMPLETE_POSTER" | "CLEAN_KEY_VISUAL" | "COMPLETE_IMAGE";
+	model?: string;
+	objective?: string;
+	composition?: string;
+	camera?: string;
+	lighting?: string;
+	scene_direction?: string;
+	/** Structural copy-space only; never actual headline/support/CTA wording. */
+	copy_space?: Record<string, string | number | boolean>;
+	copy_layout?: Record<string, string>;
+	negative_constraints?: string[];
+	aspect_ratio?: string;
+	creative_mode?: string;
+}
+
+export interface CreativeCampaignPromptPreview {
+	compiler_version: string;
+	product_id: string;
+	output_intent: string;
+	aspect_ratio: string;
+	compiled_prompt: string;
+	prompt_fingerprint: string;
+	reference_pack: { pack_id: string; pack_status: string };
+	blockers: string[];
+	warnings: string[];
+	provider_operation_plan: {
+		max_provider_operations: number;
+		max_retry_operations: number;
+	};
+	creative_context?: CreativeCampaignContext;
+}
+
+export interface ProductReferencePackSummary {
+	pack_id: string;
+	product_id: string;
+	pack_status: "DRAFT" | "PENDING_REVIEW" | "APPROVED" | "REJECTED";
+	machine_qa_status: "PASS" | "WARN" | "FAIL";
+	physical_measurements?: {
+		physical_width_mm?: number | null;
+		physical_height_mm?: number | null;
+		physical_depth_mm?: number | null;
+		volume_ml?: number | null;
+		scale_evidence_source?: string;
+		scale_confidence?: string;
+	};
+	references?: Array<{
+		role: string;
+		approved: boolean;
+		local_file_path?: string | null;
+		sha256?: string | null;
+	}>;
+}
+
+export async function fetchProductReferencePack(
+	productId: string,
+): Promise<ProductReferencePackSummary> {
+	return fetchAPI<ProductReferencePackSummary>(
+		`/api/img-factory/products/${encodeURIComponent(productId)}/reference-pack`,
+	);
+}
+
+export async function approveProductReferencePack(
+	productId: string,
+	input: { reviewed_by: string; note?: string },
+): Promise<ProductReferencePackSummary> {
+	return postAPI<ProductReferencePackSummary>(
+		`/api/img-factory/products/${encodeURIComponent(productId)}/reference-pack/approve`,
+		input,
+	);
+}
+
+export async function compileCreativeCampaignPrompt(
+	input: CreativeCampaignPromptPreviewInput,
+): Promise<CreativeCampaignPromptPreview> {
+	return postAPI<CreativeCampaignPromptPreview>(
+		"/api/img-factory/creative-campaign/preview",
+		input,
+	);
+}
+
+// ── Gated live IMG generation ─────────────────────────────────────────────────
 // These call the SAME proven one-door lane OperatorPage uses. They are wired for
-// the cockpit but MUST only ever run behind an explicit operator confirmation
-// (of the live action, not cost) — never auto-fire. Live generation is NOT fired or verified in the
-// build session; the register-output/review/save path below is credit-free.
+// the cockpit but MUST only ever run behind an explicit operator confirmation —
+// never auto-fire. IMG does not use Google Flow video credits. Live generation is
+// NOT fired or verified in the build session; the register-output/review/save path
+// below is credit-free.
 
 export interface StartImgGenerationInput {
 	prompt: string;
+	/** Server-side product lineage key; client never supplies truth bytes/status. */
+	product_id?: string;
+	/** Route context used only to select the server strategy; lock validation stays server-owned. */
+	visual_lane_id?: string;
 	image_media_ids?: string[];
 	aspect?: string;
 	model?: string;
@@ -156,6 +292,14 @@ export interface StartImgGenerationInput {
 	count?: number;
 	refs?: Record<string, any>;
 	startAsset?: Record<string, any>;
+	image_contract_version?: string;
+	reference_pack_id?: string;
+	poster_copy_set_id?: string;
+	output_intent?: string;
+	creative_mode?: string;
+	confirm_live_credit_burn?: boolean;
+	maximum_provider_operations?: number;
+	max_retry_operations?: number;
 }
 
 export interface StartImgGenerationResult {
@@ -184,9 +328,7 @@ export interface ImageArtifact {
 
 /**
  * Start a REAL IMG generation via the proven one-door lane.
- * IMAGE generation is CREDIT-FREE — only VIDEO generation consumes Google Flow
- * credits. Kept behind an explicit operator confirmation only because it fires a
- * live external action (not because of cost).
+ * Call ONLY after an explicit operator confirmation.
  */
 export async function startImgGeneration(
 	input: StartImgGenerationInput,
@@ -194,14 +336,24 @@ export async function startImgGeneration(
 	return postAPI<StartImgGenerationResult>("/api/flow/generate", {
 		mode: "IMG",
 		prompt: input.prompt,
+		product_id: input.product_id,
+		visual_lane_id: input.visual_lane_id,
 		image_media_ids: input.image_media_ids ?? [],
 		aspect: input.aspect ?? "9:16",
 		model: input.model,
 		image_model: input.image_model,
 		duration_s: input.duration_s,
 		count: input.count,
-		refs: input.refs,
-		startAsset: input.startAsset,
+	refs: input.refs,
+	startAsset: input.startAsset,
+	image_contract_version: input.image_contract_version,
+	reference_pack_id: input.reference_pack_id,
+	poster_copy_set_id: input.poster_copy_set_id,
+	output_intent: input.output_intent,
+	creative_mode: input.creative_mode,
+	confirm_live_credit_burn: input.confirm_live_credit_burn,
+	maximum_provider_operations: input.maximum_provider_operations,
+	max_retry_operations: input.max_retry_operations,
 	});
 }
 
@@ -246,11 +398,6 @@ export async function fetchImageArtifacts(limit = 50): Promise<ImageArtifact[]> 
 	return response.artifacts ?? [];
 }
 
-/** Explicitly delete one transient image artifact; durable Creative Assets are untouched. */
-export async function deleteImageArtifact(mediaId: string): Promise<void> {
-	await deleteAPI(`/api/flow/artifacts/${encodeURIComponent(mediaId)}`);
-}
-
 // ── F2V composite-frame resolver (safe validation gate) ───────────────────────
 
 export interface F2vResolvedFrame {
@@ -293,4 +440,8 @@ export async function resolveF2vFrameSources(
 		"/api/img-factory/f2v-frame-sources",
 		input,
 	);
+}
+
+export async function deleteImageArtifact(mediaId: string): Promise<void> {
+	await deleteAPI(`/api/flow/artifacts/${encodeURIComponent(mediaId)}`);
 }

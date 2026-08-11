@@ -8,7 +8,12 @@ import type {
 	PosterCopyDirection,
 	PosterCopySet,
 	PosterDeliverableReconstruction,
+	PosterDeliverableRow,
 	PosterObjectiveRecommendation,
+	PosterQAReport,
+	WorldClassPosterReview,
+	CampaignReviewRequest,
+	CampaignVariantsResponse,
 } from "../types/posterCopySet";
 
 export async function recommendPosterObjectives(payload: {
@@ -25,7 +30,15 @@ export async function recommendPosterAngles(payload: {
 	product_id: string;
 	archetype: string;
 	refresh_ai?: boolean;
-}): Promise<{ angles: PosterAngleRecommendation[]; warnings: string[] }> {
+}): Promise<{
+	angles: PosterAngleRecommendation[];
+	rejected_candidates?: Array<{
+		reason: string;
+		original_output: Record<string, unknown>;
+		provenance: string;
+	}>;
+	warnings: string[];
+}> {
 	return postAPI("/api/poster/copy-sets/recommend-angles", payload);
 }
 
@@ -40,6 +53,12 @@ export async function generatePosterDirections(payload: {
 	directions: PosterCopyDirection[];
 	ai_model: string;
 	prompt_version: string;
+	rejected_candidates?: Array<{
+		direction_index: number;
+		reason: string;
+		original_output: Record<string, unknown>;
+		provenance: string;
+	}>;
 	warnings: string[];
 }> {
 	return postAPI("/api/poster/copy-sets/directions", payload);
@@ -86,6 +105,7 @@ export async function composePoster(payload: {
 	recipe_id: string;
 	background_media_id?: string;
 	creative_mode?: string;
+	image_model?: string;
 	settings?: Record<string, unknown>;
 }): Promise<PosterComposeResponse> {
 	return postAPI("/api/poster/compose", payload);
@@ -113,6 +133,43 @@ export async function savePosterToLibrary(
 
 export function posterDeliverableOutputUrl(posterDeliverableId: string): string {
 	return `/api/poster/deliverables/${posterDeliverableId}/output`;
+}
+
+export async function fetchPosterCampaignVariants(
+	posterDeliverableId: string,
+	payload: {
+		copy_patch?: Record<string, string>;
+		design_route?: string;
+		layout_variant?: string;
+	} = {},
+): Promise<CampaignVariantsResponse> {
+	return postAPI(
+		`/api/poster/deliverables/${encodeURIComponent(posterDeliverableId)}/variants`,
+		payload,
+	);
+}
+
+export function posterCampaignVariantOutputUrl(
+	posterDeliverableId: string,
+	variantId: string,
+): string {
+	return `/api/poster/deliverables/${encodeURIComponent(posterDeliverableId)}/variants/${encodeURIComponent(variantId)}/output`;
+}
+
+export async function reviewPosterDeliverable(
+	posterDeliverableId: string,
+	payload: CampaignReviewRequest,
+): Promise<{
+	deliverable: PosterDeliverableRow;
+	qa_report: PosterQAReport;
+	world_class_review: WorldClassPosterReview;
+	product_truth_status: string;
+	approved_for_poster: boolean;
+}> {
+	return postAPI(
+		`/api/poster/deliverables/${encodeURIComponent(posterDeliverableId)}/review`,
+		payload,
+	);
 }
 
 // Creative Library round trip: reopen a saved poster from its asset id.

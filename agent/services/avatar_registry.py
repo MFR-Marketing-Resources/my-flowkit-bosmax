@@ -21,10 +21,8 @@ from pathlib import Path
 
 _AUTHORITY_DIR = Path(__file__).resolve().parent.parent / "authority"
 _POOL_FILE = _AUTHORITY_DIR / "AVATAR_POOL_NORMALIZED.csv"
-# Normalized bridge target (ADR-008 avatar law): the LIVE Notion registry is not
-# safe as a runtime dependency (auth/latency/availability), so growth arrives as
-# an explicit, validated CSV sync into this file. When present it OVERRIDES the
-# repo seed; when absent the vendored retained pool is authoritative.
+# Normalized CUSTOM bridge (ADR-008 avatar law). Runtime growth is additive;
+# the committed seed remains the immutable SYSTEM_CORE authority.
 _BRIDGE_FILE = (
     Path(__file__).resolve().parent.parent.parent
     / "data" / "avatar_registry" / "AVATAR_POOL_NORMALIZED.csv"
@@ -36,9 +34,64 @@ AGE_BAND_COLUMN = "AgeBand"
 LEGACY_AGE_BAND = "Adult (30-54)"
 _MINOR_AGE_BANDS = {"child (6-12)", "teen (13-17)"}
 
+SOURCE_SYSTEM_CORE = "SYSTEM_CORE"
+SOURCE_CUSTOM = "CUSTOM"
+_INTERNAL_SOURCE_KEY = "_registry_source"
+
 
 def _active_pool_file() -> Path:
+    """Legacy diagnostics hook; writes target the CUSTOM bridge."""
     return _BRIDGE_FILE if _BRIDGE_FILE.exists() else _POOL_FILE
+
+
+def _read_csv_rows(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def _is_approved_row(row: dict) -> bool:
+    return str(row.get("approved_flag", "")).strip().lower() in (
+        "true", "1", "yes", "approved", "",
+    )
+
+
+def _row_code(row: dict) -> str:
+    return str(row.get("AvatarCode") or "").strip()
+
+
+def _code_key(code: str) -> str:
+    return str(code or "").strip().casefold()
+
+
+def _system_core_rows_raw() -> list[dict]:
+    rows = _read_csv_rows(_POOL_FILE)
+    return [dict(row, **{_INTERNAL_SOURCE_KEY: SOURCE_SYSTEM_CORE}) for row in rows]
+
+
+def system_core_codes() -> set[str]:
+    return {_row_code(row).upper() for row in _system_core_rows_raw() if _row_code(row)}
+
+
+def is_system_core_avatar(avatar_code: str) -> bool:
+    code = str(avatar_code or "").strip().upper()
+    return bool(code) and code in system_core_codes()
+
+
+def _custom_rows_raw() -> list[dict]:
+    rows = _read_csv_rows(_BRIDGE_FILE)
+    return [dict(row, **{_INTERNAL_SOURCE_KEY: SOURCE_CUSTOM}) for row in rows]
+
+
+def _pool_header() -> list[str]:
+    for path in (_POOL_FILE, _BRIDGE_FILE):
+        if path.exists():
+            with open(path, encoding="utf-8-sig", newline="") as f:
+                fields = csv.DictReader(f).fieldnames
+                if fields:
+                    return list(fields)
+    return sorted(REQUIRED_COLUMNS | {AGE_BAND_COLUMN})
 
 
 # ── Controlled descriptor vocabulary (single source of truth for the Create
@@ -247,8 +300,7 @@ def validate_gender_compatibility(payload: dict) -> None:
 
 
 def sync_pool_csv(csv_bytes: bytes) -> dict:
-    """Fail-closed registry sync: validate the uploaded normalized CSV, then
-    install it as the runtime bridge override and reload the cache."""
+    """Validate and replace only the CUSTOM layer; SYSTEM_CORE is immutable."""
     import io
     text = csv_bytes.decode("utf-8-sig")
     rows = list(csv.DictReader(io.StringIO(text)))
@@ -260,7 +312,7 @@ def sync_pool_csv(csv_bytes: bytes) -> dict:
     codes = [str(r.get("AvatarCode") or "").strip() for r in rows]
     if not all(codes):
         raise ValueError("AVATAR_REGISTRY_BLANK_AVATAR_CODE")
-    if len(set(codes)) != len(codes):
+    if len(set(code.casefold() for code in codes)) != len(codes):
         raise ValueError("AVATAR_REGISTRY_DUPLICATE_AVATAR_CODE")
     header = list(rows[0].keys())
     normalized_age_band = False
@@ -279,25 +331,46 @@ def sync_pool_csv(csv_bytes: bytes) -> dict:
                 normalized_age_band = True
             elif age_band.casefold() not in _vocab_set("age_band"):
                 raise ValueError("AVATAR_VALUE_NOT_IN_VOCAB:age_band")
-    if normalized_age_band:
-        output = io.StringIO()
-        writer = csv.DictWriter(output, fieldnames=header)
-        writer.writeheader()
-        writer.writerows(rows)
-        text = output.getvalue()
+    core_keys = {_code_key(code) for code in system_core_codes()}
+    conflicting = [code for code in codes if _code_key(code) in core_keys]
+    if conflicting:
+        raise ValueError(f"SYSTEM_AVATAR_CODE_COLLISION:{conflicting[0]}")
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=header, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    text = output.getvalue()
     _BRIDGE_FILE.parent.mkdir(parents=True, exist_ok=True)
     _BRIDGE_FILE.write_text(text, encoding="utf-8")
     count = reload_pool()
-    return {"rows": len(rows), "approved_loaded": count, "bridge_path": str(_BRIDGE_FILE)}
+    return {
+        "rows": count,
+        "custom_rows": len(rows),
+        "approved_loaded": count,
+        "bridge_path": str(_BRIDGE_FILE),
+        "layer": SOURCE_CUSTOM,
+        "age_band_normalized": normalized_age_band,
+    }
 
 
 @lru_cache(maxsize=1)
 def _load_pool() -> tuple[dict, ...]:
-    with open(_active_pool_file(), encoding="utf-8-sig", newline="") as f:
-        rows = tuple(
-            row for row in csv.DictReader(f)
-            if str(row.get("approved_flag", "")).strip().lower() in ("true", "1", "yes", "approved", "")
-        )
+    core_rows = [row for row in _system_core_rows_raw() if _is_approved_row(row)]
+    core_keys = {_code_key(_row_code(row)) for row in core_rows if _row_code(row)}
+    raw_custom_rows = _custom_rows_raw()
+    conflicting = [
+        _row_code(row) for row in raw_custom_rows
+        if _row_code(row) and _code_key(_row_code(row)) in core_keys
+    ]
+    if conflicting:
+        raise RuntimeError(f"SYSTEM_AVATAR_CODE_COLLISION:{conflicting[0]}")
+    custom_rows = [
+        row for row in raw_custom_rows
+        if _is_approved_row(row)
+        and _row_code(row)
+    ]
+    rows = tuple(core_rows + custom_rows)
     if not rows:
         raise RuntimeError("AVATAR_POOL_EMPTY: no approved avatars in registry")
     return rows
@@ -331,6 +404,10 @@ def _parse_usage_tags(raw: str) -> list[str]:
 
 
 def _normalize_profile(row: dict) -> dict:
+    source = str(row.get(_INTERNAL_SOURCE_KEY) or SOURCE_CUSTOM).strip().upper()
+    if source not in (SOURCE_SYSTEM_CORE, SOURCE_CUSTOM):
+        source = SOURCE_CUSTOM
+    immutable = source == SOURCE_SYSTEM_CORE
     return {
         "avatar_code": str(row.get("AvatarCode") or "").strip(),
         "character_name": str(row.get("CharacterName") or "").strip(),
@@ -344,6 +421,10 @@ def _normalize_profile(row: dict) -> dict:
         "camera": str(row.get("Camera") or "").strip(),
         "expression": str(row.get("Expression") or "").strip(),
         "usage_tags": _parse_usage_tags(row.get("usage_tags")),
+        "registry_source": source,
+        "immutable": immutable,
+        "delete_allowed": not immutable,
+        "archive_allowed": not immutable,
     }
 
 
@@ -499,16 +580,18 @@ def add_avatar(row: dict) -> dict:
     new_code = str(row.get("AvatarCode") or "").strip()
     if not new_code:
         raise ValueError("AVATAR_CODE_REQUIRED")
+    if is_system_core_avatar(new_code):
+        raise ValueError(f"SYSTEM_AVATAR_CODE_COLLISION:{new_code}")
 
-    with open(_active_pool_file(), encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
-        header = list(reader.fieldnames or [])
-        existing = list(reader)
-
-    for existing_row in existing:
-        if str(existing_row.get("AvatarCode") or "").strip().casefold() == new_code.casefold():
+    for existing_profile in list_pool():
+        if str(existing_profile.get("avatar_code") or "").strip().casefold() == new_code.casefold():
             raise ValueError(f"AVATAR_CODE_EXISTS:{new_code}")
 
+    header = _pool_header()
+    existing = [
+        {key: value for key, value in row.items() if key != _INTERNAL_SOURCE_KEY}
+        for row in _custom_rows_raw()
+    ]
     full_row = {column: str(row.get(column, "") or "") for column in header}
 
     buffer = io.StringIO()
@@ -531,11 +614,14 @@ def delete_avatar(avatar_code: str) -> dict:
     target = str(avatar_code or "").strip()
     if not target:
         raise ValueError("AVATAR_CODE_REQUIRED")
+    if is_system_core_avatar(target):
+        raise ValueError(f"SYSTEM_AVATAR_IMMUTABLE:{target}")
 
-    with open(_active_pool_file(), encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
-        header = list(reader.fieldnames or [])
-        existing = list(reader)
+    header = _pool_header()
+    existing = [
+        {key: value for key, value in row.items() if key != _INTERNAL_SOURCE_KEY}
+        for row in _custom_rows_raw()
+    ]
 
     kept = [
         r for r in existing
@@ -543,16 +629,22 @@ def delete_avatar(avatar_code: str) -> dict:
     ]
     if len(kept) == len(existing):
         raise ValueError(f"AVATAR_CODE_NOT_FOUND:{target}")
-    if not kept:
-        raise ValueError("AVATAR_REGISTRY_WOULD_BE_EMPTY")
-
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=header)
     writer.writeheader()
     for r in kept:
         writer.writerow({column: str(r.get(column, "") or "") for column in header})
-    result = sync_pool_csv(buffer.getvalue().encode("utf-8"))
-    return {"removed": target, "remaining": result["rows"], "bridge_path": result["bridge_path"]}
+    if kept:
+        result = sync_pool_csv(buffer.getvalue().encode("utf-8"))
+    else:
+        _BRIDGE_FILE.unlink(missing_ok=True)
+        result = {"rows": reload_pool(), "custom_rows": 0, "bridge_path": str(_BRIDGE_FILE)}
+    return {
+        "removed": target,
+        "remaining": result["rows"],
+        "custom_remaining": result["custom_rows"],
+        "bridge_path": result["bridge_path"],
+    }
 
 
 # Non-identity presentation columns that a metadata-only edit may change. The

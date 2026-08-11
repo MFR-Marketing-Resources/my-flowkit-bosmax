@@ -1667,6 +1667,16 @@ def _resolve_family_from_taxonomy(product: dict[str, Any]) -> tuple[str, str]:
 
 
 def _resolve_family(product: dict[str, Any]) -> tuple[str, str, bool, str | None]:
+    category = _normalize_key(product.get("category"))
+    type_name = _normalize_key(product.get("type"))
+    if category == "kitchenware" and type_name == "specialty kitchen utensils":
+        return (
+            "AUTO_TOOL_GENERAL",
+            "taxonomy_evidence:specialty_kitchen_utensils",
+            False,
+            None,
+        )
+
     title_family, title_reason = _resolve_family_from_title(product)
     family_context = derive_bosmax_product_family(product)
 
@@ -1683,7 +1693,6 @@ def _resolve_family(product: dict[str, Any]) -> tuple[str, str, bool, str | None
     conflict_reason = (
         str(family_context["bosmax_source_taxonomy_conflict_reason"]).strip() or None
     )
-    category = _normalize_key(product.get("category"))
     if family == "LAUNDRY_DETERGENT_LIQUID_REFILL" and "baby" in category:
         taxonomy_conflict = True
         conflict_reason = (

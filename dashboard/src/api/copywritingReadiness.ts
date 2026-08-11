@@ -12,6 +12,11 @@ export interface CopywritingReadiness {
 	recommended_formula: string;
 	selected_copy_set_id: string | null;
 	approved_copy_set_count: number;
+	/** Production-valid approved sets only (subset of approved_copy_set_count). */
+	valid_approved_copy_set_count?: number;
+	copy_classification?: string | null;
+	primary_blocker?: string | null;
+	recommended_copy_action?: string | null;
 	formula_validation_status: string;
 	sales_clarity_status: string;
 	copy_applicable: boolean;

@@ -16,6 +16,8 @@ Library. It:
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
 from pathlib import Path
 import re
 
@@ -39,9 +41,19 @@ from agent.services.img_asset_lane_config import (
 )
 from agent.services.product_lock_builder import build_product_lock
 from agent.services.exact_product_compositor_service import exact_product_policy
+from agent.services import product_truth_lock_service as truth_lock_service
 from agent.services.creative_direction_service import (
     resolve_creative_direction,
     select_creative_direction_directives,
+)
+from agent.models.image_generation_contract import ImagePromptCompileRequest
+from agent.services.image_prompt_compiler import (
+    compile_image_prompt,
+    resolve_image_creative_context,
+)
+from agent.services.product_reference_pack_service import (
+    ProductReferencePackError,
+    ensure_product_reference_pack,
 )
 
 
@@ -352,6 +364,9 @@ def _build_engine_prompt(
     refs = [r for r in reference_map if r]
     if refs:
         blocks.append("REFERENCES:\n" + "\n".join(f"- {r}" for r in refs))
+    locks = [line for line in product_lock_lines if line]
+    if locks:
+        blocks.append("PRODUCT TRUTH LOCK:\n" + "\n".join(f"- {line}" for line in locks))
     # Drop operator-facing workflow meta ("System composes the prompt ...") — it is
     # not visual direction and only clutters a portable cross-engine brief.
     comp = [d for d in directives if d and "system composes the prompt" not in d.lower()]
@@ -563,6 +578,72 @@ async def compile_img_fastlane_prompt_preview(
         if found_product is None:
             raise ValueError("PRODUCT_NOT_FOUND")
         product = dict(found_product)
+
+    # Creative Campaign Fastlane is a control surface over the same canonical
+    # compiler as Poster Builder.  It intentionally bypasses the legacy local
+    # scene/compositor prompt branch; the feature remains provider-gated until
+    # the reference pack and bounded live benchmark pass.
+    if request.creative_mode == "CREATIVE_CAMPAIGN":
+        if not product:
+            raise ValueError("PRODUCT_REQUIRED_FOR_CREATIVE_CAMPAIGN")
+        try:
+            reference_pack = await ensure_product_reference_pack(str(product["id"]))
+        except ProductReferencePackError as exc:
+            raise ValueError(f"{exc.code}: {exc.message}") from exc
+        output_intent = (
+            "COMPLETE_POSTER"
+            if "POSTER" in str(preset.get("lane_id") or "").upper()
+            else "COMPLETE_IMAGE"
+        )
+        creative_context = await resolve_image_creative_context(
+            product,
+            operator_direction=request.preset_id,
+            objective=request.preset_id,
+        )
+        compiled = compile_image_prompt(
+            product,
+            reference_pack,
+            ImagePromptCompileRequest(
+                product_id=str(product["id"]),
+                output_intent=output_intent,
+                objective=str(preset.get("label") or "Creative Campaign"),
+                composition="; ".join(_preset_directives(request.preset_id, product)),
+                scene_direction=(
+                    _clean_text(request.scene_context_code)
+                    or "Preset-driven scene direction; no legacy scene asset required"
+                ),
+                creative_mode="CREATIVE_CAMPAIGN",
+                requested_outputs=request.requested_outputs,
+            ),
+            creative_context,
+        )
+        role_lines = [f"{binding.role}: {binding.asset_id or binding.media_id}" for binding in compiled.reference_bindings]
+        return ImgFastlanePromptPreviewResponse(
+            preset_id=str(preset["preset_id"]),
+            route=request.route,
+            ingredient_role=request.ingredient_role,
+            lane_id=str(preset["lane_id"]),
+            prompt_text=compiled.compiled_prompt,
+            engine_prompt_text=compiled.compiled_prompt,
+            display_name_suggestion=_display_name_suggestion(preset, product),
+            blockers=compiled.blockers,
+            warnings=[*compiled.warnings, "Fastlane and Poster Builder share image_prompt_compiler_v1."],
+            output_spec=str(preset["output_spec"]),
+            negative_rules=compiled.sections["NEGATIVE_CONSTRAINTS_AND_OUTPUT_SPECIFICATION"].split("; "),
+            reference_map=role_lines,
+            creative_direction={
+                "mode": "CREATIVE_CAMPAIGN",
+                "compiler_version": compiled.compiler_version,
+                "prompt_fingerprint": compiled.prompt_fingerprint,
+                "reference_pack_id": reference_pack.pack_id,
+                "provider_operation_plan": compiled.provider_operation_plan,
+                "creative_context": (
+                    compiled.creative_context.model_dump(mode="json")
+                    if compiled.creative_context is not None
+                    else None
+                ),
+            },
+        )
     creative_direction = (
         resolve_creative_direction(request.creative_mode, product=product)
         if request.creative_mode is not None
@@ -654,7 +735,11 @@ async def compile_img_fastlane_prompt_preview(
         is_video=request.route == "FRAMES"
         or request.preset_id == "MWCB_WG40_VIDEO_LOCK_FRAMES_INGREDIENTS",
     )
-    if product and exact_product_policy(dict(product)):
+    exact_preview_lane = any(
+        token in str(preset.get("lane_id") or "").upper()
+        for token in ("PRODUCT_ONLY", "POSTER")
+    )
+    if product and exact_preview_lane and exact_product_policy(dict(product)):
         # Exact-policy products: Flow draws scene only. Final pixels come from
         # exact_product_final_output_service.compose_final_for_product.
         from agent.services.exact_product_compositor_service import SCENE_ONLY_PROMPT_LINES
@@ -863,7 +948,62 @@ async def _lineage_blocker(
     return None
 
 
+async def _is_verified_exact_product_artifact(
+    artifact_id: str | None,
+    product_id: str | None,
+) -> bool:
+    """Verify exact-composite lineage before allowing an asset to claim truth."""
+    if not artifact_id or not product_id:
+        return False
+    artifact = await crud.get_generated_artifact(artifact_id)
+    if not artifact or str(artifact.get("mode") or "") != "IMG_EXACT_COMPOSITE":
+        return False
+    local_path = Path(str(artifact.get("local_path") or ""))
+    lineage_path = local_path.with_suffix(".lineage.json")
+    if not local_path.is_file() or not lineage_path.is_file():
+        return False
+    try:
+        lineage = json.loads(lineage_path.read_text(encoding="utf-8"))
+        if lineage.get("product_id") != product_id:
+            return False
+        if lineage.get("final_media_id") != artifact_id:
+            return False
+        if lineage.get("truth_status") != "PRODUCT_TRUTH_PRESERVED_EXACT_COMPOSITE":
+            return False
+        if lineage.get("raw_plate_approvable") is not False:
+            return False
+        if lineage.get("final_approvable") is not True:
+            return False
+        if not (lineage.get("qa") or {}).get("product_region_match"):
+            return False
+        output_sha = hashlib.sha256(local_path.read_bytes()).hexdigest()
+        if output_sha != lineage.get("final_output_sha256"):
+            return False
+        lock = truth_lock_service.resolve_approved_product_truth_lock(product_id)
+        return (
+            lineage.get("canonical_media_id") == lock.canonical_media_id
+            and lineage.get("canonical_cutout_media_id") == lock.canonical_cutout_media_id
+            and lineage.get("canonical_source_sha256") == lock.canonical_sha256
+            and lineage.get("cutout_sha256") == lock.canonical_cutout_sha256
+            and lineage.get("alpha_mask_sha256") == lock.alpha_mask_sha256
+            and lineage.get("truth_lock_schema_version") == lock.schema_version
+        )
+    except (OSError, ValueError, json.JSONDecodeError, truth_lock_service.ProductTruthLockError):
+        return False
+
+
 async def save_img_output_to_library(request: SaveImgOutputRequest) -> CreativeAssetRecord:
+    # A Creative Campaign provider result is a clean key visual, not a terminal
+    # poster.  Poster Builder must first create a durable poster_deliverable via
+    # the deterministic copy compositor.  Keep this guard at the generic IMG
+    # save boundary as well so stale UI clients or direct callers cannot bypass
+    # the compose-before-save contract.
+    if (
+        str(request.creative_mode or "").strip().upper() == "CREATIVE_CAMPAIGN"
+        and request.lane_id == "PRODUCT_POSTER"
+    ):
+        raise ValueError("CAMPAIGN_KEY_VISUAL_MUST_BE_COMPOSED")
+
     # Lane must exist (fail closed on unknown lane).
     governance = derive_asset_governance(request.lane_id)
     lane = get_img_asset_lane(request.lane_id)
@@ -924,17 +1064,35 @@ async def save_img_output_to_library(request: SaveImgOutputRequest) -> CreativeA
             if reused is not None:
                 return reused
 
-    # Product truth is derived, not operator-set: PRESERVED only when a product
-    # is actually bound to the asset; otherwise NOT_APPLICABLE.
-    product_truth_status = "PRESERVED" if request.product_id else "NOT_APPLICABLE"
-    identity_lock_status = request.identity_lock_status or "UNVERIFIED"
-    scale_truth_status = request.scale_truth_status or "UNVERIFIED"
+    # Product truth is derived from server-side exact lineage.  A client cannot
+    # turn a reference-conditioned output into an exact/approved asset by
+    # posting PASS flags or review_status=APPROVED.
+    exact_verified = await _is_verified_exact_product_artifact(artifact_id, request.product_id)
+    if request.product_id:
+        if exact_verified:
+            product_truth_status = "PRODUCT_TRUTH_PRESERVED_EXACT_COMPOSITE"
+            identity_lock_status = "PASS"
+            scale_truth_status = "PASS"
+        else:
+            product_truth_status = "NON_DETERMINISTIC_REFERENCE_CONDITIONED"
+            identity_lock_status = "UNVERIFIED"
+            scale_truth_status = "UNVERIFIED"
+    else:
+        product_truth_status = "NOT_APPLICABLE"
+        identity_lock_status = request.identity_lock_status or "UNVERIFIED"
+        scale_truth_status = request.scale_truth_status or "UNVERIFIED"
     claim_safety_status = request.claim_safety_status or "UNVERIFIED"
+
+    effective_review_status = request.review_status
+    if request.product_id and not exact_verified:
+        if request.review_status == "APPROVED":
+            raise ValueError("PRODUCT_TRUTH_EXACT_COMPOSITE_REQUIRED_FOR_APPROVAL")
+        effective_review_status = "PENDING_REVIEW"
 
     # An asset may be APPROVED only when EVERY truth/safety gate explicitly PASSes.
     # Any UNVERIFIED or FAIL status blocks approval — an APPROVED asset is later
     # the only kind reusable downstream (validate_selectable_asset require_approved).
-    if request.review_status == "APPROVED" and not all(
+    if effective_review_status == "APPROVED" and not all(
         status == "PASS"
         for status in (identity_lock_status, scale_truth_status, claim_safety_status)
     ):
@@ -973,7 +1131,7 @@ async def save_img_output_to_library(request: SaveImgOutputRequest) -> CreativeA
         identity_lock_status=identity_lock_status,
         scale_truth_status=scale_truth_status,
         claim_safety_status=claim_safety_status,
-        review_status=request.review_status,
+        review_status=effective_review_status,
         mode_a_metadata_handoff=(
             {
                 "generated_artifact": {"media_id": artifact_id},

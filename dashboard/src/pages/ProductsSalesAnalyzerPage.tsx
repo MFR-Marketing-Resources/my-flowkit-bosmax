@@ -1256,7 +1256,9 @@ export default function ProductsSalesAnalyzerPage() {
 		try {
 			const taxonomy = await reviewProductStrategyTaxonomy(selectedProduct.id, {
 				expected_product_fingerprint:
-					selectedProduct.strategy_taxonomy?.product_fingerprint || "",
+					selectedProduct.strategy_taxonomy?.current_product_fingerprint ||
+					selectedProduct.strategy_taxonomy?.product_fingerprint ||
+					"",
 				cluster: selectedTaxonomyRegistryEntry.cluster,
 				product_type_group: selectedTaxonomyRegistryEntry.product_type_group,
 				matched_scene_strategy_id:
@@ -1278,8 +1280,11 @@ export default function ProductsSalesAnalyzerPage() {
 				`Taxonomy saved as ${taxonomy.review_status} (${taxonomy.authority_source}).`,
 			);
 		} catch (err) {
+			const message = err instanceof Error ? err.message : "Failed to save taxonomy";
 			setTaxonomyMessage(
-				err instanceof Error ? err.message : "Failed to save taxonomy",
+				message.includes("STALE_PRODUCT_FINGERPRINT")
+					? "Product data changed. Reload the product, confirm the current cluster / type, then save again."
+					: message,
 			);
 		} finally {
 			setTaxonomyBusy(false);

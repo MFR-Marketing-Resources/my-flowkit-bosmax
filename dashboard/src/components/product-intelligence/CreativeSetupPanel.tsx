@@ -3,21 +3,23 @@ import { useEffect, useState } from "react";
 import {
 	getCreativeSetupForProduct,
 	getProductRecipes,
-	saveCreativeSelection,
 	reviewCreativeSelection,
+	saveCreativeSelection,
+	type AvatarLibraryItem,
 	type CreativeSetup,
+	type RecommendedAvatar,
 	type SavedCreativeSelection,
+	type ScenePromptTemplate,
 } from "../../api/creativeIntelligence";
 
 /**
- * Creative Setup / Saved Selection panel.
- * Composes the avatar + scene recommendations into a product-level planning
- * artifact. RECIPE-COHERENT: the config is avatar × scene; the CAMERA is NOT an
- * independent axis — it FOLLOWS the scene via the scene→variation→camera bridge,
- * so it is shown read-only per scene and derived on save. This removes the only
- * source of incoherent combos (a camera that contradicts its scene). "Smart
- * suggest (coherent recipes)" ticks + approves the arc-spread set in one click.
- * PLANNING ONLY — nothing is generated or sent to generation.
+ * The product-level creative plan editor.
+ *
+ * Recommendations are the primary setting surface. The full avatar roster is
+ * available only when the operator explicitly expands it, and cameras are
+ * always derived from the selected scenes. This keeps the editor coherent and
+ * prevents the recommendation cards from becoming a second, disconnected
+ * selection UI.
  */
 export default function CreativeSetupPanel({ productId }: { productId: string }) {
 	const [setup, setSetup] = useState<CreativeSetup | null>(null);
@@ -40,26 +42,28 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 		setSetup(null);
 		Promise.all([
 			getCreativeSetupForProduct(productId),
-			// Recipes give the deterministic scene→camera binding (the bridge). Failure
-			// here must not block the panel — camera is a read-only enrichment.
+			// Recipes provide the deterministic scene→camera binding. If this
+			// enrichment is unavailable, the editor still works without camera chips.
 			Promise.resolve(getProductRecipes(productId)).catch(() => null),
 		])
 			.then(([res, recipes]) => {
 				if (!active) return;
 				setSetup(res);
 				const sel = res.saved_selection;
-				// Pre-configure from the saved selection if one exists, else from the
-				// live smart default (auto-derived from the cluster mapping) so EVERY
-				// product opens ready without the operator hand-picking.
 				const def = res.default_selection;
 				setSaved(sel);
 				setAvatars(
-					sel?.selected_avatar_codes ?? def?.selected_avatar_codes ?? [],
+					sel
+						? savedList(sel.selected_avatar_codes, sel.selected_avatar_code)
+						: (def?.selected_avatar_codes ?? []),
 				);
 				setScenes(
-					sel?.selected_scene_template_ids ??
-						def?.selected_scene_template_ids ??
-						[],
+					sel
+						? savedList(
+								sel.selected_scene_template_ids,
+							sel.selected_scene_template_id,
+						)
+						: (def?.selected_scene_template_ids ?? []),
 				);
 				setNotes(sel?.notes ?? "");
 				setSceneCameraMap(buildSceneCameraMap(recipes));
@@ -92,11 +96,46 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 
 	// Camera is derived from the chosen scenes (never independently picked), so the
 	// saved plan can never carry a camera that contradicts its scene.
-	const derivedCameras = Array.from(
-		new Set(scenes.map((s) => sceneCameraMap[s]).filter(Boolean)),
+	const derivedCameras = unique(
+		scenes.map((sceneId) => sceneCameraMap[sceneId]).filter(Boolean),
+	);
+
+	const baselineAvatars = setup
+		? saved
+			? savedList(saved.selected_avatar_codes, saved.selected_avatar_code)
+			: (setup.default_selection?.selected_avatar_codes ?? [])
+		: [];
+	const baselineScenes = setup
+		? saved
+			? savedList(
+				saved.selected_scene_template_ids,
+				saved.selected_scene_template_id,
+			)
+			: (setup.default_selection?.selected_scene_template_ids ?? [])
+		: [];
+	const baselineNotes = saved?.notes ?? "";
+	const hasChanges =
+		!saved ||
+		!sameSet(avatars, baselineAvatars) ||
+		!sameSet(scenes, baselineScenes) ||
+		notes.trim() !== baselineNotes.trim();
+	const selectionReady = avatars.length > 0 && scenes.length > 0;
+	const canSave = Boolean(
+		setup &&
+		!setup.review_required &&
+		selectionReady &&
+		(!saved || hasChanges),
+	);
+	const canReview = Boolean(
+		setup &&
+		!setup.review_required &&
+		selectionReady &&
+		saved?.status === "DRAFT" &&
+		!hasChanges,
 	);
 
 	async function handleSave() {
+		if (!selectionReady || setup?.review_required) return;
 		setBusy(true);
 		setError("");
 		try {
@@ -104,8 +143,10 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 				product_id: productId,
 				selected_avatar_codes: avatars,
 				selected_scene_template_ids: scenes,
+				// Keep the derived value visible in the request for legacy consumers;
+				// the server recalculates it from scenes and ignores independent camera input.
 				selected_camera_preset_codes: derivedCameras,
-				notes: notes || null,
+				notes: notes.trim() || null,
 			});
 			setSaved(result);
 		} catch (cause) {
@@ -117,12 +158,10 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 		}
 	}
 
-	async function handleAutoFill() {
+	async function handleUseRecommendation() {
 		if (!setup) return;
-		// Smart suggest: build a COHERENT recipe plan (avatar × scene where the camera
-		// FOLLOWS the scene) and tick the capped, arc-spread recommended set. The camera
-		// list is derived from the picked recipes so it can never include a camera that
-		// does not match a chosen scene.
+		// This is intentionally read-only. It fills the local form; the operator
+		// must press Save plan before any selection is written or review-gated.
 		setBusy(true);
 		setError("");
 		try {
@@ -131,29 +170,22 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 			if (!chosen.length) {
 				setError(
 					plan.review_required
-						? "This product needs a verified cluster before recipes can be built."
-						: "No coherent recipe to auto-fill for this product.",
+						? "This product needs a verified category before a plan can be suggested."
+						: "No recommended creative plan is available for this product.",
 				);
 				return;
 			}
-			const dedupe = (xs: string[]) => Array.from(new Set(xs.filter(Boolean)));
-			const a = dedupe(chosen.map((r) => r.avatar_code));
-			const s = dedupe(chosen.map((r) => r.scene_template_id));
-			const c = dedupe(chosen.map((r) => r.camera_preset_code));
-			await saveCreativeSelection({
-				product_id: productId,
-				selected_avatar_codes: a,
-				selected_scene_template_ids: s,
-				selected_camera_preset_codes: c,
-				notes: "Smart suggest: coherent recipe plan (camera follows scene)",
-			});
-			setAvatars(a);
-			setScenes(s);
-			setSceneCameraMap((prev) => ({ ...prev, ...buildSceneCameraMap(plan) }));
-			setSaved(await reviewCreativeSelection(productId, "APPROVE"));
+			setAvatars(unique(chosen.map((recipe) => recipe.avatar_code)));
+			setScenes(unique(chosen.map((recipe) => recipe.scene_template_id)));
+			setSceneCameraMap((previous) => ({
+				...previous,
+				...buildSceneCameraMap(plan),
+			}));
 		} catch (cause) {
 			setError(
-				cause instanceof Error ? cause.message : "Failed to auto-fill selection.",
+				cause instanceof Error
+					? cause.message
+					: "Failed to load the recommended plan.",
 			);
 		} finally {
 			setBusy(false);
@@ -167,142 +199,241 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 			setSaved(await reviewCreativeSelection(productId, action));
 		} catch (cause) {
 			setError(
-				cause instanceof Error ? cause.message : "Failed to review selection.",
+				cause instanceof Error ? cause.message : "Failed to review the plan.",
 			);
 		} finally {
 			setBusy(false);
 		}
 	}
 
-	const statusColor =
-		saved?.status === "APPROVED"
+	const status = saved?.status ?? "NOT_SAVED";
+	const statusCopy = hasChanges
+		? "Unsaved changes"
+		: status === "APPROVED"
+			? "Approved plan"
+			: status === "DRAFT"
+				? "Ready for review"
+				: "Not saved";
+	const statusColor = hasChanges
+		? "text-amber-200"
+		: status === "APPROVED"
 			? "text-emerald-300"
-			: saved?.status === "REJECTED"
+			: status === "REJECTED"
 				? "text-red-300"
-				: "text-amber-300";
+				: "text-slate-300";
 
 	return (
 		<div
 			data-testid="creative-setup-panel"
-			className="rounded border border-teal-500/30 bg-teal-500/5 p-3"
+			className="rounded-2xl border border-slate-700 bg-slate-900/70 p-4 shadow-xl md:p-5"
 		>
-			<div className="flex items-center justify-between gap-2">
-				<div className="text-sm font-bold text-teal-100">
-					Creative Setup / Saved Selection
+			<div className="flex flex-wrap items-start justify-between gap-3">
+				<div className="min-w-0">
+					<div className="flex flex-wrap items-center gap-2">
+						<p className="text-[10px] font-bold uppercase tracking-[0.18em] text-indigo-300">
+							Creative setup
+						</p>
+						{setup?.cluster && (
+							<span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] text-slate-400">
+								Recommended for {setup.cluster}
+							</span>
+						)}
+					</div>
+					<h2 className="mt-1 text-base font-bold text-white md:text-lg">
+						Build the creative plan
+					</h2>
+					<p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-400">
+						Choose the people and scenes. Camera presets follow the scene automatically.
+					</p>
 				</div>
-				{saved && (
+				<div className="flex items-center gap-2">
 					<span
 						data-testid="creative-setup-status"
-						className={`rounded bg-slate-800 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${statusColor}`}
+						className={`rounded-full bg-slate-800 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${statusColor}`}
 					>
-						{saved.status}
+						{hasChanges ? "UNSAVED" : status}
 					</span>
-				)}
+					<span className="text-[11px] text-slate-500">{statusCopy}</span>
+				</div>
 			</div>
-			<p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-				Compose a saved creative plan for this product — tick one or MORE avatars
-				and scene templates. The <span className="text-teal-200">camera follows
-				each scene automatically</span> (never picked separately), so no
-				incoherent combos. Planning only — nothing is generated or sent to
-				generation.
-			</p>
 
 			{loading ? (
-				<p className="mt-3 text-xs text-slate-400">Loading creative setup…</p>
+				<p className="mt-6 text-sm text-slate-400">Loading creative setup…</p>
 			) : error && !setup ? (
-				<p className="mt-3 text-xs font-medium text-red-300" role="alert">
+				<p className="mt-6 text-sm font-medium text-red-300" role="alert">
 					Unable to load creative setup: {error}
 				</p>
 			) : setup ? (
 				<>
-					<div className="mt-2 flex items-center justify-between gap-2">
-						<div className="text-[10px] uppercase tracking-wide text-slate-500">
-							cluster: {setup.cluster} · {setup.cluster_source}
+					<div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+						<section
+							data-testid="recommended-avatars-card"
+							className="rounded-xl border border-indigo-500/25 bg-indigo-500/5 p-3"
+						>
+							<div className="flex items-center justify-between gap-2">
+								<div>
+									<h3 className="text-sm font-semibold text-indigo-100">
+										Recommended AI Avatars
+									</h3>
+									<p className="mt-0.5 text-[11px] text-slate-500">
+										Select one or more
+									</p>
+								</div>
+								<span className="text-[11px] text-slate-500">
+									{avatars.length} selected
+								</span>
+							</div>
+
+							<AvatarPicker
+								selected={avatars}
+								recommended={setup.recommended_avatars}
+								library={setup.avatar_library ?? []}
+								onToggle={(code) => toggle(avatars, setAvatars, code)}
+							/>
+						</section>
+
+						<section className="rounded-xl border border-violet-500/25 bg-violet-500/5 p-3">
+							<div className="flex items-center justify-between gap-2">
+								<div>
+									<h3 className="text-sm font-semibold text-violet-100">
+										Recommended scenes
+									</h3>
+									<p className="mt-0.5 text-[11px] text-slate-500">
+										Camera follows each scene
+									</p>
+								</div>
+								<span className="text-[11px] text-slate-500">
+									{scenes.length} selected
+								</span>
+							</div>
+							<div
+								data-testid="creative-setup-scene"
+								className="mt-3 grid gap-2"
+							>
+								{setup.recommended_scene_templates.length === 0 ? (
+									<p className="rounded-lg bg-slate-950/50 px-3 py-2 text-xs text-slate-500">
+										No recommended scenes for this product.
+									</p>
+								) : (
+									setup.recommended_scene_templates.map((template) => (
+										<SceneChoice
+											key={template.template_id}
+											template={template}
+											camera={sceneCameraMap[template.template_id]}
+											checked={scenes.includes(template.template_id)}
+											onChange={() =>
+												toggle(
+													scenes,
+													setScenes,
+													template.template_id,
+												)
+											}
+										/>
+									))
+								)}
+							</div>
+						</section>
+					</div>
+
+					<div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.38fr)]">
+						<div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+							<div className="flex items-center justify-between gap-2">
+								<label
+									className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400"
+									htmlFor="creative-setup-notes"
+								>
+									Plan note <span className="font-normal normal-case tracking-normal text-slate-600">(optional)</span>
+								</label>
+								<span className="text-[10px] text-slate-600">Saved with this plan</span>
+							</div>
+							<textarea
+								id="creative-setup-notes"
+								data-testid="creative-setup-notes"
+								rows={2}
+								value={notes}
+								onChange={(event) => setNotes(event.target.value)}
+								placeholder="Add a short note for the next reviewer…"
+								className="mt-2 w-full resize-y rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-200 outline-none placeholder:text-slate-600 focus:border-indigo-400"
+							/>
 						</div>
+						<div
+							data-testid="creative-setup-summary"
+							className="rounded-xl border border-teal-500/20 bg-teal-500/5 p-3"
+						>
+							<p className="text-[10px] font-bold uppercase tracking-[0.16em] text-teal-200">
+								Plan summary
+							</p>
+							<div className="mt-2 grid grid-cols-3 gap-2 text-center">
+								<SummaryMetric value={avatars.length} label="avatars" />
+								<SummaryMetric value={scenes.length} label="scenes" />
+								<SummaryMetric value={derivedCameras.length} label="cameras" />
+							</div>
+							<p className="mt-2 text-[10px] leading-relaxed text-slate-500">
+								Cameras are automatic and cannot be selected separately.
+							</p>
+						</div>
+					</div>
+
+					<div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-800 pt-4">
 						<button
 							type="button"
 							data-testid="creative-setup-autofill"
 							disabled={busy}
-							onClick={handleAutoFill}
-							title="Smart suggest: build a COHERENT recipe plan (avatar × scene, camera follows scene) and tick the capped arc-spread set (intro → body → detail → benefit), then approve — no incoherent combos"
-							className="rounded bg-indigo-600 px-2 py-1 text-[10px] font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+							onClick={handleUseRecommendation}
+							className="rounded-lg border border-indigo-400/40 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-100 hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50"
 						>
-							⚡ Smart suggest (coherent recipes)
+							{busy ? "Loading…" : "Use recommended plan"}
 						</button>
-					</div>
-
-					<div className="mt-3 grid gap-3">
-						<MultiPickList
-							label="Avatars"
-							testid="creative-setup-avatar"
-							selected={avatars}
-							options={(setup.avatar_library?.length
-								? setup.avatar_library
-								: setup.recommended_avatars
-							).map((a) => ({
-								code: a.avatar_code,
-								label:
-									`${a.avatar_code}${a.character_name ? ` · ${a.character_name}` : ""}` +
-									("recommended" in a && a.recommended ? " ★" : ""),
-							}))}
-							onToggle={(code) => toggle(avatars, setAvatars, code)}
-						/>
-						<MultiPickList
-							label="Scene templates → camera"
-							testid="creative-setup-scene"
-							selected={scenes}
-							options={setup.recommended_scene_templates.map((t) => ({
-								code: t.template_id,
-								label:
-									`${t.template_id}${t.variant ? ` · ${t.variant}` : ""}` +
-									(sceneCameraMap[t.template_id]
-										? ` · 🎥 ${sceneCameraMap[t.template_id]}`
-										: ""),
-							}))}
-							onToggle={(code) => toggle(scenes, setScenes, code)}
-						/>
-					</div>
-
-					<div className="mt-3 flex flex-wrap items-center gap-2">
 						<button
 							type="button"
 							data-testid="creative-setup-save"
-							disabled={busy}
+							disabled={busy || !canSave}
 							onClick={handleSave}
-							className="rounded bg-teal-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
+							className="rounded-lg bg-teal-600 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-500 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
 						>
-							{saved ? "Update Selection" : "Save Selection"}
+							{busy ? "Saving…" : saved ? "Save changes" : "Save plan"}
 						</button>
-						{saved?.status === "DRAFT" && (
+						{canReview && (
 							<>
 								<button
 									type="button"
 									data-testid="creative-setup-approve"
 									disabled={busy}
 									onClick={() => handleReview("APPROVE")}
-									className="rounded border border-emerald-500/50 px-3 py-1 text-xs text-emerald-200 disabled:opacity-50"
+									className="rounded-lg border border-emerald-500/50 px-3 py-2 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/10 disabled:opacity-50"
 								>
-									Approve
+									Approve plan
 								</button>
 								<button
 									type="button"
 									data-testid="creative-setup-reject"
 									disabled={busy}
 									onClick={() => handleReview("REJECT")}
-									className="rounded border border-red-500/50 px-3 py-1 text-xs text-red-200 disabled:opacity-50"
+									className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-400 hover:text-red-200 disabled:opacity-50"
 								>
 									Reject
 								</button>
 							</>
 						)}
-						<span className="text-[10px] text-slate-500">
-							{avatars.length} avatar · {scenes.length} scene ·{" "}
-							{derivedCameras.length} camera (auto)
-						</span>
+						{saved?.status === "DRAFT" && hasChanges && (
+							<span className="text-[11px] text-amber-300">
+								Save changes before review.
+							</span>
+						)}
+						{!selectionReady && (
+							<span className="text-[11px] text-amber-300">
+								Select at least one avatar and one scene.
+							</span>
+						)}
 					</div>
 
+					{setup.review_required && (
+						<p className="mt-3 text-xs text-amber-300" role="status">
+							A verified product category is required before this plan can be saved.
+						</p>
+					)}
 					{error && (
-						<p className="mt-2 text-xs font-medium text-red-300" role="alert">
+						<p className="mt-3 text-xs font-medium text-red-300" role="alert">
 							{error}
 						</p>
 					)}
@@ -312,8 +443,208 @@ export default function CreativeSetupPanel({ productId }: { productId: string })
 	);
 }
 
-/** Build scene_template_id → camera_preset_code from a recipe response (camera
- * follows the scene, so any recipe touching a scene gives its camera). */
+function AvatarPicker({
+	selected,
+	recommended,
+	library,
+	onToggle,
+}: {
+	selected: string[];
+	recommended: RecommendedAvatar[];
+	library: AvatarLibraryItem[];
+	onToggle: (code: string) => void;
+}) {
+	const recommendedChoices: { code: string; name?: string; fit?: number }[] = recommended.length
+		? recommended.map((avatar) => ({
+				code: avatar.avatar_code,
+				name: avatar.character_name,
+				fit: avatar.fit_score,
+			}))
+		: library
+				.filter((avatar) => avatar.recommended)
+				.map((avatar) => ({
+					code: avatar.avatar_code,
+					name: avatar.character_name,
+				}));
+	const recommendedCodes = new Set(recommendedChoices.map((avatar) => avatar.code));
+	const extraChoices = library.filter(
+		(avatar) => !recommendedCodes.has(avatar.avatar_code),
+	);
+
+	return (
+		<div data-testid="creative-setup-avatar" className="mt-3">
+			{recommendedChoices.length === 0 ? (
+				<p className="rounded-lg bg-slate-950/50 px-3 py-2 text-xs text-slate-500">
+					No recommended avatars for this product.
+				</p>
+			) : (
+				<div
+					data-testid="creative-setup-avatar-recommended"
+					className="grid gap-2 sm:grid-cols-2"
+				>
+					{recommendedChoices.map((avatar) => (
+						<AvatarChoice
+							key={avatar.code}
+							code={avatar.code}
+							name={avatar.name}
+							fit={avatar.fit}
+							checked={selected.includes(avatar.code)}
+							onChange={() => onToggle(avatar.code)}
+						/>
+					))}
+				</div>
+			)}
+
+			{extraChoices.length > 0 && (
+				<details className="mt-3 rounded-lg border border-slate-800 bg-slate-950/40">
+					<summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-semibold text-slate-400 hover:text-slate-200">
+						Browse all avatars ({extraChoices.length} more)
+					</summary>
+					<div
+						data-testid="creative-setup-avatar-library"
+						className="grid gap-1 border-t border-slate-800 p-2 sm:grid-cols-2"
+					>
+						{extraChoices.map((avatar) => (
+							<AvatarChoice
+								key={avatar.avatar_code}
+								code={avatar.avatar_code}
+									name={avatar.character_name}
+									checked={selected.includes(avatar.avatar_code)}
+									onChange={() => onToggle(avatar.avatar_code)}
+							/>
+						))}
+					</div>
+				</details>
+			)}
+		</div>
+	);
+}
+
+function AvatarChoice({
+	code,
+	name,
+	fit,
+	checked,
+	onChange,
+}: {
+	code: string;
+	name?: string;
+	fit?: number;
+	checked: boolean;
+	onChange: () => void;
+}) {
+	return (
+		<label
+			className={`flex min-w-0 cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-2 transition-colors ${
+				checked
+					? "border-indigo-400/60 bg-indigo-500/15"
+					: "border-slate-800 bg-slate-950/50 hover:border-slate-700 hover:bg-slate-800/60"
+			}`}
+		>
+			<input
+				type="checkbox"
+				className="mt-0.5 accent-indigo-500"
+				checked={checked}
+				onChange={onChange}
+			/>
+			<span className="min-w-0 flex-1">
+				<span className="block truncate text-xs font-semibold text-slate-100" title={code}>
+					{name || code}
+				</span>
+				<span className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] text-slate-500">
+					<span className="font-mono">{code}</span>
+					{fit != null && (
+						<span className="rounded bg-slate-800 px-1.5 py-0.5 text-indigo-200">
+							fit {Math.round(fit * 100)}%
+						</span>
+					)}
+				</span>
+			</span>
+		</label>
+	);
+}
+
+function SceneChoice({
+	template,
+	camera,
+	checked,
+	onChange,
+}: {
+	template: ScenePromptTemplate;
+	camera?: string;
+	checked: boolean;
+	onChange: () => void;
+}) {
+	const description = [template.main_action, template.setting]
+		.filter(Boolean)
+		.join(" · ");
+
+	return (
+		<label
+			className={`flex min-w-0 cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-2 transition-colors ${
+				checked
+					? "border-violet-400/60 bg-violet-500/15"
+					: "border-slate-800 bg-slate-950/50 hover:border-slate-700 hover:bg-slate-800/60"
+			}`}
+			title={description || template.template_id}
+		>
+			<input
+				type="checkbox"
+				className="mt-0.5 accent-violet-500"
+				checked={checked}
+				onChange={onChange}
+			/>
+			<span className="min-w-0 flex-1">
+				<span className="flex flex-wrap items-center gap-1.5">
+					<span className="font-mono text-[10px] text-violet-200">
+						{template.template_id}
+					</span>
+					{template.variant && (
+						<span className="text-[10px] font-semibold text-slate-300">
+							{template.variant}
+						</span>
+					)}
+					{camera && (
+						<span className="rounded bg-slate-800 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-teal-200">
+							camera {camera}
+						</span>
+					)}
+				</span>
+				{description && (
+					<span className="mt-1 block line-clamp-2 text-[11px] leading-relaxed text-slate-400">
+						{description}
+					</span>
+				)}
+			</span>
+		</label>
+	);
+}
+
+function SummaryMetric({ value, label }: { value: number; label: string }) {
+	return (
+		<div className="rounded-lg bg-slate-950/50 px-1.5 py-2">
+			<div className="text-lg font-bold text-white">{value}</div>
+			<div className="text-[9px] uppercase tracking-wide text-slate-500">{label}</div>
+		</div>
+	);
+}
+
+function savedList(list: string[] | undefined, primary: string | null | undefined) {
+	if (list !== undefined) return unique(list);
+	return primary ? [primary] : [];
+}
+
+function unique(values: string[]) {
+	return Array.from(new Set(values.filter(Boolean)));
+}
+
+function sameSet(left: string[], right: string[]) {
+	const uniqueLeft = unique(left);
+	const uniqueRight = unique(right);
+	return uniqueLeft.length === uniqueRight.length && uniqueLeft.every((value) => uniqueRight.includes(value));
+}
+
+/** Build scene_template_id → camera_preset_code from a recipe response. */
 function buildSceneCameraMap(
 	recipes:
 		| {
@@ -334,60 +665,14 @@ function buildSceneCameraMap(
 		...(recipes?.recipes ?? []),
 		...(recipes?.recommended_pretick ?? []),
 	];
-	for (const r of all) {
-		if (r.scene_template_id && r.camera_preset_code && !map[r.scene_template_id]) {
-			map[r.scene_template_id] = r.camera_preset_code;
+	for (const recipe of all) {
+		if (
+			recipe.scene_template_id &&
+			recipe.camera_preset_code &&
+			!map[recipe.scene_template_id]
+		) {
+			map[recipe.scene_template_id] = recipe.camera_preset_code;
 		}
 	}
 	return map;
-}
-
-function MultiPickList({
-	label,
-	testid,
-	selected,
-	options,
-	onToggle,
-}: {
-	label: string;
-	testid: string;
-	selected: string[];
-	options: { code: string; label: string }[];
-	onToggle: (code: string) => void;
-}) {
-	return (
-		<div>
-			<div className="mb-1 flex items-center justify-between">
-				<span className="text-xs text-slate-300">{label}</span>
-				<span className="text-[10px] text-slate-500">
-					{selected.length} selected
-				</span>
-			</div>
-			{options.length === 0 ? (
-				<p className="rounded bg-slate-900 px-2 py-1 text-[10px] text-slate-500">
-					No recommendations for this product.
-				</p>
-			) : (
-				<div
-					data-testid={testid}
-					className="max-h-32 space-y-0.5 overflow-y-auto rounded bg-slate-900 p-1"
-				>
-					{options.map((o) => (
-						<label
-							key={o.code}
-							className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-[11px] text-slate-200 hover:bg-slate-800"
-						>
-							<input
-								type="checkbox"
-								className="accent-teal-500"
-								checked={selected.includes(o.code)}
-								onChange={() => onToggle(o.code)}
-							/>
-							<span className="truncate">{o.label}</span>
-						</label>
-					))}
-				</div>
-			)}
-		</div>
-	);
 }

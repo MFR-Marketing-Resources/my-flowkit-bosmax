@@ -13,6 +13,7 @@ import {
 	aiFillMissingProductIntelligenceReviewDraft,
 	approveClaimSafeRewrite,
 	approveProductIntelligenceReviewDraft,
+	createProductIntelligenceRevisionDraft,
 	fetchClaimSafeRewritePreview,
 	fetchProductIntelligenceReviewDraft,
 	fetchProductIntelligenceReviewDrafts,
@@ -44,7 +45,7 @@ vi.mock("../../api/products", () => ({
 function makeDraft(overrides: Partial<ProductIntelligenceReviewDraft> = {}): ProductIntelligenceReviewDraft {
 	return {
 		draft_id: "d1", product_id: "p1", review_status: "NEEDS_REVISION",
-		product_description: null, benefits_json: [], usp_json: [], usage_text: null,
+		product_description: null, benefits_json: [], usp_json: [], hook_angles_json: [], cta_angles_json: [], usage_text: null,
 		ingredients_text: null, warnings_text: null, target_customer_text: null,
 		paste_anything_summary: null, source_urls_json: {}, image_evidence_json: {},
 		package_notes: null, size_or_volume: null, product_form_factor: null,
@@ -80,8 +81,127 @@ describe("ProductIntelligenceReviewDraftPanel", () => {
 			await screen.findByRole("button", { name: /Prepare with AI/i }),
 		).toBeInTheDocument();
 		expect(
-			await screen.findByRole("button", { name: /Create Review Draft/i }),
+			await screen.findByRole("button", { name: /Create Revision Draft/i }),
 		).toBeInTheDocument();
+	});
+
+	it("keeps the operator editor visible while advanced history and gates stay collapsed", async () => {
+		const draft = makeDraft({
+			draft_id: "d-editable",
+			review_status: "NEEDS_REVISION",
+		});
+		vi.mocked(fetchProductIntelligenceReviewDrafts).mockResolvedValue({
+			product_id: "p1",
+			items: [draft],
+		});
+		vi.mocked(fetchProductIntelligenceReviewDraft).mockResolvedValue(draft);
+
+		render(<ProductIntelligenceReviewDraftPanel productId="p1" onApproved={async () => {}} />);
+
+		expect(await screen.findByTestId("product-intelligence-review-panel")).toBeInTheDocument();
+		expect(await screen.findByLabelText("Product Description")).toBeVisible();
+		expect(screen.getByLabelText("Audience (who is the buyer)")).toBeVisible();
+		expect(screen.getByLabelText("Angle strategies (one per line)")).toBeVisible();
+		expect(screen.getByTestId("product-intelligence-draft-queue")).not.toHaveAttribute("open");
+		expect(screen.getByTestId("product-intelligence-review-gates")).not.toHaveAttribute("open");
+		expect(screen.getByText(/System fields — managed automatically/i)).toBeVisible();
+	});
+
+	it("selects the newest editable draft ahead of newer terminal history", async () => {
+		const approved = makeDraft({
+			draft_id: "d-approved",
+			review_status: "APPROVED",
+			updated_at: "2026-08-09T10:00:00Z",
+		});
+		const editable = makeDraft({
+			draft_id: "d-editable",
+			review_status: "NEEDS_REVISION",
+			updated_at: "2026-08-09T09:00:00Z",
+		});
+		vi.mocked(fetchProductIntelligenceReviewDrafts).mockResolvedValue({
+			product_id: "p1",
+			items: [approved, editable],
+		});
+		vi.mocked(fetchProductIntelligenceReviewDraft).mockImplementation(
+			async (draftId) => (draftId === editable.draft_id ? editable : approved),
+		);
+
+		render(<ProductIntelligenceReviewDraftPanel productId="p1" onApproved={async () => {}} />);
+
+		await waitFor(() =>
+			expect(fetchProductIntelligenceReviewDraft).toHaveBeenCalledWith("d-editable"),
+		);
+		expect(screen.getByTestId("draft-queue-item-d-editable")).toHaveClass(
+			"border-sky-400",
+		);
+	});
+
+	it("keeps an approved draft historical and blocks every terminal mutation path", async () => {
+		const approved = makeDraft({
+			review_status: "APPROVED",
+			updated_at: "2026-08-09T10:00:00Z",
+		});
+		vi.mocked(fetchProductIntelligenceReviewDrafts).mockResolvedValue({
+			product_id: "p1",
+			items: [approved],
+		});
+		vi.mocked(fetchProductIntelligenceReviewDraft).mockResolvedValue(approved);
+
+		render(<ProductIntelligenceReviewDraftPanel productId="p1" onApproved={async () => {}} />);
+
+		expect(await screen.findByTestId("terminal-draft-notice")).toHaveTextContent(
+			/Create Revision Draft/,
+		);
+		for (const button of [
+			screen.getByRole("button", { name: /^Save Draft$/i }),
+			screen.getByRole("button", { name: /Recompute \(Validate\)/i }),
+			screen.getByRole("button", { name: /Analyze & Repair from source/i }),
+			screen.getByTestId("ai-fill-missing-button"),
+			screen.getByRole("button", { name: /Approve Draft/i }),
+			screen.getByRole("button", { name: /Reject Draft/i }),
+		]) {
+			expect(button).toBeDisabled();
+			fireEvent.click(button);
+		}
+		expect(screen.getByLabelText("Product Description")).toBeDisabled();
+		expect(screen.getByRole("button", { name: /Create Revision Draft/i })).toBeEnabled();
+		expect(updateProductIntelligenceReviewDraft).not.toHaveBeenCalled();
+		expect(validateProductIntelligenceReviewDraft).not.toHaveBeenCalled();
+		expect(recomputeProductIntelligence).not.toHaveBeenCalled();
+	});
+
+	it("creates and selects an editable revision from terminal history", async () => {
+		const approved = makeDraft({ review_status: "APPROVED" });
+		const revision = makeDraft({
+			draft_id: "d-revision",
+			review_status: "NEEDS_REVISION",
+		});
+		vi.mocked(fetchProductIntelligenceReviewDrafts).mockResolvedValue({
+			product_id: "p1",
+			items: [approved],
+		});
+		vi.mocked(createProductIntelligenceRevisionDraft).mockResolvedValue(revision);
+		vi.mocked(fetchProductIntelligenceReviewDraft).mockImplementation(
+			async (draftId) => (draftId === revision.draft_id ? revision : approved),
+		);
+
+		render(<ProductIntelligenceReviewDraftPanel productId="p1" onApproved={async () => {}} />);
+		fireEvent.click(
+			await screen.findByRole("button", { name: /Create Revision Draft/i }),
+		);
+
+		await waitFor(() =>
+			expect(createProductIntelligenceRevisionDraft).toHaveBeenCalledWith("p1", {
+				created_by: "operator",
+			}),
+		);
+		await waitFor(() => {
+			expect(screen.queryByTestId("terminal-draft-notice")).toBeNull();
+			expect(screen.getByRole("button", { name: /^Save Draft$/i })).toBeEnabled();
+			expect(screen.getByTestId("draft-queue-item-d-revision")).toHaveClass(
+				"border-sky-400",
+		);
+		});
 	});
 
 	it("[AI Fill] shows distinct Recompute and AI Fill Missing controls and renders proposals", async () => {
@@ -241,6 +361,16 @@ describe("ProductIntelligenceReviewDraftPanel", () => {
 		expect(msg).toContain("source_urls_json");
 		expect(msg).toContain("rawat,penyakit,ubat");
 		expect(msg.toLowerCase()).toContain("belum boleh diluluskan");
+	});
+
+	it("translates terminal draft update errors into the revision action", () => {
+		const msg = formatReviewDraftError(
+			new Error('API 409: {"detail":"DRAFT_UPDATE_FORBIDDEN:APPROVED"}'),
+			"fallback",
+		);
+		expect(msg).toMatch(/Create Revision Draft/);
+		expect(msg).not.toContain("API 409");
+		expect(msg).not.toContain("{");
 	});
 
 	// ── authenticated TikTok relay ────────────────────────────────────────────
@@ -577,7 +707,11 @@ describe("Analyze & Repair from source (existing-product recompute)", () => {
 
 		render(<ProductIntelligenceReviewDraftPanel productId="p1" onApproved={async () => {}} />);
 		// Validate first so the server-derived options are on screen.
-		fireEvent.click(await screen.findByRole("button", { name: /Recompute \(Validate\)/i }));
+		const validateButton = await screen.findByRole("button", { name: /Recompute \(Validate\)/i });
+		fireEvent.click(
+			screen.getByTestId("product-intelligence-review-gates").querySelector("summary") as HTMLElement,
+		);
+		fireEvent.click(validateButton);
 		fireEvent.click(await screen.findByTestId("resolve-absence-ingredients_text"));
 
 		const form = await screen.findByTestId("disposition-form");
@@ -624,11 +758,15 @@ describe("Analyze & Repair from source (existing-product recompute)", () => {
 		render(
 			<ProductIntelligenceReviewDraftPanel
 				productId="p1"
-				onApproved={async () => {}}
+			onApproved={async () => {}}
 			/>,
 		);
+		const validateButton = await screen.findByRole("button", { name: /Recompute \(Validate\)/i });
 		fireEvent.click(
-			await screen.findByRole("button", { name: /Recompute \(Validate\)/i }),
+			screen.getByTestId("product-intelligence-review-gates").querySelector("summary") as HTMLElement,
+		);
+		fireEvent.click(
+			validateButton,
 		);
 		fireEvent.click(
 			await screen.findByTestId("resolve-absence-ingredients_text"),

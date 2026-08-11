@@ -6,7 +6,7 @@ returned as a final media artifact.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent.services.exact_product_compositor_service import ExactProductCompositeError
@@ -40,10 +40,22 @@ def _http(exc: ExactProductCompositeError) -> HTTPException:
 
 
 @router.get("/policy/{product_id}")
-async def get_exact_product_policy(product_id: str):
+async def get_exact_product_policy(
+    product_id: str,
+    lane_id: str | None = Query(default=None),
+    has_avatar: bool = Query(default=False),
+    is_product_only: bool = Query(default=False),
+    is_poster: bool = Query(default=False),
+):
     """Pre-generation policy + canonical validity (no credits)."""
     try:
-        return await svc.get_policy_for_product(product_id)
+        return await svc.get_policy_for_product(
+            product_id,
+            lane_id=lane_id,
+            has_avatar=has_avatar,
+            is_product_only=is_product_only,
+            is_poster=is_poster,
+        )
     except ExactProductCompositeError as exc:
         raise _http(exc) from exc
 
@@ -52,7 +64,7 @@ async def get_exact_product_policy(product_id: str):
 async def validate_exact_product(product_id: str):
     """Fail-closed pre-credit canonical check."""
     try:
-        policy = await svc.get_policy_for_product(product_id)
+        policy = await svc.get_policy_for_product(product_id, is_product_only=True)
         if not policy.get("exact_product_composite_required"):
             return {**policy, "ok": True}
         if not policy.get("canonical_valid"):
@@ -71,7 +83,7 @@ async def validate_exact_product(product_id: str):
 async def build_scene_only_prompt(req: SceneOnlyPromptRequest):
     """Augment operator/poster prompt for exact-policy scene plates."""
     try:
-        policy = await svc.get_policy_for_product(req.product_id)
+        policy = await svc.get_policy_for_product(req.product_id, is_product_only=True)
         if not policy.get("exact_product_composite_required"):
             return {
                 "product_id": req.product_id,

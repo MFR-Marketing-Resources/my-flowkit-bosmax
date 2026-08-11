@@ -18,6 +18,7 @@ const { TEST_PRODUCT, RECIPE } = vi.hoisted(() => ({
 		product_display_name: "Minyak Warisan Tok",
 		product_short_name: "Minyak Warisan",
 		category: "Traditional",
+		image_url: "https://example.test/minyak-warisan.png",
 	},
 	RECIPE: {
 		recipe_id: "product_hero_night_routine",
@@ -92,6 +93,90 @@ vi.mock("../../../api/imgFactory", () => ({
 			created_at: "2026-07-10T00:00:00Z",
 		},
 	]),
+	startImgGeneration: vi.fn().mockResolvedValue({ job_id: "job-guided-1" }),
+	pollImgGenerationJob: vi.fn().mockResolvedValue({
+		status: "DONE",
+		media_id: "scene-generated-1",
+		url: "/api/flow/retrieved/scene-generated-1",
+	}),
+	fetchProductReferencePack: vi.fn().mockResolvedValue({
+		pack_id: "pack-1",
+		product_id: "prod-1",
+		pack_status: "APPROVED",
+		machine_qa_status: "PASS",
+		physical_measurements: { scale_confidence: "VERIFIED" },
+		references: [
+		{ role: "CANONICAL_PRODUCT", approved: true, sha256: "canonical-sha" },
+		{ role: "LABEL_LOGO_CROP", approved: true, sha256: "label-sha" },
+		{ role: "TRANSPARENT_CUTOUT", approved: true, sha256: "cutout-sha" },
+		{ role: "SCALE_REFERENCE", approved: true, sha256: "scale-sha" },
+		],
+	}),
+	approveProductReferencePack: vi.fn().mockResolvedValue({
+		pack_id: "pack-1",
+		product_id: "prod-1",
+		pack_status: "APPROVED",
+		machine_qa_status: "PASS",
+	}),
+	compileCreativeCampaignPrompt: vi.fn().mockResolvedValue({
+		product_id: "prod-1",
+		output_intent: "CLEAN_KEY_VISUAL",
+		aspect_ratio: "9:16",
+		compiled_prompt: "CLEAN_KEY_VISUAL_PROMPT_WITHOUT_MARKETING_COPY",
+		prompt_fingerprint: "prompt-sha",
+		compiler_version: "image_prompt_compiler_v1",
+		reference_pack: { pack_id: "pack-1", pack_status: "APPROVED" },
+		blockers: [],
+		warnings: [],
+		provider_operation_plan: {
+			max_provider_operations: 1,
+			max_retry_operations: 0,
+		},
+	}),
+}));
+
+vi.mock("../../../api/productTruthLock", () => ({
+	fetchProductTruthLock: vi.fn().mockResolvedValue({
+		product_id: "prod-1",
+		lock_present: true,
+		lock_valid: true,
+		exact_allowed: true,
+		review_status: "APPROVED",
+		product_truth_status: "PRODUCT_TRUTH_PRESERVED_EXACT_COMPOSITE",
+	}),
+	approveProductTruthLock: vi.fn().mockResolvedValue({
+		product_id: "prod-1",
+		lock_present: true,
+		lock_valid: true,
+		exact_allowed: true,
+		review_status: "APPROVED",
+		product_truth_status: "PRODUCT_TRUTH_PRESERVED_EXACT_COMPOSITE",
+	}),
+	productTruthCutoutPreviewUrl: (productId: string) =>
+		`/api/product-truth/${productId}/visual-lock/cutout-preview`,
+}));
+
+vi.mock("../../../api/exactProductOutput", () => ({
+	resolveExactGenerationGate: vi.fn().mockResolvedValue({
+		mode: "standard",
+		policy: {
+			product_id: "prod-1",
+			exact_product_composite_required: false,
+		},
+	}),
+	buildExactSceneOnlyPrompt: vi.fn(),
+}));
+
+vi.mock("../../../api/posterPromptDraft", () => ({
+	createPosterPromptDraft: vi.fn().mockResolvedValue({
+		product_id: "prod-1",
+		poster_status: "POSTER_READY",
+		prompt_package_status: "DRAFT_READY",
+		generation_allowed: true,
+		production_allowed: true,
+		poster_prompt: "clean scene prompt from approved poster copy",
+	}),
+	formatPosterPromptDraftError: vi.fn(),
 }));
 
 vi.mock("../../../api/posterRecipes", () => ({
@@ -178,6 +263,51 @@ vi.mock("../../../api/posterCopySets", () => {
 			// for this mode, so the UI can prove compile == displayed plan.
 			composition_plan: { signature: "sig-LIFESTYLE_EDITORIAL" },
 		}),
+		fetchPosterCampaignVariants: vi.fn().mockResolvedValue({
+			poster_deliverable_id: "pd-1",
+			kv_media_id: "scene-generated-1",
+			provider_operation_count: 0,
+			retry_operation_count: 0,
+			variants: [
+				{
+					variant_id: "variant-1",
+					variant_index: 1,
+					route_id: "ROUTE_01",
+					layout_variant: "EDITORIAL_RAIL",
+					manifest_sha256: "manifest-1",
+					output_sha256: "output-1",
+				},
+				{
+					variant_id: "variant-2",
+					variant_index: 2,
+					route_id: "ROUTE_01",
+					layout_variant: "EDITORIAL_SPLIT",
+					manifest_sha256: "manifest-2",
+					output_sha256: "output-2",
+				},
+				{
+					variant_id: "variant-3",
+					variant_index: 3,
+					route_id: "ROUTE_01",
+					layout_variant: "EDITORIAL_CENTER",
+					manifest_sha256: "manifest-3",
+					output_sha256: "output-3",
+				},
+			],
+		}),
+		reviewPosterDeliverable: vi.fn().mockResolvedValue({
+			deliverable: { poster_deliverable_id: "pd-1" },
+			qa_report: {
+				ok: true,
+				findings: [],
+				block_count: 0,
+				warn_count: 0,
+				world_class_review: { decision: "APPROVED", total: 88 },
+			},
+			world_class_review: { decision: "APPROVED", total: 88 },
+			product_truth_status: "REFERENCE_CONDITIONED_UNVERIFIED",
+			approved_for_poster: false,
+		}),
 		// Backend-resolved plan preview: derived from the REQUESTED mode so the
 		// tests observe real refetch-on-change behaviour (values themselves are
 		// proven by the backend composition tests).
@@ -250,11 +380,26 @@ vi.mock("../../../api/posterCopySets", () => {
 		}),
 		posterDeliverableOutputUrl: (id: string) =>
 			`/api/poster/deliverables/${id}/output`,
+		posterCampaignVariantOutputUrl: (deliverableId: string, variantId: string) =>
+			`/api/poster/deliverables/${deliverableId}/variants/${variantId}/output`,
 		fetchPosterDeliverableByAsset: vi.fn(),
 	};
 });
 
-import { fetchImageArtifacts } from "../../../api/imgFactory";
+import {
+	compileCreativeCampaignPrompt,
+	fetchImageArtifacts,
+	fetchProductReferencePack,
+} from "../../../api/imgFactory";
+import {
+	pollImgGenerationJob,
+	startImgGeneration,
+} from "../../../api/imgFactory";
+import { createPosterPromptDraft } from "../../../api/posterPromptDraft";
+import {
+	buildExactSceneOnlyPrompt,
+	resolveExactGenerationGate,
+} from "../../../api/exactProductOutput";
 import {
 	approvePosterCopySet,
 	composePoster,
@@ -268,9 +413,15 @@ import {
 	recommendPosterAngles,
 	recommendPosterObjectives,
 	regeneratePosterField,
+	fetchPosterCampaignVariants,
+	reviewPosterDeliverable,
 	savePosterToLibrary,
 } from "../../../api/posterCopySets";
 import { fetchPosterReadiness } from "../../../api/posterReadiness";
+import {
+	approveProductTruthLock,
+	fetchProductTruthLock,
+} from "../../../api/productTruthLock";
 
 const RECON_APPROVED = {
 	deliverable: {
@@ -334,16 +485,36 @@ async function driveToApproved() {
 }
 
 async function selectPosterScene() {
+	const options = await screen.findByTestId("poster-existing-scene-options");
+	if (!(options as HTMLDetailsElement).open) {
+		fireEvent.click(screen.getByText("Gunakan visual sedia ada (pilihan sahaja)"));
+	}
 	fireEvent.click(
 		await screen.findByRole("button", {
-			name: "Poster scene visual combobox",
+			name: "Visual poster sedia ada visual combobox",
 		}),
 	);
 	fireEvent.click(await screen.findByRole("button", { name: "Select IMG" }));
 }
 
+function resetImageArtifactMock() {
+	vi.mocked(fetchImageArtifacts)
+		.mockReset()
+		.mockResolvedValue([
+			{
+				media_id: "scene-media-1",
+				artifact_kind: "image",
+				mode: "IMG",
+				created_at: "2026-07-10T00:00:00Z",
+			},
+		]);
+}
+
 describe("PosterGuidedShell", () => {
-	beforeEach(() => vi.clearAllMocks());
+	beforeEach(() => {
+		vi.clearAllMocks();
+		resetImageArtifactMock();
+	});
 	afterEach(() => cleanup());
 
 	it("shows a clean guided first screen with no engineering jargon", async () => {
@@ -358,6 +529,59 @@ describe("PosterGuidedShell", () => {
 		expect(screen.queryByText(/Subhook/i)).toBeNull();
 		expect(screen.queryByText(/\bUSP\b/)).toBeNull();
 		expect(screen.queryByText(/Manual Expert/i)).toBeNull();
+	});
+
+	it("shows the pending cutout and requires explicit truth approval before IMG", async () => {
+		vi.mocked(fetchProductTruthLock).mockResolvedValueOnce({
+			product_id: "prod-1",
+			lock_present: true,
+			lock_valid: false,
+			exact_allowed: false,
+			review_status: "PENDING_REVIEW",
+			product_truth_status: "HUMAN_REVIEW_REQUIRED",
+			failure_state: "HUMAN_REVIEW_REQUIRED",
+			canonical_cutout_media_id: "cutout-1",
+		});
+
+		renderShell();
+		await driveToApproved();
+		fireEvent.click(screen.getByTestId("poster-guided-continue"));
+		fireEvent.click(
+			await screen.findByTestId("poster-visual-card-product_hero_night_routine"),
+		);
+
+		const panel = await screen.findByTestId("poster-truth-review-panel");
+		expect(panel).toBeInTheDocument();
+		expect(
+			screen.getByTestId("poster-truth-cutout-preview").getAttribute("src"),
+		).toBe("/api/product-truth/prod-1/visual-lock/cutout-preview");
+		expect(
+			(screen.getByTestId("poster-generate-scene") as HTMLButtonElement).disabled,
+		).toBe(true);
+
+		fireEvent.change(screen.getByTestId("poster-truth-reviewed-by"), {
+			target: { value: "Faris" },
+		});
+		fireEvent.click(screen.getByTestId("poster-truth-confirm-identity"));
+		fireEvent.click(screen.getByTestId("poster-truth-confirm-label-logo"));
+		fireEvent.click(screen.getByTestId("poster-truth-confirm-geometry-scale"));
+		fireEvent.click(screen.getByTestId("poster-truth-confirm-product-isolation"));
+		fireEvent.click(screen.getByTestId("poster-truth-approve"));
+
+		await screen.findByTestId("poster-truth-approved");
+		expect(approveProductTruthLock).toHaveBeenCalledWith(
+			"prod-1",
+			expect.objectContaining({
+				reviewed_by: "Faris",
+				confirm_identity: true,
+				confirm_label_logo: true,
+				confirm_geometry_scale: true,
+				confirm_product_isolation: true,
+			}),
+		);
+		expect(
+			(screen.getByTestId("poster-generate-scene") as HTMLButtonElement).disabled,
+		).toBe(false);
 	});
 
 	it("walks the full guided journey product → save", async () => {
@@ -422,6 +646,85 @@ describe("PosterGuidedShell", () => {
 		expect(await screen.findByTestId("poster-saved")).toBeInTheDocument();
 	});
 
+	it("Creative Campaign generates a clean KV without a legacy scene and reviews three variants", async () => {
+		vi.mocked(fetchImageArtifacts).mockResolvedValueOnce([]);
+		renderShell();
+		fireEvent.click(screen.getByTestId("pick-product"));
+		fireEvent.click(await screen.findByTestId("poster-goal-card-PRODUCT_HERO"));
+		fireEvent.change(await screen.findByTestId("poster-creative-mode"), {
+			target: { value: "CREATIVE_CAMPAIGN" },
+		});
+		fireEvent.click(await screen.findByTestId("poster-angle-card-0"));
+		fireEvent.click(await screen.findByTestId("poster-copy-direction-0"));
+		fireEvent.click(screen.getByTestId("poster-guided-continue"));
+		fireEvent.click(await screen.findByTestId("poster-approve-copy"));
+		await screen.findByTestId("poster-copy-approved");
+
+		fireEvent.click(screen.getByTestId("poster-guided-continue"));
+		fireEvent.click(
+			await screen.findByTestId(
+				"poster-visual-card-product_hero_night_routine",
+			),
+		);
+		await waitFor(() => expect(fetchProductReferencePack).toHaveBeenCalledWith("prod-1"));
+		expect(
+			(screen.getByTestId("poster-existing-scene-options") as HTMLDetailsElement)
+				.open,
+		).toBe(false);
+		expect(
+			(screen.getByTestId("poster-generate-scene") as HTMLButtonElement).disabled,
+		).toBe(false);
+
+		fireEvent.click(screen.getByTestId("poster-generate-scene"));
+		expect(screen.getByTestId("poster-generate-scene-confirm")).toBeInTheDocument();
+		expect(startImgGeneration).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByTestId("poster-generate-scene-credit-checkbox"));
+		fireEvent.click(screen.getByTestId("poster-generate-scene-credit-confirm"));
+		await waitFor(() => expect(compileCreativeCampaignPrompt).toHaveBeenCalled());
+		await waitFor(() => expect(startImgGeneration).toHaveBeenCalled());
+		expect(vi.mocked(startImgGeneration).mock.lastCall?.[0]).toMatchObject({
+			creative_mode: "CREATIVE_CAMPAIGN",
+			image_model: "NANO_BANANA_PRO",
+			output_intent: "CLEAN_KEY_VISUAL",
+			maximum_provider_operations: 1,
+			max_retry_operations: 0,
+		});
+		await screen.findByTestId("poster-generated-scene");
+
+		fireEvent.click(screen.getByTestId("poster-guided-continue"));
+		fireEvent.click(await screen.findByTestId("poster-compose"));
+		await waitFor(() => expect(composePoster).toHaveBeenCalled());
+		await waitFor(() =>
+			expect(fetchPosterCampaignVariants).toHaveBeenCalledWith("pd-1", {}),
+		);
+		expect(await screen.findByTestId("poster-creative-campaign-preview")).toBeInTheDocument();
+		expect(await screen.findByTestId("poster-campaign-variants")).toBeInTheDocument();
+		expect(screen.getByTestId("poster-campaign-variants").textContent).toContain(
+			"provider ops 0",
+		);
+
+		fireEvent.change(screen.getByLabelText("Product identity score"), {
+			target: { value: "23" },
+		});
+		fireEvent.change(screen.getByLabelText("Integration score"), {
+			target: { value: "22" },
+		});
+		fireEvent.change(screen.getByLabelText("Typography score"), {
+			target: { value: "18" },
+		});
+		fireEvent.change(screen.getByLabelText("Malaysian context score"), {
+			target: { value: "12" },
+		});
+		fireEvent.change(screen.getByLabelText("Conversion score"), {
+			target: { value: "13" },
+		});
+		fireEvent.click(screen.getByTestId("poster-review-approve"));
+		await waitFor(() => expect(reviewPosterDeliverable).toHaveBeenCalledWith(
+			"pd-1",
+			expect.objectContaining({ decision: "APPROVED", product_identity: 23 }),
+		));
+	});
+
 	it("loads deterministic curated angles without optional AI enrichment", async () => {
 		renderShell();
 		fireEvent.click(screen.getByTestId("pick-product"));
@@ -476,7 +779,10 @@ describe("PosterGuidedShell", () => {
 // ── Final functional closure (versioning, reopen restore, scene picker, errors) ──
 
 describe("PosterGuidedShell closure", () => {
-	beforeEach(() => vi.clearAllMocks());
+	beforeEach(() => {
+		vi.clearAllMocks();
+		resetImageArtifactMock();
+	});
 	afterEach(() => cleanup());
 
 	it("editing approved copy reuses the version draft — patch+approve, NO duplicate create", async () => {
@@ -599,7 +905,7 @@ describe("PosterGuidedShell closure", () => {
 		).toBe("Tajuk sejarah");
 	});
 
-	it("scene step shows a picker of existing assets; raw media ID only in Advanced Diagnostics", async () => {
+	it("scene step makes native generation primary and keeps existing assets optional", async () => {
 		renderShell();
 		await driveToApproved();
 		fireEvent.click(screen.getByTestId("poster-guided-continue")); // approve → visual
@@ -608,16 +914,22 @@ describe("PosterGuidedShell closure", () => {
 				"poster-visual-card-product_hero_night_routine",
 			),
 		);
-		// Compact picker keeps its thumbnail rows bounded until the field opens.
-		const picker = await screen.findByRole("button", {
-			name: "Poster scene visual combobox",
-		});
-		expect(fetchImageArtifacts).toHaveBeenCalled();
+		expect(screen.getByTestId("poster-scene-generation-panel")).toBeInTheDocument();
+		expect(screen.getByTestId("poster-generate-scene")).toBeInTheDocument();
+		expect(screen.getByTestId("poster-existing-scene-options")).not.toHaveAttribute(
+		"open",
+	);
+		expect(fetchImageArtifacts).not.toHaveBeenCalled();
 		// Continue is blocked until a scene is picked.
 		expect(
 			(screen.getByTestId("poster-guided-continue") as HTMLButtonElement)
 				.disabled,
 		).toBe(true);
+		fireEvent.click(screen.getByText("Gunakan visual sedia ada (pilihan sahaja)"));
+		const picker = await screen.findByRole("button", {
+			name: "Visual poster sedia ada visual combobox",
+		});
+		expect(fetchImageArtifacts).toHaveBeenCalled();
 		fireEvent.click(picker);
 		expect(screen.getByText("Sedia digunakan")).toBeInTheDocument();
 		fireEvent.click(await screen.findByRole("button", { name: "Select IMG" }));
@@ -629,7 +941,7 @@ describe("PosterGuidedShell closure", () => {
 		expect(screen.getByTestId("poster-scene-bg-input")).not.toBeVisible();
 	});
 
-	it("scene picker shows empty state and a retry path on failure", async () => {
+	it("optional existing scene list shows empty state and a retry path on failure", async () => {
 		vi.mocked(fetchImageArtifacts).mockResolvedValueOnce([]);
 		renderShell();
 		await driveToApproved();
@@ -639,13 +951,9 @@ describe("PosterGuidedShell closure", () => {
 				"poster-visual-card-product_hero_night_routine",
 			),
 		);
+		fireEvent.click(screen.getByText("Gunakan visual sedia ada (pilihan sahaja)"));
 		expect(await screen.findByTestId("poster-scene-empty")).toBeInTheDocument();
-		const imgLink = screen.getByTestId("poster-scene-open-img");
-		expect(imgLink).toHaveAttribute(
-			"href",
-			"/assets/img-fastlane?product_id=prod-1",
-		);
-		expect(screen.getByTestId("poster-scene-refresh")).toBeInTheDocument();
+		expect(screen.queryByTestId("poster-scene-open-img")).toBeNull();
 		expect(
 			(screen.getByTestId("poster-guided-continue") as HTMLButtonElement)
 				.disabled,
@@ -656,11 +964,84 @@ describe("PosterGuidedShell closure", () => {
 		fireEvent.click(
 			screen.getByTestId("poster-visual-card-product_hero_night_routine"),
 		);
+		fireEvent.click(screen.getByText("Gunakan visual sedia ada (pilihan sahaja)"));
 		expect(await screen.findByTestId("poster-scene-error")).toBeInTheDocument();
 		fireEvent.click(screen.getByTestId("poster-scene-retry"));
 		await screen.findByRole("button", {
-			name: "Poster scene visual combobox",
+			name: "Visual poster sedia ada visual combobox",
 		});
+	});
+
+	it("guided poster can generate its visual without selecting an existing scene", async () => {
+		vi.mocked(fetchImageArtifacts).mockResolvedValueOnce([]);
+		renderShell();
+		await driveToApproved();
+		fireEvent.click(screen.getByTestId("poster-guided-continue"));
+		fireEvent.click(
+			await screen.findByTestId(
+				"poster-visual-card-product_hero_night_routine",
+			),
+		);
+
+		expect(await screen.findByTestId("poster-generate-scene")).toBeInTheDocument();
+		expect(screen.queryByTestId("poster-scene-open-img")).toBeNull();
+		fireEvent.click(screen.getByTestId("poster-generate-scene"));
+		expect(startImgGeneration).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByTestId("poster-generate-scene-credit-checkbox"));
+		fireEvent.click(screen.getByTestId("poster-generate-scene-credit-confirm"));
+
+		await waitFor(() => expect(createPosterPromptDraft).toHaveBeenCalled());
+		await waitFor(() => expect(startImgGeneration).toHaveBeenCalled());
+		expect(vi.mocked(startImgGeneration).mock.lastCall?.[0]).toMatchObject({
+			product_id: "prod-1",
+			visual_lane_id: "POSTER_BUILDER",
+			aspect: "9:16",
+			count: 1,
+		});
+		await waitFor(() => expect(pollImgGenerationJob).toHaveBeenCalled());
+		expect(
+			(screen.getByTestId("poster-guided-continue") as HTMLButtonElement)
+				.disabled,
+		).toBe(false);
+	});
+
+	it("exact poster generation sends a scene-only plate without product refs", async () => {
+		vi.mocked(resolveExactGenerationGate).mockResolvedValueOnce({
+			mode: "exact",
+			policy: {
+				product_id: "prod-1",
+				exact_product_composite_required: true,
+				canonical_valid: true,
+			},
+		});
+		vi.mocked(buildExactSceneOnlyPrompt).mockResolvedValueOnce({
+			product_id: "prod-1",
+			exact_product_composite_required: true,
+			prompt: "SCENE-ONLY PLATE",
+			send_product_reference_to_flow: false,
+		});
+		renderShell();
+		await driveToApproved();
+		fireEvent.click(screen.getByTestId("poster-guided-continue"));
+		fireEvent.click(
+			await screen.findByTestId(
+				"poster-visual-card-product_hero_night_routine",
+			),
+		);
+		await screen.findByTestId("poster-truth-approved");
+		fireEvent.click(screen.getByTestId("poster-generate-scene"));
+		fireEvent.click(screen.getByTestId("poster-generate-scene-credit-checkbox"));
+		fireEvent.click(screen.getByTestId("poster-generate-scene-credit-confirm"));
+
+		await waitFor(() => expect(buildExactSceneOnlyPrompt).toHaveBeenCalled());
+		await waitFor(() => expect(startImgGeneration).toHaveBeenCalled());
+		const payload = vi.mocked(startImgGeneration).mock.lastCall?.[0];
+		expect(payload).toMatchObject({
+			product_id: "prod-1",
+			visual_lane_id: "POSTER_BUILDER",
+			prompt: "SCENE-ONLY PLATE",
+		});
+		expect(payload).not.toHaveProperty("refs");
 	});
 
 	it("readiness failure is visible and friendly", async () => {
@@ -795,7 +1176,10 @@ describe("PosterGuidedShell closure", () => {
 // ── WRNA Round 3 (B-04): backend-resolved composition summary ────────────────
 
 describe("PosterGuidedShell composition plan (B-04)", () => {
-	beforeEach(() => vi.clearAllMocks());
+	beforeEach(() => {
+		vi.clearAllMocks();
+		resetImageArtifactMock();
+	});
 	afterEach(() => cleanup());
 
 	const ALL_MODES = [
@@ -836,6 +1220,21 @@ describe("PosterGuidedShell composition plan (B-04)", () => {
 		renderShell();
 		fireEvent.click(screen.getByTestId("pick-product"));
 		await screen.findByTestId("poster-readiness-banner");
+		expect(screen.queryByTestId("poster-composition-plan")).toBeNull();
+		expect(fetchCompositionPlan).not.toHaveBeenCalled();
+	});
+
+	it("does not route Creative Campaign through the legacy compositor resolver", async () => {
+		renderShell();
+		fireEvent.click(screen.getByTestId("pick-product"));
+		fireEvent.click(await screen.findByTestId("poster-goal-card-PRODUCT_HERO"));
+		fireEvent.change(await screen.findByTestId("poster-creative-mode"), {
+			target: { value: "CREATIVE_CAMPAIGN" },
+		});
+
+		await waitFor(() =>
+			expect(screen.queryByTestId("poster-composition-plan-error")).toBeNull(),
+		);
 		expect(screen.queryByTestId("poster-composition-plan")).toBeNull();
 		expect(fetchCompositionPlan).not.toHaveBeenCalled();
 	});

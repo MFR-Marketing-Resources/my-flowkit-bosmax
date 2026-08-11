@@ -33,6 +33,11 @@ class ProductStrategyTaxonomy(BaseModel):
     product_id: str
     taxonomy_version: str
     product_fingerprint: str
+    # The persisted fingerprint is the review snapshot.  The read model also
+    # exposes the fingerprint calculated from the product as it exists now so
+    # an operator can explicitly rebase/review a stale taxonomy without
+    # weakening the API's optimistic-concurrency guard.
+    current_product_fingerprint: str | None = None
     cluster: str
     product_type_group: str
     matched_scene_strategy_id: str

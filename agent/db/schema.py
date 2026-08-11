@@ -66,6 +66,280 @@ class _ReentrantDbLock:
 _db_lock = _ReentrantDbLock()
 
 
+_BULK_GENERATION_RUN_KINDS = (
+    "AVATAR_IMAGE",
+    "IMG",
+    "VIDEO",
+    "MIXED",
+    "MONTAGE_DISCRETE",
+)
+_BULK_GENERATION_RUN_STATUSES = (
+    "PENDING",
+    "RUNNING",
+    "COMPLETED",
+    "PARTIAL_FAILED",
+    "FAILED",
+    "CANCELLED",
+    "PAUSED",
+    "PREPARED",
+    "PARTIAL",
+    "GENERATING",
+    "COMPLETE",
+    "ASSEMBLY_READY",
+)
+_BULK_GENERATION_ITEM_TYPES = (
+    "AVATAR_IMAGE",
+    "IMG",
+    "T2V",
+    "I2V",
+    "F2V",
+    "MONTAGE_SCENE",
+)
+_BULK_GENERATION_ITEM_STATUSES = (
+    "QUEUED",
+    "SUBMITTED",
+    "RUNNING",
+    "GENERATED",
+    "DOWNLOADED",
+    "REGISTERED",
+    "FAILED",
+    "CANCELLED",
+    "PLANNED",
+    "IMAGE_PENDING_PACKAGE",
+    "IMAGE_PENDING",
+    "IMAGE_READY",
+    "IMAGE_BOUND",
+    "PACKAGE_READY",
+    "PACKAGE_FAILED",
+    "VIDEO_SUBMITTED",
+    "VIDEO_READY",
+    "GENERATE_RETURNED",
+    "GENERATE_FAILED",
+    "RESULT_BOUND",
+    "BLOCKED",
+    "SKIPPED_VIDEO",
+)
+_BULK_GENERATION_RUN_COLUMNS = (
+    "bulk_run_id",
+    "kind",
+    "status",
+    "total_expected",
+    "total_completed",
+    "total_failed",
+    "max_parallel_images",
+    "max_parallel_videos",
+    "confirm_credit_burn",
+    "interval_min_seconds",
+    "interval_max_seconds",
+    "cooldown_after_n_jobs",
+    "cooldown_seconds",
+    "error_log_json",
+    "config_json",
+    "created_at",
+    "updated_at",
+)
+_BULK_GENERATION_ITEM_COLUMNS = (
+    "bulk_item_id",
+    "bulk_run_id",
+    "item_type",
+    "source_ref",
+    "prompt_snapshot",
+    "payload_json",
+    "status",
+    "job_id",
+    "media_id",
+    "local_path",
+    "creative_asset_id",
+    "error",
+    "retry_count",
+    "started_at",
+    "completed_at",
+    "created_at",
+    "updated_at",
+)
+
+
+def _check_values_sql(values: tuple[str, ...]) -> str:
+    return ",".join(f"'{value}'" for value in values)
+
+
+def _bulk_generation_run_table_sql(table_name: str) -> str:
+    return f"""
+CREATE TABLE {table_name} (
+    bulk_run_id             TEXT PRIMARY KEY,
+    kind                    TEXT NOT NULL
+                            CHECK(kind IN ({_check_values_sql(_BULK_GENERATION_RUN_KINDS)})),
+    status                  TEXT NOT NULL DEFAULT 'PENDING'
+                            CHECK(status IN ({_check_values_sql(_BULK_GENERATION_RUN_STATUSES)})),
+    total_expected          INTEGER NOT NULL DEFAULT 0,
+    total_completed         INTEGER NOT NULL DEFAULT 0,
+    total_failed            INTEGER NOT NULL DEFAULT 0,
+    max_parallel_images     INTEGER NOT NULL DEFAULT 2,
+    max_parallel_videos     INTEGER NOT NULL DEFAULT 1,
+    confirm_credit_burn     INTEGER NOT NULL DEFAULT 0,
+    interval_min_seconds    INTEGER NOT NULL DEFAULT 5,
+    interval_max_seconds    INTEGER NOT NULL DEFAULT 15,
+    cooldown_after_n_jobs   INTEGER NOT NULL DEFAULT 5,
+    cooldown_seconds        INTEGER NOT NULL DEFAULT 60,
+    error_log_json          TEXT NOT NULL DEFAULT '[]',
+    config_json             TEXT NOT NULL DEFAULT '{{}}',
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+)
+"""
+
+
+def _bulk_generation_item_table_sql(table_name: str) -> str:
+    return f"""
+CREATE TABLE {table_name} (
+    bulk_item_id            TEXT PRIMARY KEY,
+    bulk_run_id             TEXT NOT NULL,
+    item_type               TEXT NOT NULL
+                            CHECK(item_type IN ({_check_values_sql(_BULK_GENERATION_ITEM_TYPES)})),
+    source_ref              TEXT NOT NULL,
+    prompt_snapshot         TEXT,
+    payload_json            TEXT NOT NULL DEFAULT '{{}}',
+    status                  TEXT NOT NULL DEFAULT 'QUEUED'
+                            CHECK(status IN ({_check_values_sql(_BULK_GENERATION_ITEM_STATUSES)})),
+    job_id                  TEXT,
+    media_id                TEXT,
+    local_path              TEXT,
+    creative_asset_id       TEXT,
+    error                   TEXT,
+    retry_count             INTEGER NOT NULL DEFAULT 0,
+    started_at              TEXT,
+    completed_at            TEXT,
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+)
+"""
+
+
+def _bulk_generation_table_sql(connection, table_name: str) -> str:
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+        (table_name,),
+    ).fetchone()
+    return str(row[0] or "") if row else ""
+
+
+def _bulk_generation_table_indexes(connection, table_name: str) -> list[str]:
+    rows = connection.execute(
+        "SELECT sql FROM sqlite_master "
+        "WHERE type='index' AND tbl_name=? AND sql IS NOT NULL "
+        "AND name NOT LIKE 'sqlite_autoindex_%' ORDER BY name",
+        (table_name,),
+    ).fetchall()
+    return [str(row[0]) for row in rows if row[0]]
+
+
+def _assert_bulk_generation_columns(
+    connection,
+    table_name: str,
+    expected_columns: tuple[str, ...],
+) -> None:
+    rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+    actual_columns = tuple(str(row[1]) for row in rows)
+    if actual_columns != expected_columns:
+        raise RuntimeError(
+            f"MONTAGE_LEDGER_SCHEMA_UNRECOGNIZED:{table_name}:"
+            f"expected={expected_columns}:actual={actual_columns}"
+        )
+
+
+def _bulk_generation_ledger_needs_migration(connection) -> bool:
+    run_sql = _bulk_generation_table_sql(connection, "bulk_generation_run")
+    item_sql = _bulk_generation_table_sql(connection, "bulk_generation_item")
+    if not run_sql or not item_sql:
+        return False
+    return not (
+        all(f"'{value}'" in run_sql for value in _BULK_GENERATION_RUN_KINDS)
+        and all(f"'{value}'" in run_sql for value in _BULK_GENERATION_RUN_STATUSES)
+        and all(f"'{value}'" in item_sql for value in _BULK_GENERATION_ITEM_TYPES)
+        and all(f"'{value}'" in item_sql for value in _BULK_GENERATION_ITEM_STATUSES)
+    )
+
+
+def _migrate_bulk_generation_ledger(db_path: str) -> bool:
+    """Rebuild the shared bulk ledger when its CHECK contract is stale.
+
+    SQLite cannot alter CHECK constraints.  The migration is deliberately
+    synchronous so PRAGMA foreign_keys can be disabled before BEGIN IMMEDIATE;
+    init_db has already committed the aiosqlite connection before calling this.
+    """
+    if str(db_path) == ":memory:":
+        return False
+
+    import sqlite3
+
+    connection = sqlite3.connect(str(db_path), timeout=60)
+    migrated = False
+    run_new = "bulk_generation_run__montage_new"
+    item_new = "bulk_generation_item__montage_new"
+    run_old = "bulk_generation_run__montage_old"
+    item_old = "bulk_generation_item__montage_old"
+    try:
+        if not _bulk_generation_ledger_needs_migration(connection):
+            return False
+        _assert_bulk_generation_columns(
+            connection, "bulk_generation_run", _BULK_GENERATION_RUN_COLUMNS
+        )
+        _assert_bulk_generation_columns(
+            connection, "bulk_generation_item", _BULK_GENERATION_ITEM_COLUMNS
+        )
+        for table_name in (run_new, item_new, run_old, item_old):
+            if _bulk_generation_table_sql(connection, table_name):
+                raise RuntimeError(
+                    f"MONTAGE_LEDGER_MIGRATION_RESIDUE:{table_name}"
+                )
+
+        run_indexes = _bulk_generation_table_indexes(connection, "bulk_generation_run")
+        item_indexes = _bulk_generation_table_indexes(connection, "bulk_generation_item")
+        quoted_run_columns = ", ".join(f'"{column}"' for column in _BULK_GENERATION_RUN_COLUMNS)
+        quoted_item_columns = ", ".join(f'"{column}"' for column in _BULK_GENERATION_ITEM_COLUMNS)
+
+        connection.execute("PRAGMA foreign_keys=OFF")
+        connection.execute("PRAGMA legacy_alter_table=ON")
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(_bulk_generation_run_table_sql(run_new))
+        connection.execute(_bulk_generation_item_table_sql(item_new))
+        connection.execute(
+            f"INSERT INTO {run_new} ({quoted_run_columns}) "
+            f"SELECT {quoted_run_columns} FROM bulk_generation_run"
+        )
+        connection.execute(
+            f"INSERT INTO {item_new} ({quoted_item_columns}) "
+            f"SELECT {quoted_item_columns} FROM bulk_generation_item"
+        )
+        connection.execute("ALTER TABLE bulk_generation_run RENAME TO " + run_old)
+        connection.execute("ALTER TABLE bulk_generation_item RENAME TO " + item_old)
+        connection.execute("ALTER TABLE " + run_new + " RENAME TO bulk_generation_run")
+        connection.execute("ALTER TABLE " + item_new + " RENAME TO bulk_generation_item")
+        connection.execute("DROP TABLE " + item_old)
+        connection.execute("DROP TABLE " + run_old)
+        for index_sql in (*run_indexes, *item_indexes):
+            connection.execute(index_sql)
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bulk_generation_item_run "
+            "ON bulk_generation_item(bulk_run_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bulk_generation_item_run_status "
+            "ON bulk_generation_item(bulk_run_id, status)"
+        )
+        connection.commit()
+        migrated = True
+        logger.info("Migrated: rebuilt bulk generation ledger for Montage lifecycle")
+    except BaseException:
+        connection.rollback()
+        raise
+    finally:
+        connection.execute("PRAGMA legacy_alter_table=OFF")
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.close()
+    return migrated
+
+
 @contextlib.asynccontextmanager
 async def atomic():
     """Run several crud writes as ONE transaction: all of them commit, or none do.
@@ -449,6 +723,7 @@ CREATE TABLE IF NOT EXISTS product (
     image_asset_status  TEXT,
     product_type        TEXT,
     product_type_id     TEXT,
+    copywriting_product_type_code TEXT,
     silo                TEXT,
     trigger_id          TEXT,
     formula             TEXT,
@@ -505,6 +780,254 @@ CREATE TABLE IF NOT EXISTS product (
     created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
+
+-- Server-owned visual identity contract.  This is intentionally separate from
+-- prompt/product metadata: exact IMG output is allowed only when these bytes,
+-- masks, bounds, and review gates validate at generation time.
+CREATE TABLE IF NOT EXISTS product_visual_truth_lock (
+    product_id              TEXT PRIMARY KEY REFERENCES product(id) ON DELETE CASCADE,
+    canonical_media_id      TEXT NOT NULL,
+    canonical_sha256        TEXT NOT NULL CHECK(length(canonical_sha256) = 64),
+    source_width            INTEGER NOT NULL CHECK(source_width > 0),
+    source_height           INTEGER NOT NULL CHECK(source_height > 0),
+    canonical_source_path   TEXT NOT NULL,
+    canonical_cutout_media_id TEXT NOT NULL,
+    canonical_cutout_sha256 TEXT NOT NULL CHECK(length(canonical_cutout_sha256) = 64),
+    canonical_cutout_path   TEXT NOT NULL,
+    alpha_mask_json         TEXT NOT NULL DEFAULT '{}',
+    anchor_point_json       TEXT NOT NULL DEFAULT '{}',
+    min_scale               REAL NOT NULL CHECK(min_scale > 0),
+    max_scale               REAL NOT NULL CHECK(max_scale > 0),
+    allowed_bbox_json       TEXT NOT NULL DEFAULT '{}',
+    allowed_rotation        REAL NOT NULL DEFAULT 0 CHECK(allowed_rotation >= 0 AND allowed_rotation <= 45),
+    allowed_perspective     REAL NOT NULL DEFAULT 0 CHECK(allowed_perspective >= 0 AND allowed_perspective <= 1),
+    identity_lock           INTEGER NOT NULL DEFAULT 0 CHECK(identity_lock IN (0,1)),
+    geometry_lock           INTEGER NOT NULL DEFAULT 0 CHECK(geometry_lock IN (0,1)),
+    label_lock              INTEGER NOT NULL DEFAULT 0 CHECK(label_lock IN (0,1)),
+    logo_lock               INTEGER NOT NULL DEFAULT 0 CHECK(logo_lock IN (0,1)),
+    colour_lock             INTEGER NOT NULL DEFAULT 0 CHECK(colour_lock IN (0,1)),
+    scale_lock              INTEGER NOT NULL DEFAULT 0 CHECK(scale_lock IN (0,1)),
+    review_status           TEXT NOT NULL DEFAULT 'DRAFT' CHECK(review_status IN ('DRAFT','PENDING_REVIEW','APPROVED','REJECTED')),
+    failure_state           TEXT NOT NULL DEFAULT '',
+    provenance_json         TEXT NOT NULL DEFAULT '{}',
+    schema_version          TEXT NOT NULL DEFAULT '1.0',
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_product_truth_lock_review ON product_visual_truth_lock(review_status);
+
+-- Immutable audit history for replaced Product Truth candidates.  The active
+-- contract remains the single product_visual_truth_lock row; this table only
+-- preserves prior bytes and provenance for review, rejection, and supersession.
+CREATE TABLE IF NOT EXISTS product_visual_truth_lock_history (
+    history_id                  TEXT PRIMARY KEY,
+    product_id                  TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    source_kind                 TEXT NOT NULL CHECK(source_kind IN ('AUTO_GENERATED','USER_UPLOAD','CANONICAL_REFERENCE')),
+    review_status               TEXT NOT NULL,
+    canonical_media_id          TEXT,
+    canonical_sha256            TEXT,
+    source_width                INTEGER,
+    source_height               INTEGER,
+    canonical_source_path       TEXT,
+    canonical_cutout_media_id   TEXT,
+    canonical_cutout_sha256     TEXT,
+    canonical_cutout_path       TEXT,
+    alpha_mask_json             TEXT NOT NULL DEFAULT '{}',
+    anchor_point_json           TEXT NOT NULL DEFAULT '{}',
+    allowed_bbox_json           TEXT NOT NULL DEFAULT '{}',
+    provenance_json             TEXT NOT NULL DEFAULT '{}',
+    superseded_by_media_id      TEXT,
+    superseded_reason           TEXT,
+    created_at                  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_product_truth_lock_history_product
+    ON product_visual_truth_lock_history(product_id, created_at DESC);
+
+-- Provider-facing creative reference pack.  This is intentionally separate
+-- from product_visual_truth_lock: exact compositor truth and generative
+-- campaign evidence have different approval and QA lifecycles.
+CREATE TABLE IF NOT EXISTS product_reference_pack (
+    product_id              TEXT PRIMARY KEY REFERENCES product(id) ON DELETE CASCADE,
+    pack_id                 TEXT NOT NULL UNIQUE,
+    schema_version          TEXT NOT NULL DEFAULT 'product_reference_pack_v1',
+    pack_status             TEXT NOT NULL DEFAULT 'DRAFT'
+        CHECK(pack_status IN ('DRAFT','PENDING_REVIEW','APPROVED','REJECTED')),
+    machine_qa_status        TEXT NOT NULL DEFAULT 'WARN'
+        CHECK(machine_qa_status IN ('PASS','WARN','FAIL')),
+    machine_qa_json          TEXT NOT NULL DEFAULT '{}',
+    physical_width_mm       REAL,
+    physical_height_mm      REAL,
+    physical_depth_mm       REAL,
+    volume_ml               REAL,
+    scale_evidence_source   TEXT NOT NULL DEFAULT 'UNVERIFIED',
+    scale_confidence        TEXT NOT NULL DEFAULT 'UNVERIFIED'
+        CHECK(scale_confidence IN ('UNVERIFIED','LOW','MEDIUM','HIGH')),
+    geometry_json            TEXT NOT NULL DEFAULT '{}',
+    references_json          TEXT NOT NULL DEFAULT '[]',
+    provenance_json          TEXT NOT NULL DEFAULT '{}',
+    human_review_json        TEXT NOT NULL DEFAULT '{}',
+    created_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_product_reference_pack_status
+    ON product_reference_pack(pack_status, updated_at);
+
+-- Deterministic product cutout preparation receipt.  This is operational
+-- evidence only; product_visual_truth_lock remains the exact-IMG authority and
+-- its APPROVED state can only be reached through the explicit human gate.
+CREATE TABLE IF NOT EXISTS product_cutout_preparation (
+    product_id       TEXT PRIMARY KEY REFERENCES product(id) ON DELETE CASCADE,
+    status           TEXT NOT NULL DEFAULT 'NOT_PREPARED'
+        CHECK(status IN ('NOT_PREPARED','PREPARING','PENDING_REVIEW','APPROVED','PREPARATION_FAILED','BLOCKED')),
+    source_sha256    TEXT,
+    cutout_media_id  TEXT,
+    cutout_sha256    TEXT,
+    failure_code     TEXT,
+    failure_message  TEXT,
+    attempt_count    INTEGER NOT NULL DEFAULT 0,
+    last_started_at  TEXT,
+    last_finished_at TEXT,
+    file_quality_status     TEXT,
+    product_isolation_status TEXT,
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_product_cutout_preparation_status
+    ON product_cutout_preparation(status, updated_at);
+
+-- Operator-selected product target region (ROI) for product-aware cutout, used
+-- when a source is ambiguous (product + unrelated foreground like bread/props).
+-- Preparation provenance ONLY — NOT Product Truth approval. Bound to the source
+-- SHA so a changed source invalidates a stale target (fail-closed upstream).
+CREATE TABLE IF NOT EXISTS product_cutout_target (
+    product_id     TEXT PRIMARY KEY REFERENCES product(id) ON DELETE CASCADE,
+    source_sha256  TEXT NOT NULL,
+    source_width   INTEGER NOT NULL,
+    source_height  INTEGER NOT NULL,
+    target_x       INTEGER NOT NULL,
+    target_y       INTEGER NOT NULL,
+    target_width   INTEGER NOT NULL,
+    target_height  INTEGER NOT NULL,
+    selected_by    TEXT,
+    selected_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_product_cutout_target_updated
+    ON product_cutout_target(updated_at);
+
+-- Bounded, provider-free bulk preparation progress.  Product IDs are a frozen
+-- preview receipt, not a free-form client-side selection; the execution worker
+-- re-checks every identity/lifecycle gate before touching a row.
+CREATE TABLE IF NOT EXISTS product_visual_onboarding_run (
+    run_id              TEXT PRIMARY KEY,
+    status              TEXT NOT NULL DEFAULT 'PREVIEW'
+        CHECK(status IN ('PREVIEW','QUEUED','RUNNING','COMPLETED','PARTIAL_FAILED','FAILED')),
+    total_expected      INTEGER NOT NULL DEFAULT 0,
+    total_processed     INTEGER NOT NULL DEFAULT 0,
+    total_pending_review INTEGER NOT NULL DEFAULT 0,
+    total_failed        INTEGER NOT NULL DEFAULT 0,
+    total_blocked       INTEGER NOT NULL DEFAULT 0,
+    total_skipped       INTEGER NOT NULL DEFAULT 0,
+    batch_size          INTEGER NOT NULL DEFAULT 5,
+    product_ids_json    TEXT NOT NULL DEFAULT '[]',
+    error_log_json      TEXT NOT NULL DEFAULT '[]',
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_product_visual_onboarding_run_status
+    ON product_visual_onboarding_run(status, updated_at);
+
+-- Canva-assisted cutout workflow ledger.  Canva UI work remains operator- or
+-- browser-controller-owned; this table persists only bounded workflow
+-- evidence and never stores credentials, cookies, or provider session data.
+CREATE TABLE IF NOT EXISTS canva_cutout_workflow (
+    product_id          TEXT PRIMARY KEY REFERENCES product(id) ON DELETE CASCADE,
+    workflow_id         TEXT NOT NULL UNIQUE,
+    source_sha256       TEXT NOT NULL CHECK(length(source_sha256) = 64),
+    source_width        INTEGER NOT NULL CHECK(source_width > 0),
+    source_height       INTEGER NOT NULL CHECK(source_height > 0),
+    canva_method        TEXT NOT NULL DEFAULT 'UNSELECTED'
+                        CHECK(canva_method IN ('UNSELECTED','MAGIC_GRAB','BACKGROUND_REMOVER','MAGIC_LAYERS')),
+    design_id           TEXT,
+    design_url          TEXT,
+    current_stage       TEXT NOT NULL DEFAULT 'NOT_STARTED'
+                        CHECK(current_stage IN (
+                            'NOT_STARTED','PREFLIGHT','CANVA_PRO_REQUIRED','OPENING_CANVA',
+                            'MAGIC_GRAB','BACKGROUND_REMOVER','MAGIC_LAYERS','CLEAN_CANVAS',
+                            'READY_TO_EXPORT','EXPORTING','VERIFYING_ALPHA','CUTOUT_READY',
+                            'PENDING_HUMAN_REVIEW','APPROVED','FAILED','PAUSED','CANCELLED'
+                        )),
+    attempt_count       INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+    last_error_code     TEXT,
+    last_error          TEXT,
+    preflight_json      TEXT NOT NULL DEFAULT '{}',
+    output_path         TEXT,
+    output_sha256       TEXT CHECK(output_sha256 IS NULL OR length(output_sha256) = 64),
+    output_width        INTEGER CHECK(output_width IS NULL OR output_width > 0),
+    output_height       INTEGER CHECK(output_height IS NULL OR output_height > 0),
+    alpha_verified      INTEGER NOT NULL DEFAULT 0 CHECK(alpha_verified IN (0,1)),
+    human_review_status TEXT NOT NULL DEFAULT 'NOT_STARTED'
+                        CHECK(human_review_status IN ('NOT_STARTED','PENDING_REVIEW','APPROVED','REJECTED')),
+    provenance_source   TEXT CHECK(provenance_source IS NULL OR provenance_source IN (
+                            'CANVA_MAGIC_GRAB','CANVA_BG_REMOVER','CANVA_MAGIC_LAYERS'
+                        )),
+    started_at          TEXT,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_canva_cutout_workflow_stage
+    ON canva_cutout_workflow(current_stage, updated_at);
+
+-- Resumable, optional Canva queue.  A run is a durable operator queue, not a
+-- claim that BOSMAX drove Canva.  Item progress survives restart and permits
+-- per-product bypass without disturbing the remaining cohort.
+CREATE TABLE IF NOT EXISTS canva_cutout_bulk_run (
+    run_id                   TEXT PRIMARY KEY,
+    status                   TEXT NOT NULL DEFAULT 'PREVIEW'
+                             CHECK(status IN ('PREVIEW','QUEUED','RUNNING','PAUSED',
+                                 'BLOCKED_CANVA_PRO_REQUIRED','COMPLETED','FAILED','CANCELLED')),
+    preview_digest            TEXT NOT NULL CHECK(length(preview_digest) = 64),
+    total_expected            INTEGER NOT NULL DEFAULT 0,
+    total_processed           INTEGER NOT NULL DEFAULT 0,
+    total_ready               INTEGER NOT NULL DEFAULT 0,
+    total_pending_review      INTEGER NOT NULL DEFAULT 0,
+    total_failed              INTEGER NOT NULL DEFAULT 0,
+    total_blocked             INTEGER NOT NULL DEFAULT 0,
+    total_bypassed            INTEGER NOT NULL DEFAULT 0,
+    next_index                INTEGER NOT NULL DEFAULT 0,
+    product_ids_json          TEXT NOT NULL DEFAULT '[]',
+    priority_product_ids_json TEXT NOT NULL DEFAULT '[]',
+    preflight_json            TEXT NOT NULL DEFAULT '{}',
+    last_error_code           TEXT,
+    last_error                TEXT,
+    created_at                TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at                TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_canva_cutout_bulk_run_status
+    ON canva_cutout_bulk_run(status, updated_at);
+
+CREATE TABLE IF NOT EXISTS canva_cutout_bulk_item (
+    item_id             TEXT PRIMARY KEY,
+    run_id              TEXT NOT NULL REFERENCES canva_cutout_bulk_run(run_id) ON DELETE CASCADE,
+    product_id          TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    ordinal             INTEGER NOT NULL CHECK(ordinal >= 0),
+    priority            INTEGER NOT NULL DEFAULT 0,
+    workflow_id         TEXT,
+    current_stage       TEXT NOT NULL DEFAULT 'NOT_STARTED'
+                        CHECK(current_stage IN (
+                            'NOT_STARTED','PREFLIGHT','CANVA_PRO_REQUIRED','OPENING_CANVA',
+                            'MAGIC_GRAB','BACKGROUND_REMOVER','MAGIC_LAYERS','CLEAN_CANVAS',
+                            'READY_TO_EXPORT','EXPORTING','VERIFYING_ALPHA','CUTOUT_READY',
+                            'PENDING_HUMAN_REVIEW','APPROVED','FAILED','PAUSED','CANCELLED','BYPASSED'
+                        )),
+    last_error          TEXT,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(run_id, product_id)
+);
+CREATE INDEX IF NOT EXISTS idx_canva_cutout_bulk_item_run
+    ON canva_cutout_bulk_item(run_id, ordinal);
 
 CREATE TABLE IF NOT EXISTS batch (
     id                      TEXT PRIMARY KEY,
@@ -689,6 +1212,27 @@ CREATE TABLE IF NOT EXISTS generated_artifact (
     duration_used  INTEGER,
     created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
+
+-- Per-submit provenance for bounded Creative Campaign image operations.  The
+-- local record id is deliberately separate from provider_operation_id: a
+-- missing provider id remains UNPROVEN rather than being fabricated.
+CREATE TABLE IF NOT EXISTS image_generation_operation (
+    operation_record_id       TEXT PRIMARY KEY,
+    job_id                    TEXT NOT NULL,
+    product_id                TEXT,
+    mode                      TEXT NOT NULL DEFAULT 'IMG',
+    provider                  TEXT NOT NULL DEFAULT 'GOOGLE_FLOW',
+    model                     TEXT,
+    variant_index             INTEGER NOT NULL,
+    provider_operation_id     TEXT,
+    transport_batch_id        TEXT,
+    operation_id_status       TEXT NOT NULL,
+    provider_media_id         TEXT,
+    response_status           TEXT NOT NULL,
+    created_at                TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_image_generation_operation_job
+    ON image_generation_operation(job_id, variant_index);
 """
 
 
@@ -894,6 +1438,7 @@ CREATE TABLE IF NOT EXISTS product (
     image_asset_status  TEXT,
     product_type        TEXT,
     product_type_id     TEXT,
+    copywriting_product_type_code TEXT,
     silo                TEXT,
     trigger_id          TEXT,
     formula             TEXT,
@@ -1053,6 +1598,68 @@ FROM _product_old
         if "bosmax_product_family" not in product_columns:
             await db.execute("ALTER TABLE product ADD COLUMN bosmax_product_family TEXT")
             logger.info("Migrated: added bosmax_product_family column to product table")
+        if "copywriting_product_type_code" not in product_columns:
+            await db.execute(
+                "ALTER TABLE product ADD COLUMN copywriting_product_type_code TEXT"
+            )
+            logger.info(
+                "Migrated: added copywriting_product_type_code column to product table"
+            )
+
+        # Migration: create/extend the workbook-backed copywriting authority
+        # before its provenance migration runs. Existing rows are retained and
+        # refreshed by the idempotent file-wins seed.
+        await db.execute("""
+CREATE TABLE IF NOT EXISTS copywriting_taxonomy_registry (
+    product_type_code       TEXT PRIMARY KEY,
+    cluster_name            TEXT NOT NULL,
+    display_name            TEXT NOT NULL,
+    category                TEXT NOT NULL,
+    subcategory             TEXT NOT NULL,
+    type                    TEXT NOT NULL,
+    copywriting_angle       TEXT NOT NULL,
+    source_workbook         TEXT NOT NULL,
+    source_sheet            TEXT NOT NULL,
+    source_row              INTEGER NOT NULL,
+    source_category         TEXT,
+    source_subcategory      TEXT,
+    source_type             TEXT,
+    canonicalization_rules_json TEXT NOT NULL DEFAULT '[]',
+    source_header_row       INTEGER NOT NULL DEFAULT 2,
+    authority_version       TEXT NOT NULL DEFAULT 'copywriting-taxonomy-v2',
+    source_sha256           TEXT,
+    registry_status         TEXT NOT NULL DEFAULT 'ACTIVE'
+        CHECK(registry_status IN ('ACTIVE','REVIEW_REQUIRED')),
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE(cluster_name, product_type_code)
+)
+""")
+        taxonomy_columns_cursor = await db.execute(
+            "PRAGMA table_info(copywriting_taxonomy_registry)"
+        )
+        taxonomy_columns = {
+            row[1] for row in await taxonomy_columns_cursor.fetchall()
+        }
+        taxonomy_migrations = {
+            "source_category": "TEXT",
+            "source_subcategory": "TEXT",
+            "source_type": "TEXT",
+            "canonicalization_rules_json": "TEXT NOT NULL DEFAULT '[]'",
+            "source_header_row": "INTEGER NOT NULL DEFAULT 2",
+            "authority_version": "TEXT NOT NULL DEFAULT 'copywriting-taxonomy-v2'",
+            "source_sha256": "TEXT",
+        }
+        for column, definition in taxonomy_migrations.items():
+            if column not in taxonomy_columns:
+                await db.execute(
+                    f"ALTER TABLE copywriting_taxonomy_registry "
+                    f"ADD COLUMN {column} {definition}"
+                )
+                logger.info(
+                    "Migrated: added %s column to copywriting taxonomy registry",
+                    column,
+                )
 
         cursor = await db.execute("SELECT sql FROM sqlite_master WHERE name='batch' AND type='table'")
         batch_sql_row = await cursor.fetchone()
@@ -2837,6 +3444,38 @@ CREATE TABLE IF NOT EXISTS product_strategy_type_registry (
 CREATE INDEX IF NOT EXISTS idx_product_strategy_type_registry_status
     ON product_strategy_type_registry(registry_status, cluster);
 
+-- Workbook-backed Category -> Subcategory -> Type -> Copywriting Angle
+-- authority. This is separate from the cluster/type-group/scene strategy
+-- registry above and is keyed by the SSOT Product Type Code.
+CREATE TABLE IF NOT EXISTS copywriting_taxonomy_registry (
+    product_type_code       TEXT PRIMARY KEY,
+    cluster_name            TEXT NOT NULL,
+    display_name            TEXT NOT NULL,
+    category                TEXT NOT NULL,
+    subcategory             TEXT NOT NULL,
+    type                    TEXT NOT NULL,
+    copywriting_angle       TEXT NOT NULL,
+    source_workbook         TEXT NOT NULL,
+    source_sheet            TEXT NOT NULL,
+    source_row              INTEGER NOT NULL,
+    source_category         TEXT,
+    source_subcategory      TEXT,
+    source_type             TEXT,
+    canonicalization_rules_json TEXT NOT NULL DEFAULT '[]',
+    source_header_row       INTEGER NOT NULL DEFAULT 2,
+    authority_version       TEXT NOT NULL DEFAULT 'copywriting-taxonomy-v2',
+    source_sha256           TEXT,
+    registry_status         TEXT NOT NULL DEFAULT 'ACTIVE'
+        CHECK(registry_status IN ('ACTIVE','REVIEW_REQUIRED')),
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE(cluster_name, product_type_code)
+);
+CREATE INDEX IF NOT EXISTS idx_copywriting_taxonomy_registry_category
+    ON copywriting_taxonomy_registry(category, subcategory, type);
+CREATE INDEX IF NOT EXISTS idx_copywriting_taxonomy_registry_status
+    ON copywriting_taxonomy_registry(registry_status);
+
 -- Official product-strategy taxonomy sidecar. This keeps Product Truth rows
 -- unchanged while giving downstream consumers one durable, review-gated
 -- contract. Manual overrides are protected by the materialization service.
@@ -3295,9 +3934,9 @@ CREATE INDEX IF NOT EXISTS idx_product_intelligence_review_field_provenance_draf
 CREATE TABLE IF NOT EXISTS bulk_generation_run (
     bulk_run_id             TEXT PRIMARY KEY,
     kind                    TEXT NOT NULL
-                            CHECK(kind IN ('AVATAR_IMAGE','IMG','VIDEO','MIXED')),
+                            CHECK(kind IN ('AVATAR_IMAGE','IMG','VIDEO','MIXED','MONTAGE_DISCRETE')),
     status                  TEXT NOT NULL DEFAULT 'PENDING'
-                            CHECK(status IN ('PENDING','RUNNING','COMPLETED','PARTIAL_FAILED','FAILED','CANCELLED','PAUSED')),
+                            CHECK(status IN ('PENDING','RUNNING','COMPLETED','PARTIAL_FAILED','FAILED','CANCELLED','PAUSED','PREPARED','PARTIAL','GENERATING','COMPLETE','ASSEMBLY_READY')),
     total_expected          INTEGER NOT NULL DEFAULT 0,
     total_completed         INTEGER NOT NULL DEFAULT 0,
     total_failed            INTEGER NOT NULL DEFAULT 0,
@@ -3317,12 +3956,12 @@ CREATE TABLE IF NOT EXISTS bulk_generation_item (
     bulk_item_id            TEXT PRIMARY KEY,
     bulk_run_id             TEXT NOT NULL,
     item_type               TEXT NOT NULL
-                            CHECK(item_type IN ('AVATAR_IMAGE','IMG','T2V','I2V','F2V')),
+                            CHECK(item_type IN ('AVATAR_IMAGE','IMG','T2V','I2V','F2V','MONTAGE_SCENE')),
     source_ref              TEXT NOT NULL,
     prompt_snapshot         TEXT,
     payload_json            TEXT NOT NULL DEFAULT '{}',
     status                  TEXT NOT NULL DEFAULT 'QUEUED'
-                            CHECK(status IN ('QUEUED','SUBMITTED','RUNNING','GENERATED','DOWNLOADED','REGISTERED','FAILED','CANCELLED')),
+                            CHECK(status IN ('QUEUED','SUBMITTED','RUNNING','GENERATED','DOWNLOADED','REGISTERED','FAILED','CANCELLED','PLANNED','IMAGE_PENDING_PACKAGE','IMAGE_PENDING','IMAGE_READY','IMAGE_BOUND','PACKAGE_READY','PACKAGE_FAILED','VIDEO_SUBMITTED','VIDEO_READY','GENERATE_RETURNED','GENERATE_FAILED','RESULT_BOUND','BLOCKED','SKIPPED_VIDEO')),
     job_id                  TEXT,
     media_id                TEXT,
     local_path              TEXT,
@@ -3403,6 +4042,7 @@ CREATE INDEX IF NOT EXISTS idx_poster_deliverable_product
     ON poster_deliverable(product_id, status);
 """)
         await db.commit()
+        _migrate_bulk_generation_ledger(str(DB_PATH))
 
         # P6 Batch Creative Production Orchestrator — durable control plane.
         #
@@ -3942,6 +4582,15 @@ CREATE INDEX IF NOT EXISTS idx_product_treatment_factory_event_plan ON product_t
                     f"ADD COLUMN {multi_col} TEXT")
                 logger.info(
                     "Migrated: added %s column to creative_product_selection", multi_col)
+        await db.commit()
+
+        # Migration: product-aware cutout isolation columns on the preparation receipt.
+        cursor = await db.execute("PRAGMA table_info(product_cutout_preparation)")
+        _prep_cols = {row[1] for row in await cursor.fetchall()}
+        if "file_quality_status" not in _prep_cols:
+            await db.execute("ALTER TABLE product_cutout_preparation ADD COLUMN file_quality_status TEXT")
+        if "product_isolation_status" not in _prep_cols:
+            await db.execute("ALTER TABLE product_cutout_preparation ADD COLUMN product_isolation_status TEXT")
         await db.commit()
 
     logger.info("Database initialized at %s", DB_PATH)

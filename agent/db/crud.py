@@ -11,7 +11,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_component", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "content_combination", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "creative_product_selection", "product_strategy_taxonomy", "poster_copy_set", "poster_deliverable", "extend_lineage", "product_source_media"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "product_visual_truth_lock", "product_visual_truth_lock_history", "product_reference_pack", "product_cutout_preparation", "product_visual_onboarding_run", "canva_cutout_workflow", "canva_cutout_bulk_run", "canva_cutout_bulk_item", "image_generation_operation", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_component", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "content_combination", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "creative_product_selection", "product_strategy_taxonomy", "copywriting_taxonomy_registry", "poster_copy_set", "poster_deliverable", "extend_lineage", "product_source_media", "product_cutout_target"})
 
 
 def _validate_table(table: str) -> None:
@@ -21,6 +21,12 @@ def _validate_table(table: str) -> None:
 # Column whitelists per table — prevents SQL injection via kwargs keys
 _COLUMNS = {
     "product_source_media": {"draft_id", "product_id", "kind", "ordinal", "local_path", "remote_url", "filename", "mime", "bytes", "width", "height", "duration_sec", "status", "updated_at"},
+    "product_cutout_preparation": {"status", "source_sha256", "cutout_media_id", "cutout_sha256", "failure_code", "failure_message", "attempt_count", "last_started_at", "last_finished_at", "file_quality_status", "product_isolation_status", "updated_at"},
+    "product_cutout_target": {"source_sha256", "source_width", "source_height", "target_x", "target_y", "target_width", "target_height", "selected_by", "selected_at", "updated_at"},
+    "product_visual_onboarding_run": {"status", "total_expected", "total_processed", "total_pending_review", "total_failed", "total_blocked", "total_skipped", "batch_size", "product_ids_json", "error_log_json", "updated_at"},
+    "canva_cutout_workflow": {"workflow_id", "source_sha256", "source_width", "source_height", "canva_method", "design_id", "design_url", "current_stage", "attempt_count", "last_error_code", "last_error", "preflight_json", "output_path", "output_sha256", "output_width", "output_height", "alpha_verified", "human_review_status", "provenance_source", "started_at", "updated_at"},
+    "canva_cutout_bulk_run": {"status", "preview_digest", "total_expected", "total_processed", "total_ready", "total_pending_review", "total_failed", "total_blocked", "total_bypassed", "next_index", "product_ids_json", "priority_product_ids_json", "preflight_json", "last_error_code", "last_error", "updated_at"},
+    "canva_cutout_bulk_item": {"run_id", "product_id", "ordinal", "priority", "workflow_id", "current_stage", "last_error", "updated_at"},
     "character": {"name", "slug", "entity_type", "description", "image_prompt", "voice_description", "reference_image_url", "media_id", "updated_at"},
     "project": {"name", "description", "story", "thumbnail_url", "language", "status", "user_paygate_tier", "narrator_voice", "narrator_ref_audio", "material", "allow_music", "allow_voice", "updated_at"},
     "video": {"title", "description", "display_order", "status", "orientation", "vertical_url", "horizontal_url",
@@ -35,7 +41,11 @@ _COLUMNS = {
               "vertical_end_scene_media_id", "horizontal_end_scene_media_id",
               "trim_start", "trim_end", "duration", "display_order", "source", "transition_prompt", "narrator_text", "updated_at"},
     "request": {"status", "request_id", "media_id", "output_url", "error_message", "retry_count", "next_retry_at", "source_media_id", "updated_at", "automation_report"},
-    "product": {"source", "source_url", "brand", "raw_product_title", "product_display_name", "product_short_name", "category", "subcategory", "type", "shop_name", "price", "currency", "commission_amount", "commission_rate", "price_min", "price_max", "commission", "image_url", "tiktok_product_url", "fastmoss_source_file", "image_asset_status", "image_failure_detail", "product_type", "product_type_id", "silo", "trigger_id", "formula", "copywriting_angle", "claim_risk_level", "bosmax_product_family", "mode_recommendations", "physics_class", "product_scale", "hand_object_interaction", "recommended_grip", "handling_notes", "air_gap_rule", "material_behavior", "surface_behavior", "fragility_level", "camera_handling_notes", "scene_context", "camera_style", "camera_behavior", "camera_shot", "unsafe_handling_rules", "section_4_hint", "section_5_product_physics_prompt", "section_5_physics_hint", "section_6_copy_hint", "section_9_overlay_hint", "mapping_source", "mapping_confidence", "mapping_review_status", "mapping_status", "mapping_missing_fields", "prompt_readiness_status", "prompt_missing_fields", "claim_safe_copy_status", "claim_safe_copy_payload", "claim_safe_copy_updated_at", "production_prompt_approval_status", "production_prompt_approved_modes", "production_prompt_approved_at", "production_prompt_approval_note", "production_prompt_approval_provenance", "lifecycle_status", "archived_at", "archived_reason", "archived_by", "unarchived_at", "unarchived_reason", "lifecycle_provenance", "asset_status", "media_id", "local_image_path", "updated_at", "fastmoss_reference_id"},
+    "product": {"source", "source_url", "brand", "raw_product_title", "product_display_name", "product_short_name", "category", "subcategory", "type", "shop_name", "price", "currency", "commission_amount", "commission_rate", "price_min", "price_max", "commission", "image_url", "tiktok_product_url", "fastmoss_source_file", "image_asset_status", "image_failure_detail", "product_type", "product_type_id", "copywriting_product_type_code", "silo", "trigger_id", "formula", "copywriting_angle", "claim_risk_level", "bosmax_product_family", "mode_recommendations", "physics_class", "product_scale", "hand_object_interaction", "recommended_grip", "handling_notes", "air_gap_rule", "material_behavior", "surface_behavior", "fragility_level", "camera_handling_notes", "scene_context", "camera_style", "camera_behavior", "camera_shot", "unsafe_handling_rules", "section_4_hint", "section_5_product_physics_prompt", "section_5_physics_hint", "section_6_copy_hint", "section_9_overlay_hint", "mapping_source", "mapping_confidence", "mapping_review_status", "mapping_status", "mapping_missing_fields", "prompt_readiness_status", "prompt_missing_fields", "claim_safe_copy_status", "claim_safe_copy_payload", "claim_safe_copy_updated_at", "production_prompt_approval_status", "production_prompt_approved_modes", "production_prompt_approved_at", "production_prompt_approval_note", "production_prompt_approval_provenance", "lifecycle_status", "archived_at", "archived_reason", "archived_by", "unarchived_at", "unarchived_reason", "lifecycle_provenance", "asset_status", "media_id", "local_image_path", "updated_at", "fastmoss_reference_id"},
+    "product_visual_truth_lock": {"canonical_media_id", "canonical_sha256", "source_width", "source_height", "canonical_source_path", "canonical_cutout_media_id", "canonical_cutout_sha256", "canonical_cutout_path", "alpha_mask_json", "anchor_point_json", "min_scale", "max_scale", "allowed_bbox_json", "allowed_rotation", "allowed_perspective", "identity_lock", "geometry_lock", "label_lock", "logo_lock", "colour_lock", "scale_lock", "review_status", "failure_state", "provenance_json", "schema_version", "updated_at"},
+    "product_visual_truth_lock_history": {"source_kind", "review_status", "canonical_media_id", "canonical_sha256", "source_width", "source_height", "canonical_source_path", "canonical_cutout_media_id", "canonical_cutout_sha256", "canonical_cutout_path", "alpha_mask_json", "anchor_point_json", "allowed_bbox_json", "provenance_json", "superseded_by_media_id", "superseded_reason"},
+    "product_reference_pack": {"pack_id", "schema_version", "pack_status", "machine_qa_status", "machine_qa_json", "physical_width_mm", "physical_height_mm", "physical_depth_mm", "volume_ml", "scale_evidence_source", "scale_confidence", "geometry_json", "references_json", "provenance_json", "human_review_json", "updated_at"},
+    "image_generation_operation": {"operation_record_id", "job_id", "product_id", "mode", "provider", "model", "variant_index", "provider_operation_id", "transport_batch_id", "operation_id_status", "provider_media_id", "response_status", "created_at"},
     "request_telemetry": {"project_id", "video_id", "scene_id", "product_id", "request_type", "mode", "prompt_package_snapshot_id", "workspace_execution_package_id", "workspace_generation_package_id", "prompt_fingerprint", "asset_fingerprints", "request_lineage_payload", "git_sha", "background_build_id", "content_build_id", "last_checkpoint", "runtime_ready", "build_match", "status", "google_flow_stage", "extension_stage", "worker_stage", "queued_at", "started_at", "last_heartbeat_at", "completed_at", "failed_at", "duration_seconds", "idle_seconds", "processing_seconds", "error_code", "error_message", "provider", "engine", "model_label", "credits_spent", "estimated_credits", "estimated_cost", "actual_cost"},
     "request_stage_event": {"request_id", "timestamp", "checkpoint", "stage", "status", "message", "git_sha", "background_build_id", "content_build_id", "runtime_ready", "build_match", "selector_used", "evidence_pointer", "fail_code", "first_fail_stage", "source"},
     "workspace_execution_package": {"product_id", "mode", "duration_seconds", "aspect_ratio", "model", "manual_override", "prompt_text", "prompt_fingerprint", "prompt_package_snapshot_id", "asset_slots", "resolved_assets", "readiness", "execution_allowed", "production_generation_allowed", "manual_fallback", "blockers", "request_lineage_payload", "source_of_truth_notes", "updated_at"},
@@ -404,6 +414,515 @@ async def create_product(raw_product_title: str, source: str = "FASTMOSS", produ
     return await _get_with_db(db, "product", "id", pid)
 
 async def get_product(pid: str): return await _get("product", "id", pid)
+
+async def get_product_truth_lock(product_id: str):
+    return await _get("product_visual_truth_lock", "product_id", product_id)
+
+
+async def list_product_truth_locks(product_ids: list[str]) -> dict[str, dict]:
+    """Batch-load truth locks for a catalog page."""
+    resolved = [str(value).strip() for value in product_ids if str(value).strip()]
+    if not resolved:
+        return {}
+    db = await get_db()
+    placeholders = ",".join("?" for _ in resolved)
+    cur = await db.execute(
+        f"SELECT * FROM product_visual_truth_lock WHERE product_id IN ({placeholders})",
+        resolved,
+    )
+    return {str(row["product_id"]): dict(row) for row in await cur.fetchall()}
+
+async def upsert_product_truth_lock(product_id: str, **kwargs) -> dict | None:
+    """Persist a reviewed contract without changing its review authority.
+
+    Callers must explicitly supply review_status/lock fields.  Generation never
+    calls this writer; it only consumes the read-only validation service.
+    """
+    _validate_table("product_visual_truth_lock")
+    allowed = _COLUMNS["product_visual_truth_lock"]
+    values = {key: value for key, value in kwargs.items() if key in allowed}
+    values["updated_at"] = _now()
+    db = await get_db()
+    async with _db_lock:
+        existing = await _get_with_db(db, "product_visual_truth_lock", "product_id", product_id)
+        if existing is None:
+            columns = ["product_id", *values.keys()]
+            placeholders = ",".join("?" for _ in columns)
+            await db.execute(
+                f"INSERT INTO product_visual_truth_lock ({','.join(columns)}) VALUES ({placeholders})",
+                [product_id, *values.values()],
+            )
+        else:
+            sets = ",".join(f"{key}=?" for key in values)
+            await db.execute(
+                f"UPDATE product_visual_truth_lock SET {sets} WHERE product_id=?",
+                [*values.values(), product_id],
+            )
+        await db.commit()
+    return await _get("product_visual_truth_lock", "product_id", product_id)
+
+
+async def create_product_truth_lock_history(product_id: str, **kwargs) -> dict | None:
+    """Append an immutable snapshot of the former active truth-lock candidate."""
+    _validate_table("product_visual_truth_lock_history")
+    values = _safe_kwargs("product_visual_truth_lock_history", kwargs)
+    history_id = str(kwargs.get("history_id") or _uuid())
+    columns = ["history_id", "product_id", *values.keys()]
+    placeholders = ",".join("?" for _ in columns)
+    db = await get_db()
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO product_visual_truth_lock_history ({','.join(columns)}) VALUES ({placeholders})",
+            [history_id, product_id, *values.values()],
+        )
+        await db.commit()
+    return await _get("product_visual_truth_lock_history", "history_id", history_id)
+
+
+async def list_product_truth_lock_history(product_id: str, *, limit: int = 50) -> list[dict]:
+    """Return prior truth-lock candidates newest first for operator comparison."""
+    _validate_table("product_visual_truth_lock_history")
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM product_visual_truth_lock_history WHERE product_id=? "
+        "ORDER BY created_at DESC LIMIT ?",
+        (product_id, max(1, min(int(limit), 200))),
+    )
+    return [dict(row) for row in await cur.fetchall()]
+
+
+async def list_product_truth_lock_histories(product_ids: list[str]) -> dict[str, list[dict]]:
+    """Batch-load truth-lock history for catalog readiness without N+1 queries."""
+    resolved = [str(value).strip() for value in product_ids if str(value).strip()]
+    if not resolved:
+        return {}
+    _validate_table("product_visual_truth_lock_history")
+    db = await get_db()
+    placeholders = ",".join("?" for _ in resolved)
+    cur = await db.execute(
+        f"SELECT * FROM product_visual_truth_lock_history WHERE product_id IN ({placeholders}) "
+        "ORDER BY created_at DESC",
+        resolved,
+    )
+    result: dict[str, list[dict]] = {}
+    for row in await cur.fetchall():
+        result.setdefault(str(row["product_id"]), []).append(dict(row))
+    return result
+
+
+async def get_product_reference_pack(product_id: str) -> dict | None:
+    """Return the product's generative reference pack, if materialized."""
+    return await _get("product_reference_pack", "product_id", product_id)
+
+
+async def list_product_reference_packs_by_products(product_ids: list[str]) -> dict[str, dict]:
+    """Batch-load reference packs for a catalog page."""
+    resolved = [str(value).strip() for value in product_ids if str(value).strip()]
+    if not resolved:
+        return {}
+    db = await get_db()
+    placeholders = ",".join("?" for _ in resolved)
+    cur = await db.execute(
+        f"SELECT * FROM product_reference_pack WHERE product_id IN ({placeholders})",
+        resolved,
+    )
+    return {str(row["product_id"]): dict(row) for row in await cur.fetchall()}
+
+
+async def upsert_product_reference_pack(product_id: str, **kwargs) -> dict | None:
+    """Idempotently persist a no-spend Product Reference Pack receipt.
+
+    The service owns the state machine; this writer only persists whitelisted
+    fields and never promotes a pack to APPROVED implicitly.
+    """
+    _validate_table("product_reference_pack")
+    allowed = _COLUMNS["product_reference_pack"]
+    values = {key: value for key, value in kwargs.items() if key in allowed}
+    values["updated_at"] = _now()
+    db = await get_db()
+    async with _db_lock:
+        existing = await _get_with_db(db, "product_reference_pack", "product_id", product_id)
+        if existing is None:
+            if not values.get("pack_id"):
+                raise ValueError("pack_id is required for a new Product Reference Pack")
+            columns = ["product_id", *values.keys()]
+            placeholders = ",".join("?" for _ in columns)
+            await db.execute(
+                f"INSERT INTO product_reference_pack ({','.join(columns)}) VALUES ({placeholders})",
+                [product_id, *values.values()],
+            )
+        else:
+            values.pop("pack_id", None)
+            if values:
+                sets = ",".join(f"{key}=?" for key in values)
+                await db.execute(
+                    f"UPDATE product_reference_pack SET {sets} WHERE product_id=?",
+                    [*values.values(), product_id],
+                )
+        await db.commit()
+    return await _get("product_reference_pack", "product_id", product_id)
+
+
+async def list_product_reference_packs(
+    *, status: str | None = None, limit: int = 100
+) -> list[dict]:
+    db = await get_db()
+    if status:
+        cur = await db.execute(
+            "SELECT * FROM product_reference_pack WHERE pack_status=? "
+            "ORDER BY updated_at DESC LIMIT ?",
+            (status, limit),
+        )
+    else:
+        cur = await db.execute(
+            "SELECT * FROM product_reference_pack ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
+        )
+    return [dict(row) for row in await cur.fetchall()]
+
+
+async def get_product_cutout_preparation(product_id: str) -> dict | None:
+    """Return the deterministic cutout preparation receipt for one product."""
+    return await _get("product_cutout_preparation", "product_id", product_id)
+
+
+async def list_product_cutout_preparations(product_ids: list[str]) -> dict[str, dict]:
+    """Batch-load cutout receipts for one catalog page; never query per row."""
+    resolved = [str(value).strip() for value in product_ids if str(value).strip()]
+    if not resolved:
+        return {}
+    db = await get_db()
+    placeholders = ",".join("?" for _ in resolved)
+    cur = await db.execute(
+        f"SELECT * FROM product_cutout_preparation WHERE product_id IN ({placeholders})",
+        resolved,
+    )
+    return {str(row["product_id"]): dict(row) for row in await cur.fetchall()}
+
+
+async def upsert_product_cutout_preparation(product_id: str, **kwargs) -> dict | None:
+    """Persist a preparation receipt without changing truth-lock authority."""
+    _validate_table("product_cutout_preparation")
+    values = _safe_kwargs("product_cutout_preparation", kwargs)
+    values["updated_at"] = _now()
+    db = await get_db()
+    async with _db_lock:
+        existing = await _get_with_db(db, "product_cutout_preparation", "product_id", product_id)
+        if existing is None:
+            columns = ["product_id", *values.keys()]
+            placeholders = ",".join("?" for _ in columns)
+            await db.execute(
+                f"INSERT INTO product_cutout_preparation ({','.join(columns)}) VALUES ({placeholders})",
+                [product_id, *values.values()],
+            )
+        else:
+            sets = ",".join(f"{key}=?" for key in values)
+            await db.execute(
+                f"UPDATE product_cutout_preparation SET {sets} WHERE product_id=?",
+                [*values.values(), product_id],
+            )
+        await db.commit()
+    return await _get("product_cutout_preparation", "product_id", product_id)
+
+
+async def get_product_cutout_target(product_id: str) -> dict | None:
+    """Operator-selected ROI target (preparation provenance, not truth approval)."""
+    return await _get("product_cutout_target", "product_id", product_id)
+
+
+async def upsert_product_cutout_target(product_id: str, **kwargs) -> dict | None:
+    """Persist/replace the ROI target for one product (bound to its source SHA)."""
+    _validate_table("product_cutout_target")
+    values = _safe_kwargs("product_cutout_target", kwargs)
+    values["updated_at"] = _now()
+    db = await get_db()
+    async with _db_lock:
+        existing = await _get_with_db(db, "product_cutout_target", "product_id", product_id)
+        if existing is None:
+            columns = ["product_id", *values.keys()]
+            placeholders = ",".join("?" for _ in columns)
+            await db.execute(
+                f"INSERT INTO product_cutout_target ({','.join(columns)}) VALUES ({placeholders})",
+                [product_id, *values.values()],
+            )
+        else:
+            sets = ",".join(f"{key}=?" for key in values)
+            await db.execute(
+                f"UPDATE product_cutout_target SET {sets} WHERE product_id=?",
+                [*values.values(), product_id],
+            )
+        await db.commit()
+    return await _get("product_cutout_target", "product_id", product_id)
+
+
+async def delete_product_cutout_target(product_id: str) -> None:
+    """Clear the ROI target (operator reset, or source changed)."""
+    _validate_table("product_cutout_target")
+    db = await get_db()
+    async with _db_lock:
+        await db.execute("DELETE FROM product_cutout_target WHERE product_id=?", [product_id])
+        await db.commit()
+
+
+async def get_product_visual_onboarding_run(run_id: str) -> dict | None:
+    return await _get("product_visual_onboarding_run", "run_id", run_id)
+
+
+async def create_product_visual_onboarding_run(run_id: str, **kwargs) -> dict | None:
+    """Create a frozen, bounded onboarding worker receipt."""
+    _validate_table("product_visual_onboarding_run")
+    values = _safe_kwargs("product_visual_onboarding_run", kwargs)
+    db = await get_db()
+    columns = ["run_id", *values.keys()]
+    placeholders = ",".join("?" for _ in columns)
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO product_visual_onboarding_run ({','.join(columns)}) VALUES ({placeholders})",
+            [run_id, *values.values()],
+        )
+        await db.commit()
+    return await _get("product_visual_onboarding_run", "run_id", run_id)
+
+
+async def update_product_visual_onboarding_run(run_id: str, **kwargs) -> dict | None:
+    return await _update("product_visual_onboarding_run", "run_id", run_id, **kwargs)
+
+
+async def list_product_visual_onboarding_runs(limit: int = 20) -> list[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM product_visual_onboarding_run ORDER BY created_at DESC LIMIT ?",
+        (max(1, min(int(limit), 100)),),
+    )
+    return [dict(row) for row in await cur.fetchall()]
+
+
+async def get_canva_cutout_workflow(product_id: str) -> dict | None:
+    return await _get("canva_cutout_workflow", "product_id", product_id)
+
+
+async def list_canva_cutout_workflows(product_ids: list[str]) -> dict[str, dict]:
+    resolved = [str(value).strip() for value in product_ids if str(value).strip()]
+    if not resolved:
+        return {}
+    db = await get_db()
+    placeholders = ",".join("?" for _ in resolved)
+    cur = await db.execute(
+        f"SELECT * FROM canva_cutout_workflow WHERE product_id IN ({placeholders})",
+        resolved,
+    )
+    return {str(row["product_id"]): dict(row) for row in await cur.fetchall()}
+
+
+async def upsert_canva_cutout_workflow(product_id: str, **kwargs) -> dict | None:
+    """Persist one Canva workflow without storing browser secrets or cookies."""
+    _validate_table("canva_cutout_workflow")
+    values = _safe_kwargs("canva_cutout_workflow", kwargs)
+    values["updated_at"] = _now()
+    db = await get_db()
+    async with _db_lock:
+        existing = await _get_with_db(db, "canva_cutout_workflow", "product_id", product_id)
+        if existing is None:
+            columns = ["product_id", *values.keys()]
+            placeholders = ",".join("?" for _ in columns)
+            await db.execute(
+                f"INSERT INTO canva_cutout_workflow ({','.join(columns)}) VALUES ({placeholders})",
+                [product_id, *values.values()],
+            )
+        else:
+            sets = ",".join(f"{key}=?" for key in values)
+            await db.execute(
+                f"UPDATE canva_cutout_workflow SET {sets} WHERE product_id=?",
+                [*values.values(), product_id],
+            )
+        await db.commit()
+    return await _get("canva_cutout_workflow", "product_id", product_id)
+
+
+async def get_canva_cutout_bulk_run(run_id: str) -> dict | None:
+    return await _get("canva_cutout_bulk_run", "run_id", run_id)
+
+
+async def create_canva_cutout_bulk_run(run_id: str, **kwargs) -> dict | None:
+    _validate_table("canva_cutout_bulk_run")
+    values = _safe_kwargs("canva_cutout_bulk_run", kwargs)
+    db = await get_db()
+    columns = ["run_id", *values.keys()]
+    placeholders = ",".join("?" for _ in columns)
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO canva_cutout_bulk_run ({','.join(columns)}) VALUES ({placeholders})",
+            [run_id, *values.values()],
+        )
+        await db.commit()
+    return await _get("canva_cutout_bulk_run", "run_id", run_id)
+
+
+async def update_canva_cutout_bulk_run(run_id: str, **kwargs) -> dict | None:
+    return await _update("canva_cutout_bulk_run", "run_id", run_id, **kwargs)
+
+
+async def list_canva_cutout_bulk_runs(limit: int = 20) -> list[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM canva_cutout_bulk_run ORDER BY created_at DESC LIMIT ?",
+        (max(1, min(int(limit), 100)),),
+    )
+    return [dict(row) for row in await cur.fetchall()]
+
+
+async def get_canva_cutout_bulk_item(item_id: str) -> dict | None:
+    return await _get("canva_cutout_bulk_item", "item_id", item_id)
+
+
+async def get_canva_cutout_bulk_item_for_product(run_id: str, product_id: str) -> dict | None:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM canva_cutout_bulk_item WHERE run_id=? AND product_id=? LIMIT 1",
+        (run_id, product_id),
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def create_canva_cutout_bulk_item(item_id: str, **kwargs) -> dict | None:
+    _validate_table("canva_cutout_bulk_item")
+    values = _safe_kwargs("canva_cutout_bulk_item", kwargs)
+    db = await get_db()
+    columns = ["item_id", *values.keys()]
+    placeholders = ",".join("?" for _ in columns)
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO canva_cutout_bulk_item ({','.join(columns)}) VALUES ({placeholders})",
+            [item_id, *values.values()],
+        )
+        await db.commit()
+    return await _get("canva_cutout_bulk_item", "item_id", item_id)
+
+
+async def update_canva_cutout_bulk_item(item_id: str, **kwargs) -> dict | None:
+    return await _update("canva_cutout_bulk_item", "item_id", item_id, **kwargs)
+
+
+async def update_canva_cutout_bulk_item_for_product(run_id: str, product_id: str, **kwargs) -> dict | None:
+    item = await get_canva_cutout_bulk_item_for_product(run_id, product_id)
+    if not item:
+        return None
+    return await update_canva_cutout_bulk_item(str(item["item_id"]), **kwargs)
+
+
+async def list_canva_cutout_bulk_items(run_id: str) -> list[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM canva_cutout_bulk_item WHERE run_id=? ORDER BY ordinal ASC, item_id ASC",
+        (run_id,),
+    )
+    return [dict(row) for row in await cur.fetchall()]
+
+
+async def list_canva_cutout_bulk_items_for_product(product_id: str) -> list[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM canva_cutout_bulk_item WHERE product_id=? ORDER BY created_at DESC, item_id DESC",
+        (product_id,),
+    )
+    return [dict(row) for row in await cur.fetchall()]
+
+
+async def is_product_catalog_alias_tombstoned(product_id: str) -> bool:
+    """Tombstone lookup used by future registration and visual workers."""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT 1 FROM product_catalog_alias_tombstone WHERE alias_product_id=? LIMIT 1",
+            (product_id,),
+        )
+    except Exception as exc:
+        if "no such table" in str(exc).lower():
+            return False
+        raise
+    return await cur.fetchone() is not None
+
+
+async def record_image_generation_operation(
+    *,
+    job_id: str,
+    product_id: str | None,
+    model: str | None,
+    variant_index: int,
+    provider_operation_id: str | None,
+    transport_batch_id: str | None,
+    operation_id_status: str,
+    provider_media_id: str | None,
+    response_status: str,
+) -> dict:
+    """Durably record one bounded provider response before artifact download.
+
+    ``operation_record_id`` is BOSMAX provenance only.  It must never be used
+    as a substitute for a missing provider operation id.
+    """
+    operation_record_id = "igop_" + uuid.uuid4().hex
+    db = await get_db()
+    async with _db_lock:
+        await db.execute(
+            """INSERT INTO image_generation_operation
+               (operation_record_id, job_id, product_id, mode, provider, model,
+                variant_index, provider_operation_id, transport_batch_id,
+                operation_id_status, provider_media_id, response_status)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                operation_record_id,
+                job_id,
+                product_id,
+                "IMG",
+                "GOOGLE_FLOW",
+                model,
+                variant_index,
+                provider_operation_id,
+                transport_batch_id,
+                operation_id_status,
+                provider_media_id,
+                response_status,
+            ),
+        )
+        await db.commit()
+    return {
+        "operation_record_id": operation_record_id,
+        "job_id": job_id,
+        "product_id": product_id,
+        "provider_operation_id": provider_operation_id,
+        "transport_batch_id": transport_batch_id,
+        "operation_id_status": operation_id_status,
+        "provider_media_id": provider_media_id,
+        "response_status": response_status,
+    }
+
+
+async def list_image_generation_operations(job_id: str) -> list[dict]:
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM image_generation_operation WHERE job_id=? ORDER BY variant_index, created_at",
+        (job_id,),
+    )
+    return [dict(row) for row in await cur.fetchall()]
+
+
+async def list_image_generation_operations_by_media_id(media_id: str) -> list[dict]:
+    """Read-only reverse lookup for a retrieved IMG artifact.
+
+    The provider media id is the durable join available to Poster Builder.
+    A missing provider operation id remains represented by its persisted
+    ``operation_id_status``; this helper never synthesises one.
+    """
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM image_generation_operation WHERE provider_media_id=? "
+        "ORDER BY created_at DESC, variant_index DESC",
+        (media_id,),
+    )
+    return [dict(row) for row in await cur.fetchall()]
+
+
 async def get_product_by_fastmoss_reference_id(reference_id: str):
     """Return the canonical product row committed from a FastMoss reference, if
     any. Enables reference_id -> canonical fallback when a queue row is missing
@@ -3220,6 +3739,19 @@ async def find_products_by_tiktok_product_id(tiktok_product_id: str) -> list[dic
     db = await get_db()
     cur = await db.execute(
         "SELECT * FROM product WHERE tiktok_product_url LIKE ?", (f"%{tid}%",))
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def find_products_by_tiktok_product_url(tiktok_product_url: str) -> list[dict]:
+    """Exact URL identity lookup for future registration duplicate gates."""
+    url = str(tiktok_product_url or "").strip()
+    if not url:
+        return []
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM product WHERE tiktok_product_url=? ORDER BY created_at DESC",
+        (url,),
+    )
     return [dict(r) for r in await cur.fetchall()]
 
 

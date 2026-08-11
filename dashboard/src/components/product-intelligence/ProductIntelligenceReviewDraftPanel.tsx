@@ -50,6 +50,10 @@ const FIELD_ABSENCE_DISPOSITIONS = new Set<FieldAbsenceDisposition>([
 	"REQUIRES_EXTERNAL_EVIDENCE",
 ]);
 
+const TERMINAL_REVIEW_STATUSES = new Set<
+	ProductIntelligenceReviewDraft["review_status"]
+>(["APPROVED", "REJECTED", "SUPERSEDED"]);
+
 type DraftFormState = {
 	product_description: string;
 	benefits_json: string;
@@ -336,6 +340,36 @@ function getStatusTone(status: string) {
 	}
 }
 
+function isTerminalReviewStatus(status: string) {
+	return TERMINAL_REVIEW_STATUSES.has(
+		status as ProductIntelligenceReviewDraft["review_status"],
+	);
+}
+
+function draftTimestamp(draft: ProductIntelligenceReviewDraft) {
+	const updatedAt = Date.parse(draft.updated_at);
+	if (Number.isFinite(updatedAt)) return updatedAt;
+	const createdAt = Date.parse(draft.created_at);
+	return Number.isFinite(createdAt) ? createdAt : 0;
+}
+
+function newestDraft(drafts: ProductIntelligenceReviewDraft[]) {
+	return drafts.reduce<ProductIntelligenceReviewDraft | null>(
+		(newest, draft) =>
+			!newest || draftTimestamp(draft) > draftTimestamp(newest)
+				? draft
+				: newest,
+		null,
+	);
+}
+
+function selectInitialDraftId(drafts: ProductIntelligenceReviewDraft[]) {
+	const newestEditable = newestDraft(
+		drafts.filter((draft) => !isTerminalReviewStatus(draft.review_status)),
+	);
+	return (newestEditable ?? newestDraft(drafts))?.draft_id ?? null;
+}
+
 function Badge({ label }: { label: string }) {
 	return (
 		<span
@@ -506,6 +540,13 @@ export function formatReviewDraftError(err: unknown, fallback: string): string {
 		}
 	}
 	const text = typeof detail === "string" ? detail : JSON.stringify(detail);
+	const terminalMatch = text.match(
+		/DRAFT_UPDATE_FORBIDDEN:(APPROVED|REJECTED|SUPERSEDED)/i,
+	);
+	if (terminalMatch) {
+		const status = terminalMatch[1].toUpperCase();
+		return `Draft ${status} is immutable historical evidence. Click Create Revision Draft to continue editing; the ${status} draft remains unchanged.`;
+	}
 	if (/DRAFT_NOT_APPROVABLE/i.test(text)) {
 		// Contract: DRAFT_NOT_APPROVABLE:<blocker>|<blocker>... where each blocker is
 		// KEY:comma,tokens and KEY ∈ MISSING_REQUIRED_FIELDS/CLAIM_BLOCKED/CLAIM_REVIEW_REQUIRED.
@@ -779,6 +820,19 @@ export default function ProductIntelligenceReviewDraftPanel({
 	const [claimSafeError, setClaimSafeError] = useState<string | null>(null);
 	const [claimSafeApprovalPhrase, setClaimSafeApprovalPhrase] = useState("");
 	const [claimSafeApprovalNote, setClaimSafeApprovalNote] = useState("");
+	const isTerminalDraft =
+		activeDraft !== null && isTerminalReviewStatus(activeDraft.review_status);
+
+	const guardTerminalDraftMutation = () => {
+		if (!activeDraft || !isTerminalDraft) return false;
+		setError(
+			formatReviewDraftError(
+				new Error(`DRAFT_UPDATE_FORBIDDEN:${activeDraft.review_status}`),
+				"The selected review draft is immutable.",
+			),
+		);
+		return true;
+	};
 
 	const missingRequiredFields = useMemo(() => {
 		if (!activeDraft) return [...REQUIRED_FIELDS];
@@ -839,8 +893,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 				const response = await fetchProductIntelligenceReviewDrafts(productId);
 				if (cancelled) return;
 				setDrafts(response.items);
-				const nextDraftId = response.items[0]?.draft_id || null;
-				setSelectedDraftId((current) => current || nextDraftId);
+				setSelectedDraftId(selectInitialDraftId(response.items));
 			} catch (err) {
 				if (cancelled) return;
 				setDraftsError(
@@ -897,6 +950,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 	}, [selectedDraftId]);
 
 	const updateFormField = (field: keyof DraftFormState, value: string) => {
+		if (isTerminalDraft) return;
 		setForm((current) => (current ? { ...current, [field]: value } : current));
 		setValidation(null);
 		setClaimAck(false);
@@ -908,6 +962,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 		field: keyof DraftProvenanceFormRow,
 		value: string,
 	) => {
+		if (isTerminalDraft) return;
 		setValidation(null);
 		setClaimAck(false);
 		setBlockerNotice(null);
@@ -990,6 +1045,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 	 * refreshing a catalogue item through it would mint a duplicate row every press.
 	 */
 	const handleRecomputeFromSource = async () => {
+		if (guardTerminalDraftMutation()) return;
 		setBusyAction("RECOMPUTE_SOURCE");
 		setError(null);
 		setMessage(null);
@@ -1031,7 +1087,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 	};
 
 	const handleAiFillMissing = async () => {
-		if (!activeDraft) return;
+		if (!activeDraft || guardTerminalDraftMutation()) return;
 		setBusyAction("AI_FILL");
 		setError(null);
 		setMessage(null);
@@ -1087,6 +1143,9 @@ export default function ProductIntelligenceReviewDraftPanel({
 
 	const saveDraft = async () => {
 		if (!activeDraft || !form) return null;
+		if (isTerminalDraft) {
+			throw new Error(`DRAFT_UPDATE_FORBIDDEN:${activeDraft.review_status}`);
+		}
 		const payload = buildMutationPayload(form, provenanceRows, activeDraft);
 		const updated = await updateProductIntelligenceReviewDraft(
 			activeDraft.draft_id,
@@ -1097,6 +1156,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 	};
 
 	const handleSaveDraft = async () => {
+		if (guardTerminalDraftMutation()) return;
 		setBusyAction("SAVE");
 		setError(null);
 		setMessage(null);
@@ -1118,7 +1178,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 	};
 
 	const handleValidateDraft = async () => {
-		if (!activeDraft) return;
+		if (!activeDraft || guardTerminalDraftMutation()) return;
 		setBusyAction("VALIDATE");
 		setError(null);
 		setMessage(null);
@@ -1150,7 +1210,13 @@ export default function ProductIntelligenceReviewDraftPanel({
 	};
 
 	const handleSetDisposition = async () => {
-		if (!activeDraft || !dispositionField || !dispositionChoice) return;
+		if (
+			!activeDraft ||
+			guardTerminalDraftMutation() ||
+			!dispositionField ||
+			!dispositionChoice
+		)
+			return;
 		const reviewedBy = form?.reviewed_by.trim();
 		if (!reviewedBy) {
 			setError("Reviewed By is required before recording a governed absence.");
@@ -1197,7 +1263,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 	};
 
 	const handleApproveDraft = async () => {
-		if (!activeDraft || !form) return;
+		if (!activeDraft || !form || guardTerminalDraftMutation()) return;
 		const claimAckAtClick = claimAck;
 		setBusyAction("APPROVE");
 		setError(null);
@@ -1248,7 +1314,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 	};
 
 	const handleRejectDraft = async () => {
-		if (!activeDraft || !form) return;
+		if (!activeDraft || !form || guardTerminalDraftMutation()) return;
 		setBusyAction("REJECT");
 		setError(null);
 		setMessage(null);
@@ -1278,25 +1344,28 @@ export default function ProductIntelligenceReviewDraftPanel({
 	};
 
 	return (
-		<section className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+		<section
+			data-testid="product-intelligence-review-panel"
+			className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4"
+		>
 			<div className="mb-4 flex flex-wrap items-start justify-between gap-3">
 				<div className="space-y-1">
 					<h2 className="text-sm font-bold text-slate-100">
-						Product Intelligence Review Draft Pipeline
+						Product Intelligence
 					</h2>
 					<p className="max-w-3xl text-[11px] text-slate-400">
-						Create a human-reviewable draft, validate required fields, inspect
-						claim safety, approve or reject, and create the immutable snapshot
-						used by the read-only INTELLIGENCE view.
+						Review product truth, save a revision, and approve only after the
+						visible evidence gates are satisfied.
 					</p>
 				</div>
 				<button
 					type="button"
+					data-testid="create-revision-draft-button"
 					onClick={handleCreateDraft}
 					disabled={busyAction !== null}
 					className="rounded border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-[11px] font-semibold text-sky-100 disabled:cursor-not-allowed disabled:opacity-60"
 				>
-					{busyAction === "CREATE" ? "Creating..." : "Create Review Draft"}
+					{busyAction === "CREATE" ? "Creating..." : "Create Revision Draft"}
 				</button>
 				<button
 					type="button"
@@ -1312,10 +1381,17 @@ export default function ProductIntelligenceReviewDraftPanel({
 			</div>
 
 			{guidedClaimSafe ? (
-				<div
-					data-testid="guided-claim-safe-panel"
-					className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4"
+				<details
+					data-testid="guided-claim-safe-disclosure"
+					className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/5"
 				>
+					<summary className="cursor-pointer list-none px-4 py-3 text-[11px] font-semibold text-amber-100">
+						Guided claim-safe recovery <span className="ml-2 font-normal text-amber-200/60">advanced review path</span>
+					</summary>
+					<div
+						data-testid="guided-claim-safe-panel"
+						className="border-t border-amber-500/20 p-4"
+					>
 					<div className="flex flex-wrap items-start justify-between gap-3">
 						<div>
 							<div className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-300">
@@ -1450,14 +1526,23 @@ export default function ProductIntelligenceReviewDraftPanel({
 							)}
 						</div>
 					) : null}
-				</div>
+					</div>
+				</details>
 			) : null}
 
-			<div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
-				<div className="rounded border border-slate-800 bg-slate-900/50 p-3">
+			<div className="space-y-4">
+				<details
+					data-testid="product-intelligence-draft-queue"
+					className="rounded border border-slate-800 bg-slate-900/50"
+				>
+					<summary className="cursor-pointer list-none px-3 py-3 text-[11px] font-semibold text-slate-200">
+						Review history · {drafts.length} saved version{drafts.length === 1 ? "" : "s"}{" "}
+						<span className="ml-2 font-normal text-slate-500">open to switch versions</span>
+					</summary>
+					<div className="border-t border-slate-800 p-3">
 					<SectionHeading
 						title="Draft Queue"
-						subtitle="Review drafts remain editable until rejected or approved."
+						subtitle="Editable drafts are preferred; terminal drafts remain read-only historical evidence."
 					/>
 					<div className="mt-3 space-y-2">
 						{draftsLoading ? (
@@ -1476,6 +1561,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 							drafts.map((draft) => (
 								<button
 									key={draft.draft_id}
+									data-testid={`draft-queue-item-${draft.draft_id}`}
 									type="button"
 									onClick={() => setSelectedDraftId(draft.draft_id)}
 									className={`block w-full rounded border px-3 py-3 text-left transition ${
@@ -1494,6 +1580,11 @@ export default function ProductIntelligenceReviewDraftPanel({
 										<Badge label={draft.claim_gate} />
 										<Badge label={draft.claim_risk_level} />
 									</div>
+									{isTerminalReviewStatus(draft.review_status) ? (
+										<div className="mt-2 text-[10px] text-slate-500">
+											Immutable historical evidence
+										</div>
+									) : null}
 									<div className="mt-2 text-[11px] text-slate-400">
 										Readiness: {fieldValue(draft.readiness_status)}
 									</div>
@@ -1501,7 +1592,8 @@ export default function ProductIntelligenceReviewDraftPanel({
 							))
 						)}
 					</div>
-				</div>
+					</div>
+				</details>
 
 				<div className="space-y-4">
 					{message ? (
@@ -1547,11 +1639,21 @@ export default function ProductIntelligenceReviewDraftPanel({
 											/>
 										</div>
 									</div>
+									{isTerminalDraft ? (
+										<div
+											data-testid="terminal-draft-notice"
+											className="mt-3 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100"
+										>
+											This {activeDraft.review_status} draft is immutable historical
+											evidence. Create Revision Draft to continue editing; the
+											original history remains unchanged.
+										</div>
+									) : null}
 									<div className="flex flex-wrap gap-2">
 										<button
 											type="button"
 											onClick={handleSaveDraft}
-											disabled={busyAction !== null}
+											disabled={busyAction !== null || isTerminalDraft}
 											className="rounded border border-slate-700 bg-slate-950/70 px-3 py-2 text-[11px] font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
 										>
 											{busyAction === "SAVE" ? "Saving..." : "Save Draft"}
@@ -1559,7 +1661,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 										<button
 											type="button"
 											onClick={handleValidateDraft}
-											disabled={busyAction !== null}
+											disabled={busyAction !== null || isTerminalDraft}
 											className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
 										>
 											{busyAction === "VALIDATE" ? "Recompute (deterministic)" : "Recompute (Validate)"}
@@ -1568,7 +1670,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 											type="button"
 											data-testid="recompute-from-source-button"
 											onClick={handleRecomputeFromSource}
-											disabled={busyAction !== null}
+											disabled={busyAction !== null || isTerminalDraft}
 											className="rounded border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-[11px] font-semibold text-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
 										>
 											{busyAction === "RECOMPUTE_SOURCE"
@@ -1579,7 +1681,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 											type="button"
 											data-testid="ai-fill-missing-button"
 											onClick={handleAiFillMissing}
-											disabled={busyAction !== null}
+											disabled={busyAction !== null || isTerminalDraft}
 											className="rounded border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-[11px] font-semibold text-sky-100 disabled:cursor-not-allowed disabled:opacity-60"
 										>
 											{busyAction === "AI_FILL" ? "AI filling..." : "AI Fill Missing (DeepSeek)"}
@@ -1587,7 +1689,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 										<button
 											type="button"
 											onClick={handleApproveDraft}
-											disabled={busyAction !== null}
+											disabled={busyAction !== null || isTerminalDraft}
 											className="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-[11px] font-semibold text-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
 										>
 											{busyAction === "APPROVE" ? "Approving..." : "Approve Draft"}
@@ -1595,7 +1697,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 										<button
 											type="button"
 											onClick={handleRejectDraft}
-											disabled={busyAction !== null}
+											disabled={busyAction !== null || isTerminalDraft}
 											className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-[11px] font-semibold text-red-100 disabled:cursor-not-allowed disabled:opacity-60"
 										>
 											{busyAction === "REJECT" ? "Rejecting..." : "Reject Draft"}
@@ -1651,7 +1753,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 													type="button"
 													data-testid="relay-retry-button"
 													onClick={handleRecomputeFromSource}
-													disabled={busyAction !== null}
+													disabled={busyAction !== null || isTerminalDraft}
 													className="mt-2 rounded border border-amber-400/50 bg-amber-400/10 px-3 py-1.5 text-[11px] font-semibold text-amber-50 disabled:cursor-not-allowed disabled:opacity-60"
 												>
 													{busyAction === "RECOMPUTE_SOURCE" ? "Retrying..." : "Retry"}
@@ -1820,6 +1922,21 @@ export default function ProductIntelligenceReviewDraftPanel({
 								</div>
 							</div>
 
+							<fieldset
+								disabled={isTerminalDraft}
+								aria-label={
+									isTerminalDraft ? "Terminal draft is read-only" : undefined
+								}
+								className="block space-y-4 border-0 p-0"
+							>
+							<details
+								data-testid="product-intelligence-review-gates"
+								className="rounded border border-slate-800 bg-slate-900/50"
+							>
+								<summary className="cursor-pointer list-none px-3 py-3 text-[11px] font-semibold text-slate-200">
+									Review gates <span className="ml-2 font-normal text-slate-500">missing fields and claim safety</span>
+								</summary>
+								<div className="border-t border-slate-800 p-3">
 							<div className="grid gap-4 xl:grid-cols-2">
 								<div className="rounded border border-slate-800 bg-slate-900/50 p-3">
 									<SectionHeading title="Missing Required Fields" />
@@ -2070,11 +2187,13 @@ export default function ProductIntelligenceReviewDraftPanel({
 									</div>
 								</div>
 							</div>
+								</div>
+							</details>
 
 							<div className="rounded border border-slate-800 bg-slate-900/50 p-3">
 								<SectionHeading
 									title="Draft Editor"
-									subtitle="Minimal V1 editor for the canonical snapshot-aligned product truth fields."
+									subtitle="Edit product truth, buyer persona, and copy strategy. System fields stay collapsed below."
 								/>
 								<div className="mt-4 grid gap-4 xl:grid-cols-2">
 									<TextArea
@@ -2472,6 +2591,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 									))}
 								</div>
 							</details>
+							</fieldset>
 						</>
 					)}
 				</div>

@@ -1,8 +1,18 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import {
+	buildExactSceneOnlyPrompt,
+	resolveExactGenerationGate,
+} from "../../api/exactProductOutput";
+import {
+	compileCreativeCampaignPrompt,
+	pollImgGenerationJob,
+	startImgGeneration,
+} from "../../api/imgFactory";
 import {
 	approvePosterCopySet,
 	composePoster,
 	createPosterCopySet,
+	fetchPosterCampaignVariants,
 	forkPosterCopySetFromHistorical,
 	generatePosterDirections,
 	newPosterCopySetVersion,
@@ -10,13 +20,21 @@ import {
 	recommendPosterAngles,
 	recommendPosterObjectives,
 	regeneratePosterField,
+	reviewPosterDeliverable,
 	savePosterToLibrary,
 } from "../../api/posterCopySets";
 import { fetchPosterReadiness } from "../../api/posterReadiness";
+import {
+	createPosterPromptDraft,
+	formatPosterPromptDraftError,
+} from "../../api/posterPromptDraft";
+import { productSubjectAsset } from "../../utils/productSubjectAsset";
 import type { Product } from "../../types";
 import {
 	POSTER_COPY_APPROVAL_PHRASE,
 	type PosterAngleRecommendation,
+	type CampaignReviewRequest,
+	type CampaignVariantsResponse,
 	type PosterComposeResponse,
 	type PosterCopyDirection,
 	type PosterCopySet,
@@ -46,6 +64,24 @@ const EMPTY_FIELDS: GuidedCopyFields = {
 	disclaimer: "",
 	tone: "",
 	language: "ms",
+};
+
+interface CreativeCampaignPromptProvenance {
+	prompt_fingerprint: string;
+	reference_pack_id: string;
+	approved_snapshot_id: string;
+	approved_snapshot_version: number | null;
+	design_brief_version: string;
+	copy_route_id: string;
+}
+
+const EMPTY_CREATIVE_PROMPT_PROVENANCE: CreativeCampaignPromptProvenance = {
+	prompt_fingerprint: "",
+	reference_pack_id: "",
+	approved_snapshot_id: "",
+	approved_snapshot_version: null,
+	design_brief_version: "",
+	copy_route_id: "",
 };
 
 function directionToFields(d: PosterCopyDirection): GuidedCopyFields {
@@ -183,11 +219,28 @@ export interface PosterGuidedWorkflow {
 	// scene
 	backgroundMediaId: string;
 	setBackgroundMediaId: (id: string) => void;
+	sceneGenerationLoading: boolean;
+	sceneGenerationStage: string;
+	sceneGenerationError: string;
+	generatedSceneMediaId: string | null;
+	generatedSceneUrl: string | null;
+	generateScene: () => Promise<void>;
 	// compose
 	compose: () => Promise<void>;
 	composeLoading: boolean;
 	composeError: string;
 	deliverable: PosterComposeResponse | null;
+	campaignVariants: CampaignVariantsResponse | null;
+	campaignVariantsLoading: boolean;
+	campaignVariantsError: string;
+	loadCampaignVariants: (payload?: {
+		copy_patch?: Record<string, string>;
+		design_route?: string;
+		layout_variant?: string;
+	}) => Promise<void>;
+	reviewCampaign: (request: CampaignReviewRequest) => Promise<void>;
+	campaignReviewLoading: boolean;
+	campaignReviewError: string;
 	// save
 	save: () => Promise<void>;
 	saveLoading: boolean;
@@ -248,18 +301,70 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 	const [forkError, setForkError] = useState("");
 
 	const [recipeId, setRecipeId] = useState<string | null>(null);
-	const [creativeMode, setCreativeMode] = useState("");
-	const [backgroundMediaId, setBackgroundMediaId] = useState("");
+	const [creativeMode, setCreativeModeState] = useState("");
+	const [backgroundMediaId, setBackgroundMediaIdState] = useState("");
+	const [sceneGenerationLoading, setSceneGenerationLoading] = useState(false);
+	const [sceneGenerationStage, setSceneGenerationStage] = useState("");
+	const [sceneGenerationError, setSceneGenerationError] = useState("");
+	const [generatedSceneMediaId, setGeneratedSceneMediaId] = useState<
+		string | null
+	>(null);
+	const [generatedSceneUrl, setGeneratedSceneUrl] = useState<string | null>(
+		null,
+	);
+	const [creativePromptProvenance, setCreativePromptProvenance] =
+		useState<CreativeCampaignPromptProvenance>(
+			EMPTY_CREATIVE_PROMPT_PROVENANCE,
+		);
+	const sceneGenerationTokenRef = useRef(0);
 
 	const [deliverable, setDeliverable] = useState<PosterComposeResponse | null>(
 		null,
 	);
 	const [composeLoading, setComposeLoading] = useState(false);
 	const [composeError, setComposeError] = useState("");
+	const [campaignVariants, setCampaignVariants] =
+		useState<CampaignVariantsResponse | null>(null);
+	const [campaignVariantsLoading, setCampaignVariantsLoading] = useState(false);
+	const [campaignVariantsError, setCampaignVariantsError] = useState("");
+	const [campaignReviewLoading, setCampaignReviewLoading] = useState(false);
+	const [campaignReviewError, setCampaignReviewError] = useState("");
 
 	const [savedAssetId, setSavedAssetId] = useState<string | null>(null);
 	const [saveLoading, setSaveLoading] = useState(false);
 	const [saveError, setSaveError] = useState("");
+
+	const invalidateScene = useCallback(() => {
+		sceneGenerationTokenRef.current += 1;
+		setBackgroundMediaIdState("");
+		setSceneGenerationError("");
+		setSceneGenerationStage("");
+		setGeneratedSceneMediaId(null);
+		setGeneratedSceneUrl(null);
+		setCreativePromptProvenance(EMPTY_CREATIVE_PROMPT_PROVENANCE);
+		setCampaignVariants(null);
+		setCampaignVariantsError("");
+		setCampaignReviewError("");
+	}, []);
+
+	const setCreativeMode = useCallback(
+		(mode: string) => {
+			if (mode !== creativeMode) invalidateScene();
+			setCreativeModeState(mode);
+		},
+		[creativeMode, invalidateScene],
+	);
+
+	const setBackgroundMediaId = useCallback(
+		(id: string) => {
+			setBackgroundMediaIdState(id);
+			if (id !== generatedSceneMediaId) {
+				setGeneratedSceneMediaId(null);
+				setGeneratedSceneUrl(null);
+			}
+		},
+		[generatedSceneMediaId],
+	);
 
 	const reach = useCallback((target: GuidedStepId) => {
 		setReached((prev) => (prev.includes(target) ? prev : [...prev, target]));
@@ -279,6 +384,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 
 	// Selecting a product invalidates EVERYTHING downstream.
 	const selectProduct = useCallback((p: Product | null) => {
+		invalidateScene();
 		setProduct(p);
 		setReadiness(null);
 		setReadinessError("");
@@ -298,7 +404,6 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		setHistoricalCopySet(null);
 		setForkError("");
 		setRecipeId(null);
-		setBackgroundMediaId("");
 		setDeliverable(null);
 		setSavedAssetId(null);
 		setReached(p ? ["product", "goal"] : ["product"]);
@@ -311,7 +416,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 				setReadinessError(friendlyError(e, "Failed to check product readiness.")),
 			)
 			.finally(() => setReadinessLoading(false));
-	}, []);
+	}, [invalidateScene]);
 
 	const recommendGoals = useCallback(async () => {
 		if (!product) return;
@@ -363,6 +468,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 	// Selecting a goal invalidates angle + copy downstream.
 	const selectGoal = useCallback(
 		(archetype: string, recipe?: string, objective?: string) => {
+			invalidateScene();
 			setGoalArchetype(archetype);
 			setGoalRecipeId(recipe ?? null);
 			setObjectiveText(objective ?? "");
@@ -374,13 +480,15 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			setApprovedCopySet(null);
 			setEditingCopySetId(null);
 			setHistoricalCopySet(null);
+			setRecipeId(null);
+			setDeliverable(null);
 			setReached((prev) => {
 				const keep = prev.filter((s) => stepIndex(s) <= stepIndex("goal"));
 				return keep.includes("angle") ? keep : [...keep, "angle"];
 			});
 			setStep("angle");
 		},
-		[],
+		[invalidateScene],
 	);
 
 	const loadDirections = useCallback(async () => {
@@ -408,6 +516,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 
 	// Selecting an angle invalidates copy downstream and advances to copy.
 	const selectAngle = useCallback((angle: string) => {
+		invalidateScene();
 		setSelectedAngle(angle);
 		setDirections([]);
 		setSelectedDirection(null);
@@ -420,12 +529,13 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			return keep.includes("copy") ? keep : [...keep, "copy"];
 		});
 		setStep("copy");
-	}, []);
+	}, [invalidateScene]);
 
 	const selectDirection = useCallback(
 		(index: number) => {
 			const d = directions[index];
 			if (!d) return;
+			invalidateScene();
 			setSelectedDirection(index);
 			setFields(directionToFields(d));
 			// Choosing a fresh AI direction is a BRAND-NEW copy flow — abandon any
@@ -437,22 +547,24 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 				prev.includes("approve") ? prev : [...prev, "approve"],
 			);
 		},
-		[directions],
+		[directions, invalidateScene],
 	);
 
 	const updateField = useCallback(
 		(field: keyof GuidedCopyFields, value: string | string[]) => {
+			invalidateScene();
 			setFields((prev) => ({ ...prev, [field]: value }));
 			// Editing invalidates a prior approval (but NOT the editing draft id —
 			// the whole point of the version draft is to receive these edits).
 			setApprovedCopySet(null);
 		},
-		[],
+		[invalidateScene],
 	);
 
 	const regenField = useCallback(
 		async (field: string) => {
 			if (!product || !goalArchetype) return;
+			invalidateScene();
 			setFieldRegenLoading(field);
 			setFieldRegenError("");
 			try {
@@ -479,11 +591,12 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 				setFieldRegenLoading("");
 			}
 		},
-		[product, goalArchetype, selectedAngle, fields],
+		[product, goalArchetype, selectedAngle, fields, invalidateScene],
 	);
 
 	const approve = useCallback(async () => {
 		if (!product || !goalArchetype) return;
+		invalidateScene();
 		setApproveLoading(true);
 		setApproveError("");
 		try {
@@ -527,12 +640,14 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		objectiveText,
 		fields,
 		editingCopySetId,
+		invalidateScene,
 	]);
 
 	// Editing approved copy uses the immutable new-version lifecycle. The created
 	// draft id is KEPT so approve() patches it instead of creating a duplicate.
 	const editApproved = useCallback(async () => {
 		if (!approvedCopySet) return;
+		invalidateScene();
 		setApproveLoading(true);
 		setApproveError("");
 		try {
@@ -550,12 +665,13 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		} finally {
 			setApproveLoading(false);
 		}
-	}, [approvedCopySet]);
+	}, [approvedCopySet, invalidateScene]);
 
 	// ── Creative Library reopen ────────────────────────────────────────────────
 
 	const restoreFromReopen = useCallback(
 		(recon: PosterDeliverableReconstruction, p: Product | null) => {
+			sceneGenerationTokenRef.current += 1;
 			const pcs = recon.poster_copy_set;
 			const historical =
 				!!recon.poster_copy_set_historical ||
@@ -589,8 +705,21 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			setEditingCopySetId(null);
 			setForkError("");
 			setRecipeId(recon.deliverable.recipe_id ?? null);
-			setCreativeMode(String((recon.render_manifest?.provenance as { creative_mode?: string } | undefined)?.creative_mode ?? ""));
-			setBackgroundMediaId(recon.deliverable.background_media_id ?? "");
+			setCreativeModeState(
+				String(
+					(
+						recon.render_manifest?.provenance as
+							| { creative_mode?: string }
+							| undefined
+					)?.creative_mode ?? "",
+				),
+			);
+			setBackgroundMediaIdState(recon.deliverable.background_media_id ?? "");
+			setSceneGenerationLoading(false);
+			setSceneGenerationStage("");
+			setSceneGenerationError("");
+			setGeneratedSceneMediaId(null);
+			setGeneratedSceneUrl(null);
 			setDeliverable({
 				deliverable: recon.deliverable,
 				render_report: {},
@@ -624,10 +753,51 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		setStep("compose");
 	}, []);
 
+	const loadCampaignVariantsFor = useCallback(
+		async (
+			posterDeliverableId: string,
+			payload: {
+				copy_patch?: Record<string, string>;
+				design_route?: string;
+				layout_variant?: string;
+			} = {},
+		) => {
+			setCampaignVariantsLoading(true);
+			setCampaignVariantsError("");
+			try {
+				const variants = await fetchPosterCampaignVariants(
+					posterDeliverableId,
+					payload,
+				);
+				setCampaignVariants(variants);
+			} catch (e) {
+				setCampaignVariantsError(
+					friendlyError(e, "Gagal menyediakan tiga varian poster terkawal."),
+				);
+			} finally {
+				setCampaignVariantsLoading(false);
+			}
+		},
+		[],
+	);
+
+	const loadCampaignVariants = useCallback(
+		async (payload: {
+			copy_patch?: Record<string, string>;
+			design_route?: string;
+			layout_variant?: string;
+		} = {}) => {
+			const id = deliverable?.deliverable.poster_deliverable_id;
+			if (id) await loadCampaignVariantsFor(id, payload);
+		},
+		[deliverable, loadCampaignVariantsFor],
+	);
+
 	// Historical (superseded) copy stays read-only; forking creates an editable
 	// DRAFT lineage-linked to the historical row, preserving the original record.
 	const forkHistorical = useCallback(async () => {
 		if (!historicalCopySet) return;
+		invalidateScene();
 		setForkLoading(true);
 		setForkError("");
 		try {
@@ -650,31 +820,271 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		} finally {
 			setForkLoading(false);
 		}
-	}, [historicalCopySet]);
+	}, [historicalCopySet, invalidateScene]);
 
 	const selectRecipe = useCallback((recipe: string) => {
+		invalidateScene();
 		setRecipeId(recipe);
 		setDeliverable(null);
 		setSavedAssetId(null);
 		setReached((prev) => (prev.includes("scene") ? prev : [...prev, "scene"]));
 		setStep("scene");
-	}, []);
+	}, [invalidateScene]);
+
+	const generateScene = useCallback(async () => {
+		if (!product || !approvedCopySet || !recipeId) {
+			setSceneGenerationError(
+				"Lengkapkan produk, teks yang disahkan dan gaya visual dahulu.",
+			);
+			return;
+		}
+
+		const token = ++sceneGenerationTokenRef.current;
+		setSceneGenerationLoading(true);
+		setSceneGenerationStage("building_prompt");
+		setSceneGenerationError("");
+		setBackgroundMediaIdState("");
+		setGeneratedSceneMediaId(null);
+		setGeneratedSceneUrl(null);
+		setCreativePromptProvenance(EMPTY_CREATIVE_PROMPT_PROVENANCE);
+		setDeliverable(null);
+		setSavedAssetId(null);
+
+		try {
+			const promptPackage = await createPosterPromptDraft({
+				product_id: product.id,
+				poster_objective:
+					objectiveText || approvedCopySet.objective || "Poster",
+				poster_type: goalArchetype || approvedCopySet.archetype || "PRODUCT_HERO",
+				visual_route: selectedAngle || recipeId,
+				human_presence_mode: "",
+				frame_ratio: "9:16",
+				language: fields.language || approvedCopySet.language || "ms",
+				text_density: "medium",
+				hook: fields.primary_message,
+				subhook: fields.support_message,
+				usp_1: fields.proof_points[0] || "",
+				usp_2: fields.proof_points[1] || "",
+				usp_3: fields.proof_points[2] || "",
+				cta: fields.cta,
+				operator_notes: selectedAngle
+					? `Guided poster angle: ${selectedAngle}`
+					: "Guided Poster Builder",
+				creative_mode: creativeMode || undefined,
+				copy_source: "APPROVED_POSTER_COPY_SET",
+				poster_recipe_id: recipeId,
+				poster_copy_set_id: approvedCopySet.poster_copy_set_id,
+			});
+			if (token !== sceneGenerationTokenRef.current) return;
+			if (!promptPackage.generation_allowed || !promptPackage.poster_prompt) {
+				throw new Error(
+					promptPackage.blocked_reasons?.[0] ||
+						"Produk belum dibenarkan untuk jana visual poster.",
+				);
+			}
+
+			const creativeCampaign = creativeMode === "CREATIVE_CAMPAIGN";
+			let generationRequest: Parameters<typeof startImgGeneration>[0];
+			if (creativeCampaign) {
+				setSceneGenerationStage("compiling_creative_prompt");
+				const compiled = await compileCreativeCampaignPrompt({
+					product_id: product.id,
+					output_intent: "CLEAN_KEY_VISUAL",
+					model: "NANO_BANANA_PRO",
+					objective:
+						objectiveText || approvedCopySet.objective || "Product Hero",
+					composition: selectedAngle || recipeId,
+					camera: "Vertical 9:16, natural product perspective, readable label",
+					lighting:
+						"Physically coherent Malaysian commercial light with contact shadow",
+					scene_direction:
+						selectedAngle || "Culturally appropriate Malaysian campaign environment",
+					copy_space: {
+						headline_line_budget:
+							Math.max(
+								1,
+								Math.ceil(
+									fields.primary_message.trim().split(/\s+/).filter(Boolean).length / 4,
+								),
+							),
+						support_line_budget: 1,
+						proof_line_budget: fields.proof_points.length > 0 ? 1 : 0,
+						cta_line_budget: 1,
+						text_hierarchy: "HEADLINE > SUPPORT > PROOF > CTA",
+						copy_zone_strategy: "DELIBERATE_NEGATIVE_SPACE",
+						copy_safe_margin: "5%",
+						avoid_product_overlap: true,
+					},
+					aspect_ratio: "9:16",
+					creative_mode: "CREATIVE_CAMPAIGN",
+				});
+				if (compiled.blockers.length) throw new Error(compiled.blockers[0]);
+				const brief = compiled.creative_context?.campaign_design_brief;
+				setCreativePromptProvenance({
+					prompt_fingerprint: compiled.prompt_fingerprint || "",
+					reference_pack_id: compiled.reference_pack.pack_id || "",
+					approved_snapshot_id: String(brief?.approved_snapshot_id || compiled.creative_context?.approved_snapshot_id || ""),
+					approved_snapshot_version:
+						brief?.approved_snapshot_version ??
+						compiled.creative_context?.approved_snapshot_version ??
+						null,
+					design_brief_version: String(brief?.schema_version || ""),
+					copy_route_id: approvedCopySet.poster_copy_set_id,
+				});
+				generationRequest = {
+					product_id: product.id,
+					visual_lane_id: "POSTER_BUILDER_CREATIVE_CAMPAIGN",
+					creative_mode: "CREATIVE_CAMPAIGN",
+					prompt: compiled.compiled_prompt,
+					image_model: "NANO_BANANA_PRO",
+					aspect: "9:16",
+					count: 1,
+					image_contract_version: compiled.compiler_version,
+					reference_pack_id: compiled.reference_pack.pack_id,
+					poster_copy_set_id: approvedCopySet.poster_copy_set_id,
+					output_intent: "CLEAN_KEY_VISUAL",
+					confirm_live_credit_burn: true,
+					maximum_provider_operations:
+						compiled.provider_operation_plan.max_provider_operations,
+					max_retry_operations: 0,
+				};
+			} else {
+				setSceneGenerationStage("validating_product");
+				const gate = await resolveExactGenerationGate(product.id, undefined, {
+					laneId: "POSTER_BUILDER",
+					isPoster: true,
+				});
+				if (token !== sceneGenerationTokenRef.current) return;
+				if (gate.mode === "blocked") throw new Error(gate.message);
+
+				const exactComposite = gate.mode === "exact";
+				const subjectAsset = productSubjectAsset(product);
+				if (!exactComposite && !subjectAsset) {
+					throw new Error(
+						"PRODUCT_REFERENCE_IMAGE_REQUIRED — produk ini tiada gambar rujukan yang boleh digunakan.",
+					);
+				}
+
+				let prompt = promptPackage.poster_prompt;
+				if (exactComposite) {
+					setSceneGenerationStage("preparing_exact_scene");
+					const sceneOnly = await buildExactSceneOnlyPrompt(product.id, prompt);
+					if (token !== sceneGenerationTokenRef.current) return;
+					prompt = sceneOnly.prompt;
+				}
+				generationRequest = {
+					product_id: product.id,
+					visual_lane_id: "POSTER_BUILDER",
+					prompt,
+					aspect: "9:16",
+					count: 1,
+					...(subjectAsset && !exactComposite
+						? { refs: { subjectAsset } }
+						: {}),
+				};
+			}
+
+			setSceneGenerationStage("generating_scene");
+			const { job_id: jobId } = await startImgGeneration(generationRequest);
+			if (token !== sceneGenerationTokenRef.current) return;
+
+			setSceneGenerationStage("waiting_for_scene");
+			const job = await pollImgGenerationJob(jobId);
+			if (token !== sceneGenerationTokenRef.current) return;
+			const status = String(job.status || "").toUpperCase();
+			if (!(status === "DONE" || status === "COMPLETED") || !job.media_id) {
+				throw new Error(
+					job.error ||
+						`Penjanaan visual tamat sebagai ${job.status || "UNKNOWN"} tanpa imej.`,
+				);
+			}
+
+			// The provider artifact is a clean key visual. It is retained as
+			// background/lineage only; compose() must create the durable poster before
+			// the result can be saved.
+			const mediaId = job.media_id;
+			const url = job.url || `/api/flow/retrieved/${encodeURIComponent(mediaId)}`;
+			setBackgroundMediaIdState(mediaId);
+			setGeneratedSceneMediaId(mediaId);
+			setGeneratedSceneUrl(url);
+		} catch (e) {
+			if (token !== sceneGenerationTokenRef.current) return;
+			const promptError = formatPosterPromptDraftError(e);
+			setSceneGenerationError(
+				friendlyError(
+					promptError === "Prompt draft failed" ? e : new Error(promptError),
+					"Gagal menyediakan visual poster. Tiada poster dikompos sehingga visual berjaya.",
+				),
+			);
+		} finally {
+			if (token === sceneGenerationTokenRef.current) {
+				setSceneGenerationLoading(false);
+				setSceneGenerationStage("");
+			}
+		}
+	}, [
+		product,
+		approvedCopySet,
+		recipeId,
+		objectiveText,
+		goalArchetype,
+		selectedAngle,
+		fields,
+		creativeMode,
+	]);
 
 	const compose = useCallback(async () => {
 		if (!product || !approvedCopySet || !recipeId) return;
 		setComposeLoading(true);
 		setComposeError("");
 		try {
+			if (!backgroundMediaId) {
+				setComposeError(
+					creativeMode === "CREATIVE_CAMPAIGN"
+						? "Key visual belum tersedia untuk dikompos."
+						: "Latar poster belum tersedia.",
+				);
+				return;
+			}
 			const res = await composePoster({
 				product_id: product.id,
 				poster_copy_set_id: approvedCopySet.poster_copy_set_id,
 				recipe_id: recipeId,
 				background_media_id: backgroundMediaId || undefined,
+				image_model:
+					creativeMode === "CREATIVE_CAMPAIGN"
+						? "NANO_BANANA_PRO"
+						: undefined,
 				creative_mode: creativeMode || undefined,
+					settings:
+						creativeMode === "CREATIVE_CAMPAIGN"
+						? {
+							pipeline: "CLEAN_KEY_VISUAL_THEN_DETERMINISTIC_COPY_COMPOSITE",
+							raw_key_visual_media_id: generatedSceneMediaId,
+							raw_key_visual_is_lineage_only: true,
+							prompt_fingerprint: creativePromptProvenance.prompt_fingerprint,
+							clean_key_visual_prompt_fingerprint:
+								creativePromptProvenance.prompt_fingerprint,
+							reference_pack_id: creativePromptProvenance.reference_pack_id,
+							approved_snapshot_id: creativePromptProvenance.approved_snapshot_id,
+							approved_snapshot_version:
+								creativePromptProvenance.approved_snapshot_version,
+							design_brief_version: creativePromptProvenance.design_brief_version,
+							copy_route_id: creativePromptProvenance.copy_route_id,
+							provider_operation_budget: 1,
+							actual_retry_count: 0,
+						}
+						: undefined,
 			});
 			setDeliverable(res);
 			setSavedAssetId(null);
+			setCampaignVariants(null);
 			setReached((prev) => (prev.includes("save") ? prev : [...prev, "save"]));
+			if (creativeMode === "CREATIVE_CAMPAIGN") {
+				await loadCampaignVariantsFor(
+					res.deliverable.poster_deliverable_id,
+				);
+			}
 		} catch (e) {
 			setComposeError(
 				friendlyError(
@@ -685,7 +1095,40 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		} finally {
 			setComposeLoading(false);
 		}
-	}, [product, approvedCopySet, recipeId, backgroundMediaId, creativeMode]);
+	}, [
+		product,
+		approvedCopySet,
+		recipeId,
+		backgroundMediaId,
+		creativeMode,
+		generatedSceneMediaId,
+		creativePromptProvenance,
+		loadCampaignVariantsFor,
+	]);
+
+	const reviewCampaign = useCallback(
+		async (request: CampaignReviewRequest) => {
+			const id = deliverable?.deliverable.poster_deliverable_id;
+			if (!id) return;
+			setCampaignReviewLoading(true);
+			setCampaignReviewError("");
+			try {
+				const response = await reviewPosterDeliverable(id, request);
+				setDeliverable((current) =>
+					current
+						? { ...current, qa_report: response.qa_report }
+						: current,
+				);
+			} catch (e) {
+				setCampaignReviewError(
+					friendlyError(e, "Semakan manusia tidak berjaya disimpan."),
+				);
+			} finally {
+				setCampaignReviewLoading(false);
+			}
+		},
+		[deliverable],
+	);
 
 	const save = useCallback(async () => {
 		if (!deliverable) return;
@@ -761,10 +1204,23 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		selectRecipe,
 		backgroundMediaId,
 		setBackgroundMediaId,
+		sceneGenerationLoading,
+		sceneGenerationStage,
+		sceneGenerationError,
+		generatedSceneMediaId,
+		generatedSceneUrl,
+		generateScene,
 		compose,
 		composeLoading,
 		composeError,
 		deliverable,
+		campaignVariants,
+		campaignVariantsLoading,
+		campaignVariantsError,
+		loadCampaignVariants,
+		reviewCampaign,
+		campaignReviewLoading,
+		campaignReviewError,
 		save,
 		saveLoading,
 		saveError,

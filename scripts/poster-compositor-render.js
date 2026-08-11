@@ -89,6 +89,26 @@ function requiredFontFamilies(manifest) {
 	return Array.from(new Set(families)).filter((f) => f && !GENERIC_FAMILIES.has(f.toLowerCase()));
 }
 
+function requiredFontRequirements(manifest) {
+	const tokens = manifest.font_tokens || {};
+	const byKey = new Map();
+	for (const zone of manifest.zones || []) {
+		const token = tokens[zone.font_token] || tokens.body || {};
+		const family = primaryFamily(token.family);
+		const weight = String(token.weight || 400);
+		const key = `${family}|${weight}`;
+		const current = byKey.get(key) || {
+			family,
+			weight,
+			size: Number(token.size || 28),
+			zone_ids: [],
+		};
+		if (!current.zone_ids.includes(zone.zone_id)) current.zone_ids.push(zone.zone_id);
+		byKey.set(key, current);
+	}
+	return Array.from(byKey.values());
+}
+
 function fontCss(token) {
 	return (
 		`font-family:${token.family || "'Segoe UI', Arial, sans-serif"};` +
@@ -140,7 +160,9 @@ function buildHtml(manifest, bgDataUri) {
 				`style="position:absolute;left:${z.rect.x}%;top:${z.rect.y}%;width:${z.rect.w}%;height:${z.rect.h}%;` +
 				`display:flex;align-items:center;justify-content:${justify};box-sizing:border-box;` +
 				`padding:0 10px;overflow:visible;text-align:${z.align};">` +
-				`<span data-text style="${spanCss}">${escapeHtml(z.text)}</span></div>`
+				`<span data-text data-requested-family="${escapeHtml(primaryFamily(token.family))}" ` +
+				`data-requested-weight="${escapeHtml(token.weight || 400)}" ` +
+				`data-requested-size="${escapeHtml(token.size || 28)}" style="${spanCss}">${escapeHtml(z.text)}</span></div>`
 			);
 		})
 		.join("\n");
@@ -156,9 +178,12 @@ function buildHtml(manifest, bgDataUri) {
 }
 
 // Runs INSIDE the page: shrink-to-fit each zone, then measure final boxes.
-function pageFitAndMeasure(fitPolicy) {
+function pageFitAndMeasure({ fitPolicy, fontRequirements }) {
 	const minScale = fitPolicy.min_scale || 0.6;
 	const step = fitPolicy.step || 0.05;
+	const fontProof = new Map(
+		(fontRequirements || []).map((item) => [`${item.family}|${item.weight}`, item]),
+	);
 	const results = [];
 	for (const el of document.querySelectorAll("[data-zone]")) {
 		const span = el.querySelector("[data-text]");
@@ -176,6 +201,11 @@ function pageFitAndMeasure(fitPolicy) {
 		}
 		const zr = zoneRect();
 		const sr = span.getBoundingClientRect();
+		const requestedFamily = span.getAttribute("data-requested-family") || "";
+		const requestedWeight = String(span.getAttribute("data-requested-weight") || "400");
+		const requestedSize = Number(span.getAttribute("data-requested-size") || base);
+		const proof = fontProof.get(`${requestedFamily}|${requestedWeight}`) || {};
+		const computed = window.getComputedStyle(span);
 		results.push({
 			zone_id: el.getAttribute("data-zone"),
 			box: { x: zr.x, y: zr.y, w: zr.width, h: zr.height },
@@ -183,6 +213,14 @@ function pageFitAndMeasure(fitPolicy) {
 			font_scale: scale,
 			fitted: sr.height <= zr.height + 1 && sr.width <= zr.width + 1,
 			rendered_text: span.textContent,
+			requested_font_family: requestedFamily,
+			requested_font_weight: requestedWeight,
+			document_fonts_check: document.fonts.check(
+				`${requestedWeight} ${requestedSize}px "${requestedFamily}"`,
+			),
+			computed_font_family: computed.fontFamily || "",
+			computed_font_weight: computed.fontWeight || "",
+			fallback_detected: Boolean(proof.fallback_detected),
 		});
 	}
 	return results;
@@ -269,8 +307,15 @@ async function main() {
 		// uses must resolve on THIS host — no silent substitute fonts under a
 		// "deterministic layout" claim.
 		const required = requiredFontFamilies(manifest);
-		const missingFonts = await page.evaluate((families) => {
-			function fontFamilyLooksAvailable(family) {
+		const requirements = requiredFontRequirements(manifest);
+		// The proof is captured only after the browser has completed its font
+		// loading lifecycle; a symbolic template status is not runtime evidence.
+		await page.evaluate(() => document.fonts.ready);
+		const fontEvidence = await page.evaluate((fontRequirements) => {
+			function fontFamilyLooksAvailable(family, weight) {
+				if (["monospace", "serif", "sans-serif", "system-ui", "cursive", "fantasy"].includes(String(family).toLowerCase())) {
+					return document.fonts.check(`${weight} 72px "${family}"`);
+				}
 				const probeText = "WwMm@#%&1234567890ilI|!";
 				const escapedFamily = String(family).replace(/[\\"]/g, "\\\\$&");
 				const probe = document.createElement("span");
@@ -278,7 +323,7 @@ async function main() {
 				for (const element of [probe, baseline]) {
 					element.textContent = probeText;
 					element.style.cssText =
-						"position:absolute;visibility:hidden;white-space:nowrap;font-size:72px;font-weight:400;line-height:1;";
+						`position:absolute;visibility:hidden;white-space:nowrap;font-size:72px;font-weight:${weight};line-height:1;`;
 					document.body.appendChild(element);
 				}
 				try {
@@ -286,7 +331,7 @@ async function main() {
 						probe.style.fontFamily = `"${escapedFamily}", ${fallback}`;
 						baseline.style.fontFamily = fallback;
 						return (
-							document.fonts.check(`16px "${escapedFamily}"`) &&
+							document.fonts.check(`${weight} 72px "${escapedFamily}"`) &&
 							probe.getBoundingClientRect().width !==
 								baseline.getBoundingClientRect().width
 						);
@@ -296,11 +341,28 @@ async function main() {
 					baseline.remove();
 				}
 			}
-			return families.filter((family) => !fontFamilyLooksAvailable(family));
-		}, required);
+			return fontRequirements.map((item) => {
+				const documentFontsCheck = document.fonts.check(
+					`${item.weight} ${item.size}px "${item.family}"`,
+				);
+				const availabilityCheck = fontFamilyLooksAvailable(item.family, item.weight);
+				return {
+					...item,
+					document_fonts_check: documentFontsCheck,
+					availability_check: availabilityCheck,
+					fallback_detected: !availabilityCheck,
+				};
+			});
+		}, requirements);
+		const missingFonts = fontEvidence
+			.filter((item) => item.fallback_detected || !item.document_fonts_check)
+			.map((item) => item.family);
 		report.fonts = {
+			evidence_schema_version: "poster-font-render-proof-v1",
 			determinism_scope: "HOST_SCOPED",
+			document_fonts_ready: true,
 			required_families: required,
+			required: fontEvidence,
 			missing_families: missingFonts,
 		};
 		if (missingFonts.length > 0) {
@@ -309,7 +371,22 @@ async function main() {
 			);
 		}
 
-		const measured = await page.evaluate(pageFitAndMeasure, manifest.fit_policy || {});
+		const measured = await page.evaluate(
+			pageFitAndMeasure,
+			{
+				fitPolicy: manifest.fit_policy || {},
+				fontRequirements: fontEvidence,
+			},
+		);
+		report.fonts.zone_evidence = measured.map((item) => ({
+			zone_id: item.zone_id,
+			requested_font_family: item.requested_font_family,
+			requested_font_weight: item.requested_font_weight,
+			document_fonts_check: item.document_fonts_check,
+			computed_font_family: item.computed_font_family,
+			computed_font_weight: item.computed_font_weight,
+			fallback_detected: item.fallback_detected,
+		}));
 		await page.screenshot({
 			path: outPath,
 			clip: { x: 0, y: 0, width: canvas.w, height: canvas.h },

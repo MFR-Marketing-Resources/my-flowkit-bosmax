@@ -89,6 +89,10 @@ from agent.services.product_strategy_taxonomy_service import (
     require_verified_product_strategy_taxonomy,
     review_product_strategy_taxonomy,
 )
+from agent.services.copywriting_taxonomy_service import (
+    CopywritingTaxonomySelectionError,
+    validate_taxonomy_selection,
+)
 from agent.utils.paths import product_image_path
 
 router = APIRouter(prefix="/products", tags=["products"])
@@ -202,10 +206,12 @@ class ProductPatchRequest(BaseModel):
     local_image_path: str | None = None
     product_type: str | None = None
     product_type_id: str | None = None
+    copywriting_product_type_code: str | None = None
     silo: str | None = None
     trigger_id: str | None = None
     formula: str | None = None
     copywriting_angle: str | None = None
+    copywriting_angle_override_enabled: bool = False
     claim_risk_level: str | None = None
     physics_class: str | None = None
     product_scale: str | None = None
@@ -695,6 +701,16 @@ async def _list_products_response(
         item["source_media_video_count"] = int(counts.get("video", 0) or 0)
         item["open_review_draft"] = open_drafts.get(pid)
 
+    # One shared visual onboarding read model for All Products.  It is strictly
+    # batched over the current page and never materializes URLs or calls a
+    # provider.  A legacy DB without the additive tables remains readable until
+    # the next normal startup migration.
+    from agent.services.product_visual_onboarding_service import (
+        annotate_products_visual_readiness,
+    )
+
+    await annotate_products_visual_readiness(enriched)
+
     return {
         "total_count": total,
         "returned_count": len(enriched),
@@ -1039,11 +1055,57 @@ async def _ensure_intake_intelligence(
     # The exact state this request left behind: the CAS reference point.
     applied_after = await crud.get_product(product_id) or dict(product)
     try:
-        return await ensure_product_intelligence(
+        intelligence = await ensure_product_intelligence(
             product_id,
             evidence_from_product_payload(payload, lane=lane),
             lane=lane,
         )
+        # Product Reference Pack construction is deterministic and provider-free.
+        # A missing/invalid image keeps the pack in a reviewable failure path but
+        # must not roll back an otherwise valid product registration.
+        try:
+            from agent.services.product_reference_pack_service import (
+                ProductReferencePackError,
+                ensure_product_reference_pack,
+            )
+
+            pack = await ensure_product_reference_pack(product_id)
+            intelligence["reference_pack"] = {
+                "pack_id": pack.pack_id,
+                "pack_status": pack.pack_status,
+                "machine_qa_status": pack.machine_qa_status,
+                "created_without_credit": True,
+            }
+        except ProductReferencePackError as pack_exc:
+            intelligence["reference_pack"] = {
+                "pack_status": "PENDING_REVIEW",
+                "error_code": pack_exc.code,
+                "message": pack_exc.message,
+                "created_without_credit": True,
+            }
+        # Visual onboarding is additive and fail-closed: a deterministic
+        # cutout failure never rolls back an otherwise valid registration.
+        try:
+            from agent.services.product_visual_onboarding_service import (
+                ensure_product_visual_onboarding,
+            )
+
+            intelligence["visual_onboarding"] = await ensure_product_visual_onboarding(
+                product_id,
+                reference_pack=intelligence.get("reference_pack"),
+            )
+        except Exception as visual_exc:  # noqa: BLE001 - receipt, not rollback
+            intelligence["visual_onboarding"] = {
+                "product_id": product_id,
+                "cutout_status": "PREPARATION_FAILED",
+                "visual_grounding_status": "VISUAL_GROUNDING_BLOCKED",
+                "exact_commerce_status": "EXACT_COMMERCE_REVIEW_REQUIRED",
+                "failure_code": "VISUAL_ONBOARDING_FAILED",
+                "failure_message": str(visual_exc),
+                "provider_operations": 0,
+                "created_without_credit": True,
+            }
+        return intelligence
     except Exception as exc:  # noqa: BLE001 - compensating
         version_guard = {"updated_at": applied_after.get("updated_at")}
         if created:
@@ -1577,7 +1639,24 @@ async def get_product(product_id: str):
         raise HTTPException(status_code=404, detail="Product not found")
     product = await _refresh_claim_safe_product_row_if_needed(product)
     enriched = await _enrich_product(product, persist=True)
-    return (await attach_product_strategy_taxonomies([enriched]))[0]
+    enriched = (await attach_product_strategy_taxonomies([enriched]))[0]
+    from agent.services.product_visual_onboarding_service import (
+        get_product_visual_readiness,
+    )
+
+    try:
+        enriched["visual_readiness"] = await get_product_visual_readiness(product_id)
+    except Exception as exc:  # noqa: BLE001 - visual readiness is additive to detail
+        enriched["visual_readiness"] = {
+            "product_id": product_id,
+            "visual_grounding_status": "VISUAL_GROUNDING_BLOCKED",
+            "exact_commerce_status": "EXACT_COMMERCE_BLOCKED",
+            "cutout_status": "NOT_PREPARED",
+            "blockers": ["VISUAL_READINESS_UNAVAILABLE"],
+            "warnings": [str(exc)],
+            "provider_operations": 0,
+        }
+    return enriched
 
 
 @router.get(
@@ -1686,7 +1765,71 @@ async def patch_product(product_id: str, data: ProductPatchRequest):
     product = await crud.get_product(product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
-    update_payload = {key: value for key, value in data.model_dump().items() if value is not None and key not in {"image_base64", "image_filename"}}
+    raw_payload = data.model_dump()
+    taxonomy_fields = {
+        "category",
+        "subcategory",
+        "type",
+        "copywriting_angle",
+        "copywriting_product_type_code",
+        "copywriting_angle_override_enabled",
+    }
+    has_taxonomy_edit = bool(data.model_fields_set & taxonomy_fields)
+    update_payload = {
+        key: value
+        for key, value in raw_payload.items()
+        if value is not None
+        and key
+        not in {
+            "image_base64",
+            "image_filename",
+            "copywriting_angle_override_enabled",
+        }
+    }
+    authoritative_taxonomy: dict[str, str] | None = None
+    if has_taxonomy_edit:
+        if "copywriting_angle" in data.model_fields_set and data.copywriting_angle is not None:
+            submitted_angle = data.copywriting_angle.strip()
+        else:
+            submitted_angle = ""
+        try:
+            taxonomy_record = await validate_taxonomy_selection(
+                category=data.category,
+                subcategory=data.subcategory,
+                type_name=data.type,
+                product_type_code=data.copywriting_product_type_code,
+            )
+        except CopywritingTaxonomySelectionError as exc:
+            raise HTTPException(status_code=422, detail=exc.detail) from exc
+        if data.copywriting_angle_override_enabled and not submitted_angle:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error_code": "COPYWRITING_TAXONOMY_OVERRIDE_ANGLE_REQUIRED",
+                },
+            )
+        authoritative_taxonomy = {
+            "category": taxonomy_record["category"],
+            "subcategory": taxonomy_record["subcategory"],
+            "type": taxonomy_record["type"],
+            "copywriting_product_type_code": taxonomy_record[
+                "product_type_code"
+            ],
+            "copywriting_angle": (
+                submitted_angle
+                if data.copywriting_angle_override_enabled
+                else taxonomy_record["copywriting_angle"]
+            ),
+        }
+        update_payload.update(authoritative_taxonomy)
+    elif "copywriting_angle" in data.model_fields_set:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error_code": "COPYWRITING_TAXONOMY_SELECTION_REQUIRED",
+                "message": "Category, subcategory, and type must be selected together.",
+            },
+        )
     if "source" in update_payload:
         update_payload["source"] = _normalize_source(update_payload["source"])
     if "commission_rate" in update_payload:
@@ -1695,7 +1838,15 @@ async def patch_product(product_id: str, data: ProductPatchRequest):
     local_image_path, image_asset_status = await _save_manual_image(product_id, data.image_base64, data.image_filename)
     if local_image_path:
         updated = await crud.update_product(product_id, local_image_path=local_image_path, asset_status=image_asset_status, image_asset_status=image_asset_status)
-    return await _enrich_product(updated, persist=True)
+    enriched = await _enrich_product(updated, persist=True)
+    if authoritative_taxonomy:
+        # The legacy enrichment pipeline has its own heuristic/profile angle
+        # resolver. Reassert the workbook authority after enrichment so a
+        # valid cascade selection cannot be silently remapped by that older
+        # lane.
+        await crud.update_product(product_id, **authoritative_taxonomy)
+        enriched.update(authoritative_taxonomy)
+    return enriched
 
 
 @router.get("/{product_id}/intelligence")
