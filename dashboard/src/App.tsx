@@ -2,6 +2,7 @@ import {
 	Activity,
 	Bot,
 	Briefcase,
+	ChevronDown,
 	Film,
 	FolderOpen,
 	Gauge,
@@ -261,6 +262,46 @@ function Layout() {
 		null,
 	);
 
+	const activeGroupLabel = NAV_GROUPS.find((navGroup) =>
+		navGroup.items.some((item) =>
+			item.exact
+				? location.pathname === item.to
+				: location.pathname.startsWith(item.to),
+		),
+	)?.label;
+
+	const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
+		try {
+			const saved = window.localStorage.getItem("bosmax:navCollapsed");
+			if (saved) return new Set(JSON.parse(saved) as string[]);
+		} catch {
+			/* ignore malformed persisted state */
+		}
+		// First visit: keep only the active group open so the sidebar stays compact.
+		return new Set(
+			NAV_GROUPS.map((navGroup) => navGroup.label).filter(
+				(label) => label !== activeGroupLabel,
+			),
+		);
+	});
+
+	const toggleGroup = (label: string) => {
+		setCollapsedGroups((prev) => {
+			const next = new Set(prev);
+			if (next.has(label)) next.delete(label);
+			else next.add(label);
+			try {
+				window.localStorage.setItem(
+					"bosmax:navCollapsed",
+					JSON.stringify([...next]),
+				);
+			} catch {
+				/* ignore persistence failure */
+			}
+			return next;
+		});
+	};
+
 	const withPortalQuery = (path: string) => {
 		if (!isPortalMode) return path;
 		return `${path}${path.includes("?") ? "&" : "?"}portal=side`;
@@ -388,35 +429,48 @@ function Layout() {
 				</div>
 
 				<nav className="flex-1 overflow-y-auto px-3 space-y-6 pb-6">
-					{NAV_GROUPS.map((group) => (
-						<div key={group.label}>
-							<div className="px-3 mb-2 text-[10px] font-bold tracking-widest text-slate-500 uppercase">
-								{group.label}
+					{NAV_GROUPS.map((group) => {
+						const collapsed = collapsedGroups.has(group.label);
+						return (
+							<div key={group.label}>
+								<button
+									type="button"
+									onClick={() => toggleGroup(group.label)}
+									className="w-full flex items-center justify-between px-3 mb-2 text-[10px] font-bold tracking-widest text-slate-500 uppercase hover:text-slate-300 transition-colors"
+								>
+									{group.label}
+									<ChevronDown
+										size={12}
+										className={`transition-transform duration-200 ${collapsed ? "-rotate-90" : ""}`}
+									/>
+								</button>
+								{!collapsed && (
+									<div className="space-y-1">
+										{group.items.map(({ to, icon: Icon, label, exact }) => (
+											<NavLink
+												key={to}
+												to={withPortalQuery(to)}
+												end={exact}
+												className={({ isActive }) =>
+													`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs transition-all duration-200 group ${
+														isActive
+															? "bg-blue-600/10 text-blue-400 font-medium"
+															: "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+													}`
+												}
+											>
+												<Icon
+													size={14}
+													className="group-hover:scale-110 transition-transform duration-200"
+												/>
+												{label}
+											</NavLink>
+										))}
+									</div>
+								)}
 							</div>
-							<div className="space-y-1">
-								{group.items.map(({ to, icon: Icon, label, exact }) => (
-									<NavLink
-										key={to}
-										to={withPortalQuery(to)}
-										end={exact}
-										className={({ isActive }) =>
-											`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs transition-all duration-200 group ${
-												isActive
-													? "bg-blue-600/10 text-blue-400 font-medium"
-													: "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
-											}`
-										}
-									>
-										<Icon
-											size={14}
-											className="group-hover:scale-110 transition-transform duration-200"
-										/>
-										{label}
-									</NavLink>
-								))}
-							</div>
-						</div>
-					))}
+						);
+					})}
 				</nav>
 
 				<div className="p-4 border-t border-slate-800">
