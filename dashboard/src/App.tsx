@@ -52,7 +52,6 @@ import DashboardPage from "./pages/DashboardPage";
 import ReportingExecutivePage from "./pages/ReportingExecutivePage";
 import ReportingOperationsPage from "./pages/ReportingOperationsPage";
 import GalleryPage from "./pages/GalleryPage";
-import LogsPage from "./pages/LogsPage";
 import OperatorPage from "./pages/OperatorPage";
 import FacelessVideoPage from "./pages/FacelessVideoPage";
 import MontagePage from "./pages/MontagePage";
@@ -192,7 +191,6 @@ const NAV_GROUPS = [
 			{ to: "/prompt-preview", icon: Sparkles, label: "Prompt Preview" },
 			{ to: "/health", icon: Activity, label: "Health" },
 			{ to: "/troubleshoot", icon: Siren, label: "Troubleshoot" },
-			{ to: "/logs", icon: ScrollText, label: "Logs" },
 		],
 	},
 	{
@@ -672,7 +670,6 @@ function Layout() {
 						<Route path="/projects" element={<ProjectsPage />} />
 						<Route path="/projects/:id" element={<ProjectsPage />} />
 						<Route path="/gallery" element={<GalleryPage />} />
-						<Route path="/logs" element={<LogsPage />} />
 						<Route path="/prompt-preview" element={<PromptPreviewPage />} />
 
 						{/* System Routes */}
