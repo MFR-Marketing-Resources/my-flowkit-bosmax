@@ -8,6 +8,18 @@ const AUTO_RUNTIME_RETRY_MS = 5000;
 const LAST_KNOWN_RUNTIME_GRACE_MS = 60000;
 
 const DASHBOARD_ROUTES = {
+	video: {
+		label: "Video Generation",
+		url: `${LOCAL_AGENT_BASE_URL}/operator/t2v?portal=side`,
+	},
+	image: {
+		label: "Image Generation",
+		url: `${LOCAL_AGENT_BASE_URL}/assets/img-fastlane?portal=side`,
+	},
+	poster: {
+		label: "Poster Builder",
+		url: `${LOCAL_AGENT_BASE_URL}/creative/poster-builder?portal=side`,
+	},
 	operator: {
 		label: "Operator Dashboard",
 		url: `${LOCAL_AGENT_BASE_URL}/operator?portal=side`,
