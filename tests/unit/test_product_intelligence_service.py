@@ -813,3 +813,41 @@ async def test_archived_product_fail_closes_mode_readiness_and_preflight():
     assert enriched["mode_readiness"]["Images"]["status"] == "PRODUCT_ARCHIVED"
     assert enriched["preflight"]["blocking_reason"] == "PRODUCT_ARCHIVED"
     assert enriched["preflight"]["safe_to_generate_prompt"] is False
+
+
+async def test_ssot_taxonomy_survives_legacy_enrichment_angle_rewrite(monkeypatch):
+    canonical = {
+        "category": "Home & Living",
+        "subcategory": "Home Decor",
+        "type": "Artificial Flower Bouquets",
+        "product_type_code": "artificial_flowers",
+        "copywriting_angle": (
+            "Decor-led lasting colour, maintenance-free beauty, and event versatility"
+        ),
+    }
+
+    async def fake_validate_taxonomy_selection(**kwargs):
+        assert kwargs["product_type_code"] == canonical["product_type_code"]
+        return canonical
+
+    monkeypatch.setattr(
+        "agent.services.product_intelligence.validate_taxonomy_selection",
+        fake_validate_taxonomy_selection,
+    )
+
+    enriched = await enrich_product(
+        _product(
+            category=canonical["category"],
+            subcategory=canonical["subcategory"],
+            type=canonical["type"],
+            copywriting_product_type_code=canonical["product_type_code"],
+            copywriting_angle="legacy angle that must not win",
+            product_type_id="HOUSEHOLD_CLEANER_GENERAL",
+        )
+    )
+
+    assert enriched["category"] == canonical["category"]
+    assert enriched["subcategory"] == canonical["subcategory"]
+    assert enriched["type"] == canonical["type"]
+    assert enriched["copywriting_product_type_code"] == canonical["product_type_code"]
+    assert enriched["copywriting_angle"] == canonical["copywriting_angle"]
