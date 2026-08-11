@@ -723,6 +723,7 @@ CREATE TABLE IF NOT EXISTS product (
     image_asset_status  TEXT,
     product_type        TEXT,
     product_type_id     TEXT,
+    copywriting_product_type_code TEXT,
     silo                TEXT,
     trigger_id          TEXT,
     formula             TEXT,
@@ -1440,6 +1441,7 @@ CREATE TABLE IF NOT EXISTS product (
     image_asset_status  TEXT,
     product_type        TEXT,
     product_type_id     TEXT,
+    copywriting_product_type_code TEXT,
     silo                TEXT,
     trigger_id          TEXT,
     formula             TEXT,
@@ -1602,6 +1604,68 @@ FROM _product_old
         if "bosmax_product_family" not in product_columns:
             await db.execute("ALTER TABLE product ADD COLUMN bosmax_product_family TEXT")
             logger.info("Migrated: added bosmax_product_family column to product table")
+        if "copywriting_product_type_code" not in product_columns:
+            await db.execute(
+                "ALTER TABLE product ADD COLUMN copywriting_product_type_code TEXT"
+            )
+            logger.info(
+                "Migrated: added copywriting_product_type_code column to product table"
+            )
+
+        # Migration: create/extend the workbook-backed copywriting authority
+        # before its provenance migration runs. Existing rows are retained and
+        # refreshed by the idempotent file-wins seed.
+        await db.execute("""
+CREATE TABLE IF NOT EXISTS copywriting_taxonomy_registry (
+    product_type_code       TEXT PRIMARY KEY,
+    cluster_name            TEXT NOT NULL,
+    display_name            TEXT NOT NULL,
+    category                TEXT NOT NULL,
+    subcategory             TEXT NOT NULL,
+    type                    TEXT NOT NULL,
+    copywriting_angle       TEXT NOT NULL,
+    source_workbook         TEXT NOT NULL,
+    source_sheet            TEXT NOT NULL,
+    source_row              INTEGER NOT NULL,
+    source_category         TEXT,
+    source_subcategory      TEXT,
+    source_type             TEXT,
+    canonicalization_rules_json TEXT NOT NULL DEFAULT '[]',
+    source_header_row       INTEGER NOT NULL DEFAULT 2,
+    authority_version       TEXT NOT NULL DEFAULT 'copywriting-taxonomy-v2',
+    source_sha256           TEXT,
+    registry_status         TEXT NOT NULL DEFAULT 'ACTIVE'
+        CHECK(registry_status IN ('ACTIVE','REVIEW_REQUIRED')),
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE(cluster_name, product_type_code)
+)
+""")
+        taxonomy_columns_cursor = await db.execute(
+            "PRAGMA table_info(copywriting_taxonomy_registry)"
+        )
+        taxonomy_columns = {
+            row[1] for row in await taxonomy_columns_cursor.fetchall()
+        }
+        taxonomy_migrations = {
+            "source_category": "TEXT",
+            "source_subcategory": "TEXT",
+            "source_type": "TEXT",
+            "canonicalization_rules_json": "TEXT NOT NULL DEFAULT '[]'",
+            "source_header_row": "INTEGER NOT NULL DEFAULT 2",
+            "authority_version": "TEXT NOT NULL DEFAULT 'copywriting-taxonomy-v2'",
+            "source_sha256": "TEXT",
+        }
+        for column, definition in taxonomy_migrations.items():
+            if column not in taxonomy_columns:
+                await db.execute(
+                    f"ALTER TABLE copywriting_taxonomy_registry "
+                    f"ADD COLUMN {column} {definition}"
+                )
+                logger.info(
+                    "Migrated: added %s column to copywriting taxonomy registry",
+                    column,
+                )
 
         cursor = await db.execute("SELECT sql FROM sqlite_master WHERE name='batch' AND type='table'")
         batch_sql_row = await cursor.fetchone()
@@ -3373,6 +3437,38 @@ CREATE TABLE IF NOT EXISTS product_strategy_type_registry (
 );
 CREATE INDEX IF NOT EXISTS idx_product_strategy_type_registry_status
     ON product_strategy_type_registry(registry_status, cluster);
+
+-- Workbook-backed Category -> Subcategory -> Type -> Copywriting Angle
+-- authority. This is separate from the cluster/type-group/scene strategy
+-- registry above and is keyed by the SSOT Product Type Code.
+CREATE TABLE IF NOT EXISTS copywriting_taxonomy_registry (
+    product_type_code       TEXT PRIMARY KEY,
+    cluster_name            TEXT NOT NULL,
+    display_name            TEXT NOT NULL,
+    category                TEXT NOT NULL,
+    subcategory             TEXT NOT NULL,
+    type                    TEXT NOT NULL,
+    copywriting_angle       TEXT NOT NULL,
+    source_workbook         TEXT NOT NULL,
+    source_sheet            TEXT NOT NULL,
+    source_row              INTEGER NOT NULL,
+    source_category         TEXT,
+    source_subcategory      TEXT,
+    source_type             TEXT,
+    canonicalization_rules_json TEXT NOT NULL DEFAULT '[]',
+    source_header_row       INTEGER NOT NULL DEFAULT 2,
+    authority_version       TEXT NOT NULL DEFAULT 'copywriting-taxonomy-v2',
+    source_sha256           TEXT,
+    registry_status         TEXT NOT NULL DEFAULT 'ACTIVE'
+        CHECK(registry_status IN ('ACTIVE','REVIEW_REQUIRED')),
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE(cluster_name, product_type_code)
+);
+CREATE INDEX IF NOT EXISTS idx_copywriting_taxonomy_registry_category
+    ON copywriting_taxonomy_registry(category, subcategory, type);
+CREATE INDEX IF NOT EXISTS idx_copywriting_taxonomy_registry_status
+    ON copywriting_taxonomy_registry(registry_status);
 
 -- Official product-strategy taxonomy sidecar. This keeps Product Truth rows
 -- unchanged while giving downstream consumers one durable, review-gated

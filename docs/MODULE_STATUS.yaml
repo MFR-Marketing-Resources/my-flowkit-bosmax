@@ -292,6 +292,18 @@ domains:
       - tests/api/test_product_strategy_taxonomy_api.py
       - tests/api/test_product_registration_review_api.py
       - tests/ui/test_product_strategy_taxonomy_ui_contract.py
+      # Canonical Copywriting Hub taxonomy authority — 313-row strict cascade
+      - agent/authority/copywriting_taxonomy_registry.json
+      - agent/models/copywriting_taxonomy.py
+      - agent/services/copywriting_taxonomy_service.py
+      - agent/api/taxonomy.py
+      - agent/api/products.py
+      - agent/db/schema.py
+      - agent/db/crud.py
+      - agent/main.py
+      - scripts/seed_copywriting_taxonomy_registry.py
+      - tests/unit/test_copywriting_taxonomy_service.py
+      - tests/api/test_taxonomy_api.py
       # P5.5 Dedicated Product Type Registry — standalone operator control room
       - dashboard/src/pages/ProductTypeRegistryPage.tsx
       - dashboard/src/pages/ProductTypeRegistryPage.test.tsx
@@ -707,6 +719,8 @@ domains:
       - dashboard/src/pages/ProductsSalesAnalyzerPage.sourceFilter.test.ts
       - dashboard/src/pages/ProductDetailPage.tsx
       - dashboard/src/pages/ProductDetailPage.test.tsx
+      - dashboard/src/api/taxonomy.ts
+      - dashboard/src/types/index.ts
       - dashboard/src/components/product-registration/ProductKnowledgeResultPanel.tsx
       - dashboard/src/pages/WorkspaceJobsPage.tsx
       - dashboard/src/pages/WorkspaceGenerationPackagesPage.tsx

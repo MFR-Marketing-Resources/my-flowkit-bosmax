@@ -36,6 +36,7 @@ from agent.api.local_agent import (
 )
 from agent.api.operator import router as operator_router
 from agent.api.products import router as products_router
+from agent.api.taxonomy import router as taxonomy_router
 from agent.api.poster_readiness import router as poster_readiness_router
 from agent.api.poster_prompt import router as poster_prompt_router
 from agent.api.poster_copy_sets import router as poster_copy_sets_router
@@ -345,6 +346,7 @@ app.add_middleware(
 )
 
 app.include_router(products_router, prefix="/api")
+app.include_router(taxonomy_router, prefix="/api")
 app.include_router(copywriting_router, prefix="/api")
 app.include_router(poster_readiness_router, prefix="/api")
 app.include_router(poster_prompt_router, prefix="/api")
