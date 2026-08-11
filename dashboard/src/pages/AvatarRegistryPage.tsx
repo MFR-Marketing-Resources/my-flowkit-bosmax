@@ -1000,6 +1000,45 @@ export default function AvatarRegistryPage() {
 		}
 	};
 
+	const [editAvatar, setEditAvatar] = useState<AvatarProfile | null>(null);
+	const [editTags, setEditTags] = useState<string[]>([]);
+	const [editSaving, setEditSaving] = useState(false);
+
+	const openEditAvatar = (avatar: AvatarProfile) => {
+		setError(null);
+		setSuccessMsg(null);
+		setEditAvatar(avatar);
+		setEditTags([...avatar.usage_tags]);
+	};
+
+	const handleEditAvatarSave = async () => {
+		if (!editAvatar) return;
+		setEditSaving(true);
+		setError(null);
+		setSuccessMsg(null);
+		try {
+			const response = await fetch(
+				`/api/workspace/avatar-registry/${encodeURIComponent(editAvatar.avatar_code)}`,
+				{
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ usage_tags: editTags.join("|") }),
+				},
+			);
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data?.detail || `HTTP ${response.status}`);
+			}
+			setSuccessMsg(`Avatar ${editAvatar.avatar_code} dikemas kini.`);
+			setEditAvatar(null);
+			await refresh();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Gagal kemas kini avatar.");
+		} finally {
+			setEditSaving(false);
+		}
+	};
+
 	const handleGenerateImage = async (
 		avatar: AvatarProfile,
 		skipConfirm = false,
@@ -2517,17 +2556,98 @@ export default function AvatarRegistryPage() {
 						},
 					]}
 					rowActions={(a) => (
-						<button
-							type="button"
-							onClick={() => void handleDeleteAvatar(a)}
-							disabled={deletingCode === a.avatar_code}
-							className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-200 hover:bg-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
-						>
-							{deletingCode === a.avatar_code ? "..." : "Delete"}
-						</button>
+						<div className="flex items-center gap-2">
+							<button
+								type="button"
+								onClick={() => openEditAvatar(a)}
+								className="rounded-lg border border-slate-600 bg-slate-800/60 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+							>
+								Edit
+							</button>
+							<button
+								type="button"
+								onClick={() => void handleDeleteAvatar(a)}
+								disabled={deletingCode === a.avatar_code}
+								className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-200 hover:bg-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+							>
+								{deletingCode === a.avatar_code ? "..." : "Delete"}
+							</button>
+						</div>
 					)}
 				/>
 			</section>
+			{editAvatar && (
+				<div
+					className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4"
+					onClick={() => {
+						if (!editSaving) setEditAvatar(null);
+					}}
+				>
+					<div
+						className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl"
+						onClick={(e) => e.stopPropagation()}
+					>
+						<div className="mb-1 text-sm font-semibold text-slate-100">
+							Edit avatar metadata
+						</div>
+						<div className="mb-4 text-xs text-slate-400">
+							{editAvatar.character_name} ·{" "}
+							<span className="font-mono">{editAvatar.avatar_code}</span>
+							<div className="mt-1 text-slate-500">
+								Identiti (skin/hair/wardrobe/expression) kekal — hanya usage tags
+								boleh diubah.
+							</div>
+						</div>
+						<div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+							Usage Tags
+						</div>
+						<div className="mb-4 flex flex-wrap gap-2">
+							{(vocab?.usage_tags ?? []).map((tag) => {
+								const checked = editTags.includes(tag);
+								return (
+									<button
+										key={tag}
+										type="button"
+										onClick={() =>
+											setEditTags((prev) =>
+												checked
+													? prev.filter((t) => t !== tag)
+													: [...prev, tag],
+											)
+										}
+										className={`rounded-full border px-3 py-1 text-xs font-medium ${checked ? "border-blue-400/60 bg-blue-500/15 text-blue-200" : "border-slate-700 bg-slate-950 text-slate-400 hover:border-slate-500"}`}
+									>
+										{tag}
+									</button>
+								);
+							})}
+						</div>
+						{editTags.length === 0 && (
+							<div className="mb-3 text-xs text-amber-300">
+								Pilih sekurang-kurangnya 1 usage tag.
+							</div>
+						)}
+						<div className="flex justify-end gap-2">
+							<button
+								type="button"
+								onClick={() => setEditAvatar(null)}
+								disabled={editSaving}
+								className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+							>
+								Batal
+							</button>
+							<button
+								type="button"
+								onClick={() => void handleEditAvatarSave()}
+								disabled={editSaving || editTags.length === 0}
+								className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-40"
+							>
+								{editSaving ? "Menyimpan..." : "Simpan"}
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }
