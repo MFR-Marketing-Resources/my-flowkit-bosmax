@@ -297,4 +297,29 @@ describe("ProductVisualReadinessPanel", () => {
 		const helper = screen.getByTestId("canva-helper");
 		expect(helper.textContent || "").not.toMatch(/auto/i);
 	});
+
+	it("marks the approved candidate as official and offers Set as Official on the others", () => {
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={approvedAuto} />);
+		// approved auto card carries the official marker and no redundant action
+		expect(screen.getByTestId("official-ribbon-auto")).toBeInTheDocument();
+		expect(screen.queryByTestId("set-official-auto")).not.toBeInTheDocument();
+		// the non-official cards expose an explicit Set as Official control
+		expect(screen.getByTestId("set-official-original")).toBeInTheDocument();
+		expect(screen.getByTestId("set-official-manual")).toBeInTheDocument();
+	});
+
+	it("enables Set as Official only on the live candidate card", () => {
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={trustedSourcePendingAuto} />);
+		// original is the current reference -> ribbon, not a button
+		expect(screen.getByTestId("official-ribbon-original")).toBeInTheDocument();
+		// auto is the active pending candidate -> actionable
+		expect(screen.getByTestId("set-official-auto")).toBeEnabled();
+		// manual has no uploaded candidate -> its action is disabled
+		expect(screen.getByTestId("set-official-manual")).toBeDisabled();
+	});
+
+	it("states the transparent-PNG requirement for manual upload", () => {
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={perLaneBusy} />);
+		expect(screen.getByText(/transparent background/i)).toBeInTheDocument();
+	});
 });
