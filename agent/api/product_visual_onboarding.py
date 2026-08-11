@@ -20,7 +20,9 @@ from agent import config
 from agent.db import crud
 from agent.services.product_visual_onboarding_service import (
     ProductVisualOnboardingError,
+    clear_product_cutout_target,
     get_product_visual_readiness,
+    set_product_cutout_target,
     get_product_cutout_history,
     preview_bulk_cutout_preparation,
     prepare_product_cutout,
@@ -65,6 +67,18 @@ class CutoutDecisionRequest(BaseModel):
 
     operator: str = Field(min_length=1, max_length=200)
     reason: str = Field(min_length=1, max_length=2000)
+
+
+class CutoutTargetRequest(BaseModel):
+    """Operator-selected product ROI in source pixels (x, y, width, height)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    x: int = Field(ge=0)
+    y: int = Field(ge=0)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    selected_by: str = Field(default="operator", min_length=1, max_length=200)
 
 
 CanvaCapabilityStatus = Literal["READY", "UNAVAILABLE", "UNKNOWN", "PRO_REQUIRED", "USER_ACTION_REQUIRED"]
@@ -495,5 +509,35 @@ async def prepare_visual_cutout(product_id: str):
 async def rebuild_visual_cutout(product_id: str):
     try:
         return await prepare_product_cutout(product_id, force=True)
+    except ProductVisualOnboardingError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/{product_id}/cutout/target")
+async def get_visual_cutout_target(product_id: str):
+    """Read-only readiness (includes the current target_region, if any)."""
+    try:
+        return await get_product_visual_readiness(product_id)
+    except ProductVisualOnboardingError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/{product_id}/cutout/target")
+async def set_visual_cutout_target(product_id: str, request: CutoutTargetRequest):
+    """Persist the operator-selected product ROI (validated vs current source)."""
+    try:
+        return await set_product_cutout_target(
+            product_id, x=request.x, y=request.y, width=request.width,
+            height=request.height, selected_by=request.selected_by,
+        )
+    except ProductVisualOnboardingError as exc:
+        raise _error(exc) from exc
+
+
+@router.delete("/{product_id}/cutout/target")
+async def clear_visual_cutout_target(product_id: str):
+    """Clear the operator ROI target (reset)."""
+    try:
+        return await clear_product_cutout_target(product_id)
     except ProductVisualOnboardingError as exc:
         raise _error(exc) from exc

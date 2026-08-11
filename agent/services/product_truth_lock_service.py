@@ -1161,10 +1161,12 @@ async def approve_product_truth_lock(
         request.confirm_identity
         and request.confirm_label_logo
         and request.confirm_geometry_scale
+        and request.confirm_product_isolation
     ):
         raise ProductTruthLockError(
             "HUMAN_REVIEW_CONFIRMATION_REQUIRED",
-            "Identity, label/logo, and geometry/scale confirmations are all required.",
+            "Identity, label/logo, geometry/scale, and product-isolation "
+            "confirmations are all required.",
             status_code=409,
         )
     lock = load_product_truth_lock(product_id)
@@ -1199,6 +1201,7 @@ async def approve_product_truth_lock(
             "approved_at": reviewed_at,
             "active_selection": ACTIVE_CANONICAL_CUTOUT,
             "human_review_required": False,
+            "confirm_product_isolation": request.confirm_product_isolation,
         }
     )
     candidate = lock.model_copy(
