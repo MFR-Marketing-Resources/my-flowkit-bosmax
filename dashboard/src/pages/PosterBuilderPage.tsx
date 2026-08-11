@@ -1466,10 +1466,10 @@ export function PosterBuilderLegacyPanel() {
 						</>
 					) : null}
 
-					<section className="rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
-						<h3 className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
-							Draft JSON preview
-						</h3>
+					<details className="rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
+						<summary className="cursor-pointer text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500 hover:text-slate-300">
+							Draft JSON preview (technical)
+						</summary>
 						<pre className="mt-2 max-h-64 overflow-auto text-[10px] text-slate-400">
 							{JSON.stringify(
 								{
@@ -1487,7 +1487,7 @@ export function PosterBuilderLegacyPanel() {
 								2,
 							)}
 						</pre>
-					</section>
+					</details>
 				</>
 			) : null}
 			{posterGenConfirm ? (
