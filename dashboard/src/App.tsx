@@ -82,6 +82,7 @@ const NAV_GROUPS = [
 			{ to: "/operator/img", icon: ImageIcon, label: "Image Gen" },
 			{ to: "/operator/faceless", icon: Film, label: "Faceless Video" },
 			{ to: "/operator/montage", icon: Layers, label: "Montage" },
+			{ to: "/production-studio", icon: Video, label: "Production Studio" },
 		],
 	},
 	{
@@ -95,7 +96,6 @@ const NAV_GROUPS = [
 	{
 		label: "PRODUCTION",
 		items: [
-			{ to: "/production-studio", icon: Video, label: "Production Studio" },
 			{ to: "/postiz", icon: Send, label: "Postiz Publish" },
 			{ to: "/workspace/jobs", icon: Activity, label: "Workspace Jobs" },
 		],
