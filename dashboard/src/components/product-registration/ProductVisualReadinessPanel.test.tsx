@@ -1,6 +1,22 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const { fetchProductVisualReadinessMock, uploadManualProductCutoutMock } = vi.hoisted(() => ({
+	fetchProductVisualReadinessMock: vi.fn(),
+	uploadManualProductCutoutMock: vi.fn(),
+}));
+
+vi.mock("../../api/productVisualOnboarding", async () => {
+	const actual = await vi.importActual<typeof import("../../api/productVisualOnboarding")>(
+		"../../api/productVisualOnboarding",
+	);
+	return {
+		...actual,
+		fetchProductVisualReadiness: fetchProductVisualReadinessMock,
+		uploadManualProductCutout: uploadManualProductCutoutMock,
+	};
+});
 
 import ProductVisualReadinessPanel from "./ProductVisualReadinessPanel";
 import type { ProductVisualReadiness } from "../../types";
@@ -136,6 +152,8 @@ describe("ProductVisualReadinessPanel", () => {
 	afterEach(() => {
 		cleanup();
 		vi.unstubAllGlobals();
+		fetchProductVisualReadinessMock.mockReset();
+		uploadManualProductCutoutMock.mockReset();
 	});
 
 	it("shows the four visual readiness gates and keeps approval explicit", () => {
@@ -321,5 +339,73 @@ describe("ProductVisualReadinessPanel", () => {
 	it("states the transparent-PNG requirement for manual upload", () => {
 		render(<ProductVisualReadinessPanel productId="product-1" readiness={perLaneBusy} />);
 		expect(screen.getByText(/transparent background/i)).toBeInTheDocument();
+	});
+
+	it("re-reads after Replace Manual Cutout, reloads the preview, and enables the official action", async () => {
+		const replacementPending: ProductVisualReadiness = {
+			...approvedManual,
+			cutout_status: "PENDING_REVIEW",
+			cutout_review_status: "PENDING_REVIEW",
+			manual_cutout_status: "PENDING_REVIEW",
+			active_visual_source: "SAME_PRODUCT_TRUSTED_SOURCE",
+			current_system_visual: {
+				card: "ORIGINAL_SOURCE",
+				label: "Original Source",
+				status: "ORIGINAL_FALLBACK",
+			},
+			cutout_media_id: "same-media-id",
+			attempt_count: 1,
+			can_upload_manual_cutout: true,
+			can_review_cutout: true,
+			can_approve_cutout: true,
+		};
+		uploadManualProductCutoutMock.mockResolvedValue(approvedManual);
+		fetchProductVisualReadinessMock.mockResolvedValue(replacementPending);
+
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={approvedManual} showApprovalForm />);
+		const before = screen.getByAltText("Manual / Canva cutout").getAttribute("src");
+		const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+
+		fireEvent.change(input, {
+			target: {
+				files: [new File(["replacement"], "replacement.png", { type: "image/png" })],
+			},
+		});
+
+		await waitFor(() => expect(screen.getByTestId("manual-upload-message")).toHaveTextContent(/replaced the previously-approved cutout/i));
+		expect(fetchProductVisualReadinessMock).toHaveBeenCalledWith("product-1");
+		expect(screen.getByTestId("set-official-manual")).toBeEnabled();
+		expect(screen.queryByTestId("official-ribbon-manual")).not.toBeInTheDocument();
+		expect(screen.getByTestId("current-system-visual")).toHaveTextContent("Original Source");
+		expect(screen.getByAltText("Manual / Canva cutout").getAttribute("src")).not.toBe(before);
+		expect(screen.getByAltText("Manual / Canva cutout").getAttribute("src")).toContain("v=1-");
+	});
+
+	it("provides a read-only Refresh preview control", async () => {
+		fetchProductVisualReadinessMock.mockResolvedValue(trustedSourcePendingAuto);
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={trustedSourcePendingAuto} />);
+
+		fireEvent.click(screen.getByTestId("refresh-visual-preview"));
+
+		await waitFor(() => expect(fetchProductVisualReadinessMock).toHaveBeenCalledWith("product-1"));
+		expect(screen.getByTestId("refresh-visual-preview")).toHaveTextContent("Refresh preview");
+	});
+
+	it("shows a URL-only Original Source without promoting it to trusted", () => {
+		const displayOnly: ProductVisualReadiness = {
+			...missingSource,
+			original_display_url: "https://example.test/kaxier.jpg",
+			original_display_source: "PRODUCT_ROW_IMAGE_URL",
+			original_display_trust_status: "DISPLAY_ONLY",
+			can_upload_manual_cutout: true,
+			can_open_source: true,
+		};
+
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={displayOnly} />);
+
+		expect(screen.getByAltText("Original Source cutout")).toHaveAttribute("src", expect.stringContaining("https://example.test/kaxier.jpg"));
+		expect(screen.getByTestId("original-display-only")).toHaveTextContent("not yet prepared as trusted source");
+		expect(screen.getByRole("button", { name: "Upload My Cutout" })).toBeEnabled();
+		expect(screen.getByTestId("set-official-original")).toBeDisabled();
 	});
 });

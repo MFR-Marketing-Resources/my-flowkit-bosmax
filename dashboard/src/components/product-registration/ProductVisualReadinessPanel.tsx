@@ -70,6 +70,7 @@ const CANVA_OPERATOR_STAGES = ["OPENING_CANVA", "MAGIC_GRAB", "BACKGROUND_REMOVE
 // action (so button labels stay precise); `busyLane` is derived for the
 // enable/disable logic so e.g. an Auto prepare/rebuild never disables Upload.
 type BusyAction =
+	| "refresh"
 	| "prepare"
 	| "rebuild"
 	| "upload"
@@ -82,8 +83,9 @@ type BusyAction =
 	| "fallback"
 	| "target-save"
 	| "target-clear";
-type BusyLane = "auto" | "manual" | "canva" | "review" | "fallback" | "target";
+type BusyLane = "refresh" | "auto" | "manual" | "canva" | "review" | "fallback" | "target";
 const BUSY_LANE: Record<BusyAction, BusyLane> = {
+	refresh: "refresh",
 	prepare: "auto",
 	rebuild: "auto",
 	upload: "manual",
@@ -388,6 +390,7 @@ export default function ProductVisualReadinessPanel({
 	const [confirmLabelLogo, setConfirmLabelLogo] = useState(false);
 	const [confirmGeometryScale, setConfirmGeometryScale] = useState(false);
 	const [confirmProductIsolation, setConfirmProductIsolation] = useState(false);
+	const [previewRevision, setPreviewRevision] = useState(0);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const canvaFileInputRef = useRef<HTMLInputElement>(null);
 	const approveRef = useRef<HTMLDivElement>(null);
@@ -407,6 +410,12 @@ export default function ProductVisualReadinessPanel({
 	});
 
 	const busyLane: BusyLane | null = busy ? BUSY_LANE[busy] : null;
+
+	function commitReadiness(next: ProductVisualReadiness) {
+		setReadiness(next);
+		setPreviewRevision((value) => value + 1);
+		onChanged?.(next);
+	}
 
 	useEffect(() => {
 		setReadiness(initialReadiness);
@@ -443,10 +452,21 @@ export default function ProductVisualReadinessPanel({
 			const next = action === "prepare"
 				? await prepareProductCutout(productId)
 				: await rebuildProductCutout(productId);
-			setReadiness(next);
-			onChanged?.(next);
+			commitReadiness(next);
 		} catch (err: unknown) {
 			setError(err instanceof Error ? err.message : "Visual preparation failed");
+		} finally {
+			setBusy(null);
+		}
+	}
+
+	async function refreshReadiness() {
+		setBusy("refresh");
+		setError(null);
+		try {
+			commitReadiness(await fetchProductVisualReadiness(productId));
+		} catch (err: unknown) {
+			setError(err instanceof Error ? err.message : "Visual preview refresh failed");
 		} finally {
 			setBusy(null);
 		}
@@ -469,8 +489,7 @@ export default function ProductVisualReadinessPanel({
 				confirm_product_isolation: confirmProductIsolation,
 			});
 			const next = await fetchProductVisualReadiness(productId);
-			setReadiness(next);
-			onChanged?.(next);
+			commitReadiness(next);
 		} catch (err: unknown) {
 			setError(err instanceof Error ? err.message : "Approval failed");
 		} finally {
@@ -491,9 +510,21 @@ export default function ProductVisualReadinessPanel({
 		setError(null);
 		setManualMsg(null);
 		try {
-			const next = await uploadManualProductCutout(productId, file, reviewedBy.trim() || "operator");
-			setReadiness(next);
-			onChanged?.(next);
+			const uploaded = await uploadManualProductCutout(productId, file, reviewedBy.trim() || "operator");
+			let next = uploaded;
+			try {
+				// The upload response is a write receipt. Read the authoritative
+				// readiness once more so a lagging response cannot leave the card,
+				// candidate state, or official action stale.
+				next = await fetchProductVisualReadiness(productId);
+			} catch (refreshErr: unknown) {
+				setError(
+					refreshErr instanceof Error
+						? `Upload succeeded, but the latest preview could not be read: ${refreshErr.message}. Use Refresh preview.`
+						: "Upload succeeded, but the latest preview could not be read. Use Refresh preview.",
+				);
+			}
+			commitReadiness(next);
 			setManualMsg({
 				tone: "ok",
 				text: wasOfficial
@@ -523,6 +554,7 @@ export default function ProductVisualReadinessPanel({
 
 	function applyCanvaEnvelope(envelope: { workflow: CanvaCutoutWorkflow; readiness: ProductVisualReadiness }) {
 		setCanvaWorkflow(envelope.workflow);
+		setPreviewRevision((value) => value + 1);
 		setReadiness(envelope.readiness);
 		if (envelope.workflow.canva_method && envelope.workflow.canva_method !== "UNSELECTED") setCanvaMethod(envelope.workflow.canva_method as CanvaMethod);
 		setCanvaDesignId(envelope.workflow.design_id || "");
@@ -617,8 +649,7 @@ export default function ProductVisualReadinessPanel({
 		setError(null);
 		try {
 			const next = await rejectProductCutout(productId, operator, reason);
-			setReadiness(next);
-			onChanged?.(next);
+			commitReadiness(next);
 		} catch (err: unknown) {
 			setError(err instanceof Error ? err.message : "Cutout rejection failed");
 		} finally {
@@ -637,8 +668,7 @@ export default function ProductVisualReadinessPanel({
 		setError(null);
 		try {
 			const next = await useOriginalProductFallback(productId, operator, reason);
-			setReadiness(next);
-			onChanged?.(next);
+			commitReadiness(next);
 		} catch (err: unknown) {
 			setError(err instanceof Error ? err.message : "Fallback selection failed");
 		} finally {
@@ -651,8 +681,7 @@ export default function ProductVisualReadinessPanel({
 		setError(null);
 		try {
 			const next = await setProductCutoutTarget(productId, { ...roi, selected_by: reviewedBy.trim() || "operator" });
-			setReadiness(next);
-			onChanged?.(next);
+			commitReadiness(next);
 		} catch (err: unknown) {
 			setError(err instanceof Error ? err.message : "Product area could not be saved");
 		} finally {
@@ -665,8 +694,7 @@ export default function ProductVisualReadinessPanel({
 		setError(null);
 		try {
 			const next = await clearProductCutoutTarget(productId);
-			setReadiness(next);
-			onChanged?.(next);
+			commitReadiness(next);
 		} catch (err: unknown) {
 			setError(err instanceof Error ? err.message : "Product area could not be cleared");
 		} finally {
@@ -690,7 +718,7 @@ export default function ProductVisualReadinessPanel({
 	// Cache-bust preview URLs: the path is stable per variant, so without a
 	// version query the browser shows a stale (or empty) image after a rebuild /
 	// upload / approval. Any candidate change flips this token and forces reload.
-	const previewVersion = `${readiness.cutout_media_id ?? ""}-${readiness.attempt_count ?? 0}-${readiness.auto_cutout_status}-${readiness.manual_cutout_status}-${readiness.active_visual_source}`;
+	const previewVersion = `${previewRevision}-${readiness.cutout_media_id ?? ""}-${readiness.attempt_count ?? 0}-${readiness.auto_cutout_status}-${readiness.manual_cutout_status}-${readiness.active_visual_source}`;
 	const withBust = (u: string | null | undefined): string | null | undefined =>
 		u ? `${u}${u.includes("?") ? "&" : "?"}v=${encodeURIComponent(previewVersion)}` : u;
 	const isOfficialCard = (k: CardKey): boolean => cardBadges[k].some((b) => CURRENT_MARKERS.has(b));
@@ -701,7 +729,9 @@ export default function ProductVisualReadinessPanel({
 			: readiness.auto_cutout_status === "PENDING_REVIEW"
 				? "auto"
 				: null;
-	const roiImageUrl = readiness.original_preview_url || productSourceUrl || null;
+	const originalDisplayUrl = readiness.original_display_url || readiness.original_preview_url || null;
+	const roiImageUrl = originalDisplayUrl || productSourceUrl || null;
+	const originalDisplayOnly = readiness.original_display_trust_status === "DISPLAY_ONLY";
 	const showProductArea = Boolean(roiImageUrl) && (readiness.target_selection_required || readiness.target_selection_available);
 
 	const canvaController = Boolean(canvaWorkflow?.current_stage) && canvaWorkflow?.current_stage !== "NOT_STARTED";
@@ -765,11 +795,22 @@ export default function ProductVisualReadinessPanel({
 						</p>
 					)}
 				</div>
-				{readiness.provider_operations === 0 && (
-					<span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-widest text-emerald-300">
-						No provider spend
-					</span>
-				)}
+				<div className="flex flex-wrap items-center gap-2">
+					{readiness.provider_operations === 0 && (
+						<span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-widest text-emerald-300">
+							No provider spend
+						</span>
+					)}
+					<button
+						type="button"
+						onClick={() => void refreshReadiness()}
+						disabled={busyLane === "refresh"}
+						className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-300 transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+						data-testid="refresh-visual-preview"
+					>
+						{busy === "refresh" ? "Refreshing…" : "Refresh preview"}
+					</button>
+				</div>
 			</div>
 
 			<div className={`mt-3 grid gap-2 ${compact ? "grid-cols-2" : "grid-cols-2 md:grid-cols-4"}`}>
@@ -807,7 +848,7 @@ export default function ProductVisualReadinessPanel({
 			{!compact && (
 				<div className="mt-4 grid gap-3 md:grid-cols-3" data-testid="product-cutout-comparison">
 					{([
-						["Original Source", readiness.original_preview_url, "original", "card-badge-original"],
+						["Original Source", originalDisplayUrl, "original", "card-badge-original"],
 						["Auto Cutout", readiness.auto_cutout_preview_url, "auto", "card-badge-auto"],
 						["Manual / Canva", readiness.manual_cutout_preview_url, "manual", "card-badge-manual"],
 					] as const).map(([name, src, key, testid]) => {
@@ -832,6 +873,11 @@ export default function ProductVisualReadinessPanel({
 								<div className="mt-2 flex h-36 items-center justify-center rounded bg-white" style={{ backgroundImage: "linear-gradient(45deg,#d1d5db 25%,transparent 25%),linear-gradient(-45deg,#d1d5db 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#d1d5db 75%),linear-gradient(-45deg,transparent 75%,#d1d5db 75%)", backgroundSize: "16px 16px", backgroundPosition: "0 0,0 8px,8px -8px,-8px 0" }}>
 									{src ? <img src={withBust(src) ?? undefined} alt={`${name} cutout`} className="max-h-full max-w-full object-contain" /> : <span className="text-[10px] text-slate-500">Not available</span>}
 								</div>
+								{key === "original" && originalDisplayOnly && src && (
+									<div className="mt-1 text-center text-[8px] font-semibold uppercase tracking-widest text-amber-300/80" data-testid="original-display-only">
+										Display source · not yet prepared as trusted source
+									</div>
+								)}
 								<div className="mt-2">
 									{official ? (
 										<div className="rounded-lg bg-emerald-500/10 px-2 py-1.5 text-center text-[9px] font-bold uppercase tracking-widest text-emerald-300">Current system reference</div>

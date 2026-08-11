@@ -197,6 +197,34 @@ def test_reference_pack_canonical_source_restores_missing_product_cache(tmp_path
     assert resolved.height == 800
 
 
+def test_registered_product_source_media_is_same_product_reference(tmp_path, monkeypatch):
+    source = tmp_path / "registered-source.png"
+    Image.new("RGB", (320, 240), color=(40, 90, 120)).save(source, format="PNG")
+    from agent.services import product_visual_grounding_resolver as module
+
+    monkeypatch.setattr(module, "resolve_schema_entry", lambda _product: None)
+    monkeypatch.setattr(
+        module,
+        "_find_registered_product_source_media",
+        lambda _product_id, _media_id: {
+            "media_id": "source-media-1",
+            "product_id": "product-1",
+            "kind": "image",
+            "local_path": str(source),
+        },
+    )
+
+    resolved = module.resolve_product_reference_image(
+        {"id": "product-1", "media_id": "source-media-1"},
+        prefer_approved_cutout=False,
+    )
+
+    assert resolved.source_type == "PRODUCT_SOURCE_MEDIA"
+    assert resolved.media_id == "source-media-1"
+    assert resolved.local_path == str(source)
+    assert resolved.validation_status == "VALIDATED"
+
+
 def test_purged_alias_cannot_receive_schema_visual_fallback(monkeypatch):
     from agent.services import product_visual_grounding_resolver as module
 
