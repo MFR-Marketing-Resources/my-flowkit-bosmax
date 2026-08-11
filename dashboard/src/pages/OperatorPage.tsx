@@ -42,17 +42,13 @@ import CreativeDirectionSection, {
 } from "../components/workspace/CreativeDirectionSection";
 import IMGModule from "../components/workspace/IMGModule";
 import {
-	OperatorCockpit,
-	QueueRow,
 	ResolvedChip,
 	StoryboardStrip,
 	WorkflowStep,
 } from "../components/workflow";
-import type {
-	CockpitPlanRow,
-	WorkflowStepStatus,
-} from "../components/workflow";
+import type { WorkflowStepStatus } from "../components/workflow";
 import SceneStrategySummary from "../components/workspace/SceneStrategySummary";
+import ResultsSidebar, { type SessionResult } from "../components/workspace/ResultsSidebar";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import VisualAssetPicker from "../components/workspace/VisualAssetPicker";
 import type {
@@ -817,6 +813,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	});
 	// Finished artifact preview — rendered inline the moment a job completes so the
 	// operator never has to back-button/reload to find out the video is ready.
+	const [sessionResults, setSessionResults] = useState<SessionResult[]>([]);
 	const [completedArtifact, setCompletedArtifact] = useState<{
 		mediaId: string;
 		url: string;
@@ -1313,6 +1310,14 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							kind: job.artifact === "image" ? "image" : "video",
 							sizeMb: job.size_mb != null ? String(job.size_mb) : null,
 						});
+						setSessionResults((prev) => [
+							{
+								media_id: mediaId,
+								kind: job.artifact === "image" ? "image" : "video",
+								size_mb: job.size_mb ?? null,
+							},
+							...prev.filter((r) => r.media_id !== mediaId),
+						]);
 					}
 					setNotice({
 						tone: "success",
@@ -1458,7 +1463,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				setNotice({
 					tone: "info",
 					title: `${data.mode} running — video sedang dijana (±3–8 min), biar page ini terbuka`,
-					detail: `Stage: ${stageLabel}${stageMessage ? ` — ${stageMessage}` : ""} · Nota: tiada apa akan bergerak dalam tab Google Flow — penjanaan berjalan melalui API dan video muncul di sini bila siap.`,
+					detail: `Stage: ${stageLabel}${stageMessage ? ` — ${stageMessage}` : ""} · Note: nothing moves in the Google Flow tab — generation runs via API and the video appears here when it's ready.`,
 					requestId: manualRequestId,
 				});
 				pollTimerRef.current = window.setTimeout(() => {
@@ -2150,83 +2155,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					: undefined,
 			}),
 		);
-		const cockpitState: "idle" | "online" | "running" | "done" =
-			isLoadingPreview || isLoadingPackage
-				? "running"
-				: workspacePackage
-					? "done"
-					: selectedProduct
-						? "online"
-						: "idle";
-		const plan: CockpitPlanRow[] = isImageMode
-			? [
-					{ k: "Lane", v: "IMG", mono: true },
-					{
-						k: "Product",
-						v: selectedProduct?.product_display_name ?? "Manual reference",
-					},
-				  ]
-			: [
-					{
-						k: "Angle",
-						v: copyBound ? "Copy set bound" : "Fallback copy",
-						tone: copyBound ? "good" : "muted",
-					},
-					{ k: "Presenter", v: presenterLabel },
-					{ k: "Scene → camera", v: sceneCameraLabel, mono: true },
-					{ k: "Length", v: lengthLabel },
-					{
-						k: "Engine · model",
-						v: `${currentEngine?.label ?? selectedEngineId} · ${videoModel}`,
-					},
-			  ];
-		// Free prepare flow only — the live, credit-bearing fire stays in the
-		// NativeExtendPanel below (unchanged gates). The cockpit never spends credits.
-		const cockpitGenerate = isImageMode
-			? {
-					label: "Use Image setup below",
-					disabled: true,
-					onClick: () => {},
-					note: "the IMG control remains the operator gate",
-			  }
-			: !productReady
-			? {
-					label: "Select a ready product",
-					disabled: true,
-					onClick: () => {},
-					note: "pick a READY product to begin",
-				}
-			: extendTotalRequired
-				? {
-						label: "Set length first",
-						disabled: true,
-						onClick: () => {},
-						note: "Extended video needs a total duration",
-					}
-				: !previewPackage
-					? {
-							label: isLoadingPreview ? "Compiling…" : "Compile preview",
-							loading: isLoadingPreview,
-							disabled: backendRuntimeStale,
-							onClick: () => void handleLoadPreview(),
-							note: "compiles the prompt · no credits",
-						}
-					: !workspacePackage
-						? {
-								label: isLoadingPackage
-									? "Preparing…"
-									: "Prepare final prompt",
-								loading: isLoadingPackage,
-								disabled: showFallbackConfirm || backendRuntimeStale,
-								onClick: () => void handleGeneratePackage(),
-								note: "saves the execution package · no credits",
-							}
-						: {
-								label: "Prepared ✓ — generate below",
-								disabled: true,
-								onClick: () => {},
-								note: "credits only when you press Generate video",
-							};
 
 		const s1: WorkflowStepStatus = selectedProduct
 			? productReady
@@ -3026,8 +2954,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 
 					{/* Operator cockpit rail — also the video review screen once a job
 					    completes (a quick look here without leaving for the Library). */}
-					<div className="w-full lg:w-80 lg:flex-none">
-						<div className="space-y-4 lg:sticky lg:top-4">
+					<div className="w-full lg:w-80 lg:flex-none lg:min-h-0 lg:overflow-y-auto">
+						<div className="space-y-4">
 							{completedArtifact ? (
 								<div className="overflow-hidden rounded-2xl border border-emerald-500/40 bg-emerald-500/10 shadow-lg shadow-black/20">
 									<div className="flex items-center justify-between gap-2 border-b border-emerald-500/20 px-3 py-2">
@@ -3078,60 +3006,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									</div>
 								</div>
 							) : null}
-							<OperatorCockpit
-								laneLabel={laneTitle}
-								status={{
-									label:
-										cockpitState === "running"
-											? "Working"
-											: cockpitState === "done"
-												? "Prepared"
-												: cockpitState === "online"
-													? "Ready"
-													: "Idle",
-									state: cockpitState,
-								}}
-								product={
-									selectedProduct
-										? {
-												name: selectedProduct.product_display_name,
-												sub:
-													selectedProduct.strategy_taxonomy?.cluster ??
-													undefined,
-											}
-										: undefined
+							<ResultsSidebar
+								results={sessionResults}
+								generating={isExecuting}
+								libraryHref={isImageMode ? "/library/images" : "/library/videos"}
+								onRemoved={(mediaId) =>
+									setSessionResults((prev) =>
+										prev.filter((r) => r.media_id !== mediaId),
+									)
 								}
-								plan={selectedProduct ? plan : undefined}
-								queueTitle="Storyboard"
-								generate={cockpitGenerate}
-								debug={
-									<div className="space-y-1">
-										<div>
-										mode {mode} · {isImageMode ? "IMAGE" : isExtendMode ? "EXTEND" : "SINGLE"}
-										</div>
-										{workspacePackage ? (
-											<div className="break-all">
-												pkg {workspacePackage.workspace_execution_package_id}
-											</div>
-										) : null}
-									</div>
-								}
-							>
-								{storyboardShots.length ? (
-									storyboardShots.slice(0, 4).map((shot) => (
-										<QueueRow
-											key={shot.id}
-											title={shot.label}
-											sub={shot.sub}
-											status={workspacePackage ? "ready" : "queued"}
-										/>
-									))
-								) : (
-									<p className="text-[11px] text-slate-500">
-										Compile a preview to see the shot list.
-									</p>
-								)}
-							</OperatorCockpit>
+							/>
 						</div>
 					</div>
 				</div>
@@ -4416,8 +4300,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					<div className="mb-3 flex items-center justify-between">
 						<div className="font-semibold tracking-wide text-emerald-200">
 							{completedArtifact.kind === "video"
-								? "🎬 Video siap"
-								: "🖼 Imej siap"}
+								? "🎬 Video ready"
+								: "🖼 Image ready"}
 							{completedArtifact.sizeMb
 								? ` — ${completedArtifact.sizeMb}MB`
 								: ""}

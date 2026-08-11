@@ -4,6 +4,7 @@ import { deleteImageArtifact } from "../../api/imgFactory";
 export interface SessionResult {
 	media_id: string;
 	size_mb?: number | null;
+	kind?: "image" | "video";
 }
 
 interface ResultsSidebarProps {
@@ -62,8 +63,7 @@ export default function ResultsSidebar({
 				{title}
 			</div>
 			<p className="text-[10px] text-slate-500">
-				Images are credit-free (only video costs credits). Results appear here
-				automatically when ready.
+				Results appear here automatically when ready — no need to refresh.
 			</p>
 
 			{error ? (
@@ -90,35 +90,48 @@ export default function ResultsSidebar({
 							key={r.media_id}
 							className="space-y-1.5 rounded-xl border border-slate-800 bg-slate-950/60 p-1.5"
 						>
-							<a
-								href={`/api/flow/retrieved/${r.media_id}`}
-								target="_blank"
-								rel="noopener noreferrer"
-							>
-								<img
+							{r.kind === "video" ? (
+								<video
 									src={`/api/flow/retrieved/${encodeURIComponent(r.media_id)}`}
-									alt="generated result"
-									loading="lazy"
-									className="aspect-square w-full rounded-lg bg-black object-contain"
+									muted
+									playsInline
+									controls
+									preload="metadata"
+									className="aspect-[9/16] w-full rounded-lg bg-black object-contain"
 								/>
-							</a>
+							) : (
+								<a
+									href={`/api/flow/retrieved/${r.media_id}`}
+									target="_blank"
+									rel="noopener noreferrer"
+								>
+									<img
+										src={`/api/flow/retrieved/${encodeURIComponent(r.media_id)}`}
+										alt="generated result"
+										loading="lazy"
+										className="aspect-square w-full rounded-lg bg-black object-contain"
+									/>
+								</a>
+							)}
 							<div className="flex gap-1">
 								<a
 									href={`/api/flow/retrieved/${r.media_id}`}
-									download={`${r.media_id}.jpg`}
+									download={`${r.media_id}.${r.kind === "video" ? "mp4" : "jpg"}`}
 									className="flex-1 rounded border border-slate-700 py-0.5 text-center text-[10px] text-slate-300 hover:bg-slate-800"
 								>
 									Save
 								</a>
-								<button
-									type="button"
-									onClick={() => void handleDelete(r.media_id)}
-									disabled={busyId === r.media_id}
-									aria-label={`Delete ${r.media_id}`}
-									className="rounded border border-rose-500/40 px-2 py-0.5 text-[10px] text-rose-300 hover:bg-rose-500/10 disabled:opacity-40"
-								>
-									{busyId === r.media_id ? "…" : "Delete"}
-								</button>
+								{r.kind !== "video" ? (
+									<button
+										type="button"
+										onClick={() => void handleDelete(r.media_id)}
+										disabled={busyId === r.media_id}
+										aria-label={`Delete ${r.media_id}`}
+										className="rounded border border-rose-500/40 px-2 py-0.5 text-[10px] text-rose-300 hover:bg-rose-500/10 disabled:opacity-40"
+									>
+										{busyId === r.media_id ? "…" : "Delete"}
+									</button>
+								) : null}
 							</div>
 						</div>
 					))}
