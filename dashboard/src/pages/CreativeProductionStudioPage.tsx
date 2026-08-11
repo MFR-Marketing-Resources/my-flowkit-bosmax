@@ -2884,12 +2884,17 @@ export default function CreativeProductionStudioPage() {
 											</div>
 										) : (
 											detail.qa.map((row, index) => (
-												<pre
+												<details
 													key={String(row.qa_id ?? index)}
-													className="overflow-auto rounded border border-slate-800 bg-slate-900 p-3 text-[10px] text-slate-300"
+													className="rounded border border-slate-800 bg-slate-900 text-[10px] text-slate-300"
 												>
-													{JSON.stringify(row, null, 2)}
-												</pre>
+													<summary className="cursor-pointer px-3 py-2 font-mono text-slate-400 hover:text-slate-200">
+														QA {String(row.qa_id ?? index)}
+													</summary>
+													<pre className="overflow-auto px-3 pb-3 text-slate-300">
+														{JSON.stringify(row, null, 2)}
+													</pre>
+												</details>
 											))
 										)}
 									</div>
