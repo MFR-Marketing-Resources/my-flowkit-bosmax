@@ -183,7 +183,6 @@ const NAV_GROUPS = [
 			{ to: "/projects", icon: FolderOpen, label: "Projects" },
 			{ to: "/gallery", icon: Film, label: "Gallery (Legacy)" },
 			{ to: "/prompt-preview", icon: Sparkles, label: "Prompt Preview" },
-			{ to: "/health", icon: Activity, label: "Health" },
 			{ to: "/troubleshoot", icon: Siren, label: "Troubleshoot" },
 		],
 	},
@@ -664,14 +663,6 @@ function Layout() {
 
 						{/* System Routes */}
 						<Route path="/settings" element={<SettingsPage />} />
-						<Route
-							path="/health"
-							element={
-								<div className="p-8 text-slate-400">
-									Health Diagnostics Dashboard
-								</div>
-							}
-						/>
 						<Route path="/troubleshoot" element={<TroubleshootPage />} />
 
 						{/* Default Dashboard */}
