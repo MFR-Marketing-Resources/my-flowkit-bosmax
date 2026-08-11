@@ -52,7 +52,7 @@ import {
 } from "./imgCockpitLogic";
 
 // Honesty labels — surfaced verbatim in the Generate step. Live generation is
-// credit-spending / live Google Flow and is NOT fired or verified in the build
+// live Google Flow (IMAGE gen is credit-FREE; only VIDEO costs credits) and is NOT fired or verified in the build
 // session; the register-output → review → save path is credit-free.
 const GEN_NOT_FIRED = "NOT_FIRED_IN_SESSION";
 const GEN_RUNTIME_UNVERIFIED = "EXTERNAL_RUNTIME_NOT_VERIFIED";
@@ -303,7 +303,7 @@ export default function ImgCockpitPage() {
 	// Every other IMG lane is pure-visual (clean-frame, no-text guard) => copy is NOT
 	// applicable: no readiness card, no gate. The poster lane must be copywriting-ready
 	// (approved snapshot + approved Copy Set) or the operator must explicitly confirm
-	// fallback before the credit-spending Generate — it can never silently render
+	// fallback before the (credit-free) image Generate — it can never silently render
 	// ungrounded generic marketing copy.
 	const posterCopyApplicable = Boolean(lane?.default_contains_rendered_text);
 	const { readiness: copyReadiness } = useCopywritingReadiness(
@@ -706,7 +706,7 @@ export default function ImgCockpitPage() {
 								</div>
 							</WorkflowStep>
 
-							<WorkflowStep index={6} title="Generate image" status={generateStatus} summary={genJob?.status ?? "Manual confirmation required"} helper="Live Google Flow is credit-bearing and remains behind explicit confirmation; it never auto-fires.">
+							<WorkflowStep index={6} title="Generate image" status={generateStatus} summary={genJob?.status ?? "Manual confirmation required"} helper="Image generation is credit-free (only video costs credits); it stays behind explicit confirmation and never auto-fires.">
 								<div className="space-y-3">
 									<div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">Build-session status: <strong>{GEN_NOT_FIRED}</strong> · <strong>{GEN_RUNTIME_UNVERIFIED}</strong>. The data-rpa-stop fallback remains a human gate.</div>
 									{posterCopyApplicable ? <div className="space-y-3"><CopywritingReadinessCard readiness={copyReadiness} onPrepare={() => selectedProduct ? window.location.assign(`/products?product_id=${encodeURIComponent(selectedProduct.id)}`) : undefined} onOpenCopyRegistry={() => selectedProduct ? window.location.assign(`/creative/copy-registry?product_id=${encodeURIComponent(selectedProduct.id)}`) : undefined} /><CopyBindingGate copyBound={copyReady} ready={copyReady} fallbackConfirmed={copyFallbackConfirmed} onToggleFallback={setCopyFallbackConfirmed} /></div> : null}
@@ -758,7 +758,7 @@ export default function ImgCockpitPage() {
 				</div>
 
 				<ApproveAssetModal asset={approveTarget} open={approveTarget !== null} onCancel={() => setApproveTarget(null)} onApproved={() => { setApproveTarget(null); void loadReferences(); }} />
-				{showGenConfirm ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"><div className="max-w-md rounded-2xl border border-rose-500/40 bg-slate-950 p-5 space-y-3"><div className="text-sm font-bold text-rose-100">Confirm live credit-spending generation</div><div className="text-[11px] text-slate-300">This is the one-door IMG generation action and it remains behind explicit confirmation. Build-session status: <strong>{GEN_NOT_FIRED}</strong> · <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.</div><div className="flex justify-end gap-2"><button type="button" onClick={() => setShowGenConfirm(false)} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-300">Cancel</button><button type="button" onClick={() => void handleConfirmedGenerate()} className="rounded-lg border border-rose-500/40 bg-rose-500/20 px-3 py-1.5 text-[11px] font-bold text-rose-100">Confirm &amp; Generate (live)</button></div></div></div> : null}
+				{showGenConfirm ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"><div className="max-w-md rounded-2xl border border-rose-500/40 bg-slate-950 p-5 space-y-3"><div className="text-sm font-bold text-rose-100">Confirm live image generation (credit-free)</div><div className="text-[11px] text-slate-300">This is the one-door IMG generation action and it remains behind explicit confirmation. Build-session status: <strong>{GEN_NOT_FIRED}</strong> · <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.</div><div className="flex justify-end gap-2"><button type="button" onClick={() => setShowGenConfirm(false)} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-slate-300">Cancel</button><button type="button" onClick={() => void handleConfirmedGenerate()} className="rounded-lg border border-rose-500/40 bg-rose-500/20 px-3 py-1.5 text-[11px] font-bold text-rose-100">Confirm &amp; Generate (live)</button></div></div></div> : null}
 			</>
 		);
 	}
@@ -951,11 +951,11 @@ export default function ImgCockpitPage() {
 			</Section>
 
 			{/* 6 — Gated Generate */}
-			<Section step="6" title="Generate image output (gated · credit-spending)">
+			<Section step="6" title="Generate image output (gated · credit-free)">
 				<div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
 					Live generation calls the real one-door lane
-					(<code>POST /api/flow/generate</code> mode:IMG) — it spends credits and
-					uses live Google Flow. It only runs after an explicit confirmation and{" "}
+					(<code>POST /api/flow/generate</code> mode:IMG) using live Google
+					Flow. Image generation is credit-free — only video costs credits. It only runs after an explicit confirmation and{" "}
 					<strong>never auto-fires</strong>. Build-session status:{" "}
 					<strong>{GEN_NOT_FIRED}</strong> · <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.
 				</div>
@@ -1099,7 +1099,7 @@ export default function ImgCockpitPage() {
 					}
 					className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-xs font-bold text-rose-100 disabled:opacity-40"
 				>
-					{generating ? "Generating (live)…" : "Generate (live · spends credits)"}
+					{generating ? "Generating (live)…" : "Generate (live · credit-free)"}
 				</button>
 				{genJob ? (
 					<div className="mt-2 space-y-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
@@ -1119,7 +1119,7 @@ export default function ImgCockpitPage() {
 									className="w-full max-w-[220px] rounded-lg border border-slate-800 bg-black object-contain"
 								/>
 								<p className="text-[10px] text-slate-500">
-									Kualiti tak memuaskan? Regenerate untuk cuba lagi (guna kredit) atau padam imej ini.
+									Kualiti tak memuaskan? Regenerate untuk cuba lagi — imej PERCUMA (hanya video guna kredit) — atau padam imej ini.
 								</p>
 								<div className="flex flex-wrap gap-2">
 									<button
@@ -1385,10 +1385,10 @@ export default function ImgCockpitPage() {
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
 					<div className="max-w-md rounded-2xl border border-rose-500/40 bg-slate-950 p-5 space-y-3">
 						<div className="text-sm font-bold text-rose-100">
-							Confirm live credit-spending generation
+							Confirm live image generation
 						</div>
 						<div className="text-[11px] text-slate-300">
-							This calls live Google Flow and <strong>spends credits</strong>. It
+							This calls live Google Flow. Image generation is <strong>credit-free</strong> (only video costs credits). It
 							will not run without this confirmation. (In the build session this
 							path is <strong>{GEN_NOT_FIRED}</strong>.)
 						</div>

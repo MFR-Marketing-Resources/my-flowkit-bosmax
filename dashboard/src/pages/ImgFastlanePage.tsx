@@ -1118,7 +1118,7 @@ export default function ImgFastlanePage() {
 								title="Generate image"
 								status={generateStatus}
 								summary={genJob?.status ?? "Manual confirmation required"}
-								helper="This is the credit-bearing external action; it never fires without explicit confirmation."
+								helper="Image generation is credit-free (only video costs credits); it never fires without explicit confirmation."
 							>
 								<div className="space-y-3">
 									<div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
@@ -1684,7 +1684,7 @@ export default function ImgFastlanePage() {
 											className="w-full max-w-[220px] rounded-lg border border-slate-800 bg-black object-contain"
 										/>
 										<p className="text-[10px] text-slate-500">
-											Kualiti tak memuaskan? Regenerate untuk cuba lagi (guna kredit) atau padam imej ini.
+											Kualiti tak memuaskan? Regenerate untuk cuba lagi — imej PERCUMA (hanya video guna kredit) — atau padam imej ini.
 										</p>
 										<div className="flex flex-wrap gap-2">
 											<button

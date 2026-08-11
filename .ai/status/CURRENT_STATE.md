@@ -4,6 +4,15 @@ Last updated: 2026-08-07 (post PR #653 merge and V4 closeout). This file is the 
 agent reads. If anything here conflicts with an older doc, THIS FILE and
 ADR-007 win.
 
+## ⚠️ CANONICAL COST FACT — IMAGE = FREE, VIDEO = CREDITS
+- **IMAGE generation is CREDIT-FREE.** Only **VIDEO** generation consumes Google
+  Flow credits/tokens. The IMG lanes (IMG Fastlane, IMG Cockpit, Poster image
+  plate, `POST /api/flow/generate` mode:IMG) spend NOTHING.
+- Never gate, warn, refuse, or add a "credit-spend confirmation" to an image
+  generation *because of cost* — it costs nothing. Regenerating an image is FREE.
+- Only VIDEO generation/regeneration/extend consumes credits. Confirmation gates
+  on image generation exist only to confirm a live external action, not cost.
+
 ## Current Repo Head
 - Verify live from Git (`git rev-parse HEAD` / `origin/main`); this file never
   self-declares a current SHA.
