@@ -4,6 +4,15 @@ Last updated: 2026-08-07 (post PR #653 merge and V4 closeout). This file is the 
 agent reads. If anything here conflicts with an older doc, THIS FILE and
 ADR-007 win.
 
+> 🛑 **ACTIVE PARKED WORK — do not clobber.** A finished **V4 UI overhaul**
+> (task-group nav, StudioShell/ResultsSidebar on all lanes, Poster Builder full
+> English) lives on branch `fix/v4-ui-shell-and-f2v-avatar` (HEAD `9266f9a`,
+> pushed, **PR #705 DRAFT**). It is **~100 commits behind `main` and must NOT be
+> blind-merged** (would revert ~15k lines). Read
+> [`.ai/status/V4_UI_BRANCH_HANDOFF.md`](V4_UI_BRANCH_HANDOFF.md) before touching
+> the dashboard nav / StudioShell / Poster Builder, or before merging PR #705.
+> (This banner is on the branch; the cross-agent signal on `main` is PR #705.)
+
 ## ⚠️ CANONICAL COST FACT — IMAGE = FREE, VIDEO = CREDITS
 - **IMAGE generation is CREDIT-FREE.** Only **VIDEO** generation consumes Google
   Flow credits/tokens. The IMG lanes (IMG Fastlane, IMG Cockpit, Poster image
