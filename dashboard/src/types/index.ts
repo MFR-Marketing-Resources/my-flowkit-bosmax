@@ -1402,6 +1402,7 @@ export interface Product {
 	commission_rate?: string | null;
 	product_type_id?: string | null;
 	product_type?: string | null;
+	copywriting_product_type_code?: string | null;
 	silo?: string | null;
 	trigger_id?: string | null;
 	formula?: string | null;

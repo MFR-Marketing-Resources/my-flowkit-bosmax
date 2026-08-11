@@ -20,6 +20,9 @@ from agent.services import product_strategy_taxonomy_service as taxonomy_service
 from agent.services.product_strategy_taxonomy_service import (
     ProductStrategyTaxonomyError,
 )
+from agent.services.copywriting_taxonomy_service import (
+    seed_copywriting_taxonomy_registry,
+)
 
 
 def _taxonomy(**overrides) -> ProductStrategyTaxonomy:
@@ -147,7 +150,12 @@ async def test_registry_backed_review_persists_and_api_reads_verified_taxonomy()
 
 @pytest.mark.asyncio
 async def test_manual_product_patch_persists_source_taxonomy_fields():
-    """The product editor's manual Category/Subcategory/Type save is durable."""
+    """The product editor persists only a canonical taxonomy selection."""
+
+    await seed_copywriting_taxonomy_registry(
+        dry_run=False,
+        confirm_apply="SEED_COPYWRITING_TAXONOMY_REGISTRY",
+    )
 
     product = await crud.create_product(
         "Manual Sink Strainer",
@@ -166,18 +174,24 @@ async def test_manual_product_patch_persists_source_taxonomy_fields():
         response = await client.patch(
             f"/api/products/{product['id']}",
             json={
-                "category": "Kitchenware",
-                "subcategory": "Kitchen Utensils & Gadgets",
-                "type": "Specialty Kitchen Utensils",
+                "category": "Toys & Games",
+                "subcategory": "Creative Play",
+                "type": "3D Scene Sticker Books",
+                "copywriting_angle": "operator text is ignored when override is off",
             },
         )
 
     assert response.status_code == 200, response.text
     stored = await crud.get_product(product["id"])
     assert stored is not None
-    assert stored["category"] == "Kitchenware"
-    assert stored["subcategory"] == "Kitchen Utensils & Gadgets"
-    assert stored["type"] == "Specialty Kitchen Utensils"
+    assert stored["category"] == "Toys & Games"
+    assert stored["subcategory"] == "Creative Play"
+    assert stored["type"] == "3D Scene Sticker Books"
+    assert stored["copywriting_product_type_code"] == "3d_sticker_book"
+    assert stored["copywriting_angle"] == (
+        "Creativity-led city-scene storytelling, reusable play, and "
+        "screen-free engagement"
+    )
 
 
 def test_product_catalog_items_include_taxonomy_contract(monkeypatch):

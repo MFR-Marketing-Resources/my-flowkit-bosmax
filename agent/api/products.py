@@ -89,6 +89,10 @@ from agent.services.product_strategy_taxonomy_service import (
     require_verified_product_strategy_taxonomy,
     review_product_strategy_taxonomy,
 )
+from agent.services.copywriting_taxonomy_service import (
+    CopywritingTaxonomySelectionError,
+    validate_taxonomy_selection,
+)
 from agent.utils.paths import product_image_path
 
 router = APIRouter(prefix="/products", tags=["products"])
@@ -202,10 +206,12 @@ class ProductPatchRequest(BaseModel):
     local_image_path: str | None = None
     product_type: str | None = None
     product_type_id: str | None = None
+    copywriting_product_type_code: str | None = None
     silo: str | None = None
     trigger_id: str | None = None
     formula: str | None = None
     copywriting_angle: str | None = None
+    copywriting_angle_override_enabled: bool = False
     claim_risk_level: str | None = None
     physics_class: str | None = None
     product_scale: str | None = None
@@ -1759,7 +1765,71 @@ async def patch_product(product_id: str, data: ProductPatchRequest):
     product = await crud.get_product(product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
-    update_payload = {key: value for key, value in data.model_dump().items() if value is not None and key not in {"image_base64", "image_filename"}}
+    raw_payload = data.model_dump()
+    taxonomy_fields = {
+        "category",
+        "subcategory",
+        "type",
+        "copywriting_angle",
+        "copywriting_product_type_code",
+        "copywriting_angle_override_enabled",
+    }
+    has_taxonomy_edit = bool(data.model_fields_set & taxonomy_fields)
+    update_payload = {
+        key: value
+        for key, value in raw_payload.items()
+        if value is not None
+        and key
+        not in {
+            "image_base64",
+            "image_filename",
+            "copywriting_angle_override_enabled",
+        }
+    }
+    authoritative_taxonomy: dict[str, str] | None = None
+    if has_taxonomy_edit:
+        if "copywriting_angle" in data.model_fields_set and data.copywriting_angle is not None:
+            submitted_angle = data.copywriting_angle.strip()
+        else:
+            submitted_angle = ""
+        try:
+            taxonomy_record = await validate_taxonomy_selection(
+                category=data.category,
+                subcategory=data.subcategory,
+                type_name=data.type,
+                product_type_code=data.copywriting_product_type_code,
+            )
+        except CopywritingTaxonomySelectionError as exc:
+            raise HTTPException(status_code=422, detail=exc.detail) from exc
+        if data.copywriting_angle_override_enabled and not submitted_angle:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error_code": "COPYWRITING_TAXONOMY_OVERRIDE_ANGLE_REQUIRED",
+                },
+            )
+        authoritative_taxonomy = {
+            "category": taxonomy_record["category"],
+            "subcategory": taxonomy_record["subcategory"],
+            "type": taxonomy_record["type"],
+            "copywriting_product_type_code": taxonomy_record[
+                "product_type_code"
+            ],
+            "copywriting_angle": (
+                submitted_angle
+                if data.copywriting_angle_override_enabled
+                else taxonomy_record["copywriting_angle"]
+            ),
+        }
+        update_payload.update(authoritative_taxonomy)
+    elif "copywriting_angle" in data.model_fields_set:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error_code": "COPYWRITING_TAXONOMY_SELECTION_REQUIRED",
+                "message": "Category, subcategory, and type must be selected together.",
+            },
+        )
     if "source" in update_payload:
         update_payload["source"] = _normalize_source(update_payload["source"])
     if "commission_rate" in update_payload:
@@ -1768,7 +1838,15 @@ async def patch_product(product_id: str, data: ProductPatchRequest):
     local_image_path, image_asset_status = await _save_manual_image(product_id, data.image_base64, data.image_filename)
     if local_image_path:
         updated = await crud.update_product(product_id, local_image_path=local_image_path, asset_status=image_asset_status, image_asset_status=image_asset_status)
-    return await _enrich_product(updated, persist=True)
+    enriched = await _enrich_product(updated, persist=True)
+    if authoritative_taxonomy:
+        # The legacy enrichment pipeline has its own heuristic/profile angle
+        # resolver. Reassert the workbook authority after enrichment so a
+        # valid cascade selection cannot be silently remapped by that older
+        # lane.
+        await crud.update_product(product_id, **authoritative_taxonomy)
+        enriched.update(authoritative_taxonomy)
+    return enriched
 
 
 @router.get("/{product_id}/intelligence")
