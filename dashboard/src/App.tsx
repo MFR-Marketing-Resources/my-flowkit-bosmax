@@ -117,11 +117,6 @@ const NAV_GROUPS = [
 				icon: Tags,
 				label: "Product Type Registry",
 			},
-			{
-				to: "/product-asset-generator",
-				icon: Sparkles,
-				label: "Product Asset Generator",
-			},
 		],
 	},
 	{
@@ -175,6 +170,11 @@ const NAV_GROUPS = [
 			{ to: "/asset-registry", icon: Layers, label: "Asset Registry" },
 			{ to: "/assets/img-cockpit", icon: Sparkles, label: "IMG Cockpit" },
 			{ to: "/assets/img-fastlane", icon: Sparkles, label: "IMG Fastlane" },
+			{
+				to: "/product-asset-generator",
+				icon: Sparkles,
+				label: "Product Asset Generator (Preview)",
+			},
 			{ to: "/creative/copy-registry", icon: PenLine, label: "Copy Registry" },
 			{
 				to: "/creative/copy-intelligence",
