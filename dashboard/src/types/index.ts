@@ -1456,6 +1456,9 @@ export interface Product {
 	tiktok_product_url: string | null;
 	fastmoss_source_file: string | null;
 	image_asset_status?: string | null;
+	visual_canvas_width?: number | null;
+	visual_canvas_height?: number | null;
+	visual_canvas_requirement?: string | null;
 	image_failure_detail?: string | null;
 	image_readiness_status?:
 		| "IMAGE_READY"
@@ -1543,6 +1546,10 @@ export interface CanvaCutoutWorkflow {
 
 export interface ProductVisualReadiness {
 	product_id: string;
+	visual_canvas_width?: number;
+	visual_canvas_height?: number;
+	visual_canvas_label?: string;
+	visual_canvas_requirement?: string;
 	canonical_media_status: "AVAILABLE" | "MISSING" | string;
 	reference_pack_status: string;
 	visual_grounding_status: string;

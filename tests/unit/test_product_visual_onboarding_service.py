@@ -10,6 +10,17 @@ from agent.db import crud
 from agent.services import product_visual_onboarding_service as service
 
 
+def _standard_cutout_bytes(color=(40, 80, 120)) -> bytes:
+    image = Image.new("RGBA", (1000, 1000), (0, 0, 0, 0))
+    for x in range(200, 800):
+        for y in range(120, 880):
+            image.putpixel((x, y), (*color, 255))
+    stream = BytesIO()
+    image.save(stream, format="PNG")
+    image.close()
+    return stream.getvalue()
+
+
 @pytest.mark.asyncio
 async def test_readiness_separates_same_product_grounding_from_exact_approval(tmp_path):
     source = tmp_path / "source.png"
@@ -30,6 +41,12 @@ async def test_readiness_separates_same_product_grounding_from_exact_approval(tm
     assert readiness["cutout_status"] == "NOT_PREPARED"
     assert readiness["can_use_original_fallback"] is True
     assert readiness["provider_operations"] == 0
+    assert readiness["visual_canvas_width"] == 1000
+    assert readiness["visual_canvas_height"] == 1000
+    assert readiness["visual_canvas_label"] == "1000×1000 px"
+    assert product["visual_canvas_width"] == 1000
+    assert product["visual_canvas_height"] == 1000
+    assert "1000x1000 px canvas" in product["visual_canvas_requirement"]
 
 
 def test_url_only_display_source_stays_untrusted_but_manual_lane_is_available():
@@ -104,10 +121,11 @@ async def test_display_only_generate_uses_the_existing_write_lane_materializatio
         return "source-media-display-only"
 
     async def local_cutout(*_args, **_kwargs):
+        generated = _standard_cutout_bytes()
         return (
-            b"generated-cutout",
+            generated,
             {"x": 0.1, "y": 0.1, "w": 0.8, "h": 0.8, "anchor_x": 0.5, "anchor_y": 0.5},
-            service._sha256_bytes(b"generated-cutout"),
+            service._sha256_bytes(generated),
             0.01,
             "local-u2net-test",
             "OK",
@@ -334,14 +352,15 @@ async def test_deterministic_prepare_creates_pending_review_only(tmp_path, monke
     async def resolve(_product):
         return reference
 
+    deterministic_cutout = _standard_cutout_bytes()
     monkeypatch.setattr(service, "_resolve_source", resolve)
     monkeypatch.setattr(
         service,
         "_build_cutout_bytes",
         lambda _path: (
-            b"deterministic-cutout",
+            deterministic_cutout,
             {"x": 0.1, "y": 0.1, "w": 0.8, "h": 0.8, "anchor_x": 0.5, "anchor_y": 0.5},
-            service._sha256_bytes(b"deterministic-cutout"),
+            service._sha256_bytes(deterministic_cutout),
         ),
     )
 
@@ -466,14 +485,7 @@ async def test_manual_upload_is_pending_and_uses_user_provenance(tmp_path, monke
         image_asset_status="READY",
         asset_status="DOWNLOADED",
     )
-    cutout = Image.new("RGBA", (24, 24), (0, 0, 0, 0))
-    for x in range(4, 16):
-        for y in range(3, 20):
-            cutout.putpixel((x, y), (40, 80, 120, 255))
-    from io import BytesIO
-
-    buffer = BytesIO()
-    cutout.save(buffer, format="PNG")
+    buffer = BytesIO(_standard_cutout_bytes())
     captured: dict[str, object] = {}
     reference = SimpleNamespace(width=24, height=24, sha256=service._sha256_bytes(source.read_bytes()), local_path=str(source))
 

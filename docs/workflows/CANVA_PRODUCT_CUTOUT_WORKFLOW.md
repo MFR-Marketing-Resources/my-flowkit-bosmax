@@ -10,7 +10,7 @@ The workflow is an assisted quality lane around the governed Smart Registration 
 - The existing `product_visual_onboarding` manual lane remains the cutout authority. Do not create a second approval or canonical-media path.
 - Every Canva result is `PENDING_HUMAN_REVIEW`. No checkbox, preflight result, Canva status, or machine check can auto-approve Product Truth.
 - A white RGB PNG is not a transparent cutout. A valid result must contain an alpha-bearing PNG with transparent pixels and visible product pixels.
-- The output canvas must preserve the exact source width and height. BOSMAX does not resize, crop, or silently repair a Canva export.
+- Every manual/Canva result must be a transparent PNG on the standard `1000x1000` px canvas. BOSMAX rejects another export size; the trusted raw source may have a different native size and is standardized internally for the durable truth lock.
 - No Canva cookies, session tokens, passwords, or provider secrets are written to the database. Only non-secret operator evidence is persisted.
 - The workflow is bounded and resumable. It is not permission to process the full catalog or to resume the historical Python auto-cutout run.
 
@@ -30,7 +30,7 @@ Preflight happens before editing or bulk queue work:
 
 1. Confirm the operator is logged in to Canva.
 2. Inspect which Canva functions are available: Magic Grab, Background Remover, and Magic Layers.
-3. Capture the exact source dimensions from BOSMAX.
+3. Confirm the required `1000x1000` px canvas shown by BOSMAX.
 4. Confirm that transparent PNG export is available.
 
 If transparent export is locked behind a crown/Pro entitlement, persist `CANVA_PRO_REQUIRED` and stop before editing. The bulk queue uses `BLOCKED_CANVA_PRO_REQUIRED`; it does not start hundreds of designs that cannot produce the required artifact.
@@ -73,15 +73,16 @@ Use for promotional images with text, decorations, multiple objects, or scene fr
 
 The fixed-page/root background can be non-deletable through MCP. That is a tooling limitation, not a reason to delete product evidence. Use the actual Canva UI or the clean-canvas method.
 
-### 4. Clean same-size canvas
+### 4. Standard clean canvas
 
 When the original Magic Layers page cannot become transparent:
 
-1. Create a clean Canva design with exactly the source dimensions.
+1. Create a clean Canva design with exactly `1000x1000` px.
 2. Transfer only the isolated product element(s).
 3. Preserve scale and aspect ratio; do not crop or distort.
 
-Example: an `800x800` source requires an `800x800` clean design.
+The raw source can be `800x800`, `1000x1000`, or another native size; the
+Canva export requirement remains `1000x1000`.
 
 ## Export and BOSMAX handoff
 
@@ -90,7 +91,7 @@ Export from Canva as `PNG` with `Transparent Background = ON`. Then upload the f
 BOSMAX performs these checks before persistence:
 
 - PNG format;
-- exact source width and height;
+- exact `1000x1000` canvas dimensions;
 - actual alpha-bearing image mode or transparency metadata;
 - at least one transparent pixel;
 - at least one visible product pixel.

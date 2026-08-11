@@ -66,6 +66,21 @@ const CANVA_PREFLIGHT_FIELDS = [
 const CANVA_PREFLIGHT_OPTIONS: CanvaCapabilityStatus[] = ["UNKNOWN", "READY", "UNAVAILABLE", "PRO_REQUIRED", "USER_ACTION_REQUIRED"];
 const CANVA_OPERATOR_STAGES = ["OPENING_CANVA", "MAGIC_GRAB", "BACKGROUND_REMOVER", "MAGIC_LAYERS", "CLEAN_CANVAS", "READY_TO_EXPORT", "EXPORTING", "PAUSED"] as const;
 
+async function readImageDimensions(file: File): Promise<{ width: number; height: number } | null> {
+	if (typeof createImageBitmap !== "function") return null;
+	let bitmap: ImageBitmap | null = null;
+	try {
+		bitmap = await createImageBitmap(file);
+		return { width: bitmap.width, height: bitmap.height };
+	} catch {
+		// Let the server remain the final decoder/validator when the browser cannot
+		// inspect this particular file type in the client environment.
+		return null;
+	} finally {
+		bitmap?.close();
+	}
+}
+
 // ── Per-lane busy model ────────────────────────────────────────────────────
 // A running action only disables its OWN lane. `busy` tracks the specific
 // action (so button labels stay precise); `busyLane` is derived for the
@@ -541,6 +556,19 @@ export default function ProductVisualReadinessPanel({
 		if (file.type !== "image/png" || !file.name.toLowerCase().endsWith(".png")) {
 			setManualMsg({ tone: "bad", text: "That is not a PNG. Upload a PNG with a transparent background — a normal photo (JPEG) will be rejected." });
 			return;
+		}
+		const requiredWidth = readiness?.visual_canvas_width ?? 1000;
+		const requiredHeight = readiness?.visual_canvas_height ?? 1000;
+		const requiredLabel = readiness?.visual_canvas_label ?? "1000×1000 px";
+		if (typeof createImageBitmap === "function") {
+			const dimensions = await readImageDimensions(file);
+			if (dimensions && (dimensions.width !== requiredWidth || dimensions.height !== requiredHeight)) {
+				setManualMsg({
+					tone: "bad",
+					text: `Wrong canvas: this product requires ${requiredLabel}. Selected file is ${dimensions.width}×${dimensions.height} px.`,
+				});
+				return;
+			}
 		}
 		const wasOfficial = readiness?.active_visual_source?.startsWith("APPROVED_") ?? false;
 		setBusy("upload");
@@ -1054,6 +1082,9 @@ export default function ProductVisualReadinessPanel({
 						<h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-200">Manual / Canva Cutout</h4>
 						<input ref={fileInputRef} type="file" accept="image/png,.png" onChange={(event) => void uploadManual(event)} className="hidden" />
 						<div className="mt-3">
+							<div className="rounded-md border border-fuchsia-500/30 bg-fuchsia-500/5 px-2 py-1.5 text-[9px] font-semibold leading-relaxed text-fuchsia-200" data-testid="canonical-canvas-requirement">
+								Required canvas: <span className="font-bold">{readiness.visual_canvas_label ?? "1000×1000 px"}</span> · transparent PNG · exact size
+							</div>
 							<button type="button" onClick={() => fileInputRef.current?.click()} disabled={busyLane === "manual" || !readiness.can_upload_manual_cutout} title={!readiness.can_upload_manual_cutout ? trustedSourceReason : undefined} className="rounded-lg bg-fuchsia-600/80 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40" data-testid="manual-cutout-upload">
 								{busy === "upload" ? "UPLOADING CUTOUT…" : readiness.manual_cutout_status === "NOT_UPLOADED" ? "UPLOAD MANUAL CUTOUT" : "REPLACE MANUAL CUTOUT"}
 							</button>

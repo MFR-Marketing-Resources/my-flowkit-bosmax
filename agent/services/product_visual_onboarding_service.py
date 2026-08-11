@@ -47,6 +47,12 @@ from agent.services.product_visual_grounding_resolver import (
     ProductVisualReferenceRequiredError,
     resolve_product_reference_image,
 )
+from agent.services.product_visual_canvas_service import (
+    STANDARD_VISUAL_CANVAS_HEIGHT,
+    STANDARD_VISUAL_CANVAS_LABEL,
+    STANDARD_VISUAL_CANVAS_REQUIREMENT,
+    STANDARD_VISUAL_CANVAS_WIDTH,
+)
 from agent.services.product_truth_lock_service import (
     AUTO_GENERATED,
     USER_UPLOAD,
@@ -515,6 +521,10 @@ def _readiness_payload(
         "last_error_code": (canva_workflow or {}).get("last_error_code"),
         "last_error": (canva_workflow or {}).get("last_error"),
         "preflight": canva_preflight,
+        "source_dimensions": {
+            "width": STANDARD_VISUAL_CANVAS_WIDTH,
+            "height": STANDARD_VISUAL_CANVAS_HEIGHT,
+        },
         "output_dimensions": {
             "width": int((canva_workflow or {}).get("output_width") or 0) or None,
             "height": int((canva_workflow or {}).get("output_height") or 0) or None,
@@ -526,6 +536,10 @@ def _readiness_payload(
     }
     return {
         "product_id": str(product.get("id") or ""),
+        "visual_canvas_width": STANDARD_VISUAL_CANVAS_WIDTH,
+        "visual_canvas_height": STANDARD_VISUAL_CANVAS_HEIGHT,
+        "visual_canvas_label": STANDARD_VISUAL_CANVAS_LABEL,
+        "visual_canvas_requirement": STANDARD_VISUAL_CANVAS_REQUIREMENT,
         "canonical_media_status": "AVAILABLE" if source_available else "MISSING",
         "reference_pack_status": str((pack or {}).get("pack_status") or "NOT_PREPARED"),
         "visual_grounding_status": grounding_status,
@@ -907,6 +921,10 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
             filename=cutout_filename,
             content_type="image/png",
             raw_bytes=raw_cutout,
+            expected_dimensions=(
+                int(getattr(reference, "width", 0) or 0),
+                int(getattr(reference, "height", 0) or 0),
+            ),
         )
         db_write_seconds += time.perf_counter() - media_started
         media_id = str(media.get("media_id") or "").strip()
@@ -1045,10 +1063,10 @@ async def upload_manual_product_cutout(
             status_code=409,
         )
     reference = await _resolve_source(product)
-    width = int(getattr(reference, "width", 0) or 0)
-    height = int(getattr(reference, "height", 0) or 0)
-    if width <= 0 or height <= 0:
-        raise ProductVisualOnboardingError("CANONICAL_PRODUCT_SOURCE_INVALID", "Canonical product dimensions are unavailable.")
+    source_width = int(getattr(reference, "width", 0) or 0)
+    source_height = int(getattr(reference, "height", 0) or 0)
+    if source_width <= 0 or source_height <= 0:
+        raise ProductVisualOnboardingError("CANONICAL_PRODUCT_SOURCE_INVALID", "Canonical product source dimensions are unavailable.")
     # URL-only product images become governed same-product source media as
     # part of the manual lane. This is source preparation, not auto cutout.
     await _ensure_canonical_media(product, reference)
@@ -1062,7 +1080,11 @@ async def upload_manual_product_cutout(
         media_id = str(media.get("media_id") or "").strip()
         if not media_id:
             raise ProductVisualOnboardingError("CANONICAL_CUTOUT_MEDIA_REQUIRED", "Manual cutout media was not persisted.")
-        bounds = _manual_cutout_bounds(raw_bytes, width, height)
+        bounds = _manual_cutout_bounds(
+            raw_bytes,
+            STANDARD_VISUAL_CANVAS_WIDTH,
+            STANDARD_VISUAL_CANVAS_HEIGHT,
+        )
         onboarding_kwargs: dict[str, Any] = {}
         if provenance_source:
             onboarding_kwargs["provenance_source"] = provenance_source
