@@ -58,7 +58,6 @@ import MontagePage from "./pages/MontagePage";
 import PosterBuilderPage from "./pages/PosterBuilderPage";
 import PostizPublishPage from "./pages/PostizPublishPage";
 import ResultsHubPage from "./pages/ResultsHubPage";
-import ProductAssetGeneratorPage from "./pages/ProductAssetGeneratorPage";
 import ProductionQueuePage from "./pages/ProductionQueuePage";
 import RpaQueueControlPage from "./pages/RpaQueueControlPage";
 import ProductRegistrationPage from "./pages/ProductRegistrationPage";
@@ -170,11 +169,6 @@ const NAV_GROUPS = [
 			{ to: "/asset-registry", icon: Layers, label: "Asset Registry" },
 			{ to: "/assets/img-cockpit", icon: Sparkles, label: "IMG Cockpit" },
 			{ to: "/assets/img-fastlane", icon: Sparkles, label: "IMG Fastlane" },
-			{
-				to: "/product-asset-generator",
-				icon: Sparkles,
-				label: "Product Asset Generator (Preview)",
-			},
 			{ to: "/creative/copy-registry", icon: PenLine, label: "Copy Registry" },
 			{
 				to: "/creative/copy-intelligence",
@@ -640,10 +634,6 @@ function Layout() {
 						<Route
 							path="/assets/creative-library"
 							element={<CreativeLibraryPage />}
-						/>
-						<Route
-							path="/product-asset-generator"
-							element={<ProductAssetGeneratorPage />}
 						/>
 						<Route
 							path="/product-registration"
