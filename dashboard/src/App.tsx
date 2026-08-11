@@ -101,22 +101,9 @@ const NAV_GROUPS = [
 	{
 		label: "PRODUCTION",
 		items: [
-			{ to: "/batches", icon: Briefcase, label: "Batch Prompt Builder" },
-			{
-				to: "/workspace/generation-packages",
-				icon: PackageSearch,
-				label: "Prompt Handoff Bank",
-			},
-			{
-				to: "/approved-packages",
-				icon: PackageSearch,
-				label: "Approved Packages",
-			},
-			{ to: "/production-queue", icon: Film, label: "Production Queue" },
 			{ to: "/production-studio", icon: Video, label: "Production Studio" },
-			{ to: "/rpa-queue-control", icon: Bot, label: "RPA Queue Control" },
-			{ to: "/workspace/jobs", icon: Activity, label: "Workspace Jobs" },
 			{ to: "/postiz", icon: Send, label: "Postiz Publish" },
+			{ to: "/workspace/jobs", icon: Activity, label: "Workspace Jobs" },
 		],
 	},
 	{
@@ -186,6 +173,24 @@ const NAV_GROUPS = [
 		items: [
 			{ to: "/reporting/executive", icon: Gauge, label: "Executive" },
 			{ to: "/reporting/operations", icon: Siren, label: "Operations" },
+		],
+	},
+	{
+		label: "ADVANCED",
+		items: [
+			{ to: "/batches", icon: Briefcase, label: "Batch Prompt Builder" },
+			{
+				to: "/workspace/generation-packages",
+				icon: PackageSearch,
+				label: "Prompt Handoff Bank",
+			},
+			{
+				to: "/approved-packages",
+				icon: PackageSearch,
+				label: "Approved Packages",
+			},
+			{ to: "/production-queue", icon: Film, label: "Production Queue" },
+			{ to: "/rpa-queue-control", icon: Bot, label: "RPA Queue Control" },
 		],
 	},
 	{
