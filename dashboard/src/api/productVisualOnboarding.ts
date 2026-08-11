@@ -267,6 +267,26 @@ export function useOriginalProductFallback(
 	);
 }
 
+export interface VisualSetupSaveInput {
+	selected_visual: "ORIGINAL" | "AUTO" | "MANUAL";
+	reviewed_by?: string;
+	review_note?: string;
+	confirm_identity?: boolean;
+	confirm_label_logo?: boolean;
+	confirm_geometry_scale?: boolean;
+	confirm_product_isolation?: boolean;
+}
+
+export function saveProductVisualSetup(
+	productId: string,
+	input: VisualSetupSaveInput,
+): Promise<ProductVisualReadiness> {
+	return postAPI<ProductVisualReadiness>(
+		`/api/product-visual-onboarding/${encodeURIComponent(productId)}/save-visual-setup`,
+		input,
+	);
+}
+
 export function fetchProductCutoutHistory(
 	productId: string,
 ): Promise<ProductVisualCutoutHistory> {

@@ -1,7 +1,9 @@
 """Smart Registration visual onboarding operator API.
 
 All write routes are local, deterministic, and review-gated.  They do not
-invoke image providers, create provider operations, or approve Product Truth.
+invoke image providers or create provider operations.  The page-level save
+route delegates explicit candidate approval to the existing Product Truth
+authority; generation and upload never approve truth.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from agent.services.product_visual_onboarding_service import (
     ProductVisualOnboardingError,
     clear_product_cutout_target,
     get_product_visual_readiness,
+    save_product_visual_setup,
     set_product_cutout_target,
     get_product_cutout_history,
     preview_bulk_cutout_preparation,
@@ -67,6 +70,18 @@ class CutoutDecisionRequest(BaseModel):
 
     operator: str = Field(min_length=1, max_length=200)
     reason: str = Field(min_length=1, max_length=2000)
+
+
+class VisualSetupSaveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    selected_visual: Literal["ORIGINAL", "AUTO", "MANUAL"]
+    reviewed_by: str | None = Field(default=None, max_length=256)
+    review_note: str | None = Field(default=None, max_length=2000)
+    confirm_identity: bool = False
+    confirm_label_logo: bool = False
+    confirm_geometry_scale: bool = False
+    confirm_product_isolation: bool = False
 
 
 class CutoutTargetRequest(BaseModel):
@@ -327,6 +342,23 @@ async def fallback_visual_cutout(product_id: str, request: CutoutDecisionRequest
             product_id,
             selected_by=request.operator,
             reason=request.reason,
+        )
+    except ProductVisualOnboardingError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/{product_id}/save-visual-setup")
+async def save_visual_setup(product_id: str, request: VisualSetupSaveRequest):
+    try:
+        return await save_product_visual_setup(
+            product_id,
+            selected_visual=request.selected_visual,
+            reviewed_by=request.reviewed_by,
+            review_note=request.review_note,
+            confirm_identity=request.confirm_identity,
+            confirm_label_logo=request.confirm_label_logo,
+            confirm_geometry_scale=request.confirm_geometry_scale,
+            confirm_product_isolation=request.confirm_product_isolation,
         )
     except ProductVisualOnboardingError as exc:
         raise _error(exc) from exc

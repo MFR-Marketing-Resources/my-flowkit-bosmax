@@ -3,22 +3,6 @@ import {
 	fetchProductRegistry,
 	fetchProductStrategyTypeRegistry,
 } from "../../api/products";
-import {
-	cancelCanvaCutoutBulk,
-	fetchCanvaCutoutBulkPreview,
-	fetchProductVisualBulkPreview,
-	bypassCanvaCutoutBulkItem,
-	pauseCanvaCutoutBulk,
-	queueCanvaCutoutBulk,
-	queueProductVisualBulkPrepare,
-	resumeCanvaCutoutBulk,
-	type CanvaCapabilityStatus,
-	type CanvaMethod,
-	type CanvaCutoutBulkPreview,
-	type CanvaCutoutBulkRun,
-	type ProductVisualBulkPreview,
-	type ProductVisualBulkRun,
-} from "../../api/productVisualOnboarding";
 import type { Product, ProductCatalogResponse } from "../../types";
 
 const SOURCE_BADGE: Record<string, string> = {
@@ -176,14 +160,6 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [data, setData] = useState<ProductCatalogResponse | null>(null);
-	const [bulkPreview, setBulkPreview] = useState<ProductVisualBulkPreview | null>(null);
-	const [bulkRun, setBulkRun] = useState<ProductVisualBulkRun | null>(null);
-	const [bulkBusy, setBulkBusy] = useState(false);
-	const [canvaBulkPreview, setCanvaBulkPreview] = useState<CanvaCutoutBulkPreview | null>(null);
-	const [canvaBulkRun, setCanvaBulkRun] = useState<CanvaCutoutBulkRun | null>(null);
-	const [canvaBulkBusy, setCanvaBulkBusy] = useState(false);
-	const [canvaTransparentExport, setCanvaTransparentExport] = useState<CanvaCapabilityStatus>("UNKNOWN");
-	const [canvaBulkMethod, setCanvaBulkMethod] = useState<CanvaMethod>("MAGIC_GRAB");
 
 	// Cluster list + cluster → product_type_group map (dependent Product Type dropdown).
 	const [clusters, setClusters] = useState<string[]>([]);
@@ -292,132 +268,6 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 	const rangeStart = total === 0 ? 0 : offset + 1;
 	const rangeEnd = Math.min(offset + PAGE_SIZE, total);
 
-	async function openBulkPreview() {
-		setBulkBusy(true);
-		setError(null);
-		try {
-			setBulkRun(null);
-			setBulkPreview(await fetchProductVisualBulkPreview(1000));
-		} catch (err: unknown) {
-			setError(getErrorMessage(err, "Could not preview missing cutouts"));
-		} finally {
-			setBulkBusy(false);
-		}
-	}
-
-	async function confirmBulkPrepare() {
-		if (!bulkPreview) return;
-		const boundedBatch = bulkPreview.bounded_batch?.default_size ?? 5;
-		if (!window.confirm(`Prepare a bounded batch of up to ${boundedBatch} of ${bulkPreview.counts.eligible} auto-cutout candidates for human review? No provider calls or approvals will occur.`)) return;
-		setBulkBusy(true);
-		setError(null);
-		try {
-			setBulkRun(await queueProductVisualBulkPrepare({ preview_digest: bulkPreview.preview_digest, batch_size: boundedBatch, max_products: boundedBatch }));
-		} catch (err: unknown) {
-			setError(getErrorMessage(err, "Could not queue cutout preparation"));
-		} finally {
-			setBulkBusy(false);
-		}
-	}
-
-	async function openCanvaBulkPreview() {
-		setCanvaBulkBusy(true);
-		setError(null);
-		try {
-			setCanvaBulkRun(null);
-			setCanvaBulkPreview(await fetchCanvaCutoutBulkPreview(1000));
-		} catch (err: unknown) {
-			setError(getErrorMessage(err, "Could not preview Canva cutouts"));
-		} finally {
-			setCanvaBulkBusy(false);
-		}
-	}
-
-	async function confirmCanvaBulkPrepare() {
-		if (!canvaBulkPreview) return;
-		const bounded = canvaBulkPreview.bounded_batch?.default_size ?? 3;
-		if (!window.confirm(`Prepare a resumable Canva operator queue for up to ${bounded} products? Canva editing remains user/browser-controller work; no provider calls or approvals will occur.`)) return;
-		setCanvaBulkBusy(true);
-		setError(null);
-		try {
-			setCanvaBulkRun(await queueCanvaCutoutBulk({
-				preview_digest: canvaBulkPreview.preview_digest,
-				max_products: bounded,
-				preflight: {
-					canva_method: canvaBulkMethod,
-					login_status: "UNKNOWN",
-					magic_grab_status: "UNKNOWN",
-					background_remover_status: "UNKNOWN",
-					magic_layers_status: "UNKNOWN",
-					transparent_export_status: canvaTransparentExport,
-				},
-			}));
-		} catch (err: unknown) {
-			setError(getErrorMessage(err, "Could not queue Canva cutouts"));
-		} finally {
-			setCanvaBulkBusy(false);
-		}
-	}
-
-	async function pauseCanvaBulk() {
-		if (!canvaBulkRun) return;
-		setCanvaBulkBusy(true);
-		try {
-			setCanvaBulkRun(await pauseCanvaCutoutBulk(canvaBulkRun.run_id));
-		} catch (err: unknown) {
-			setError(getErrorMessage(err, "Could not pause Canva queue"));
-		} finally {
-			setCanvaBulkBusy(false);
-		}
-	}
-
-	async function resumeCanvaBulk() {
-		if (!canvaBulkRun) return;
-		if (!window.confirm("Confirm Canva login, at least one method, and transparent PNG export entitlement before resuming.")) return;
-		setCanvaBulkBusy(true);
-		try {
-			setCanvaBulkRun(await resumeCanvaCutoutBulk(canvaBulkRun.run_id, {
-				login_status: "READY",
-				magic_grab_status: canvaBulkMethod === "MAGIC_GRAB" ? "READY" : "UNKNOWN",
-				background_remover_status: canvaBulkMethod === "BACKGROUND_REMOVER" ? "READY" : "UNKNOWN",
-				magic_layers_status: canvaBulkMethod === "MAGIC_LAYERS" ? "READY" : "UNKNOWN",
-				transparent_export_status: "READY",
-			}));
-		} catch (err: unknown) {
-			setError(getErrorMessage(err, "Could not resume Canva queue"));
-		} finally {
-			setCanvaBulkBusy(false);
-		}
-	}
-
-	async function cancelCanvaBulk() {
-		if (!canvaBulkRun || !window.confirm("Cancel the remaining Canva queue? Completed and pending-review products remain preserved.")) return;
-		setCanvaBulkBusy(true);
-		try {
-			setCanvaBulkRun(await cancelCanvaCutoutBulk(canvaBulkRun.run_id));
-		} catch (err: unknown) {
-			setError(getErrorMessage(err, "Could not cancel Canva queue"));
-		} finally {
-			setCanvaBulkBusy(false);
-		}
-	}
-
-	async function bypassCanvaBulkItem(productId: string) {
-		if (!canvaBulkRun) return;
-		const operator = window.prompt("Operator identity")?.trim() || "";
-		const reason = window.prompt("Why bypass this product in the Canva queue?")?.trim() || "";
-		if (!operator || !reason) return;
-		setCanvaBulkBusy(true);
-		setError(null);
-		try {
-			setCanvaBulkRun(await bypassCanvaCutoutBulkItem(canvaBulkRun.run_id, productId, operator, reason));
-		} catch (err: unknown) {
-			setError(getErrorMessage(err, "Could not bypass Canva queue item"));
-		} finally {
-			setCanvaBulkBusy(false);
-		}
-	}
-
 	return (
 		<div className="min-w-0 space-y-5">
 			{/* Header */}
@@ -435,99 +285,15 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 						</p>
 					</div>
 					<div className="flex items-center gap-2">
-						<button type="button" onClick={() => void openCanvaBulkPreview()} disabled={canvaBulkBusy} className="rounded-lg bg-violet-600/90 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40" data-testid="prepare-canva-cutouts">
-							{canvaBulkBusy ? "Loading Canva…" : "Prepare Canva Cutouts"}
-						</button>
-						<button type="button" onClick={() => void openBulkPreview()} disabled={bulkBusy} className="rounded-lg bg-indigo-600/80 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40" data-testid="prepare-missing-cutouts">
-							{bulkBusy ? "Loading…" : "Prepare Bounded Auto Batch"}
-						</button>
+						<span className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-400" data-testid="per-product-visual-workflow">
+							Visual work is per product
+						</span>
 						<span className="px-2 py-0.5 rounded text-[9px] font-bold bg-slate-700/30 text-slate-400">
 							Total: {total.toLocaleString()}
 						</span>
 					</div>
 				</div>
 			</div>
-
-			{bulkPreview && (
-				<div className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 p-4" data-testid="cutout-bulk-preview">
-					<div className="flex flex-wrap items-center justify-between gap-3">
-						<div>
-							<div className="text-xs font-bold text-white">Cutout preparation preview</div>
-							<div className="mt-1 text-[10px] text-slate-400">Preview only: archived, purged aliases, fixtures, approved locks, rejected candidates, and rows without trusted media are excluded. Execution is bounded and requires confirmation.</div>
-						</div>
-						<button type="button" onClick={() => void confirmBulkPrepare()} disabled={bulkBusy || bulkPreview.counts.eligible === 0} className="rounded-lg bg-emerald-600/80 px-3 py-2 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40">
-							Confirm &amp; Queue
-						</button>
-					</div>
-					<div className="mt-3 grid grid-cols-2 gap-2 text-[10px] text-slate-300 md:grid-cols-5">
-						<div>Eligible <span className="font-bold text-white">{bulkPreview.counts.eligible}</span></div>
-						<div>Approved <span className="font-bold text-emerald-300">{bulkPreview.counts.already_approved}</span></div>
-						<div>Pending <span className="font-bold text-amber-300">{bulkPreview.counts.pending_review}</span></div>
-						<div>Blocked <span className="font-bold text-red-300">{bulkPreview.counts.blocked}</span></div>
-						<div>Skipped <span className="font-bold text-slate-400">{bulkPreview.counts.skipped}</span></div>
-					</div>
-					<div className="mt-3 text-[10px] text-slate-400">Batch limit <span className="font-bold text-white">{bulkPreview.bounded_batch?.default_size ?? 5}</span> (max {bulkPreview.bounded_batch?.max_size ?? 25}) · {bulkPreview.bounded_batch?.estimated_throughput ?? "Throughput measured from completed local runs"}</div>
-					{bulkRun && <div className="mt-3 text-[10px] text-sky-200">Run {bulkRun.run_id}: {bulkRun.status} · {bulkRun.total_expected} queued · provider operations {bulkRun.provider_operations}</div>}
-				</div>
-			)}
-
-			{canvaBulkPreview && (
-				<div className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-4" data-testid="canva-bulk-preview">
-					<div className="flex flex-wrap items-center justify-between gap-3">
-						<div>
-							<div className="text-xs font-bold text-white">Canva cutout queue preview</div>
-							<div className="mt-1 text-[10px] text-slate-400">Preview only. The queue persists pause/resume/cancel state, but Canva editing remains operator/browser-controller work and every result enters PENDING_HUMAN_REVIEW.</div>
-						</div>
-						<button type="button" onClick={() => void confirmCanvaBulkPrepare()} disabled={canvaBulkBusy || canvaBulkPreview.counts.eligible === 0} className="rounded-lg bg-violet-600/80 px-3 py-2 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40">Confirm &amp; Queue</button>
-					</div>
-					<div className="mt-3 grid grid-cols-2 gap-2 text-[10px] text-slate-300 md:grid-cols-7">
-						<div>Eligible <span className="font-bold text-white">{canvaBulkPreview.counts.eligible}</span></div>
-						<div>Approved <span className="font-bold text-emerald-300">{canvaBulkPreview.counts.already_approved}</span></div>
-						<div>Pending <span className="font-bold text-amber-300">{canvaBulkPreview.counts.pending_review}</span></div>
-						<div>Pro blocked <span className="font-bold text-red-300">{canvaBulkPreview.counts.canva_pro_required}</span></div>
-						<div>Missing source <span className="font-bold text-red-300">{canvaBulkPreview.counts.missing_source}</span></div>
-						<div>Blocked <span className="font-bold text-red-300">{canvaBulkPreview.counts.blocked}</span></div>
-						<div>Remaining <span className="font-bold text-violet-200">{canvaBulkPreview.remaining}</span></div>
-					</div>
-					<div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
-						<label>Transparent export preflight
-							<select value={canvaTransparentExport} onChange={(event) => setCanvaTransparentExport(event.target.value as CanvaCapabilityStatus)} className="ml-2 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-slate-200">
-								<option value="UNKNOWN">UNKNOWN</option>
-								<option value="READY">READY</option>
-								<option value="PRO_REQUIRED">PRO REQUIRED</option>
-							</select>
-						</label>
-						<label>Queue method
-							<select value={canvaBulkMethod} onChange={(event) => setCanvaBulkMethod(event.target.value as CanvaMethod)} className="ml-2 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-slate-200">
-								<option value="MAGIC_GRAB">Magic Grab</option>
-								<option value="BACKGROUND_REMOVER">Background Remover</option>
-								<option value="MAGIC_LAYERS">Magic Layers</option>
-							</select>
-						</label>
-						<span>Bounded batch {canvaBulkPreview.bounded_batch?.default_size ?? 3} (max {canvaBulkPreview.bounded_batch?.max_size ?? 25})</span>
-					</div>
-					{canvaBulkRun && <div className="mt-3 rounded border border-slate-700/70 bg-slate-900/50 p-3 text-[10px] text-sky-200">
-						<div>Run {canvaBulkRun.run_id}: {canvaBulkRun.status} · processed {canvaBulkRun.total_processed}/{canvaBulkRun.total_expected} · pending review {canvaBulkRun.total_pending_review} · bypassed {canvaBulkRun.total_bypassed}</div>
-						<div className="mt-2 flex flex-wrap gap-2">
-							{!['COMPLETED', 'FAILED', 'CANCELLED'].includes(canvaBulkRun.status) && <>
-								<button type="button" onClick={() => void pauseCanvaBulk()} disabled={canvaBulkBusy} className="rounded bg-slate-700 px-2 py-1 font-bold uppercase tracking-widest text-slate-200">Pause</button>
-								<button type="button" onClick={() => void resumeCanvaBulk()} disabled={canvaBulkBusy} className="rounded bg-emerald-600/70 px-2 py-1 font-bold uppercase tracking-widest text-white">Resume</button>
-								<button type="button" onClick={() => void cancelCanvaBulk()} disabled={canvaBulkBusy} className="rounded bg-red-500/30 px-2 py-1 font-bold uppercase tracking-widest text-red-200">Cancel</button>
-							</>}
-						</div>
-						<div className="mt-2 text-slate-400">Per-product Canva Cutout remains available in each row and can bypass this queue safely.</div>
-						{canvaBulkRun.items?.length > 0 && <div className="mt-3 space-y-1 border-t border-slate-800 pt-2">
-							{canvaBulkRun.items.map((item) => {
-								const terminal = ["APPROVED", "PENDING_HUMAN_REVIEW", "CANCELLED", "BYPASSED"].includes(item.current_stage);
-								return <div key={item.item_id} className="flex flex-wrap items-center justify-between gap-2 rounded bg-slate-950/40 px-2 py-1.5 text-slate-300">
-									<span>{item.product_id} · {item.current_stage}{item.priority === 0 ? " · priority" : ""}</span>
-									{!terminal && <button type="button" onClick={() => void bypassCanvaBulkItem(item.product_id)} disabled={canvaBulkBusy} className="rounded bg-amber-500/20 px-2 py-1 font-bold uppercase tracking-widest text-amber-200 disabled:opacity-40">Bypass</button>}
-								</div>;
-							})}
-						</div>}
-					</div>}
-				</div>
-			)}
 
 			{/* Error */}
 			{error && (
