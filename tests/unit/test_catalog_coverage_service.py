@@ -185,3 +185,72 @@ async def test_matrix_is_full_deterministic_and_launch_cohort_is_fail_closed(
     assert authority_by_id["unknown"].p6_launch_cohort is False
     assert authority_first.matrix_sha256 == authority_second.matrix_sha256
     assert attach_calls == 4
+
+
+@pytest.mark.asyncio
+async def test_approved_product_truth_description_releases_description_absent_blocker(
+    monkeypatch,
+):
+    product_id = "8e75f1a8-ba43-444e-8b40-c71d140c76c5"
+    taxonomy = _taxonomy(
+        product_id,
+        cluster="sensitive_wellness",
+        product_type_group="traditional_herbal_preparation",
+        scene_strategy_id="SENSITIVE_WELLNESS",
+        authority_source="MANUAL_OVERRIDE",
+    )
+    product = _product(
+        product_id,
+        taxonomy,
+        source_type="Herbal Topical Cream",
+    )
+    product["category"] = "Health & Personal Care"
+    product["subcategory"] = "Traditional Herbal Preparation"
+    attached = [product]
+
+    async def fake_products(**kwargs):
+        assert kwargs == {"include_archived": True}
+        return [
+            {key: value for key, value in product.items() if key != "strategy_taxonomy"}
+        ]
+
+    async def fake_attach(products):
+        assert len(products) == 1
+        return attached
+
+    async def fake_registry():
+        return ProductStrategyTypeRegistryListResponse(
+            items=[
+                ProductStrategyTypeRegistryEntry(
+                    cluster="sensitive_wellness",
+                    product_type_group="traditional_herbal_preparation",
+                    display_name="Traditional Herbal Preparation",
+                    matched_scene_strategy_id="SENSITIVE_WELLNESS",
+                    scene_coverage_status="COVERED",
+                    registry_status="ACTIVE",
+                    auto_classification_enabled=False,
+                    authority_source="MANUAL_REGISTRATION",
+                ),
+            ],
+            clusters=["sensitive_wellness"],
+            scene_strategy_ids=["SENSITIVE_WELLNESS"],
+        )
+
+    async def fake_approved_snapshot(product_id):
+        assert product_id == "8e75f1a8-ba43-444e-8b40-c71d140c76c5"
+        return {"product_description": "Approved product truth description."}
+
+    monkeypatch.setattr(service.crud, "list_products", fake_products)
+    monkeypatch.setattr(service, "attach_product_strategy_taxonomies", fake_attach)
+    monkeypatch.setattr(service, "list_product_strategy_type_registry", fake_registry)
+    monkeypatch.setattr(
+        service.crud,
+        "get_latest_approved_product_intelligence_snapshot",
+        fake_approved_snapshot,
+    )
+
+    report = await service.build_catalog_authority_matrix()
+
+    row = report.products[0]
+    assert row.terminal_state == "P6_READY"
+    assert row.terminal_reasons == []

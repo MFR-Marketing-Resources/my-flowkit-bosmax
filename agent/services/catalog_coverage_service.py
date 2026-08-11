@@ -33,6 +33,30 @@ from agent.services.product_strategy_taxonomy_service import (
 _UNKNOWN_PRODUCT_TYPE = "unknown_product_type"
 
 
+async def _resolve_insufficient_product_truth_reason(
+    product_id: str,
+) -> str | None:
+    """Resolve legacy P5.8 truth blockers against the current PI evidence.
+
+    P5.8 records the reason that originally kept a product out of authority.  The
+    approved Product Intelligence snapshot is the durable operator decision that
+    can satisfy the specific ``...DESCRIPTION_ABSENT`` blocker.  Keep the other
+    reason-specific blockers unchanged: an approved description alone must not
+    silently override a sample-size or title-only ruling.
+    """
+
+    reason = P58_INSUFFICIENT_PRODUCT_TRUTH_REASONS.get(product_id)
+    if reason != "APPROVED_PRODUCT_TRUTH_DESCRIPTION_ABSENT":
+        return reason
+
+    snapshot = await crud.get_latest_approved_product_intelligence_snapshot(
+        product_id
+    )
+    if snapshot and str(snapshot.get("product_description") or "").strip():
+        return None
+    return reason
+
+
 def _product_name(product: dict[str, object]) -> str:
     for field in (
         "product_display_name",
@@ -309,7 +333,7 @@ async def build_catalog_authority_matrix() -> CatalogAuthorityMatrixReport:
             and coverage_row.p6_launch_cohort
             and not authority_blockers
         )
-        insufficient_reason = P58_INSUFFICIENT_PRODUCT_TRUTH_REASONS.get(
+        insufficient_reason = await _resolve_insufficient_product_truth_reason(
             coverage_row.product_id
         )
         if coverage_row.lifecycle_status != "ACTIVE":

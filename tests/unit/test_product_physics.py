@@ -1,4 +1,5 @@
 from agent.services.product_physics import evaluate_prompt_readiness, resolve_product_physics
+from agent.services.product_preflight import resolve_creative_profile
 
 
 def test_diaper_physics_mapping():
@@ -71,6 +72,34 @@ def test_sambal_physics_mapping():
 
     assert result["physics_class"] == "B"
     assert "food-safe" in result["camera_handling_notes"]
+
+
+def test_exact_kitchen_utensil_taxonomy_overrides_food_title_token():
+    result = resolve_product_physics(
+        product_name="Triangle Food Waste Sink Filter 304 Stainless Steel Drain Basket",
+        category="Kitchenware",
+        subcategory="Kitchen Utensils & Gadgets",
+        type_name="Specialty Kitchen Utensils",
+    )
+
+    assert result["physics_class"] == "KITCHEN_TOOL"
+    assert "grate" in result["air_gap_rule"]
+
+
+def test_kitchen_utility_creative_profile_does_not_use_food_copy():
+    profile = resolve_creative_profile(
+        {
+            "raw_product_title": "Triangle Food Waste Sink Filter",
+            "product_short_name": "Triangle Food Waste Sink",
+            "category": "Kitchenware",
+            "subcategory": "Kitchen Utensils & Gadgets",
+            "type": "Specialty Kitchen Utensils",
+            "bosmax_product_family": "AUTO_TOOL_GENERAL",
+        }
+    )
+
+    assert profile["copywriting_angle"] == "Trust-led kitchen utility and ease of use"
+    assert profile["product_type_id"] == "KITCHEN_TOOL"
 
 
 def test_unknown_manual_product_readiness_missing_fields():

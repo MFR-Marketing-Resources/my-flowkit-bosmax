@@ -145,6 +145,41 @@ async def test_registry_backed_review_persists_and_api_reads_verified_taxonomy()
     assert readback.json()["authority_source"] == "MANUAL_OVERRIDE"
 
 
+@pytest.mark.asyncio
+async def test_manual_product_patch_persists_source_taxonomy_fields():
+    """The product editor's manual Category/Subcategory/Type save is durable."""
+
+    product = await crud.create_product(
+        "Manual Sink Strainer",
+        source="MANUAL",
+        product_display_name="Manual Sink Strainer",
+        product_short_name="Manual Sink Strainer",
+    )
+    app = FastAPI()
+    app.include_router(products_router, prefix="/api")
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://test",
+    ) as client:
+        response = await client.patch(
+            f"/api/products/{product['id']}",
+            json={
+                "category": "Kitchenware",
+                "subcategory": "Kitchen Utensils & Gadgets",
+                "type": "Specialty Kitchen Utensils",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    stored = await crud.get_product(product["id"])
+    assert stored is not None
+    assert stored["category"] == "Kitchenware"
+    assert stored["subcategory"] == "Kitchen Utensils & Gadgets"
+    assert stored["type"] == "Specialty Kitchen Utensils"
+
+
 def test_product_catalog_items_include_taxonomy_contract(monkeypatch):
     product = {
         "id": "p1",

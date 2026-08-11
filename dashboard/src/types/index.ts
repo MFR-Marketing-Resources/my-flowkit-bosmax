@@ -1122,6 +1122,8 @@ export interface ProductStrategyTaxonomy {
 	product_id: string;
 	taxonomy_version: string;
 	product_fingerprint: string;
+	/** Current product snapshot; differs from product_fingerprint when review is stale. */
+	current_product_fingerprint?: string | null;
 	cluster: string;
 	product_type_group: string;
 	matched_scene_strategy_id: string;
