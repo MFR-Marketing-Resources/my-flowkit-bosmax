@@ -51,7 +51,6 @@ import CopySetRegistryPage from "./pages/CopySetRegistryPage";
 import DashboardPage from "./pages/DashboardPage";
 import ReportingExecutivePage from "./pages/ReportingExecutivePage";
 import ReportingOperationsPage from "./pages/ReportingOperationsPage";
-import GalleryPage from "./pages/GalleryPage";
 import OperatorPage from "./pages/OperatorPage";
 import FacelessVideoPage from "./pages/FacelessVideoPage";
 import MontagePage from "./pages/MontagePage";
@@ -64,7 +63,6 @@ import ProductRegistrationPage from "./pages/ProductRegistrationPage";
 import ProductTypeRegistryPage from "./pages/ProductTypeRegistryPage";
 import ProductsSalesAnalyzerPage from "./pages/ProductsSalesAnalyzerPage";
 import ProductDetailPage from "./pages/ProductDetailPage";
-import ProjectsPage from "./pages/ProjectsPage";
 import PromptPreviewPage from "./pages/PromptPreviewPage";
 import SettingsPage from "./pages/SettingsPage";
 import TroubleshootPage from "./pages/TroubleshootPage";
@@ -180,8 +178,6 @@ const NAV_GROUPS = [
 				icon: Gauge,
 				label: "Cockpit Settings",
 			},
-			{ to: "/projects", icon: FolderOpen, label: "Projects" },
-			{ to: "/gallery", icon: Film, label: "Gallery (Legacy)" },
 			{ to: "/prompt-preview", icon: Sparkles, label: "Prompt Preview" },
 			{ to: "/troubleshoot", icon: Siren, label: "Troubleshoot" },
 		],
@@ -656,9 +652,6 @@ function Layout() {
 						/>
 						<Route path="/products" element={<ProductsSalesAnalyzerPage />} />
 						<Route path="/product/:id" element={<ProductDetailPage />} />
-						<Route path="/projects" element={<ProjectsPage />} />
-						<Route path="/projects/:id" element={<ProjectsPage />} />
-						<Route path="/gallery" element={<GalleryPage />} />
 						<Route path="/prompt-preview" element={<PromptPreviewPage />} />
 
 						{/* System Routes */}
