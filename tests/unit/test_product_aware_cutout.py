@@ -80,6 +80,25 @@ def test_validate_roi(roi, size, expected):
 
 
 # ── ROI cutout: product-only, same-canvas ────────────────────
+def test_roi_infer_letterboxes_non_square_roi(monkeypatch):
+    # The model must receive a SQUARE input (no aspect distortion that mangled the
+    # light jar body), and the mask must map back undistorted, confined to the ROI.
+    seen = {}
+
+    def fake(img):
+        seen["size"] = img.size
+        return Image.new("L", img.size, 255)
+
+    monkeypatch.setattr(engine, "_infer_mask", fake)
+    src = Image.new("RGB", (800, 800), (10, 20, 30))
+    roi = (435, 42, 350, 618)  # portrait ROI (jar)
+    mask = engine._infer_mask_roi(src, roi)
+    assert seen["size"] == (618, 618)             # letterboxed to a square = no squash
+    assert mask.size == (800, 800)                # same canvas
+    assert mask.getbbox() == (435, 42, 785, 660)  # foreground exactly the ROI, undistorted
+    assert mask.getpixel((100, 100)) == 0         # outside ROI transparent
+
+
 def test_roi_infer_keeps_only_roi_and_preserves_full_canvas(monkeypatch):
     # inference returns an all-foreground mask for whatever crop it is given
     monkeypatch.setattr(engine, "_infer_mask", lambda crop: Image.new("L", crop.size, 255))
