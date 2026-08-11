@@ -36,12 +36,11 @@ import VisualAssetPicker from "../components/workspace/VisualAssetPicker";
 import CopywritingReadinessCard from "../components/copywriting/CopywritingReadinessCard";
 import CopyBindingGate from "../components/copywriting/CopyBindingGate";
 import {
-	OperatorCockpit,
-	QueueRow,
 	ResolvedChip,
 	WorkflowStep,
 } from "../components/workflow";
 import type { WorkflowStepStatus } from "../components/workflow";
+import ResultsSidebar, { type SessionResult } from "../components/workspace/ResultsSidebar";
 import { useCopywritingReadiness } from "../api/copywritingReadiness";
 import type { CreativeAsset, Product } from "../types";
 import {
@@ -224,6 +223,7 @@ export default function ImgCockpitPage() {
 	// Register-output (credit-free).
 	const [outputMode, setOutputMode] = useState<OutputMode>("artifact");
 	const [artifacts, setArtifacts] = useState<ImageArtifact[]>([]);
+	const [sessionResults, setSessionResults] = useState<SessionResult[]>([]);
 	const [artifactMediaId, setArtifactMediaId] = useState("");
 	const [uploadFile, setUploadFile] = useState<File | null>(null);
 
@@ -528,6 +528,10 @@ export default function ImgCockpitPage() {
 								...prev,
 							],
 				);
+				setSessionResults((prev) => [
+					{ media_id: mediaId, size_mb: sizeMb },
+					...prev.filter((r) => r.media_id !== mediaId),
+				]);
 			}
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Generation call failed.");
@@ -714,16 +718,16 @@ export default function ImgCockpitPage() {
 									{genJob && genJob.status === "DONE" && genJob.media_id ? (
 										<div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
 											<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-												Hasil Terkini
+												Latest result
 											</div>
 											<img
 												src={`/api/flow/retrieved/${encodeURIComponent(genJob.media_id)}`}
-												alt="Hasil generate terkini"
+												alt="Latest generated image"
 												loading="lazy"
 												className="w-full max-w-[220px] rounded-lg border border-slate-800 bg-black object-contain"
 											/>
 											<p className="text-[10px] text-slate-500">
-												Kualiti tak memuaskan? Regenerate untuk cuba lagi — imej PERCUMA (hanya video guna kredit) — atau padam imej ini.
+												Not satisfied? Regenerate to try again — images are credit-free (only video costs credits) — or delete this image.
 											</p>
 											<div className="flex flex-wrap gap-2">
 												<button
@@ -740,7 +744,7 @@ export default function ImgCockpitPage() {
 													disabled={!canSave}
 													className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-bold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-40"
 												>
-													💾 Simpan ke Library
+													💾 Save to Library
 												</button>
 												<button
 													type="button"
@@ -749,7 +753,7 @@ export default function ImgCockpitPage() {
 														if (!mid) return;
 														if (
 															!window.confirm(
-																"Padam imej ini? Creative Asset yang sudah disimpan tidak terjejas.",
+																"Delete this image? Saved Creative Assets are not affected.",
 															)
 														)
 															return;
@@ -763,13 +767,13 @@ export default function ImgCockpitPage() {
 															setError(
 																err instanceof Error
 																	? err.message
-																	: "Gagal padam imej artifact",
+																	: "Failed to delete image artifact",
 															);
 														}
 													}}
 													className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-[11px] font-bold text-rose-200 hover:bg-rose-500/20"
 												>
-													🗑 Padam
+													🗑 Delete
 												</button>
 											</div>
 										</div>
@@ -798,25 +802,20 @@ export default function ImgCockpitPage() {
 							</WorkflowStep>
 						</main>
 
-						<aside className="w-full lg:w-80 lg:flex-none"><div className="lg:sticky lg:top-4"><OperatorCockpit
-							laneLabel="IMG Cockpit"
-							status={{ label: generating ? "Working" : approvedAsset ? "Approved" : selectedProduct ? "Ready" : "Idle", state: generating ? "running" : approvedAsset ? "done" : selectedProduct ? "online" : "idle" }}
-							product={selectedProduct ? { name: selectedProduct.product_display_name, sub: lane?.label } : undefined}
-							plan={[
-								{ k: "Lane", v: lane?.lane_id ?? "—", mono: true },
-								{ k: "Aspect", v: aspect, mono: true },
-								{ k: "Count", v: count, mono: true },
-								{ k: "References", v: `${referenceCount} approved`, tone: referenceCount ? "good" : "muted" },
-								{ k: "Review", v: approvedAsset ? "Approved asset" : "Pending approval", tone: approvedAsset ? "good" : "muted" },
-							]}
-							queueTitle="Cockpit review"
-							generate={{ label: "Generate image · gated", disabled: !prompt.trim() || generating || genResolution.blocked || requirementsMissing || posterCopyGateBlocked, loading: generating, onClick: () => setShowGenConfirm(true), note: "manual confirmation required · no auto-fire" }}
-							debugLabel="IMG Cockpit diagnostics"
-							debug={<div className="space-y-1"><div>lane {lane?.lane_id ?? "—"}</div><div>count {count} · refs {referenceCount}</div><div>{GEN_NOT_FIRED} · {GEN_RUNTIME_UNVERIFIED}</div></div>}
-						>
-							<QueueRow title="Image output" sub={`${count} image${count === 1 ? "" : "s"} · ${aspect}`} status={genJob?.status === "DONE" ? "done" : "queued"} />
-							<QueueRow title="Approved asset" sub={approvedAsset?.display_name ?? "Review after save"} status={approvedAsset ? "done" : "queued"} />
-						</OperatorCockpit></div></aside>
+						<aside className="w-full lg:w-80 lg:flex-none lg:min-h-0 lg:overflow-y-auto">
+							<ResultsSidebar
+								results={sessionResults}
+								generating={generating}
+								onRemoved={(mediaId) => {
+									setSessionResults((prev) =>
+										prev.filter((r) => r.media_id !== mediaId),
+									);
+									setArtifacts((prev) =>
+										prev.filter((a) => a.media_id !== mediaId),
+									);
+								}}
+							/>
+						</aside>
 					</div>
 				</div>
 
@@ -1173,16 +1172,16 @@ export default function ImgCockpitPage() {
 						{genJob.status === "DONE" && genJob.media_id ? (
 							<div className="space-y-2">
 								<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-									Hasil Terkini
+									Latest result
 								</div>
 								<img
 									src={`/api/flow/retrieved/${encodeURIComponent(genJob.media_id)}`}
-									alt="Hasil generate terkini"
+									alt="Latest generated image"
 									loading="lazy"
 									className="w-full max-w-[220px] rounded-lg border border-slate-800 bg-black object-contain"
 								/>
 								<p className="text-[10px] text-slate-500">
-									Kualiti tak memuaskan? Regenerate untuk cuba lagi — imej PERCUMA (hanya video guna kredit) — atau padam imej ini.
+									Not satisfied? Regenerate to try again — images are credit-free (only video costs credits) — or delete this image.
 								</p>
 								<div className="flex flex-wrap gap-2">
 									<button
@@ -1199,7 +1198,7 @@ export default function ImgCockpitPage() {
 										disabled={!canSave}
 										className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-bold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-40"
 									>
-										💾 Simpan ke Library
+										💾 Save to Library
 									</button>
 									<button
 										type="button"
@@ -1208,7 +1207,7 @@ export default function ImgCockpitPage() {
 											if (!mid) return;
 											if (
 												!window.confirm(
-													"Padam imej ini? Creative Asset yang sudah disimpan tidak terjejas.",
+													"Delete this image? Saved Creative Assets are not affected.",
 												)
 											)
 												return;
@@ -1222,13 +1221,13 @@ export default function ImgCockpitPage() {
 												setError(
 													err instanceof Error
 														? err.message
-														: "Gagal padam imej artifact",
+														: "Failed to delete image artifact",
 												);
 											}
 										}}
 										className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-[11px] font-bold text-rose-200 hover:bg-rose-500/20"
 									>
-										🗑 Padam
+										🗑 Delete
 									</button>
 								</div>
 							</div>
