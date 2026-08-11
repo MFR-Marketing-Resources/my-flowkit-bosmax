@@ -8,7 +8,7 @@ from agent.db import crud
 from agent.services import canva_cutout_workflow_service as service
 
 
-def _png(size=(24, 24), *, alpha=True, transparent=True) -> bytes:
+def _png(size=(1000, 1000), *, alpha=True, transparent=True) -> bytes:
     image = Image.new("RGBA" if alpha else "RGB", size, (255, 255, 255, 0) if alpha else (255, 255, 255))
     if alpha:
         if transparent:
@@ -53,10 +53,10 @@ async def test_per_product_canva_start_and_preflight_persist_source_identity(tmp
     started = await service.start_canva_cutout(product["id"])
 
     assert started["workflow"]["current_stage"] == "PREFLIGHT"
-    assert started["workflow"]["source_dimensions"] == {"width": 24, "height": 24}
+    assert started["workflow"]["source_dimensions"] == {"width": 1000, "height": 1000}
     row = await crud.get_canva_cutout_workflow(product["id"])
-    assert row["source_width"] == 24
-    assert row["source_height"] == 24
+    assert row["source_width"] == 1000
+    assert row["source_height"] == 1000
     assert len(row["source_sha256"]) == 64
 
     ready = await service.record_canva_preflight(
@@ -96,15 +96,15 @@ async def test_canva_pro_required_blocks_before_editing(tmp_path):
 
 def test_canva_png_verification_rejects_rgb_and_opaque_outputs():
     with pytest.raises(service.CanvaCutoutWorkflowError) as rgb_error:
-        service._verify_canva_png(_png(alpha=False), (24, 24))
+        service._verify_canva_png(_png(alpha=False), (1000, 1000))
     assert rgb_error.value.code == "CANVA_ALPHA_REQUIRED"
 
     with pytest.raises(service.CanvaCutoutWorkflowError) as opaque_error:
-        service._verify_canva_png(_png(alpha=True, transparent=False), (24, 24))
+        service._verify_canva_png(_png(alpha=True, transparent=False), (1000, 1000))
     assert opaque_error.value.code == "CANVA_ALPHA_REQUIRED"
 
-    width, height, sha = service._verify_canva_png(_png(), (24, 24))
-    assert (width, height) == (24, 24)
+    width, height, sha = service._verify_canva_png(_png(), (1000, 1000))
+    assert (width, height) == (1000, 1000)
     assert len(sha) == 64
 
 

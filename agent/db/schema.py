@@ -777,6 +777,9 @@ CREATE TABLE IF NOT EXISTS product (
     media_id            TEXT, -- Google Flow media_id after upload
     local_image_path    TEXT, -- Path to cached image
     image_failure_detail TEXT,
+    visual_canvas_width INTEGER NOT NULL DEFAULT 1000,
+    visual_canvas_height INTEGER NOT NULL DEFAULT 1000,
+    visual_canvas_requirement TEXT NOT NULL DEFAULT 'Manual / Canva cutouts must be transparent PNG files on an exact 1000x1000 px canvas.',
     created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
@@ -1492,6 +1495,9 @@ CREATE TABLE IF NOT EXISTS product (
     media_id            TEXT,
     local_image_path    TEXT,
     image_failure_detail TEXT,
+    visual_canvas_width INTEGER NOT NULL DEFAULT 1000,
+    visual_canvas_height INTEGER NOT NULL DEFAULT 1000,
+    visual_canvas_requirement TEXT NOT NULL DEFAULT 'Manual / Canva cutouts must be transparent PNG files on an exact 1000x1000 px canvas.',
     created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
@@ -1750,6 +1756,27 @@ CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_statu
         if "image_failure_detail" not in product_columns:
             await db.execute("ALTER TABLE product ADD COLUMN image_failure_detail TEXT")
             logger.info("Migrated: added image_failure_detail column to product table")
+        if "visual_canvas_width" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN visual_canvas_width INTEGER NOT NULL DEFAULT 1000")
+            logger.info("Migrated: added visual_canvas_width column to product table")
+        if "visual_canvas_height" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN visual_canvas_height INTEGER NOT NULL DEFAULT 1000")
+            logger.info("Migrated: added visual_canvas_height column to product table")
+        if "visual_canvas_requirement" not in product_columns:
+            await db.execute(
+                "ALTER TABLE product ADD COLUMN visual_canvas_requirement TEXT NOT NULL "
+                "DEFAULT 'Manual / Canva cutouts must be transparent PNG files on an exact 1000x1000 px canvas.'"
+            )
+            logger.info("Migrated: added visual_canvas_requirement column to product table")
+        await db.execute(
+            "UPDATE product SET visual_canvas_width = 1000, visual_canvas_height = 1000, "
+            "visual_canvas_requirement = 'Manual / Canva cutouts must be transparent PNG files "
+            "on an exact 1000x1000 px canvas.' "
+            "WHERE visual_canvas_width IS NULL OR visual_canvas_width != 1000 "
+            "OR visual_canvas_height IS NULL OR visual_canvas_height != 1000 "
+            "OR visual_canvas_requirement IS NULL OR visual_canvas_requirement != "
+            "'Manual / Canva cutouts must be transparent PNG files on an exact 1000x1000 px canvas.'"
+        )
         # Migration: add orientation to video table + backfill from scene data
         cursor = await db.execute("PRAGMA table_info(video)")
         video_columns = {row[1] for row in await cursor.fetchall()}

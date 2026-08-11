@@ -46,6 +46,7 @@ domains:
       # identity/geometry/label/scale authority shared by IMG and Poster lanes.
       - agent/models/product_truth_lock.py
       - agent/services/product_truth_lock_service.py
+      - agent/services/product_visual_canvas_service.py
       - agent/api/product_truth.py
       - agent/api/product_visual_onboarding.py
       - agent/services/canva_cutout_workflow_service.py
@@ -56,6 +57,7 @@ domains:
       - tests/integration/test_product_visual_crud_workflow.py
       - tests/unit/test_canonical_runtime_lock.py
       - tests/unit/test_canva_cutout_workflow_service.py
+      - tests/unit/test_product_visual_canvas_service.py
       - tests/api/test_canva_cutout_workflow_api.py
       - tests/api/test_product_truth_lock_flow_gate.py
       # Local, CPU-only BiRefNet ONNX cutout engine (opt-in) — upgrades HOW the

@@ -513,6 +513,11 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 									const draft = product.open_review_draft;
 									const visualStatus = getTableVisualStatus(product.visual_readiness);
 									const visualAction = getTableVisualAction(product.visual_readiness);
+									const visualCanvasLabel =
+										product.visual_readiness?.visual_canvas_label ||
+										(product.visual_canvas_width && product.visual_canvas_height
+											? `${product.visual_canvas_width}×${product.visual_canvas_height} px`
+											: "1000×1000 px");
 									const sold =
 										product.sold_count ?? product.product_sold_count ?? null;
 									return (
@@ -650,6 +655,13 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 														>
 															{visualAction}
 														</button>
+														<div
+															className="mt-1 text-[8px] font-semibold uppercase tracking-widest text-fuchsia-300/80"
+															data-testid="table-visual-canvas-requirement"
+															title={product.visual_readiness?.visual_canvas_requirement || product.visual_canvas_requirement || undefined}
+														>
+															Canvas {visualCanvasLabel}
+														</div>
 													</div>
 												</div>
 											</td>

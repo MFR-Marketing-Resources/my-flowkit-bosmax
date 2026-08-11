@@ -35,6 +35,10 @@ import type { ProductVisualReadiness } from "../../types";
 
 const pending: ProductVisualReadiness = {
 	product_id: "product-1",
+	visual_canvas_width: 1000,
+	visual_canvas_height: 1000,
+	visual_canvas_label: "1000×1000 px",
+	visual_canvas_requirement: "Manual / Canva cutouts must be transparent PNG files on an exact 1000x1000 px canvas.",
 	canonical_media_status: "AVAILABLE",
 	reference_pack_status: "PENDING_REVIEW",
 	visual_grounding_status: "VISUAL_GROUNDING_READY",
@@ -201,9 +205,35 @@ describe("ProductVisualReadinessPanel", () => {
 		expect(screen.getByText("Visual Ready")).toBeInTheDocument();
 		expect(screen.getByText("Exact Commerce")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Canva Cutout" })).toBeInTheDocument();
+		expect(screen.getByTestId("canonical-canvas-requirement")).toHaveTextContent("1000×1000 px");
 		expect(screen.getByTestId("save-visual-changes")).toBeDisabled();
 		expect(screen.queryByRole("button", { name: "Approve as Official Cutout" })).not.toBeInTheDocument();
 		expect(screen.getByText("Open Source")).toHaveAttribute("href", "https://example.test/product");
+	});
+
+	it("rejects a non-standard manual PNG before the upload API is called", async () => {
+		const uploadReady = {
+			...pending,
+			can_upload_manual_cutout: true,
+			can_start_canva_cutout: true,
+		};
+		vi.stubGlobal(
+			"createImageBitmap",
+			vi.fn().mockResolvedValue({ width: 800, height: 800, close: vi.fn() }),
+		);
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={uploadReady} />);
+
+		const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+		fireEvent.change(input, {
+			target: {
+				files: [new File(["png"], "manual.png", { type: "image/png" })],
+			},
+		});
+
+		expect(await screen.findByTestId("manual-upload-message")).toHaveTextContent(
+			"requires 1000×1000 px",
+		);
+		expect(uploadManualProductCutoutMock).not.toHaveBeenCalled();
 	});
 
 	it("keeps the compact Canva workflow bounded and readable", () => {

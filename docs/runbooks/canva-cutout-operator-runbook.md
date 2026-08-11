@@ -86,22 +86,24 @@ MCP has no direct proven Magic Grab tool. The fixed-page/root background may be 
 If the Magic Layers root background cannot be deleted:
 
 1. create a clean Canva design;
-2. set its width and height to the exact source dimensions;
+2. set its width and height to the standard `1000x1000` px canvas;
 3. transfer only the isolated product element(s);
 4. preserve the original scale and aspect ratio;
 5. do not crop, stretch, or add a white replacement background.
 
-## 8. Clean same-size canvas rule
+## 8. Standard canvas rule
 
-The source and export dimensions must match exactly. For example:
+Every product uses the same working canvas. Create the clean Canva page and
+export the transparent cutout at exactly `1000x1000` px:
 
 ```text
-source:      800x800
-clean page:  800x800
-export:      800x800 PNG with alpha
+clean page:  1000x1000
+export:      1000x1000 PNG with alpha
 ```
 
-If the Canva export is cropped or resized, do not upload it. Correct the Canva design first.
+The original product source may be a different native size; BOSMAX standardizes
+the trusted source internally. If the Canva export is cropped or resized, do
+not upload it. Correct the Canva design first.
 
 ## 9. Transparent PNG export
 
@@ -110,7 +112,7 @@ Export `PNG` and enable `Transparent Background`. Canva’s visible checkerboard
 Upload the file using `Upload Canva PNG → Manual Review`. BOSMAX independently verifies:
 
 - PNG format;
-- exact source dimensions;
+- exact `1000x1000` canvas dimensions;
 - alpha-bearing mode/metadata;
 - transparent pixels;
 - visible product pixels.
@@ -162,7 +164,7 @@ The queue is durable in `canva_cutout_bulk_run` and `canva_cutout_bulk_item`; a 
 | `CANVA_PRO_REQUIRED` / transparent export crown | Stop. Obtain the required entitlement or choose a different approved workflow; do not start editing or export RGB. |
 | `CANVA_LOGIN_REQUIRED` | Log in to the intended Canva workspace and record preflight again. |
 | `CANVA_METHOD_UNAVAILABLE` | Pick a method observed as available: Magic Grab, BG Remover, or Magic Layers. |
-| `CANVA_CANVAS_DIMENSIONS_MISMATCH` | Rebuild the design on an exact same-size canvas and export again. Do not resize in BOSMAX. |
+| `CANVA_CANVAS_DIMENSIONS_MISMATCH` | Rebuild the design on the standard `1000x1000` canvas and export again. |
 | `CANVA_ALPHA_REQUIRED` | Export a real transparent PNG. A white RGB PNG is rejected. |
 | MCP cannot delete root/fixed-page background | Use actual Canva UI or clean same-size canvas; preserve product elements. |
 | MCP has no direct Magic Grab tool | Perform Magic Grab in Canva UI; record only observed evidence. |
