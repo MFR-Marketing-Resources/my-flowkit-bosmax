@@ -188,6 +188,88 @@ async def test_matrix_is_full_deterministic_and_launch_cohort_is_fail_closed(
 
 
 @pytest.mark.asyncio
+async def test_exact_workbook_mapping_counts_as_product_truth_without_legacy_rule(
+    monkeypatch,
+):
+    mapped = _product(
+        "workbook-mapped",
+        _taxonomy("workbook-mapped"),
+        source_type="3D Scene Sticker Books",
+    )
+    mapped.update(
+        {
+            "category": "Toys & Games",
+            "subcategory": "Creative Play",
+            "type": "3D Scene Sticker Books",
+            "copywriting_product_type_code": "3d_sticker_book",
+            "copywriting_angle": (
+                "Creativity-led city-scene storytelling, reusable play, and "
+                "screen-free engagement"
+            ),
+        }
+    )
+
+    async def fake_products(**kwargs):
+        assert kwargs == {"include_archived": True}
+        return [
+            {
+                key: value
+                for key, value in mapped.items()
+                if key != "strategy_taxonomy"
+            }
+        ]
+
+    async def fake_attach(products):
+        assert len(products) == 1
+        return [mapped]
+
+    async def fake_registry():
+        return ProductStrategyTypeRegistryListResponse(
+            items=[
+                ProductStrategyTypeRegistryEntry(
+                    cluster="beauty_makeup",
+                    product_type_group="lipstick_lip_tint",
+                    display_name="Lipstick Lip Tint",
+                    matched_scene_strategy_id="LIP_COLOR",
+                    scene_coverage_status="COVERED",
+                    registry_status="ACTIVE",
+                    auto_classification_enabled=True,
+                    authority_source="SYSTEM_SEED",
+                ),
+            ],
+            clusters=["beauty_makeup"],
+            scene_strategy_ids=["LIP_COLOR"],
+        )
+
+    monkeypatch.setattr(service.crud, "list_products", fake_products)
+    monkeypatch.setattr(
+        service,
+        "attach_product_strategy_taxonomies",
+        fake_attach,
+    )
+    monkeypatch.setattr(
+        service,
+        "list_product_strategy_type_registry",
+        fake_registry,
+    )
+    monkeypatch.setattr(
+        service,
+        "resolve_catalog_product_type_truth",
+        lambda _product: None,
+    )
+
+    coverage = await service.build_catalog_coverage_matrix()
+    coverage_row = coverage.products[0]
+    assert coverage_row.product_truth_mapped is True
+
+    authority = await service.build_catalog_authority_matrix()
+    authority_row = authority.products[0]
+    assert authority_row.product_truth_mapped is True
+    assert authority_row.mapping_provenance == "SOURCE_TAXONOMY"
+    assert authority_row.terminal_state == "P6_READY"
+
+
+@pytest.mark.asyncio
 async def test_approved_product_truth_description_releases_description_absent_blocker(
     monkeypatch,
 ):

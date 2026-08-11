@@ -15,6 +15,9 @@ from agent.models.product_strategy_taxonomy import (
     ProductStrategyTypeRegistrySeedRequest,
 )
 from agent.services import product_strategy_taxonomy_service as service
+from agent.services.copywriting_taxonomy_service import (
+    seed_copywriting_taxonomy_registry,
+)
 
 
 def _product_payload(product_id: str, title: str, product_type: str) -> dict:
@@ -689,6 +692,59 @@ async def test_stale_taxonomy_binding_fails_closed_without_product_change(
     assert readback.review_status == "REVIEW_REQUIRED"
     assert readback.consumer_status == "BLOCKED_REVIEW_REQUIRED"
     assert "STALE_TAXONOMY_BINDING" in readback.review_reasons
+
+
+@pytest.mark.asyncio
+async def test_exact_copywriting_mapping_preserves_reviewed_strategy_binding(
+    monkeypatch,
+):
+    await _seed_registry()
+    await seed_copywriting_taxonomy_registry(
+        dry_run=False,
+        confirm_apply="SEED_COPYWRITING_TAXONOMY_REGISTRY",
+    )
+    product = await crud.create_product(
+        "Mapped Lipstick",
+        source="MANUAL",
+        product_display_name="Mapped Lipstick",
+        product_short_name="Mapped Lipstick",
+        category="Beauty & Personal Care",
+        subcategory="Makeup",
+        type="Lipstick & Lip Gloss",
+        product_type="Lipstick & Lip Gloss",
+        copywriting_product_type_code="lipstick_lip_tint",
+        copywriting_angle="Confidence-led colour payoff and lip finish",
+    )
+    await service.review_product_strategy_taxonomy(
+        product["id"],
+        ProductStrategyTaxonomyReviewRequest(
+            expected_product_fingerprint=service.product_strategy_fingerprint(product),
+            cluster="beauty_makeup",
+            product_type_group="lipstick_lip_tint",
+            matched_scene_strategy_id="LIP_COLOR",
+            scene_coverage_status="COVERED",
+            review_status="VERIFIED",
+            reviewer_id="admin-1",
+            reviewer_note="Verified against the workbook taxonomy mapping.",
+        ),
+    )
+    real_binding = service._strategy_binding
+
+    def changed_binding(product_payload):
+        return {
+            **real_binding(product_payload),
+            "cluster": "beauty_makeup",
+            "product_type_group": "mascara",
+            "matched_scene_strategy_id": "MASCARA",
+        }
+
+    monkeypatch.setattr(service, "_strategy_binding", changed_binding)
+
+    readback = await service.get_product_strategy_taxonomy_read_model(product["id"])
+
+    assert readback.is_stale is False
+    assert readback.review_status == "VERIFIED"
+    assert readback.consumer_status == "READY"
 
 
 @pytest.mark.asyncio
