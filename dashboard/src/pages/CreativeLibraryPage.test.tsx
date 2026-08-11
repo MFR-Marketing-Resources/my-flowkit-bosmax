@@ -166,7 +166,7 @@ describe("CreativeLibraryPage poster reopen round trip", () => {
 
 	afterEach(() => cleanup());
 
-	it("shows 'Buka semula' ONLY on POSTER_AD assets and routes to the Poster Builder reopen URL", async () => {
+	it("shows 'Reopen' ONLY on POSTER_AD assets and routes to the Poster Builder reopen URL", async () => {
 		mockedFetch.mockResolvedValue({
 			items: [
 				asset({
@@ -185,7 +185,7 @@ describe("CreativeLibraryPage poster reopen round trip", () => {
 		});
 		renderPage();
 		const reopenBtn = await screen.findByTestId("reopen-poster-ca_poster_1");
-		expect(reopenBtn).toHaveTextContent("Buka semula");
+		expect(reopenBtn).toHaveTextContent("Reopen");
 		// Non-poster assets get no reopen affordance.
 		expect(screen.queryByTestId("reopen-poster-ca_frame_1")).toBeNull();
 	});

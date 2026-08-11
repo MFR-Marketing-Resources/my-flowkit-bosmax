@@ -381,7 +381,7 @@ export default function CreativeLibraryPage() {
 									}
 									className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-xs font-semibold text-sky-300 hover:bg-sky-500/20"
 								>
-									Buka semula
+									Reopen
 								</button>
 							)}
 							<button

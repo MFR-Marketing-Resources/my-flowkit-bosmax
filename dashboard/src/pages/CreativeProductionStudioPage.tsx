@@ -176,8 +176,9 @@ type StudioMode =
 
 export default function CreativeProductionStudioPage() {
 	const searchParams = new URLSearchParams(window.location.search);
-	const useV4 =
-		searchParams.get("v4") === "1" && searchParams.get("classic") !== "1";
+	// V4 cockpit is the DEFAULT (matches the T2V lane convention); `?classic=1`
+	// opts back into the legacy surface. Operators no longer need a magic `?v4=1`.
+	const useV4 = searchParams.get("classic") !== "1";
 	const [cohort, setCohort] = useState<CohortAuthority | null>(null);
 	const [plans, setPlans] = useState<ProductionPlan[]>([]);
 	const [selectedPlanId, setSelectedPlanId] = useState("");

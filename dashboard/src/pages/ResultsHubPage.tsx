@@ -260,17 +260,17 @@ function ResultDetailModal({
 											<span
 												className={`inline-flex items-center gap-1 text-[11px] ${expiryTone(detail.expires_in_hours)}`}
 											>
-												<Clock size={11} /> file luput dalam{" "}
-												{detail.expires_in_hours}j
+												<Clock size={11} /> file expires in{" "}
+												{detail.expires_in_hours}h
 											</span>
 										)}
 									</div>
 								</>
 							) : (
 								<div className="rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-3 text-[11px] text-slate-400">
-									Fail sudah luput (retensi 48 jam) — tapi prompt, settings &amp;
-									caption di bawah <span className="text-slate-200">kekal</span>{" "}
-									untuk rujukan &amp; manual fallback.
+									File expired (48-hour retention) — but the prompt, settings &amp;
+									caption below <span className="text-slate-200">stay available</span>{" "}
+									for reference &amp; manual fallback.
 								</div>
 							)}
 						</section>
@@ -329,9 +329,9 @@ function ResultDetailModal({
 								</div>
 							) : (
 								<div className="rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-3 text-[11px] text-slate-400">
-									Tiada rekod prompt tersimpan untuk artifact ini (dijana sebelum
-									Results Hub atau melalui lane langsung). Fail masih boleh
-									dimuat turun di atas.
+									No stored prompt record for this artifact (generated before
+									the Results Hub, or via a direct lane). The file can still be
+									downloaded above.
 								</div>
 							)}
 						</section>
@@ -453,10 +453,10 @@ export default function ResultsHubPage() {
 						Results
 					</h1>
 					<p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-400">
-						Tempat pengumpulan hasil generation. Setiap hasil: muat turun fail,
-						salin prompt + settings untuk manual fallback Google Flow, dan bina
-						caption per platform untuk copy-paste ke social media. Fail luput 48
-						jam; rekod prompt &amp; caption kekal.
+						A collection point for generation results. For each result: download the file,
+						copy the prompt + settings for a Google Flow manual fallback, and build
+						per-platform captions to copy-paste to social media. Files expire in 48
+						hours; the prompt &amp; caption records stay.
 					</p>
 				</div>
 				<div className="flex items-center gap-2">
@@ -495,8 +495,8 @@ export default function ResultsHubPage() {
 
 			{!loading && items.length === 0 && !error && (
 				<div className="rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-10 text-center text-sm text-slate-500">
-					Belum ada hasil. Hasil generation baru akan muncul di sini secara
-					automatik.
+					No results yet. New generation results appear here
+					automatically.
 				</div>
 			)}
 
