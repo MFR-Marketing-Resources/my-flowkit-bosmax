@@ -54,12 +54,13 @@ import ReportingOperationsPage from "./pages/ReportingOperationsPage";
 import GalleryPage from "./pages/GalleryPage";
 import LogsPage from "./pages/LogsPage";
 import OperatorPage from "./pages/OperatorPage";
+import FacelessVideoPage from "./pages/FacelessVideoPage";
+import MontagePage from "./pages/MontagePage";
 import PosterBuilderPage from "./pages/PosterBuilderPage";
 import PostizPublishPage from "./pages/PostizPublishPage";
 import ResultsHubPage from "./pages/ResultsHubPage";
 import ProductAssetGeneratorPage from "./pages/ProductAssetGeneratorPage";
 import ProductionQueuePage from "./pages/ProductionQueuePage";
-import RpaProductionStudioPage from "./pages/RpaProductionStudioPage";
 import RpaQueueControlPage from "./pages/RpaQueueControlPage";
 import ProductRegistrationPage from "./pages/ProductRegistrationPage";
 import ProductTypeRegistryPage from "./pages/ProductTypeRegistryPage";
@@ -83,6 +84,8 @@ const NAV_GROUPS = [
 			{ to: "/operator/f2v", icon: Sparkles, label: "Frames (F2V)" },
 			{ to: "/operator/i2v", icon: Layers, label: "Ingredients" },
 			{ to: "/operator/img", icon: ImageIcon, label: "Image Gen" },
+			{ to: "/operator/faceless", icon: Film, label: "Faceless Video" },
+			{ to: "/operator/montage", icon: Layers, label: "Montage" },
 			{ to: "/library/videos", icon: Video, label: "Video Library (48j)" },
 			{ to: "/library/images", icon: ImageIcon, label: "Image Library (Manual Delete)" },
 			{ to: "/results", icon: FolderOpen, label: "Results (Hasil + Caption)" },
@@ -148,6 +151,7 @@ const NAV_GROUPS = [
 				icon: Sparkles,
 				label: "Product Asset Generator",
 			},
+			{ to: "/products", icon: PackageSearch, label: "Product Catalog" },
 			{
 				to: "/product-registration",
 				icon: ScrollText,
@@ -173,7 +177,6 @@ const NAV_GROUPS = [
 				icon: Users,
 				label: "Copy Intelligence",
 			},
-			{ to: "/products", icon: PackageSearch, label: "Products" },
 			{ to: "/projects", icon: FolderOpen, label: "Projects" },
 			{ to: "/gallery", icon: Film, label: "Gallery" },
 		],
@@ -336,6 +339,8 @@ function Layout() {
 		{ to: "/library/images", label: "IMAGES" },
 		{ to: "/operator/i2v", label: "I2V" },
 		{ to: "/operator/img", label: "IMG" },
+		{ to: "/operator/faceless", label: "FACELESS" },
+		{ to: "/operator/montage", label: "MONTAGE" },
 		{ to: "/assets/creative-library", label: "Creative" },
 		{ to: "/workspace/generation-packages", label: "Bank" },
 		{ to: "/workspace/jobs", label: "Jobs" },
@@ -528,6 +533,8 @@ function Layout() {
 						<Route path="/operator/f2v" element={<OperatorPage mode="F2V" />} />
 						<Route path="/operator/i2v" element={<OperatorPage mode="I2V" />} />
 						<Route path="/operator/img" element={<OperatorPage mode="IMG" />} />
+						<Route path="/operator/faceless" element={<FacelessVideoPage />} />
+						<Route path="/operator/montage" element={<MontagePage />} />
 						<Route path="/workspace/jobs" element={<WorkspaceJobsPage />} />
 						<Route
 							path="/workspace/generation-packages"
@@ -542,10 +549,6 @@ function Layout() {
 						<Route
 							path="/production-queue"
 							element={<ProductionQueuePage />}
-						/>
-						<Route
-							path="/rpa-production-studio"
-							element={<RpaProductionStudioPage />}
 						/>
 						<Route
 							path="/production-studio"

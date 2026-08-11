@@ -1388,6 +1388,73 @@ async def create_product_strategy_type_registry_entry(record: dict) -> dict:
     return result
 
 
+_PRODUCT_STRATEGY_TYPE_REGISTRY_MUTABLE_COLUMNS = (
+    "display_name",
+    "matched_scene_strategy_id",
+    "scene_coverage_status",
+    "registry_status",
+    "auto_classification_enabled",
+    "reviewer_id",
+    "reviewer_note",
+    "reviewed_at",
+    "updated_at",
+)
+
+
+async def update_product_strategy_type_registry_entry(
+    cluster: str,
+    product_type_group: str,
+    fields: dict,
+) -> Optional[dict]:
+    columns = [
+        column
+        for column in _PRODUCT_STRATEGY_TYPE_REGISTRY_MUTABLE_COLUMNS
+        if column in fields
+    ]
+    if not columns:
+        return await get_product_strategy_type_registry_entry(
+            cluster, product_type_group
+        )
+    db = await get_db()
+    assignments = ", ".join(f"{column}=?" for column in columns)
+    sql = (
+        f"UPDATE product_strategy_type_registry SET {assignments} "
+        "WHERE cluster=? AND product_type_group=?"
+    )
+    params = [fields[column] for column in columns] + [cluster, product_type_group]
+    async with _db_lock:
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            await db.execute(sql, params)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    return await get_product_strategy_type_registry_entry(
+        cluster, product_type_group
+    )
+
+
+async def delete_product_strategy_type_registry_entry(
+    cluster: str,
+    product_type_group: str,
+) -> bool:
+    db = await get_db()
+    async with _db_lock:
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            cursor = await db.execute(
+                "DELETE FROM product_strategy_type_registry "
+                "WHERE cluster=? AND product_type_group=?",
+                (cluster, product_type_group),
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    return cursor.rowcount > 0
+
+
 async def seed_product_strategy_type_registry(records: list[dict]) -> int:
     """Insert or refresh system entries without overwriting manual pairs."""
 

@@ -15,6 +15,7 @@ import type {
 	ProductStrategyTypeRegistrationRequest,
 	ProductStrategyTypeRegistryEntry,
 	ProductStrategyTypeRegistryResponse,
+	ProductStrategyTypeUpdateRequest,
 	ProductTypeCopyEligibleReport,
 } from "../types";
 import { fetchAPI } from "./client";
@@ -120,6 +121,31 @@ export async function registerProductStrategyType(
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(input),
 		},
+	);
+}
+
+export async function updateProductStrategyType(
+	cluster: string,
+	productTypeGroup: string,
+	input: ProductStrategyTypeUpdateRequest,
+): Promise<ProductStrategyTypeRegistryEntry> {
+	return fetchAPI<ProductStrategyTypeRegistryEntry>(
+		`/api/creative-intelligence/product-strategy-type-registry/${encodeURIComponent(cluster)}/${encodeURIComponent(productTypeGroup)}`,
+		{
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(input),
+		},
+	);
+}
+
+export async function deleteProductStrategyType(
+	cluster: string,
+	productTypeGroup: string,
+): Promise<ProductStrategyTypeRegistryEntry> {
+	return fetchAPI<ProductStrategyTypeRegistryEntry>(
+		`/api/creative-intelligence/product-strategy-type-registry/${encodeURIComponent(cluster)}/${encodeURIComponent(productTypeGroup)}`,
+		{ method: "DELETE" },
 	);
 }
 

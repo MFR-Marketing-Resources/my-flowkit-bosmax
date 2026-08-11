@@ -29,6 +29,7 @@ from agent.models.product_strategy_taxonomy import (
     ProductStrategyTypeRegistrationRequest,
     ProductStrategyTypeRegistryEntry,
     ProductStrategyTypeRegistryListResponse,
+    ProductStrategyTypeUpdateRequest,
     ProductStrategyTypeRegistrySeedRequest,
     ProductStrategyTypeRegistrySeedResponse,
 )
@@ -63,6 +64,10 @@ _FINGERPRINT_FIELDS = (
 
 class ProductStrategyTaxonomyError(ValueError):
     """Stable service error surfaced by Product and Creative Intelligence APIs."""
+
+
+class ProductStrategyTaxonomyNotFound(ProductStrategyTaxonomyError):
+    """Raised when a registry pair does not exist (mapped to HTTP 404)."""
 
 
 def lookup_product_strategy_type_registry_entry(
@@ -422,6 +427,70 @@ async def register_product_strategy_type(
         }
     )
     return _row_to_registry_entry(row)
+
+
+async def update_product_strategy_type(
+    cluster: str,
+    product_type_group: str,
+    request: ProductStrategyTypeUpdateRequest,
+) -> ProductStrategyTypeRegistryEntry:
+    """Edit one registered pair in place; identity (cluster/type) is immutable."""
+
+    if request.auto_classification_enabled:
+        raise ProductStrategyTaxonomyError("AUTO_CLASSIFICATION_RULE_REQUIRED")
+    existing = await crud.get_product_strategy_type_registry_entry(
+        cluster, product_type_group
+    )
+    if not existing:
+        raise ProductStrategyTaxonomyNotFound("PRODUCT_STRATEGY_TYPE_NOT_FOUND")
+    _validate_registry_binding(
+        cluster=cluster,
+        product_type_group=product_type_group,
+        matched_scene_strategy_id=request.matched_scene_strategy_id,
+        scene_coverage_status=request.scene_coverage_status,
+        registry_status=request.registry_status,
+    )
+    payload = request.model_dump(mode="json")
+    now = _now()
+    row = await crud.update_product_strategy_type_registry_entry(
+        cluster,
+        product_type_group,
+        {
+            "display_name": payload["display_name"],
+            "matched_scene_strategy_id": payload["matched_scene_strategy_id"],
+            "scene_coverage_status": payload["scene_coverage_status"],
+            "registry_status": payload["registry_status"],
+            "auto_classification_enabled": int(request.auto_classification_enabled),
+            "reviewer_id": payload["reviewer_id"],
+            "reviewer_note": payload["reviewer_note"],
+            "reviewed_at": now,
+            "updated_at": now,
+        },
+    )
+    if row is None:
+        raise ProductStrategyTaxonomyNotFound("PRODUCT_STRATEGY_TYPE_NOT_FOUND")
+    return _row_to_registry_entry(row)
+
+
+async def delete_product_strategy_type(
+    cluster: str,
+    product_type_group: str,
+) -> ProductStrategyTypeRegistryEntry:
+    """Delete a MANUAL_REGISTRATION pair; SYSTEM_SEED entries are protected."""
+
+    existing = await crud.get_product_strategy_type_registry_entry(
+        cluster, product_type_group
+    )
+    if not existing:
+        raise ProductStrategyTaxonomyNotFound("PRODUCT_STRATEGY_TYPE_NOT_FOUND")
+    if existing.get("authority_source") == "SYSTEM_SEED":
+        raise ProductStrategyTaxonomyError("CANNOT_DELETE_SYSTEM_SEED_ENTRY")
+    deleted = await crud.delete_product_strategy_type_registry_entry(
+        cluster, product_type_group
+    )
+    if not deleted:
+        raise ProductStrategyTaxonomyNotFound("PRODUCT_STRATEGY_TYPE_NOT_FOUND")
+    return _row_to_registry_entry(existing)
 
 
 async def seed_product_strategy_type_registry(

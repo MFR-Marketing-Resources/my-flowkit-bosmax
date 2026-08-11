@@ -164,6 +164,18 @@ class ProductStrategyTypeRegistrationRequest(BaseModel):
     reviewer_note: str = Field(min_length=1)
 
 
+class ProductStrategyTypeUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str = Field(min_length=2, max_length=120)
+    matched_scene_strategy_id: str
+    scene_coverage_status: ProductStrategyCoverageStatus
+    registry_status: ProductStrategyRegistryStatus
+    auto_classification_enabled: bool = False
+    reviewer_id: str = Field(min_length=1)
+    reviewer_note: str = Field(min_length=1)
+
+
 class ProductStrategyTypeRegistrySeedRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

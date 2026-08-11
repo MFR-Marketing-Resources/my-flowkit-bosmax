@@ -1141,6 +1141,16 @@ export interface ProductStrategyTypeRegistrationRequest {
 	reviewer_note: string;
 }
 
+export interface ProductStrategyTypeUpdateRequest {
+	display_name: string;
+	matched_scene_strategy_id: string;
+	scene_coverage_status: "COVERED" | "PARTIAL" | "FALLBACK_ONLY";
+	registry_status: "ACTIVE" | "REVIEW_REQUIRED";
+	auto_classification_enabled: false;
+	reviewer_id: string;
+	reviewer_note: string;
+}
+
 export interface ProductTypeCopyReportProduct {
 	product_id: string;
 	product_name: string;
@@ -1489,6 +1499,8 @@ export interface ProductIntelligenceSnapshot {
 	product_description: string | null;
 	benefits_json: string[];
 	usp_json: string[];
+	hook_angles_json: string[];
+	cta_angles_json: string[];
 	usage_text: string | null;
 	ingredients_text: string | null;
 	warnings_text: string | null;
@@ -1598,6 +1610,8 @@ export interface ProductIntelligenceReviewDraft {
 	product_description: string | null;
 	benefits_json: string[];
 	usp_json: string[];
+	hook_angles_json: string[];
+	cta_angles_json: string[];
 	usage_text: string | null;
 	ingredients_text: string | null;
 	warnings_text: string | null;
@@ -1666,6 +1680,8 @@ export interface ProductIntelligenceReviewDraftMutationRequest {
 	product_description?: string | null;
 	benefits_json?: string[] | null;
 	usp_json?: string[] | null;
+	hook_angles_json?: string[] | null;
+	cta_angles_json?: string[] | null;
 	usage_text?: string | null;
 	ingredients_text?: string | null;
 	warnings_text?: string | null;

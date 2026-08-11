@@ -71,8 +71,6 @@ vi.mock("../components/workspace/CanonicalReferenceBindingControls", () => ({
 		styleReferenceAssetId: null,
 	},
 }));
-vi.mock("../components/workspace/F2VModule", () => ({ default: () => null }));
-vi.mock("../components/workspace/I2VModule", () => ({ default: () => null }));
 vi.mock("../components/workspace/IMGModule", () => ({
 	default: () => <div data-testid="v4-img-module">IMG module</div>,
 }));
@@ -82,7 +80,6 @@ vi.mock("../components/workspace/SearchableProductSelect", () => ({
 vi.mock("../components/workspace/VisualAssetPicker", () => ({
 	default: () => null,
 }));
-vi.mock("../components/workspace/T2VModule", () => ({ default: () => null }));
 
 import OperatorPage from "./OperatorPage";
 
