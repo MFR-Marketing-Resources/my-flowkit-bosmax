@@ -42,6 +42,7 @@ import {
 	WorkflowStep,
 } from "../components/workflow";
 import type { WorkflowStepStatus } from "../components/workflow";
+import ResultsSidebar from "../components/workspace/ResultsSidebar";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import VisualAssetPicker from "../components/workspace/VisualAssetPicker";
 import type { CreativeAsset, Product } from "../types";
@@ -1299,7 +1300,7 @@ export default function ImgFastlanePage() {
 							</WorkflowStep>
 						</main>
 
-						<aside className="w-full lg:w-80 lg:flex-none">
+						<aside className="w-full space-y-4 lg:w-80 lg:flex-none">
 							<div className="lg:sticky lg:top-4">
 								<OperatorCockpit
 									laneLabel="IMG Fastlane · Composite Frames"
@@ -1330,6 +1331,12 @@ export default function ImgFastlanePage() {
 									<QueueRow title="Approved asset" sub={approvedAsset?.display_name ?? "Review after registration"} status={approvedAsset ? "done" : "queued"} />
 								</OperatorCockpit>
 							</div>
+							<ResultsSidebar
+								onRegenerate={() => setShowGenConfirm(true)}
+								regenerateDisabled={!prompt.trim() || generating || generationBlocked}
+								regenerating={generating}
+								refreshSignal={genJob?.media_id}
+							/>
 						</aside>
 					</div>
 				</div>
