@@ -111,11 +111,6 @@ const NAV_GROUPS = [
 				icon: ScrollText,
 				label: "Smart Registration",
 			},
-			{
-				to: "/assets/product-type-registry",
-				icon: Tags,
-				label: "Product Type Registry",
-			},
 		],
 	},
 	{
@@ -167,6 +162,11 @@ const NAV_GROUPS = [
 				label: "Scene Registry",
 			},
 			{ to: "/asset-registry", icon: Layers, label: "Asset Registry" },
+			{
+				to: "/assets/product-type-registry",
+				icon: Tags,
+				label: "Product Type Registry",
+			},
 			{ to: "/assets/img-cockpit", icon: Sparkles, label: "IMG Cockpit" },
 			{ to: "/assets/img-fastlane", icon: Sparkles, label: "IMG Fastlane" },
 			{ to: "/creative/copy-registry", icon: PenLine, label: "Copy Registry" },
