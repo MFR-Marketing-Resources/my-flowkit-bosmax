@@ -40,7 +40,6 @@ import ApprovedPackagesPage from "./pages/ApprovedPackagesPage";
 import AssetRegistryPage from "./pages/AssetRegistryPage";
 import AvatarRegistryPage from "./pages/AvatarRegistryPage";
 import SceneContextRegistryPage from "./pages/SceneContextRegistryPage";
-import BatchPromptBuilderPage from "./pages/BatchPromptBuilderPage";
 import CreativeLibraryPage from "./pages/CreativeLibraryPage";
 import CreativeProductionStudioPage from "./pages/CreativeProductionStudioPage";
 import ImgCockpitPage from "./pages/ImgCockpitPage";
@@ -153,7 +152,6 @@ const NAV_GROUPS = [
 	{
 		label: "ADVANCED",
 		items: [
-			{ to: "/batches", icon: Briefcase, label: "Batch Prompt Builder" },
 			{
 				to: "/workspace/generation-packages",
 				icon: PackageSearch,
@@ -603,7 +601,6 @@ function Layout() {
 							element={<ApprovedPackagesPage />}
 						/>
 
-						<Route path="/batches" element={<BatchPromptBuilderPage />} />
 						<Route
 							path="/production-queue"
 							element={<ProductionQueuePage />}
