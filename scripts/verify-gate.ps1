@@ -66,7 +66,19 @@ $SmokeTests = @(
     'tests/unit/test_formula_validator_service.py',
     'tests/unit/test_copy_set_service.py',
     'tests/unit/test_copy_binding_service.py',
-    'tests/api/test_copy_sets_api.py'
+    'tests/api/test_copy_sets_api.py',
+    # Smart Registration Visual / Canva is an explicit CI contract. Keep these
+    # paths in the normal gate so deleting a regression suite fails the gate.
+    'tests/api/test_product_visual_onboarding_api.py',
+    'tests/unit/test_product_visual_onboarding_service.py',
+    'tests/integration/test_product_visual_crud_workflow.py',
+    'tests/unit/test_canonical_runtime_lock.py'
+)
+
+$DashboardContractTests = @(
+    'src/components/product-registration/ProductVisualReadinessPanel.test.tsx',
+    'src/components/product-registration/AllProductsTab.test.tsx',
+    'src/pages/ProductDetailPage.test.tsx'
 )
 
 $results = @()
@@ -99,6 +111,17 @@ function Invoke-Gate {
 
 Write-Host ''
 Write-Host '================================================================' -ForegroundColor Cyan
+
+# The Smart Registration contract is deliberately explicit. The broad Vitest
+# run below is useful for the whole dashboard, but it would silently pass if a
+# required contract test file were deleted. Fail closed before running it.
+foreach ($contractTest in $DashboardContractTests) {
+    $contractPath = Join-Path $DashboardDir $contractTest
+    if (-not (Test-Path -LiteralPath $contractPath -PathType Leaf)) {
+        Write-Error "SMART_REGISTRATION_CONTRACT_TEST_MISSING: $contractTest"
+        exit 1
+    }
+}
 Write-Host '  BOSMAX FLOW KIT - LOCAL VERIFICATION GATE' -ForegroundColor Cyan
 Write-Host '  LOCAL ONLY - this is NOT CI. Run before opening / merging a PR.' -ForegroundColor Cyan
 Write-Host '================================================================' -ForegroundColor Cyan
@@ -133,6 +156,10 @@ if ($VitestTestTimeout -gt 0) {
     $vitestArgs = @('--', '--testTimeout', "$VitestTestTimeout")
 }
 Invoke-Gate -Name 'DASHBOARD_VITEST' -WorkingDir $DashboardDir -Command { & npm test @vitestArgs }
+
+# Re-run the exact Smart Registration contract files so this surface cannot
+# disappear behind a passing unrelated dashboard suite.
+Invoke-Gate -Name 'SMART_REGISTRATION_VISUAL_CONTRACT' -WorkingDir $DashboardDir -Command { & npx vitest run --config vitest.config.ts @DashboardContractTests }
 
 # Gate 4 - Backend pytest smoke (or full with -Full).
 $pytestArgs = if ($Full) { @('-m', 'pytest', '-q') } else { @('-m', 'pytest', '-q') + $SmokeTests }

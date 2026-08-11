@@ -14,7 +14,8 @@ A Startup-folder shortcut — `…\Startup\BOSMAX Flow Kit Local Agent.lnk` — 
 That checkout sits on the unmerged WIP branch `fix/v4-ui-shell-and-f2v-avatar`, which
 is many commits behind `main`, so every logon served a **stale dashboard bundle**.
 The session-scoped canonical runtime died on shutdown and nothing canonical replaced
-it — the stale dev-root launcher won :8100.
+it — the stale dev-root launcher won :8100. The older `BOSMAX Local Runner.lnk`
+was also audited as a duplicate startup path and is disabled by the installer.
 
 `BACKGROUND: the runtime being canonical ≠ the runtime being persistent.` The
 provenance lock (`/api/local-agent/runtime-provenance`) proves *what* is serving;
@@ -38,7 +39,9 @@ It:
    auto-starts). If run elevated it *also* registers a logon Scheduled Task
    `BOSMAX-Canonical-Runtime` (restart-on-failure) as a bonus — but the shortcut
    is the active mechanism either way.
-4. Disables the legacy dev-root Startup shortcut → `…\BOSMAX Flow Kit Local Agent.lnk.disabled`.
+4. Disables the known legacy Startup shortcuts →
+   `…\BOSMAX Flow Kit Local Agent.lnk.disabled` and
+   `…\BOSMAX Local Runner.lnk.disabled`.
 
 ## Verify (after a reboot, or any time the UI "looks old")
 ```powershell
@@ -60,7 +63,29 @@ Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'agent\.mai
 pwsh -File scripts/verify-runtime-canonical.ps1
 ```
 
-Merge → `deploy-canonical-release.ps1 <sha>` → verify. That is the whole loop.
+## Definition-of-done lock — MERGED != DEPLOYED
+
+`MERGED != DEPLOYED`. A BOSMAX change is only complete after this exact chain:
+
+```text
+commit
+→ push
+→ PR
+→ CI green
+→ merge
+→ immutable release built from the merge SHA
+→ current pointer updated
+→ canonical runtime restarted
+→ runtime SHA == origin/main
+→ source_stale = false
+→ post-merge Smart Registration smoke PASS
+```
+
+`deploy-canonical-release.ps1` enforces the immutable-release build, manifest
+validation, and `current` update. `verify-runtime-canonical.ps1` enforces the
+runtime/origin SHA match, canonical release, canonical DB, and bundle match.
+The post-merge smoke must re-open Product Detail and confirm the four tabs and
+the per-product Visual / Canva CRUD controls after the restart.
 
 ## Rollback
 ```powershell
@@ -68,6 +93,8 @@ Remove-Item "$([Environment]::GetFolderPath('Startup'))\BOSMAX Canonical Runtime
 Unregister-ScheduledTask -TaskName BOSMAX-Canonical-Runtime -Confirm:$false -ErrorAction SilentlyContinue
 Rename-Item "$([Environment]::GetFolderPath('Startup'))\BOSMAX Flow Kit Local Agent.lnk.disabled" `
             "$([Environment]::GetFolderPath('Startup'))\BOSMAX Flow Kit Local Agent.lnk"
+Rename-Item "$([Environment]::GetFolderPath('Startup'))\BOSMAX Local Runner.lnk.disabled" `
+            "$([Environment]::GetFolderPath('Startup'))\BOSMAX Local Runner.lnk"
 ```
 
 ## Guarantees / non-goals

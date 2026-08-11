@@ -4,11 +4,10 @@
   launcher that reverted the app to an unmerged branch every morning.
 
 .DESCRIPTION
-  Root cause of "my updates disappear after I reboot": a Startup-folder shortcut
-  ("BOSMAX Flow Kit Local Agent.lnk") launched scripts/start-local-agent.ps1 from
-  the DEV ROOT (C:\Users\USER\Desktop\_ref_flowkit) — an unmerged WIP branch — so
-  every logon served a stale dashboard bundle. Merged code was never lost; the
-  boot server was just the wrong tree.
+  Root cause of "my updates disappear after I reboot": Startup-folder shortcuts
+  ("BOSMAX Flow Kit Local Agent.lnk" and the older "BOSMAX Local Runner.lnk")
+  could launch a non-canonical runner. Merged code was never lost; the boot
+  server was just the wrong tree.
 
   This installer:
     1. Resolves a full-stack Python (fastapi + onnxruntime + Pillow + aiosqlite).
@@ -18,8 +17,8 @@
        `current` release on every (re)start and refuses to serve on drift.
     3. Registers a logon Scheduled Task ("BOSMAX-Canonical-Runtime") that runs the
        stable launcher hidden, single-instance, restart-on-failure.
-    4. Disables the legacy dev-root Startup shortcut (renamed *.disabled) so it can
-       never again race for :8100 and serve stale UI.
+    4. Disables known legacy BOSMAX Startup shortcuts (renamed *.disabled) so
+       they can never again race for :8100 and serve stale UI.
 
   Idempotent (safe to re-run). Does NOT modify the dev-root working tree, does NOT
   touch the canonical DB, spends no provider credits. Reversible: see the runbook
@@ -113,16 +112,26 @@ try {
   Write-Host "  -> the Startup shortcut is the active auto-start; re-run elevated to also add the task."
 }
 
-# 4) Disable the legacy dev-root Startup shortcut (the stale-serving culprit).
+# 4) Disable every known legacy BOSMAX Startup shortcut. Never delete an
+#    existing .disabled backup: if both copies exist, fail closed and make the
+#    duplicate visible for manual resolution.
 if (-not $NoDisableLegacy) {
-  $legacy = Join-Path ([Environment]::GetFolderPath('Startup')) "BOSMAX Flow Kit Local Agent.lnk"
-  if (Test-Path $legacy) {
+  $legacyNames = @(
+    "BOSMAX Flow Kit Local Agent.lnk",
+    "BOSMAX Local Runner.lnk"
+  )
+  foreach ($legacyName in $legacyNames) {
+    $legacy = Join-Path ([Environment]::GetFolderPath('Startup')) $legacyName
     $bak = "$legacy.disabled"
-    if (Test-Path $bak) { Remove-Item $bak -Force }
-    Rename-Item $legacy $bak -Force
-    Write-Host "disabled legacy Startup shortcut -> $bak"
-  } else {
-    Write-Host "legacy Startup shortcut already absent/disabled"
+    if (Test-Path -LiteralPath $legacy) {
+      if (Test-Path -LiteralPath $bak) {
+        Write-Error "LEGACY_STARTUP_BACKUP_EXISTS: active=$legacy disabled=$bak"
+      }
+      Rename-Item -LiteralPath $legacy -NewName ([IO.Path]::GetFileName($bak))
+      Write-Host "disabled legacy Startup shortcut -> $bak"
+    } else {
+      Write-Host "legacy Startup shortcut absent/disabled: $legacyName"
+    }
   }
 }
 
