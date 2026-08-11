@@ -3,7 +3,14 @@
 Read-only; no token spend. Composes product-intelligence snapshot + copy
 grounding + copy sets + formula into one payload.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
+
+from agent.models.copywriting_taxonomy import (
+    CopywritingTaxonomyEntry,
+    CopywritingTaxonomyListResponse,
+    CopywritingTaxonomyProductResolution,
+    CopywritingTaxonomyRollupResponse,
+)
 
 from agent.models.lip_color_copy_strategy import (
     LipColorCopyStrategyResponse,
@@ -40,6 +47,12 @@ from agent.services.product_type_copy_strategy_service import (
     ProductTypeCopyStrategyError,
     build_product_type_copy_eligible_report,
     build_product_type_copy_strategy,
+)
+from agent.services.copywriting_taxonomy_service import (
+    get_copywriting_taxonomy_entry,
+    get_copywriting_taxonomy_rollup,
+    list_copywriting_taxonomy_entries,
+    resolve_product_taxonomy,
 )
 
 router = APIRouter(prefix="/copywriting", tags=["copywriting"])
@@ -140,6 +153,88 @@ async def p5_8_catalog_authority_matrix():
     """Return all 659 products with one deterministic terminal state each."""
 
     return await build_catalog_authority_matrix()
+
+
+@router.get(
+    "/taxonomy",
+    response_model=CopywritingTaxonomyListResponse,
+)
+async def copywriting_taxonomy_registry(
+    cluster_name: str | None = Query(default=None),
+    category: str | None = Query(default=None),
+    subcategory: str | None = Query(default=None),
+    type_name: str | None = Query(default=None, alias="type"),
+    product_type_code: str | None = Query(default=None),
+    registry_status: str | None = Query(default=None),
+    query: str | None = Query(default=None, alias="q"),
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+):
+    """List the registered workbook dependency map without mutating products."""
+
+    try:
+        return await list_copywriting_taxonomy_entries(
+            cluster_name=cluster_name,
+            category=category,
+            subcategory=subcategory,
+            type_name=type_name,
+            product_type_code=product_type_code,
+            registry_status=registry_status,
+            query=query,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get(
+    "/taxonomy/rollup",
+    response_model=CopywritingTaxonomyRollupResponse,
+)
+async def copywriting_taxonomy_rollup():
+    """Return the cluster/category/subcategory/type/angle dependency counts."""
+
+    return await get_copywriting_taxonomy_rollup()
+
+
+@router.get(
+    "/taxonomy/entry/{product_type_code}",
+    response_model=CopywritingTaxonomyEntry,
+)
+async def copywriting_taxonomy_entry(
+    product_type_code: str,
+    cluster_name: str | None = Query(default=None),
+):
+    entry = await get_copywriting_taxonomy_entry(
+        product_type_code,
+        cluster_name=cluster_name,
+    )
+    if entry is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "COPYWRITING_TAXONOMY_ENTRY_NOT_FOUND",
+                "product_type_code": product_type_code,
+            },
+        )
+    return entry
+
+
+@router.get(
+    "/taxonomy/product/{product_id}",
+    response_model=CopywritingTaxonomyProductResolution,
+)
+async def resolve_product_copywriting_taxonomy(product_id: str):
+    """Resolve an existing product against the new authority, read-only."""
+
+    resolution = await resolve_product_taxonomy(product_id)
+    if resolution is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "PRODUCT_NOT_FOUND", "product_id": product_id},
+        )
+    return resolution
 
 
 @router.get("/readiness/{product_id}")

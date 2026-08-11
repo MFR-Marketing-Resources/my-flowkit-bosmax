@@ -2280,6 +2280,38 @@ CREATE INDEX IF NOT EXISTS idx_copy_intelligence_seed_reference
                 logger.info("Migrated: added %s column to copy_intelligence_seed", _col)
         await db.commit()
 
+        # Copywriting taxonomy authority. This is the workbook-backed lookup
+        # registry for cluster -> product type -> copywriting dimensions. It is
+        # deliberately separate from Product Truth and product_strategy_taxonomy:
+        # round one registers the dependency map only; product remapping is a
+        # later, explicit review operation.
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS copywriting_taxonomy_registry (
+    product_type_code     TEXT PRIMARY KEY,
+    cluster_name          TEXT NOT NULL,
+    display_name          TEXT NOT NULL,
+    category              TEXT NOT NULL,
+    subcategory           TEXT NOT NULL,
+    type                  TEXT NOT NULL,
+    copywriting_angle     TEXT NOT NULL,
+    source_workbook       TEXT NOT NULL,
+    source_sheet          TEXT NOT NULL,
+    source_row            INTEGER NOT NULL,
+    registry_status       TEXT NOT NULL DEFAULT 'ACTIVE'
+        CHECK(registry_status IN ('ACTIVE','REVIEW_REQUIRED')),
+    created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE(cluster_name, product_type_code)
+);
+CREATE INDEX IF NOT EXISTS idx_copywriting_taxonomy_cluster
+    ON copywriting_taxonomy_registry(cluster_name, product_type_code);
+CREATE INDEX IF NOT EXISTS idx_copywriting_taxonomy_category
+    ON copywriting_taxonomy_registry(category, subcategory, type);
+CREATE INDEX IF NOT EXISTS idx_copywriting_taxonomy_status
+    ON copywriting_taxonomy_registry(registry_status, cluster_name);
+""")
+        await db.commit()
+
         # Copy Set foundation (Copy Strategy Studio Phase 1). Additive table —
         # persists an explicitly-approvable Copy Set (product → angle / hook /
         # subhook / usp / cta) that later feeds the canonical prompt compiler as
