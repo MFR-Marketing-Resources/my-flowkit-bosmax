@@ -37,6 +37,15 @@ def _assets(tmp_path: Path) -> dict[str, object]:
     }
 
 
+def _standard_cutout(tmp_path: Path) -> Path:
+    cutout = tmp_path / "standard-cutout.png"
+    layer = Image.new("RGBA", (1000, 1000), (0, 0, 0, 0))
+    ImageDraw.Draw(layer).rectangle((200, 120, 799, 879), fill=(10, 120, 60, 255))
+    layer.save(cutout)
+    layer.close()
+    return cutout
+
+
 def _db(tmp_path: Path, assets: dict[str, object], *, status: str = "APPROVED") -> Path:
     db_path = tmp_path / "truth-lock.sqlite3"
     conn = sqlite3.connect(db_path)
@@ -232,7 +241,7 @@ def test_fully_transparent_canonical_source_fails_closed(tmp_path, monkeypatch):
 async def test_onboarding_persists_server_owned_pending_lock_from_reviewed_cutout(tmp_path, monkeypatch):
     assets = _assets(tmp_path)
     source = assets["source"]
-    cutout = assets["cutout"]
+    cutout = _standard_cutout(tmp_path)
     captured: dict[str, object] = {}
 
     async def get_product(product_id: str):
@@ -307,6 +316,7 @@ async def test_onboarding_persists_server_owned_pending_lock_from_reviewed_cutou
 @pytest.mark.asyncio
 async def test_cutout_media_registration_is_stored_without_approving_lock(tmp_path, monkeypatch):
     assets = _assets(tmp_path)
+    cutout = _standard_cutout(tmp_path)
     captured: dict[str, object] = {}
 
     async def get_product(product_id: str):
@@ -338,7 +348,7 @@ async def test_cutout_media_registration_is_stored_without_approving_lock(tmp_pa
         "p-1",
         filename=r"..\..\reviewed-cutout.png",
         content_type="image/png",
-        raw_bytes=Path(assets["cutout"]).read_bytes(),
+        raw_bytes=cutout.read_bytes(),
     )
 
     assert result["media_id"] == "stored-cutout-1"
@@ -502,7 +512,7 @@ async def test_onboarding_rejects_canonical_source_hash_drift(tmp_path, monkeypa
 async def test_manual_replacement_archives_auto_candidate_before_switching_active_row(tmp_path, monkeypatch):
     assets = _assets(tmp_path)
     source = assets["source"]
-    cutout = assets["cutout"]
+    cutout = _standard_cutout(tmp_path)
     captured: dict[str, object] = {}
     existing = {
         "product_id": "p-1",
@@ -512,7 +522,7 @@ async def test_manual_replacement_archives_auto_candidate_before_switching_activ
         "source_height": 40,
         "canonical_source_path": str(source),
         "canonical_cutout_media_id": "auto-media",
-        "canonical_cutout_sha256": assets["cutout_sha"],
+        "canonical_cutout_sha256": _sha(cutout),
         "canonical_cutout_path": str(cutout),
         "alpha_mask_json": json.dumps({"source": "cutout_alpha"}),
         "anchor_point_json": json.dumps({"x": 0.5, "y": 0.5}),

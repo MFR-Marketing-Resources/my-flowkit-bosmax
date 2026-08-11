@@ -27,6 +27,11 @@ from agent.services.product_visual_grounding_resolver import (
     ProductVisualReferenceRequiredError,
     resolve_product_reference_image,
 )
+from agent.services.product_visual_canvas_service import (
+    STANDARD_VISUAL_CANVAS_HEIGHT,
+    STANDARD_VISUAL_CANVAS_SIZE,
+    STANDARD_VISUAL_CANVAS_WIDTH,
+)
 
 
 CANVA_STAGES = (
@@ -214,7 +219,7 @@ def _next_action(stage: str) -> str:
         "MAGIC_GRAB": "ISOLATE_PRODUCT_IN_CANVA",
         "BACKGROUND_REMOVER": "VERIFY_PRODUCT_PIXELS_IN_CANVA",
         "MAGIC_LAYERS": "REMOVE_NON_PRODUCT_LAYERS_IN_CANVA",
-        "CLEAN_CANVAS": "COPY_TO_EXACT_SOURCE_SIZE_CANVAS",
+        "CLEAN_CANVAS": "COPY_TO_1000X1000_CANVAS",
         "READY_TO_EXPORT": "EXPORT_TRANSPARENT_PNG",
         "EXPORTING": "WAIT_FOR_OPERATOR_EXPORT",
         "VERIFYING_ALPHA": "VERIFY_PNG_ALPHA_LOCALLY",
@@ -238,8 +243,8 @@ def _workflow_payload(row: dict[str, Any] | None) -> dict[str, Any]:
         "product_id": row.get("product_id"),
         "source_sha256": row.get("source_sha256"),
         "source_dimensions": {
-            "width": int(row.get("source_width") or 0) or None,
-            "height": int(row.get("source_height") or 0) or None,
+            "width": STANDARD_VISUAL_CANVAS_WIDTH,
+            "height": STANDARD_VISUAL_CANVAS_HEIGHT,
         },
         "output_dimensions": {
             "width": int(row.get("output_width") or 0) or None,
@@ -340,7 +345,10 @@ async def get_canva_cutout_workflow(product_id: str) -> dict[str, Any]:
         try:
             _product, _reference, _path, source_sha, width, height = await _load_product_source(product_id)
             payload["source_sha256"] = source_sha
-            payload["source_dimensions"] = {"width": width, "height": height}
+            payload["source_dimensions"] = {
+                "width": STANDARD_VISUAL_CANVAS_WIDTH,
+                "height": STANDARD_VISUAL_CANVAS_HEIGHT,
+            }
         except CanvaCutoutWorkflowError as exc:
             payload["last_error_code"] = exc.code
             payload["last_error"] = exc.message
@@ -352,17 +360,21 @@ async def start_canva_cutout(product_id: str) -> dict[str, Any]:
     _product, _reference, _path, source_sha, width, height = await _load_product_source(product_id)
     existing = await crud.get_canva_cutout_workflow(product_id)
     current = str((existing or {}).get("current_stage") or "NOT_STARTED").upper()
-    if existing and current == "PENDING_HUMAN_REVIEW" and str(existing.get("source_sha256") or "") == source_sha:
+    existing_has_standard_canvas = (
+        int((existing or {}).get("source_width") or 0),
+        int((existing or {}).get("source_height") or 0),
+    ) == STANDARD_VISUAL_CANVAS_SIZE
+    if existing and existing_has_standard_canvas and current == "PENDING_HUMAN_REVIEW" and str(existing.get("source_sha256") or "") == source_sha:
         return await _response(product_id)
-    if existing and current in {"PREFLIGHT", "CANVA_PRO_REQUIRED", "OPENING_CANVA", "MAGIC_GRAB", "BACKGROUND_REMOVER", "MAGIC_LAYERS", "CLEAN_CANVAS", "READY_TO_EXPORT", "EXPORTING", "VERIFYING_ALPHA", "PAUSED"} and str(existing.get("source_sha256") or "") == source_sha:
+    if existing and existing_has_standard_canvas and current in {"PREFLIGHT", "CANVA_PRO_REQUIRED", "OPENING_CANVA", "MAGIC_GRAB", "BACKGROUND_REMOVER", "MAGIC_LAYERS", "CLEAN_CANVAS", "READY_TO_EXPORT", "EXPORTING", "VERIFYING_ALPHA", "PAUSED"} and str(existing.get("source_sha256") or "") == source_sha:
         return await _response(product_id)
     attempt_count = int((existing or {}).get("attempt_count") or 0) + 1
     row = await crud.upsert_canva_cutout_workflow(
         product_id,
         workflow_id=f"canva_{uuid.uuid4().hex}",
         source_sha256=source_sha,
-        source_width=width,
-        source_height=height,
+        source_width=STANDARD_VISUAL_CANVAS_WIDTH,
+        source_height=STANDARD_VISUAL_CANVAS_HEIGHT,
         canva_method="UNSELECTED",
         design_id=None,
         design_url=None,
@@ -480,7 +492,7 @@ def _verify_canva_png(raw_bytes: bytes, expected_dimensions: tuple[int, int]) ->
             if (width, height) != expected_dimensions:
                 raise CanvaCutoutWorkflowError(
                     "CANVA_CANVAS_DIMENSIONS_MISMATCH",
-                    "Canva output must preserve the exact canonical source canvas dimensions.",
+                    "Canva output must be a transparent PNG on the standard 1000x1000 px canvas.",
                 )
             if "A" not in image.getbands() and "transparency" not in image.info:
                 raise CanvaCutoutWorkflowError(
@@ -528,8 +540,8 @@ async def complete_canva_cutout(
     failure = _preflight_error(preflight, method)
     if failure:
         raise CanvaCutoutWorkflowError(failure[0], failure[1])
-    source_width = int(row.get("source_width") or 0)
-    source_height = int(row.get("source_height") or 0)
+    source_width = STANDARD_VISUAL_CANVAS_WIDTH
+    source_height = STANDARD_VISUAL_CANVAS_HEIGHT
     await crud.upsert_canva_cutout_workflow(
         product_id,
         canva_method=method,
