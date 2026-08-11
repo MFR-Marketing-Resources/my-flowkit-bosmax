@@ -632,6 +632,7 @@ async def register_product_truth_cutout_media(
     filename: str,
     content_type: str | None,
     raw_bytes: bytes,
+    expected_dimensions: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
     """Persist a transparent review cutout as server-owned ``STORED`` media.
 
@@ -671,7 +672,7 @@ async def register_product_truth_cutout_media(
 
     width, height, _alpha_sha, _bbox = _uploaded_cutout_details(
         raw_bytes,
-        expected_dimensions=STANDARD_VISUAL_CANVAS_SIZE,
+        expected_dimensions=expected_dimensions or STANDARD_VISUAL_CANVAS_SIZE,
     )
 
     cutout_sha = _sha256_bytes(raw_bytes)
@@ -822,7 +823,11 @@ def _prepare_durable_assets(
             if cutout_image.size != (source_width, source_height):
                 raise ProductTruthLockError(
                     "CANONICAL_CUTOUT_DIMENSIONS_MISMATCH",
-                    f"Reviewed cutout must use the standard {STANDARD_VISUAL_CANVAS_WIDTH}x{STANDARD_VISUAL_CANVAS_HEIGHT} px canvas.",
+                    (
+                        f"Reviewed cutout must use the standard {STANDARD_VISUAL_CANVAS_WIDTH}x{STANDARD_VISUAL_CANVAS_HEIGHT} px canvas."
+                        if (source_width, source_height) == STANDARD_VISUAL_CANVAS_SIZE
+                        else "Reviewed cutout dimensions must match the canonical product source dimensions."
+                    ),
                 )
             rgba = cutout_image.convert("RGBA")
             try:
@@ -1056,16 +1061,29 @@ async def create_pending_product_truth_lock(
             "Canonical source SHA-256 changed during onboarding.",
         )
 
-    standardized_source = standardize_image_file_to_canvas(
-        source_path,
-        _truth_lock_directory(product_id)
-        / "standardized-source"
-        / f"source-1000x1000-{source_sha[:16]}.png",
-    )
-    standardized_source_path = standardized_source.path
-    standardized_source_sha = standardized_source.standardized_sha256
-    source_width = STANDARD_VISUAL_CANVAS_WIDTH
-    source_height = STANDARD_VISUAL_CANVAS_HEIGHT
+    if source_kind == AUTO_GENERATED:
+        # The historical Auto Cutout lane is paused and remains byte/dimension
+        # compatible with its existing native-source contract.  The fixed
+        # 1000x1000 canvas applies to the active Manual / Canva lane only.
+        standardized_source_path = source_path
+        standardized_source_sha = source_sha
+        original_source_width = source_width
+        original_source_height = source_height
+        source_was_resized = False
+    else:
+        standardized_source = standardize_image_file_to_canvas(
+            source_path,
+            _truth_lock_directory(product_id)
+            / "standardized-source"
+            / f"source-1000x1000-{source_sha[:16]}.png",
+        )
+        standardized_source_path = standardized_source.path
+        standardized_source_sha = standardized_source.standardized_sha256
+        original_source_width = standardized_source.original_width
+        original_source_height = standardized_source.original_height
+        source_was_resized = standardized_source.was_resized
+        source_width = STANDARD_VISUAL_CANVAS_WIDTH
+        source_height = STANDARD_VISUAL_CANVAS_HEIGHT
 
     if existing:
         await _archive_existing_truth_lock(
@@ -1116,26 +1134,31 @@ async def create_pending_product_truth_lock(
         "canonical_source_type": str(reference.source_type or ""),
         "canonical_source_provenance": str(reference.provenance or ""),
         "canonical_media_id": canonical_media_id,
-        "canonical_canvas_width": STANDARD_VISUAL_CANVAS_WIDTH,
-        "canonical_canvas_height": STANDARD_VISUAL_CANVAS_HEIGHT,
-        "canonical_canvas_label": STANDARD_VISUAL_CANVAS_LABEL,
-        "canonical_canvas_requirement": (
-            "Manual / Canva cutouts must be transparent PNG files on an exact "
-            "1000x1000 px canvas."
-        ),
-        "source_normalization": (
-            "FIT_CONTAIN_CENTER_PRESERVE_ASPECT"
-            if standardized_source.was_resized
-            else "SOURCE_ALREADY_1000X1000"
-        ),
-        "original_source_width": standardized_source.original_width,
-        "original_source_height": standardized_source.original_height,
-        "original_source_sha256": standardized_source.original_sha256,
         "source_media_id": request.canonical_cutout_media_id,
         "source_media_sha256": _sha256_path(cutout_path),
         "version_id": version_id,
         "human_review_required": True,
     }
+    if source_kind != AUTO_GENERATED:
+        provenance.update(
+            {
+                "canonical_canvas_width": STANDARD_VISUAL_CANVAS_WIDTH,
+                "canonical_canvas_height": STANDARD_VISUAL_CANVAS_HEIGHT,
+                "canonical_canvas_label": STANDARD_VISUAL_CANVAS_LABEL,
+                "canonical_canvas_requirement": (
+                    "Manual / Canva cutouts must be transparent PNG files on an exact "
+                    "1000x1000 px canvas."
+                ),
+                "source_normalization": (
+                    "FIT_CONTAIN_CENTER_PRESERVE_ASPECT"
+                    if source_was_resized
+                    else "SOURCE_ALREADY_1000X1000"
+                ),
+                "original_source_width": original_source_width,
+                "original_source_height": original_source_height,
+                "original_source_sha256": source_sha,
+            }
+        )
     if provenance_source:
         provenance["canva_provenance_source"] = provenance_source
     if existing:

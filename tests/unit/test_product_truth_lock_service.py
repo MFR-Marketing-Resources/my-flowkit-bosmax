@@ -308,6 +308,10 @@ async def test_onboarding_persists_server_owned_pending_lock_from_reviewed_cutou
     assert captured["identity_lock"] == 0
     assert captured["review_status"] == "PENDING_REVIEW"
     assert captured["failure_state"] == "HUMAN_REVIEW_REQUIRED"
+    assert captured["source_width"] == 1000
+    assert captured["source_height"] == 1000
+    with Image.open(tmp_path / str(captured["canonical_source_path"])) as standardized_source:
+        assert standardized_source.size == (1000, 1000)
     assert json.loads(str(captured["alpha_mask_json"]))["source"] == "cutout_alpha"
     assert (tmp_path / str(captured["canonical_source_path"])).exists()
     assert (tmp_path / str(captured["canonical_cutout_path"])).exists()

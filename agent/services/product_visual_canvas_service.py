@@ -1,9 +1,10 @@
-"""Shared 1000x1000 product-visual canvas contract.
+"""Shared 1000x1000 Manual / Canva product-visual canvas contract.
 
-The Visual / Canva lane uses one working canvas for every product.  Raw
+The active Visual / Canva lane uses one working canvas for every product. Raw
 product sources may still arrive at different native dimensions, but every
-cutout candidate and every durable truth-lock source is normalized to this
-canvas before it enters the review/official-selection flow.
+manual/Canva candidate and its durable truth-lock source is normalized to this
+canvas before it enters the review/official-selection flow. The paused Auto
+Cutout lane keeps its legacy native-canvas contract until that lane is resumed.
 """
 
 from __future__ import annotations

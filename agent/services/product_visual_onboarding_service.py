@@ -52,7 +52,6 @@ from agent.services.product_visual_canvas_service import (
     STANDARD_VISUAL_CANVAS_LABEL,
     STANDARD_VISUAL_CANVAS_REQUIREMENT,
     STANDARD_VISUAL_CANVAS_WIDTH,
-    normalize_image_to_standard_canvas,
 )
 from agent.services.product_truth_lock_service import (
     AUTO_GENERATED,
@@ -895,19 +894,6 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
             # timing receipt; otherwise deterministic failures look free.
             compositor_seconds = time.perf_counter() - compositor_started
             raise
-        try:
-            raw_cutout = normalize_image_to_standard_canvas(raw_cutout)
-            bounds = _manual_cutout_bounds(
-                raw_cutout,
-                STANDARD_VISUAL_CANVAS_WIDTH,
-                STANDARD_VISUAL_CANVAS_HEIGHT,
-            )
-            cutout_sha = _sha256_bytes(raw_cutout)
-        except Exception as exc:  # noqa: BLE001 - candidate bytes must be valid PNG evidence
-            raise ProductVisualOnboardingError(
-                "CANONICAL_CUTOUT_INVALID",
-                f"Auto cutout could not be normalized to the standard canvas: {exc}",
-            ) from exc
         from agent.services.product_truth_lock_service import (
             create_pending_product_truth_lock,
             register_product_truth_cutout_media,
@@ -935,6 +921,10 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
             filename=cutout_filename,
             content_type="image/png",
             raw_bytes=raw_cutout,
+            expected_dimensions=(
+                int(getattr(reference, "width", 0) or 0),
+                int(getattr(reference, "height", 0) or 0),
+            ),
         )
         db_write_seconds += time.perf_counter() - media_started
         media_id = str(media.get("media_id") or "").strip()

@@ -16,10 +16,11 @@ from agent.services import product_truth_lock_service
 from agent.services import product_visual_onboarding_service as service
 
 
-def _cutout_bytes(color: tuple[int, int, int]) -> bytes:
-    image = Image.new("RGBA", (1000, 1000), (0, 0, 0, 0))
-    for x in range(180, 820):
-        for y in range(120, 880):
+def _cutout_bytes(color: tuple[int, int, int], size: tuple[int, int] = (1000, 1000)) -> bytes:
+    width, height = size
+    image = Image.new("RGBA", size, (0, 0, 0, 0))
+    for x in range(max(1, width // 5), min(width, width - max(1, width // 5))):
+        for y in range(max(1, height // 8), min(height, height - max(1, height // 8))):
             image.putpixel((x, y), (*color, 255))
     stream = BytesIO()
     image.save(stream, format="PNG")
@@ -56,7 +57,7 @@ async def test_product_visual_crud_workflow_is_provider_free(tmp_path, monkeypat
     }
     assert read["provider_operations"] == 0
 
-    auto_bytes = _cutout_bytes((190, 70, 60))
+    auto_bytes = _cutout_bytes((190, 70, 60), (32, 32))
     auto_calls = 0
 
     async def fake_auto_cutout(_source_path, roi=None, roi_source_sha256=None):
@@ -89,7 +90,7 @@ async def test_product_visual_crud_workflow_is_provider_free(tmp_path, monkeypat
     auto_preview = await service.resolve_product_visual_preview(product_id, "auto")
     assert auto_preview.read_bytes() == auto_bytes
     with Image.open(auto_preview) as auto_image:
-        assert auto_image.size == (1000, 1000)
+        assert auto_image.size == (32, 32)
 
     first_manual_bytes = _cutout_bytes((60, 170, 90))
     first_manual = await service.upload_manual_product_cutout(
