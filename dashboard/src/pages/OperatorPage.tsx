@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { fetchAPI } from "../api/client";
+import {
+	bindingFallbackGenerateAsset,
+	generateAssetHasTransport,
+	packageSlotResolvedAsset,
+	resolvedAssetToGenerateAsset,
+} from "../faceless/facelessLane";
 import { useCopywritingReadiness } from "../api/copywritingReadiness";
 import { fetchCreativeAssetEligibilityAudit } from "../api/creativeAssets";
 import {
@@ -1554,6 +1560,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							? data.visual_lane_id ?? data.lane
 							: undefined,
 					image_media_ids: refs,
+					// Forward resolvable asset OBJECTS (Faceless parity) so the backend
+					// resolver can upload/materialize references that carry transport
+					// (local/preview/download) but no live media_id yet.
+					startAsset: data.startAsset,
+					refs: data.refs,
 					aspect,
 					model: data.mode === "IMG" ? data.model : videoModel,
 					// IMG image model (Nano Banana …) — separate from the video `model`.
@@ -1657,6 +1668,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		setVideoModel(nextModel);
 		setModelAdjustmentNote(null);
 		clearDurationAuthorityArtifacts();
+		// Snap the single-clip duration to the model's registry default (Veo 3.1
+		// Lite → 8s, Omni Flash → 10s) so the per-model single target holds. The
+		// operator may still pick another allowed duration afterwards.
+		const engine = getEngine(capabilityMatrix, selectedEngineId);
+		const modelDefault = engine?.models.find(
+			(m) => m.ui_label === nextModel || m.key === nextModel,
+		)?.default_duration_s;
+		if (modelDefault && modelDefault !== videoDurationSeconds) {
+			setVideoDurationSeconds(modelDefault);
+		}
 	};
 
 	// DURATION change (SINGLE): filter models to the new duration; if the current
@@ -2147,8 +2168,72 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		// SINGLE-clip generation: the compiled single-block prompt from the prepared
 		// execution package. Fired through the LIVE one-door lane (/api/flow/generate),
 		// the same proven lane IMG uses — NOT the retired DOM lane (ADR-007 compliant).
-		const singleClipPrompt =
-			mode === "T2V" ? workspacePackage?.prompt_text || "" : "";
+		const singleClipPrompt = workspacePackage?.prompt_text || "";
+		// Single-clip reference bytes, resolved from the prepared package slots
+		// (proven Faceless pattern) → operator-binding fallback → transport gate.
+		// The backend /api/flow/generate resolver uploads assets that carry
+		// transport (media_id / local / preview / download) but a bare asset_id
+		// fails closed — so gating on real transport makes a broken fire impossible.
+		const singleStartAsset =
+			mode === "F2V" || mode === "HYBRID"
+				? resolvedAssetToGenerateAsset(
+						packageSlotResolvedAsset(workspacePackage, "start_frame"),
+					) ||
+					bindingFallbackGenerateAsset(
+						referenceBinding.startFrameAssetId ||
+							referenceBinding.productReferenceAssetId,
+						"start_frame",
+					)
+				: null;
+		const singleEndAsset =
+			mode === "F2V"
+				? resolvedAssetToGenerateAsset(
+						packageSlotResolvedAsset(workspacePackage, "end_frame"),
+					) ||
+					bindingFallbackGenerateAsset(
+						referenceBinding.endFrameAssetId,
+						"end_frame",
+					)
+				: null;
+		const singleSubjectAsset =
+			mode === "I2V"
+				? resolvedAssetToGenerateAsset(
+						packageSlotResolvedAsset(workspacePackage, "subject"),
+					) ||
+					bindingFallbackGenerateAsset(
+						referenceBinding.characterReferenceAssetId,
+						"subject",
+					)
+				: null;
+		const singleSceneAsset =
+			mode === "I2V"
+				? resolvedAssetToGenerateAsset(
+						packageSlotResolvedAsset(workspacePackage, "scene"),
+					) ||
+					bindingFallbackGenerateAsset(
+						referenceBinding.sceneContextReferenceAssetId,
+						"scene",
+					)
+				: null;
+		const singleStyleAsset =
+			mode === "I2V"
+				? resolvedAssetToGenerateAsset(
+						packageSlotResolvedAsset(workspacePackage, "style"),
+					) ||
+					bindingFallbackGenerateAsset(
+						referenceBinding.styleReferenceAssetId,
+						"style",
+					)
+				: null;
+		// Reference-required modes must have real transportable bytes, not just a
+		// satisfied binding. HYBRID's product anchor lives in the start_frame slot.
+		const singleClipRefsReady =
+			mode === "T2V"
+				? true
+				: mode === "I2V"
+					? generateAssetHasTransport(singleSubjectAsset) &&
+						generateAssetHasTransport(singleSceneAsset)
+					: generateAssetHasTransport(singleStartAsset);
 		const storyboardShots = (previewPackage?.prompt_blocks ?? []).map(
 			(block, i) => ({
 				id: String(block.block_index ?? i),
@@ -2853,10 +2938,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 											is_final: i === extendAuthority.plan.length - 2,
 										}))}
 								/>
-							) : mode === "T2V" ? (
-								// SINGLE clip: one video via the LIVE one-door lane
-								// (/api/flow/generate). The operator presses this — it spends
-								// credits — never auto-fired.
+							) : singleClipPrompt && !referenceBlocker && singleClipRefsReady ? (
+								// SINGLE clip for EVERY mode (T2V/F2V/HYBRID/I2V) via the LIVE
+								// one-door lane (/api/flow/generate). Reference-required modes are
+								// gated on their own resolved-reference transport; the operator
+								// presses this — it spends credits — never auto-fired.
 								<div className="space-y-2">
 									<button
 										type="button"
@@ -2871,11 +2957,19 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 													null,
 												prompt_fingerprint:
 													workspacePackage?.prompt_fingerprint ?? null,
+												startAsset: singleStartAsset ?? undefined,
+												endAsset: singleEndAsset ?? undefined,
+												refs:
+													mode === "I2V"
+														? {
+																subjectAsset: singleSubjectAsset ?? undefined,
+																sceneAsset: singleSceneAsset ?? undefined,
+																styleAsset: singleStyleAsset ?? undefined,
+															}
+														: undefined,
 											})
 										}
-										disabled={
-											!singleClipPrompt || isExecuting || backendRuntimeStale
-										}
+										disabled={isExecuting || backendRuntimeStale}
 										className="w-full rounded-xl bg-gradient-to-br from-v4-accent to-v4-auto px-4 py-3 text-[13px] font-bold text-slate-950 shadow-lg shadow-v4-accent/20 transition-opacity hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-40"
 									>
 										{isExecuting
@@ -2883,15 +2977,18 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 											: `▶ Generate 1 clip · ${videoDurationSeconds}s`}
 									</button>
 									<p className="text-[11px] text-slate-500">
-										{singleClipPrompt
-											? "Fires one video through Google Flow — spends credits. Needs an open, warmed-up Flow editor tab. For a longer joined video, switch Length to “Extended video”."
-											: "Compile preview → Prepare final prompt (cockpit) first."}
+										Fires one video through Google Flow — spends credits. Needs an
+										open, warmed-up Flow editor tab. For a longer joined video,
+										switch Length to “Extended video”.
 									</p>
 								</div>
 							) : (
 								<div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-100">
-									{mode} keeps the existing reference-aware production gate. Select
-									EXTEND with a total duration to open the durable Generate control.
+									{referenceBlocker
+										? referenceBlocker
+										: !singleClipRefsReady
+											? `${mode} needs its reference image resolved into the prepared package — re-run Prepare, or bind an approved reference.`
+											: "Compile preview → Prepare final prompt first, then Generate 1 clip appears here."}
 								</div>
 							)}
 						</WorkflowStep>
