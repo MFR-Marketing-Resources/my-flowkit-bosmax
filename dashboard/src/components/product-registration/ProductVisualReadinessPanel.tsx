@@ -729,7 +729,9 @@ export default function ProductVisualReadinessPanel({
 			: readiness.auto_cutout_status === "PENDING_REVIEW"
 				? "auto"
 				: null;
-	const roiImageUrl = readiness.original_preview_url || productSourceUrl || null;
+	const originalDisplayUrl = readiness.original_display_url || readiness.original_preview_url || null;
+	const roiImageUrl = originalDisplayUrl || productSourceUrl || null;
+	const originalDisplayOnly = readiness.original_display_trust_status === "DISPLAY_ONLY";
 	const showProductArea = Boolean(roiImageUrl) && (readiness.target_selection_required || readiness.target_selection_available);
 
 	const canvaController = Boolean(canvaWorkflow?.current_stage) && canvaWorkflow?.current_stage !== "NOT_STARTED";
@@ -846,7 +848,7 @@ export default function ProductVisualReadinessPanel({
 			{!compact && (
 				<div className="mt-4 grid gap-3 md:grid-cols-3" data-testid="product-cutout-comparison">
 					{([
-						["Original Source", readiness.original_preview_url, "original", "card-badge-original"],
+						["Original Source", originalDisplayUrl, "original", "card-badge-original"],
 						["Auto Cutout", readiness.auto_cutout_preview_url, "auto", "card-badge-auto"],
 						["Manual / Canva", readiness.manual_cutout_preview_url, "manual", "card-badge-manual"],
 					] as const).map(([name, src, key, testid]) => {
@@ -871,6 +873,11 @@ export default function ProductVisualReadinessPanel({
 								<div className="mt-2 flex h-36 items-center justify-center rounded bg-white" style={{ backgroundImage: "linear-gradient(45deg,#d1d5db 25%,transparent 25%),linear-gradient(-45deg,#d1d5db 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#d1d5db 75%),linear-gradient(-45deg,transparent 75%,#d1d5db 75%)", backgroundSize: "16px 16px", backgroundPosition: "0 0,0 8px,8px -8px,-8px 0" }}>
 									{src ? <img src={withBust(src) ?? undefined} alt={`${name} cutout`} className="max-h-full max-w-full object-contain" /> : <span className="text-[10px] text-slate-500">Not available</span>}
 								</div>
+								{key === "original" && originalDisplayOnly && src && (
+									<div className="mt-1 text-center text-[8px] font-semibold uppercase tracking-widest text-amber-300/80" data-testid="original-display-only">
+										Display source · not yet prepared as trusted source
+									</div>
+								)}
 								<div className="mt-2">
 									{official ? (
 										<div className="rounded-lg bg-emerald-500/10 px-2 py-1.5 text-center text-[9px] font-bold uppercase tracking-widest text-emerald-300">Current system reference</div>

@@ -261,6 +261,38 @@ def _reference_pack_file(pack: dict[str, Any] | None) -> Path | None:
     return None
 
 
+def _http_source_url(value: Any) -> str | None:
+    candidate = str(value or "").strip()
+    if candidate.lower().startswith(("http://", "https://")):
+        return candidate
+    return None
+
+
+def _original_display_source(
+    product: dict[str, Any],
+    *,
+    source_available: bool,
+) -> dict[str, str | None]:
+    """Resolve the image the operator should see without changing trust state.
+
+    A byte-backed source is served through the governed preview endpoint.  If
+    trust has not been established yet, the product row URL remains a display
+    source only; it never upgrades ``canonical_media_status``.
+    """
+    product_id = str(product.get("id") or product.get("product_id") or "")
+    if source_available and product_id:
+        return {
+            "url": f"/api/product-visual-onboarding/{product_id}/cutout/preview/original",
+            "source": "TRUSTED_SAME_PRODUCT_SOURCE",
+            "trust_status": "TRUSTED",
+        }
+    for field, source in (("image_url", "PRODUCT_ROW_IMAGE_URL"), ("source_url", "PRODUCT_ROW_SOURCE_URL")):
+        url = _http_source_url(product.get(field))
+        if url:
+            return {"url": url, "source": source, "trust_status": "DISPLAY_ONLY"}
+    return {"url": None, "source": "UNAVAILABLE", "trust_status": "UNAVAILABLE"}
+
+
 def _parse_json(value: Any, fallback: Any) -> Any:
     if value in (None, ""):
         return fallback
@@ -350,6 +382,7 @@ def _candidate_actions(
     product: dict[str, Any],
     *,
     source_available: bool,
+    display_source_available: bool,
     state: str,
     lock: dict[str, Any] | None,
     blocked_reason: str | None,
@@ -364,11 +397,11 @@ def _candidate_actions(
         "can_review_cutout": bool(active and pending),
         "can_approve_cutout": bool(active and pending),
         "can_rebuild_cutout": bool(active and source_available and not approved),
-        "can_upload_manual_cutout": bool(active and source_available),
+        "can_upload_manual_cutout": bool(active and (source_available or display_source_available)),
         "can_reject_cutout": bool(active and lock and str(lock.get("review_status") or "").upper() in {PENDING_REVIEW, APPROVED}),
         "can_use_original_fallback": bool(active and source_available),
         "can_start_canva_cutout": bool(active and source_available and canva_stage not in {"PENDING_HUMAN_REVIEW", "APPROVED"}),
-        "can_open_source": bool(source_available or product.get("image_url")),
+        "can_open_source": bool(source_available or display_source_available),
         "can_view": True,
     }
 
@@ -452,9 +485,12 @@ def _readiness_payload(
     if state == REJECTED:
         warnings.append("REJECTED_BY_USER")
 
+    display_source = _original_display_source(product, source_available=source_available)
+
     actions = _candidate_actions(
         product,
         source_available=source_available,
+        display_source_available=bool(display_source["url"]),
         state=state,
         lock=lock,
         blocked_reason=blocked_reason,
@@ -505,6 +541,9 @@ def _readiness_payload(
             f"/api/product-visual-onboarding/{product.get('id')}/cutout/preview/original"
             if source_available else None
         ),
+        "original_display_url": display_source["url"],
+        "original_display_source": display_source["source"],
+        "original_display_trust_status": display_source["trust_status"],
         "auto_cutout_preview_url": (
             f"/api/product-visual-onboarding/{product.get('id')}/cutout/preview/auto"
             if auto_status not in {NOT_PREPARED, "NOT_UPLOADED"} else None
@@ -987,6 +1026,9 @@ async def upload_manual_product_cutout(
     height = int(getattr(reference, "height", 0) or 0)
     if width <= 0 or height <= 0:
         raise ProductVisualOnboardingError("CANONICAL_PRODUCT_SOURCE_INVALID", "Canonical product dimensions are unavailable.")
+    # URL-only product images become governed same-product source media as
+    # part of the manual lane. This is source preparation, not auto cutout.
+    await _ensure_canonical_media(product, reference)
     try:
         media = await register_product_truth_cutout_media(
             product_id,
@@ -1202,21 +1244,25 @@ async def get_product_visual_readiness(product_id: str) -> dict[str, Any]:
     reference = None
     source_error = None
     source_available = bool(_reference_file(product)) or bool(_reference_pack_file(pack)) or _truth_row_approved(lock)
+    resolver_product = product
     # Detail reads stay read-only: the resolver is consulted only when a
-    # server-local source/approved lock already exists.  URL-only rows remain
-    # visibly unresolved until an explicit Prepare action is pressed; a GET must
-    # not download or materialize a remote image as a hidden side effect.
+    # server-local source/approved lock already exists. URL-only rows remain
+    # displayable but visibly untrusted until a governed manual/prepare action
+    # materializes and registers the same product image.
     if not source_available:
         for media in await crud.list_product_source_media(product_id=product_id):
-            if _path(media.get("local_path")):
+            if str(media.get("kind") or "").lower() == "image" and _path(media.get("local_path")):
                 source_available = True
+                if media.get("media_id"):
+                    resolver_product = {**product, "media_id": media["media_id"]}
                 break
     if source_available:
         try:
-            reference = await _resolve_source(product)
-            source_available = bool(_path(getattr(reference, "local_path", None))) or _truth_row_approved(lock)
+            reference = await _resolve_source(resolver_product)
+            source_available = bool(_path(getattr(reference, "local_path", None)))
         except ProductVisualOnboardingError as exc:
             source_error = exc.code
+            source_available = False
     blocked_reason = await _blocked_reason(product)
     return _readiness_payload(
         product,
@@ -1299,6 +1345,7 @@ async def annotate_products_visual_readiness(products: list[dict[str, Any]]) -> 
         pack = packs.get(pid)
         prep = preps.get(pid)
         source = _reference_file(product)
+        source_available = bool(source) or bool(_reference_pack_file(pack)) or _truth_row_approved(lock)
         blocked = "PURGED_ALIAS" if pid in tombstoned else _purge_reason(product)
         if not blocked and is_archived(product):
             blocked = "ARCHIVED_PRODUCT"
@@ -1310,7 +1357,7 @@ async def annotate_products_visual_readiness(products: list[dict[str, Any]]) -> 
             pack=pack,
             prep=prep,
             reference=None,
-            source_available=bool(source),
+            source_available=source_available,
             source_error=None,
             blocked_reason=blocked,
             history=histories.get(pid, []),

@@ -243,6 +243,22 @@ def _registered_reference_id_for_bytes(product_id: str, expected_sha256: str) ->
     return str(asset.get("media_id") or asset.get("asset_id") or "").strip() or None
 
 
+def _find_registered_product_source_media(product_id: str, media_id: str) -> dict[str, Any] | None:
+    """Read a byte-backed same-product source-media registry row."""
+    if not product_id or not media_id:
+        return None
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM product_source_media WHERE media_id = ? AND product_id = ? AND kind = 'image' LIMIT 1",
+                (media_id, product_id),
+            ).fetchone()
+        return dict(row) if row else None
+    except (OSError, sqlite3.Error):
+        return None
+
+
 def _find_reference_pack_canonical_source(product_id: str) -> dict[str, Any] | None:
     """Resolve a byte-verified same-product canonical source from its pack.
 
@@ -391,13 +407,15 @@ def resolve_product_reference_image(
     media_id = product.get("media_id")
     if media_id:
         try:
-            with get_db() as db:
-                cursor = db.cursor()
-                cursor.execute("SELECT * FROM request WHERE media_id = ? OR request_id = ?", (media_id, media_id))
-                row = cursor.fetchone()
-                if row:
-                    d = dict(row)
-                out_path = d.get("output_url") or d.get("local_path")
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT * FROM request WHERE media_id = ? OR request_id = ? LIMIT 1",
+                    (media_id, media_id),
+                ).fetchone()
+            if row:
+                data = dict(row)
+                out_path = data.get("output_url") or data.get("local_path")
                 if out_path and Path(out_path).exists():
                     meta = _inspect_image_file(out_path)
                     if meta:
@@ -416,6 +434,28 @@ def resolve_product_reference_image(
                         )
         except Exception:
             pass
+
+        registered = _find_registered_product_source_media(product_id, str(media_id))
+        registered_path = (registered or {}).get("local_path")
+        if registered_path:
+            resolved_registered_path = Path(str(registered_path))
+            if not resolved_registered_path.is_absolute():
+                resolved_registered_path = BASE_DIR / resolved_registered_path
+            meta = _inspect_image_file(resolved_registered_path)
+            if meta:
+                w, h, mime, sha = meta
+                return ProductReferenceInfo(
+                    source_type="PRODUCT_SOURCE_MEDIA",
+                    media_id=str(media_id),
+                    local_path=str(resolved_registered_path),
+                    image_url=product.get("image_url"),
+                    mime_type=mime,
+                    sha256=sha,
+                    width=w,
+                    height=h,
+                    provenance="PRODUCT_SOURCE_MEDIA_REGISTRY",
+                    validation_status="VALIDATED",
+                )
         
         # Check standard retrieved storage fallback across extensions
         for ext in (".jpg", ".jpeg", ".png", ".webp"):

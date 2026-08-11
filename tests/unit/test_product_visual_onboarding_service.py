@@ -1,4 +1,5 @@
 from io import BytesIO
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -30,7 +31,7 @@ async def test_readiness_separates_same_product_grounding_from_exact_approval(tm
     assert readiness["provider_operations"] == 0
 
 
-def test_missing_source_label_is_truthful_and_actions_remain_fail_closed():
+def test_url_only_display_source_stays_untrusted_but_manual_lane_is_available():
     readiness = service._readiness_payload(
         {"id": "missing-source", "image_url": "https://example.test/product.jpg"},
         lock=None,
@@ -41,10 +42,71 @@ def test_missing_source_label_is_truthful_and_actions_remain_fail_closed():
     )
 
     assert readiness["visual_grounding_source"] == "SOURCE_NOT_RESOLVED"
+    assert readiness["original_preview_url"] is None
+    assert readiness["original_display_url"] == "https://example.test/product.jpg"
+    assert readiness["original_display_source"] == "PRODUCT_ROW_IMAGE_URL"
+    assert readiness["original_display_trust_status"] == "DISPLAY_ONLY"
+    assert readiness["canonical_media_status"] == "MISSING"
     assert readiness["can_prepare_cutout"] is False
-    assert readiness["can_upload_manual_cutout"] is False
+    assert readiness["can_upload_manual_cutout"] is True
     assert readiness["can_start_canva_cutout"] is False
     assert readiness["can_open_source"] is True
+
+
+def test_missing_source_has_no_display_or_manual_action():
+    readiness = service._readiness_payload(
+        {"id": "missing-source"},
+        lock=None,
+        pack=None,
+        prep=None,
+        reference=None,
+        source_available=False,
+    )
+
+    assert readiness["original_display_url"] is None
+    assert readiness["original_display_source"] == "UNAVAILABLE"
+    assert readiness["original_display_trust_status"] == "UNAVAILABLE"
+    assert readiness["can_upload_manual_cutout"] is False
+    assert readiness["can_open_source"] is False
+
+
+def test_trusted_source_display_uses_governed_preview_endpoint():
+    readiness = service._readiness_payload(
+        {"id": "trusted-source"},
+        lock=None,
+        pack=None,
+        prep=None,
+        reference=SimpleNamespace(source_type="PRODUCT_ROW_LOCAL_PATH"),
+        source_available=True,
+    )
+
+    assert readiness["original_display_url"] == "/api/product-visual-onboarding/trusted-source/cutout/preview/original"
+    assert readiness["original_display_source"] == "TRUSTED_SAME_PRODUCT_SOURCE"
+    assert readiness["original_display_trust_status"] == "TRUSTED"
+    assert readiness["original_preview_url"] == readiness["original_display_url"]
+
+
+def test_reference_pack_source_is_trusted_display(tmp_path):
+    pack_source = tmp_path / "reference-pack-source.png"
+    Image.new("RGB", (24, 24), (30, 120, 150)).save(pack_source)
+    pack = {
+        "references_json": json.dumps([
+            {"role": "PRODUCT_CANONICAL", "local_file_path": str(pack_source)},
+        ]),
+    }
+
+    readiness = service._readiness_payload(
+        {"id": "pack-source"},
+        lock=None,
+        pack=pack,
+        prep=None,
+        reference=None,
+        source_available=bool(service._reference_pack_file(pack)),
+    )
+
+    assert readiness["original_display_source"] == "TRUSTED_SAME_PRODUCT_SOURCE"
+    assert readiness["original_display_trust_status"] == "TRUSTED"
+    assert readiness["original_display_url"].endswith("/pack-source/cutout/preview/original")
 
 
 def test_deterministic_cutout_bytes_preserve_canonical_source_dimensions(tmp_path, monkeypatch):
@@ -255,6 +317,11 @@ async def test_manual_upload_is_pending_and_uses_user_provenance(tmp_path, monke
         return {"cutout_status": "PENDING_REVIEW", "exact_commerce_status": "CUTOUT_REQUIRED"}
 
     monkeypatch.setattr(service, "_resolve_source", resolve)
+    async def ensure_media(_product, _reference):
+        captured["canonical_source"] = _reference
+        return "source-media-1"
+
+    monkeypatch.setattr(service, "_ensure_canonical_media", ensure_media)
     monkeypatch.setattr(service, "register_product_truth_cutout_media", register)
     monkeypatch.setattr(service, "create_pending_product_truth_lock", onboard)
     monkeypatch.setattr(service, "get_product_visual_readiness", readiness)
@@ -273,3 +340,4 @@ async def test_manual_upload_is_pending_and_uses_user_provenance(tmp_path, monke
     assert captured["onboard"]["source_kind"] == "USER_UPLOAD"
     assert captured["onboard"]["uploaded_by"] == "operator-1"
     assert captured["onboard"]["original_filename"] == r"..\operator\manual.png"
+    assert captured["canonical_source"] is reference

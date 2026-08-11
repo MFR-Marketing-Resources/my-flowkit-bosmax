@@ -1551,6 +1551,9 @@ export interface ProductVisualReadiness {
 	manual_cutout_status?: ProductVisualCutoutStatus | string;
 	active_visual_source?: string;
 	original_preview_url?: string | null;
+	original_display_url?: string | null;
+	original_display_source?: string | null;
+	original_display_trust_status?: string | null;
 	auto_cutout_preview_url?: string | null;
 	manual_cutout_preview_url?: string | null;
 	active_cutout_preview_url?: string | null;

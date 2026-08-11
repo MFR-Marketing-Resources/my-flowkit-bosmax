@@ -375,6 +375,8 @@ describe("ProductVisualReadinessPanel", () => {
 		await waitFor(() => expect(screen.getByTestId("manual-upload-message")).toHaveTextContent(/replaced the previously-approved cutout/i));
 		expect(fetchProductVisualReadinessMock).toHaveBeenCalledWith("product-1");
 		expect(screen.getByTestId("set-official-manual")).toBeEnabled();
+		expect(screen.queryByTestId("official-ribbon-manual")).not.toBeInTheDocument();
+		expect(screen.getByTestId("current-system-visual")).toHaveTextContent("Original Source");
 		expect(screen.getByAltText("Manual / Canva cutout").getAttribute("src")).not.toBe(before);
 		expect(screen.getByAltText("Manual / Canva cutout").getAttribute("src")).toContain("v=1-");
 	});
@@ -387,5 +389,23 @@ describe("ProductVisualReadinessPanel", () => {
 
 		await waitFor(() => expect(fetchProductVisualReadinessMock).toHaveBeenCalledWith("product-1"));
 		expect(screen.getByTestId("refresh-visual-preview")).toHaveTextContent("Refresh preview");
+	});
+
+	it("shows a URL-only Original Source without promoting it to trusted", () => {
+		const displayOnly: ProductVisualReadiness = {
+			...missingSource,
+			original_display_url: "https://example.test/kaxier.jpg",
+			original_display_source: "PRODUCT_ROW_IMAGE_URL",
+			original_display_trust_status: "DISPLAY_ONLY",
+			can_upload_manual_cutout: true,
+			can_open_source: true,
+		};
+
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={displayOnly} />);
+
+		expect(screen.getByAltText("Original Source cutout")).toHaveAttribute("src", expect.stringContaining("https://example.test/kaxier.jpg"));
+		expect(screen.getByTestId("original-display-only")).toHaveTextContent("not yet prepared as trusted source");
+		expect(screen.getByRole("button", { name: "Upload My Cutout" })).toBeEnabled();
+		expect(screen.getByTestId("set-official-original")).toBeDisabled();
 	});
 });
