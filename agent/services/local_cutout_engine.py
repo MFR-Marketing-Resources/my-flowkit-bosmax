@@ -602,10 +602,24 @@ def _infer_mask_roi(rgb_image: "Image.Image", roi) -> "Image.Image":
     """Infer ONLY on the ROI crop, then paste its mask onto a full-source-size
     transparent (0) canvas at the ROI location. Pixels outside the ROI stay
     transparent => same-canvas product isolation (bread outside the jar ROI is
-    dropped)."""
+    dropped).
+
+    The ROI crop is letterboxed to a SQUARE before inference so the model's square
+    input never distorts a non-square ROI — an aspect squash mangled light /
+    low-contrast products (the CHEEZY GARLIC jar body was dropped, leaving only the
+    label). Padding preserves the product's geometry; the mask is un-padded back to
+    the ROI before compositing.
+    """
     x, y, w, h = (int(round(float(v))) for v in roi)
     crop = rgb_image.crop((x, y, x + w, y + h))
-    crop_mask = _infer_mask(crop).convert("L")
+    side = max(w, h)
+    square = Image.new("RGB", (side, side), (0, 0, 0))
+    off_x, off_y = (side - w) // 2, (side - h) // 2
+    square.paste(crop, (off_x, off_y))
+    square_mask = _infer_mask(square).convert("L")
+    if square_mask.size != (side, side):
+        square_mask = square_mask.resize((side, side), Image.Resampling.LANCZOS)
+    crop_mask = square_mask.crop((off_x, off_y, off_x + w, off_y + h))
     canvas = Image.new("L", rgb_image.size, 0)
     canvas.paste(crop_mask, (x, y))
     return canvas
