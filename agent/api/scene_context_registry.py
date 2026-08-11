@@ -238,6 +238,27 @@ async def scene_context_registry_add_manual(request: SceneManualAddRequest):
     return {"scene_code": scene_code, "scene_name": request.scene_name}
 
 
+class SceneUpdateRequest(BaseModel):
+    """Metadata-only scene edit. Identity (SceneName/BackgroundPrompt) + SceneCode
+    are immutable here; only non-identity metadata (usage_tags) may change."""
+    usage_tags: str
+
+
+@router.patch("/scene-context-registry/{scene_code}")
+async def scene_context_registry_update(scene_code: str, request: SceneUpdateRequest):
+    """CRUD metadata edit: change one scene's non-identity metadata (usage_tags)
+    while its identity descriptors + SceneCode stay frozen. 404 if the code is
+    absent; 422 if no editable field was supplied."""
+    from agent.services import scene_context_registry
+    if not request.usage_tags.strip():
+        raise HTTPException(422, "SCENE_USAGE_TAGS_REQUIRED")
+    try:
+        return scene_context_registry.update_scene(scene_code, request.model_dump())
+    except ValueError as exc:
+        msg = str(exc)
+        raise HTTPException(404 if "NOT_FOUND" in msg else 422, msg) from exc
+
+
 class SceneAutoGenRequest(BaseModel):
     brief: str | None = None
 
