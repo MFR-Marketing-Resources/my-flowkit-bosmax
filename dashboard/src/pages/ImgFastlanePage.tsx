@@ -1101,9 +1101,14 @@ export default function ImgFastlanePage() {
 											</select>
 										</label>
 									</div>
-									<pre className="max-h-48 overflow-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 font-mono text-[10px] text-slate-400">
-										{JSON.stringify({ aspect, count: quantity, image_model: imageModel, refs: resolvedRefsPayload }, null, 2)}
-									</pre>
+									<details className="mt-2">
+										<summary className="cursor-pointer text-[10px] font-semibold uppercase tracking-wide text-slate-500 hover:text-slate-300">
+											Technical payload
+										</summary>
+										<pre className="mt-2 max-h-48 overflow-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 font-mono text-[10px] text-slate-400">
+											{JSON.stringify({ aspect, count: quantity, image_model: imageModel, refs: resolvedRefsPayload }, null, 2)}
+										</pre>
+									</details>
 								</div>
 							</WorkflowStep>
 
@@ -1643,10 +1648,12 @@ export default function ImgFastlanePage() {
 								Aspect: <strong>{aspect}</strong> | Count: <strong>{quantity}</strong>
 							</div>
 							<div className="space-y-1">
-								<span className="text-[10px] font-semibold text-slate-500 block">refs payload:</span>
-								<pre className="max-h-40 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-2 font-mono text-[10px] text-slate-400">
-									{JSON.stringify(resolvedRefsPayload, null, 2)}
-								</pre>
+								<details>
+									<summary className="cursor-pointer text-[10px] font-semibold text-slate-500 hover:text-slate-300">refs payload</summary>
+									<pre className="mt-1 max-h-40 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-2 font-mono text-[10px] text-slate-400">
+										{JSON.stringify(resolvedRefsPayload, null, 2)}
+									</pre>
+								</details>
 							</div>
 						</div>
 
