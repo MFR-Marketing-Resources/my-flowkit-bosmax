@@ -10,6 +10,7 @@ import {
 	type ImageArtifact,
 	type ImgAssetLane,
 	type ImgGenerationJob,
+	deleteImageArtifact,
 	fetchImageArtifacts,
 	fetchImgAssetLanes,
 	pollImgGenerationJob,
@@ -1101,9 +1102,74 @@ export default function ImgCockpitPage() {
 					{generating ? "Generating (live)…" : "Generate (live · spends credits)"}
 				</button>
 				{genJob ? (
-					<div className="text-[11px] text-slate-300">
-						Job status: <strong>{genJob.status}</strong>
-						{genJob.media_id ? ` · media ${genJob.media_id}` : ""}
+					<div className="mt-2 space-y-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+						<div className="text-[11px] text-slate-300">
+							Job status: <strong>{genJob.status}</strong>
+							{genJob.media_id ? ` · media ${genJob.media_id}` : ""}
+						</div>
+						{genJob.status === "DONE" && genJob.media_id ? (
+							<div className="space-y-2">
+								<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+									Hasil Terkini
+								</div>
+								<img
+									src={`/api/flow/retrieved/${encodeURIComponent(genJob.media_id)}`}
+									alt="Hasil generate terkini"
+									loading="lazy"
+									className="w-full max-w-[220px] rounded-lg border border-slate-800 bg-black object-contain"
+								/>
+								<p className="text-[10px] text-slate-500">
+									Kualiti tak memuaskan? Regenerate untuk cuba lagi (guna kredit) atau padam imej ini.
+								</p>
+								<div className="flex flex-wrap gap-2">
+									<button
+										type="button"
+										onClick={() => setShowGenConfirm(true)}
+										disabled={generating || genResolution.blocked}
+										className="rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-1.5 text-[11px] font-bold text-blue-200 hover:bg-blue-500/20 disabled:opacity-40"
+									>
+										🔄 Regenerate
+									</button>
+									<button
+										type="button"
+										onClick={() => void handleSave()}
+										disabled={!canSave}
+										className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-bold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-40"
+									>
+										💾 Simpan ke Library
+									</button>
+									<button
+										type="button"
+										onClick={async () => {
+											const mid = genJob.media_id;
+											if (!mid) return;
+											if (
+												!window.confirm(
+													"Padam imej ini? Creative Asset yang sudah disimpan tidak terjejas.",
+												)
+											)
+												return;
+											try {
+												await deleteImageArtifact(mid);
+												setArtifacts((prev) =>
+													prev.filter((a) => a.media_id !== mid),
+												);
+												setGenJob(null);
+											} catch (err) {
+												setError(
+													err instanceof Error
+														? err.message
+														: "Gagal padam imej artifact",
+												);
+											}
+										}}
+										className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-[11px] font-bold text-rose-200 hover:bg-rose-500/20"
+									>
+										🗑 Padam
+									</button>
+								</div>
+							</div>
+						) : null}
 					</div>
 				) : null}
 				<p className="text-[10px] text-slate-500">
