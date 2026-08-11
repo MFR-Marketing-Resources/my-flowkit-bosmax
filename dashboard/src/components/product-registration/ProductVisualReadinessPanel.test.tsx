@@ -1,6 +1,22 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const { fetchProductVisualReadinessMock, uploadManualProductCutoutMock } = vi.hoisted(() => ({
+	fetchProductVisualReadinessMock: vi.fn(),
+	uploadManualProductCutoutMock: vi.fn(),
+}));
+
+vi.mock("../../api/productVisualOnboarding", async () => {
+	const actual = await vi.importActual<typeof import("../../api/productVisualOnboarding")>(
+		"../../api/productVisualOnboarding",
+	);
+	return {
+		...actual,
+		fetchProductVisualReadiness: fetchProductVisualReadinessMock,
+		uploadManualProductCutout: uploadManualProductCutoutMock,
+	};
+});
 
 import ProductVisualReadinessPanel from "./ProductVisualReadinessPanel";
 import type { ProductVisualReadiness } from "../../types";
@@ -136,6 +152,8 @@ describe("ProductVisualReadinessPanel", () => {
 	afterEach(() => {
 		cleanup();
 		vi.unstubAllGlobals();
+		fetchProductVisualReadinessMock.mockReset();
+		uploadManualProductCutoutMock.mockReset();
 	});
 
 	it("shows the four visual readiness gates and keeps approval explicit", () => {
@@ -321,5 +339,53 @@ describe("ProductVisualReadinessPanel", () => {
 	it("states the transparent-PNG requirement for manual upload", () => {
 		render(<ProductVisualReadinessPanel productId="product-1" readiness={perLaneBusy} />);
 		expect(screen.getByText(/transparent background/i)).toBeInTheDocument();
+	});
+
+	it("re-reads after Replace Manual Cutout, reloads the preview, and enables the official action", async () => {
+		const replacementPending: ProductVisualReadiness = {
+			...approvedManual,
+			cutout_status: "PENDING_REVIEW",
+			cutout_review_status: "PENDING_REVIEW",
+			manual_cutout_status: "PENDING_REVIEW",
+			active_visual_source: "SAME_PRODUCT_TRUSTED_SOURCE",
+			current_system_visual: {
+				card: "ORIGINAL_SOURCE",
+				label: "Original Source",
+				status: "ORIGINAL_FALLBACK",
+			},
+			cutout_media_id: "same-media-id",
+			attempt_count: 1,
+			can_upload_manual_cutout: true,
+			can_review_cutout: true,
+			can_approve_cutout: true,
+		};
+		uploadManualProductCutoutMock.mockResolvedValue(approvedManual);
+		fetchProductVisualReadinessMock.mockResolvedValue(replacementPending);
+
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={approvedManual} showApprovalForm />);
+		const before = screen.getByAltText("Manual / Canva cutout").getAttribute("src");
+		const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+
+		fireEvent.change(input, {
+			target: {
+				files: [new File(["replacement"], "replacement.png", { type: "image/png" })],
+			},
+		});
+
+		await waitFor(() => expect(screen.getByTestId("manual-upload-message")).toHaveTextContent(/replaced the previously-approved cutout/i));
+		expect(fetchProductVisualReadinessMock).toHaveBeenCalledWith("product-1");
+		expect(screen.getByTestId("set-official-manual")).toBeEnabled();
+		expect(screen.getByAltText("Manual / Canva cutout").getAttribute("src")).not.toBe(before);
+		expect(screen.getByAltText("Manual / Canva cutout").getAttribute("src")).toContain("v=1-");
+	});
+
+	it("provides a read-only Refresh preview control", async () => {
+		fetchProductVisualReadinessMock.mockResolvedValue(trustedSourcePendingAuto);
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={trustedSourcePendingAuto} />);
+
+		fireEvent.click(screen.getByTestId("refresh-visual-preview"));
+
+		await waitFor(() => expect(fetchProductVisualReadinessMock).toHaveBeenCalledWith("product-1"));
+		expect(screen.getByTestId("refresh-visual-preview")).toHaveTextContent("Refresh preview");
 	});
 });
