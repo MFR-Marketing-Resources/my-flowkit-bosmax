@@ -93,7 +93,6 @@ const NAV_GROUPS = [
 			{ to: "/library/videos", icon: Video, label: "Video Library" },
 			{ to: "/library/images", icon: ImageIcon, label: "Image Library" },
 			{ to: "/results", icon: FolderOpen, label: "Results" },
-			{ to: "/gallery", icon: Film, label: "Gallery" },
 		],
 	},
 	{
@@ -188,6 +187,7 @@ const NAV_GROUPS = [
 				label: "Cockpit Settings",
 			},
 			{ to: "/projects", icon: FolderOpen, label: "Projects" },
+			{ to: "/gallery", icon: Film, label: "Gallery (Legacy)" },
 			{ to: "/prompt-preview", icon: Sparkles, label: "Prompt Preview" },
 			{ to: "/health", icon: Activity, label: "Health" },
 			{ to: "/troubleshoot", icon: Siren, label: "Troubleshoot" },
