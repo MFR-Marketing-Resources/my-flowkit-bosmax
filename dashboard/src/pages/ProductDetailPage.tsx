@@ -205,7 +205,9 @@ export default function ProductDetailPage() {
 		try {
 			await reviewProductStrategyTaxonomy(product.id, {
 				expected_product_fingerprint:
-					product.strategy_taxonomy?.product_fingerprint || "",
+					product.strategy_taxonomy?.current_product_fingerprint ||
+					product.strategy_taxonomy?.product_fingerprint ||
+					"",
 				cluster: selectedTaxEntry.cluster,
 				product_type_group: selectedTaxEntry.product_type_group,
 				matched_scene_strategy_id: selectedTaxEntry.matched_scene_strategy_id,
@@ -217,9 +219,18 @@ export default function ProductDetailPage() {
 			await loadProduct();
 			setTaxMsg({ ok: true, text: "Cluster / type saved." });
 		} catch (err) {
+			const message = err instanceof Error ? err.message : "Failed to save taxonomy";
+			if (message.includes("STALE_PRODUCT_FINGERPRINT")) {
+				await loadProduct();
+				setTaxMsg({
+					ok: false,
+					text: "Product data changed. Reloaded the current snapshot; confirm the cluster / type and save again.",
+				});
+				return;
+			}
 			setTaxMsg({
 				ok: false,
-				text: err instanceof Error ? err.message : "Failed to save taxonomy",
+				text: message,
 			});
 		} finally {
 			setTaxSaving(false);
@@ -483,6 +494,13 @@ export default function ProductDetailPage() {
 									<span className="font-mono text-slate-300">{clusterType}</span>. Pick
 									a cluster, then its product type. Saved as VERIFIED.
 								</p>
+								{product.strategy_taxonomy?.is_stale && (
+									<div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200">
+										This taxonomy review is stale because the product identity changed.
+										Confirm the current cluster / type, then save to create a new review
+										snapshot.
+									</div>
+								)}
 								<div className="space-y-4">
 									<div className="space-y-1.5">
 										<label className={LABEL}>Cluster</label>

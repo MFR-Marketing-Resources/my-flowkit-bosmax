@@ -613,6 +613,18 @@ def resolve_product_physics(
     )
     haystack = f"{title} {taxonomy}".strip()
 
+    # The source type is exact enough to outrank the broad "food" token in a
+    # title such as "Food Waste Sink Filter".  Keep this scoped to the proven
+    # Kitchenware signature so unrelated food products retain their normal
+    # title-based physics resolution.
+    if (
+        normalize_mapping_text(category or (product or {}).get("category"))
+        == "kitchenware"
+        and normalize_mapping_text(type_name or (product or {}).get("type"))
+        == "specialty kitchen utensils"
+    ):
+        return dict(PHYSICS_FAMILY_RULES["kitchen_tool"])
+
     is_traditional_herbal_oil = _title_or_taxonomy_contains(
         haystack, *_TRADITIONAL_HERBAL_OIL_TOKENS
     )

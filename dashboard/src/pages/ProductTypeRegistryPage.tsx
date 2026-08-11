@@ -1,6 +1,6 @@
 import { RefreshCw, Search, Tags } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
 	fetchCatalogAuthorityReport,
 	fetchProductStrategyTypeRegistry,
@@ -143,7 +143,49 @@ function terminalStateClass(status: CatalogAuthorityTerminalState) {
 	return "border-slate-600 bg-slate-800/70 text-slate-300";
 }
 
+const PRODUCT_INTELLIGENCE_REASONS = new Set([
+	"APPROVED_PRODUCT_TRUTH_DESCRIPTION_ABSENT",
+	"APPROVED_DESCRIPTION_IDENTIFIES_SAMPLE_SIZE_NOT_PRODUCT_SUBSTANCE",
+	"PRODUCT_TITLE_ONLY_WITHOUT_APPROVED_PRODUCT_TRUTH",
+	"UNVERIFIED_ELECTRICITY_SAVINGS_CLAIM",
+	"ELECTRICAL_SAFETY_REVIEW_REQUIRED",
+	"UNVERIFIED_LIGHT_OUTPUT_AND_RUNTIME_CLAIMS",
+]);
+const TAXONOMY_REASONS = new Set([
+	"TAXONOMY_NOT_VERIFIED",
+	"TAXONOMY_NOT_READY",
+	"TAXONOMY_STALE",
+	"STALE_PRODUCT_FINGERPRINT",
+	"STALE_TAXONOMY_BINDING",
+	"TYPE_REGISTRY_NOT_ACTIVE",
+	"TYPE_REGISTRY_SCENE_MISMATCH",
+	"TYPE_REGISTRY_SCENE_COVERAGE_MISMATCH",
+	"SCENE_STRATEGY_DOES_NOT_MATCH_REGISTRY",
+	"SCENE_COVERAGE_DOES_NOT_MATCH_REGISTRY",
+	]);
+const PRODUCT_MAPPING_REASON =
+	"NO_EXACT_SOURCE_OR_REVIEWED_PRODUCT_TRUTH_MAPPING";
+
+function exceptionActions(product: CatalogAuthorityReport["products"][number]) {
+	const reasons = new Set(product.terminal_reasons);
+	const productPath = `/product/${encodeURIComponent(product.product_id)}`;
+	const intelligencePath = `/products?product=${encodeURIComponent(product.product_id)}&tab=INTELLIGENCE`;
+	const registryPath = `/assets/product-type-registry?cluster=${encodeURIComponent(product.cluster)}&product_type_group=${encodeURIComponent(product.product_type_group)}`;
+	return {
+		productPath,
+		intelligencePath,
+		registryPath,
+		showIntelligence: [...reasons].some((reason) =>
+			PRODUCT_INTELLIGENCE_REASONS.has(reason),
+		),
+		showTaxonomy: [...reasons].some((reason) => TAXONOMY_REASONS.has(reason)),
+		showMapping: reasons.has(PRODUCT_MAPPING_REASON),
+		showRegistry: reasons.has("P4_NOT_SUPPORTED"),
+	};
+}
+
 export default function ProductTypeRegistryPage() {
+	const [searchParams] = useSearchParams();
 	const [registry, setRegistry] =
 		useState<ProductStrategyTypeRegistryResponse>(EMPTY_REGISTRY);
 	const [copyReport, setCopyReport] =
@@ -156,8 +198,12 @@ export default function ProductTypeRegistryPage() {
 	const [registryError, setRegistryError] = useState<string | null>(null);
 	const [copyReportError, setCopyReportError] = useState<string | null>(null);
 	const [authorityError, setAuthorityError] = useState<string | null>(null);
-	const [search, setSearch] = useState("");
-	const [clusterFilter, setClusterFilter] = useState("ALL");
+	const [search, setSearch] = useState(
+		() => searchParams.get("product_type_group") || "",
+	);
+	const [clusterFilter, setClusterFilter] = useState(
+		() => searchParams.get("cluster") || "ALL",
+	);
 	const [statusFilter, setStatusFilter] = useState("ALL");
 	const [coverageFilter, setCoverageFilter] = useState("ALL");
 	const [sceneFilter, setSceneFilter] = useState("ALL");
@@ -582,12 +628,14 @@ export default function ProductTypeRegistryPage() {
 							Active terminal exceptions ({terminalExceptions.length})
 						</div>
 						<div className="grid gap-2 lg:grid-cols-2">
-							{terminalExceptions.map((product) => (
-								<div
-									key={product.product_id}
-									className="rounded-lg border border-slate-800 bg-slate-900/60 p-3"
-									data-testid={`terminal-product-${product.product_id}`}
-								>
+							{terminalExceptions.map((product) => {
+								const actions = exceptionActions(product);
+								return (
+									<div
+										key={product.product_id}
+										className="rounded-lg border border-slate-800 bg-slate-900/60 p-3"
+										data-testid={`terminal-product-${product.product_id}`}
+									>
 									<div className="flex flex-wrap items-center gap-2">
 										<span
 											className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${terminalStateClass(product.terminal_state)}`}
@@ -607,8 +655,49 @@ export default function ProductTypeRegistryPage() {
 									<div className="mt-2 text-xs text-slate-400">
 										{product.terminal_reasons.join(" · ")}
 									</div>
-								</div>
-							))}
+										<div className="mt-3 flex flex-wrap gap-2">
+											<Link
+												to={actions.productPath}
+												className="rounded border border-slate-600 px-2 py-1 text-[10px] font-semibold text-slate-200 transition hover:border-slate-400"
+											>
+												Open product
+											</Link>
+											{actions.showMapping && (
+												<Link
+													to={actions.productPath}
+													className="rounded border border-rose-500/40 px-2 py-1 text-[10px] font-semibold text-rose-200 transition hover:border-rose-300"
+												>
+													Fix product truth mapping
+												</Link>
+											)}
+											{actions.showIntelligence && (
+												<Link
+													to={actions.intelligencePath}
+													className="rounded border border-indigo-500/40 px-2 py-1 text-[10px] font-semibold text-indigo-200 transition hover:border-indigo-300"
+												>
+													Open Product Intelligence
+												</Link>
+											)}
+											{actions.showTaxonomy && (
+												<Link
+													to={actions.productPath}
+													className="rounded border border-amber-500/40 px-2 py-1 text-[10px] font-semibold text-amber-200 transition hover:border-amber-300"
+												>
+													Review cluster / type
+												</Link>
+											)}
+											{actions.showRegistry && (
+												<Link
+													to={actions.registryPath}
+													className="rounded border border-cyan-500/40 px-2 py-1 text-[10px] font-semibold text-cyan-200 transition hover:border-cyan-300"
+												>
+													Open P4 registry row
+												</Link>
+											)}
+										</div>
+									</div>
+								);
+							})}
 						</div>
 					</div>
 				)}

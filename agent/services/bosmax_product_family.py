@@ -39,6 +39,24 @@ def derive_bosmax_product_family(product: dict[str, Any]) -> dict[str, Any]:
     subcategory = normalize_mapping_text(product.get("subcategory"))
     type_name = normalize_mapping_text(product.get("type"))
 
+    # An exact source taxonomy must outrank a misleading title token.  "Food
+    # Waste Sink Filter" is a kitchen utensil, not packaged food; without this
+    # narrow source-type guard the generic ``food`` title token wins and poisons
+    # the downstream Product Intelligence / physics / copy family.
+    if category == "kitchenware" and type_name == "specialty kitchen utensils":
+        return {
+            "bosmax_product_family": "AUTO_TOOL_GENERAL",
+            "bosmax_product_family_reason": (
+                "Exact Kitchenware / Specialty Kitchen Utensils source taxonomy matched."
+            ),
+            "bosmax_source_taxonomy_conflict": False,
+            "bosmax_source_taxonomy_conflict_reason": "",
+            "bosmax_family_uses_generic_fallback": False,
+            "bosmax_family_category": category,
+            "bosmax_family_subcategory": subcategory,
+            "bosmax_family_type": type_name,
+        }
+
     family = "GENERIC_UNCLASSIFIED"
     reason = "No BOSMAX family match found. Generic fallback remains in use."
 

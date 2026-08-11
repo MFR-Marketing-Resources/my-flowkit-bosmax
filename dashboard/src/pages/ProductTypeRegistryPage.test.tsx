@@ -184,9 +184,9 @@ const mockedFetchRegistry = vi.mocked(fetchProductStrategyTypeRegistry);
 const mockedFetchCopyReport = vi.mocked(fetchProductTypeCopyEligibleReport);
 const mockedRegister = vi.mocked(registerProductStrategyType);
 
-function renderPage() {
+function renderPage(initialEntries: string[] = ["/"]) {
 	return render(
-		<MemoryRouter>
+		<MemoryRouter initialEntries={initialEntries}>
 			<ProductTypeRegistryPage />
 		</MemoryRouter>,
 	);
@@ -260,6 +260,27 @@ describe("ProductTypeRegistryPage", () => {
 		expect(within(blocked).getByText("SOURCE_TAXONOMY")).toBeVisible();
 		expect(blocked).toHaveTextContent("UNVERIFIED_ELECTRICITY_SAVINGS_CLAIM");
 		expect(blocked).toHaveTextContent("ELECTRICAL_SAFETY_REVIEW_REQUIRED");
+		expect(
+		within(blocked).getByRole("link", { name: "Open product" }),
+	).toHaveAttribute("href", "/product/product-blocked-1");
+		expect(
+			within(blocked).getByRole("link", { name: "Open Product Intelligence" }),
+		).toHaveAttribute(
+			"href",
+			"/products?product=product-blocked-1&tab=INTELLIGENCE",
+		);
+	});
+
+	it("opens a registry exception link with the affected type already filtered", async () => {
+		renderPage([
+			"/assets/product-type-registry?cluster=home_electrical&product_type_group=power_saver_device",
+		]);
+		await screen.findByTestId("catalog-authority-summary");
+		// The fixture has no matching row, so the query is reflected in the controls
+		// and the empty state is the expected targeted result.
+		expect(screen.getByLabelText("Search product types")).toHaveValue(
+			"power_saver_device",
+		);
 	});
 
 	it("searches and filters by every requested registry dimension", async () => {

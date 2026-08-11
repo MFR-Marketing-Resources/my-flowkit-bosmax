@@ -388,6 +388,21 @@ class TestBosmaxFamilyExpansion:
     def test_syampu_resolves_beauty(self):
         assert self._family("Syampu Anti Gugur Rambut") == "BEAUTY_PERSONAL_CARE"
 
+    def test_exact_kitchenware_taxonomy_overrides_food_title_token(self):
+        assert (
+            derive_bosmax_product_family(
+                {
+                    "raw_product_title": (
+                        "Triangle Food Waste Sink Filter 304 Stainless Steel Drain Basket"
+                    ),
+                    "category": "Kitchenware",
+                    "subcategory": "Kitchen Utensils & Gadgets",
+                    "type": "Specialty Kitchen Utensils",
+                }
+            )["bosmax_product_family"]
+            == "AUTO_TOOL_GENERAL"
+        )
+
     def test_shampoo_resolves_beauty(self):
         assert self._family("Shampoo Keratin 300ml") == "BEAUTY_PERSONAL_CARE"
 

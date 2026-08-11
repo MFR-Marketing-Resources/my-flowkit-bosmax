@@ -562,6 +562,7 @@ domains:
       - agent/services/full_storyboard_extend_planner.py
       - agent/services/canonical_cta_fitter.py
       - agent/services/google_flow_extend_prompt_renderer.py
+      - agent/services/product_preflight.py
       - agent/services/product_physics.py
       - agent/services/workspace_execution_package_service.py
       - agent/services/flow_client.py

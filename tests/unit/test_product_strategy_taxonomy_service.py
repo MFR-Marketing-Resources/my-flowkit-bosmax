@@ -632,6 +632,9 @@ async def test_stale_product_fingerprint_fails_closed():
 
     readback = await service.get_product_strategy_taxonomy_read_model(product["id"])
     assert readback.is_stale is True
+    assert readback.current_product_fingerprint == service.product_strategy_fingerprint(
+        await crud.get_product(product["id"])
+    )
     assert readback.review_status == "REVIEW_REQUIRED"
     with pytest.raises(
         service.ProductStrategyTaxonomyError,
