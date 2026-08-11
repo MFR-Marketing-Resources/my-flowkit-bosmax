@@ -555,6 +555,64 @@ def delete_avatar(avatar_code: str) -> dict:
     return {"removed": target, "remaining": result["rows"], "bridge_path": result["bridge_path"]}
 
 
+# Non-identity presentation columns that a metadata-only edit may change. The
+# AvatarCode and every descriptor that derives the code (CharacterName/gender) or
+# the dedup key (SkinTone/HairStyle/Wardrobe/Expression/AgeBand) are intentionally
+# absent, so an edit can never change identity, break a reference, or collide with
+# another avatar. usage_tags is also absent from the generation prompt, so no
+# PromptV1 regeneration is required.
+_METADATA_EDITABLE_COLUMNS = ("usage_tags",)
+
+
+def update_avatar(avatar_code: str, updates: dict) -> dict:
+    """Metadata-only edit of ONE avatar by AvatarCode (case-insensitive).
+
+    Only the whitelisted non-identity columns (currently usage_tags) may change;
+    identity descriptors and the AvatarCode stay frozen. Writes the whole table
+    back through the SAME fail-closed sync_pool_csv() door as add/delete (which
+    re-validates REQUIRED_COLUMNS + uniqueness, installs the bridge, reloads the
+    cache). Raises AVATAR_CODE_NOT_FOUND if the code is absent, and
+    AVATAR_NO_EDITABLE_FIELDS if no editable column was supplied."""
+    import io
+
+    target = str(avatar_code or "").strip()
+    if not target:
+        raise ValueError("AVATAR_CODE_REQUIRED")
+    clean = {
+        column: str(updates.get(column) or "")
+        for column in _METADATA_EDITABLE_COLUMNS
+        if column in updates
+    }
+    if not clean:
+        raise ValueError("AVATAR_NO_EDITABLE_FIELDS")
+    if "usage_tags" in clean:
+        validate_usage_tags(clean["usage_tags"])
+
+    with open(_active_pool_file(), encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        header = list(reader.fieldnames or [])
+        existing = list(reader)
+
+    found = False
+    for existing_row in existing:
+        if str(existing_row.get("AvatarCode") or "").strip().casefold() == target.casefold():
+            for column, value in clean.items():
+                if column in header:
+                    existing_row[column] = value
+            found = True
+            break
+    if not found:
+        raise ValueError(f"AVATAR_CODE_NOT_FOUND:{target}")
+
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=header)
+    writer.writeheader()
+    for existing_row in existing:
+        writer.writerow({column: str(existing_row.get(column, "") or "") for column in header})
+    result = sync_pool_csv(buffer.getvalue().encode("utf-8"))
+    return {"updated": target, "rows": result["rows"], "bridge_path": result["bridge_path"]}
+
+
 def descriptor_key(profile: dict, gender: str | None = None) -> tuple[str, ...]:
     """Lowercased descriptor tuple (skin_tone, hair_style, wardrobe, expression,
     gender_word, age_band) used to detect duplicate avatars. gender_word derives from the
