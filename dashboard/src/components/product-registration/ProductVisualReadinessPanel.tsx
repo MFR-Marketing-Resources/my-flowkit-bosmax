@@ -390,6 +390,9 @@ export default function ProductVisualReadinessPanel({
 	const [confirmProductIsolation, setConfirmProductIsolation] = useState(false);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const canvaFileInputRef = useRef<HTMLInputElement>(null);
+	const approveRef = useRef<HTMLDivElement>(null);
+	const [manualMsg, setManualMsg] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
+	const [flashApprove, setFlashApprove] = useState(false);
 	const [canvaWorkflow, setCanvaWorkflow] = useState<CanvaCutoutWorkflow | undefined>(initialReadiness?.canva_cutout_workflow);
 	const [canvaMethod, setCanvaMethod] = useState<CanvaMethod>("MAGIC_GRAB");
 	const [canvaDesignId, setCanvaDesignId] = useState("");
@@ -480,20 +483,42 @@ export default function ProductVisualReadinessPanel({
 		event.target.value = "";
 		if (!file) return;
 		if (file.type !== "image/png" || !file.name.toLowerCase().endsWith(".png")) {
-			setError("Manual cutout override requires a PNG file with image/png MIME type.");
+			setManualMsg({ tone: "bad", text: "That is not a PNG. Upload a PNG with a transparent background — a normal photo (JPEG) will be rejected." });
 			return;
 		}
+		const wasOfficial = readiness?.active_visual_source?.startsWith("APPROVED_") ?? false;
 		setBusy("upload");
 		setError(null);
+		setManualMsg(null);
 		try {
 			const next = await uploadManualProductCutout(productId, file, reviewedBy.trim() || "operator");
 			setReadiness(next);
 			onChanged?.(next);
+			setManualMsg({
+				tone: "ok",
+				text: wasOfficial
+					? "Uploaded ✓ — this replaced the previously-approved cutout. It is now a candidate; click “Set as Official” below to use it."
+					: "Uploaded ✓ — your cutout is now a candidate. Click “Set as Official” below to make it the system reference.",
+			});
 		} catch (err: unknown) {
-			setError(err instanceof Error ? err.message : "Manual cutout upload failed");
+			const raw = err instanceof Error ? err.message : "Manual cutout upload failed";
+			const friendly = /alpha|transparent/i.test(raw)
+				? "Rejected: the PNG has no transparent background. Cut the product out first (e.g. in Canva/Photoshop) and export a transparent PNG."
+				: raw;
+			setManualMsg({ tone: "bad", text: friendly });
 		} finally {
 			setBusy(null);
 		}
+	}
+
+	function focusApproval() {
+		if (approveRef.current) {
+			approveRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+			setFlashApprove(true);
+			window.setTimeout(() => setFlashApprove(false), 1600);
+			return;
+		}
+		onOpenReview?.();
 	}
 
 	function applyCanvaEnvelope(envelope: { workflow: CanvaCutoutWorkflow; readiness: ProductVisualReadiness }) {
@@ -662,6 +687,20 @@ export default function ProductVisualReadinessPanel({
 		: "This action is unavailable in the current review state.";
 
 	const cardBadges = computeCardBadges(readiness);
+	// Cache-bust preview URLs: the path is stable per variant, so without a
+	// version query the browser shows a stale (or empty) image after a rebuild /
+	// upload / approval. Any candidate change flips this token and forces reload.
+	const previewVersion = `${readiness.cutout_media_id ?? ""}-${readiness.attempt_count ?? 0}-${readiness.auto_cutout_status}-${readiness.manual_cutout_status}-${readiness.active_visual_source}`;
+	const withBust = (u: string | null | undefined): string | null | undefined =>
+		u ? `${u}${u.includes("?") ? "&" : "?"}v=${encodeURIComponent(previewVersion)}` : u;
+	const isOfficialCard = (k: CardKey): boolean => cardBadges[k].some((b) => CURRENT_MARKERS.has(b));
+	// The one-row candidate SSOT: at most one of auto/manual is the live candidate.
+	const activeCandidateKey: CardKey | null =
+		readiness.manual_cutout_status === "PENDING_REVIEW"
+			? "manual"
+			: readiness.auto_cutout_status === "PENDING_REVIEW"
+				? "auto"
+				: null;
 	const roiImageUrl = readiness.original_preview_url || productSourceUrl || null;
 	const showProductArea = Boolean(roiImageUrl) && (readiness.target_selection_required || readiness.target_selection_available);
 
@@ -771,15 +810,38 @@ export default function ProductVisualReadinessPanel({
 						["Original Source", readiness.original_preview_url, "original", "card-badge-original"],
 						["Auto Cutout", readiness.auto_cutout_preview_url, "auto", "card-badge-auto"],
 						["Manual / Canva", readiness.manual_cutout_preview_url, "manual", "card-badge-manual"],
-					] as const).map(([name, src, key, testid]) => (
-						<div key={name} className="rounded-lg border border-slate-800 p-2">
-							<div className="mb-1 text-[9px] font-bold uppercase tracking-widest text-slate-500">{name}</div>
-							<CardBadges badges={cardBadges[key]} testid={testid} />
-							<div className="mt-2 flex h-36 items-center justify-center rounded bg-white" style={{ backgroundImage: "linear-gradient(45deg,#d1d5db 25%,transparent 25%),linear-gradient(-45deg,#d1d5db 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#d1d5db 75%),linear-gradient(-45deg,transparent 75%,#d1d5db 75%)", backgroundSize: "16px 16px", backgroundPosition: "0 0,0 8px,8px -8px,-8px 0" }}>
-								{src ? <img src={src} alt={`${name} cutout`} className="max-h-full max-w-full object-contain" /> : <span className="text-[10px] text-slate-500">Not available</span>}
+					] as const).map(([name, src, key, testid]) => {
+						const official = isOfficialCard(key);
+						const canMakeOfficial = key === "original"
+							? readiness.can_use_original_fallback
+							: key === activeCandidateKey && readiness.can_approve_cutout;
+						const makeOfficialTitle = key === "original"
+							? (readiness.can_use_original_fallback ? undefined : trustedSourceReason)
+							: key === activeCandidateKey
+								? "Confirm the four checks to approve this as the official cutout."
+								: key === "manual"
+									? "Upload a transparent PNG first, then set it official."
+									: "Prepare an auto cutout first, then set it official.";
+						return (
+							<div key={name} className={`flex flex-col rounded-lg border p-2 ${official ? "border-emerald-500/60 ring-1 ring-emerald-500/40" : "border-slate-800"}`}>
+								<div className="mb-1 flex items-center justify-between gap-1">
+									<div className="text-[9px] font-bold uppercase tracking-widest text-slate-500">{name}</div>
+									{official && <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-widest text-emerald-300" data-testid={`official-ribbon-${key}`}>✓ Official</span>}
+								</div>
+								<CardBadges badges={cardBadges[key]} testid={testid} />
+								<div className="mt-2 flex h-36 items-center justify-center rounded bg-white" style={{ backgroundImage: "linear-gradient(45deg,#d1d5db 25%,transparent 25%),linear-gradient(-45deg,#d1d5db 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#d1d5db 75%),linear-gradient(-45deg,transparent 75%,#d1d5db 75%)", backgroundSize: "16px 16px", backgroundPosition: "0 0,0 8px,8px -8px,-8px 0" }}>
+									{src ? <img src={withBust(src) ?? undefined} alt={`${name} cutout`} className="max-h-full max-w-full object-contain" /> : <span className="text-[10px] text-slate-500">Not available</span>}
+								</div>
+								<div className="mt-2">
+									{official ? (
+										<div className="rounded-lg bg-emerald-500/10 px-2 py-1.5 text-center text-[9px] font-bold uppercase tracking-widest text-emerald-300">Current system reference</div>
+									) : (
+										<button type="button" onClick={key === "original" ? () => void fallback() : focusApproval} disabled={!canMakeOfficial} title={makeOfficialTitle} data-testid={`set-official-${key}`} className="w-full rounded-lg bg-emerald-600/80 px-2 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40">Set as Official</button>
+									)}
+								</div>
 							</div>
-						</div>
-					))}
+						);
+					})}
 				</div>
 			)}
 
@@ -837,6 +899,10 @@ export default function ProductVisualReadinessPanel({
 							<button type="button" onClick={() => fileInputRef.current?.click()} disabled={busyLane === "manual" || !readiness.can_upload_manual_cutout} title={!readiness.can_upload_manual_cutout ? trustedSourceReason : undefined} className="rounded-lg bg-fuchsia-600/80 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40">
 								{busy === "upload" ? "Uploading…" : readiness.manual_cutout_status === "NOT_UPLOADED" ? "Upload My Cutout" : "Replace Manual Cutout"}
 							</button>
+							<p className="mt-2 text-[9px] leading-relaxed text-slate-400">Upload a <span className="font-bold text-slate-300">PNG with a transparent background</span> (the product already cut out, e.g. exported from Canva or Photoshop). A normal photo will be rejected. It uploads immediately — then use <span className="font-bold text-slate-300">Set as Official</span> on the Manual card above.</p>
+							{manualMsg && (
+								<p data-testid="manual-upload-message" className={`mt-2 rounded-md px-2 py-1.5 text-[9px] font-semibold leading-relaxed ${manualMsg.tone === "ok" ? "bg-emerald-500/10 text-emerald-300" : "bg-red-500/10 text-red-300"}`}>{manualMsg.text}</p>
+							)}
 							<ReasonLine testid="reason-manual" tone={manualReason.tone}>{manualReason.text}</ReasonLine>
 						</div>
 						<div className="mt-3 border-t border-slate-800 pt-3">
@@ -936,11 +1002,11 @@ export default function ProductVisualReadinessPanel({
 			)}
 
 			{showApprovalForm && readiness.can_review_cutout && (
-				<div className="mt-5 border-t border-slate-800 pt-4" data-testid="product-visual-approval">
-					<div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-amber-200" data-testid="reviewing-candidate-approval">Reviewing: {reviewingCandidate}</div>
+				<div ref={approveRef} className={`mt-5 border-t pt-4 transition-colors ${flashApprove ? "rounded-lg border-emerald-500/60 ring-2 ring-emerald-500/50" : "border-slate-800"}`} data-testid="product-visual-approval">
+					<div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-emerald-200" data-testid="reviewing-candidate-approval">Set as Official: {reviewingCandidate} — confirm the four checks below</div>
 					<div className="mb-3 flex flex-wrap items-start gap-4">
 						{readiness.cutout_preview_available && (
-							<img src={readiness.active_cutout_preview_url || productTruthCutoutPreviewUrl(productId)} alt="Deterministic cutout candidate" className="h-32 w-32 rounded-lg border border-slate-700 bg-white object-contain" />
+							<img src={withBust(readiness.active_cutout_preview_url) || productTruthCutoutPreviewUrl(productId)} alt="Deterministic cutout candidate" className="h-32 w-32 rounded-lg border border-slate-700 bg-white object-contain" />
 						)}
 						<div className="flex-1 text-[10px] leading-relaxed text-amber-200">
 							This candidate is not approved. Inspect identity, label/logo, geometry, scale, product isolation, and source lineage. Approve as Official Cutout applies to the active candidate, including a Canva handoff, only after explicit human confirmation.
