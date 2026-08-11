@@ -211,7 +211,7 @@ async def test_dispatch_flag_off_uses_compositor(monkeypatch):
         return b"det", {"x": 0.1, "y": 0.1, "w": 0.8, "h": 0.8, "anchor_x": 0.5, "anchor_y": 0.5}, "sha", 0.01
 
     monkeypatch.setattr(service, "_run_cutout_compositor", fake_compositor)
-    _raw, _bounds, _sha, _sec, used = await service._run_auto_cutout("src.png")
+    _raw, _bounds, _sha, _sec, used, _iso, _fq = await service._run_auto_cutout("src.png")
     assert used == "deterministic-compositor"
 
 
@@ -221,9 +221,9 @@ async def test_dispatch_flag_on_uses_local(monkeypatch):
     monkeypatch.setattr(
         service,
         "_build_local_cutout_bytes",
-        lambda _p: (b"local", {"x": 0.1, "y": 0.1, "w": 0.8, "h": 0.8, "anchor_x": 0.5, "anchor_y": 0.5}, "lsha"),
+        lambda _p, *_a: (b"local", {"x": 0.1, "y": 0.1, "w": 0.8, "h": 0.8, "anchor_x": 0.5, "anchor_y": 0.5}, "lsha", "PRODUCT_ISOLATION_REVIEW_REQUIRED", "OK"),
     )
-    _raw, _bounds, _sha, _sec, used = await service._run_auto_cutout("src.png")
+    _raw, _bounds, _sha, _sec, used, _iso, _fq = await service._run_auto_cutout("src.png")
     assert used == "local-birefnet-onnx"
 
 
@@ -240,7 +240,7 @@ async def test_dispatch_falls_back_when_local_fails(monkeypatch):
         return b"det", {"x": 0.1, "y": 0.1, "w": 0.8, "h": 0.8, "anchor_x": 0.5, "anchor_y": 0.5}, "sha", 0.01
 
     monkeypatch.setattr(service, "_run_cutout_compositor", fake_compositor)
-    _raw, _bounds, _sha, _sec, used = await service._run_auto_cutout("src.png")
+    _raw, _bounds, _sha, _sec, used, _iso, _fq = await service._run_auto_cutout("src.png")
     assert used == "deterministic-compositor"
 
 
@@ -277,7 +277,7 @@ async def test_local_prepare_creates_pending_review_auto_candidate(tmp_path, mon
     monkeypatch.setattr(
         service,
         "_build_local_cutout_bytes",
-        lambda _p: (png, {"x": 0.1, "y": 0.1, "w": 0.8, "h": 0.8, "anchor_x": 0.5, "anchor_y": 0.5}, service._sha256_bytes(png)),
+        lambda _p, *_a: (png, {"x": 0.1, "y": 0.1, "w": 0.8, "h": 0.8, "anchor_x": 0.5, "anchor_y": 0.5}, service._sha256_bytes(png), "PRODUCT_ISOLATION_REVIEW_REQUIRED", "OK"),
     )
 
     captured = {}

@@ -886,11 +886,34 @@ CREATE TABLE IF NOT EXISTS product_cutout_preparation (
     attempt_count    INTEGER NOT NULL DEFAULT 0,
     last_started_at  TEXT,
     last_finished_at TEXT,
+    file_quality_status     TEXT,
+    product_isolation_status TEXT,
     created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 CREATE INDEX IF NOT EXISTS idx_product_cutout_preparation_status
     ON product_cutout_preparation(status, updated_at);
+
+-- Operator-selected product target region (ROI) for product-aware cutout, used
+-- when a source is ambiguous (product + unrelated foreground like bread/props).
+-- Preparation provenance ONLY — NOT Product Truth approval. Bound to the source
+-- SHA so a changed source invalidates a stale target (fail-closed upstream).
+CREATE TABLE IF NOT EXISTS product_cutout_target (
+    product_id     TEXT PRIMARY KEY REFERENCES product(id) ON DELETE CASCADE,
+    source_sha256  TEXT NOT NULL,
+    source_width   INTEGER NOT NULL,
+    source_height  INTEGER NOT NULL,
+    target_x       INTEGER NOT NULL,
+    target_y       INTEGER NOT NULL,
+    target_width   INTEGER NOT NULL,
+    target_height  INTEGER NOT NULL,
+    selected_by    TEXT,
+    selected_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_product_cutout_target_updated
+    ON product_cutout_target(updated_at);
 
 -- Bounded, provider-free bulk preparation progress.  Product IDs are a frozen
 -- preview receipt, not a free-form client-side selection; the execution worker
@@ -4430,6 +4453,15 @@ CREATE INDEX IF NOT EXISTS idx_product_treatment_factory_event_plan ON product_t
                     f"ADD COLUMN {multi_col} TEXT")
                 logger.info(
                     "Migrated: added %s column to creative_product_selection", multi_col)
+        await db.commit()
+
+        # Migration: product-aware cutout isolation columns on the preparation receipt.
+        cursor = await db.execute("PRAGMA table_info(product_cutout_preparation)")
+        _prep_cols = {row[1] for row in await cursor.fetchall()}
+        if "file_quality_status" not in _prep_cols:
+            await db.execute("ALTER TABLE product_cutout_preparation ADD COLUMN file_quality_status TEXT")
+        if "product_isolation_status" not in _prep_cols:
+            await db.execute("ALTER TABLE product_cutout_preparation ADD COLUMN product_isolation_status TEXT")
         await db.commit()
 
     logger.info("Database initialized at %s", DB_PATH)

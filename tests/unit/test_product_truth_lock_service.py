@@ -372,6 +372,7 @@ async def test_approval_requires_explicit_human_acknowledgement(tmp_path, monkey
         confirm_identity=True,
         confirm_label_logo=True,
         confirm_geometry_scale=True,
+        confirm_product_isolation=True,
     )
 
     result = await lock_service.approve_product_truth_lock("p-1", request)

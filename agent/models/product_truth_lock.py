@@ -79,3 +79,7 @@ class ProductTruthLockApprovalRequest(BaseModel):
     confirm_identity: bool = False
     confirm_label_logo: bool = False
     confirm_geometry_scale: bool = False
+    # Product-isolation confirmation: the cutout is the PRODUCT ONLY — no
+    # unrelated props, food, decoration, or secondary objects remain (the CHEEZY
+    # GARLIC "bread retained" class of defect). Fail-closed; the human decides.
+    confirm_product_isolation: bool = False

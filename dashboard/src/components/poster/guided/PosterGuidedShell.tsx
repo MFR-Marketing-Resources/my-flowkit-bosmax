@@ -1028,6 +1028,7 @@ function SceneStep({ wf }: { wf: WF }) {
 	const [confirmIdentity, setConfirmIdentity] = useState(false);
 	const [confirmLabelLogo, setConfirmLabelLogo] = useState(false);
 	const [confirmGeometryScale, setConfirmGeometryScale] = useState(false);
+	const [confirmProductIsolation, setConfirmProductIsolation] = useState(false);
 
 	useEffect(() => {
 		let active = true;
@@ -1069,6 +1070,7 @@ function SceneStep({ wf }: { wf: WF }) {
 		setConfirmIdentity(false);
 		setConfirmLabelLogo(false);
 		setConfirmGeometryScale(false);
+		setConfirmProductIsolation(false);
 		if (!wf.product || wf.creativeMode === "CREATIVE_CAMPAIGN") {
 			return () => {
 				active = false;
@@ -1108,6 +1110,7 @@ function SceneStep({ wf }: { wf: WF }) {
 				confirm_identity: confirmIdentity,
 				confirm_label_logo: confirmLabelLogo,
 				confirm_geometry_scale: confirmGeometryScale,
+				confirm_product_isolation: confirmProductIsolation,
 			});
 			setTruthLock(status);
 		} catch (error) {
@@ -1148,7 +1151,8 @@ function SceneStep({ wf }: { wf: WF }) {
 		reviewedBy.trim().length > 0 &&
 		confirmIdentity &&
 		confirmLabelLogo &&
-		confirmGeometryScale;
+		confirmGeometryScale &&
+		confirmProductIsolation;
 
 	const load = () => {
 		setLoading(true);
@@ -1295,6 +1299,15 @@ function SceneStep({ wf }: { wf: WF }) {
 								data-testid="poster-truth-confirm-geometry-scale"
 							/>
 							<span>Geometry dan skala cutout tepat.</span>
+						</label>
+						<label className="flex items-start gap-2">
+							<input
+								type="checkbox"
+								checked={confirmProductIsolation}
+								onChange={(event) => setConfirmProductIsolation(event.target.checked)}
+								data-testid="poster-truth-confirm-product-isolation"
+							/>
+							<span>Produk sahaja — tiada props, makanan, hiasan, atau objek lain yang tinggal.</span>
 						</label>
 					</div>
 					<button

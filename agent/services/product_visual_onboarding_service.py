@@ -373,6 +373,27 @@ def _candidate_actions(
     }
 
 
+def _current_system_visual(active_source: str, *, source_available: bool) -> dict[str, Any]:
+    """The single visual BOSMAX is using RIGHT NOW, derived from backend authority.
+
+    Exactly one card is 'current'. OFFICIAL = an approved canonical cutout;
+    FALLBACK = the trusted original source is the reference while a cutout is
+    still pending; BLOCKED/NOT_SELECTED otherwise.
+    """
+    mapping = {
+        "APPROVED_AUTO_CANONICAL_CUTOUT": ("AUTO_CUTOUT", "Auto Cutout", "OFFICIAL"),
+        "APPROVED_MANUAL_CANONICAL_CUTOUT": ("MANUAL_CUTOUT", "Manual / Canva Cutout", "OFFICIAL"),
+        "SAME_PRODUCT_TRUSTED_SOURCE": ("ORIGINAL_SOURCE", "Original Source", "ORIGINAL_FALLBACK"),
+    }
+    if active_source in mapping:
+        card, label, status = mapping[active_source]
+    elif active_source == "BLOCKED" or not source_available:
+        card, label, status = None, None, "BLOCKED"
+    else:
+        card, label, status = None, None, "NOT_SELECTED"
+    return {"card": card, "label": label, "status": status}
+
+
 def _readiness_payload(
     product: dict[str, Any],
     *,
@@ -385,6 +406,7 @@ def _readiness_payload(
     blocked_reason: str | None = None,
     history: list[dict[str, Any]] | None = None,
     canva_workflow: dict[str, Any] | None = None,
+    target: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     history = history or []
     state = _prep_state(lock, prep)
@@ -496,6 +518,21 @@ def _readiness_payload(
             if lock and (lock.get("canonical_cutout_path") or lock.get("canonical_cutout_media_id")) else None
         ),
         "cutout_history_count": len(history),
+        # ── Product-aware isolation + operator target (preparation metadata) ──
+        "file_quality_status": (prep or {}).get("file_quality_status"),
+        "product_isolation_status": (prep or {}).get("product_isolation_status"),
+        "target_selection_required": (prep or {}).get("product_isolation_status") == "TARGET_SELECTION_REQUIRED",
+        "target_selection_available": bool(target),
+        "target_region": (
+            {
+                "x": int(target["target_x"]), "y": int(target["target_y"]),
+                "width": int(target["target_width"]), "height": int(target["target_height"]),
+                "source_sha256": target.get("source_sha256"),
+            }
+            if target else None
+        ),
+        # ── Which visual BOSMAX uses RIGHT NOW (backend authority; no FE guess) ──
+        "current_system_visual": _current_system_visual(active_source, source_available=source_available),
         "blockers": blockers,
         "warnings": warnings,
         "provider_operations": 0,
@@ -581,23 +618,28 @@ def _build_cutout_bytes(source_path: Path) -> tuple[bytes, dict[str, float], str
         image.close()
 
 
-def _build_local_cutout_bytes(source_path: Path) -> tuple[bytes, dict[str, float], str]:
-    """Prepare AUTO cutout bytes via the local BiRefNet ONNX engine.
+def _build_local_cutout_bytes(
+    source_path: Path, roi=None, roi_source_sha256: str | None = None,
+) -> tuple[bytes, dict[str, float], str, str, str]:
+    """Prepare AUTO cutout bytes via the local ONNX engine.
 
-    Produces the SAME (bytes, bounds, sha) contract as ``_build_cutout_bytes`` so
-    downstream persistence is unchanged. Raises ``ProductVisualOnboardingError``
-    on any engine failure (not ready / low quality / decode) so the caller can
-    fall back to the deterministic compositor. This engine is local: it spends no
-    provider credit and creates no provider operation.
+    Returns ``(bytes, bounds, sha, product_isolation_status, file_quality_status)``.
+    When ``roi`` is given, inference is confined to the operator target region.
+    Raises ``ProductVisualOnboardingError`` on failure; an invalid/stale ROI
+    surfaces its own code so the caller does NOT fall back to a full-frame
+    compositor (which would re-include the excluded objects). Local engine =
+    no provider credit, no provider operation.
     """
     from agent.services import local_cutout_engine as engine
 
-    result = engine.prepare(source_path)
+    result = engine.prepare(source_path, roi=roi, roi_source_sha256=roi_source_sha256)
     if not result.ok() or not result.output_bytes:
+        code = result.failure_code or result.quality_status
+        if code in {engine.ROI_INVALID, engine.ROI_TOO_SMALL, engine.ROI_SOURCE_CHANGED}:
+            raise ProductVisualOnboardingError(code, f"Product target region rejected: {code}.")
         raise ProductVisualOnboardingError(
             "LOCAL_CUTOUT_ENGINE_UNAVAILABLE",
-            "Local cutout engine did not produce a valid cutout: "
-            f"{result.failure_code or result.quality_status}.",
+            f"Local cutout engine did not produce a valid cutout: {code}.",
         )
     rgba = Image.open(io.BytesIO(result.output_bytes)).convert("RGBA")
     try:
@@ -620,14 +662,17 @@ def _build_local_cutout_bytes(source_path: Path) -> tuple[bytes, dict[str, float
         }
         bounds = {**allowed_bbox, **{f"anchor_{key}": value for key, value in anchor.items()}}
         cutout_sha = result.output_sha256 or _sha256_bytes(result.output_bytes)
-        return result.output_bytes, bounds, cutout_sha
+        return (
+            result.output_bytes, bounds, cutout_sha,
+            result.product_isolation_status, result.file_quality_status,
+        )
     finally:
         rgba.close()
 
 
 async def _run_auto_cutout(
-    source_path: Path,
-) -> tuple[bytes, dict[str, float], str, float, str]:
+    source_path: Path, roi=None, roi_source_sha256: str | None = None,
+) -> tuple[bytes, dict[str, float], str, float, str, str, str]:
     """Dispatch AUTO cutout byte production and report which engine produced it.
 
     Policy (the ``LOCAL_CUTOUT_ENGINE_ENABLED`` flag IS the policy — two engines
@@ -638,20 +683,28 @@ async def _run_auto_cutout(
       session); on ANY failure or not-ready, fall back to the deterministic
       compositor. Exactly one set of bytes is ever persisted.
     """
+    from agent.services import local_cutout_engine as engine
+
     if config.LOCAL_CUTOUT_ENGINE_ENABLED:
         started = time.perf_counter()
         try:
-            raw, bounds, cutout_sha = await asyncio.to_thread(
-                _build_local_cutout_bytes, source_path
+            raw, bounds, cutout_sha, iso_status, file_quality = await asyncio.to_thread(
+                _build_local_cutout_bytes, source_path, roi, roi_source_sha256
             )
-            return raw, bounds, cutout_sha, time.perf_counter() - started, "local-birefnet-onnx"
-        except Exception as exc:  # not ready / low quality / inference error
-            logger.warning(
-                "local cutout engine unavailable; falling back to deterministic compositor: %s",
-                exc,
+            return (
+                raw, bounds, cutout_sha, time.perf_counter() - started,
+                "local-birefnet-onnx", iso_status, file_quality,
             )
+        except ProductVisualOnboardingError as exc:
+            # An invalid/stale operator target must NOT silently fall back to a
+            # full-frame cutout that re-includes the excluded objects.
+            if getattr(exc, "code", "") in {engine.ROI_INVALID, engine.ROI_TOO_SMALL, engine.ROI_SOURCE_CHANGED}:
+                raise
+            logger.warning("local cutout engine unavailable; falling back to compositor: %s", exc)
+        except Exception as exc:  # not ready / inference error
+            logger.warning("local cutout engine error; falling back to compositor: %s", exc)
     raw, bounds, cutout_sha, seconds = await _run_cutout_compositor(source_path)
-    return raw, bounds, cutout_sha, seconds, "deterministic-compositor"
+    return raw, bounds, cutout_sha, seconds, "deterministic-compositor", "PRODUCT_ISOLATION_REVIEW_REQUIRED", "OK"
 
 
 async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dict[str, Any]:
@@ -728,6 +781,20 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
         if source_path is None:
             raise ProductVisualOnboardingError("TRUSTED_SAME_PRODUCT_SOURCE_REQUIRED", "Canonical source is not a readable local image.")
         source_sha = str(getattr(reference, "sha256", "") or "")
+        # Operator-selected product target (ROI). Bound to the source SHA — a
+        # changed source invalidates a stale target (fail-closed).
+        target = await crud.get_product_cutout_target(product_id)
+        roi = None
+        roi_source_sha = None
+        if target and str(target.get("source_sha256") or "") == source_sha:
+            roi = (
+                int(target["target_x"]), int(target["target_y"]),
+                int(target["target_width"]), int(target["target_height"]),
+            )
+            roi_source_sha = source_sha
+        elif target:
+            await crud.delete_product_cutout_target(product_id)
+            target = None
         attempt_count = int((prep or {}).get("attempt_count") or 0) + 1
         await timed_write(crud.upsert_product_cutout_preparation(
             product_id,
@@ -743,8 +810,8 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
         db_write_seconds += time.perf_counter() - media_sync_started
         compositor_started = time.perf_counter()
         try:
-            raw_cutout, bounds, cutout_sha, compositor_seconds, cutout_engine = await _run_auto_cutout(
-                source_path
+            raw_cutout, bounds, cutout_sha, compositor_seconds, cutout_engine, isolation_status, file_quality_status = await _run_auto_cutout(
+                source_path, roi=roi, roi_source_sha256=roi_source_sha
             )
         except Exception:
             # Failed compositor calls still contribute to the pilot/full-run
@@ -812,6 +879,8 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
             last_finished_at=_now(),
             failure_code=None,
             failure_message=None,
+            file_quality_status=file_quality_status,
+            product_isolation_status=isolation_status,
         ))
         return _with_performance(_readiness_payload(
             product,
@@ -824,6 +893,7 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
             prep=row,
             reference=reference,
             source_available=True,
+            target=target,
         ), started=started, compositor_seconds=compositor_seconds,
         db_write_seconds=db_write_seconds)
     except ProductVisualOnboardingError as exc:
@@ -1127,6 +1197,7 @@ async def get_product_visual_readiness(product_id: str) -> dict[str, Any]:
     history = await crud.list_product_truth_lock_history(product_id)
     pack = await crud.get_product_reference_pack(product_id)
     prep = await crud.get_product_cutout_preparation(product_id)
+    target = await crud.get_product_cutout_target(product_id)
     canva_workflow = await _get_canva_workflow_row(product_id)
     reference = None
     source_error = None
@@ -1158,7 +1229,42 @@ async def get_product_visual_readiness(product_id: str) -> dict[str, Any]:
         blocked_reason=blocked_reason,
         history=history,
         canva_workflow=canva_workflow,
+        target=target,
     )
+
+
+async def set_product_cutout_target(
+    product_id: str, *, x: int, y: int, width: int, height: int, selected_by: str = "operator",
+) -> dict[str, Any]:
+    """Persist an operator-selected product ROI (validated against the CURRENT
+    source geometry + SHA). Preparation provenance only — never approves truth."""
+    from agent.services import local_cutout_engine as engine
+
+    product = await crud.get_product(product_id)
+    if not product:
+        raise ProductVisualOnboardingError("PRODUCT_NOT_FOUND", f"Product {product_id} was not found.")
+    reference = await _resolve_source(product)
+    source_path = _path(getattr(reference, "local_path", None))
+    if source_path is None:
+        raise ProductVisualOnboardingError("TRUSTED_SAME_PRODUCT_SOURCE_REQUIRED", "Canonical source is not a readable local image.")
+    with Image.open(source_path) as img:
+        sw, sh = img.size
+    source_sha = str(getattr(reference, "sha256", "") or "") or _sha256_bytes(Path(source_path).read_bytes())
+    roi_err = engine.validate_roi((x, y, width, height), (sw, sh))
+    if roi_err:
+        raise ProductVisualOnboardingError(roi_err, f"Product target region rejected: {roi_err}.")
+    await crud.upsert_product_cutout_target(
+        product_id, source_sha256=source_sha, source_width=sw, source_height=sh,
+        target_x=int(x), target_y=int(y), target_width=int(width), target_height=int(height),
+        selected_by=selected_by, selected_at=_now(),
+    )
+    return await get_product_visual_readiness(product_id)
+
+
+async def clear_product_cutout_target(product_id: str) -> dict[str, Any]:
+    """Clear the operator ROI target (reset)."""
+    await crud.delete_product_cutout_target(product_id)
+    return await get_product_visual_readiness(product_id)
 
 
 async def annotate_products_visual_readiness(products: list[dict[str, Any]]) -> None:

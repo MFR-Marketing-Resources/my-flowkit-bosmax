@@ -11,7 +11,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "product_visual_truth_lock", "product_visual_truth_lock_history", "product_reference_pack", "product_cutout_preparation", "product_visual_onboarding_run", "canva_cutout_workflow", "canva_cutout_bulk_run", "canva_cutout_bulk_item", "image_generation_operation", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_component", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "content_combination", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "creative_product_selection", "product_strategy_taxonomy", "poster_copy_set", "poster_deliverable", "extend_lineage", "product_source_media"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "product_visual_truth_lock", "product_visual_truth_lock_history", "product_reference_pack", "product_cutout_preparation", "product_visual_onboarding_run", "canva_cutout_workflow", "canva_cutout_bulk_run", "canva_cutout_bulk_item", "image_generation_operation", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_component", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "content_combination", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "creative_product_selection", "product_strategy_taxonomy", "poster_copy_set", "poster_deliverable", "extend_lineage", "product_source_media", "product_cutout_target"})
 
 
 def _validate_table(table: str) -> None:
@@ -21,7 +21,8 @@ def _validate_table(table: str) -> None:
 # Column whitelists per table — prevents SQL injection via kwargs keys
 _COLUMNS = {
     "product_source_media": {"draft_id", "product_id", "kind", "ordinal", "local_path", "remote_url", "filename", "mime", "bytes", "width", "height", "duration_sec", "status", "updated_at"},
-    "product_cutout_preparation": {"status", "source_sha256", "cutout_media_id", "cutout_sha256", "failure_code", "failure_message", "attempt_count", "last_started_at", "last_finished_at", "updated_at"},
+    "product_cutout_preparation": {"status", "source_sha256", "cutout_media_id", "cutout_sha256", "failure_code", "failure_message", "attempt_count", "last_started_at", "last_finished_at", "file_quality_status", "product_isolation_status", "updated_at"},
+    "product_cutout_target": {"source_sha256", "source_width", "source_height", "target_x", "target_y", "target_width", "target_height", "selected_by", "selected_at", "updated_at"},
     "product_visual_onboarding_run": {"status", "total_expected", "total_processed", "total_pending_review", "total_failed", "total_blocked", "total_skipped", "batch_size", "product_ids_json", "error_log_json", "updated_at"},
     "canva_cutout_workflow": {"workflow_id", "source_sha256", "source_width", "source_height", "canva_method", "design_id", "design_url", "current_stage", "attempt_count", "last_error_code", "last_error", "preflight_json", "output_path", "output_sha256", "output_width", "output_height", "alpha_verified", "human_review_status", "provenance_source", "started_at", "updated_at"},
     "canva_cutout_bulk_run": {"status", "preview_digest", "total_expected", "total_processed", "total_ready", "total_pending_review", "total_failed", "total_blocked", "total_bypassed", "next_index", "product_ids_json", "priority_product_ids_json", "preflight_json", "last_error_code", "last_error", "updated_at"},
@@ -622,6 +623,45 @@ async def upsert_product_cutout_preparation(product_id: str, **kwargs) -> dict |
             )
         await db.commit()
     return await _get("product_cutout_preparation", "product_id", product_id)
+
+
+async def get_product_cutout_target(product_id: str) -> dict | None:
+    """Operator-selected ROI target (preparation provenance, not truth approval)."""
+    return await _get("product_cutout_target", "product_id", product_id)
+
+
+async def upsert_product_cutout_target(product_id: str, **kwargs) -> dict | None:
+    """Persist/replace the ROI target for one product (bound to its source SHA)."""
+    _validate_table("product_cutout_target")
+    values = _safe_kwargs("product_cutout_target", kwargs)
+    values["updated_at"] = _now()
+    db = await get_db()
+    async with _db_lock:
+        existing = await _get_with_db(db, "product_cutout_target", "product_id", product_id)
+        if existing is None:
+            columns = ["product_id", *values.keys()]
+            placeholders = ",".join("?" for _ in columns)
+            await db.execute(
+                f"INSERT INTO product_cutout_target ({','.join(columns)}) VALUES ({placeholders})",
+                [product_id, *values.values()],
+            )
+        else:
+            sets = ",".join(f"{key}=?" for key in values)
+            await db.execute(
+                f"UPDATE product_cutout_target SET {sets} WHERE product_id=?",
+                [*values.values(), product_id],
+            )
+        await db.commit()
+    return await _get("product_cutout_target", "product_id", product_id)
+
+
+async def delete_product_cutout_target(product_id: str) -> None:
+    """Clear the ROI target (operator reset, or source changed)."""
+    _validate_table("product_cutout_target")
+    db = await get_db()
+    async with _db_lock:
+        await db.execute("DELETE FROM product_cutout_target WHERE product_id=?", [product_id])
+        await db.commit()
 
 
 async def get_product_visual_onboarding_run(run_id: str) -> dict | None:
