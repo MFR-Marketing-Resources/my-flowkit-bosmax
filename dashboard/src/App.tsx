@@ -77,19 +77,30 @@ import type { TelemetrySummary } from "./types";
 
 const NAV_GROUPS = [
 	{
-		label: "WORKSPACE",
+		label: "CREATE",
 		items: [
 			{ to: "/operator/t2v", icon: Video, label: "Text to Video" },
-			{ to: "/operator/hybrid", icon: Sparkles, label: "Hybrid (Product + AI Presenter)" },
-			{ to: "/operator/f2v", icon: Sparkles, label: "Frames (F2V)" },
+			{ to: "/operator/hybrid", icon: Sparkles, label: "Hybrid" },
+			{ to: "/operator/f2v", icon: Sparkles, label: "Frames" },
 			{ to: "/operator/i2v", icon: Layers, label: "Ingredients" },
 			{ to: "/operator/img", icon: ImageIcon, label: "Image Gen" },
 			{ to: "/operator/faceless", icon: Film, label: "Faceless Video" },
 			{ to: "/operator/montage", icon: Layers, label: "Montage" },
-			{ to: "/library/videos", icon: Video, label: "Video Library (48j)" },
-			{ to: "/library/images", icon: ImageIcon, label: "Image Library (Manual Delete)" },
-			{ to: "/results", icon: FolderOpen, label: "Results (Hasil + Caption)" },
-			{ to: "/workspace/jobs", icon: Activity, label: "Workspace Jobs" },
+		],
+	},
+	{
+		label: "LIBRARY",
+		items: [
+			{ to: "/library/videos", icon: Video, label: "Video Library" },
+			{ to: "/library/images", icon: ImageIcon, label: "Image Library" },
+			{ to: "/results", icon: FolderOpen, label: "Results" },
+			{ to: "/gallery", icon: Film, label: "Gallery" },
+		],
+	},
+	{
+		label: "PRODUCTION",
+		items: [
+			{ to: "/batches", icon: Briefcase, label: "Batch Prompt Builder" },
 			{
 				to: "/workspace/generation-packages",
 				icon: PackageSearch,
@@ -100,15 +111,36 @@ const NAV_GROUPS = [
 				icon: PackageSearch,
 				label: "Approved Packages",
 			},
-			{ to: "/batches", icon: Briefcase, label: "Batch Prompt Builder" },
 			{ to: "/production-queue", icon: Film, label: "Production Queue" },
-			{ to: "/production-studio", icon: Video, label: "Production Studio (P6)" },
+			{ to: "/production-studio", icon: Video, label: "Production Studio" },
 			{ to: "/rpa-queue-control", icon: Bot, label: "RPA Queue Control" },
+			{ to: "/workspace/jobs", icon: Activity, label: "Workspace Jobs" },
 			{ to: "/postiz", icon: Send, label: "Postiz Publish" },
 		],
 	},
 	{
-		label: "ASSETS",
+		label: "PRODUCTS",
+		items: [
+			{ to: "/products", icon: PackageSearch, label: "Product Catalog" },
+			{
+				to: "/product-registration",
+				icon: ScrollText,
+				label: "Smart Registration",
+			},
+			{
+				to: "/assets/product-type-registry",
+				icon: Tags,
+				label: "Product Type Registry",
+			},
+			{
+				to: "/product-asset-generator",
+				icon: Sparkles,
+				label: "Product Asset Generator",
+			},
+		],
+	},
+	{
+		label: "CREATIVE ASSETS",
 		items: [
 			{
 				to: "/assets/creative-library",
@@ -120,69 +152,36 @@ const NAV_GROUPS = [
 				icon: Sparkles,
 				label: "Asset Workspace",
 			},
-			{
-				to: "/assets/avatar-registry",
-				icon: Users,
-				label: "Avatar Registry",
-			},
+			{ to: "/assets/avatar-registry", icon: Users, label: "Avatar Registry" },
 			{
 				to: "/assets/scene-context-registry",
 				icon: Sparkles,
 				label: "Scene Registry",
 			},
-			{
-				to: "/assets/product-type-registry",
-				icon: Tags,
-				label: "Product Type Registry",
-			},
-			{
-				to: "/assets/img-cockpit",
-				icon: Sparkles,
-				label: "IMG Cockpit",
-			},
-			{
-				to: "/assets/img-fastlane",
-				icon: Sparkles,
-				label: "IMG Fastlane",
-			},
 			{ to: "/asset-registry", icon: Layers, label: "Asset Registry" },
-			{
-				to: "/product-asset-generator",
-				icon: Sparkles,
-				label: "Product Asset Generator",
-			},
-			{ to: "/products", icon: PackageSearch, label: "Product Catalog" },
-			{
-				to: "/product-registration",
-				icon: ScrollText,
-				label: "Smart Registration",
-			},
+			{ to: "/assets/img-cockpit", icon: Sparkles, label: "IMG Cockpit" },
+			{ to: "/assets/img-fastlane", icon: Sparkles, label: "IMG Fastlane" },
 			{
 				to: "/creative/poster-builder",
 				icon: ImageIcon,
 				label: "Poster Builder",
+			},
+			{ to: "/creative/copy-registry", icon: PenLine, label: "Copy Registry" },
+			{
+				to: "/creative/copy-intelligence",
+				icon: Users,
+				label: "Copy Intelligence",
 			},
 			{
 				to: "/creative/cockpit-settings",
 				icon: Gauge,
 				label: "Cockpit Settings",
 			},
-			{
-				to: "/creative/copy-registry",
-				icon: PenLine,
-				label: "Copy Registry",
-			},
-			{
-				to: "/creative/copy-intelligence",
-				icon: Users,
-				label: "Copy Intelligence",
-			},
 			{ to: "/projects", icon: FolderOpen, label: "Projects" },
-			{ to: "/gallery", icon: Film, label: "Gallery" },
 		],
 	},
 	{
-		label: "COMMAND CENTRE",
+		label: "REPORTING",
 		items: [
 			{ to: "/reporting/executive", icon: Gauge, label: "Executive" },
 			{ to: "/reporting/operations", icon: Siren, label: "Operations" },
