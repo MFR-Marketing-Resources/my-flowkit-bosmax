@@ -164,8 +164,8 @@ export default function PosterBuilderShellForm({
 					data-testid="poster-copy-required-hint"
 					className="mt-4 text-[11px] text-amber-300"
 				>
-					Isi dulu medan wajib: <strong>{missingCopy.join(", ")}</strong> sebelum
-					menjana prompt draft.
+					Fill the required fields first: <strong>{missingCopy.join(", ")}</strong> before
+					generating the prompt draft.
 				</p>
 			) : null}
 			{promptDraftEnabled && overLimit.length > 0 ? (
@@ -173,8 +173,8 @@ export default function PosterBuilderShellForm({
 					data-testid="poster-copy-overlimit-hint"
 					className="mt-4 text-[11px] text-rose-300"
 				>
-					Terlalu panjang untuk poster: <strong>{overLimit.join(", ")}</strong>.
-					Pendekkan ayat supaya muat.
+					Too long for a poster: <strong>{overLimit.join(", ")}</strong>.
+					Shorten the text so it fits.
 				</p>
 			) : null}
 			<div className="mt-4 flex flex-wrap gap-3">
@@ -189,9 +189,9 @@ export default function PosterBuilderShellForm({
 					}
 					title={
 						missingCopy.length > 0
-							? `Isi dulu: ${missingCopy.join(", ")}`
+							? `Fill first: ${missingCopy.join(", ")}`
 							: overLimit.length > 0
-								? `Terlalu panjang: ${overLimit.join(", ")}`
+								? `Too long: ${overLimit.join(", ")}`
 								: promptDraftLabel
 					}
 					onClick={onPromptDraft}

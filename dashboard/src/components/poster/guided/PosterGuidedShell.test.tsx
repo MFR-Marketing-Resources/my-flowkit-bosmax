@@ -367,10 +367,10 @@ describe("PosterGuidedShell", () => {
 		const banner = await screen.findByTestId("poster-readiness-banner");
 		await waitFor(() => expect(banner.getAttribute("data-tone")).toBe("ready"));
 
-		// "Cadangkan untuk saya" marks a recommended goal.
+		// "Suggest for me" marks a recommended goal.
 		fireEvent.click(screen.getByTestId("poster-goal-recommend"));
 		await waitFor(() => expect(recommendPosterObjectives).toHaveBeenCalled());
-		expect(await screen.findByText(/Disyorkan/)).toBeInTheDocument();
+		expect(await screen.findByText(/Recommended/)).toBeInTheDocument();
 
 		fireEvent.click(screen.getByTestId("poster-goal-card-PRODUCT_HERO"));
 		fireEvent.change(await screen.findByTestId("poster-creative-mode"), {
@@ -539,7 +539,7 @@ describe("PosterGuidedShell closure", () => {
 		// Restored context is reflected in the summary (product + approved copy).
 		const summary = screen.getByTestId("poster-guided-summary");
 		expect(summary.textContent).toContain("Minyak Warisan Tok");
-		expect(summary.textContent).toContain("Disahkan");
+		expect(summary.textContent).toContain("Approved");
 		expect(summary.textContent).toContain("Tajuk tersimpan");
 	});
 
@@ -670,7 +670,7 @@ describe("PosterGuidedShell closure", () => {
 		renderShell();
 		fireEvent.click(screen.getByTestId("pick-product"));
 		const err = await screen.findByTestId("poster-readiness-error");
-		expect(err.textContent).toContain("Gagal menyemak kesediaan produk");
+		expect(err.textContent).toContain("Failed to check product readiness");
 	});
 
 	it("objective recommendation failure is visible; manual goals still selectable", async () => {
@@ -681,7 +681,7 @@ describe("PosterGuidedShell closure", () => {
 		fireEvent.click(screen.getByTestId("pick-product"));
 		fireEvent.click(await screen.findByTestId("poster-goal-recommend"));
 		const err = await screen.findByTestId("poster-goals-error");
-		expect(err.textContent).toContain("cadangan tujuan");
+		expect(err.textContent).toContain("objective suggestions");
 		fireEvent.click(screen.getByTestId("poster-goal-card-PRODUCT_HERO"));
 		expect(
 			await screen.findByTestId("poster-angle-card-0"),
@@ -699,7 +699,7 @@ describe("PosterGuidedShell closure", () => {
 		fireEvent.click(await screen.findByTestId("poster-copy-direction-0"));
 		fireEvent.click(screen.getByTestId("poster-regen-cta"));
 		const err = await screen.findByTestId("poster-regen-error");
-		expect(err.textContent).toContain("Teks asal dikekalkan");
+		expect(err.textContent).toContain("original text is kept");
 		expect(
 			(screen.getByTestId("poster-field-cta") as HTMLInputElement).value,
 		).toBe("CTA 0");
@@ -728,7 +728,7 @@ describe("PosterGuidedShell closure", () => {
 		fireEvent.click(await screen.findByTestId("poster-goal-card-PRODUCT_HERO"));
 		fireEvent.click(await screen.findByTestId("poster-angle-card-0"));
 		const warn = await screen.findByTestId("poster-direction-warnings");
-		expect(warn.textContent).toContain("cadangan selamat masih tersedia");
+		expect(warn.textContent).toContain("safe suggestions are still available");
 		expect(warn.textContent).not.toContain("AI_COPY_ASSIST_CALL_FAILED");
 		expect(await screen.findByTestId("poster-copy-direction-0")).toBeInTheDocument();
 	});
@@ -743,8 +743,8 @@ describe("PosterGuidedShell closure", () => {
 		expect(
 			screen.getByTestId("poster-visual-diagram-product_hero_night_routine"),
 		).toBeInTheDocument();
-		expect(card.textContent).toContain("Kedudukan produk");
-		expect(card.textContent).toContain("Ketumpatan teks");
+		expect(card.textContent).toContain("Product placement");
+		expect(card.textContent).toContain("Text density");
 		// Internal recipe id is never shown as text.
 		expect(card.textContent).not.toContain("product_hero_night_routine");
 	});
@@ -859,7 +859,7 @@ describe("PosterGuidedShell composition plan (B-04)", () => {
 		// NOTHING downstream was invalidated by the mode switch.
 		const summary = screen.getByTestId("poster-guided-summary");
 		expect(summary.textContent).toContain("Minyak Warisan Tok"); // product
-		expect(summary.textContent).toContain("Disahkan"); // approved copy status
+		expect(summary.textContent).toContain("Approved"); // approved copy status
 		expect(summary.textContent).toContain("Tajuk 0"); // approved copy text
 		expect(summary.textContent).toContain("Premium hero"); // selected angle
 		for (const s of ["visual", "scene"]) {

@@ -73,16 +73,28 @@ import type { TelemetrySummary } from "./types";
 
 const NAV_GROUPS = [
 	{
-		label: "CREATE",
+		label: "VIDEO PRODUCTION",
 		items: [
 			{ to: "/operator/t2v", icon: Video, label: "Text to Video" },
 			{ to: "/operator/hybrid", icon: Sparkles, label: "Hybrid" },
 			{ to: "/operator/f2v", icon: Sparkles, label: "Frames" },
 			{ to: "/operator/i2v", icon: Layers, label: "Ingredients" },
-			{ to: "/operator/img", icon: ImageIcon, label: "Image Gen" },
 			{ to: "/operator/faceless", icon: Film, label: "Faceless Video" },
 			{ to: "/operator/montage", icon: Layers, label: "Montage" },
 			{ to: "/production-studio", icon: Video, label: "Production Studio" },
+		],
+	},
+	{
+		label: "IMAGE PRODUCTION",
+		items: [
+			{ to: "/operator/img", icon: ImageIcon, label: "Image Gen" },
+			{ to: "/assets/img-cockpit", icon: Sparkles, label: "IMG Cockpit" },
+			{ to: "/assets/img-fastlane", icon: Sparkles, label: "IMG Fastlane" },
+			{
+				to: "/creative/poster-builder",
+				icon: ImageIcon,
+				label: "Poster Builder",
+			},
 		],
 	},
 	{
@@ -94,7 +106,7 @@ const NAV_GROUPS = [
 		],
 	},
 	{
-		label: "PRODUCTION",
+		label: "PUBLISH & JOBS",
 		items: [
 			{ to: "/postiz", icon: Send, label: "Postiz Publish" },
 			{ to: "/workspace/jobs", icon: Activity, label: "Workspace Jobs" },
@@ -120,11 +132,6 @@ const NAV_GROUPS = [
 				label: "Creative Library",
 			},
 			{ to: "/assets/avatar-registry", icon: Users, label: "Avatar Registry" },
-			{
-				to: "/creative/poster-builder",
-				icon: ImageIcon,
-				label: "Poster Builder",
-			},
 		],
 	},
 	{
@@ -165,8 +172,6 @@ const NAV_GROUPS = [
 				icon: Tags,
 				label: "Product Type Registry",
 			},
-			{ to: "/assets/img-cockpit", icon: Sparkles, label: "IMG Cockpit" },
-			{ to: "/assets/img-fastlane", icon: Sparkles, label: "IMG Fastlane" },
 			{ to: "/creative/copy-registry", icon: PenLine, label: "Copy Registry" },
 			{
 				to: "/creative/copy-intelligence",

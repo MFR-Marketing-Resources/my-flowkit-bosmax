@@ -75,16 +75,16 @@ export default function CompositionPlanSummary({
 			<p className="text-[10px] font-bold uppercase tracking-wide text-sky-300">
 				Pelan Komposisi (backend)
 			</p>
-			<Row label="Mod" value={plan.creative_mode} />
-			<Row label="Profil" value={plan.profile_id} />
-			<Row label="Anchor produk" value={plan.product?.anchor} />
-			<Row label="Dominasi" value={plan.product?.dominance} />
-			<Row label="Susunan bacaan" value={(plan.reading_order ?? []).join(" → ")} />
-			<Row label="Margin selamat" value={plan.canvas?.safe_margin} />
-			<Row label="Nisbah bingkai" value={plan.canvas?.frame_ratio} />
-			<Row label="Polisi manusia" value={plan.scene?.human_presence} />
-			<Row label="Polisi identiti" value={plan.scene?.identity_policy} />
-			<Row label="Zon muka selamat" value={plan.scene?.face_safe_rule} />
+			<Row label="Mode" value={plan.creative_mode} />
+			<Row label="Profile" value={plan.profile_id} />
+			<Row label="Product anchor" value={plan.product?.anchor} />
+			<Row label="Dominance" value={plan.product?.dominance} />
+			<Row label="Reading order" value={(plan.reading_order ?? []).join(" → ")} />
+			<Row label="Safe margin" value={plan.canvas?.safe_margin} />
+			<Row label="Frame ratio" value={plan.canvas?.frame_ratio} />
+			<Row label="Human policy" value={plan.scene?.human_presence} />
+			<Row label="Identity policy" value={plan.scene?.identity_policy} />
+			<Row label="Face-safe zone" value={plan.scene?.face_safe_rule} />
 			<Row
 				label="Zon hook"
 				value={
@@ -109,8 +109,8 @@ export default function CompositionPlanSummary({
 						: plan.copy?.cta_zone
 				}
 			/>
-			<Row label="Latar" value={plan.scene?.background_complexity} />
-			<Row label="Pencahayaan" value={plan.scene?.lighting} />
+			<Row label="Background" value={plan.scene?.background_complexity} />
+			<Row label="Lighting" value={plan.scene?.lighting} />
 
 			{locks.length ? (
 				<div
@@ -174,15 +174,15 @@ export default function CompositionPlanSummary({
 						className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-100"
 						data-testid="poster-composition-plan-match"
 					>
-						✓ Kompilasi menggunakan pelan yang sama dipaparkan di sini.
+						✓ Compilation uses the same plan shown here.
 					</p>
 				) : (
 					<p
 						className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-100"
 						data-testid="poster-composition-plan-mismatch"
 					>
-						Pelan telah berubah selepas kompilasi terakhir — hasilkan semula
-						untuk padankan.
+						The plan changed since the last compile — regenerate
+						to match.
 					</p>
 				)
 			) : null}

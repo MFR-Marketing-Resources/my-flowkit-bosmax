@@ -49,7 +49,7 @@ export default function PosterComposePanel({
 			});
 			setResult(res);
 		} catch (e) {
-			setError(e instanceof Error ? e.message : "Komposit poster gagal.");
+			setError(e instanceof Error ? e.message : "Poster composite failed.");
 		} finally {
 			setLoading(false);
 		}
@@ -65,7 +65,7 @@ export default function PosterComposePanel({
 			);
 			setSavedAssetId(res.creative_asset_id);
 		} catch (e) {
-			setError(e instanceof Error ? e.message : "Simpan ke Creative Library gagal.");
+			setError(e instanceof Error ? e.message : "Save to Creative Library failed.");
 		} finally {
 			setSaving(false);
 		}
@@ -79,20 +79,20 @@ export default function PosterComposePanel({
 			data-testid="poster-compose-panel"
 		>
 			<h3 className="text-sm font-bold text-slate-100">
-				7. Komposit teks muktamad (deterministik · percuma)
+				7. Final text composite (deterministic · free)
 			</h3>
 			<p className="text-[11px] text-slate-500">
-				Teks pemasaran dilukis oleh compositor (bukan AI imej) — ejaan tepat,
-				muat zon, dan teks dijauhkan dari kawasan-produk yang DITETAPKAN
-				template (bukan pengesanan produk sebenar). Preview = fail yang
-				DISIMPAN (byte sama). Semakan manusia tetap perlu: kedudukan, identiti,
-				label & skala produk dalam scene janaan.
+				Marketing text is drawn by the compositor (not image AI) — exact spelling,
+				zone-fit, and text kept away from product areas DEFINED by the
+				template (not real product detection). Preview = the SAVED
+				file (byte-identical). Human review is still required: placement, identity,
+				product label & scale in the generated scene.
 			</p>
 			{!ready ? (
 				<p className="text-[11px] text-amber-300" data-testid="poster-compose-waiting">
 					{!copySet
-						? "Lulus Poster Copy Set dahulu (langkah 3)."
-						: "Jana scene bersih dahulu (langkah 6)."}
+						? "Approve the Poster Copy Set first (step 3)."
+						: "Generate a clean scene first (step 6)."}
 				</p>
 			) : (
 				<button
@@ -102,7 +102,7 @@ export default function PosterComposePanel({
 					onClick={() => void handleCompose()}
 					className="rounded-xl border border-blue-500/50 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40"
 				>
-					{loading ? "Mengkomposit…" : "Komposit poster (percuma)"}
+					{loading ? "Compositing…" : "Composite poster (free)"}
 				</button>
 			)}
 			{qa ? (
@@ -110,8 +110,8 @@ export default function PosterComposePanel({
 					<p
 						className={`text-[11px] font-bold ${qa.ok ? "text-emerald-300" : "text-rose-300"}`}
 					>
-						QA: {qa.ok ? "LULUS" : `${qa.block_count} isu menghalang`}
-						{qa.warn_count ? ` · ${qa.warn_count} amaran` : ""}
+						QA: {qa.ok ? "PASS" : `${qa.block_count} blocking issues`}
+						{qa.warn_count ? ` · ${qa.warn_count} warnings` : ""}
 					</p>
 					{qa.findings.map((f) => (
 						<p
@@ -130,7 +130,7 @@ export default function PosterComposePanel({
 						src={posterDeliverableOutputUrl(
 							result.deliverable.poster_deliverable_id,
 						)}
-						alt="Poster komposit"
+						alt="Composited poster"
 						className="max-h-96 rounded-xl border border-slate-800"
 					/>
 					<div className="flex flex-wrap items-center gap-3">
@@ -142,10 +142,10 @@ export default function PosterComposePanel({
 							className="rounded-xl border border-emerald-500/50 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40"
 						>
 							{saving
-								? "Menyimpan…"
+								? "Saving…"
 								: savedAssetId
-									? "✓ Disimpan"
-									: "Simpan ke Creative Library"}
+									? "✓ Saved"
+									: "Save to Creative Library"}
 						</button>
 						<a
 							href={posterDeliverableOutputUrl(
@@ -155,13 +155,13 @@ export default function PosterComposePanel({
 							rel="noopener noreferrer"
 							className="rounded-lg border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-200"
 						>
-							Buka / Muat turun ↗
+							Open / Download ↗
 						</a>
 					</div>
 					{savedAssetId ? (
 						<p data-testid="poster-saved-note" className="text-[11px] text-emerald-300">
-							✓ Poster + konfigurasi disimpan (asset {savedAssetId}). Boleh dibuka
-							semula dari Creative Library / deliverable{" "}
+							✓ Poster + configuration saved (asset {savedAssetId}). Can be reopened
+							from Creative Library / deliverable{" "}
 							{result.deliverable.poster_deliverable_id}.
 						</p>
 					) : null}

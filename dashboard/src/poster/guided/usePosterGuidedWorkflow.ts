@@ -308,7 +308,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 		void fetchPosterReadiness(p.id)
 			.then((r) => setReadiness(r))
 			.catch((e) =>
-				setReadinessError(friendlyError(e, "Gagal menyemak kesediaan produk.")),
+				setReadinessError(friendlyError(e, "Failed to check product readiness.")),
 			)
 			.finally(() => setReadinessLoading(false));
 	}, []);
@@ -329,7 +329,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			setGoalsError(
 				friendlyError(
 					e,
-					"Gagal mendapatkan cadangan tujuan. Anda masih boleh memilih sendiri di bawah.",
+					"Failed to get objective suggestions. You can still choose one yourself below.",
 				),
 			);
 		} finally {
@@ -353,7 +353,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			setAngles(res.angles ?? []);
 		} catch (e) {
 			setAnglesError(
-				friendlyError(e, "Gagal menjana sudut jualan. Cuba lagi."),
+				friendlyError(e, "Failed to generate selling angles. Try again."),
 			);
 		} finally {
 			setAnglesLoading(false);
@@ -399,7 +399,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			setDirectionWarnings(res.warnings ?? []);
 		} catch (e) {
 			setDirectionsError(
-				friendlyError(e, "Gagal menjana arah teks. Cuba lagi."),
+				friendlyError(e, "Failed to generate copy directions. Try again."),
 			);
 		} finally {
 			setDirectionsLoading(false);
@@ -472,7 +472,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 				setFieldRegenError(
 					friendlyError(
 						e,
-						"Gagal menjana semula medan ini. Teks asal dikekalkan — cuba lagi.",
+						"Failed to regenerate this field. The original text is kept — try again.",
 					),
 				);
 			} finally {
@@ -515,7 +515,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			);
 		} catch (e) {
 			setApproveError(
-				friendlyError(e, "Teks tidak lulus semakan. Perbaiki dan cuba lagi."),
+				friendlyError(e, "The copy did not pass review. Fix it and try again."),
 			);
 		} finally {
 			setApproveLoading(false);
@@ -546,7 +546,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			setReached((prev) => (prev.includes("copy") ? prev : [...prev, "copy"]));
 			setStep("copy");
 		} catch (e) {
-			setApproveError(friendlyError(e, "Gagal membuka versi baharu."));
+			setApproveError(friendlyError(e, "Failed to open a new version."));
 		} finally {
 			setApproveLoading(false);
 		}
@@ -569,7 +569,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 					.then((r) => setReadiness(r))
 					.catch((e) =>
 						setReadinessError(
-							friendlyError(e, "Gagal menyemak kesediaan produk."),
+							friendlyError(e, "Failed to check product readiness."),
 						),
 					)
 					.finally(() => setReadinessLoading(false));
@@ -644,7 +644,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			setForkError(
 				friendlyError(
 					e,
-					"Gagal mencipta salinan boleh-edit daripada versi sejarah.",
+					"Failed to create an editable copy from the history version.",
 				),
 			);
 		} finally {
@@ -679,7 +679,7 @@ export function usePosterGuidedWorkflow(): PosterGuidedWorkflow {
 			setComposeError(
 				friendlyError(
 					e,
-					"Gagal menghasilkan poster. Semak latar/aset dan cuba lagi.",
+					"Failed to generate the poster. Check the background/asset and try again.",
 				),
 			);
 		} finally {

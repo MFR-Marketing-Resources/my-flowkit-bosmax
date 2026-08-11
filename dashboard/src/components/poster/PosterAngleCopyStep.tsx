@@ -77,7 +77,7 @@ export default function PosterAngleCopyStep({
 			setDirections(res.directions);
 			setWarnings(res.warnings ?? []);
 		} catch (e) {
-			setError(e instanceof Error ? e.message : "Gagal menjana arah copy.");
+			setError(e instanceof Error ? e.message : "Failed to generate copy directions.");
 		} finally {
 			setLoading("");
 		}
@@ -128,7 +128,7 @@ export default function PosterAngleCopyStep({
 					: prev,
 			);
 		} catch (e) {
-			setError(e instanceof Error ? e.message : "Regenerate medan gagal.");
+			setError(e instanceof Error ? e.message : "Field regeneration failed.");
 		} finally {
 			setRegenField("");
 		}
@@ -163,7 +163,7 @@ export default function PosterAngleCopyStep({
 			setSelectedAngle("");
 			onApproved(done);
 		} catch (e) {
-			setError(e instanceof Error ? e.message : "Kelulusan Poster Copy Set gagal.");
+			setError(e instanceof Error ? e.message : "Poster Copy Set approval failed.");
 		} finally {
 			setLoading("");
 		}
@@ -188,7 +188,7 @@ export default function PosterAngleCopyStep({
 			/>
 			<button
 				type="button"
-				title="Jana semula medan ini sahaja (AI)"
+				title="Regenerate just this field (AI)"
 				data-testid={`poster-regen-${field}`}
 				disabled={regenField !== ""}
 				onClick={() => void handleRegenerateField(field)}
@@ -214,7 +214,7 @@ export default function PosterAngleCopyStep({
 						onClick={() => void loadAngles(false)}
 						className="rounded-xl border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 disabled:opacity-40"
 					>
-						Angle disyorkan
+						Suggested angles
 					</button>
 					<button
 						type="button"
@@ -223,7 +223,7 @@ export default function PosterAngleCopyStep({
 						onClick={() => void loadAngles(true)}
 						className="rounded-xl border border-blue-500/40 bg-blue-600/10 px-3 py-1.5 text-[11px] font-semibold text-blue-200 disabled:opacity-40"
 					>
-						{loading === "angles" ? "Menjana…" : "Angle AI +"}
+						{loading === "angles" ? "Generating…" : "Angle AI +"}
 					</button>
 				</div>
 			</div>
@@ -249,13 +249,13 @@ export default function PosterAngleCopyStep({
 				</div>
 			) : (
 				<p className="text-xs text-slate-500">
-					Klik <strong>Angle disyorkan</strong> untuk mula — tak perlu tahu
-					copywriting; sistem cadangkan angle jualan yang sesuai.
+					Click <strong>Suggested angles</strong> to start — no copywriting
+					knowledge needed; the system suggests suitable selling angles.
 				</p>
 			)}
 
 			{loading === "directions" ? (
-				<p className="text-xs text-slate-400">Menjana 3 arah copy poster…</p>
+				<p className="text-xs text-slate-400">Generating 3 poster copy directions…</p>
 			) : null}
 
 			{directions.length > 0 && !picked ? (
@@ -292,18 +292,18 @@ export default function PosterAngleCopyStep({
 				<div className="space-y-2 rounded-xl border border-slate-700 bg-slate-900/40 p-3">
 					<div className="flex items-center justify-between">
 						<p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
-							Edit copy terpilih (↻ = jana semula satu medan)
+							Edit the selected copy (↻ = regenerate one field)
 						</p>
 						<button
 							type="button"
 							onClick={() => setPicked(null)}
 							className="text-[11px] text-slate-400 underline"
 						>
-							Tukar arah
+							Change direction
 						</button>
 					</div>
-					{fieldRow("Mesej utama", "primary_message", picked.primary_message, 48)}
-					{fieldRow("Sokongan", "support_message", picked.support_message, 72)}
+					{fieldRow("Primary message", "primary_message", picked.primary_message, 48)}
+					{fieldRow("Support", "support_message", picked.support_message, 72)}
 					<div className="flex items-center gap-2">
 						<label className="w-24 shrink-0 text-[10px] font-bold uppercase text-slate-500">
 							Proof points
@@ -339,16 +339,16 @@ export default function PosterAngleCopyStep({
 						className="mt-2 rounded-xl border border-emerald-500/50 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40"
 					>
 						{loading === "approve"
-							? "Meluluskan…"
-							: "Lulus & simpan Poster Copy Set"}
+							? "Approving…"
+							: "Approve & save Poster Copy Set"}
 					</button>
 				</div>
 			) : null}
 
 			{approved ? (
 				<p data-testid="poster-copy-set-approved" className="text-[11px] text-emerald-300">
-					✓ Poster Copy Set diluluskan (v{approved.version} ·{" "}
-					{approved.poster_copy_set_id}) — boleh diguna semula untuk kempen lain.
+					✓ Poster Copy Set approved (v{approved.version} ·{" "}
+					{approved.poster_copy_set_id}) — can be reused for other campaigns.
 				</p>
 			) : null}
 			{warnings.map((w) => (
