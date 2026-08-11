@@ -9,9 +9,11 @@ conflate:
 * ``EXACT_COMMERCE_CUTOUT_READY`` means the persisted Product Truth lock is
   approved and byte-valid.
 
-No function in this module calls a provider or approves a truth lock.  The
-existing resolver, reference-pack builder, and truth-lock service remain the
-source authorities for their respective evidence.
+Generation and upload functions in this module never call a provider or approve
+a truth lock.  The page-level save orchestration delegates any explicit
+approval to the existing Product Truth authority; the resolver, reference-pack
+builder, and truth-lock service remain the source authorities for their
+respective evidence.
 """
 
 from __future__ import annotations
@@ -34,7 +36,10 @@ from PIL import Image
 from agent import config
 from agent.config import BASE_DIR
 from agent.db import crud
-from agent.models.product_truth_lock import ProductTruthLockOnboardingRequest
+from agent.models.product_truth_lock import (
+    ProductTruthLockApprovalRequest,
+    ProductTruthLockOnboardingRequest,
+)
 from agent.services.product_intelligence import is_test_product
 from agent.services.product_lifecycle_service import is_archived
 from agent.services.product_lock_builder import resolve_schema_entry
@@ -47,6 +52,7 @@ from agent.services.product_truth_lock_service import (
     USER_UPLOAD,
     ProductTruthLockError,
     create_pending_product_truth_lock,
+    approve_product_truth_lock,
     register_product_truth_cutout_media,
     reject_product_truth_lock,
     select_product_truth_fallback,
@@ -393,10 +399,12 @@ def _candidate_actions(
     approved = _truth_row_approved(lock)
     canva_stage = str((canva_workflow or {}).get("current_stage") or "NOT_STARTED").upper()
     return {
-        "can_prepare_cutout": bool(active and source_available and not approved and not pending),
+        # A display-only URL is a valid operator-visible input.  The write lane
+        # resolves/materializes it lazily; the readiness GET remains read-only.
+        "can_prepare_cutout": bool(active and (source_available or display_source_available) and not approved and not pending),
         "can_review_cutout": bool(active and pending),
         "can_approve_cutout": bool(active and pending),
-        "can_rebuild_cutout": bool(active and source_available and not approved),
+        "can_rebuild_cutout": bool(active and (source_available or display_source_available) and not approved),
         "can_upload_manual_cutout": bool(active and (source_available or display_source_available)),
         "can_reject_cutout": bool(active and lock and str(lock.get("review_status") or "").upper() in {PENDING_REVIEW, APPROVED}),
         "can_use_original_fallback": bool(active and source_available),
@@ -544,6 +552,21 @@ def _readiness_payload(
         "original_display_url": display_source["url"],
         "original_display_source": display_source["source"],
         "original_display_trust_status": display_source["trust_status"],
+        "auto_input_preview_url": (
+            display_source["url"]
+            if auto_status in {NOT_PREPARED, "NOT_UPLOADED"} and display_source["url"]
+            else None
+        ),
+        "auto_input_source": (
+            "ORIGINAL_SOURCE_INPUT"
+            if auto_status in {NOT_PREPARED, "NOT_UPLOADED"} and display_source["url"]
+            else None
+        ),
+        "auto_input_trust_status": (
+            display_source["trust_status"]
+            if auto_status in {NOT_PREPARED, "NOT_UPLOADED"} and display_source["url"]
+            else None
+        ),
         "auto_cutout_preview_url": (
             f"/api/product-visual-onboarding/{product.get('id')}/cutout/preview/auto"
             if auto_status not in {NOT_PREPARED, "NOT_UPLOADED"} else None
@@ -1136,6 +1159,142 @@ async def use_original_product_fallback(
     except Exception as exc:  # noqa: BLE001 - additive table may await runtime restart
         if not _canva_table_missing(exc):
             raise
+    return await get_product_visual_readiness(product_id)
+
+
+async def save_product_visual_setup(
+    product_id: str,
+    *,
+    selected_visual: str,
+    reviewed_by: str | None = None,
+    review_note: str | None = None,
+    confirm_identity: bool = False,
+    confirm_label_logo: bool = False,
+    confirm_geometry_scale: bool = False,
+    confirm_product_isolation: bool = False,
+) -> dict[str, Any]:
+    """Commit one page-level visual selection through existing authorities.
+
+    This is intentionally an orchestration seam, not a second truth system:
+    Original delegates to the existing trusted-source fallback authority and a
+    pending Auto/Manual candidate delegates to the existing Product Truth
+    approval authority.  Candidate generation/upload remains review-only.
+    """
+    product = await crud.get_product(product_id)
+    if not product:
+        raise ProductVisualOnboardingError("PRODUCT_NOT_FOUND", f"Product {product_id} was not found.", status_code=404)
+    blocked = await _blocked_reason(product)
+    if blocked:
+        raise ProductVisualOnboardingError(
+            blocked,
+            "Visual selection is blocked for this product cohort.",
+            status_code=409,
+        )
+
+    selection = str(selected_visual or "").strip().upper()
+    if selection not in {"ORIGINAL", "AUTO", "MANUAL"}:
+        raise ProductVisualOnboardingError(
+            "VISUAL_SELECTION_INVALID",
+            "Choose Original, Auto Cutout, or Manual / Canva.",
+            status_code=400,
+        )
+    operator = str(reviewed_by or "").strip()
+    note = str(review_note or "").strip()
+    readiness = await get_product_visual_readiness(product_id)
+    current_card = str(((readiness.get("current_system_visual") or {}).get("card") or "")).upper()
+
+    if selection == "ORIGINAL":
+        if current_card == "ORIGINAL_SOURCE":
+            return readiness
+        if not operator or not note:
+            raise ProductVisualOnboardingError(
+                "HUMAN_REVIEW_NOTE_REQUIRED",
+                "Operator identity and a reason are required to save Original Source.",
+                status_code=409,
+            )
+        # The existing fallback authority expects a governed source.  Resolve
+        # and register a display-only URL only on this explicit write action;
+        # the page GET never performs this materialization.
+        if not readiness.get("can_use_original_fallback"):
+            reference = await _resolve_source(product)
+            source_path = _path(getattr(reference, "local_path", None))
+            if source_path is None:
+                raise ProductVisualOnboardingError(
+                    "TRUSTED_SAME_PRODUCT_SOURCE_REQUIRED",
+                    "The Original Source image could not be prepared as a trusted same-product source.",
+                )
+            await _ensure_canonical_media(product, reference)
+        return await use_original_product_fallback(
+            product_id,
+            selected_by=operator,
+            reason=note,
+        )
+
+    selected_status = (
+        readiness.get("auto_cutout_status")
+        if selection == "AUTO"
+        else readiness.get("manual_cutout_status")
+    )
+    selected_card = "AUTO_CUTOUT" if selection == "AUTO" else "MANUAL_CUTOUT"
+    if current_card == selected_card and str(selected_status or "").upper() == APPROVED:
+        return readiness
+    if str(selected_status or "").upper() != PENDING_REVIEW:
+        raise ProductVisualOnboardingError(
+            "VISUAL_CANDIDATE_NOT_AVAILABLE",
+            "Generate or upload a candidate before saving this visual.",
+            status_code=409,
+        )
+    if not operator or not note:
+        raise ProductVisualOnboardingError(
+            "HUMAN_REVIEW_NOTE_REQUIRED",
+            "Reviewer identity and review note are required before approving a pending candidate.",
+            status_code=409,
+        )
+    if not (
+        confirm_identity
+        and confirm_label_logo
+        and confirm_geometry_scale
+        and confirm_product_isolation
+    ):
+        raise ProductVisualOnboardingError(
+            "HUMAN_REVIEW_CONFIRMATION_REQUIRED",
+            "Identity, label/logo, geometry/scale, and product-isolation confirmations are all required.",
+            status_code=409,
+        )
+
+    lock = await crud.get_product_truth_lock(product_id)
+    expected_source_kind = AUTO_GENERATED if selection == "AUTO" else USER_UPLOAD
+    if not lock or _candidate_source_kind(lock) != expected_source_kind:
+        raise ProductVisualOnboardingError(
+            "VISUAL_CANDIDATE_NOT_AVAILABLE",
+            "The selected candidate is no longer the active review candidate. Refresh the page and try again.",
+            status_code=409,
+        )
+    try:
+        await approve_product_truth_lock(
+            product_id,
+            ProductTruthLockApprovalRequest(
+                reviewed_by=operator,
+                review_note=note,
+                confirm_identity=confirm_identity,
+                confirm_label_logo=confirm_label_logo,
+                confirm_geometry_scale=confirm_geometry_scale,
+                confirm_product_isolation=confirm_product_isolation,
+            ),
+        )
+    except ProductTruthLockError as exc:
+        raise _truth_error(exc) from exc
+    # Keep the existing additive Canva workflow ledger in sync when the
+    # approved candidate came through that assisted lane. Product Truth above
+    # remains the sole approval authority; this is only the established mirror.
+    from agent.services.canva_cutout_workflow_service import mark_canva_workflow_approved
+
+    try:
+        await mark_canva_workflow_approved(product_id)
+    except Exception as exc:  # noqa: BLE001 - additive ledger may await runtime restart
+        if not _canva_table_missing(exc):
+            raise
+        logger.warning("Canva workflow mirror deferred until schema initialization: %s", exc)
     return await get_product_visual_readiness(product_id)
 
 

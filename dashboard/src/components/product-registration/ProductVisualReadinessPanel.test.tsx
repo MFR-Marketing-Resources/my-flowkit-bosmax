@@ -2,9 +2,18 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { fetchProductVisualReadinessMock, uploadManualProductCutoutMock } = vi.hoisted(() => ({
+const {
+	fetchProductVisualReadinessMock,
+	prepareProductCutoutMock,
+	rebuildProductCutoutMock,
+	uploadManualProductCutoutMock,
+	saveProductVisualSetupMock,
+} = vi.hoisted(() => ({
 	fetchProductVisualReadinessMock: vi.fn(),
+	prepareProductCutoutMock: vi.fn(),
+	rebuildProductCutoutMock: vi.fn(),
 	uploadManualProductCutoutMock: vi.fn(),
+	saveProductVisualSetupMock: vi.fn(),
 }));
 
 vi.mock("../../api/productVisualOnboarding", async () => {
@@ -14,7 +23,10 @@ vi.mock("../../api/productVisualOnboarding", async () => {
 	return {
 		...actual,
 		fetchProductVisualReadiness: fetchProductVisualReadinessMock,
+		prepareProductCutout: prepareProductCutoutMock,
+		rebuildProductCutout: rebuildProductCutoutMock,
 		uploadManualProductCutout: uploadManualProductCutoutMock,
+		saveProductVisualSetup: saveProductVisualSetupMock,
 	};
 });
 
@@ -110,6 +122,18 @@ const trustedSourcePendingAuto: ProductVisualReadiness = {
 	current_system_visual: { card: "ORIGINAL_SOURCE", label: "Original Source", status: "ORIGINAL_FALLBACK" },
 };
 
+const sourceInputOnly: ProductVisualReadiness = {
+	...trustedSourcePendingAuto,
+	auto_cutout_status: "NOT_PREPARED",
+	auto_cutout_preview_url: null,
+	auto_input_preview_url: "https://example.test/original.png",
+	auto_input_source: "ORIGINAL_SOURCE_INPUT",
+	auto_input_trust_status: "TRUSTED",
+	can_prepare_cutout: true,
+	can_rebuild_cutout: true,
+	can_upload_manual_cutout: true,
+};
+
 const targetRequired: ProductVisualReadiness = {
 	...pending,
 	original_preview_url: "https://example.test/original.png",
@@ -128,6 +152,7 @@ const targetNotRequired: ProductVisualReadiness = {
 const perLaneBusy: ProductVisualReadiness = {
 	...pending,
 	cutout_status: "PENDING_REVIEW",
+	auto_cutout_status: "PENDING_REVIEW",
 	manual_cutout_status: "NOT_UPLOADED",
 	can_prepare_cutout: false,
 	can_rebuild_cutout: true,
@@ -153,7 +178,10 @@ describe("ProductVisualReadinessPanel", () => {
 		cleanup();
 		vi.unstubAllGlobals();
 		fetchProductVisualReadinessMock.mockReset();
+		prepareProductCutoutMock.mockReset();
+		rebuildProductCutoutMock.mockReset();
 		uploadManualProductCutoutMock.mockReset();
+		saveProductVisualSetupMock.mockReset();
 	});
 
 	it("shows the four visual readiness gates and keeps approval explicit", () => {
@@ -173,7 +201,8 @@ describe("ProductVisualReadinessPanel", () => {
 		expect(screen.getByText("Visual Ready")).toBeInTheDocument();
 		expect(screen.getByText("Exact Commerce")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Canva Cutout" })).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Approve as Official Cutout" })).toBeDisabled();
+		expect(screen.getByTestId("save-visual-changes")).toBeDisabled();
+		expect(screen.queryByRole("button", { name: "Approve as Official Cutout" })).not.toBeInTheDocument();
 		expect(screen.getByText("Open Source")).toHaveAttribute("href", "https://example.test/product");
 	});
 
@@ -208,9 +237,9 @@ describe("ProductVisualReadinessPanel", () => {
 		expect(screen.getByRole("region", { name: "Original source controls" })).toBeInTheDocument();
 		expect(screen.getByRole("region", { name: "Auto cutout controls" })).toBeInTheDocument();
 		expect(screen.getByRole("region", { name: "Manual and Canva cutout controls" })).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Prepare Auto Cutout" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "GENERATE AUTO CUTOUT" })).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Canva Cutout" })).toBeDisabled();
-		expect(screen.getByRole("button", { name: "Upload My Cutout" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "UPLOAD MANUAL CUTOUT" })).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Use Original Fallback" })).toBeDisabled();
 		expect(screen.getAllByText("Trusted same-product source must be prepared first.").length).toBeGreaterThan(0);
 		expect(screen.getByText("SOURCE NOT RESOLVED")).toBeInTheDocument();
@@ -218,12 +247,12 @@ describe("ProductVisualReadinessPanel", () => {
 		expect(screen.getAllByText("Not available")).toHaveLength(3);
 	});
 
-	it("keeps Upload My Cutout enabled while an Auto rebuild is in flight (per-lane busy)", () => {
-		vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+	it("keeps Upload Manual Cutout enabled while Auto regeneration is in flight (per-lane busy)", () => {
+		rebuildProductCutoutMock.mockImplementation(() => new Promise(() => {}));
 		render(<ProductVisualReadinessPanel productId="product-1" readiness={perLaneBusy} />);
 
-		const rebuild = screen.getByRole("button", { name: "Rebuild Auto Cutout" });
-		const upload = screen.getByRole("button", { name: "Upload My Cutout" });
+		const rebuild = screen.getByRole("button", { name: "REGENERATE AUTO CUTOUT" });
+		const upload = screen.getByRole("button", { name: "UPLOAD MANUAL CUTOUT" });
 		expect(rebuild).toBeEnabled();
 		expect(upload).toBeEnabled();
 
@@ -302,10 +331,11 @@ describe("ProductVisualReadinessPanel", () => {
 	});
 
 	it("adds the product-isolation confirmation to the approval form", () => {
-		render(<ProductVisualReadinessPanel productId="product-1" readiness={pending} showApprovalForm />);
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={trustedSourcePendingAuto} showApprovalForm />);
+		fireEvent.click(screen.getByTestId("visual-selection-auto"));
 
 		expect(screen.getByTestId("confirm-product-isolation")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Approve as Official Cutout" })).toBeDisabled();
+		expect(screen.getByTestId("save-visual-changes")).toBeEnabled();
 	});
 
 	it("keeps the Canva label truthful and shows Continue in Canva when resuming", () => {
@@ -316,21 +346,21 @@ describe("ProductVisualReadinessPanel", () => {
 		expect(helper.textContent || "").not.toMatch(/auto/i);
 	});
 
-	it("marks the approved candidate as official and offers Set as Official on the others", () => {
+	it("marks the approved candidate as official and offers local choices on the others", () => {
 		render(<ProductVisualReadinessPanel productId="product-1" readiness={approvedAuto} />);
 		// approved auto card carries the official marker and no redundant action
 		expect(screen.getByTestId("official-ribbon-auto")).toBeInTheDocument();
 		expect(screen.queryByTestId("set-official-auto")).not.toBeInTheDocument();
-		// the non-official cards expose an explicit Set as Official control
+		// The non-official cards expose local choices; backend mutation waits for Save Changes.
 		expect(screen.getByTestId("set-official-original")).toBeInTheDocument();
 		expect(screen.getByTestId("set-official-manual")).toBeInTheDocument();
 	});
 
-	it("enables Set as Official only on the live candidate card", () => {
+	it("enables a local choice only on the live candidate card", () => {
 		render(<ProductVisualReadinessPanel productId="product-1" readiness={trustedSourcePendingAuto} />);
 		// original is the current reference -> ribbon, not a button
 		expect(screen.getByTestId("official-ribbon-original")).toBeInTheDocument();
-		// auto is the active pending candidate -> actionable
+		// auto is the active pending candidate -> actionable locally
 		expect(screen.getByTestId("set-official-auto")).toBeEnabled();
 		// manual has no uploaded candidate -> its action is disabled
 		expect(screen.getByTestId("set-official-manual")).toBeDisabled();
@@ -341,7 +371,7 @@ describe("ProductVisualReadinessPanel", () => {
 		expect(screen.getByText(/transparent background/i)).toBeInTheDocument();
 	});
 
-	it("re-reads after Replace Manual Cutout, reloads the preview, and enables the official action", async () => {
+	it("re-reads after Replace Manual Cutout, reloads the preview, and keeps the replacement pending", async () => {
 		const replacementPending: ProductVisualReadiness = {
 			...approvedManual,
 			cutout_status: "PENDING_REVIEW",
@@ -372,7 +402,7 @@ describe("ProductVisualReadinessPanel", () => {
 			},
 		});
 
-		await waitFor(() => expect(screen.getByTestId("manual-upload-message")).toHaveTextContent(/replaced the previously-approved cutout/i));
+		await waitFor(() => expect(screen.getByTestId("manual-upload-message")).toHaveTextContent(/replacement is now PENDING REVIEW/i));
 		expect(fetchProductVisualReadinessMock).toHaveBeenCalledWith("product-1");
 		expect(screen.getByTestId("set-official-manual")).toBeEnabled();
 		expect(screen.queryByTestId("official-ribbon-manual")).not.toBeInTheDocument();
@@ -405,7 +435,158 @@ describe("ProductVisualReadinessPanel", () => {
 
 		expect(screen.getByAltText("Original Source cutout")).toHaveAttribute("src", expect.stringContaining("https://example.test/kaxier.jpg"));
 		expect(screen.getByTestId("original-display-only")).toHaveTextContent("not yet prepared as trusted source");
-		expect(screen.getByRole("button", { name: "Upload My Cutout" })).toBeEnabled();
-		expect(screen.getByTestId("set-official-original")).toBeDisabled();
+		expect(screen.getByRole("button", { name: "UPLOAD MANUAL CUTOUT" })).toBeEnabled();
+		expect(screen.getByTestId("set-official-original")).toBeEnabled();
+		expect(screen.getByTestId("visual-selection-original")).toBeEnabled();
+		expect(screen.getByTestId("set-official-auto")).toBeDisabled();
+		expect(screen.getByTestId("visual-selection-auto")).toBeDisabled();
+		expect(screen.getByAltText("Auto Cutout source input")).toHaveAttribute(
+			"src",
+			expect.stringContaining("https://example.test/kaxier.jpg"),
+		);
+	});
+
+	it("shows the Auto loader in-place and keeps the Manual lane enabled", async () => {
+		let releasePrepare!: (value: ProductVisualReadiness) => void;
+		prepareProductCutoutMock.mockReturnValue(new Promise<ProductVisualReadiness>((resolve) => {
+			releasePrepare = resolve;
+		}));
+		const generated = {
+			...sourceInputOnly,
+			auto_cutout_status: "PENDING_REVIEW" as const,
+			auto_cutout_preview_url: "https://example.test/generated.png",
+			auto_input_preview_url: null,
+		};
+		fetchProductVisualReadinessMock.mockResolvedValue(generated);
+
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={sourceInputOnly} />);
+		fireEvent.click(screen.getByTestId("generate-auto-cutout"));
+
+		expect(screen.getByTestId("auto-cutout-loading")).toHaveTextContent("GENERATING CUTOUT");
+		expect(screen.getByTestId("auto-cutout-control-loading")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "UPLOAD MANUAL CUTOUT" })).toBeEnabled();
+
+		releasePrepare(sourceInputOnly);
+		await waitFor(() => expect(screen.getByAltText("Auto Cutout cutout")).toHaveAttribute("src", expect.stringContaining("generated.png")));
+		expect(fetchProductVisualReadinessMock).toHaveBeenCalledWith("product-1");
+		expect(screen.getByTestId("card-badge-auto")).toHaveTextContent("PENDING REVIEW");
+		expect(screen.getByTestId("generate-auto-cutout")).toHaveTextContent("REGENERATE AUTO CUTOUT");
+		expect(screen.getByAltText("Auto Cutout cutout").getAttribute("src")).toContain("v=");
+	});
+
+	it("keeps the Original input and exposes a retryable card error when Auto fails", async () => {
+		prepareProductCutoutMock.mockRejectedValue(new Error("cutout generation failed"));
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={sourceInputOnly} />);
+
+		fireEvent.click(screen.getByTestId("generate-auto-cutout"));
+		await waitFor(() => expect(screen.getByTestId("auto-cutout-message")).toHaveTextContent("Cutout generation failed"));
+		expect(screen.getByAltText("Auto Cutout source input")).toHaveAttribute("src", expect.stringContaining("original.png"));
+		expect(screen.getByTestId("generate-auto-cutout")).toBeEnabled();
+	});
+
+	it("surfaces a backend preparation failure inside the Auto card", async () => {
+		const failed = {
+			...sourceInputOnly,
+			cutout_status: "PREPARATION_FAILED" as const,
+			failure_code: "CUTOUT_PREPARATION_FAILED",
+		};
+		prepareProductCutoutMock.mockResolvedValue(failed);
+		fetchProductVisualReadinessMock.mockResolvedValue(failed);
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={sourceInputOnly} />);
+
+		fireEvent.click(screen.getByTestId("generate-auto-cutout"));
+		await waitFor(() => expect(screen.getByTestId("auto-cutout-message")).toHaveTextContent("Cutout generation failed"));
+		expect(screen.getByAltText("Auto Cutout source input")).toHaveAttribute("src", expect.stringContaining("original.png"));
+		expect(screen.getByTestId("generate-auto-cutout")).toBeEnabled();
+	});
+
+	it("shows the Manual loader, re-reads the result, and keeps Auto enabled", async () => {
+		let releaseUpload!: (value: ProductVisualReadiness) => void;
+		uploadManualProductCutoutMock.mockReturnValue(new Promise<ProductVisualReadiness>((resolve) => {
+			releaseUpload = resolve;
+		}));
+		const manualPending: ProductVisualReadiness = {
+			...sourceInputOnly,
+			manual_cutout_status: "PENDING_REVIEW",
+			manual_cutout_preview_url: "https://example.test/manual-new.png",
+		};
+		fetchProductVisualReadinessMock.mockResolvedValue(manualPending);
+
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={sourceInputOnly} />);
+		const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+		fireEvent.change(input, {
+			target: { files: [new File(["manual"], "manual.png", { type: "image/png" })] },
+		});
+
+		expect(screen.getByTestId("manual-cutout-loading")).toHaveTextContent("UPLOADING CUTOUT");
+		expect(screen.getByTestId("generate-auto-cutout")).toBeEnabled();
+		releaseUpload(sourceInputOnly);
+
+		await waitFor(() => expect(screen.getByAltText("Manual / Canva cutout")).toHaveAttribute("src", expect.stringContaining("manual-new.png")));
+		expect(fetchProductVisualReadinessMock).toHaveBeenCalledWith("product-1");
+		expect(screen.getByTestId("manual-upload-message")).toHaveTextContent("PENDING REVIEW");
+	});
+
+	it("keeps the existing Manual preview when a replacement fails", async () => {
+		uploadManualProductCutoutMock.mockRejectedValue(new Error("Transparent PNG required."));
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={approvedManual} />);
+		const before = screen.getByAltText("Manual / Canva cutout").getAttribute("src");
+		const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+		fireEvent.change(input, {
+			target: { files: [new File(["replacement"], "replacement.png", { type: "image/png" })] },
+		});
+
+		await waitFor(() => expect(screen.getByTestId("manual-upload-message")).toHaveTextContent(/PNG has no transparent background/i));
+		expect(screen.getByAltText("Manual / Canva cutout").getAttribute("src")).toBe(before);
+		expect(fetchProductVisualReadinessMock).not.toHaveBeenCalled();
+	});
+
+	it("marks a radio/card choice dirty without changing the backend current visual", () => {
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={trustedSourcePendingAuto} />);
+
+		fireEvent.click(screen.getByTestId("visual-selection-auto"));
+		expect(screen.getByTestId("unsaved-visual-changes")).toBeInTheDocument();
+		expect(screen.getByTestId("current-system-visual")).toHaveTextContent("Original Source");
+		expect(screen.getByTestId("save-visual-changes")).toBeEnabled();
+	});
+
+	it("performs a real pending Auto save and verifies the authoritative result", async () => {
+		saveProductVisualSetupMock.mockResolvedValue(approvedAuto);
+		fetchProductVisualReadinessMock.mockResolvedValue(approvedAuto);
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={trustedSourcePendingAuto} showApprovalForm />);
+		fireEvent.click(screen.getByTestId("visual-selection-auto"));
+		fireEvent.change(screen.getByPlaceholderText("Reviewer identity"), { target: { value: "reviewer-1" } });
+		fireEvent.change(screen.getByPlaceholderText("Review note"), { target: { value: "Identity and geometry checked." } });
+		for (const name of ["Identity", "Label / logo", "Geometry / scale", "Product only — no unrelated props, food, decoration, or secondary objects remain"]) {
+			fireEvent.click(screen.getByRole("checkbox", { name }));
+		}
+
+		fireEvent.click(screen.getByTestId("save-visual-changes"));
+		await waitFor(() => expect(saveProductVisualSetupMock).toHaveBeenCalledWith("product-1", expect.objectContaining({
+			selected_visual: "AUTO",
+			reviewed_by: "reviewer-1",
+		})));
+		expect(fetchProductVisualReadinessMock).toHaveBeenCalledWith("product-1");
+		expect(await screen.findByTestId("save-visual-message")).toHaveTextContent("SAVED");
+		expect(screen.getByTestId("current-system-visual")).toHaveTextContent("Auto Cutout");
+		expect(screen.queryByTestId("unsaved-visual-changes")).not.toBeInTheDocument();
+	});
+
+	it("keeps a dirty local selection and current Original state when Save fails", async () => {
+		saveProductVisualSetupMock.mockRejectedValue(new Error("review authority unavailable"));
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={trustedSourcePendingAuto} showApprovalForm />);
+		fireEvent.click(screen.getByTestId("visual-selection-auto"));
+		fireEvent.change(screen.getByPlaceholderText("Reviewer identity"), { target: { value: "reviewer-1" } });
+		fireEvent.change(screen.getByPlaceholderText("Review note"), { target: { value: "Identity and geometry checked." } });
+		for (const name of ["Identity", "Label / logo", "Geometry / scale", "Product only — no unrelated props, food, decoration, or secondary objects remain"]) {
+			fireEvent.click(screen.getByRole("checkbox", { name }));
+		}
+
+		fireEvent.click(screen.getByTestId("save-visual-changes"));
+		await waitFor(() => expect(screen.getByTestId("save-visual-message")).toHaveTextContent("review authority unavailable"));
+		expect(screen.getByTestId("unsaved-visual-changes")).toBeInTheDocument();
+		expect(screen.getByTestId("current-system-visual")).toHaveTextContent("Original Source");
+		expect(screen.queryByTestId("official-ribbon-auto")).not.toBeInTheDocument();
+		expect(fetchProductVisualReadinessMock).not.toHaveBeenCalled();
 	});
 });

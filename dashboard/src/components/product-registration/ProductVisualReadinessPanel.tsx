@@ -7,9 +7,9 @@ import {
 	type ReactNode,
 } from "react";
 import {
-	approveProductTruthLock,
 	productTruthCutoutPreviewUrl,
 } from "../../api/productTruthLock";
+import { Loader2 } from "lucide-react";
 import {
 	fetchProductVisualReadiness,
 	prepareProductCutout,
@@ -23,6 +23,7 @@ import {
 	completeCanvaCutout,
 	setProductCutoutTarget,
 	clearProductCutoutTarget,
+	saveProductVisualSetup,
 	type CanvaCapabilityStatus,
 	type CanvaMethod,
 } from "../../api/productVisualOnboarding";
@@ -78,12 +79,12 @@ type BusyAction =
 	| "canva-preflight"
 	| "canva-stage"
 	| "canva-upload"
-	| "approve"
 	| "reject"
 	| "fallback"
+	| "save"
 	| "target-save"
 	| "target-clear";
-type BusyLane = "refresh" | "auto" | "manual" | "canva" | "review" | "fallback" | "target";
+type BusyLane = "refresh" | "auto" | "manual" | "canva" | "review" | "fallback" | "save" | "target";
 const BUSY_LANE: Record<BusyAction, BusyLane> = {
 	refresh: "refresh",
 	prepare: "auto",
@@ -93,9 +94,9 @@ const BUSY_LANE: Record<BusyAction, BusyLane> = {
 	"canva-preflight": "canva",
 	"canva-stage": "canva",
 	"canva-upload": "canva",
-	approve: "review",
 	reject: "review",
 	fallback: "fallback",
+	save: "save",
 	"target-save": "target",
 	"target-clear": "target",
 };
@@ -106,6 +107,14 @@ function candidateExists(status?: string | null): boolean {
 
 type CardKey = "original" | "auto" | "manual";
 
+function cardForReadiness(readiness?: ProductVisualReadiness): CardKey | null {
+	const card = readiness?.current_system_visual?.card;
+	if (card === "ORIGINAL_SOURCE") return "original";
+	if (card === "AUTO_CUTOUT") return "auto";
+	if (card === "MANUAL_CUTOUT") return "manual";
+	return null;
+}
+
 // Derive the CURRENT / OFFICIAL / PENDING markers for the three cards purely
 // from backend authority. Exactly one card carries "CURRENT SYSTEM REFERENCE"
 // whenever an active source exists.
@@ -113,8 +122,25 @@ function computeCardBadges(readiness: ProductVisualReadiness): Record<CardKey, s
 	const active = readiness.active_visual_source;
 	const autoHas = candidateExists(readiness.auto_cutout_status);
 	const manualHas = candidateExists(readiness.manual_cutout_status);
-	const pending = (has: boolean, fallback: string): string[] =>
-		has ? ["PENDING REVIEW", "NOT YET USED BY SYSTEM"] : [fallback];
+	const autoHasInput = Boolean(readiness.auto_input_preview_url || readiness.original_display_url || readiness.original_preview_url);
+	const candidateBadges = (status: string | null | undefined, fallback: string): string[] => {
+		switch (String(status || "").toUpperCase()) {
+			case "PENDING_REVIEW":
+				return ["PENDING REVIEW", "NOT YET USED BY SYSTEM"];
+			case "REJECTED":
+				return ["REJECTED"];
+			case "SUPERSEDED":
+				return ["SUPERSEDED"];
+			case "PREPARING":
+				return ["PREPARING"];
+			case "PREPARATION_FAILED":
+				return ["PREPARATION FAILED"];
+			case "APPROVED":
+				return ["APPROVED CANDIDATE", "NOT SELECTED"];
+			default:
+				return [fallback];
+		}
+	};
 
 	if (active === "APPROVED_AUTO_CANONICAL_CUTOUT") {
 		return {
@@ -133,15 +159,15 @@ function computeCardBadges(readiness: ProductVisualReadiness): Record<CardKey, s
 	if (active === "SAME_PRODUCT_TRUSTED_SOURCE") {
 		return {
 			original: ["CURRENT SYSTEM REFERENCE", "ORIGINAL FALLBACK"],
-			auto: pending(autoHas, "NOT SELECTED"),
-			manual: pending(manualHas, "NOT AVAILABLE / NOT SELECTED"),
+			auto: autoHas ? candidateBadges(readiness.auto_cutout_status, "NOT SELECTED") : autoHasInput ? ["SOURCE INPUT", "NOT GENERATED YET"] : ["NOT SELECTED"],
+			manual: manualHas ? candidateBadges(readiness.manual_cutout_status, "NOT AVAILABLE / NOT SELECTED") : ["NOT AVAILABLE / NOT SELECTED"],
 		};
 	}
 	// BLOCKED / nothing selected yet — no card is the current reference.
 	return {
 		original: ["NOT SELECTED"],
-		auto: pending(autoHas, "NOT SELECTED"),
-		manual: pending(manualHas, "NOT SELECTED"),
+		auto: autoHas ? candidateBadges(readiness.auto_cutout_status, "NOT SELECTED") : autoHasInput ? ["SOURCE INPUT", "NOT GENERATED YET"] : ["NOT SELECTED"],
+		manual: manualHas ? candidateBadges(readiness.manual_cutout_status, "NOT SELECTED") : ["NOT SELECTED"],
 	};
 }
 
@@ -183,6 +209,15 @@ function ReasonLine({ children, testid, tone = "muted" }: { children: ReactNode;
 		<p className={`mt-1 text-[9px] ${color}`} data-testid={testid}>
 			{children}
 		</p>
+	);
+}
+
+function LaneLoader({ label: loaderLabel, testid }: { label: string; testid: string }) {
+	return (
+		<div className="mt-2 flex items-center gap-1.5 rounded-md bg-sky-500/10 px-2 py-1.5 text-[9px] font-bold uppercase tracking-widest text-sky-200" data-testid={testid}>
+			<Loader2 size={13} className="animate-spin" aria-hidden="true" />
+			{loaderLabel}
+		</div>
 	);
 }
 
@@ -395,6 +430,9 @@ export default function ProductVisualReadinessPanel({
 	const canvaFileInputRef = useRef<HTMLInputElement>(null);
 	const approveRef = useRef<HTMLDivElement>(null);
 	const [manualMsg, setManualMsg] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
+	const [autoMsg, setAutoMsg] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
+	const [saveMsg, setSaveMsg] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
+	const [selectedVisual, setSelectedVisual] = useState<CardKey | null>(() => cardForReadiness(initialReadiness));
 	const [flashApprove, setFlashApprove] = useState(false);
 	const [canvaWorkflow, setCanvaWorkflow] = useState<CanvaCutoutWorkflow | undefined>(initialReadiness?.canva_cutout_workflow);
 	const [canvaMethod, setCanvaMethod] = useState<CanvaMethod>("MAGIC_GRAB");
@@ -419,6 +457,7 @@ export default function ProductVisualReadinessPanel({
 
 	useEffect(() => {
 		setReadiness(initialReadiness);
+		setSelectedVisual(cardForReadiness(initialReadiness));
 		setCanvaWorkflow(initialReadiness?.canva_cutout_workflow);
 		if (initialReadiness?.canva_cutout_workflow) {
 			const workflow = initialReadiness.canva_cutout_workflow;
@@ -435,7 +474,10 @@ export default function ProductVisualReadinessPanel({
 		let cancelled = false;
 		void fetchProductVisualReadiness(productId)
 			.then((next) => {
-				if (!cancelled) setReadiness(next);
+				if (!cancelled) {
+					setReadiness(next);
+					setSelectedVisual(cardForReadiness(next));
+				}
 			})
 			.catch((err: unknown) => {
 				if (!cancelled) setError(err instanceof Error ? err.message : "Visual readiness unavailable");
@@ -448,13 +490,33 @@ export default function ProductVisualReadinessPanel({
 	async function refresh(action: "prepare" | "rebuild") {
 		setBusy(action);
 		setError(null);
+		setAutoMsg(null);
 		try {
-			const next = action === "prepare"
-				? await prepareProductCutout(productId)
-				: await rebuildProductCutout(productId);
+			await (action === "prepare"
+				? prepareProductCutout(productId)
+				: rebuildProductCutout(productId));
+			// The write response is only a receipt. Re-read the authoritative
+			// readiness so the candidate status and stable preview URL cannot lag
+			// behind the persisted Product Truth row.
+			const next = await fetchProductVisualReadiness(productId);
 			commitReadiness(next);
+			const failureCode = String(next.failure_code || next.cutout_status || "").toUpperCase();
+			if (failureCode === "PREPARATION_FAILED" || failureCode === "BLOCKED" || next.failure_code) {
+				const friendly = /SOURCE|REFERENCE|MEDIA/.test(failureCode)
+					? "Source image could not be prepared."
+					: /TARGET|AREA|ROI/.test(failureCode)
+						? "Product area selection may be required."
+						: "Cutout generation failed. Retry the Auto Cutout action.";
+				setAutoMsg({ tone: "bad", text: friendly });
+			}
 		} catch (err: unknown) {
-			setError(err instanceof Error ? err.message : "Visual preparation failed");
+			const raw = err instanceof Error ? err.message : "Visual preparation failed";
+			const friendly = /source|reference|media/i.test(raw)
+				? "Source image could not be prepared."
+				: /target|area|roi/i.test(raw)
+					? "Product area selection may be required."
+					: "Cutout generation failed. Retry the Auto Cutout action.";
+			setAutoMsg({ tone: "bad", text: friendly });
 		} finally {
 			setBusy(null);
 		}
@@ -467,31 +529,6 @@ export default function ProductVisualReadinessPanel({
 			commitReadiness(await fetchProductVisualReadiness(productId));
 		} catch (err: unknown) {
 			setError(err instanceof Error ? err.message : "Visual preview refresh failed");
-		} finally {
-			setBusy(null);
-		}
-	}
-
-	async function approve() {
-		if (!reviewedBy.trim() || !reviewNote.trim() || !confirmIdentity || !confirmLabelLogo || !confirmGeometryScale || !confirmProductIsolation) {
-			setError("Explicit reviewer identity, note, and all four confirmations are required.");
-			return;
-		}
-		setBusy("approve");
-		setError(null);
-		try {
-			await approveProductTruthLock(productId, {
-				reviewed_by: reviewedBy.trim(),
-				review_note: reviewNote.trim(),
-				confirm_identity: confirmIdentity,
-				confirm_label_logo: confirmLabelLogo,
-				confirm_geometry_scale: confirmGeometryScale,
-				confirm_product_isolation: confirmProductIsolation,
-			});
-			const next = await fetchProductVisualReadiness(productId);
-			commitReadiness(next);
-		} catch (err: unknown) {
-			setError(err instanceof Error ? err.message : "Approval failed");
 		} finally {
 			setBusy(null);
 		}
@@ -528,8 +565,8 @@ export default function ProductVisualReadinessPanel({
 			setManualMsg({
 				tone: "ok",
 				text: wasOfficial
-					? "Uploaded ✓ — this replaced the previously-approved cutout. It is now a candidate; click “Set as Official” below to use it."
-					: "Uploaded ✓ — your cutout is now a candidate. Click “Set as Official” below to make it the system reference.",
+					? "Uploaded ✓ — the replacement is now PENDING REVIEW. Choose Manual and press SAVE CHANGES to use it."
+					: "Uploaded ✓ — the candidate is now PENDING REVIEW. Choose Manual and press SAVE CHANGES to use it.",
 			});
 		} catch (err: unknown) {
 			const raw = err instanceof Error ? err.message : "Manual cutout upload failed";
@@ -543,6 +580,7 @@ export default function ProductVisualReadinessPanel({
 	}
 
 	function focusApproval() {
+		if (activeCandidateKey) setSelectedVisual(activeCandidateKey);
 		if (approveRef.current) {
 			approveRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
 			setFlashApprove(true);
@@ -702,6 +740,61 @@ export default function ProductVisualReadinessPanel({
 		}
 	}
 
+	function selectVisual(key: CardKey) {
+		setSelectedVisual(key);
+		setSaveMsg(null);
+		setError(null);
+	}
+
+	async function saveVisualSelection() {
+		if (!readiness || !selectedVisual || selectedVisual === cardForReadiness(readiness) || busy) return;
+		const isPendingCandidate =
+			readiness.can_review_cutout
+			&& ((selectedVisual === "auto" && readiness.auto_cutout_status === "PENDING_REVIEW")
+				|| (selectedVisual === "manual" && readiness.manual_cutout_status === "PENDING_REVIEW"));
+		let operator = reviewedBy.trim();
+		let note = reviewNote.trim();
+		if (selectedVisual === "original") {
+			operator = operator || window.prompt("Operator identity")?.trim() || "";
+			note = note || window.prompt("Why choose Original Source?")?.trim() || "";
+		}
+		if (!operator || !note) {
+			const message = isPendingCandidate
+				? "Reviewer identity and review note are required before saving a pending candidate."
+				: "Operator identity and a reason are required before saving this visual.";
+			setSaveMsg({ tone: "bad", text: message });
+			return;
+		}
+		if (isPendingCandidate && (!confirmIdentity || !confirmLabelLogo || !confirmGeometryScale || !confirmProductIsolation)) {
+			setSaveMsg({ tone: "bad", text: "Confirm all four review checks before saving the pending candidate." });
+			return;
+		}
+		setBusy("save");
+		setError(null);
+		setSaveMsg(null);
+		try {
+			await saveProductVisualSetup(productId, {
+				selected_visual: selectedVisual === "original" ? "ORIGINAL" : selectedVisual === "auto" ? "AUTO" : "MANUAL",
+				reviewed_by: operator,
+				review_note: note,
+				confirm_identity: confirmIdentity,
+				confirm_label_logo: confirmLabelLogo,
+				confirm_geometry_scale: confirmGeometryScale,
+				confirm_product_isolation: confirmProductIsolation,
+			});
+			const next = await fetchProductVisualReadiness(productId);
+			commitReadiness(next);
+			if (cardForReadiness(next) !== selectedVisual) {
+				throw new Error("The server did not confirm the selected visual. Refresh and try again.");
+			}
+			setSaveMsg({ tone: "ok", text: "SAVED" });
+		} catch (err: unknown) {
+			setSaveMsg({ tone: "bad", text: err instanceof Error ? err.message : "Save failed. Your selection is still unsaved." });
+		} finally {
+			setBusy(null);
+		}
+	}
+
 	if (!readiness) {
 		return (
 			<div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3 text-[11px] text-slate-500">
@@ -722,14 +815,18 @@ export default function ProductVisualReadinessPanel({
 	const withBust = (u: string | null | undefined): string | null | undefined =>
 		u ? `${u}${u.includes("?") ? "&" : "?"}v=${encodeURIComponent(previewVersion)}` : u;
 	const isOfficialCard = (k: CardKey): boolean => cardBadges[k].some((b) => CURRENT_MARKERS.has(b));
+	const authoritativeVisual = cardForReadiness(readiness);
+	const selectionDirty = selectedVisual !== authoritativeVisual;
 	// The one-row candidate SSOT: at most one of auto/manual is the live candidate.
 	const activeCandidateKey: CardKey | null =
 		readiness.manual_cutout_status === "PENDING_REVIEW"
 			? "manual"
 			: readiness.auto_cutout_status === "PENDING_REVIEW"
 				? "auto"
-				: null;
+			: null;
 	const originalDisplayUrl = readiness.original_display_url || readiness.original_preview_url || null;
+	const autoHasCandidate = candidateExists(readiness.auto_cutout_status);
+	const autoInputPreviewUrl = readiness.auto_input_preview_url || (!autoHasCandidate ? originalDisplayUrl : null);
 	const roiImageUrl = originalDisplayUrl || productSourceUrl || null;
 	const originalDisplayOnly = readiness.original_display_trust_status === "DISPLAY_ONLY";
 	const showProductArea = Boolean(roiImageUrl) && (readiness.target_selection_required || readiness.target_selection_available);
@@ -738,7 +835,8 @@ export default function ProductVisualReadinessPanel({
 	const canvaPreflightBlocked = Object.values(canvaWorkflow?.preflight ?? {}).some((value) => value === "UNAVAILABLE" || value === "USER_ACTION_REQUIRED");
 	const canvaNeedsUserAction = !canvaController || canvaPreflightBlocked;
 
-	const autoDisabled = !(readiness.can_prepare_cutout || readiness.can_rebuild_cutout);
+	const autoAction = autoHasCandidate ? "rebuild" : "prepare";
+	const autoDisabled = autoHasCandidate ? !readiness.can_rebuild_cutout : !readiness.can_prepare_cutout;
 	const candidateWriteBusy = busyLane === "auto" || busyLane === "manual" || busyLane === "canva";
 	const allApprovalConfirms = confirmIdentity && confirmLabelLogo && confirmGeometryScale && confirmProductIsolation;
 
@@ -771,19 +869,39 @@ export default function ProductVisualReadinessPanel({
 					? "Original source is the current system reference."
 					: csv?.status === "BLOCKED"
 						? "No trusted product source yet."
-						: "No cutout selected yet.";
-
-	const approveReason =
-		busyLane === "review"
-			? "Processing…"
-			: candidateWriteBusy
-				? "Temporarily unavailable while candidate write is completing."
-				: !allApprovalConfirms
-					? "Confirm all four checks to approve as the official cutout."
-					: "Ready to approve as the official cutout.";
+					: "No cutout selected yet.";
+	const readinessOverview = compact ? (
+		<div className="mt-3 grid grid-cols-2 gap-2">
+			<Status name="Reference" value={readiness.canonical_media_status} />
+			<Status name="Cutout" value={readiness.cutout_status} />
+		</div>
+	) : (
+		<details className="mt-4 text-[10px] text-slate-500" open data-testid="visual-readiness-advanced">
+			<summary className="cursor-pointer font-bold uppercase tracking-widest">Advanced Readiness</summary>
+			<div className="mt-2 grid gap-3">
+				<div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+					<Status name="Reference" value={readiness.canonical_media_status} />
+					<Status name="Cutout" value={readiness.cutout_status} />
+					<Status name="Visual Ready" value={readiness.visual_grounding_status} />
+					<Status name="Exact Commerce" value={readiness.exact_commerce_status} />
+				</div>
+				<div className="grid gap-2 md:grid-cols-3">
+					<Status name="Auto Candidate" value={readiness.auto_cutout_status} />
+					<Status name="Manual Candidate" value={readiness.manual_cutout_status} />
+					<Status name="Active Source" value={readiness.active_visual_source} />
+				</div>
+				<div className="grid gap-2 text-[10px] text-slate-400 md:grid-cols-2">
+					<div>Source: <span className="text-slate-200">{label(readiness.visual_grounding_source)}</span></div>
+					<div>Reference Pack: <span className="text-slate-200">{label(readiness.reference_pack_status)}</span></div>
+					<div>Review: <span className="text-slate-200">{label(readiness.cutout_review_status)}</span></div>
+					<div>Attempts: <span className="text-slate-200">{readiness.attempt_count ?? 0}</span></div>
+				</div>
+			</div>
+		</details>
+	);
 
 	return (
-		<div className={`min-w-0 max-w-full overflow-hidden rounded-xl border border-slate-800 bg-slate-900/40 ${compact ? "p-2" : "p-5"}`} data-testid="product-visual-readiness">
+		<div className={`flex min-w-0 max-w-full flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-900/40 ${compact ? "p-2" : "p-5"}`} data-testid="product-visual-readiness">
 			<div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
 				<div className="min-w-0">
 					<h3 className={`${compact ? "text-[10px]" : "text-sm"} font-bold uppercase tracking-widest text-white`}>
@@ -813,13 +931,6 @@ export default function ProductVisualReadinessPanel({
 				</div>
 			</div>
 
-			<div className={`mt-3 grid gap-2 ${compact ? "grid-cols-2" : "grid-cols-2 md:grid-cols-4"}`}>
-				<Status name="Reference" value={readiness.canonical_media_status} />
-				<Status name="Cutout" value={readiness.cutout_status} />
-				<Status name="Visual Ready" value={readiness.visual_grounding_status} />
-				<Status name="Exact Commerce" value={readiness.exact_commerce_status} />
-			</div>
-
 			{!compact && (
 				<div className="mt-3 rounded-lg border border-slate-800 bg-slate-900/60 p-3" data-testid="current-system-visual">
 					<div className="text-[8px] font-bold uppercase tracking-widest text-slate-500">Current System Visual</div>
@@ -829,50 +940,50 @@ export default function ProductVisualReadinessPanel({
 			)}
 
 			{!compact && (
-				<div className="mt-3 grid gap-2 md:grid-cols-3">
-					<Status name="Auto Candidate" value={readiness.auto_cutout_status} />
-					<Status name="Manual Candidate" value={readiness.manual_cutout_status} />
-					<Status name="Active Source" value={readiness.active_visual_source} />
-				</div>
-			)}
-
-			{!compact && (
-				<div className="mt-4 grid gap-2 text-[10px] text-slate-400 md:grid-cols-2">
-					<div>Source: <span className="text-slate-200">{label(readiness.visual_grounding_source)}</span></div>
-					<div>Reference Pack: <span className="text-slate-200">{label(readiness.reference_pack_status)}</span></div>
-					<div>Review: <span className="text-slate-200">{label(readiness.cutout_review_status)}</span></div>
-					<div>Attempts: <span className="text-slate-200">{readiness.attempt_count ?? 0}</span></div>
-				</div>
-			)}
-
-			{!compact && (
 				<div className="mt-4 grid gap-3 md:grid-cols-3" data-testid="product-cutout-comparison">
+					<div className="md:col-span-3 flex flex-wrap items-center justify-between gap-2">
+						<div className="text-[10px] font-bold uppercase tracking-widest text-slate-200">CHOOSE VISUAL</div>
+						{selectionDirty && <span className="rounded bg-amber-500/15 px-2 py-1 text-[9px] font-bold uppercase tracking-widest text-amber-200" data-testid="unsaved-visual-changes">UNSAVED CHANGES</span>}
+					</div>
 					{([
 						["Original Source", originalDisplayUrl, "original", "card-badge-original"],
-						["Auto Cutout", readiness.auto_cutout_preview_url, "auto", "card-badge-auto"],
+						["Auto Cutout", readiness.auto_cutout_preview_url || autoInputPreviewUrl, "auto", "card-badge-auto"],
 						["Manual / Canva", readiness.manual_cutout_preview_url, "manual", "card-badge-manual"],
 					] as const).map(([name, src, key, testid]) => {
 						const official = isOfficialCard(key);
-						const canMakeOfficial = key === "original"
-							? readiness.can_use_original_fallback
-							: key === activeCandidateKey && readiness.can_approve_cutout;
-						const makeOfficialTitle = key === "original"
-							? (readiness.can_use_original_fallback ? undefined : trustedSourceReason)
-							: key === activeCandidateKey
-								? "Confirm the four checks to approve this as the official cutout."
-								: key === "manual"
-									? "Upload a transparent PNG first, then set it official."
-									: "Prepare an auto cutout first, then set it official.";
+						const isAutoInput = key === "auto" && !autoHasCandidate && Boolean(src);
+						// The Original image shown in the Auto card before generation is
+						// input evidence, not an Auto candidate and therefore cannot be
+						// selected or saved as Auto.
+						const candidateStatus = key === "auto" ? readiness.auto_cutout_status : readiness.manual_cutout_status;
+						const canSelect = Boolean(src) && (
+							key === "original"
+								|| candidateStatus === "PENDING_REVIEW"
+								|| (official && candidateStatus === "APPROVED")
+						);
+						const selected = selectedVisual === key;
 						return (
-							<div key={name} className={`flex flex-col rounded-lg border p-2 ${official ? "border-emerald-500/60 ring-1 ring-emerald-500/40" : "border-slate-800"}`}>
+							<div key={name} className={`flex flex-col rounded-lg border p-2 ${official ? "border-emerald-500/60 ring-1 ring-emerald-500/40" : selected ? "border-sky-500/60 ring-1 ring-sky-500/30" : "border-slate-800"}`}>
 								<div className="mb-1 flex items-center justify-between gap-1">
-									<div className="text-[9px] font-bold uppercase tracking-widest text-slate-500">{name}</div>
+									<label className="flex min-w-0 items-center gap-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-300">
+										<input
+											type="radio"
+											name="visual-selection"
+											value={key}
+											checked={selected}
+											disabled={!canSelect}
+											onChange={() => selectVisual(key)}
+											data-testid={`visual-selection-${key}`}
+										/>
+										<span>{name}</span>
+									</label>
 									{official && <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-widest text-emerald-300" data-testid={`official-ribbon-${key}`}>✓ Official</span>}
 								</div>
 								<CardBadges badges={cardBadges[key]} testid={testid} />
 								<div className="mt-2 flex h-36 items-center justify-center rounded bg-white" style={{ backgroundImage: "linear-gradient(45deg,#d1d5db 25%,transparent 25%),linear-gradient(-45deg,#d1d5db 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#d1d5db 75%),linear-gradient(-45deg,transparent 75%,#d1d5db 75%)", backgroundSize: "16px 16px", backgroundPosition: "0 0,0 8px,8px -8px,-8px 0" }}>
-									{src ? <img src={withBust(src) ?? undefined} alt={`${name} cutout`} className="max-h-full max-w-full object-contain" /> : <span className="text-[10px] text-slate-500">Not available</span>}
+									{src ? <img src={withBust(src) ?? undefined} alt={`${name}${isAutoInput ? " source input" : " cutout"}`} className="max-h-full max-w-full object-contain" /> : <span className="text-[10px] text-slate-500">Not available</span>}
 								</div>
+								{isAutoInput && <div className="mt-1 text-center text-[8px] font-semibold uppercase tracking-widest text-sky-300/80" data-testid="auto-input-state">SOURCE INPUT · NOT GENERATED YET</div>}
 								{key === "original" && originalDisplayOnly && src && (
 									<div className="mt-1 text-center text-[8px] font-semibold uppercase tracking-widest text-amber-300/80" data-testid="original-display-only">
 										Display source · not yet prepared as trusted source
@@ -882,9 +993,11 @@ export default function ProductVisualReadinessPanel({
 									{official ? (
 										<div className="rounded-lg bg-emerald-500/10 px-2 py-1.5 text-center text-[9px] font-bold uppercase tracking-widest text-emerald-300">Current system reference</div>
 									) : (
-										<button type="button" onClick={key === "original" ? () => void fallback() : focusApproval} disabled={!canMakeOfficial} title={makeOfficialTitle} data-testid={`set-official-${key}`} className="w-full rounded-lg bg-emerald-600/80 px-2 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40">Set as Official</button>
+										<button type="button" onClick={() => selectVisual(key)} disabled={!canSelect} title={!canSelect ? "Create this visual candidate first." : "Select this visual, then press Save Changes."} data-testid={`set-official-${key}`} className="w-full rounded-lg bg-slate-700 px-2 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-200 disabled:opacity-40">Choose for Save</button>
 									)}
 								</div>
+								{key === "auto" && busyLane === "auto" && <LaneLoader label="GENERATING CUTOUT…" testid="auto-cutout-loading" />}
+								{key === "auto" && autoMsg && <p data-testid="auto-cutout-message" className={`mt-2 rounded-md px-2 py-1.5 text-[9px] font-semibold leading-relaxed ${autoMsg.tone === "ok" ? "bg-emerald-500/10 text-emerald-300" : "bg-red-500/10 text-red-300"}`}>{autoMsg.text}</p>}
 							</div>
 						);
 					})}
@@ -926,15 +1039,14 @@ export default function ProductVisualReadinessPanel({
 
 					<section className="rounded-lg border border-slate-800 p-3" aria-label="Auto cutout controls">
 						<h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-200">Auto Cutout</h4>
-						<p className="mt-2 text-[10px] text-slate-500">{readiness.can_prepare_cutout ? "Local deterministic preparation is ready." : trustedSourceReason}</p>
+						<p className="mt-2 text-[10px] text-slate-500">{autoDisabled ? trustedSourceReason : autoHasCandidate ? "A review candidate exists. Generate a fresh local candidate when needed." : "Original Source is the input. Generate a review candidate when ready."}</p>
 						<div className="mt-3 flex flex-wrap gap-2">
-							<button type="button" onClick={() => void refresh("prepare")} disabled={busyLane === "auto" || !readiness.can_prepare_cutout} title={!readiness.can_prepare_cutout ? trustedSourceReason : undefined} className="rounded-lg bg-indigo-600/80 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40">
-								{busy === "prepare" ? "Preparing…" : "Prepare Auto Cutout"}
+							<button type="button" onClick={() => void refresh(autoAction)} disabled={busyLane === "auto" || autoDisabled} title={autoDisabled ? trustedSourceReason : undefined} className="rounded-lg bg-indigo-600/80 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40" data-testid="generate-auto-cutout">
+								{busyLane === "auto" ? (autoHasCandidate ? "REGENERATING AUTO CUTOUT…" : "GENERATING CUTOUT…") : autoHasCandidate ? "REGENERATE AUTO CUTOUT" : "GENERATE AUTO CUTOUT"}
 							</button>
-							{readiness.cutout_status !== "NOT_PREPARED" && (
-								<button type="button" onClick={() => void refresh("rebuild")} disabled={busyLane === "auto" || !readiness.can_rebuild_cutout} className="rounded-lg bg-slate-700 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-200 disabled:opacity-40">{busy === "rebuild" ? "Rebuilding…" : "Rebuild Auto Cutout"}</button>
-							)}
 						</div>
+						{busyLane === "auto" && <LaneLoader label="GENERATING CUTOUT…" testid="auto-cutout-control-loading" />}
+						{autoMsg && <p data-testid="auto-cutout-control-message" className="mt-2 text-[9px] font-semibold text-red-300">{autoMsg.text}</p>}
 						<ReasonLine testid="reason-auto" tone={autoReason.tone}>{autoReason.text}</ReasonLine>
 					</section>
 
@@ -942,10 +1054,11 @@ export default function ProductVisualReadinessPanel({
 						<h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-200">Manual / Canva Cutout</h4>
 						<input ref={fileInputRef} type="file" accept="image/png,.png" onChange={(event) => void uploadManual(event)} className="hidden" />
 						<div className="mt-3">
-							<button type="button" onClick={() => fileInputRef.current?.click()} disabled={busyLane === "manual" || !readiness.can_upload_manual_cutout} title={!readiness.can_upload_manual_cutout ? trustedSourceReason : undefined} className="rounded-lg bg-fuchsia-600/80 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40">
-								{busy === "upload" ? "Uploading…" : readiness.manual_cutout_status === "NOT_UPLOADED" ? "Upload My Cutout" : "Replace Manual Cutout"}
+							<button type="button" onClick={() => fileInputRef.current?.click()} disabled={busyLane === "manual" || !readiness.can_upload_manual_cutout} title={!readiness.can_upload_manual_cutout ? trustedSourceReason : undefined} className="rounded-lg bg-fuchsia-600/80 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40" data-testid="manual-cutout-upload">
+								{busy === "upload" ? "UPLOADING CUTOUT…" : readiness.manual_cutout_status === "NOT_UPLOADED" ? "UPLOAD MANUAL CUTOUT" : "REPLACE MANUAL CUTOUT"}
 							</button>
-							<p className="mt-2 text-[9px] leading-relaxed text-slate-400">Upload a <span className="font-bold text-slate-300">PNG with a transparent background</span> (the product already cut out, e.g. exported from Canva or Photoshop). A normal photo will be rejected. It uploads immediately — then use <span className="font-bold text-slate-300">Set as Official</span> on the Manual card above.</p>
+							{busyLane === "manual" && <LaneLoader label="UPLOADING CUTOUT…" testid="manual-cutout-loading" />}
+							<p className="mt-2 text-[9px] leading-relaxed text-slate-400">Upload a <span className="font-bold text-slate-300">PNG with a transparent background</span> (the product already cut out, e.g. exported from Canva or Photoshop). A normal photo will be rejected. It uploads immediately — then choose Manual and press <span className="font-bold text-slate-300">SAVE CHANGES</span>.</p>
 							{manualMsg && (
 								<p data-testid="manual-upload-message" className={`mt-2 rounded-md px-2 py-1.5 text-[9px] font-semibold leading-relaxed ${manualMsg.tone === "ok" ? "bg-emerald-500/10 text-emerald-300" : "bg-red-500/10 text-red-300"}`}>{manualMsg.text}</p>
 							)}
@@ -969,6 +1082,23 @@ export default function ProductVisualReadinessPanel({
 				</div>
 			)}
 
+			{!compact && (
+				<div className="mt-5 rounded-xl border border-sky-500/30 bg-sky-500/5 p-4" data-testid="visual-save-workspace">
+					<div className="flex flex-wrap items-center justify-between gap-2">
+						<div>
+							<div className="text-[10px] font-bold uppercase tracking-widest text-sky-100">SAVE VISUAL SETUP</div>
+							<div className="mt-1 text-[10px] text-slate-400">Choose a card above, then save the selection. Pending candidates require the existing review confirmations below.</div>
+						</div>
+						{selectionDirty && <span className="text-[9px] font-bold uppercase tracking-widest text-amber-200">UNSAVED CHANGES</span>}
+					</div>
+					<button type="button" onClick={() => void saveVisualSelection()} disabled={!selectionDirty || !selectedVisual || busyLane === "save" || candidateWriteBusy} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-white disabled:cursor-not-allowed disabled:opacity-40" data-testid="save-visual-changes">
+						{busyLane === "save" && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
+						{busyLane === "save" ? "SAVING CHANGES…" : "SAVE CHANGES"}
+					</button>
+					{saveMsg && <p data-testid="save-visual-message" className={`mt-2 rounded-md px-2 py-1.5 text-center text-[9px] font-semibold ${saveMsg.tone === "ok" ? "bg-emerald-500/10 text-emerald-300" : "bg-red-500/10 text-red-300"}`}>{saveMsg.text}</p>}
+				</div>
+			)}
+
 			{!compact && readiness.can_review_cutout && (
 				<div className="mt-4 text-[10px]" data-testid="reviewing-candidate">
 					<span className="font-bold uppercase tracking-widest text-amber-200">Reviewing: {reviewingCandidate}</span>
@@ -977,7 +1107,7 @@ export default function ProductVisualReadinessPanel({
 
 			<div className="mt-4 flex min-w-0 flex-wrap items-center gap-2">
 				{readiness.can_review_cutout && (
-					<button type="button" onClick={onOpenReview} className="rounded-lg bg-amber-500/20 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-amber-200">
+					<button type="button" onClick={() => focusApproval()} className="rounded-lg bg-amber-500/20 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-amber-200">
 						Review
 					</button>
 				)}
@@ -1047,15 +1177,15 @@ export default function ProductVisualReadinessPanel({
 				</div>
 			)}
 
-			{showApprovalForm && readiness.can_review_cutout && (
+			{showApprovalForm && readiness.can_review_cutout && selectedVisual === activeCandidateKey && (
 				<div ref={approveRef} className={`mt-5 border-t pt-4 transition-colors ${flashApprove ? "rounded-lg border-emerald-500/60 ring-2 ring-emerald-500/50" : "border-slate-800"}`} data-testid="product-visual-approval">
-					<div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-emerald-200" data-testid="reviewing-candidate-approval">Set as Official: {reviewingCandidate} — confirm the four checks below</div>
+					<div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-emerald-200" data-testid="reviewing-candidate-approval">Review {reviewingCandidate} before SAVE CHANGES — confirm the four checks below</div>
 					<div className="mb-3 flex flex-wrap items-start gap-4">
 						{readiness.cutout_preview_available && (
 							<img src={withBust(readiness.active_cutout_preview_url) || productTruthCutoutPreviewUrl(productId)} alt="Deterministic cutout candidate" className="h-32 w-32 rounded-lg border border-slate-700 bg-white object-contain" />
 						)}
 						<div className="flex-1 text-[10px] leading-relaxed text-amber-200">
-							This candidate is not approved. Inspect identity, label/logo, geometry, scale, product isolation, and source lineage. Approve as Official Cutout applies to the active candidate, including a Canva handoff, only after explicit human confirmation.
+							This candidate is not approved. Inspect identity, label/logo, geometry, scale, product isolation, and source lineage. SAVE CHANGES applies the existing Product Truth approval authority to the active candidate, including a Canva handoff, only after explicit human confirmation.
 						</div>
 					</div>
 					<div className="grid gap-2 md:grid-cols-2">
@@ -1068,10 +1198,7 @@ export default function ProductVisualReadinessPanel({
 						<label><input type="checkbox" checked={confirmGeometryScale} onChange={(event) => setConfirmGeometryScale(event.target.checked)} className="mr-1" /> Geometry / scale</label>
 						<label><input type="checkbox" data-testid="confirm-product-isolation" checked={confirmProductIsolation} onChange={(event) => setConfirmProductIsolation(event.target.checked)} className="mr-1" /> Product only — no unrelated props, food, decoration, or secondary objects remain</label>
 					</div>
-					<button type="button" onClick={() => void approve()} disabled={busyLane === "review" || candidateWriteBusy || !reviewedBy.trim() || !reviewNote.trim() || !allApprovalConfirms} className="mt-3 rounded-lg bg-emerald-600/80 px-3 py-2 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40">
-						{busy === "approve" ? "Approving…" : "Approve as Official Cutout"}
-					</button>
-					<ReasonLine testid="reason-approve" tone={busyLane === "review" ? "warn" : allApprovalConfirms && !candidateWriteBusy ? "ok" : "muted"}>{approveReason}</ReasonLine>
+					<ReasonLine testid="reason-approve" tone={allApprovalConfirms && !candidateWriteBusy ? "ok" : "muted"}>{allApprovalConfirms ? "Ready — press SAVE CHANGES to approve through the existing Product Truth authority." : "Confirm all four checks, then press SAVE CHANGES."}</ReasonLine>
 				</div>
 			)}
 
@@ -1089,6 +1216,8 @@ export default function ProductVisualReadinessPanel({
 					</div>
 				</details>
 			)}
+
+			{readinessOverview}
 
 			{error && <div className="mt-3 text-[10px] text-red-300">{error}</div>}
 		</div>

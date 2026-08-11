@@ -1,6 +1,7 @@
 from io import BytesIO
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from PIL import Image
@@ -47,7 +48,9 @@ def test_url_only_display_source_stays_untrusted_but_manual_lane_is_available():
     assert readiness["original_display_source"] == "PRODUCT_ROW_IMAGE_URL"
     assert readiness["original_display_trust_status"] == "DISPLAY_ONLY"
     assert readiness["canonical_media_status"] == "MISSING"
-    assert readiness["can_prepare_cutout"] is False
+    assert readiness["can_prepare_cutout"] is True
+    assert readiness["auto_input_preview_url"] == "https://example.test/product.jpg"
+    assert readiness["auto_input_source"] == "ORIGINAL_SOURCE_INPUT"
     assert readiness["can_upload_manual_cutout"] is True
     assert readiness["can_start_canva_cutout"] is False
     assert readiness["can_open_source"] is True
@@ -68,6 +71,178 @@ def test_missing_source_has_no_display_or_manual_action():
     assert readiness["original_display_trust_status"] == "UNAVAILABLE"
     assert readiness["can_upload_manual_cutout"] is False
     assert readiness["can_open_source"] is False
+
+
+@pytest.mark.asyncio
+async def test_display_only_generate_uses_the_existing_write_lane_materialization(tmp_path, monkeypatch):
+    source = tmp_path / "display-source.png"
+    Image.new("RGB", (24, 24), (40, 80, 120)).save(source)
+    product = await crud.create_product(
+        raw_product_title="Display Only Generate Product",
+        source="MANUAL",
+        image_url="https://example.test/display-source.png",
+        image_asset_status="MISSING",
+        asset_status="UNRESOLVED",
+    )
+    reference = SimpleNamespace(
+        local_path=str(source),
+        media_id=None,
+        mime_type="image/png",
+        sha256=service._sha256_bytes(source.read_bytes()),
+        width=24,
+        height=24,
+        source_type="PRODUCT_ROW_IMAGE_URL",
+        provenance="PRODUCT_DATABASE_RECORD",
+    )
+    ensured: list[str] = []
+
+    async def resolve(_product):
+        return reference
+
+    async def ensure(_product, _reference):
+        ensured.append(str(_reference.local_path))
+        return "source-media-display-only"
+
+    async def local_cutout(*_args, **_kwargs):
+        return (
+            b"generated-cutout",
+            {"x": 0.1, "y": 0.1, "w": 0.8, "h": 0.8, "anchor_x": 0.5, "anchor_y": 0.5},
+            service._sha256_bytes(b"generated-cutout"),
+            0.01,
+            "local-u2net-test",
+            "OK",
+            "OK",
+        )
+
+    monkeypatch.setattr(service, "_resolve_source", resolve)
+    monkeypatch.setattr(service, "_ensure_canonical_media", ensure)
+    monkeypatch.setattr(service, "_run_auto_cutout", local_cutout)
+    monkeypatch.setattr("agent.services.product_truth_lock_service.register_product_truth_cutout_media", AsyncMock(return_value={"media_id": "auto-media-display-only"}))
+    monkeypatch.setattr("agent.services.product_truth_lock_service.create_pending_product_truth_lock", AsyncMock(return_value={"review_status": "PENDING_REVIEW"}))
+
+    readiness = await service.prepare_product_cutout(product["id"])
+
+    assert ensured == [str(source)]
+    assert readiness["cutout_status"] == "PENDING_REVIEW"
+    assert readiness["cutout_media_id"] == "auto-media-display-only"
+    assert readiness["provider_operations"] == 0
+
+
+@pytest.mark.asyncio
+async def test_save_original_delegates_to_existing_fallback_authority(monkeypatch):
+    product = {"id": "save-original-product"}
+    readiness = {
+        "current_system_visual": {"card": "AUTO_CUTOUT"},
+        "can_use_original_fallback": True,
+        "auto_cutout_status": "APPROVED",
+        "manual_cutout_status": "NOT_UPLOADED",
+    }
+    monkeypatch.setattr(service.crud, "get_product", AsyncMock(return_value=product))
+    monkeypatch.setattr(service, "_blocked_reason", AsyncMock(return_value=None))
+    monkeypatch.setattr(service, "get_product_visual_readiness", AsyncMock(return_value=readiness))
+    calls: list[dict[str, str]] = []
+
+    async def use_fallback(product_id, *, selected_by, reason):
+        calls.append({"product_id": product_id, "selected_by": selected_by, "reason": reason})
+        return {"current_system_visual": {"card": "ORIGINAL_SOURCE"}}
+
+    monkeypatch.setattr(service, "use_original_product_fallback", use_fallback)
+    result = await service.save_product_visual_setup(
+        "save-original-product",
+        selected_visual="ORIGINAL",
+        reviewed_by="operator-1",
+        review_note="Use the verified original source.",
+    )
+
+    assert calls == [{
+        "product_id": "save-original-product",
+        "selected_by": "operator-1",
+        "reason": "Use the verified original source.",
+    }]
+    assert result["current_system_visual"]["card"] == "ORIGINAL_SOURCE"
+
+
+@pytest.mark.asyncio
+async def test_save_pending_auto_requires_existing_review_confirmations(monkeypatch):
+    product = {"id": "save-auto-product"}
+    pending = {
+        "current_system_visual": {"card": "ORIGINAL_SOURCE"},
+        "can_use_original_fallback": True,
+        "can_review_cutout": True,
+        "auto_cutout_status": "PENDING_REVIEW",
+        "manual_cutout_status": "NOT_UPLOADED",
+    }
+    monkeypatch.setattr(service.crud, "get_product", AsyncMock(return_value=product))
+    monkeypatch.setattr(service, "_blocked_reason", AsyncMock(return_value=None))
+    monkeypatch.setattr(service, "get_product_visual_readiness", AsyncMock(return_value=pending))
+    monkeypatch.setattr(service.crud, "get_product_truth_lock", AsyncMock(return_value={
+        "review_status": "PENDING_REVIEW",
+        "provenance_json": '{"source_kind":"AUTO_GENERATED"}',
+    }))
+    approval_calls: list[object] = []
+
+    async def approve(product_id, request):
+        approval_calls.append(request)
+        return {"product_id": product_id, "review_status": "APPROVED"}
+
+    monkeypatch.setattr(service, "approve_product_truth_lock", approve)
+
+    with pytest.raises(service.ProductVisualOnboardingError) as raised:
+        await service.save_product_visual_setup(
+            "save-auto-product",
+            selected_visual="AUTO",
+            reviewed_by="reviewer-1",
+            review_note="Reviewed candidate.",
+        )
+
+    assert raised.value.code == "HUMAN_REVIEW_CONFIRMATION_REQUIRED"
+    assert approval_calls == []
+
+
+@pytest.mark.asyncio
+async def test_save_pending_auto_uses_existing_approval_authority_and_refetches(monkeypatch):
+    product = {"id": "save-auto-product"}
+    pending = {
+        "current_system_visual": {"card": "ORIGINAL_SOURCE"},
+        "can_review_cutout": True,
+        "auto_cutout_status": "PENDING_REVIEW",
+        "manual_cutout_status": "NOT_UPLOADED",
+    }
+    approved = {
+        "current_system_visual": {"card": "AUTO_CUTOUT"},
+        "auto_cutout_status": "APPROVED",
+        "manual_cutout_status": "NOT_UPLOADED",
+    }
+    monkeypatch.setattr(service.crud, "get_product", AsyncMock(return_value=product))
+    monkeypatch.setattr(service, "_blocked_reason", AsyncMock(return_value=None))
+    monkeypatch.setattr(service, "get_product_visual_readiness", AsyncMock(side_effect=[pending, approved]))
+    monkeypatch.setattr(service.crud, "get_product_truth_lock", AsyncMock(return_value={
+        "review_status": "PENDING_REVIEW",
+        "provenance_json": '{"source_kind":"AUTO_GENERATED"}',
+    }))
+    approval_calls: list[tuple[str, object]] = []
+
+    async def approve(product_id, request):
+        approval_calls.append((product_id, request))
+        return {"review_status": "APPROVED"}
+
+    monkeypatch.setattr(service, "approve_product_truth_lock", approve)
+
+    result = await service.save_product_visual_setup(
+        "save-auto-product",
+        selected_visual="AUTO",
+        reviewed_by="reviewer-1",
+        review_note="Reviewed candidate.",
+        confirm_identity=True,
+        confirm_label_logo=True,
+        confirm_geometry_scale=True,
+        confirm_product_isolation=True,
+    )
+
+    assert result == approved
+    assert len(approval_calls) == 1
+    assert approval_calls[0][0] == "save-auto-product"
+    assert approval_calls[0][1].reviewed_by == "reviewer-1"
 
 
 def test_trusted_source_display_uses_governed_preview_endpoint():

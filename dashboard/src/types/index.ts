@@ -1554,6 +1554,9 @@ export interface ProductVisualReadiness {
 	original_display_url?: string | null;
 	original_display_source?: string | null;
 	original_display_trust_status?: string | null;
+	auto_input_preview_url?: string | null;
+	auto_input_source?: string | null;
+	auto_input_trust_status?: string | null;
 	auto_cutout_preview_url?: string | null;
 	manual_cutout_preview_url?: string | null;
 	active_cutout_preview_url?: string | null;
