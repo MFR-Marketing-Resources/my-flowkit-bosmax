@@ -36,6 +36,9 @@ from agent.models.product_strategy_taxonomy import (
 from agent.services.product_intelligence_service import (
     resolve_product_intelligence_profile,
 )
+from agent.services.copywriting_taxonomy_service import (
+    resolve_product_copywriting_taxonomy,
+)
 from agent.services.product_strategy_scouting_service import (
     SCOUTING_CLUSTER_ORDER,
     classify_product_strategy_tag,
@@ -677,9 +680,13 @@ def _read_model_from_row(
             getattr(taxonomy, field) != value
             for field, value in current_binding.items()
         )
+        copywriting_mapping = resolve_product_copywriting_taxonomy(dict(product))
         binding_is_stale = binding_changed and (
             taxonomy.authority_source == "AUTO_DERIVED"
-            or resolve_catalog_product_type_truth(product) is not None
+            or (
+                resolve_catalog_product_type_truth(product) is not None
+                and copywriting_mapping is None
+            )
         )
         stale_reasons: list[str] = []
         if taxonomy.product_fingerprint != current_fingerprint:

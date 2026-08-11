@@ -266,27 +266,22 @@ export default function ProductDetailPage() {
 	async function handleEditSave(e: FormEvent) {
 		e.preventDefault();
 		if (!product) return;
-		if (!selectedCopywritingRecord) {
-			setEditMsg({
-				ok: false,
-				text: "Select a valid Category → Subcategory → Type mapping before saving.",
-			});
-			return;
-		}
 		setEditSaving(true);
 		setEditMsg(null);
 		try {
 			const payload: Record<string, string | number | boolean | null> = {};
-			const all = {
-				...editForm,
-				category: selectedCopywritingRecord.category,
-				subcategory: selectedCopywritingRecord.subcategory,
-				type: selectedCopywritingRecord.type,
-				copywriting_product_type_code:
-					selectedCopywritingRecord.product_type_code,
-				copywriting_angle: copywritingAngle,
-				copywriting_angle_override_enabled: copywritingAngleOverride,
-			};
+			const all: Record<string, string | boolean> = { ...editForm };
+			if (selectedCopywritingRecord) {
+				Object.assign(all, {
+					category: selectedCopywritingRecord.category,
+					subcategory: selectedCopywritingRecord.subcategory,
+					type: selectedCopywritingRecord.type,
+					copywriting_product_type_code:
+						selectedCopywritingRecord.product_type_code,
+					copywriting_angle: copywritingAngle,
+					copywriting_angle_override_enabled: copywritingAngleOverride,
+				});
+			}
 			for (const [key, val] of Object.entries(all)) {
 				if (val === "") payload[key] = null;
 				else if (typeof val === "boolean") payload[key] = val;

@@ -28,6 +28,9 @@ from agent.services.product_strategy_taxonomy_service import (
     attach_product_strategy_taxonomies,
     list_product_strategy_type_registry,
 )
+from agent.services.copywriting_taxonomy_service import (
+    resolve_product_copywriting_taxonomy,
+)
 
 
 _UNKNOWN_PRODUCT_TYPE = "unknown_product_type"
@@ -132,6 +135,7 @@ async def build_catalog_coverage_matrix(
         taxonomy = ProductStrategyTaxonomy.model_validate(
             product["strategy_taxonomy"]
         )
+        copywriting_mapping = resolve_product_copywriting_taxonomy(product)
         lifecycle_status = str(
             product.get("lifecycle_status") or "ACTIVE"
         ).upper()
@@ -185,7 +189,8 @@ async def build_catalog_coverage_matrix(
                     else None
                 ),
                 product_truth_mapped=(
-                    resolve_catalog_product_type_truth(product) is not None
+                    copywriting_mapping is not None
+                    or resolve_catalog_product_type_truth(product) is not None
                 ),
                 cluster=taxonomy.cluster,
                 product_type_group=taxonomy.product_type_group,
@@ -313,6 +318,7 @@ async def build_catalog_authority_matrix() -> CatalogAuthorityMatrixReport:
             product["strategy_taxonomy"]
         )
         truth_mapping = resolve_catalog_product_type_truth(product)
+        copywriting_mapping = resolve_product_copywriting_taxonomy(product)
         manual_taxonomy_authority = bool(
             taxonomy.authority_source == "MANUAL_OVERRIDE"
             and taxonomy.review_status == "VERIFIED"
@@ -321,7 +327,11 @@ async def build_catalog_authority_matrix() -> CatalogAuthorityMatrixReport:
             and taxonomy.product_type_group != _UNKNOWN_PRODUCT_TYPE
             and taxonomy.matched_scene_strategy_id != "GENERIC_FALLBACK"
         )
-        authority_mapped = truth_mapping is not None or manual_taxonomy_authority
+        authority_mapped = (
+            copywriting_mapping is not None
+            or truth_mapping is not None
+            or manual_taxonomy_authority
+        )
         authority_blockers = list(
             P58_PRODUCT_AUTHORITY_BLOCKERS.get(coverage_row.product_id, ())
         )
@@ -353,8 +363,16 @@ async def build_catalog_authority_matrix() -> CatalogAuthorityMatrixReport:
         else:
             terminal_state = "REVIEW_BLOCKED_WITH_EXACT_REASON"
             terminal_reasons = blockers or ["P6_READINESS_GATE_NOT_SATISFIED"]
-        mapping_provenance = catalog_product_type_truth_provenance(product)
-        if truth_mapping is None and manual_taxonomy_authority:
+        mapping_provenance = (
+            "SOURCE_TAXONOMY"
+            if copywriting_mapping is not None
+            else catalog_product_type_truth_provenance(product)
+        )
+        if (
+            copywriting_mapping is None
+            and truth_mapping is None
+            and manual_taxonomy_authority
+        ):
             mapping_provenance = "MANUAL_TAXONOMY_REVIEW"
         blocked_counts.update(terminal_reasons)
         rows.append(

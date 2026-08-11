@@ -13,6 +13,7 @@ import json
 import hashlib
 from difflib import SequenceMatcher
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -363,6 +364,45 @@ def _tree_record(row: dict[str, Any]) -> dict[str, Any]:
         "subcategory": _text(row.get("subcategory")),
         "type": _text(row.get("type")),
     }
+
+
+@lru_cache(maxsize=1)
+def _authority_records_by_code() -> dict[str, dict[str, Any]]:
+    """Cache the committed workbook authority for synchronous product checks."""
+
+    return {
+        _text(record["product_type_code"]): record
+        for record in load_authority_records()
+    }
+
+
+def resolve_product_copywriting_taxonomy(
+    product: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return an exact workbook mapping for one stored product, or ``None``.
+
+    The product type code is only accepted when every stored taxonomy field
+    agrees with the canonical Database record.  This keeps the P5.8 authority
+    report fail-closed while allowing the product-level workbook mapping to be
+    recognized as Product Truth.
+    """
+
+    code = _text(product.get("copywriting_product_type_code"))
+    if not code:
+        return None
+    record = _authority_records_by_code().get(code)
+    if record is None:
+        return None
+    if (
+        canonical_category(product.get("category"))
+        != _text(record["category"])
+        or _text(product.get("subcategory")) != _text(record["subcategory"])
+        or _text(product.get("type")) != _text(record["type"])
+        or _text(product.get("copywriting_angle"))
+        != _text(record["copywriting_angle"])
+    ):
+        return None
+    return _tree_record(record)
 
 
 def _nearest_tree_records(

@@ -314,6 +314,44 @@ describe("ProductDetailPage tab contract", () => {
 		);
 	});
 
+	it("saves identity fields while an unmapped legacy taxonomy needs reconciliation", async () => {
+		vi.mocked(fetchProductCopywritingTaxonomy).mockResolvedValue({
+			...taxonomyResolutionFixture,
+			match_status: "NEEDS_RECONCILIATION",
+			needs_reconciliation: true,
+			current: {
+				category: "Legacy",
+				subcategory: "Unknown",
+				type: "Invalid",
+				copywriting_angle: "Old angle",
+				product_type_code: null,
+			},
+			match: null,
+			nearest_match: taxonomyRecord,
+			candidates: [taxonomyRecord],
+		});
+		renderProductDetail();
+		await screen.findByTestId("copywriting-taxonomy-reconciliation");
+
+		fireEvent.change(screen.getByDisplayValue("Canonical"), {
+			target: { value: "Updated Canonical" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+
+		await waitFor(() =>
+			expect(patchAPI).toHaveBeenCalledWith(
+				"/api/products/p1",
+				expect.objectContaining({ product_short_name: "Updated Canonical" }),
+			),
+		);
+		const payload = vi.mocked(patchAPI).mock.calls[0]?.[1] as Record<string, unknown>;
+		expect(payload).not.toHaveProperty("category");
+		expect(payload).not.toHaveProperty("subcategory");
+		expect(payload).not.toHaveProperty("type");
+		expect(payload).not.toHaveProperty("copywriting_product_type_code");
+		expect(payload).not.toHaveProperty("copywriting_angle");
+	});
+
 	it("shows reconciliation evidence for legacy values instead of selecting silently", async () => {
 		vi.mocked(fetchProductCopywritingTaxonomy).mockResolvedValueOnce({
 			...taxonomyResolutionFixture,
