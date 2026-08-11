@@ -698,6 +698,24 @@ async def generate_directions(
             if not any(d["primary_message"] == fb["primary_message"] for d in directions):
                 directions.append(fb)
 
+        # A stale or unsafe intelligence record must not strand the guided
+        # browser step after the provider output has been rejected.  Re-run the
+        # deterministic discovery-only templates without grounding; they carry
+        # no benefits, usage, efficacy, or other product claims and still pass
+        # the same poster gate.  This preserves fail-closed claim handling while
+        # keeping a POSTER_READY product operable without another provider call.
+        if len(directions) < count and fb_grounding is not None:
+            warnings.append(
+                "Grounded fallback unavailable — neutral product-discovery directions used."
+            )
+            for fb in _fallback_directions(
+                dict(product), contract, angle, language, None
+            ):
+                if len(directions) >= count:
+                    break
+                if not any(d["primary_message"] == fb["primary_message"] for d in directions):
+                    directions.append(fb)
+
     return {
         "product_id": product_id,
         "archetype": contract["archetype"],

@@ -23,15 +23,15 @@ export interface GuidedStepMeta {
 
 // Ordered guided journey. Titles are user-facing Malay; no engineering jargon.
 export const GUIDED_STEPS: GuidedStepMeta[] = [
-	{ id: "product", title: "Produk", heading: "Pilih produk" },
-	{ id: "goal", title: "Tujuan", heading: "Apa tujuan poster ini?" },
-	{ id: "angle", title: "Sudut", heading: "Pilih sudut jualan" },
-	{ id: "copy", title: "Teks", heading: "Pilih arah teks poster" },
-	{ id: "approve", title: "Sahkan", heading: "Semak & sahkan teks poster" },
-	{ id: "visual", title: "Visual", heading: "Pilih gaya visual" },
-	{ id: "scene", title: "Latar", heading: "Latar / aset produk" },
-	{ id: "compose", title: "Hasilkan", heading: "Hasilkan poster" },
-	{ id: "save", title: "Simpan", heading: "Simpan & guna semula" },
+	{ id: "product", title: "Product", heading: "Choose a product" },
+	{ id: "goal", title: "Objective", heading: "What is this poster for?" },
+	{ id: "angle", title: "Angle", heading: "Choose a selling angle" },
+	{ id: "copy", title: "Copy", heading: "Choose the poster copy direction" },
+	{ id: "approve", title: "Approve", heading: "Review and approve the poster copy" },
+	{ id: "visual", title: "Visual", heading: "Choose a visual style" },
+	{ id: "scene", title: "Background", heading: "Background / product asset" },
+	{ id: "compose", title: "Generate", heading: "Generate the poster" },
+	{ id: "save", title: "Save", heading: "Save and reuse" },
 ];
 
 export function stepIndex(id: GuidedStepId): number {
@@ -53,40 +53,40 @@ export const GUIDED_GOALS: GuidedGoal[] = [
 	{
 		archetype: "PRODUCT_HERO",
 		title: "Product Hero",
-		description: "Serlahkan produk sebagai bintang utama poster.",
+		description: "Make the product the hero of the poster.",
 		accent: "emerald",
 	},
 	{
 		// Backend/recipe archetype code — "PRODUCT_SCALE" was a mismatch that
 		// silently broke recommendations + recipe filtering for this goal.
 		archetype: "PORTABILITY",
-		title: "Mudah Dibawa",
-		description: "Tekankan saiz padat dan mudah dibawa ke mana-mana.",
+		title: "Easy to Carry",
+		description: "Emphasize the compact size and easy portability.",
 		accent: "sky",
 	},
 	{
 		archetype: "ROUTINE_USE",
-		title: "Rutin Penggunaan",
-		description: "Tunjukkan produk sebagai sebahagian rutin pilihan anda.",
+		title: "Usage Routine",
+		description: "Show the product as part of your chosen routine.",
 		accent: "violet",
 	},
 	{
 		archetype: "HERITAGE_TRUST",
-		title: "Warisan & Kepercayaan",
-		description: "Bina kepercayaan melalui warisan dan keaslian.",
+		title: "Heritage and Trust",
+		description: "Build trust through heritage and authenticity.",
 		accent: "amber",
 	},
 	{
 		archetype: "OFFER",
 		title: "Promosi Tanpa Harga",
-		description: "Promosi menarik tanpa menyebut harga atau diskaun.",
+		description: "An appealing promo without mentioning price or discounts.",
 		accent: "rose",
 		nonPrice: true,
 	},
 	{
 		archetype: "PROBLEM_AWARE_SAFE",
 		title: "Problem-Aware Safe",
-		description: "Sasarkan masalah pelanggan dengan mesej yang selamat.",
+		description: "Target the customer's problem with safe messaging.",
 		accent: "teal",
 	},
 	{
@@ -128,25 +128,25 @@ export function readinessBanner(
 		case "POSTER_READY":
 			return {
 				tone: "ready",
-				title: "Sedia",
-				message: "Produk ini sudah bersedia untuk menghasilkan poster.",
+				title: "Ready",
+				message: "This product is ready to generate a poster.",
 				canProceed: true,
 			};
 		case "POSTER_READY_RESTRICTED":
 		case "POSTER_PREVIEW_ONLY":
 			return {
 				tone: "review",
-				title: "Semakan disyorkan",
+				title: "Review recommended",
 				message:
-					"Semakan manusia disyorkan untuk identiti, label atau skala produk sebelum diterbitkan.",
+					"Human review is recommended for product identity, label or scale before publishing.",
 				canProceed: true,
 			};
 		case "POSTER_BLOCKED":
 			return {
 				tone: "blocked",
-				title: "Disekat",
+				title: "Blocked",
 				message:
-					"Poster tidak boleh dijana sehingga isu produk berikut diselesaikan.",
+					"The poster cannot be generated until the following product issues are resolved.",
 				canProceed: false,
 			};
 		case null:
@@ -154,15 +154,15 @@ export function readinessBanner(
 		case "":
 			return {
 				tone: "info",
-				title: "Menyemak",
-				message: "Menyemak kesediaan produk…",
+				title: "Checking",
+				message: "Checking product readiness…",
 				canProceed: false,
 			};
 		default:
 			return {
 				tone: "info",
-				title: "Lengkapkan maklumat",
-				message: "Lengkapkan maklumat produk sebelum meneruskan.",
+				title: "Complete the details",
+				message: "Complete the product details before continuing.",
 				canProceed: false,
 			};
 	}
@@ -255,7 +255,7 @@ export function goalEvidence(
 			supported,
 			requirement: supported
 				? ""
-				: "Perlukan bukti produk: tiada tanda saiz padat/mudah dibawa pada rekod produk ini.",
+				: "Product evidence required: no compact/portable size signal on this product record.",
 		};
 	}
 	if (archetype === "HERITAGE_TRUST") {
@@ -264,7 +264,7 @@ export function goalEvidence(
 			supported,
 			requirement: supported
 				? ""
-				: "Perlukan bukti produk: tiada tanda warisan/tradisional pada rekod produk ini.",
+				: "Product evidence required: no heritage/traditional signal on this product record.",
 		};
 	}
 	// PRODUCT_HERO / ROUTINE_USE / OFFER(non-price) / PROBLEM_AWARE_SAFE are
@@ -276,10 +276,10 @@ export function goalEvidence(
 export function truthLabel(status: string | null | undefined): string {
 	if (!status) return "";
 	if (status.startsWith("REFERENCE_CONDITIONED"))
-		return "Latar dijana serupa produk — identiti/label perlu semakan manusia.";
+		return "Background generated to resemble the product — identity/label needs human review.";
 	if (status.includes("DETERMINISTIC_COMPOSITE_VERIFIED"))
-		return "Produk sebenar disisipkan (disahkan).";
+		return "Real product inserted (verified).";
 	if (status.includes("DETERMINISTIC_COMPOSITE"))
-		return "Produk sebenar disisipkan — belum disahkan.";
+		return "Real product inserted — not yet verified.";
 	return status.replace(/_/g, " ");
 }

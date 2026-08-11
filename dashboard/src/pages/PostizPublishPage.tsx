@@ -1215,14 +1215,14 @@ export default function PostizPublishPage() {
 						)}
 
 						{dryRunPayload != null && (
-							<div className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-3 space-y-2">
-								<div className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-300">
+							<details className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-3 space-y-2">
+								<summary className="cursor-pointer text-[10px] font-bold uppercase tracking-[0.16em] text-blue-300 hover:text-blue-200">
 									Dry-run payload {dryRunNote ? `— ${dryRunNote}` : ""}
-								</div>
+								</summary>
 								<pre className="overflow-x-auto rounded-lg bg-slate-950/80 p-3 font-mono text-[10px] text-slate-300">
 									{JSON.stringify(dryRunPayload, null, 2)}
 								</pre>
-							</div>
+							</details>
 						)}
 					</section>
 

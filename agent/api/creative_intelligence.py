@@ -33,6 +33,7 @@ from agent.models.product_strategy_taxonomy import (
     ProductStrategyTypeRegistrationRequest,
     ProductStrategyTypeRegistryEntry,
     ProductStrategyTypeRegistryListResponse,
+    ProductStrategyTypeUpdateRequest,
     ProductStrategyTypeRegistrySeedRequest,
     ProductStrategyTypeRegistrySeedResponse,
 )
@@ -501,6 +502,47 @@ async def product_strategy_type_register(
 
     try:
         return await _strategy_taxonomy.register_product_strategy_type(request)
+    except _strategy_taxonomy.ProductStrategyTaxonomyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.patch(
+    "/product-strategy-type-registry/{cluster}/{product_type_group}",
+    response_model=ProductStrategyTypeRegistryEntry,
+)
+async def product_strategy_type_update(
+    cluster: str,
+    product_type_group: str,
+    request: ProductStrategyTypeUpdateRequest,
+) -> ProductStrategyTypeRegistryEntry:
+    """Edit one registered pair in place (cluster/type identity is immutable)."""
+
+    try:
+        return await _strategy_taxonomy.update_product_strategy_type(
+            cluster, product_type_group, request
+        )
+    except _strategy_taxonomy.ProductStrategyTaxonomyNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except _strategy_taxonomy.ProductStrategyTaxonomyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.delete(
+    "/product-strategy-type-registry/{cluster}/{product_type_group}",
+    response_model=ProductStrategyTypeRegistryEntry,
+)
+async def product_strategy_type_delete(
+    cluster: str,
+    product_type_group: str,
+) -> ProductStrategyTypeRegistryEntry:
+    """Delete a manual pair; SYSTEM_SEED entries are protected (409)."""
+
+    try:
+        return await _strategy_taxonomy.delete_product_strategy_type(
+            cluster, product_type_group
+        )
+    except _strategy_taxonomy.ProductStrategyTaxonomyNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except _strategy_taxonomy.ProductStrategyTaxonomyError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

@@ -572,6 +572,8 @@ domains:
       - dashboard/src/utils/promptRepresentationUi.test.ts
       - dashboard/src/utils/promptRepresentationUi.ts
       - tests/unit/test_artifact_library_retention.py
+      - tests/api/test_flow_artifacts_api.py
+      - tests/ui/test_artifact_library_page_ui_contract.py
       - requirements.txt
       - agent/services/prompt_package_dryrun_service.py
       - agent/services/ugc_video_prompt_compiler_service.py
@@ -678,6 +680,8 @@ domains:
       - agent/services/video_reviewer.py
       - dashboard/src/App.tsx
       - dashboard/src/api/assets.ts
+      - dashboard/src/api/avatarRegistry.ts
+      - dashboard/src/api/avatarRegistry.test.ts
       - dashboard/src/api/client.ts
       - dashboard/src/api/creativeAssets.ts
       - dashboard/src/api/creativeAssets.test.ts

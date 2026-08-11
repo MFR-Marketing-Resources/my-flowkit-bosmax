@@ -2639,8 +2639,8 @@ CREATE TABLE IF NOT EXISTS postiz_publish_record (
         # Social Copy Package — platform-specific caption/comment copy linked to
         # a generated artifact (media_id). Authored on the generator pages,
         # approved, then prefilled into Postiz Publish. Like postiz_publish_record
-        # this uses a plain artifact_media_id (no hard FK): generated_artifact rows
-        # self-purge at 48h while copy packages persist as publishing history.
+        # this uses a plain artifact_media_id (no hard FK): video generated_artifact
+        # rows self-purge at 48h while copy packages persist as publishing history.
         await db.executescript("""
 CREATE TABLE IF NOT EXISTS social_copy_package (
     package_id            TEXT PRIMARY KEY,
@@ -2672,8 +2672,9 @@ CREATE INDEX IF NOT EXISTS idx_social_copy_status ON social_copy_package(status)
         await db.commit()
 
         # Generation Result (Results Hub) — DURABLE per-finished-generation record.
-        # The heavy artifact FILE still lives in `generated_artifact` and is purged
-        # at 48h; THIS row is the lightweight, long-lived deliverable record so the
+        # Video artifact FILE still lives in `generated_artifact` and is purged at
+        # 48h; image artifact files are manual-delete. THIS row is the lightweight,
+        # long-lived deliverable record so the
         # operator can, at any time: (a) copy the exact prompt + settings used to
         # manually re-drive Google Flow if automation breaks, and (b) reach the
         # per-platform social captions for that result. Keyed by Flow media_id, it
@@ -2911,6 +2912,38 @@ CREATE INDEX IF NOT EXISTS idx_copy_intelligence_seed_reference
             if _col not in seed_cols:
                 await db.execute(f"ALTER TABLE copy_intelligence_seed ADD COLUMN {_col} TEXT")
                 logger.info("Migrated: added %s column to copy_intelligence_seed", _col)
+        await db.commit()
+
+        # Copywriting taxonomy authority. This is the workbook-backed lookup
+        # registry for cluster -> product type -> copywriting dimensions. It is
+        # deliberately separate from Product Truth and product_strategy_taxonomy:
+        # round one registers the dependency map only; product remapping is a
+        # later, explicit review operation.
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS copywriting_taxonomy_registry (
+    product_type_code     TEXT PRIMARY KEY,
+    cluster_name          TEXT NOT NULL,
+    display_name          TEXT NOT NULL,
+    category              TEXT NOT NULL,
+    subcategory           TEXT NOT NULL,
+    type                  TEXT NOT NULL,
+    copywriting_angle     TEXT NOT NULL,
+    source_workbook       TEXT NOT NULL,
+    source_sheet          TEXT NOT NULL,
+    source_row            INTEGER NOT NULL,
+    registry_status       TEXT NOT NULL DEFAULT 'ACTIVE'
+        CHECK(registry_status IN ('ACTIVE','REVIEW_REQUIRED')),
+    created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE(cluster_name, product_type_code)
+);
+CREATE INDEX IF NOT EXISTS idx_copywriting_taxonomy_cluster
+    ON copywriting_taxonomy_registry(cluster_name, product_type_code);
+CREATE INDEX IF NOT EXISTS idx_copywriting_taxonomy_category
+    ON copywriting_taxonomy_registry(category, subcategory, type);
+CREATE INDEX IF NOT EXISTS idx_copywriting_taxonomy_status
+    ON copywriting_taxonomy_registry(registry_status, cluster_name);
+""")
         await db.commit()
 
         # Copy Set foundation (Copy Strategy Studio Phase 1). Additive table —

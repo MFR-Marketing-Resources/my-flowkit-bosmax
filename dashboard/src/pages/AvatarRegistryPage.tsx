@@ -53,10 +53,6 @@ interface AvatarProfile {
 	usage_tags: string[];
 	image_generated: boolean;
 	generated_asset_id: string | null;
-	registry_source: "SYSTEM_CORE" | "CUSTOM";
-	immutable: boolean;
-	delete_allowed: boolean;
-	archive_allowed: boolean;
 }
 
 interface AvatarGenerationState {
@@ -67,13 +63,8 @@ interface AvatarGenerationState {
 interface AvatarPoolResponse {
 	avatars: AvatarProfile[];
 	count: number;
-	system_core_count: number;
-	custom_count: number;
-	generated_count: number;
-	not_generated_count: number;
 	source: string;
 	bridge_active: boolean;
-	effective_pool_model: "SYSTEM_CORE_UNION_CUSTOM";
 	product_fit_mapped_count?: number;
 	saved_selection_referenced_count?: number;
 	unmapped_review_candidate_count?: number;
@@ -980,10 +971,6 @@ export default function AvatarRegistryPage() {
 	};
 
 	const handleDeleteAvatar = async (avatar: AvatarProfile) => {
-		if (!avatar.delete_allowed) {
-			setError("SYSTEM_AVATAR_IMMUTABLE");
-			return;
-		}
 		const confirmed = window.confirm(
 			`Padam avatar "${avatar.character_name}" (${avatar.avatar_code}) dari registry?\n\n` +
 				"Profil dibuang dari pool dan imej rujukannya (jika ada) diarkibkan " +
@@ -1010,6 +997,45 @@ export default function AvatarRegistryPage() {
 			setError(err instanceof Error ? err.message : "Gagal padam avatar.");
 		} finally {
 			setDeletingCode(null);
+		}
+	};
+
+	const [editAvatar, setEditAvatar] = useState<AvatarProfile | null>(null);
+	const [editTags, setEditTags] = useState<string[]>([]);
+	const [editSaving, setEditSaving] = useState(false);
+
+	const openEditAvatar = (avatar: AvatarProfile) => {
+		setError(null);
+		setSuccessMsg(null);
+		setEditAvatar(avatar);
+		setEditTags([...avatar.usage_tags]);
+	};
+
+	const handleEditAvatarSave = async () => {
+		if (!editAvatar) return;
+		setEditSaving(true);
+		setError(null);
+		setSuccessMsg(null);
+		try {
+			const response = await fetch(
+				`/api/workspace/avatar-registry/${encodeURIComponent(editAvatar.avatar_code)}`,
+				{
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ usage_tags: editTags.join("|") }),
+				},
+			);
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data?.detail || `HTTP ${response.status}`);
+			}
+			setSuccessMsg(`Avatar ${editAvatar.avatar_code} dikemas kini.`);
+			setEditAvatar(null);
+			await refresh();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Gagal kemas kini avatar.");
+		} finally {
+			setEditSaving(false);
 		}
 	};
 
@@ -1169,7 +1195,7 @@ export default function AvatarRegistryPage() {
 							manual gallery.{" "}
 							{isLoading
 								? "Loading..."
-								: `${avatars.length} effective · ${avatars.filter((a) => a.registry_source === "SYSTEM_CORE").length} system core · ${avatars.filter((a) => a.registry_source === "CUSTOM").length} custom · ${avatars.filter((a) => a.image_generated).length} generated · ${avatars.filter((a) => !a.image_generated).length} not generated · custom bridge ${bridgeActive ? "active" : "inactive"}`}
+								: `${avatars.length} approved avatar${avatars.length !== 1 ? "s" : ""} · ${avatars.filter((a) => a.image_generated).length} generated · source: ${bridgeActive ? "synced bridge CSV" : "repo seed"}`}
 						</div>
 					</div>
 					<div>
@@ -1413,7 +1439,7 @@ export default function AvatarRegistryPage() {
 										{Object.entries(productClusterAudit.cluster_counts)
 											.sort((a, b) => b[1] - a[1])
 											.map(([cluster, count]) => {
-											const recommendedAvatars = clusterAvatarSets?.[cluster]?.avatars ?? [];
+												const avatars = clusterAvatarSets?.[cluster]?.avatars ?? [];
 												return (
 													<tr
 														key={cluster}
@@ -1430,13 +1456,13 @@ export default function AvatarRegistryPage() {
 																<span className="text-[11px] text-slate-500">
 																	Memuatkan…
 																</span>
-															) : recommendedAvatars.length === 0 ? (
+															) : avatars.length === 0 ? (
 																<span className="text-[11px] text-slate-500">
 																	— tiada —
 																</span>
 															) : (
 																<div className="flex flex-wrap gap-1.5">
-																{recommendedAvatars.map((avatar) => (
+																	{avatars.map((avatar) => (
 																		<span
 																			key={avatar.avatar_code}
 																			className="inline-flex items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[11px]"
@@ -1449,12 +1475,9 @@ export default function AvatarRegistryPage() {
 																					{avatar.character_name}
 																				</span>
 																			)}
-													<span className="text-slate-500">
-														fit {avatar.fit_score}
-													</span>
-													<span className={avatars.find((profile) => profile.avatar_code === avatar.avatar_code)?.image_generated ? "text-emerald-300" : "text-slate-400"}>
-														{avatars.find((profile) => profile.avatar_code === avatar.avatar_code)?.image_generated ? "GENERATED" : "NOT GENERATED"}
-													</span>
+																			<span className="text-slate-500">
+																				fit {avatar.fit_score}
+																			</span>
 																		</span>
 																	))}
 																</div>
@@ -2489,25 +2512,6 @@ export default function AvatarRegistryPage() {
 							),
 						},
 						{
-							key: "product_clusters",
-							header: "Mapped Product Cluster(s)",
-							render: (a) => (
-								<span className="text-xs text-slate-400">
-									{activeProductFitAvatars.find((profile) => profile.avatar_code === a.avatar_code)?.product_clusters.join(", ") || "—"}
-								</span>
-							),
-						},
-						{
-							key: "source",
-							header: "Source",
-							render: (a) => a.registry_source === "SYSTEM_CORE" ? "System Core" : "Custom",
-						},
-						{
-							key: "protection",
-							header: "Protection",
-							render: (a) => a.immutable ? "Locked" : "Managed",
-						},
-						{
 							key: "scene",
 							header: "Scene",
 							render: (a) => (
@@ -2541,31 +2545,109 @@ export default function AvatarRegistryPage() {
 										⏳ {generating[a.avatar_code].stage}
 									</span>
 								) : (
-									<div className="flex flex-col items-start gap-1">
-										<span className="text-[10px] font-semibold text-slate-400">NOT GENERATED</span>
-										<button
-											type="button"
-											onClick={() => void handleGenerateImage(a)}
-											className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-100 hover:bg-blue-500/20"
-										>
-											Generate
-										</button>
-									</div>
+									<button
+										type="button"
+										onClick={() => void handleGenerateImage(a)}
+										className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-100 hover:bg-blue-500/20"
+									>
+										Generate
+									</button>
 								),
 						},
 					]}
-					rowActions={(a) => a.delete_allowed ? (
-						<button
-							type="button"
-							onClick={() => void handleDeleteAvatar(a)}
-							disabled={deletingCode === a.avatar_code}
-							className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-200 hover:bg-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
-						>
-							{deletingCode === a.avatar_code ? "..." : "Delete"}
-						</button>
-					) : null}
+					rowActions={(a) => (
+						<div className="flex items-center gap-2">
+							<button
+								type="button"
+								onClick={() => openEditAvatar(a)}
+								className="rounded-lg border border-slate-600 bg-slate-800/60 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+							>
+								Edit
+							</button>
+							<button
+								type="button"
+								onClick={() => void handleDeleteAvatar(a)}
+								disabled={deletingCode === a.avatar_code}
+								className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-200 hover:bg-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+							>
+								{deletingCode === a.avatar_code ? "..." : "Delete"}
+							</button>
+						</div>
+					)}
 				/>
 			</section>
+			{editAvatar && (
+				<div
+					className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4"
+					onClick={() => {
+						if (!editSaving) setEditAvatar(null);
+					}}
+				>
+					<div
+						className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl"
+						onClick={(e) => e.stopPropagation()}
+					>
+						<div className="mb-1 text-sm font-semibold text-slate-100">
+							Edit avatar metadata
+						</div>
+						<div className="mb-4 text-xs text-slate-400">
+							{editAvatar.character_name} ·{" "}
+							<span className="font-mono">{editAvatar.avatar_code}</span>
+							<div className="mt-1 text-slate-500">
+								Identiti (skin/hair/wardrobe/expression) kekal — hanya usage tags
+								boleh diubah.
+							</div>
+						</div>
+						<div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+							Usage Tags
+						</div>
+						<div className="mb-4 flex flex-wrap gap-2">
+							{(vocab?.usage_tags ?? []).map((tag) => {
+								const checked = editTags.includes(tag);
+								return (
+									<button
+										key={tag}
+										type="button"
+										onClick={() =>
+											setEditTags((prev) =>
+												checked
+													? prev.filter((t) => t !== tag)
+													: [...prev, tag],
+											)
+										}
+										className={`rounded-full border px-3 py-1 text-xs font-medium ${checked ? "border-blue-400/60 bg-blue-500/15 text-blue-200" : "border-slate-700 bg-slate-950 text-slate-400 hover:border-slate-500"}`}
+									>
+										{tag}
+									</button>
+								);
+							})}
+						</div>
+						{editTags.length === 0 && (
+							<div className="mb-3 text-xs text-amber-300">
+								Pilih sekurang-kurangnya 1 usage tag.
+							</div>
+						)}
+						<div className="flex justify-end gap-2">
+							<button
+								type="button"
+								onClick={() => setEditAvatar(null)}
+								disabled={editSaving}
+								className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+							>
+								Batal
+							</button>
+							<button
+								type="button"
+								onClick={() => void handleEditAvatarSave()}
+								disabled={editSaving || editTags.length === 0}
+								className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-40"
+							>
+								{editSaving ? "Menyimpan..." : "Simpan"}
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }

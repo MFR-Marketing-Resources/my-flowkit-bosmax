@@ -96,7 +96,7 @@ describe("summarizePosterCopyFit", () => {
 				still_over_limit: [],
 				warnings: [],
 			}),
-		).toBe("Dipendekkan: Hook, CTA.");
+		).toBe("Shortened: Hook, CTA.");
 	});
 
 	it("reports remaining over-limit fields and warnings", () => {
@@ -105,10 +105,10 @@ describe("summarizePosterCopyFit", () => {
 				applied: true,
 				changed_fields: ["Hook"],
 				still_over_limit: ["USP 1 (60/36)"],
-				warnings: ["Sebahagian ayat masih panjang."],
+				warnings: ["Some lines are still long."],
 			}),
 		).toBe(
-			"Dipendekkan: Hook. Masih panjang: USP 1 (60/36). Sebahagian ayat masih panjang.",
+			"Shortened: Hook. Still too long: USP 1 (60/36). Some lines are still long.",
 		);
 	});
 
@@ -120,7 +120,7 @@ describe("summarizePosterCopyFit", () => {
 				still_over_limit: [],
 				warnings: [],
 			}),
-		).toBe("Tiada perubahan pada copy.");
+		).toBe("No changes to the copy.");
 	});
 });
 

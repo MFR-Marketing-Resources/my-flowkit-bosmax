@@ -106,3 +106,27 @@ def test_unknown_and_broad_beauty_have_no_product_truth_or_p4_strategy() -> None
         key[1] in {"unknown_product_type", "beauty_personal_care_other"}
         for key in PRODUCT_TYPE_COPY_STRATEGY_KEYS
     )
+
+
+def test_car_cover_override_uses_exact_accessory_authority() -> None:
+    mapping = resolve_catalog_product_type_truth(
+        {
+            "id": "0ff37782-a1d7-49db-9d33-575f2e7ae351",
+            "raw_product_title": "3 Layers PVC + Cotton Universal Car Cover",
+            "category": None,
+            "subcategory": None,
+            "type": None,
+        }
+    )
+
+    assert mapping is not None
+    assert (
+        mapping.cluster,
+        mapping.product_type_group,
+        mapping.specific_scene_strategy_id,
+    ) == ("automotive_accessory", "car_cover", "AUTOMOTIVE_ACCESSORY")
+    assert (
+        mapping.cluster,
+        mapping.product_type_group,
+        mapping.specific_scene_strategy_id,
+    ) in PRODUCT_TYPE_COPY_STRATEGY_KEYS

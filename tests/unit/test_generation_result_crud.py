@@ -1,8 +1,9 @@
 """Durable generation_result record (Results Hub) — crud behavior.
 
-The heavy artifact FILE is purged at 48h; the generation_result record and the
-social captions are NOT — so the prompt/settings/caption stay reachable for
-manual Google Flow fallback + publishing after the file is gone.
+Video artifact FILEs are purged at 48h; image artifact FILEs are manual-delete.
+The generation_result record and social captions are NOT purged, so the
+prompt/settings/caption stay reachable for manual Google Flow fallback +
+publishing after a video file is gone.
 """
 import json
 from datetime import datetime, timedelta, timezone
@@ -44,12 +45,12 @@ async def test_upsert_updates_snapshot_but_preserves_created_at():
     assert second["created_at"] == first["created_at"]   # ordering stays stable
 
 
-async def test_record_survives_artifact_purge():
-    """The whole point of the split: purging the 48h file removes the artifact
-    row, but the durable record (prompt/settings) stays reachable."""
+async def test_record_survives_video_artifact_purge():
+    """Purging a 48h video file removes only its artifact row; the durable
+    record (prompt/settings) stays reachable."""
     await crud.insert_generation_result(
-        "media-3", mode="IMG", artifact_kind="image",
-        final_prompt_text="a product on marble")
+        "media-3", mode="T2V", artifact_kind="video",
+        final_prompt_text="a cinematic product scene")
     db = await crud.get_db()
     async with crud._db_lock:
         await db.execute(
@@ -57,7 +58,7 @@ async def test_record_survives_artifact_purge():
                (media_id, job_id, mode, artifact_kind, local_path, size_mb,
                 project_id, model_used, duration_used, created_at)
                VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            ("media-3", "g_3", "IMG", "image", None, 0.5, None, None, None, _ts(49)))
+            ("media-3", "g_3", "T2V", "video", None, 0.5, None, None, None, _ts(49)))
         await db.commit()
 
     purged = await crud.purge_expired_artifacts(retention_hours=48)
@@ -65,7 +66,7 @@ async def test_record_survives_artifact_purge():
     assert await crud.get_generated_artifact("media-3") is None      # file row gone
     survived = await crud.get_generation_result("media-3")
     assert survived is not None                                      # record stays
-    assert survived["final_prompt_text"] == "a product on marble"
+    assert survived["final_prompt_text"] == "a cinematic product scene"
 
 
 async def test_list_filters_by_kind_and_mode():

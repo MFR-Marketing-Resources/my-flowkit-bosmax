@@ -1340,13 +1340,17 @@ ARTIFACT_RETENTION_HOURS = 48  # retention law: results auto-delete after 48h
 @router.get("/artifacts")
 async def list_artifacts(limit: int = 50, mode: str = None, kind: str = None):
     """System library of finished generations — newest first, for the Library
-    pages. kind = video | image. Retention: 48h, enforced lazily on every
-    listing (expired files + rows are purged before results are returned).
+    pages. kind = video | image. Video retention is 48h and is enforced lazily
+    on every listing; image artifacts remain until manual deletion.
     Each entry is playable/downloadable via /api/flow/retrieved/{media_id}."""
     from datetime import datetime, timedelta, timezone
     purged = await crud.purge_expired_artifacts(ARTIFACT_RETENTION_HOURS)
     items = await crud.list_generated_artifacts(limit=limit, mode=mode, kind=kind)
     for item in items:
+        if str(item.get("artifact_kind") or "").lower() != "video":
+            item["expires_at"] = None
+            item["expires_in_hours"] = None
+            continue
         try:
             created = datetime.strptime(item["created_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
                 tzinfo=timezone.utc)
@@ -1358,7 +1362,24 @@ async def list_artifacts(limit: int = 50, mode: str = None, kind: str = None):
             item["expires_at"] = None
             item["expires_in_hours"] = None
     return {"artifacts": items, "count": len(items),
-            "retention_hours": ARTIFACT_RETENTION_HOURS, "purged": purged}
+            "retention_hours": ARTIFACT_RETENTION_HOURS,
+            "retention_policy": {"video": "48h", "image": "manual_delete"},
+            "purged": purged}
+
+
+@router.delete("/artifacts/{media_id}")
+async def delete_image_artifact(media_id: str):
+    """Manually delete one image artifact (row + local file).
+
+    Video retention remains governed by the 48h sweep. Durable Creative Library
+    assets are separate records and are not touched by this endpoint.
+    """
+    artifact = await crud.get_generated_artifact(media_id)
+    if artifact is None:
+        raise HTTPException(404, "GENERATED_ARTIFACT_NOT_FOUND")
+    if str(artifact.get("artifact_kind") or "").lower() != "image":
+        raise HTTPException(409, "ONLY_IMAGE_ARTIFACTS_HAVE_MANUAL_DELETE")
+    return await crud.delete_generated_artifact(media_id)
 
 
 @router.get("/retrieved/{media_id}")

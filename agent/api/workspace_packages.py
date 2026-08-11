@@ -638,7 +638,7 @@ async def avatar_registry_register_generated(request: AvatarRegisterGeneratedReq
     existing = await _generated_avatar_asset_ids()
     if identity["avatar_code"].upper() in existing:
         raise HTTPException(409, f"AVATAR_ALREADY_REGISTERED:{existing[identity['avatar_code'].upper()]}")
-    # Copy the image OUT of the 48h-retention artifact library into permanent
+    # Copy the image OUT of the transient artifact library into permanent
     # creative-asset storage (the base64 path handles file placement + URLs).
     import base64
     from pathlib import Path
@@ -727,6 +727,12 @@ class AvatarManualAddRequest(BaseModel):
     usage_tags: str | None = None
 
 
+class AvatarUpdateRequest(BaseModel):
+    """Metadata-only avatar edit. Identity descriptors + AvatarCode are immutable
+    here; only non-identity presentation metadata (usage_tags) may change."""
+    usage_tags: str = Field(min_length=1)
+
+
 def _build_avatar_pool_row(avatar_registry, payload: dict) -> tuple[str, dict]:
     """Build (avatar_code, full pool row dict) from a validated manual/AI payload."""
     # Name-only descriptor — wardrobe never enters the AvatarCode slug (keeps codes
@@ -791,6 +797,19 @@ async def avatar_registry_add_manual(request: AvatarManualAddRequest):
         raise HTTPException(422, str(exc)) from exc
     return {"avatar_code": avatar_code, "character_name": request.character_name,
             "redundant": False}
+
+
+@router.patch("/avatar-registry/{avatar_code}")
+async def avatar_registry_update(avatar_code: str, request: AvatarUpdateRequest):
+    """CRUD metadata edit: change one avatar's non-identity metadata (usage_tags)
+    while its identity descriptors + AvatarCode stay frozen. 404 if the code is
+    absent; 422 on invalid usage tags."""
+    from agent.services import avatar_registry
+    try:
+        return avatar_registry.update_avatar(avatar_code, request.model_dump())
+    except ValueError as exc:
+        msg = str(exc)
+        raise HTTPException(404 if "NOT_FOUND" in msg else 422, msg) from exc
 
 
 class AvatarAutoGenRequest(BaseModel):
@@ -1002,7 +1021,7 @@ async def avatar_registry_delete(avatar_code: str):
             if code == target:
                 await archive_creative_asset(str(asset.asset_id))
                 archived_asset_id = str(asset.asset_id)
-                # Also purge the linked 48h temp artifact so the image fully
+                # Also purge the linked transient artifact so the image fully
                 # leaves the Library now (archiving the saved asset alone un-hides
                 # its temp twin). Best-effort; never blocks the delete.
                 media_id = getattr(asset, "media_id", None)

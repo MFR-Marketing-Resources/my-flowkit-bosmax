@@ -20,7 +20,8 @@ import {
 import SocialCopyPackagePanel from "../components/SocialCopyPackagePanel";
 
 // RESULTS HUB — the single durable home for every finished generation. For each
-// result the operator can: (1) preview + download the file (48h), (2) copy the
+// result the operator can: (1) preview + download the video file (48h) or
+// persistent image, (2) copy the
 // exact prompt + settings to manually re-drive Google Flow if automation breaks
 // (the record is durable — it outlives the file), and (3) author + copy the
 // per-platform social captions (reusing SocialCopyPackagePanel). Two-pronged:

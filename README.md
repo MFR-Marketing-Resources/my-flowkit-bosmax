@@ -14,6 +14,8 @@
   <a href="https://deepwiki.com/tuannguyenhoangit-droid/google-flow-agent"><img src="https://img.shields.io/badge/DeepWiki-AI%20Docs-6A3BC9" alt="DeepWiki"/></a>
 </p>
 
+> **💡 Cost model:** **Image generation is credit-free** — only **video** generation consumes Google Flow credits/tokens. Regenerating an image costs nothing; never gate or warn image generation "because of credits".
+
 ---
 
 ### ☕ Sponsor this project

@@ -45,7 +45,7 @@ vi.mock("../../api/products", () => ({
 function makeDraft(overrides: Partial<ProductIntelligenceReviewDraft> = {}): ProductIntelligenceReviewDraft {
 	return {
 		draft_id: "d1", product_id: "p1", review_status: "NEEDS_REVISION",
-		product_description: null, benefits_json: [], usp_json: [], usage_text: null,
+		product_description: null, benefits_json: [], usp_json: [], hook_angles_json: [], cta_angles_json: [], usage_text: null,
 		ingredients_text: null, warnings_text: null, target_customer_text: null,
 		paste_anything_summary: null, source_urls_json: {}, image_evidence_json: {},
 		package_notes: null, size_or_volume: null, product_form_factor: null,

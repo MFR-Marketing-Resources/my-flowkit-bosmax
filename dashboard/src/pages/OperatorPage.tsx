@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { fetchAPI } from "../api/client";
+import {
+	bindingFallbackGenerateAsset,
+	generateAssetHasTransport,
+	packageSlotResolvedAsset,
+	resolvedAssetToGenerateAsset,
+} from "../faceless/facelessLane";
 import { useCopywritingReadiness } from "../api/copywritingReadiness";
 import { fetchCreativeAssetEligibilityAudit } from "../api/creativeAssets";
 import {
@@ -9,6 +15,13 @@ import {
 	type CreativeRecipe,
 } from "../api/creativeIntelligence";
 import { fetchProductCatalog } from "../api/products";
+import {
+	avatarRegistryCode,
+	fetchAvatarRegistryPool,
+	filterRecipesToAvatarRegistry,
+	resolveAvatarRegistryCode,
+	type AvatarRegistryPoolRow,
+} from "../api/avatarRegistry";
 import {
 	createF2VGenerationPackage,
 	createI2VGenerationPackage,
@@ -35,17 +48,13 @@ import CreativeDirectionSection, {
 } from "../components/workspace/CreativeDirectionSection";
 import IMGModule from "../components/workspace/IMGModule";
 import {
-	OperatorCockpit,
-	QueueRow,
 	ResolvedChip,
 	StoryboardStrip,
 	WorkflowStep,
 } from "../components/workflow";
-import type {
-	CockpitPlanRow,
-	WorkflowStepStatus,
-} from "../components/workflow";
+import type { WorkflowStepStatus } from "../components/workflow";
 import SceneStrategySummary from "../components/workspace/SceneStrategySummary";
+import ResultsSidebar, { type SessionResult } from "../components/workspace/ResultsSidebar";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import VisualAssetPicker from "../components/workspace/VisualAssetPicker";
 import type {
@@ -709,33 +718,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// Registry; no persona-composer or legacy persona fallback reaches production.
 	const [registryAvatarId, setRegistryAvatarId] = useState("");
 	const [registrySceneCode, setRegistrySceneCode] = useState("");
-	// T2V descriptor-based creative direction (no image pickers). The primary
-	// avatar drives the load-bearing `avatar_id` generation input via
-	// `registryAvatarId`; scene-strategy / camera descriptors shape the prompt.
-	const [creativeDirection, setCreativeDirection] = useState<CreativeDirection>(
-		EMPTY_CREATIVE_DIRECTION,
-	);
-	const handleCreativeDirectionChange = useCallback(
-		(next: CreativeDirection) => {
-			setCreativeDirection(next);
-			// Keep the presenter authority in sync so T2V generation still resolves
-			// an avatar (avatar_id) exactly as the old registry picker did.
-			setRegistryAvatarId(next.avatarCodes[0] ?? "");
-		},
-		[],
-	);
 	const [avatarRegistryPool, setAvatarRegistryPool] = useState<
-		Array<{
-			avatar_code?: string;
-			AvatarCode?: string;
-			display_name?: string;
-			Name?: string;
-			name?: string;
-			Variant?: string;
-			age_band?: string;
-			character_name?: string;
-			generated_asset_id?: string | null;
-		}>
+		AvatarRegistryPoolRow[]
 	>([]);
 	const [sceneRegistryPool, setSceneRegistryPool] = useState<
 		Array<{
@@ -751,13 +735,33 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const [registryPoolsLoading, setRegistryPoolsLoading] = useState(false);
 	const [registryPreviewUrls, setRegistryPreviewUrls] = useState<Record<string, string>>({});
 	const [backendRuntimeStale, setBackendRuntimeStale] = useState(false);
+	// T2V descriptor-based creative direction (no image pickers). The primary
+	// avatar drives the load-bearing `avatar_id` generation input via
+	// `registryAvatarId`; scene-strategy / camera descriptors shape the prompt.
+	const [creativeDirection, setCreativeDirection] = useState<CreativeDirection>(
+		EMPTY_CREATIVE_DIRECTION,
+	);
+	const handleCreativeDirectionChange = useCallback(
+		(next: CreativeDirection) => {
+			const avatar = resolveAvatarRegistryCode(
+				next.avatarCodes[0],
+				avatarRegistryPool,
+			);
+			setCreativeDirection({
+				...next,
+				avatarCodes: avatar ? [avatar] : [],
+			});
+			// Keep the presenter authority in sync so T2V generation still resolves
+			// an avatar (avatar_id) exactly as the old registry picker did.
+			setRegistryAvatarId(avatar);
+		},
+		[avatarRegistryPool],
+	);
 	useEffect(() => {
 		let cancelled = false;
 		setRegistryPoolsLoading(true);
 		Promise.all([
-			fetchAPI<{ avatars?: typeof avatarRegistryPool }>(
-				"/api/workspace/avatar-registry/pool",
-			).catch(() => ({ avatars: [] })),
+			fetchAvatarRegistryPool().catch(() => []),
 			fetchAPI<{
 				scenes?: typeof sceneRegistryPool;
 				count?: number;
@@ -765,7 +769,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		])
 			.then(([avatarResp, sceneResp]) => {
 				if (cancelled) return;
-				setAvatarRegistryPool(avatarResp.avatars ?? []);
+				setAvatarRegistryPool(avatarResp);
 				setSceneRegistryPool(sceneResp.scenes ?? []);
 			})
 			.finally(() => {
@@ -775,6 +779,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			cancelled = true;
 		};
 	}, []);
+	useEffect(() => {
+		if (!avatarRegistryPool.length || !registryAvatarId) return;
+		if (resolveAvatarRegistryCode(registryAvatarId, avatarRegistryPool)) return;
+		setRegistryAvatarId("");
+		setCreativeDirection((current) => ({ ...current, avatarCodes: [] }));
+	}, [avatarRegistryPool, registryAvatarId]);
 	useEffect(() => { void Promise.all([fetchCreativeAssetEligibilityAudit({ surface: "I2V_CHARACTER_PICKER" }), fetchCreativeAssetEligibilityAudit({ surface: "I2V_SCENE_PICKER" })]).then((results) => setRegistryPreviewUrls(Object.fromEntries(results.flatMap((result) => result.eligible_assets.map((asset) => [asset.asset_id, asset.preview_url || asset.download_url || ""]))))).catch(() => setRegistryPreviewUrls({})); }, []);
 	const selectedSceneBackground =
 		sceneRegistryPool.find((s) => s.scene_code === registrySceneCode)?.background_prompt?.trim() ||
@@ -809,6 +819,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	});
 	// Finished artifact preview — rendered inline the moment a job completes so the
 	// operator never has to back-button/reload to find out the video is ready.
+	const [sessionResults, setSessionResults] = useState<SessionResult[]>([]);
 	const [completedArtifact, setCompletedArtifact] = useState<{
 		mediaId: string;
 		url: string;
@@ -860,17 +871,19 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// avatar (avatar_id) and the recipe (scene/camera) never disagree.
 	const applyV4Presenter = useCallback(
 		(avatar: string, pool: CreativeRecipe[], pretick: CreativeRecipe[]) => {
+			const registryPool = filterRecipesToAvatarRegistry(pool, avatarRegistryPool);
+			const registryPretick = filterRecipesToAvatarRegistry(pretick, avatarRegistryPool);
 			// Single-select: ONE coherent recipe for the presenter (the knowledge
 			// base's top pick) becomes recipes[0] → scene_template_id + camera_preset.
 			const chosen =
-				pretick.find((r) => r.avatar_code === avatar) ??
-				pool.find((r) => r.avatar_code === avatar) ??
+				registryPretick.find((r) => r.avatar_code === avatar) ??
+				registryPool.find((r) => r.avatar_code === avatar) ??
 				null;
 			handleCreativeDirectionChange(
 				buildCreativeDirectionFromRecipes(chosen ? [chosen] : []),
 			);
 		},
-		[handleCreativeDirectionChange],
+		[avatarRegistryPool, handleCreativeDirectionChange],
 	);
 	// Load the product's coherent recipe pool for the V4 T2V lane; auto-pick a
 	// default presenter from the knowledge base only when none is set yet.
@@ -882,15 +895,23 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		void getProductRecipes(selectedProduct.id)
 			.then((res) => {
 				if (!active) return;
-				setV4Pool(res.recipes);
-				setV4Pretick(res.recommended_pretick);
+				const registryRecipes = filterRecipesToAvatarRegistry(
+					res.recipes,
+					avatarRegistryPool,
+				);
+				const registryPretick = filterRecipesToAvatarRegistry(
+					res.recommended_pretick,
+					avatarRegistryPool,
+				);
+				setV4Pool(registryRecipes);
+				setV4Pretick(registryPretick);
 				if (!registryAvatarId) {
 					const autoAvatar =
-						res.recommended_pretick[0]?.avatar_code ??
-						res.recipes[0]?.avatar_code ??
+						registryPretick[0]?.avatar_code ??
+						registryRecipes[0]?.avatar_code ??
 						"";
 					if (autoAvatar)
-						applyV4Presenter(autoAvatar, res.recipes, res.recommended_pretick);
+						applyV4Presenter(autoAvatar, registryRecipes, registryPretick);
 				}
 			})
 			.catch(() => {})
@@ -901,7 +922,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			active = false;
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [useV4, mode, selectedProduct?.id]);
+	}, [useV4, mode, selectedProduct?.id, avatarRegistryPool]);
 	// Keep the scene→camera recipe coherent with whoever set the presenter
 	// (creative-setup seed, manual pick). Idempotent: no-op when already in sync,
 	// when the avatar is not in this product's pool, or when the recipe is empty.
@@ -975,7 +996,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					setup.saved_selection?.selected_avatar_codes?.[0] ||
 					setup.default_selection?.selected_avatar_codes?.[0] ||
 					"";
-				if (avatar) setRegistryAvatarId(avatar);
+				const registryAvatar = resolveAvatarRegistryCode(
+					avatar,
+					avatarRegistryPool,
+				);
+				if (registryAvatar) setRegistryAvatarId(registryAvatar);
 				// Scene pre-fill: the saved scene TEMPLATES (SCN-xxxx strategy) are a
 				// different layer from the generation scene CONTEXTS (backgrounds), so
 				// pick a cluster-appropriate scene context from the registry instead of
@@ -997,7 +1022,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		return () => {
 			active = false;
 		};
-	}, [selectedProduct?.id]);
+	}, [selectedProduct?.id, avatarRegistryPool]);
 
 	useEffect(() => {
 		void fetchPromptCompilerRuntimeConfig()
@@ -1291,6 +1316,14 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							kind: job.artifact === "image" ? "image" : "video",
 							sizeMb: job.size_mb != null ? String(job.size_mb) : null,
 						});
+						setSessionResults((prev) => [
+							{
+								media_id: mediaId,
+								kind: job.artifact === "image" ? "image" : "video",
+								size_mb: job.size_mb ?? null,
+							},
+							...prev.filter((r) => r.media_id !== mediaId),
+						]);
 					}
 					setNotice({
 						tone: "success",
@@ -1436,7 +1469,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				setNotice({
 					tone: "info",
 					title: `${data.mode} running — video sedang dijana (±3–8 min), biar page ini terbuka`,
-					detail: `Stage: ${stageLabel}${stageMessage ? ` — ${stageMessage}` : ""} · Nota: tiada apa akan bergerak dalam tab Google Flow — penjanaan berjalan melalui API dan video muncul di sini bila siap.`,
+					detail: `Stage: ${stageLabel}${stageMessage ? ` — ${stageMessage}` : ""} · Note: nothing moves in the Google Flow tab — generation runs via API and the video appears here when it's ready.`,
 					requestId: manualRequestId,
 				});
 				pollTimerRef.current = window.setTimeout(() => {
@@ -1527,6 +1560,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							? data.visual_lane_id ?? data.lane
 							: undefined,
 					image_media_ids: refs,
+					// Forward resolvable asset OBJECTS (Faceless parity) so the backend
+					// resolver can upload/materialize references that carry transport
+					// (local/preview/download) but no live media_id yet.
+					startAsset: data.startAsset,
+					refs: data.refs,
 					aspect,
 					model: data.mode === "IMG" ? data.model : videoModel,
 					// IMG image model (Nano Banana …) — separate from the video `model`.
@@ -1630,6 +1668,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		setVideoModel(nextModel);
 		setModelAdjustmentNote(null);
 		clearDurationAuthorityArtifacts();
+		// Snap the single-clip duration to the model's registry default (Veo 3.1
+		// Lite → 8s, Omni Flash → 10s) so the per-model single target holds. The
+		// operator may still pick another allowed duration afterwards.
+		const engine = getEngine(capabilityMatrix, selectedEngineId);
+		const modelDefault = engine?.models.find(
+			(m) => m.ui_label === nextModel || m.key === nextModel,
+		)?.default_duration_s;
+		if (modelDefault && modelDefault !== videoDurationSeconds) {
+			setVideoDurationSeconds(modelDefault);
+		}
 	};
 
 	// DURATION change (SINGLE): filter models to the new duration; if the current
@@ -2068,14 +2116,18 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			? "Choose a product or upload references, then shape the image before the operator gate."
 			: "Pick a product, message and presenter — references and camera resolve by lane.";
 		const productReady = selectedReadiness?.readiness_status === "READY";
+		const registryV4Pool = filterRecipesToAvatarRegistry(
+			v4Pool,
+			avatarRegistryPool,
+		);
 		const v4Avatars = Array.from(
-			new Set(v4Pool.map((r) => r.avatar_code)),
+			new Set(registryV4Pool.map((r) => r.avatar_code)),
 		).filter(Boolean);
 		const primaryRecipe = creativeDirection.recipes[0] ?? null;
 		// Single-select scene list for the chosen presenter (backend-configured
 		// recipes only — nothing invented).
 		const v4PresenterRecipes = registryAvatarId
-			? v4Pool.filter((r) => r.avatar_code === registryAvatarId)
+			? registryV4Pool.filter((r) => r.avatar_code === registryAvatarId)
 			: [];
 		const applyV4Recipe = (recipe: CreativeRecipe) =>
 			handleCreativeDirectionChange(
@@ -2083,8 +2135,10 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			);
 		const avatarName = (code: string) =>
 			avatarRegistryPool.find(
-				(a) => String(a.avatar_code || a.AvatarCode || "") === code,
-			)?.display_name || code;
+				(a) => avatarRegistryCode(a) === code,
+			)?.character_name ||
+			avatarRegistryPool.find((a) => avatarRegistryCode(a) === code)?.display_name ||
+			code;
 		const presenterLabel = registryAvatarId
 			? `${avatarName(registryAvatarId)} ${v4GenderTag(registryAvatarId)}`.trim()
 			: v4RecipesLoading
@@ -2114,8 +2168,72 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		// SINGLE-clip generation: the compiled single-block prompt from the prepared
 		// execution package. Fired through the LIVE one-door lane (/api/flow/generate),
 		// the same proven lane IMG uses — NOT the retired DOM lane (ADR-007 compliant).
-		const singleClipPrompt =
-			mode === "T2V" ? workspacePackage?.prompt_text || "" : "";
+		const singleClipPrompt = workspacePackage?.prompt_text || "";
+		// Single-clip reference bytes, resolved from the prepared package slots
+		// (proven Faceless pattern) → operator-binding fallback → transport gate.
+		// The backend /api/flow/generate resolver uploads assets that carry
+		// transport (media_id / local / preview / download) but a bare asset_id
+		// fails closed — so gating on real transport makes a broken fire impossible.
+		const singleStartAsset =
+			mode === "F2V" || mode === "HYBRID"
+				? resolvedAssetToGenerateAsset(
+						packageSlotResolvedAsset(workspacePackage, "start_frame"),
+					) ||
+					bindingFallbackGenerateAsset(
+						referenceBinding.startFrameAssetId ||
+							referenceBinding.productReferenceAssetId,
+						"start_frame",
+					)
+				: null;
+		const singleEndAsset =
+			mode === "F2V"
+				? resolvedAssetToGenerateAsset(
+						packageSlotResolvedAsset(workspacePackage, "end_frame"),
+					) ||
+					bindingFallbackGenerateAsset(
+						referenceBinding.endFrameAssetId,
+						"end_frame",
+					)
+				: null;
+		const singleSubjectAsset =
+			mode === "I2V"
+				? resolvedAssetToGenerateAsset(
+						packageSlotResolvedAsset(workspacePackage, "subject"),
+					) ||
+					bindingFallbackGenerateAsset(
+						referenceBinding.characterReferenceAssetId,
+						"subject",
+					)
+				: null;
+		const singleSceneAsset =
+			mode === "I2V"
+				? resolvedAssetToGenerateAsset(
+						packageSlotResolvedAsset(workspacePackage, "scene"),
+					) ||
+					bindingFallbackGenerateAsset(
+						referenceBinding.sceneContextReferenceAssetId,
+						"scene",
+					)
+				: null;
+		const singleStyleAsset =
+			mode === "I2V"
+				? resolvedAssetToGenerateAsset(
+						packageSlotResolvedAsset(workspacePackage, "style"),
+					) ||
+					bindingFallbackGenerateAsset(
+						referenceBinding.styleReferenceAssetId,
+						"style",
+					)
+				: null;
+		// Reference-required modes must have real transportable bytes, not just a
+		// satisfied binding. HYBRID's product anchor lives in the start_frame slot.
+		const singleClipRefsReady =
+			mode === "T2V"
+				? true
+				: mode === "I2V"
+					? generateAssetHasTransport(singleSubjectAsset) &&
+						generateAssetHasTransport(singleSceneAsset)
+					: generateAssetHasTransport(singleStartAsset);
 		const storyboardShots = (previewPackage?.prompt_blocks ?? []).map(
 			(block, i) => ({
 				id: String(block.block_index ?? i),
@@ -2127,83 +2245,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					: undefined,
 			}),
 		);
-		const cockpitState: "idle" | "online" | "running" | "done" =
-			isLoadingPreview || isLoadingPackage
-				? "running"
-				: workspacePackage
-					? "done"
-					: selectedProduct
-						? "online"
-						: "idle";
-		const plan: CockpitPlanRow[] = isImageMode
-			? [
-					{ k: "Lane", v: "IMG", mono: true },
-					{
-						k: "Product",
-						v: selectedProduct?.product_display_name ?? "Manual reference",
-					},
-				  ]
-			: [
-					{
-						k: "Angle",
-						v: copyBound ? "Copy set bound" : "Fallback copy",
-						tone: copyBound ? "good" : "muted",
-					},
-					{ k: "Presenter", v: presenterLabel },
-					{ k: "Scene → camera", v: sceneCameraLabel, mono: true },
-					{ k: "Length", v: lengthLabel },
-					{
-						k: "Engine · model",
-						v: `${currentEngine?.label ?? selectedEngineId} · ${videoModel}`,
-					},
-			  ];
-		// Free prepare flow only — the live, credit-bearing fire stays in the
-		// NativeExtendPanel below (unchanged gates). The cockpit never spends credits.
-		const cockpitGenerate = isImageMode
-			? {
-					label: "Use Image setup below",
-					disabled: true,
-					onClick: () => {},
-					note: "the IMG control remains the operator gate",
-			  }
-			: !productReady
-			? {
-					label: "Select a ready product",
-					disabled: true,
-					onClick: () => {},
-					note: "pick a READY product to begin",
-				}
-			: extendTotalRequired
-				? {
-						label: "Set length first",
-						disabled: true,
-						onClick: () => {},
-						note: "Extended video needs a total duration",
-					}
-				: !previewPackage
-					? {
-							label: isLoadingPreview ? "Compiling…" : "Compile preview",
-							loading: isLoadingPreview,
-							disabled: backendRuntimeStale,
-							onClick: () => void handleLoadPreview(),
-							note: "compiles the prompt · no credits",
-						}
-					: !workspacePackage
-						? {
-								label: isLoadingPackage
-									? "Preparing…"
-									: "Prepare final prompt",
-								loading: isLoadingPackage,
-								disabled: showFallbackConfirm || backendRuntimeStale,
-								onClick: () => void handleGeneratePackage(),
-								note: "saves the execution package · no credits",
-							}
-						: {
-								label: "Prepared ✓ — generate below",
-								disabled: true,
-								onClick: () => {},
-								note: "credits only when you press Generate video",
-							};
 
 		const s1: WorkflowStepStatus = selectedProduct
 			? productReady
@@ -2277,8 +2318,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					<BackendVersionBanner onRuntimeStaleChange={setBackendRuntimeStale} />
 				</div>
 
-				<div className="flex min-h-0 flex-1 flex-col gap-5 xl:flex-row">
-					<main className="min-w-0 flex-1 space-y-3 overflow-y-auto pb-6 xl:pr-1">
+				<div className="flex min-h-0 flex-1 flex-col gap-5 lg:flex-row">
+					<main className="min-w-0 space-y-3 pb-6 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1">
 						{/* Step 1 — Product */}
 						<WorkflowStep
 							index={1}
@@ -2391,6 +2432,15 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									icon="🎭"
 									auto={!v4IsOpen(3, s3) || !registryAvatarId}
 								/>
+								<div
+									data-testid="operator-presenter-source"
+									className="text-[11px] text-cyan-200"
+								>
+									Avatar source: Avatar Registry
+									{mode === "F2V"
+										? " · F2V start/end slots remain frame references"
+										: ""}
+								</div>
 								{mode === "HYBRID" ? (
 									<div
 										data-testid="operator-registry-authority"
@@ -2414,9 +2464,13 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 											<select
 												id="operator-avatar-registry"
 												data-testid="operator-avatar-registry"
-												value={registryAvatarId}
-												onChange={(e) => setRegistryAvatarId(e.target.value)}
-												className={selectClass}
+											value={registryAvatarId}
+											onChange={(e) =>
+												setRegistryAvatarId(
+													resolveAvatarRegistryCode(e.target.value, avatarRegistryPool),
+												)
+											}
+											className={selectClass}
 											>
 												<option value="">
 													{avatarRegistryPool.length
@@ -2441,7 +2495,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										<VisualAssetPicker
 											label="Avatar registry visual picker"
 											value={registryAvatarId}
-											onChange={setRegistryAvatarId}
+											onChange={(value) =>
+												setRegistryAvatarId(
+													resolveAvatarRegistryCode(value, avatarRegistryPool),
+												)
+											}
 											items={avatarRegistryPool
 												.map((row) => ({
 													value: String(row.avatar_code || row.AvatarCode || ""),
@@ -2742,6 +2800,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										icon="🧷"
 										auto={!referenceBlocker}
 									/>
+									{mode === "F2V" ? (
+										<p className="text-[11px] text-slate-400">
+											F2V start/end selections are frame references; presenter identity
+											comes from the Avatar Registry.
+										</p>
+									) : null}
 									<CanonicalReferenceBindingControls
 										mode={mode}
 										productId={selectedProduct?.id ?? null}
@@ -2874,10 +2938,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 											is_final: i === extendAuthority.plan.length - 2,
 										}))}
 								/>
-							) : mode === "T2V" ? (
-								// SINGLE clip: one video via the LIVE one-door lane
-								// (/api/flow/generate). The operator presses this — it spends
-								// credits — never auto-fired.
+							) : singleClipPrompt && !referenceBlocker && singleClipRefsReady ? (
+								// SINGLE clip for EVERY mode (T2V/F2V/HYBRID/I2V) via the LIVE
+								// one-door lane (/api/flow/generate). Reference-required modes are
+								// gated on their own resolved-reference transport; the operator
+								// presses this — it spends credits — never auto-fired.
 								<div className="space-y-2">
 									<button
 										type="button"
@@ -2892,11 +2957,19 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 													null,
 												prompt_fingerprint:
 													workspacePackage?.prompt_fingerprint ?? null,
+												startAsset: singleStartAsset ?? undefined,
+												endAsset: singleEndAsset ?? undefined,
+												refs:
+													mode === "I2V"
+														? {
+																subjectAsset: singleSubjectAsset ?? undefined,
+																sceneAsset: singleSceneAsset ?? undefined,
+																styleAsset: singleStyleAsset ?? undefined,
+															}
+														: undefined,
 											})
 										}
-										disabled={
-											!singleClipPrompt || isExecuting || backendRuntimeStale
-										}
+										disabled={isExecuting || backendRuntimeStale}
 										className="w-full rounded-xl bg-gradient-to-br from-v4-accent to-v4-auto px-4 py-3 text-[13px] font-bold text-slate-950 shadow-lg shadow-v4-accent/20 transition-opacity hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-40"
 									>
 										{isExecuting
@@ -2904,15 +2977,18 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 											: `▶ Generate 1 clip · ${videoDurationSeconds}s`}
 									</button>
 									<p className="text-[11px] text-slate-500">
-										{singleClipPrompt
-											? "Fires one video through Google Flow — spends credits. Needs an open, warmed-up Flow editor tab. For a longer joined video, switch Length to “Extended video”."
-											: "Compile preview → Prepare final prompt (cockpit) first."}
+										Fires one video through Google Flow — spends credits. Needs an
+										open, warmed-up Flow editor tab. For a longer joined video,
+										switch Length to “Extended video”.
 									</p>
 								</div>
 							) : (
 								<div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-100">
-									{mode} keeps the existing reference-aware production gate. Select
-									EXTEND with a total duration to open the durable Generate control.
+									{referenceBlocker
+										? referenceBlocker
+										: !singleClipRefsReady
+											? `${mode} needs its reference image resolved into the prepared package — re-run Prepare, or bind an approved reference.`
+											: "Compile preview → Prepare final prompt first, then Generate 1 clip appears here."}
 								</div>
 							)}
 						</WorkflowStep>
@@ -2980,8 +3056,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 
 					{/* Operator cockpit rail — also the video review screen once a job
 					    completes (a quick look here without leaving for the Library). */}
-					<div className="w-full xl:w-80 xl:flex-none">
-						<div className="space-y-4 xl:sticky xl:top-4">
+					<div className="w-full lg:w-80 lg:flex-none lg:min-h-0 lg:overflow-y-auto">
+						<div className="space-y-4">
 							{completedArtifact ? (
 								<div className="overflow-hidden rounded-2xl border border-emerald-500/40 bg-emerald-500/10 shadow-lg shadow-black/20">
 									<div className="flex items-center justify-between gap-2 border-b border-emerald-500/20 px-3 py-2">
@@ -3032,60 +3108,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									</div>
 								</div>
 							) : null}
-							<OperatorCockpit
-								laneLabel={laneTitle}
-								status={{
-									label:
-										cockpitState === "running"
-											? "Working"
-											: cockpitState === "done"
-												? "Prepared"
-												: cockpitState === "online"
-													? "Ready"
-													: "Idle",
-									state: cockpitState,
-								}}
-								product={
-									selectedProduct
-										? {
-												name: selectedProduct.product_display_name,
-												sub:
-													selectedProduct.strategy_taxonomy?.cluster ??
-													undefined,
-											}
-										: undefined
+							<ResultsSidebar
+								results={sessionResults}
+								generating={isExecuting}
+								libraryHref={isImageMode ? "/library/images" : "/library/videos"}
+								onRemoved={(mediaId) =>
+									setSessionResults((prev) =>
+										prev.filter((r) => r.media_id !== mediaId),
+									)
 								}
-								plan={selectedProduct ? plan : undefined}
-								queueTitle="Storyboard"
-								generate={cockpitGenerate}
-								debug={
-									<div className="space-y-1">
-										<div>
-										mode {mode} · {isImageMode ? "IMAGE" : isExtendMode ? "EXTEND" : "SINGLE"}
-										</div>
-										{workspacePackage ? (
-											<div className="break-all">
-												pkg {workspacePackage.workspace_execution_package_id}
-											</div>
-										) : null}
-									</div>
-								}
-							>
-								{storyboardShots.length ? (
-									storyboardShots.slice(0, 4).map((shot) => (
-										<QueueRow
-											key={shot.id}
-											title={shot.label}
-											sub={shot.sub}
-											status={workspacePackage ? "ready" : "queued"}
-										/>
-									))
-								) : (
-									<p className="text-[11px] text-slate-500">
-										Compile a preview to see the shot list.
-									</p>
-								)}
-							</OperatorCockpit>
+							/>
 						</div>
 					</div>
 				</div>
@@ -3651,7 +3683,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										id="operator-avatar-registry"
 										data-testid="operator-avatar-registry"
 										value={registryAvatarId}
-										onChange={(e) => setRegistryAvatarId(e.target.value)}
+										onChange={(e) =>
+											setRegistryAvatarId(
+												resolveAvatarRegistryCode(e.target.value, avatarRegistryPool),
+											)
+										}
 										className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
 									>
 										<option value="">
@@ -3676,7 +3712,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										})}
 									</select>
 								</label>
-								<VisualAssetPicker label="Avatar registry visual picker" value={registryAvatarId} onChange={setRegistryAvatarId} items={avatarRegistryPool.map((row) => ({ value: String(row.avatar_code || row.AvatarCode || ""), title: String(row.character_name || row.display_name || row.Name || row.name || row.avatar_code || "Avatar"), subtitle: String(row.avatar_code || row.AvatarCode || ""), previewUrl: registryPreviewUrls[String(row.generated_asset_id || "")] || null, status: "APPROVED" })).filter((row) => Boolean(row.value))} />
+								<VisualAssetPicker label="Avatar registry visual picker" value={registryAvatarId} onChange={(value) => setRegistryAvatarId(resolveAvatarRegistryCode(value, avatarRegistryPool))} items={avatarRegistryPool.map((row) => ({ value: String(row.avatar_code || row.AvatarCode || ""), title: String(row.character_name || row.display_name || row.Name || row.name || row.avatar_code || "Avatar"), subtitle: String(row.avatar_code || row.AvatarCode || ""), previewUrl: registryPreviewUrls[String(row.generated_asset_id || "")] || null, status: "APPROVED" })).filter((row) => Boolean(row.value))} />
 								<label className="space-y-1 text-xs text-slate-200">
 									<span>Scene registry</span>
 									<select
@@ -4409,8 +4445,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					<div className="mb-3 flex items-center justify-between">
 						<div className="font-semibold tracking-wide text-emerald-200">
 							{completedArtifact.kind === "video"
-								? "🎬 Video siap"
-								: "🖼 Imej siap"}
+								? "🎬 Video ready"
+								: "🖼 Image ready"}
 							{completedArtifact.sizeMb
 								? ` — ${completedArtifact.sizeMb}MB`
 								: ""}

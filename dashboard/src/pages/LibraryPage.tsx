@@ -1,9 +1,10 @@
-import { Download, RefreshCw, Timer } from "lucide-react";
+import { Download, RefreshCw, Timer, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { deleteImageArtifact } from "../api/imgFactory";
 
 // LIBRARY — the single collection point for finished Google Flow results.
-// Workspace pages are for WORK; results live here (video + image pages),
-// retained 48 hours by the backend, then auto-deleted (file + record).
+// Workspace pages are for WORK; results live here. Videos are retained 48 hours;
+// images remain until the operator explicitly deletes the transient artifact.
 
 interface LibraryArtifact {
 	media_id: string;
@@ -36,6 +37,7 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 	const [modeFilter, setModeFilter] = useState<(typeof MODE_FILTERS)[number]>("ALL");
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [deletingMediaId, setDeletingMediaId] = useState<string | null>(null);
 
 	const refresh = useCallback(async () => {
 		setIsLoading(true);
@@ -58,6 +60,26 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 		void refresh();
 	}, [refresh]);
 
+	const handleDeleteImage = useCallback(
+		async (mediaId: string) => {
+			if (kind !== "image") return;
+			if (!window.confirm("Padam image artifact ini? Creative Asset yang sudah disimpan tidak terjejas.")) {
+				return;
+			}
+			setDeletingMediaId(mediaId);
+			setError(null);
+			try {
+				await deleteImageArtifact(mediaId);
+				setArtifacts((prev) => prev.filter((item) => item.media_id !== mediaId));
+			} catch (err) {
+				setError(err instanceof Error ? err.message : "Failed to delete image artifact");
+			} finally {
+				setDeletingMediaId(null);
+			}
+		},
+		[kind],
+	);
+
 	const title = kind === "video" ? "Video Library" : "Image Library";
 
 	return (
@@ -68,9 +90,11 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 						{kind === "video" ? "🎬" : "🖼"} {title}
 					</h1>
 					<p className="mt-1 text-xs text-slate-400">
-						Semua hasil siap dari Google Flow terkumpul di sini. Setiap item
-						disimpan <span className="font-semibold text-slate-200">48 jam</span>{" "}
-						sebelum auto-delete — download apa yang anda mahu simpan.
+						{kind === "video" ? (
+							<>Video disimpan <span className="font-semibold text-slate-200">48 jam</span> sebelum auto-delete. Download apa yang anda mahu simpan.</>
+						) : (
+							<>Image kekal disimpan sehingga anda padam secara manual. Save ke Creative Library untuk reuse dalam F2V / I2V.</>
+						)}
 					</p>
 				</div>
 				<div className="flex items-center gap-2">
@@ -107,9 +131,9 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 
 			{!error && artifacts.length === 0 && !isLoading && (
 				<div className="rounded-2xl border border-slate-800 bg-slate-900/40 px-4 py-10 text-center text-sm text-slate-400">
-					Tiada {kind === "video" ? "video" : "imej"} dalam tempoh simpanan 48
-					jam. Hasil baharu akan muncul di sini secara automatik selepas job
-					siap.
+					{kind === "video"
+						? "Tiada video dalam tempoh simpanan 48 jam. Hasil baharu akan muncul di sini secara automatik selepas job siap."
+						: "Tiada image tersimpan. Hasil baharu akan muncul di sini secara automatik selepas job siap."}
 				</div>
 			)}
 
@@ -149,16 +173,21 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 							</span>
 							<span>{item.size_mb != null ? `${item.size_mb}MB` : ""}</span>
 						</div>
-						<div className="mt-1 flex items-center justify-between">
-							<span
-								className={`flex items-center gap-1 text-[10px] ${expiryTone(item.expires_in_hours)}`}
-								title={item.expires_at ?? undefined}
-							>
-								<Timer size={11} />
-								{item.expires_in_hours != null
-									? `${item.expires_in_hours}j lagi`
-									: "—"}
-							</span>
+						<div className="mt-1 flex items-center justify-between gap-2">
+							{item.artifact_kind === "video" ? (
+								<span
+									className={`flex items-center gap-1 text-[10px] ${expiryTone(item.expires_in_hours)}`}
+									title={item.expires_at ?? undefined}
+								>
+									<Timer size={11} />
+									{item.expires_in_hours != null
+										? `${item.expires_in_hours}j lagi`
+										: "—"}
+								</span>
+							) : (
+								<span className="text-[10px] text-emerald-300">Persistent · manual delete</span>
+							)}
+							<div className="flex items-center gap-1">
 							<a
 								href={`/api/flow/retrieved/${item.media_id}`}
 								download={`${item.media_id}.${item.artifact_kind === "video" ? "mp4" : "jpg"}`}
@@ -167,6 +196,19 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 								<Download size={11} />
 								Save
 							</a>
+							{kind === "image" ? (
+								<button
+									type="button"
+									onClick={() => void handleDeleteImage(item.media_id)}
+									disabled={deletingMediaId === item.media_id}
+									aria-label={`Delete image ${item.media_id}`}
+									className="flex items-center gap-1 rounded border border-rose-500/40 px-2 py-0.5 text-[10px] text-rose-300 hover:bg-rose-500/10 disabled:opacity-40"
+								>
+									<Trash2 size={11} />
+									{deletingMediaId === item.media_id ? "Deleting…" : "Delete"}
+								</button>
+							) : null}
+							</div>
 						</div>
 						<div className="mt-1 text-[9px] text-slate-500">
 							{item.created_at?.replace("T", " ").replace("Z", "")}

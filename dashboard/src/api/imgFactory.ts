@@ -1,5 +1,5 @@
 import type { CreativeAsset } from "../types";
-import { fetchAPI, getAPI, postAPI } from "./client";
+import { deleteAPI, fetchAPI, getAPI, postAPI } from "./client";
 
 export interface ImgAssetLane {
 	lane_id: string;
@@ -440,4 +440,8 @@ export async function resolveF2vFrameSources(
 		"/api/img-factory/f2v-frame-sources",
 		input,
 	);
+}
+
+export async function deleteImageArtifact(mediaId: string): Promise<void> {
+	await deleteAPI(`/api/flow/artifacts/${encodeURIComponent(mediaId)}`);
 }

@@ -135,13 +135,37 @@ function Metric({
 }
 
 const WORKFLOW_STEPS = [
-	{ id: 1, label: "Products", desc: "Select & quantity" },
-	{ id: 2, label: "Video Setup", desc: "Mode & duration" },
-	{ id: 3, label: "Preflight", desc: "Capacity check" },
-	{ id: 4, label: "Matrix & Compile", desc: "0 credits" },
-	{ id: 5, label: "Waves & Dry Run", desc: "0 credits" },
-	{ id: 6, label: "Generate", desc: "Spends credits" },
+	{ id: 1, label: "Pick products", desc: "Choose & quantity" },
+	{ id: 2, label: "Choose recipe", desc: "Mode & duration" },
+	{ id: 3, label: "Check readiness", desc: "Capacity + supply" },
+	{ id: 4, label: "Compile", desc: "0 credits" },
+	{ id: 5, label: "Dry run", desc: "Review before live" },
+	{ id: 6, label: "Generate", desc: "Explicit credit gate" },
 ];
+
+const GUIDED_RECIPES = [
+	{
+		id: "single-8",
+		seconds: 8,
+		mode: "SINGLE",
+		title: "Single 8s",
+		detail: "1 engine block · one finished clip",
+	},
+	{
+		id: "extend-16",
+		seconds: 16,
+		mode: "EXTEND",
+		title: "Extend 16s",
+		detail: "2 × 8s blocks · one joined clip",
+	},
+	{
+		id: "extend-24",
+		seconds: 24,
+		mode: "EXTEND",
+		title: "Extend 24s",
+		detail: "3 × 8s blocks · one joined clip",
+	},
+] as const;
 
 type StudioMode =
 	| "NEW_DRAFT"
@@ -183,6 +207,7 @@ export default function CreativeProductionStudioPage() {
 	const [modelRegistryError, setModelRegistryError] = useState("");
 	const [historySearch, setHistorySearch] = useState("");
 	const [historyStatus, setHistoryStatus] = useState("ACTIVE");
+	const [advancedWorkspaceOpen, setAdvancedWorkspaceOpen] = useState(false);
 	const planRequestSequence = useRef(0);
 	const treatmentAvailabilitySequence = useRef(0);
 	const [activeView, setActiveView] = useState<"matrix" | "attempts" | "qa">(
@@ -222,6 +247,7 @@ export default function CreativeProductionStudioPage() {
 		setLivePhrase("");
 		setLastEvidence("");
 		setActiveView("matrix");
+		setAdvancedWorkspaceOpen(false);
 		try {
 			const fetchedDetail = await fetchProductionPlan(planId);
 			if (requestSequence !== planRequestSequence.current) return null;
@@ -628,6 +654,7 @@ export default function CreativeProductionStudioPage() {
 		setLivePhrase("");
 		setLastEvidence("");
 		setActiveView("matrix");
+		setAdvancedWorkspaceOpen(false);
 		setStudioMode("UNSAVED_DRAFT_FROM_ACTIVE_PLAN");
 	}, [detail]);
 
@@ -639,6 +666,7 @@ export default function CreativeProductionStudioPage() {
 		setLivePhrase("");
 		setLastEvidence("");
 		setActiveView("matrix");
+		setAdvancedWorkspaceOpen(false);
 		setDraftSourceSnapshot(null);
 		setAllocations([]);
 		setForm((current) => ({
@@ -1026,6 +1054,20 @@ export default function CreativeProductionStudioPage() {
 		selectedSnapshot?.product_allocations.length ?? allocations.length;
 	const p6V4TargetCount = selectedSnapshot?.target_video_count ?? totalVideoCount;
 	const p6V4PlanStatus = selectedPlan?.status ?? (studioMode === "NEW_DRAFT" ? "DRAFT" : studioMode);
+	const guidedActiveStep = !allocations.length
+		? 1
+		: !detail?.plan
+			? 2
+			: activeStep;
+	const guidedRecipe = selectedSnapshot?.video_configurations?.[0]
+		? `${selectedSnapshot.video_configurations[0].requested_total_duration_seconds}s ${selectedSnapshot.video_configurations[0].generation_mode}`
+		: selectedDurationOption
+			? `${selectedDurationOption.seconds}s ${selectedDurationOption.generationMode}`
+			: "Choose a recipe";
+	const guidedNextAction = primaryActionConfig.isCreditSpend
+		? null
+		: primaryActionConfig;
+	const guidedAuthorityReady = cohort?.matches_frozen_authority === true;
 	const p6V4Surface = (surface: ReactNode) =>
 		useV4 ? (
 			<WorkflowStep
@@ -1036,7 +1078,165 @@ export default function CreativeProductionStudioPage() {
 				helper="Batch, matrix, waves, QA, and live confirmation remain the P6 IA; this frame only adds the V4 visual language."
 				collapsible={false}
 			>
-				{surface}
+				<div data-testid="p6-guided-flow" className="space-y-4">
+					<div className="rounded-2xl border border-cyan-500/30 bg-gradient-to-br from-cyan-950/30 via-slate-950 to-violet-950/20 p-4">
+						<div className="flex flex-wrap items-start justify-between gap-4">
+							<div className="max-w-2xl">
+								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-300">
+									Guided production flow
+								</div>
+								<h2 className="mt-1 text-xl font-semibold text-slate-100">
+									Build a video pack, then review it
+								</h2>
+								<p className="mt-1 text-xs leading-5 text-slate-400">
+									Choose products and one recipe per plan. Compile and dry-run are
+									free; live dispatch remains a separate, explicit credit action.
+								</p>
+							</div>
+							<div className="grid min-w-[230px] grid-cols-3 gap-2">
+								<Metric label="Products" value={p6V4ProductCount} />
+								<Metric label="Videos" value={p6V4TargetCount} />
+								<Metric label="Before live" value="0 credits" tone="text-emerald-200" />
+							</div>
+						</div>
+
+						<div className="mt-4 grid gap-2 md:grid-cols-3">
+							{GUIDED_RECIPES.map((recipe) => {
+								const available = durationOptions.some(
+									(option) => option.seconds === recipe.seconds,
+									);
+								const selected = form.durationSeconds === recipe.seconds;
+								return (
+									<button
+										key={recipe.id}
+										type="button"
+										disabled={!available || Boolean(busy)}
+										onClick={() =>
+											setForm((current) => ({
+												...current,
+												durationSeconds: recipe.seconds,
+											}))
+										}
+										data-testid={`p6-recipe-${recipe.id}`}
+										className={`rounded-xl border p-3 text-left transition-colors ${
+											selected
+												? "border-violet-400/70 bg-violet-500/15 text-violet-100"
+												: "border-slate-700 bg-slate-950/60 text-slate-300 hover:border-cyan-400/50"
+										}`}
+									>
+										<div className="flex items-center justify-between gap-2">
+											<strong>{recipe.title}</strong>
+											{selected ? <StatusBadge status="SELECTED" /> : null}
+										</div>
+										<div className="mt-1 text-[10px] text-slate-500">
+											{available ? recipe.detail : "Unavailable for this model"}
+										</div>
+									</button>
+								);
+							})}
+						</div>
+
+						<div className="mt-4 grid gap-2 md:grid-cols-3">
+							{WORKFLOW_STEPS.map((step) => {
+								const stepStatus =
+									step.id < guidedActiveStep
+										? "done"
+										: step.id === guidedActiveStep
+											? "active"
+											: "upcoming";
+								return (
+									<div
+										key={step.id}
+										className={`rounded-lg border px-3 py-2 ${
+											stepStatus === "active"
+												? "border-cyan-400/50 bg-cyan-500/10"
+												: "border-slate-800 bg-slate-950/50"
+										}`}
+									>
+										<div className="flex items-center gap-2 text-[11px] font-semibold text-slate-200">
+											<span className="grid h-5 w-5 place-items-center rounded-md border border-slate-700 text-[10px] text-cyan-200">
+												{stepStatus === "done" ? "✓" : step.id}
+											</span>
+											{step.label}
+										</div>
+										<div className="mt-1 pl-7 text-[10px] text-slate-500">
+											{step.desc}
+										</div>
+									</div>
+								);
+							})}
+						</div>
+
+						<div
+							data-testid="p6-nine-pack-guidance"
+							className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-500/30 bg-violet-950/20 p-3 text-xs"
+						>
+							<div>
+								<div className="font-semibold text-violet-100">9-video validation pack</div>
+								<div className="mt-1 text-[10px] text-violet-200/70">
+									Prepare three separate plans: 8s × 3, 16s × 3, and 24s × 3.
+									No media credits are used until live confirmation.
+								</div>
+							</div>
+							<StatusBadge status="ONE RECIPE PER PLAN" />
+						</div>
+
+						<div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+							<div className="text-xs text-slate-400">
+								<span className="font-semibold text-slate-200">Current:</span>{" "}
+								{guidedRecipe} · {p6V4PlanStatus}
+							</div>
+							<div className="flex flex-wrap gap-2">
+								{!guidedAuthorityReady ? (
+									<span
+										data-testid="p6-guided-authority-blocker"
+										className="rounded-lg border border-rose-500/30 bg-rose-950/30 px-3 py-2 text-[10px] text-rose-200"
+									>
+										Product authority needs reconciliation before a new plan can be created.
+									</span>
+								) : null}
+								{guidedNextAction ? (
+									<button
+										type="button"
+										disabled={guidedNextAction.disabled}
+										onClick={() =>
+											void execute(
+												guidedNextAction.actionName,
+												guidedNextAction.executeAction,
+											)
+										}
+										data-testid="p6-guided-next-action"
+										className="rounded-lg bg-cyan-400 px-3 py-2 text-[10px] font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
+									>
+										{guidedNextAction.buttonLabel}
+									</button>
+								) : null}
+								<button
+									type="button"
+									onClick={() => setAdvancedWorkspaceOpen(true)}
+									data-testid="p6-open-advanced-workspace"
+									className="rounded-lg border border-slate-700 px-3 py-2 text-[10px] font-semibold text-slate-300 hover:border-cyan-400/50"
+								>
+									Open advanced workspace
+								</button>
+							</div>
+						</div>
+					</div>
+
+					<details
+						data-testid="p6-advanced-workspace"
+						open={advancedWorkspaceOpen}
+						onToggle={(event) =>
+							setAdvancedWorkspaceOpen(event.currentTarget.open)
+						}
+						className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3"
+					>
+						<summary className="cursor-pointer list-none text-xs font-semibold text-slate-300">
+							Advanced workspace · factory, matrix, history and diagnostics
+						</summary>
+						<div className="mt-4">{surface}</div>
+					</details>
+				</div>
 			</WorkflowStep>
 		) : (
 			surface
@@ -2684,12 +2884,17 @@ export default function CreativeProductionStudioPage() {
 											</div>
 										) : (
 											detail.qa.map((row, index) => (
-												<pre
+												<details
 													key={String(row.qa_id ?? index)}
-													className="overflow-auto rounded border border-slate-800 bg-slate-900 p-3 text-[10px] text-slate-300"
+													className="rounded border border-slate-800 bg-slate-900 text-[10px] text-slate-300"
 												>
-													{JSON.stringify(row, null, 2)}
-												</pre>
+													<summary className="cursor-pointer px-3 py-2 font-mono text-slate-400 hover:text-slate-200">
+														QA {String(row.qa_id ?? index)}
+													</summary>
+													<pre className="overflow-auto px-3 pb-3 text-slate-300">
+														{JSON.stringify(row, null, 2)}
+													</pre>
+												</details>
 											))
 										)}
 									</div>

@@ -31,7 +31,15 @@ if ($stopped) {
     Start-Sleep -Seconds 2
 }
 
-$pythonExe = Join-Path $script:RepoRoot '.venv\Scripts\python.exe'
+$venvRoot = Join-Path $script:RepoRoot '.venv'
+$pythonExe = Join-Path $venvRoot 'Scripts\python.exe'
+$venvConfig = Join-Path $venvRoot 'pyvenv.cfg'
+if ((Test-Path $pythonExe) -and -not (Test-Path $venvConfig)) {
+    Write-Host "LOCAL_AGENT_START: FAIL" -ForegroundColor Red
+    Write-Host "Reason: Python virtual environment is incomplete; missing $venvConfig"
+    Write-Host "Repair: .\scripts\install-local-agent.ps1"
+    exit 1
+}
 if (-not (Test-Path $pythonExe)) {
     $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
     if (-not $pythonCommand) {

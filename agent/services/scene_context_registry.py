@@ -397,6 +397,58 @@ def delete_scene(scene_code: str) -> dict:
     return {"removed": target, "remaining": result["rows"], "bridge_path": result["bridge_path"]}
 
 
+# Non-identity presentation columns a metadata-only edit may change. SceneCode and
+# every field that derives the code (SceneName), the dedup key (SceneName +
+# BackgroundPrompt), or the generation prompt (PromptV1) are intentionally absent,
+# so an edit can never change identity, break a reference, or collide with another
+# scene. usage_tags is also absent from the generation prompt.
+_METADATA_EDITABLE_COLUMNS = ("usage_tags",)
+
+
+def update_scene(scene_code: str, updates: dict) -> dict:
+    """Metadata-only edit of ONE scene by SceneCode (case-insensitive).
+
+    Only whitelisted non-identity columns (currently usage_tags) may change; the
+    SceneCode and identity/prompt fields stay frozen. Writes the whole table back
+    through the SAME fail-closed sync_pool_csv() door as add/delete. Raises
+    SCENE_CODE_NOT_FOUND if the code is absent, and SCENE_NO_EDITABLE_FIELDS if no
+    editable column was supplied."""
+    target = str(scene_code or "").strip()
+    if not target:
+        raise ValueError("SCENE_CODE_REQUIRED")
+    clean = {
+        column: str(updates.get(column) or "")
+        for column in _METADATA_EDITABLE_COLUMNS
+        if column in updates
+    }
+    if not clean:
+        raise ValueError("SCENE_NO_EDITABLE_FIELDS")
+
+    with open(_active_pool_file(), encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        header = list(reader.fieldnames or [])
+        existing = list(reader)
+
+    found = False
+    for existing_row in existing:
+        if str(existing_row.get("SceneCode") or "").strip().casefold() == target.casefold():
+            for column, value in clean.items():
+                if column in header:
+                    existing_row[column] = value
+            found = True
+            break
+    if not found:
+        raise ValueError(f"SCENE_CODE_NOT_FOUND:{target}")
+
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=header)
+    writer.writeheader()
+    for existing_row in existing:
+        writer.writerow({column: str(existing_row.get(column, "") or "") for column in header})
+    result = sync_pool_csv(buffer.getvalue().encode("utf-8"))
+    return {"updated": target, "rows": result["rows"], "bridge_path": result["bridge_path"]}
+
+
 def find_duplicate_scene(scene_name: str, background_prompt: str) -> dict | None:
     """Return the first pool profile that matches on normalized scene_name OR on
     identical normalized background text, else None."""

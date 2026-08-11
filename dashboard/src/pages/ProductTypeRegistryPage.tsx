@@ -1,12 +1,15 @@
-import { RefreshCw, Search, Tags } from "lucide-react";
+import { Pencil, RefreshCw, Search, Tags, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
+	deleteProductStrategyType,
 	fetchCatalogAuthorityReport,
 	fetchProductStrategyTypeRegistry,
 	fetchProductTypeCopyEligibleReport,
 	registerProductStrategyType,
+	updateProductStrategyType,
 } from "../api/products";
+import { ConfirmActionModal } from "../components/ui";
 import type {
 	CatalogAuthorityReport,
 	CatalogAuthorityTerminalState,
@@ -24,6 +27,14 @@ type RegistrationForm = Omit<
 	ProductStrategyTypeRegistrationRequest,
 	"auto_classification_enabled"
 >;
+type EditForm = {
+	display_name: string;
+	matched_scene_strategy_id: string;
+	scene_coverage_status: CoverageStatus;
+	registry_status: RegistryStatus;
+	reviewer_id: string;
+	reviewer_note: string;
+};
 
 interface CopyStrategyEvidence {
 	eligibleCount: number;
@@ -211,6 +222,15 @@ export default function ProductTypeRegistryPage() {
 	const [saving, setSaving] = useState(false);
 	const [createError, setCreateError] = useState<string | null>(null);
 	const [createSuccess, setCreateSuccess] = useState<string | null>(null);
+	const [editTarget, setEditTarget] =
+		useState<ProductStrategyTypeRegistryEntry | null>(null);
+	const [editForm, setEditForm] = useState<EditForm | null>(null);
+	const [editError, setEditError] = useState<string | null>(null);
+	const [editSaving, setEditSaving] = useState(false);
+	const [deleteTarget, setDeleteTarget] =
+		useState<ProductStrategyTypeRegistryEntry | null>(null);
+	const [deleteError, setDeleteError] = useState<string | null>(null);
+	const [deleteBusy, setDeleteBusy] = useState(false);
 
 	const loadRegistry = useCallback(async () => {
 		setLoading(true);
@@ -471,6 +491,77 @@ export default function ProductTypeRegistryPage() {
 			);
 		} finally {
 			setSaving(false);
+		}
+	}
+
+	function openEdit(item: ProductStrategyTypeRegistryEntry) {
+		setEditError(null);
+		setEditTarget(item);
+		setEditForm({
+			display_name: item.display_name,
+			matched_scene_strategy_id: item.matched_scene_strategy_id,
+			scene_coverage_status: item.scene_coverage_status,
+			registry_status: item.registry_status,
+			reviewer_id: item.reviewer_id ?? "",
+			reviewer_note: item.reviewer_note ?? "",
+		});
+	}
+
+	async function handleEditSave() {
+		if (!editTarget || !editForm) return;
+		const displayName = editForm.display_name.trim();
+		const reviewerId = editForm.reviewer_id.trim();
+		const reviewerNote = editForm.reviewer_note.trim();
+		if (
+			!displayName ||
+			!editForm.matched_scene_strategy_id ||
+			!reviewerId ||
+			!reviewerNote
+		) {
+			setEditError("Complete every required field.");
+			return;
+		}
+		setEditSaving(true);
+		setEditError(null);
+		try {
+			await updateProductStrategyType(
+				editTarget.cluster,
+				editTarget.product_type_group,
+				{
+					display_name: displayName,
+					matched_scene_strategy_id: editForm.matched_scene_strategy_id,
+					scene_coverage_status: editForm.scene_coverage_status,
+					registry_status: editForm.registry_status,
+					auto_classification_enabled: false,
+					reviewer_id: reviewerId,
+					reviewer_note: reviewerNote,
+				},
+			);
+			setEditTarget(null);
+			setEditForm(null);
+			await loadRegistry();
+		} catch (error) {
+			setEditError(error instanceof Error ? error.message : "Update failed.");
+		} finally {
+			setEditSaving(false);
+		}
+	}
+
+	async function handleDeleteConfirm() {
+		if (!deleteTarget) return;
+		setDeleteBusy(true);
+		setDeleteError(null);
+		try {
+			await deleteProductStrategyType(
+				deleteTarget.cluster,
+				deleteTarget.product_type_group,
+			);
+			setDeleteTarget(null);
+			await loadRegistry();
+		} catch (error) {
+			setDeleteError(error instanceof Error ? error.message : "Delete failed.");
+		} finally {
+			setDeleteBusy(false);
 		}
 	}
 
@@ -1035,6 +1126,33 @@ export default function ProductTypeRegistryPage() {
 																{sample.product_name}
 															</div>
 														)}
+														<div className="mt-2 flex gap-2">
+															<button
+																type="button"
+																onClick={() => openEdit(item)}
+																data-testid={`edit-${item.product_type_group}`}
+																className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] font-semibold text-slate-200 hover:border-blue-400/50 hover:text-blue-200"
+															>
+																<Pencil size={12} /> Edit
+															</button>
+															<button
+																type="button"
+																onClick={() => {
+																	setDeleteError(null);
+																	setDeleteTarget(item);
+																}}
+																disabled={item.authority_source === "SYSTEM_SEED"}
+																title={
+																	item.authority_source === "SYSTEM_SEED"
+																		? "System seed entries are protected"
+																		: "Delete this manual entry"
+																}
+																data-testid={`delete-${item.product_type_group}`}
+																className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 bg-red-500/10 px-2 py-1 text-[11px] font-semibold text-red-300 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+															>
+																<Trash2 size={12} /> Delete
+															</button>
+														</div>
 													</td>
 												</tr>
 											);
@@ -1257,6 +1375,172 @@ export default function ProductTypeRegistryPage() {
 					</div>
 				</form>
 			</section>
+
+			{editTarget && editForm && (
+				<div
+					className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+					onClick={() => {
+						setEditTarget(null);
+						setEditForm(null);
+					}}
+				>
+					<div
+						className="w-full max-w-lg space-y-3 rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl"
+						onClick={(event) => event.stopPropagation()}
+					>
+						<h3 className="text-sm font-bold text-slate-100">
+							Edit {editTarget.cluster} / {editTarget.product_type_group}
+						</h3>
+						<p className="text-[11px] text-slate-500">
+							Cluster and product type identity are immutable. Editing does not
+							classify, verify, or approve products.
+						</p>
+						<label className="block text-xs text-slate-400">
+							Display name
+							<input
+								value={editForm.display_name}
+								onChange={(event) =>
+									setEditForm((current) =>
+										current ? { ...current, display_name: event.target.value } : current,
+									)
+								}
+								className={INPUT_CLASS}
+							/>
+						</label>
+						<label className="block text-xs text-slate-400">
+							Matched scene strategy
+							<select
+								value={editForm.matched_scene_strategy_id}
+								onChange={(event) =>
+									setEditForm((current) =>
+										current
+											? { ...current, matched_scene_strategy_id: event.target.value }
+											: current,
+									)
+								}
+								className={INPUT_CLASS}
+							>
+								{registry.scene_strategy_ids.map((sceneStrategyId) => (
+									<option key={sceneStrategyId} value={sceneStrategyId}>
+										{sceneStrategyId}
+									</option>
+								))}
+							</select>
+						</label>
+						<div className="grid grid-cols-2 gap-3">
+							<label className="block text-xs text-slate-400">
+								Scene coverage
+								<select
+									value={editForm.scene_coverage_status}
+									onChange={(event) =>
+										setEditForm((current) =>
+											current
+												? { ...current, scene_coverage_status: event.target.value as CoverageStatus }
+											: current,
+										)
+									}
+									className={INPUT_CLASS}
+								>
+									<option value="COVERED">COVERED</option>
+									<option value="PARTIAL">PARTIAL</option>
+									<option value="FALLBACK_ONLY">FALLBACK_ONLY</option>
+								</select>
+							</label>
+							<label className="block text-xs text-slate-400">
+								Registry status
+								<select
+									value={editForm.registry_status}
+									onChange={(event) =>
+										setEditForm((current) =>
+											current
+												? { ...current, registry_status: event.target.value as RegistryStatus }
+											: current,
+										)
+									}
+									className={INPUT_CLASS}
+								>
+									<option value="ACTIVE">ACTIVE</option>
+									<option value="REVIEW_REQUIRED">REVIEW_REQUIRED</option>
+								</select>
+							</label>
+						</div>
+						<label className="block text-xs text-slate-400">
+							Reviewer ID
+							<input
+								value={editForm.reviewer_id}
+								onChange={(event) =>
+									setEditForm((current) =>
+										current ? { ...current, reviewer_id: event.target.value } : current,
+									)
+								}
+								className={INPUT_CLASS}
+							/>
+						</label>
+						<label className="block text-xs text-slate-400">
+							Reviewer note
+							<input
+								value={editForm.reviewer_note}
+								onChange={(event) =>
+									setEditForm((current) =>
+										current ? { ...current, reviewer_note: event.target.value } : current,
+									)
+								}
+								className={INPUT_CLASS}
+							/>
+						</label>
+						{editError && (
+							<p className="text-xs text-red-300">{editError}</p>
+						)}
+						<div className="flex justify-end gap-2 pt-1">
+							<button
+								type="button"
+								onClick={() => {
+									setEditTarget(null);
+									setEditForm(null);
+								}}
+								disabled={editSaving}
+								className="rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								onClick={handleEditSave}
+								disabled={editSaving}
+								data-testid="edit-save"
+								className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-500 disabled:opacity-40"
+							>
+								{editSaving ? "Saving…" : "Save changes"}
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+
+			<ConfirmActionModal
+				open={deleteTarget !== null}
+				tone="danger"
+				title="Delete product type"
+				body={
+					deleteTarget ? (
+						<span>
+							Permanently remove{" "}
+							<span className="font-mono text-slate-100">
+								{deleteTarget.cluster} / {deleteTarget.product_type_group}
+							</span>
+							? This cannot be undone.
+							{deleteError && (
+								<span className="mt-2 block text-red-300">{deleteError}</span>
+							)}
+						</span>
+					) : null
+				}
+				requiredPhrase={deleteTarget?.product_type_group}
+				confirmLabel="Delete"
+				busy={deleteBusy}
+				onConfirm={handleDeleteConfirm}
+				onCancel={() => setDeleteTarget(null)}
+			/>
 		</div>
 	);
 }

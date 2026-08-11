@@ -31,17 +31,8 @@ vi.mock("../components/copywriting/CopywritingReadinessCard", () => ({
 vi.mock("../components/reporting/RequestReportPanel", () => ({ default: () => null }));
 vi.mock("../components/SocialCopyPackagePanel", () => ({ default: () => null }));
 vi.mock("../components/workspace/CopySelectionPanel", () => ({ default: () => null }));
-vi.mock("../components/workspace/F2VModule", () => ({ default: () => null }));
-vi.mock("../components/workspace/I2VModule", () => ({ default: () => null }));
 vi.mock("../components/workspace/IMGModule", () => ({ default: () => null }));
 vi.mock("../components/workspace/SearchableProductSelect", () => ({ default: () => null }));
-vi.mock("../components/workspace/T2VModule", () => ({
-	default: ({ workspacePackage }: { workspacePackage?: { workspace_execution_package_id?: string } }) => (
-		<output data-testid="mock-t2v-package">
-			{workspacePackage?.workspace_execution_package_id ?? "none"}
-		</output>
-	),
-}));
 
 import OperatorPage from "./OperatorPage";
 

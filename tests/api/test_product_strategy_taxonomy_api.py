@@ -19,6 +19,7 @@ from agent.models.product_strategy_taxonomy import (
 from agent.services import product_strategy_taxonomy_service as taxonomy_service
 from agent.services.product_strategy_taxonomy_service import (
     ProductStrategyTaxonomyError,
+    ProductStrategyTaxonomyNotFound,
 )
 from agent.services.copywriting_taxonomy_service import (
     seed_copywriting_taxonomy_registry,
@@ -409,3 +410,152 @@ def test_admin_review_contract_surfaces_stale_fingerprint(monkeypatch):
     )
     assert response.status_code == 409
     assert response.json()["detail"] == "STALE_PRODUCT_FINGERPRINT"
+
+
+def test_registry_update_and_delete_routes_map_success(monkeypatch):
+    entry = ProductStrategyTypeRegistryEntry(
+        cluster="beauty_makeup",
+        product_type_group="custom_palette",
+        display_name="Renamed Palette",
+        matched_scene_strategy_id="LIP_COLOR",
+        scene_coverage_status="PARTIAL",
+        registry_status="REVIEW_REQUIRED",
+        auto_classification_enabled=False,
+        authority_source="MANUAL_REGISTRATION",
+        reviewer_id="admin-2",
+        reviewer_note="Edited binding.",
+    )
+    captured = {}
+
+    async def fake_update(cluster, product_type_group, request):
+        captured["update"] = (cluster, product_type_group, request)
+        return entry
+
+    async def fake_delete(cluster, product_type_group):
+        captured["delete"] = (cluster, product_type_group)
+        return entry
+
+    monkeypatch.setattr(
+        "agent.api.creative_intelligence._strategy_taxonomy.update_product_strategy_type",
+        fake_update,
+    )
+    monkeypatch.setattr(
+        "agent.api.creative_intelligence._strategy_taxonomy.delete_product_strategy_type",
+        fake_delete,
+    )
+
+    updated = _client().patch(
+        "/api/creative-intelligence/product-strategy-type-registry/beauty_makeup/custom_palette",
+        json={
+            "display_name": "Renamed Palette",
+            "matched_scene_strategy_id": "LIP_COLOR",
+            "scene_coverage_status": "PARTIAL",
+            "registry_status": "REVIEW_REQUIRED",
+            "reviewer_id": "admin-2",
+            "reviewer_note": "Edited binding.",
+        },
+    )
+    removed = _client().delete(
+        "/api/creative-intelligence/product-strategy-type-registry/beauty_makeup/custom_palette"
+    )
+
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["display_name"] == "Renamed Palette"
+    assert captured["update"][0] == "beauty_makeup"
+    assert captured["update"][1] == "custom_palette"
+    assert captured["update"][2].registry_status == "REVIEW_REQUIRED"
+    assert removed.status_code == 200, removed.text
+    assert captured["delete"] == ("beauty_makeup", "custom_palette")
+
+
+def test_registry_update_not_found_and_delete_seed_guard_map_errors(monkeypatch):
+    async def fake_update(cluster, product_type_group, request):
+        raise ProductStrategyTaxonomyNotFound("PRODUCT_STRATEGY_TYPE_NOT_FOUND")
+
+    async def fake_delete(cluster, product_type_group):
+        raise ProductStrategyTaxonomyError("CANNOT_DELETE_SYSTEM_SEED_ENTRY")
+
+    monkeypatch.setattr(
+        "agent.api.creative_intelligence._strategy_taxonomy.update_product_strategy_type",
+        fake_update,
+    )
+    monkeypatch.setattr(
+        "agent.api.creative_intelligence._strategy_taxonomy.delete_product_strategy_type",
+        fake_delete,
+    )
+
+    not_found = _client().patch(
+        "/api/creative-intelligence/product-strategy-type-registry/beauty_makeup/ghost_pair",
+        json={
+            "display_name": "Ghost",
+            "matched_scene_strategy_id": "LIP_COLOR",
+            "scene_coverage_status": "COVERED",
+            "registry_status": "ACTIVE",
+            "reviewer_id": "admin-1",
+            "reviewer_note": "note",
+        },
+    )
+    guarded = _client().delete(
+        "/api/creative-intelligence/product-strategy-type-registry/beauty_makeup/seed_pair"
+    )
+
+    assert not_found.status_code == 404
+    assert not_found.json()["detail"] == "PRODUCT_STRATEGY_TYPE_NOT_FOUND"
+    assert guarded.status_code == 409
+    assert guarded.json()["detail"] == "CANNOT_DELETE_SYSTEM_SEED_ENTRY"
+
+
+@pytest.mark.asyncio
+async def test_registry_crud_update_delete_roundtrip():
+    record = {
+        "cluster": "beauty_makeup",
+        "product_type_group": "crud_roundtrip_pair",
+        "display_name": "CRUD Roundtrip",
+        "matched_scene_strategy_id": "LIP_COLOR",
+        "scene_coverage_status": "COVERED",
+        "registry_status": "ACTIVE",
+        "auto_classification_enabled": 0,
+        "authority_source": "MANUAL_REGISTRATION",
+        "reviewer_id": "admin-1",
+        "reviewer_note": "seed",
+        "reviewed_at": "2026-01-01T00:00:00Z",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+    }
+    created = await crud.create_product_strategy_type_registry_entry(record)
+    assert created["display_name"] == "CRUD Roundtrip"
+
+    updated = await crud.update_product_strategy_type_registry_entry(
+        "beauty_makeup",
+        "crud_roundtrip_pair",
+        {
+            "display_name": "CRUD Renamed",
+            "scene_coverage_status": "PARTIAL",
+            "registry_status": "REVIEW_REQUIRED",
+            "updated_at": "2026-02-02T00:00:00Z",
+        },
+    )
+    assert updated is not None
+    assert updated["display_name"] == "CRUD Renamed"
+    assert updated["scene_coverage_status"] == "PARTIAL"
+    assert updated["registry_status"] == "REVIEW_REQUIRED"
+    # Untouched columns are preserved by the partial update.
+    assert updated["matched_scene_strategy_id"] == "LIP_COLOR"
+
+    deleted = await crud.delete_product_strategy_type_registry_entry(
+        "beauty_makeup", "crud_roundtrip_pair"
+    )
+    assert deleted is True
+    assert (
+        await crud.get_product_strategy_type_registry_entry(
+            "beauty_makeup", "crud_roundtrip_pair"
+        )
+        is None
+    )
+    # Deleting a missing pair is idempotent and reports False.
+    assert (
+        await crud.delete_product_strategy_type_registry_entry(
+            "beauty_makeup", "crud_roundtrip_pair"
+        )
+        is False
+    )

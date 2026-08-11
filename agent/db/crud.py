@@ -1907,6 +1907,73 @@ async def create_product_strategy_type_registry_entry(record: dict) -> dict:
     return result
 
 
+_PRODUCT_STRATEGY_TYPE_REGISTRY_MUTABLE_COLUMNS = (
+    "display_name",
+    "matched_scene_strategy_id",
+    "scene_coverage_status",
+    "registry_status",
+    "auto_classification_enabled",
+    "reviewer_id",
+    "reviewer_note",
+    "reviewed_at",
+    "updated_at",
+)
+
+
+async def update_product_strategy_type_registry_entry(
+    cluster: str,
+    product_type_group: str,
+    fields: dict,
+) -> Optional[dict]:
+    columns = [
+        column
+        for column in _PRODUCT_STRATEGY_TYPE_REGISTRY_MUTABLE_COLUMNS
+        if column in fields
+    ]
+    if not columns:
+        return await get_product_strategy_type_registry_entry(
+            cluster, product_type_group
+        )
+    db = await get_db()
+    assignments = ", ".join(f"{column}=?" for column in columns)
+    sql = (
+        f"UPDATE product_strategy_type_registry SET {assignments} "
+        "WHERE cluster=? AND product_type_group=?"
+    )
+    params = [fields[column] for column in columns] + [cluster, product_type_group]
+    async with _db_lock:
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            await db.execute(sql, params)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    return await get_product_strategy_type_registry_entry(
+        cluster, product_type_group
+    )
+
+
+async def delete_product_strategy_type_registry_entry(
+    cluster: str,
+    product_type_group: str,
+) -> bool:
+    db = await get_db()
+    async with _db_lock:
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            cursor = await db.execute(
+                "DELETE FROM product_strategy_type_registry "
+                "WHERE cluster=? AND product_type_group=?",
+                (cluster, product_type_group),
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    return cursor.rowcount > 0
+
+
 async def seed_product_strategy_type_registry(records: list[dict]) -> int:
     """Insert or refresh system entries without overwriting manual pairs."""
 
@@ -4229,16 +4296,20 @@ async def list_generated_artifacts(limit: int = 50, mode: str = None,
 
 
 async def purge_expired_artifacts(retention_hours: int = 48) -> dict:
-    """Retention law: finished artifacts live 48 hours, then the FILE and the
-    library row are deleted. Runs lazily on every library listing (no scheduler
-    needed) and is safe to call repeatedly."""
+    """Purge expired video artifacts; image artifacts require manual deletion.
+
+    Runs lazily on every library listing (no scheduler needed) and is safe to
+    call repeatedly. Images are intentionally excluded so a library refresh
+    cannot destroy reusable visual outputs.
+    """
     import os
     from datetime import datetime, timedelta, timezone
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=retention_hours)).strftime(
         "%Y-%m-%dT%H:%M:%SZ")
     db = await get_db()
     cursor = await db.execute(
-        "SELECT media_id, local_path FROM generated_artifact WHERE created_at < ?",
+        """SELECT media_id, local_path FROM generated_artifact
+           WHERE artifact_kind='video' AND created_at < ?""",
         (cutoff,),
     )
     rows = await cursor.fetchall()
@@ -4253,7 +4324,10 @@ async def purge_expired_artifacts(retention_hours: int = 48) -> dict:
     if rows:
         async with _db_lock:
             await db.execute(
-                "DELETE FROM generated_artifact WHERE created_at < ?", (cutoff,))
+                """DELETE FROM generated_artifact
+                   WHERE artifact_kind='video' AND created_at < ?""",
+                (cutoff,),
+            )
             await db.commit()
     return {"purged_rows": len(rows), "purged_files": removed_files,
             "retention_hours": retention_hours, "cutoff": cutoff}

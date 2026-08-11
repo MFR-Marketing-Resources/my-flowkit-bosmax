@@ -2,108 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { fetchAPI } from '../api/client'
 import { useWebSocketContext } from '../contexts/WebSocketContext'
-import type { Project, TelemetryRequest, Video } from '../types'
-import PipelineView from '../components/pipeline/PipelineView'
-import ProjectHistoryPanel from '../components/reporting/ProjectHistoryPanel'
+import type { TelemetryRequest } from '../types'
 import RequestReportPanel from '../components/reporting/RequestReportPanel'
-import { formatKualaLumpurDateTime } from '../utils/dateTime'
-import { buildStandardTraceLabel, getLatestTraceForProject, getLatestTraceForVideo, shortId } from '../utils/requestTrace'
 import { getTelemetryModeLabel, getTelemetrySummaryCounts, sortTelemetryByUpdatedAt } from '../utils/telemetryReporting'
-
-interface SelectorOption {
-  id: string
-  label: string
-  meta: string
-}
-
-function formatDateTime(value: string | null | undefined) {
-  return formatKualaLumpurDateTime(value)
-}
-
-function TraceableSelect({
-  value,
-  options,
-  placeholder,
-  disabled = false,
-  onChange,
-}: {
-  value: string
-  options: SelectorOption[]
-  placeholder: string
-  disabled?: boolean
-  onChange: (value: string) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const [search, setSearch] = useState('')
-
-  const filtered = useMemo(() => {
-    const query = search.toLowerCase().trim()
-    if (!query) return options
-    return options.filter(option => `${option.label} ${option.meta}`.toLowerCase().includes(query))
-  }, [options, search])
-
-  const selected = options.find(option => option.id === value)
-
-  return (
-    <div className="relative min-w-0 w-full md:min-w-[320px] max-w-full">
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => !disabled && setOpen(prev => !prev)}
-        className="w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-left text-slate-100 transition-opacity disabled:opacity-50"
-      >
-        <div className="bosmax-wrap-safe text-xs font-semibold">{selected?.label || placeholder}</div>
-        <div className="bosmax-wrap-safe mt-1 text-[10px] opacity-60">{selected?.meta || 'Searchable, scrollable selector'}</div>
-      </button>
-
-      {open && !disabled && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div
-            className="absolute z-50 mt-1 w-full overflow-hidden rounded border border-slate-700 bg-slate-950 shadow-2xl"
-          >
-            <div className="border-b border-slate-700 bg-slate-900 p-2">
-              <input
-                autoFocus
-                value={search}
-                onChange={event => setSearch(event.target.value)}
-                placeholder="Search by short label, status, request ID, engine..."
-                className="w-full rounded border border-slate-700 bg-slate-950 p-2 text-xs text-slate-100 outline-none"
-              />
-            </div>
-            <div className="max-h-80 overflow-y-auto">
-              {filtered.length === 0 ? (
-                <div className="p-3 text-xs opacity-60">No matching items.</div>
-              ) : filtered.map(option => (
-                <button
-                  type="button"
-                  key={option.id}
-                  onClick={() => {
-                    onChange(option.id)
-                    setOpen(false)
-                    setSearch('')
-                  }}
-                  className="w-full border-b border-slate-700 p-3 text-left hover:bg-blue-600/10"
-                >
-                  <div className="bosmax-wrap-safe text-xs font-semibold">{option.label}</div>
-                  <div className="bosmax-wrap-safe mt-1 text-[10px] opacity-60">{option.meta}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
 
 export default function DashboardPage() {
   const location = useLocation()
-  const [projects, setProjects] = useState<Project[]>([])
-  const [videos, setVideos] = useState<Video[]>([])
   const [telemetryRequests, setTelemetryRequests] = useState<TelemetryRequest[]>([])
-  const [selectedProject, setSelectedProject] = useState<string>('')
-  const [selectedVideo, setSelectedVideo] = useState<string>('')
   const { lastEvent } = useWebSocketContext()
   const isPortalMode = new URLSearchParams(location.search).get('portal') === 'side'
 
@@ -112,58 +17,18 @@ export default function DashboardPage() {
   }, [])
 
   useEffect(() => {
-    fetchAPI<Project[]>('/api/projects').then(setProjects).catch(() => {})
-  }, [])
-
-  useEffect(() => {
     loadTelemetry()
     const timer = window.setInterval(loadTelemetry, 4000)
     return () => window.clearInterval(timer)
   }, [loadTelemetry])
 
-  useEffect(() => {
-    if (!selectedProject) {
-      setVideos([])
-      setSelectedVideo('')
-      return
-    }
-    fetchAPI<Video[]>(`/api/videos?project_id=${selectedProject}`)
-      .then(v => {
-        setVideos(v)
-        if (v.length > 0) setSelectedVideo(v[0].id)
-        else setSelectedVideo('')
-      })
-      .catch(() => {})
-  }, [selectedProject])
-
-  // Re-fetch projects list on WS events that may add new projects
+  // Refresh the live job feed on any request lifecycle event.
   useEffect(() => {
     if (!lastEvent) return
     if (lastEvent.type === 'project_created' || lastEvent.type === 'request_created' || lastEvent.type === 'request_updated' || lastEvent.type === 'request_completed' || lastEvent.type === 'request_failed') {
-      fetchAPI<Project[]>('/api/projects').then(setProjects).catch(() => {})
       loadTelemetry()
     }
   }, [lastEvent, loadTelemetry])
-
-  const selectedProjectRecord = projects.find(project => project.id === selectedProject) || null
-
-  const projectOptions = useMemo(() => projects.map(project => {
-    const trace = getLatestTraceForProject(telemetryRequests, project.id)
-    return {
-      id: project.id,
-      label: buildStandardTraceLabel(project, null, trace),
-      meta: `created ${formatDateTime(project.created_at)} | status ${trace?.status || 'NO_STATUS'} | request ${shortId(trace?.request_id)}`,
-    }
-  }), [projects, telemetryRequests])
-
-  const videoOptions = useMemo(() => videos.map(video => {
-    const trace = getLatestTraceForVideo(telemetryRequests, video.id)
-    return {
-      id: video.id,
-      label: buildStandardTraceLabel(selectedProjectRecord, video, trace),
-      meta: `created ${formatDateTime(video.created_at)} | status ${trace?.status || video.status || 'NO_STATUS'} | request ${shortId(trace?.request_id)}`,
-    }
-  }), [videos, telemetryRequests, selectedProjectRecord])
 
   const visibleTelemetry = useMemo(() => sortTelemetryByUpdatedAt(
     telemetryRequests.filter(trace => trace.request_type !== 'TELEMETRY_SELF_TEST'),
@@ -237,37 +102,6 @@ export default function DashboardPage() {
               </div>
             </div>
           </div>
-        </div>
-      </div>
-
-      <ProjectHistoryPanel projects={projects} requests={visibleTelemetry} />
-
-      <div className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
-        <div className="flex items-start gap-3 flex-wrap">
-          <TraceableSelect
-            value={selectedProject}
-            options={projectOptions}
-            placeholder="Select project for pipeline drill-down..."
-            onChange={setSelectedProject}
-          />
-
-          <TraceableSelect
-            value={selectedVideo}
-            options={videoOptions}
-            placeholder="Select video for pipeline drill-down..."
-            disabled={!selectedProject || videos.length === 0}
-            onChange={setSelectedVideo}
-          />
-        </div>
-
-        <div className="mt-5">
-          {selectedProject && selectedVideo ? (
-            <PipelineView projectId={selectedProject} videoId={selectedVideo} />
-          ) : (
-            <div className="flex flex-1 items-center justify-center text-slate-400">
-              Select a project and video to view the pipeline
-            </div>
-          )}
         </div>
       </div>
     </div>

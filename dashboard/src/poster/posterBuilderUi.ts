@@ -60,7 +60,7 @@ export function shouldOfferPosterCopyFit(
 	return aiProviderReady && overLimitPosterCopyFields(draft).length > 0;
 }
 
-/** Human-readable, Malay one-line summary of a "Fit to poster" result for the
+/** Human-readable, English one-line summary of a "Fit to poster" result for the
  * operator (what got shortened, what still overflows, any provider warning). */
 export function summarizePosterCopyFit(result: {
 	applied: boolean;
@@ -70,13 +70,13 @@ export function summarizePosterCopyFit(result: {
 }): string {
 	const parts: string[] = [];
 	if (result.applied && result.changed_fields.length > 0) {
-		parts.push(`Dipendekkan: ${result.changed_fields.join(", ")}.`);
+		parts.push(`Shortened: ${result.changed_fields.join(", ")}.`);
 	}
 	if (result.still_over_limit.length > 0) {
-		parts.push(`Masih panjang: ${result.still_over_limit.join(", ")}.`);
+		parts.push(`Still too long: ${result.still_over_limit.join(", ")}.`);
 	}
 	for (const w of result.warnings) parts.push(w);
-	if (parts.length === 0) parts.push("Tiada perubahan pada copy.");
+	if (parts.length === 0) parts.push("No changes to the copy.");
 	return parts.join(" ");
 }
 

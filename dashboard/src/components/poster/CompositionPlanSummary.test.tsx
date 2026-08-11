@@ -162,9 +162,9 @@ describe("CompositionPlanSummary", () => {
 			screen.getByTestId("poster-composition-plan-loading"),
 		).toBeInTheDocument();
 		cleanup();
-		render(<CompositionPlanSummary plan={null} error="Gagal" />);
+		render(<CompositionPlanSummary plan={null} error="Failed" />);
 		expect(
 			screen.getByTestId("poster-composition-plan-error").textContent,
-		).toContain("Gagal");
+		).toContain("Failed");
 	});
 });

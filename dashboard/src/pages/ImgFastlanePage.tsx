@@ -3,12 +3,18 @@ import { useSearchParams } from "react-router-dom";
 import { archiveCreativeAsset, fetchCreativeAssets } from "../api/creativeAssets";
 import { getCreativeSetupForProduct } from "../api/creativeIntelligence";
 import {
+	buildAvatarRegistryReferenceAssets,
+	fetchAvatarRegistryPool,
+	type AvatarRegistryPoolRow,
+} from "../api/avatarRegistry";
+import {
 	compileImgFastlanePromptPreview,
 	type ImageArtifact,
 	type ImgAssetLane,
 	type ImgFastlanePreset,
 	type ImgFastlanePromptPreview,
 	type ImgGenerationJob,
+	deleteImageArtifact,
 	fetchImageArtifacts,
 	fetchImgAssetLanes,
 	fetchImgFastlanePresets,
@@ -30,12 +36,11 @@ import {
 import { fetchProductCatalog } from "../api/products";
 import ApproveAssetModal from "../components/creative-library/ApproveAssetModal";
 import {
-	OperatorCockpit,
-	QueueRow,
 	ResolvedChip,
 	WorkflowStep,
 } from "../components/workflow";
 import type { WorkflowStepStatus } from "../components/workflow";
+import ResultsSidebar, { type SessionResult } from "../components/workspace/ResultsSidebar";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import VisualAssetPicker from "../components/workspace/VisualAssetPicker";
 import type { CreativeAsset, Product } from "../types";
@@ -212,6 +217,9 @@ export default function ImgFastlanePage() {
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const [products, setProducts] = useState<Product[]>([]);
 	const [characterAssets, setCharacterAssets] = useState<CreativeAsset[]>([]);
+	const [avatarRegistryPool, setAvatarRegistryPool] = useState<
+		AvatarRegistryPoolRow[]
+	>([]);
 	const [sceneAssets, setSceneAssets] = useState<CreativeAsset[]>([]);
 	const [styleAssets, setStyleAssets] = useState<CreativeAsset[]>([]);
 
@@ -252,13 +260,13 @@ export default function ImgFastlanePage() {
 
 	// Gated live generation.
 	const [showGenConfirm, setShowGenConfirm] = useState(false);
-	const [imgGenConfirmed, setImgGenConfirmed] = useState(false);
 	const [generating, setGenerating] = useState(false);
 	const [genJob, setGenJob] = useState<ImgGenerationJob | null>(null);
 
 	// Register-output (credit-free).
 	const [outputMode, setOutputMode] = useState<OutputMode>("artifact");
 	const [artifacts, setArtifacts] = useState<ImageArtifact[]>([]);
+	const [sessionResults, setSessionResults] = useState<SessionResult[]>([]);
 	const [artifactMediaId, setArtifactMediaId] = useState("");
 	const [uploadFile, setUploadFile] = useState<File | null>(null);
 
@@ -297,14 +305,16 @@ export default function ImgFastlanePage() {
 			}),
 			fetchImageArtifacts(50),
 			fetch("/api/workspace/scene-context-registry/pool").then((r) => r.json()),
+			fetchAvatarRegistryPool(),
 		]);
-		const [chars, scenes, styles, arts, scenePool] = results;
+		const [chars, scenes, styles, arts, scenePool, avatarPool] = results;
 		if (chars.status === "fulfilled") setCharacterAssets(chars.value.items);
 		if (scenes.status === "fulfilled") setSceneAssets(scenes.value.items);
 		if (styles.status === "fulfilled") setStyleAssets(styles.value.items);
 		if (arts.status === "fulfilled") setArtifacts(arts.value);
 		if (scenePool.status === "fulfilled")
 			setSceneRegistry(scenePool.value?.scenes ?? []);
+		if (avatarPool.status === "fulfilled") setAvatarRegistryPool(avatarPool.value);
 		if (results.some((r) => r.status === "rejected")) {
 			setError("Failed to load reference assets from Library.");
 		}
@@ -382,11 +392,24 @@ export default function ImgFastlanePage() {
 		const laneId = sceneAssetId ? "AVATAR_PRODUCT_SCENE_COMPOSITE" : "AVATAR_PRODUCT_COMPOSITE";
 		return lanes.find((l) => l.lane_id === laneId) ?? null;
 	}, [lanes, compiledPreview?.lane_id, sceneAssetId]);
+	const avatarRegistryAssets = useMemo(
+		() => buildAvatarRegistryReferenceAssets(avatarRegistryPool, characterAssets),
+		[avatarRegistryPool, characterAssets],
+	);
 
 	const selectedCharacter = useMemo(
-		() => characterAssets.find((a) => a.asset_id === characterAssetId) ?? null,
-		[characterAssets, characterAssetId],
+		() =>
+			avatarRegistryAssets.find((a) => a.asset_id === characterAssetId) ?? null,
+		[avatarRegistryAssets, characterAssetId],
 	);
+	useEffect(() => {
+		if (
+			characterAssetId &&
+			!avatarRegistryAssets.some((asset) => asset.asset_id === characterAssetId)
+		) {
+			setCharacterAssetId("");
+		}
+	}, [avatarRegistryAssets, characterAssetId]);
 	const selectedScene = useMemo(
 		() => sceneAssets.find((a) => a.asset_id === sceneAssetId) ?? null,
 		[sceneAssets, sceneAssetId],
@@ -567,7 +590,6 @@ export default function ImgFastlanePage() {
 				advanced_override_notes: advancedOverrideNotes || null,
 				scene_context_code: sceneContextCode || null,
 				creative_mode: creativeMode || null,
-				requested_outputs: creativeMode === "CREATIVE_CAMPAIGN" ? Math.min(quantity, 3) : 1,
 			});
 			setCompiledPreview(preview);
 			// Send + display the CLEAN engine brief (no internal routing ids), which
@@ -597,7 +619,6 @@ export default function ImgFastlanePage() {
 		advancedOverrideNotes,
 		sceneContextCode,
 		creativeMode,
-		quantity,
 	]);
 
 	useEffect(() => {
@@ -624,50 +645,38 @@ export default function ImgFastlanePage() {
 	};
 
 	const handleConfirmedGenerate = async () => {
-		if (!imgGenConfirmed) return;
 		setShowGenConfirm(false);
 		setGenerating(true);
 		setError(null);
 		try {
 			const productId = selectedProduct?.id ?? "";
-			const creativeCampaign = creativeMode === "CREATIVE_CAMPAIGN";
-			const hasAvatar = Boolean(characterAssetId);
+			const gate = await resolveExactGenerationGate(productId);
+			if (gate.mode === "blocked") {
+				throw new Error(gate.message);
+			}
+
+			const hasAvatar = Boolean(characterAssetId || sceneAssetId);
+			const isProductOnly = !hasAvatar && Boolean(framePresetId?.includes("PRODUCT_ONLY") || framePresetId?.includes("HERO"));
+
 			let scenePrompt = prompt;
 			let groundedProdAsset: ReturnType<typeof buildProviderProductReferenceAsset> = null;
 			let useExactComposite = false;
 
-			if (creativeCampaign) {
-				if (!compiledPreview?.creative_direction?.reference_pack_id) {
-					throw new Error("Creative Campaign preview is not ready.");
-				}
-				scenePrompt = compiledPreview.engine_prompt_text || prompt;
-			} else {
-				const isProductOnly = !hasAvatar && Boolean(framePresetId?.includes("PRODUCT_ONLY") || framePresetId?.includes("HERO"));
-				const gate = await resolveExactGenerationGate(productId, undefined, {
-					laneId: framePresetId || undefined,
-					hasAvatar,
-					isProductOnly,
+			if (productId) {
+				const grounded = await fetchGroundedPayload(productId, {
+					prompt,
+					lane_id: framePresetId,
+					has_avatar: hasAvatar,
+					is_product_only: isProductOnly,
 				});
-				if (gate.mode === "blocked") {
-					throw new Error(gate.message);
-				}
 
-				if (productId) {
-					const grounded = await fetchGroundedPayload(productId, {
-						prompt,
-						lane_id: framePresetId,
-						has_avatar: hasAvatar,
-						is_product_only: isProductOnly,
-					});
-
-					if (grounded.selected_strategy === STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE && gate.mode === "exact") {
-						useExactComposite = true;
-						const scene = await buildExactSceneOnlyPrompt(productId, prompt);
-						scenePrompt = scene.prompt;
-					} else {
-						scenePrompt = grounded.full_prompt;
-						groundedProdAsset = buildProviderProductReferenceAsset(grounded);
-					}
+				if (grounded.selected_strategy === STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE && gate.mode === "exact") {
+					useExactComposite = true;
+					const scene = await buildExactSceneOnlyPrompt(productId, prompt);
+					scenePrompt = scene.prompt;
+				} else {
+					scenePrompt = grounded.full_prompt;
+					groundedProdAsset = buildProviderProductReferenceAsset(grounded);
 				}
 			}
 
@@ -676,23 +685,9 @@ export default function ImgFastlanePage() {
 				resolvedRefsPayload: useExactComposite ? {} : resolvedRefsPayload,
 				groundedProdAsset: useExactComposite ? null : groundedProdAsset,
 				aspect,
-				quantity: creativeCampaign ? Math.min(quantity, 3) : quantity,
+				quantity,
 				imageModel,
-				productId: productId || undefined,
-				visualLaneId: framePresetId || undefined,
 			});
-			if (creativeCampaign) {
-				Object.assign(genInput, {
-					creative_mode: "CREATIVE_CAMPAIGN",
-					image_contract_version: "image_prompt_compiler_v1",
-					reference_pack_id: compiledPreview?.creative_direction?.reference_pack_id,
-					output_intent: framePresetId?.includes("POSTER") ? "COMPLETE_POSTER" : "COMPLETE_IMAGE",
-					confirm_live_credit_burn: true,
-					maximum_provider_operations:
-						compiledPreview?.creative_direction?.provider_operation_plan?.max_provider_operations,
-					max_retry_operations: 0,
-				});
-			}
 
 			const { job_id } = await startImgGeneration(genInput);
 			const job = await pollImgGenerationJob(job_id);
@@ -731,17 +726,16 @@ export default function ImgFastlanePage() {
 								...prev,
 							],
 				);
+				setSessionResults((prev) => [
+					{ media_id: mediaId, size_mb: sizeMb },
+					...prev.filter((r) => r.media_id !== mediaId),
+				]);
 			}
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Generation call failed.");
 		} finally {
 			setGenerating(false);
 		}
-	};
-
-	const openGenConfirm = () => {
-		setImgGenConfirmed(false);
-		setShowGenConfirm(true);
 	};
 
 	const resetOutputForm = () => {
@@ -843,9 +837,6 @@ export default function ImgFastlanePage() {
 			: canSave
 				? "active"
 				: "upcoming";
-		const approvedAsset =
-			savedAsset?.review_status === "APPROVED" ? savedAsset : null;
-
 		return (
 			<>
 				<div
@@ -881,8 +872,8 @@ export default function ImgFastlanePage() {
 						</div>
 					) : null}
 
-					<div className="flex min-h-0 flex-1 flex-col gap-5 xl:flex-row">
-						<main className="min-w-0 flex-1 space-y-3 overflow-y-auto pb-6 xl:pr-1">
+					<div className="flex min-h-0 flex-1 flex-col gap-5 lg:flex-row">
+						<main className="min-w-0 space-y-3 pb-6 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1">
 							<WorkflowStep
 								index={1}
 								title="Product"
@@ -929,12 +920,12 @@ export default function ImgFastlanePage() {
 										auto={referenceCount === 0}
 									/>
 									<ReferenceField
-										label="Select Existing Reference — Avatar"
-										noun="avatar"
-										assets={characterAssets}
+											label="Avatar Registry — Approved Presenter"
+											noun="avatar"
+											assets={avatarRegistryAssets}
 										value={characterAssetId}
 										onChange={setCharacterAssetId}
-										emptyHint="No avatars yet — open the Avatar Registry to add one"
+											emptyHint="No approved Avatar Registry presenter assets"
 										requiredMissing={characterMissing}
 										onApprove={handleApproveAsset}
 										approvingId={approveTarget?.asset_id ?? null}
@@ -1112,9 +1103,14 @@ export default function ImgFastlanePage() {
 											</select>
 										</label>
 									</div>
-									<pre className="max-h-48 overflow-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 font-mono text-[10px] text-slate-400">
-										{JSON.stringify({ aspect, count: quantity, image_model: imageModel, refs: resolvedRefsPayload }, null, 2)}
-									</pre>
+									<details className="mt-2">
+										<summary className="cursor-pointer text-[10px] font-semibold uppercase tracking-wide text-slate-500 hover:text-slate-300">
+											Technical payload
+										</summary>
+										<pre className="mt-2 max-h-48 overflow-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 font-mono text-[10px] text-slate-400">
+											{JSON.stringify({ aspect, count: quantity, image_model: imageModel, refs: resolvedRefsPayload }, null, 2)}
+										</pre>
+									</details>
 								</div>
 							</WorkflowStep>
 
@@ -1123,7 +1119,7 @@ export default function ImgFastlanePage() {
 								title="Generate image"
 								status={generateStatus}
 								summary={genJob?.status ?? "Manual confirmation required"}
-								helper="This is the external IMG action; it never fires without explicit confirmation. Image generation may use provider image quota/credits, not video credits."
+								helper="Image generation is credit-free (only video costs credits); it never fires without explicit confirmation."
 							>
 								<div className="space-y-3">
 									<div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
@@ -1132,12 +1128,75 @@ export default function ImgFastlanePage() {
 									</div>
 									<button
 										type="button"
-										onClick={openGenConfirm}
+										onClick={() => setShowGenConfirm(true)}
 										disabled={!prompt.trim() || generating || generationBlocked}
 										className="w-full rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-[12px] font-bold text-rose-100 disabled:opacity-40"
 									>
 										{generating ? "Generating image…" : "Generate image · gated"}
 									</button>
+									{genJob && genJob.status === "DONE" && genJob.media_id ? (
+										<div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+											<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+												Latest result
+											</div>
+											<img
+												src={`/api/flow/retrieved/${encodeURIComponent(genJob.media_id)}`}
+												alt="Latest generated image"
+												loading="lazy"
+												className="w-full max-w-[220px] rounded-lg border border-slate-800 bg-black object-contain"
+											/>
+											<p className="text-[10px] text-slate-500">
+												Not satisfied? Regenerate to try again — images are credit-free (only video costs credits) — or delete this image.
+											</p>
+											<div className="flex flex-wrap gap-2">
+												<button
+													type="button"
+													onClick={() => setShowGenConfirm(true)}
+													disabled={generating || generationBlocked}
+													className="rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-1.5 text-[11px] font-bold text-blue-200 hover:bg-blue-500/20 disabled:opacity-40"
+												>
+													🔄 Regenerate
+												</button>
+												<button
+													type="button"
+													onClick={() => void handleSave()}
+													disabled={!canSave}
+													className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-bold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-40"
+												>
+													💾 Save to Library
+												</button>
+												<button
+													type="button"
+													onClick={async () => {
+														const mid = genJob.media_id;
+														if (!mid) return;
+														if (
+															!window.confirm(
+																"Delete this image? Saved Creative Assets are not affected.",
+															)
+														)
+															return;
+														try {
+															await deleteImageArtifact(mid);
+															setArtifacts((prev) =>
+																prev.filter((a) => a.media_id !== mid),
+															);
+															setGenJob(null);
+														} catch (err) {
+															setError(
+																err instanceof Error
+																	? err.message
+																	: "Failed to delete image artifact",
+															);
+														}
+													}}
+													className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-[11px] font-bold text-rose-200 hover:bg-rose-500/20"
+												>
+													🗑 Delete
+												</button>
+											</div>
+										</div>
+									) : null}
 								</div>
 							</WorkflowStep>
 
@@ -1241,37 +1300,19 @@ export default function ImgFastlanePage() {
 							</WorkflowStep>
 						</main>
 
-						<aside className="w-full xl:w-80 xl:flex-none">
-							<div className="xl:sticky xl:top-4">
-								<OperatorCockpit
-									laneLabel="IMG Fastlane · Composite Frames"
-									status={{
-										label: generating ? "Working" : approvedAsset ? "Approved" : selectedProduct ? "Ready" : "Idle",
-										state: generating ? "running" : approvedAsset ? "done" : selectedProduct ? "online" : "idle",
-									}}
-									product={selectedProduct ? { name: selectedProduct.product_display_name, sub: selectedProduct.product_short_name } : undefined}
-									plan={[
-										{ k: "Mode", v: "IMG", mono: true },
-										{ k: "Aspect", v: aspect, mono: true },
-										{ k: "Count", v: quantity, mono: true },
-										{ k: "References", v: `${referenceCount} approved`, tone: referenceCount ? "good" : "muted" },
-										{ k: "Review", v: approvedAsset ? "Approved asset" : "Pending approval", tone: approvedAsset ? "good" : "muted" },
-									]}
-									queueTitle="Output queue"
-									generate={{
-										label: "Generate image · gated",
-										disabled: !prompt.trim() || generating || generationBlocked,
-										loading: generating,
-										onClick: openGenConfirm,
-										note: "manual confirmation required · no auto-fire",
-									}}
-									debugLabel="IMG Fastlane diagnostics"
-									debug={<div className="space-y-1"><div>lane {lane?.lane_id ?? "—"}</div><div>refs {referenceCount} approved</div><div>{GEN_NOT_FIRED} · {GEN_RUNTIME_UNVERIFIED}</div></div>}
-								>
-									<QueueRow title="Image output" sub={`${quantity} image${quantity === 1 ? "" : "s"} · ${aspect}`} status={genJob?.status === "DONE" ? "done" : "queued"} />
-									<QueueRow title="Approved asset" sub={approvedAsset?.display_name ?? "Review after registration"} status={approvedAsset ? "done" : "queued"} />
-								</OperatorCockpit>
-							</div>
+						<aside className="w-full lg:w-80 lg:flex-none lg:min-h-0 lg:overflow-y-auto">
+							<ResultsSidebar
+								results={sessionResults}
+								generating={generating}
+								onRemoved={(mediaId) => {
+									setSessionResults((prev) =>
+										prev.filter((r) => r.media_id !== mediaId),
+									);
+									setArtifacts((prev) =>
+										prev.filter((a) => a.media_id !== mediaId),
+									);
+								}}
+							/>
 						</aside>
 					</div>
 				</div>
@@ -1289,10 +1330,9 @@ export default function ImgFastlanePage() {
 				{showGenConfirm ? (
 					<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-[2px]">
 						<div className="max-w-md w-full rounded-2xl border border-rose-500/40 bg-slate-950 p-6 space-y-4 shadow-2xl">
-							<div className="text-sm font-bold text-rose-100 uppercase tracking-wider">Sahkan penghantaran kerja IMG</div>
-							<div className="text-xs text-slate-300 space-y-2"><p>IMG ini tidak menggunakan kredit penjanaan; kredit Google Flow hanya berkaitan video. Pengesahan di bawah hanya mengesahkan satu operasi IMG akan dihantar. Tiada kerja akan dihantar sebelum pengesahan ini.</p><p>Build status: <strong>{GEN_NOT_FIRED}</strong> · <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.</p></div>
-							<label className="flex items-start gap-2 text-xs text-slate-200"><input type="checkbox" data-testid="img-fastlane-credit-confirm-checkbox" checked={imgGenConfirmed} onChange={(event) => setImgGenConfirmed(event.target.checked)} className="mt-0.5" /><span>Saya faham tindakan ini menghantar satu kerja IMG tanpa caj kredit penjanaan.</span></label>
-							<div className="flex justify-end gap-3 pt-2"><button type="button" onClick={() => setShowGenConfirm(false)} className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-xs font-semibold text-slate-300">Cancel</button><button type="button" disabled={!imgGenConfirmed} onClick={() => void handleConfirmedGenerate()} className="rounded-xl border border-rose-500/40 bg-rose-500/20 px-4 py-2 text-xs font-bold text-rose-100 disabled:opacity-40">Confirm &amp; Generate</button></div>
+							<div className="text-sm font-bold text-rose-100 uppercase tracking-wider">Confirm Image Generation</div>
+							<div className="text-xs text-slate-300 space-y-2"><p>This fires the real image generation lane. It stays behind this explicit confirmation and is not auto-fired.</p><p>Build status: <strong>{GEN_NOT_FIRED}</strong> · <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.</p></div>
+							<div className="flex justify-end gap-3 pt-2"><button type="button" onClick={() => setShowGenConfirm(false)} className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-xs font-semibold text-slate-300">Cancel</button><button type="button" onClick={() => void handleConfirmedGenerate()} className="rounded-xl border border-rose-500/40 bg-rose-500/20 px-4 py-2 text-xs font-bold text-rose-100">Confirm &amp; Generate</button></div>
 						</div>
 					</div>
 				) : null}
@@ -1374,12 +1414,12 @@ export default function ImgFastlanePage() {
 								    a dead/misleading field. Style stays optional and is simply not
 								    surfaced until a real style library exists. */}
 								<ReferenceField
-									label="Select Existing Reference — Avatar"
+									label="Avatar Registry — Approved Presenter"
 									noun="avatar"
-									assets={characterAssets}
+									assets={avatarRegistryAssets}
 									value={characterAssetId}
 									onChange={setCharacterAssetId}
-									emptyHint="No avatars yet — open the Avatar Registry to add one"
+									emptyHint="No approved Avatar Registry presenter assets"
 									requiredMissing={characterMissing}
 									onApprove={handleApproveAsset}
 									approvingId={approveTarget?.asset_id ?? null}
@@ -1479,9 +1519,8 @@ export default function ImgFastlanePage() {
 									Creative Direction optional
 								</span>
 								<select value={creativeMode} onChange={(event) => setCreativeMode(event.target.value)} className="w-full rounded-xl border border-slate-800 bg-slate-950 p-2.5 text-xs text-slate-200">
-					<option value="">No governed mode (legacy)</option>
-					<option value="CREATIVE_CAMPAIGN">Creative Campaign (provider image)</option>
-					<option value="PGC_CAMPAIGN">PGC Campaign</option>
+									<option value="">No governed mode (legacy)</option>
+									<option value="PGC_CAMPAIGN">PGC Campaign</option>
 									<option value="UGC_AUTHENTIC">UGC Authentic</option>
 									<option value="MODEL_AMBASSADOR">Model Ambassador</option>
 									<option value="CLEAN_STUDIO_CATALOGUE">Clean Studio / Clean Catalogue</option>
@@ -1656,25 +1695,92 @@ export default function ImgFastlanePage() {
 								Aspect: <strong>{aspect}</strong> | Count: <strong>{quantity}</strong>
 							</div>
 							<div className="space-y-1">
-								<span className="text-[10px] font-semibold text-slate-500 block">refs payload:</span>
-								<pre className="max-h-40 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-2 font-mono text-[10px] text-slate-400">
-									{JSON.stringify(resolvedRefsPayload, null, 2)}
-								</pre>
+								<details>
+									<summary className="cursor-pointer text-[10px] font-semibold text-slate-500 hover:text-slate-300">refs payload</summary>
+									<pre className="mt-1 max-h-40 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-2 font-mono text-[10px] text-slate-400">
+										{JSON.stringify(resolvedRefsPayload, null, 2)}
+									</pre>
+								</details>
 							</div>
 						</div>
 
 						<button
 							type="button"
-							onClick={openGenConfirm}
+							onClick={() => setShowGenConfirm(true)}
 							disabled={!prompt.trim() || generating || generationBlocked}
 							className="rounded-xl border border-blue-500/40 bg-blue-500/10 px-5 py-2.5 text-xs font-bold text-blue-200 hover:bg-blue-500/20 disabled:opacity-40 transition-all w-full cursor-pointer"
 						>
 							{generating ? "Generating image…" : "Generate Image (Avatar + Product) — credit-free"}
 						</button>
 						{genJob && (
-							<div className="text-xs text-slate-300 mt-2">
-								Job Status: <strong>{genJob.status}</strong>
-								{genJob.media_id ? ` | Media: ${genJob.media_id}` : ""}
+							<div className="mt-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3 space-y-3">
+								<div className="text-xs text-slate-300">
+									Job Status: <strong>{genJob.status}</strong>
+									{genJob.media_id ? ` · ${genJob.media_id}` : ""}
+								</div>
+								{genJob.status === "DONE" && genJob.media_id ? (
+									<div className="space-y-2">
+										<div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+											Latest result
+										</div>
+										<img
+											src={`/api/flow/retrieved/${encodeURIComponent(genJob.media_id)}`}
+											alt="Latest generated image"
+											loading="lazy"
+											className="w-full max-w-[220px] rounded-lg border border-slate-800 bg-black object-contain"
+										/>
+										<p className="text-[10px] text-slate-500">
+											Not satisfied? Regenerate to try again — images are credit-free (only video costs credits) — or delete this image.
+										</p>
+										<div className="flex flex-wrap gap-2">
+											<button
+												type="button"
+												onClick={() => setShowGenConfirm(true)}
+												disabled={generating || generationBlocked}
+												className="rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-1.5 text-[11px] font-bold text-blue-200 hover:bg-blue-500/20 disabled:opacity-40"
+											>
+												🔄 Regenerate
+											</button>
+											<button
+												type="button"
+												onClick={() => void handleSave()}
+												disabled={!canSave}
+												className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-bold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-40"
+											>
+												💾 Save to Library
+											</button>
+											<button
+												type="button"
+												onClick={async () => {
+													const mid = genJob.media_id;
+													if (!mid) return;
+													if (
+														!window.confirm(
+															"Delete this image? Saved Creative Assets are not affected.",
+														)
+													)
+														return;
+													try {
+														await deleteImageArtifact(mid);
+														setArtifacts((prev) =>
+															prev.filter((a) => a.media_id !== mid),
+														);
+														setGenJob(null);
+													} catch (err) {
+														setError(
+															err instanceof Error
+																? err.message
+																: "Failed to delete image artifact",
+														);
+													}
+												}}
+												className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-[11px] font-bold text-rose-200 hover:bg-rose-500/20"
+											>
+												🗑 Delete
+											</button>
+										</div>
+									</div>
+								) : null}
 							</div>
 						)}
 					</Section>
@@ -1927,20 +2033,18 @@ export default function ImgFastlanePage() {
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-[2px]">
 					<div className="max-w-md w-full rounded-2xl border border-blue-500/40 bg-slate-950 p-6 space-y-4 shadow-2xl">
 						<div className="text-sm font-bold text-blue-200 uppercase tracking-wider">
-							Sahkan penghantaran kerja IMG
+							Confirm Image Generation
 						</div>
 						<div className="text-xs text-slate-300 space-y-2">
-											<p>
-														IMG ini tidak menggunakan kredit penjanaan; kredit Google Flow hanya
-														berkaitan video. Pengesahan di bawah hanya mengesahkan satu operasi
-														IMG avatar + produk akan dihantar. Tiada kerja akan dihantar sebelum
-														pengesahan ini.
-												</p>
+							<p>
+								This fires a real avatar + product image generation on Google Flow.{" "}
+								<strong>Image generation is credit-free</strong> — only video
+								generations consume credits.
+							</p>
 							<p>
 								Build status: <strong>{GEN_NOT_FIRED}</strong> | <strong>{GEN_RUNTIME_UNVERIFIED}</strong>.
 							</p>
 						</div>
-											<label className="flex items-start gap-2 text-xs text-slate-200"><input type="checkbox" data-testid="img-fastlane-credit-confirm-checkbox" checked={imgGenConfirmed} onChange={(event) => setImgGenConfirmed(event.target.checked)} className="mt-0.5" /><span>Saya faham tindakan ini menghantar satu kerja IMG tanpa caj kredit penjanaan.</span></label>
 						<div className="flex justify-end gap-3 pt-2">
 							<button
 								type="button"
@@ -1951,7 +2055,6 @@ export default function ImgFastlanePage() {
 							</button>
 							<button
 								type="button"
-								disabled={!imgGenConfirmed}
 								onClick={() => void handleConfirmedGenerate()}
 								className="rounded-xl border border-blue-500/40 bg-blue-500/20 px-4 py-2 text-xs font-bold text-blue-100 hover:bg-blue-500/30 cursor-pointer"
 							>

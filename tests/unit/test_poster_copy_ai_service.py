@@ -127,6 +127,59 @@ async def test_provider_failure_uses_neutral_fallback_without_optional_grounding
 
 
 @pytest.mark.asyncio
+async def test_unsafe_grounding_cannot_strand_neutral_fallback(monkeypatch):
+    """Rejected provider copy plus unsafe stored grounding still leaves a safe choice."""
+    pid = await _seed_product(title="Minyak Warisan Cap Burung 25ml", display="Minyak Warisan Cap Burung 25ml")
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        svc.ai_provider,
+        "complete_json",
+        lambda *_args, **_kwargs: {
+            "directions": [
+                {
+                    "primary_message": "Rawat sakit anda",
+                    "support_message": "Hasil terjamin",
+                    "proof_points": [],
+                    "cta": "Beli sekarang",
+                    "disclaimer": "",
+                    "tone": "neutral",
+                }
+            ]
+        },
+    )
+
+    class _PK:
+        description = ""
+        benefits = ["Rawat sakit dan tingkatkan stamina"]
+        usps = ["Berkesan untuk kesihatan"]
+
+    class _Persona:
+        audience = ""
+        desires = []
+
+    class _Guard:
+        blocked_claims = []
+        banned_terms = []
+
+    class _Grounding:
+        source = "TEST"
+        product_knowledge = _PK()
+        buyer_persona = _Persona()
+        claim_guardrails = _Guard()
+
+    async def unsafe_grounding(_product):
+        return _Grounding()
+
+    monkeypatch.setattr(svc, "resolve_copy_grounding", unsafe_grounding)
+    out = await svc.generate_directions(pid, "PRODUCT_HERO", "Product quality")
+
+    assert len(out["directions"]) == 3
+    assert "Grounded fallback unavailable" in " ".join(out["warnings"])
+    assert all(d["field_provenance"]["cta"] == "FALLBACK_TEMPLATE" for d in out["directions"])
+    assert all("Rawat" not in d["primary_message"] for d in out["directions"])
+
+
+@pytest.mark.asyncio
 async def test_ai_directions_are_parsed_gated_and_stamped(monkeypatch):
     pid = await _seed_product()
     monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: True)

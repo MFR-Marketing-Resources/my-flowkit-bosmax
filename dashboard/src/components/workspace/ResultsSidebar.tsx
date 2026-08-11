@@ -1,0 +1,166 @@
+import { useCallback, useState } from "react";
+import { deleteImageArtifact } from "../../api/imgFactory";
+
+export interface SessionResult {
+	media_id: string;
+	size_mb?: number | null;
+	kind?: "image" | "video";
+}
+
+interface ResultsSidebarProps {
+	/** Results generated in THIS session only. Updates live as jobs finish — no manual refresh needed. */
+	results: SessionResult[];
+	/** Whether a generation is currently running (shows a placeholder). */
+	generating?: boolean;
+	/** Called after an artifact is deleted so the page can drop it from state. */
+	onRemoved?: (mediaId: string) => void;
+	title?: string;
+	/** Library route to point at for historical results (image vs video lane). */
+	libraryHref?: string;
+}
+
+/**
+ * Persistent, docked results panel. Shows ONLY the artifacts produced in the
+ * current session (prop-driven, so it auto-updates the moment a job finishes).
+ * Older results and other sessions live in Image/Video Library + Results — this
+ * panel links there rather than dumping the whole global store.
+ */
+export default function ResultsSidebar({
+	results,
+	generating = false,
+	onRemoved,
+	title = "This session's results",
+	libraryHref = "/library/images",
+}: ResultsSidebarProps) {
+	const [busyId, setBusyId] = useState<string | null>(null);
+	const [error, setError] = useState<string | null>(null);
+
+	const handleDelete = useCallback(
+		async (mediaId: string) => {
+			if (
+				!window.confirm(
+					"Delete this image? Saved Creative Assets are not affected.",
+				)
+			)
+				return;
+			setBusyId(mediaId);
+			setError(null);
+			try {
+				await deleteImageArtifact(mediaId);
+				onRemoved?.(mediaId);
+			} catch (err) {
+				setError(err instanceof Error ? err.message : "Failed to delete image");
+			} finally {
+				setBusyId(null);
+			}
+		},
+		[onRemoved],
+	);
+
+	return (
+		<div className="w-full space-y-3 rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
+			<div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-300">
+				{title}
+			</div>
+			<p className="text-[10px] text-slate-500">
+				Results appear here automatically when ready — no need to refresh.
+			</p>
+
+			{error ? (
+				<div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[10px] text-red-200">
+					{error}
+				</div>
+			) : null}
+
+			{results.length === 0 && !generating ? (
+				<div className="rounded-xl border border-dashed border-slate-700 bg-slate-900/40 px-3 py-6 text-center text-[11px] text-slate-500">
+					No results yet. Press{" "}
+					<span className="text-slate-300">Generate</span> on the left —
+					results appear here automatically.
+				</div>
+			) : (
+				<div className="grid grid-cols-2 gap-2">
+					{generating ? (
+						<div className="col-span-2 flex items-center justify-center rounded-xl border border-dashed border-blue-500/30 bg-blue-500/5 px-3 py-4 text-[11px] text-blue-200">
+							Generating image… results will appear here.
+						</div>
+					) : null}
+					{results.map((r) => (
+						<div
+							key={r.media_id}
+							className="space-y-1.5 rounded-xl border border-slate-800 bg-slate-950/60 p-1.5"
+						>
+							{r.kind === "video" ? (
+								<video
+									src={`/api/flow/retrieved/${encodeURIComponent(r.media_id)}`}
+									muted
+									playsInline
+									controls
+									preload="metadata"
+									className="aspect-[9/16] w-full rounded-lg bg-black object-contain"
+								/>
+							) : (
+								<a
+									href={`/api/flow/retrieved/${r.media_id}`}
+									target="_blank"
+									rel="noopener noreferrer"
+								>
+									<img
+										src={`/api/flow/retrieved/${encodeURIComponent(r.media_id)}`}
+										alt="generated result"
+										loading="lazy"
+										className="aspect-square w-full rounded-lg bg-black object-contain"
+									/>
+								</a>
+							)}
+							<div className="flex gap-1">
+								<a
+									href={`/api/flow/retrieved/${r.media_id}`}
+									download={`${r.media_id}.${r.kind === "video" ? "mp4" : "jpg"}`}
+									className="flex-1 rounded border border-slate-700 py-0.5 text-center text-[10px] text-slate-300 hover:bg-slate-800"
+								>
+									Save
+								</a>
+								{r.kind !== "video" ? (
+									<button
+										type="button"
+										onClick={() => void handleDelete(r.media_id)}
+										disabled={busyId === r.media_id}
+										aria-label={`Delete ${r.media_id}`}
+										className="rounded border border-rose-500/40 px-2 py-0.5 text-[10px] text-rose-300 hover:bg-rose-500/10 disabled:opacity-40"
+									>
+										{busyId === r.media_id ? "…" : "Delete"}
+									</button>
+								) : null}
+							</div>
+						</div>
+					))}
+				</div>
+			)}
+
+			<div className="border-t border-slate-800 pt-2 text-[10px] text-slate-500">
+				<div className="mb-1">Older results / other sessions:</div>
+				<div className="flex flex-wrap gap-1.5">
+					<a
+						href={libraryHref}
+						className="rounded border border-slate-700 px-2 py-0.5 text-slate-300 hover:bg-slate-800"
+					>
+						Image Library
+					</a>
+					<a
+						href="/library/videos"
+						className="rounded border border-slate-700 px-2 py-0.5 text-slate-300 hover:bg-slate-800"
+					>
+						Video Library
+					</a>
+					<a
+						href="/results"
+						className="rounded border border-slate-700 px-2 py-0.5 text-slate-300 hover:bg-slate-800"
+					>
+						Results
+					</a>
+				</div>
+			</div>
+		</div>
+	);
+}

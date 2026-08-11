@@ -95,7 +95,7 @@ export default function PosterRecipeSlotEditor({
 									data-testid={`slot-over-${zone.zone_id}`}
 									className="mt-1 text-[10px] text-rose-300"
 								>
-									Terlalu panjang — pendekkan supaya muat slot ({zone.max_chars}).
+									Too long — shorten it to fit the slot ({zone.max_chars}).
 								</p>
 							) : null}
 						</label>

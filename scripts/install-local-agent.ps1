@@ -33,13 +33,20 @@ Write-Host "INSTALL_LOCAL_AGENT: START" -ForegroundColor Cyan
 $pythonSource = Require-Command -Name 'python'
 $npmSource = Require-Command -Name 'npm'
 
-$venvPython = Join-Path $script:RepoRoot '.venv\Scripts\python.exe'
-if (-not (Test-Path $venvPython)) {
+$venvRoot = Join-Path $script:RepoRoot '.venv'
+$venvPython = Join-Path $venvRoot 'Scripts\python.exe'
+$venvConfig = Join-Path $venvRoot 'pyvenv.cfg'
+if (-not (Test-Path $venvPython) -or -not (Test-Path $venvConfig)) {
     Write-Host "Creating local virtual environment..."
-    & $pythonSource -m venv .venv
+    # A copied/incomplete .venv can retain python.exe while missing pyvenv.cfg.
+    # Recreate it cleanly so the launcher cannot select a broken interpreter.
+    Stop-BosmaxBackendProcess | Out-Null
+    & $pythonSource -m venv --clear $venvRoot
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $venvConfig)) {
+        throw "Local virtual environment could not be created at $venvRoot"
+    }
 }
 
-$venvPython = Join-Path $script:RepoRoot '.venv\Scripts\python.exe'
 Write-Host "Installing backend dependencies..."
 & $venvPython -m pip install --upgrade pip
 & $venvPython -m pip install -r requirements.txt

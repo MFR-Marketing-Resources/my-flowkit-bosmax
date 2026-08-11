@@ -2,6 +2,7 @@ import {
 	Activity,
 	Bot,
 	Briefcase,
+	ChevronDown,
 	Film,
 	FolderOpen,
 	Gauge,
@@ -39,7 +40,6 @@ import ApprovedPackagesPage from "./pages/ApprovedPackagesPage";
 import AssetRegistryPage from "./pages/AssetRegistryPage";
 import AvatarRegistryPage from "./pages/AvatarRegistryPage";
 import SceneContextRegistryPage from "./pages/SceneContextRegistryPage";
-import BatchPromptBuilderPage from "./pages/BatchPromptBuilderPage";
 import CreativeLibraryPage from "./pages/CreativeLibraryPage";
 import CreativeProductionStudioPage from "./pages/CreativeProductionStudioPage";
 import ImgCockpitPage from "./pages/ImgCockpitPage";
@@ -51,23 +51,18 @@ import CopySetRegistryPage from "./pages/CopySetRegistryPage";
 import DashboardPage from "./pages/DashboardPage";
 import ReportingExecutivePage from "./pages/ReportingExecutivePage";
 import ReportingOperationsPage from "./pages/ReportingOperationsPage";
-import GalleryPage from "./pages/GalleryPage";
-import LogsPage from "./pages/LogsPage";
 import OperatorPage from "./pages/OperatorPage";
-import MontagePage from "./pages/MontagePage";
 import FacelessVideoPage from "./pages/FacelessVideoPage";
+import MontagePage from "./pages/MontagePage";
 import PosterBuilderPage from "./pages/PosterBuilderPage";
 import PostizPublishPage from "./pages/PostizPublishPage";
 import ResultsHubPage from "./pages/ResultsHubPage";
-import ProductAssetGeneratorPage from "./pages/ProductAssetGeneratorPage";
 import ProductionQueuePage from "./pages/ProductionQueuePage";
-import RpaProductionStudioPage from "./pages/RpaProductionStudioPage";
 import RpaQueueControlPage from "./pages/RpaQueueControlPage";
 import ProductRegistrationPage from "./pages/ProductRegistrationPage";
 import ProductTypeRegistryPage from "./pages/ProductTypeRegistryPage";
 import ProductsSalesAnalyzerPage from "./pages/ProductsSalesAnalyzerPage";
 import ProductDetailPage from "./pages/ProductDetailPage";
-import ProjectsPage from "./pages/ProjectsPage";
 import PromptPreviewPage from "./pages/PromptPreviewPage";
 import SettingsPage from "./pages/SettingsPage";
 import TroubleshootPage from "./pages/TroubleshootPage";
@@ -78,19 +73,77 @@ import type { TelemetrySummary } from "./types";
 
 const NAV_GROUPS = [
 	{
-		label: "WORKSPACE",
+		label: "VIDEO PRODUCTION",
 		items: [
 			{ to: "/operator/t2v", icon: Video, label: "Text to Video" },
-			{ to: "/operator/hybrid", icon: Sparkles, label: "Hybrid (Product + AI Presenter)" },
-			{ to: "/operator/f2v", icon: Sparkles, label: "Frames (F2V)" },
+			{ to: "/operator/hybrid", icon: Sparkles, label: "Hybrid" },
+			{ to: "/operator/f2v", icon: Sparkles, label: "Frames" },
 			{ to: "/operator/i2v", icon: Layers, label: "Ingredients" },
-			{ to: "/operator/img", icon: ImageIcon, label: "Image Gen" },
-			{ to: "/operator/montage", icon: Layers, label: "Montage" },
 			{ to: "/operator/faceless", icon: Film, label: "Faceless Video" },
-			{ to: "/library/videos", icon: Video, label: "Video Library (48j)" },
-			{ to: "/library/images", icon: ImageIcon, label: "Image Library (48j)" },
-			{ to: "/results", icon: FolderOpen, label: "Results (Hasil + Caption)" },
+			{ to: "/operator/montage", icon: Layers, label: "Montage" },
+			{ to: "/production-studio", icon: Video, label: "Production Studio" },
+		],
+	},
+	{
+		label: "IMAGE PRODUCTION",
+		items: [
+			{ to: "/operator/img", icon: ImageIcon, label: "Image Gen" },
+			{ to: "/assets/img-cockpit", icon: Sparkles, label: "IMG Cockpit" },
+			{ to: "/assets/img-fastlane", icon: Sparkles, label: "IMG Fastlane" },
+			{
+				to: "/creative/poster-builder",
+				icon: ImageIcon,
+				label: "Poster Builder",
+			},
+		],
+	},
+	{
+		label: "LIBRARY",
+		items: [
+			{ to: "/library/videos", icon: Video, label: "Video Library" },
+			{ to: "/library/images", icon: ImageIcon, label: "Image Library" },
+			{ to: "/results", icon: FolderOpen, label: "Results" },
+		],
+	},
+	{
+		label: "PUBLISH & JOBS",
+		items: [
+			{ to: "/postiz", icon: Send, label: "Postiz Publish" },
 			{ to: "/workspace/jobs", icon: Activity, label: "Workspace Jobs" },
+		],
+	},
+	{
+		label: "PRODUCTS",
+		items: [
+			{ to: "/products", icon: PackageSearch, label: "Product Catalog" },
+			{
+				to: "/product-registration",
+				icon: ScrollText,
+				label: "Smart Registration",
+			},
+		],
+	},
+	{
+		label: "CREATIVE ASSETS",
+		items: [
+			{
+				to: "/assets/creative-library",
+				icon: Briefcase,
+				label: "Creative Library",
+			},
+			{ to: "/assets/avatar-registry", icon: Users, label: "Avatar Registry" },
+		],
+	},
+	{
+		label: "REPORTING",
+		items: [
+			{ to: "/reporting/executive", icon: Gauge, label: "Executive" },
+			{ to: "/reporting/operations", icon: Siren, label: "Operations" },
+		],
+	},
+	{
+		label: "ADVANCED",
+		items: [
 			{
 				to: "/workspace/generation-packages",
 				icon: PackageSearch,
@@ -101,103 +154,44 @@ const NAV_GROUPS = [
 				icon: PackageSearch,
 				label: "Approved Packages",
 			},
-			{ to: "/batches", icon: Briefcase, label: "Batch Prompt Builder" },
 			{ to: "/production-queue", icon: Film, label: "Production Queue" },
-			{ to: "/production-studio", icon: Video, label: "Production Studio (P6)" },
 			{ to: "/rpa-queue-control", icon: Bot, label: "RPA Queue Control" },
-			{ to: "/postiz", icon: Send, label: "Postiz Publish" },
-		],
-	},
-	{
-		label: "ASSETS",
-		items: [
-			{
-				to: "/assets/creative-library",
-				icon: Briefcase,
-				label: "Creative Library",
-			},
 			{
 				to: "/assets/creative-library/workspace",
 				icon: Sparkles,
 				label: "Asset Workspace",
 			},
 			{
-				to: "/assets/avatar-registry",
-				icon: Users,
-				label: "Avatar Registry",
-			},
-			{
 				to: "/assets/scene-context-registry",
 				icon: Sparkles,
 				label: "Scene Registry",
 			},
+			{ to: "/asset-registry", icon: Layers, label: "Asset Registry" },
 			{
 				to: "/assets/product-type-registry",
 				icon: Tags,
 				label: "Product Type Registry",
 			},
+			{ to: "/creative/copy-registry", icon: PenLine, label: "Copy Registry" },
 			{
-				to: "/assets/img-cockpit",
-				icon: Sparkles,
-				label: "IMG Cockpit",
-			},
-			{
-				to: "/assets/img-fastlane",
-				icon: Sparkles,
-				label: "IMG Fastlane",
-			},
-			{ to: "/asset-registry", icon: Layers, label: "Asset Registry" },
-			{
-				to: "/product-asset-generator",
-				icon: Sparkles,
-				label: "Product Asset Generator",
-			},
-			{
-				to: "/product-registration",
-				icon: ScrollText,
-				label: "Smart Registration",
-			},
-			{
-				to: "/creative/poster-builder",
-				icon: ImageIcon,
-				label: "Poster Builder",
+				to: "/creative/copy-intelligence",
+				icon: Users,
+				label: "Copy Intelligence",
 			},
 			{
 				to: "/creative/cockpit-settings",
 				icon: Gauge,
 				label: "Cockpit Settings",
 			},
-			{
-				to: "/creative/copy-registry",
-				icon: PenLine,
-				label: "Copy Registry",
-			},
-			{
-				to: "/creative/copy-intelligence",
-				icon: Users,
-				label: "Copy Intelligence",
-			},
-			{ to: "/products", icon: PackageSearch, label: "Products" },
-			{ to: "/projects", icon: FolderOpen, label: "Projects" },
-			{ to: "/gallery", icon: Film, label: "Gallery" },
-		],
-	},
-	{
-		label: "COMMAND CENTRE",
-		items: [
-			{ to: "/reporting/executive", icon: Gauge, label: "Executive" },
-			{ to: "/reporting/operations", icon: Siren, label: "Operations" },
+			{ to: "/prompt-preview", icon: Sparkles, label: "Prompt Preview" },
+			{ to: "/troubleshoot", icon: Siren, label: "Troubleshoot" },
 		],
 	},
 	{
 		label: "SYSTEM",
 		items: [
-			{ to: "/prompt-preview", icon: Sparkles, label: "Prompt Preview" },
-			{ to: "/settings", icon: SettingsIcon, label: "Settings" },
-			{ to: "/health", icon: Activity, label: "Health" },
-			{ to: "/troubleshoot", icon: Siren, label: "Troubleshoot" },
-			{ to: "/logs", icon: ScrollText, label: "Logs" },
 			{ to: "/", icon: LayoutDashboard, label: "Overview", exact: true },
+			{ to: "/settings", icon: SettingsIcon, label: "Settings" },
 		],
 	},
 ];
@@ -262,6 +256,46 @@ function Layout() {
 	const [portalSummary, setPortalSummary] = useState<TelemetrySummary | null>(
 		null,
 	);
+
+	const activeGroupLabel = NAV_GROUPS.find((navGroup) =>
+		navGroup.items.some((item) =>
+			item.exact
+				? location.pathname === item.to
+				: location.pathname.startsWith(item.to),
+		),
+	)?.label;
+
+	const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
+		try {
+			const saved = window.localStorage.getItem("bosmax:navCollapsed");
+			if (saved) return new Set(JSON.parse(saved) as string[]);
+		} catch {
+			/* ignore malformed persisted state */
+		}
+		// First visit: keep only the active group open so the sidebar stays compact.
+		return new Set(
+			NAV_GROUPS.map((navGroup) => navGroup.label).filter(
+				(label) => label !== activeGroupLabel,
+			),
+		);
+	});
+
+	const toggleGroup = (label: string) => {
+		setCollapsedGroups((prev) => {
+			const next = new Set(prev);
+			if (next.has(label)) next.delete(label);
+			else next.add(label);
+			try {
+				window.localStorage.setItem(
+					"bosmax:navCollapsed",
+					JSON.stringify([...next]),
+				);
+			} catch {
+				/* ignore persistence failure */
+			}
+			return next;
+		});
+	};
 
 	const withPortalQuery = (path: string) => {
 		if (!isPortalMode) return path;
@@ -340,8 +374,8 @@ function Layout() {
 		{ to: "/library/images", label: "IMAGES" },
 		{ to: "/operator/i2v", label: "I2V" },
 		{ to: "/operator/img", label: "IMG" },
-		{ to: "/operator/montage", label: "MONTAGE" },
 		{ to: "/operator/faceless", label: "FACELESS" },
+		{ to: "/operator/montage", label: "MONTAGE" },
 		{ to: "/assets/creative-library", label: "Creative" },
 		{ to: "/workspace/generation-packages", label: "Bank" },
 		{ to: "/workspace/jobs", label: "Jobs" },
@@ -390,35 +424,48 @@ function Layout() {
 				</div>
 
 				<nav className="flex-1 overflow-y-auto px-3 space-y-6 pb-6">
-					{NAV_GROUPS.map((group) => (
-						<div key={group.label}>
-							<div className="px-3 mb-2 text-[10px] font-bold tracking-widest text-slate-500 uppercase">
-								{group.label}
+					{NAV_GROUPS.map((group) => {
+						const collapsed = collapsedGroups.has(group.label);
+						return (
+							<div key={group.label}>
+								<button
+									type="button"
+									onClick={() => toggleGroup(group.label)}
+									className="w-full flex items-center justify-between px-3 mb-2 text-[10px] font-bold tracking-widest text-slate-500 uppercase hover:text-slate-300 transition-colors"
+								>
+									{group.label}
+									<ChevronDown
+										size={12}
+										className={`transition-transform duration-200 ${collapsed ? "-rotate-90" : ""}`}
+									/>
+								</button>
+								{!collapsed && (
+									<div className="space-y-1">
+										{group.items.map(({ to, icon: Icon, label, exact }) => (
+											<NavLink
+												key={to}
+												to={withPortalQuery(to)}
+												end={exact}
+												className={({ isActive }) =>
+													`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs transition-all duration-200 group ${
+														isActive
+															? "bg-blue-600/10 text-blue-400 font-medium"
+															: "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+													}`
+												}
+											>
+												<Icon
+													size={14}
+													className="group-hover:scale-110 transition-transform duration-200"
+												/>
+												{label}
+											</NavLink>
+										))}
+									</div>
+								)}
 							</div>
-							<div className="space-y-1">
-								{group.items.map(({ to, icon: Icon, label, exact }) => (
-									<NavLink
-										key={to}
-										to={withPortalQuery(to)}
-										end={exact}
-										className={({ isActive }) =>
-											`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs transition-all duration-200 group ${
-												isActive
-													? "bg-blue-600/10 text-blue-400 font-medium"
-													: "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
-											}`
-										}
-									>
-										<Icon
-											size={14}
-											className="group-hover:scale-110 transition-transform duration-200"
-										/>
-										{label}
-									</NavLink>
-								))}
-							</div>
-						</div>
-					))}
+						);
+					})}
 				</nav>
 
 				<div className="p-4 border-t border-slate-800">
@@ -534,8 +581,8 @@ function Layout() {
 						<Route path="/operator/f2v" element={<OperatorPage mode="F2V" />} />
 						<Route path="/operator/i2v" element={<OperatorPage mode="I2V" />} />
 						<Route path="/operator/img" element={<OperatorPage mode="IMG" />} />
-						<Route path="/operator/montage" element={<MontagePage />} />
 						<Route path="/operator/faceless" element={<FacelessVideoPage />} />
+						<Route path="/operator/montage" element={<MontagePage />} />
 						<Route path="/workspace/jobs" element={<WorkspaceJobsPage />} />
 						<Route
 							path="/workspace/generation-packages"
@@ -546,14 +593,9 @@ function Layout() {
 							element={<ApprovedPackagesPage />}
 						/>
 
-						<Route path="/batches" element={<BatchPromptBuilderPage />} />
 						<Route
 							path="/production-queue"
 							element={<ProductionQueuePage />}
-						/>
-						<Route
-							path="/rpa-production-studio"
-							element={<RpaProductionStudioPage />}
 						/>
 						<Route
 							path="/production-studio"
@@ -594,10 +636,6 @@ function Layout() {
 							element={<CreativeLibraryPage />}
 						/>
 						<Route
-							path="/product-asset-generator"
-							element={<ProductAssetGeneratorPage />}
-						/>
-						<Route
 							path="/product-registration"
 							element={<ProductRegistrationPage />}
 						/>
@@ -619,22 +657,10 @@ function Layout() {
 						/>
 						<Route path="/products" element={<ProductsSalesAnalyzerPage />} />
 						<Route path="/product/:id" element={<ProductDetailPage />} />
-						<Route path="/projects" element={<ProjectsPage />} />
-						<Route path="/projects/:id" element={<ProjectsPage />} />
-						<Route path="/gallery" element={<GalleryPage />} />
-						<Route path="/logs" element={<LogsPage />} />
 						<Route path="/prompt-preview" element={<PromptPreviewPage />} />
 
 						{/* System Routes */}
 						<Route path="/settings" element={<SettingsPage />} />
-						<Route
-							path="/health"
-							element={
-								<div className="p-8 text-slate-400">
-									Health Diagnostics Dashboard
-								</div>
-							}
-						/>
 						<Route path="/troubleshoot" element={<TroubleshootPage />} />
 
 						{/* Default Dashboard */}

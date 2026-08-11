@@ -209,9 +209,9 @@ export default function PosterAutoModePanel({
 						data-testid="poster-copy-required-hint"
 						className="mt-3 text-[11px] text-amber-300"
 					>
-						Isi dulu: <strong>{missingCopy.join(", ")}</strong>. Taip terus di medan
-						Copy draft di atas, atau tekan <em>Apply suggestion</em> pada satu cadangan
-						AI di bawah untuk mengisinya.
+						Fill first: <strong>{missingCopy.join(", ")}</strong>. Type directly in the
+						Copy draft field above, or press <em>Apply suggestion</em> on one of the AI
+						suggestions below to fill it.
 					</p>
 				) : null}
 				{promptDraftEnabled && overLimit.length > 0 ? (
@@ -220,8 +220,8 @@ export default function PosterAutoModePanel({
 							data-testid="poster-copy-overlimit-hint"
 							className="text-[11px] text-rose-300"
 						>
-							Terlalu panjang untuk poster: <strong>{overLimit.join(", ")}</strong>.
-							Copy poster mesti ringkas, bukan panjang macam copywriting video.
+							Too long for a poster: <strong>{overLimit.join(", ")}</strong>.
+							Poster copy must be concise, not long like video copywriting.
 						</p>
 						{canFit ? (
 							<button
@@ -231,11 +231,11 @@ export default function PosterAutoModePanel({
 								onClick={onFitToPoster}
 								className="mt-2 rounded-lg border border-amber-500/40 bg-amber-600/20 px-3 py-1.5 text-[10px] font-bold uppercase text-amber-100 disabled:opacity-40"
 							>
-								{fitLoading ? "AI memendekkan…" : "Muatkan ke poster (AI)"}
+								{fitLoading ? "AI shortening…" : "Fit to poster (AI)"}
 							</button>
 						) : !aiReady ? (
 							<p className="mt-2 text-[10px] text-slate-400">
-								AI provider tidak tersedia — pendekkan ayat secara manual.
+								AI provider unavailable — shorten the text manually.
 							</p>
 						) : null}
 						{fitNotice ? (

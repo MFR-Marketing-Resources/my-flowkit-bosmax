@@ -59,11 +59,10 @@ import PosterReadinessStatusCard from "../components/poster/PosterReadinessStatu
 import PosterRepairActionCenter from "../components/poster/PosterRepairActionCenter";
 import PosterWorkingModeSelector from "../components/poster/PosterWorkingModeSelector";
 import {
-	OperatorCockpit,
-	QueueRow,
 	WorkflowStep,
 } from "../components/workflow";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
+import ResultsSidebar, { type SessionResult } from "../components/workspace/ResultsSidebar";
 import CopywritingReadinessCard from "../components/copywriting/CopywritingReadinessCard";
 import { useCopywritingReadiness } from "../api/copywritingReadiness";
 import {
@@ -132,9 +131,8 @@ export function PosterBuilderLegacyPanel() {
 	// changes after a check the signature diverges → the report is stale → the
 	// generate gate re-arms (mandatory recheck before generation).
 	const [posterQualityKey, setPosterQualityKey] = useState<string | null>(null);
-	// Poster image generation (gated IMG submission; no Google Flow video credits).
+	// Poster image generation (gated, credit-spending — reuses the one-door IMG lane).
 	const [posterGenConfirm, setPosterGenConfirm] = useState(false);
-	const [posterImgConfirmed, setPosterImgConfirmed] = useState(false);
 	const [posterGenLoading, setPosterGenLoading] = useState(false);
 	const [posterGenStage, setPosterGenStage] = useState<string>("");
 	const [exactPolicy, setExactPolicy] = useState<ExactProductPolicy | null>(null);
@@ -217,7 +215,7 @@ export function PosterBuilderLegacyPanel() {
 			})
 			.catch((err: Error) =>
 				setReopenError(
-					err.message || "Gagal buka semula poster dari Creative Library.",
+					err.message || "Failed to reopen poster from Creative Library.",
 				),
 			);
 		// eslint-disable-next-line react-hooks/exhaustive-deps -- fetch once per reopen id
@@ -241,7 +239,6 @@ export function PosterBuilderLegacyPanel() {
 			setPosterGenResult(null);
 			setPosterGenError("");
 			setPosterGenConfirm(false);
-			setPosterImgConfirmed(false);
 			setApprovedCopySet(null);
 			setObjectiveRecs([]);
 		}
@@ -502,7 +499,7 @@ export function PosterBuilderLegacyPanel() {
 			setPosterQualityKey(null);
 		} catch (err) {
 			setCopyVersionError(
-				err instanceof Error ? err.message : "Gagal membuka versi baharu untuk edit.",
+				err instanceof Error ? err.message : "Failed to open the new version for editing.",
 			);
 		} finally {
 			setCopyVersionLoading("");
@@ -540,7 +537,7 @@ export function PosterBuilderLegacyPanel() {
 			setCopyVersionError(
 				err instanceof Error
 					? err.message
-					: "Gagal membuka draf baharu daripada versi sejarah.",
+					: "Failed to open a new draft from the history version.",
 			);
 		} finally {
 			setCopyVersionLoading("");
@@ -566,7 +563,7 @@ export function PosterBuilderLegacyPanel() {
 			handleApprovedCopySet(approved);
 		} catch (err) {
 			setCopyVersionError(
-				err instanceof Error ? err.message : "Gagal menyimpan versi baharu Poster Copy Set.",
+				err instanceof Error ? err.message : "Failed to save the new Poster Copy Set version.",
 			);
 		} finally {
 			setCopyVersionLoading("");
@@ -635,7 +632,7 @@ export function PosterBuilderLegacyPanel() {
 		if (overLimit.length > 0) {
 			setPromptPackage(null);
 			setPromptError(
-				`Copy terlalu panjang untuk poster: ${overLimit.join(", ")}. Pendekkan ayat supaya muat pada poster.`,
+				`Copy too long for the poster: ${overLimit.join(", ")}. Shorten the sentences to fit the poster.`,
 			);
 			return;
 		}
@@ -710,27 +707,23 @@ export function PosterBuilderLegacyPanel() {
 			setFitNotice(summarizePosterCopyFit(res));
 		} catch (e) {
 			setFitNotice(
-				e instanceof Error ? e.message : "Auto-pendekkan gagal. Cuba lagi.",
+				e instanceof Error ? e.message : "Auto-shorten failed. Try again.",
 			);
 		} finally {
 			setFitLoading(false);
 		}
 	};
 
-	// GATED IMG submission: only after explicit confirm.
+	// GATED, credit-spending: only after explicit confirm.
 	// Exact-policy products: scene-only Flow plate + deterministic cutout composite.
 	// Non-exact: reference-conditioned one-door IMG path (unchanged).
 	const handleConfirmedGeneratePoster = async () => {
-		if (!posterImgConfirmed) return;
 		const pkg = promptPackage;
 		if (!pkg?.poster_prompt) return;
 		const subjectAsset = productSubjectAsset(selectedProduct);
 		const productId = selectedProduct?.id ?? "";
 		// Fail-closed: never assume non-exact when policy cannot be resolved.
-		const gate = await resolveExactGenerationGate(productId, undefined, {
-			laneId: "POSTER_BUILDER",
-			isPoster: true,
-		});
+		const gate = await resolveExactGenerationGate(productId);
 		if (gate.mode === "blocked") {
 			setPosterGenConfirm(false);
 			setPosterGenError(gate.message);
@@ -743,7 +736,7 @@ export function PosterBuilderLegacyPanel() {
 		if (!exact && !subjectAsset) {
 			setPosterGenConfirm(false);
 			setPosterGenError(
-				`${PRODUCT_REFERENCE_IMAGE_REQUIRED} — produk ini tiada gambar rujukan yang boleh diguna. Poster produk mesti berlabuh pada gambar produk sebenar; penjanaan dihalang.`,
+				`${PRODUCT_REFERENCE_IMAGE_REQUIRED} — this product has no usable reference image. A product poster must anchor on the real product image; generation is blocked.`,
 			);
 			return;
 		}
@@ -798,8 +791,6 @@ export function PosterBuilderLegacyPanel() {
 
 			const { job_id } = await startImgGeneration({
 				prompt,
-				product_id: productId || undefined,
-				visual_lane_id: "POSTER_BUILDER",
 				aspect: flowMirror.aspect_ratio,
 				count: flowMirror.count,
 				image_model: flowMirror.image_model,
@@ -812,7 +803,7 @@ export function PosterBuilderLegacyPanel() {
 				!plateMediaId
 			) {
 				setPosterGenError(
-					job.error || `Penjanaan tamat sebagai ${job.status} tanpa imej.`,
+					job.error || `Generation ended as ${job.status} with no image.`,
 				);
 				return;
 			}
@@ -840,7 +831,7 @@ export function PosterBuilderLegacyPanel() {
 			}
 		} catch (e) {
 			setPosterGenError(
-				e instanceof Error ? e.message : "Penjanaan poster gagal.",
+				e instanceof Error ? e.message : "Poster generation failed.",
 			);
 		} finally {
 			setPosterGenLoading(false);
@@ -931,7 +922,7 @@ export function PosterBuilderLegacyPanel() {
 					data-testid="poster-reopen-panel"
 				>
 					<p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-400">
-						Dibuka semula dari Creative Library
+						Reopened from Creative Library
 					</p>
 					<div className="mt-3 flex flex-wrap gap-5">
 						{reopened.output_available ? (
@@ -939,14 +930,14 @@ export function PosterBuilderLegacyPanel() {
 								src={posterDeliverableOutputUrl(
 									reopened.deliverable.poster_deliverable_id,
 								)}
-								alt="Poster asal yang disimpan"
+								alt="Original saved poster"
 								className="h-56 rounded-lg border border-slate-800 object-contain"
 								data-testid="poster-reopen-original-output"
 							/>
 						) : (
 							<p className="text-xs text-amber-300">
-								Fail output asal tiada di runtime ini — konfigurasi tetap
-								dipulihkan; compose semula untuk hasilkan output baharu.
+								The original output file is not on this runtime — config is
+								preserved; compose again to produce a new output.
 							</p>
 						)}
 						<dl className="space-y-1 text-xs text-slate-300">
@@ -969,10 +960,10 @@ export function PosterBuilderLegacyPanel() {
 								</dd>
 							</div>
 							<div>
-								<dt className="inline font-semibold">Strategi produk:</dt>{" "}
+								<dt className="inline font-semibold">Product strategy:</dt>{" "}
 								<dd className="inline">
 									{reopened.deliverable.composition_strategy} — identiti/label/
-									skala produk dalam scene janaan perlu semakan manusia.
+									product scale in the generated scene needs human review.
 								</dd>
 							</div>
 							<div>
@@ -982,7 +973,7 @@ export function PosterBuilderLegacyPanel() {
 										? reopened.output_source === "CREATIVE_LIBRARY"
 											? "Salinan Creative Library (durable)"
 											: "Fail deliverable asal"
-										: "Tiada — kedua-dua salinan hilang"}
+										: "None — both copies lost"}
 								</dd>
 							</div>
 						</dl>
@@ -996,10 +987,10 @@ export function PosterBuilderLegacyPanel() {
 						>
 							<p className="text-[11px] text-amber-100">
 								<span className="font-bold uppercase tracking-wide">
-									Versi sejarah (superseded)
+									History version (superseded)
 								</span>{" "}
-								— copy ini dipaparkan baca-sahaja. Poster yang disimpan
-								mengekalkan salinan copy asalnya; rekod sejarah tidak diubah.
+								— this copy is shown read-only. The saved poster keeps a copy
+								of its original copy; the history record is unchanged.
 							</p>
 							<button
 								type="button"
@@ -1010,7 +1001,7 @@ export function PosterBuilderLegacyPanel() {
 							>
 								{copyVersionLoading === "fork"
 									? "Membuka draf…"
-									: "Buat draf baharu daripada versi sejarah ini"}
+									: "Create a new draft from this history version"}
 							</button>
 							{copyVersionError ? (
 								<p
@@ -1023,9 +1014,9 @@ export function PosterBuilderLegacyPanel() {
 						</div>
 					) : null}
 					<p className="mt-3 text-[11px] text-slate-400">
-						Konfigurasi (produk, recipe, copy set) telah dipulihkan di bawah.
-						Edit copy yang diluluskan akan mencipta VERSI BAHARU; compose semula
-						mencipta deliverable baharu — output asal tidak ditulis ganti.
+						Config (product, recipe, copy set) has been restored below.
+						Editing approved copy creates a NEW VERSION; composing again
+						creates a new deliverable — the original output is not overwritten.
 					</p>
 				</section>
 			) : null}
@@ -1091,7 +1082,7 @@ export function PosterBuilderLegacyPanel() {
 										onClick={() => void handleRecommendObjectives()}
 										className="rounded-xl border border-blue-500/40 bg-blue-600/10 px-3 py-1.5 text-[11px] font-bold text-blue-200 disabled:opacity-40"
 									>
-										{objectiveRecsLoading ? "Menganalisis…" : "Cadangkan untuk saya ✦"}
+										{objectiveRecsLoading ? "Analyzing…" : "Suggest for me ✦"}
 									</button>
 								</div>
 								{objectiveRecs.length > 0 ? (
@@ -1133,13 +1124,13 @@ export function PosterBuilderLegacyPanel() {
 										data-testid="poster-product-ref-confirmed"
 										className="text-[11px] text-emerald-300"
 									>
-										✓ Product reference image confirmed — poster akan berlabuh pada
-										gambar produk sebenar.
+										✓ Product reference image confirmed — the poster will anchor
+										on the real product image.
 									</p>
 								) : (
 									<p className="text-[11px] text-rose-300">
-										{PRODUCT_REFERENCE_IMAGE_REQUIRED} — produk ini tiada gambar rujukan;
-										set gambar produk dahulu (penjanaan dihalang).
+										{PRODUCT_REFERENCE_IMAGE_REQUIRED} — this product has no reference image;
+										set the product image first (generation is blocked).
 									</p>
 								)}
 							</section>
@@ -1165,7 +1156,7 @@ export function PosterBuilderLegacyPanel() {
 										>
 											<span>
 												✓ Copy diluluskan (Poster Copy Set v{approvedCopySet.version}).
-												Untuk edit, buka versi baharu — set asal kekal immutable.
+												To edit, open a new version — the original set stays immutable.
 											</span>
 											<button
 												type="button"
@@ -1176,7 +1167,7 @@ export function PosterBuilderLegacyPanel() {
 											>
 												{copyVersionLoading === "create"
 													? "Membuka versi…"
-													: "Buka versi baharu untuk edit"}
+													: "Open a new version to edit"}
 											</button>
 										</div>
 									) : null}
@@ -1186,8 +1177,8 @@ export function PosterBuilderLegacyPanel() {
 											className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-[11px] text-amber-100"
 										>
 											<span>
-												Versi baharu v{editingCopySet.version} sedang diedit. Simpan &
-												luluskan untuk mengikat copy ini semula ke compositor.
+												New version v{editingCopySet.version} is being edited. Save &
+												approve to bind this copy back into the compositor.
 											</span>
 											<button
 												type="button"
@@ -1198,7 +1189,7 @@ export function PosterBuilderLegacyPanel() {
 											>
 												{copyVersionLoading === "approve"
 													? "Menyimpan…"
-													: "Simpan & luluskan versi baharu"}
+													: "Save & approve the new version"}
 											</button>
 										</div>
 									) : null}
@@ -1241,7 +1232,7 @@ export function PosterBuilderLegacyPanel() {
 												data-testid="poster-quality-block-note"
 												className="mt-2 text-[11px] text-rose-300"
 											>
-												Kualiti poster gagal ({posterQuality?.block_count} isu) — baiki copy sebelum jana.
+												Poster quality failed ({posterQuality?.block_count} issues) — fix the copy before generating.
 											</p>
 										) : missingCopy.length === 0 &&
 											overLimitCopy.length === 0 &&
@@ -1251,8 +1242,8 @@ export function PosterBuilderLegacyPanel() {
 												className="mt-2 text-[11px] text-amber-300"
 											>
 												{posterQualityStale
-													? "Copy berubah selepas semakan — semak kualiti poster semula sebelum jana."
-													: "Semak kualiti poster dahulu — penjanaan dihalang sehingga lulus."}
+													? "Copy changed after review — recheck poster quality before generating."
+													: "Check poster quality first — generation is blocked until it passes."}
 											</p>
 										) : null}
 										<button
@@ -1278,7 +1269,7 @@ export function PosterBuilderLegacyPanel() {
 									data-testid="poster-recipe-required-hint"
 									className="text-sm text-slate-400"
 								>
-									Pilih satu recipe poster di atas untuk teruskan ke settings + copy slots.
+									Pick a poster recipe above to continue to settings + copy slots.
 								</p>
 							)}
 							<details
@@ -1372,9 +1363,9 @@ export function PosterBuilderLegacyPanel() {
 									Poster scene generation
 								</h3>
 								<p className="mt-1 text-[11px] text-slate-500">
-									Recipe path menjana <strong>scene bersih</strong> (produk +
-									latar, tiada teks pemasaran) — teks muktamad dilukis oleh
-									compositor selepas ini, jadi ejaan sentiasa tepat.
+									The Recipe path generates a <strong>clean scene</strong> (product +
+									background, no marketing text) — the final text is drawn by
+									the compositor afterwards, so spelling is always exact.
 								</p>
 								<p
 									className="mt-2 text-xs text-slate-500"
@@ -1386,13 +1377,13 @@ export function PosterBuilderLegacyPanel() {
 								</p>
 								{!promptPackage ? (
 									<p className="mt-2 text-sm text-slate-400">
-										Jana <strong>prompt draft</strong> dulu di atas — poster
-										image dijana daripada prompt package itu.
+										Generate a <strong>prompt draft</strong> above first — the poster
+										image is generated from that prompt package.
 									</p>
 								) : promptPackage.prompt_package_status === "PREVIEW_ONLY" ? (
 									<p className="mt-2 text-[11px] text-amber-300">
 										Nota: copy ini review-only (bukan Copy Set diluluskan).
-										Poster tetap boleh dijana untuk semakan.
+										The poster can still be generated for review.
 									</p>
 								) : null}
 								{!productReferenceReady ? (
@@ -1400,9 +1391,9 @@ export function PosterBuilderLegacyPanel() {
 										data-testid="poster-product-ref-required"
 										className="mt-2 text-[11px] text-rose-300"
 									>
-										{PRODUCT_REFERENCE_IMAGE_REQUIRED} — produk ini tiada gambar
-										rujukan. Poster produk mesti berlabuh pada gambar produk
-										sebenar; set gambar produk dahulu. Penjanaan dihalang.
+										{PRODUCT_REFERENCE_IMAGE_REQUIRED} — this product has no
+										reference image. A product poster must anchor on the real
+										product image; set the product image first. Generation is blocked.
 									</p>
 								) : null}
 								<button
@@ -1414,10 +1405,7 @@ export function PosterBuilderLegacyPanel() {
 										!readiness.generation_allowed ||
 										!productReferenceReady
 									}
-									onClick={() => {
-										setPosterImgConfirmed(false);
-										setPosterGenConfirm(true);
-									}}
+									onClick={() => setPosterGenConfirm(true)}
 									className="mt-3 rounded-xl border border-rose-500/40 bg-rose-600/20 px-4 py-2 text-xs font-bold uppercase text-rose-100 disabled:opacity-40"
 								>
 									{posterGenLoading
@@ -1440,7 +1428,7 @@ export function PosterBuilderLegacyPanel() {
 									<div className="mt-4" data-testid="poster-gen-result">
 										<img
 											src={posterGenResult.url}
-											alt="Poster dijana"
+											alt="Generated poster"
 											className="max-h-96 rounded-xl border border-slate-800"
 										/>
 										<div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-slate-400">
@@ -1477,10 +1465,10 @@ export function PosterBuilderLegacyPanel() {
 						</>
 					) : null}
 
-					<section className="rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
-						<h3 className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
-							Draft JSON preview
-						</h3>
+					<details className="rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
+						<summary className="cursor-pointer text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500 hover:text-slate-300">
+							Draft JSON preview (technical)
+						</summary>
 						<pre className="mt-2 max-h-64 overflow-auto text-[10px] text-slate-400">
 							{JSON.stringify(
 								{
@@ -1498,30 +1486,20 @@ export function PosterBuilderLegacyPanel() {
 								2,
 							)}
 						</pre>
-					</section>
+					</details>
 				</>
 			) : null}
 			{posterGenConfirm ? (
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
 					<div className="max-w-md space-y-3 rounded-2xl border border-rose-500/40 bg-slate-950 p-5">
 						<div className="text-sm font-bold text-rose-100">
-							Sahkan penghantaran kerja IMG poster
+							Confirm poster generation (credit-free)
 						</div>
 						<div className="text-[11px] text-slate-300">
-							IMG ini tidak menggunakan kredit penjanaan; kredit Google Flow hanya
-							berkaitan video. Pengesahan di bawah hanya mengesahkan satu operasi
-							IMG akan dihantar. Tiada kerja akan dihantar sebelum pengesahan ini.
+							This calls the live image lane (<code>POST /api/flow/generate</code>{" "}
+							mode:IMG). Image generation is <strong>credit-free</strong> (only
+							video costs credits). It will not run without this confirmation.
 						</div>
-						<label className="flex items-start gap-2 text-[11px] text-slate-200">
-							<input
-								type="checkbox"
-								data-testid="poster-img-credit-confirm-checkbox"
-								checked={posterImgConfirmed}
-								onChange={(event) => setPosterImgConfirmed(event.target.checked)}
-								className="mt-0.5"
-							/>
-							<span>Saya faham tindakan ini menghantar satu kerja IMG tanpa caj kredit penjanaan.</span>
-						</label>
 						<div className="flex justify-end gap-2">
 							<button
 								type="button"
@@ -1533,11 +1511,10 @@ export function PosterBuilderLegacyPanel() {
 							<button
 								type="button"
 								data-testid="poster-gen-confirm"
-								disabled={!posterImgConfirmed}
 								onClick={() => void handleConfirmedGeneratePoster()}
 								className="rounded-lg border border-rose-500/40 bg-rose-500/20 px-3 py-1.5 text-[11px] font-bold text-rose-100"
 							>
-								Sahkan &amp; Jana (live)
+								Confirm &amp; Generate (live)
 							</button>
 						</div>
 					</div>
@@ -1553,6 +1530,7 @@ export function PosterBuilderLegacyPanel() {
 // data-fetching effects never run in the normal flow).
 export default function PosterBuilderPage() {
 	const [advancedOpen, setAdvancedOpen] = useState(false);
+	const [sessionResults, setSessionResults] = useState<SessionResult[]>([]);
 	const [searchParams] = useSearchParams();
 	const useV4 =
 		searchParams.get("v4") === "1" && searchParams.get("classic") !== "1";
@@ -1566,8 +1544,8 @@ export default function PosterBuilderPage() {
 				Advanced Diagnostics / Legacy Compatibility
 			</summary>
 			<p className="mt-2 text-[11px] text-amber-300/80">
-				Untuk penyelesaian masalah dan kawalan lanjutan sahaja — tidak
-				diperlukan untuk penciptaan poster biasa.
+				For troubleshooting and advanced controls only — not needed for
+				normal poster creation.
 			</p>
 			<div className="mt-4 border-t border-slate-800 pt-4">
 				{advancedOpen ? <PosterBuilderLegacyPanel /> : null}
@@ -1631,44 +1609,15 @@ export default function PosterBuilderPage() {
 						{advancedDiagnostics}
 					</main>
 
-					<aside className="w-full xl:w-80 xl:flex-none">
-						<div className="xl:sticky xl:top-4">
-							<OperatorCockpit
-								laneLabel="Poster Builder · Bespoke"
-								status={{ label: "Guided", state: "online" }}
-								planTitle="Poster plan"
-								plan={[
-									{ k: "Journey", v: "Poster-native", tone: "default" },
-									{ k: "Modes", v: "Auto · Guided · Controlled", tone: "default" },
-									{ k: "Output", v: "Poster + Copy Set", tone: "good" },
-									{ k: "Credit gate", v: "Explicit confirmation", tone: "good" },
-								]}
-								queueTitle="Handoff"
-								generate={{
-									label: "Generate poster · gated",
-									disabled: true,
-									note: "The bespoke page owns human confirmation; no auto-fire.",
-								}}
-								debugLabel="Poster Builder diagnostics"
-								debug={
-									<div className="space-y-1">
-										<div>guided journey preserved</div>
-										<div>Auto · Guided · Controlled remain available</div>
-									</div>
-								}
-							>
-								<QueueRow
-									title="Copy + visual review"
-									sub="Poster-native composition"
-									status="queued"
-								/>
-								<QueueRow
-									title="Creative Library"
-									sub="Approved save / reuse"
-									status="queued"
-								/>
-							</OperatorCockpit>
-						</div>
+					<aside className="w-full xl:w-80 xl:flex-none xl:min-h-0 xl:overflow-y-auto">
+						<ResultsSidebar
+							results={sessionResults}
+							onRemoved={(mediaId) =>
+								setSessionResults((prev) =>
+									prev.filter((r) => r.media_id !== mediaId),
+								)
+							}
+						/>
 					</aside>
 				</div>
 			</div>

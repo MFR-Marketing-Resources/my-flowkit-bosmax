@@ -45,13 +45,10 @@ vi.mock("../components/SocialCopyPackagePanel", () => ({ default: () => null }))
 vi.mock("../components/workspace/CopySelectionPanel", () => ({
 	default: () => null,
 }));
-vi.mock("../components/workspace/F2VModule", () => ({ default: () => null }));
-vi.mock("../components/workspace/I2VModule", () => ({ default: () => null }));
 vi.mock("../components/workspace/IMGModule", () => ({ default: () => null }));
 vi.mock("../components/workspace/SearchableProductSelect", () => ({
 	default: () => null,
 }));
-vi.mock("../components/workspace/T2VModule", () => ({ default: () => null }));
 
 import OperatorPage from "./OperatorPage";
 

@@ -71,8 +71,6 @@ vi.mock("../components/workspace/CanonicalReferenceBindingControls", () => ({
 		styleReferenceAssetId: null,
 	},
 }));
-vi.mock("../components/workspace/F2VModule", () => ({ default: () => null }));
-vi.mock("../components/workspace/I2VModule", () => ({ default: () => null }));
 vi.mock("../components/workspace/IMGModule", () => ({
 	default: () => <div data-testid="v4-img-module">IMG module</div>,
 }));
@@ -82,7 +80,6 @@ vi.mock("../components/workspace/SearchableProductSelect", () => ({
 vi.mock("../components/workspace/VisualAssetPicker", () => ({
 	default: () => null,
 }));
-vi.mock("../components/workspace/T2VModule", () => ({ default: () => null }));
 
 import OperatorPage from "./OperatorPage";
 
@@ -201,6 +198,24 @@ describe("OperatorPage V4 Bucket 1 rollout", () => {
 			);
 		},
 	);
+
+	it("keeps the V4 main rail responsive and binds F2V presenter authority to the registry", () => {
+		renderOperator("F2V", "?v4=1");
+		const root = screen.getByTestId("hybrid-workflow");
+		const main = root.querySelector("main");
+		const layout = main?.parentElement;
+
+		expect(layout).toHaveClass("lg:flex-row");
+		expect(main).toHaveClass("lg:flex-1", "lg:overflow-y-auto");
+		expect(main).not.toHaveClass("overflow-y-auto");
+		fireEvent.click(screen.getByRole("button", { name: /^Presenter/ }));
+		expect(screen.getByTestId("operator-presenter-source")).toHaveTextContent(
+			"Avatar source: Avatar Registry",
+		);
+		expect(screen.getByTestId("operator-presenter-source")).toHaveTextContent(
+			"F2V start/end slots remain frame references",
+		);
+	});
 
 	it("keeps IMGModule inside the V4 Image setup step", () => {
 		renderOperator("IMG", "?v4=1");

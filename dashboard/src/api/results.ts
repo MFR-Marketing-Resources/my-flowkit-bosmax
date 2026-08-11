@@ -2,8 +2,8 @@ import { getAPI } from "./client";
 
 // Results Hub API client — the DURABLE deliverable view for finished generations.
 // Read-only: it composes the durable generation_result snapshot (prompt/settings
-// for manual Flow fallback), the 48h artifact file (download), and the social
-// caption rollup. Captions themselves are authored via socialCopyPackages /
+// for manual Flow fallback), the video 48h/image persistent artifact file
+// (download), and the social caption rollup. Captions themselves are authored via socialCopyPackages /
 // SocialCopyPackagePanel — this client never posts copy.
 
 export interface CaptionSummary {
@@ -32,6 +32,7 @@ export interface ResultListResponse {
 	results: ResultListItem[];
 	count: number;
 	retention_hours: number;
+	retention_policy: { video: "48h"; image: "manual_delete" };
 }
 
 export interface ResultSnapshot {

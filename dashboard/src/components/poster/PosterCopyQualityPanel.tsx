@@ -28,12 +28,12 @@ export default function PosterCopyQualityPanel({
 					onClick={onCheck}
 					className="rounded-lg border border-amber-500/40 bg-amber-600/20 px-3 py-1.5 text-[10px] font-bold uppercase text-amber-100 disabled:opacity-40"
 				>
-					{loading ? "Menyemak…" : "Semak kualiti poster"}
+					{loading ? "Checking…" : "Check poster quality"}
 				</button>
 			</div>
 			<p className="mt-1 text-[11px] text-slate-400">
-				Poster bukan skrip video: headline pendek (first-read), satu ayat sokongan,
-				2–3 chip, satu CTA padu, satu idea teras, bahasa selamat.
+				A poster is not a video script: short headline (first-read), one support line,
+				2–3 chips, one solid CTA, one core idea, safe language.
 			</p>
 
 			{stale ? (
@@ -41,7 +41,7 @@ export default function PosterCopyQualityPanel({
 					data-testid="poster-quality-stale"
 					className="mt-3 text-[11px] text-amber-300"
 				>
-					⟳ Copy berubah selepas semakan terakhir — semak semula sebelum jana.
+					⟳ Copy changed since the last check — re-check before generating.
 				</p>
 			) : null}
 
@@ -51,7 +51,7 @@ export default function PosterCopyQualityPanel({
 						data-testid="poster-quality-clean"
 						className="mt-3 text-[11px] text-emerald-300"
 					>
-						✓ Copy poster lulus semakan pakar e-dagang.
+						✓ Poster copy passed the e-commerce expert check.
 					</p>
 				) : (
 					<ul className="mt-3 space-y-1" data-testid="poster-quality-findings">
@@ -69,8 +69,8 @@ export default function PosterCopyQualityPanel({
 				)
 			) : (
 				<p className="mt-3 text-[11px] text-slate-500">
-					Tekan “Semak kualiti poster” untuk semakan pakar (percuma, tiada
-					penjanaan).
+					Press "Check poster quality" for an expert check (free, no
+					generation).
 				</p>
 			)}
 		</section>

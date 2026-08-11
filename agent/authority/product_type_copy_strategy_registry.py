@@ -1773,6 +1773,43 @@ for _strategy_key, (
         overlay_text=_overlay,
     )
 
+# The car-cover dialogue is deliberately duration-shaped: every slot carries a
+# complete hook -> demo -> benefit -> CTA arc while staying inside the existing
+# 2.4-WPS-equivalent upper budgets (19/24/38 words for 8/10/16 seconds).
+PRODUCT_TYPE_COPY_STRATEGY_REGISTRY[
+    ("automotive_accessory", "car_cover", "AUTOMOTIVE_ACCESSORY")
+] = {
+    "copy_strategy_id": "P4_CAR_COVER_PRODUCT_TYPE_V1",
+    "source_strategy": "PRODUCT_TYPE_COPY_STRATEGY_REGISTRY",
+    "scene_action_indices": (0, 1),
+    "scene_result_template": (
+        "show the cover material layers, size label, seams, edge fit, and storage clearly"
+    ),
+    "scripts": {
+        8: {
+            "hook_line": "Semak saiz dan bahan penutup kereta.",
+            "demo_line": "Bentang pada kereta pegun, ratakan.",
+            "benefit_line": "Lapisan dan tepi jelas.",
+            "cta_line": "Padankan saiz kenderaan.",
+            "overlay_text": "BAHAN DAN SAIZ",
+        },
+        10: {
+            "hook_line": "Semak saiz dan bahan penutup kereta.",
+            "demo_line": "Bentang pada kereta pegun, ratakan tepi.",
+            "benefit_line": "Lapisan, jahitan dan kemasan tepi mudah dilihat.",
+            "cta_line": "Padankan saiz dengan kenderaan pilihan.",
+            "overlay_text": "BAHAN DAN SAIZ",
+        },
+        16: {
+            "hook_line": "Semak saiz, bahan dan kemasan penutup kereta dengan teliti.",
+            "demo_line": "Bentang pada kereta pegun dan ratakan mengikut bentuk badan.",
+            "benefit_line": "Lapisan, jahitan, tepi dan lipatan mudah diperiksa dari dekat.",
+            "cta_line": "Padankan saiz dengan kenderaan dan semak arahan sebelum beli.",
+            "overlay_text": "BAHAN DAN SAIZ",
+        },
+    },
+}
+
 
 PRODUCT_TYPE_COPY_STRATEGY_KEYS: Final[frozenset[ProductTypeCopyStrategyKey]] = (
     frozenset(PRODUCT_TYPE_COPY_STRATEGY_REGISTRY)
