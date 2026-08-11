@@ -1557,6 +1557,24 @@ export interface ProductVisualReadiness {
 	cutout_history_count?: number;
 	cutout_media_id?: string | null;
 	cutout_preview_available?: boolean;
+	// ── Product-aware isolation + operator target (preparation metadata) ──
+	file_quality_status?: string | null;
+	product_isolation_status?: string | null;
+	target_selection_required?: boolean;
+	target_selection_available?: boolean;
+	target_region?: {
+		x: number;
+		y: number;
+		width: number;
+		height: number;
+		source_sha256?: string;
+	} | null;
+	// ── Which visual BOSMAX uses RIGHT NOW (backend authority; no FE guess) ──
+	current_system_visual?: {
+		card: string | null;
+		label: string | null;
+		status: string;
+	};
 	attempt_count?: number;
 	failure_code?: string | null;
 	failure_message?: string | null;

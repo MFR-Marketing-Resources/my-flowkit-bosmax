@@ -731,6 +731,7 @@ domains:
       - dashboard/src/components/product-registration/BulkFastMossConvertTab.test.tsx
       - dashboard/src/components/product-registration/AllProductsTab.tsx
       - dashboard/src/api/productVisualOnboarding.ts
+      - dashboard/src/api/productTruthLock.ts
       - dashboard/src/components/product-registration/ProductVisualReadinessPanel.tsx
       - docs/workflows/CANVA_PRODUCT_CUTOUT_WORKFLOW.md
       - docs/runbooks/canva-cutout-operator-runbook.md

@@ -565,6 +565,7 @@ describe("PosterGuidedShell", () => {
 		fireEvent.click(screen.getByTestId("poster-truth-confirm-identity"));
 		fireEvent.click(screen.getByTestId("poster-truth-confirm-label-logo"));
 		fireEvent.click(screen.getByTestId("poster-truth-confirm-geometry-scale"));
+		fireEvent.click(screen.getByTestId("poster-truth-confirm-product-isolation"));
 		fireEvent.click(screen.getByTestId("poster-truth-approve"));
 
 		await screen.findByTestId("poster-truth-approved");
@@ -575,6 +576,7 @@ describe("PosterGuidedShell", () => {
 				confirm_identity: true,
 				confirm_label_logo: true,
 				confirm_geometry_scale: true,
+				confirm_product_isolation: true,
 			}),
 		);
 		expect(

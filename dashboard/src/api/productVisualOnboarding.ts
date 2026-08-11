@@ -209,6 +209,28 @@ export function rebuildProductCutout(
 	);
 }
 
+export function setProductCutoutTarget(
+	productId: string,
+	roi: { x: number; y: number; width: number; height: number; selected_by?: string },
+): Promise<ProductVisualReadiness> {
+	return postAPI<ProductVisualReadiness>(
+		`/api/product-visual-onboarding/${encodeURIComponent(productId)}/cutout/target`,
+		roi,
+	);
+}
+
+// The shared `deleteAPI` helper in ./client returns Promise<void>; this endpoint
+// returns the updated readiness, so we go through fetchAPI with method DELETE
+// (same pattern getAPI/postAPI use) to keep the typed response.
+export function clearProductCutoutTarget(
+	productId: string,
+): Promise<ProductVisualReadiness> {
+	return fetchAPI<ProductVisualReadiness>(
+		`/api/product-visual-onboarding/${encodeURIComponent(productId)}/cutout/target`,
+		{ method: "DELETE" },
+	);
+}
+
 export function uploadManualProductCutout(
 	productId: string,
 	file: File,

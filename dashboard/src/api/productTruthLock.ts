@@ -21,6 +21,7 @@ export interface ProductTruthLockApproval {
 	confirm_identity: boolean;
 	confirm_label_logo: boolean;
 	confirm_geometry_scale: boolean;
+	confirm_product_isolation: boolean;
 }
 
 export function fetchProductTruthLock(
