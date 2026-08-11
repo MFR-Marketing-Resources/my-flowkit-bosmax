@@ -31,6 +31,12 @@ domains:
       - agent/runtime_release.py
       - scripts/deploy-canonical-release.ps1
       - scripts/start-canonical-runtime.ps1
+      # Boot persistence: auto-start the canonical runtime at logon (fail-closed)
+      # and retire the stale dev-root Startup launcher that reverted :8100 to an
+      # unmerged branch after every reboot.
+      - scripts/install-canonical-runtime-autostart.ps1
+      - scripts/verify-runtime-canonical.ps1
+      - docs/CANONICAL_RUNTIME_PERSISTENCE.md
       - tests/unit/test_runtime_release.py
       - tests/unit/test_product_detail_tabs_contract.py
       - agent/api/flow.py
