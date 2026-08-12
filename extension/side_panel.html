@@ -11,617 +11,224 @@
       --panel: #0e1730;
       --panel-2: #131d3a;
       --border: rgba(148, 163, 184, 0.16);
-      --border-strong: rgba(56, 189, 248, 0.55);
+      --border-strong: rgba(56, 189, 248, 0.5);
       --text: #eef2fb;
       --muted: #93a4c3;
       --faint: #64748b;
       --accent: #38bdf8;
       --accent-soft: rgba(56, 189, 248, 0.14);
+      --violet: #a78bfa;
       --ok: #4ade80;
       --warn: #facc15;
       --danger: #f87171;
       --font: 'Segoe UI', Inter, system-ui, sans-serif;
-      --radius: 14px;
     }
-
     * { box-sizing: border-box; }
-
-    html, body {
-      width: 100%;
-      height: 100%;
-      margin: 0;
-      background: var(--bg);
-      color: var(--text);
-      font-family: var(--font);
-      overflow: hidden;
-    }
+    html, body { width: 100%; height: 100%; margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); overflow: hidden; }
 
     .shell {
-      display: flex;
-      flex-direction: column;
-      width: 100%;
-      height: 100%;
+      display: flex; flex-direction: column; width: 100%; height: 100%;
       background:
         radial-gradient(circle at top left, rgba(56, 189, 248, 0.10), transparent 26%),
         radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.12), transparent 30%),
         var(--bg);
     }
 
-    .launcher-bar {
-      flex-shrink: 0;
-      overflow-y: auto;
-      max-height: 100%;
-      position: relative;
-      z-index: 2;
-      border-bottom: 1px solid var(--border);
-      background: rgba(6, 10, 26, 0.94);
-      padding: 16px 16px 14px;
-      -webkit-backdrop-filter: blur(10px);
-      backdrop-filter: blur(10px);
+    .bar {
+      flex-shrink: 0; overflow-y: auto; max-height: 100%; position: relative; z-index: 2;
+      border-bottom: 1px solid var(--border); background: rgba(6, 10, 26, 0.94);
+      padding: 12px 14px 14px; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
     }
 
-    /* ── Header ─────────────────────────────────────────── */
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
+    /* Header: wordmark + status dot only */
+    .brand { display: flex; align-items: center; gap: 9px; }
     .brand-mark {
-      width: 30px;
-      height: 30px;
-      flex-shrink: 0;
-      border-radius: 9px;
-      display: grid;
-      place-items: center;
-      font-size: 15px;
-      font-weight: 800;
-      color: #04121f;
-      background: linear-gradient(135deg, #7dd3fc, #38bdf8);
-      box-shadow: 0 6px 18px rgba(56, 189, 248, 0.28);
+      width: 26px; height: 26px; flex-shrink: 0; border-radius: 8px; display: grid; place-items: center;
+      font-size: 13px; font-weight: 800; color: #04121f;
+      background: linear-gradient(135deg, #7dd3fc, #38bdf8); box-shadow: 0 5px 14px rgba(56, 189, 248, 0.28);
+    }
+    .brand-title { font-size: 13px; font-weight: 700; color: var(--text); flex: 1; }
+    .portal-btn { flex: none; border: 1px solid var(--border-strong); background: var(--panel-2); color: var(--text); border-radius: 8px; padding: 5px 9px; font-size: 11px; font-weight: 700; line-height: 1; cursor: pointer; white-space: nowrap; transition: border-color .15s ease, color .15s ease; }
+    .portal-btn:hover { border-color: var(--ok); color: var(--ok); }
+    .portal-cta { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin: 2px 0 8px; padding: 12px 14px; border: 1px solid rgba(56,189,248,0.55); border-radius: 12px; background: linear-gradient(180deg, rgba(56,189,248,0.24), rgba(56,189,248,0.10)); color: #e0f2fe; font-size: 13px; font-weight: 800; letter-spacing: 0.01em; cursor: pointer; transition: background .15s ease, border-color .15s ease, transform .1s ease; }
+    .portal-cta:hover { background: rgba(56,189,248,0.32); border-color: rgba(56,189,248,0.9); transform: translateY(-1px); }
+    .portal-cta-arrow { font-size: 15px; opacity: 0.9; }
+    .brand-dot {
+      width: 9px; height: 9px; border-radius: 999px; background: var(--muted); flex-shrink: 0;
+    }
+    .shell[data-runtime-state="ready"] .brand-dot { background: var(--ok); box-shadow: 0 0 0 3px rgba(74,222,128,0.15); animation: pulse 2.4s ease-in-out infinite; }
+    .shell[data-runtime-state="error"] .brand-dot { background: var(--danger); }
+
+    .label {
+      display: block; margin: 16px 2px 8px; font-size: 10px; font-weight: 700;
+      letter-spacing: 0.2em; text-transform: uppercase; color: var(--faint);
     }
 
-    .brand-text { min-width: 0; }
-
-    .brand-title {
-      font-size: 13px;
-      font-weight: 700;
-      letter-spacing: 0.02em;
-      color: var(--text);
-      line-height: 1.2;
-    }
-
-    .brand-sub {
-      font-size: 11px;
-      color: var(--muted);
-      line-height: 1.3;
-      margin-top: 1px;
-    }
-
-    /* ── Launchers ──────────────────────────────────────── */
-    .section-label {
-      display: block;
-      margin: 16px 2px 8px;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.2em;
-      text-transform: uppercase;
-      color: var(--faint);
-    }
-
-    .launcher-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
-    }
-
-    .launcher-btn {
-      position: relative;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      background: var(--panel);
-      color: var(--text);
-      padding: 12px 12px;
-      font: inherit;
-      font-size: 12px;
-      font-weight: 600;
-      text-align: left;
-      cursor: pointer;
+    /* GENERATE — primary big actions */
+    .gen-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .gen-btn {
+      display: flex; flex-direction: column; align-items: center; gap: 5px;
+      border: 1px solid var(--border); border-radius: 14px; background: var(--panel);
+      color: var(--text); padding: 14px 6px 11px; font: inherit; cursor: pointer;
       transition: border-color 150ms ease, background 150ms ease, transform 150ms ease;
     }
+    .gen-btn:hover { border-color: var(--border-strong); background: var(--panel-2); transform: translateY(-1px); }
+    .gen-btn .ico { font-size: 22px; line-height: 1; }
+    .gen-btn .nm { font-size: 12px; font-weight: 700; }
+    .gen-btn .cost { font-size: 9px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+    .gen-btn .cost.free { color: var(--ok); }
+    .gen-btn .cost.credit { color: var(--warn); }
+    .gen-btn.active { border-color: rgba(56,189,248,0.7); background: var(--accent-soft); }
 
-    .launcher-btn::before {
-      content: "";
-      width: 6px;
-      height: 6px;
-      border-radius: 999px;
-      flex-shrink: 0;
-      background: var(--faint);
-      transition: background 150ms ease, box-shadow 150ms ease;
+    /* TOOLS — compact secondary */
+    .tool-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 7px; }
+    .tool-btn {
+      display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 10px;
+      background: rgba(14,23,48,0.55); color: var(--muted); padding: 9px 11px; font: inherit;
+      font-size: 11px; font-weight: 600; text-align: left; cursor: pointer;
+      transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
     }
+    .tool-btn::before { content: ""; width: 5px; height: 5px; border-radius: 999px; background: var(--faint); flex-shrink: 0; }
+    .tool-btn:hover { border-color: var(--border-strong); color: var(--text); background: var(--panel-2); }
+    .tool-btn.active { border-color: rgba(56,189,248,0.6); color: #f8fafc; background: var(--accent-soft); }
+    .tool-btn.active::before { background: var(--accent); }
 
-    .launcher-btn:hover {
-      border-color: var(--border-strong);
-      background: var(--panel-2);
-      transform: translateY(-1px);
-    }
+    /* Error banner — only shown when something is wrong */
+    .banner { display: none; margin-top: 12px; border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 10px; padding: 9px 11px; background: var(--panel); }
+    .shell[data-runtime-state="error"] .banner,
+    .banner[data-banner-state="warning"], .banner[data-banner-state="error"] { display: block; }
+    .banner[data-banner-state="success"], .banner[data-banner-state="info"] { display: none; }
+    .shell[data-runtime-state="error"] .banner[data-banner-state="success"] { display: block; }
+    .banner-title { font-size: 11px; font-weight: 700; color: var(--warn); }
+    .banner[data-banner-state="error"] .banner-title { color: var(--danger); }
+    .banner-copy { margin-top: 3px; font-size: 11px; line-height: 1.5; color: var(--muted); }
 
-    .launcher-btn.active {
-      border-color: rgba(56, 189, 248, 0.7);
-      background: var(--accent-soft);
-      color: #f8fafc;
-    }
-
-    .launcher-btn.active::before {
-      background: var(--accent);
-      box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.18);
-    }
-
-    /* ── Status strip ───────────────────────────────────── */
-    .status-strip {
-      margin-top: 14px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      background: var(--panel);
-      padding: 10px 12px;
-    }
-
-    .status-dot {
-      width: 9px;
-      height: 9px;
-      flex-shrink: 0;
-      border-radius: 999px;
-      background: var(--muted);
-      box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.5);
-    }
-
-    .shell[data-runtime-state="online"] .status-dot,
-    .shell[data-runtime-state="ready"] .status-dot {
-      background: var(--ok);
-      animation: pulse 2s ease-in-out infinite;
-    }
-
-    .shell[data-runtime-state="offline"] .status-dot,
-    .shell[data-runtime-state="error"] .status-dot {
-      background: var(--danger);
-    }
-
-    .status-text { min-width: 0; flex: 1; }
-
-    .status-main {
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--text);
-      line-height: 1.3;
-      word-break: break-word;
-    }
-
-    .status-sub {
-      font-size: 11px;
-      color: var(--muted);
-      line-height: 1.3;
-      margin-top: 2px;
-      word-break: break-word;
-    }
-
-    .route-chip {
-      flex-shrink: 0;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.02em;
-      color: var(--accent);
-      background: var(--accent-soft);
-      border: 1px solid rgba(56, 189, 248, 0.28);
-      border-radius: 999px;
-      padding: 4px 9px;
-      max-width: 46%;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    /* ── Human status banner ────────────────────────────── */
-    .diagnostic-banner {
-      margin-top: 8px;
-      border: 1px solid var(--border);
-      border-left: 3px solid var(--accent);
-      border-radius: 12px;
-      padding: 10px 12px;
-      background: var(--panel);
-    }
-
-    .banner-title {
-      font-size: 11px;
-      font-weight: 700;
-      color: var(--text);
-    }
-
-    .banner-copy {
-      margin-top: 3px;
-      font-size: 11px;
-      line-height: 1.5;
-      color: var(--muted);
-    }
-
-    .diagnostic-banner[data-banner-state="warning"] { border-left-color: var(--warn); }
-    .diagnostic-banner[data-banner-state="warning"] .banner-title { color: var(--warn); }
-    .diagnostic-banner[data-banner-state="error"] { border-left-color: var(--danger); }
-    .diagnostic-banner[data-banner-state="error"] .banner-title { color: var(--danger); }
-    .diagnostic-banner[data-banner-state="success"] { border-left-color: var(--ok); }
-    .diagnostic-banner[data-banner-state="success"] .banner-title { color: var(--ok); }
-
-    /* ── Advanced diagnostics (collapsed) ───────────────── */
-    .diagnostics {
-      margin-top: 8px;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      background: rgba(14, 23, 48, 0.5);
-      overflow: hidden;
-    }
-
-    .diagnostics > summary {
-      list-style: none;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 9px 12px;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      color: var(--muted);
-      user-select: none;
-    }
-
-    .diagnostics > summary::-webkit-details-marker { display: none; }
-
-    .diagnostics > summary::before {
-      content: "▸";
-      font-size: 10px;
-      color: var(--faint);
-      transition: transform 150ms ease;
-    }
-
-    .diagnostics[open] > summary::before { transform: rotate(90deg); }
-    .diagnostics > summary:hover { color: var(--text); }
-
-    .diagnostics-body { padding: 4px 12px 12px; }
-
-    .runtime-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px 12px;
-    }
-
+    /* Diagnostics — tiny collapsed footer */
+    .diag { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 8px; }
+    .diag > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 9px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); user-select: none; }
+    .diag > summary::-webkit-details-marker { display: none; }
+    .diag > summary::before { content: "\2699"; font-size: 11px; }
+    .diag > summary:hover { color: var(--muted); }
+    .diag-body { padding-top: 10px; }
+    .runtime-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 7px 10px; }
     .runtime-item { min-width: 0; }
+    .runtime-label { font-size: 9px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); }
+    .runtime-value { margin-top: 2px; font-size: 10px; line-height: 1.4; color: var(--muted); word-break: break-word; }
+    .runtime-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+    .runtime-btn { border: 1px solid var(--border); border-radius: 9px; background: var(--accent-soft); color: var(--text); padding: 7px 9px; font: inherit; font-size: 9px; font-weight: 700; letter-spacing: 0.04em; cursor: pointer; }
+    .runtime-btn:hover { border-color: var(--border-strong); }
+    .runtime-btn.danger { background: rgba(248,113,113,0.08); border-color: rgba(248,113,113,0.2); }
 
-    .runtime-label {
-      font-size: 9px;
-      font-weight: 700;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      color: var(--faint);
-    }
-
-    .runtime-value {
-      margin-top: 3px;
-      font-size: 11px;
-      line-height: 1.45;
-      color: var(--text);
-      word-break: break-word;
-    }
-
-    .runtime-actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 12px;
-    }
-
-    .runtime-btn {
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      background: var(--accent-soft);
-      color: var(--text);
-      padding: 8px 10px;
-      font: inherit;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.04em;
-      cursor: pointer;
-      transition: border-color 150ms ease, background 150ms ease;
-    }
-
-    .runtime-btn:hover {
-      border-color: var(--border-strong);
-      background: rgba(56, 189, 248, 0.2);
-    }
-
-    .runtime-btn.danger {
-      background: rgba(248, 113, 113, 0.08);
-      border-color: rgba(248, 113, 113, 0.2);
-    }
-
-    .runtime-btn.danger:hover {
-      border-color: rgba(248, 113, 113, 0.45);
-      background: rgba(248, 113, 113, 0.16);
-    }
-
-    /* ── Frame + veil ───────────────────────────────────── */
-    .frame-shell {
-      flex: 1 1 0;
-      min-height: 0;
-      position: relative;
-    }
-
-    #dashboard-frame {
-      width: 100%;
-      height: 100%;
-      border: 0;
-      background: #020617;
-      display: block;
-      visibility: hidden;
-    }
-
+    /* Frame + veil */
+    .frame-shell { flex: 1 1 0; min-height: 0; position: relative; }
+    #dashboard-frame { width: 100%; height: 100%; border: 0; background: #020617; display: block; visibility: hidden; }
     body.ready #dashboard-frame { visibility: visible; }
-
-    .veil {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 18px;
-      background: linear-gradient(180deg, rgba(6, 10, 26, 0.86), rgba(6, 10, 26, 0.7));
-      transition: opacity 180ms ease, visibility 180ms ease;
-      z-index: 1;
-    }
-
-    body.ready .veil {
-      opacity: 0;
-      visibility: hidden;
-      pointer-events: none;
-    }
-
-    .card {
-      width: min(100%, 360px);
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      background: rgba(14, 23, 48, 0.92);
-      -webkit-backdrop-filter: blur(12px);
-      backdrop-filter: blur(12px);
-      padding: 20px 18px;
-      box-shadow: 0 18px 48px rgba(2, 6, 23, 0.4);
-    }
-
-    .eyebrow {
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.22em;
-      text-transform: uppercase;
-      color: var(--accent);
-    }
-
-    .title {
-      margin: 10px 0 0;
-      font-size: 20px;
-      line-height: 1.15;
-      font-weight: 700;
-      color: var(--text);
-    }
-
-    .body-copy {
-      margin: 10px 0 0;
-      font-size: 13px;
-      line-height: 1.6;
-      color: var(--muted);
-    }
-
-    .status-row {
-      margin-top: 16px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-size: 12px;
-      color: var(--text);
-    }
-
-    .pulse {
-      width: 10px;
-      height: 10px;
-      border-radius: 999px;
-      background: var(--accent);
-      box-shadow: 0 0 0 rgba(56, 189, 248, 0.55);
-      animation: pulse 1.8s ease-in-out infinite;
-    }
-
-    body.error .pulse {
-      background: var(--danger);
-      box-shadow: none;
-      animation: none;
-    }
-
-    .error-copy {
-      display: none;
-      margin-top: 14px;
-      padding-top: 14px;
-      border-top: 1px solid var(--border);
-      font-size: 12px;
-      line-height: 1.6;
-      color: #fecaca;
-    }
-
+    .veil { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 18px; background: linear-gradient(180deg, rgba(6,10,26,0.86), rgba(6,10,26,0.7)); transition: opacity 180ms ease, visibility 180ms ease; z-index: 1; }
+    body.ready .veil { opacity: 0; visibility: hidden; pointer-events: none; }
+    .card { width: min(100%, 340px); border: 1px solid var(--border); border-radius: 18px; background: rgba(14,23,48,0.92); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); padding: 20px 18px; box-shadow: 0 18px 48px rgba(2,6,23,0.4); }
+    .eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent); }
+    .title { margin: 10px 0 0; font-size: 19px; line-height: 1.15; font-weight: 700; color: var(--text); }
+    .body-copy { margin: 10px 0 0; font-size: 13px; line-height: 1.6; color: var(--muted); }
+    .status-row { margin-top: 16px; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text); }
+    .pulse { width: 10px; height: 10px; border-radius: 999px; background: var(--accent); animation: pulse 1.8s ease-in-out infinite; }
+    body.error .pulse { background: var(--danger); animation: none; }
+    .error-copy { display: none; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); font-size: 12px; line-height: 1.6; color: #fecaca; }
     body.error .error-copy { display: block; }
+    .frame-url { margin-top: 12px; display: block; font-size: 11px; color: var(--muted); word-break: break-all; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 
-    .sr-only {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      padding: 0;
-      margin: -1px;
-      overflow: hidden;
-      clip: rect(0, 0, 0, 0);
-      white-space: nowrap;
-      border: 0;
-    }
-
-    .frame-url {
-      margin-top: 12px;
-      display: block;
-      font-size: 11px;
-      color: var(--muted);
-      word-break: break-all;
-    }
-
-    @keyframes pulse {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.5); }
-      50% { box-shadow: 0 0 0 7px rgba(74, 222, 128, 0); }
-    }
+    @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(74,222,128,0.5); } 50% { box-shadow: 0 0 0 6px rgba(74,222,128,0); } }
   </style>
 </head>
 <body>
-  <div
-    class="shell"
-    id="flowkit-side-panel-root"
-    data-testid="flowkit-side-panel-root"
-    data-runtime-state="loading"
-  >
+  <div class="shell" id="flowkit-side-panel-root" data-testid="flowkit-side-panel-root" data-runtime-state="loading">
     <div class="sr-only" aria-hidden="true">
       <span id="flowkit-side-panel-ready-marker" data-testid="flowkit-side-panel-ready" hidden>ready</span>
       <span id="flowkit-side-panel-error-marker" data-testid="flowkit-side-panel-error" hidden>error</span>
+      <span id="runtime-status-label"></span>
+      <span id="runtime-agent-health"></span>
+      <span id="route-label">Operator Dashboard</span>
     </div>
-    <div class="launcher-bar">
+    <div class="bar">
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">B</div>
-        <div class="brand-text">
-          <div class="brand-title">BOSMAX Dashboard</div>
-          <div class="brand-sub">Preview-only tools — no Google Flow execution.</div>
-        </div>
+        <div class="brand-title">BOSMAX</div>
+        <span class="brand-dot" id="brand-status-dot" aria-hidden="true"></span>
+        <button type="button" class="portal-btn" id="btn-open-portal" title="Open the full dashboard (with the left sidebar) in a browser tab">Full dashboard ↗</button>
       </div>
 
-      <span class="section-label">Launchers</span>
-      <div class="launcher-grid">
-        <button type="button" class="launcher-btn active" data-dashboard-route="operator">Operator Dashboard</button>
-        <button type="button" class="launcher-btn" data-dashboard-route="product">Product Asset Generator</button>
-        <button type="button" class="launcher-btn" data-dashboard-route="registration">Smart Registration</button>
-        <button type="button" class="launcher-btn" data-dashboard-route="prompt">Prompt Preview</button>
-        <button type="button" class="launcher-btn" data-dashboard-route="registry">Asset Registry</button>
-        <button type="button" class="launcher-btn" data-dashboard-route="creative">Creative</button>
-        <button type="button" class="launcher-btn" data-dashboard-route="bank">Bank</button>
+      <button type="button" class="portal-cta" id="btn-open-portal-cta" title="Open the full dashboard (with the left sidebar) in a browser tab">
+        <span class="portal-cta-text">Open Full Dashboard</span>
+        <span class="portal-cta-arrow" aria-hidden="true">↗</span>
+      </button>
+
+      <span class="label">Generate</span>
+      <div class="gen-grid">
+        <button type="button" class="gen-btn" data-dashboard-route="video">
+          <span class="ico">🎬</span><span class="nm">Video</span><span class="cost credit">Credits</span>
+        </button>
+        <button type="button" class="gen-btn" data-dashboard-route="image">
+          <span class="ico">🖼️</span><span class="nm">Image</span><span class="cost free">Free</span>
+        </button>
+        <button type="button" class="gen-btn" data-dashboard-route="poster">
+          <span class="ico">🎨</span><span class="nm">Poster</span><span class="cost free">Free</span>
+        </button>
       </div>
 
-      <div class="status-strip">
-        <span class="status-dot" aria-hidden="true"></span>
-        <div class="status-text">
-          <div class="status-main" id="runtime-status-label">Dashboard status: unknown</div>
-          <div class="status-sub" id="runtime-agent-health">Pending health check</div>
-        </div>
-        <span class="route-chip" id="route-label">Operator Dashboard</span>
+      <span class="label">Tools</span>
+      <div class="tool-grid">
+        <button type="button" class="tool-btn active" data-dashboard-route="operator">Operator</button>
+        <button type="button" class="tool-btn" data-dashboard-route="registration">Smart Registration</button>
+        <button type="button" class="tool-btn" data-dashboard-route="registry">Asset Registry</button>
+        <button type="button" class="tool-btn" data-dashboard-route="creative">Creative Library</button>
+        <button type="button" class="tool-btn" data-dashboard-route="prompt">Prompt Preview</button>
+        <button type="button" class="tool-btn" data-dashboard-route="bank">Prompt Bank</button>
       </div>
 
-      <div class="diagnostic-banner" id="diagnostic-banner" data-banner-state="info">
+      <div class="banner" id="diagnostic-banner" data-banner-state="info">
         <div class="banner-title" id="diagnostic-banner-title">Local agent check pending</div>
-        <div class="banner-copy" id="diagnostic-banner-copy">Waiting for Flow Kit side panel runtime diagnostics.</div>
+        <div class="banner-copy" id="diagnostic-banner-copy">Waiting for Flow Kit side panel runtime.</div>
       </div>
 
-      <details class="diagnostics">
-        <summary>Advanced diagnostics</summary>
-        <div class="diagnostics-body">
+      <div hidden aria-hidden="true">
+        <div class="diag-body">
           <div class="runtime-grid">
-            <div class="runtime-item">
-              <div class="runtime-label">Launcher Build</div>
-              <div class="runtime-value" id="launcher-build-label">Launcher build: pending</div>
-            </div>
-            <div class="runtime-item">
-              <div class="runtime-label">Current Route Key</div>
-              <div class="runtime-value" id="current-route-key">operator</div>
-            </div>
-            <div class="runtime-item">
-              <div class="runtime-label">Extension Bridge</div>
-              <div class="runtime-value" id="runtime-extension-state">Pending runtime check</div>
-            </div>
-            <div class="runtime-item">
-              <div class="runtime-label">Last Click</div>
-              <div class="runtime-value" id="last-click-at">No click recorded</div>
-            </div>
-            <div class="runtime-item">
-              <div class="runtime-label">Dashboard Serving Mode</div>
-              <div class="runtime-value" id="runtime-serving-mode">Pending runtime check</div>
-            </div>
-            <div class="runtime-item">
-              <div class="runtime-label">Runtime Owner</div>
-              <div class="runtime-value" id="runtime-owner">Pending runtime check</div>
-            </div>
-            <div class="runtime-item">
-              <div class="runtime-label">Last Action</div>
-              <div class="runtime-value" id="last-action-copy">Boot pending</div>
-            </div>
-            <div class="runtime-item">
-              <div class="runtime-label">Offline Reason</div>
-              <div class="runtime-value" id="runtime-offline-reason">None</div>
-            </div>
-            <div class="runtime-item">
-              <div class="runtime-label">Autostart Warning</div>
-              <div class="runtime-value" id="runtime-autostart-warning">None</div>
-            </div>
-            <div class="runtime-item">
-              <div class="runtime-label">Iframe Src</div>
-              <div class="runtime-value" id="iframe-src-copy">not-set</div>
-            </div>
-            <div class="runtime-item">
-              <div class="runtime-label">API Base</div>
-              <div class="runtime-value" id="runtime-api-base">http://127.0.0.1:8100</div>
-            </div>
-            <div class="runtime-item" style="grid-column: 1 / -1;">
-              <div class="runtime-label">Selected Route URL</div>
-              <div class="runtime-value" id="selected-route-url">http://127.0.0.1:8100/operator?portal=side</div>
-            </div>
-            <div class="runtime-item" style="grid-column: 1 / -1;">
-              <div class="runtime-label">Repair Command</div>
-              <div class="runtime-value" id="runtime-repair-command">.\scripts\install-local-agent.ps1</div>
-            </div>
+            <div class="runtime-item"><div class="runtime-label">Launcher Build</div><div class="runtime-value" id="launcher-build-label">pending</div></div>
+            <div class="runtime-item"><div class="runtime-label">Current Route Key</div><div class="runtime-value" id="current-route-key">operator</div></div>
+            <div class="runtime-item"><div class="runtime-label">Extension Bridge</div><div class="runtime-value" id="runtime-extension-state">pending</div></div>
+            <div class="runtime-item"><div class="runtime-label">Last Click</div><div class="runtime-value" id="last-click-at">none</div></div>
+            <div class="runtime-item"><div class="runtime-label">Serving Mode</div><div class="runtime-value" id="runtime-serving-mode">pending</div></div>
+            <div class="runtime-item"><div class="runtime-label">Runtime Owner</div><div class="runtime-value" id="runtime-owner">pending</div></div>
+            <div class="runtime-item"><div class="runtime-label">Last Action</div><div class="runtime-value" id="last-action-copy">boot pending</div></div>
+            <div class="runtime-item"><div class="runtime-label">Offline Reason</div><div class="runtime-value" id="runtime-offline-reason">none</div></div>
+            <div class="runtime-item"><div class="runtime-label">Autostart Warning</div><div class="runtime-value" id="runtime-autostart-warning">none</div></div>
+            <div class="runtime-item"><div class="runtime-label">Iframe Src</div><div class="runtime-value" id="iframe-src-copy">not-set</div></div>
+            <div class="runtime-item"><div class="runtime-label">API Base</div><div class="runtime-value" id="runtime-api-base">http://127.0.0.1:8100</div></div>
+            <div class="runtime-item" style="grid-column: 1 / -1;"><div class="runtime-label">Selected Route URL</div><div class="runtime-value" id="selected-route-url">http://127.0.0.1:8100/operator?portal=side</div></div>
+            <div class="runtime-item" style="grid-column: 1 / -1;"><div class="runtime-label">Repair Command</div><div class="runtime-value" id="runtime-repair-command">.\scripts\install-local-agent.ps1</div></div>
           </div>
           <div class="runtime-actions">
-            <button type="button" class="runtime-btn" id="btn-open-selected-route">Open route in browser tab</button>
-            <button type="button" class="runtime-btn danger" id="btn-retry-runtime">Retry runtime check</button>
+            <button type="button" class="runtime-btn" id="btn-open-selected-route">Open in browser tab</button>
+            <button type="button" class="runtime-btn danger" id="btn-retry-runtime">Retry check</button>
           </div>
         </div>
-      </details>
+      </div>
     </div>
 
     <div class="frame-shell">
       <div class="veil" id="portal-veil" aria-live="polite">
         <div class="card">
           <div class="eyebrow">BOSMAX Side Portal</div>
-          <h1 class="title" id="portal-title">Loading operator dashboard</h1>
-          <p class="body-copy">This side panel hosts existing BOSMAX dashboard tools directly, so prompt planning can stay beside Google Flow without adding extension-native execution controls.</p>
-          <div class="status-row">
-            <span class="pulse" aria-hidden="true"></span>
-            <span id="portal-status">Connecting to localhost dashboard...</span>
-          </div>
+          <h1 class="title" id="portal-title">Loading dashboard</h1>
+          <p class="body-copy">Generate images and videos, or open any BOSMAX tool — right beside Google Flow.</p>
+          <div class="status-row"><span class="pulse" aria-hidden="true"></span><span id="portal-status">Connecting to localhost dashboard...</span></div>
           <div class="error-copy" id="portal-error">Dashboard iframe did not finish loading. Confirm the local agent is serving <strong>http://127.0.0.1:8100/operator?portal=side</strong>.</div>
           <span class="frame-url" id="portal-url">http://127.0.0.1:8100/operator?portal=side</span>
         </div>
       </div>
-
-      <iframe
-        id="dashboard-frame"
-        title="BOSMAX Operator Dashboard"
-        src="http://127.0.0.1:8100/operator?portal=side"
-        allow="clipboard-write; clipboard-read"
-        referrerpolicy="no-referrer"
-        loading="eager"
-      ></iframe>
+      <iframe id="dashboard-frame" title="BOSMAX Dashboard" src="http://127.0.0.1:8100/operator?portal=side" allow="clipboard-write; clipboard-read" referrerpolicy="no-referrer" loading="eager"></iframe>
     </div>
   </div>
-
   <script src="side_panel.js"></script>
 </body>
 </html>
