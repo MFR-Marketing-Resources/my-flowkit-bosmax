@@ -192,9 +192,10 @@ async def test_startup_reconcile_refreshes_only_initialized_system_seed_rows():
     assert reconciled.mutation_performed is True
     assert reconciled.planned_insert_count == 0
     assert reconciled.planned_update_count == 3
-    # 126, not 125, since ec38170 registered the pet_cage_accessory authority. This is a
-    # deliberate tripwire on registry growth: update it only alongside an intended new pair.
-    assert reconciled.active_count == 126
+    # Keep this as a deliberate tripwire on registry growth.  The five exact
+    # Copywriting Hub code bridges added in this change are active, reviewed
+    # pairs, so the expected count moves with the authority by design.
+    assert reconciled.active_count == 132
     assert reconciled.review_required_count == 3
 
     expected_strategies = {
