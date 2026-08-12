@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections import Counter
 
 from agent.authority.catalog_product_type_truth import (
@@ -58,6 +59,122 @@ async def _resolve_insufficient_product_truth_reason(
     if snapshot and str(snapshot.get("product_description") or "").strip():
         return None
     return reason
+
+
+_P58_AUTHORITY_CLAIM_FIELDS = (
+    "product_description",
+    "benefits_json",
+    "usp_json",
+    "usage_text",
+    "warnings_text",
+    "target_customer_text",
+    "paste_anything_summary",
+    "allowed_claims_json",
+)
+_P58_QUANTIFIED_SAVINGS_RE = re.compile(
+    r"(?i)"
+    r"(?:\b\d+(?:[.,]\d+)?\s*%(?!\w)|\b(?:rm|myr)\s*\d[\d,]*(?:\.\d+)?\b|"
+    r"\b(?:save|savings?|jimat|penjimatan)\b[^.!?\n]{0,80}"
+    r"\b\d+(?:[.,]\d+)?\s*(?:%|percent|per cent|rm|myr)\b)"
+)
+_P58_LIGHT_OUTPUT_RUNTIME_RE = re.compile(
+    r"(?i)\b\d[\d,]*(?:\.\d+)?\s*"
+    r"(?:w|watt(?:s)?|wh|mah|lm|lumen(?:s)?|hour(?:s)?|hr(?:s)?|jam)\b"
+)
+
+
+def _snapshot_json_value(
+    snapshot: dict[str, object],
+    field_name: str,
+    expected_type: type[list] | type[dict],
+) -> list[object] | dict[str, object]:
+    raw = snapshot.get(field_name)
+    if isinstance(raw, expected_type):
+        return raw
+    if not isinstance(raw, str) or not raw.strip():
+        return [] if expected_type is list else {}
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return [] if expected_type is list else {}
+    return parsed if isinstance(parsed, expected_type) else (
+        [] if expected_type is list else {}
+    )
+
+
+def _snapshot_claim_text(snapshot: dict[str, object]) -> str:
+    parts: list[str] = []
+    for field_name in _P58_AUTHORITY_CLAIM_FIELDS:
+        raw = snapshot.get(field_name)
+        values: list[object]
+        if field_name.endswith("_json"):
+            values = list(_snapshot_json_value(snapshot, field_name, list))
+        else:
+            values = [raw]
+        parts.extend(str(value).strip() for value in values if str(value or "").strip())
+    return " ".join(parts)
+
+
+def _snapshot_is_approved_and_claim_safe(snapshot: dict[str, object] | None) -> bool:
+    if not snapshot or str(snapshot.get("status") or "").upper() != "APPROVED":
+        return False
+    if str(snapshot.get("claim_gate") or "").upper() != "CLAIM_SAFE":
+        return False
+    if str(snapshot.get("claim_risk_level") or "").upper() != "LOW":
+        return False
+    if not str(snapshot.get("product_description") or "").strip():
+        return False
+    return not _snapshot_json_value(snapshot, "blocked_claims_json", list)
+
+
+def _snapshot_has_review_evidence(snapshot: dict[str, object]) -> bool:
+    source_urls = _snapshot_json_value(snapshot, "source_urls_json", dict)
+    image_evidence = _snapshot_json_value(snapshot, "image_evidence_json", dict)
+    return bool(source_urls or image_evidence)
+
+
+async def _resolve_product_authority_blockers(
+    product_id: str,
+) -> tuple[str, ...]:
+    """Release P5.8 claim blockers only after a current approved PI review.
+
+    The P5.8 map is intentionally the fail-closed baseline.  A Product Intelligence
+    *draft* must not change the launch cohort, and an approved snapshot that still
+    publishes the original quantitative claim must not erase its blocker.  The
+    resolver only retires a named blocker when the approved snapshot is claim-safe,
+    low-risk, evidenced, and its published fields no longer contain the specific
+    unverified claim that triggered the exception.
+    """
+
+    reasons = P58_PRODUCT_AUTHORITY_BLOCKERS.get(product_id, ())
+    if not reasons:
+        return ()
+    snapshot = await crud.get_latest_approved_product_intelligence_snapshot(
+        product_id
+    )
+    if not _snapshot_is_approved_and_claim_safe(snapshot):
+        return reasons
+    assert snapshot is not None
+    claim_text = _snapshot_claim_text(snapshot)
+    remaining: list[str] = []
+    for reason in reasons:
+        if reason == "UNVERIFIED_ELECTRICITY_SAVINGS_CLAIM":
+            if _P58_QUANTIFIED_SAVINGS_RE.search(claim_text):
+                remaining.append(reason)
+            continue
+        if reason == "ELECTRICAL_SAFETY_REVIEW_REQUIRED":
+            if not (
+                str(snapshot.get("warnings_text") or "").strip()
+                and _snapshot_has_review_evidence(snapshot)
+            ):
+                remaining.append(reason)
+            continue
+        if reason == "UNVERIFIED_LIGHT_OUTPUT_AND_RUNTIME_CLAIMS":
+            if _P58_LIGHT_OUTPUT_RUNTIME_RE.search(claim_text):
+                remaining.append(reason)
+            continue
+        remaining.append(reason)
+    return tuple(remaining)
 
 
 def _product_name(product: dict[str, object]) -> str:
@@ -333,7 +450,7 @@ async def build_catalog_authority_matrix() -> CatalogAuthorityMatrixReport:
             or manual_taxonomy_authority
         )
         authority_blockers = list(
-            P58_PRODUCT_AUTHORITY_BLOCKERS.get(coverage_row.product_id, ())
+            await _resolve_product_authority_blockers(coverage_row.product_id)
         )
         blockers = list(
             dict.fromkeys([*coverage_row.blockers, *authority_blockers])

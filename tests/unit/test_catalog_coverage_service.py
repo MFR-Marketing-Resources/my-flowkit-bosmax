@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from agent.models.product_strategy_taxonomy import (
@@ -336,3 +338,166 @@ async def test_approved_product_truth_description_releases_description_absent_bl
     row = report.products[0]
     assert row.terminal_state == "P6_READY"
     assert row.terminal_reasons == []
+
+
+@pytest.mark.asyncio
+async def test_approved_product_intelligence_releases_only_resolved_p58_blockers(
+    monkeypatch,
+):
+    power_id = "7712a709-d9eb-4203-a07f-249bceff9213"
+    headlamp_id = "8014da71-6b87-4476-9eb2-a91baf7fc0dd"
+    power = _product(
+        power_id,
+        _taxonomy(
+            power_id,
+            cluster="home_electrical",
+            product_type_group="power_saver_device",
+            scene_strategy_id="ELECTRICAL_DEVICE",
+        ),
+        source_type="Power Savers",
+    )
+    power.update(
+        {
+            "category": "Home & Living",
+            "subcategory": "Electrical",
+            "type": "Power Savers",
+            "copywriting_product_type_code": "power_saver_device",
+            "copywriting_angle": "Authority-led household utility and convenience",
+        }
+    )
+    headlamp = _product(
+        headlamp_id,
+        _taxonomy(
+            headlamp_id,
+            cluster="outdoor_equipment",
+            product_type_group="headlamp",
+            scene_strategy_id="OUTDOOR_LIGHTING",
+        ),
+        source_type="High-Power Headlamps",
+    )
+    headlamp.update(
+        {
+            "category": "Sports & Outdoors",
+            "subcategory": "Outdoor Lighting",
+            "type": "High-Power Headlamps",
+            "copywriting_product_type_code": "led_headlamp",
+            "copywriting_angle": (
+                "Performance-led extreme brightness, zoom, multi-colour modes, "
+                "and long battery life"
+            ),
+        }
+    )
+    attached = [power, headlamp]
+
+    async def fake_products(**kwargs):
+        assert kwargs == {"include_archived": True}
+        return [
+            {key: value for key, value in product.items() if key != "strategy_taxonomy"}
+            for product in attached
+        ]
+
+    async def fake_attach(products):
+        assert len(products) == 2
+        return attached
+
+    async def fake_registry():
+        return ProductStrategyTypeRegistryListResponse(
+            items=[
+                ProductStrategyTypeRegistryEntry(
+                    cluster="home_electrical",
+                    product_type_group="power_saver_device",
+                    display_name="Power Saver Device",
+                    matched_scene_strategy_id="ELECTRICAL_DEVICE",
+                    scene_coverage_status="COVERED",
+                    registry_status="ACTIVE",
+                    auto_classification_enabled=True,
+                    authority_source="SYSTEM_SEED",
+                ),
+                ProductStrategyTypeRegistryEntry(
+                    cluster="outdoor_equipment",
+                    product_type_group="headlamp",
+                    display_name="Headlamp",
+                    matched_scene_strategy_id="OUTDOOR_LIGHTING",
+                    scene_coverage_status="COVERED",
+                    registry_status="ACTIVE",
+                    auto_classification_enabled=True,
+                    authority_source="SYSTEM_SEED",
+                ),
+            ],
+            clusters=["home_electrical", "outdoor_equipment"],
+            scene_strategy_ids=["ELECTRICAL_DEVICE", "OUTDOOR_LIGHTING"],
+        )
+
+    snapshots = {
+        power_id: {
+            "status": "APPROVED",
+            "claim_gate": "CLAIM_SAFE",
+            "claim_risk_level": "LOW",
+            "product_description": "Alat penjimat elektrik plug-in.",
+            "allowed_claims_json": json.dumps(
+                ["Save 80% power and MYR 3000 per year."]
+            ),
+            "blocked_claims_json": "[]",
+            "warnings_text": "Jangan buka perumah alat. Jauhkan dari air.",
+            "source_urls_json": json.dumps({"source_url": "https://example.test/power"}),
+            "image_evidence_json": "{}",
+        },
+        headlamp_id: {
+            "status": "APPROVED",
+            "claim_gate": "CLAIM_SAFE",
+            "claim_risk_level": "LOW",
+            "product_description": "Lampu kepala LED 2200W, bateri tahan 96 jam.",
+            "allowed_claims_json": json.dumps(
+                ["Lampu kepala dengan beberapa mod cahaya."]
+            ),
+            "blocked_claims_json": "[]",
+            "warnings_text": "Jangan suluh direct ke mata.",
+            "source_urls_json": json.dumps({"source_url": "https://example.test/light"}),
+            "image_evidence_json": "{}",
+        },
+    }
+
+    async def fake_snapshot(product_id):
+        return snapshots.get(product_id)
+
+    monkeypatch.setattr(service.crud, "list_products", fake_products)
+    monkeypatch.setattr(service, "attach_product_strategy_taxonomies", fake_attach)
+    monkeypatch.setattr(service, "list_product_strategy_type_registry", fake_registry)
+    monkeypatch.setattr(
+        service.crud,
+        "get_latest_approved_product_intelligence_snapshot",
+        fake_snapshot,
+    )
+
+    report = await service.build_catalog_authority_matrix()
+    rows = {row.product_id: row for row in report.products}
+    assert rows[power_id].terminal_state == "REVIEW_BLOCKED_WITH_EXACT_REASON"
+    assert rows[power_id].terminal_reasons == [
+        "UNVERIFIED_ELECTRICITY_SAVINGS_CLAIM"
+    ]
+    assert rows[headlamp_id].terminal_state == "REVIEW_BLOCKED_WITH_EXACT_REASON"
+    assert rows[headlamp_id].terminal_reasons == [
+        "UNVERIFIED_LIGHT_OUTPUT_AND_RUNTIME_CLAIMS"
+    ]
+
+    snapshots[power_id]["allowed_claims_json"] = json.dumps(
+        ["Kurangkan bil elektrik, stabilkan arus, mudah digunakan."]
+    )
+    power_released = await service.build_catalog_authority_matrix()
+    power_released_rows = {
+        row.product_id: row for row in power_released.products
+    }
+    assert power_released_rows[power_id].terminal_state == "P6_READY"
+    assert power_released_rows[power_id].terminal_reasons == []
+    assert power_released_rows[headlamp_id].terminal_state == (
+        "REVIEW_BLOCKED_WITH_EXACT_REASON"
+    )
+
+    snapshots[headlamp_id]["product_description"] = (
+        "Lampu kepala LED untuk aktiviti luar dengan beberapa mod cahaya; "
+        "rujuk label produk untuk rating dan tempoh penggunaan."
+    )
+    released = await service.build_catalog_authority_matrix()
+    released_rows = {row.product_id: row for row in released.products}
+    assert released_rows[headlamp_id].terminal_state == "P6_READY"
+    assert released_rows[headlamp_id].terminal_reasons == []
