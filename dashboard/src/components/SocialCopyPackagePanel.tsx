@@ -214,7 +214,7 @@ export default function SocialCopyPackagePanel({
 			const msg = String(e);
 			if (msg.includes("NOT_CONFIGURED") || msg.includes("409")) {
 				setAiNotice(
-					"AI text_assist lane belum dikonfigur — set provider & model di Settings. Guna 'Suggest copy' untuk scaffold percuma.",
+					"AI text_assist lane is not configured — set provider & model in Settings. Use 'Suggest copy' for a free scaffold.",
 				);
 			} else {
 				setError(msg);

@@ -352,7 +352,7 @@ export default function SceneContextRegistryPage() {
 						throw new Error(registerData?.detail || `HTTP ${registerResponse.status}`);
 					}
 					setSuccessMsg(
-						`${sceneCode}: imej scene siap dan didaftarkan (${registerData.asset_id}) — kini boleh dipilih di IMG Fastlane + I2V.`,
+						`${sceneCode}: scene image ready and registered (${registerData.asset_id}) — now selectable in IMG Fastlane + I2V.`,
 					);
 					setGenerating((prev) => {
 						const next = { ...prev };
@@ -375,7 +375,7 @@ export default function SceneContextRegistryPage() {
 				return;
 			}
 		}
-		setError(`${sceneCode}: generation timed out — semak Video Jobs / Library.`);
+		setError(`${sceneCode}: generation timed out — check Video Jobs / Library.`);
 		setGenerating((prev) => {
 			const next = { ...prev };
 			delete next[sceneCode];
@@ -385,7 +385,7 @@ export default function SceneContextRegistryPage() {
 
 	const handleAddManualScene = async () => {
 		if (!manualScene.scene_name.trim() || !manualScene.background_prompt.trim()) {
-			setError("scene_name dan background_prompt wajib diisi.");
+			setError("scene_name and background_prompt are required.");
 			return;
 		}
 		setIsAddingManual(true);
@@ -408,7 +408,7 @@ export default function SceneContextRegistryPage() {
 			if (!response.ok) {
 				const detail = String(data?.detail || `HTTP ${response.status}`);
 				if (response.status === 409 && detail.startsWith("SCENE_REDUNDANT")) {
-					throw new Error("Scene serupa sudah wujud");
+					throw new Error("A similar scene already exists");
 				}
 				throw new Error(detail);
 			}
@@ -453,20 +453,20 @@ export default function SceneContextRegistryPage() {
 				const detail = String(data?.detail || `HTTP ${response.status}`);
 				if (response.status === 503) {
 					throw new Error(
-						"AI text provider belum diset. Set di AI Provider Settings (lane text_assist) dahulu.",
+						"AI text provider is not set. Configure it in AI Provider Settings (lane text_assist) first.",
 					);
 				}
 				if (response.status === 409) {
 					throw new Error(
-						"AI hasilkan scene yang serupa sedia ada — cuba brief lain.",
+						"AI produced a scene similar to an existing one — try a different brief.",
 					);
 				}
 				if (response.status === 502) {
-					throw new Error("Penjanaan AI gagal / respons tak sah.");
+					throw new Error("AI generation failed / invalid response.");
 				}
 				throw new Error(detail);
 			}
-			setSuccessMsg(`Scene ${data.scene_code} dijana`);
+			setSuccessMsg(`Scene ${data.scene_code} generated`);
 			setAutoBrief("");
 			await refresh();
 			// Auto-chain into the free IMG lane so the new scene arrives with a
@@ -490,8 +490,8 @@ export default function SceneContextRegistryPage() {
 	const handleDeleteScene = async (scene: SceneProfile) => {
 		const confirmed = window.confirm(
 			`Padam scene "${scene.scene_name}" (${scene.scene_code}) dari registry?\n\n` +
-				"Profil dibuang dari pool dan imej background-nya (jika ada) diarkibkan " +
-				"(boleh pulih semula dari Creative Library). Tiada kesan pada video/kredit.",
+				"Profile removed from the pool and its background image (if any) archived " +
+				"(recoverable from the Creative Library). No effect on video/credits.",
 		);
 		if (!confirmed) return;
 		setDeletingCode(scene.scene_code);
@@ -507,11 +507,11 @@ export default function SceneContextRegistryPage() {
 				throw new Error(data?.detail || `HTTP ${response.status}`);
 			}
 			setSuccessMsg(
-				`Scene ${scene.scene_code} dipadam (baki ${data.remaining} scene).`,
+				`Scene ${scene.scene_code} deleted (${data.remaining} scenes remaining).`,
 			);
 			await refresh();
 		} catch (err) {
-			setError(err instanceof Error ? err.message : "Gagal padam scene.");
+			setError(err instanceof Error ? err.message : "Failed to delete scene.");
 		} finally {
 			setDeletingCode(null);
 		}
@@ -532,7 +532,7 @@ export default function SceneContextRegistryPage() {
 		if (!editScene) return;
 		const tags = editSceneTags.trim();
 		if (!tags) {
-			setError("Usage tags tidak boleh kosong.");
+			setError("Usage tags cannot be empty.");
 			return;
 		}
 		setEditSceneSaving(true);
@@ -567,10 +567,10 @@ export default function SceneContextRegistryPage() {
 	) => {
 		if (!skipConfirm) {
 			const confirmed = window.confirm(
-				`Generate imej background untuk "${scene.scene_name}" (${scene.scene_code})?\n\n` +
-					"Ini akan hantar 1 job IMG ke Google Flow (imej PERCUMA — hanya video yang " +
-					"dicaj kredit). Imej scene siap akan disimpan kekal sebagai " +
-					"SCENE_CONTEXT_REFERENCE dan terus boleh dipilih di IMG Fastlane + I2V.",
+				`Generate a background image for "${scene.scene_name}" (${scene.scene_code})?\n\n` +
+					"This sends 1 IMG job to Google Flow (images are FREE — only video is " +
+					"charged credits). The finished scene image is saved permanently as " +
+					"SCENE_CONTEXT_REFERENCE and is immediately selectable in IMG Fastlane + I2V.",
 			);
 			if (!confirmed) return;
 		}
@@ -621,7 +621,7 @@ export default function SceneContextRegistryPage() {
 				</p>
 				{activeView === "admin" && pool && (
 					<p className="text-xs text-slate-500">
-						{pool.count} scene · {pool.generated_count} sudah ada imej ·
+						{pool.count} scene · {pool.generated_count} already have images ·
 						{pool.bridge_active ? " bridge aktif" : " seed repo"}
 					</p>
 				)}
@@ -957,8 +957,8 @@ export default function SceneContextRegistryPage() {
 						Create Scene
 					</h2>
 					<p className="mt-1 text-xs text-slate-400">
-						Tambah scene tunggal secara manual, atau biar AI jana satu scene
-						baharu (bukan duplikat) terus ke pool.
+						Add a single scene manually, or let AI generate one new
+						scene (not a duplicate) straight into the pool.
 					</p>
 				</div>
 				<div className="grid gap-4 md:grid-cols-2">
@@ -1031,7 +1031,7 @@ export default function SceneContextRegistryPage() {
 								value={autoBrief}
 								onChange={(e) => setAutoBrief(e.target.value)}
 								rows={3}
-								placeholder="Ringkasan: cth 'dapur moden cerah untuk demo produk penjagaan kulit'"
+								placeholder="Summary: e.g. 'bright modern kitchen for a skincare product demo'"
 								className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
 							/>
 						</label>
@@ -1046,8 +1046,8 @@ export default function SceneContextRegistryPage() {
 								: "🤖 Auto-generate Scene"}
 						</button>
 						<div className="mt-2 text-[10px] text-slate-500">
-							Guna lane text_assist (AI Provider Settings). Boleh ambil masa
-							beberapa saat.
+							Use the text_assist lane (AI Provider Settings). May take a
+							few seconds.
 						</div>
 					</div>
 				</div>
@@ -1390,12 +1390,12 @@ export default function SceneContextRegistryPage() {
 							{editScene.scene_name} ·{" "}
 							<span className="font-mono">{editScene.scene_code}</span>
 							<div className="mt-1 text-slate-500">
-								Identiti (nama/background) + pipeline promotion kekal — hanya usage
-								tags boleh diubah.
+								Identity (name/background) + pipeline promotion stay fixed — only usage
+								tags can be changed.
 							</div>
 						</div>
 						<label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
-							Usage Tags (pisah dengan |)
+							Usage Tags (separate with |)
 						</label>
 						<input
 							type="text"

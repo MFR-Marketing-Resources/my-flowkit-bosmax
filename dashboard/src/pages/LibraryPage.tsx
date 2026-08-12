@@ -63,7 +63,7 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 	const handleDeleteImage = useCallback(
 		async (mediaId: string) => {
 			if (kind !== "image") return;
-			if (!window.confirm("Padam image artifact ini? Creative Asset yang sudah disimpan tidak terjejas.")) {
+			if (!window.confirm("Delete this image artifact? Saved Creative Assets are not affected.")) {
 				return;
 			}
 			setDeletingMediaId(mediaId);
@@ -91,9 +91,9 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 					</h1>
 					<p className="mt-1 text-xs text-slate-400">
 						{kind === "video" ? (
-							<>Video disimpan <span className="font-semibold text-slate-200">48 jam</span> sebelum auto-delete. Download apa yang anda mahu simpan.</>
+							<>Videos are kept <span className="font-semibold text-slate-200">48 hours</span> before auto-delete. Download whatever you want to keep.</>
 						) : (
-							<>Image kekal disimpan sehingga anda padam secara manual. Save ke Creative Library untuk reuse dalam F2V / I2V.</>
+							<>Images stay saved until you delete them manually. Save to the Creative Library to reuse in F2V / I2V.</>
 						)}
 					</p>
 				</div>
@@ -132,8 +132,8 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 			{!error && artifacts.length === 0 && !isLoading && (
 				<div className="rounded-2xl border border-slate-800 bg-slate-900/40 px-4 py-10 text-center text-sm text-slate-400">
 					{kind === "video"
-						? "Tiada video dalam tempoh simpanan 48 jam. Hasil baharu akan muncul di sini secara automatik selepas job siap."
-						: "Tiada image tersimpan. Hasil baharu akan muncul di sini secara automatik selepas job siap."}
+						? "No videos within the 48-hour retention window. New results appear here automatically once a job finishes."
+						: "No saved images. New results appear here automatically once a job finishes."}
 				</div>
 			)}
 

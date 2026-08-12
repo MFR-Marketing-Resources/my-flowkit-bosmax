@@ -487,11 +487,11 @@ async function driveToApproved() {
 async function selectPosterScene() {
 	const options = await screen.findByTestId("poster-existing-scene-options");
 	if (!(options as HTMLDetailsElement).open) {
-		fireEvent.click(screen.getByText("Gunakan visual sedia ada (pilihan sahaja)"));
+		fireEvent.click(screen.getByText("Use an existing visual (optional)"));
 	}
 	fireEvent.click(
 		await screen.findByRole("button", {
-			name: "Visual poster sedia ada visual combobox",
+			name: "Existing poster image visual combobox",
 		}),
 	);
 	fireEvent.click(await screen.findByRole("button", { name: "Select IMG" }));
@@ -925,13 +925,13 @@ describe("PosterGuidedShell closure", () => {
 			(screen.getByTestId("poster-guided-continue") as HTMLButtonElement)
 				.disabled,
 		).toBe(true);
-		fireEvent.click(screen.getByText("Gunakan visual sedia ada (pilihan sahaja)"));
+		fireEvent.click(screen.getByText("Use an existing visual (optional)"));
 		const picker = await screen.findByRole("button", {
-			name: "Visual poster sedia ada visual combobox",
+			name: "Existing poster image visual combobox",
 		});
 		expect(fetchImageArtifacts).toHaveBeenCalled();
 		fireEvent.click(picker);
-		expect(screen.getByText("Sedia digunakan")).toBeInTheDocument();
+		expect(screen.getByText("Ready to use")).toBeInTheDocument();
 		fireEvent.click(await screen.findByRole("button", { name: "Select IMG" }));
 		expect(
 			(screen.getByTestId("poster-guided-continue") as HTMLButtonElement)
@@ -951,7 +951,7 @@ describe("PosterGuidedShell closure", () => {
 				"poster-visual-card-product_hero_night_routine",
 			),
 		);
-		fireEvent.click(screen.getByText("Gunakan visual sedia ada (pilihan sahaja)"));
+		fireEvent.click(screen.getByText("Use an existing visual (optional)"));
 		expect(await screen.findByTestId("poster-scene-empty")).toBeInTheDocument();
 		expect(screen.queryByTestId("poster-scene-open-img")).toBeNull();
 		expect(
@@ -964,11 +964,11 @@ describe("PosterGuidedShell closure", () => {
 		fireEvent.click(
 			screen.getByTestId("poster-visual-card-product_hero_night_routine"),
 		);
-		fireEvent.click(screen.getByText("Gunakan visual sedia ada (pilihan sahaja)"));
+		fireEvent.click(screen.getByText("Use an existing visual (optional)"));
 		expect(await screen.findByTestId("poster-scene-error")).toBeInTheDocument();
 		fireEvent.click(screen.getByTestId("poster-scene-retry"));
 		await screen.findByRole("button", {
-			name: "Visual poster sedia ada visual combobox",
+			name: "Existing poster image visual combobox",
 		});
 	});
 

@@ -285,7 +285,7 @@ export default function ProductKnowledgeIntakeForm({ onComplete, setIsProcessing
           />
         </div>
         <div className="space-y-2">
-          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Usage / Cara Guna</label>
+          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1">Usage</label>
           <textarea
             className="w-full h-24 rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all resize-none"
             placeholder="Step by step instructions..."

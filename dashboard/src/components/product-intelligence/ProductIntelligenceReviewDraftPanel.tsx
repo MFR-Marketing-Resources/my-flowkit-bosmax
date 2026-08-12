@@ -557,15 +557,15 @@ export function formatReviewDraftError(err: unknown, fallback: string): string {
 			const key = idx >= 0 ? blocker.slice(0, idx) : blocker;
 			const val = idx >= 0 ? blocker.slice(idx + 1) : "";
 			if (/MISSING_REQUIRED_FIELDS/i.test(key)) {
-				parts.push(`lengkapkan medan wajib yang tiada (${val})`);
+				parts.push(`complete the missing required field (${val})`);
 			} else if (/CLAIM_BLOCKED/i.test(key)) {
-				parts.push(`buang / lembutkan perkataan claim ubatan yang disekat (${val})`);
+				parts.push(`remove / soften the blocked medical-claim wording (${val})`);
 			} else if (/CLAIM_REVIEW_REQUIRED/i.test(key)) {
-				parts.push(`semak semula perkataan claim yang berisiko (${val})`);
+				parts.push(`re-check the risky claim wording (${val})`);
 			}
 		}
-		const how = parts.length ? parts.join("; ") : "selesaikan semua blocker di bawah";
-		return `Draf belum boleh diluluskan — ${how}. Kemas kini medan → Save Draft → Validate Draft → Approve semula. Rujuk panel "Missing Required Fields" & "Claim Safety Gate" di bawah.`;
+		const how = parts.length ? parts.join("; ") : "resolve all blockers below";
+		return `Draft cannot be approved yet — ${how}. Update fields → Save Draft → Validate Draft → Approve again. See the "Missing Required Fields" & "Claim Safety Gate" panels below.`;
 	}
 	return raw;
 }
@@ -741,24 +741,24 @@ export function describeApprovalBlockers(
 	const parts: string[] = [];
 	if (ungoverned.length)
 		parts.push(
-			`lengkapkan ${ungoverned.length} medan wajib yang tiada (${ungoverned.join(", ")}) atau rekod ketiadaan bergoverned ("Resolve absence…")`,
+			`complete ${ungoverned.length} missing required field(s) (${ungoverned.join(", ")}) or record a governed absence ("Resolve absence…")`,
 		);
 	if (external.length)
 		parts.push(
-			`medan menunggu bukti luaran masih menyekat (${external.join(", ")}) — dapatkan bukti atau tukar keputusan`,
+			`fields awaiting external evidence still block (${external.join(", ")}) — obtain evidence or change the decision`,
 		);
 	if (claimBlocked.length)
 		parts.push(
-			`buang atau lembutkan perkataan claim ubatan yang disekat (${claimBlocked.join(", ")})`,
+			`remove or soften the blocked medical-claim wording (${claimBlocked.join(", ")})`,
 		);
 	if (!parts.length && otherBlockers.some((b) => b.startsWith("CLAIM_REVIEW_REQUIRED")))
 		parts.push(
-			"tandakan kotak pengakuan semakan claim di bawah sebelum Approve",
+			"tick the claim-review acknowledgment box below before Approve",
 		);
 	const how = parts.length
 		? parts.join("; ")
-		: "selesaikan blocker yang tersenarai di bawah";
-	return `Draf belum boleh diluluskan — ${how}. Kemas kini medan di editor, tekan Save Draft, kemudian Validate & Approve semula. Panel "Missing Required Fields" dan "Claim Safety Gate" di bawah menyenaraikan butirannya.`;
+		: "resolve the blockers listed below";
+	return `Draft cannot be approved yet — ${how}. Update fields in the editor, press Save Draft, then Validate & Approve again. The "Missing Required Fields" and "Claim Safety Gate" panels below list the details.`;
 }
 
 export default function ProductIntelligenceReviewDraftPanel({
@@ -1027,7 +1027,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 			setSelectedDraftId(result.draft.draft_id);
 			setValidation(null);
 			setMessage(
-				`AI drafted Product Knowledge + Customer Avatar (recommended formula: ${result.recommended_formula}). Review every field, then Validate and Approve — nothing is auto-approved. Tekan Validate Draft untuk lihat baki blocker (medan wajib / claim).`,
+				`AI drafted Product Knowledge + Customer Avatar (recommended formula: ${result.recommended_formula}). Review every field, then Validate and Approve — nothing is auto-approved. Press Validate Draft to see remaining blockers (required fields / claim).`,
 			);
 		} catch (err) {
 			setError(
@@ -1195,7 +1195,7 @@ export default function ProductIntelligenceReviewDraftPanel({
 			setMessage(
 				blockerMsg
 					? null
-					: "Draf disemak — semua medan wajib lengkap dan claim gate selamat. Sedia untuk Approve.",
+					: "Draft reviewed — all required fields complete and the claim gate is safe. Ready to Approve.",
 			);
 		} catch (err) {
 			setError(
@@ -2147,9 +2147,9 @@ export default function ProductIntelligenceReviewDraftPanel({
 													onChange={(event) => setClaimAck(event.target.checked)}
 												/>
 												<span className="text-[11px] text-amber-100">
-													Saya telah menyemak token claim di atas dalam konteks
-													produk ini dan mengesahkan ia BUKAN claim perubatan.
-													Pengakuan ini direkodkan bersama approval.
+													I have reviewed the claim tokens above in the context
+													of this product and confirm they are NOT medical claims.
+													This acknowledgment is recorded with the approval.
 												</span>
 											</label>
 										)}
@@ -2158,9 +2158,9 @@ export default function ProductIntelligenceReviewDraftPanel({
 												data-testid="claim-blocked-absolute"
 												className="rounded border border-red-500/30 bg-red-500/10 p-2 text-[11px] text-red-100"
 											>
-												CLAIM_BLOCKED adalah mutlak — tiada pengakuan atau bypass.
-												Buang atau lembutkan perkataan yang disekat, Save, dan
-												Validate semula.
+												CLAIM_BLOCKED is absolute — no acknowledgment or bypass.
+												Remove or soften the blocked wording, Save, and
+												Validate again.
 											</p>
 										)}
 										<div>

@@ -360,7 +360,7 @@ describe("ProductIntelligenceReviewDraftPanel", () => {
 		// Both blockers are explained with their specifics.
 		expect(msg).toContain("source_urls_json");
 		expect(msg).toContain("rawat,penyakit,ubat");
-		expect(msg.toLowerCase()).toContain("belum boleh diluluskan");
+		expect(msg.toLowerCase()).toContain("cannot be approved yet");
 	});
 
 	it("translates terminal draft update errors into the revision action", () => {
@@ -985,7 +985,7 @@ describe("Analyze & Repair from source (existing-product recompute)", () => {
 		render(<ProductIntelligenceReviewDraftPanel productId="p1" onApproved={async () => {}} />);
 		fireEvent.click(await screen.findByRole("button", { name: /Recompute \(Validate\)/i }));
 		expect(await screen.findByTestId("claim-blocked-absolute"))
-			.toHaveTextContent(/mutlak/i);
+			.toHaveTextContent(/absolute/i);
 		expect(screen.queryByTestId("claim-ack-checkbox")).toBeNull();
 	});
 
@@ -1006,7 +1006,7 @@ describe("Analyze & Repair from source (existing-product recompute)", () => {
 			unresolved_external_fields: ["ingredients_text"],
 			approval_blockers: ["REQUIRES_EXTERNAL_EVIDENCE:ingredients_text"],
 		});
-		expect(describeApprovalBlockers(external, true)).toMatch(/bukti luaran/);
+		expect(describeApprovalBlockers(external, true)).toMatch(/external evidence/);
 		// ack clears ONLY a review-required claim blocker
 		const review = gapValidation({
 			missing_required_fields: [],
@@ -1014,7 +1014,7 @@ describe("Analyze & Repair from source (existing-product recompute)", () => {
 			claim_tokens_json: ["treat"],
 			approval_blockers: ["CLAIM_REVIEW_REQUIRED:treat"],
 		});
-		expect(describeApprovalBlockers(review, false)).toMatch(/pengakuan/);
+		expect(describeApprovalBlockers(review, false)).toMatch(/acknowledgment/);
 		expect(describeApprovalBlockers(review, true)).toBeNull();
 		const blocked = gapValidation({
 			missing_required_fields: [],
@@ -1022,7 +1022,7 @@ describe("Analyze & Repair from source (existing-product recompute)", () => {
 			claim_tokens_json: ["ubat"],
 			approval_blockers: ["CLAIM_BLOCKED:ubat"],
 		});
-		expect(describeApprovalBlockers(blocked, true)).toMatch(/disekat/);
+		expect(describeApprovalBlockers(blocked, true)).toMatch(/blocked/);
 	});
 
 });
