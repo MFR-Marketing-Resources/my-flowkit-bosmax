@@ -8,6 +8,18 @@ const AUTO_RUNTIME_RETRY_MS = 5000;
 const LAST_KNOWN_RUNTIME_GRACE_MS = 60000;
 
 const DASHBOARD_ROUTES = {
+	video: {
+		label: "Video Generation",
+		url: `${LOCAL_AGENT_BASE_URL}/operator/t2v?portal=side`,
+	},
+	image: {
+		label: "Image Generation",
+		url: `${LOCAL_AGENT_BASE_URL}/assets/img-fastlane?portal=side`,
+	},
+	poster: {
+		label: "Poster Builder",
+		url: `${LOCAL_AGENT_BASE_URL}/creative/poster-builder?portal=side`,
+	},
 	operator: {
 		label: "Operator Dashboard",
 		url: `${LOCAL_AGENT_BASE_URL}/operator?portal=side`,
@@ -757,6 +769,16 @@ function bootSidePortal() {
 				DASHBOARD_ROUTES[selectedRouteKey] ||
 				DASHBOARD_ROUTES.operator,
 		);
+	});
+
+	const openFullDashboard = () =>
+		openRouteInBrowserTab({
+			label: "Full dashboard",
+			url: `${LOCAL_AGENT_BASE_URL}/`,
+		});
+	["btn-open-portal", "btn-open-portal-cta"].forEach((id) => {
+		const el = getElement(id);
+		if (el) el.addEventListener("click", openFullDashboard);
 	});
 
 	retryButton.addEventListener("click", () => {
