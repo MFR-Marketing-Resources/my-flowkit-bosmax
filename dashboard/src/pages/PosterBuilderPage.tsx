@@ -1532,8 +1532,7 @@ export default function PosterBuilderPage() {
 	const [advancedOpen, setAdvancedOpen] = useState(false);
 	const [sessionResults, setSessionResults] = useState<SessionResult[]>([]);
 	const [searchParams] = useSearchParams();
-	const useV4 =
-		searchParams.get("v4") === "1" && searchParams.get("classic") !== "1";
+	const useV4 = searchParams.get("classic") !== "1";
 	const advancedDiagnostics = (
 		<details
 			className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4"
