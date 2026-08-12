@@ -771,15 +771,15 @@ function bootSidePortal() {
 		);
 	});
 
-	const openPortalButton = getElement("btn-open-portal");
-	if (openPortalButton) {
-		openPortalButton.addEventListener("click", () => {
-			openRouteInBrowserTab({
-				label: "Full dashboard",
-				url: `${LOCAL_AGENT_BASE_URL}/`,
-			});
+	const openFullDashboard = () =>
+		openRouteInBrowserTab({
+			label: "Full dashboard",
+			url: `${LOCAL_AGENT_BASE_URL}/`,
 		});
-	}
+	["btn-open-portal", "btn-open-portal-cta"].forEach((id) => {
+		const el = getElement(id);
+		if (el) el.addEventListener("click", openFullDashboard);
+	});
 
 	retryButton.addEventListener("click", () => {
 		clearAutoRuntimeRetry();

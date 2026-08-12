@@ -50,6 +50,9 @@
     .brand-title { font-size: 13px; font-weight: 700; color: var(--text); flex: 1; }
     .portal-btn { flex: none; border: 1px solid var(--border-strong); background: var(--panel-2); color: var(--text); border-radius: 8px; padding: 5px 9px; font-size: 11px; font-weight: 700; line-height: 1; cursor: pointer; white-space: nowrap; transition: border-color .15s ease, color .15s ease; }
     .portal-btn:hover { border-color: var(--ok); color: var(--ok); }
+    .portal-cta { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin: 2px 0 8px; padding: 12px 14px; border: 1px solid rgba(56,189,248,0.55); border-radius: 12px; background: linear-gradient(180deg, rgba(56,189,248,0.24), rgba(56,189,248,0.10)); color: #e0f2fe; font-size: 13px; font-weight: 800; letter-spacing: 0.01em; cursor: pointer; transition: background .15s ease, border-color .15s ease, transform .1s ease; }
+    .portal-cta:hover { background: rgba(56,189,248,0.32); border-color: rgba(56,189,248,0.9); transform: translateY(-1px); }
+    .portal-cta-arrow { font-size: 15px; opacity: 0.9; }
     .brand-dot {
       width: 9px; height: 9px; border-radius: 999px; background: var(--muted); flex-shrink: 0;
     }
@@ -153,6 +156,11 @@
         <span class="brand-dot" id="brand-status-dot" aria-hidden="true"></span>
         <button type="button" class="portal-btn" id="btn-open-portal" title="Open the full dashboard (with the left sidebar) in a browser tab">Full dashboard ↗</button>
       </div>
+
+      <button type="button" class="portal-cta" id="btn-open-portal-cta" title="Open the full dashboard (with the left sidebar) in a browser tab">
+        <span class="portal-cta-text">Open Full Dashboard</span>
+        <span class="portal-cta-arrow" aria-hidden="true">↗</span>
+      </button>
 
       <span class="label">Generate</span>
       <div class="gen-grid">
