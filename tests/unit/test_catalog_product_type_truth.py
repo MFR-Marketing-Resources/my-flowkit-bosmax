@@ -4,6 +4,7 @@ import pytest
 
 from agent.authority.catalog_product_type_truth import (
     CATALOG_PRODUCT_TYPE_TRUTH_MAPPINGS,
+    catalog_product_type_truth_provenance,
     iter_catalog_product_type_truth_registry_entries,
     resolve_catalog_product_type_truth,
 )
@@ -65,6 +66,105 @@ def test_exact_source_authority_resolves_ambiguous_catalog_types(
         mapping.product_type_group,
         mapping.specific_scene_strategy_id,
     ) == expected
+
+
+@pytest.mark.parametrize(
+    ("product_type_code", "source_type", "expected"),
+    (
+        (
+            "artificial_flowers",
+            "Artificial Flower Bouquets",
+            ("home_decor", "artificial_plant", "HOME_DECOR"),
+        ),
+        (
+            "crossbody_bag",
+            "Crossbody Bags",
+            ("fashion_accessory", "bag", "FASHION_ACCESSORY"),
+        ),
+        (
+            "bidet_spray_set",
+            "Bidet Spray Sets",
+            ("home_improvement", "bathroom_fixture", "WALL_COVERING"),
+        ),
+        (
+            "hydrocolloid_acne_patch",
+            "Acne Patches",
+            ("beauty_skincare", "medicated_patch", "FACE_MASK"),
+        ),
+        (
+            "3d_sticker_book",
+            "3D Scene Sticker Books",
+            ("stationery", "sticker", "STATIONERY"),
+        ),
+    ),
+)
+def test_copywriting_hub_product_type_code_bridges_to_existing_p4_lane(
+    product_type_code,
+    source_type,
+    expected,
+) -> None:
+    mapping = resolve_catalog_product_type_truth(
+        {
+            "copywriting_product_type_code": product_type_code,
+            "category": "Home & Living"
+            if product_type_code in {"artificial_flowers", "bidet_spray_set"}
+            else "Fashion"
+            if product_type_code == "crossbody_bag"
+            else "Beauty & Personal Care"
+            if product_type_code == "hydrocolloid_acne_patch"
+            else "Toys & Games",
+            "subcategory": "Home Decor"
+            if product_type_code == "artificial_flowers"
+            else "Bathroom Fixtures"
+            if product_type_code == "bidet_spray_set"
+            else "Bags"
+            if product_type_code == "crossbody_bag"
+            else "Skincare"
+            if product_type_code == "hydrocolloid_acne_patch"
+            else "Creative Play",
+            "type": source_type,
+        }
+    )
+
+    assert mapping is not None
+    assert (
+        mapping.cluster,
+        mapping.product_type_group,
+        mapping.specific_scene_strategy_id,
+    ) == expected
+    assert expected in PRODUCT_TYPE_COPY_STRATEGY_KEYS
+
+
+def test_copywriting_hub_code_fails_closed_when_source_fields_disagree() -> None:
+    assert resolve_catalog_product_type_truth(
+        {
+            "copywriting_product_type_code": "artificial_flowers",
+            "category": "Fashion",
+            "subcategory": "Bags",
+            "type": "Crossbody Bags",
+        }
+    ) is None
+
+
+def test_exact_copywriting_hub_code_precedes_historical_product_id_override() -> None:
+    product = {
+        # This ID has a historical Books & Media override; the current
+        # workbook selection must win when its full source triple agrees.
+        "id": "867bd162-ef79-46ef-a7aa-97fb2387c058",
+        "copywriting_product_type_code": "3d_sticker_book",
+        "category": "Toys & Games",
+        "subcategory": "Creative Play",
+        "type": "3D Scene Sticker Books",
+    }
+    mapping = resolve_catalog_product_type_truth(product)
+
+    assert mapping is not None
+    assert (
+        mapping.cluster,
+        mapping.product_type_group,
+        mapping.specific_scene_strategy_id,
+    ) == ("stationery", "sticker", "STATIONERY")
+    assert catalog_product_type_truth_provenance(product) == "SOURCE_TAXONOMY"
 
 
 def test_every_activated_product_truth_type_has_specific_scene_and_p4() -> None:

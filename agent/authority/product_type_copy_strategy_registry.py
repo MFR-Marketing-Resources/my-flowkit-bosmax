@@ -1344,6 +1344,49 @@ _P58_ACTIVATED_COPY_TYPES: dict[
     ProductTypeCopyStrategyKey,
     tuple[str, str, str, str, str, str],
 ] = {
+    # Copywriting Hub exact-code bridges.  These are deliberately evidence-led
+    # previews: they show dimensions, components, labels, and ordinary use
+    # without inventing product benefits that are absent from Product Truth.
+    ("home_decor", "artificial_plant", "HOME_DECOR"): (
+        "show the bouquet shape, colours, stems, and display arrangement clearly",
+        "Tengok susunan bunga hiasan.",
+        "Susun dalam pasu atau ruang sampel.",
+        "Warna dan bentuk mudah dilihat.",
+        "Padankan dengan ruang paparan.",
+        "WARNA DAN SUSUNAN",
+    ),
+    ("fashion_accessory", "bag", "FASHION_ACCESSORY"): (
+        "show the bag dimensions, compartments, strap, closure, and material clearly",
+        "Semak ruang dan tali beg.",
+        "Buka ruang, zip dan tali.",
+        "Saiz dan susunan mudah dilihat.",
+        "Padankan dengan kegunaan.",
+        "RUANG DAN TALI",
+    ),
+    ("home_improvement", "bathroom_fixture", "WALL_COVERING"): (
+        "show the spray head, hose, connector, controls, and installation parts clearly",
+        "Semak set semburan bidet.",
+        "Tunjuk kepala semburan, hos dan penyambung.",
+        "Komponen pemasangan mudah dilihat.",
+        "Semak saiz sambungan dahulu.",
+        "KOMPONEN DAN SAMBUNGAN",
+    ),
+    ("beauty_skincare", "medicated_patch", "FACE_MASK"): (
+        "show the sealed pack, patch size, label, and external placement guidance clearly",
+        "Semak pek dan saiz tampalan.",
+        "Tunjuk satu tampalan dan label.",
+        "Saiz dan arahan mudah dilihat.",
+        "Ikut arahan pada label.",
+        "SAIZ DAN LABEL",
+    ),
+    ("stationery", "sticker", "STATIONERY"): (
+        "show the pack, sticker count, scene print, peel edge, and clean-surface placement clearly",
+        "Tengok tema dan helaian pelekat.",
+        "Tanggalkan satu pelekat pada sampel.",
+        "Cetakan dan saiz mudah dilihat.",
+        "Pilih tema kegemaran.",
+        "TEMA DAN SAIZ",
+    ),
     ("automotive_care", "car_surface_coating", "CAR_CARE"): (
         "show the label, applicator, compatibility, and small sample panel clearly",
         "Semak label produk penjagaan kereta.",

@@ -6,6 +6,7 @@ from agent.services.copywriting_taxonomy_service import (
     CopywritingTaxonomySelectionError,
     get_copywriting_taxonomy_tree,
     load_authority_records,
+    resolve_product_copywriting_taxonomy,
     resolve_product_taxonomy_record,
     seed_copywriting_taxonomy_registry,
     validate_taxonomy_selection,
@@ -123,3 +124,25 @@ async def test_legacy_product_resolution_is_needs_reconciliation_with_nearest_ma
     assert resolution["match"] is None
     assert resolution["nearest_match"] is not None
     assert resolution["current"]["category"] == "Kitchenware"
+
+
+def test_exact_product_mapping_requires_every_canonical_workbook_field():
+    product = {
+        "copywriting_product_type_code": "3d_sticker_book",
+        "category": "Toys & Games",
+        "subcategory": "Creative Play",
+        "type": "3D Scene Sticker Books",
+        "copywriting_angle": (
+            "Creativity-led city-scene storytelling, reusable play, and "
+            "screen-free engagement"
+        ),
+    }
+
+    mapping = resolve_product_copywriting_taxonomy(product)
+
+    assert mapping is not None
+    assert mapping["product_type_code"] == "3d_sticker_book"
+    assert mapping["display_name"] == "3D Sticker Book"
+
+    product["copywriting_angle"] = "operator text"
+    assert resolve_product_copywriting_taxonomy(product) is None

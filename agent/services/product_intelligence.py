@@ -12,6 +12,10 @@ from agent.services.product_lifecycle_service import is_archived, lifecycle_stat
 from agent.services.product_mapping import resolve_product_mapping
 from agent.services.product_physics import resolve_product_physics, evaluate_prompt_readiness
 from agent.services.product_preflight import build_product_preflight, evaluate_mapping_status, resolve_creative_profile
+from agent.services.copywriting_taxonomy_service import (
+    CopywritingTaxonomySelectionError,
+    validate_taxonomy_selection,
+)
 from agent.services.product_intelligence_service import (
     inject_product_intelligence_fields,
     resolve_product_intelligence_profile,
@@ -271,6 +275,7 @@ def mode_readiness(payload: dict[str, Any]) -> dict[str, dict[str, str | list[st
 
 async def enrich_product(product: dict[str, Any], *, persist: bool = False) -> dict[str, Any]:
     payload = dict(product)
+    stored_copywriting_taxonomy = await _resolve_stored_copywriting_taxonomy(payload)
     payload["lifecycle_status"] = lifecycle_status(payload)
     payload["source"] = normalize_source(payload.get("source"))
     payload["source_url"] = payload.get("source_url") or payload.get("tiktok_product_url")
@@ -289,12 +294,14 @@ async def enrich_product(product: dict[str, Any], *, persist: bool = False) -> d
 
     mapping = resolve_product_mapping(product=payload, source_hint=payload.get("source"))
     payload.update(mapping)
+    _apply_stored_copywriting_taxonomy(payload, stored_copywriting_taxonomy)
     intelligence = resolve_product_intelligence_profile(payload)
     payload = inject_product_intelligence_fields(payload, intelligence)
     physics = resolve_product_physics(product=payload)
     payload.update(physics)
     creative_profile = resolve_creative_profile(payload)
     payload.update(creative_profile)
+    _apply_stored_copywriting_taxonomy(payload, stored_copywriting_taxonomy)
     payload["product_display_name"] = creative_profile.get("display_name") or payload.get("product_display_name")
     payload.update(evaluate_mapping_status(payload))
     payload.update(resolve_image_readiness(payload))
@@ -326,6 +333,52 @@ async def enrich_product(product: dict[str, Any], *, persist: bool = False) -> d
     if persist and payload.get("id"):
         await persist_intelligence(payload["id"], payload, updated_at=payload.get("updated_at"))
     return payload
+
+
+async def _resolve_stored_copywriting_taxonomy(
+    product: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Resolve a stored cascade selection before legacy enrichment can rewrite it.
+
+    The legacy mapping lane is title/profile driven and can infer a different
+    copywriting angle even after an operator has selected a valid workbook row.
+    Only a complete selection carrying a valid Product Type Code is protected;
+    incomplete or invalid legacy rows continue through the existing
+    reconciliation path unchanged.
+    """
+
+    code = str(product.get("copywriting_product_type_code") or "").strip()
+    category = str(product.get("category") or "").strip()
+    subcategory = str(product.get("subcategory") or "").strip()
+    type_name = str(product.get("type") or "").strip()
+    if not code or not category or not subcategory or not type_name:
+        return None
+    try:
+        return await validate_taxonomy_selection(
+            category=category,
+            subcategory=subcategory,
+            type_name=type_name,
+            product_type_code=code,
+        )
+    except CopywritingTaxonomySelectionError:
+        return None
+
+
+def _apply_stored_copywriting_taxonomy(
+    payload: dict[str, Any],
+    record: dict[str, Any] | None,
+) -> None:
+    if record is None:
+        return
+    payload.update(
+        {
+            "category": record["category"],
+            "subcategory": record["subcategory"],
+            "type": record["type"],
+            "copywriting_product_type_code": record["product_type_code"],
+            "copywriting_angle": record["copywriting_angle"],
+        }
+    )
 
 async def persist_intelligence(product_id: str, payload: dict[str, Any], *, updated_at: str | None = None) -> None:
     await crud.update_product(
