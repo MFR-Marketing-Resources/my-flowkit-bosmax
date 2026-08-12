@@ -129,7 +129,7 @@ export default function ProductRegistrationPage() {
 		setReviewDraft(draft);
 		setResult(null);
 		setActiveTab("single");
-		setSearchParams({});
+		setSearchParams({}, { replace: true });
 		setTimeout(() => {
 			document
 				.getElementById("review-draft-section")
@@ -218,7 +218,7 @@ export default function ProductRegistrationPage() {
 								type="button"
 								onClick={() => {
 									setActiveTab("single");
-									setSearchParams("tab=single");
+									setSearchParams("tab=single", { replace: true });
 								}}
 								className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold uppercase tracking-widest transition-all shadow-lg shadow-indigo-600/20"
 							>
@@ -228,7 +228,7 @@ export default function ProductRegistrationPage() {
 								type="button"
 								onClick={() => {
 									setActiveTab("fastmoss");
-									setSearchParams("tab=fastmoss");
+									setSearchParams("tab=fastmoss", { replace: true });
 								}}
 								className="px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 hover:border-slate-600 text-slate-300 hover:text-white text-[11px] font-bold uppercase tracking-widest transition-all"
 							>
@@ -241,7 +241,7 @@ export default function ProductRegistrationPage() {
 						type="button"
 						onClick={() => {
 							setActiveTab("all");
-							setSearchParams("tab=all");
+							setSearchParams("tab=all", { replace: true });
 						}}
 						className="px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 hover:border-slate-600 text-slate-300 hover:text-white text-[11px] font-bold uppercase tracking-widest transition-all"
 					>
