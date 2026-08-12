@@ -190,7 +190,7 @@ const NAV_GROUPS = [
 	{
 		label: "SYSTEM",
 		items: [
-			{ to: "/", icon: LayoutDashboard, label: "Overview", exact: true },
+			{ to: "/home", icon: LayoutDashboard, label: "Overview", exact: true },
 			{ to: "/settings", icon: SettingsIcon, label: "Settings" },
 		],
 	},
@@ -366,7 +366,7 @@ function Layout() {
 	}, [isPortalMode]);
 
 	const portalQuickLinks = [
-		{ to: "/", label: "Ops" },
+		{ to: "/home", label: "Ops" },
 		{ to: "/operator/t2v", label: "T2V" },
 		{ to: "/operator/hybrid", label: "HYBRID" },
 		{ to: "/operator/f2v", label: "FRAMES" },
@@ -664,7 +664,8 @@ function Layout() {
 						<Route path="/troubleshoot" element={<TroubleshootPage />} />
 
 						{/* Default Dashboard */}
-						<Route path="/" element={<DashboardPage />} />
+						<Route path="/" element={<Navigate to={withPortalQuery("/operator/hybrid")} replace />} />
+						<Route path="/home" element={<DashboardPage />} />
 					</Routes>
 				</main>
 			</div>
