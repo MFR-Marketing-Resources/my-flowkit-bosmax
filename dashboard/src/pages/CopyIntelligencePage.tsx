@@ -50,7 +50,7 @@ function SeedReviewModal({
 			}
 			onReviewed();
 		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : "Review gagal.");
+			setError(cause instanceof Error ? cause.message : "Review failed.");
 		} finally {
 			setSubmitting(false);
 		}
@@ -162,7 +162,7 @@ export default function CopyIntelligencePage() {
 			const result = await promoteApprovedCopyIntelligenceSeed(seedId);
 			setPromoteResults((prev) => ({ ...prev, [seedId]: result }));
 		} catch (cause) {
-			setPromoteErrors((prev) => ({ ...prev, [seedId]: cause instanceof Error ? cause.message : "Promote gagal." }));
+			setPromoteErrors((prev) => ({ ...prev, [seedId]: cause instanceof Error ? cause.message : "Promote failed." }));
 		} finally {
 			setPromoting("");
 		}
@@ -191,7 +191,7 @@ export default function CopyIntelligencePage() {
 
 	const runDryRun = async () => {
 		if (!workbook) {
-			setUploadError("Pilih fail .xlsx penuh Kalodata & Fastmoss dahulu.");
+			setUploadError("Select the full Kalodata & Fastmoss .xlsx file first.");
 			return;
 		}
 		setLoading(true);
@@ -202,7 +202,7 @@ export default function CopyIntelligencePage() {
 			setReport(await runUploadedCopyIntelligenceDryRun(uploaded.source_id));
 		} catch (cause) {
 			setReport(null);
-			setUploadError(cause instanceof Error ? cause.message : "Dry-run gagal.");
+			setUploadError(cause instanceof Error ? cause.message : "Dry-run failed.");
 		} finally {
 			setLoading(false);
 		}

@@ -1980,11 +1980,11 @@ export default function ProductsSalesAnalyzerPage() {
 				</div>
 
 				<HelperText className="mb-2 px-2">
-					Klik kad untuk butiran penuh. Guna butang{" "}
+					Click a card for full details. Use the{" "}
 					<span className="font-semibold text-blue-300">Edit</span> /{" "}
-					<span className="font-semibold text-amber-300">Archive</span> pada
-					setiap kad untuk kemas kini maklumat atau nyah-aktif produk yang tidak
-					digunakan — terus dari senarai.
+					<span className="font-semibold text-amber-300">Archive</span> button on
+					each card to update details or deactivate products that aren't
+					being used — straight from the list.
 				</HelperText>
 				<div
 					className="min-h-[280px] flex-1 overflow-y-auto p-2 lg:min-h-0"
