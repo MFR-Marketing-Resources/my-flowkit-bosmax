@@ -1056,11 +1056,6 @@ export default function CreativeProductionStudioPage() {
 		selectedSnapshot?.product_allocations.length ?? allocations.length;
 	const p6V4TargetCount = selectedSnapshot?.target_video_count ?? totalVideoCount;
 	const p6V4PlanStatus = selectedPlan?.status ?? (studioMode === "NEW_DRAFT" ? "DRAFT" : studioMode);
-	const guidedActiveStep = !allocations.length
-		? 1
-		: !detail?.plan
-			? 2
-			: activeStep;
 	const guidedRecipe = selectedSnapshot?.video_configurations?.[0]
 		? `${selectedSnapshot.video_configurations[0].requested_total_duration_seconds}s ${selectedSnapshot.video_configurations[0].generation_mode}`
 		: selectedDurationOption
@@ -1081,19 +1076,12 @@ export default function CreativeProductionStudioPage() {
 				collapsible={false}
 			>
 				<div data-testid="p6-guided-flow" className="space-y-4">
-					<div className="rounded-2xl border border-cyan-500/30 bg-gradient-to-br from-cyan-950/30 via-slate-950 to-violet-950/20 p-4">
+										<div className="rounded-2xl border border-cyan-500/30 bg-gradient-to-br from-cyan-950/30 via-slate-950 to-violet-950/20 p-4">
 						<div className="flex flex-wrap items-start justify-between gap-4">
 							<div className="max-w-2xl">
-								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-300">
-									Guided production flow
-								</div>
-								<h2 className="mt-1 text-xl font-semibold text-slate-100">
-									Build a video pack, then review it
-								</h2>
-								<p className="mt-1 text-xs leading-5 text-slate-400">
-									Choose products and one recipe per plan. Compile and dry-run are
-									free; live dispatch remains a separate, explicit credit action.
-								</p>
+								<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-300">Guided production flow</div>
+								<h2 className="mt-1 text-xl font-semibold text-slate-100">Build a video pack, step by step</h2>
+								<p className="mt-1 text-xs leading-5 text-slate-400">Open each step in order — nothing runs until you reach Compile &amp; generate. Compile and dry-run are free; live dispatch stays a separate, explicit credit action.</p>
 							</div>
 							<div className="grid min-w-[230px] grid-cols-3 gap-2">
 								<Metric label="Products" value={p6V4ProductCount} />
@@ -1101,129 +1089,103 @@ export default function CreativeProductionStudioPage() {
 								<Metric label="Before live" value="0 credits" tone="text-emerald-200" />
 							</div>
 						</div>
-
-						<div className="mt-4 grid gap-2 md:grid-cols-3">
-							{GUIDED_RECIPES.map((recipe) => {
-								const available = durationOptions.some(
-									(option) => option.seconds === recipe.seconds,
-									);
-								const selected = form.durationSeconds === recipe.seconds;
-								return (
-									<button
-										key={recipe.id}
-										type="button"
-										disabled={!available || Boolean(busy)}
-										onClick={() =>
-											setForm((current) => ({
-												...current,
-												durationSeconds: recipe.seconds,
-											}))
-										}
-										data-testid={`p6-recipe-${recipe.id}`}
-										className={`rounded-xl border p-3 text-left transition-colors ${
-											selected
-												? "border-violet-400/70 bg-violet-500/15 text-violet-100"
-												: "border-slate-700 bg-slate-950/60 text-slate-300 hover:border-cyan-400/50"
-										}`}
-									>
-										<div className="flex items-center justify-between gap-2">
-											<strong>{recipe.title}</strong>
-											{selected ? <StatusBadge status="SELECTED" /> : null}
-										</div>
-										<div className="mt-1 text-[10px] text-slate-500">
-											{available ? recipe.detail : "Unavailable for this model"}
-										</div>
-									</button>
-								);
-							})}
-						</div>
-
-						<div className="mt-4 grid gap-2 md:grid-cols-3">
-							{WORKFLOW_STEPS.map((step) => {
-								const stepStatus =
-									step.id < guidedActiveStep
-										? "done"
-										: step.id === guidedActiveStep
-											? "active"
-											: "upcoming";
-								return (
-									<div
-										key={step.id}
-										className={`rounded-lg border px-3 py-2 ${
-											stepStatus === "active"
-												? "border-cyan-400/50 bg-cyan-500/10"
-												: "border-slate-800 bg-slate-950/50"
-										}`}
-									>
-										<div className="flex items-center gap-2 text-[11px] font-semibold text-slate-200">
-											<span className="grid h-5 w-5 place-items-center rounded-md border border-slate-700 text-[10px] text-cyan-200">
-												{stepStatus === "done" ? "✓" : step.id}
-											</span>
-											{step.label}
-										</div>
-										<div className="mt-1 pl-7 text-[10px] text-slate-500">
-											{step.desc}
-										</div>
-									</div>
-								);
-							})}
-						</div>
-
-						<div
-							data-testid="p6-nine-pack-guidance"
-							className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-500/30 bg-violet-950/20 p-3 text-xs"
-						>
+						<div data-testid="p6-nine-pack-guidance" className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-500/30 bg-violet-950/20 p-3 text-xs">
 							<div>
 								<div className="font-semibold text-violet-100">9-video validation pack</div>
-								<div className="mt-1 text-[10px] text-violet-200/70">
-									Prepare three separate plans: 8s × 3, 16s × 3, and 24s × 3.
-									No media credits are used until live confirmation.
-								</div>
+								<div className="mt-1 text-[10px] text-violet-200/70">Prepare three separate plans: 8s × 3, 16s × 3, and 24s × 3. No media credits are used until live confirmation.</div>
 							</div>
 							<StatusBadge status="ONE RECIPE PER PLAN" />
 						</div>
-
-						<div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-							<div className="text-xs text-slate-400">
-								<span className="font-semibold text-slate-200">Current:</span>{" "}
-								{guidedRecipe} · {p6V4PlanStatus}
-							</div>
-							<div className="flex flex-wrap gap-2">
-								{!guidedAuthorityReady ? (
-									<span
-										data-testid="p6-guided-authority-blocker"
-										className="rounded-lg border border-rose-500/30 bg-rose-950/30 px-3 py-2 text-[10px] text-rose-200"
-									>
-										Product authority needs reconciliation before a new plan can be created.
-									</span>
-								) : null}
-								{guidedNextAction ? (
-									<button
-										type="button"
-										disabled={guidedNextAction.disabled}
-										onClick={() =>
-											void execute(
-												guidedNextAction.actionName,
-												guidedNextAction.executeAction,
-											)
-										}
-										data-testid="p6-guided-next-action"
-										className="rounded-lg bg-cyan-400 px-3 py-2 text-[10px] font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
-									>
-										{guidedNextAction.buttonLabel}
-									</button>
-								) : null}
-								<button
-									type="button"
-									onClick={() => setAdvancedWorkspaceOpen(true)}
-									data-testid="p6-open-advanced-workspace"
-									className="rounded-lg border border-slate-700 px-3 py-2 text-[10px] font-semibold text-slate-300 hover:border-cyan-400/50"
-								>
-									Open advanced workspace
-								</button>
-							</div>
-						</div>
 					</div>
+
+										<WorkflowStep
+						index={1}
+						title="Products"
+						status={allocations.length ? "done" : "active"}
+						summary={`${p6V4ProductCount} product${p6V4ProductCount === 1 ? "" : "s"} · ${p6V4TargetCount} video${p6V4TargetCount === 1 ? "" : "s"}`}
+						helper="Choose which products this plan produces and how many videos each."
+					>
+						<div className="space-y-3">
+							<p className="text-xs text-slate-400">Products and quantities are set in the production workspace. Open it to add products and set counts, then come back to pick a recipe.</p>
+							<button type="button" onClick={() => setAdvancedWorkspaceOpen(true)} data-testid="p6-open-advanced-workspace" className="rounded-lg border border-cyan-500/50 bg-cyan-500/10 px-3 py-2 text-[11px] font-semibold text-cyan-100 hover:border-cyan-400">Choose / manage products</button>
+						</div>
+					</WorkflowStep>
+
+										<WorkflowStep
+						index={2}
+						title="Recipe & length"
+						status={form.durationSeconds && allocations.length ? "done" : allocations.length ? "active" : "upcoming"}
+						summary={guidedRecipe}
+						helper="Pick one recipe per plan: a single clip, or an extended (chained) clip."
+					>
+						<div className="grid gap-2 md:grid-cols-3">
+							{GUIDED_RECIPES.map((recipe) => {
+							const available = durationOptions.some(
+							(option) => option.seconds === recipe.seconds,
+							);
+							const selected = form.durationSeconds === recipe.seconds;
+							return (
+							<button
+							key={recipe.id}
+							type="button"
+							disabled={!available || Boolean(busy)}
+							onClick={() =>
+							setForm((current) => ({
+							...current,
+							durationSeconds: recipe.seconds,
+							}))
+							}
+							data-testid={`p6-recipe-${recipe.id}`}
+							className={`rounded-xl border p-3 text-left transition-colors ${
+							selected
+							? "border-violet-400/70 bg-violet-500/15 text-violet-100"
+							: "border-slate-700 bg-slate-950/60 text-slate-300 hover:border-cyan-400/50"
+							}`}
+							>
+							<div className="flex items-center justify-between gap-2">
+							<strong>{recipe.title}</strong>
+							{selected ? <StatusBadge status="SELECTED" /> : null}
+							</div>
+							<div className="mt-1 text-[10px] text-slate-500">
+							{available ? recipe.detail : "Unavailable for this model"}
+							</div>
+							</button>
+							);
+							})}
+						</div>
+					</WorkflowStep>
+
+										<WorkflowStep
+						index={3}
+						title="Readiness"
+						status={guidedAuthorityReady ? "done" : allocations.length ? "active" : "upcoming"}
+						summary={guidedAuthorityReady ? "Authority reconciled" : "Needs reconciliation"}
+						helper="Product authority and capacity must be reconciled before a plan can be created."
+					>
+						{guidedAuthorityReady ? (
+							<div className="rounded-lg border border-emerald-500/30 bg-emerald-950/20 px-3 py-2 text-[11px] text-emerald-200">Product authority is reconciled — you can create a plan.</div>
+						) : (
+							<span data-testid="p6-guided-authority-blocker" className="block rounded-lg border border-rose-500/30 bg-rose-950/30 px-3 py-2 text-[10px] text-rose-200">Product authority needs reconciliation before a new plan can be created.</span>
+						)}
+					</WorkflowStep>
+
+										<WorkflowStep
+						index={4}
+						title="Compile & generate"
+						status={selectedPlan ? "done" : allocations.length && guidedAuthorityReady ? "active" : "upcoming"}
+						summary={p6V4PlanStatus}
+						helper="Compile and dry-run are free. Live dispatch is a separate, explicit credit action."
+					>
+						<div className="space-y-3">
+							<div className="flex flex-wrap items-center justify-between gap-3">
+								<div className="text-xs text-slate-400"><span className="font-semibold text-slate-200">Current:</span>{" "}{guidedRecipe} · {p6V4PlanStatus}</div>
+								{guidedNextAction ? (
+									<button type="button" disabled={guidedNextAction.disabled} onClick={() => void execute(guidedNextAction.actionName, guidedNextAction.executeAction)} data-testid="p6-guided-next-action" className="rounded-lg bg-cyan-400 px-3 py-2 text-[10px] font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40">{guidedNextAction.buttonLabel}</button>
+								) : null}
+							</div>
+							<p className="text-[10px] text-slate-500">The full factory, matrix, waves, QA and live confirmation live in the Advanced workspace below.</p>
+						</div>
+					</WorkflowStep>
 
 					<details
 						data-testid="p6-advanced-workspace"

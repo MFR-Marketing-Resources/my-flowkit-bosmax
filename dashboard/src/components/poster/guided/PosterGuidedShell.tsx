@@ -205,8 +205,21 @@ const FIELD_LABELS: { key: keyof GuidedCopyFields; label: string }[] = [
 	{ key: "disclaimer", label: "Disclaimer" },
 ];
 
-export default function PosterGuidedShell() {
+interface PosterGuidedShellProps {
+	/** Report a finished poster up to the page's results sidebar. */
+	onResult?: (r: { media_id: string; url: string; kind: "image" }) => void;
+}
+
+export default function PosterGuidedShell({ onResult }: PosterGuidedShellProps) {
 	const wf = usePosterGuidedWorkflow();
+	const reportedDeliverableRef = useRef<string>("");
+	useEffect(() => {
+		const id = wf.deliverable?.deliverable.poster_deliverable_id;
+		if (id && id !== reportedDeliverableRef.current) {
+			reportedDeliverableRef.current = id;
+			onResult?.({ media_id: id, url: posterDeliverableOutputUrl(id), kind: "image" });
+		}
+	}, [wf.deliverable, onResult]);
 	const [products, setProducts] = useState<Product[]>([]);
 	const [catalogError, setCatalogError] = useState("");
 	const { recipes } = usePosterRecipes();

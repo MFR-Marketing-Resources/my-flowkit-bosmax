@@ -233,6 +233,10 @@ export default function CopySetRegistryPage() {
 	const [scanning, setScanning] = useState(false);
 	const [bulkApproving, setBulkApproving] = useState(false);
 	const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
+	const [rejectTarget, setRejectTarget] = useState<CopySet | null>(null);
+	const [scanConfirm, setScanConfirm] = useState<Awaited<
+		ReturnType<typeof runSimilarityBackfill>
+	> | null>(null);
 	const [grounding, setGrounding] = useState<CopyGroundingSummary | null>(null);
 	const [formulas, setFormulas] = useState<CopyFormula[]>([]);
 	const [formulaId, setFormulaId] = useState("");
@@ -325,7 +329,7 @@ export default function CopySetRegistryPage() {
 		setSuccess("");
 		try {
 			await generateCopySet({ product_id: selectedProduct.id });
-			setSuccess("1 set deterministik (tanpa AI) ditambah.");
+			setSuccess("1 deterministic set (no AI) added.");
 			await loadSets(selectedProduct.id);
 		} catch (e) {
 			setError(e instanceof Error ? e.message : "Failed to add the set.");
@@ -376,12 +380,14 @@ export default function CopySetRegistryPage() {
 			setSuccess("Set approved (APPROVED).");
 		});
 
-	const handleReject = (s: CopySet) => {
-		const note = window.prompt("Sebab reject (reviewer note):", "Not suitable");
-		if (note == null || !note.trim()) return;
+	const handleReject = (s: CopySet) => setRejectTarget(s);
+	const confirmReject = (reason: string) => {
+		const s = rejectTarget;
+		if (!s) return;
+		setRejectTarget(null);
 		void withBusy(s.copy_set_id, async () => {
-			await rejectCopySet(s.copy_set_id, note.trim());
-			setSuccess("Set direject.");
+			await rejectCopySet(s.copy_set_id, reason || "Not suitable");
+			setSuccess("Set rejected.");
 		});
 	};
 
@@ -437,23 +443,7 @@ export default function CopySetRegistryPage() {
 				setSuccess("No scripts to scan.");
 				return;
 			}
-			const wantApply = window.confirm(
-				`Scan (dry-run): ${dry.scanned} scripts, ${dry.flagged} near-dups detected, ${dry.items.filter((i) => i.changed).length} rows will be updated.\n\nWrite similarity/uniqueness metadata to the library? (Status is NOT touched — you still approve/reject.)`,
-			);
-			if (!wantApply) {
-				setSuccess(
-					`Dry-run only: ${dry.scanned} scripts scanned, ${dry.flagged} near-dups detected. Nothing was written.`,
-				);
-				return;
-			}
-			const applied = await runSimilarityBackfill({
-				product_id: selectedProduct.id,
-				apply: true,
-			});
-			setSuccess(
-				`Scan complete: ${applied.scanned} scripts, ${applied.flagged} near-dups, ${applied.updated} rows updated.`,
-			);
-			await loadSets(selectedProduct.id);
+			setScanConfirm(dry);
 		} catch (e) {
 			setError(e instanceof Error ? e.message : "Scan failed.");
 		} finally {
@@ -461,6 +451,38 @@ export default function CopySetRegistryPage() {
 		}
 	};
 
+	const cancelScan = () => {
+		const dry = scanConfirm;
+		setScanConfirm(null);
+		if (dry) {
+			setSuccess(
+				`Dry-run only: ${dry.scanned} scripts scanned, ${dry.flagged} near-dups detected. Nothing was written.`,
+			);
+		}
+	};
+	const confirmScanApply = () => {
+		if (!selectedProduct || !scanConfirm) return;
+		setScanConfirm(null);
+		void (async () => {
+			setScanning(true);
+			setError("");
+			setSuccess("");
+			try {
+				const applied = await runSimilarityBackfill({
+					product_id: selectedProduct.id,
+					apply: true,
+				});
+				setSuccess(
+					`Scan complete: ${applied.scanned} scripts, ${applied.flagged} near-dups, ${applied.updated} rows updated.`,
+				);
+				await loadSets(selectedProduct.id);
+			} catch (e) {
+				setError(e instanceof Error ? e.message : "Scan failed.");
+			} finally {
+				setScanning(false);
+			}
+		})();
+	};
 	const reviewRequired = sets.filter((s) => s.status === "COPY_REVIEW_REQUIRED");
 
 	// Bulk approve = approve every review-required set for this product,
@@ -828,11 +850,11 @@ export default function CopySetRegistryPage() {
 								) : null}
 								{grounding.source !== "APPROVED_SNAPSHOT" ? (
 									<HelperText tone="warn">
-										Grounded pada peringkat framework family. Untuk copy paling
+										Grounded at the framework-family level. For the most
 										accurate (benefit / USP / real persona), author one Product
 										Knowledge snapshot for this product.
 										{grounding.missing.length
-											? ` Kurang: ${grounding.missing.join("; ")}.`
+											? ` Missing: ${grounding.missing.join("; ")}.`
 											: ""}
 									</HelperText>
 								) : null}
@@ -932,7 +954,7 @@ export default function CopySetRegistryPage() {
 						}
 					>
 						{loading && sets.length === 0 ? (
-							<p className="text-sm text-slate-400">Memuatkan…</p>
+							<p className="text-sm text-slate-400">Loading…</p>
 						) : (
 							<DataTable<CopySet>
 								rows={sets}
@@ -942,7 +964,7 @@ export default function CopySetRegistryPage() {
 								searchText={(r) =>
 									`${r.angle} ${r.hook} ${r.subhook} ${r.usp_set.join(" ")} ${r.cta}`
 								}
-								searchPlaceholder="Cari angle / hook / CTA…"
+								searchPlaceholder="Search angle / hook / CTA…"
 								filters={filters}
 								initialSort={{ key: "status", dir: "asc" }}
 								rowActions={rowActions}
@@ -1003,6 +1025,35 @@ export default function CopySetRegistryPage() {
 				busy={!!deleteTarget && busyId === deleteTarget.copy_set_id}
 				onConfirm={confirmDelete}
 				onCancel={() => setDeleteTarget(null)}
+			/>
+
+			<ConfirmActionModal
+				open={!!rejectTarget}
+				tone="danger"
+				title="Reject this copywriting set?"
+				body={
+					rejectTarget
+						? `"${rejectTarget.hook || rejectTarget.angle || rejectTarget.copy_set_id}" will be marked rejected. Add a short reviewer note.`
+						: ""
+				}
+				reasonLabel="Reason (reviewer note)"
+				reasonDefault="Not suitable"
+				confirmLabel="Reject set"
+				onConfirm={confirmReject}
+				onCancel={() => setRejectTarget(null)}
+			/>
+
+			<ConfirmActionModal
+				open={!!scanConfirm}
+				title="Write near-duplicate metadata?"
+				body={
+					scanConfirm
+						? `Dry-run found ${scanConfirm.scanned} scripts, ${scanConfirm.flagged} near-dups; ${scanConfirm.items.filter((i) => i.changed).length} rows will be updated. Status is NOT touched — you still approve/reject each set.`
+						: ""
+				}
+				confirmLabel="Write metadata"
+				onConfirm={confirmScanApply}
+				onCancel={cancelScan}
 			/>
 		</div>
 	);

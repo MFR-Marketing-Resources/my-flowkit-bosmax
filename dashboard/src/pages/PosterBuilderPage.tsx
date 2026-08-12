@@ -1534,8 +1534,7 @@ export default function PosterBuilderPage() {
 	const [advancedOpen, setAdvancedOpen] = useState(false);
 	const [sessionResults, setSessionResults] = useState<SessionResult[]>([]);
 	const [searchParams] = useSearchParams();
-	const useV4 =
-		searchParams.get("v4") === "1" && searchParams.get("classic") !== "1";
+	const useV4 = searchParams.get("classic") !== "1";
 	const advancedDiagnostics = (
 		<details
 			className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4"
@@ -1606,7 +1605,15 @@ export default function PosterBuilderPage() {
 							helper="The poster-native journey remains multi-step; this V4 frame does not collapse its creative modes into a single-shot lane."
 							collapsible={false}
 						>
-							<PosterGuidedShell />
+							<PosterGuidedShell
+								onResult={(r) =>
+									setSessionResults((prev) =>
+										prev.some((x) => x.media_id === r.media_id)
+											? prev
+											: [{ ...r, deletable: false }, ...prev],
+									)
+								}
+							/>
 						</WorkflowStep>
 						{advancedDiagnostics}
 					</main>
