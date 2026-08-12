@@ -624,7 +624,7 @@ export function PosterBuilderLegacyPanel() {
 		if (missingCopy.length > 0) {
 			setPromptPackage(null);
 			setPromptError(
-				`Isi dulu medan copy wajib: ${missingCopy.join(", ")}. Taip di bahagian Copy draft, atau guna satu cadangan AI (Apply suggestion).`,
+				`Fill the required copy fields first: ${missingCopy.join(", ")}. Type them in the Copy draft area, or use one AI suggestion (Apply suggestion).`,
 			);
 			return;
 		}

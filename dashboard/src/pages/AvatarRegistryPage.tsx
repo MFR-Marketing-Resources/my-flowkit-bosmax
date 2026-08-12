@@ -373,7 +373,7 @@ export default function AvatarRegistryPage() {
 				return;
 			}
 			setSuccessMsg(
-				`Avatar ${pendingLinkAvatarCode} dipautkan kepada produk terpilih sebagai DRAFT.`,
+				`Avatar ${pendingLinkAvatarCode} linked to the selected product as DRAFT.`,
 			);
 			setPendingLinkAvatarCode(null);
 			setPendingLinkError(null);
@@ -480,7 +480,7 @@ export default function AvatarRegistryPage() {
 
 	const handleAddManualAvatar = async () => {
 		if (!manualForm.character_name.trim()) {
-			setError("Nama karakter (character_name) wajib diisi.");
+			setError("Character name (character_name) is required.");
 			return;
 		}
 		setIsAddingManual(true);
@@ -514,7 +514,7 @@ export default function AvatarRegistryPage() {
 				if (response.status === 409 && detail.startsWith("AVATAR_REDUNDANT")) {
 					const code = detail.split(":")[1] || "";
 					throw new Error(
-						`Avatar serupa sudah wujud (${code}) — ubah ciri (muka/pakaian).`,
+						`A similar avatar already exists (${code}) — change features (face/clothing).`,
 					);
 				}
 				throw new Error(detail);
@@ -529,14 +529,14 @@ export default function AvatarRegistryPage() {
 				if (linkResult.ok) {
 					if (!linkResult.skipped) {
 						setSuccessMsg(
-							`Avatar ${data.avatar_code} ditambah dan dipautkan kepada produk terpilih sebagai DRAFT.`,
+							`Avatar ${data.avatar_code} added and linked to the selected product as DRAFT.`,
 						);
 					}
 				} else {
 					setPendingLinkAvatarCode(data.avatar_code);
 					setPendingLinkError(linkResult.error);
 					setSuccessMsg(
-						`AVATAR_CREATED_PRODUCT_LINK_FAILED: Avatar ${data.avatar_code} berjaya dicipta, tetapi pautan produk gagal.`,
+						`AVATAR_CREATED_PRODUCT_LINK_FAILED: Avatar ${data.avatar_code} was created successfully, but the product link failed.`,
 					);
 					setError(linkResult.error);
 				}
@@ -580,20 +580,20 @@ export default function AvatarRegistryPage() {
 				const detail = String(data?.detail || `HTTP ${response.status}`);
 				if (response.status === 503) {
 					throw new Error(
-						"AI text provider belum diset. Set di AI Provider Settings (lane text_assist) dahulu.",
+						"AI text provider is not set. Configure it in AI Provider Settings (lane text_assist) first.",
 					);
 				}
 				if (response.status === 409) {
 					throw new Error(
-						"AI hasilkan avatar yang serupa sedia ada — cuba brief lain.",
+						"AI produced an avatar similar to an existing one — try a different brief.",
 					);
 				}
 				if (response.status === 502) {
-					throw new Error("Penjanaan AI gagal / respons tak sah.");
+					throw new Error("AI generation failed / invalid response.");
 				}
 				throw new Error(detail);
 			}
-			setSuccessMsg(`Avatar ${data.avatar_code} dijana`);
+			setSuccessMsg(`Avatar ${data.avatar_code} generated`);
 			setPendingLinkAvatarCode(null);
 			setPendingLinkError(null);
 			setAutoBrief("");
@@ -604,14 +604,14 @@ export default function AvatarRegistryPage() {
 				if (linkResult.ok) {
 					if (!linkResult.skipped) {
 						setSuccessMsg(
-							`Avatar ${data.avatar_code} dijana dan dipautkan kepada produk terpilih sebagai DRAFT.`,
+							`Avatar ${data.avatar_code} generated and linked to the selected product as DRAFT.`,
 						);
 					}
 				} else {
 					setPendingLinkAvatarCode(data.avatar_code);
 					setPendingLinkError(linkResult.error);
 					setSuccessMsg(
-						`AVATAR_CREATED_PRODUCT_LINK_FAILED: Avatar ${data.avatar_code} berjaya dijana, tetapi pautan produk gagal.`,
+						`AVATAR_CREATED_PRODUCT_LINK_FAILED: Avatar ${data.avatar_code} was generated successfully, but the product link failed.`,
 					);
 					setError(linkResult.error);
 				}
@@ -973,8 +973,8 @@ export default function AvatarRegistryPage() {
 	const handleDeleteAvatar = async (avatar: AvatarProfile) => {
 		const confirmed = window.confirm(
 			`Padam avatar "${avatar.character_name}" (${avatar.avatar_code}) dari registry?\n\n` +
-				"Profil dibuang dari pool dan imej rujukannya (jika ada) diarkibkan " +
-				"(boleh pulih semula dari Creative Library). Tiada kesan pada video/kredit.",
+				"Profile removed from the pool and its reference image (if any) archived " +
+				"(recoverable from the Creative Library). No effect on video/credits.",
 		);
 		if (!confirmed) return;
 		setDeletingCode(avatar.avatar_code);
@@ -990,11 +990,11 @@ export default function AvatarRegistryPage() {
 				throw new Error(data?.detail || `HTTP ${response.status}`);
 			}
 			setSuccessMsg(
-				`Avatar ${avatar.avatar_code} dipadam (baki ${data.remaining} avatar).`,
+				`Avatar ${avatar.avatar_code} deleted (${data.remaining} avatars remaining).`,
 			);
 			await refresh();
 		} catch (err) {
-			setError(err instanceof Error ? err.message : "Gagal padam avatar.");
+			setError(err instanceof Error ? err.message : "Failed to delete avatar.");
 		} finally {
 			setDeletingCode(null);
 		}
@@ -1045,10 +1045,10 @@ export default function AvatarRegistryPage() {
 	) => {
 		if (!skipConfirm) {
 			const confirmed = window.confirm(
-				`Generate imej untuk ${avatar.character_name} (${avatar.avatar_code})?\n\n` +
-					"Ini akan hantar 1 job IMG ke Google Flow (imej PERCUMA — hanya video " +
-					"yang dicaj kredit). Imej siap akan disimpan kekal dalam Creative " +
-					"Library sebagai CHARACTER_REFERENCE.",
+				`Generate an image for ${avatar.character_name} (${avatar.avatar_code})?\n\n` +
+					"This sends 1 IMG job to Google Flow (images are FREE — only video " +
+					"is charged credits). The finished image is saved permanently in the Creative " +
+					"Library as CHARACTER_REFERENCE.",
 			);
 			if (!confirmed) return;
 		}
@@ -1119,7 +1119,7 @@ export default function AvatarRegistryPage() {
 						);
 					}
 					setSuccessMsg(
-						`${avatarCode}: imej siap dan didaftarkan dalam Creative Library (${registerData.asset_id}).`,
+						`${avatarCode}: image ready and registered in the Creative Library (${registerData.asset_id}).`,
 					);
 					setGenerating((prev) => {
 						const next = { ...prev };
@@ -1241,10 +1241,10 @@ export default function AvatarRegistryPage() {
 							Step 1 — Product-first avatar planning
 						</div>
 						<div className="mt-1 text-sm font-semibold text-slate-100">
-							Pilih produk dahulu, kemudian cipta atau pilih avatar yang boleh diaudit.
+							Select a product first, then create or pick an auditable avatar.
 						</div>
 						<div className="mt-1 text-[11px] text-slate-400">
-							Registry menyimpan pilihan sebagai DRAFT untuk produk ini. Ia tidak menjalankan image atau video generation secara automatik.
+							The registry saves the selection as DRAFT for this product. It does not run image or video generation automatically.
 						</div>
 					</div>
 					<SearchableProductSelect
@@ -1319,7 +1319,7 @@ export default function AvatarRegistryPage() {
 											<button
 												key={avatar.avatar_code}
 												type="button"
-												onClick={() => void saveProductAvatarSelection(avatar.avatar_code).then(() => setSuccessMsg(`${avatar.avatar_code} dipautkan kepada produk sebagai DRAFT.`)).catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to save avatar selection."))}
+												onClick={() => void saveProductAvatarSelection(avatar.avatar_code).then(() => setSuccessMsg(`${avatar.avatar_code} linked to the product as DRAFT.`)).catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to save avatar selection."))}
 												className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-semibold text-slate-200 hover:border-violet-400 hover:text-violet-200"
 											>
 												Use {avatar.avatar_code} · {Math.round(avatar.fit_score * 100)}%
@@ -1334,8 +1334,8 @@ export default function AvatarRegistryPage() {
 									>
 										<div className="font-bold">AVATAR_CREATED_PRODUCT_LINK_FAILED</div>
 										<div className="mt-1">
-											Avatar <span className="font-mono font-semibold">{pendingLinkAvatarCode}</span> wujud dalam registry.
-											Pautan produk gagal{pendingLinkError ? `: ${pendingLinkError}` : "."}
+											Avatar <span className="font-mono font-semibold">{pendingLinkAvatarCode}</span> exists in the registry.
+											Product link failed{pendingLinkError ? `: ${pendingLinkError}` : "."}
 										</div>
 										<button
 											type="button"
@@ -1413,10 +1413,10 @@ export default function AvatarRegistryPage() {
 										Pemetaan Avatar × Cluster Produk
 									</div>
 									<p className="mt-1 max-w-2xl text-[11px] text-slate-400">
-										Setiap produk (ikut kategori) diselesaikan ke satu cluster kreatif; cluster
-										itu dipetakan ke satu set avatar dewasa. Read-only — sumber
-										avatar_product_fit yang di-seed. Kanak-kanak dan remaja sengaja
-										dikecualikan daripada auto-cadangan.
+										Each product (by category) resolves to one creative cluster; that
+										cluster maps to one set of adult avatars. Read-only — seeded from the
+										avatar_product_fit source. Children and teens are intentionally
+										excluded from auto-suggestions.
 									</p>
 								</div>
 								{coverage && (
@@ -1458,7 +1458,7 @@ export default function AvatarRegistryPage() {
 																</span>
 															) : avatars.length === 0 ? (
 																<span className="text-[11px] text-slate-500">
-																	— tiada —
+																	— none —
 																</span>
 															) : (
 																<div className="flex flex-wrap gap-1.5">
@@ -1640,8 +1640,8 @@ export default function AvatarRegistryPage() {
 						Create Avatar
 					</div>
 					<div className="mt-1 text-xs text-slate-400">
-						Tambah avatar tunggal secara manual, atau biar AI jana satu
-						profil baharu (bukan duplikat) terus ke pool.
+						Add a single avatar manually, or let AI generate one
+						new profile (not a duplicate) straight into the pool.
 					</div>
 				</div>
 				<div className="grid gap-4 md:grid-cols-2">
@@ -1669,7 +1669,7 @@ export default function AvatarRegistryPage() {
 									}}
 									className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
 								>
-									<option value="">— pilih persona —</option>
+									<option value="">— select persona —</option>
 									{personasForGender(manualForm.gender).map((p) => (
 										<option key={p} value={p}>
 											{p}
@@ -1686,7 +1686,7 @@ export default function AvatarRegistryPage() {
 									<input
 										value={manualForm.character_name}
 										maxLength={16}
-										placeholder="cth: Aisha (huruf sahaja)"
+										placeholder="e.g. Aisha (letters only)"
 										onChange={(e) =>
 											setManualForm((f) => ({
 												...f,
@@ -1911,7 +1911,7 @@ export default function AvatarRegistryPage() {
 								value={autoBrief}
 								onChange={(e) => setAutoBrief(e.target.value)}
 								rows={3}
-								placeholder="Ringkasan: cth 'wanita muda ceria untuk UGC kecantikan'"
+								placeholder="Summary: e.g. 'cheerful young woman for beauty UGC'"
 								className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-200"
 							/>
 						</label>
@@ -2594,8 +2594,8 @@ export default function AvatarRegistryPage() {
 							{editAvatar.character_name} ·{" "}
 							<span className="font-mono">{editAvatar.avatar_code}</span>
 							<div className="mt-1 text-slate-500">
-								Identiti (skin/hair/wardrobe/expression) kekal — hanya usage tags
-								boleh diubah.
+								Identity (skin/hair/wardrobe/expression) stays fixed — only usage tags
+								can be changed.
 							</div>
 						</div>
 						<div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
