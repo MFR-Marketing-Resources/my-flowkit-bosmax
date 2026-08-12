@@ -38,9 +38,80 @@ class CatalogProductTypeTruthMapping:
     include_in_registry: bool = True
     reviewer_id: str = P57_REVIEWER_ID
     reviewer_note: str = P57_REVIEWER_NOTE
+    # Exact Product Type Codes from the workbook authority take precedence over
+    # broad source-type rules.  This is the bridge into the existing P4 scene
+    # taxonomy; the workbook's human-readable cluster remains available from
+    # the copywriting taxonomy authority itself.
+    source_product_type_codes: tuple[str, ...] = ()
 
 
 CATALOG_PRODUCT_TYPE_TRUTH_MAPPINGS = (
+    # Copywriting Hub exact-code bridges.  The workbook supplies the canonical
+    # product identity; these entries bind that identity to the existing,
+    # reviewed Scene Strategy/P4 lane without falling back to title inference.
+    CatalogProductTypeTruthMapping(
+        "home_decor",
+        "artificial_plant",
+        "Artificial Flowers",
+        source_types=("Artificial Flower Bouquets",),
+        source_categories=("Home & Living",),
+        source_subcategories=("Home Decor",),
+        specific_scene_strategy_id="HOME_DECOR",
+        source_product_type_codes=("artificial_flowers",),
+    ),
+    CatalogProductTypeTruthMapping(
+        "fashion_accessory",
+        "bag",
+        "Bag & Wallet",
+        source_types=(
+            "Men's Waist Bags",
+            "Crossbody Bags",
+            "Women's Mini Wallets",
+            "Women's Mini Bags",
+        ),
+        source_categories=("Fashion",),
+        source_subcategories=("Bags", "Wallets"),
+        specific_scene_strategy_id="FASHION_ACCESSORY",
+        source_product_type_codes=(
+            "mens_waist_bag",
+            "crossbody_bag",
+            "womens_wallet",
+            "womens_mini_bag",
+        ),
+    ),
+    CatalogProductTypeTruthMapping(
+        "home_improvement",
+        "bathroom_fixture",
+        "Bathroom Fixture",
+        source_types=("Bidet Spray Sets",),
+        source_categories=("Home & Living",),
+        source_subcategories=("Bathroom Fixtures",),
+        specific_scene_strategy_id="WALL_COVERING",
+        source_product_type_codes=("bidet_spray_set",),
+    ),
+    CatalogProductTypeTruthMapping(
+        "beauty_skincare",
+        "medicated_patch",
+        "Medicated Patch",
+        source_types=("Wart & Corn Removal Plasters", "Acne Patches"),
+        source_categories=("Health & Personal Care", "Beauty & Personal Care"),
+        source_subcategories=("Foot Care", "Skincare"),
+        specific_scene_strategy_id="FACE_MASK",
+        source_product_type_codes=(
+            "wart_corn_plaster",
+            "hydrocolloid_acne_patch",
+        ),
+    ),
+    CatalogProductTypeTruthMapping(
+        "stationery",
+        "sticker",
+        "Sticker",
+        source_types=("3D Scene Sticker Books",),
+        source_categories=("Toys & Games",),
+        source_subcategories=("Creative Play",),
+        specific_scene_strategy_id="STATIONERY",
+        source_product_type_codes=("3d_sticker_book",),
+    ),
     # Existing, proven Product Truth types.
     CatalogProductTypeTruthMapping(
         "baby_care",
@@ -1317,6 +1388,13 @@ def _matches(value: str, candidates: tuple[str, ...]) -> bool:
     return not candidates or value in {_normalize(candidate) for candidate in candidates}
 
 
+def _matches_exact_code(value: object, candidates: tuple[str, ...]) -> bool:
+    normalized = str(value or "").strip().casefold()
+    return not candidates or normalized in {
+        str(candidate).strip().casefold() for candidate in candidates
+    }
+
+
 def resolve_catalog_product_type_truth(
     product: Mapping[str, object],
 ) -> CatalogProductTypeTruthMapping | None:
@@ -1324,12 +1402,35 @@ def resolve_catalog_product_type_truth(
 
     product_id = str(product.get("id") or product.get("product_id") or "")
     reviewed_override = P58_PRODUCT_TRUTH_OVERRIDES.get(product_id)
-    if reviewed_override is not None:
-        return reviewed_override
+    source_product_type_code = product.get("copywriting_product_type_code")
     source_type = _normalize(product.get("type"))
     source_category = _normalize(product.get("category"))
     source_subcategory = _normalize(product.get("subcategory"))
+
+    # The current workbook code is the stronger identity signal.  Check it
+    # before historical product-ID overrides so an old ruling cannot silently
+    # win after a product has an exact SSOT selection.
     for mapping in CATALOG_PRODUCT_TYPE_TRUTH_MAPPINGS:
+        if not mapping.source_product_type_codes or not _matches_exact_code(
+            source_product_type_code, mapping.source_product_type_codes
+        ):
+            continue
+        if mapping.source_types and not source_type:
+            continue
+        if not _matches(source_type, mapping.source_types):
+            continue
+        if not _matches(source_category, mapping.source_categories):
+            continue
+        if not _matches(source_subcategory, mapping.source_subcategories):
+            continue
+        return mapping
+
+    if reviewed_override is not None:
+        return reviewed_override
+
+    for mapping in CATALOG_PRODUCT_TYPE_TRUTH_MAPPINGS:
+        if mapping.source_product_type_codes:
+            continue
         if mapping.source_types and not source_type:
             continue
         if not _matches(source_type, mapping.source_types):
@@ -1346,11 +1447,15 @@ def catalog_product_type_truth_provenance(
     product: Mapping[str, object],
 ) -> str:
     product_id = str(product.get("id") or product.get("product_id") or "")
-    if product_id in P58_PRODUCT_TRUTH_OVERRIDES:
+    mapping = resolve_catalog_product_type_truth(product)
+    if mapping is None:
+        return "UNRESOLVED"
+    if (
+        product_id in P58_PRODUCT_TRUTH_OVERRIDES
+        and not mapping.source_product_type_codes
+    ):
         return "P5_8_PRODUCT_TRUTH_REVIEW"
-    if resolve_catalog_product_type_truth(product) is not None:
-        return "SOURCE_TAXONOMY"
-    return "UNRESOLVED"
+    return "SOURCE_TAXONOMY"
 
 
 def iter_catalog_product_type_truth_registry_entries() -> tuple[
