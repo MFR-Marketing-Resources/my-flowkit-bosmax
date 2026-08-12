@@ -461,13 +461,13 @@ const RECON_APPROVED = {
 	output_sha256_verified: true,
 };
 
-function renderShell(query = "") {
+function renderShell(query = "", onResult?: (r: { media_id: string; url: string; kind: "image" }) => void) {
 	return render(
 		<MemoryRouter initialEntries={[`/creative/poster-builder${query}`]}>
 			<Routes>
 				<Route
 					path="/creative/poster-builder"
-					element={<PosterGuidedShell />}
+					element={<PosterGuidedShell onResult={onResult} />}
 				/>
 			</Routes>
 		</MemoryRouter>,
@@ -585,7 +585,8 @@ describe("PosterGuidedShell", () => {
 	});
 
 	it("walks the full guided journey product → save", async () => {
-		renderShell();
+		const onResult = vi.fn();
+		renderShell("", onResult);
 		fireEvent.click(screen.getByTestId("pick-product"));
 		// Readiness banner is friendly + ready.
 		const banner = await screen.findByTestId("poster-readiness-banner");
@@ -638,6 +639,9 @@ describe("PosterGuidedShell", () => {
 			creative_mode: "LIFESTYLE_EDITORIAL",
 		});
 		expect(await screen.findByTestId("poster-preview")).toBeInTheDocument();
+		expect(onResult).toHaveBeenCalledWith(
+			expect.objectContaining({ media_id: "pd-1", kind: "image" }),
+		);
 		expect(screen.getByTestId("poster-qa-passed")).toBeInTheDocument();
 
 		fireEvent.click(screen.getByTestId("poster-guided-continue")); // compose → save

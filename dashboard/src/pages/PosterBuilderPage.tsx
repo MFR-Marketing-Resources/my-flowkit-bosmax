@@ -1604,7 +1604,15 @@ export default function PosterBuilderPage() {
 							helper="The poster-native journey remains multi-step; this V4 frame does not collapse its creative modes into a single-shot lane."
 							collapsible={false}
 						>
-							<PosterGuidedShell />
+							<PosterGuidedShell
+								onResult={(r) =>
+									setSessionResults((prev) =>
+										prev.some((x) => x.media_id === r.media_id)
+											? prev
+											: [{ ...r, deletable: false }, ...prev],
+									)
+								}
+							/>
 						</WorkflowStep>
 						{advancedDiagnostics}
 					</main>
