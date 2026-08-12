@@ -61,6 +61,37 @@ const resolveThumb = (product: Product): string | null =>
 	product.image_analysis?.image_url ||
 	null;
 
+const resolveOriginalVisualThumb = (product: Product): string | null =>
+	product.visual_readiness?.original_preview_url ||
+	product.visual_readiness?.original_display_url ||
+	resolveThumb(product);
+
+// The Visual column must follow the backend's current-system authority. A
+// pending candidate is not official yet, so it deliberately falls back to the
+// original source until the operator completes approval and saves it.
+const resolveVisualThumb = (product: Product): string | null => {
+	const readiness = product.visual_readiness;
+	const current = readiness?.current_system_visual;
+	const activePreview = readiness?.active_cutout_preview_url;
+	const manualPreview = readiness?.manual_cutout_preview_url;
+	const autoPreview = readiness?.auto_cutout_preview_url;
+	const official =
+		current?.status === "OFFICIAL" ||
+		readiness?.active_visual_source?.startsWith("APPROVED_");
+	if (official) {
+		if (activePreview) {
+			return activePreview;
+		}
+		if (current?.card === "MANUAL_CUTOUT" && manualPreview) {
+			return manualPreview;
+		}
+		if (current?.card === "AUTO_CUTOUT" && autoPreview) {
+			return autoPreview;
+		}
+	}
+	return resolveOriginalVisualThumb(product);
+};
+
 const fmtMoney = (value: number | null | undefined): string =>
 	value == null || Number.isNaN(Number(value))
 		? "—"
@@ -500,6 +531,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 							<tbody>
 								{rows.map((product) => {
 									const thumb = resolveThumb(product);
+									const visualThumb = resolveVisualThumb(product);
 									const riskLevel = (product.claim_risk_level || "").toUpperCase();
 									const clusterType =
 										[
@@ -619,9 +651,9 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 													data-testid="table-visual-summary"
 												>
 													<div className="h-10 w-10 shrink-0 overflow-hidden rounded border border-slate-700 bg-white">
-														{thumb ? (
+														{visualThumb ? (
 															<img
-																src={thumb}
+																src={visualThumb}
 																alt=""
 																className="h-full w-full object-contain"
 																onError={(event) => {
