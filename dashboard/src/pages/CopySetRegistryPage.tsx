@@ -181,8 +181,8 @@ function CloneCopySetModal({
 				<p className="mt-1 text-xs text-slate-400">
 					Hook: “{set.hook || set.angle}”. The clone re-enters as{" "}
 					<span className="font-semibold text-amber-200">Review required</span>{" "}
-					dengan claim-safety scan terhadap produk sasaran — tidak pernah
-					auto-approve. Usage bermula 0 (bajet reuse baharu).
+					with a claim-safety scan against the target product — never
+					auto-approved. Usage starts at 0 (fresh reuse budget).
 				</p>
 				<div className="mt-4">
 					<SearchableProductSelect
@@ -480,7 +480,7 @@ export default function CopySetRegistryPage() {
 				ok += 1;
 			} catch (e) {
 				failures.push(
-					`${s.hook || s.copy_set_id}: ${e instanceof Error ? e.message : "gagal"}`,
+					`${s.hook || s.copy_set_id}: ${e instanceof Error ? e.message : "failed"}`,
 				);
 			}
 		}
@@ -488,7 +488,7 @@ export default function CopySetRegistryPage() {
 		setBulkApproveOpen(false);
 		if (failures.length) {
 			setError(
-				`${failures.length} set gagal approve (gate menolak): ${failures.slice(0, 3).join(" · ")}${failures.length > 3 ? " · …" : ""}`,
+				`${failures.length} sets failed to approve (gate rejected): ${failures.slice(0, 3).join(" · ")}${failures.length > 3 ? " · …" : ""}`,
 			);
 		}
 		if (ok) setSuccess(`${ok} sets approved (bulk).`);
@@ -566,7 +566,7 @@ export default function CopySetRegistryPage() {
 							{r.similar_to_copy_set_id ? (
 								<div
 									className="font-bold text-amber-300"
-									title={`Hampir sama dengan set ${r.similar_to_copy_set_id}`}
+									title={`Nearly identical to set ${r.similar_to_copy_set_id}`}
 								>
 									NEAR-DUP{" "}
 									{r.similarity_score != null
@@ -830,7 +830,7 @@ export default function CopySetRegistryPage() {
 									<HelperText tone="warn">
 										Grounded pada peringkat framework family. Untuk copy paling
 										tepat (benefit / USP / persona sebenar), author satu Product
-										Knowledge snapshot untuk produk ini.
+										Knowledge snapshot for this product.
 										{grounding.missing.length
 											? ` Kurang: ${grounding.missing.join("; ")}.`
 											: ""}

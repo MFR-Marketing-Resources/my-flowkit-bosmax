@@ -1468,7 +1468,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 
 				setNotice({
 					tone: "info",
-					title: `${data.mode} running — video sedang dijana (±3–8 min), biar page ini terbuka`,
+					title: `${data.mode} running — video is generating (±3–8 min), keep this page open`,
 					detail: `Stage: ${stageLabel}${stageMessage ? ` — ${stageMessage}` : ""} · Note: nothing moves in the Google Flow tab — generation runs via API and the video appears here when it's ready.`,
 					requestId: manualRequestId,
 				});
