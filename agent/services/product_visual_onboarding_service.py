@@ -280,6 +280,32 @@ def _http_source_url(value: Any) -> str | None:
     return None
 
 
+def _display_image_url(product: dict[str, Any]) -> tuple[str, str] | None:
+    """Return the same browser-visible image precedence used by Product Detail.
+
+    ``get_product_visual_readiness`` is intentionally read-only and must not
+    materialize a URL-only source.  It still needs to expose the image that the
+    product header already displays, otherwise the Visual/Canva page presents
+    a false ``Not available`` state and disables the manual lane.  Only remote
+    URLs are considered here; byte-backed/local sources continue through the
+    trusted preview endpoint above.
+    """
+    candidates: list[tuple[Any, str]] = [
+        (product.get("image_url"), "PRODUCT_ROW_IMAGE_URL"),
+        (product.get("rendered_img_src"), "PRODUCT_RENDERED_IMAGE_URL"),
+        (product.get("image_analysis_image_url"), "PRODUCT_IMAGE_ANALYSIS_URL"),
+    ]
+    analysis = product.get("image_analysis")
+    if isinstance(analysis, dict):
+        candidates.append((analysis.get("image_url"), "PRODUCT_IMAGE_ANALYSIS_URL"))
+    candidates.append((product.get("source_url"), "PRODUCT_ROW_SOURCE_URL"))
+    for value, source in candidates:
+        url = _http_source_url(value)
+        if url:
+            return url, source
+    return None
+
+
 def _original_display_source(
     product: dict[str, Any],
     *,
@@ -298,10 +324,10 @@ def _original_display_source(
             "source": "TRUSTED_SAME_PRODUCT_SOURCE",
             "trust_status": "TRUSTED",
         }
-    for field, source in (("image_url", "PRODUCT_ROW_IMAGE_URL"), ("source_url", "PRODUCT_ROW_SOURCE_URL")):
-        url = _http_source_url(product.get(field))
-        if url:
-            return {"url": url, "source": source, "trust_status": "DISPLAY_ONLY"}
+    display = _display_image_url(product)
+    if display:
+        url, source = display
+        return {"url": url, "source": source, "trust_status": "DISPLAY_ONLY"}
     return {"url": None, "source": "UNAVAILABLE", "trust_status": "UNAVAILABLE"}
 
 
