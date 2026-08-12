@@ -9,10 +9,16 @@ export interface ConfirmActionModalProps {
 	 * standard gate for destructive actions (product archive/delete). */
 	requiredPhrase?: string;
 	confirmLabel?: string;
+	/** If set, renders a free-text reason box; its value is passed to onConfirm. */
+	reasonLabel?: string;
+	reasonPlaceholder?: string;
+	reasonDefault?: string;
+	/** When reasonLabel is set, require a non-empty reason (default true). */
+	reasonRequired?: boolean;
 	cancelLabel?: string;
 	tone?: "danger" | "default";
 	busy?: boolean;
-	onConfirm: () => void;
+	onConfirm: (reason: string) => void;
 	onCancel: () => void;
 }
 
@@ -26,6 +32,10 @@ export function ConfirmActionModal({
 	body,
 	requiredPhrase,
 	confirmLabel = "Confirm",
+	reasonLabel,
+	reasonPlaceholder,
+	reasonDefault,
+	reasonRequired = true,
 	cancelLabel = "Cancel",
 	tone = "default",
 	busy,
@@ -33,16 +43,21 @@ export function ConfirmActionModal({
 	onCancel,
 }: ConfirmActionModalProps) {
 	const [phrase, setPhrase] = useState("");
+	const [reason, setReason] = useState(reasonDefault ?? "");
 
 	// Reset the typed phrase every time the modal (re)opens so a stale value
 	// never carries over from a previous confirmation.
 	useEffect(() => {
-		if (open) setPhrase("");
+		if (open) {
+			setPhrase("");
+			setReason(reasonDefault ?? "");
+		}
 	}, [open]);
 
 	if (!open) return null;
 
 	const phraseOk = !requiredPhrase || phrase.trim() === requiredPhrase;
+	const reasonOk = !reasonLabel || !reasonRequired || reason.trim().length > 0;
 	const confirmClass =
 		tone === "danger" ? "bg-red-600 hover:bg-red-500" : "bg-blue-600 hover:bg-blue-500";
 
@@ -72,6 +87,18 @@ export function ConfirmActionModal({
 						/>
 					</div>
 				)}
+				{reasonLabel && (
+					<div className="space-y-1.5">
+						<p className="text-[10px] text-slate-500">{reasonLabel}</p>
+						<textarea
+							value={reason}
+							onChange={(event) => setReason(event.target.value)}
+							placeholder={reasonPlaceholder}
+							rows={2}
+							className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+						/>
+					</div>
+				)}
 				<div className="flex justify-end gap-2">
 					<button
 						type="button"
@@ -83,8 +110,8 @@ export function ConfirmActionModal({
 					</button>
 					<button
 						type="button"
-						onClick={onConfirm}
-						disabled={!phraseOk || busy}
+						onClick={() => onConfirm(reason.trim())}
+						disabled={!phraseOk || !reasonOk || busy}
 						className={`rounded-lg px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40 ${confirmClass}`}
 					>
 						{busy ? "…" : confirmLabel}
