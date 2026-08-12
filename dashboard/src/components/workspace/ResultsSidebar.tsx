@@ -5,6 +5,10 @@ export interface SessionResult {
 	media_id: string;
 	size_mb?: number | null;
 	kind?: "image" | "video";
+	/** Direct preview/download URL. When set, used instead of /api/flow/retrieved/{media_id} (e.g. composed posters). */
+	url?: string;
+	/** When false, hides Delete (non-flow-artifact results like posters). */
+	deletable?: boolean;
 }
 
 interface ResultsSidebarProps {
@@ -92,7 +96,7 @@ export default function ResultsSidebar({
 						>
 							{r.kind === "video" ? (
 								<video
-									src={`/api/flow/retrieved/${encodeURIComponent(r.media_id)}`}
+									src={r.url ?? `/api/flow/retrieved/${encodeURIComponent(r.media_id)}`}
 									muted
 									playsInline
 									controls
@@ -101,12 +105,12 @@ export default function ResultsSidebar({
 								/>
 							) : (
 								<a
-									href={`/api/flow/retrieved/${r.media_id}`}
+									href={r.url ?? `/api/flow/retrieved/${r.media_id}`}
 									target="_blank"
 									rel="noopener noreferrer"
 								>
 									<img
-										src={`/api/flow/retrieved/${encodeURIComponent(r.media_id)}`}
+										src={r.url ?? `/api/flow/retrieved/${encodeURIComponent(r.media_id)}`}
 										alt="generated result"
 										loading="lazy"
 										className="aspect-square w-full rounded-lg bg-black object-contain"
@@ -115,13 +119,13 @@ export default function ResultsSidebar({
 							)}
 							<div className="flex gap-1">
 								<a
-									href={`/api/flow/retrieved/${r.media_id}`}
+									href={r.url ?? `/api/flow/retrieved/${r.media_id}`}
 									download={`${r.media_id}.${r.kind === "video" ? "mp4" : "jpg"}`}
 									className="flex-1 rounded border border-slate-700 py-0.5 text-center text-[10px] text-slate-300 hover:bg-slate-800"
 								>
 									Save
 								</a>
-								{r.kind !== "video" ? (
+								{r.kind !== "video" && r.deletable !== false ? (
 									<button
 										type="button"
 										onClick={() => void handleDelete(r.media_id)}
