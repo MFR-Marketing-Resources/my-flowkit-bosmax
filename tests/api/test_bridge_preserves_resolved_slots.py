@@ -107,10 +107,10 @@ async def test_bridge_without_resolved_assets_keeps_the_default_seed(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_i2v_bridge_maps_subject_scene_style_and_skips_product_image_refs(monkeypatch):
+async def test_i2v_bridge_maps_subject_scene_style_and_skips_product_visual_refs(monkeypatch):
     """I2V WEP slots are subject/scene/style. The bridge maps them to the
     resolver's reference-asset params, skipping auto-seeded product-image:* refs
-    (not creative-asset ids — the resolver's own product auto-seed applies)."""
+    and the server-owned official visual (neither is a creator asset)."""
     wep = {
         "workspace_execution_package_id": "wep_i2v",
         "product_id": "prod-1",
@@ -118,7 +118,11 @@ async def test_i2v_bridge_maps_subject_scene_style_and_skips_product_image_refs(
         "request_lineage_payload": "{}",
         "asset_slots": json.dumps([
             {"slot_key": "subject",
-             "resolved_asset": {"asset_id": "product-image:prod-1:subject"}},
+            "resolved_asset": {
+                "asset_id": "registry-cutout-id",
+                "asset_source": "PRODUCT_VISUAL_OFFICIAL_CUTOUT",
+                "official_visual": True,
+            }},
             {"slot_key": "scene", "resolved_asset": {"asset_id": "ca_scene_1"}},
             {"slot_key": "style", "resolved_asset": {"asset_id": "ca_style_1"}},
         ]),

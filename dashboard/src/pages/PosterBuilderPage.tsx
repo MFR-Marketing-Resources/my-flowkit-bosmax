@@ -791,6 +791,8 @@ export function PosterBuilderLegacyPanel() {
 
 			const { job_id } = await startImgGeneration({
 				prompt,
+				product_id: productId || undefined,
+				visual_lane_id: "POSTER_BUILDER",
 				aspect: flowMirror.aspect_ratio,
 				count: flowMirror.count,
 				image_model: flowMirror.image_model,

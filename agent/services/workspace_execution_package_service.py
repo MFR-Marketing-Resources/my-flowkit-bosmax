@@ -127,10 +127,11 @@ async def _bind_f2v_reference_assets(
 ) -> list[dict[str, Any]]:
     """Bind operator-selected F2V reference slots with server-validated assets.
 
-    HYBRID: the approved package's own product anchor (start_frame slot) is the
-    DEFAULT authority; an explicitly selected PRODUCT_REFERENCE asset overrides
-    it. Start/end frame ids are a contract violation (exactly one effective
-    product reference). FRAMES: an explicit start frame is REQUIRED (end frame
+    HYBRID: the Product Registration Official Product Visual in the approved
+    package's own product anchor (start_frame slot) is the sole authority.
+    Product reference and start-frame overrides are ignored so a P6/creative
+    asset cannot reintroduce cosmetic product imagery. FRAMES: an explicit
+    start frame is REQUIRED (end frame
     optional) — the raw product image is never a silent stand-in for a finished
     composite frame. Every explicit selection is validated server-side: role,
     mode, slot, approval, rendered-text ban, product ownership, and
@@ -140,12 +141,11 @@ async def _bind_f2v_reference_assets(
     normalized_source_mode = str(source_mode or "").upper()
     selected_slots: list[tuple[str, str, str]] = []
     if normalized_source_mode == "HYBRID":
-        if start_frame_asset_id or end_frame_asset_id:
-            raise ValueError("HYBRID_EXACTLY_ONE_PRODUCT_REFERENCE_REQUIRED")
-        if product_reference_asset_id:
-            selected_slots.append(("start_frame", product_reference_asset_id, "PRODUCT_REFERENCE"))
-        # No explicit selection: the package's resolved product anchor stands
-        # (or the package is already BLOCKED with START_FRAME_REQUIRED).
+        if end_frame_asset_id:
+            raise ValueError("HYBRID_END_FRAME_OVERRIDE_NOT_ALLOWED")
+        # All product-reference overrides are intentionally ignored. The
+        # package's resolved Product Registration visual stands as the only
+        # effective HYBRID product anchor.
     if normalized_source_mode == "FRAMES":
         if not start_frame_asset_id:
             raise ValueError("FRAMES_START_FRAME_REFERENCE_REQUIRED")

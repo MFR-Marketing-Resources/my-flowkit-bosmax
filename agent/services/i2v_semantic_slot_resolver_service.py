@@ -35,10 +35,11 @@ def _clone_product_reference_asset(
     slot_key: str,
 ) -> dict[str, Any]:
     cloned = copy.deepcopy(asset)
-    product_id = str(asset.get("asset_id", "product-reference")).split(":")[1]
+    original_asset_id = str(asset.get("asset_id") or "product-reference")
+    product_id = original_asset_id.split(":", 2)[1] if ":" in original_asset_id else original_asset_id
     source_value = asset.get("preview_url") or asset.get("download_url") or product_id
     cloned["slot_key"] = slot_key
-    cloned["asset_id"] = f"product-image:{product_id}:{slot_key}"
+    cloned["asset_id"] = f"{original_asset_id}:{slot_key}"
     cloned["asset_fingerprint"] = f"asset_{_fingerprint(product_id, slot_key, str(source_value))[:16]}"
     return cloned
 
@@ -60,13 +61,6 @@ async def resolve_i2v_semantic_slots(
     blockers: list[str] = []
     warnings: list[str] = []
 
-    role_asset_ids = {
-        "product_reference": request.product_reference_asset_id,
-        "character_reference": request.character_reference_asset_id,
-        "scene_context_reference": request.scene_context_reference_asset_id,
-        "style_reference": request.style_reference_asset_id,
-    }
-
     semantic_roles: dict[str, str | None] = {
         "product_reference": None,
         "character_reference": request.character_reference_asset_id,
@@ -74,7 +68,7 @@ async def resolve_i2v_semantic_slots(
         "style_reference": request.style_reference_asset_id,
     }
     creative_asset_ids: dict[str, str | None] = {
-        "product_reference": request.product_reference_asset_id or (product_subject_asset or {}).get("asset_id"),
+        "product_reference": (product_subject_asset or {}).get("asset_id"),
         "character_reference": request.character_reference_asset_id,
         "scene_context_reference": request.scene_context_reference_asset_id,
         "style_reference": request.style_reference_asset_id,
@@ -83,36 +77,14 @@ async def resolve_i2v_semantic_slots(
     resolved_role_assets: dict[str, dict[str, Any]] = {}
     role_summaries: list[str] = []
 
-    product_reference_slot = next(
-        (
-            slot_key
-            for slot_key, mapped_role in recipe["engine_slot_mapping"].items()
-            if mapped_role == "product_reference"
-        ),
-        "subject",
-    )
-
     if request.product_reference_asset_id:
-        validation = await validate_selectable_asset(
-            request.product_reference_asset_id,
-            semantic_role="PRODUCT_REFERENCE",
-            allowed_mode="I2V",
-            engine_slot=product_reference_slot,  # type: ignore[arg-type]
-            require_approved=True,
+        warnings.append(
+            "PRODUCT_REFERENCE_OVERRIDE_IGNORED_OFFICIAL_VISUAL"
         )
-        if not validation.valid or validation.asset is None:
-            blockers.extend([f"PRODUCT_REFERENCE_{item}" for item in validation.blockers])
-        else:
-            resolved_role_assets["product_reference"] = build_resolved_workspace_asset(
-                asset=validation.asset,
-                slot_key=product_reference_slot,
-            )
-            semantic_roles["product_reference"] = validation.asset.asset_id
-            role_summaries.append(f"selected product reference {validation.asset.display_name}")
-    elif product_subject_asset:
+    if product_subject_asset:
         resolved_role_assets["product_reference"] = dict(product_subject_asset)
         semantic_roles["product_reference"] = product_subject_asset.get("asset_id")
-        role_summaries.append("approved product reference image")
+        role_summaries.append("Product Registration official product visual")
     else:
         blockers.append("MISSING_PRODUCT_REFERENCE")
 

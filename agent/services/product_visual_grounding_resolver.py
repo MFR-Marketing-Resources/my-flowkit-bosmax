@@ -547,6 +547,149 @@ def resolve_product_reference_image(
     )
 
 
+def resolve_official_product_reference_image(
+    product: dict[str, Any],
+) -> ProductReferenceInfo:
+    """Resolve the one product visual selected by Product Registration.
+
+    Product Registration persists the active selection in the Product Truth
+    lock. Generation lanes must not independently choose a creative asset or
+    silently fall back to the catalog image after a cutout has been approved.
+    When an approved lock exists, validate and return that cutout strictly; an
+    invalid approved lock is a hard failure, not a reason to leak the original
+    source back into generation.
+
+    Products that explicitly use Original Source (or have not created a
+    cutout candidate yet) continue through the existing trusted-source
+    resolver. Pending candidates therefore remain review-only.
+    """
+    product_id = str(product.get("id") or product.get("product_id") or "")
+    try:
+        lock = truth_lock_service.load_product_truth_lock(product_id)
+    except truth_lock_service.ProductTruthLockError as exc:
+        raise ProductVisualReferenceRequiredError(
+            f"OFFICIAL_PRODUCT_VISUAL_INVALID: {exc}"
+        ) from exc
+
+    if lock is not None:
+        active_selection = str(
+            (lock.provenance or {}).get("active_selection") or ""
+        ).upper()
+        if active_selection == "SAME_PRODUCT_TRUSTED_SOURCE":
+            # An explicit Original Source decision must not fall through to an
+            # old approved creative-library asset.  The onboarding lock keeps a
+            # byte-verified, same-product canonical source copy even after a
+            # cutout is rejected or the operator switches back to Original.
+            source_path = Path(str(lock.canonical_source_path or ""))
+            if not source_path.is_absolute():
+                source_path = BASE_DIR / source_path
+            source_path = source_path.resolve()
+            source_meta = _inspect_image_file(source_path)
+            if not source_meta or source_meta[3] != str(lock.canonical_sha256 or ""):
+                raise ProductVisualReferenceRequiredError(
+                    "OFFICIAL_PRODUCT_VISUAL_INVALID: Selected Original Source bytes are missing or changed."
+                )
+            w, h, mime, sha = source_meta
+            return ProductReferenceInfo(
+                source_type="PRODUCT_TRUTH_LOCK_SOURCE",
+                media_id=lock.canonical_media_id,
+                local_path=str(source_path),
+                image_url=product.get("image_url"),
+                mime_type=mime,
+                sha256=sha,
+                width=w,
+                height=h,
+                provenance="PRODUCT_VISUAL_TRUTH_LOCK_CANONICAL_SOURCE",
+                validation_status="VALIDATED",
+            )
+
+    if lock is None or lock.review_status != "APPROVED":
+        return resolve_product_reference_image(product, prefer_approved_cutout=True)
+
+    try:
+        resolved = truth_lock_service.resolve_approved_product_truth_lock(product_id)
+        cutout_path = Path(resolved.canonical_cutout_path)
+        cutout_meta = _inspect_image_file(cutout_path)
+        if not cutout_meta or cutout_meta[3] != resolved.canonical_cutout_sha256:
+            raise ProductVisualReferenceRequiredError(
+                "OFFICIAL_PRODUCT_VISUAL_INVALID: Approved Product Truth cutout bytes are missing or changed."
+            )
+        w, h, mime, sha = cutout_meta
+        return ProductReferenceInfo(
+            source_type="PRODUCT_TRUTH_LOCK_CUTOUT",
+            media_id=resolved.canonical_cutout_media_id,
+            local_path=str(cutout_path),
+            image_url=product.get("image_url"),
+            mime_type=mime,
+            sha256=sha,
+            width=w,
+            height=h,
+            provenance="PRODUCT_VISUAL_TRUTH_LOCK_CANONICAL_CUTOUT",
+            validation_status="VALIDATED",
+        )
+    except ProductVisualReferenceRequiredError:
+        raise
+    except truth_lock_service.ProductTruthLockError as exc:
+        raise ProductVisualReferenceRequiredError(
+            f"OFFICIAL_PRODUCT_VISUAL_INVALID: {exc}"
+        ) from exc
+
+
+def build_official_product_visual_asset(
+    product: dict[str, Any],
+    *,
+    slot_key: str,
+    label: str = "Official product visual",
+) -> dict[str, Any]:
+    """Build the server-owned asset shape consumed by every package lane."""
+    product_id = str(product.get("id") or product.get("product_id") or "").strip()
+    if not product_id:
+        raise ProductVisualReferenceRequiredError(
+            "PRODUCT_VISUAL_REFERENCE_REQUIRED: Product id is missing."
+        )
+
+    reference = resolve_official_product_reference_image(product)
+    is_cutout = reference.source_type == "PRODUCT_TRUTH_LOCK_CUTOUT"
+    preview_url = (
+        f"/api/product-visual-onboarding/{product_id}/cutout/preview/active"
+        if is_cutout
+        else f"/api/products/{product_id}/image"
+        if reference.local_path
+        else reference.image_url
+    )
+    extension = Path(reference.local_path).suffix.lower() if reference.local_path else ""
+    if extension not in {".png", ".jpg", ".jpeg", ".webp"}:
+        extension = ".png" if is_cutout else ".jpg"
+    source = (
+        "PRODUCT_VISUAL_OFFICIAL_CUTOUT"
+        if is_cutout
+        else "PRODUCT_VISUAL_OFFICIAL_SOURCE"
+    )
+    return {
+        "asset_id": reference.media_id or f"product-visual:{product_id}:{reference.sha256[:16]}",
+        "product_id": product_id,
+        "asset_fingerprint": f"product_visual_{reference.sha256[:16]}_{slot_key}",
+        "slot_key": slot_key,
+        "asset_source": source,
+        "label": label,
+        "file_name": f"{product_id}_official{extension}",
+        "preview_url": preview_url,
+        "download_url": preview_url,
+        "media_id": reference.media_id,
+        "local_file_path": reference.local_path,
+        "preview_renderable_status": "RENDERABLE" if reference.local_path else "REMOTE_URL_DIRECT",
+        "preview_error_detail": None,
+        "local_image_path_present": bool(reference.local_path),
+        "remote_image_url_present": bool(reference.image_url),
+        "semantic_role": "PRODUCT_REFERENCE",
+        "official_visual": True,
+        "official_visual_source_type": reference.source_type,
+        "official_visual_sha256": reference.sha256,
+        "width": reference.width,
+        "height": reference.height,
+    }
+
+
 def resolve_generation_strategy(
     lane_id: str | None = None,
     product_id: str | None = None,
@@ -639,7 +782,11 @@ def resolve_product_visual_grounding(
             "Exact IMG lane is blocked until the server-side Product Truth Lock is approved and byte-valid.",
         )
 
-    ref_info = resolve_product_reference_image(product)
+    # Product Registration is the only visual authority for generation.  This
+    # deliberately resolves the active selection (including an approved
+    # Manual/Canva or Auto cutout) instead of allowing the generic catalog
+    # resolver to choose a different product image.
+    ref_info = resolve_official_product_reference_image(product)
     locks = build_product_lock(product, is_video=is_video, has_product_reference=True)
 
     handling_lock = (

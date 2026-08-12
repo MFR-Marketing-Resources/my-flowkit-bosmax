@@ -471,6 +471,8 @@ export default function ImgCockpitPage() {
 			let payload = useExactComposite
 				? {
 						prompt: scenePrompt,
+						product_id: productId || undefined,
+						visual_lane_id: lane?.lane_id,
 						aspect,
 						count,
 						image_model: imageModel,
@@ -482,6 +484,8 @@ export default function ImgCockpitPage() {
 						aspect,
 						count,
 						imageModel,
+						productId,
+						visualLaneId: lane?.lane_id,
 				  });
 
 			if (!useExactComposite && groundedProdAsset) {

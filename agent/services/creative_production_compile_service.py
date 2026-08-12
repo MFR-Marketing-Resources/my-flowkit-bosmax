@@ -72,12 +72,14 @@ async def _compile_video(
                 dimensions.get("scene_strategy_context") or None
             ),
             product_reference_asset_id=(
-                dimensions.get("product_reference_asset_id") or None
+                (dimensions.get("product_reference_asset_id") or None)
+                if logical_mode not in {"HYBRID", "I2V"}
+                else None
             ),
             start_frame_asset_id=(
-                dimensions.get("finished_frame_asset_id")
-                or dimensions.get("product_reference_asset_id")
-                or None
+                (dimensions.get("finished_frame_asset_id") or None)
+                if logical_mode == "F2V"
+                else None
             ),
             character_reference_asset_id=(
                 dimensions.get("character_asset_id") or None
@@ -128,9 +130,6 @@ async def _compile_video(
         package = await wgp_service.create_hybrid_generation_package(
             **common,
             avatar_id=dimensions.get("avatar_code") or None,
-            start_frame_asset_id=(
-                dimensions.get("product_reference_asset_id") or None
-            ),
         )
     elif logical_mode == "F2V":
         package = await wgp_service.create_f2v_generation_package(
@@ -149,9 +148,6 @@ async def _compile_video(
         package = await wgp_service.create_i2v_generation_package(
             **i2v_common,
             duration_seconds=engine_block_duration,
-            product_reference_asset_id=(
-                dimensions.get("product_reference_asset_id") or None
-            ),
             character_reference_asset_id=(
                 dimensions.get("character_asset_id") or None
             ),
@@ -235,9 +231,6 @@ async def _compile_image(
     package = await wgp_service.create_img_generation_package(
         product_id=item["product_id"],
         generation_mode="SINGLE",
-        subject_asset_id=(
-            dimensions.get("product_reference_asset_id") or None
-        ),
         scene_context_asset_id=dimensions.get("scene_asset_id") or None,
         style_asset_id=dimensions.get("style_asset_id") or None,
         operator_notes=(

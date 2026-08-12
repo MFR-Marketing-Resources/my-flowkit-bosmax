@@ -18,6 +18,31 @@ def _b04_eligibility_pass(monkeypatch):
         "agent.services.copy_eligibility_service.copy_eligibility", _ok
     )
 
+    def _official_asset(product, *, slot_key, label="Official product visual"):
+        product_id = product.get("id") or product.get("product_id")
+        return {
+            "asset_id": f"product-visual:{product_id}:official",
+            "product_id": product_id,
+            "asset_fingerprint": f"product_visual_{product_id}_{slot_key}",
+            "slot_key": slot_key,
+            "asset_source": "PRODUCT_VISUAL_OFFICIAL_SOURCE",
+            "official_visual": True,
+            "official_visual_source_type": "PRODUCT_SOURCE_MEDIA",
+            "official_visual_sha256": "a" * 64,
+            "label": label,
+            "file_name": f"{product_id}_official.jpg",
+            "preview_url": f"/api/products/{product_id}/image",
+            "download_url": f"/api/products/{product_id}/image",
+            "media_id": f"media-{product_id}",
+            "local_file_path": rf"C:\tmp\{product_id}-official.jpg",
+            "preview_renderable_status": "RENDERABLE",
+        }
+
+    monkeypatch.setattr(
+        "agent.services.approved_product_package_service.build_official_product_visual_asset",
+        _official_asset,
+    )
+
 
 def _scan_clean(*args, **kwargs):
     return {
@@ -145,7 +170,7 @@ async def test_approved_product_package_returns_img_contract(monkeypatch):
         ("6483d624-a03d-4933-9bba-6ca2e5f7b6fd", "Minyak Warisan Tok Cap Burung 25ml"),
     ],
 )
-async def test_approved_product_package_img_uses_prompt_subject_when_cache_missing(
+async def test_approved_product_package_img_blocks_when_official_visual_missing(
     monkeypatch,
     product_id: str,
     product_name: str,
@@ -199,13 +224,13 @@ async def test_approved_product_package_img_uses_prompt_subject_when_cache_missi
 
     subject_slot = next(slot for slot in result["asset_slots"] if slot["slot_key"] == "subject")
 
-    assert result["blockers"] == []
+    assert "OFFICIAL_PRODUCT_VISUAL_REQUIRED" in result["blockers"]
     assert result["product_name"] == product_name
     assert product_name in result["prompt_text"]
     assert result["image_reference_status"] == "LOCAL_CACHE_MISSING"
-    assert subject_slot["default_source"] == "PROMPT_TEXT_SUBJECT"
+    assert subject_slot["default_source"] == "NONE"
     assert subject_slot["resolved_asset"] is None
-    assert "PROMPT_TEXT_SUBJECT" in subject_slot["allowed_sources"]
+    assert "PROMPT_TEXT_SUBJECT" not in subject_slot["allowed_sources"]
     assert "Bosmax Herbs 5 ML" not in result["prompt_text"] or product_name == "Bosmax Herbs 5 ML"
 
 
@@ -251,8 +276,9 @@ async def test_approved_product_package_returns_f2v_with_cached_start_frame(monk
     assert result["mode"] == "F2V"
     assert result["production_generation_allowed"] is False
     assert result["blockers"] == []
-    assert start_frame["default_source"] == "PRODUCT_IMAGE_CACHE"
-    assert start_frame["resolved_asset"]["asset_source"] == "PRODUCT_IMAGE_CACHE"
+    assert start_frame["default_source"] == "PRODUCT_VISUAL_OFFICIAL_SOURCE"
+    assert start_frame["resolved_asset"]["asset_source"] == "PRODUCT_VISUAL_OFFICIAL_SOURCE"
+    assert start_frame["resolved_asset"]["official_visual"] is True
     assert start_frame["resolved_asset"]["preview_url"] == "/api/products/prod-001/image"
     assert start_frame["resolved_asset"]["preview_renderable_status"] == "RENDERABLE"
     assert end_frame["required"] is False
@@ -297,13 +323,10 @@ async def test_approved_product_package_returns_f2v_with_remote_image_preview(mo
 
     start_frame = next(slot for slot in result["asset_slots"] if slot["slot_key"] == "start_frame")
 
-    assert start_frame["default_source"] == "PRODUCT_IMAGE_URL"
-    assert start_frame["resolved_asset"]["asset_source"] == "PRODUCT_IMAGE_URL"
-    assert start_frame["resolved_asset"]["preview_url"] == "https://cdn.example.com/glad2glow.webp"
-    assert start_frame["resolved_asset"]["download_url"] == "https://cdn.example.com/glad2glow.webp"
-    assert start_frame["resolved_asset"]["preview_renderable_status"] == "REMOTE_URL_DIRECT"
-    assert start_frame["resolved_asset"]["local_image_path_present"] is False
-    assert start_frame["resolved_asset"]["remote_image_url_present"] is True
+    assert start_frame["default_source"] == "PRODUCT_VISUAL_OFFICIAL_SOURCE"
+    assert start_frame["resolved_asset"]["asset_source"] == "PRODUCT_VISUAL_OFFICIAL_SOURCE"
+    assert start_frame["resolved_asset"]["official_visual"] is True
+    assert start_frame["resolved_asset"]["preview_url"] == "/api/products/prod-remote/image"
 
 
 @pytest.mark.asyncio

@@ -687,6 +687,8 @@ export default function ImgFastlanePage() {
 				aspect,
 				quantity,
 				imageModel,
+				productId,
+				visualLaneId: lane?.lane_id,
 			});
 
 			const { job_id } = await startImgGeneration(genInput);

@@ -17,6 +17,7 @@ from agent.services.product_visual_grounding_resolver import (
     _materialize_image_url,
     get_grounded_generation_payload,
     resolve_generation_strategy,
+    resolve_official_product_reference_image,
     resolve_product_reference_image,
     resolve_product_visual_grounding,
 )
@@ -166,6 +167,37 @@ def test_reference_pack_source_builder_can_explicitly_keep_canonical_source(tmp_
     assert resolved.source_type == "PRODUCT_TRUTH_LOCK"
     assert resolved.local_path == str(source)
     assert resolved.sha256 == source_sha
+
+
+def test_official_original_selection_uses_lock_source_not_cutout_or_library_asset(
+    tmp_path,
+    monkeypatch,
+):
+    source = tmp_path / "original-source.png"
+    cutout = tmp_path / "rejected-cutout.png"
+    Image.new("RGB", (800, 800), color=(30, 70, 100)).save(source, format="PNG")
+    Image.new("RGBA", (800, 800), color=(0, 0, 0, 0)).save(cutout, format="PNG")
+    source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    from agent.services import product_visual_grounding_resolver as module
+
+    monkeypatch.setattr(
+        module.truth_lock_service,
+        "load_product_truth_lock",
+        lambda _product_id: SimpleNamespace(
+            review_status="REJECTED",
+            provenance={"active_selection": "SAME_PRODUCT_TRUSTED_SOURCE"},
+            canonical_source_path=str(source),
+            canonical_sha256=source_sha,
+            canonical_media_id="source-media-1",
+        ),
+    )
+
+    resolved = resolve_official_product_reference_image({"id": "product-original"})
+
+    assert resolved.source_type == "PRODUCT_TRUTH_LOCK_SOURCE"
+    assert resolved.local_path == str(source.resolve())
+    assert resolved.local_path != str(cutout)
+    assert resolved.media_id == "source-media-1"
 
 
 def test_reference_pack_canonical_source_restores_missing_product_cache(tmp_path, monkeypatch):

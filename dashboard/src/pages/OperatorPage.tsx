@@ -1554,11 +1554,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				body: JSON.stringify({
 					mode: data.mode,
 					prompt: data.prompt,
-					product_id: data.mode === "IMG" ? data.product_id : undefined,
+					product_id: data.product_id,
 					visual_lane_id:
 						data.mode === "IMG"
 							? data.visual_lane_id ?? data.lane
 							: undefined,
+					source_mode: data.source_mode ?? resolveSourceMode(mode),
 					image_media_ids: refs,
 					// Forward resolvable asset OBJECTS (Faceless parity) so the backend
 					// resolver can upload/materialize references that carry transport

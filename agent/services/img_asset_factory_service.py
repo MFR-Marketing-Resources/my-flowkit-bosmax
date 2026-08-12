@@ -665,9 +665,13 @@ async def compile_img_fastlane_prompt_preview(
         if request.style_reference_asset_id
         else None
     )
+    # Product Registration owns the product visual whenever a product_id is
+    # present. A legacy Fastlane/Cockpit product-reference id may still arrive
+    # from an older client, but it must not leak its label into the compiled
+    # prompt or become a provider reference.
     selected_product_reference = (
         await get_creative_asset(request.product_reference_asset_id)
-        if request.product_reference_asset_id
+        if request.product_reference_asset_id and not request.product_id
         else None
     )
 
@@ -684,6 +688,8 @@ async def compile_img_fastlane_prompt_preview(
     )
 
     warnings: list[str] = []
+    if request.product_id and request.product_reference_asset_id:
+        warnings.append("PRODUCT_REFERENCE_OVERRIDE_IGNORED_OFFICIAL_VISUAL")
     flags = _product_family_flags(product)
     if request.preset_id.startswith("BOSMAX_") and not flags["is_bosmax_serum"]:
         warnings.append("PRESET_PRODUCT_FAMILY_MISMATCH_BOSMAX_SERUM")

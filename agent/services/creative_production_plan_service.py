@@ -1204,6 +1204,11 @@ async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
     created_at = _now()
     pool_snapshot = {
         **body.pools.model_dump(mode="json"),
+        # Product Registration owns the sole product visual for every P6 lane.
+        # Keep this legacy request field for wire compatibility, but never
+        # persist client-selected Creative Library product references into the
+        # executable plan snapshot.
+        "product_reference_asset_ids": [],
         "creative_format": body.creative_format,
         "controlled_reuse_reason": body.controlled_reuse_reason,
         "controlled_reuse_max_per_dna": body.controlled_reuse_max_per_dna,
@@ -1537,6 +1542,9 @@ async def update_plan(
         values.get("pool_snapshot_json", plan.get("pool_snapshot_json")),
         {},
     )
+    # Preserve the legacy field for schema compatibility, but never carry a
+    # Creative Library product visual into an updated executable P6 snapshot.
+    next_pool["product_reference_asset_ids"] = []
     if (
         int(next_pool.get("controlled_reuse_max_per_dna") or 1) > 1
         and not str(next_pool.get("controlled_reuse_reason") or "").strip()
@@ -1673,9 +1681,15 @@ async def get_governed_pool_authority(
         "copy_sets": copy_sets,
         "poster_copy_sets": poster_copy_sets,
         "avatar_profiles": avatar_profiles,
-        "product_reference_assets": [
-            row for row in assets if row.get("semantic_role") == "PRODUCT_REFERENCE"
-        ],
+        # Deliberately empty: product visuals are resolved per product from
+        # Product Registration's approved Official Product Visual at compile /
+        # dispatch time, not selected from the Creative Library pool.
+        "product_reference_assets": [],
+        "official_product_visual_authority": {
+            "source": "PRODUCT_REGISTRATION",
+            "selection": "ONE_APPROVED_OFFICIAL_VISUAL_PER_PRODUCT",
+            "used_by": ["IMG", "HYBRID", "I2V", "F2V", "POSTER"],
+        },
         "finished_frame_assets": [
             row
             for row in assets
@@ -1967,7 +1981,6 @@ async def _load_approved_pools(plan: dict[str, Any]) -> dict[str, Any]:
 
     assets: dict[str, dict[str, Any]] = {}
     role_expectations = {
-        "product_reference_asset_ids": "PRODUCT_REFERENCE",
         "finished_frame_asset_ids": "COMPOSITE_FRAME_REFERENCE",
         "character_asset_ids": "CHARACTER_REFERENCE",
         "scene_asset_ids": "SCENE_CONTEXT_REFERENCE",
@@ -2268,11 +2281,11 @@ def _product_dimension_rows(
         if layout_id in approved["approved_layouts"]
     ]
     avatar_profiles = approved["avatar_profiles"].get(product_id) or []
-    product_refs = _asset_rows_for_product(
-        approved,
-        "product_reference_asset_ids",
-        product_id,
-    )
+    # Product references are not a P6 variation dimension.  P6 must compile
+    # every image/video item against the one Official Product Visual selected
+    # in Product Registration; carrying a creative-library product asset here
+    # would allow cosmetic props or a stale combo image to re-enter the lane.
+    product_refs = [{}]
     finished_frames = _asset_rows_for_product(
         approved,
         "finished_frame_asset_ids",
@@ -2377,10 +2390,10 @@ def _product_dimension_rows(
                     "age_band": "",
                     "wardrobe": treatment["wardrobe_text"],
                     "avatar_variant": "",
-                    "product_reference_asset_id": asset_by_role.get(
-                        "PRODUCT_REFERENCE",
-                        "",
-                    ),
+                    # Treatment evidence may retain its original binding for
+                    # audit, but it is never a provider reference.  The WGP
+                    # compiler resolves Product Registration's official visual.
+                    "product_reference_asset_id": "",
                     "finished_frame_asset_id": asset_by_role.get(
                         "COMPOSITE_FRAME_REFERENCE",
                         "",
@@ -2500,13 +2513,6 @@ def _product_dimension_rows(
                 blockers.append(
                     {"code": "NO_APPROVED_AVATAR_POOL", "product_id": product_id}
                 )
-            if not product_refs:
-                blockers.append(
-                    {
-                        "code": "NO_APPROVED_PRODUCT_REFERENCE_POOL",
-                        "product_id": product_id,
-                    }
-                )
             visual_rows = [
                 {
                     "product_reference_asset_id": str(ref.get("asset_id") or ""),
@@ -2558,7 +2564,7 @@ def _product_dimension_rows(
                 )
             visual_rows = []
             for ref, character, scene, style in itertools.product(
-                product_refs or [{}],
+                product_refs,
                 characters,
                 scenes or [{}],
                 styles or [{}],
@@ -2837,11 +2843,7 @@ async def _capacity_candidates(
         "avatars": len(
             _unique(approved["raw"].get("avatar_codes") or [])
         ),
-        "product_references": len(
-            _unique(
-                approved["raw"].get("product_reference_asset_ids") or []
-            )
-        ),
+        "product_references": 0,
         "finished_frames": len(
             _unique(approved["raw"].get("finished_frame_asset_ids") or [])
         ),

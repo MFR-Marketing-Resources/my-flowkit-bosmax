@@ -162,8 +162,14 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
                 ),
                 None,
             )
-        is_product_anchor = str((start_asset or {}).get("asset_id") or "").startswith(
-            "product-image:"
+        is_product_anchor = bool(
+            (start_asset or {}).get("official_visual")
+            or str((start_asset or {}).get("asset_source") or "").startswith(
+                "PRODUCT_VISUAL_OFFICIAL"
+            )
+            or str((start_asset or {}).get("source") or "").startswith(
+                "PRODUCT_VISUAL_OFFICIAL"
+            )
         )
         has_transport = bool(
             (start_asset or {}).get("media_id")

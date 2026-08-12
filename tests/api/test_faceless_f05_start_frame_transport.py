@@ -76,6 +76,7 @@ def test_faceless_start_asset_downloadurl_reaches_start_generate(monkeypatch):
         prompt="Faceless animate THIS product image",
         aspect="9:16",
         product_id="prod-1",
+        source_mode="FRAMES",
         startAsset={
             "mediaId": None,
             "assetId": "ca_start_selected",
@@ -129,7 +130,7 @@ def test_faceless_package_id_only_does_not_inject_start_frame(monkeypatch):
         mode="F2V",
         prompt="Faceless without frame transport",
         aspect="9:16",
-        product_id="prod-1",
+        product_id=None,
         image_media_ids=None,
         startAsset=None,
     )

@@ -23,6 +23,10 @@ from agent.services.fastmoss_product_reference_service import (
     get_fastmoss_reference_product,
     is_fastmoss_reference_product_id,
 )
+from agent.services.product_visual_grounding_resolver import (
+    ProductVisualReferenceRequiredError,
+    build_official_product_visual_asset,
+)
 
 
 SUPPORTED_MODES = {"T2V", "F2V", "I2V", "IMG"}
@@ -63,10 +67,6 @@ def _package_snapshot_id(product_id: str, mode: str, prompt_fingerprint: str, ap
     return f"pkg_{_fingerprint(product_id, mode, prompt_fingerprint, approval_status)[:16]}"
 
 
-def _asset_fingerprint(product_id: str, slot_key: str, source_value: str) -> str:
-    return f"asset_{_fingerprint(product_id, slot_key, source_value)[:16]}"
-
-
 def _default_prompt_notice() -> str:
     return "Manual override remains available, but the approved package is the default source of truth."
 
@@ -94,6 +94,8 @@ def _detail_for_blocker(blocker: str, *, mode: str, image_reference_status: str 
         return "F2V requires a product image as Start Frame."
     if blocker == "SUBJECT_REQUIRED":
         return "This mode requires a product image/subject reference."
+    if blocker == "OFFICIAL_PRODUCT_VISUAL_REQUIRED":
+        return "Select and save an Original Source, Auto Cutout, or Manual / Canva Cutout in Product Registration before generating."
     if blocker == "PRODUCT_ARCHIVED":
         return "Archived products cannot be loaded for generation."
     if blocker == "UNSUPPORTED_MODE":
@@ -118,16 +120,6 @@ def _checklist_entry(key: str, label: str, ready: bool, detail: str) -> dict[str
     }
 
 
-def _preview_detail_for_source(product: dict[str, Any], *, uses_local_cache: bool) -> tuple[str, str | None]:
-    if uses_local_cache:
-        if _clean(product.get("local_image_path")):
-            return "RENDERABLE", None
-        return "ERROR", "Local cache path is missing."
-    if _clean(product.get("image_url")):
-        return "REMOTE_URL_DIRECT", None
-    return "ERROR", "Remote image URL is missing."
-
-
 def _product_identity(product: dict[str, Any]) -> str:
     return _clean(product.get("product_display_name") or product.get("raw_product_title"))
 
@@ -137,33 +129,36 @@ def _img_subject_ready(product: dict[str, Any]) -> bool:
 
 
 def _product_image_asset(product: dict[str, Any], slot_key: str, label: str) -> dict[str, Any] | None:
+    """Resolve the server-owned Product Registration visual, fail closed."""
     product_id = _clean(product.get("id") or product.get("product_id"))
     if not product_id or _clean(product.get("image_readiness_status")) not in IMAGE_READY_STATES:
         return None
-    local_image_path = _clean(product.get("local_image_path"))
-    remote_image_url = _clean(product.get("image_url"))
-    uses_local_cache = bool(local_image_path)
-    source_value = _clean(local_image_path or remote_image_url or product_id)
-    preview_renderable_status, preview_error_detail = _preview_detail_for_source(
-        product,
-        uses_local_cache=uses_local_cache,
-    )
-    return {
-        "asset_id": f"product-image:{product_id}:{slot_key}",
-        "asset_fingerprint": _asset_fingerprint(product_id, slot_key, source_value),
-        "slot_key": slot_key,
-        "asset_source": "PRODUCT_IMAGE_CACHE" if uses_local_cache else "PRODUCT_IMAGE_URL",
-        "label": label if uses_local_cache else "Product remote image URL",
-        "file_name": f"{product_id}.jpg",
-        "preview_url": f"/api/products/{product_id}/image" if uses_local_cache else remote_image_url,
-        "download_url": f"/api/products/{product_id}/image" if uses_local_cache else remote_image_url,
-        "media_id": product.get("media_id"),
-        "local_file_path": local_image_path,
-        "preview_renderable_status": preview_renderable_status,
-        "preview_error_detail": preview_error_detail,
-        "local_image_path_present": uses_local_cache,
-        "remote_image_url_present": bool(remote_image_url),
-    }
+    # Do not fall back to a raw row image here.  The resolver uses the selected
+    # original/cutout authority and raises a stable blocker when that authority
+    # cannot produce transportable bytes.
+    try:
+        return build_official_product_visual_asset(
+            product,
+            slot_key=slot_key,
+            label=label,
+        )
+    except ProductVisualReferenceRequiredError:
+        # Readiness/package endpoints expose a deterministic blocker so the
+        # operator can fix Product Registration. The live generation seam
+        # still raises the same error as an HTTP 422 before provider work.
+        return None
+
+
+def _finalize_asset_slots(
+    blockers: list[str],
+    slots: list[dict[str, Any]],
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """Expose the selected Product Registration source in package metadata."""
+    for slot in slots:
+        asset = slot.get("resolved_asset")
+        if isinstance(asset, dict) and asset.get("official_visual"):
+            slot["default_source"] = asset.get("asset_source") or slot.get("default_source")
+    return blockers, slots
 
 
 def _asset_slots_for_mode(product: dict[str, Any], mode: str) -> tuple[list[str], list[dict[str, Any]]]:
@@ -180,7 +175,7 @@ def _asset_slots_for_mode(product: dict[str, Any], mode: str) -> tuple[list[str]
     )
 
     if mode == "T2V":
-        return blockers, [
+        return _finalize_asset_slots(blockers, [
             {
                 "slot_key": "prompt_text",
                 "required": True,
@@ -188,7 +183,7 @@ def _asset_slots_for_mode(product: dict[str, Any], mode: str) -> tuple[list[str]
                 "allowed_sources": ["APPROVED_PROMPT_PACKAGE", "MANUAL_OVERRIDE"],
                 "resolved_asset": None,
             }
-        ]
+        ])
 
     if mode == "F2V":
         if not has_image:
@@ -199,8 +194,11 @@ def _asset_slots_for_mode(product: dict[str, Any], mode: str) -> tuple[list[str]
                     "slot_key": "start_frame",
                     "required": True,
                     "default_source": default_asset_source if has_image else "NONE",
-                    "allowed_sources": ["PRODUCT_IMAGE_CACHE", "PRODUCT_IMAGE_URL", "USER_UPLOAD"],
-                    "resolved_asset": _product_image_asset(product, "start_frame", "Product cached image"),
+                    "allowed_sources": [
+                        "PRODUCT_VISUAL_OFFICIAL_CUTOUT",
+                        "PRODUCT_VISUAL_OFFICIAL_SOURCE",
+                    ],
+                    "resolved_asset": _product_image_asset(product, "start_frame", "Official product visual"),
                 },
                 {
                     "slot_key": "end_frame",
@@ -211,7 +209,9 @@ def _asset_slots_for_mode(product: dict[str, Any], mode: str) -> tuple[list[str]
                 },
             ]
         )
-        return blockers, slots
+        if slots[0]["resolved_asset"] is None:
+            blockers.append("OFFICIAL_PRODUCT_VISUAL_REQUIRED")
+        return _finalize_asset_slots(blockers, slots)
 
     if mode == "I2V":
         if not has_image:
@@ -222,8 +222,11 @@ def _asset_slots_for_mode(product: dict[str, Any], mode: str) -> tuple[list[str]
                     "slot_key": "subject",
                     "required": True,
                     "default_source": default_asset_source if has_image else "NONE",
-                    "allowed_sources": ["PRODUCT_IMAGE_CACHE", "PRODUCT_IMAGE_URL", "USER_UPLOAD"],
-                    "resolved_asset": _product_image_asset(product, "subject", "Product cached image"),
+                    "allowed_sources": [
+                        "PRODUCT_VISUAL_OFFICIAL_CUTOUT",
+                        "PRODUCT_VISUAL_OFFICIAL_SOURCE",
+                    ],
+                    "resolved_asset": _product_image_asset(product, "subject", "Official product visual"),
                 },
                 {
                     "slot_key": "scene",
@@ -241,7 +244,9 @@ def _asset_slots_for_mode(product: dict[str, Any], mode: str) -> tuple[list[str]
                 },
             ]
         )
-        return blockers, slots
+        if slots[0]["resolved_asset"] is None:
+            blockers.append("OFFICIAL_PRODUCT_VISUAL_REQUIRED")
+        return _finalize_asset_slots(blockers, slots)
 
     if mode == "IMG":
         if not has_img_subject:
@@ -251,20 +256,12 @@ def _asset_slots_for_mode(product: dict[str, Any], mode: str) -> tuple[list[str]
                 {
                     "slot_key": "subject",
                     "required": True,
-                    "default_source": (
-                        default_asset_source
-                        if has_image
-                        else "PROMPT_TEXT_SUBJECT"
-                        if has_img_subject
-                        else "NONE"
-                    ),
+                    "default_source": default_asset_source if has_image else "NONE",
                     "allowed_sources": [
-                        "PROMPT_TEXT_SUBJECT",
-                        "PRODUCT_IMAGE_CACHE",
-                        "PRODUCT_IMAGE_URL",
-                        "USER_UPLOAD",
+                        "PRODUCT_VISUAL_OFFICIAL_CUTOUT",
+                        "PRODUCT_VISUAL_OFFICIAL_SOURCE",
                     ],
-                    "resolved_asset": _product_image_asset(product, "subject", "Product cached image"),
+                    "resolved_asset": _product_image_asset(product, "subject", "Official product visual"),
                 },
                 {
                     "slot_key": "scene",
@@ -282,10 +279,12 @@ def _asset_slots_for_mode(product: dict[str, Any], mode: str) -> tuple[list[str]
                 },
             ]
         )
-        return blockers, slots
+        if slots[0]["resolved_asset"] is None:
+            blockers.append("OFFICIAL_PRODUCT_VISUAL_REQUIRED")
+        return _finalize_asset_slots(blockers, slots)
 
     blockers.append("UNSUPPORTED_MODE")
-    return blockers, slots
+    return _finalize_asset_slots(blockers, slots)
 
 
 def _manual_fallback_payload(product: dict[str, Any], mode: str, asset_slots: list[dict[str, Any]]) -> dict[str, Any]:
@@ -299,16 +298,16 @@ def _manual_fallback_payload(product: dict[str, Any], mode: str, asset_slots: li
     image_download_url = preview_asset.get("download_url") if preview_asset else None
     checklist = [
         "Copy the approved prompt text from this package.",
-        "Use the resolved product image source when the mode requires a subject or start frame.",
+        "Use the resolved Product Registration Official Product Visual when the mode requires a subject or start frame.",
         "Keep manual edits clearly separate from the approved package payload.",
         "Record the later handoff attempt with the workspace execution package id.",
     ]
     if mode == "F2V":
-        checklist.insert(1, "Use the cached product image as the default Start Frame. End Frame stays optional.")
+        checklist.insert(1, "Use the Product Registration Official Product Visual as the default Start Frame. End Frame stays optional.")
     if mode == "I2V":
-        checklist.insert(1, "Use the cached product image as the Subject. Scene and Style remain optional uploads.")
+        checklist.insert(1, "Use the Product Registration Official Product Visual as the Subject. Scene and Style remain optional uploads.")
     if mode == "IMG":
-        checklist.insert(1, "Use the approved prompt text as the default Subject. Add a product image reference only when the workflow benefits from one.")
+        checklist.insert(1, "Use the Product Registration Official Product Visual as the Subject. Do not replace it with a creative-library product image.")
     if mode == "T2V":
         checklist.insert(1, "No image is required by default for T2V.")
     return {
@@ -325,7 +324,7 @@ def _manual_fallback_payload(product: dict[str, Any], mode: str, asset_slots: li
 def _f2v_prompt(product: dict[str, Any], claim_safe_rewrite: str, hook: str, cta: str) -> str:
     name = _clean(product.get("product_display_name") or product.get("raw_product_title"))
     return (
-        f"Create a premium frames-to-video sequence for {name}. Start from the cached real product image as the opening frame. "
+        f"Create a premium frames-to-video sequence for {name}. Start from the Product Registration Official Product Visual as the opening frame. "
         f"Preserve bottle scale, label visibility, cap integrity, and discreet masculine wellness tone. {hook} "
         f"{claim_safe_rewrite} End frame remains optional; if supplied, transition into it smoothly without inventing new label details. "
         f"Overlay direction: {cta}"
@@ -335,7 +334,7 @@ def _f2v_prompt(product: dict[str, Any], claim_safe_rewrite: str, hook: str, cta
 def _i2v_prompt(product: dict[str, Any], claim_safe_rewrite: str, hook: str, cta: str) -> str:
     name = _clean(product.get("product_display_name") or product.get("raw_product_title"))
     return (
-        f"Use {name} as the verified subject reference from the cached real product image. "
+        f"Use {name} as the verified subject reference from the Product Registration Official Product Visual. "
         f"Allow optional scene and style uploads to refine environment and visual treatment without changing product truth. "
         f"{hook} {claim_safe_rewrite} Keep wording commercial, discreet, and non-medical. Overlay direction: {cta}"
     )
@@ -634,8 +633,18 @@ async def get_approved_product_package(product_id: str, mode: str) -> dict[str, 
         "Claim-safe rewrite remains on product.claim_safe_copy_payload.",
         "T2V and IMG prompts are loaded from the approved production prompt path.",
         "F2V and I2V are derived workspace packages built from approved product and claim-safe truth.",
+        "Product Registration Official Product Visual is the only product reference for every generation lane.",
         _default_prompt_notice(),
     ]
+    official_visual = next(
+        (
+            slot.get("resolved_asset")
+            for slot in asset_slots
+            if isinstance(slot.get("resolved_asset"), dict)
+            and slot.get("resolved_asset", {}).get("official_visual")
+        ),
+        None,
+    )
 
     return {
         "prompt_package_snapshot_id": package_snapshot_id,
@@ -655,6 +664,7 @@ async def get_approved_product_package(product_id: str, mode: str) -> dict[str, 
         "image_reference_status": image_reference_status,
         "asset_requirements": asset_requirements,
         "asset_slots": asset_slots,
+        "official_visual": official_visual,
         "manual_fallback": _manual_fallback_payload(enriched, normalized_mode, asset_slots),
         "provenance": [
             "approved_product_package_service:v1",

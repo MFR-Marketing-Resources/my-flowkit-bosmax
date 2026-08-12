@@ -1208,6 +1208,10 @@ async def test_plan_update_and_governed_pool_authority_are_fail_closed(
     assert authority["credit_spend"] == 0
     assert authority["copy_sets"][0]["copy_set_id"] == COPY_SET_ID
     assert authority["avatar_profiles"][0]["avatar_code"] == AVATAR_CODE
+    assert authority["product_reference_assets"] == []
+    assert authority["official_product_visual_authority"]["source"] == (
+        "PRODUCT_REGISTRATION"
+    )
     assert authority["blockers"] == []
 
     await plans.run_capacity_preflight(plan["plan_id"])

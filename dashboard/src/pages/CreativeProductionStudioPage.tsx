@@ -582,7 +582,9 @@ export default function CreativeProductionStudioPage() {
 				copy_set_ids: splitValues(form.copySetIds),
 				poster_copy_set_ids: splitValues(form.posterCopySetIds),
 				avatar_codes: splitValues(form.avatarCodes),
-				product_reference_asset_ids: splitValues(form.productReferenceAssetIds),
+				// Product visuals are never a P6 pool dimension. Each item resolves
+				// the product's saved Product Registration Official Product Visual.
+				product_reference_asset_ids: [],
 				finished_frame_asset_ids: splitValues(form.finishedFrameAssetIds),
 				character_asset_ids: splitValues(form.characterAssetIds),
 				scene_asset_ids: splitValues(form.sceneAssetIds),
@@ -1825,6 +1827,14 @@ export default function CreativeProductionStudioPage() {
 										Advanced approved pools and reuse controls
 									</summary>
 									<div className="mt-3 grid gap-3">
+										<div
+											data-testid="p6-official-product-visual-note"
+											className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2 text-xs text-emerald-100"
+										>
+											Product images are not selected from Creative Library here. Every P6
+											IMG, Hybrid, I2V, and Poster item uses the Official Product Visual
+											saved in Smart Product Registration.
+										</div>
 										{poolAuthorityLoading ? (
 											<div
 												data-testid="p6-pool-authority-loading"
@@ -1854,13 +1864,6 @@ export default function CreativeProductionStudioPage() {
 												options: poolAuthority?.avatar_profiles ?? [],
 												valueKey: "avatar_code",
 												labelKeys: ["character_name", "variant"],
-											},
-											{
-												key: "productReferenceAssetIds",
-												label: "Product reference assets",
-												options: poolAuthority?.product_reference_assets ?? [],
-												valueKey: "asset_id",
-												labelKeys: ["name", "semantic_role"],
 											},
 											{
 												key: "finishedFrameAssetIds",

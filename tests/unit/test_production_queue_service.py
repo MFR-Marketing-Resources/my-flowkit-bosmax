@@ -23,6 +23,8 @@ async def _seed_package(
     status: str = "READY_MANUAL",
     prompt: str = "SECTION 1 - ROLE & OBJECTIVE\nfinal polished prompt",
     slots: dict | None = None,
+    selected_assets: dict | None = None,
+    image_assets: dict | None = None,
 ) -> dict:
     row = await crud.create_workspace_generation_package(
         wgp_id,
@@ -35,10 +37,10 @@ async def _seed_package(
         generation_mode="SINGLE",
         final_prompt_text=prompt,
         prompt_blocks_json="[]",
-        selected_assets_json="{}",
+        selected_assets_json=json.dumps(selected_assets or {}),
         resolved_engine_slots_json=json.dumps(slots or {}),
         resolver_output_json="{}",
-        image_assets_json="{}",
+        image_assets_json=json.dumps(image_assets or {}),
         manual_handoff_json="{}",
         dom_handoff_payload_json="{}",
         blockers_json="[]",
@@ -203,6 +205,88 @@ async def test_image_mode_without_flow_media_is_blocked_not_fired():
     payload, blockers = await pq.build_execution_payload(row, {})
     assert any(b.startswith("SLOT_NOT_UPLOADED_TO_FLOW") for b in blockers)
     assert "NO_FLOW_MEDIA_FOR_IMAGE_MODE" in blockers
+
+
+async def test_official_product_visual_is_deferred_until_live_transport(tmp_path):
+    local = tmp_path / "official-cutout.png"
+    local.write_bytes(b"official-cutout-bytes")
+    official = {
+        "asset_id": "registry-cutout-id",
+        "media_id": "registry-cutout-id",
+        "local_file_path": str(local),
+        "asset_source": "PRODUCT_VISUAL_OFFICIAL_CUTOUT",
+        "official_visual": True,
+        "official_visual_sha256": "c" * 64,
+    }
+    await _seed_package(
+        "wgp_official_transport",
+        mode="F2V",
+        source_lane="HYBRID",
+        slots={"start_frame": "registry-cutout-id"},
+        selected_assets={"start_frame": official},
+    )
+    await crud.update_workspace_generation_package(
+        "wgp_official_transport",
+        logical_mode="HYBRID",
+    )
+    row = await crud.get_workspace_generation_package("wgp_official_transport")
+
+    payload, blockers = await pq.build_execution_payload(
+        row,
+        {"model": "Veo 3.1 - Lite", "aspect": "9:16"},
+    )
+
+    assert blockers == []
+    assert payload["image_media_ids"] == [
+        "OFFICIAL_PRODUCT_VISUAL:start_frame:" + "c" * 32
+    ]
+    assert payload["deferred_official_visual_assets"][0]["official_visual"] is True
+
+
+async def test_deferred_official_product_visual_uploads_before_fire(monkeypatch, tmp_path):
+    local = tmp_path / "official-cutout.png"
+    local.write_bytes(b"official-cutout-bytes")
+    placeholder = "OFFICIAL_PRODUCT_VISUAL:subject:" + "d" * 32
+    payload = {
+        "mode": "IMG",
+        "prompt": "approved prompt",
+        "image_media_ids": [placeholder],
+        "deferred_official_visual_assets": [
+            {
+                "slot_key": "subject",
+                "media_id": "registry-cutout-id",
+                "local_file_path": str(local),
+                "official_visual_sha256": "d" * 64,
+                "official_visual": True,
+            }
+        ],
+    }
+    calls: list[str] = []
+
+    class FakeFlowClient:
+        connected = True
+
+        async def upload_image(
+            self,
+            b64,
+            mime_type="image/png",
+            project_id="",
+            file_name="",
+        ):
+            del b64, mime_type, project_id
+            calls.append(file_name)
+            return {"_mediaId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}
+
+    from agent.services import flow_client
+
+    monkeypatch.setattr(flow_client, "get_flow_client", lambda: FakeFlowClient())
+    runtime, blockers = await pq.materialize_official_visual_transport(payload)
+
+    assert blockers == []
+    assert calls == ["official-cutout.png"]
+    assert runtime["image_media_ids"] == [
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    ]
 
 
 async def test_empty_prompt_is_a_payload_blocker():

@@ -775,6 +775,8 @@ class GenerateRequest(BaseModel):
     # client-authorized image path/hash or truth status.
     product_id: Optional[str] = None
     visual_lane_id: Optional[str] = None
+    source_mode: Optional[str] = None       # HYBRID | FRAMES | INGREDIENTS
+    workspace_execution_package_id: Optional[str] = None
     image_media_ids: Optional[list] = None     # existing/uploaded refs (I2V/F2V)
     image_prompt: Optional[str] = None         # auto start-frame if no refs (I2V/F2V)
     aspect: str = "9:16"
@@ -876,6 +878,50 @@ def _is_multi_block_prompt(prompt: str) -> bool:
     return (prompt or "").count(_BLOCK_HEADER_MARKER) > 1
 
 
+def _is_product_reference_asset(
+    asset: object,
+    slot_key: str,
+    *,
+    product_id: str,
+    product: dict[str, Any],
+) -> bool:
+    """Identify product bytes before the provider reference list is built."""
+    normalized_slot = str(slot_key or "").lower()
+    if normalized_slot in {
+        "productasset",
+        "productreference",
+        "productcutoutasset",
+        "productlabelasset",
+        "productlogoasset",
+        "productscaleasset",
+    }:
+        return True
+    if not isinstance(asset, dict):
+        return False
+    asset_product_id = str(asset.get("productId") or asset.get("product_id") or "")
+    role = str(asset.get("semanticRole") or asset.get("semantic_role") or "").upper()
+    source = str(asset.get("assetSource") or asset.get("asset_source") or "").upper()
+    if asset_product_id == product_id or role == "PRODUCT_REFERENCE":
+        return True
+    if source.startswith(("PRODUCT_IMAGE", "PRODUCT_VISUAL", "PRODUCT_TRUTH", "PRODUCT_REFERENCE_PACK")):
+        return True
+
+    # Older dashboard payloads did not carry productId/semanticRole.  Match
+    # their row-owned paths/URLs so a stale catalog image cannot survive merely
+    # because it used the generic subjectAsset key.
+    row_values = {
+        str(product.get("media_id") or "").strip(),
+        str(product.get("local_image_path") or "").strip(),
+        str(product.get("image_url") or "").strip(),
+    }
+    asset_values = {
+        str(asset.get("mediaId") or asset.get("media_id") or "").strip(),
+        str(asset.get("localFilePath") or asset.get("local_file_path") or "").strip(),
+        str(asset.get("downloadUrl") or asset.get("download_url") or asset.get("image_url") or "").strip(),
+    }
+    return bool((row_values - {""}) & (asset_values - {""}))
+
+
 async def _apply_img_product_truth_gate(
     *, product_id: str, visual_lane_id: str | None, prompt: str,
     request_refs: dict[str, Any], start_asset: object = None,
@@ -933,7 +979,38 @@ async def _apply_img_product_truth_gate(
             transport_reference_ids(pack)
         except ProductReferencePackError as exc:
             raise HTTPException(422, f"{exc.code}: {exc.message}") from exc
-        bound_refs: dict[str, Any] = {}
+        # The pack remains an approval/evidence gate, but its product images
+        # are not provider references.  Product Registration owns the one
+        # image that reaches generation, so a pack's canonical/label/logo/
+        # scale/cutout roles cannot reintroduce cosmetic pixels.
+        from agent.services.product_visual_grounding_resolver import (
+            ProductVisualReferenceRequiredError,
+            build_official_product_visual_asset,
+        )
+
+        try:
+            official = build_official_product_visual_asset(
+                product,
+                slot_key="productAsset",
+                label="Official product visual",
+            )
+        except ProductVisualReferenceRequiredError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+        bound_refs: dict[str, Any] = {
+            "productAsset": {
+                "productId": product_id,
+                "mediaId": official.get("media_id"),
+                "localFilePath": official.get("local_file_path"),
+                "downloadUrl": official.get("download_url") or official.get("preview_url"),
+                "previewUrl": official.get("preview_url"),
+                "fileName": official.get("file_name"),
+                "semanticRole": "PRODUCT_REFERENCE",
+                "assetSource": official.get("asset_source"),
+                "officialVisual": True,
+                "officialVisualSha256": official.get("official_visual_sha256"),
+            },
+        }
         role_slots = {
             "PRODUCT_CANONICAL": "productAsset",
             "PRODUCT_LABEL_CROP": "productLabelAsset",
@@ -941,23 +1018,31 @@ async def _apply_img_product_truth_gate(
             "PRODUCT_SCALE_EVIDENCE": "productScaleAsset",
             "PRODUCT_CUTOUT": "productCutoutAsset",
         }
-        for binding in pack.references:
-            slot = role_slots.get(binding.role)
-            if not slot:
-                continue
-            bound_refs[slot] = {
-                "productId": product_id,
-                "mediaId": binding.media_id,
-                "localFilePath": binding.local_file_path,
-                "fileName": f"{product_id}_{binding.role.lower()}",
-                "semanticRole": binding.role,
-                "assetSource": "PRODUCT_REFERENCE_PACK",
-            }
         # Optional approved character/scene/style references remain operator
-        # controls. Product roles above are server-owned and cannot be replaced
-        # by client-selected product bytes.
+        # controls. Deny both Product Reference Pack role names and the
+        # concrete product slot keys so a client cannot overwrite the official
+        # visual after this server binding.
+        product_reference_keys = set(role_slots.values()) | {
+            "productAsset",
+            "product_asset",
+            "productReference",
+            "product_reference",
+            "subjectAsset",
+            "subject_asset",
+            "startAsset",
+            "start_asset",
+        }
         for key, asset in refs.items():
-            if key not in role_slots and isinstance(asset, dict):
+            if (
+                key not in product_reference_keys
+                and not _is_product_reference_asset(
+                    asset,
+                    key,
+                    product_id=product_id,
+                    product=product,
+                )
+                and isinstance(asset, dict)
+            ):
                 bound_refs[key] = asset
         return prompt, bound_refs, False
     has_avatar = bool(
@@ -979,20 +1064,6 @@ async def _apply_img_product_truth_gate(
         "FIXED_HERO_POSTER",
     )
 
-    def _is_product_reference(asset: object, slot_key: str = "") -> bool:
-        if slot_key.lower() in {"productasset", "productreference"}:
-            return True
-        if not isinstance(asset, dict):
-            return False
-        asset_product_id = str(asset.get("productId") or asset.get("product_id") or "")
-        role = str(asset.get("semanticRole") or asset.get("semantic_role") or "").upper()
-        source = str(asset.get("assetSource") or asset.get("asset_source") or "").upper()
-        return (
-            asset_product_id == product_id
-            or role == "PRODUCT_REFERENCE"
-            or source == "PRODUCT_IMAGE_URL"
-        )
-
     if exact_strategy:
         exact_product = dict(product)
         exact_product["_exact_product_required"] = True
@@ -1001,9 +1072,19 @@ async def _apply_img_product_truth_gate(
         except ExactProductCompositeError as exc:
             raise HTTPException(exc.status_code, f"{exc.code}: {exc.message}") from exc
         if any(
-            _is_product_reference(asset, slot_key)
+            _is_product_reference_asset(
+                asset,
+                slot_key,
+                product_id=product_id,
+                product=product,
+            )
             for slot_key, asset in refs.items()
-        ) or _is_product_reference(start_asset, "startAsset"):
+        ) or _is_product_reference_asset(
+            start_asset,
+            "startAsset",
+            product_id=product_id,
+            product=product,
+        ):
             raise HTTPException(
                 422,
                 "PRODUCT_REFERENCE_FORBIDDEN_EXACT_MODE: exact IMG sends a scene-only plate; the immutable product is inserted after Flow.",
@@ -1028,7 +1109,12 @@ async def _apply_img_product_truth_gate(
     refs = {
         key: asset
         for key, asset in refs.items()
-        if not _is_product_reference(asset, key)
+        if not _is_product_reference_asset(
+            asset,
+            key,
+            product_id=product_id,
+            product=product,
+        )
     }
     product_ref = grounded.product_reference
     refs["productAsset"] = {
@@ -1038,11 +1124,114 @@ async def _apply_img_product_truth_gate(
         "downloadUrl": product_ref.get("image_url"),
         "fileName": f"{product_id}_product_reference",
         "semanticRole": "PRODUCT_REFERENCE",
-        "assetSource": "PRODUCT_TRUTH_LOCK"
-        if product_ref.get("source_type") == "PRODUCT_TRUTH_LOCK"
-        else "PRODUCT_DATABASE_RECORD",
+        "assetSource": (
+            "PRODUCT_VISUAL_OFFICIAL_CUTOUT"
+            if product_ref.get("source_type") == "PRODUCT_TRUTH_LOCK_CUTOUT"
+            else "PRODUCT_VISUAL_OFFICIAL_SOURCE"
+            if product_ref.get("source_type") == "PRODUCT_TRUTH_LOCK"
+            else "PRODUCT_DATABASE_RECORD"
+        ),
+        "officialVisual": True,
+        "officialVisualSha256": product_ref.get("sha256"),
     }
     return prompt, refs, False
+
+
+async def _apply_video_product_visual_gate(
+    *,
+    product_id: str,
+    mode: str,
+    source_mode: str | None,
+    request_refs: dict[str, Any],
+    start_asset: object = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any], bool]:
+    """Bind the Product Registration visual at the API-first video seam.
+
+    HYBRID (the default F2V product lane) gets exactly the selected official
+    product visual as its start anchor. I2V gets that same visual in
+    ``productAsset`` while character/scene/style references remain independent.
+    FRAMES is the explicit finished-frame continuation lane and is therefore
+    allowed to keep its operator-selected frame.
+    """
+    normalized_mode = str(mode or "").upper()
+    normalized_source = str(source_mode or "").upper()
+    if normalized_mode not in {"F2V", "I2V"} or (
+        normalized_mode == "F2V" and normalized_source == "FRAMES"
+    ):
+        return (
+            dict(start_asset) if isinstance(start_asset, dict) else None,
+            dict(request_refs or {}),
+            False,
+        )
+
+    product = await crud.get_product(product_id)
+    if not product:
+        raise HTTPException(404, f"PRODUCT_NOT_FOUND: {product_id}")
+    from agent.services.product_visual_grounding_resolver import (
+        ProductVisualReferenceRequiredError,
+        build_official_product_visual_asset,
+    )
+
+    try:
+        official = build_official_product_visual_asset(
+            product,
+            slot_key="start_frame" if normalized_mode == "F2V" else "subject",
+            label="Official product visual",
+        )
+    except ProductVisualReferenceRequiredError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    provider_asset = {
+        "productId": product_id,
+        "mediaId": official.get("media_id"),
+        "localFilePath": official.get("local_file_path"),
+        "downloadUrl": official.get("download_url") or official.get("preview_url"),
+        "previewUrl": official.get("preview_url"),
+        "fileName": official.get("file_name"),
+        "semanticRole": "PRODUCT_REFERENCE",
+        "assetSource": official.get("asset_source"),
+        "officialVisual": True,
+        "officialVisualSha256": official.get("official_visual_sha256"),
+    }
+    refs = {
+        key: asset
+        for key, asset in dict(request_refs or {}).items()
+        if not _is_product_reference_asset(
+            asset,
+            key,
+            product_id=product_id,
+            product=product,
+        )
+    }
+    if normalized_mode == "F2V":
+        # HYBRID has one product anchor, never a second client-selected image.
+        return provider_asset, {}, True
+    refs["productAsset"] = provider_asset
+    return None, refs, True
+
+
+async def _effective_video_source_mode(
+    source_mode: str | None,
+    workspace_execution_package_id: str | None,
+) -> str | None:
+    """Resolve the source lane before product-image authority is applied.
+
+    Direct callers may omit ``source_mode`` while still sending a persisted
+    execution package.  In that case HYBRID must not be guessed for a compiled
+    FRAMES package; the package lineage is the server-owned authority.
+    """
+    from agent.services import flow_mode_reference_contract as _refc
+
+    declared = _refc.normalize_source_mode(source_mode)
+    if declared:
+        return declared
+    package_id = str(workspace_execution_package_id or "").strip()
+    if package_id:
+        package = await crud.get_workspace_execution_package(package_id)
+        derived = _refc.derive_package_source_mode(package)
+        if derived:
+            return derived
+    return source_mode
 
 
 async def _run_creative_campaign_pre_provider_lint(
@@ -1149,6 +1338,9 @@ async def generate(body: GenerateRequest):
 
     generation_prompt = body.prompt
     request_refs = dict(body.refs or {})
+    effective_start_asset = body.startAsset
+    exact_img = False
+    drop_legacy_video_media_ids = False
     creative_campaign = mode == "IMG" and (
         (body.visual_lane_id or "").upper() == "POSTER_BUILDER_CREATIVE_CAMPAIGN"
         or (body.creative_mode or "").upper() == "CREATIVE_CAMPAIGN"
@@ -1185,7 +1377,7 @@ async def generate(body: GenerateRequest):
         # Product-aware IMG requests pass this server gate before extension
         # connectivity or provider work. The workspace wrapper calls the same
         # helper so both routes have identical product-byte authority.
-        generation_prompt, request_refs, _ = await _apply_img_product_truth_gate(
+        generation_prompt, request_refs, exact_img = await _apply_img_product_truth_gate(
             product_id=body.product_id,
             visual_lane_id=body.visual_lane_id,
             prompt=body.prompt,
@@ -1194,6 +1386,12 @@ async def generate(body: GenerateRequest):
             reference_pack_id=body.reference_pack_id,
             creative_mode=body.creative_mode,
         )
+        if not exact_img:
+            # Product-aware IMG lanes accept typed refs only.  A legacy
+            # startAsset is untyped transport and could be the old catalog
+            # image (or a cosmetic composition), so the server-owned
+            # productAsset above is the sole product input.
+            effective_start_asset = None
         if creative_campaign:
             await _run_creative_campaign_pre_provider_lint(
                 product_id=body.product_id,
@@ -1204,6 +1402,22 @@ async def generate(body: GenerateRequest):
                 maximum_provider_operations=body.maximum_provider_operations,
                 max_retry_operations=body.max_retry_operations,
             )
+    if mode in ("I2V", "F2V") and body.product_id:
+        effective_source_mode = await _effective_video_source_mode(
+            body.source_mode,
+            body.workspace_execution_package_id,
+        )
+        (
+            effective_start_asset,
+            request_refs,
+            drop_legacy_video_media_ids,
+        ) = await _apply_video_product_visual_gate(
+            product_id=body.product_id,
+            mode=mode,
+            source_mode=effective_source_mode,
+            request_refs=request_refs,
+            start_asset=body.startAsset,
+        )
     # Validate model+duration BEFORE connectivity so 422 stays deterministic (patch I2a);
     # always resolve against the EFFECTIVE model (defaults to Lite) so a bad duration_s with
     # no model (e.g. 10s on default Lite) is caught here, not late inside the job.
@@ -1240,15 +1454,22 @@ async def generate(body: GenerateRequest):
             raise HTTPException(503, "Extension not connected")
 
     # Resolve visual assets from refs / startAsset to live Flow media IDs, in the
-    # canonical slot order (startAsset, subject, scene, style, image). IMG keeps
-    # product truth ahead of legacy explicit IDs; video preserves its proven
-    # explicit-ID-first contract and is intentionally outside this repair.
-    resolved_ids = [] if mode == "IMG" else list(body.image_media_ids or [])
-    for slot_label, ref_asset in ordered_ref_slots(body.startAsset, request_refs):
+    # canonical slot order (startAsset, subject, scene, style, image). IMG and
+    # product-aware video lanes have already been normalized through the
+    # Product Registration authority above; FRAMES keeps its explicit frame IDs.
+    resolved_ids = (
+        []
+        if mode == "IMG" or drop_legacy_video_media_ids
+        else list(body.image_media_ids or [])
+    )
+    for slot_label, ref_asset in ordered_ref_slots(effective_start_asset, request_refs):
         media_id = await _resolve_asset_to_media_id(client, ref_asset, slot_label)
         if media_id and media_id not in resolved_ids:
             resolved_ids.append(media_id)
-    if mode == "IMG":
+    if mode == "IMG" and (not body.product_id or exact_img):
+        # Product-aware non-exact IMG requests deliberately do not merge the
+        # caller's untyped image_media_ids.  Those IDs have no slot/lineage and
+        # can reintroduce the stale product image after the official gate.
         for media_id in body.image_media_ids or []:
             if media_id and media_id not in resolved_ids:
                 resolved_ids.append(media_id)
@@ -2987,6 +3208,25 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
             "prompt carries more than one compiled block — submit block 1 only; "
             "block 2+ belongs to the Extend step", "ERR_MULTI_BLOCK_PROMPT")
 
+    if mode in ("I2V", "F2V") and body.get("product_id"):
+        # Apply the same server-owned visual authority used by /generate.  The
+        # package path normally already carries this asset; this guard also
+        # protects direct/manual API callers from injecting a stale catalog
+        # image into the API-first lane.
+        effective_source_mode = await _effective_video_source_mode(
+            body.get("source_mode"),
+            body.get("workspace_execution_package_id"),
+        )
+        body["source_mode"] = effective_source_mode
+        start_asset, gated_refs, _ = await _apply_video_product_visual_gate(
+            product_id=str(body["product_id"]),
+            mode=mode,
+            source_mode=effective_source_mode,
+            request_refs=dict(body.get("refs") or {}),
+            start_asset=start_asset,
+        )
+        body["refs"] = gated_refs
+
     if mode == "IMG" and body.get("product_id"):
         if creative_campaign:
             from agent import config
@@ -3043,7 +3283,7 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
                     "creative campaign final model must be NANO_BANANA_PRO",
                     "ERR_CREATIVE_CAMPAIGN_FINAL_MODEL_REQUIRED",
                 )
-        prompt, gated_refs, _ = await _apply_img_product_truth_gate(
+        prompt, gated_refs, exact_img = await _apply_img_product_truth_gate(
             product_id=str(body["product_id"]),
             visual_lane_id=body.get("visual_lane_id") or body.get("lane"),
             prompt=prompt,
@@ -3052,6 +3292,11 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
             reference_pack_id=body.get("reference_pack_id"),
             creative_mode=body.get("creative_mode"),
         )
+        if not exact_img:
+            # The official Product Registration visual is the only product
+            # input for this IMG lane.  Drop the untyped legacy start asset;
+            # scene/avatar/style references remain available through refs.*.
+            start_asset = None
         body["prompt"] = prompt
         body["refs"] = gated_refs
         if creative_campaign:

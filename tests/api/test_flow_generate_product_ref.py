@@ -247,3 +247,168 @@ def test_img_generation_orders_product_reference_before_explicit_refs(monkeypatc
         scene,
         avatar,
     ]
+
+
+def test_hybrid_video_gate_replaces_stale_start_with_official_visual(monkeypatch):
+    product_id = "prod-official-hybrid"
+    official = {
+        "media_id": "registry-cutout-id",
+        "local_file_path": "C:/server/official-cutout.png",
+        "preview_url": "/official-cutout.png",
+        "file_name": "official-cutout.png",
+        "asset_source": "PRODUCT_VISUAL_OFFICIAL_CUTOUT",
+        "official_visual_sha256": "a" * 64,
+    }
+
+    async def get_product(value):
+        assert value == product_id
+        return {"id": product_id, "product_display_name": "Approved Product"}
+
+    monkeypatch.setattr(flow.crud, "get_product", get_product)
+    monkeypatch.setattr(
+        "agent.services.product_visual_grounding_resolver.build_official_product_visual_asset",
+        lambda product, *, slot_key, label: {**official, "slot_key": slot_key, "label": label},
+    )
+
+    start, refs, drop = _run(
+        flow._apply_video_product_visual_gate(
+            product_id=product_id,
+            mode="F2V",
+            source_mode="HYBRID",
+            request_refs={
+                "productAsset": {
+                    "productId": product_id,
+                    "assetSource": "PRODUCT_IMAGE_URL",
+                    "downloadUrl": "https://stale.example/product.jpg",
+                }
+            },
+            start_asset={
+                "productId": product_id,
+                "assetSource": "PRODUCT_IMAGE_URL",
+                "downloadUrl": "https://stale.example/product.jpg",
+            },
+        )
+    )
+
+    assert start["assetSource"] == "PRODUCT_VISUAL_OFFICIAL_CUTOUT"
+    assert start["officialVisual"] is True
+    assert refs == {}
+    assert drop is True
+
+
+def test_i2v_video_gate_keeps_scene_but_binds_official_product_visual(monkeypatch):
+    product_id = "prod-official-i2v"
+    official = {
+        "media_id": "registry-cutout-id",
+        "local_file_path": "C:/server/official-cutout.png",
+        "preview_url": "/official-cutout.png",
+        "file_name": "official-cutout.png",
+        "asset_source": "PRODUCT_VISUAL_OFFICIAL_CUTOUT",
+        "official_visual_sha256": "b" * 64,
+    }
+
+    async def get_product(value):
+        assert value == product_id
+        return {"id": product_id, "product_display_name": "Approved Product"}
+
+    monkeypatch.setattr(flow.crud, "get_product", get_product)
+    monkeypatch.setattr(
+        "agent.services.product_visual_grounding_resolver.build_official_product_visual_asset",
+        lambda product, *, slot_key, label: {**official, "slot_key": slot_key, "label": label},
+    )
+
+    start, refs, drop = _run(
+        flow._apply_video_product_visual_gate(
+            product_id=product_id,
+            mode="I2V",
+            source_mode="INGREDIENTS",
+            request_refs={
+                "productAsset": {
+                    "productId": product_id,
+                    "assetSource": "PRODUCT_IMAGE_URL",
+                },
+                "subjectAsset": {
+                    "productId": product_id,
+                    "assetSource": "PRODUCT_IMAGE_URL",
+                },
+                "sceneAsset": {
+                    "assetSource": "SCENE_REFERENCE",
+                    "mediaId": "scene-1",
+                },
+            },
+        )
+    )
+
+    assert start is None
+    assert refs["productAsset"]["assetSource"] == "PRODUCT_VISUAL_OFFICIAL_CUTOUT"
+    assert refs["productAsset"]["officialVisual"] is True
+    assert refs["sceneAsset"]["mediaId"] == "scene-1"
+    assert "subjectAsset" not in refs
+    assert drop is True
+
+
+def test_product_aware_img_drops_untyped_legacy_product_transport(monkeypatch):
+    """The shared IMG door must not let old product IDs bypass the official gate.
+
+    Typed scene/style/avatar refs remain available, while the legacy
+    ``startAsset`` and untyped ``image_media_ids`` channels are discarded for
+    non-exact product-aware IMG work.
+    """
+    calls = {"start_generate": None}
+
+    class _C:
+        connected = True
+
+        async def get_media(self, media_id):
+            return {"status": 200, "data": {"name": media_id}}
+
+    async def fake_img_gate(**kwargs):
+        return (
+            "official prompt",
+            {
+                "productAsset": {
+                    "mediaId": "11111111-1111-4111-8111-111111111111",
+                    "officialVisual": True,
+                    "assetSource": "PRODUCT_VISUAL_OFFICIAL_CUTOUT",
+                },
+                "sceneAsset": {"mediaId": "22222222-2222-4222-8222-222222222222"},
+            },
+            False,
+        )
+
+    async def fake_start_generate(mode, prompt, project_id=None, image_media_ids=None, **kw):
+        calls["start_generate"] = {
+            "mode": mode,
+            "prompt": prompt,
+            "image_media_ids": image_media_ids,
+        }
+        return {"job_id": "g_official_only", "status": "SUBMITTED", "mode": mode}
+
+    monkeypatch.setattr(flow, "get_flow_client", lambda: _C())
+    monkeypatch.setattr(flow, "_apply_img_product_truth_gate", fake_img_gate)
+    from agent.services import make_video as mv
+
+    monkeypatch.setattr(mv, "start_generate", fake_start_generate)
+
+    result = _run(
+        flow.generate(
+            flow.GenerateRequest(
+                mode="IMG",
+                prompt="stale prompt",
+                product_id="product-official-only",
+                startAsset={"mediaId": "stale-start-product"},
+                image_media_ids=["stale-product-id", "stale-creative-library-id"],
+                refs={"subjectAsset": {"mediaId": "stale-subject-product"}},
+            )
+        )
+    )
+
+    assert result["status"] == "SUBMITTED"
+    assert calls["start_generate"] == {
+        "mode": "IMG",
+        "prompt": "official prompt",
+        "image_media_ids": [
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222",
+        ],
+    }

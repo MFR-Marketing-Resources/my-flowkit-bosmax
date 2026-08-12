@@ -292,17 +292,59 @@ async def _build_item_payload(
         )
         if not str(prompt).strip():
             return {}, ["EMPTY_POSTER_PROMPT"]
+        poster_blockers: list[str] = []
+        poster_media_ids: list[str] = []
+        poster_deferred: list[dict] = []
+        product_id = str(item.get("product_id") or "").strip()
+        if not product_id:
+            poster_blockers.append("OFFICIAL_PRODUCT_VISUAL_REQUIRED")
+        else:
+            from agent.services.product_visual_grounding_resolver import (
+                ProductVisualReferenceRequiredError,
+                build_official_product_visual_asset,
+            )
+
+            try:
+                official = build_official_product_visual_asset(
+                    await crud.get_product(product_id) or {"id": product_id},
+                    slot_key="subject",
+                    label="Official product visual",
+                )
+            except ProductVisualReferenceRequiredError:
+                official = None
+                poster_blockers.append("OFFICIAL_PRODUCT_VISUAL_REQUIRED")
+            if official:
+                if official.get("local_file_path"):
+                    poster_media_ids.append(
+                        production_queue_service.official_visual_placeholder(
+                            official,
+                            "subject",
+                        )
+                    )
+                    poster_deferred.append(
+                        production_queue_service._deferred_official_visual_payload(
+                            official,
+                            "subject",
+                        )
+                    )
+                elif official.get("media_id"):
+                    poster_media_ids.append(str(official["media_id"]))
+                else:
+                    poster_blockers.append("OFFICIAL_PRODUCT_VISUAL_REQUIRED")
         return (
             {
                 "mode": "IMG",
                 "prompt": str(prompt),
                 "aspect": aspect,
                 "image_model": model_key or None,
+                "product_id": product_id or None,
+                "image_media_ids": poster_media_ids or None,
+                "deferred_official_visual_assets": poster_deferred,
                 "num_videos": 1,
                 "logical_mode": "POSTER",
                 "execution_lane": "IMAGE_API_FIRST",
             },
-            [],
+            poster_blockers,
         )
     wgp_id = item.get("workspace_generation_package_id")
     if not wgp_id:
@@ -397,10 +439,33 @@ async def _build_item_payload(
         prompt = str(wgp.get("final_prompt_text") or "")
         blockers = [] if prompt.strip() else ["EMPTY_FINAL_PROMPT"]
         image_media_ids: list[str] = []
+        deferred_official_visual_assets: list[dict] = []
         slots = _loads(wgp.get("resolved_engine_slots_json"), {})
         if isinstance(slots, dict):
             for slot_key, asset_ref in slots.items():
                 if not asset_ref:
+                    continue
+                official_asset = production_queue_service.official_visual_asset_for_slot(
+                    wgp,
+                    str(slot_key),
+                    str(asset_ref),
+                )
+                if official_asset and (
+                    official_asset.get("local_file_path")
+                    or official_asset.get("localFilePath")
+                ):
+                    image_media_ids.append(
+                        production_queue_service.official_visual_placeholder(
+                            official_asset,
+                            str(slot_key),
+                        )
+                    )
+                    deferred_official_visual_assets.append(
+                        production_queue_service._deferred_official_visual_payload(
+                            official_asset,
+                            str(slot_key),
+                        )
+                    )
                     continue
                 media_id = await _resolve_flow_media_id(str(asset_ref), wgp)
                 if media_id:
@@ -413,8 +478,10 @@ async def _build_item_payload(
                 "mode": "IMG",
                 "prompt": prompt,
                 "image_media_ids": image_media_ids or None,
+                "deferred_official_visual_assets": deferred_official_visual_assets,
                 "aspect": aspect,
                 "image_model": model_key or None,
+                "product_id": str(wgp.get("product_id") or "") or None,
                 "num_videos": 1,
                 "logical_mode": "IMG",
                 "execution_lane": "IMAGE_API_FIRST",
@@ -688,15 +755,26 @@ async def _dispatch_attempt(
                     str(result.get("error") or "Durable Extend dispatch failed."),
                 )
         else:
+            runtime_payload, transport_blockers = (
+                await production_queue_service.materialize_official_visual_transport(
+                    payload
+                )
+            )
+            if transport_blockers:
+                raise CreativeProductionError(
+                    "OFFICIAL_PRODUCT_VISUAL_TRANSPORT_FAILED",
+                    ",".join(transport_blockers),
+                    details={"blockers": transport_blockers},
+                )
             result = await make_video.start_generate(
-                mode=payload["mode"],
-                prompt=payload["prompt"],
-                image_media_ids=payload.get("image_media_ids"),
-                aspect=payload.get("aspect") or "9:16",
-                model=payload.get("model"),
-                duration_s=payload.get("duration_s"),
-                num_videos=int(payload.get("num_videos") or 1),
-                image_model=payload.get("image_model"),
+                mode=runtime_payload["mode"],
+                prompt=runtime_payload["prompt"],
+                image_media_ids=runtime_payload.get("image_media_ids"),
+                aspect=runtime_payload.get("aspect") or "9:16",
+                model=runtime_payload.get("model"),
+                duration_s=runtime_payload.get("duration_s"),
+                num_videos=int(runtime_payload.get("num_videos") or 1),
+                image_model=runtime_payload.get("image_model"),
             )
     except Exception as exc:
         await p6db.update_attempt(

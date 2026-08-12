@@ -1021,7 +1021,7 @@ export default function ProductVisualReadinessPanel({
 									{official ? (
 										<div className="rounded-lg bg-emerald-500/10 px-2 py-1.5 text-center text-[9px] font-bold uppercase tracking-widest text-emerald-300">Current system reference</div>
 									) : (
-										<button type="button" onClick={() => selectVisual(key)} disabled={!canSelect} title={!canSelect ? "Create this visual candidate first." : "Select this visual, then press Save Changes."} data-testid={`set-official-${key}`} className="w-full rounded-lg bg-slate-700 px-2 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-200 disabled:opacity-40">Choose for Save</button>
+										<button type="button" onClick={() => selectVisual(key)} disabled={!canSelect} title={!canSelect ? "Create this visual candidate first." : "Select this visual as the official candidate, complete review if required, then press Save Changes."} data-testid={`set-official-${key}`} className="w-full rounded-lg bg-slate-700 px-2 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-200 disabled:opacity-40">Select Official</button>
 									)}
 								</div>
 								{key === "auto" && busyLane === "auto" && <LaneLoader label="GENERATING CUTOUT…" testid="auto-cutout-loading" />}
@@ -1089,7 +1089,7 @@ export default function ProductVisualReadinessPanel({
 								{busy === "upload" ? "UPLOADING CUTOUT…" : readiness.manual_cutout_status === "NOT_UPLOADED" ? "UPLOAD MANUAL CUTOUT" : "REPLACE MANUAL CUTOUT"}
 							</button>
 							{busyLane === "manual" && <LaneLoader label="UPLOADING CUTOUT…" testid="manual-cutout-loading" />}
-							<p className="mt-2 text-[9px] leading-relaxed text-slate-400">Upload a <span className="font-bold text-slate-300">PNG with a transparent background</span> (the product already cut out, e.g. exported from Canva or Photoshop). A normal photo will be rejected. It uploads immediately — then choose Manual and press <span className="font-bold text-slate-300">SAVE CHANGES</span>.</p>
+			<p className="mt-2 text-[9px] leading-relaxed text-slate-400">Upload a <span className="font-bold text-slate-300">PNG with a transparent background</span> (the product already cut out, e.g. exported from Canva or Photoshop). A normal photo will be rejected. It uploads immediately — then select Manual as Official and press <span className="font-bold text-slate-300">SAVE CHANGES</span>.</p>
 							{manualMsg && (
 								<p data-testid="manual-upload-message" className={`mt-2 rounded-md px-2 py-1.5 text-[9px] font-semibold leading-relaxed ${manualMsg.tone === "ok" ? "bg-emerald-500/10 text-emerald-300" : "bg-red-500/10 text-red-300"}`}>{manualMsg.text}</p>
 							)}
@@ -1118,7 +1118,7 @@ export default function ProductVisualReadinessPanel({
 					<div className="flex flex-wrap items-center justify-between gap-2">
 						<div>
 							<div className="text-[10px] font-bold uppercase tracking-widest text-sky-100">SAVE VISUAL SETUP</div>
-							<div className="mt-1 text-[10px] text-slate-400">Choose a card above, then save the selection. Pending candidates require the existing review confirmations below.</div>
+							<div className="mt-1 text-[10px] text-slate-400">Select one card, complete review when required, then save. The saved visual becomes the only product reference for IMG, Hybrid, I2V, Production Studio, Fastlane, Cockpit, and Poster Builder.</div>
 						</div>
 						{selectionDirty && <span className="text-[9px] font-bold uppercase tracking-widest text-amber-200">UNSAVED CHANGES</span>}
 					</div>

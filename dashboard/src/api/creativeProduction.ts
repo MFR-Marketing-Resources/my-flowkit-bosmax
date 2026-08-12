@@ -329,6 +329,7 @@ export interface GovernedPoolAuthority {
 	poster_copy_sets: Array<Record<string, unknown>>;
 	avatar_profiles: Array<Record<string, unknown>>;
 	product_reference_assets: Array<Record<string, unknown>>;
+	official_product_visual_authority?: Record<string, unknown>;
 	finished_frame_assets: Array<Record<string, unknown>>;
 	character_assets: Array<Record<string, unknown>>;
 	scene_assets: Array<Record<string, unknown>>;

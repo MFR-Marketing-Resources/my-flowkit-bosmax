@@ -55,12 +55,14 @@ _ANCHOR_SLOTS = [
     {
         "slot_key": "start_frame",
         "required": True,
-        "default_source": "PRODUCT_IMAGE_CACHE",
+        "default_source": "PRODUCT_VISUAL_OFFICIAL_SOURCE",
         "resolved_asset": {
-            "asset_id": "product-image:prod-001:start_frame",
+            "asset_id": "product-visual:prod-001:official",
+            "product_id": "prod-001",
             "asset_fingerprint": "asset_fp_001",
             "slot_key": "start_frame",
-            "asset_source": "PRODUCT_IMAGE_CACHE",
+            "asset_source": "PRODUCT_VISUAL_OFFICIAL_SOURCE",
+            "official_visual": True,
             "media_id": "media-product",
         },
     },
@@ -84,32 +86,42 @@ async def test_hybrid_binding_defaults_to_package_product_anchor():
     assert merged == _ANCHOR_SLOTS
     resolved = [slot["resolved_asset"] for slot in merged if slot.get("resolved_asset")]
     assert len(resolved) == 1
-    assert resolved[0]["asset_id"] == "product-image:prod-001:start_frame"
+    assert resolved[0]["asset_id"] == "product-visual:prod-001:official"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("product_reference_asset_id", "start_frame_asset_id", "end_frame_asset_id"),
+    ("product_reference_asset_id", "start_frame_asset_id"),
     [
-        ("ca_product", "ca_extra", None),
-        ("ca_product", None, "ca_extra"),
-        (None, "ca_extra", None),
-        (None, None, "ca_extra"),
+        ("ca_product", "ca_extra"),
+        (None, "ca_extra"),
     ],
 )
-async def test_hybrid_reference_binding_rejects_frame_selections(
+async def test_hybrid_reference_overrides_are_ignored_in_favour_of_official_visual(
     product_reference_asset_id,
     start_frame_asset_id,
-    end_frame_asset_id,
 ):
-    with pytest.raises(ValueError, match="HYBRID_EXACTLY_ONE_PRODUCT_REFERENCE_REQUIRED"):
+    merged = await _bind_f2v_reference_assets(
+        copy.deepcopy(_ANCHOR_SLOTS),
+        product_id="prod-001",
+        source_mode="HYBRID",
+        product_reference_asset_id=product_reference_asset_id,
+        start_frame_asset_id=start_frame_asset_id,
+        end_frame_asset_id=None,
+    )
+    assert merged == _ANCHOR_SLOTS
+
+
+@pytest.mark.asyncio
+async def test_hybrid_rejects_end_frame_override():
+    with pytest.raises(ValueError, match="HYBRID_END_FRAME_OVERRIDE_NOT_ALLOWED"):
         await _bind_f2v_reference_assets(
-            [],
+            copy.deepcopy(_ANCHOR_SLOTS),
             product_id="prod-001",
             source_mode="HYBRID",
-            product_reference_asset_id=product_reference_asset_id,
-            start_frame_asset_id=start_frame_asset_id,
-            end_frame_asset_id=end_frame_asset_id,
+            product_reference_asset_id=None,
+            start_frame_asset_id=None,
+            end_frame_asset_id="ca_extra",
         )
 
 
@@ -171,9 +183,9 @@ async def test_binding_rejects_reference_without_resolvable_source(monkeypatch):
         await _bind_f2v_reference_assets(
             copy.deepcopy(_ANCHOR_SLOTS),
             product_id="prod-001",
-            source_mode="HYBRID",
-            product_reference_asset_id="ca_no_media",
-            start_frame_asset_id=None,
+            source_mode="FRAMES",
+            product_reference_asset_id=None,
+            start_frame_asset_id="ca_no_media",
             end_frame_asset_id=None,
         )
 
@@ -212,7 +224,7 @@ async def test_binding_accepts_local_file_without_media_id(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_hybrid_explicit_pick_overrides_anchor(monkeypatch):
+async def test_hybrid_explicit_pick_does_not_override_anchor(monkeypatch):
     captured_kwargs = {}
 
     async def fake_validate(asset_id: str, **kwargs):
@@ -233,13 +245,12 @@ async def test_hybrid_explicit_pick_overrides_anchor(monkeypatch):
         start_frame_asset_id=None,
         end_frame_asset_id=None,
     )
-    # picker parity: the binder enforces the same rendered-text ban as the
-    # eligibility-audit surfaces.
-    assert captured_kwargs["disallow_rendered_text"] is True
-    assert captured_kwargs["semantic_role"] == "PRODUCT_REFERENCE"
+    # Product Registration is the sole HYBRID authority. A creative-library
+    # product picker must not be consulted or allowed to replace it.
+    assert captured_kwargs == {}
     start = next(s for s in merged if s["slot_key"] == "start_frame")
-    assert start["resolved_asset"]["asset_id"] == "ca_pick"
-    assert start["resolved_asset"]["semantic_role"] == "PRODUCT_REFERENCE"
+    assert start["resolved_asset"]["asset_id"] == "product-visual:prod-001:official"
+    assert start["resolved_asset"]["official_visual"] is True
 
 
 @pytest.mark.asyncio
@@ -480,8 +491,8 @@ async def test_workspace_execution_package_hybrid_uses_automatic_product_anchor(
 
     assert result["readiness"] == "READY"
     assert len(result["resolved_assets"]) == 1
-    assert result["resolved_assets"][0]["asset_source"] == "PRODUCT_IMAGE_CACHE"
-    assert result["resolved_assets"][0]["asset_id"] == "product-image:prod-001:start_frame"
+    assert result["resolved_assets"][0]["asset_source"] == "PRODUCT_VISUAL_OFFICIAL_SOURCE"
+    assert result["resolved_assets"][0]["asset_id"] == "product-visual:prod-001:official"
     stored_assets = json.loads(captured["resolved_assets"])
     assert stored_assets[0]["media_id"] == "media-product"
 

@@ -144,6 +144,143 @@ def _loads(raw, default):
         return default
 
 
+def _is_official_visual_asset(asset: object) -> bool:
+    if not isinstance(asset, dict):
+        return False
+    source = str(
+        asset.get("asset_source")
+        or asset.get("assetSource")
+        or asset.get("source")
+        or ""
+    ).upper()
+    return bool(asset.get("official_visual") or source.startswith("PRODUCT_VISUAL_OFFICIAL"))
+
+
+def official_visual_asset_for_slot(
+    package: dict,
+    slot_key: str,
+    asset_ref: str | None,
+) -> dict | None:
+    """Find the full server-owned official asset behind a compact slot id."""
+    reference = str(asset_ref or "").strip()
+    candidates: list[dict] = []
+
+    def collect(value: object) -> None:
+        if isinstance(value, dict):
+            direct = value.get(slot_key)
+            if isinstance(direct, dict):
+                candidates.append(direct)
+            for nested in value.values():
+                if isinstance(nested, dict):
+                    if nested is not direct:
+                        candidates.append(nested)
+                elif isinstance(nested, list):
+                    collect(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                if isinstance(nested, dict):
+                    candidates.append(nested)
+
+    for field in ("selected_assets_json", "image_assets_json"):
+        collect(_loads(package.get(field), {}))
+    dom = _loads(package.get("dom_handoff_payload_json"), {})
+    if isinstance(dom, dict):
+        collect(dom.get("assets") or {})
+
+    for candidate in candidates:
+        if not _is_official_visual_asset(candidate):
+            continue
+        ids = {
+            str(candidate.get(key) or "").strip()
+            for key in ("asset_id", "media_id", "flow_media_id")
+        }
+        if reference and reference not in ids:
+            continue
+        return dict(candidate)
+    return None
+
+
+def official_visual_placeholder(asset: dict, slot_key: str) -> str:
+    digest = str(
+        asset.get("official_visual_sha256")
+        or asset.get("asset_fingerprint")
+        or asset.get("asset_id")
+        or "unknown"
+    )
+    return f"OFFICIAL_PRODUCT_VISUAL:{slot_key}:{digest[:32]}"
+
+
+def _deferred_official_visual_payload(asset: dict, slot_key: str) -> dict:
+    return {
+        "slot_key": slot_key,
+        "asset_id": asset.get("asset_id"),
+        "media_id": asset.get("media_id"),
+        "flow_media_id": asset.get("flow_media_id"),
+        "local_file_path": asset.get("local_file_path") or asset.get("localFilePath"),
+        "download_url": asset.get("download_url") or asset.get("downloadUrl"),
+        "file_name": asset.get("file_name") or asset.get("fileName"),
+        "official_visual_sha256": asset.get("official_visual_sha256"),
+        "asset_source": asset.get("asset_source") or asset.get("assetSource"),
+        "official_visual": True,
+    }
+
+
+async def materialize_official_visual_transport(
+    payload: dict,
+) -> tuple[dict, list[str]]:
+    """Upload deferred Product Registration visuals immediately before firing.
+
+    P6 dry-runs remain provider-call free: they carry deterministic placeholders
+    and the server-owned bytes. The live dispatch replaces those placeholders
+    with real Flow media UUIDs, so a random product-source UUID can never be
+    mistaken for an already-uploaded Flow asset.
+    """
+    deferred = payload.get("deferred_official_visual_assets") or []
+    if not deferred:
+        return payload, []
+    from agent.services.flow_client import get_flow_client
+
+    client = get_flow_client()
+    if not getattr(client, "connected", False):
+        return payload, ["OFFICIAL_PRODUCT_VISUAL_TRANSPORT_UNAVAILABLE"]
+
+    replacements: dict[str, str] = {}
+    blockers: list[str] = []
+    for raw_asset in deferred:
+        if not isinstance(raw_asset, dict):
+            blockers.append("OFFICIAL_PRODUCT_VISUAL_TRANSPORT_INVALID")
+            continue
+        slot_key = str(raw_asset.get("slot_key") or "slot")
+        placeholder = official_visual_placeholder(raw_asset, slot_key)
+        candidate_media_id = str(
+            raw_asset.get("flow_media_id") or raw_asset.get("media_id") or ""
+        ).strip()
+        media_id = None
+        if _FLOW_MEDIA_UUID_RE.match(candidate_media_id):
+            if await _flow_media_is_live(client, candidate_media_id):
+                media_id = candidate_media_id
+        if not media_id:
+            media_id, blocker = await _upload_local_image(
+                client,
+                raw_asset.get("local_file_path"),
+            )
+            if blocker:
+                blockers.append(
+                    f"OFFICIAL_PRODUCT_VISUAL_UPLOAD_FAILED:{slot_key}:{blocker}"
+                )
+                continue
+        replacements[placeholder] = str(media_id)
+
+    if blockers:
+        return payload, blockers
+    runtime = dict(payload)
+    runtime["image_media_ids"] = [
+        replacements.get(str(media_id), media_id)
+        for media_id in (payload.get("image_media_ids") or [])
+    ]
+    return runtime, []
+
+
 # ── Approval ──────────────────────────────────────────────────────────────
 
 
@@ -328,9 +465,31 @@ async def build_execution_payload(pkg: dict, run_config: dict | None = None) -> 
     # not Flow media ids — each slot must resolve to an uploaded UUID.
     image_media_ids: list[str] = []
     slots = _loads(pkg.get("resolved_engine_slots_json"), {})
+    deferred_official_visual_assets: list[dict] = []
     if engine_mode in ("F2V", "I2V") and isinstance(slots, dict):
         for slot_key, asset_ref in slots.items():
             if not asset_ref:
+                continue
+            official_asset = official_visual_asset_for_slot(
+                pkg,
+                str(slot_key),
+                str(asset_ref),
+            )
+            if official_asset and (
+                official_asset.get("local_file_path")
+                or official_asset.get("localFilePath")
+            ):
+                placeholder = official_visual_placeholder(
+                    official_asset,
+                    str(slot_key),
+                )
+                image_media_ids.append(placeholder)
+                deferred_official_visual_assets.append(
+                    _deferred_official_visual_payload(
+                        official_asset,
+                        str(slot_key),
+                    )
+                )
                 continue
             media_id = await _resolve_flow_media_id(str(asset_ref), pkg)
             if media_id:
@@ -380,6 +539,7 @@ async def build_execution_payload(pkg: dict, run_config: dict | None = None) -> 
         "mode": engine_mode,
         "prompt": prompt,
         "image_media_ids": image_media_ids or None,
+        "deferred_official_visual_assets": deferred_official_visual_assets,
         "aspect": cfg.get("aspect") or "9:16",
         "model": cfg.get("model"),
         "duration_s": duration_s,
@@ -1578,15 +1738,26 @@ async def _fire_and_wait(make_video, payload: dict, wgp_id: str) -> dict:
 
 
 async def _fire_and_wait_inner(make_video, payload: dict, wgp_id: str) -> dict:
+    runtime_payload, transport_blockers = await materialize_official_visual_transport(
+        payload
+    )
+    if transport_blockers:
+        reason = ",".join(transport_blockers)
+        await crud.update_workspace_generation_package(
+            wgp_id,
+            production_status="FAILED",
+            production_error=reason,
+        )
+        return {"ok": False, "error": reason}
     attempts = 0
     while True:
         result = await make_video.start_generate(
-            payload["mode"], payload["prompt"],
-            image_media_ids=payload.get("image_media_ids"),
-            aspect=payload.get("aspect") or "9:16",
-            model=payload.get("model"),
-            duration_s=payload.get("duration_s"),
-            num_videos=payload.get("num_videos") or 1,
+            runtime_payload["mode"], runtime_payload["prompt"],
+            image_media_ids=runtime_payload.get("image_media_ids"),
+            aspect=runtime_payload.get("aspect") or "9:16",
+            model=runtime_payload.get("model"),
+            duration_s=runtime_payload.get("duration_s"),
+            num_videos=runtime_payload.get("num_videos") or 1,
         )
         if result.get("status") == "REJECTED" and result.get("error") == "VIDEO_JOB_IN_FLIGHT":
             attempts += 1

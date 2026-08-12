@@ -18,6 +18,23 @@ from agent.services.workspace_generation_package_service import (
 
 # ─── Shared fakes ────────────────────────────────────────────
 
+FAKE_OFFICIAL_PRODUCT_VISUAL = {
+    "asset_id": "product-visual:prod-001:official",
+    "product_id": "prod-001",
+    "asset_fingerprint": "product_visual_official_start_frame",
+    "asset_source": "PRODUCT_VISUAL_OFFICIAL_SOURCE",
+    "official_visual": True,
+    "official_visual_source_type": "PRODUCT_SOURCE_MEDIA",
+    "official_visual_sha256": "a" * 64,
+    "slot_key": "start_frame",
+    "label": "Official product visual",
+    "file_name": "prod-001_official.jpg",
+    "preview_url": "/api/products/prod-001/image",
+    "download_url": "/api/products/prod-001/image",
+    "media_id": "media-product-official",
+    "local_file_path": "C:/tmp/prod-001-official.jpg",
+}
+
 FAKE_APPROVED_PKG = {
     "prompt_package_snapshot_id": "pkg_test_001",
     "product_id": "prod-001",
@@ -26,7 +43,22 @@ FAKE_APPROVED_PKG = {
     "production_generation_allowed": False,
     "prompt_text": "Compiled F2V prompt",
     "prompt_fingerprint": "fp_test_001",
-    "asset_slots": [],
+    "asset_slots": [
+        {
+            "slot_key": "start_frame",
+            "required": True,
+            "default_source": "PRODUCT_VISUAL_OFFICIAL_SOURCE",
+            "allowed_sources": ["PRODUCT_VISUAL_OFFICIAL_SOURCE", "PRODUCT_VISUAL_OFFICIAL_CUTOUT"],
+            "resolved_asset": {**FAKE_OFFICIAL_PRODUCT_VISUAL, "slot_key": "start_frame"},
+        },
+        {
+            "slot_key": "subject",
+            "required": True,
+            "default_source": "PRODUCT_VISUAL_OFFICIAL_SOURCE",
+            "allowed_sources": ["PRODUCT_VISUAL_OFFICIAL_SOURCE", "PRODUCT_VISUAL_OFFICIAL_CUTOUT"],
+            "resolved_asset": {**FAKE_OFFICIAL_PRODUCT_VISUAL, "slot_key": "subject"},
+        },
+    ],
     "manual_fallback": {"copy_prompt_available": True},
     "blockers": [],
     "source_of_truth_notes": [],
@@ -323,7 +355,7 @@ async def test_f2v_package_blocked_when_no_prompt(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_f2v_start_frame_auto_seeded_from_product_image(monkeypatch):
+async def test_f2v_start_frame_uses_product_registration_official_visual(monkeypatch):
     async def fake_approved(product_id, mode): return FAKE_APPROVED_PKG
     def fake_compile(**kwargs): return FAKE_COMPILE_RESULT
     monkeypatch.setattr("agent.services.workspace_generation_package_service.get_approved_product_package", fake_approved)
@@ -339,8 +371,9 @@ async def test_f2v_start_frame_auto_seeded_from_product_image(monkeypatch):
 
     await create_f2v_generation_package(product_id="prod-001")
     start_frame = captured_selected_assets.get("start_frame", {})
-    assert start_frame["source"] == "PRODUCT_IMAGE_AUTO_SEED"
-    assert "prod-001" in start_frame["preview_url"]
+    assert start_frame["source"] == "PRODUCT_VISUAL_OFFICIAL_SOURCE"
+    assert start_frame["official_visual"] is True
+    assert start_frame["asset_id"] == "product-visual:prod-001:official"
 
 
 @pytest.mark.asyncio
@@ -360,6 +393,7 @@ async def test_f2v_operator_selected_start_frame_persists(monkeypatch):
 
     await create_f2v_generation_package(
         product_id="prod-001",
+        source_mode="FRAMES",
         start_frame_asset_id="custom_asset_001",
         start_frame_preview_url="/custom/preview.jpg",
         start_frame_download_url="/custom/download.jpg",

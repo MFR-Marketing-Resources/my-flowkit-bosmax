@@ -257,6 +257,9 @@ export function buildFacelessGenerateBody(input: {
 		prompt,
 		aspect: input.aspect || pkg?.aspect_ratio || "9:16",
 		product_id: input.productId ?? pkg?.product_id ?? null,
+		source_mode:
+			pkg?.source_mode ||
+			(input.startFrameAssetId ? FACELESS_OVERRIDE_SOURCE_MODE : FACELESS_SOURCE_MODE),
 		model,
 		duration_s: durationSeconds,
 		generation_mode: "SINGLE",

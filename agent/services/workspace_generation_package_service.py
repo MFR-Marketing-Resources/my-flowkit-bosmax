@@ -101,11 +101,25 @@ def _compiler_product_context(
 
 
 def _fingerprint(*parts: str) -> str:
-    return hashlib.sha1("||".join(parts).encode("utf-8")).hexdigest()
+    return hashlib.sha1(
+        "||".join(str(part or "") for part in parts).encode("utf-8")
+    ).hexdigest()
 
 
 def _json(v: Any) -> str:
     return json.dumps(v, ensure_ascii=True)
+
+
+def _approved_asset_for_slot(
+    approved_package: dict[str, Any],
+    slot_key: str,
+) -> tuple[bool, dict[str, Any] | None]:
+    """Return the package's server-resolved asset and whether the slot exists."""
+    for slot in approved_package.get("asset_slots") or []:
+        if str(slot.get("slot_key") or "") == slot_key:
+            asset = slot.get("resolved_asset")
+            return True, dict(asset) if isinstance(asset, dict) else None
+    return False, None
 
 
 def _wgp_id(product_id: str, mode: str, source_lane: str, prompt_fp: str) -> str:
@@ -301,16 +315,49 @@ async def create_f2v_generation_package(
     prompt_blocks: list = compiler_result.get("prompt_blocks", [])
     prompt_fingerprint: str = compiler_result.get("prompt_fingerprint", _fingerprint(final_prompt_text))
 
-    # Resolve start frame — product image auto-seeds if no operator replacement
-    product_image_url = f"/api/products/{product_id}/image"
-    start_frame = {
-        "slot_key": "start_frame",
-        "label": "Start Frame",
-        "asset_id": start_frame_asset_id or f"product-image:{product_id}:start_frame",
-        "preview_url": start_frame_preview_url or product_image_url,
-        "download_url": start_frame_download_url or product_image_url,
-        "source": "OPERATOR_SELECTED" if start_frame_asset_id else "PRODUCT_IMAGE_AUTO_SEED",
-    }
+    # HYBRID and every default product-image anchor use the Product
+    # Registration Official Product Visual. A P6/creative-asset product
+    # reference is never allowed to replace this server-owned selection.
+    has_official_slot, official_start_frame = _approved_asset_for_slot(
+        approved, "start_frame"
+    )
+    if resolved_source_lane == "HYBRID" or not start_frame_asset_id:
+        if official_start_frame:
+            start_frame = {
+                **official_start_frame,
+                "slot_key": "start_frame",
+                "label": "Official product visual",
+                "source": official_start_frame.get(
+                    "asset_source", "PRODUCT_VISUAL_OFFICIAL"
+                ),
+            }
+        elif has_official_slot:
+            start_frame = {
+                "slot_key": "start_frame",
+                "label": "Official product visual",
+                "asset_id": None,
+                "preview_url": None,
+                "download_url": None,
+                "source": "OFFICIAL_PRODUCT_VISUAL_REQUIRED",
+            }
+        else:
+            start_frame = {
+                "slot_key": "start_frame",
+                "label": "Official product visual",
+                "asset_id": None,
+                "preview_url": None,
+                "download_url": None,
+                "source": "OFFICIAL_PRODUCT_VISUAL_REQUIRED",
+            }
+    else:
+        start_frame = {
+            "slot_key": "start_frame",
+            "label": "Start Frame",
+            "asset_id": start_frame_asset_id,
+            "preview_url": start_frame_preview_url,
+            "download_url": start_frame_download_url,
+            "source": "OPERATOR_SELECTED",
+        }
 
     end_frame: dict | None = None
     if end_frame_asset_id or end_frame_preview_url:
@@ -328,6 +375,8 @@ async def create_f2v_generation_package(
     warnings: list = []
     if not final_prompt_text:
         blockers.append("final_prompt_text is empty")
+    if not start_frame.get("asset_id"):
+        blockers.append("OFFICIAL_PRODUCT_VISUAL_REQUIRED")
 
     status = "BLOCKED" if blockers else "READY_MANUAL"
 
@@ -338,7 +387,7 @@ async def create_f2v_generation_package(
         "subject": None,
         "scene": None,
         "style": None,
-        "product_reference": None,
+        "product_reference": start_frame if resolved_source_lane == "HYBRID" else None,
     }
 
     # Upload order F2V: Start Frame -> End Frame
@@ -347,7 +396,11 @@ async def create_f2v_generation_package(
         upload_order.append("end_frame")
 
     image_assets = {k: v for k, v in asset_map.items() if v and k in ("start_frame", "end_frame")}
-    asset_fingerprints = [_fingerprint(a.get("asset_id", "")) for a in image_assets.values() if a]
+    asset_fingerprints = [
+        _fingerprint(a.get("asset_id", ""))
+        for a in image_assets.values()
+        if a and a.get("asset_id")
+    ]
 
     selected_assets = {
         "start_frame": start_frame,
@@ -530,11 +583,16 @@ async def create_i2v_generation_package(
 
     prompt_fingerprint: str = compiler_result.get("prompt_fingerprint", _fingerprint(final_prompt_text))
 
-    # Map resolved slots to Subject/Scene/Style
+    # Map resolved slots by semantic role first. The Product Reference may be
+    # carried in an engine slot named "subject"; it must not be mistaken for
+    # the creator subject and then replaced by the raw product image below.
     slot_map: dict[str, dict | None] = {"subject": None, "scene": None, "style": None, "product_reference": None}
     for slot in resolved_slots:
         sk = (slot.get("slot_key") or "").lower()
-        if "subject" in sk or "character" in sk:
+        semantic_role = str(slot.get("semantic_role") or "").lower()
+        if semantic_role == "product_reference":
+            slot_map["product_reference"] = slot
+        elif "subject" in sk or "character" in sk:
             slot_map["subject"] = slot
         elif "scene" in sk or "context" in sk:
             slot_map["scene"] = slot
@@ -543,17 +601,26 @@ async def create_i2v_generation_package(
         elif "product_ref" in sk or "product" in sk:
             slot_map["product_reference"] = slot
 
-    # Product reference auto-loads from product image if not supplied
+    # Product reference is always the package's Product Registration visual.
+    # There is no raw product-image fallback: an absent official slot is a
+    # blocker that must remain visible to the operator.
     if not slot_map["product_reference"]:
-        product_image_url = f"/api/products/{product_id}/image"
-        slot_map["product_reference"] = {
-            "slot_key": "product_reference",
-            "label": "Product Reference",
-            "asset_id": product_reference_asset_id or f"product-image:{product_id}:product_reference",
-            "preview_url": product_image_url,
-            "download_url": product_image_url,
-            "source": "PRODUCT_IMAGE_AUTO_SEED",
-        }
+        has_official_slot, official_product_reference = _approved_asset_for_slot(
+            approved, "subject"
+        )
+        if official_product_reference:
+            slot_map["product_reference"] = {
+                **official_product_reference,
+                "slot_key": "product_reference",
+                "label": "Official product visual",
+                "source": official_product_reference.get(
+                    "asset_source", "PRODUCT_VISUAL_OFFICIAL"
+                ),
+            }
+        elif has_official_slot:
+            resolver_blockers.append("MISSING_OFFICIAL_PRODUCT_VISUAL")
+        else:
+            resolver_blockers.append("MISSING_OFFICIAL_PRODUCT_VISUAL")
 
     # Blockers / warnings
     blockers = list(resolver_blockers)
@@ -976,16 +1043,36 @@ async def create_img_generation_package(
     prompt_blocks: list = compiler_result.get("prompt_blocks", [])
     prompt_fingerprint: str = compiler_result.get("prompt_fingerprint", _fingerprint(final_prompt_text))
 
-    # Subject auto-seeds from product image
-    product_image_url = f"/api/products/{product_id}/image"
-    subject_slot = {
-        "slot_key": "subject",
-        "label": "Subject",
-        "asset_id": subject_asset_id or f"product-image:{product_id}:subject",
-        "preview_url": subject_preview_url or product_image_url,
-        "download_url": subject_download_url or product_image_url,
-        "source": "OPERATOR_SELECTED" if subject_asset_id else "PRODUCT_IMAGE_AUTO_SEED",
-    }
+    # IMG package subject is server-bound to the same Official Product Visual
+    # used by video packages. Client/P6 subject asset ids cannot override it.
+    has_official_slot, official_subject = _approved_asset_for_slot(approved, "subject")
+    if official_subject:
+        subject_slot = {
+            **official_subject,
+            "slot_key": "subject",
+            "label": "Official product visual",
+            "source": official_subject.get(
+                "asset_source", "PRODUCT_VISUAL_OFFICIAL"
+            ),
+        }
+    elif has_official_slot:
+        subject_slot = {
+            "slot_key": "subject",
+            "label": "Official product visual",
+            "asset_id": None,
+            "preview_url": None,
+            "download_url": None,
+            "source": "OFFICIAL_PRODUCT_VISUAL_REQUIRED",
+        }
+    else:
+        subject_slot = {
+            "slot_key": "subject",
+            "label": "Official product visual",
+            "asset_id": None,
+            "preview_url": None,
+            "download_url": None,
+            "source": "OFFICIAL_PRODUCT_VISUAL_REQUIRED",
+        }
 
     scene_slot: dict | None = None
     if scene_context_asset_id or scene_context_preview_url:
@@ -1014,7 +1101,7 @@ async def create_img_generation_package(
     if not final_prompt_text:
         blockers.append("final_prompt_text is empty")
     if not subject_slot.get("asset_id"):
-        blockers.append("subject image is required for IMG mode")
+        blockers.append("OFFICIAL_PRODUCT_VISUAL_REQUIRED")
 
     status = "BLOCKED" if blockers else "READY_MANUAL"
 
@@ -1027,7 +1114,11 @@ async def create_img_generation_package(
     }
     image_assets = {k: v for k, v in asset_map.items() if v and k in ("subject", "scene", "style")}
     upload_order = [k for k in ("subject", "scene", "style") if asset_map.get(k)]
-    asset_fingerprints = [_fingerprint(a.get("asset_id", "")) for a in image_assets.values() if a]
+    asset_fingerprints = [
+        _fingerprint(a.get("asset_id", ""))
+        for a in image_assets.values()
+        if a and a.get("asset_id")
+    ]
 
     settings = {
         "generation_mode": generation_mode,

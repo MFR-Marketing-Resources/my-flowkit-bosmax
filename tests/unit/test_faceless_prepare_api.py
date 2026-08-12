@@ -61,9 +61,10 @@ def test_prepare_product_only_no_start_frame(client: TestClient) -> None:
             {
                 "slot_key": "start_frame",
                 "resolved_asset": {
-                    "asset_id": "product-image:p1:start_frame",
+                    "asset_id": "product-visual:p1:official",
                     "asset_fingerprint": "sha256:product-p1",
-                    "asset_source": "PRODUCT_IMAGE_CACHE",
+                    "asset_source": "PRODUCT_VISUAL_OFFICIAL_SOURCE",
+                    "official_visual": True,
                     "media_id": "media-p1",
                     "download_url": "https://cdn.example/p1.png",
                 },
@@ -113,9 +114,10 @@ def test_prepare_extend_keeps_durable_multiblock_package_lineage(
             {
                 "slot_key": "start_frame",
                 "resolved_asset": {
-                    "asset_id": "product-image:p1:start_frame",
+                    "asset_id": "product-visual:p1:official",
                     "asset_fingerprint": "sha256:product-p1",
-                    "asset_source": "PRODUCT_IMAGE_CACHE",
+                    "asset_source": "PRODUCT_VISUAL_OFFICIAL_SOURCE",
+                    "official_visual": True,
                     "media_id": "media-p1",
                     "download_url": "https://cdn.example/p1.png",
                 },
@@ -156,9 +158,10 @@ def test_prepare_propagates_omni_flash_duration(client: TestClient) -> None:
             {
                 "slot_key": "start_frame",
                 "resolved_asset": {
-                    "asset_id": "product-image:p1:start_frame",
+                    "asset_id": "product-visual:p1:official",
                     "asset_fingerprint": "sha256:product-p1",
-                    "asset_source": "PRODUCT_IMAGE_CACHE",
+                    "asset_source": "PRODUCT_VISUAL_OFFICIAL_SOURCE",
+                    "official_visual": True,
                     "media_id": "media-p1",
                     "download_url": "https://cdn.example/p1.png",
                 },
