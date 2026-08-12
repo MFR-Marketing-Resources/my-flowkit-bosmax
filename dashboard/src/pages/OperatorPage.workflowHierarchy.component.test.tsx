@@ -193,6 +193,15 @@ describe("OperatorPage V4 Bucket 1 rollout", () => {
 			expect(referenceStep).toBeInTheDocument();
 
 			fireEvent.click(referenceStep);
+
+			if (mode === "HYBRID") {
+				// HYBRID's anchor is auto-locked from the product's official image, so
+				// the canonical picker is collapsed behind an explicit "Override anchor"
+				// disclosure — it must NOT show until the operator opts to override.
+				expect(screen.queryByTestId("v4-reference-binding")).toBeNull();
+				fireEvent.click(screen.getByTestId("hybrid-override-anchor-toggle"));
+			}
+
 			expect(screen.getByTestId("v4-reference-binding")).toHaveTextContent(
 				`${mode} reference controls`,
 			);
