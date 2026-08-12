@@ -399,6 +399,22 @@ describe("ProductVisualReadinessPanel", () => {
 	it("states the transparent-PNG requirement for manual upload", () => {
 		render(<ProductVisualReadinessPanel productId="product-1" readiness={perLaneBusy} />);
 		expect(screen.getByText(/transparent background/i)).toBeInTheDocument();
+		expect(screen.getByTestId("manual-cutout-upload")).toBeEnabled();
+	});
+
+	it("makes the pending review close action explicit after choosing a candidate", () => {
+		render(
+			<ProductVisualReadinessPanel
+				productId="product-1"
+				readiness={trustedSourcePendingAuto}
+				showApprovalForm
+			/>,
+		);
+
+		fireEvent.click(screen.getByTestId("visual-selection-auto"));
+
+		expect(screen.getByTestId("save-visual-changes")).toHaveAttribute("data-review-action", "CLOSE_REVIEW");
+		expect(screen.getByRole("button", { name: "CLOSE REVIEW & SET OFFICIAL" })).toBeEnabled();
 	});
 
 	it("re-reads after Replace Manual Cutout, reloads the preview, and keeps the replacement pending", async () => {

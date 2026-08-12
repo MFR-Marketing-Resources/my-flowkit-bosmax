@@ -73,6 +73,39 @@ def test_url_only_display_source_stays_untrusted_but_manual_lane_is_available():
     assert readiness["can_open_source"] is True
 
 
+def test_display_source_follows_product_header_fallbacks_without_promoting_trust():
+    rendered_only = service._readiness_payload(
+        {
+            "id": "rendered-only",
+            "rendered_img_src": "https://example.test/rendered-product.jpg",
+        },
+        lock=None,
+        pack=None,
+        prep=None,
+        reference=None,
+        source_available=False,
+    )
+    assert rendered_only["original_display_url"] == "https://example.test/rendered-product.jpg"
+    assert rendered_only["original_display_source"] == "PRODUCT_RENDERED_IMAGE_URL"
+    assert rendered_only["original_display_trust_status"] == "DISPLAY_ONLY"
+    assert rendered_only["can_upload_manual_cutout"] is True
+
+    analysis_only = service._readiness_payload(
+        {
+            "id": "analysis-only",
+            "image_analysis": {"image_url": "https://example.test/analysis-product.jpg"},
+        },
+        lock=None,
+        pack=None,
+        prep=None,
+        reference=None,
+        source_available=False,
+    )
+    assert analysis_only["original_display_url"] == "https://example.test/analysis-product.jpg"
+    assert analysis_only["original_display_source"] == "PRODUCT_IMAGE_ANALYSIS_URL"
+    assert analysis_only["original_display_trust_status"] == "DISPLAY_ONLY"
+
+
 def test_missing_source_has_no_display_or_manual_action():
     readiness = service._readiness_payload(
         {"id": "missing-source"},

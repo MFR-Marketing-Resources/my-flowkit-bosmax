@@ -851,7 +851,10 @@ export default function ProductVisualReadinessPanel({
 			? "manual"
 			: readiness.auto_cutout_status === "PENDING_REVIEW"
 				? "auto"
-			: null;
+				: null;
+	const closeReviewSelected = Boolean(
+		showApprovalForm && readiness.can_review_cutout && selectedVisual === activeCandidateKey,
+	);
 	const originalDisplayUrl = readiness.original_display_url || readiness.original_preview_url || null;
 	const autoHasCandidate = candidateExists(readiness.auto_cutout_status);
 	const autoInputPreviewUrl = readiness.auto_input_preview_url || (!autoHasCandidate ? originalDisplayUrl : null);
@@ -1024,6 +1027,24 @@ export default function ProductVisualReadinessPanel({
 										<button type="button" onClick={() => selectVisual(key)} disabled={!canSelect} title={!canSelect ? "Create this visual candidate first." : "Select this visual as the official candidate, complete review if required, then press Save Changes."} data-testid={`set-official-${key}`} className="w-full rounded-lg bg-slate-700 px-2 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-200 disabled:opacity-40">Select Official</button>
 									)}
 								</div>
+								{key === "manual" && (
+									<div className="mt-2 border-t border-slate-800 pt-2">
+										<button
+											type="button"
+											onClick={() => fileInputRef.current?.click()}
+											disabled={busyLane === "manual" || !readiness.can_upload_manual_cutout}
+											title={!readiness.can_upload_manual_cutout ? trustedSourceReason : undefined}
+											className="w-full rounded-lg bg-fuchsia-600/80 px-2 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40"
+											data-testid="manual-cutout-upload"
+										>
+											{busy === "upload" ? "UPLOADING CUTOUT…" : readiness.manual_cutout_status === "NOT_UPLOADED" ? "UPLOAD MANUAL CUTOUT" : "REPLACE MANUAL CUTOUT"}
+										</button>
+										{busyLane === "manual" && <LaneLoader label="UPLOADING CUTOUT…" testid="manual-cutout-loading" />}
+										{manualMsg && (
+											<p data-testid="manual-upload-message" className={`mt-2 rounded-md px-2 py-1.5 text-[9px] font-semibold leading-relaxed ${manualMsg.tone === "ok" ? "bg-emerald-500/10 text-emerald-300" : "bg-red-500/10 text-red-300"}`}>{manualMsg.text}</p>
+										)}
+									</div>
+								)}
 								{key === "auto" && busyLane === "auto" && <LaneLoader label="GENERATING CUTOUT…" testid="auto-cutout-loading" />}
 								{key === "auto" && autoMsg && <p data-testid="auto-cutout-message" className={`mt-2 rounded-md px-2 py-1.5 text-[9px] font-semibold leading-relaxed ${autoMsg.tone === "ok" ? "bg-emerald-500/10 text-emerald-300" : "bg-red-500/10 text-red-300"}`}>{autoMsg.text}</p>}
 							</div>
@@ -1085,14 +1106,7 @@ export default function ProductVisualReadinessPanel({
 							<div className="rounded-md border border-fuchsia-500/30 bg-fuchsia-500/5 px-2 py-1.5 text-[9px] font-semibold leading-relaxed text-fuchsia-200" data-testid="canonical-canvas-requirement">
 								Required canvas: <span className="font-bold">{readiness.visual_canvas_label ?? "1000×1000 px"}</span> · transparent PNG · exact size
 							</div>
-							<button type="button" onClick={() => fileInputRef.current?.click()} disabled={busyLane === "manual" || !readiness.can_upload_manual_cutout} title={!readiness.can_upload_manual_cutout ? trustedSourceReason : undefined} className="rounded-lg bg-fuchsia-600/80 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40" data-testid="manual-cutout-upload">
-								{busy === "upload" ? "UPLOADING CUTOUT…" : readiness.manual_cutout_status === "NOT_UPLOADED" ? "UPLOAD MANUAL CUTOUT" : "REPLACE MANUAL CUTOUT"}
-							</button>
-							{busyLane === "manual" && <LaneLoader label="UPLOADING CUTOUT…" testid="manual-cutout-loading" />}
-			<p className="mt-2 text-[9px] leading-relaxed text-slate-400">Upload a <span className="font-bold text-slate-300">PNG with a transparent background</span> (the product already cut out, e.g. exported from Canva or Photoshop). A normal photo will be rejected. It uploads immediately — then select Manual as Official and press <span className="font-bold text-slate-300">SAVE CHANGES</span>.</p>
-							{manualMsg && (
-								<p data-testid="manual-upload-message" className={`mt-2 rounded-md px-2 py-1.5 text-[9px] font-semibold leading-relaxed ${manualMsg.tone === "ok" ? "bg-emerald-500/10 text-emerald-300" : "bg-red-500/10 text-red-300"}`}>{manualMsg.text}</p>
-							)}
+							<p className="mt-2 text-[9px] leading-relaxed text-slate-400">Use the Upload / Replace button on the Manual card above. Upload a <span className="font-bold text-slate-300">PNG with a transparent background</span> (the product already cut out, e.g. exported from Canva or Photoshop). A normal photo will be rejected. After upload, select Manual as Official and press <span className="font-bold text-slate-300">SAVE CHANGES</span>.</p>
 							<ReasonLine testid="reason-manual" tone={manualReason.tone}>{manualReason.text}</ReasonLine>
 						</div>
 						<div className="mt-3 border-t border-slate-800 pt-3">
@@ -1122,9 +1136,9 @@ export default function ProductVisualReadinessPanel({
 						</div>
 						{selectionDirty && <span className="text-[9px] font-bold uppercase tracking-widest text-amber-200">UNSAVED CHANGES</span>}
 					</div>
-					<button type="button" onClick={() => void saveVisualSelection()} disabled={!selectionDirty || !selectedVisual || busyLane === "save" || candidateWriteBusy} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-white disabled:cursor-not-allowed disabled:opacity-40" data-testid="save-visual-changes">
+					<button type="button" onClick={() => void saveVisualSelection()} disabled={!selectionDirty || !selectedVisual || busyLane === "save" || candidateWriteBusy} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-white disabled:cursor-not-allowed disabled:opacity-40" data-testid="save-visual-changes" data-review-action={closeReviewSelected ? "CLOSE_REVIEW" : "SAVE_VISUAL_SETUP"}>
 						{busyLane === "save" && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
-						{busyLane === "save" ? "SAVING CHANGES…" : "SAVE CHANGES"}
+						{busyLane === "save" ? (closeReviewSelected ? "CLOSING REVIEW…" : "SAVING CHANGES…") : closeReviewSelected ? "CLOSE REVIEW & SET OFFICIAL" : "SAVE CHANGES"}
 					</button>
 					{saveMsg && <p data-testid="save-visual-message" className={`mt-2 rounded-md px-2 py-1.5 text-center text-[9px] font-semibold ${saveMsg.tone === "ok" ? "bg-emerald-500/10 text-emerald-300" : "bg-red-500/10 text-red-300"}`}>{saveMsg.text}</p>}
 				</div>
