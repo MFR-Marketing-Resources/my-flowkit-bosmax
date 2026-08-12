@@ -360,12 +360,16 @@ describe("ProductVisualReadinessPanel", () => {
 		expect(screen.queryByTestId("select-product-area")).not.toBeInTheDocument();
 	});
 
-	it("adds the product-isolation confirmation to the approval form", () => {
+	it("adds the product-isolation confirmation and gates save until the review is complete", () => {
 		render(<ProductVisualReadinessPanel productId="product-1" readiness={trustedSourcePendingAuto} showApprovalForm />);
 		fireEvent.click(screen.getByTestId("visual-selection-auto"));
 
 		expect(screen.getByTestId("confirm-product-isolation")).toBeInTheDocument();
-		expect(screen.getByTestId("save-visual-changes")).toBeEnabled();
+		// A pending candidate cannot be saved until reviewer identity + note + all
+		// four checks are provided; the missing items are listed to the operator.
+		expect(screen.getByTestId("save-visual-changes")).toBeDisabled();
+		expect(screen.getByTestId("save-requirements")).toBeInTheDocument();
+		expect(screen.getByTestId("missing-reviewer")).toBeInTheDocument();
 	});
 
 	it("keeps the Canva label truthful and shows Continue in Canva when resuming", () => {
@@ -402,7 +406,7 @@ describe("ProductVisualReadinessPanel", () => {
 		expect(screen.getByTestId("manual-cutout-upload")).toBeEnabled();
 	});
 
-	it("makes the pending review close action explicit after choosing a candidate", () => {
+	it("keeps the close action explicit but enabled only after the required review is complete", () => {
 		render(
 			<ProductVisualReadinessPanel
 				productId="product-1"
@@ -413,8 +417,19 @@ describe("ProductVisualReadinessPanel", () => {
 
 		fireEvent.click(screen.getByTestId("visual-selection-auto"));
 
-		expect(screen.getByTestId("save-visual-changes")).toHaveAttribute("data-review-action", "CLOSE_REVIEW");
+		const save = screen.getByTestId("save-visual-changes");
+		expect(save).toHaveAttribute("data-review-action", "CLOSE_REVIEW");
+		// Gated: identity + note + all four checks are required before it enables.
+		expect(save).toBeDisabled();
+
+		fireEvent.change(screen.getByPlaceholderText("Reviewer identity"), { target: { value: "reviewer-1" } });
+		fireEvent.change(screen.getByPlaceholderText("Review note"), { target: { value: "Checked." } });
+		for (const name of ["Identity", "Label / logo", "Geometry / scale", "Product only — no unrelated props, food, decoration, or secondary objects remain"]) {
+			fireEvent.click(screen.getByRole("checkbox", { name }));
+		}
+
 		expect(screen.getByRole("button", { name: "CLOSE REVIEW & SET OFFICIAL" })).toBeEnabled();
+		expect(screen.queryByTestId("save-requirements")).not.toBeInTheDocument();
 	});
 
 	it("re-reads after Replace Manual Cutout, reloads the preview, and keeps the replacement pending", async () => {

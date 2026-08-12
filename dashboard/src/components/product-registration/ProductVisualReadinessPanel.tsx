@@ -870,6 +870,10 @@ export default function ProductVisualReadinessPanel({
 	const autoDisabled = autoHasCandidate ? !readiness.can_rebuild_cutout : !readiness.can_prepare_cutout;
 	const candidateWriteBusy = busyLane === "auto" || busyLane === "manual" || busyLane === "canva";
 	const allApprovalConfirms = confirmIdentity && confirmLabelLogo && confirmGeometryScale && confirmProductIsolation;
+	// Mirror the backend approval requirement so the operator cannot skip the
+	// review: reviewer identity + review note + all four confirmations.
+	const reviewInputsComplete = reviewedBy.trim().length > 0 && reviewNote.trim().length > 0 && allApprovalConfirms;
+	const reviewGateBlocking = closeReviewSelected && !reviewInputsComplete;
 
 	const reasonFor = (lane: BusyLane, disabled: boolean, disabledReason: string): { text: string; tone: "muted" | "warn" | "ok" } => {
 		if (busyLane === lane) return { text: "Processing…", tone: "warn" };
@@ -932,7 +936,7 @@ export default function ProductVisualReadinessPanel({
 	);
 
 	return (
-		<div className={`flex min-w-0 max-w-full flex-col rounded-xl border border-slate-800 bg-slate-900/40 ${compact ? "p-2" : "p-5"}`} data-testid="product-visual-readiness">
+		<div className={`flex min-w-0 max-w-full flex-col rounded-xl border border-slate-800 bg-slate-900/40 ${compact ? "overflow-hidden p-2" : "p-5"}`} data-testid="product-visual-readiness">
 			<div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
 				<div className="min-w-0">
 					<h3 className={`${compact ? "text-[10px]" : "text-sm"} font-bold uppercase tracking-widest text-white`}>
@@ -1127,23 +1131,6 @@ export default function ProductVisualReadinessPanel({
 				</div>
 			)}
 
-			{!compact && (
-				<div className="mt-5 rounded-xl border border-sky-500/30 bg-sky-500/5 p-4" data-testid="visual-save-workspace">
-					<div className="flex flex-wrap items-center justify-between gap-2">
-						<div>
-							<div className="text-[10px] font-bold uppercase tracking-widest text-sky-100">SAVE VISUAL SETUP</div>
-							<div className="mt-1 text-[10px] text-slate-400">Select one card, complete review when required, then save. The saved visual becomes the only product reference for IMG, Hybrid, I2V, Production Studio, Fastlane, Cockpit, and Poster Builder.</div>
-						</div>
-						{selectionDirty && <span className="text-[9px] font-bold uppercase tracking-widest text-amber-200">UNSAVED CHANGES</span>}
-					</div>
-					<button type="button" onClick={() => void saveVisualSelection()} disabled={!selectionDirty || !selectedVisual || busyLane === "save" || candidateWriteBusy} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-white disabled:cursor-not-allowed disabled:opacity-40" data-testid="save-visual-changes" data-review-action={closeReviewSelected ? "CLOSE_REVIEW" : "SAVE_VISUAL_SETUP"}>
-						{busyLane === "save" && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
-						{busyLane === "save" ? (closeReviewSelected ? "CLOSING REVIEW…" : "SAVING CHANGES…") : closeReviewSelected ? "CLOSE REVIEW & SET OFFICIAL" : "SAVE CHANGES"}
-					</button>
-					{saveMsg && <p data-testid="save-visual-message" className={`mt-2 rounded-md px-2 py-1.5 text-center text-[9px] font-semibold ${saveMsg.tone === "ok" ? "bg-emerald-500/10 text-emerald-300" : "bg-red-500/10 text-red-300"}`}>{saveMsg.text}</p>}
-				</div>
-			)}
-
 			{!compact && readiness.can_review_cutout && (
 				<div className="mt-4 text-[10px]" data-testid="reviewing-candidate">
 					<span className="font-bold uppercase tracking-widest text-amber-200">Reviewing: {reviewingCandidate}</span>
@@ -1234,16 +1221,44 @@ export default function ProductVisualReadinessPanel({
 						</div>
 					</div>
 					<div className="grid gap-2 md:grid-cols-2">
-						<input value={reviewedBy} onChange={(event) => setReviewedBy(event.target.value)} placeholder="Reviewer identity" className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-white" />
-						<input value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} placeholder="Review note" className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-white" />
+						<label className="flex flex-col gap-1 text-[9px] font-bold uppercase tracking-widest text-slate-400">Reviewer identity <span className="text-red-400">* required</span><input value={reviewedBy} onChange={(event) => setReviewedBy(event.target.value)} placeholder="Reviewer identity" className={`mt-1 rounded-lg border bg-slate-800 px-3 py-2 text-xs text-white ${reviewedBy.trim() ? "border-slate-700" : "border-red-500/60"}`} /></label>
+						<label className="flex flex-col gap-1 text-[9px] font-bold uppercase tracking-widest text-slate-400">Review note <span className="text-red-400">* required</span><input value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} placeholder="Review note" className={`mt-1 rounded-lg border bg-slate-800 px-3 py-2 text-xs text-white ${reviewNote.trim() ? "border-slate-700" : "border-red-500/60"}`} /></label>
 					</div>
-					<div className="mt-3 grid gap-2 text-[10px] text-slate-300 md:grid-cols-2">
+					<div className="mt-3 text-[9px] font-bold uppercase tracking-widest text-slate-400">Confirm all four checks <span className="text-red-400">* required</span></div>
+					<div className="mt-1 grid gap-2 text-[10px] text-slate-300 md:grid-cols-2">
 						<label><input type="checkbox" checked={confirmIdentity} onChange={(event) => setConfirmIdentity(event.target.checked)} className="mr-1" /> Identity</label>
 						<label><input type="checkbox" checked={confirmLabelLogo} onChange={(event) => setConfirmLabelLogo(event.target.checked)} className="mr-1" /> Label / logo</label>
 						<label><input type="checkbox" checked={confirmGeometryScale} onChange={(event) => setConfirmGeometryScale(event.target.checked)} className="mr-1" /> Geometry / scale</label>
 						<label><input type="checkbox" data-testid="confirm-product-isolation" checked={confirmProductIsolation} onChange={(event) => setConfirmProductIsolation(event.target.checked)} className="mr-1" /> Product only — no unrelated props, food, decoration, or secondary objects remain</label>
 					</div>
 					<ReasonLine testid="reason-approve" tone={allApprovalConfirms && !candidateWriteBusy ? "ok" : "muted"}>{allApprovalConfirms ? "Ready — press SAVE CHANGES to approve through the existing Product Truth authority." : "Confirm all four checks, then press SAVE CHANGES."}</ReasonLine>
+				</div>
+			)}
+
+			{!compact && (
+				<div className="mt-5 rounded-xl border border-sky-500/30 bg-sky-500/5 p-4" data-testid="visual-save-workspace">
+					<div className="flex flex-wrap items-center justify-between gap-2">
+						<div>
+							<div className="text-[10px] font-bold uppercase tracking-widest text-sky-100">SAVE VISUAL SETUP</div>
+							<div className="mt-1 text-[10px] text-slate-400">Select one card, complete the required review above when a candidate is pending, then save. The saved visual becomes the only product reference for IMG, Hybrid, I2V, Production Studio, Fastlane, Cockpit, and Poster Builder.</div>
+						</div>
+						{selectionDirty && <span className="text-[9px] font-bold uppercase tracking-widest text-amber-200">UNSAVED CHANGES</span>}
+					</div>
+					{reviewGateBlocking && (
+						<div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[10px] text-amber-200" data-testid="save-requirements">
+							<div className="font-bold uppercase tracking-widest">Complete the required review above to enable save</div>
+							<ul className="mt-1 list-disc pl-4">
+								{!reviewedBy.trim() && <li data-testid="missing-reviewer">Reviewer identity</li>}
+								{!reviewNote.trim() && <li data-testid="missing-note">Review note</li>}
+								{!allApprovalConfirms && <li data-testid="missing-confirms">Confirm all four checks (identity, label/logo, geometry/scale, product-only)</li>}
+							</ul>
+						</div>
+					)}
+					<button type="button" onClick={() => void saveVisualSelection()} disabled={!selectionDirty || !selectedVisual || busyLane === "save" || candidateWriteBusy || reviewGateBlocking} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-white disabled:cursor-not-allowed disabled:opacity-40" data-testid="save-visual-changes" data-review-action={closeReviewSelected ? "CLOSE_REVIEW" : "SAVE_VISUAL_SETUP"}>
+						{busyLane === "save" && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
+						{busyLane === "save" ? (closeReviewSelected ? "CLOSING REVIEW…" : "SAVING CHANGES…") : closeReviewSelected ? "CLOSE REVIEW & SET OFFICIAL" : "SAVE CHANGES"}
+					</button>
+					{saveMsg && <p data-testid="save-visual-message" className={`mt-2 rounded-md px-2 py-1.5 text-center text-[9px] font-semibold ${saveMsg.tone === "ok" ? "bg-emerald-500/10 text-emerald-300" : "bg-red-500/10 text-red-300"}`}>{saveMsg.text}</p>}
 				</div>
 			)}
 
