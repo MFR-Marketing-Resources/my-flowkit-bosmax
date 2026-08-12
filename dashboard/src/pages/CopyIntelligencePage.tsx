@@ -12,7 +12,15 @@ import {
 	type CopyIntelligenceDryRunReport,
 	type CopyIntelligenceWorkbookUploadReport,
 } from "../api/copyIntelligence";
-import { Badge, HelperText, Section } from "../components/ui";
+import { Sparkles } from "lucide-react";
+import { KpiCard } from "../components/reporting/KpiCard";
+import {
+	Badge,
+	DataTable,
+	type DataTableColumn,
+	HelperText,
+	Section,
+} from "../components/ui";
 import BulkAngleSuggestionsPanel from "../components/BulkAngleSuggestionsPanel";
 
 const APPROVE_PHRASE = "APPROVE COPY INTELLIGENCE";
@@ -125,18 +133,6 @@ function SeedReviewModal({
 	);
 }
 
-function CountCard({ label, value, tone }: { label: string; value: number; tone: "success" | "info" | "warn" | "danger" }) {
-	return (
-		<div className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
-			<div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">{label}</div>
-			<div className="mt-2 flex items-baseline gap-2">
-				<span className="text-2xl font-bold text-slate-100">{value}</span>
-				<Badge tone={tone}>{tone === "warn" || tone === "danger" ? "Review" : "Review-only"}</Badge>
-			</div>
-		</div>
-	);
-}
-
 export default function CopyIntelligencePage() {
 	const [workbook, setWorkbook] = useState<File | null>(null);
 	const [uploadedSource, setUploadedSource] = useState<CopyIntelligenceWorkbookUploadReport | null>(null);
@@ -211,14 +207,27 @@ export default function CopyIntelligencePage() {
 	const safeRecords = (report?.matched_high_confidence ?? 0) + (report?.matched_medium_confidence ?? 0);
 	const unsafeRecords = (report?.low_confidence_quarantined ?? 0) + (report?.unmatched ?? 0);
 
+	const ledgerColumns: DataTableColumn<CopyIntelligenceSeedLedgerResponse["items"][number]>[] = [
+		{ key: "product", header: "Product", render: (r) => <span className="font-medium text-slate-100">{r.source_product_name}</span>, sortValue: (r) => r.source_product_name },
+		{ key: "avatar", header: "Avatar", render: (r) => r.target_avatar || "—" },
+		{ key: "hook", header: "Hook", render: (r) => <span className="line-clamp-2 text-slate-300">{r.hook_script || "—"}</span> },
+		{ key: "cta", header: "CTA", render: (r) => <span className="line-clamp-2 text-slate-300">{r.cta_script || "—"}</span> },
+		{ key: "confidence", header: "Confidence", render: (r) => <Badge tone={r.confidence === "HIGH" ? "success" : "info"}>{r.confidence}</Badge>, sortValue: (r) => r.confidence },
+		{ key: "status", header: "Status", render: (r) => <Badge tone={r.status === "APPROVED" ? "success" : r.status === "REJECTED" ? "danger" : "warn"}>{r.status}</Badge>, sortValue: (r) => r.status },
+	];
+
 	return (
 		<div className="mx-auto max-w-6xl space-y-5 p-5 md:p-8" data-testid="copy-intelligence-page">
-			<div className="space-y-2">
-				<h2 className="text-xl font-bold tracking-tight text-slate-100">Copy Intelligence / Customer Avatar</h2>
+			<header>
+				<div className="flex items-center gap-2 text-blue-300">
+					<Sparkles size={20} />
+					<span className="text-[10px] font-bold uppercase tracking-[0.2em]">Creative Intelligence</span>
+				</div>
+				<h1 className="mt-1 text-2xl font-bold text-slate-100">Copy Intelligence / Customer Avatar</h1>
 				<p className="max-w-3xl text-sm text-slate-400">
 					Cross-product copy tools. The AI angle tool below proposes angles for your review and commits only what you accept (free, claim-gated). The COPYWRITING HUB audit is review-only — it cannot approve copy, change Product Truth, or send material to generation.
 				</p>
-			</div>
+			</header>
 
 			<BulkAngleSuggestionsPanel />
 
@@ -247,7 +256,7 @@ export default function CopyIntelligencePage() {
 					</button>
 				</div>
 				{workbook && <p className="text-xs text-slate-400">Selected: {workbook.name}</p>}
-				{uploadedSource && <p className="text-xs text-slate-400">Stored source: {uploadedSource.original_filename} · fingerprint {uploadedSource.fingerprint}</p>}
+				{uploadedSource && <p className="text-xs text-slate-400">Stored source: {uploadedSource.original_filename}</p>}
 				<HelperText>Nothing is seeded from this page. Seed execution requires separate owner authorization.</HelperText>
 				{uploadError && <p className="text-xs font-medium text-red-300" role="alert">Upload and dry-run error: {uploadError}</p>}
 			</Section>
@@ -261,10 +270,10 @@ export default function CopyIntelligencePage() {
 						<Badge tone="warn">No automatic seed execution</Badge>
 					</div>
 					<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" data-testid="copy-intelligence-summary">
-						<CountCard label="High confidence" value={report.matched_high_confidence} tone="success" />
-						<CountCard label="Medium confidence" value={report.matched_medium_confidence} tone="info" />
-						<CountCard label="Quarantined / low" value={report.low_confidence_quarantined} tone="warn" />
-						<CountCard label="Unmatched" value={report.unmatched} tone="danger" />
+						<KpiCard label="High confidence" value={report.matched_high_confidence} tone="success" />
+						<KpiCard label="Medium confidence" value={report.matched_medium_confidence} tone="info" />
+						<KpiCard label="Quarantined / low" value={report.low_confidence_quarantined} tone="warn" />
+						<KpiCard label="Unmatched" value={report.unmatched} tone="danger" />
 					</div>
 					<div className="grid gap-3 text-sm text-slate-300 md:grid-cols-2">
 						<div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
@@ -304,10 +313,17 @@ export default function CopyIntelligencePage() {
 				) : (
 					<div className="overflow-x-auto" data-testid="copy-intelligence-seed-ledger">
 						<p className="mb-3 text-xs text-slate-400">{ledger?.total ?? 0} persisted review records</p>
-						<table className="min-w-[1400px] text-left text-xs text-slate-300">
-							<thead className="border-b border-slate-700 text-[10px] uppercase tracking-wide text-slate-500"><tr><th>Source</th><th>Product</th><th>Avatar</th><th>Pain / emotion</th><th>Dream / features</th><th>Hook</th><th>CTA</th><th>Confidence</th><th>Match</th><th>Status</th><th>Provenance</th><th>Review</th></tr></thead>
-							<tbody>{ledger?.items.map((row) => <tr key={row.seed_id} className="border-b border-slate-800 align-top"><td className="p-2">{row.source_row}</td><td className="p-2 font-medium text-slate-100">{row.source_product_name}</td><td className="p-2">{row.target_avatar || "—"}</td><td className="p-2">{row.pain_point || "—"}<br />{row.emotion_trigger || "—"}</td><td className="p-2">{row.dream_outcome || "—"}<br />{row.key_ingredients_features || "—"}</td><td className="p-2">{row.hook_script || "—"}</td><td className="p-2">{row.cta_script || "—"}</td><td className="p-2">{row.confidence}</td><td className="p-2">{row.match_method}</td><td className="p-2">{row.status}</td><td className="p-2">{row.source_workbook}<br />{row.source_sheet} · row {row.provenance.source_row || row.source_row}</td><td className="p-2">{row.status === "NEEDS_REVIEW" ? <button type="button" data-testid={`review-seed-${row.seed_id}`} onClick={() => setReviewRow(row)} className="rounded-md border border-blue-400/40 bg-blue-500/15 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-blue-100 hover:bg-blue-500/25">Review</button> : row.status === "APPROVED" ? <div className="space-y-1"><span className="block text-[10px] uppercase tracking-wide text-emerald-400">APPROVED</span>{promoteResults[row.seed_id] ? <span className="block text-[10px] text-slate-400" data-testid={`promote-result-${row.seed_id}`}>Draft {promoteResults[row.seed_id].draft_id.slice(0, 8)} · {promoteResults[row.seed_id].review_status}</span> : <button type="button" data-testid={`promote-seed-${row.seed_id}`} disabled={promoting === row.seed_id} onClick={() => void promoteSeed(row.seed_id)} className="rounded-md border border-emerald-400/40 bg-emerald-500/15 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-100 hover:bg-emerald-500/25 disabled:opacity-50">{promoting === row.seed_id ? "Creating…" : "Create review draft"}</button>}{promoteErrors[row.seed_id] && <span className="block text-[10px] text-red-300" role="alert">{promoteErrors[row.seed_id]}</span>}</div> : <span className="text-[10px] uppercase tracking-wide text-slate-500">{row.status}</span>}</td></tr>)}</tbody>
-						</table>
+						<DataTable<CopyIntelligenceSeedLedgerResponse["items"][number]>
+							rows={ledger?.items ?? []}
+							columns={ledgerColumns}
+							getRowId={(r) => r.seed_id}
+							rowActions={(row) => (
+								row.status === "NEEDS_REVIEW" ? <button type="button" data-testid={`review-seed-${row.seed_id}`} onClick={() => setReviewRow(row)} className="rounded-md border border-blue-400/40 bg-blue-500/15 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-blue-100 hover:bg-blue-500/25">Review</button> : row.status === "APPROVED" ? <div className="space-y-1">{promoteResults[row.seed_id] ? <span className="block text-[10px] text-slate-400" data-testid={`promote-result-${row.seed_id}`}>Draft {promoteResults[row.seed_id].draft_id.slice(0, 8)} · {promoteResults[row.seed_id].review_status}</span> : <button type="button" data-testid={`promote-seed-${row.seed_id}`} disabled={promoting === row.seed_id} onClick={() => void promoteSeed(row.seed_id)} className="rounded-md border border-emerald-400/40 bg-emerald-500/15 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-100 hover:bg-emerald-500/25 disabled:opacity-50">{promoting === row.seed_id ? "Creating…" : "Create review draft"}</button>}{promoteErrors[row.seed_id] && <span className="block text-[10px] text-red-300" role="alert">{promoteErrors[row.seed_id]}</span>}</div> : <span className="text-[10px] uppercase tracking-wide text-slate-500">{row.status}</span>
+							)}
+							pageSize={15}
+							minWidthClassName="min-w-[720px]"
+							emptyLabel="No seeded review records yet"
+						/>
 					</div>
 				)}
 			</Section>
