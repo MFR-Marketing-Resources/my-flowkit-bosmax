@@ -144,12 +144,15 @@ function pickerPlaceholder(
 	bindableCount: number,
 	error: string | null,
 ): string {
+	// HYBRID's anchor IS the product's official image (resolved server-side into
+	// the start_frame slot). This picker is only an OPTIONAL override, so it never
+	// surfaces an eligibility-exclusion or API-error placeholder.
+	if (surface === "HYBRID_START_FRAME_PICKER") {
+		return "Using this product's official image — pick only to override";
+	}
 	if (error) return "API fetch failed — refresh eligibility audit";
 	if (!audit) return "Loading eligibility audit…";
 	if (bindableCount > 0) {
-		if (surface === "HYBRID_START_FRAME_PICKER") {
-			return "Automatic product anchor (approved package)";
-		}
 		if (surface === "F2V_END_FRAME_PICKER") return "No end frame";
 		if (surface === "I2V_STYLE_PICKER") return "No style reference";
 		return "Select approved reference";
@@ -348,8 +351,9 @@ export default function CanonicalReferenceBindingControls({
 				Canonical reference binding
 			</div>
 			<div className="mt-1 text-[11px] text-slate-300">
-				Selections are validated and persisted into execution-package asset slots; no browser
-				automation is used. Empty pickers show exact eligibility exclusion reasons below.
+				{mode === "HYBRID"
+					? "Your product's official image is the automatic anchor. The picker below is an optional override — leave it empty to use the official image."
+					: "Selections are validated and persisted into execution-package asset slots; no browser automation is used. Empty pickers show exact eligibility exclusion reasons below."}
 			</div>
 			<div className="mt-3 grid gap-3 md:grid-cols-2">
 				{surfaces.map((surface) => {
@@ -369,11 +373,13 @@ export default function CanonicalReferenceBindingControls({
 								? registryRowsForEligibleAssets(sceneRegistryRows, bindable)
 								: null;
 					const pickerLabel =
-						surface === "I2V_CHARACTER_PICKER"
-							? "Avatar Registry (approved I2V image)"
-							: surface === "I2V_SCENE_PICKER"
-								? "Scene Registry (approved I2V image)"
-								: surface.replace(/_/g, " ");
+						surface === "HYBRID_START_FRAME_PICKER"
+							? "Product's official image — automatic anchor"
+							: surface === "I2V_CHARACTER_PICKER"
+								? "Avatar Registry (approved I2V image)"
+								: surface === "I2V_SCENE_PICKER"
+									? "Scene Registry (approved I2V image)"
+									: surface.replace(/_/g, " ");
 					const audit = audits[surface];
 					const otherProductCount = otherProductCounts[surface] ?? 0;
 					const emptyLabel = pickerPlaceholder(
@@ -387,7 +393,11 @@ export default function CanonicalReferenceBindingControls({
 							<label className="space-y-1 text-xs text-slate-200">
 								<span>
 									{pickerLabel}
-									{required ? " *" : " (optional)"}
+									{required
+										? " *"
+										: surface === "HYBRID_START_FRAME_PICKER"
+											? " — optional override"
+											: " (optional)"}
 								</span>
 								{registryRows ? (
 									<span
@@ -469,12 +479,23 @@ export default function CanonicalReferenceBindingControls({
 									value={binding[field] ?? ""}
 								/>
 							</label>
-							{renderSurfaceAuditCard(
-								surface,
-								audit,
-								bindable.length,
-								otherProductCount,
-								error,
+							{surface === "HYBRID_START_FRAME_PICKER" ? (
+								<div
+									data-testid={`binding-audit-${surface}`}
+									className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-100"
+								>
+									Your Hybrid video is built on this product's approved official
+									image automatically. Leave this empty unless you want to override
+									the anchor with a specific Creative Library asset.
+								</div>
+							) : (
+								renderSurfaceAuditCard(
+									surface,
+									audit,
+									bindable.length,
+									otherProductCount,
+									error,
+								)
 							)}
 						</div>
 					);

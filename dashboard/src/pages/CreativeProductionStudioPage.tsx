@@ -1665,6 +1665,17 @@ export default function CreativeProductionStudioPage() {
 										</select>
 									</label>
 								</div>
+								{form.logicalMode === "HYBRID" ? (
+									<div
+										data-testid="p6-hybrid-anchor-note"
+										className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2 text-xs text-emerald-100"
+									>
+										Hybrid anchor is automatic: every product in this bulk run uses
+										its own Official Product Visual (approved cutout → source image)
+										saved in Smart Product Registration as the anchor. No start-frame
+										picker or Creative Library selection is needed here.
+									</div>
+								) : null}
 								<label className="text-xs text-slate-400">
 									Creative Treatment format
 									<select

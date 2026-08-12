@@ -15,6 +15,7 @@ import {
 	type CreativeRecipe,
 } from "../api/creativeIntelligence";
 import { fetchProductCatalog } from "../api/products";
+import { fetchProductVisualReadiness } from "../api/productVisualOnboarding";
 import {
 	avatarRegistryCode,
 	fetchAvatarRegistryPool,
@@ -59,6 +60,7 @@ import SearchableProductSelect from "../components/workspace/SearchableProductSe
 import VisualAssetPicker from "../components/workspace/VisualAssetPicker";
 import type {
 	Product,
+	ProductVisualReadiness,
 	PromptCameraStyle,
 	PromptCharacterPresence,
 	PromptCompilerRuntimeConfig,
@@ -682,6 +684,13 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	);
 	const [referenceBinding, setReferenceBinding] =
 		useState<CanonicalReferenceBinding>(EMPTY_BINDING);
+	// HYBRID anchor clarity: the product's official image (approved cutout →
+	// source → product image) is the automatic Hybrid anchor. We read its
+	// readiness so the reference step can say "anchor set" vs. "prepare / set the
+	// official image" instead of the old cryptic reference-resolution blocker.
+	// Presentation only — never gates or changes generation/dispatch/credit logic.
+	const [hybridVisualReadiness, setHybridVisualReadiness] =
+		useState<ProductVisualReadiness | null>(null);
 	const [packageReadiness, setPackageReadiness] = useState<
 		Record<string, WorkspacePackageReadinessItem>
 	>({});
@@ -949,6 +958,28 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reset-on-change effect
 	useEffect(() => {
 		setReferenceBinding(EMPTY_BINDING);
+	}, [mode, selectedProduct?.id]);
+	// Official-image readiness for the HYBRID anchor. Guarded to HYBRID + a
+	// selected product; any failure falls back to "not ready" copy. Never throws
+	// and never gates generation — the backend still owns the real anchor.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: keyed on mode + product id
+	useEffect(() => {
+		if (mode !== "HYBRID" || !selectedProduct?.id) {
+			setHybridVisualReadiness(null);
+			return;
+		}
+		let active = true;
+		const pid = selectedProduct.id;
+		void Promise.resolve(fetchProductVisualReadiness(pid))
+			.then((readiness) => {
+				if (active) setHybridVisualReadiness(readiness ?? null);
+			})
+			.catch(() => {
+				if (active) setHybridVisualReadiness(null);
+			});
+		return () => {
+			active = false;
+		};
 	}, [mode, selectedProduct?.id]);
 	const selectedReadiness = selectedProduct
 		? (packageReadiness[selectedProduct.id] ?? null)
@@ -2235,6 +2266,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					? generateAssetHasTransport(singleSubjectAsset) &&
 						generateAssetHasTransport(singleSceneAsset)
 					: generateAssetHasTransport(singleStartAsset);
+		// HYBRID anchor = the product's official image, resolved server-side into
+		// the start_frame slot. These booleans only drive reference-step copy and
+		// the generate blocker text — they never gate or change dispatch.
+		const hybridProductName =
+			selectedProduct?.product_display_name || "this product";
+		const hybridOfficialImageReady =
+			hybridVisualReadiness?.visual_grounding_status ===
+			"VISUAL_GROUNDING_READY";
+		const hybridAnchorLocked =
+			mode === "HYBRID" && generateAssetHasTransport(singleStartAsset);
 		const storyboardShots = (previewPackage?.prompt_blocks ?? []).map(
 			(block, i) => ({
 				id: String(block.block_index ?? i),
@@ -2801,6 +2842,24 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										icon="🧷"
 										auto={!referenceBlocker}
 									/>
+									{mode === "HYBRID" ? (
+										<div
+											data-testid="operator-hybrid-anchor"
+											className={`rounded-lg border px-3 py-2 text-[11px] ${
+												hybridAnchorLocked
+													? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
+													: hybridOfficialImageReady
+														? "border-amber-500/30 bg-amber-500/10 text-amber-100"
+														: "border-slate-700 bg-slate-900/60 text-slate-300"
+											}`}
+										>
+											{hybridAnchorLocked
+												? `Anchor: ${hybridProductName}'s official image ✓ — locked into this Hybrid package.`
+												: hybridOfficialImageReady
+													? `Anchor ready: ${hybridProductName}'s official image. Click Prepare to lock it into this Hybrid package.`
+													: `Set ${hybridProductName}'s official image in the Visual / Canva tab, then Prepare to lock it as the Hybrid anchor.`}
+										</div>
+									) : null}
 									{mode === "F2V" ? (
 										<p className="text-[11px] text-slate-400">
 											F2V start/end selections are frame references; presenter identity
@@ -2988,7 +3047,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									{referenceBlocker
 										? referenceBlocker
 										: !singleClipRefsReady
-											? `${mode} needs its reference image resolved into the prepared package — re-run Prepare, or bind an approved reference.`
+											? mode === "HYBRID"
+												? hybridOfficialImageReady
+													? "Click Prepare to lock this product's official image as the anchor."
+													: "Set this product's official image in the Visual / Canva tab first, then Prepare to lock it as the Hybrid anchor."
+												: `${mode} needs its reference image resolved into the prepared package — re-run Prepare, or bind an approved reference.`
 											: "Compile preview → Prepare final prompt first, then Generate 1 clip appears here."}
 								</div>
 							)}
