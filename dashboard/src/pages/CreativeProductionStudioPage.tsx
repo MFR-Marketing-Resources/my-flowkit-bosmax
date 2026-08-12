@@ -55,10 +55,9 @@ import CreativeSupplyFactoryPanel from "../components/CreativeSupplyFactoryPanel
 import ProductAllocationPicker from "../components/production-studio/ProductAllocationPicker";
 import ProductTreatmentFactoryPanel from "../components/production-studio/ProductTreatmentFactoryPanel";
 import {
-	OperatorCockpit,
-	QueueRow,
 	WorkflowStep,
 } from "../components/workflow";
+import ResultsSidebar from "../components/workspace/ResultsSidebar";
 
 const splitValues = (value: string) =>
 	value
@@ -1267,7 +1266,7 @@ export default function CreativeProductionStudioPage() {
 						</h1>
 						<p className="mt-2 max-w-3xl text-sm text-slate-400">
 							The bespoke batch and matrix orchestration stays intact; the V4
-							frame adds guided visual hierarchy and a cockpit summary rail.
+							frame adds guided visual hierarchy and a live results rail.
 						</p>
 					</div>
 					<nav className="flex flex-wrap items-center gap-2 text-[11px] font-semibold">
@@ -2937,49 +2936,11 @@ export default function CreativeProductionStudioPage() {
 				{useV4 ? (
 					<aside className="w-full 2xl:w-80 2xl:flex-none">
 						<div className="2xl:sticky 2xl:top-4">
-							<OperatorCockpit
-								laneLabel="Production Studio · P6"
-								status={{
-									label: busy ? "Working" : p6V4PlanStatus,
-									state: busy ? "running" : selectedPlan ? "online" : "idle",
-								}}
-								planTitle="Batch plan"
-								plan={[
-									{ k: "Products", v: p6V4ProductCount, tone: "default" },
-									{ k: "Video target", v: p6V4TargetCount, tone: "default" },
-									{ k: "Mode", v: selectedSnapshot?.logical_mode ?? form.logicalMode, tone: "default" },
-									{ k: "Compile / dry run", v: "0 credits", tone: "good" },
-								]}
-								queueTitle="Execution state"
-								generate={{
-									label: "Start production · gated",
-									disabled: true,
-									note: "P6 live dispatch remains behind its exact human confirmation phrase.",
-								}}
-								debugLabel="P6 diagnostics"
-								debug={
-									<div className="space-y-1">
-										<div>studio mode {studioMode}</div>
-										<div>live gate {liveEnabled ? "ready" : "blocked"}</div>
-									</div>
-								}
-							>
-								<QueueRow
-									title="Matrix & compile"
-									sub="Canonical DNA preparation · 0 credits"
-									status={selectedSnapshot ? "done" : "queued"}
-								/>
-								<QueueRow
-									title="Waves &amp; dry run"
-									sub="Review before live dispatch"
-									status={hasDryRunProof ? "done" : "queued"}
-								/>
-								<QueueRow
-									title="Live dispatch"
-									sub={liveEnabled ? "Ready after explicit confirmation" : liveDisabledReason}
-									status="queued"
-								/>
-							</OperatorCockpit>
+							<ResultsSidebar
+								results={[]}
+								generating={Boolean(busy)}
+								libraryHref="/library/videos"
+							/>
 						</div>
 					</aside>
 				) : null}
