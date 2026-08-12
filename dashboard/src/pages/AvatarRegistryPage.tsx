@@ -1146,7 +1146,7 @@ export default function AvatarRegistryPage() {
 				return;
 			}
 		}
-		setError(`${avatarCode}: generation timed out — semak Video Jobs / Library.`);
+		setError(`${avatarCode}: generation timed out — check Video Jobs / Library.`);
 		setGenerating((prev) => {
 			const next = { ...prev };
 			delete next[avatarCode];
@@ -1410,7 +1410,7 @@ export default function AvatarRegistryPage() {
 							<div className="mb-3 flex flex-wrap items-start justify-between gap-2">
 								<div>
 									<div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sky-200">
-										Pemetaan Avatar × Cluster Produk
+										Avatar × Product Cluster Mapping
 									</div>
 									<p className="mt-1 max-w-2xl text-[11px] text-slate-400">
 										Each product (by category) resolves to one creative cluster; that
@@ -2037,8 +2037,8 @@ export default function AvatarRegistryPage() {
 								: "🤖 Auto-generate Avatar"}
 						</button>
 						<div className="mt-2 text-[10px] text-slate-500">
-							Guna lane text_assist (AI Provider Settings). Boleh ambil masa
-							beberapa saat.
+							Use the text_assist lane (AI Provider Settings). May take a
+							few seconds.
 						</div>
 					</div>
 				</div>

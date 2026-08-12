@@ -1257,7 +1257,7 @@ function SceneStep({ wf }: { wf: WF }) {
 					</div>
 					<img
 						src={productTruthCutoutPreviewUrl(wf.product.id)}
-						alt={`Cutout for review of ${wf.product.product_display_name || "produk"}`}
+						alt={`Cutout for review of ${wf.product.product_display_name || "product"}`}
 						className="max-h-80 w-full rounded-lg border border-slate-700 bg-white/5 object-contain"
 						data-testid="poster-truth-cutout-preview"
 					/>

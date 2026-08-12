@@ -4734,7 +4734,7 @@ export default function ProductsSalesAnalyzerPage() {
 												[
 													["product_knowledge_text", "Product Description / Knowledge"],
 													["benefits_text", "Benefits / USP"],
-													["usage_text", "Usage / Cara Guna"],
+													["usage_text", "Usage"],
 													["target_customer_text", "Target Customer"],
 													["ingredients_text", "Ingredients / Materials"],
 													["warnings_text", "Warnings / Pantang"],

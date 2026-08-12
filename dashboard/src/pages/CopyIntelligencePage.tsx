@@ -181,7 +181,7 @@ export default function CopyIntelligencePage() {
 		}).catch((cause) => {
 			if (active) {
 				setLedger(null);
-				setLedgerError(cause instanceof Error ? cause.message : "Ledger tidak dapat dimuatkan.");
+				setLedgerError(cause instanceof Error ? cause.message : "Ledger could not be loaded.");
 			}
 		}).finally(() => {
 			if (active) setLedgerLoading(false);

@@ -1155,7 +1155,7 @@ export function PosterBuilderLegacyPanel() {
 											className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-[11px] text-emerald-200"
 										>
 											<span>
-												✓ Copy diluluskan (Poster Copy Set v{approvedCopySet.version}).
+												✓ Copy approved (Poster Copy Set v{approvedCopySet.version}).
 												To edit, open a new version — the original set stays immutable.
 											</span>
 											<button
@@ -1382,7 +1382,7 @@ export function PosterBuilderLegacyPanel() {
 									</p>
 								) : promptPackage.prompt_package_status === "PREVIEW_ONLY" ? (
 									<p className="mt-2 text-[11px] text-amber-300">
-										Nota: copy ini review-only (bukan Copy Set diluluskan).
+										Note: this copy is review-only (not an approved Copy Set).
 										The poster can still be generated for review.
 									</p>
 								) : null}

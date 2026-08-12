@@ -757,7 +757,7 @@ export function describeApprovalBlockers(
 		);
 	const how = parts.length
 		? parts.join("; ")
-		: "selesaikan blocker yang tersenarai di bawah";
+		: "resolve the blockers listed below";
 	return `Draft cannot be approved yet — ${how}. Update fields in the editor, press Save Draft, then Validate & Approve again. The "Missing Required Fields" and "Claim Safety Gate" panels below list the details.`;
 }
 

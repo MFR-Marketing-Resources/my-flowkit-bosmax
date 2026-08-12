@@ -732,10 +732,10 @@ export default function CopySetRegistryPage() {
 					Copywriting Set Registry
 				</h1>
 				<p className="mt-2 max-w-3xl text-sm text-slate-400">
-					Satu database copywriting set per produk (angle → hook → subhook → USP →
+					One copywriting-set database per product (angle → hook → subhook → USP →
 					CTA). Press Generate, AI (DeepSeek) fills the set. Approved sets are used by
-					Poster Builder dan video generation (T2V/F2V/Hybrid/I2V). Setiap baris =
-					satu set MAPPING lengkap.
+					Poster Builder and video generation (T2V/F2V/Hybrid/I2V). Each row =
+					one complete MAPPING set.
 				</p>
 			</header>
 
@@ -829,7 +829,7 @@ export default function CopySetRegistryPage() {
 								{grounding.source !== "APPROVED_SNAPSHOT" ? (
 									<HelperText tone="warn">
 										Grounded pada peringkat framework family. Untuk copy paling
-										tepat (benefit / USP / persona sebenar), author satu Product
+										accurate (benefit / USP / real persona), author one Product
 										Knowledge snapshot for this product.
 										{grounding.missing.length
 											? ` Kurang: ${grounding.missing.join("; ")}.`

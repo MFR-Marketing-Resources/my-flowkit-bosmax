@@ -375,7 +375,7 @@ export default function SceneContextRegistryPage() {
 				return;
 			}
 		}
-		setError(`${sceneCode}: generation timed out — semak Video Jobs / Library.`);
+		setError(`${sceneCode}: generation timed out — check Video Jobs / Library.`);
 		setGenerating((prev) => {
 			const next = { ...prev };
 			delete next[sceneCode];
@@ -1046,8 +1046,8 @@ export default function SceneContextRegistryPage() {
 								: "🤖 Auto-generate Scene"}
 						</button>
 						<div className="mt-2 text-[10px] text-slate-500">
-							Guna lane text_assist (AI Provider Settings). Boleh ambil masa
-							beberapa saat.
+							Use the text_assist lane (AI Provider Settings). May take a
+							few seconds.
 						</div>
 					</div>
 				</div>
