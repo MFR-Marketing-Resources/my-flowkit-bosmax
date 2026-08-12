@@ -18,11 +18,11 @@ import {
 } from "../api/productionQueue";
 import { fetchProductCatalog } from "../api/products";
 import {
-	OperatorCockpit,
 	ResolvedChip,
 	WorkflowStep,
 	type WorkflowStepStatus,
 } from "../components/workflow";
+import ResultsSidebar, { type SessionResult } from "../components/workspace/ResultsSidebar";
 import NativeExtendPanel from "../components/NativeExtendPanel";
 import CanonicalReferenceBindingControls, {
 	EMPTY_BINDING,
@@ -77,6 +77,7 @@ export default function FacelessVideoPage() {
 	const [hookId, setHookId] = useState("AUTO");
 	const [backgroundId, setBackgroundId] = useState("AUTO");
 	const [showAdvancedRef, setShowAdvancedRef] = useState(false);
+	const [sessionResults, setSessionResults] = useState<SessionResult[]>([]);
 	const [binding, setBinding] = useState<CanonicalReferenceBinding>(EMPTY_BINDING);
 
 	const [sceneMode, setSceneMode] = useState<FacelessSceneMode>("SINGLE");
@@ -367,6 +368,8 @@ export default function FacelessVideoPage() {
 			if (status === "DONE") {
 				const mediaId = job.media_id ?? job.video_media_id ?? "";
 				if (mediaId) setCompletedUrl(`/api/flow/retrieved/${mediaId}`);
+				if (mediaId)
+					setSessionResults((prev) => [{ media_id: mediaId, kind: "video" }, ...prev]);
 				setNotice({
 					tone: "success",
 					title:
@@ -907,86 +910,12 @@ export default function FacelessVideoPage() {
 					) : null}
 				</div>
 
-				<OperatorCockpit
-					laneLabel="Faceless Video"
-					status={{
-						label: isExecuting
-							? "Running"
-							: completedUrl
-								? "Done"
-								: selectedProduct
-									? "Online"
-									: "Idle",
-						state: isExecuting
-							? "running"
-							: completedUrl
-								? "done"
-								: selectedProduct
-									? "online"
-									: "idle",
-					}}
-					product={
-						selectedProduct
-							? {
-									name: selectedProduct.raw_product_title || selectedProduct.id,
-									sub: selectedProduct.id,
-								}
-							: undefined
-					}
-					plan={[
-						{ k: "Lane", v: "Faceless", tone: "good" },
-						{ k: "Hook", v: hookLabel, mono: hookId !== "AUTO" },
-						{ k: "Background", v: backgroundLabel },
-						{
-							k: "Mode",
-							v: sceneMode === "EXTEND" ? "Extend" : "Single",
-						},
-						{ k: "Model", v: videoModel, mono: true },
-						{ k: "Duration", v: durationLabel },
-						{ k: "Avatar", v: "None", tone: "good" },
-						{
-							k: "Package",
-							v: workspacePackage ? "Ready" : "—",
-							tone: workspacePackage ? "good" : "muted",
-						},
-					]}
-					generate={
-						sceneMode === "SINGLE"
-							? {
-									label: genLabel,
-									note: "Credits only on Generate. Prepare is free.",
-									disabled:
-										!workspacePackage?.prompt_text ||
-										isExecuting ||
-										blockers.length > 0,
-									loading: isExecuting,
-									onClick: () => void handleGenerate(),
-								}
-							: undefined
-					}
-					debug={
-						<pre className="overflow-auto text-[10px] text-slate-400">
-							{JSON.stringify(
-								{
-									hookId,
-									backgroundId,
-									sceneMode,
-									videoModel,
-									durationSec,
-									extendTotalSec,
-									advancedStartFrame: binding.startFrameAssetId,
-									packageId: workspacePackage?.workspace_execution_package_id,
-									settingsSource: settings.source,
-									// internal transport (debug only)
-									internal_transport: "F2V",
-									internal_source_mode: showAdvancedRef && binding.startFrameAssetId
-										? "FRAMES"
-										: "HYBRID",
-								},
-								null,
-								2,
-							)}
-						</pre>
+				<ResultsSidebar
+					results={sessionResults}
+					generating={isExecuting}
+					libraryHref="/library/videos"
+					onRemoved={(mediaId) =>
+						setSessionResults((prev) => prev.filter((r) => r.media_id !== mediaId))
 					}
 				/>
 			</div>

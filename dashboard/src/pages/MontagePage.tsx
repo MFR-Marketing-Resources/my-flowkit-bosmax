@@ -29,10 +29,10 @@ import {
 } from "../api/montage";
 import { fetchProductCatalog } from "../api/products";
 import {
-	OperatorCockpit,
 	WorkflowStep,
 	type WorkflowStepStatus,
 } from "../components/workflow";
+import ResultsSidebar from "../components/workspace/ResultsSidebar";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { Product } from "../types";
 import {
@@ -134,9 +134,6 @@ export default function MontagePage() {
 	);
 	const canOperate =
 		Boolean(selectedProduct) && settingsAvailable && Boolean(validSelection);
-	const packagesReady = Boolean(
-		run?.scenes?.some((scene) => scene.workspace_execution_package_id),
-	);
 	const packageCount =
 		run?.scenes?.filter((s) => s.workspace_execution_package_id).length ?? 0;
 
@@ -901,73 +898,10 @@ export default function MontagePage() {
 				</div>
 
 				<aside className="min-h-0">
-					<OperatorCockpit
-						laneLabel="Montage · discrete"
-						status={{
-							label: busy ? "Working" : run ? "Run ready" : "Idle",
-							state: busy ? "running" : run ? "online" : "idle",
-						}}
-						product={
-							selectedProduct
-								? {
-										name:
-											selectedProduct.product_short_name ||
-											selectedProduct.raw_product_title ||
-											selectedProduct.id,
-										sub: selectedProduct.id,
-								  }
-								: undefined
-						}
-						planTitle="Discrete plan"
-						plan={[
-							{ k: "Hook", v: hookLabel, mono: true },
-							{ k: "Background", v: backgroundLabel, mono: true },
-							{
-								k: "Model",
-								v: validSelection?.model || "—",
-								mono: true,
-							},
-							{
-								k: "Duration",
-								v: validSelection ? `${validSelection.durationSeconds}s / scene` : "—",
-								mono: true,
-							},
-							{
-								k: "Progress",
-								v: run ? `${run.status} · ${run.total_scenes} scenes` : "—",
-								tone: run ? "default" : "muted",
-							},
-						]}
-						queueTitle="Execution state"
-						generate={{
-							label: estimate
-								? creditConfirm
-									? "Generate Montage (credits)"
-									: "Confirm provider operations"
-								: "Generate Montage",
-							disabled: !canOperate || busy,
-							loading: busy,
-							onClick: handleGenerateMontage,
-							note: "The operation count is explicit; no provider call is implicit.",
-						}}
-						debug={
-							<pre className="max-h-40 overflow-auto text-[10px] text-slate-400">
-								{JSON.stringify(
-									{
-										settings_source: settings.source,
-										run_id: run?.montage_run_id,
-										run_ok: run?.ok,
-										readiness_ok: readiness?.ok,
-										packages_ready: packagesReady,
-										estimate: estimate?.summary,
-										credit_confirm: creditConfirm,
-									},
-									null,
-									2,
-								)}
-							</pre>
-						}
-
+					<ResultsSidebar
+						results={[]}
+						generating={busy}
+						libraryHref="/library/videos"
 					/>
 				</aside>
 			</div>
