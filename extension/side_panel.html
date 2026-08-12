@@ -48,6 +48,8 @@
       background: linear-gradient(135deg, #7dd3fc, #38bdf8); box-shadow: 0 5px 14px rgba(56, 189, 248, 0.28);
     }
     .brand-title { font-size: 13px; font-weight: 700; color: var(--text); flex: 1; }
+    .portal-btn { flex: none; border: 1px solid var(--border-strong); background: var(--panel-2); color: var(--text); border-radius: 8px; padding: 5px 9px; font-size: 11px; font-weight: 700; line-height: 1; cursor: pointer; white-space: nowrap; transition: border-color .15s ease, color .15s ease; }
+    .portal-btn:hover { border-color: var(--ok); color: var(--ok); }
     .brand-dot {
       width: 9px; height: 9px; border-radius: 999px; background: var(--muted); flex-shrink: 0;
     }
@@ -149,6 +151,7 @@
         <div class="brand-mark" aria-hidden="true">B</div>
         <div class="brand-title">BOSMAX</div>
         <span class="brand-dot" id="brand-status-dot" aria-hidden="true"></span>
+        <button type="button" class="portal-btn" id="btn-open-portal" title="Open the full dashboard (with the left sidebar) in a browser tab">Full dashboard ↗</button>
       </div>
 
       <span class="label">Generate</span>

@@ -771,6 +771,16 @@ function bootSidePortal() {
 		);
 	});
 
+	const openPortalButton = getElement("btn-open-portal");
+	if (openPortalButton) {
+		openPortalButton.addEventListener("click", () => {
+			openRouteInBrowserTab({
+				label: "Full dashboard",
+				url: `${LOCAL_AGENT_BASE_URL}/`,
+			});
+		});
+	}
+
 	retryButton.addEventListener("click", () => {
 		clearAutoRuntimeRetry();
 		setLastAction("Retry requested from side panel shell.");
